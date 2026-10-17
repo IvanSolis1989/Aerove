@@ -139,6 +139,10 @@ void main() {
       'expectedImageCount': seeds.length * 6 + randomSeeds.length * 2,
       'imageWidth': 300,
       'imageHeight': 600,
+      'meshColumns': 65,
+      'meshRows': 97,
+      'sharedSourceSaturationCeiling': 0.60,
+      'sourceSofteningBrightnessDependent': false,
       'hardGates': {
         'opaqueAlpha': 255,
         'minimumSelectedHueCoverageExclusive': 0.01,
@@ -162,22 +166,23 @@ void main() {
       },
       'visualReview': {
         'darkSourcePolicy':
-            'retain original selected HSV hue and saturation without clipping; only value controls low brightness',
+            'both modes first apply the shared artistic source saturation ceiling 0.60; dark retains that source hue and saturation and only attenuates value',
         'retiredDarkMaximumHctChroma': 24,
         'darkChromaGateRetirementReason':
-            'user explicitly requires dark to preserve selected saturation and become low-brightness color; the former chroma ceiling was an inferred anti-glare proxy that conflicted with that requirement',
+            'the former dark-only chroma ceiling was an inferred anti-glare proxy; extreme saturation is now softened once in the shared source palette for both modes, while dark changes only value',
         'darkChromaReviewPolicy':
-            'record actual sampled HCT chroma for visual review; enforce low luminance, selected hue/saturation retention, zero near-black area, and no neutral holes instead of desaturating to satisfy a fixed chroma ceiling',
+            'record actual sampled HCT chroma for visual review; enforce shared-source hue/saturation retention, value attenuation, zero near-black area, and no neutral holes instead of dark-specific desaturation',
         'darkValueAttenuationFactors': [0.32, 0.46, 0.50, 0.38],
         'darkValueMappingIterations': 0,
         'darkToneMappingSemantics':
-            'preserve source HSV hue and saturation; interpolate original selected value multiplied by fixed attenuation factors, with no equal-luminance compensation',
+            'preserve the shared artistic source HSV hue and saturation; interpolate its original value multiplied by fixed attenuation factors, with no equal-luminance compensation',
         'retiredEqualLuminanceGates': {
           'minimumSampledLuminance': 0.035,
           'maximumMappedLuminance': 0.085,
           'nearBlackLuminanceThreshold': 0.02,
         },
-        'equalLuminanceRetirementReason': 'fixed luminance targets raised pure blue toward HSV value 1 because its maximum luminance is only 0.0722; dark now attenuates every selected value, and low-luminance colored blue is not classified as a black hole',
+        'equalLuminanceRetirementReason':
+            'fixed luminance targets raised pure blue toward HSV value 1 because its maximum luminance is only 0.0722; dark now attenuates every selected value, and low-luminance colored blue is not classified as a black hole',
         'retiredDarkLuminanceFloor': 0.07,
         'darkLuminanceFloorChangeReason':
             'user clarified dark means low-brightness color, not a desaturated gray background; the earlier floor was an inferred anti-hole proxy',
@@ -405,6 +410,14 @@ void main() {
               'selectedSaturations': [
                 for (final selected in palette)
                   HSVColor.fromColor(selected).saturation,
+              ],
+              'sharedSourceSaturations': [
+                for (final source in normalizeAuroraColors(palette))
+                  HSVColor.fromColor(source).saturation,
+              ],
+              'sharedSourceColors': [
+                for (final source in normalizeAuroraColors(palette))
+                  source.toARGB32(),
               ],
               'nearBlackFraction': nearBlackSamples / samples,
               'neutralFraction': neutralSamples / samples,

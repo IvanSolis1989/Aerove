@@ -9,12 +9,28 @@ import 'package:material_ui/material_ui.dart';
 void main() {
   const selected = [Color(0xFF6BD5D9), Color(0xFFC6ADE4), Color(0xFFA9DAC6)];
 
+  test('shared source softening retains hue and value in both brightness paths', () {
+    expect(normalizeAuroraColors(selected), selected);
+    for (final color in const [Color(0xFFFF0000), Color(0xFF00FF00), Color(0xFF0000FF)]) {
+      final original = HSVColor.fromColor(color);
+      final shared = normalizeAuroraColors([color]).single;
+      final source = HSVColor.fromColor(shared);
+      expect(source.hue, closeTo(original.hue, 1));
+      expect(source.value, closeTo(original.value, 1 / 255));
+      expect(source.saturation, closeTo(0.60, 1 / 255));
+      for (final brightness in Brightness.values) {
+        expect(auroraTint(color, brightness), auroraTint(shared, brightness));
+      }
+    }
+  });
+
   test('ten random seeds have no injected dark or neutral mesh regions', () {
     final random = math.Random(20261017);
     for (var sample = 0; sample < 10; sample++) {
       final seed = random.nextInt(1 << 32);
       for (var count = 1; count <= 3; count++) {
-        final sourceValues = selected.take(count)
+        final sourceValues = selected
+            .take(count)
             .map((color) => HSVColor.fromColor(color).value);
         final minimumValue = sourceValues.reduce(math.min);
         final maximumValue = sourceValues.reduce(math.max);
@@ -35,21 +51,35 @@ void main() {
     }
   });
 
-  test('pure RGB meshes attenuate value without changing hue or saturation', () {
-    for (final color in const [Color(0xFFFF0000), Color(0xFF00FF00), Color(0xFF0000FF)]) {
-      final source = HSVColor.fromColor(color);
-      final mesh = generateAuroraMesh(832838199, colors: [color], brightness: Brightness.dark);
-      for (final pixel in mesh.colors) {
-        final hsv = HSVColor.fromColor(pixel);
-        final delta = (hsv.hue - source.hue).abs();
-        expect(math.min(delta, 360 - delta), lessThan(3));
-        expect(hsv.saturation, closeTo(source.saturation, 0.012));
-        expect(hsv.value, lessThan(0.51));
-        expect(hsv.value, lessThan(source.value));
-        expect(hsv.value, greaterThanOrEqualTo(source.value * 0.32 - 1 / 255));
+  test(
+    'pure RGB meshes dim the shared artistic source without further desaturation',
+    () {
+      for (final color in const [
+        Color(0xFFFF0000),
+        Color(0xFF00FF00),
+        Color(0xFF0000FF),
+      ]) {
+        final source = HSVColor.fromColor(color).withSaturation(0.60);
+        final mesh = generateAuroraMesh(
+          832838199,
+          colors: [color],
+          brightness: Brightness.dark,
+        );
+        for (final pixel in mesh.colors) {
+          final hsv = HSVColor.fromColor(pixel);
+          final delta = (hsv.hue - source.hue).abs();
+          expect(math.min(delta, 360 - delta), lessThan(3));
+          expect(hsv.saturation, closeTo(source.saturation, 0.012));
+          expect(hsv.value, lessThan(0.51));
+          expect(hsv.value, lessThan(source.value));
+          expect(
+            hsv.value,
+            greaterThanOrEqualTo(source.value * 0.32 - 1 / 255),
+          );
+        }
       }
-    }
-  });
+    },
+  );
 
   test(
     'dark single-color mapping changes value while retaining hue and saturation',
@@ -95,8 +125,8 @@ void main() {
           final next = HSVColor.fromColor(after.colors[index]);
           final delta = (previous.hue - next.hue).abs();
           expect(math.min(delta, 360 - delta), lessThan(4));
-          expect(previous.saturation, closeTo(0.8, 0.012));
-          expect(next.saturation, closeTo(0.8, 0.012));
+          expect(previous.saturation, closeTo(0.60, 0.012));
+          expect(next.saturation, closeTo(0.60, 0.012));
         }
       }
     },
@@ -141,8 +171,8 @@ void main() {
     expect(first.colors, repeated.colors);
     expect(first.colors, isNot(changed.colors));
     expect(first.colors, hasLength(first.positions.length));
-    expect(first.positions, hasLength(33 * 49));
-    expect(first.indices, hasLength(32 * 48 * 6));
+    expect(first.positions, hasLength(65 * 97));
+    expect(first.indices, hasLength(64 * 96 * 6));
     for (final position in first.positions) {
       expect(position.dx, inInclusiveRange(0, 1));
       expect(position.dy, inInclusiveRange(0, 1));
@@ -169,7 +199,7 @@ void main() {
 
   for (final brightness in Brightness.values) {
     test(
-      'fully saturated selections retain hue and readable brightness ($brightness)',
+      'fully saturated selections soften once before brightness mapping ($brightness)',
       () {
         for (final color in const [
           Color(0xFFFF0000),
@@ -183,12 +213,12 @@ void main() {
           if (brightness == Brightness.light) {
             expect(Hct.fromInt(tint.toARGB32()).chroma, lessThanOrEqualTo(20));
           } else {
-            expect(HSVColor.fromColor(tint).saturation, closeTo(1, 0.012));
-          final original = HSVColor.fromColor(color);
-          final darkValue = HSVColor.fromColor(tint).value;
-          expect(darkValue, closeTo(original.value * 0.42, 1 / 255));
-          expect(darkValue, lessThan(original.value));
-          expect(darkValue, lessThan(0.51));
+            expect(HSVColor.fromColor(tint).saturation, closeTo(0.60, 0.012));
+            final original = HSVColor.fromColor(color);
+            final darkValue = HSVColor.fromColor(tint).value;
+            expect(darkValue, closeTo(original.value * 0.42, 1 / 255));
+            expect(darkValue, lessThan(original.value));
+            expect(darkValue, lessThan(0.51));
           }
           final hueDelta =
               (HSLColor.fromColor(tint).hue - HSLColor.fromColor(color).hue)

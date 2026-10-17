@@ -11,19 +11,19 @@ typedef AuroraMesh = ({
 });
 
 final _auroraPositions = List<Offset>.unmodifiable([
-  for (var row = 0; row <= 48; row++)
-    for (var column = 0; column <= 32; column++) Offset(column / 32, row / 48),
+  for (var row = 0; row <= 96; row++)
+    for (var column = 0; column <= 64; column++) Offset(column / 64, row / 96),
 ]);
 
 final _auroraIndices = List<int>.unmodifiable([
-  for (var row = 0; row < 48; row++)
-    for (var column = 0; column < 32; column++) ...[
-      row * 33 + column,
-      row * 33 + column + 1,
-      (row + 1) * 33 + column,
-      row * 33 + column + 1,
-      (row + 1) * 33 + column + 1,
-      (row + 1) * 33 + column,
+  for (var row = 0; row < 96; row++)
+    for (var column = 0; column < 64; column++) ...[
+      row * 65 + column,
+      row * 65 + column + 1,
+      (row + 1) * 65 + column,
+      row * 65 + column + 1,
+      (row + 1) * 65 + column + 1,
+      (row + 1) * 65 + column,
     ],
 ]);
 
@@ -68,7 +68,8 @@ AuroraMesh generateAuroraMesh(
       (
         hue: unwrappedHues[sourceIndices[index]],
         saturation: sourceHsv[sourceIndices[index]].saturation,
-        value: sourceHsv[sourceIndices[index]].value *
+        value:
+            sourceHsv[sourceIndices[index]].value *
             [0.32, 0.46, 0.50, 0.38][index],
       ),
   ];
@@ -129,11 +130,11 @@ AuroraMesh generateAuroraMesh(
       final c = darkCorners[order[2]];
       final d = darkCorners[order[3]];
       return HSVColor.fromAHSV(
-          1,
-          mix(a.hue, b.hue, c.hue, d.hue) % 360,
-          mix(a.saturation, b.saturation, c.saturation, d.saturation),
-          mix(a.value, b.value, c.value, d.value),
-        ).toColor();
+        1,
+        mix(a.hue, b.hue, c.hue, d.hue) % 360,
+        mix(a.saturation, b.saturation, c.saturation, d.saturation),
+        mix(a.value, b.value, c.value, d.value),
+      ).toColor();
     }
     var color = Color.lerp(
       Color.lerp(corners[order[0]], corners[order[1]], u),
@@ -159,8 +160,16 @@ List<Color> normalizeAuroraColors(List<Color> colors) {
       ? const [Color(0xFF9AAFC5), Color(0xFFC4BDD3)]
       : colors.take(3);
   return List.unmodifiable([
-    for (final color in palette) color.withValues(alpha: 1),
+    for (final color in palette) _softAuroraSource(color),
   ]);
+}
+
+Color _softAuroraSource(Color color) {
+  final opaque = color.withValues(alpha: 1);
+  final hsv = HSVColor.fromColor(opaque);
+  return hsv.saturation > 0.60
+      ? hsv.withSaturation(0.60).toColor()
+      : opaque;
 }
 
 Color auroraBaseColor(Brightness brightness) => brightness == Brightness.dark
@@ -168,12 +177,13 @@ Color auroraBaseColor(Brightness brightness) => brightness == Brightness.dark
     : const Color(0xFFF7F8FA);
 
 Color auroraTint(Color color, Brightness brightness) {
+  final source = _softAuroraSource(color);
   if (brightness == Brightness.dark) {
-    final hsv = HSVColor.fromColor(color);
+    final hsv = HSVColor.fromColor(source);
     return hsv.withValue(hsv.value * 0.42).toColor();
   }
   final base = auroraBaseColor(brightness);
-  final tint = Color.lerp(base, color, 0.58)!;
+  final tint = Color.lerp(base, source, 0.58)!;
   final readable = _readableLightAuroraTint(tint, base);
   return _limitLightAuroraChroma(readable);
 }
