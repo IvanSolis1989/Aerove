@@ -1,334 +1,262 @@
-name: XClash Android
+name: XClash Android 17 install diagnostic
 
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - 'README*.md'
-      - AGENTS.md
-      - CLAUDE.md
-      - CHANGELOG.md
-      - 'docs/**'
-      - 'snapshots/**'
-      - '.agents/**/*.md'
   workflow_dispatch:
-    inputs:
-      prepare_sources:
-        description: Allow regenerated sources and formatting in the exported patch
-        type: boolean
-        default: false
-      build_apk:
-        description: Build the Android arm64 APK after verification
-        type: boolean
-        default: true
-      publish_release:
-        description: Publish the verified APK to XClash Releases
-        type: boolean
-        default: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: xclash-android-${{ github.ref }}
+  group: xclash-install-parse-33-${{ github.ref }}
   cancel-in-progress: false
 
-env:
-  FLUTTER_VERSION: '3.47.6'
-
 jobs:
-  verify:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - name: Check fork download links
-        env:
-          REPOSITORY: ${{ github.repository }}
-        run: python3 tool/sync_fork_readme.py --repository "$REPOSITORY" --check
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-      - name: Install dependencies
-        run: flutter pub get
-      - name: Test repository commit hooks
-        run: bash tool/hooks/test.sh
-      - name: Test upstream version selection
-        run: python3 -m unittest tool.test_xclash_version -v
-      - name: Generate and format sources
-        run: |
-          cp pubspec.yaml "$RUNNER_TEMP/xclash-pubspec.yaml"
-          trap 'cp "$RUNNER_TEMP/xclash-pubspec.yaml" pubspec.yaml' EXIT
-          sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
-          dart run intl_utils:generate
-          dart run build_runner build --delete-conflicting-outputs
-          dart format lib test
-          cp "$RUNNER_TEMP/xclash-pubspec.yaml" pubspec.yaml
-          git add -- lib test
-          git diff --cached --binary -- lib test > "$RUNNER_TEMP/xclash-generated.patch"
-          git write-tree > "$RUNNER_TEMP/xclash-verified-tree.txt"
-          git restore --staged -- lib test
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: xclash-generated
-          path: |
-            ${{ runner.temp }}/xclash-generated.patch
-            ${{ runner.temp }}/xclash-verified-tree.txt
-      - name: Require committed generated sources
-        if: ${{ !inputs.prepare_sources }}
-        run: test "$(cat "$RUNNER_TEMP/xclash-verified-tree.txt")" = "$(git rev-parse 'HEAD^{tree}')"
-      - name: Analyze
-        run: flutter analyze --no-fatal-infos
-      - name: Install preview font
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y fonts-noto-cjk
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: plugins/rust_api/rust
-          cache-directories: .dart_tool/hooks_runner
-      - name: UI and configuration regressions
-        env:
-          XCLASH_SCREENSHOT_DIR: ${{ runner.temp }}/xclash-previews
-        run: |
-          cp pubspec.yaml "$RUNNER_TEMP/xclash-test-pubspec.yaml"
-          trap 'cp "$RUNNER_TEMP/xclash-test-pubspec.yaml" pubspec.yaml' EXIT
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-          path = Path('pubspec.yaml')
-          text, count = re.subn(
-              r'(?m)^(    setup:\s*\n      build_assets: )true(\s*)$',
-              r'\g<1>false\2', path.read_text())
-          if count != 1:
-              raise SystemExit('Expected exactly one enabled setup native hook')
-          path.write_text(text)
-          PY
-          flutter test --reporter expanded \
-            test/models/config_test.dart test/models/dns_override_test.dart test/providers/config_test.dart \
-            test/manager/theme_manager_test.dart \
-            test/common/preferences_test.dart test/common/tray_menu_test.dart \
-            test/common/request_test.dart \
-            test/common/xclash_defaults_test.dart test/common/task_dns_override_test.dart \
-            test/common/aurora_test.dart \
-            test/common/task_test.dart test/common/migration_test.dart \
-            test/providers/profiles_action_test.dart test/providers/backup_action_test.dart \
-            test/providers/action_test.dart \
-            test/views/aurora_settings_test.dart test/views/theme_test.dart \
-            test/views/dns_view_test.dart test/views/scripts_source_test.dart \
-            test/views/script_content_test.dart test/pages/home_test.dart \
-            test/widgets/ test/l10n/ test/lint/
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: xclash-previews
-          path: ${{ runner.temp }}/xclash-previews
-          if-no-files-found: ignore
-
-  apk:
-    if: ${{ github.event_name == 'push' || inputs.build_apk }}
-    needs: verify
+  diagnose:
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    outputs:
-      tag: ${{ steps.version.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 0
-      - uses: actions/download-artifact@v4
-        with:
-          name: xclash-generated
-          path: ${{ runner.temp }}/xclash-generated
-      - name: Apply verified generated sources
+      - name: Enable KVM
         run: |
-          patch="$RUNNER_TEMP/xclash-generated/xclash-generated.patch"
-          if test -s "$patch"; then git apply "$patch"; fi
-          git add -- lib test
-          test "$(git write-tree)" = "$(cat "$RUNNER_TEMP/xclash-generated/xclash-verified-tree.txt")"
-          git restore --staged -- lib test
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-      - uses: actions/setup-java@v4
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-      - name: Verify recorded upstream release against official refs
-        run: |
-          git fetch --no-tags --recurse-submodules=no https://github.com/chen08209/FlClash.git \
-            '+refs/heads/*:refs/remotes/upstream/*' \
-            '+refs/tags/v*:refs/upstream-tags/v*'
-      - name: Restore persistent Android test signing key
-        env:
-          KEYSTORE_BASE64: ${{ secrets.XCLASH_ANDROID_DEBUG_KEYSTORE }}
-        run: |
-          test -n "$KEYSTORE_BASE64" || { echo '::error::Configure XCLASH_ANDROID_DEBUG_KEYSTORE before building.'; exit 1; }
-          install -d -m 700 "$HOME/.android"
-          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/debug.keystore"
-          chmod 600 "$HOME/.android/debug.keystore"
-          keytool -list -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey
-      - name: Set version for this Android build
-        id: version
-        run: |
-          python3 tool/xclash_version.py release-plan \
-            --metadata tool/upstream-version.json \
-            --pubspec pubspec.yaml \
-            --head "$GITHUB_SHA" \
-            --run-number "$GITHUB_RUN_NUMBER" \
-            > "$RUNNER_TEMP/xclash-version.json"
-          plan="$RUNNER_TEMP/xclash-version.json"
-          printf 'name=%s\nnumber=%s\ntag=%s\n' \
-            "$(jq -er .name "$plan")" \
-            "$(jq -er .number "$plan")" \
-            "$(jq -er .tag "$plan")" >> "$GITHUB_OUTPUT"
-          printf 'upstream_repository=%s\nupstream_source_commit=%s\n' \
-            "$(jq -er .upstream_repository "$plan")" \
-            "$(jq -er .upstream_source_commit "$plan")" >> "$GITHUB_OUTPUT"
-          printf 'upstream_tag=%s\nupstream_tag_commit=%s\nupstream_pubspec_version=%s\n' \
-            "$(jq -er .upstream_tag "$plan")" \
-            "$(jq -er .upstream_tag_commit "$plan")" \
-            "$(jq -er .upstream_pubspec_version "$plan")" >> "$GITHUB_OUTPUT"
-          printf 'upstream_pubspec_source_commit=%s\n' \
-            "$(jq -er .upstream_pubspec_source_commit "$plan")" >> "$GITHUB_OUTPUT"
-          printf 'upstream_source_branches=%s\n' \
-            "$(jq -cer .upstream_source_branches "$plan")" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.27.1'
-          cache-dependency-path: core/go.sum
-      - uses: nttld/setup-ndk@v1
-        id: ndk
-        with:
-          ndk-version: r28c
-          link-to-sdk: true
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: plugins/rust_api/rust
-      - name: Build Android arm64
-        env:
-          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
-          VERSION_NAME: ${{ steps.version.outputs.name }}
-          VERSION_NUMBER: ${{ steps.version.outputs.number }}
-          UPSTREAM_REPOSITORY: ${{ steps.version.outputs.upstream_repository }}
-          UPSTREAM_SOURCE_COMMIT: ${{ steps.version.outputs.upstream_source_commit }}
-          UPSTREAM_TAG: ${{ steps.version.outputs.upstream_tag }}
-          UPSTREAM_TAG_COMMIT: ${{ steps.version.outputs.upstream_tag_commit }}
-          UPSTREAM_PUBSPEC_VERSION: ${{ steps.version.outputs.upstream_pubspec_version }}
-          UPSTREAM_PUBSPEC_SOURCE_COMMIT: ${{ steps.version.outputs.upstream_pubspec_source_commit }}
-          UPSTREAM_SOURCE_BRANCHES: ${{ steps.version.outputs.upstream_source_branches }}
-        run: |
-          flutter pub get
-          flutter build apk --release --target-platform android-arm64 \
-            --build-name "$VERSION_NAME" --build-number "$VERSION_NUMBER"
-          mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-release.apk dist/XClash-android-arm64.apk
-          build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
-          "$build_tools/apksigner" verify --print-certs dist/XClash-android-arm64.apk
-          "$build_tools/aapt" dump badging dist/XClash-android-arm64.apk > "$RUNNER_TEMP/apk-badging.txt"
-          grep -F "package: name='com.follow.clash.dev' versionCode='$VERSION_NUMBER' versionName='$VERSION_NAME'" "$RUNNER_TEMP/apk-badging.txt"
-          jq -n --arg source "$GITHUB_SHA" --arg version "$VERSION_NAME+$VERSION_NUMBER" \
-            --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            --arg upstream_repository "$UPSTREAM_REPOSITORY" \
-            --arg upstream_source_commit "$UPSTREAM_SOURCE_COMMIT" \
-            --arg upstream_tag "$UPSTREAM_TAG" \
-            --arg upstream_tag_commit "$UPSTREAM_TAG_COMMIT" \
-            --arg upstream_pubspec_version "$UPSTREAM_PUBSPEC_VERSION" \
-            --arg upstream_pubspec_source_commit "$UPSTREAM_PUBSPEC_SOURCE_COMMIT" \
-            --argjson upstream_source_branches "$UPSTREAM_SOURCE_BRANCHES" \
-            '{source: $source, version: $version, workflow: $run, signing: "persistent Android test key", applicationId: "com.follow.clash.dev", upstream: {repository: $upstream_repository, sourceCommit: $upstream_source_commit, tag: $upstream_tag, tagCommit: $upstream_tag_commit, sourceBranches: $upstream_source_branches, pubspecVersion: $upstream_pubspec_version, pubspecSourceCommit: $upstream_pubspec_source_commit}}' \
-            > dist/BUILD_INFO.json
-          (cd dist && sha256sum XClash-android-arm64.apk BUILD_INFO.json > SHA256SUMS)
-      - name: Android model and service regressions
-        working-directory: android
-        env:
-          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
-        run: |
-          ./gradlew :common:testDebugUnitTest :service:testDebugUnitTest :app:testDebugUnitTest \
-            -Ptarget-platform=android-arm64 \
-            -x :app:compileFlutterBuildDebug -x :app:copyFlutterAssetsDebug
-      - uses: actions/upload-artifact@v4
-        with:
-          name: XClash-android-arm64
-          path: dist/
 
-  release:
-    if: >-
-      github.repository == 'IvanSolis1989/XClash' && github.ref == 'refs/heads/main' &&
-      !inputs.prepare_sources && (github.event_name == 'push' || inputs.publish_release)
-    needs: apk
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/download-artifact@v4
-        with:
-          name: XClash-android-arm64
-          path: dist
-      - name: Publish verified APK to Releases
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.apk.outputs.tag }}
+      - name: Download and verify published APKs
+        shell: bash
         run: |
           set -euo pipefail
-          check_main_inputs() {
-            git fetch --no-tags --recurse-submodules=no origin main
-            main=$(git rev-parse FETCH_HEAD)
-            if ! git merge-base --is-ancestor "$GITHUB_SHA" "$main"; then
-              echo '::error::The build source is no longer an ancestor of main; publication stopped.'
-              return 1
-            fi
-            git diff --no-renames --name-only -z "$GITHUB_SHA" "$main" > "$RUNNER_TEMP/release-main-paths"
-            while IFS= read -r -d '' path; do
-              case "$path" in
-                docs/*|snapshots/*|.agents/*.md) continue ;;
-                README*.md|AGENTS.md|CLAUDE.md|CHANGELOG.md)
-                  if [[ "$path" != */* ]]; then continue; fi ;;
-              esac
-              printf '::error::main changed an APK input (%q); this build will not replace latest.\n' "$path"
-              return 1
-            done < "$RUNNER_TEMP/release-main-paths"
+          mkdir -p "$RUNNER_TEMP/xclash-diagnostic/apks" "$RUNNER_TEMP/xclash-diagnostic/logs"
+          base='https://github.com/IvanSolis1989/XClash/releases/download'
+          curl --fail --location --retry 3 --retry-all-errors "$base/v0.9.0%2B2026101407/XClash-android-arm64.apk" -o "$RUNNER_TEMP/xclash-diagnostic/apks/old.apk"
+          curl --fail --location --retry 3 --retry-all-errors "$base/v0.9.1-pre.4-X%2B2026101714/XClash-android-arm64.apk" -o "$RUNNER_TEMP/xclash-diagnostic/apks/new.apk"
+          printf '%s  %s\n' 'dc83613947edbb90c21186e990baaa19509515c3d13e83b8f6dd88c8a1e97b7f' "$RUNNER_TEMP/xclash-diagnostic/apks/old.apk" '3ada37e79954f0023e77c1ef6726b77f59c7d2c663d0274d0e053078d4b98ea5' "$RUNNER_TEMP/xclash-diagnostic/apks/new.apk" | sha256sum --check
+          sha256sum "$RUNNER_TEMP/xclash-diagnostic/apks/old.apk" "$RUNNER_TEMP/xclash-diagnostic/apks/new.apk" | tee "$RUNNER_TEMP/xclash-diagnostic/logs/apk-sha256.txt"
+
+      - name: Prepare public-API archive probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/xclash-diagnostic/src/org/codex/archiveprobe"
+          cat > "$RUNNER_TEMP/xclash-diagnostic/src/org/codex/archiveprobe/ProbeActivity.java" <<'JAVA'
+          package org.codex.archiveprobe;
+
+          import android.app.Activity;
+          import android.content.pm.PackageInfo;
+          import android.content.pm.PackageManager;
+          import android.content.pm.Signature;
+          import android.os.Bundle;
+          import android.util.Log;
+          import java.security.MessageDigest;
+          import java.util.Locale;
+
+          public final class ProbeActivity extends Activity {
+              private static final String TAG = "ArchiveProbe";
+              @Override public void onCreate(Bundle state) {
+                  super.onCreate(state);
+                  String path = getIntent().getStringExtra("archive");
+                  String expectedPackage = getIntent().getStringExtra("expectedPackage");
+                  String expectedVersion = getIntent().getStringExtra("expectedVersion");
+                  long expectedCode = getIntent().getLongExtra("expectedCode", -1L);
+                  String expectedCert = getIntent().getStringExtra("expectedCert");
+                  try {
+                      PackageManager pm = getPackageManager();
+                      PackageInfo info = pm.getPackageArchiveInfo(path,
+                              PackageManager.GET_ACTIVITIES | PackageManager.GET_SERVICES |
+                              PackageManager.GET_PROVIDERS | PackageManager.GET_SIGNING_CERTIFICATES);
+                      if (info == null || info.applicationInfo == null) {
+                          Log.e(TAG, "ARCHIVE_PROBE_FAIL parse returned null for " + path);
+                          finish();
+                          return;
+                      }
+                      info.applicationInfo.sourceDir = path;
+                      info.applicationInfo.publicSourceDir = path;
+                      CharSequence label = pm.getApplicationLabel(info.applicationInfo);
+                      StringBuilder certs = new StringBuilder();
+                      if (info.signingInfo != null) {
+                          for (Signature signature : info.signingInfo.getApkContentsSigners()) {
+                              if (certs.length() > 0) certs.append(',');
+                              certs.append(hex(MessageDigest.getInstance("SHA-256")
+                                      .digest(signature.toByteArray())));
+                          }
+                      }
+                      long code = info.getLongVersionCode();
+                      Log.i(TAG, "ARCHIVE_METADATA package=" + info.packageName +
+                              " version=" + info.versionName + " code=" + code +
+                              " label=" + String.valueOf(label) + " signerSha256=" + certs);
+                      if (!expectedPackage.equals(info.packageName) ||
+                              !expectedVersion.equals(info.versionName) || code != expectedCode ||
+                              !certs.toString().toLowerCase(Locale.ROOT).contains(expectedCert)) {
+                          Log.e(TAG, "ARCHIVE_PROBE_FAIL metadata or signer mismatch");
+                      } else {
+                          Log.i(TAG, "ARCHIVE_PROBE_PASS");
+                      }
+                  } catch (Throwable t) {
+                      Log.e(TAG, "ARCHIVE_PROBE_FAIL exception", t);
+                  } finally {
+                      finish();
+                  }
+              }
+              private static String hex(byte[] bytes) {
+                  StringBuilder out = new StringBuilder(bytes.length * 2);
+                  for (byte b : bytes) out.append(String.format(Locale.ROOT, "%02x", b & 0xff));
+                  return out.toString();
+              }
           }
-          (cd dist && sha256sum --check SHA256SUMS)
-          test "$(jq -r .source dist/BUILD_INFO.json)" = "$GITHUB_SHA"
-          check_main_inputs
-          existing=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,targetCommitish 2>/dev/null || true)
-          if test -n "$existing"; then
-            test "$(jq -r .targetCommitish <<< "$existing")" = "$GITHUB_SHA"
-            if test "$(jq -r .isDraft <<< "$existing")" = false; then
-              echo 'This release is already published; its assets were preserved.' >> "$GITHUB_STEP_SUMMARY"
-              exit 0
-            fi
-          fi
+          JAVA
+          cat > "$RUNNER_TEMP/xclash-diagnostic/AndroidManifest.xml" <<'XML'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.codex.archiveprobe">
+            <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="37" />
+            <application android:label="ArchiveProbe" android:debuggable="true">
+              <activity android:name=".ProbeActivity" android:exported="true">
+                <intent-filter>
+                  <action android:name="android.intent.action.MAIN" />
+                  <category android:name="android.intent.category.LAUNCHER" />
+                </intent-filter>
+              </activity>
+            </application>
+          </manifest>
+          XML
+          cat > "$RUNNER_TEMP/xclash-diagnostic/run_diagnostics.sh" <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          root="$RUNNER_TEMP/xclash-diagnostic"
+          logs="$root/logs"
+          mkdir -p "$logs" "$root/classes" "$root/dex"
+          status=0
+          trap 'adb logcat -d -v threadtime > "$logs/logcat-final.txt" 2>&1 || true; adb shell dumpsys package com.follow.clash.dev > "$logs/dumpsys-xclash-final.txt" 2>&1 || true' EXIT
           {
-            printf '# XClash Android preview\n\n'
-            printf 'Android ARM64 APK with random gradient wallpaper and subtle glass surfaces.\n\n'
-            printf 'Source: `%s`\n\nBuild: %s/%s/actions/runs/%s\n\n' "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
-            printf 'Uses a persistent test signing key and package ID `com.follow.clash.dev`. Physical-device acceptance is still pending.\n'
-            printf 'When replacing the earlier Actions-only APK, Android may require uninstalling that build first because its temporary signing key differs. Back up your configuration before doing so.\n\n'
-            printf 'SHA-256 checksums are in `SHA256SUMS`; source and build details are in `BUILD_INFO.json`.\n'
-          } > "$RUNNER_TEMP/xclash-release.md"
-          if test -z "$existing"; then
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-              --title "XClash $TAG · Android preview" --draft --notes-file "$RUNNER_TEMP/xclash-release.md"
+            echo "Android SDK: $ANDROID_HOME"
+            sdkmanager --list_installed 2>&1 || true
+            echo "API 37 image packages:"
+            sdkmanager --list_installed 2>/dev/null | grep -E 'system-images;android-37|build-tools;37' || true
+            echo "Emulator:"
+            adb shell getprop ro.build.version.sdk
+            adb shell getprop ro.build.version.release
+            adb shell getprop ro.product.cpu.abi
+            adb shell getconf PAGE_SIZE || true
+          } > "$logs/emulator-environment.txt" 2>&1
+          platform="$ANDROID_HOME/platforms/android-37/android.jar"
+          bt="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          test -f "$platform" || { echo "Missing $platform" | tee -a "$logs/build-probe.txt"; exit 1; }
+          {
+            echo "Build tools: $bt"
+            javac --release 8 -classpath "$platform" -d "$root/classes" "$root/src/org/codex/archiveprobe/ProbeActivity.java"
+            "$bt/d8" --min-api 24 --output "$root/dex" "$root/classes/org/codex/archiveprobe/ProbeActivity.class"
+            "$bt/aapt" package -f -M "$root/AndroidManifest.xml" -I "$platform" -F "$root/probe-unsigned.apk"
+            (cd "$root/dex" && zip -q "$root/probe-unsigned.apk" classes.dex)
+            keytool -genkeypair -alias archiveprobe -keystore "$root/probe.p12" -storepass android -keypass android -storetype PKCS12 -dname 'CN=ArchiveProbe,O=Codex,C=US' -keyalg RSA -keysize 2048 -validity 3650 -noprompt
+            "$bt/apksigner" sign --ks "$root/probe.p12" --ks-pass pass:android --key-pass pass:android --out "$root/probe.apk" "$root/probe-unsigned.apk"
+            "$bt/apksigner" verify --verbose --print-certs "$root/probe.apk"
+          } > "$logs/build-probe.txt" 2>&1
+          adb install -r -t "$root/probe.apk" > "$logs/install-probe-app.txt" 2>&1 || { cat "$logs/install-probe-app.txt"; exit 1; }
+          adb shell run-as org.codex.archiveprobe mkdir -p files > "$logs/probe-private-dir.txt" 2>&1
+          probe_one() {
+            local which="$1" apk="$2" version="$3" code="$4"
+            local dest="/data/user/0/org.codex.archiveprobe/files/${which}.apk"
+            adb shell -T "run-as org.codex.archiveprobe sh -c 'cat > files/${which}.apk'" < "$apk" > "$logs/copy-${which}.txt" 2>&1 || return 1
+            local local_sha device_sha
+            local_sha="$(sha256sum "$apk" | awk '{print $1}')"
+            device_sha="$(adb shell -T "run-as org.codex.archiveprobe sha256sum files/${which}.apk" | awk '{print $1}')"
+            printf 'local=%s\ndevice=%s\n' "$local_sha" "$device_sha" > "$logs/archive-sha256-${which}.txt"
+            [ "$local_sha" = "$device_sha" ] || { echo "Probe archive hash mismatch: $which" >&2; return 1; }
+            adb logcat -c
+            adb shell am start -W -n org.codex.archiveprobe/.ProbeActivity \
+              --es archive "$dest" --es expectedPackage com.follow.clash.dev \
+              --es expectedVersion "$version" --el expectedCode "$code" \
+              --es expectedCert 0fc82c3b7b089b6244d9ed167b352ff76185417d07689853caca286fbdeb6e60 \
+              > "$logs/probe-start-${which}.txt" 2>&1 || true
+            local found=0
+            for _ in $(seq 1 30); do
+              if adb logcat -d -s ArchiveProbe:I ArchiveProbe:E | grep -q 'ARCHIVE_PROBE_\(PASS\|FAIL\)'; then found=1; break; fi
+              sleep 1
+            done
+            adb logcat -d -v threadtime -s ArchiveProbe:I ArchiveProbe:E > "$logs/archive-probe-${which}.txt" 2>&1 || true
+            if [ "$found" -eq 0 ] || grep -q 'ARCHIVE_PROBE_FAIL' "$logs/archive-probe-${which}.txt" || ! grep -q 'ARCHIVE_PROBE_PASS' "$logs/archive-probe-${which}.txt"; then
+              echo "Archive parse/metadata check failed for $which" | tee -a "$logs/results.txt"
+              return 1
+            fi
+            echo "Archive parse/metadata check passed for $which" | tee -a "$logs/results.txt"
+          }
+          probe_one old "$root/apks/old.apk" '0.9.0' 2026101407 || status=1
+          probe_one new "$root/apks/new.apk" '0.9.1-pre.4-X' 2026101714 || status=1
+          # Install old first, then test replacement by the new release. Do not launch XClash.
+          adb uninstall com.follow.clash.dev > "$logs/uninstall-before-install.txt" 2>&1 || true
+          set +e
+          adb install --no-streaming -r -t "$root/apks/old.apk" > "$logs/install-old.txt" 2>&1
+          old_rc=$?
+          set -e
+          if [ "$old_rc" -eq 0 ]; then
+            echo 'Old release install: success' | tee -a "$logs/results.txt"
+          elif grep -q 'INSTALL_FAILED_NO_MATCHING_ABIS' "$logs/install-old.txt"; then
+            echo 'Old release install: NO_MATCHING_ABIS (reported separately; not counted as install pass)' | tee -a "$logs/results.txt"
+            status=1
+          else
+            echo "Old release install failed rc=$old_rc" | tee -a "$logs/results.txt"
+            status=1
           fi
-          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" \
-            dist/XClash-android-arm64.apk dist/SHA256SUMS dist/BUILD_INFO.json --clobber
-          check_main_inputs
-          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false --latest
-          printf 'Published APK: https://github.com/%s/releases/tag/%s\n' "$GITHUB_REPOSITORY" "$TAG" >> "$GITHUB_STEP_SUMMARY"
+          set +e
+          adb install --no-streaming -r -t "$root/apks/new.apk" > "$logs/install-new-upgrade.txt" 2>&1
+          new_rc=$?
+          set -e
+          if [ "$new_rc" -eq 0 ]; then
+            if [ "$old_rc" -eq 0 ]; then
+              echo 'New release upgrade after old release: success' | tee -a "$logs/results.txt"
+            else
+              echo 'New release install: success; old release was not installed, so upgrade was not tested' | tee -a "$logs/results.txt"
+            fi
+            adb shell pm path com.follow.clash.dev > "$logs/installed-apk-path.txt" 2>&1 || true
+            adb shell dumpsys package com.follow.clash.dev > "$logs/dumpsys-xclash-after-install.txt" 2>&1 || true
+          elif grep -q 'INSTALL_FAILED_NO_MATCHING_ABIS' "$logs/install-new-upgrade.txt"; then
+            echo 'New release install: NO_MATCHING_ABIS (reported separately; not counted as install pass)' | tee -a "$logs/results.txt"
+            status=1
+          else
+            echo "New release install/upgrade failed rc=$new_rc" | tee -a "$logs/results.txt"
+            status=1
+          fi
+          cat "$logs/install-old.txt" "$logs/install-new-upgrade.txt" >> "$logs/results.txt" 2>/dev/null || true
+          # Archive parsing is the primary reproduction; native ABI mismatch is reported independently.
+          grep -q 'ARCHIVE_PROBE_PASS' "$logs/archive-probe-old.txt" 2>/dev/null || status=1
+          grep -q 'ARCHIVE_PROBE_PASS' "$logs/archive-probe-new.txt" 2>/dev/null || status=1
+          exit "$status"
+          SH
+          chmod +x "$RUNNER_TEMP/xclash-diagnostic/run_diagnostics.sh"
+
+      - name: Run on Android API 37 emulator
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: '37'
+          system-image-api-level: '37.0'
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          disable-animations: true
+          script: bash "$RUNNER_TEMP/xclash-diagnostic/run_diagnostics.sh"
+
+      - name: Collect emulator logs after failure
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/xclash-diagnostic/logs"
+          adb logcat -d -v threadtime > "$RUNNER_TEMP/xclash-diagnostic/logs/logcat-post-step.txt" 2>&1 || true
+          adb shell getprop > "$RUNNER_TEMP/xclash-diagnostic/logs/device-properties.txt" 2>&1 || true
+          adb shell dumpsys package com.follow.clash.dev > "$RUNNER_TEMP/xclash-diagnostic/logs/dumpsys-xclash-post-step.txt" 2>&1 || true
+
+      - name: Upload diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xclash-install-parse-33-api37
+          path: |
+            ${{ runner.temp }}/xclash-diagnostic/logs/
+            ${{ runner.temp }}/xclash-diagnostic/src/**/*.java
+            ${{ runner.temp }}/xclash-diagnostic/AndroidManifest.xml
+          if-no-files-found: warn
+          retention-days: 14
