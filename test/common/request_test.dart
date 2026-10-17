@@ -139,23 +139,44 @@ void main() {
   });
 
   group('checkForUpdate', () {
-    setUpAll(() {
-      globalState.packageInfo = PackageInfo(
-        appName: 'XClash',
-        packageName: 'com.follow.clash',
-        version: '0.9.0',
-        buildNumber: '2026101402',
-      );
-    });
-
-    for (final (description, tag, hasUpdate) in [
-      ('same version and build is current', 'v0.9.0+2026101402', false),
-      ('a higher build is an update', 'v0.9.0+2026101403', true),
-      ('a lower build is already superseded', 'v0.9.0+2026101401', false),
-      ('same upstream version without a build is current', 'v0.9.0', false),
-      ('higher upstream version without a build updates', 'v0.9.1', true),
+    for (final (description, installedVersion, tag, hasUpdate) in [
+      ('same version and build is current', '0.9.0', 'v0.9.0+2026101402', false),
+      ('a higher build is an update', '0.9.0', 'v0.9.0+2026101403', true),
+      ('a lower build is already superseded', '0.9.0', 'v0.9.0+2026101401', false),
+      ('same upstream version without a build is current', '0.9.0', 'v0.9.0', false),
+      ('higher upstream version without a build updates', '0.9.0', 'v0.9.1', true),
+      (
+        'the installed preview and build is current',
+        '0.9.1-preview.4-X',
+        'v0.9.1-preview.4-X+2026101402',
+        false,
+      ),
+      (
+        'the installed dev version and build is current',
+        '0.9.1-dev.4-X',
+        'v0.9.1-dev.4-X+2026101402',
+        false,
+      ),
+      (
+        'a higher preview identifier updates with the same build',
+        '0.9.1-preview.4-X',
+        'v0.9.1-preview.10-X+2026101402',
+        true,
+      ),
+      (
+        'a higher dev identifier updates with the same build',
+        '0.9.1-dev.4-X',
+        'v0.9.1-dev.10-X+2026101402',
+        true,
+      ),
     ]) {
       test(description, () async {
+        globalState.packageInfo = PackageInfo(
+          appName: 'XClash',
+          packageName: 'com.follow.clash',
+          version: installedVersion,
+          buildNumber: '2026101402',
+        );
         final release = <String, dynamic>{'tag_name': tag};
         final request = Request()
           ..dio.httpClientAdapter = _HostAdapter({

@@ -1,19 +1,31 @@
 # 上游自动同步
 
 `Sync upstream` 工作流每小时 UTC 第 17 分钟检查
-[`chen08209/FlClash/main`](https://github.com/chen08209/FlClash/tree/main)，
+[`chen08209/FlClash`](https://github.com/chen08209/FlClash) 的上游发布标签，
 合并到 `IvanSolis1989/XClash/main`。也可在仓库 **Actions → Sync upstream → Run workflow**
 选择 `main` 立即运行。工作流只在此 fork 的 `main` 上运行，同一时间只处理一次同步。
+
+每次检查都会从官方上游 remote 获取全部分支到 `refs/remotes/upstream/*`，并把 `v*` 标签放入独立的
+`refs/upstream-tags/` 命名空间；不会从本 fork 的发布标签选择版本。只考虑至少有一个上游分支可达的合法稳定版或
+`-pre.N` 预发布标签，按 SemVer 顺序选择最高版本，并把 annotated tag 剥离为其目标 commit。孤立 tag 不作为版本；
+没有可达合法标签或 tag 版本无法解析时，本轮明确失败，不猜测版本。工作流合并选中的标签 commit，
+不会跟随未打标签的分支开发提交，也不依赖固定分支名。
 
 同步使用普通 merge，不 reset、rebase、force push，也不以 `ours`/`theirs` 整体覆盖文件。
 `README.md` 为默认中文首页，`README_en.md` 为英文说明，均由 XClash 独立维护，
 完整介绍本仓库的功能、下载、构建和发布。上游的 `README_zh_CN.md` 不再导入。
 同步时精确保留 fork 基线中的这两个文件，不采用上游 README；只有这两份文档发生冲突时，
 可以自动保留本仓库版本，任何其他文件冲突仍停止。上游署名和 GPL 许可信息保留在本仓库文档中。
+只有当选中的 tag、其 peeled commit 或 pubspec 来源发生变化时才继续；branch membership 的改变与未打标签的
+分支提交不会单独触发同步。真实代码更新使用普通双父 merge；若选中 tag 的代码已在 fork 历史中而只有发布 tag
+或来源记录变化，则仅提交新的 `tool/upstream-version.json`。同一 tag 与 source commit 已记录时直接早退，
+即使某个分支推进了未打标签的提交。新增 tag 本身会刷新 metadata 并触发后续 APK 构建。metadata 记录上游仓库、
+source/tag peeled commit、发现时包含该 tag commit 的上游分支、tag 版本、上游 pubspec 完整版本及其来源 commit。
+
 合并提交前运行 `tool/sync_fork_readme.py --repository "$GITHUB_REPOSITORY"`，
 只校正自有文档中由仓库名派生的链接，不从上游生成 README。
-文档与源码随同一个双父合并提交进入验证；Android 工作流再次以 `--check` 检查链接，漂移时停止。
-上游没有新提交时直接结束。发现新提交时，以当前 fork main 为第一父提交建立合并提交，
+文档与源码随同同一个合并或 metadata 更新提交进入验证；Android 工作流再次以 `--check` 检查链接，漂移时停止。
+同一最高 tag 已记录时直接结束。发现新 tag commit 时，以当前 fork main 为第一父提交建立双父合并提交，
 在只有读权限的任务中运行 Flutter 3.47.6 的 `pub get`、`analyze --no-fatal-infos`、
 配置模型/Provider、更新请求、主题、导航、启动按钮、Aurora 设置/壁纸/应用组件、本地化及 lint 测试。
 测试期间仅临时关闭 Go setup hook，保留 Rust hook 运行编辑器相关测试，退出时恢复，打包前检查工作区无已跟踪修改；
@@ -50,8 +62,13 @@
 不会标成后续文档提交。重跑不会覆盖已经公开的同名版本资产。`prepare_sources=true`
 只用于准备生成文件，永不发布；仅验证时可关闭 `build_apk`，只构建时可关闭 `publish_release`。
 
-标签采用 `v<pubspec版本>+<pubspec构建号加工作流运行序号>`，APK 内使用相同版本和构建号。
-构建号只用于此次打包，不回写 pubspec；应用检查更新同时比较已安装的版本和构建号。
+APK 显示版本取 `tool/upstream-version.json` 中上游 tag 去掉 `v` 后追加 `-X`，例如
+`v0.9.1-pre.4` 显示为 `0.9.1-pre.4-X`；不从 `pubspec.yaml` 的基础版本推导，因此保留上游预发布编号。
+同步 CI 会验证 metadata 的 schema、上游仓库、完整 commit SHA、tag commit 与 source commit 一致、记录的
+pubspec 来源版本与当前 `pubspec.yaml`，并确认 source commit 已包含在构建 `HEAD`。过期或不匹配 metadata 会使 APK
+构建失败。`pubspec.yaml` 保留上游内容；内部 Android versionCode 固定为 `2026101700 + GITHUB_RUN_NUMBER`，
+不读取或累加上游 build number。Release tag 为 `v<显示版本>+<内部versionCode>`，且 APK 使用同一名称和编号。
+构建编号只用于 CI 打包，不回写 pubspec；`BUILD_INFO.json` 保存上游 source/tag/pubspec 来源，便于核对。
 README 的 `/releases/latest/download/XClash-android-arm64.apk` 始终指向最近成功发布的 ARM64 APK。
 
 仓库 secret `XCLASH_ANDROID_DEBUG_KEYSTORE` 保存固定 Android 测试签名容器的 base64，
@@ -86,8 +103,8 @@ CI 还原到私有 runner 的默认 debug keystore；缺失时构建失败，不
 `upstream-sync-publish` 记录推送阶段日志和远端 main。证据保留 30 天。
 候选 bundle 保留 7 天，仅供检查，不应绕过验证直接推送。
 
-冲突时在干净的独立本地工作树获取最新 `origin/main` 与 `upstream/main`，执行
-`git merge --no-ff upstream/main`，逐文件协调 UI 与上游逻辑，完成相同检查，再提交和普通推送。
+冲突时在干净的独立本地工作树获取最新 `origin/main`、上游所有分支和 `v*` 标签，按同一规则选出最高可达版本标签，
+执行 `git merge --no-ff <peeled-tag-commit>`，逐文件协调 UI 与上游逻辑，完成相同检查，再提交和普通推送。
 使用有 workflow 权限的凭据处理工作流变更。若放弃本地冲突，使用 `git merge --abort`；
 自动任务中失败的候选不会更新远端。依赖、分析或测试失败同样先修复真实失败条件，
 然后重新运行；不要删断言、跳测试或强制推送。工作流不自动创建 issue 或发送消息。

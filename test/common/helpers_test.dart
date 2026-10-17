@@ -133,6 +133,54 @@ void main() {
     test('handles missing minor/patch', () {
       expect(compareVersions('1', '1.0.0'), 0);
     });
+
+    test('orders branded prerelease identifiers numerically', () {
+      expect(compareVersions('0.9.1-pre.4-X', '0.9.1-pre.10-X'), lessThan(0));
+      expect(compareVersions('0.9.1-pre.10-X', '0.9.1-pre.4-X'), greaterThan(0));
+      expect(compareVersions('0.9.1-pre.4-X', '0.9.1-pre.4'), 0);
+    });
+
+    test('an installed branded release with the same build is current', () {
+      expect(compareVersions('v0.9.1-pre.4-X+42', '0.9.1-pre.4-X+42'), 0);
+      expect(compareVersions('0.9.1-pre.4-X+43', '0.9.1-pre.4-X+42'), greaterThan(0));
+      expect(compareVersions('0.9.1-pre.4-X+41', '0.9.1-pre.4-X+42'), lessThan(0));
+      expect(compareVersions('0.9.1-pre.4-X', '0.9.1-pre.4-X+0'), 0);
+    });
+
+    test('a stable version outranks its prerelease regardless of build', () {
+      expect(compareVersions('0.9.1-X+1', '0.9.1-pre.10-X+99'), greaterThan(0));
+      expect(compareVersions('0.9.1-pre.10-X+99', '0.9.1-X+1'), lessThan(0));
+      expect(compareVersions('0.9.1-pre.4-X+99', '0.9.1-pre.10-X+1'), lessThan(0));
+    });
+
+    test('follows prerelease numeric, string and identifier-length order', () {
+      const versions = [
+        '1.0.0-alpha-X',
+        '1.0.0-alpha.1-X',
+        '1.0.0-alpha.beta-X',
+        '1.0.0-beta-X',
+        '1.0.0-beta.2-X',
+        '1.0.0-beta.11-X',
+        '1.0.0-rc.1-X',
+        '1.0.0-X',
+      ];
+      for (var index = 1; index < versions.length; index++) {
+        expect(compareVersions(versions[index - 1], versions[index]), lessThan(0));
+      }
+      expect(compareVersions('1.0.0-1-X', '1.0.0--1-X'), lessThan(0));
+    });
+
+    test('normalizes the leading v, brand suffix and short core versions', () {
+      expect(compareVersions('v1-X+2', '1.0.0+2'), 0);
+      expect(compareVersions('1.2-X', 'v1.2.0'), 0);
+      expect(compareVersions('v0.10.0-pre.1-X', '0.9.1-X'), greaterThan(0));
+    });
+
+    test('rejects malformed versions and nonnumeric build numbers', () {
+      for (final version in ['1.2.3-pre..4-X', '1.2.3+build', '1.2.3+1+2']) {
+        expect(() => compareVersions(version, '1.2.3'), throwsFormatException);
+      }
+    });
   });
 
   group('getViewMode', () {

@@ -13,30 +13,59 @@ extension PackageInfoExtension on PackageInfo {
 }
 
 int compareVersions(String version1, String version2) {
-  final List<String> v1 = version1.split('+')[0].split('.');
-  final List<String> v2 = version2.split('+')[0].split('.');
-  final int major1 = int.parse(v1[0]);
-  final int major2 = int.parse(v2[0]);
-  if (major1 != major2) {
-    return major1.compareTo(major2);
+  final pattern = RegExp(
+    r'^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?'
+    r'(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+(\d+))?$',
+  );
+  final brandSuffix = RegExp(r'-X(?=\+|$)');
+  final numericIdentifier = RegExp(r'^\d+$');
+
+  ({List<int> core, List<String> prerelease, int build}) parse(String version) {
+    final match = pattern.firstMatch(version.replaceFirst(brandSuffix, ''));
+    if (match == null) {
+      throw FormatException('Invalid version', version);
+    }
+    return (
+      core: [
+        for (var index = 1; index <= 3; index++) int.parse(match[index] ?? '0'),
+      ],
+      prerelease: match[4]?.split('.') ?? const [],
+      build: int.parse(match[5] ?? '0'),
+    );
   }
-  final int minor1 = v1.length > 1 ? int.parse(v1[1]) : 0;
-  final int minor2 = v2.length > 1 ? int.parse(v2[1]) : 0;
-  if (minor1 != minor2) {
-    return minor1.compareTo(minor2);
+
+  final first = parse(version1);
+  final second = parse(version2);
+  for (var index = 0; index < 3; index++) {
+    final result = first.core[index].compareTo(second.core[index]);
+    if (result != 0) {
+      return result;
+    }
   }
-  final int patch1 = v1.length > 2 ? int.parse(v1[2]) : 0;
-  final int patch2 = v2.length > 2 ? int.parse(v2[2]) : 0;
-  if (patch1 != patch2) {
-    return patch1.compareTo(patch2);
+  final pre1 = first.prerelease;
+  final pre2 = second.prerelease;
+  if (pre1.isEmpty != pre2.isEmpty) {
+    return pre1.isEmpty ? 1 : -1;
   }
-  final int build1 = version1.contains('+')
-      ? int.parse(version1.split('+')[1])
-      : 0;
-  final int build2 = version2.contains('+')
-      ? int.parse(version2.split('+')[1])
-      : 0;
-  return build1.compareTo(build2);
+  for (var index = 0; index < pre1.length && index < pre2.length; index++) {
+    final id1 = pre1[index];
+    final id2 = pre2[index];
+    final numeric1 = numericIdentifier.hasMatch(id1);
+    final numeric2 = numericIdentifier.hasMatch(id2);
+    if (numeric1 != numeric2) {
+      return numeric1 ? -1 : 1;
+    }
+    final result = numeric1
+        ? BigInt.parse(id1).compareTo(BigInt.parse(id2))
+        : id1.compareTo(id2);
+    if (result != 0) {
+      return result;
+    }
+  }
+  final prereleaseLength = pre1.length.compareTo(pre2.length);
+  return prereleaseLength != 0
+      ? prereleaseLength
+      : first.build.compareTo(second.build);
 }
 
 const releaseNotesBeginMarker = '<!-- flclash:changelog:begin -->';

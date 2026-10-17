@@ -24,6 +24,13 @@ Only `arm64-v8a` is published, targeting **Android 7.0 or later**. There are no 
 The APK is built by this fork's CI; [Actions](https://github.com/IvanSolis1989/XClash/actions/workflows/xclash-android.yaml)
 provides build logs and diagnostic artifacts. Use Releases for installation.
 
+The displayed APK version follows the highest legal stable or prerelease tag reachable from any
+`chen08209/FlClash` branch, with `-X` added to identify this fork: upstream `v0.9.1-pre.4` becomes
+`0.9.1-pre.4-X`. Untagged development commits do not trigger synchronization. `pubspec.yaml` keeps the upstream
+version; the APK uses an independent fork build number so upstream build numbers cannot cause a rollback or collision.
+`tool/upstream-version.json` and `BUILD_INFO.json` record the selected tag, target commit, branches containing it and
+pubspec source.
+
 The preview uses a persistent **test signing key** and application ID `com.follow.clash.dev`.
 Physical-device acceptance is still pending. Earlier Actions-only APKs used temporary signing keys;
 Android may require uninstalling those before installing a Release. Back up your configuration first.
@@ -31,12 +38,14 @@ Locally built APKs may also have a different signing key and cannot necessarily 
 
 ## Appearance and controls
 
-Open **Tools → Theme → Random gradient wallpaper**. Enable the background, choose **1–3 colors**,
-then use **New wallpaper** to request a new composition. The palette and random seed are saved with your
+Open **Tools → Theme → Theme colors**, then choose either **Solid theme color** or **Random gradient wallpaper**.
+In gradient mode, choose **1–3 colors**, then use **New wallpaper** to request a new composition. The palette and random seed are saved with your
 configuration, so the same pattern returns after restarting. It is a static seeded background, with no
 continuous wallpaper animation. The surfaces use restrained translucency to keep controls readable.
 
-Disable the option to return to ordinary theme surfaces. High-contrast mode and dark pure-black mode use opaque
+Gradient mode suspends the ordinary theme palette and enables and locks the existing Liquid Glass setting.
+Choosing solid theme color restores the saved palette and glass setting. The default follows system brightness;
+light and dark modes remain available at the top of the page. High-contrast mode and dark pure-black mode use opaque
 surfaces instead of the aurora/glass treatment. Existing navigation, dashboard layout and proxy controls are retained.
 
 <p align="center">
@@ -91,9 +100,10 @@ An agent running the application on a development host must use `--dart-define=S
   and Android unit tests, then builds ARM64. Successful eligible `main` builds publish the APK and provenance files
   through a separate Release job. Failed checks do not publish a new APK; source synchronization and APK publication
   are separate runs, so an APK build failure does not undo an already merged source update.
-- **Upstream synchronization:** the scheduled workflow checks `chen08209/FlClash/main` hourly at minute 17 UTC;
-  GitHub may delay scheduled runs. It uses an ordinary merge, validates the candidate and only then advances this
-  fork's `main`. Conflicts, failed validation or a competing update leave the existing `main` in place.
+- **Upstream synchronization:** hourly at minute 17 UTC, the workflow selects the highest stable or prerelease tag
+  reachable from any upstream branch; GitHub may delay scheduled runs. It merges the tagged commit and does not follow
+  untagged development commits. The candidate is validated before this fork's `main` advances. Conflicts, failed
+  validation or a competing update leave the existing `main` in place.
 - **Fork documentation:** these two READMEs are maintained for XClash. Synchronization preserves the fork's README
   files from its pre-merge revision; it does not import upstream README content. `tool/sync_fork_readme.py` only
   updates repository-derived links and badges, and rejects documents without the XClash ownership marker.

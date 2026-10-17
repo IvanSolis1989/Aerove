@@ -57,6 +57,8 @@ jobs:
         run: flutter pub get
       - name: Test repository commit hooks
         run: bash tool/hooks/test.sh
+      - name: Test upstream version selection
+        run: python3 -m unittest tool.test_xclash_version -v
       - name: Generate and format sources
         run: |
           cp pubspec.yaml "$RUNNER_TEMP/xclash-pubspec.yaml"
@@ -140,6 +142,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           name: xclash-generated
@@ -160,6 +163,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Verify recorded upstream release against official refs
+        run: |
+          git fetch --no-tags https://github.com/chen08209/FlClash.git \
+            '+refs/heads/*:refs/remotes/upstream/*' \
+            '+refs/tags/v*:refs/upstream-tags/v*'
       - name: Restore persistent Android test signing key
         env:
           KEYSTORE_BASE64: ${{ secrets.XCLASH_ANDROID_DEBUG_KEYSTORE }}
@@ -172,14 +180,28 @@ jobs:
       - name: Set version for this Android build
         id: version
         run: |
-          version=$(sed -n 's/^version: //p' pubspec.yaml)
-          name=${version%%+*}
-          number=${version#*+}
-          [[ "$name" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          [[ "$number" =~ ^[0-9]+$ ]]
-          number=$((number + GITHUB_RUN_NUMBER))
-          test "$number" -le 2100000000
-          printf 'name=%s\nnumber=%s\ntag=v%s+%s\n' "$name" "$number" "$name" "$number" >> "$GITHUB_OUTPUT"
+          python3 tool/xclash_version.py release-plan \
+            --metadata tool/upstream-version.json \
+            --pubspec pubspec.yaml \
+            --head "$GITHUB_SHA" \
+            --run-number "$GITHUB_RUN_NUMBER" \
+            > "$RUNNER_TEMP/xclash-version.json"
+          plan="$RUNNER_TEMP/xclash-version.json"
+          printf 'name=%s\nnumber=%s\ntag=%s\n' \
+            "$(jq -er .name "$plan")" \
+            "$(jq -er .number "$plan")" \
+            "$(jq -er .tag "$plan")" >> "$GITHUB_OUTPUT"
+          printf 'upstream_repository=%s\nupstream_source_commit=%s\n' \
+            "$(jq -er .upstream_repository "$plan")" \
+            "$(jq -er .upstream_source_commit "$plan")" >> "$GITHUB_OUTPUT"
+          printf 'upstream_tag=%s\nupstream_tag_commit=%s\nupstream_pubspec_version=%s\n' \
+            "$(jq -er .upstream_tag "$plan")" \
+            "$(jq -er .upstream_tag_commit "$plan")" \
+            "$(jq -er .upstream_pubspec_version "$plan")" >> "$GITHUB_OUTPUT"
+          printf 'upstream_pubspec_source_commit=%s\n' \
+            "$(jq -er .upstream_pubspec_source_commit "$plan")" >> "$GITHUB_OUTPUT"
+          printf 'upstream_source_branches=%s\n' \
+            "$(jq -cer .upstream_source_branches "$plan")" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v5
         with:
           go-version: '1.27.1'
@@ -197,6 +219,13 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
           VERSION_NAME: ${{ steps.version.outputs.name }}
           VERSION_NUMBER: ${{ steps.version.outputs.number }}
+          UPSTREAM_REPOSITORY: ${{ steps.version.outputs.upstream_repository }}
+          UPSTREAM_SOURCE_COMMIT: ${{ steps.version.outputs.upstream_source_commit }}
+          UPSTREAM_TAG: ${{ steps.version.outputs.upstream_tag }}
+          UPSTREAM_TAG_COMMIT: ${{ steps.version.outputs.upstream_tag_commit }}
+          UPSTREAM_PUBSPEC_VERSION: ${{ steps.version.outputs.upstream_pubspec_version }}
+          UPSTREAM_PUBSPEC_SOURCE_COMMIT: ${{ steps.version.outputs.upstream_pubspec_source_commit }}
+          UPSTREAM_SOURCE_BRANCHES: ${{ steps.version.outputs.upstream_source_branches }}
         run: |
           flutter pub get
           flutter build apk --release --target-platform android-arm64 \
@@ -209,7 +238,14 @@ jobs:
           grep -F "package: name='com.follow.clash.dev' versionCode='$VERSION_NUMBER' versionName='$VERSION_NAME'" "$RUNNER_TEMP/apk-badging.txt"
           jq -n --arg source "$GITHUB_SHA" --arg version "$VERSION_NAME+$VERSION_NUMBER" \
             --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            '{source: $source, version: $version, workflow: $run, signing: "persistent Android test key", applicationId: "com.follow.clash.dev"}' \
+            --arg upstream_repository "$UPSTREAM_REPOSITORY" \
+            --arg upstream_source_commit "$UPSTREAM_SOURCE_COMMIT" \
+            --arg upstream_tag "$UPSTREAM_TAG" \
+            --arg upstream_tag_commit "$UPSTREAM_TAG_COMMIT" \
+            --arg upstream_pubspec_version "$UPSTREAM_PUBSPEC_VERSION" \
+            --arg upstream_pubspec_source_commit "$UPSTREAM_PUBSPEC_SOURCE_COMMIT" \
+            --argjson upstream_source_branches "$UPSTREAM_SOURCE_BRANCHES" \
+            '{source: $source, version: $version, workflow: $run, signing: "persistent Android test key", applicationId: "com.follow.clash.dev", upstream: {repository: $upstream_repository, sourceCommit: $upstream_source_commit, tag: $upstream_tag, tagCommit: $upstream_tag_commit, sourceBranches: $upstream_source_branches, pubspecVersion: $upstream_pubspec_version, pubspecSourceCommit: $upstream_pubspec_source_commit}}' \
             > dist/BUILD_INFO.json
           (cd dist && sha256sum XClash-android-arm64.apk BUILD_INFO.json > SHA256SUMS)
       - name: Android model and service regressions

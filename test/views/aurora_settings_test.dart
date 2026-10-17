@@ -1,3 +1,4 @@
+import 'package:fl_clash/common/app_localizations.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/providers/config.dart';
@@ -48,17 +49,23 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('toggle preserves wallpaper colors and seed', (tester) async {
+  testWidgets('palette contains no duplicate mode toggle and keeps its seed', (tester) async {
     await pumpSettings(tester);
     final original = readTheme();
     expect(find.byType(SeededAuroraWallpaper), findsOneWidget);
 
-    await tester.tap(find.text('Random gradient wallpaper'));
+    expect(find.text('Random gradient wallpaper'), findsNothing);
+    expect(find.byType(Switch), findsNothing);
+    container.read(themeSettingProvider.notifier).update(
+      (state) => state.copyWith(auroraEnabled: false),
+    );
     await tester.pumpAndSettle();
     expect(readTheme().auroraEnabled, isFalse);
     expect(find.byType(SeededAuroraWallpaper), findsNothing);
 
-    await tester.tap(find.text('Random gradient wallpaper'));
+    container.read(themeSettingProvider.notifier).update(
+      (state) => state.copyWith(auroraEnabled: true),
+    );
     await tester.pumpAndSettle();
     expect(readTheme(), original);
   });
@@ -147,6 +154,8 @@ void main() {
     await pumpSettings(tester);
     final original = readTheme();
     await tester.tap(find.byTooltip('Edit wallpaper color 1'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(currentAppLocalizations.sliders));
     await tester.pumpAndSettle();
     final slider = tester.widget<Slider>(find.byType(Slider).first);
     slider.onChanged!(120);

@@ -26,6 +26,8 @@ jobs:
       base: ${{ steps.merge.outputs.base }}
       upstream: ${{ steps.merge.outputs.upstream }}
       candidate: ${{ steps.merge.outputs.candidate }}
+      tag: ${{ steps.merge.outputs.tag }}
+      sync_action: ${{ steps.merge.outputs.sync_action }}
     defaults:
       run:
         shell: bash
@@ -45,31 +47,73 @@ jobs:
           evidence="$RUNNER_TEMP/upstream-sync"
           mkdir -p "$evidence"
           git remote add upstream "$UPSTREAM_URL"
-          git fetch --no-tags upstream main
+          git fetch --no-tags upstream \
+            '+refs/heads/*:refs/remotes/upstream/*' \
+            '+refs/tags/v*:refs/upstream-tags/v*'
           base=$(git rev-parse HEAD)
-          upstream=$(git rev-parse upstream/main)
-          printf 'base=%s\nupstream=%s\n' "$base" "$upstream" | tee "$evidence/revisions.txt" >> "$GITHUB_OUTPUT"
+          selection=$(python3 tool/xclash_version.py select-tag --repo .)
+          tag_ref=$(jq -er .tag_ref <<< "$selection")
+          tag=$(jq -er .tag <<< "$selection")
+          upstream=$(jq -er .source_commit <<< "$selection")
+          tag_commit=$(jq -er .tag_commit <<< "$selection")
+          source_branches=$(jq -c .source_branches <<< "$selection")
+          printf 'base=%s\nupstream=%s\ntag=%s\ntag_commit=%s\nsource_branches=%s\n' \
+            "$base" "$upstream" "$tag" "$tag_commit" "$source_branches" |
+            tee "$evidence/revisions.txt" >> "$GITHUB_OUTPUT"
+          pubspec_version=$(git show "$upstream:pubspec.yaml" |
+            python3 -c 'import sys; from tool.xclash_version import parse_pubspec_version; print(parse_pubspec_version(sys.stdin.read()))')
+          target_metadata="$RUNNER_TEMP/upstream-version.json"
+          metadata_args=()
+          while IFS= read -r branch; do
+            metadata_args+=(--source-branch "$branch")
+          done < <(jq -r '.source_branches[]' <<< "$selection")
+          python3 tool/xclash_version.py make-metadata \
+            --source-commit "$upstream" \
+            --tag-ref "$tag_ref" \
+            --tag-commit "$tag_commit" \
+            --pubspec-version "$pubspec_version" \
+            "${metadata_args[@]}" \
+            --output "$target_metadata"
           if git merge-base --is-ancestor "$upstream" "$base"; then
+            upstream_in_base=true
+          else
+            upstream_in_base=false
+          fi
+          action=$(python3 tool/xclash_version.py sync-decision \
+            --current tool/upstream-version.json \
+            --target "$target_metadata" \
+            --upstream-in-base "$upstream_in_base")
+          printf 'sync_action=%s\n' "$action" | tee -a "$evidence/revisions.txt" >> "$GITHUB_OUTPUT"
+          printf 'tag=%s\nsync_action=%s\n' "$tag" "$action" >> "$GITHUB_OUTPUT"
+          if [[ "$action" == no_change ]]; then
             echo 'changed=false' >> "$GITHUB_OUTPUT"
-            echo 'Upstream main is already included.' >> "$GITHUB_STEP_SUMMARY"
+            printf 'Selected upstream release tag `%s` is already recorded.\n' "$tag" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          if ! git merge --no-ff --no-commit "$upstream" 2>&1 | tee "$evidence/merge.log"; then
-            git diff --name-only --diff-filter=U > "$evidence/conflicted-files.txt"
-            git diff --cc > "$evidence/merge-conflicts.patch"
-            if ! test -s "$evidence/conflicted-files.txt" ||
-              grep -vEx 'README\.md|README_en\.md|README_zh_CN\.md' "$evidence/conflicted-files.txt"; then
-              echo '::error::Upstream merge failed. Resolve the recorded conflicts manually; main was not updated.'
-              exit 1
+          if [[ "$action" == merge ]]; then
+            if ! git merge --no-ff --no-commit "$upstream" 2>&1 | tee "$evidence/merge.log"; then
+              git diff --name-only --diff-filter=U > "$evidence/conflicted-files.txt"
+              git diff --cc > "$evidence/merge-conflicts.patch"
+              if ! test -s "$evidence/conflicted-files.txt" ||
+                grep -vEx 'README\.md|README_en\.md|README_zh_CN\.md' "$evidence/conflicted-files.txt"; then
+                echo '::error::Upstream merge failed. Resolve the recorded conflicts manually; main was not updated.'
+                exit 1
+              fi
             fi
+            git restore --source="$base" --staged --worktree -- README.md README_en.md
+            git rm -f --ignore-unmatch -- README_zh_CN.md
+            python3 tool/sync_fork_readme.py --repository "$GITHUB_REPOSITORY"
+            git add -- README.md README_en.md
           fi
-          git restore --source="$base" --staged --worktree -- README.md README_en.md
-          git rm -f --ignore-unmatch -- README_zh_CN.md
-          python3 tool/sync_fork_readme.py --repository "$GITHUB_REPOSITORY"
-          git add -- README.md README_en.md
-          git commit --no-edit
+          cp "$target_metadata" tool/upstream-version.json
+          git add -- tool/upstream-version.json
+          if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+            git commit --no-edit
+          else
+            git commit -m "chore(sync): record upstream release metadata $tag"
+          fi
           candidate=$(git rev-parse HEAD)
           printf 'candidate=%s\n' "$candidate" | tee -a "$evidence/revisions.txt" >> "$GITHUB_OUTPUT"
           git diff --name-status "$base" "$candidate" > "$evidence/changed-files.txt"
@@ -105,6 +149,7 @@ jobs:
           evidence="$RUNNER_TEMP/upstream-sync"
           cp pubspec.yaml "$RUNNER_TEMP/sync-pubspec.yaml"
           trap 'cp "$RUNNER_TEMP/sync-pubspec.yaml" pubspec.yaml' EXIT
+          python3 -m unittest tool.test_xclash_version -v 2>&1 | tee "$evidence/version-tests.log"
           flutter pub get 2>&1 | tee "$evidence/pub-get.log"
           flutter analyze --no-fatal-infos 2>&1 | tee "$evidence/analyze.log"
           python3 - <<'PY'
@@ -125,6 +170,7 @@ jobs:
             test/common/request_test.dart \
             test/common/xclash_defaults_test.dart \
             test/common/aurora_test.dart \
+            test/common/helpers_test.dart \
             test/common/task_dns_override_test.dart \
             test/common/task_test.dart \
             test/common/migration_test.dart \
@@ -215,6 +261,8 @@ jobs:
           BASE: ${{ needs.validate.outputs.base }}
           UPSTREAM: ${{ needs.validate.outputs.upstream }}
           CANDIDATE: ${{ needs.validate.outputs.candidate }}
+          SYNC_ACTION: ${{ needs.validate.outputs.sync_action }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
           SYNC_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -228,7 +276,13 @@ jobs:
           git bundle verify "$evidence/upstream-candidate.bundle"
           git fetch "$evidence/upstream-candidate.bundle" refs/heads/sync-candidate:refs/remotes/sync/candidate
           test "$(git rev-parse refs/remotes/sync/candidate)" = "$CANDIDATE"
-          test "$(git show -s --format=%P "$CANDIDATE")" = "$BASE $UPSTREAM"
+          candidate_parents=$(git show -s --format=%P "$CANDIDATE")
+          if [[ "$SYNC_ACTION" == merge ]]; then
+            test "$candidate_parents" = "$BASE $UPSTREAM"
+          else
+            test "$SYNC_ACTION" = metadata_only
+            test "$candidate_parents" = "$BASE"
+          fi
           git merge-base --is-ancestor "$BASE" "$CANDIDATE"
           git diff --exit-code "$BASE" "$CANDIDATE" -- .github/workflows
           current=$(git ls-remote --exit-code origin refs/heads/main | cut -f1)
@@ -241,7 +295,8 @@ jobs:
             push origin "$CANDIDATE:refs/heads/main"
           actual=$(git ls-remote --exit-code origin refs/heads/main | cut -f1)
           test "$actual" = "$CANDIDATE"
-          printf 'Synced upstream `%s` into main as `%s`.\n' "$UPSTREAM" "$CANDIDATE" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Recorded upstream release `%s` at `%s` in main as `%s`.\n' \
+            "$RELEASE_TAG" "$UPSTREAM" "$CANDIDATE" >> "$GITHUB_STEP_SUMMARY"
           git diff --no-renames --name-only -z "$BASE" "$CANDIDATE" > "$evidence/apk-input-paths"
           build_apk=false
           while IFS= read -r -d '' path; do

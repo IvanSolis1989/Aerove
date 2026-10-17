@@ -1,7 +1,7 @@
 import 'dart:math';
 
 import 'package:fl_clash/common/common.dart';
-import 'package:fl_clash/icons/icons.dart';
+import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/widgets/aurora.dart';
 import 'package:fl_clash/widgets/widgets.dart';
@@ -17,6 +17,7 @@ class AuroraSettings extends ConsumerWidget {
     int? index,
   }) async {
     final theme = ref.read(themeSettingProvider);
+    if (!theme.auroraEnabled) return;
     if (index == null && theme.auroraColors.length >= 3) {
       return;
     }
@@ -31,6 +32,7 @@ class AuroraSettings extends ConsumerWidget {
       return;
     }
     ref.read(themeSettingProvider.notifier).update((state) {
+      if (!state.auroraEnabled) return state;
       final colors = List<int>.of(state.auroraColors);
       if (index == null) {
         if (colors.length < 3) {
@@ -56,18 +58,6 @@ class AuroraSettings extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const SizedBox(height: 16),
-        ConfigToggleItem(
-          selector: themeSettingProvider.select((state) => state.auroraEnabled),
-          title: (strings) => strings.auroraWallpaper,
-          subtitle: (strings) => strings.auroraWallpaperDescription,
-          leading: const GlyphIcon(AppGlyphs.blur),
-          onChanged: (ref, value) {
-            ref
-                .read(themeSettingProvider.notifier)
-                .update((state) => state.copyWith(auroraEnabled: value));
-          },
-        ),
         if (theme.auroraEnabled) ...[
           InfoHeader(
             info: Info(label: strings.auroraColors, glyph: AppGlyphs.palette),
@@ -117,6 +107,7 @@ class AuroraSettings extends ConsumerWidget {
               child: FilledButton.tonalIcon(
                 onPressed: () {
                   ref.read(themeSettingProvider.notifier).update((state) {
+                    if (!state.auroraEnabled) return state;
                     final seed =
                         (state.auroraSeed + 1 + Random().nextInt(0x3ffffffe)) %
                         0x7fffffff;

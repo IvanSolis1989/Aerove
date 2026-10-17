@@ -1,41 +1,20 @@
 import 'dart:ui' show ImageFilter;
 
 import 'package:fl_clash/common/aurora.dart';
-import 'package:fl_clash/common/shape.dart';
+import 'package:fl_clash/ui/aurora.dart';
+import 'package:fl_clash/ui/shape.dart';
+import 'package:fl_clash/ui/liquid_glass.dart';
+import 'package:fl_clash/ui/surface.dart';
 import 'package:fl_clash/providers/config.dart';
+import 'package:fl_clash/enum/enum.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
-class AuroraAppearance extends InheritedWidget {
-  const AuroraAppearance({
-    super.key,
-    required this.enabled,
-    required super.child,
-  });
+export 'package:fl_clash/ui/aurora.dart';
 
-  final bool enabled;
-
-  static bool enabledOf(BuildContext context) =>
-      context.dependOnInheritedWidgetOfExactType<AuroraAppearance>()?.enabled ??
-      false;
-
-  static Color surfaceColorOf(
-    BuildContext context,
-    Color fallback, {
-    double opacity = 0.28,
-  }) {
-    if (!enabledOf(context)) return fallback;
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    return (dark ? fallback : Colors.white).withValues(
-      alpha: dark ? (opacity + 0.12).clamp(0, 1) : opacity,
-    );
-  }
-
-  @override
-  bool updateShouldNotify(AuroraAppearance oldWidget) =>
-      enabled != oldWidget.enabled;
-}
+LiquidGlassMode effectiveAuroraGlassMode(LiquidGlassMode stored, bool gradient) =>
+    gradient && stored == LiquidGlassMode.none ? LiquidGlassMode.standard : stored;
 
 class AuroraAppSurface extends ConsumerWidget {
   const AuroraAppSurface({super.key, required this.child});
@@ -52,6 +31,7 @@ class AuroraAppSurface extends ConsumerWidget {
           colors: state.auroraColors,
           seed: state.auroraSeed,
           pureBlack: state.pureBlack,
+          liquidGlass: state.liquidGlass,
         ),
       ),
     );
@@ -60,11 +40,48 @@ class AuroraAppSurface extends ConsumerWidget {
         settings.enabled &&
         !MediaQuery.highContrastOf(context) &&
         !(settings.pureBlack && theme.brightness == Brightness.dark);
-    return AuroraAppearance(
+    final glassColors = auroraColorScheme(theme.brightness);
+    final glassTheme = theme.copyWith(
+      colorScheme: glassColors,
+      extensions: [
+        for (final extension in theme.extensions.values)
+          if (extension is ElevatedColorScheme)
+            ElevatedColorScheme(glassColors.elevated)
+          else
+            extension,
+      ],
+    ).withAppSurfaces;
+    final glassMode = effectiveAuroraGlassMode(settings.liquidGlass, enabled);
+    final glassEnabled = glassMode != LiquidGlassMode.none;
+    final glassButtons = (glassEnabled
+        ? LiquidGlass.buttonStyle(
+            (_) => LiquidGlassStyle.regular(glassColors),
+          )
+        : const ButtonStyle()).merge(FilledButton.styleFrom(
+      backgroundColor: Colors.transparent,
+      foregroundColor: glassColors.onSurface,
+    ));
+    return LiquidGlassScope(
+      enabled: glassEnabled,
+      quality: glassMode == LiquidGlassMode.ultra
+          ? LiquidGlassQuality.ultra
+          : LiquidGlassQuality.standard,
+      child: LiquidGlassHost(
+        enabled: glassEnabled,
+        child: AuroraAppearance(
       enabled: enabled,
       child: Theme(
         data: enabled
-            ? theme.copyWith(scaffoldBackgroundColor: Colors.transparent)
+            ? glassTheme.copyWith(
+                scaffoldBackgroundColor: Colors.transparent,
+                filledButtonTheme: FilledButtonThemeData(
+                  style: glassButtons.merge(glassTheme.filledButtonTheme.style),
+                ),
+                floatingActionButtonTheme: theme.floatingActionButtonTheme.copyWith(
+                  backgroundColor: glassColors.surfaceContainer.withValues(alpha: 0.28),
+                  foregroundColor: glassColors.onSurface,
+                ),
+              )
             : theme,
         child: Stack(
           fit: StackFit.expand,
@@ -96,6 +113,8 @@ class AuroraAppSurface extends ConsumerWidget {
             ),
             child,
           ],
+        ),
+      ),
         ),
       ),
     );

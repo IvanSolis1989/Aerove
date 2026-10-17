@@ -92,8 +92,7 @@ class Request {
     final packageInfo = globalState.packageInfo;
     final buildNumber = int.tryParse(packageInfo.buildNumber) ?? 0;
     final version = '${packageInfo.version}+$buildNumber';
-    final hasUpdate =
-        compareVersions(remoteVersion.replaceAll('v', ''), version) > 0;
+    final hasUpdate = compareVersions(remoteVersion, version) > 0;
     return hasUpdate ? release : null;
   }
 
