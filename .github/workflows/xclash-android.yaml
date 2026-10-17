@@ -237,9 +237,11 @@ jobs:
           set -euo pipefail
           root="$RUNNER_TEMP/xclash-diagnostic"
           export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
+          export ANDROID_AVD_HOME="$root/avds"
+          mkdir -p "$ANDROID_AVD_HOME"
           sdkmanager --install 'platforms;android-37.0' 'build-tools;37.0.0' emulator 'system-images;android-37.0;google_apis;x86_64'
-          printf 'no\n' | avdmanager create avd --force --name xclash-install --package 'system-images;android-37.0;google_apis;x86_64' --device pixel_2
-          printf '\ndisk.dataPartition.size=6G\n' >> "$HOME/.android/avd/xclash-install.avd/config.ini"
+          printf 'no\n' | avdmanager create avd --force --name xclash-install --path "$root/avd" --package 'system-images;android-37.0;google_apis;x86_64' --device pixel_2
+          printf '\ndisk.dataPartition.size=6G\n' >> "$root/avd/config.ini"
           adb start-server
           "$ANDROID_HOME/emulator/emulator" -avd xclash-install -port 5554 -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -partition-size 6144 -memory 4096 -cores 2 > "$root/logs/emulator-startup.txt" 2>&1 &
           emulator_pid=$!
