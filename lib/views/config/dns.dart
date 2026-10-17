@@ -165,7 +165,7 @@ class _DnsOverrideSpec extends OverrideSpec<DnsOverrideKey, Dns> {
   NullStatusIllustration get illustration => NullStatusIllustration.dns;
 
   @override
-  Dns get defaults => defaultDns;
+  Dns get defaults => xclashDefaultDns;
 
   @override
   String sectionOf(DnsOverrideKey key, AppLocalizations l) => key.section(l);

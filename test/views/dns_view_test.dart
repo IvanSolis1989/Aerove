@@ -132,7 +132,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(config().dnsOverrideKeys, {DnsOverrideKey.ipv6});
-    expect(config().dns.ipv6, defaultDns.ipv6);
+    expect(config().dns.ipv6, xclashDefaultDns.ipv6);
   });
 
   testWidgets('the empty page says where the entries apply and adds from it', (
@@ -187,9 +187,9 @@ void main() {
 
     expect(find.byType(OptionsDialog<(DnsMode,)?>), findsNothing);
     expect(config().dnsOverrideKeys, {DnsOverrideKey.enhancedMode});
-    expect(config().dns.enhancedMode, defaultDns.enhancedMode);
-    expect(defaultDns.enhancedMode, DnsMode.redirHost);
-    expect(find.text('redir-host'), findsOneWidget);
+    expect(config().dns.enhancedMode, xclashDefaultDns.enhancedMode);
+    expect(xclashDefaultDns.enhancedMode, DnsMode.fakeIp);
+    expect(find.text('fake-ip'), findsOneWidget);
   });
 
   testWidgets('a toggle entry writes its value and can be removed', (
@@ -207,9 +207,32 @@ void main() {
     await tester.tap(find.byTooltip(currentAppLocalizations.remove));
     await tester.pumpAndSettle();
     expect(config().dnsOverrideKeys, isEmpty);
-    expect(config().dns.ipv6, defaultDns.ipv6);
+    expect(config().dns.ipv6, xclashDefaultDns.ipv6);
     expect(find.text('IPv6'), findsNothing);
     expect(find.text(emptyLabel()), findsOneWidget);
+  });
+
+  testWidgets('resetting and re-adding bootstrap DNS restores only four DoH resolvers', (
+    tester,
+  ) async {
+    await pumpView(tester);
+    setKeys({DnsOverrideKey.defaultNameserver});
+    container.read(patchClashConfigProvider.notifier).update(
+      (state) => state.copyWith.dns(defaultNameserver: ['114.114.114.114']),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byTooltip(currentAppLocalizations.remove));
+    await tester.pumpAndSettle();
+    expect(config().dns.defaultNameserver, xclashBootstrapNameservers);
+
+    await openAddSheet(tester);
+    await tester.tap(find.text('Default Nameserver'));
+    await tester.pumpAndSettle();
+    expect(config().dnsOverrideKeys, {DnsOverrideKey.defaultNameserver});
+    expect(config().dns.defaultNameserver, xclashBootstrapNameservers);
+    expect(config().dns.defaultNameserver.every((value) => value.startsWith('https://')), true);
+    expect(find.text(currentAppLocalizations.itemsCount(4)), findsOneWidget);
   });
 
   testWidgets('a list entry without a description summarises its items', (
@@ -318,7 +341,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(overrides().dnsOverrideKeys, {DnsOverrideKey.respectRules});
-      expect(overrides().dns.respectRules, defaultDns.respectRules);
+      expect(overrides().dns.respectRules, xclashDefaultDns.respectRules);
       expect(config().dnsOverrideKeys, isEmpty);
     });
 
@@ -396,7 +419,7 @@ void main() {
           .onChanged(tester.element(nameserver) as WidgetRef, const []);
       await tester.pumpAndSettle();
       expect(overrides().dnsOverrideKeys, {DnsOverrideKey.fallback});
-      expect(overrides().dns.nameserver, defaultDns.nameserver);
+      expect(overrides().dns.nameserver, xclashDefaultDns.nameserver);
     });
 
     testWidgets('a policy entry summarises its rules', (tester) async {

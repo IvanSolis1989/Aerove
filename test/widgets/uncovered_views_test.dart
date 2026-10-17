@@ -368,10 +368,10 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text(url), findsNothing);
+    expect(find.text(url), findsOneWidget);
     expect(find.byType(LastUpdateTimeText), findsNWidgets(2));
     expect(find.text('Local'), findsOneWidget);
-    expect(find.text('Remote'), findsOneWidget);
+    expect(find.text('Remote'), findsNothing);
 
     await rightClick(tester, find.text('Local script'));
     await tester.pumpAndSettle();

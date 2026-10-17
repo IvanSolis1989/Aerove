@@ -16,7 +16,7 @@
 上游没有新提交时直接结束。发现新提交时，以当前 fork main 为第一父提交建立合并提交，
 在只有读权限的任务中运行 Flutter 3.47.6 的 `pub get`、`analyze --no-fatal-infos`、
 配置模型/Provider、更新请求、主题、导航、启动按钮、Aurora 设置/壁纸/应用组件、本地化及 lint 测试。
-测试期间两个 native build hook 临时关闭，退出时恢复，打包前检查工作区无已跟踪修改；
+测试期间仅临时关闭 Go setup hook，保留 Rust hook 运行编辑器相关测试，退出时恢复，打包前检查工作区无已跟踪修改；
 被推送的是关闭 hook 之前已经生成并验证的合并提交。
 
 验证通过后，独立写权限任务只读取 Git bundle，检查提交父链、工作流文件及远端 main，
@@ -24,11 +24,17 @@
 本轮失败并保留 main，下一轮基于最新 main 重做合并和验证。
 写权限任务不执行合并后的仓库脚本或 Flutter 代码。
 
-推送后确认远端 SHA，再通过 `workflow_dispatch` 触发 `XClash Android`，参数为
+推送后确认远端 SHA，只有合并相对 fork 基线改变了 APK 输入时，才通过 `workflow_dispatch`
+触发 `XClash Android`，参数为
 `ref=main`、`prepare_sources=false`、`build_apk=true`、`publish_release=true`。
 该工作流执行 Android 验证和原生构建，成功后自动发布 APK、`SHA256SUMS` 和 `BUILD_INFO.json`
 到本仓库 [Releases](https://github.com/IvanSolis1989/XClash/releases/latest)。
 默认分支的普通 push 也会运行同一构建发布流程；Actions artifacts 继续保留用于排查。
+根目录 `README*.md`、`AGENTS.md`、`CLAUDE.md`、`CHANGELOG.md`，`docs/`、`snapshots/` 全部文件，
+以及 `.agents/` 中的 Markdown 文档属于非 APK 输入；仅这些文件变化时，普通 push 不触发构建，
+同步仍合并并执行既有验证，但不 dispatch Android。其他文件一律按实际输入处理，包含
+`lib/`、`assets/`、`android/`、依赖、脚本和工作流。后续提交不会自动取消正在运行的构建；
+手动 dispatch 仍可明确发起新构建。
 源码同步与 Android 构建是两次独立运行：后续构建失败不会撤销已成功同步的源码，
 失败结论保留在 Android Actions；dispatch 失败则同步运行的发布步骤显示失败，源码可能已推送，
 应先核对记录的远端 SHA，再手动运行 Android 工作流。期间若 main 再次更新，Android 运行可能构建新的 main，
@@ -37,8 +43,11 @@
 ## Android 发布与签名
 
 `XClash Android` 先验证、再构建和执行 Android 单元测试，全部成功后才由独立
-`contents: write` 任务创建草稿、上传资产并公开为 latest。它检查构建 SHA 仍是 main，
-避免旧构建替换新版本；重跑不会覆盖已经公开的同名版本资产。`prepare_sources=true`
+`contents: write` 任务创建草稿、上传资产并公开为 latest。发布任务检出实际构建 SHA，
+在上传前和公开前各获取一次最新 main：构建 SHA 必须仍是 main 的祖先，且其后变化只能是
+上述非 APK 文档。README 等文档更新不会阻止已完成的包发布；任何代码、资源、依赖或打包变化
+仍阻止旧包替换 latest，若已上传则保留草稿。`BUILD_INFO.json` 和 tag 始终指向实际构建 SHA，
+不会标成后续文档提交。重跑不会覆盖已经公开的同名版本资产。`prepare_sources=true`
 只用于准备生成文件，永不发布；仅验证时可关闭 `build_apk`，只构建时可关闭 `publish_release`。
 
 标签采用 `v<pubspec版本>+<pubspec构建号加工作流运行序号>`，APK 内使用相同版本和构建号。

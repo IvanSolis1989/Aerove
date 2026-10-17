@@ -42,6 +42,19 @@ APK 由本分支 CI 构建；[Actions](https://github.com/IvanSolis1989/XClash/a
 
 上图由实际 Flutter widget 测试按 Android 模式渲染，**不是真机截图**，不能作为真机渲染性能或 VPN 连通性证明。
 
+## 国内网络默认配置
+
+新安装内置并关联 [Smart-Config-Kit 的 FlClash 专用脚本](https://github.com/IvanSolis1989/Smart-Config-Kit/tree/main/FlClash)，
+可在 **进阶配置 → 脚本** 查看内置正文和来源链接，并编辑链接、复制或打开来源、手动同步新版。
+普通订阅和本地配置默认使用该脚本；已有配置与恢复的数据保留原有选择。
+
+DNS 仅使用用户指定的方案：启动自举仅保留四个 DoH-over-IP 地址，移除明文兜底及原版默认 DNS；
+业务解析、分域策略、fallback 与私有节点适配沿用该脚本。客户端不追加系统 DNS，
+仅覆写为加密自举所需的 `default-nameserver`，其他 DNS 字段保持脚本结果。
+恢复默认也回到这套用户方案。VPN 系统代理、VPN/核心 IPv6 与应用绕过默认关闭，DNS 劫持开启。
+
+取值依据、来源版本、更新方式与验证边界见[国内网络默认基线](docs/network-defaults.md)。
+
 ## 从源码构建 Android
 
 请对齐 [Android CI 工作流](.github/workflows/xclash-android.yaml)：**Flutter 3.47.6**、**Go 1.27.1**、

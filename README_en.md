@@ -46,6 +46,21 @@ surfaces instead of the aurora/glass treatment. Existing navigation, dashboard l
 This preview is rendered from the actual Flutter widget test in Android mode. It is not a physical-device screenshot
 and does not demonstrate on-device rendering performance or VPN connectivity.
 
+## Network defaults for mainland China
+
+New installations include and select the [Smart-Config-Kit FlClash script](https://github.com/IvanSolis1989/Smart-Config-Kit/tree/main/FlClash)
+for new ordinary subscriptions and local profiles. Open **Advanced configuration → Scripts** to view its bundled
+content and source URL, edit or copy the URL, open the source, or manually sync a newer version.
+Existing profiles and restored data keep their selections.
+
+DNS uses the user's approved policy: four encrypted DoH-over-IP bootstrap endpoints, with the plaintext fallback
+and original client resolver defaults removed. Business DNS, domain policies, fallback and private-node adaptation
+come from the script. The client appends no system DNS and overrides only `default-nameserver` for encrypted
+bootstrap; all other script DNS fields remain intact. Reset returns to the same user defaults.
+VPN HTTP proxy, VPN/core IPv6 and application VPN bypass default to off; DNS hijacking defaults to on.
+
+See the [network default baseline](docs/network-defaults.md) for source versions, update behavior and validation limits.
+
 ## Build Android from source
 
 Match the [Android CI workflow](.github/workflows/xclash-android.yaml): **Flutter 3.47.6**, **Go 1.27.1**,

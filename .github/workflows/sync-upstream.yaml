@@ -86,6 +86,17 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
+      - name: Install Rust toolchain
+        if: steps.merge.outputs.changed == 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust editor library build
+        if: steps.merge.outputs.changed == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: plugins/rust_api/rust
+          cache-directories: .dart_tool/hooks_runner
+
       - name: Validate merged UI and configuration
         if: steps.merge.outputs.changed == 'true'
         run: |
@@ -100,7 +111,7 @@ jobs:
           import re
           path = Path('pubspec.yaml')
           text = path.read_text()
-          for package in ('setup', 'rust_api'):
+          for package in ('setup',):
               pattern = rf'(?m)^(    {package}:\s*\n      build_assets: )true(\s*)$'
               text, count = re.subn(pattern, r'\g<1>false\2', text)
               if count != 1:
@@ -109,15 +120,23 @@ jobs:
           PY
           flutter test --reporter expanded \
             test/models/config_test.dart \
+            test/models/dns_override_test.dart \
             test/common/request_test.dart \
+            test/common/xclash_defaults_test.dart \
+            test/common/task_dns_override_test.dart \
+            test/common/task_test.dart \
+            test/common/migration_test.dart \
             test/providers/config_test.dart \
+            test/providers/profiles_action_test.dart \
+            test/providers/backup_action_test.dart \
+            test/providers/action_test.dart \
             test/manager/theme_manager_test.dart \
             test/views/theme_test.dart \
             test/views/aurora_settings_test.dart \
-            test/widgets/navigation_dock_test.dart \
-            test/widgets/start_button_test.dart \
-            test/widgets/aurora_wallpaper_test.dart \
-            test/widgets/aurora_app_test.dart \
+            test/views/dns_view_test.dart \
+            test/views/scripts_source_test.dart \
+            test/views/script_content_test.dart \
+            test/widgets/ \
             test/l10n/ \
             test/lint/ 2>&1 | tee "$evidence/tests.log"
 
@@ -221,6 +240,22 @@ jobs:
           actual=$(git ls-remote --exit-code origin refs/heads/main | cut -f1)
           test "$actual" = "$CANDIDATE"
           printf 'Synced upstream `%s` into main as `%s`.\n' "$UPSTREAM" "$CANDIDATE" >> "$GITHUB_STEP_SUMMARY"
+          git diff --no-renames --name-only -z "$BASE" "$CANDIDATE" > "$evidence/apk-input-paths"
+          build_apk=false
+          while IFS= read -r -d '' path; do
+            case "$path" in
+              docs/*|snapshots/*|.agents/*.md) continue ;;
+              README*.md|AGENTS.md|CLAUDE.md|CHANGELOG.md)
+                if [[ "$path" != */* ]]; then continue; fi ;;
+            esac
+            build_apk=true
+            printf 'APK input changed: %q\n' "$path"
+            break
+          done < "$evidence/apk-input-paths"
+          if [[ "$build_apk" == false ]]; then
+            echo 'Only documentation changed; Android build and Release dispatch were skipped.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           GH_TOKEN="$SYNC_TOKEN" gh workflow run xclash-android.yaml \
             --repo "$GITHUB_REPOSITORY" --ref main \
             -f prepare_sources=false -f build_apk=true -f publish_release=true

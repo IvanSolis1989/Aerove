@@ -1,8 +1,11 @@
 import 'dart:io';
 
+import 'package:drift/native.dart';
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/common/xclash_defaults.dart';
 import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/interface.dart';
+import 'package:fl_clash/database/database.dart' as db;
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
@@ -15,6 +18,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yaml/yaml.dart';
 
 import '../helpers/test_app.dart';
@@ -81,6 +85,40 @@ void main() {
   }
 
   group('addProfileFromLink with a share link', () {
+    test('associates a newly imported share link with the bundled script', () async {
+      SharedPreferences.setMockInitialValues({});
+      final storage = await SharedPreferences.getInstance();
+      final defaultsDb = db.Database(NativeDatabase.memory());
+      final defaultsHome = await home.createTemp('defaults-');
+      final defaults = XClashDefaults(
+        storage: storage,
+        database: defaultsDb,
+        directory: defaultsHome,
+        loadScript: () => File(xclashDefaultScriptAsset).readAsBytes(),
+        createId: () => 123,
+        saveConfig: (_) async => true,
+      );
+      addTearDown(() async {
+        xclashDefaults = null;
+        await defaultsDb.close();
+        await defaultsHome.delete(recursive: true);
+      });
+      await defaults.prepare(isAndroid: false);
+      await defaults.initialize(const Config(themeProps: defaultThemeProps));
+      xclashDefaults = defaults;
+      const link = 'vless://id@hk.example.com:443#HK';
+      decodesTo(link, [
+        {'name': 'HK', 'type': 'vless', 'server': 'hk.example.com'},
+      ]);
+
+      await container.read(profilesActionProvider.notifier).addProfileFromLink(link);
+
+      final profile = container.read(profilesProvider).single;
+      expect(profile.extendType, ExtendType.script);
+      expect(profile.scriptId, 123);
+      expect(profile.type, ProfileType.file);
+    });
+
     test('saves a file profile named after the proxy it holds', () async {
       const link = 'vless://id@hk.example.com:443#HK';
       decodesTo(link, [

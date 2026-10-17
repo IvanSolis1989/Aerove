@@ -186,7 +186,7 @@ class ProfilesAction extends _$ProfilesAction {
       title: currentAppLocalizations.addProfile,
     );
     if (profile != null) {
-      putProfile(profile);
+      putProfile(await xclashDefaults?.associateNewProfile(profile) ?? profile);
     }
   }
 
@@ -352,7 +352,7 @@ class ProfilesAction extends _$ProfilesAction {
       title: currentAppLocalizations.addProfile,
     );
     if (profile != null) {
-      putProfile(profile);
+      putProfile(await xclashDefaults?.associateNewProfile(profile) ?? profile);
     }
   }
 
@@ -372,11 +372,12 @@ class ProfilesAction extends _$ProfilesAction {
           else if (link == shareLinks.first)
             (profile: Profile.normal(), shareLinks: shareLinks),
       ],
-      (item) async => putProfile(
-        await (item.shareLinks.isEmpty
+      (item) async {
+        final profile = await (item.shareLinks.isEmpty
             ? _download(item.profile)
-            : _fromShareLinks(item.profile, item.shareLinks)),
-      ),
+            : _fromShareLinks(item.profile, item.shareLinks));
+        putProfile(await xclashDefaults?.associateNewProfile(profile) ?? profile);
+      },
       label: (item) => item.shareLinks.firstOrNull ?? item.profile.url,
       concurrency: maxConcurrentImports,
       tag: LoadingTag.profiles,

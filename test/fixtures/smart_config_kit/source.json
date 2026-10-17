@@ -1,0 +1,10 @@
+{
+  "revision": "6847cd225d70bc9eb6fdd9311d50ff53bc91981c",
+  "gitBlob": "b92cdae0b826e43e6fc0237ec739d3d5bec134c2",
+  "scriptSha256": "d962c99703ca0c4fb0649541b81a7d24d94f2737ad3d83937a85a42e07f4ccc5",
+  "generation": "Unmodified script main(config) executed offline using Node.js; DNS extracted from its returned object.",
+  "syntheticOnly": true,
+  "networkRequests": 0,
+  "baseline": "Two synthetic FQDN nodes; no source DNS.",
+  "private": "Same nodes; source has exact node resolver hints and unrelated global DNS. Only the active-node proxy-server-nameserver-policy changes."
+}

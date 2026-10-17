@@ -14,6 +14,7 @@ import 'package:fl_clash/state.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:collection/collection.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 class ScriptsView extends ConsumerStatefulWidget {
@@ -92,6 +93,16 @@ class _ScriptsViewState extends ConsumerState<ScriptsView> {
       ),
       if (script.url != null) ...[
         CommonPopupMenuItem(
+          glyph: AppGlyphs.copy,
+          label: appLocalizations.copyLink,
+          onPressed: () => _handleCopyUrl(script.url!),
+        ),
+        CommonPopupMenuItem(
+          glyph: AppGlyphs.link,
+          label: appLocalizations.externalLink,
+          onPressed: () => dialogs.openUrl(script.url!),
+        ),
+        CommonPopupMenuItem(
           glyph: AppGlyphs.link,
           label: appLocalizations.url,
           onPressed: () {
@@ -139,9 +150,9 @@ class _ScriptsViewState extends ConsumerState<ScriptsView> {
               overflow: TextOverflow.ellipsis,
             ),
             subtitle: Text(
-              script.url != null
-                  ? context.appLocalizations.remote
-                  : context.appLocalizations.local,
+              script.url ?? context.appLocalizations.local,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
               style: context.listCaptionStyle,
             ),
             trailing: _ScriptTrailing(script: script),
@@ -166,10 +177,23 @@ class _ScriptsViewState extends ConsumerState<ScriptsView> {
   }
 
   Future<void> _handleUpdate(Script script) async {
+    if (ref.read(isUpdatingProvider(script.updatingKey))) {
+      return;
+    }
     await globalState.safeRun(
       () => _scriptsAction.updateScript(script),
       title: script.label,
     );
+  }
+
+  Future<void> _handleCopyUrl(String url) async {
+    await Clipboard.setData(ClipboardData(text: url));
+    if (mounted) {
+      context.showNotifier(
+        context.appLocalizations.copySuccess,
+        level: MessageLevel.success,
+      );
+    }
   }
 
   List<Script> get _scripts => ref.read(scriptsProvider).value ?? [];

@@ -9,6 +9,7 @@ import 'package:fl_clash/common/launch.dart';
 import 'package:fl_clash/common/migration.dart';
 import 'package:fl_clash/common/tray.dart';
 import 'package:fl_clash/common/window.dart';
+import 'package:fl_clash/common/xclash_defaults.dart';
 import 'package:fl_clash/database/database.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/l10n/l10n.dart';
@@ -101,7 +102,10 @@ class Bootstrap {
   ) async {
     await _claimDataDirectory();
     globalState.packageInfo = await PackageInfo.fromPlatform();
+    xclashDefaults = await XClashDefaults.open();
+    await xclashDefaults?.prepare(isAndroid: system.isAndroid);
     var config = await migration.run();
+    config = await xclashDefaults?.initialize(config) ?? config;
     _bootDecision = await bootGuard.evaluate(
       profileId: config.currentProfileId,
       crashlyticsEnabled: config.appSettingProps.crashlytics,

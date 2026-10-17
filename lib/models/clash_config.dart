@@ -13,22 +13,134 @@ const defaultClashConfig = PatchClashConfig();
 
 const defaultTun = Tun();
 const defaultDns = Dns();
+const xclashBootstrapNameservers = [
+  'https://223.5.5.5/dns-query',
+  'https://223.6.6.6/dns-query',
+  'https://8.8.8.8/dns-query',
+  'https://1.1.1.1/dns-query',
+];
+const xclashDomesticNameservers = [
+  'https://dns.alidns.com/dns-query',
+  'https://doh.pub/dns-query',
+];
+const xclashForeignNameservers = [
+  'https://cloudflare-dns.com/dns-query',
+  'https://dns.google/dns-query',
+];
+const xclashDefaultDns = Dns(
+  enable: true,
+  useSystemHosts: false,
+  respectRules: true,
+  cacheAlgorithm: DnsCacheAlgorithm.arc,
+  enhancedMode: DnsMode.fakeIp,
+  defaultNameserver: xclashBootstrapNameservers,
+  nameserver: xclashDomesticNameservers,
+  directNameserver: xclashDomesticNameservers,
+  directNameserverFollowPolicy: true,
+  proxyServerNameserver: [
+    ...xclashForeignNameservers,
+    ...xclashDomesticNameservers,
+  ],
+  fallback: xclashForeignNameservers,
+  nameserverPolicy: {
+    '+.jsdelivr.net':
+        'https://cloudflare-dns.com/dns-query,https://dns.google/dns-query',
+    '+.github.com':
+        'https://cloudflare-dns.com/dns-query,https://dns.google/dns-query',
+    '+.githubusercontent.com':
+        'https://cloudflare-dns.com/dns-query,https://dns.google/dns-query',
+    '+.githubassets.com':
+        'https://cloudflare-dns.com/dns-query,https://dns.google/dns-query',
+    '+.fastly.net':
+        'https://cloudflare-dns.com/dns-query,https://dns.google/dns-query',
+    'geosite:cn': 'https://dns.alidns.com/dns-query,https://doh.pub/dns-query',
+    'geosite:geolocation-!cn':
+        'https://cloudflare-dns.com/dns-query,https://dns.google/dns-query',
+  },
+  fallbackFilter: FallbackFilter(
+    geoipCode: 'CN',
+    geosite: ['gfw', 'geolocation-!cn'],
+    ipcidr: [
+      '240.0.0.0/4',
+      '0.0.0.0/32',
+      '127.0.0.0/8',
+      '10.0.0.0/8',
+      '192.168.0.0/16',
+    ],
+  ),
+  fakeIpFilter: [
+    '+.lan',
+    '+.local',
+    '+.localdomain',
+    '+.home.arpa',
+    '+.msftconnecttest.com',
+    '+.msftncsi.com',
+    'localhost.ptlogin2.qq.com',
+    'localhost.sec.qq.com',
+    'localhost.work.weixin.qq.com',
+    '+.in-addr.arpa',
+    '+.ip6.arpa',
+    'time.*.com',
+    'time.*.gov',
+    'ntp.*.com',
+    'pool.ntp.org',
+    '+.ntp.org',
+    '+.pool.ntp.org',
+    '+.market.xiaomi.com',
+    '+.stun.*.*',
+    '+.stun.*.*.*',
+    '+.turn.*.*',
+    '+.turn.*.*.*',
+    'stun.l.google.com',
+    'stun1.l.google.com',
+    'stun2.l.google.com',
+    'stun3.l.google.com',
+    'stun4.l.google.com',
+    'global.turn.twilio.com',
+    '+.rustdesk.com',
+    '+.todesk.com',
+    '+.oray.com',
+    '+.sunlogin.com',
+    '+.teamviewer.com',
+    '+.anydesk.com',
+    '+.battlenet.com.cn',
+    '+.wotgame.cn',
+    '+.wggames.cn',
+    '+.wowsgame.cn',
+    '+.mcdn.bilivideo.cn',
+    '+.pub.3gppnetwork.org',
+    '+.bing.com',
+    '+.n.n.srv.nintendo.net',
+    '+.stun.playstation.net',
+    '+.xboxlive.com',
+    'auth.docker.io',
+    'registry-1.docker.io',
+    'index.docker.io',
+    'hub.docker.com',
+    'production.cloudflare.docker.com',
+    '+.push.apple.com',
+    '+.courier.push.apple.com',
+    '+.miui.com',
+    '+.xiaomi.com',
+    '+.xiaomi.net',
+    '+.mijia.tech',
+    '+.gotui.com',
+    '+.miwifi.com',
+  ],
+);
 const defaultNtp = Ntp();
 const defaultSniffer = Sniffer();
 const defaultProfileTun = ProfileTun();
 
 /// What a profile that brings no DNS section of its own is given, so the core
-/// always resolves. The user's own override set starts empty.
+/// always resolves, using the approved encrypted bootstrap resolvers.
 const baselineDnsOverrideKeys = {
   DnsOverrideKey.enable,
   DnsOverrideKey.enhancedMode,
   DnsOverrideKey.nameserver,
+  DnsOverrideKey.defaultNameserver,
 };
-const baselineDns = Dns(
-  enable: true,
-  enhancedMode: DnsMode.fakeIp,
-  nameserver: ['https://doh.pub/dns-query', 'https://dns.alidns.com/dns-query'],
-);
+const baselineDns = xclashDefaultDns;
 const defaultGeoXUrl = {
   GeoResource.MMDB:
       'https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.metadb',
@@ -1453,7 +1565,7 @@ extension TunOverrideExt on ProfileTun {
 @freezed
 abstract class ProfileOverrides with _$ProfileOverrides {
   const factory ProfileOverrides({
-    @Default(defaultDns) @JsonKey(fromJson: Dns.safeDnsFromJson) Dns dns,
+    @Default(xclashDefaultDns) @JsonKey(fromJson: Dns.safeDnsFromJson) Dns dns,
     @Default({})
     @JsonKey(name: _dnsOverrideKeysJsonKey, fromJson: _dnsOverrideKeysFromJson)
     Set<DnsOverrideKey> dnsOverrideKeys,
@@ -1925,7 +2037,7 @@ abstract class PatchClashConfig with _$PatchClashConfig {
     @Default(true) @JsonKey(name: 'unified-delay') bool unifiedDelay,
     @Default(true) @JsonKey(name: 'tcp-concurrent') bool tcpConcurrent,
     @Default(defaultTun) @JsonKey(fromJson: Tun.safeFormJson) Tun tun,
-    @Default(defaultDns) @JsonKey(fromJson: Dns.safeDnsFromJson) Dns dns,
+    @Default(xclashDefaultDns) @JsonKey(fromJson: Dns.safeDnsFromJson) Dns dns,
     @Default({})
     @JsonKey(name: _dnsOverrideKeysJsonKey, fromJson: _dnsOverrideKeysFromJson)
     Set<DnsOverrideKey> dnsOverrideKeys,

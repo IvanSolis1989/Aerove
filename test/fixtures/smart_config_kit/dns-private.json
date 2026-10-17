@@ -1,0 +1,151 @@
+{
+  "nameserver": [
+    "https://dns.alidns.com/dns-query",
+    "https://doh.pub/dns-query"
+  ],
+  "fallback": [
+    "https://cloudflare-dns.com/dns-query",
+    "https://dns.google/dns-query"
+  ],
+  "proxy-server-nameserver": [
+    "https://cloudflare-dns.com/dns-query",
+    "https://dns.google/dns-query",
+    "https://dns.alidns.com/dns-query",
+    "https://doh.pub/dns-query"
+  ],
+  "nameserver-policy": {
+    "+.jsdelivr.net": [
+      "https://cloudflare-dns.com/dns-query",
+      "https://dns.google/dns-query"
+    ],
+    "+.github.com": [
+      "https://cloudflare-dns.com/dns-query",
+      "https://dns.google/dns-query"
+    ],
+    "+.githubusercontent.com": [
+      "https://cloudflare-dns.com/dns-query",
+      "https://dns.google/dns-query"
+    ],
+    "+.githubassets.com": [
+      "https://cloudflare-dns.com/dns-query",
+      "https://dns.google/dns-query"
+    ],
+    "+.fastly.net": [
+      "https://cloudflare-dns.com/dns-query",
+      "https://dns.google/dns-query"
+    ],
+    "geosite:cn": [
+      "https://dns.alidns.com/dns-query",
+      "https://doh.pub/dns-query"
+    ],
+    "geosite:geolocation-!cn": [
+      "https://cloudflare-dns.com/dns-query",
+      "https://dns.google/dns-query"
+    ]
+  },
+  "fake-ip-filter-mode": "blacklist",
+  "fake-ip-filter": [
+    "+.lan",
+    "+.local",
+    "+.localdomain",
+    "+.home.arpa",
+    "+.msftconnecttest.com",
+    "+.msftncsi.com",
+    "localhost.ptlogin2.qq.com",
+    "localhost.sec.qq.com",
+    "localhost.work.weixin.qq.com",
+    "+.in-addr.arpa",
+    "+.ip6.arpa",
+    "time.*.com",
+    "time.*.gov",
+    "ntp.*.com",
+    "pool.ntp.org",
+    "+.ntp.org",
+    "+.pool.ntp.org",
+    "+.market.xiaomi.com",
+    "+.stun.*.*",
+    "+.stun.*.*.*",
+    "+.turn.*.*",
+    "+.turn.*.*.*",
+    "stun.l.google.com",
+    "stun1.l.google.com",
+    "stun2.l.google.com",
+    "stun3.l.google.com",
+    "stun4.l.google.com",
+    "global.turn.twilio.com",
+    "+.rustdesk.com",
+    "+.todesk.com",
+    "+.oray.com",
+    "+.sunlogin.com",
+    "+.teamviewer.com",
+    "+.anydesk.com",
+    "+.battlenet.com.cn",
+    "+.wotgame.cn",
+    "+.wggames.cn",
+    "+.wowsgame.cn",
+    "+.mcdn.bilivideo.cn",
+    "+.pub.3gppnetwork.org",
+    "+.bing.com",
+    "+.n.n.srv.nintendo.net",
+    "+.stun.playstation.net",
+    "+.xboxlive.com",
+    "auth.docker.io",
+    "registry-1.docker.io",
+    "index.docker.io",
+    "hub.docker.com",
+    "production.cloudflare.docker.com",
+    "+.push.apple.com",
+    "+.courier.push.apple.com",
+    "+.miui.com",
+    "+.xiaomi.com",
+    "+.xiaomi.net",
+    "+.mijia.tech",
+    "+.gotui.com",
+    "+.miwifi.com"
+  ],
+  "enable": true,
+  "listen": "0.0.0.0:1053",
+  "enhanced-mode": "fake-ip",
+  "fake-ip-range": "198.18.0.1/16",
+  "ipv6": false,
+  "prefer-h3": false,
+  "respect-rules": true,
+  "use-system-hosts": false,
+  "cache-algorithm": "arc",
+  "default-nameserver": [
+    "https://223.5.5.5/dns-query",
+    "https://223.6.6.6/dns-query",
+    "https://8.8.8.8/dns-query",
+    "https://1.1.1.1/dns-query",
+    "223.5.5.5"
+  ],
+  "direct-nameserver": [
+    "https://dns.alidns.com/dns-query",
+    "https://doh.pub/dns-query"
+  ],
+  "direct-nameserver-follow-policy": true,
+  "fallback-filter": {
+    "geoip": true,
+    "geoip-code": "CN",
+    "geosite": [
+      "gfw",
+      "geolocation-!cn"
+    ],
+    "ipcidr": [
+      "240.0.0.0/4",
+      "0.0.0.0/32",
+      "127.0.0.0/8",
+      "10.0.0.0/8",
+      "192.168.0.0/16"
+    ],
+    "domain": []
+  },
+  "proxy-server-nameserver-policy": {
+    "hk.node.fixture.test": [
+      "https://resolver.exact.fixture.test/dns-query"
+    ],
+    "us.node.fixture.test": [
+      "https://resolver.fallback.fixture.test/dns-query"
+    ]
+  }
+}
