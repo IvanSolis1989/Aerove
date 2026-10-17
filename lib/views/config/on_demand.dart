@@ -38,7 +38,7 @@ class _OnDemandViewState extends ConsumerState<OnDemandView>
         cancelable: false,
         message: TextSpan(
           style: context.textTheme.bodyMedium,
-          text: appLocalizations.locationPermissionGuide(appName),
+          text: appLocalizations.locationPermissionGuide(displayAppName),
         ),
       );
     } else if (_isAndroid) {

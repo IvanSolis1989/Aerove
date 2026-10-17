@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/views/dashboard/widget_metrics.dart';
+import 'package:fl_clash/widgets/aurora.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -37,13 +38,21 @@ class RowCardFrame extends StatelessWidget {
       child: Container(
         clipBehavior: Clip.antiAlias,
         decoration: ShapeDecoration(
-          color: colorScheme.surfaceContainerLow,
+          color: AuroraAppearance.surfaceColorOf(
+            context,
+            colorScheme.surfaceContainerLow,
+          ),
           shape: shape,
         ),
         // A border on the decoration would inset the content by its width.
         foregroundDecoration: ShapeDecoration(
           shape: shape.copyWith(
-            side: BorderSide(color: colorScheme.surfaceContainerHighest),
+            side: AuroraAppearance.enabledOf(context)
+                ? BorderSide(
+                    color: colorScheme.outlineVariant.withValues(alpha: 0.38),
+                    width: 0.5,
+                  )
+                : BorderSide(color: colorScheme.surfaceContainerHighest),
           ),
         ),
         // The page's safe-area padding and bar would otherwise inset the

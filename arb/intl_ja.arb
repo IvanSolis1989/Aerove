@@ -905,5 +905,10 @@
   "required": "必須",
   "ageSecretKey": "age 秘密鍵",
   "ageEncryptedProfile": "暗号化されたプロファイル",
-  "ageSecretKeyRequiredTip": "このプロファイルは age で暗号化されており、復号には age 秘密鍵が必要です"
+  "ageSecretKeyRequiredTip": "このプロファイルは age で暗号化されており、復号には age 秘密鍵が必要です",
+  "auroraWallpaper": "ランダムグラデーションの背景",
+  "auroraWallpaperDescription": "1～3 色で淡いオーロラを作成します。背景を変更するまで模様は保持されます。",
+  "auroraColors": "背景の配色",
+  "auroraEditColor": "背景色 {index} を編集",
+  "auroraRegenerate": "別の背景を生成"
 }

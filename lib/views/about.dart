@@ -169,7 +169,7 @@ class _AboutHero extends StatelessWidget {
           ),
           const SizedBox(height: 20),
           Text(
-            appName,
+            displayAppName,
             style: textTheme.headlineSmall?.copyWith(
               fontWeight: FontWeight.w700,
             ),

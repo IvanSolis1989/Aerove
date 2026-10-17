@@ -7,6 +7,7 @@ import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/widgets/animated_visibility.dart';
+import 'package:fl_clash/widgets/aurora.dart';
 import 'package:fl_clash/widgets/icon.dart';
 import 'package:fl_clash/widgets/sidebar.dart';
 import 'package:flutter/foundation.dart';
@@ -243,7 +244,9 @@ class AppSidebarContainer extends ConsumerWidget {
     final hasSidebar = viewMode != ViewMode.mobile;
     final isLtr = Directionality.of(context) == TextDirection.ltr;
     return Container(
-      color: blur ? Colors.transparent : surfaceContainer,
+      color: blur || AuroraAppearance.enabledOf(context)
+          ? Colors.transparent
+          : surfaceContainer,
       child: Row(
         children: [
           AnimatedVisibility.sidebar(

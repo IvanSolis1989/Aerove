@@ -2,6 +2,7 @@ import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/icons/icons.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
+import 'package:fl_clash/widgets/aurora.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -191,8 +192,18 @@ class _StartButtonState extends ConsumerState<StartButton>
     final suspend = ref.watch(suspendProvider);
     final appLocalizations = context.appLocalizations;
     final suspended = isStart && suspend;
+    final theme = Theme.of(context);
+    final backgroundColor = AuroraAppearance.enabledOf(context)
+        ? AuroraAppearance.surfaceColorOf(
+            context,
+            theme.floatingActionButtonTheme.backgroundColor ??
+                context.colorScheme.primaryContainer,
+            opacity: 0.72,
+          )
+        : null;
     if (NavigationDock.isDocked(context)) {
       return FloatingActionButton(
+        backgroundColor: backgroundColor,
         heroTag: null,
         tooltip: suspended ? appLocalizations.suspended : null,
         onPressed: handleSwitchStart,
@@ -201,7 +212,6 @@ class _StartButtonState extends ConsumerState<StartButton>
     }
     final hasThreeDigitHours =
         (_displayRunTime ?? 0) >= _threeDigitHourThreshold;
-    final theme = Theme.of(context);
     final textWidth = suspend
         ? _getSuspendedTextWidth(context, appLocalizations.suspended)
         : _getRunTimeTextWidth(context, hasThreeDigitHours: hasThreeDigitHours);
@@ -219,6 +229,7 @@ class _StartButtonState extends ConsumerState<StartButton>
         ),
         child: ElasticButton(
           child: FloatingActionButton(
+            backgroundColor: backgroundColor,
             clipBehavior: Clip.antiAlias,
             materialTapTargetSize: MaterialTapTargetSize.padded,
             heroTag: null,

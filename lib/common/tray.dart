@@ -91,8 +91,8 @@ class AppTray implements TrayPort {
           size: isMacOS ? 18 : 16,
         ),
         toolTip: trayState.safeMode
-            ? currentAppLocalizations.safeModeAppTitle(appName)
-            : appName,
+            ? currentAppLocalizations.safeModeAppTitle(displayAppName)
+            : displayAppName,
         menu: _buildMenu(trayState: trayState, read: read),
       ),
     );

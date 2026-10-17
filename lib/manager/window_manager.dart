@@ -405,7 +405,7 @@ class _WindowHeaderState extends ConsumerState<WindowHeader> {
       translucent: translucent,
       onDragStart: desktopWindow.startDragging,
       onDoubleTap: caption.toggleMaximized,
-      title: system.isMacOS ? const Text(appName) : null,
+      title: system.isMacOS ? const Text(displayAppName) : null,
       actions: system.isMacOS
           ? null
           : WindowHeaderActions(

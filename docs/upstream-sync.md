@@ -1,0 +1,53 @@
+# 上游自动同步
+
+`Sync upstream` 工作流每小时 UTC 第 17 分钟检查
+[`chen08209/FlClash/main`](https://github.com/chen08209/FlClash/tree/main)，
+合并到 `IvanSolis1989/XClash/main`。也可在仓库 **Actions → Sync upstream → Run workflow**
+选择 `main` 立即运行。工作流只在此 fork 的 `main` 上运行，同一时间只处理一次同步。
+
+同步使用普通 merge，不 reset、rebase、force push，也不以 `ours`/`theirs` 整体覆盖文件。
+上游没有新提交时直接结束。发现新提交时，以当前 fork main 为第一父提交建立合并提交，
+在只有读权限的任务中运行 Flutter 3.47.6 的 `pub get`、`analyze --no-fatal-infos`、
+配置模型/Provider、主题、导航、启动按钮、Aurora 设置/壁纸/应用组件、本地化及 lint 测试。
+测试期间两个 native build hook 临时关闭，退出时恢复，打包前检查工作区无已跟踪修改；
+被推送的是关闭 hook 之前已经生成并验证的合并提交。
+
+验证通过后，独立写权限任务只读取 Git bundle，检查提交父链、工作流文件及远端 main，
+通过普通 fast-forward push 更新 main。验证期间有人更新 main，或推送时发生竞争，
+本轮失败并保留 main，下一轮基于最新 main 重做合并和验证。
+写权限任务不执行合并后的仓库脚本或 Flutter 代码。
+
+## 首次启用与平台限制
+
+- 工作流必须已提交到默认分支 `main`，fork 的 Actions 必须启用；当前工作流仅申请
+  `contents: write`，仓库规则或组织策略仍可能拒绝机器人直接推送，此时运行会明确失败。
+- GitHub 定时任务可能延迟或被丢弃，并非小时级时效保证。公开仓库连续 60 天无活动后，
+  定时任务会被平台禁用；维护者应在 Actions 重新启用。无需新密钥即可运行一般源码同步。
+- `GITHUB_TOKEN` 没有可申请的 `workflows: write` 权限。合并若修改 `.github/workflows/`，
+  本工作流主动失败，不能自动发布该更新；维护者需检查变化后，使用具备相应 workflow
+  权限的个人凭据或 GitHub App 手动合并推送。不要通过丢弃上游工作流更改来绕过限制。
+- 默认 token 推送不会触发另一个 `push` 工作流，必要 UI 检查已放在同步工作流中。
+  这里不证明 Android、桌面原生构建、Rust/Go 或全部插件测试通过；需要这些验证时，
+  在更新后的 main 手动运行 `build` 工作流。上游升级 Flutter 或改变测试路径时，需先调整此工作流。
+- Git merge 保留 fork 的既有 UI 提交，但不能判断无文本冲突的上游改动是否仍符合视觉意图；
+  聚焦测试也不代替人工界面验收。不承诺自动解决未来所有冲突。
+
+## 失败排查与恢复
+
+失败运行显示红色结论。先看失败步骤及该次运行的 artifacts：
+`upstream-sync-validation` 包含基线/上游/候选 SHA、merge 日志、冲突文件列表与补丁、
+依赖/分析/测试日志（完成到哪一步就保留到哪一步）及最终 Git 状态；
+`upstream-sync-publish` 记录推送阶段日志和远端 main。证据保留 30 天。
+候选 bundle 保留 7 天，仅供检查，不应绕过验证直接推送。
+
+冲突时在干净的独立本地工作树获取最新 `origin/main` 与 `upstream/main`，执行
+`git merge --no-ff upstream/main`，逐文件协调 UI 与上游逻辑，完成相同检查，再提交和普通推送。
+使用有 workflow 权限的凭据处理工作流变更。若放弃本地冲突，使用 `git merge --abort`；
+自动任务中失败的候选不会更新远端。依赖、分析或测试失败同样先修复真实失败条件，
+然后重新运行；不要删断言、跳测试或强制推送。工作流不自动创建 issue 或发送消息。
+
+平台行为依据：
+[定时事件与默认分支](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)、
+[token 触发限制](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow)、
+[GITHUB_TOKEN 权限](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#permissions)、
+[修改 workflow 所需额外权限](https://docs.github.com/en/rest/repos/contents#create-or-update-file-contents)。

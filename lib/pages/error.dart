@@ -34,7 +34,7 @@ class InitErrorApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: appName,
+      title: displayAppName,
       theme: _theme(Brightness.light),
       darkTheme: _theme(Brightness.dark),
       localizationsDelegates: const [

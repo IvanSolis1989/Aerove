@@ -905,5 +905,10 @@
   "required": "Required",
   "ageSecretKey": "Age secret key",
   "ageEncryptedProfile": "Encrypted profile",
-  "ageSecretKeyRequiredTip": "This profile is encrypted with age and needs an age secret key to decrypt"
+  "ageSecretKeyRequiredTip": "This profile is encrypted with age and needs an age secret key to decrypt",
+  "auroraWallpaper": "Random gradient wallpaper",
+  "auroraWallpaperDescription": "Choose 1–3 colors for a soft aurora. The pattern stays until you change it.",
+  "auroraColors": "Wallpaper colors",
+  "auroraEditColor": "Edit wallpaper color {index}",
+  "auroraRegenerate": "New wallpaper"
 }

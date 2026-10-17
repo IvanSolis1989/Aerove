@@ -1,0 +1,224 @@
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-upstream-main
+  cancel-in-progress: false
+
+env:
+  FLUTTER_VERSION: '3.47.6'
+  UPSTREAM_URL: https://github.com/chen08209/FlClash.git
+
+jobs:
+  validate:
+    if: github.repository == 'IvanSolis1989/XClash' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    outputs:
+      changed: ${{ steps.merge.outputs.changed }}
+      base: ${{ steps.merge.outputs.base }}
+      upstream: ${{ steps.merge.outputs.upstream }}
+      candidate: ${{ steps.merge.outputs.candidate }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout fork main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Merge upstream without rewriting fork history
+        id: merge
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/upstream-sync"
+          mkdir -p "$evidence"
+          git remote add upstream "$UPSTREAM_URL"
+          git fetch --no-tags upstream main
+          base=$(git rev-parse HEAD)
+          upstream=$(git rev-parse upstream/main)
+          printf 'base=%s\nupstream=%s\n' "$base" "$upstream" | tee "$evidence/revisions.txt" >> "$GITHUB_OUTPUT"
+          if git merge-base --is-ancestor "$upstream" "$base"; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            echo 'Upstream main is already included.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if ! git merge --no-ff --no-edit "$upstream" 2>&1 | tee "$evidence/merge.log"; then
+            git diff --name-only --diff-filter=U > "$evidence/conflicted-files.txt"
+            git diff --cc > "$evidence/merge-conflicts.patch"
+            echo '::error::Upstream merge failed. Resolve the recorded conflicts manually; main was not updated.'
+            exit 1
+          fi
+          candidate=$(git rev-parse HEAD)
+          printf 'candidate=%s\n' "$candidate" | tee -a "$evidence/revisions.txt" >> "$GITHUB_OUTPUT"
+          git diff --name-status "$base" "$candidate" > "$evidence/changed-files.txt"
+          if ! git diff --quiet "$base" "$candidate" -- .github/workflows; then
+            echo '::error::The merge changes workflow files. GITHUB_TOKEN cannot grant workflows write permission; a maintainer must merge with suitable credentials.'
+            exit 1
+          fi
+          echo 'changed=true' >> "$GITHUB_OUTPUT"
+
+      - name: Setup Flutter
+        if: steps.merge.outputs.changed == 'true'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Validate merged UI and configuration
+        if: steps.merge.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/upstream-sync"
+          cp pubspec.yaml "$RUNNER_TEMP/sync-pubspec.yaml"
+          trap 'cp "$RUNNER_TEMP/sync-pubspec.yaml" pubspec.yaml' EXIT
+          flutter pub get 2>&1 | tee "$evidence/pub-get.log"
+          flutter analyze --no-fatal-infos 2>&1 | tee "$evidence/analyze.log"
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          path = Path('pubspec.yaml')
+          text = path.read_text()
+          for package in ('setup', 'rust_api'):
+              pattern = rf'(?m)^(    {package}:\s*\n      build_assets: )true(\s*)$'
+              text, count = re.subn(pattern, r'\g<1>false\2', text)
+              if count != 1:
+                  raise SystemExit(f'Expected exactly one enabled native hook for {package}')
+          path.write_text(text)
+          PY
+          flutter test --reporter expanded \
+            test/models/config_test.dart \
+            test/providers/config_test.dart \
+            test/manager/theme_manager_test.dart \
+            test/views/theme_test.dart \
+            test/views/aurora_settings_test.dart \
+            test/widgets/navigation_dock_test.dart \
+            test/widgets/start_button_test.dart \
+            test/widgets/aurora_wallpaper_test.dart \
+            test/widgets/aurora_app_test.dart \
+            test/l10n/ \
+            test/lint/ 2>&1 | tee "$evidence/tests.log"
+
+      - name: Package validated commit
+        if: steps.merge.outputs.changed == 'true'
+        env:
+          BASE: ${{ steps.merge.outputs.base }}
+          CANDIDATE: ${{ steps.merge.outputs.candidate }}
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          git diff --cached --exit-code
+          test "$(git rev-parse HEAD)" = "$CANDIDATE"
+          git branch sync-candidate "$CANDIDATE"
+          git bundle create "$RUNNER_TEMP/upstream-candidate.bundle" refs/heads/sync-candidate "^$BASE"
+          git bundle verify "$RUNNER_TEMP/upstream-candidate.bundle"
+
+      - name: Upload validated commit
+        if: steps.merge.outputs.changed == 'true' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-candidate
+          path: ${{ runner.temp }}/upstream-candidate.bundle
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Record final status
+        if: always()
+        run: |
+          evidence="$RUNNER_TEMP/upstream-sync"
+          mkdir -p "$evidence"
+          git status --short --branch > "$evidence/status.txt"
+          git log -5 --format=fuller > "$evidence/recent-history.txt"
+          git diff --stat > "$evidence/worktree-diff-stat.txt"
+          printf '## Upstream sync validation\n\nRun: %s/%s/actions/runs/%s\n\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> "$GITHUB_STEP_SUMMARY"
+          cat "$evidence/revisions.txt" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+
+      - name: Upload sync evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-sync-validation
+          path: ${{ runner.temp }}/upstream-sync/
+          retention-days: 30
+          if-no-files-found: error
+
+  publish:
+    needs: validate
+    if: needs.validate.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout fork main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download validated commit
+        uses: actions/download-artifact@v4
+        with:
+          name: upstream-candidate
+          path: ${{ runner.temp }}/upstream-sync/
+
+      - name: Publish only if main has not changed
+        env:
+          BASE: ${{ needs.validate.outputs.base }}
+          UPSTREAM: ${{ needs.validate.outputs.upstream }}
+          CANDIDATE: ${{ needs.validate.outputs.candidate }}
+          SYNC_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/upstream-sync"
+          auth=$(printf 'x-access-token:%s' "$SYNC_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          exec > >(tee "$evidence/publish.log") 2>&1
+          for revision in "$BASE" "$UPSTREAM" "$CANDIDATE"; do
+            [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
+          done
+          git bundle verify "$evidence/upstream-candidate.bundle"
+          git fetch "$evidence/upstream-candidate.bundle" refs/heads/sync-candidate:refs/remotes/sync/candidate
+          test "$(git rev-parse refs/remotes/sync/candidate)" = "$CANDIDATE"
+          test "$(git show -s --format=%P "$CANDIDATE")" = "$BASE $UPSTREAM"
+          git merge-base --is-ancestor "$BASE" "$CANDIDATE"
+          git diff --exit-code "$BASE" "$CANDIDATE" -- .github/workflows
+          current=$(git ls-remote --exit-code origin refs/heads/main | cut -f1)
+          printf 'base=%s\nupstream=%s\ncandidate=%s\nremote-main=%s\n' "$BASE" "$UPSTREAM" "$CANDIDATE" "$current" | tee "$evidence/revisions.txt"
+          if [[ "$current" != "$BASE" ]]; then
+            echo '::error::Fork main changed during validation. No push attempted; run sync again on the new main.'
+            exit 1
+          fi
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            push origin "$CANDIDATE:refs/heads/main"
+          actual=$(git ls-remote --exit-code origin refs/heads/main | cut -f1)
+          test "$actual" = "$CANDIDATE"
+          printf 'Synced upstream `%s` into main as `%s`.\n' "$UPSTREAM" "$CANDIDATE" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload publish evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-sync-publish
+          path: |
+            ${{ runner.temp }}/upstream-sync/publish.log
+            ${{ runner.temp }}/upstream-sync/revisions.txt
+          retention-days: 30
+          if-no-files-found: warn

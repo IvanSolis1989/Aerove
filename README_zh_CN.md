@@ -1,10 +1,13 @@
 <div align="center">
 
-<img src="assets/images/icon.png" alt="FlClash" width="88">
+<img src="assets/images/icon.png" alt="XClash" width="88">
 
-# FlClash
+# XClash
 
-基于 ClashMeta 的多平台代理客户端，简单易用，开源无广告。
+[XClash](https://github.com/IvanSolis1989/XClash) 是基于 chen08209 的
+[FlClash](https://github.com/chen08209/FlClash) 开发的 [GPL-3.0](LICENSE) 分支。
+现阶段优先开发 Android 版，视觉方向为淡雅极光与玻璃质感，保留上游作者署名和许可声明。
+本阶段保留现有 Android 包 ID 以维持兼容性。
 
 [English](README.md) · **简体中文**
 
@@ -16,6 +19,8 @@
 [官网](https://chen08209.github.io/FlClash/zh) · [下载](#下载) · [更新日志](CHANGELOG.md) · [从源码构建](#从源码构建)
 
 </div>
+
+以下保留上游文档，其中下载、官网及社区链接均指向 FlClash。
 
 <p align="center">
   <picture>

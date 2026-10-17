@@ -5,6 +5,7 @@ import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/providers/state.dart';
 import 'package:fl_clash/views/font_family.dart';
+import 'package:fl_clash/views/aurora_settings.dart';
 import 'package:fl_clash/views/theme_preview.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:material_ui/material_ui.dart';
@@ -23,6 +24,8 @@ class ThemeView extends StatelessWidget {
         slivers: [
           SliverToBoxAdapter(child: SizedBox(height: context.appBarInset)),
           const SliverToBoxAdapter(child: ThemeLivePreview()),
+          if (Theme.of(context).platform == TargetPlatform.android)
+            const SliverToBoxAdapter(child: AuroraSettings()),
           const SliverToBoxAdapter(child: SizedBox(height: 16)),
           const _ThemeModeItem(),
           const SliverToBoxAdapter(child: SizedBox(height: 16)),

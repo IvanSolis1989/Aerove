@@ -905,5 +905,10 @@
   "required": "Обязательно",
   "ageSecretKey": "Секретный ключ age",
   "ageEncryptedProfile": "Зашифрованный профиль",
-  "ageSecretKeyRequiredTip": "Профиль зашифрован с помощью age, для расшифровки нужен секретный ключ age"
+  "ageSecretKeyRequiredTip": "Профиль зашифрован с помощью age, для расшифровки нужен секретный ключ age",
+  "auroraWallpaper": "Случайный градиентный фон",
+  "auroraWallpaperDescription": "Выберите 1–3 цвета для мягкого сияния. Рисунок сохраняется, пока вы его не смените.",
+  "auroraColors": "Цвета фона",
+  "auroraEditColor": "Изменить цвет фона {index}",
+  "auroraRegenerate": "Новый фон"
 }

@@ -5,6 +5,7 @@ import 'package:fl_clash/state.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 
+import 'aurora.dart';
 import 'fade_box.dart';
 import 'scaffold.dart';
 import 'text.dart';
@@ -149,6 +150,18 @@ class CommonCard extends StatelessWidget {
       );
     }
     if (type == CommonCardType.filled) {
+      if (AuroraAppearance.enabledOf(context)) {
+        final emphasized = isSelected ||
+            states.contains(WidgetState.hovered) ||
+            states.contains(WidgetState.focused) ||
+            states.contains(WidgetState.pressed);
+        return BorderSide(
+          color: emphasized
+              ? colorScheme.primary.opacity60
+              : colorScheme.outlineVariant.withValues(alpha: 0.38),
+          width: emphasized ? 1 : 0.5,
+        );
+      }
       return BorderSide.none;
     }
     final hoverColor = isSelected
@@ -158,6 +171,12 @@ class CommonCard extends StatelessWidget {
         states.contains(WidgetState.focused) ||
         states.contains(WidgetState.pressed)) {
       return BorderSide(color: hoverColor);
+    }
+    if (!isSelected && AuroraAppearance.enabledOf(context)) {
+      return BorderSide(
+        color: colorScheme.outlineVariant.withValues(alpha: 0.38),
+        width: 0.5,
+      );
     }
     return BorderSide(
       color: isSelected
@@ -172,12 +191,18 @@ class CommonCard extends StatelessWidget {
       if (isSelected) {
         return colorScheme.secondaryContainer.opacity80;
       }
-      return colorScheme.surfaceContainerHigh;
+      return AuroraAppearance.surfaceColorOf(
+        context,
+        colorScheme.surfaceContainerHigh,
+      );
     }
     if (isSelected) {
       return colorScheme.secondaryContainer;
     }
-    return colorScheme.surfaceContainerLow;
+    return AuroraAppearance.surfaceColorOf(
+      context,
+      colorScheme.surfaceContainerLow,
+    );
   }
 
   Color? _buildForegroundColor(BuildContext context) {

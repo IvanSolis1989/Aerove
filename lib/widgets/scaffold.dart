@@ -12,6 +12,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'button.dart';
+import 'aurora.dart';
 import 'chip.dart';
 import 'inherited.dart';
 import 'loading.dart';
@@ -577,7 +578,13 @@ class CommonScaffoldState extends State<CommonScaffold> {
   Widget _buildFloatingHeader(Widget appBar) {
     final top = MediaQuery.paddingOf(context).top;
     return FloatingHeader(
-      backgroundColor: widget.backgroundColor ?? context.colorScheme.surface,
+      backgroundColor:
+          widget.backgroundColor ??
+          AuroraAppearance.surfaceColorOf(
+            context,
+            context.colorScheme.surface,
+            opacity: 0.82,
+          ),
       fadeStart: top / (top + pageToolbarHeight),
       overhang: _headerOverhang,
       child: appBar,

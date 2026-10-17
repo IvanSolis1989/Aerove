@@ -14,6 +14,7 @@ import 'package:fl_clash/plugins/app.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/widgets/focus.dart';
+import 'package:fl_clash/widgets/aurora.dart';
 import 'package:fl_clash/widgets/keyboard_inset_hold.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
@@ -190,15 +191,17 @@ class ApplicationState extends ConsumerState<Application> {
             ...GlobalMaterialLocalizations.delegates,
           ],
           builder: (context, child) {
-            return buildManagerStack(
-              isDesktop: system.isDesktop,
-              onConnectivityChanged: _handleConnectivityChanged,
-              terminateSignals: _terminateSignals,
-              child: RemoteFocusAdapter(enabled: system.isTV, child: child!),
+            return AuroraAppSurface(
+              child: buildManagerStack(
+                isDesktop: system.isDesktop,
+                onConnectivityChanged: _handleConnectivityChanged,
+                terminateSignals: _terminateSignals,
+                child: RemoteFocusAdapter(enabled: system.isTV, child: child!),
+              ),
             );
           },
           scrollBehavior: const BaseScrollBehavior(),
-          title: appName,
+          title: displayAppName,
           locale: getLocaleForString(locale),
           supportedLocales: AppLocalizations.delegate.supportedLocales,
           themeMode: themeProps.themeMode,

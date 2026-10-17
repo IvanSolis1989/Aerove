@@ -11,6 +11,8 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
+import 'aurora.dart';
+
 const double _barHeight = 62;
 const double _barPadding = 4;
 const double _edgeMargin = 21;
@@ -960,94 +962,110 @@ class _FloatingNavigationBarState extends State<FloatingNavigationBar>
       0.0,
       (height, label) => math.max(height, label.height),
     );
-    final bar = DecoratedBox(
-      decoration: ShapeDecoration(
-        shape: AppShape.full,
-        shadows: _dockShadows(colorScheme),
+    final material = Material(
+      color: AuroraAppearance.surfaceColorOf(
+        context,
+        colorScheme.surfaceContainer,
+        opacity: 0.42,
       ),
-      child: Material(
-        color: colorScheme.surfaceContainer,
-        shape: AppShape.full,
-        // Raw pointers rather than recognizers: a drag has nothing to win the
-        // arena from, and a tap waiting on one lifts the lens late.
-        child: Listener(
-          behavior: HitTestBehavior.opaque,
-          onPointerDown: _handlePointerDown,
-          onPointerMove: _handlePointerMove,
-          onPointerUp: _handlePointerEnd,
-          onPointerCancel: _handlePointerEnd,
-          child: MouseRegion(
-            onHover: _handleHover,
-            onExit: _handleExit,
-            child: Padding(
-              padding: const EdgeInsets.all(_barPadding),
-              // Above the LayoutBuilder: rebuilding anything under one relays
-              // it out, and that repaint would otherwise reach the whole dock.
-              child: RepaintBoundary(
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final extent =
-                        constraints.maxWidth /
-                        math.max(1, widget.destinations.length);
-                    final room = extent - _labelInset * 2;
-                    final labelScale = widest <= room
-                        ? 1.0
-                        : math.max(room / widest, _minLabelSize / _labelSize);
-                    return Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        if (widget.destinations.isNotEmpty)
-                          AnimatedBuilder(
-                            animation: _motion,
-                            builder: (_, _) => _Lens(
-                              position: _lens.value,
-                              velocity: _lens.velocity,
-                              extent: extent,
-                              height: constraints.maxHeight,
-                              lift: _lift.value,
-                            ),
+      shape: AppShape.full,
+      // Raw pointers rather than recognizers: a drag has nothing to win the
+      // arena from, and a tap waiting on one lifts the lens late.
+      child: Listener(
+        behavior: HitTestBehavior.opaque,
+        onPointerDown: _handlePointerDown,
+        onPointerMove: _handlePointerMove,
+        onPointerUp: _handlePointerEnd,
+        onPointerCancel: _handlePointerEnd,
+        child: MouseRegion(
+          onHover: _handleHover,
+          onExit: _handleExit,
+          child: Padding(
+            padding: const EdgeInsets.all(_barPadding),
+            // Above the LayoutBuilder: rebuilding anything under one relays
+            // it out, and that repaint would otherwise reach the whole dock.
+            child: RepaintBoundary(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final extent =
+                      constraints.maxWidth /
+                      math.max(1, widget.destinations.length);
+                  final room = extent - _labelInset * 2;
+                  final labelScale = widest <= room
+                      ? 1.0
+                      : math.max(room / widest, _minLabelSize / _labelSize);
+                  return Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      if (widget.destinations.isNotEmpty)
+                        AnimatedBuilder(
+                          animation: _motion,
+                          builder: (_, _) => _Lens(
+                            position: _lens.value,
+                            velocity: _lens.velocity,
+                            extent: extent,
+                            height: constraints.maxHeight,
+                            lift: _lift.value,
                           ),
-                        if (widget.destinations.isNotEmpty)
-                          AnimatedBuilder(
-                            animation: _hoverMotion,
-                            builder: (_, _) => _HoverHighlight(
-                              position: _hover.value,
-                              extent: extent,
-                              opacity: _hoverShow.value,
-                            ),
-                          ),
-                        Row(
-                          children: [
-                            for (final (index, destination)
-                                in widget.destinations.indexed)
-                              Expanded(
-                                child: _FloatingBarItem(
-                                  destination: destination,
-                                  selected: index == _selectedIndex,
-                                  index: index,
-                                  lens: _lens,
-                                  hoverAt: _hoverAt,
-                                  lift: _lift,
-                                  labelStyle: labelStyle?.copyWith(
-                                    fontSize: _labelSize * labelScale,
-                                  ),
-                                  labelHeight: lineHeight,
-                                  labelOverflows:
-                                      labels[index].width * labelScale > room,
-                                  onActivate: () => widget.onSelected(index),
-                                ),
-                              ),
-                          ],
                         ),
-                      ],
-                    );
-                  },
-                ),
+                      if (widget.destinations.isNotEmpty)
+                        AnimatedBuilder(
+                          animation: _hoverMotion,
+                          builder: (_, _) => _HoverHighlight(
+                            position: _hover.value,
+                            extent: extent,
+                            opacity: _hoverShow.value,
+                          ),
+                        ),
+                      Row(
+                        children: [
+                          for (final (index, destination)
+                              in widget.destinations.indexed)
+                            Expanded(
+                              child: _FloatingBarItem(
+                                destination: destination,
+                                selected: index == _selectedIndex,
+                                index: index,
+                                lens: _lens,
+                                hoverAt: _hoverAt,
+                                lift: _lift,
+                                labelStyle: labelStyle?.copyWith(
+                                  fontSize: _labelSize * labelScale,
+                                ),
+                                labelHeight: lineHeight,
+                                labelOverflows:
+                                    labels[index].width * labelScale > room,
+                                onActivate: () => widget.onSelected(index),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
+                  );
+                },
               ),
             ),
           ),
         ),
       ),
+    );
+    final bar = DecoratedBox(
+      decoration: ShapeDecoration(
+        shape: AppShape.full,
+        shadows: _dockShadows(colorScheme),
+      ),
+      child: AuroraAppearance.enabledOf(context)
+          ? Stack(
+              fit: StackFit.passthrough,
+              clipBehavior: Clip.none,
+              children: [
+                const Positioned.fill(
+                  child: AuroraBackdrop(child: SizedBox.expand()),
+                ),
+                material,
+              ],
+            )
+          : material,
     );
     return AnimatedBuilder(
       animation: _barMotion,

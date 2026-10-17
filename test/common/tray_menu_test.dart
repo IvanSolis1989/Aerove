@@ -215,7 +215,7 @@ void main() {
 
       final arguments = showCall()!.arguments as Map;
       final l10n = currentAppLocalizations;
-      expect(arguments['toolTip'], '$appName (${l10n.safeMode})');
+      expect(arguments['toolTip'], '$displayAppName (${l10n.safeMode})');
       final reps = ((arguments['icon'] as Map)['reps'] as List).cast<Map>();
       final base = reps.firstWhere((rep) => rep['scale'] == 1.0);
       expect(
@@ -244,7 +244,7 @@ void main() {
     expect(showCalls, hasLength(1));
 
     final arguments = showCalls.single.arguments as Map;
-    expect(arguments['toolTip'], appName);
+    expect(arguments['toolTip'], displayAppName);
     expect(arguments['menu'], isNotEmpty);
     final reps = ((arguments['icon'] as Map)['reps'] as List).cast<Map>();
     expect(reps.map((rep) => rep['scale']), containsAll([1.0, 2.0, 3.0, 4.0]));

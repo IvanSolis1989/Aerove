@@ -366,6 +366,15 @@ abstract class TextScale with _$TextScale {
       _$TextScaleFromJson(json);
 }
 
+List<int> _auroraColorsFromJson(Object? value) {
+  if (value is! List ||
+      value.isEmpty ||
+      value.any((color) => color is! int || color < 0 || color > 0xFFFFFFFF)) {
+    return const [0xFF9AAFC5, 0xFFC4BDD3];
+  }
+  return value.take(3).map((color) => (color as int) | 0xFF000000).toList();
+}
+
 @freezed
 abstract class ThemeProps with _$ThemeProps {
   const factory ThemeProps({
@@ -375,6 +384,10 @@ abstract class ThemeProps with _$ThemeProps {
     @Default(DynamicSchemeVariant.content) DynamicSchemeVariant schemeVariant,
     @Default(false) bool pureBlack,
     @Default(true) bool sidebarBlur,
+    @Default(true) bool auroraEnabled,
+    @JsonKey(fromJson: _auroraColorsFromJson)
+    @Default([0xFF9AAFC5, 0xFFC4BDD3]) List<int> auroraColors,
+    @Default(271828) int auroraSeed,
     @Default(TextScale()) TextScale textScale,
     // `fontFamily` held the names of a removed enum, which old configs may
     // still carry.

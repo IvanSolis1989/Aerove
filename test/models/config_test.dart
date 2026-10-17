@@ -598,6 +598,9 @@ void main() {
       expect(props.primaryColors, defaultPrimaryColors);
       expect(props.themeMode, ThemeMode.dark);
       expect(props.pureBlack, false);
+      expect(props.auroraEnabled, true);
+      expect(props.auroraColors, [0xFF9AAFC5, 0xFFC4BDD3]);
+      expect(props.auroraSeed, 271828);
       expect(props.textScale.scale, 1.0);
     });
 
@@ -606,18 +609,70 @@ void main() {
       expect(result.themeMode, ThemeMode.dark);
     });
 
+    test('older configs receive stable wallpaper defaults', () {
+      final props = ThemeProps.fromJson({'themeMode': 'light'});
+      expect(props.auroraEnabled, true);
+      expect(props.auroraColors, [0xFF9AAFC5, 0xFFC4BDD3]);
+      expect(props.auroraSeed, 271828);
+      expect(props.themeMode, ThemeMode.light);
+    });
+
     test('round-trip with custom values', () {
       const props = ThemeProps(
         primaryColor: 0xFF123456,
         themeMode: ThemeMode.light,
         pureBlack: true,
         textScale: TextScale(enable: true, scale: 1.5),
+        auroraEnabled: false,
+        auroraColors: [0xFFAABBCC, 0xFFCCDDEE, 0xFF112233],
+        auroraSeed: 123456,
       );
       final restored = roundTrip(() => props.toJson(), ThemeProps.fromJson);
       expect(restored.primaryColor, 0xFF123456);
       expect(restored.themeMode, ThemeMode.light);
       expect(restored.pureBlack, true);
       expect(restored.textScale.scale, 1.5);
+      expect(restored.auroraEnabled, false);
+      expect(restored.auroraColors, props.auroraColors);
+      expect(restored.auroraSeed, 123456);
+    });
+
+    test('empty or malformed wallpaper colors use the default palette', () {
+      for (final value in <Object?>[
+        null,
+        <int>[],
+        'blue',
+        123,
+        <String, Object?>{'color': 0xFF112233},
+        <Object?>[null],
+        <Object?>[0xFF112233, 'blue'],
+        <double>[0.5],
+        <int>[-1],
+        <int>[0x100000000],
+      ]) {
+        final props = ThemeProps.fromJson({
+          'themeMode': 'light',
+          'auroraSeed': 77,
+          'auroraColors': value,
+        });
+        expect(props.auroraColors, [0xFF9AAFC5, 0xFFC4BDD3]);
+        expect(props.themeMode, ThemeMode.light);
+        expect(props.auroraSeed, 77);
+      }
+    });
+
+    test('wallpaper colors are opaque and limited to three entries', () {
+      final props = ThemeProps.fromJson({
+        'auroraColors': [0x00112233, 0x80445566, 0xFF778899, 0xFFAABBCC],
+      });
+      expect(props.auroraColors, [0xFF112233, 0xFF445566, 0xFF778899]);
+      final restored = roundTrip(() => props.toJson(), ThemeProps.fromJson);
+      expect(restored.auroraColors, props.auroraColors);
+    });
+
+    test('a single valid wallpaper color remains a single color', () {
+      final props = ThemeProps.fromJson({'auroraColors': [0x00112233]});
+      expect(props.auroraColors, [0xFF112233]);
     });
   });
 

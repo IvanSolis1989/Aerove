@@ -1,10 +1,13 @@
 <div align="center">
 
-<img src="assets/images/icon.png" alt="FlClash" width="88">
+<img src="assets/images/icon.png" alt="XClash" width="88">
 
-# FlClash
+# XClash
 
-A multi-platform proxy client based on ClashMeta. Simple to use, open source and ad-free.
+[XClash](https://github.com/IvanSolis1989/XClash) is a [GPL-3.0](LICENSE) fork of
+[FlClash](https://github.com/chen08209/FlClash) by chen08209. Development currently focuses on Android,
+with a soft aurora and glass visual direction. Upstream authorship and license notices are preserved.
+The existing Android package ID is retained for compatibility in this phase.
 
 **English** · [简体中文](README_zh_CN.md)
 
@@ -16,6 +19,8 @@ A multi-platform proxy client based on ClashMeta. Simple to use, open source and
 [Website](https://chen08209.github.io/FlClash) · [Download](#download) · [Changelog](CHANGELOG.md) · [Build from source](#build-from-source)
 
 </div>
+
+The upstream documentation is retained below; its download, website and community links refer to FlClash.
 
 <p align="center">
   <picture>
