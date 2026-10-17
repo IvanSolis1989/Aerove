@@ -75,6 +75,7 @@ void main() {
     }
 
     test('reads the release from the API', () async {
+      Uri? requested;
       final request = requestAnswering({
         'api.github.com': () => ResponseBody.fromString(
           '{"tag_name":"v1.2.3","body":"notes"}',
@@ -84,11 +85,25 @@ void main() {
           },
         ),
       });
+      request.dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            requested = options.uri;
+            handler.next(options);
+          },
+        ),
+      );
 
       expect(await request.latestRelease(), {
         'tag_name': 'v1.2.3',
         'body': 'notes',
       });
+      expect(
+        requested,
+        Uri.parse(
+          'https://api.github.com/repos/IvanSolis1989/XClash/releases/latest',
+        ),
+      );
     });
 
     test(

@@ -74,6 +74,7 @@ jobs:
             test/models/config_test.dart test/providers/config_test.dart \
             test/manager/theme_manager_test.dart \
             test/common/preferences_test.dart test/common/tray_menu_test.dart \
+            test/common/request_test.dart \
             test/views/aurora_settings_test.dart test/views/theme_test.dart \
             test/widgets/aurora_wallpaper_test.dart test/widgets/aurora_app_test.dart \
             test/widgets/navigation_dock_test.dart test/widgets/start_button_test.dart \

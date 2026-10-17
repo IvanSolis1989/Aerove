@@ -172,7 +172,9 @@ void main() {
           theme: ThemeData(
             useMaterial3: true,
             platform: TargetPlatform.android,
-            colorScheme: container.read(genColorSchemeProvider(Brightness.light)),
+            colorScheme: container.read(
+              genColorSchemeProvider(Brightness.light),
+            ),
             fontFamily: output == null ? null : 'XClashPreview',
           ).withAppShapes,
           homeBuilder: (child) => RepaintBoundary(

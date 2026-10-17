@@ -101,6 +101,7 @@ jobs:
           PY
           flutter test --reporter expanded \
             test/models/config_test.dart \
+            test/common/request_test.dart \
             test/providers/config_test.dart \
             test/manager/theme_manager_test.dart \
             test/views/theme_test.dart \
@@ -162,6 +163,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
+      actions: write
     defaults:
       run:
         shell: bash
@@ -211,6 +213,10 @@ jobs:
           actual=$(git ls-remote --exit-code origin refs/heads/main | cut -f1)
           test "$actual" = "$CANDIDATE"
           printf 'Synced upstream `%s` into main as `%s`.\n' "$UPSTREAM" "$CANDIDATE" >> "$GITHUB_STEP_SUMMARY"
+          GH_TOKEN="$SYNC_TOKEN" gh workflow run xclash-android.yaml \
+            --repo "$GITHUB_REPOSITORY" --ref main \
+            -f prepare_sources=false -f build_apk=true
+          printf 'Dispatched XClash Android on main for validation and APK artifacts.\n' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload publish evidence
         if: always()

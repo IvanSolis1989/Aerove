@@ -8,7 +8,7 @@
 同步使用普通 merge，不 reset、rebase、force push，也不以 `ours`/`theirs` 整体覆盖文件。
 上游没有新提交时直接结束。发现新提交时，以当前 fork main 为第一父提交建立合并提交，
 在只有读权限的任务中运行 Flutter 3.47.6 的 `pub get`、`analyze --no-fatal-infos`、
-配置模型/Provider、主题、导航、启动按钮、Aurora 设置/壁纸/应用组件、本地化及 lint 测试。
+配置模型/Provider、更新请求、主题、导航、启动按钮、Aurora 设置/壁纸/应用组件、本地化及 lint 测试。
 测试期间两个 native build hook 临时关闭，退出时恢复，打包前检查工作区无已跟踪修改；
 被推送的是关闭 hook 之前已经生成并验证的合并提交。
 
@@ -17,19 +17,28 @@
 本轮失败并保留 main，下一轮基于最新 main 重做合并和验证。
 写权限任务不执行合并后的仓库脚本或 Flutter 代码。
 
+推送后确认远端 SHA，再通过 `workflow_dispatch` 触发 `XClash Android`，参数为
+`ref=main`、`prepare_sources=false`、`build_apk=true`。该工作流执行 Android 验证和原生构建，
+成功后可在对应运行的 artifacts 下载 APK；不会自动创建 GitHub Release。
+源码同步与 Android 构建是两次独立运行：后续构建失败不会撤销已成功同步的源码，
+失败结论保留在 Android Actions；dispatch 失败则同步运行的发布步骤显示失败，源码可能已推送，
+应先核对记录的远端 SHA，再手动运行 Android 工作流。期间若 main 再次更新，Android 运行可能构建新的 main，
+以它实际 checkout 的 SHA 和日志为准。
+
 ## 首次启用与平台限制
 
 - 工作流必须已提交到默认分支 `main`，fork 的 Actions 必须启用；当前工作流仅申请
-  `contents: write`，仓库规则或组织策略仍可能拒绝机器人直接推送，此时运行会明确失败。
+  `contents: write` 和用于触发 Android 工作流的 `actions: write`，仓库规则或组织策略仍可能拒绝
+  机器人直接推送或触发工作流，此时运行会明确失败。
 - GitHub 定时任务可能延迟或被丢弃，并非小时级时效保证。公开仓库连续 60 天无活动后，
   定时任务会被平台禁用；维护者应在 Actions 重新启用。无需新密钥即可运行一般源码同步。
 - `GITHUB_TOKEN` 没有可申请的 `workflows: write` 权限。合并若修改 `.github/workflows/`，
   本工作流主动失败，不能自动发布该更新；维护者需检查变化后，使用具备相应 workflow
   权限的个人凭据或 GitHub App 手动合并推送。不要通过丢弃上游工作流更改来绕过限制。
 - 默认 token 推送不会触发另一个 `push` 工作流，必要 UI 检查已放在同步工作流中。
-  这里不证明 Android、桌面原生构建、Rust/Go 或全部插件测试通过；需要这些验证时，
-  在更新后的 main 手动运行 `XClash Android` 工作流以构建 APK；其他平台验证可显式启用上游
-  `build` 工作流。上游升级 Flutter 或改变测试路径时，需先调整此工作流。
+  源码同步后显式 dispatch Android 构建，检查其独立运行结果。这里不证明桌面原生构建、
+  全部 Rust/Go 或插件测试通过；其他平台验证可显式启用上游 `build` 工作流。
+  上游升级 Flutter 或改变测试路径时，需先调整此工作流。
 - Git merge 保留 fork 的既有 UI 提交，但不能判断无文本冲突的上游改动是否仍符合视觉意图；
   聚焦测试也不代替人工界面验收。不承诺自动解决未来所有冲突。
 
