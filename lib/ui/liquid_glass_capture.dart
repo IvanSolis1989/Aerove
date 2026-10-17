@@ -767,7 +767,7 @@ Matrix4 _within(ContainerLayer layer, Matrix4 toHost) {
 
 bool _drawsOffscreen(Layer layer) {
   return switch (layer) {
-    _LiquidGlassFadeLayer() => false,
+    _LiquidGlassFadeLayer() || ImageFilterLayer() => false,
     ClipRectLayer(:final clipBehavior) ||
     ClipRRectLayer(:final clipBehavior) ||
     ClipRSuperellipseLayer(:final clipBehavior) ||
@@ -776,7 +776,6 @@ bool _drawsOffscreen(Layer layer) {
     ) => clipBehavior == Clip.antiAliasWithSaveLayer,
     OpacityLayer(:final alpha) => alpha != null && alpha < 255,
     ColorFilterLayer() ||
-    ImageFilterLayer() ||
     ShaderMaskLayer() ||
     BackdropFilterLayer() => true,
     _ => false,
@@ -873,10 +872,12 @@ class _Replay {
               Paint()..colorFilter = colorFilter,
               colorFilter,
             ),
-            ImageFilterLayer(:final imageFilter?) => (
+            ImageFilterLayer(:final imageFilter?)
+                when !entry.ancestors.contains(layer) => (
               Paint()..imageFilter = imageFilter,
               imageFilter,
             ),
+            BackdropFilterLayer() => (Paint(), BlendMode.srcOver),
             ShaderMaskLayer(:final shader) => (Paint(), shader),
             _ => null,
           };

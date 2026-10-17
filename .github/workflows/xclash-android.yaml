@@ -110,6 +110,11 @@ jobs:
               raise SystemExit('Expected exactly one enabled setup native hook')
           path.write_text(text)
           PY
+          flutter test --reporter expanded test/widgets/header_blur_test.dart
+          XCLASH_REQUIRE_IMPELLER=true \
+            XCLASH_SCREENSHOT_DIR="$RUNNER_TEMP/xclash-previews/impeller" \
+            flutter test --enable-impeller --reporter expanded \
+              test/widgets/header_blur_test.dart test/widgets/glass_scroll_test.dart
           flutter test --reporter expanded \
             test/application_theme_test.dart \
             test/features/glass_feature_surfaces_test.dart \
@@ -191,10 +196,11 @@ jobs:
             --run-number "$GITHUB_RUN_NUMBER" \
             > "$RUNNER_TEMP/xclash-version.json"
           plan="$RUNNER_TEMP/xclash-version.json"
-          printf 'name=%s\nnumber=%s\ntag=%s\n' \
+          printf 'name=%s\nnumber=%s\ntag=%s\napp_env=%s\n' \
             "$(jq -er .name "$plan")" \
             "$(jq -er .number "$plan")" \
-            "$(jq -er .tag "$plan")" >> "$GITHUB_OUTPUT"
+            "$(jq -er .tag "$plan")" \
+            "$(jq -er .app_env "$plan")" >> "$GITHUB_OUTPUT"
           printf 'upstream_repository=%s\nupstream_source_commit=%s\n' \
             "$(jq -er .upstream_repository "$plan")" \
             "$(jq -er .upstream_source_commit "$plan")" >> "$GITHUB_OUTPUT"
@@ -223,6 +229,7 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
           VERSION_NAME: ${{ steps.version.outputs.name }}
           VERSION_NUMBER: ${{ steps.version.outputs.number }}
+          APP_ENV: ${{ steps.version.outputs.app_env }}
           UPSTREAM_REPOSITORY: ${{ steps.version.outputs.upstream_repository }}
           UPSTREAM_SOURCE_COMMIT: ${{ steps.version.outputs.upstream_source_commit }}
           UPSTREAM_TAG: ${{ steps.version.outputs.upstream_tag }}
@@ -233,7 +240,8 @@ jobs:
         run: |
           flutter pub get
           flutter build apk --release --target-platform android-arm64 \
-            --build-name "$VERSION_NAME" --build-number "$VERSION_NUMBER"
+            --build-name "$VERSION_NAME" --build-number "$VERSION_NUMBER" \
+            --dart-define=APP_ENV="$APP_ENV"
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-release.apk dist/XClash-android-arm64.apk
           build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
@@ -241,6 +249,7 @@ jobs:
           "$build_tools/aapt" dump badging dist/XClash-android-arm64.apk > "$RUNNER_TEMP/apk-badging.txt"
           grep -F "package: name='com.follow.clash.dev' versionCode='$VERSION_NUMBER' versionName='$VERSION_NAME'" "$RUNNER_TEMP/apk-badging.txt"
           jq -n --arg source "$GITHUB_SHA" --arg version "$VERSION_NAME+$VERSION_NUMBER" \
+            --arg app_env "$APP_ENV" \
             --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             --arg upstream_repository "$UPSTREAM_REPOSITORY" \
             --arg upstream_source_commit "$UPSTREAM_SOURCE_COMMIT" \
@@ -249,7 +258,7 @@ jobs:
             --arg upstream_pubspec_version "$UPSTREAM_PUBSPEC_VERSION" \
             --arg upstream_pubspec_source_commit "$UPSTREAM_PUBSPEC_SOURCE_COMMIT" \
             --argjson upstream_source_branches "$UPSTREAM_SOURCE_BRANCHES" \
-            '{source: $source, version: $version, workflow: $run, signing: "persistent Android test key", applicationId: "com.follow.clash.dev", upstream: {repository: $upstream_repository, sourceCommit: $upstream_source_commit, tag: $upstream_tag, tagCommit: $upstream_tag_commit, sourceBranches: $upstream_source_branches, pubspecVersion: $upstream_pubspec_version, pubspecSourceCommit: $upstream_pubspec_source_commit}}' \
+            '{source: $source, version: $version, appEnv: $app_env, workflow: $run, signing: "persistent Android test key", applicationId: "com.follow.clash.dev", upstream: {repository: $upstream_repository, sourceCommit: $upstream_source_commit, tag: $upstream_tag, tagCommit: $upstream_tag_commit, sourceBranches: $upstream_source_branches, pubspecVersion: $upstream_pubspec_version, pubspecSourceCommit: $upstream_pubspec_source_commit}}' \
             > dist/BUILD_INFO.json
           (cd dist && sha256sum XClash-android-arm64.apk BUILD_INFO.json > SHA256SUMS)
       - name: Android model and service regressions

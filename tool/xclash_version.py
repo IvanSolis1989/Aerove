@@ -350,6 +350,7 @@ def build_release_plan(
         raise VersionError("Fork Android version code exceeds the platform limit")
     display_name = f"{metadata['version']}-X"
     return {
+        "app_env": "pre" if "-" in metadata["version"] else "stable",
         "name": display_name,
         "number": version_code,
         "tag": f"v{display_name}+{version_code}",

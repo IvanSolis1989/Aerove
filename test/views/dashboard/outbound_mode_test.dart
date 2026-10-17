@@ -153,6 +153,77 @@ void main() {
     });
   }
 
+  for (final quality in LiquidGlassQuality.values) {
+    for (final direction in TextDirection.values) {
+      testWidgets('${quality.name} mode geometry stays equal in '
+          '${direction.name} through selection', (tester) async {
+        void expectGeometry() {
+          expect(find.byType(LiquidGlass), findsNWidgets(4));
+          for (final mode in Mode.values) {
+            final decoration = decorationOf(tester, mode);
+            final shape = decoration.shape as RoundedSuperellipseBorder;
+            expect(shape.borderRadius, AppShape.full.borderRadius);
+            final button = tester.widget<InkWell>(buttonOf(mode));
+            expect(button.onTap, isNotNull);
+            expect(button.customBorder, shape);
+            final size = tester.getSize(buttonOf(mode));
+            final bounds = Offset.zero & size;
+            final expected = AppShape.full.getOuterPath(bounds);
+            final actual = shape.getOuterPath(bounds);
+            final panes = find.ancestor(
+              of: buttonOf(mode),
+              matching: find.byType(LiquidGlass),
+            );
+            final pane = panes.first;
+            final clip = tester.widget<LiquidGlass>(pane).clipper!.getClip(size);
+            for (var x = 0; x <= 8; x++) {
+              for (var y = 0; y <= 8; y++) {
+                final point = Offset(size.width * x / 8, size.height * y / 8);
+                expect(actual.contains(point), expected.contains(point));
+                expect(clip.contains(point), expected.contains(point));
+              }
+            }
+          }
+        }
+
+        for (final desktop in [false, true]) {
+          final content = desktop
+              ? const DashboardDensityScope(
+                  density: DashboardDensity.standard,
+                  scale: 1,
+                  child: SizedBox(height: 64, child: OutboundModeBar()),
+                )
+              : const OutboundModeCard();
+          await pump(
+            tester,
+            Directionality(
+              textDirection: direction,
+              child: LiquidGlassScope(
+                enabled: true,
+                quality: quality,
+                child: content,
+              ),
+            ),
+            width: desktop ? 600 : 360,
+          );
+          await tester.pumpAndSettle();
+          expectGeometry();
+          await tester.tap(buttonOf(Mode.direct));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 50));
+          expectGeometry();
+          await tester.pumpAndSettle();
+          expect(container.read(patchClashConfigProvider).mode, Mode.direct);
+          expectGeometry();
+          await tester.tap(buttonOf(Mode.rule));
+          await tester.pumpAndSettle();
+          expect(container.read(patchClashConfigProvider).mode, Mode.rule);
+          expectGeometry();
+        }
+      });
+    }
+  }
+
   testWidgets('a pressed mode swells alone, over its neighbours', (
     tester,
   ) async {

@@ -21,6 +21,12 @@ class XClashVersionTest(unittest.TestCase):
             version.select_upstream_tag(refs[:-1]),
             "refs/upstream-tags/v0.9.1-pre.10",
         )
+        self.assertEqual(
+            version.select_upstream_tag(
+                refs + ["refs/upstream-tags/v0.9.2-pre.1"]
+            ),
+            "refs/upstream-tags/v0.9.2-pre.1",
+        )
 
     def test_semver_prerelease_identifiers_follow_semver_precedence(self):
         refs = [
@@ -239,6 +245,7 @@ class XClashVersionTest(unittest.TestCase):
                 run_number=1,
             )
             self.assertEqual(plan["name"], "0.9.1-pre.4-X")
+            self.assertEqual(plan["app_env"], "pre")
             self.assertEqual(plan["number"], 2026101701)
             self.assertEqual(plan["tag"], "v0.9.1-pre.4-X+2026101701")
 
@@ -313,6 +320,45 @@ class XClashVersionTest(unittest.TestCase):
                     head=source_commit,
                     run_number=2,
                 )
+
+    def test_release_environment_follows_selected_tag_instead_of_pubspec_or_branch(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary)
+            self.git(repo, "init", "-b", "main")
+            self.git(repo, "config", "user.name", "Offline Test")
+            self.git(repo, "config", "user.email", "offline@example.invalid")
+            pubspec = "name: fixture\nversion: 0.9.1+2026101701\n"
+            (repo / "pubspec.yaml").write_text(pubspec, encoding="utf-8")
+            self.git(repo, "add", "pubspec.yaml")
+            self.git(repo, "commit", "-m", "upstream source")
+            source_commit = self.git(repo, "rev-parse", "HEAD")
+            self.git(repo, "update-ref", "refs/remotes/upstream/dev", source_commit)
+            self.git(repo, "update-ref", "refs/remotes/upstream/main", source_commit)
+
+            for tag, app_env in (("v0.9.1-pre.4", "pre"), ("v0.9.1", "stable")):
+                with self.subTest(tag=tag):
+                    tag_ref = f"refs/upstream-tags/{tag}"
+                    self.git(repo, "update-ref", tag_ref, source_commit)
+                    selected = version.select_reachable_release(repo)
+                    self.assertEqual(selected["tag"], tag)
+                    self.assertEqual(selected["source_branches"], ["dev", "main"])
+                    metadata = version.make_metadata(
+                        source_commit=source_commit,
+                        tag_ref=tag_ref,
+                        tag_commit=source_commit,
+                        source_branches=selected["source_branches"],
+                        pubspec_version="0.9.1+2026101701",
+                    )
+                    plan = version.build_release_plan(
+                        metadata=metadata,
+                        current_pubspec=pubspec,
+                        repo=repo,
+                        head=source_commit,
+                        run_number=2,
+                    )
+                    self.assertEqual(plan["app_env"], app_env)
+                    self.assertEqual(plan["name"], f"{tag.removeprefix('v')}-X")
+                    self.assertEqual(plan["number"], 2026101702)
 
     @staticmethod
     def metadata_fixture():

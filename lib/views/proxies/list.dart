@@ -762,9 +762,11 @@ class _GroupIcon extends ConsumerWidget {
                 alignment: Alignment.center,
                 padding: EdgeInsets.all(6.ap(context)),
                 decoration: ShapeDecoration(
-                  color: context.raisedSurfaceLevel.colorOf(
-                    context.colorScheme,
-                  ),
+                  color: LiquidGlassScope.of(context)
+                      ? Colors.transparent
+                      : context.raisedSurfaceLevel.colorOf(
+                          context.colorScheme,
+                        ),
                   shape: AppShape.all(AppCorner.xl.ap(context) - _headerInset),
                 ),
                 clipBehavior: Clip.antiAlias,

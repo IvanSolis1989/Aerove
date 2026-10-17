@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:emoji_regex/emoji_regex.dart';
 import 'package:fl_clash/common/cache.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/plugins/app.dart';
@@ -130,16 +131,20 @@ class _ImagePlaceholder extends StatelessWidget {
   }
 }
 
-/// Stands for a proxy group without an icon: the first letter or digit of
-/// its name, past any leading emoji the name already shows.
 class GroupMonogram extends StatelessWidget {
   final String name;
 
   const GroupMonogram(this.name, {super.key});
 
   static final _letter = RegExp(r'[\p{L}\p{N}]', unicode: true);
+  static final _emoji = emojiRegex();
 
   String get _mark {
+    for (final character in name.characters) {
+      if (_emoji.hasMatch(character)) {
+        return character;
+      }
+    }
     final letter = _letter.firstMatch(name)?.group(0);
     if (letter != null) {
       return letter.toUpperCase();

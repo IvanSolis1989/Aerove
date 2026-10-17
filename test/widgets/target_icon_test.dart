@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_svg/svg.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../helpers/glyph_finders.dart';
@@ -21,13 +22,38 @@ Future<void> _pump(WidgetTester tester, Widget icon) {
 }
 
 void main() {
-  testWidgets('a group without an icon shows the first letter of its name, '
-      'past a leading emoji', (tester) async {
+  testWidgets('a group without an icon prefers its first complete emoji', (
+    tester,
+  ) async {
     for (final (name, mark) in [
-      ('🚀 节点选择', '节'),
+      ('🌐全球节点', '🌐'),
+      ('AI 🤖 服务 🌐', '🤖'),
+      ('香港 🇭🇰 节点', '🇭🇰'),
+      ('家庭 👨‍👩‍👧‍👦 节点', '👨‍👩‍👧‍👦'),
+      ('服务 👍🏽 节点', '👍🏽'),
+      ('金融 🏛️ 支付', '🏛️'),
+      ('收藏 ⭐ 服务', '⭐'),
+      ('线路 1️⃣', '1️⃣'),
+      ('♻️ 9 Auto', '♻️'),
+    ]) {
+      await _pump(
+        tester,
+        CommonTargetIcon(src: '', fallback: GroupMonogram(name)),
+      );
+
+      expect(find.text(mark), findsOne, reason: name);
+    }
+  });
+
+  testWidgets('a name without emoji keeps its first meaningful character', (
+    tester,
+  ) async {
+    for (final (name, mark) in [
+      ('节点选择', '节'),
       ('proxy', 'P'),
-      ('♻️ 9 Auto', '9'),
-      ('🇭🇰', '🇭🇰'),
+      (' -- 9 Auto', '9'),
+      ('A1普通数字', 'A'),
+      (' -- ', ' '),
     ]) {
       await _pump(
         tester,
@@ -48,6 +74,29 @@ void main() {
     await _pump(tester, const GroupMonogram(''));
 
     expect(find.byGlyph(AppGlyphs.photos), findsOne);
+  });
+
+  testWidgets('an explicit SVG takes priority over the name emoji', (
+    tester,
+  ) async {
+    final svg = base64Encode(
+      utf8.encode(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1">'
+        '<rect width="1" height="1" fill="red"/></svg>',
+      ),
+    );
+    await _pump(
+      tester,
+      CommonTargetIcon(
+        src: 'data:image/svg+xml;base64,$svg',
+        fallback: const GroupMonogram('AI 🤖 服务'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SvgPicture), findsOne);
+    expect(find.text('🤖'), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('the placeholder glyph is opaque, so a grid of icons that '
@@ -73,11 +122,18 @@ void main() {
 
     testWidgets('loads at once on a page that sits still', (tester) async {
       const src = 'https://example.com/still.png';
-      await _pump(tester, const CommonTargetIcon(src: src));
+      await _pump(
+        tester,
+        const CommonTargetIcon(
+          src: src,
+          fallback: GroupMonogram('AI 🤖 服务'),
+        ),
+      );
       await tester.pump();
 
       expect(reads, [src]);
       expect(find.byType(Image), findsOne);
+      expect(find.text('🤖'), findsNothing);
     });
 
     testWidgets('loads while the route bringing it in arrives', (tester) async {
@@ -183,6 +239,41 @@ void main() {
       await tester.pump();
 
       expect(find.text('P'), findsOne);
+    });
+
+    testWidgets('a failed download falls back to the complete name emoji', (
+      tester,
+    ) async {
+      readRemoteIcon = (_) => Stream.error(StateError('unavailable'));
+      await _pump(
+        tester,
+        const CommonTargetIcon(
+          src: 'https://example.com/failed-emoji.png',
+          fallback: GroupMonogram('香港 🇭🇰 节点'),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('🇭🇰'), findsOne);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('unreadable image bytes fall back to the name emoji', (
+      tester,
+    ) async {
+      readRemoteIcon = (_) => Stream.value(Uint8List.fromList([0, 1, 2]));
+      await _pump(
+        tester,
+        const CommonTargetIcon(
+          src: 'https://example.com/corrupt-emoji.png',
+          fallback: GroupMonogram('家庭 👨‍👩‍👧‍👦 节点'),
+        ),
+      );
+      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+      await tester.pumpAndSettle();
+
+      expect(find.text('👨‍👩‍👧‍👦'), findsOne);
+      expect(tester.takeException(), isNull);
     });
   });
 }

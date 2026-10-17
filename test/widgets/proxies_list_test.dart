@@ -147,6 +147,29 @@ void main() {
               .decoration
           as ShapeDecoration;
 
+  testWidgets('glass leaves the filled group icon well transparent', (
+    tester,
+  ) async {
+    await pumpList(tester, groups: [_group('全球 🌐 节点', 0)], glass: true);
+    container.read(proxiesStyleSettingProvider.notifier).value = container
+        .read(proxiesStyleSettingProvider)
+        .copyWith(iconStyle: ProxiesIconStyle.filled);
+    await tester.pumpAndSettle();
+
+    final iconContainers = tester.widgetList<Container>(
+      find.ancestor(
+        of: find.byType(GroupMonogram),
+        matching: find.byType(Container),
+      ),
+    );
+    final well = iconContainers.singleWhere(
+      (widget) => widget.decoration is ShapeDecoration,
+    );
+    expect((well.decoration! as ShapeDecoration).color, Colors.transparent);
+    expect(find.text('🌐'), findsOneWidget);
+    expect(find.text('全球 🌐 节点'), findsOneWidget);
+  });
+
   testWidgets('scroll to selected lands the row under the pinned header', (
     tester,
   ) async {

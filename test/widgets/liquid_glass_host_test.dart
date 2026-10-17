@@ -1,5 +1,6 @@
 import 'dart:ui' as ui;
 
+import 'package:fl_clash/ui/header_blur.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -323,6 +324,146 @@ void main() {
       tester.view.devicePixelRatio,
     );
     expect(await scaleAt(LiquidGlassQuality.standard), lessThan(1));
+  });
+
+  testWidgets('an image-filtered pane retains the backdrop outside its effect', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _app(
+        Stack(
+          children: [
+            const Positioned.fill(child: ColoredBox(color: _red)),
+            Positioned.fill(
+              child: ImageFiltered(
+                imageFilter: ui.ImageFilter.blur(sigmaX: 1, sigmaY: 1),
+                child: Stack(
+                  children: [
+                    const Positioned(
+                      left: 100,
+                      top: 100,
+                      width: 100,
+                      height: 100,
+                      child: ColoredBox(color: _green),
+                    ),
+                    _pane(const Rect.fromLTWH(100, 100, 200, 100)),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    final pane = _capture().panes.single;
+    expect(await _behind(tester, pane, const Offset(150, 150)), _green);
+    expect(await _behind(tester, pane, const Offset(199, 150)), _green);
+    expect(await _behind(tester, pane, const Offset(250, 150)), _red);
+  });
+
+  testWidgets('a matrix filter transforms a pane after its backdrop is read', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _app(
+        Stack(
+          children: [
+            const Positioned.fill(child: ColoredBox(color: _red)),
+            Positioned.fill(
+              child: ImageFiltered(
+                imageFilter: ui.ImageFilter.matrix(
+                  Matrix4.diagonal3Values(2, 2, 1).storage,
+                ),
+                child: Stack(
+                  children: [
+                    const Positioned(
+                      left: 100,
+                      top: 100,
+                      width: 100,
+                      height: 100,
+                      child: ColoredBox(color: _green),
+                    ),
+                    _pane(const Rect.fromLTWH(100, 100, 200, 100)),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    final pane = _capture().panes.single;
+    expect(await _behind(tester, pane, const Offset(105, 150)), _green);
+    expect(await _behind(tester, pane, const Offset(250, 150)), _red);
+  });
+
+  testWidgets('a pane still reads a sibling image filter with its blur', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _app(
+        Stack(
+          children: [
+            const Positioned.fill(child: ColoredBox(color: _red)),
+            Positioned.fill(
+              child: ImageFiltered(
+                imageFilter: ui.ImageFilter.blur(sigmaX: 4, sigmaY: 4),
+                child: const Align(
+                  alignment: Alignment.topLeft,
+                  child: SizedBox.square(
+                    dimension: 200,
+                    child: ColoredBox(color: _green),
+                  ),
+                ),
+              ),
+            ),
+            _pane(const Rect.fromLTWH(100, 100, 200, 100)),
+          ],
+        ),
+      ),
+    );
+    final color = await _behind(
+      tester,
+      _capture().panes.single,
+      const Offset(199, 150),
+    );
+    expect(color.r, inExclusiveRange(0, 1));
+    expect(color.g, inExclusiveRange(0, 1));
+  });
+
+  testWidgets('a sibling backdrop mask cannot erase the captured wallpaper', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _app(
+        Stack(
+          children: [
+            Positioned.fill(
+              child: Row(
+                children: List.generate(
+                  20,
+                  (index) => Expanded(
+                    child: ColoredBox(color: index.isEven ? _red : _green),
+                  ),
+                ),
+              ),
+            ),
+            const Positioned(
+              left: 0,
+              right: 0,
+              top: 0,
+              child: HeaderBlur(fadeHeight: 200),
+            ),
+            _pane(const Rect.fromLTWH(100, 0, 200, 200)),
+          ],
+        ),
+      ),
+    );
+    final pane = _capture().panes.single;
+    for (final y in [20.0, 100.0, 180.0]) {
+      expect(await _behind(tester, pane, Offset(150, y)), _green);
+      expect(await _behind(tester, pane, Offset(185, y)), _red);
+    }
   });
 
   testWidgets('a pane under a layer of its own reads only that layer', (

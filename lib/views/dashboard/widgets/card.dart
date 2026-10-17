@@ -415,6 +415,7 @@ class DashboardConnectedButton extends StatelessWidget {
     final startRest = first ? outer : inner;
     final endRest = last ? outer : inner;
     final colorScheme = context.colorScheme;
+    final glass = LiquidGlassScope.of(context);
     return Semantics(
       button: true,
       selected: selected,
@@ -429,19 +430,21 @@ class DashboardConnectedButton extends StatelessWidget {
           builder: (context, amount, child) {
             final start = lerpDouble(startRest, outer, amount)!;
             final end = lerpDouble(endRest, outer, amount)!;
-            final shape =
-                AppShape.of(
-                  BorderRadius.horizontal(
-                    left: Radius.circular(rtl ? end : start),
-                    right: Radius.circular(rtl ? start : end),
-                  ),
-                ).copyWith(
-                  side: selected && LiquidGlassScope.of(context)
-                      ? BorderSide(
-                          color: colorScheme.onSurface.withValues(alpha: 0.45),
-                        )
-                      : BorderSide.none,
-                );
+            final outline = glass
+                ? AppShape.full
+                : AppShape.of(
+                    BorderRadius.horizontal(
+                      left: Radius.circular(rtl ? end : start),
+                      right: Radius.circular(rtl ? start : end),
+                    ),
+                  );
+            final shape = outline.copyWith(
+              side: selected && glass
+                  ? BorderSide(
+                      color: colorScheme.onSurface.withValues(alpha: 0.45),
+                    )
+                  : BorderSide.none,
+            );
             return FocusRing(
               shape: shape,
               standsOff: selected,
