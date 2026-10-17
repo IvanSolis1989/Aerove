@@ -36,6 +36,7 @@ jobs:
           ref: main
           fetch-depth: 0
           persist-credentials: false
+          submodules: recursive
 
       - name: Merge upstream without rewriting fork history
         id: merge
@@ -123,6 +124,7 @@ jobs:
             test/models/dns_override_test.dart \
             test/common/request_test.dart \
             test/common/xclash_defaults_test.dart \
+            test/common/aurora_test.dart \
             test/common/task_dns_override_test.dart \
             test/common/task_test.dart \
             test/common/migration_test.dart \
