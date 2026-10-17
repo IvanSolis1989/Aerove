@@ -199,22 +199,31 @@ void main() {
     'default alert action uses tinted glass and preserves its action',
     (tester) async {
       var taps = 0;
-      for (final enabled in [false, true]) {
+      for (final (enabled, highContrast) in [
+        (false, false),
+        (true, false),
+        (true, true),
+      ]) {
         await tester.pumpWidget(
           LiquidGlassScope(
             enabled: enabled,
             child: TestApp(
               wrapInProviderScope: true,
-              child: Scaffold(
-                body: CommonDialog(
-                  title: 'Confirm',
-                  actions: [
-                    TextButton(
-                      onPressed: () => taps++,
-                      child: const Text('Continue'),
-                    ),
-                  ],
-                  child: const Text('Body'),
+              child: MediaQuery(
+                data: MediaQueryData.fromView(tester.view).copyWith(
+                  highContrast: highContrast,
+                ),
+                child: Scaffold(
+                  body: CommonDialog(
+                    title: 'Confirm',
+                    actions: [
+                      TextButton(
+                        onPressed: () => taps++,
+                        child: const Text('Continue'),
+                      ),
+                    ],
+                    child: const Text('Body'),
+                  ),
                 ),
               ),
             ),
@@ -230,15 +239,15 @@ void main() {
           enabled ? Colors.transparent : scheme.primary,
         );
         expect(style.backgroundBuilder, enabled ? isNotNull : isNull);
-        expect(
-          style.foregroundColor!.resolve({}),
-          enabled ? scheme.primary : scheme.onPrimary,
-        );
+        final foreground = style.foregroundColor!.resolve({})!;
+        final source = enabled ? scheme.primary : scheme.onPrimary;
+        expect(foreground.a, enabled && !highContrast ? 0.94 : 1);
+        expect(foreground.withValues(alpha: source.a), source);
         await tester.tap(button);
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
       }
-      expect(taps, 2);
+      expect(taps, 3);
     },
   );
 }

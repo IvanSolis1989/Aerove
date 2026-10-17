@@ -1,5 +1,6 @@
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/surface.dart';
+import 'package:fl_clash/ui/typography.dart';
 import 'package:material_ui/material_ui.dart';
 
 abstract final class GlassForeground {
@@ -35,28 +36,6 @@ abstract final class GlassForeground {
 
   static TextStyle textStyle(TextStyle style) =>
       style.color == null ? style : style.copyWith(color: cap(style.color!));
-
-  static TextTheme textTheme(TextTheme theme) {
-    TextStyle? apply(TextStyle? style) =>
-        style == null ? null : textStyle(style);
-    return theme.copyWith(
-      displayLarge: apply(theme.displayLarge),
-      displayMedium: apply(theme.displayMedium),
-      displaySmall: apply(theme.displaySmall),
-      headlineLarge: apply(theme.headlineLarge),
-      headlineMedium: apply(theme.headlineMedium),
-      headlineSmall: apply(theme.headlineSmall),
-      titleLarge: apply(theme.titleLarge),
-      titleMedium: apply(theme.titleMedium),
-      titleSmall: apply(theme.titleSmall),
-      bodyLarge: apply(theme.bodyLarge),
-      bodyMedium: apply(theme.bodyMedium),
-      bodySmall: apply(theme.bodySmall),
-      labelLarge: apply(theme.labelLarge),
-      labelMedium: apply(theme.labelMedium),
-      labelSmall: apply(theme.labelSmall),
-    );
-  }
 
   static ButtonStyle _button(ButtonStyle? style, Color? fallback) {
     final base = style ?? const ButtonStyle();
@@ -134,8 +113,6 @@ abstract final class GlassForeground {
           else if (extension is! _ForegroundSources)
             extension,
       ],
-      textTheme: textTheme(theme.textTheme),
-      primaryTextTheme: textTheme(theme.primaryTextTheme),
       iconTheme: theme.iconTheme.copyWith(
         color: cap(theme.iconTheme.color ?? colors.onSurface),
       ),
@@ -171,7 +148,7 @@ abstract final class GlassForeground {
             ? null
             : textStyle(theme.appBarTheme.titleTextStyle!),
       ),
-    );
+    ).withForegroundAlphaCap(opacity);
   }
 }
 

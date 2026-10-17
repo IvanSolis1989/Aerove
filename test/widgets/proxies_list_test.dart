@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
@@ -10,6 +12,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_svg/svg.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../helpers/test_app.dart';
@@ -174,27 +177,29 @@ void main() {
     tester,
   ) async {
     final semantics = tester.ensureSemantics();
-    addTearDown(semantics.dispose);
-    for (final (name, title) in [
-      ('普通 A1 名称', '普通 A1 名称'),
-      ('🤖 AI 🌐 服务', 'AI 服务'),
-      ('家庭 👨‍👩‍👧‍👦 👍🏽 🇭🇰 节点', '家庭 节点'),
-      ('🌐🇭🇰👨‍👩‍👧‍👦', ''),
-    ]) {
-      await pumpList(tester, groups: [_group(name, 0)]);
-      container.read(proxiesStyleSettingProvider.notifier).value = container
-          .read(proxiesStyleSettingProvider)
-          .copyWith(iconStyle: ProxiesIconStyle.filled);
-      await tester.pumpAndSettle();
+    try {
+      for (final (name, title) in [
+        ('普通 A1 名称', '普通 A1 名称'),
+        ('🤖 AI 🌐 服务', 'AI 服务'),
+        ('家庭 👨‍👩‍👧‍👦 👍🏽 🇭🇰 节点', '家庭 节点'),
+        ('🌐🇭🇰👨‍👩‍👧‍👦', ''),
+      ]) {
+        await pumpList(tester, groups: [_group(name, 0)]);
+        container.read(proxiesStyleSettingProvider.notifier).value = container
+            .read(proxiesStyleSettingProvider)
+            .copyWith(iconStyle: ProxiesIconStyle.filled);
+        await tester.pumpAndSettle();
 
-      expect(find.text(title), findsOneWidget, reason: name);
-      expect(
-        find.byWidgetPredicate(
+        expect(find.text(title), findsOneWidget, reason: name);
+        final titleSemantics = find.byWidgetPredicate(
           (widget) => widget is Semantics && widget.properties.label == name,
-        ),
-        findsOneWidget,
-      );
-      expect(container.read(groupsProvider).single.name, name);
+        );
+        expect(titleSemantics, findsOneWidget);
+        expect(tester.getSemantics(titleSemantics).label, contains(name));
+        expect(container.read(groupsProvider).single.name, name);
+      }
+    } finally {
+      semantics.dispose();
     }
   });
 
@@ -202,10 +207,14 @@ void main() {
     tester,
   ) async {
     const name = 'AI 🤖 服务';
+    final svg = base64Encode(
+      utf8.encode(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1">'
+        '<rect width="1" height="1" fill="red"/></svg>',
+      ),
+    );
     final group = _group(name, 0).copyWith(
-      icon:
-          'data:image/svg+xml;base64,'
-          'PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=',
+      icon: 'data:image/svg+xml;base64,$svg',
     );
     await pumpList(tester, groups: [group]);
     container.read(proxiesStyleSettingProvider.notifier).value = container
@@ -215,7 +224,15 @@ void main() {
 
     expect(find.text('AI 服务'), findsOneWidget);
     expect(find.text(name), findsNothing);
-    expect(find.text('🤖'), findsNothing);
+    final avatar = find.byType(CommonTargetIcon);
+    expect(
+      find.descendant(of: avatar, matching: find.byType(SvgPicture)),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: avatar, matching: find.byType(GroupMonogram)),
+      findsNothing,
+    );
     expect(
       tester.widget<CommonTargetIcon>(find.byType(CommonTargetIcon)).src,
       group.icon,
@@ -251,11 +268,22 @@ void main() {
     expect(container.read(currentProfileProvider)?.selectedMap, {name: node});
     expect(tester.widget<ListHeader>(headerOf(name)).group.name, name);
 
+    await tester.tap(actionOf(name, 'Expand'));
+    await tester.pumpAndSettle();
+    expect(container.read(unfoldSetProvider), contains(name));
+    expect(find.byKey(const ValueKey('$name.$node')), findsWidgets);
+
     await tester.tap(actionOf(name, 'Delay test'));
     await tester.pump();
     expect(_RecordingProxiesAction.tested, [name]);
 
-    await tester.tap(find.text('全球节点'));
+    await tester.tap(
+      find.descendant(of: headerOf(name), matching: find.text('全球节点')),
+    );
+    await tester.pumpAndSettle();
+    expect(container.read(unfoldSetProvider), isNot(contains(name)));
+
+    await tester.tap(actionOf(name, 'Expand'));
     await tester.pumpAndSettle();
     expect(container.read(unfoldSetProvider), contains(name));
     expect(find.byKey(const ValueKey('$name.$node')), findsWidgets);

@@ -3,6 +3,29 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
 void main() {
+  testWidgets('high contrast glass buttons keep an opaque foreground', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: MediaQueryData.fromView(tester.view).copyWith(highContrast: true),
+          child: LiquidGlassScope(
+            enabled: true,
+            child: TonalButtonTheme(
+              child: FilledButton(onPressed: () {}, child: const Text('Action')),
+            ),
+          ),
+        ),
+      ),
+    );
+    final button = find.widgetWithText(FilledButton, 'Action');
+    final context = tester.element(button);
+    final style = FilledButtonTheme.of(context).style!;
+    final source = Theme.of(context).colorScheme.onSurface;
+    expect(style.foregroundColor!.resolve({}), source);
+    expect(source.a, 1);
+  });
   for (final quality in LiquidGlassQuality.values) {
     for (final enabled in [false, true]) {
       testWidgets('shared surfaces follow glass scope ($quality, $enabled)', (
@@ -56,12 +79,10 @@ void main() {
         final button = find.widgetWithText(FilledButton, 'Scoped action');
         final buttonTheme = FilledButtonTheme.of(tester.element(button)).style!;
         expect(buttonTheme.backgroundBuilder, enabled ? isNotNull : isNull);
-        if (enabled) {
-          expect(
-            buttonTheme.foregroundColor!.resolve({}),
-            Theme.of(tester.element(button)).colorScheme.onSurface,
-          );
-        }
+        final foreground = buttonTheme.foregroundColor!.resolve({})!;
+        final source = Theme.of(tester.element(button)).colorScheme.onSurface;
+        expect(foreground.a, enabled ? 0.94 : source.a);
+        expect(foreground.withValues(alpha: source.a), source);
         final segmentFills = tester
             .widgetList<DecoratedBox>(
               find.descendant(

@@ -126,36 +126,49 @@ void main() {
     expect(theme.textButtonTheme.style!.foregroundColor!.resolve({})!.a, 0.94);
   });
 
-  testWidgets('inherited IconTheme opacity uses its uncapped source alpha', (
+  testWidgets('inherited IconTheme opacity preserves the original semantics', (
     tester,
   ) async {
     for (final brightness in Brightness.values) {
       final base = ThemeData(colorScheme: auroraColorScheme(brightness));
-      final theme = GlassForeground.theme(base);
-      for (final color in [
-        theme.iconTheme.color!,
-        theme.colorScheme.onSurface,
-      ]) {
+      for (final useScheme in [false, true]) {
         for (final opacity in [0.54, 0.38]) {
-          await tester.pumpWidget(
-            TestApp(
-              theme: theme,
-              child: LiquidGlassScope(
-                enabled: true,
-                child: IconTheme.merge(
-                  data: IconThemeData(color: color, opacity: opacity),
-                  child: const GlyphIcon(AppGlyphs.tools),
+          Future<Color> render(bool glass) async {
+            final theme = glass ? GlassForeground.theme(base) : base;
+            final color = useScheme
+                ? theme.colorScheme.onSurface
+                : theme.iconTheme.color!;
+            await tester.pumpWidget(
+              TestApp(
+                includeNavigatorKey: false,
+                theme: theme,
+                darkTheme: theme,
+                themeMode: brightness == Brightness.dark
+                    ? ThemeMode.dark
+                    : ThemeMode.light,
+                child: LiquidGlassScope(
+                  enabled: glass,
+                  child: IconTheme.merge(
+                    data: IconThemeData(color: color, opacity: opacity),
+                    child: const GlyphIcon(AppGlyphs.tools),
+                  ),
                 ),
               ),
-            ),
-          );
-          final paint = tester.widget<CustomPaint>(
-            find.descendant(
-              of: find.byType(GlyphIcon),
-              matching: find.byType(CustomPaint),
-            ),
-          );
-          expect((paint.painter! as GlyphPainter).color.a, opacity);
+            );
+            await tester.pumpAndSettle();
+            final paint = tester.widget<CustomPaint>(
+              find.descendant(
+                of: find.byType(GlyphIcon),
+                matching: find.byType(CustomPaint),
+              ),
+            );
+            return (paint.painter! as GlyphPainter).color;
+          }
+
+          final original = await render(false);
+          final capped = await render(true);
+          expect(original.a, lessThanOrEqualTo(opacity));
+          expect(capped, original);
         }
       }
     }
@@ -171,6 +184,9 @@ void main() {
       (LiquidGlassMode.ultra, true, false, false),
       (LiquidGlassMode.ultra, false, true, false),
     ]) {
+      final inputTheme = ThemeData(
+        colorScheme: auroraColorScheme(Brightness.dark),
+      );
       await tester.pumpWidget(
         ProviderScope(
           key: UniqueKey(),
@@ -183,23 +199,52 @@ void main() {
               ),
             ),
           ],
-          child: TestApp(
-            theme: ThemeData(colorScheme: auroraColorScheme(Brightness.dark)),
-            homeBuilder: (child) => Builder(
-              builder: (context) => MediaQuery(
-                data: MediaQuery.of(
-                  context,
-                ).copyWith(highContrast: highContrast),
-                child: AuroraAppSurface(child: child),
-              ),
+          child: MaterialApp(
+            theme: inputTheme,
+            darkTheme: inputTheme,
+            themeMode: ThemeMode.dark,
+            builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(highContrast: highContrast),
+              child: AuroraAppSurface(child: child!),
             ),
-            child: const Scaffold(body: Text('Foreground')),
+            home: const Scaffold(body: Text('Foreground')),
           ),
         ),
       );
       await tester.pumpAndSettle();
       final context = tester.element(find.text('Foreground'));
-      expect(LiquidGlassScope.of(context), expected);
+      final container = ProviderScope.containerOf(context);
+      final settings = container.read(themeSettingProvider);
+      final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+      if (output != null) {
+        final directory = Directory(output)..createSync(recursive: true);
+        final path =
+            '${directory.path}/foreground-gate-${mode.name}-'
+            '$highContrast-$pureBlack.json';
+        File(path).writeAsStringSync(
+          jsonEncode({
+            'expected': expected,
+            'glass': LiquidGlassScope.of(context),
+            'brightness': Theme.of(context).brightness.name,
+            'highContrast': MediaQuery.highContrastOf(context),
+            'settings': {
+              'gradient': settings.auroraEnabled,
+              'glass': settings.liquidGlass.name,
+              'pureBlack': settings.pureBlack,
+            },
+          }),
+        );
+      }
+      expect(settings.auroraEnabled, isFalse);
+      expect(settings.liquidGlass, mode);
+      expect(settings.pureBlack, pureBlack);
+      expect(Theme.of(context).brightness, Brightness.dark);
+      expect(MediaQuery.highContrastOf(context), highContrast);
+      expect(
+        LiquidGlassScope.of(context),
+        expected,
+        reason: '$mode highContrast=$highContrast pureBlack=$pureBlack',
+      );
       expect(
         Theme.of(context).colorScheme.onSurface.a,
         expected ? GlassForeground.opacity : 1,
@@ -221,48 +266,106 @@ void main() {
         final backdrop = brightness == Brightness.light
             ? const Color(0xFFF0E8F1)
             : const Color(0xFF38283D);
-        final capture = GlobalKey();
-        await tester.pumpWidget(ProviderScope(
-          key: UniqueKey(),
-          overrides: [
-            themeSettingProvider.overrideWithBuild((_, _) => ThemeProps(
-              auroraEnabled: false,
-              liquidGlass: mode,
-            )),
-          ],
-          child: TestApp(
-            theme: ThemeData(
-              platform: TargetPlatform.android,
-              colorScheme: colors,
-              scaffoldBackgroundColor: backdrop,
-              fontFamily: 'Ahem',
-              filledButtonTheme: FilledButtonThemeData(style: ButtonStyle(
-                foregroundColor: WidgetStatePropertyAll(colors.onPrimary),
-                padding: const WidgetStatePropertyAll(EdgeInsets.all(20)),
-              )),
-            ).withAppShapes.withAppSurfaces,
-            homeBuilder: (child) => RepaintBoundary(
-              key: capture,
-              child: AuroraAppSurface(child: child),
+        final inputTheme = ThemeData(
+          platform: TargetPlatform.android,
+          colorScheme: colors,
+          scaffoldBackgroundColor: backdrop,
+          fontFamily: 'Ahem',
+          filledButtonTheme: FilledButtonThemeData(
+            style: ButtonStyle(
+              foregroundColor: WidgetStatePropertyAll(colors.onPrimary),
+              padding: const WidgetStatePropertyAll(EdgeInsets.all(20)),
             ),
-            child: Scaffold(body: Center(child: FilledButton(
-              onPressed: () {},
-              child: const Text('BUTTON'),
-            ))),
           ),
-        ));
+        ).withAppShapes.withAppSurfaces.copyWith(
+          scaffoldBackgroundColor: backdrop,
+        );
+        final capture = GlobalKey();
+        await tester.pumpWidget(
+          ProviderScope(
+            key: UniqueKey(),
+            overrides: [
+              themeSettingProvider.overrideWithBuild(
+                (_, _) => ThemeProps(auroraEnabled: false, liquidGlass: mode),
+              ),
+            ],
+            child: MaterialApp(
+              theme: inputTheme,
+              darkTheme: inputTheme,
+              themeMode: brightness == Brightness.dark
+                  ? ThemeMode.dark
+                  : ThemeMode.light,
+              builder: (context, child) => RepaintBoundary(
+                key: capture,
+                child: AuroraAppSurface(child: child!),
+              ),
+              home: Scaffold(
+                body: Center(
+                  child: FilledButton(
+                    onPressed: () {},
+                    child: const Text('BUTTON'),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
         await tester.pumpAndSettle();
         final label = find.text('BUTTON');
         final context = tester.element(label);
+        final container = ProviderScope.containerOf(context);
+        final settings = container.read(themeSettingProvider);
+        final actualTheme = Theme.of(context);
+        final platformBrightness = MediaQuery.platformBrightnessOf(context);
         final foreground = DefaultTextStyle.of(context).style.color!;
+        final style = actualTheme.filledButtonTheme.style!;
+        final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+        if (output != null) {
+          final directory = Directory(output)..createSync(recursive: true);
+          List<double>? rgba(Color? color) =>
+              color == null ? null : [color.r, color.g, color.b, color.a];
+          final path =
+              '${directory.path}/foreground-filled-'
+              '${brightness.name}-${mode.name}-context.json';
+          File(path).writeAsStringSync(
+            jsonEncode({
+              'expectedBrightness': brightness.name,
+              'inputBrightness': inputTheme.brightness.name,
+              'actualBrightness': actualTheme.brightness.name,
+              'platformBrightness': platformBrightness.name,
+              'expectedForeground': rgba(
+                colors.onSurface.withValues(alpha: 0.94),
+              ),
+              'actualOnSurface': rgba(actualTheme.colorScheme.onSurface),
+              'actualOnPrimary': rgba(actualTheme.colorScheme.onPrimary),
+              'actualOnPrimaryContainer': rgba(
+                actualTheme.colorScheme.onPrimaryContainer,
+              ),
+              'themeForeground': rgba(style.foregroundColor?.resolve({})),
+              'actualForeground': rgba(foreground),
+              'inputBackground': rgba(inputTheme.scaffoldBackgroundColor),
+              'glass': LiquidGlassScope.of(context),
+              'settings': {
+                'gradient': settings.auroraEnabled,
+                'glass': settings.liquidGlass.name,
+                'pureBlack': settings.pureBlack,
+              },
+            }),
+          );
+        }
+        expect(settings.auroraEnabled, isFalse);
+        expect(settings.liquidGlass, mode);
+        expect(actualTheme.brightness, brightness);
+        expect(LiquidGlassScope.of(context), isTrue);
         expect(foreground, colors.onSurface.withValues(alpha: 0.94));
-        final style = Theme.of(context).filledButtonTheme.style!;
         expect(style.backgroundColor!.resolve({}), Colors.transparent);
         expect(style.padding!.resolve({}), const EdgeInsets.all(20));
-        final boundary = capture.currentContext!.findRenderObject()!
-            as RenderRepaintBoundary;
+        final boundary =
+            capture.currentContext!.findRenderObject()!
+                as RenderRepaintBoundary;
         final text = tester.getRect(label);
-        final point = Offset(text.left + text.width / 12, text.center.dy) -
+        final point =
+            Offset(text.left + text.width / 12, text.center.dy) -
             boundary.localToGlobal(Offset.zero);
         await tester.runAsync(() async {
           final image = await boundary.toImage();
@@ -270,29 +373,38 @@ void main() {
             final bytes = (await image.toByteData(
               format: ui.ImageByteFormat.rawRgba,
             ))!;
-            final actual = _pixel(bytes.buffer.asUint8List(), image.width, point);
+            final actual = _pixel(
+              bytes.buffer.asUint8List(),
+              image.width,
+              point,
+            );
             final expected = Color.alphaBlend(foreground, backdrop);
             final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
             if (output != null) {
               final directory = Directory(output)..createSync(recursive: true);
-              final prefix = '${directory.path}/foreground-filled-'
+              final prefix =
+                  '${directory.path}/foreground-filled-'
                   '${brightness.name}-${mode.name}';
-              File('$prefix.json').writeAsStringSync(jsonEncode({
-                'source': _channels(foreground),
-                'under': _channels(backdrop),
-                'actual': _channels(actual),
-                'expected': _channels(expected),
-                'point': [point.dx, point.dy],
-                'contrast': _contrast(actual, backdrop),
-              }));
+              File('$prefix.json').writeAsStringSync(
+                jsonEncode({
+                  'source': _channels(foreground),
+                  'under': _channels(backdrop),
+                  'actual': _channels(actual),
+                  'expected': _channels(expected),
+                  'point': [point.dx, point.dy],
+                  'contrast': _contrast(actual, backdrop),
+                }),
+              );
               final png = (await image.toByteData(
                 format: ui.ImageByteFormat.png,
               ))!;
               File('$prefix.png').writeAsBytesSync(png.buffer.asUint8List());
             }
             for (var channel = 0; channel < 3; channel++) {
-              expect(_channels(actual)[channel] * 255,
-                  closeTo(_channels(expected)[channel] * 255, 2));
+              expect(
+                _channels(actual)[channel] * 255,
+                closeTo(_channels(expected)[channel] * 255, 2),
+              );
             }
             expect(_contrast(actual, backdrop), greaterThanOrEqualTo(4.5));
           } finally {

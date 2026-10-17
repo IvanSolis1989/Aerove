@@ -435,35 +435,51 @@ void main() {
   testWidgets('a sibling backdrop mask cannot erase the captured wallpaper', (
     tester,
   ) async {
-    await tester.pumpWidget(
-      _app(
-        Stack(
-          children: [
-            Positioned.fill(
-              child: Row(
-                children: List.generate(
-                  20,
-                  (index) => Expanded(
-                    child: ColoredBox(color: index.isEven ? _red : _green),
+    for (final header in [false, true]) {
+      await tester.pumpWidget(
+        _app(
+          Stack(
+            children: [
+              Positioned.fill(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: List.generate(
+                    20,
+                    (index) => Expanded(
+                      child: ColoredBox(color: index.isEven ? _red : _green),
+                    ),
                   ),
                 ),
               ),
-            ),
-            const Positioned(
-              left: 0,
-              right: 0,
-              top: 0,
-              child: HeaderBlur(fadeHeight: 200),
-            ),
-            _pane(const Rect.fromLTWH(100, 0, 200, 200)),
-          ],
+              if (header)
+                const Positioned(
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  child: HeaderBlur(fadeHeight: 200),
+                ),
+              _pane(const Rect.fromLTWH(100, 0, 200, 200)),
+            ],
+          ),
         ),
-      ),
-    );
-    final pane = _capture().panes.single;
-    for (final y in [20.0, 100.0, 180.0]) {
-      expect(await _behind(tester, pane, Offset(150, y)), _green);
-      expect(await _behind(tester, pane, Offset(185, y)), _red);
+      );
+      final wallpaper = tester.getRect(find.byType(Row));
+      expect(wallpaper.height, greaterThan(200));
+      final stripes = find.descendant(
+        of: find.byType(Row),
+        matching: find.byType(ColoredBox),
+      );
+      expect(stripes, findsNWidgets(20));
+      for (final stripe in tester.widgetList<ColoredBox>(stripes)) {
+        expect(tester.getSize(find.byWidget(stripe)).height, wallpaper.height);
+      }
+      final pane = _capture().panes.single;
+      for (final y in [20.0, 100.0, 180.0]) {
+        expect(await _behind(tester, pane, Offset(150, y)), _green,
+            reason: 'header=$header, green at y=$y');
+        expect(await _behind(tester, pane, Offset(185, y)), _red,
+            reason: 'header=$header, red at y=$y');
+      }
     }
   });
 

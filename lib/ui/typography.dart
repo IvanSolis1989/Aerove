@@ -83,6 +83,11 @@ extension AppTypographyThemeExt on ThemeData {
     textTheme: _onAppScale(textTheme),
     primaryTextTheme: _onAppScale(primaryTextTheme),
   );
+
+  ThemeData withForegroundAlphaCap(double opacity) => copyWith(
+    textTheme: _capForegroundAlpha(textTheme, opacity),
+    primaryTextTheme: _capForegroundAlpha(primaryTextTheme, opacity),
+  );
 }
 
 TextTheme _onAppScale(TextTheme theme) => theme.copyWith(
@@ -102,3 +107,30 @@ TextTheme _onAppScale(TextTheme theme) => theme.copyWith(
   labelMedium: AppTextStyle.caption1._on(theme.labelMedium, emphasized: true),
   labelSmall: AppTextStyle.caption2._on(theme.labelSmall, emphasized: true),
 );
+
+TextTheme _capForegroundAlpha(TextTheme theme, double opacity) {
+  TextStyle? apply(TextStyle? style) {
+    if (style == null) return null;
+    final color = style.color;
+    if (color == null || color.a <= opacity) return style;
+    return style.copyWith(color: color.withValues(alpha: opacity));
+  }
+
+  return theme.copyWith(
+    displayLarge: apply(theme.displayLarge),
+    displayMedium: apply(theme.displayMedium),
+    displaySmall: apply(theme.displaySmall),
+    headlineLarge: apply(theme.headlineLarge),
+    headlineMedium: apply(theme.headlineMedium),
+    headlineSmall: apply(theme.headlineSmall),
+    titleLarge: apply(theme.titleLarge),
+    titleMedium: apply(theme.titleMedium),
+    titleSmall: apply(theme.titleSmall),
+    bodyLarge: apply(theme.bodyLarge),
+    bodyMedium: apply(theme.bodyMedium),
+    bodySmall: apply(theme.bodySmall),
+    labelLarge: apply(theme.labelLarge),
+    labelMedium: apply(theme.labelMedium),
+    labelSmall: apply(theme.labelSmall),
+  );
+}

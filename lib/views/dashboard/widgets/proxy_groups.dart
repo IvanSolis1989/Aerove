@@ -120,7 +120,9 @@ class _GroupDelay extends ConsumerWidget {
           .of(context, emphasized: true)
           .toTabular
           .copyWith(
-            color: color == null ? null : GlassForeground.colorOf(context, color),
+            color: color == null
+                ? null
+                : GlassForeground.colorOf(context, color),
           ),
     );
   }

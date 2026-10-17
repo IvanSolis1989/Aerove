@@ -61,29 +61,32 @@ class AuroraAppSurface extends ConsumerWidget {
     final glassEnabled = glassMode != LiquidGlassMode.none && !opaque;
     final surfaceTheme = enabled ? glassTheme : theme;
     final surfaceColors = surfaceTheme.colorScheme;
-    final glassButtons = LiquidGlass.buttonStyle(
-      (_) => LiquidGlassStyle.regular(surfaceColors),
-    ).merge(
-      FilledButton.styleFrom(
-        backgroundColor: Colors.transparent,
-        foregroundColor: surfaceColors.onSurface,
-      ),
-    );
+    final glassButtons =
+        LiquidGlass.buttonStyle(
+          (_) => LiquidGlassStyle.regular(surfaceColors),
+        ).merge(
+          FilledButton.styleFrom(
+            backgroundColor: Colors.transparent,
+            foregroundColor: surfaceColors.onSurface,
+          ),
+        );
     final effectiveTheme = glassEnabled
         ? GlassForeground.theme(
             surfaceTheme.copyWith(
               scaffoldBackgroundColor: Colors.transparent,
               filledButtonTheme: FilledButtonThemeData(
-                style: (surfaceTheme.filledButtonTheme.style ??
-                        const ButtonStyle())
-                    .merge(glassButtons),
+                style:
+                    (surfaceTheme.filledButtonTheme.style ??
+                            const ButtonStyle())
+                        .merge(glassButtons),
               ),
-              floatingActionButtonTheme: theme.floatingActionButtonTheme.copyWith(
-                backgroundColor: surfaceColors.surfaceContainer.withValues(
-                  alpha: 0.28,
-                ),
-                foregroundColor: surfaceColors.onSurface,
-              ),
+              floatingActionButtonTheme: theme.floatingActionButtonTheme
+                  .copyWith(
+                    backgroundColor: surfaceColors.surfaceContainer.withValues(
+                      alpha: 0.28,
+                    ),
+                    foregroundColor: surfaceColors.onSurface,
+                  ),
             ),
           )
         : theme;

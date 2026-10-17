@@ -344,7 +344,10 @@ class _DelayTextState extends ConsumerState<_DelayText> {
                               overflow: TextOverflow.ellipsis,
                               color: delayColor == null
                                   ? null
-                                  : GlassForeground.colorOf(context, delayColor),
+                                  : GlassForeground.colorOf(
+                                      context,
+                                      delayColor,
+                                    ),
                             ),
                       ),
                     ),
