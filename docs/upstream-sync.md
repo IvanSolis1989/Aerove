@@ -6,6 +6,9 @@
 选择 `main` 立即运行。工作流只在此 fork 的 `main` 上运行，同一时间只处理一次同步。
 
 同步使用普通 merge，不 reset、rebase、force push，也不以 `ours`/`theirs` 整体覆盖文件。
+合并提交前运行 `tool/sync_fork_readme.py --repository "$GITHUB_REPOSITORY"`，
+将 README 的下载段、徽章、源码及问题反馈入口校正到当前 fork，同时保留上游署名。
+文档修正随同一个双父合并提交进入验证；Android 工作流再次以 `--check` 检查链接，漂移时停止。
 上游没有新提交时直接结束。发现新提交时，以当前 fork main 为第一父提交建立合并提交，
 在只有读权限的任务中运行 Flutter 3.47.6 的 `pub get`、`analyze --no-fatal-infos`、
 配置模型/Provider、更新请求、主题、导航、启动按钮、Aurora 设置/壁纸/应用组件、本地化及 lint 测试。
@@ -18,12 +21,32 @@
 写权限任务不执行合并后的仓库脚本或 Flutter 代码。
 
 推送后确认远端 SHA，再通过 `workflow_dispatch` 触发 `XClash Android`，参数为
-`ref=main`、`prepare_sources=false`、`build_apk=true`。该工作流执行 Android 验证和原生构建，
-成功后可在对应运行的 artifacts 下载 APK；不会自动创建 GitHub Release。
+`ref=main`、`prepare_sources=false`、`build_apk=true`、`publish_release=true`。
+该工作流执行 Android 验证和原生构建，成功后自动发布 APK、`SHA256SUMS` 和 `BUILD_INFO.json`
+到本仓库 [Releases](https://github.com/IvanSolis1989/XClash/releases/latest)。
+默认分支的普通 push 也会运行同一构建发布流程；Actions artifacts 继续保留用于排查。
 源码同步与 Android 构建是两次独立运行：后续构建失败不会撤销已成功同步的源码，
 失败结论保留在 Android Actions；dispatch 失败则同步运行的发布步骤显示失败，源码可能已推送，
 应先核对记录的远端 SHA，再手动运行 Android 工作流。期间若 main 再次更新，Android 运行可能构建新的 main，
 以它实际 checkout 的 SHA 和日志为准。
+
+## Android 发布与签名
+
+`XClash Android` 先验证、再构建和执行 Android 单元测试，全部成功后才由独立
+`contents: write` 任务创建草稿、上传资产并公开为 latest。它检查构建 SHA 仍是 main，
+避免旧构建替换新版本；重跑不会覆盖已经公开的同名版本资产。`prepare_sources=true`
+只用于准备生成文件，永不发布；仅验证时可关闭 `build_apk`，只构建时可关闭 `publish_release`。
+
+标签采用 `v<pubspec版本>+<pubspec构建号加工作流运行序号>`，APK 内使用相同版本和构建号。
+构建号只用于此次打包，不回写 pubspec；应用检查更新同时比较已安装的版本和构建号。
+README 的 `/releases/latest/download/XClash-android-arm64.apk` 始终指向最近成功发布的 ARM64 APK。
+
+仓库 secret `XCLASH_ANDROID_DEBUG_KEYSTORE` 保存固定 Android 测试签名容器的 base64，
+CI 还原到私有 runner 的默认 debug keystore；缺失时构建失败，不生成临时签名替代。
+别名为 `androiddebugkey`、容器口令为 `android`，包 ID 保持 `com.follow.clash.dev`。
+不要轮换此 key，否则已安装版本不能直接覆盖升级。先前仅在 Actions 提供的 APK 使用
+临时签名，更换到首次 Release 可能需要先备份配置再卸载旧测试版。
+这些发布仍标为 Android preview，尚未完成真机验收；没有产出其他平台安装包。
 
 ## 首次启用与平台限制
 

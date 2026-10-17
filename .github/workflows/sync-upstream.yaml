@@ -55,12 +55,15 @@ jobs:
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          if ! git merge --no-ff --no-edit "$upstream" 2>&1 | tee "$evidence/merge.log"; then
+          if ! git merge --no-ff --no-commit "$upstream" 2>&1 | tee "$evidence/merge.log"; then
             git diff --name-only --diff-filter=U > "$evidence/conflicted-files.txt"
             git diff --cc > "$evidence/merge-conflicts.patch"
             echo '::error::Upstream merge failed. Resolve the recorded conflicts manually; main was not updated.'
             exit 1
           fi
+          python3 tool/sync_fork_readme.py --repository "$GITHUB_REPOSITORY"
+          git add -- README.md README_zh_CN.md
+          git commit --no-edit
           candidate=$(git rev-parse HEAD)
           printf 'candidate=%s\n' "$candidate" | tee -a "$evidence/revisions.txt" >> "$GITHUB_OUTPUT"
           git diff --name-status "$base" "$candidate" > "$evidence/changed-files.txt"
@@ -215,8 +218,8 @@ jobs:
           printf 'Synced upstream `%s` into main as `%s`.\n' "$UPSTREAM" "$CANDIDATE" >> "$GITHUB_STEP_SUMMARY"
           GH_TOKEN="$SYNC_TOKEN" gh workflow run xclash-android.yaml \
             --repo "$GITHUB_REPOSITORY" --ref main \
-            -f prepare_sources=false -f build_apk=true
-          printf 'Dispatched XClash Android on main for validation and APK artifacts.\n' >> "$GITHUB_STEP_SUMMARY"
+            -f prepare_sources=false -f build_apk=true -f publish_release=true
+          printf 'Dispatched XClash Android on main for validation, APK build and Release publication.\n' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload publish evidence
         if: always()

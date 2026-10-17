@@ -12,21 +12,21 @@ The existing Android package ID is retained for compatibility in this phase.
 Open **Tools → Theme → Random gradient wallpaper** to choose 1–3 colors and request a new pattern.
 The palette and seed are saved with the configuration. Disable it to restore ordinary surfaces;
 high contrast and dark pure-black mode keep opaque surfaces.
-[Android builds and APK](https://github.com/IvanSolis1989/XClash/actions/workflows/xclash-android.yaml)
+[Android build records](https://github.com/IvanSolis1989/XClash/actions/workflows/xclash-android.yaml)
 · [Upstream sync guide](docs/upstream-sync.md)
 
 **English** · [简体中文](README_zh_CN.md)
 
-[![Release](https://img.shields.io/github/v/release/chen08209/FlClash?style=flat-square&label=release)](https://github.com/chen08209/FlClash/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/chen08209/FlClash/total?style=flat-square&logo=github)](https://github.com/chen08209/FlClash/releases)
-[![License](https://img.shields.io/github/license/chen08209/FlClash?style=flat-square)](LICENSE)
-[![Telegram](https://img.shields.io/badge/Telegram-channel-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/FlClash)
+[![Release](https://img.shields.io/github/v/release/IvanSolis1989/XClash?style=flat-square&label=release)](https://github.com/IvanSolis1989/XClash/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/IvanSolis1989/XClash/total?style=flat-square&logo=github)](https://github.com/IvanSolis1989/XClash/releases)
+[![License](https://img.shields.io/github/license/IvanSolis1989/XClash?style=flat-square)](LICENSE)
+[![Upstream Telegram](https://img.shields.io/badge/Upstream_Telegram-channel-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/FlClash)
 
-[Website](https://chen08209.github.io/FlClash) · [Download](#download) · [Changelog](CHANGELOG.md) · [Build from source](#build-from-source)
+[Repository](https://github.com/IvanSolis1989/XClash) · [Download](#download) · [Changelog](CHANGELOG.md) · [Build from source](#build-from-source)
 
 </div>
 
-The upstream documentation is retained below; its download, website and community links refer to FlClash.
+Upstream screenshots and architecture documentation are retained below; downloads refer to this fork.
 
 <p align="center">
   <picture>
@@ -37,7 +37,7 @@ The upstream documentation is retained below; its download, website and communit
 
 ## Features
 
-- **One app for Android, Windows, macOS and Linux**, with x64 and ARM64 builds on the desktop.
+- **Android first** in this fork; upstream also supports Windows, macOS and Linux.
 - **mihomo (Clash.Meta) core** with rule routing, proxy groups, latency tests, system proxy and TUN mode.
 - **Profiles** from a subscription link or a file, with a built-in editor, override scripts, and custom rules,
   proxies and proxy groups.
@@ -51,37 +51,15 @@ The upstream documentation is retained below; its download, website and communit
 
 ## Download
 
-Get the latest build from [GitHub Releases](https://github.com/chen08209/FlClash/releases/latest), or open the
-[website](https://chen08209.github.io/FlClash#download), which picks the right file for your device.
+Get this fork from [XClash Releases](https://github.com/IvanSolis1989/XClash/releases/latest), or download the [Android ARM64 APK](https://github.com/IvanSolis1989/XClash/releases/latest/download/XClash-android-arm64.apk) directly.
 
-| Platform | Packages | Notes |
-| --- | --- | --- |
-| Android | APK for `arm64-v8a`, `armeabi-v7a` and `x86_64` | Most phones use `arm64-v8a`. Also on the F-Droid repository below. |
-| Windows 10 and later | Installer (`.exe`) or portable `.zip`, for x64 and ARM64 | Pick ARM64 on Snapdragon and other ARM laptops. |
-| macOS 12 and later | DMG for Apple Silicon and Intel | Also on Homebrew. |
-| Linux | `.deb`, `.rpm` and AppImage, for x64 and ARM64 | See the tray note below. |
+Only Android `arm64-v8a` APKs are published at present; other architectures and desktop platforms are not released.
+These Android previews use a persistent test signing key; physical-device acceptance is pending.
+Actions pages provide build records only.
 
 <p>
-  <a href="https://chen08209.github.io/FlClash-fdroid-repo/repo?fingerprint=789D6D32668712EF7672F9E58DEEB15FBD6DCEEC5AE7A4371EA72F2AAE8A12FD"><img alt="Get it on F-Droid" src="snapshots/get-it-on-fdroid.svg" height="56"></a>
-  <a href="https://github.com/chen08209/FlClash/releases/latest"><img alt="Get it on GitHub" src="snapshots/get-it-on-github.svg" height="56"></a>
+  <a href="https://github.com/IvanSolis1989/XClash/releases/latest"><img alt="Get it on GitHub" src="snapshots/get-it-on-github.svg" height="56"></a>
 </p>
-
-**Homebrew**
-
-```bash
-brew tap chen08209/tap
-brew install --cask flclash
-```
-
-**Linux tray icon**
-
-The `.deb` package installs its own dependencies. With the AppImage or the `.rpm`, install the AyatanaAppIndicator
-library so the tray icon can show:
-
-```bash
-sudo apt-get install libayatana-appindicator3-1   # Debian and Ubuntu
-sudo dnf install libayatana-appindicator-gtk3     # Fedora
-```
 
 ## Usage
 
@@ -114,8 +92,8 @@ You need [Flutter](https://docs.flutter.dev/get-started/install) 3.47 (release b
 host, except Android, which builds anywhere.
 
 ```bash
-git clone --recursive https://github.com/chen08209/FlClash.git
-cd FlClash
+git clone --recursive https://github.com/IvanSolis1989/XClash.git
+cd XClash
 flutter pub get
 dart setup.dart android   # or windows, macos, linux
 ```
@@ -133,14 +111,14 @@ Run `dart setup.dart --help` for the remaining options, such as `--targets` to b
 
 ## Support
 
-Starring the repository is the easiest way to support the project. Questions and announcements go to the
-[Telegram channel](https://t.me/FlClash); bugs and feature requests go to
-[GitHub Issues](https://github.com/chen08209/FlClash/issues).
+Star this fork to support it; report bugs and feature requests in [XClash Issues](https://github.com/IvanSolis1989/XClash/issues).
 
-<a href="https://star-history.com/#chen08209/FlClash&Date">
+Upstream community: [FlClash Telegram channel](https://t.me/FlClash).
+
+<a href="https://star-history.com/#IvanSolis1989/XClash&Date">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=chen08209/FlClash&type=Date&theme=dark">
-    <img alt="Star history" src="https://api.star-history.com/svg?repos=chen08209/FlClash&type=Date" width="640">
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=IvanSolis1989/XClash&type=Date&theme=dark">
+    <img alt="Star history" src="https://api.star-history.com/svg?repos=IvanSolis1989/XClash&type=Date" width="640">
   </picture>
 </a>
 

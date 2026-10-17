@@ -1,6 +1,8 @@
 name: XClash Android
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       prepare_sources:
@@ -9,6 +11,10 @@ on:
         default: false
       build_apk:
         description: Build the Android arm64 APK after verification
+        type: boolean
+        default: true
+      publish_release:
+        description: Publish the verified APK to XClash Releases
         type: boolean
         default: true
 
@@ -28,6 +34,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - name: Check fork download links
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: python3 tool/sync_fork_readme.py --repository "$REPOSITORY" --check
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -45,8 +55,8 @@ jobs:
           dart run build_runner build --delete-conflicting-outputs
           dart format lib test
           cp "$RUNNER_TEMP/xclash-pubspec.yaml" pubspec.yaml
-          git diff --binary -- lib test > "$RUNNER_TEMP/xclash-generated.patch"
           git add -- lib test
+          git diff --cached --binary -- lib test > "$RUNNER_TEMP/xclash-generated.patch"
           git write-tree > "$RUNNER_TEMP/xclash-verified-tree.txt"
           git restore --staged -- lib test
       - uses: actions/upload-artifact@v4
@@ -58,7 +68,7 @@ jobs:
             ${{ runner.temp }}/xclash-verified-tree.txt
       - name: Require committed generated sources
         if: ${{ !inputs.prepare_sources }}
-        run: git diff --exit-code -- lib test
+        run: test "$(cat "$RUNNER_TEMP/xclash-verified-tree.txt")" = "$(git rev-parse 'HEAD^{tree}')"
       - name: Analyze
         run: flutter analyze --no-fatal-infos
       - name: Install preview font
@@ -88,10 +98,12 @@ jobs:
           if-no-files-found: ignore
 
   apk:
-    if: ${{ inputs.build_apk }}
+    if: ${{ github.event_name == 'push' || inputs.build_apk }}
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -104,6 +116,9 @@ jobs:
         run: |
           patch="$RUNNER_TEMP/xclash-generated/xclash-generated.patch"
           if test -s "$patch"; then git apply "$patch"; fi
+          git add -- lib test
+          test "$(git write-tree)" = "$(cat "$RUNNER_TEMP/xclash-generated/xclash-verified-tree.txt")"
+          git restore --staged -- lib test
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -113,6 +128,26 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Restore persistent Android test signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.XCLASH_ANDROID_DEBUG_KEYSTORE }}
+        run: |
+          test -n "$KEYSTORE_BASE64" || { echo '::error::Configure XCLASH_ANDROID_DEBUG_KEYSTORE before building.'; exit 1; }
+          install -d -m 700 "$HOME/.android"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/debug.keystore"
+          chmod 600 "$HOME/.android/debug.keystore"
+          keytool -list -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey
+      - name: Set version for this Android build
+        id: version
+        run: |
+          version=$(sed -n 's/^version: //p' pubspec.yaml)
+          name=${version%%+*}
+          number=${version#*+}
+          [[ "$name" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$number" =~ ^[0-9]+$ ]]
+          number=$((number + GITHUB_RUN_NUMBER))
+          test "$number" -le 2100000000
+          printf 'name=%s\nnumber=%s\ntag=v%s+%s\n' "$name" "$number" "$name" "$number" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v5
         with:
           go-version: '1.27.1'
@@ -128,12 +163,23 @@ jobs:
       - name: Build Android arm64
         env:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          VERSION_NAME: ${{ steps.version.outputs.name }}
+          VERSION_NUMBER: ${{ steps.version.outputs.number }}
         run: |
           flutter pub get
-          flutter build apk --release --target-platform android-arm64
+          flutter build apk --release --target-platform android-arm64 \
+            --build-name "$VERSION_NAME" --build-number "$VERSION_NUMBER"
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-release.apk dist/XClash-android-arm64.apk
-          sha256sum dist/XClash-android-arm64.apk > dist/SHA256SUMS
+          build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          "$build_tools/apksigner" verify --print-certs dist/XClash-android-arm64.apk
+          "$build_tools/aapt" dump badging dist/XClash-android-arm64.apk > "$RUNNER_TEMP/apk-badging.txt"
+          grep -F "package: name='com.follow.clash.dev' versionCode='$VERSION_NUMBER' versionName='$VERSION_NAME'" "$RUNNER_TEMP/apk-badging.txt"
+          jq -n --arg source "$GITHUB_SHA" --arg version "$VERSION_NAME+$VERSION_NUMBER" \
+            --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            '{source: $source, version: $version, workflow: $run, signing: "persistent Android test key", applicationId: "com.follow.clash.dev"}' \
+            > dist/BUILD_INFO.json
+          (cd dist && sha256sum XClash-android-arm64.apk BUILD_INFO.json > SHA256SUMS)
       - name: Android model and service regressions
         working-directory: android
         env:
@@ -146,3 +192,54 @@ jobs:
         with:
           name: XClash-android-arm64
           path: dist/
+
+  release:
+    if: >-
+      github.repository == 'IvanSolis1989/XClash' && github.ref == 'refs/heads/main' &&
+      !inputs.prepare_sources && (github.event_name == 'push' || inputs.publish_release)
+    needs: apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: XClash-android-arm64
+          path: dist
+      - name: Publish verified APK to Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.apk.outputs.tag }}
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum --check SHA256SUMS)
+          test "$(jq -r .source dist/BUILD_INFO.json)" = "$GITHUB_SHA"
+          main=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          test "$main" = "$GITHUB_SHA" || { echo '::error::main advanced; this build will not replace the latest release.'; exit 1; }
+          existing=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,targetCommitish 2>/dev/null || true)
+          if test -n "$existing"; then
+            test "$(jq -r .targetCommitish <<< "$existing")" = "$GITHUB_SHA"
+            if test "$(jq -r .isDraft <<< "$existing")" = false; then
+              echo 'This release is already published; its assets were preserved.' >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          fi
+          {
+            printf '# XClash Android preview\n\n'
+            printf 'Android ARM64 APK with random gradient wallpaper and subtle glass surfaces.\n\n'
+            printf 'Source: `%s`\n\nBuild: %s/%s/actions/runs/%s\n\n' "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+            printf 'Uses a persistent test signing key and package ID `com.follow.clash.dev`. Physical-device acceptance is still pending.\n'
+            printf 'When replacing the earlier Actions-only APK, Android may require uninstalling that build first because its temporary signing key differs. Back up your configuration before doing so.\n\n'
+            printf 'SHA-256 checksums are in `SHA256SUMS`; source and build details are in `BUILD_INFO.json`.\n'
+          } > "$RUNNER_TEMP/xclash-release.md"
+          if test -z "$existing"; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "XClash $TAG · Android preview" --draft --notes-file "$RUNNER_TEMP/xclash-release.md"
+          fi
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" \
+            dist/XClash-android-arm64.apk dist/SHA256SUMS dist/BUILD_INFO.json --clobber
+          main=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          test "$main" = "$GITHUB_SHA" || { echo '::error::main advanced during upload; assets remain in a draft.'; exit 1; }
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false --latest
+          printf 'Published APK: https://github.com/%s/releases/tag/%s\n' "$GITHUB_REPOSITORY" "$TAG" >> "$GITHUB_STEP_SUMMARY"

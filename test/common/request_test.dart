@@ -6,7 +6,9 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:fl_clash/common/constant.dart';
 import 'package:fl_clash/common/request.dart';
+import 'package:fl_clash/state.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 class _StalledHttpClient extends Fake implements HttpClient {
   @override
@@ -134,6 +136,42 @@ void main() {
 
       await expectLater(request.latestRelease(), throwsA(isA<DioException>()));
     });
+  });
+
+  group('checkForUpdate', () {
+    setUpAll(() {
+      globalState.packageInfo = PackageInfo(
+        appName: 'XClash',
+        packageName: 'com.follow.clash',
+        version: '0.9.0',
+        buildNumber: '2026101402',
+      );
+    });
+
+    for (final (description, tag, hasUpdate) in [
+      ('same version and build is current', 'v0.9.0+2026101402', false),
+      ('a higher build is an update', 'v0.9.0+2026101403', true),
+      ('a lower build is already superseded', 'v0.9.0+2026101401', false),
+      ('same upstream version without a build is current', 'v0.9.0', false),
+      ('higher upstream version without a build updates', 'v0.9.1', true),
+    ]) {
+      test(description, () async {
+        final release = <String, dynamic>{'tag_name': tag};
+        final request = Request()
+          ..dio.httpClientAdapter = _HostAdapter({
+            'api.github.com': () => ResponseBody.fromString(
+              jsonEncode(release),
+              200,
+              headers: {
+                Headers.contentTypeHeader: [Headers.jsonContentType],
+              },
+            ),
+          });
+        addTearDown(() => request.dio.close(force: true));
+
+        expect(await request.checkForUpdate(), hasUpdate ? release : isNull);
+      });
+    }
   });
 
   group('downloadTarget', () {
