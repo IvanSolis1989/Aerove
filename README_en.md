@@ -39,12 +39,6 @@ Switching back restores the ordinary palette and makes None selectable again. A 
 The gradient palette and composition also persist across restarts.
 Brightness defaults to **system**, with explicit light and dark options at the top. High-contrast and dark pure-black modes use opaque surfaces.
 
-<p align="center">
-  <img src="snapshots/xclash-theme.png" alt="XClash theme settings preview" width="300">
-</p>
-
-*Preview rendered by a Flutter test.*
-
 ## Default DNS
 
 The bundled script provides routing and the selected DNS policy. System DNS is not appended. Bootstrap uses only these encrypted endpoints:

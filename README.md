@@ -39,12 +39,6 @@ https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/main/FlClash/Fl
 渐变配色与构图也会保存，重启后保持不变。
 深浅色默认**跟随系统**，也可在页面顶部指定浅色或深色。高对比度、深色纯黑模式使用不透明表面。
 
-<p align="center">
-  <img src="snapshots/xclash-theme.png" alt="XClash 主题设置预览" width="300">
-</p>
-
-*界面预览由 Flutter 测试渲染。*
-
 ## DNS 默认设置
 
 内置脚本提供分流与防泄漏 DNS 配置。客户端不追加系统 DNS，启动自举仅使用以下四个加密地址：
