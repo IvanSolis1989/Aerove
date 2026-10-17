@@ -1,5 +1,6 @@
 import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/ui/dialog.dart';
+import 'package:fl_clash/ui/inherited.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/paged_sheet.dart';
 import 'package:fl_clash/ui/scaffold.dart';
@@ -70,19 +71,14 @@ void main() {
             .first;
         final material = tester.widget<Material>(sheetMaterial);
         final explicitColor =
-            kind != 'bottom' &&
-            enabled &&
-            quality == LiquidGlassQuality.ultra;
+            kind != 'bottom' && enabled && quality == LiquidGlassQuality.ultra;
         final baseColor = explicitColor
             ? Colors.orange
             : SurfaceLevel.page.colorOf(
                 Theme.of(tester.element(sheetMaterial)).colorScheme,
               );
         expect(material.color, isNotNull);
-        expect(
-          material.color!.a,
-          enabled ? lessThanOrEqualTo(0.24) : 1.0,
-        );
+        expect(material.color!.a, enabled ? lessThanOrEqualTo(0.24) : 1.0);
         expect(
           material.color!.toARGB32() & 0xFFFFFF,
           baseColor.toARGB32() & 0xFFFFFF,

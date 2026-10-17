@@ -1,5 +1,6 @@
 import 'package:fl_clash/common/aurora.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_color_utilities/material_color_utilities.dart' show Hct;
 import 'package:material_ui/material_ui.dart';
 
 void main() {
@@ -52,6 +53,33 @@ void main() {
   });
 
   for (final brightness in Brightness.values) {
+    test('fully saturated selections have bounded chroma ($brightness)', () {
+      for (final color in const [
+        Color(0xFFFF0000),
+        Color(0xFF00FF00),
+        Color(0xFF0000FF),
+        Color(0xFFFF00FF),
+        Color(0xFF00FFFF),
+        Color(0xFFFFFF00),
+      ]) {
+        final tint = auroraTint(color, brightness);
+        expect(
+          Hct.fromInt(tint.toARGB32()).chroma,
+          lessThanOrEqualTo(brightness == Brightness.dark ? 24 : 20),
+        );
+        final hueDelta = (HSLColor.fromColor(tint).hue -
+                HSLColor.fromColor(color).hue)
+            .abs();
+        expect(hueDelta < 12 || hueDelta > 348, true);
+        expect(
+          tint.computeLuminance(),
+          brightness == Brightness.dark
+              ? lessThanOrEqualTo(0.161)
+              : greaterThanOrEqualTo(0.739),
+        );
+      }
+    });
+
     test(
       'tints preserve selected hue and readable luminance ($brightness)',
       () {

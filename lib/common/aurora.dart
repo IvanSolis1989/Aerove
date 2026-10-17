@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:material_color_utilities/material_color_utilities.dart' show Hct;
 import 'package:material_ui/material_ui.dart';
 
 typedef AuroraMesh = ({
@@ -118,7 +119,27 @@ Color auroraTint(Color color, Brightness brightness) {
   final base = auroraBaseColor(brightness);
   final dark = brightness == Brightness.dark;
   final tint = Color.lerp(base, color, dark ? 0.78 : 0.58)!;
-  return _readableAuroraTint(tint, base, brightness);
+  final readable = _readableAuroraTint(tint, base, brightness);
+  final cap = dark ? 24.0 : 20.0;
+  final hct = Hct.fromInt(readable.toARGB32());
+  if (hct.chroma <= cap) return readable;
+  final neutral = Color(Hct.from(0, 0, hct.tone).toInt());
+  var low = 0.0;
+  var high = 1.0;
+  for (var i = 0; i < 12; i++) {
+    final middle = (low + high) / 2;
+    final candidate = Color.lerp(neutral, readable, middle)!;
+    if (Hct.fromInt(candidate.toARGB32()).chroma <= cap - 0.5) {
+      low = middle;
+    } else {
+      high = middle;
+    }
+  }
+  return _readableAuroraTint(
+    Color.lerp(neutral, readable, low)!,
+    base,
+    brightness,
+  );
 }
 
 Color _readableAuroraTint(Color tint, Color base, Brightness brightness) {

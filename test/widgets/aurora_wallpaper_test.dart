@@ -7,6 +7,7 @@ import 'package:fl_clash/common/aurora.dart';
 import 'package:fl_clash/widgets/aurora.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_color_utilities/material_color_utilities.dart' show Hct;
 import 'package:material_ui/material_ui.dart';
 
 void main() {
@@ -112,133 +113,287 @@ void main() {
         Color(0xFFC6ADE4),
         Color(0xFFA9DAC6),
       ];
+      const saturated = [
+        Color(0xFFFF0000),
+        Color(0xFF00FF00),
+        Color(0xFF0000FF),
+      ];
+      const palettes = {'soft': selected, 'saturated': saturated};
+      const regressionSeeds = [12, 271828, 314159];
+      const masterSeed = 20261017;
+      final random = math.Random(masterSeed);
+      final randomSeeds = <int>[];
+      while (randomSeeds.length < 10) {
+        final seed = random.nextInt(1 << 32);
+        if (!regressionSeeds.contains(seed) && !randomSeeds.contains(seed)) {
+          randomSeeds.add(seed);
+        }
+      }
+      final seeds = [...regressionSeeds, ...randomSeeds];
       final key = GlobalKey();
       final metrics = <String, Object?>{};
+      final failures = <String>[];
       final output = Directory(
         Platform.environment['XCLASH_SCREENSHOT_DIR'] ?? 'build/aurora-review',
       );
-      for (final brightness in Brightness.values) {
-        for (var count = 1; count <= 3; count++) {
-          final palette = selected.take(count).toList();
-          List<int>? previous;
-          for (final seed in [12, 271828, 314159]) {
-            await tester.pumpWidget(
-              Directionality(
-                textDirection: TextDirection.ltr,
-                child: Center(
-                  child: RepaintBoundary(
-                    key: key,
-                    child: SizedBox(
-                      width: 300,
-                      height: 600,
-                      child: SeededAuroraWallpaper(
-                        colors: palette,
-                        seed: seed,
-                        brightness: brightness,
+      final manifest = {
+        'schemaVersion': 1,
+        'masterSeed': masterSeed,
+        'generator': 'dart:math Random(masterSeed).nextInt(1 << 32)',
+        'dartVersion': Platform.version,
+        'regressionSeeds': regressionSeeds,
+        'randomSeeds': randomSeeds,
+        'expectedImageCount': seeds.length * 6 + randomSeeds.length * 2,
+        'imageWidth': 300,
+        'imageHeight': 600,
+        'hardGates': {
+          'opaqueAlpha': 255,
+          'minimumSelectedHueCoverageExclusive': 0.01,
+          'hueToleranceDegreesExclusive': 20,
+          'minimumHueSampleSaturation': 0.07,
+          'minimumConsecutiveSeedMeanRgbDifferenceExclusive': 3,
+          'minimumVerticalMeanRgbDifferenceExclusive': 3,
+          'minimumVaryingRowFractionExclusive': 0.75,
+          'darkMinimumMeanLuminanceExclusive': 0.035,
+          'darkMaximumLuminanceExclusive': 0.165,
+          'lightMinimumLuminanceExclusive': 0.73,
+          'darkMaximumSampledHctChromaInclusive': 24,
+          'lightMaximumSampledHctChromaInclusive': 20,
+        },
+        'visualReview': {
+          'status': 'requires independent review of actual rendered PNGs',
+          'softMaximumP95AdjacentRgbStep': 2,
+          'softMaximumLuminanceStandardDeviation': 0.10,
+          'criteria': [
+            'broad soft color transitions without visible mesh edges',
+            'balanced negative space and visible chosen colors',
+            'no rigid stripes, harsh hotspots, or distracting detail',
+            'soft metric flags require inspection, not automatic approval',
+          ],
+          'randomSeedReviewGroups': [
+            for (final seed in randomSeeds)
+              {
+                'seed': seed,
+                'files': [
+                  for (final brightness in Brightness.values)
+                    for (var count = 1; count <= 3; count++)
+                      'aurora-${brightness.name}-$count-$seed.png',
+                  for (final brightness in Brightness.values)
+                    'aurora-saturated-${brightness.name}-3-$seed.png',
+                ],
+              },
+          ],
+        },
+        'images': [
+          for (final brightness in Brightness.values)
+            for (var count = 1; count <= 3; count++)
+              for (final seed in seeds)
+                {
+                  'file': 'aurora-${brightness.name}-$count-$seed.png',
+                  'seed': seed,
+                  'sample': randomSeeds.contains(seed) ? 'random' : 'regression',
+                  'brightness': brightness.name,
+                  'colorCount': count,
+                  'selectedColors': selected
+                      .take(count)
+                      .map((color) => color.toARGB32())
+                      .toList(),
+                },
+          for (final brightness in Brightness.values)
+            for (final seed in randomSeeds)
+              {
+                'file': 'aurora-saturated-${brightness.name}-3-$seed.png',
+                'seed': seed,
+                'sample': 'random',
+                'palette': 'saturated',
+                'brightness': brightness.name,
+                'colorCount': 3,
+                'selectedColors': saturated
+                    .map((color) => color.toARGB32())
+                    .toList(),
+              },
+        ],
+      };
+      debugPrint('aurora random seeds: ${jsonEncode(randomSeeds)}');
+      await tester.runAsync(() async {
+        await output.create(recursive: true);
+        await File('${output.path}/aurora-review-manifest.json').writeAsString(
+          const JsonEncoder.withIndent('  ').convert(manifest),
+        );
+      });
+      for (final paletteCase in palettes.entries) {
+        for (final brightness in Brightness.values) {
+          for (final count in paletteCase.key == 'soft' ? [1, 2, 3] : [3]) {
+            final palette = paletteCase.value.take(count).toList();
+            List<int>? previous;
+            for (final seed in paletteCase.key == 'soft' ? seeds : randomSeeds) {
+              await tester.pumpWidget(
+                Directionality(
+                  textDirection: TextDirection.ltr,
+                  child: Center(
+                    child: RepaintBoundary(
+                      key: key,
+                      child: SizedBox(
+                        width: 300,
+                        height: 600,
+                        child: SeededAuroraWallpaper(
+                          colors: palette,
+                          seed: seed,
+                          brightness: brightness,
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-            );
-            final boundary =
-                key.currentContext!.findRenderObject()!
-                    as RenderRepaintBoundary;
-            final name = 'aurora-${brightness.name}-$count-$seed';
-            final bytes = (await tester.runAsync(() async {
-              final image = await boundary.toImage();
-              try {
-                final pixels = await image.toByteData(
-                  format: ui.ImageByteFormat.rawRgba,
-                );
-                final png = await image.toByteData(
-                  format: ui.ImageByteFormat.png,
-                );
-                await output.create(recursive: true);
-                await File('${output.path}/$name.png').writeAsBytes(
-                  png!.buffer.asUint8List(png.offsetInBytes, png.lengthInBytes),
-                );
-                return pixels!.buffer
-                    .asUint8List(pixels.offsetInBytes, pixels.lengthInBytes)
-                    .toList();
-              } finally {
-                image.dispose();
-              }
-            }))!;
-            if (previous != null) {
-              expect(
-                _meanPixelDifference(previous, bytes),
-                greaterThan(3),
-                reason: name,
               );
-            }
-            previous = bytes;
-            final coverage = List<int>.filled(count, 0);
-            var samples = 0;
-            var totalLuminance = 0.0;
-            var minLuminance = 1.0;
-            var maxLuminance = 0.0;
-            for (var offset = 0; offset < bytes.length; offset += 64) {
-              expect(bytes[offset + 3], 255);
-              final color = Color.fromARGB(
-                255,
-                bytes[offset],
-                bytes[offset + 1],
-                bytes[offset + 2],
-              );
-              final luminance = color.computeLuminance();
-              minLuminance = math.min(minLuminance, luminance);
-              maxLuminance = math.max(maxLuminance, luminance);
-              totalLuminance += luminance;
-              samples++;
-              final pixel = HSVColor.fromColor(color);
-              if (pixel.saturation < 0.07) continue;
-              for (var index = 0; index < palette.length; index++) {
-                final delta =
-                    (pixel.hue - HSVColor.fromColor(palette[index]).hue).abs();
-                if (math.min(delta, 360 - delta) < 20) coverage[index]++;
+              final boundary =
+                  key.currentContext!.findRenderObject()!
+                      as RenderRepaintBoundary;
+              final prefix = paletteCase.key == 'soft'
+                  ? 'aurora'
+                  : 'aurora-saturated';
+              final name = '$prefix-${brightness.name}-$count-$seed';
+              final bytes = (await tester.runAsync(() async {
+                final image = await boundary.toImage();
+                try {
+                  final pixels = await image.toByteData(
+                    format: ui.ImageByteFormat.rawRgba,
+                  );
+                  final png = await image.toByteData(
+                    format: ui.ImageByteFormat.png,
+                  );
+                  await output.create(recursive: true);
+                  await File('${output.path}/$name.png').writeAsBytes(
+                    png!.buffer.asUint8List(png.offsetInBytes, png.lengthInBytes),
+                  );
+                  return pixels!.buffer
+                      .asUint8List(pixels.offsetInBytes, pixels.lengthInBytes)
+                      .toList();
+                } finally {
+                  image.dispose();
+                }
+              }))!;
+              final seedDifference = previous == null
+                  ? null
+                  : _meanPixelDifference(previous, bytes);
+              previous = bytes;
+              final coverage = List<int>.filled(count, 0);
+              var samples = 0;
+              var opaque = true;
+              var totalLuminance = 0.0;
+              var squaredLuminance = 0.0;
+              var minLuminance = 1.0;
+              var maxLuminance = 0.0;
+              var maxChroma = 0.0;
+              for (var offset = 0; offset < bytes.length; offset += 64) {
+                opaque = opaque && bytes[offset + 3] == 255;
+                final color = Color.fromARGB(
+                  255,
+                  bytes[offset],
+                  bytes[offset + 1],
+                  bytes[offset + 2],
+                );
+                final luminance = color.computeLuminance();
+                if (offset % 1024 == 0) {
+                  maxChroma = math.max(
+                    maxChroma,
+                    Hct.fromInt(color.toARGB32()).chroma,
+                  );
+                }
+                minLuminance = math.min(minLuminance, luminance);
+                maxLuminance = math.max(maxLuminance, luminance);
+                totalLuminance += luminance;
+                squaredLuminance += luminance * luminance;
+                samples++;
+                final pixel = HSVColor.fromColor(color);
+                if (pixel.saturation < 0.07) continue;
+                for (var index = 0; index < palette.length; index++) {
+                  final delta =
+                      (pixel.hue - HSVColor.fromColor(palette[index]).hue).abs();
+                  if (math.min(delta, 360 - delta) < 20) coverage[index]++;
+                }
               }
-            }
-            final meanLuminance = totalLuminance / samples;
-            final verticalVariation = _verticalVariation(bytes, 300, 600);
-            final varyingRows = _varyingRows(bytes, 300, 600);
-            expect(verticalVariation, greaterThan(3), reason: name);
-            expect(varyingRows, greaterThan(0.75), reason: name);
-            metrics[name] = {
-              'verticalVariation': verticalVariation,
-              'varyingRowFraction': varyingRows,
-              'seed': seed,
-              'syntheticPalette': palette
-                  .map((color) => color.toARGB32())
-                  .toList(),
-              'meanLuminance': meanLuminance,
-              'minLuminance': minLuminance,
-              'maxLuminance': maxLuminance,
-              'selectedHueCoverage': [
-                for (final visible in coverage) visible / samples,
-              ],
-              'minimumWhiteContrast': 1.05 / (maxLuminance + 0.05),
-              'minimumBlackContrast': (minLuminance + 0.05) / 0.05,
-            };
-            debugPrint('$name rendered pixels: ${jsonEncode(metrics[name])}');
-            await tester.runAsync(
-              () => File('${output.path}/aurora-pixel-metrics.json')
-                  .writeAsString(
-                    const JsonEncoder.withIndent('  ').convert(metrics),
-                  ),
-            );
-            for (final visible in coverage) {
-              expect(visible / samples, greaterThan(0.01), reason: name);
-            }
-            if (brightness == Brightness.dark) {
-              expect(meanLuminance, greaterThan(0.035), reason: name);
-              expect(maxLuminance, lessThan(0.165), reason: name);
-            } else {
-              expect(minLuminance, greaterThan(0.73), reason: name);
+              final meanLuminance = totalLuminance / samples;
+              final verticalVariation = _verticalVariation(bytes, 300, 600);
+              final varyingRows = _varyingRows(bytes, 300, 600);
+              final luminanceDeviation = math.sqrt(
+                math.max(0, squaredLuminance / samples -
+                    meanLuminance * meanLuminance),
+              );
+              final adjacentStep = _p95AdjacentRgbStep(bytes, 300, 600);
+              final failedChecks = <String>[
+                if (!opaque) 'opaque alpha must equal 255',
+                if (maxChroma > (brightness == Brightness.dark ? 24 : 20))
+                  'sampled HCT chroma must remain inside the brightness cap',
+                if (seedDifference != null && seedDifference <= 3)
+                  'consecutive seed mean RGB difference must exceed 3',
+                if (verticalVariation <= 3)
+                  'vertical mean RGB difference must exceed 3',
+                if (varyingRows <= 0.75)
+                  'varying row fraction must exceed 0.75',
+                for (var index = 0; index < coverage.length; index++)
+                  if (coverage[index] / samples <= 0.01)
+                    'selected color $index hue coverage must exceed 0.01',
+                if (brightness == Brightness.dark) ...[
+                  if (meanLuminance <= 0.035)
+                    'dark mean luminance must exceed 0.035',
+                  if (maxLuminance >= 0.165)
+                    'dark maximum luminance must be below 0.165',
+                ] else if (minLuminance <= 0.73)
+                  'light minimum luminance must exceed 0.73',
+              ];
+              failures.addAll(failedChecks.map((failure) => '$name: $failure'));
+              metrics[name] = {
+                'file': '$name.png',
+                'palette': paletteCase.key,
+                'maximumSampledHctChroma': maxChroma,
+                'sample': randomSeeds.contains(seed) ? 'random' : 'regression',
+                'passedHardGates': failedChecks.isEmpty,
+                'failedChecks': failedChecks,
+                'consecutiveSeedMeanRgbDifference': seedDifference,
+                'verticalVariation': verticalVariation,
+                'varyingRowFraction': varyingRows,
+                'p95AdjacentRgbStep': adjacentStep,
+                'luminanceStandardDeviation': luminanceDeviation,
+                'softReviewFlags': [
+                  if (adjacentStep > 2) 'adjacent RGB step exceeds 2',
+                  if (luminanceDeviation > 0.10)
+                    'luminance standard deviation exceeds 0.10',
+                ],
+                'seed': seed,
+                'syntheticPalette': palette
+                    .map((color) => color.toARGB32())
+                    .toList(),
+                'meanLuminance': meanLuminance,
+                'minLuminance': minLuminance,
+                'maxLuminance': maxLuminance,
+                'selectedHueCoverage': [
+                  for (final visible in coverage) visible / samples,
+                ],
+                'minimumWhiteContrast': 1.05 / (maxLuminance + 0.05),
+                'minimumBlackContrast': (minLuminance + 0.05) / 0.05,
+              };
+              debugPrint('$name rendered pixels: ${jsonEncode(metrics[name])}');
+              await tester.runAsync(
+                () => File('${output.path}/aurora-pixel-metrics.json')
+                    .writeAsString(
+                      const JsonEncoder.withIndent('  ').convert(metrics),
+                    ),
+              );
             }
           }
         }
       }
+      manifest['renderedImageCount'] = metrics.length;
+      manifest['passedHardGates'] = failures.isEmpty;
+      manifest['failedChecks'] = failures;
+      await tester.runAsync(
+        () => File('${output.path}/aurora-review-manifest.json').writeAsString(
+          const JsonEncoder.withIndent('  ').convert(manifest),
+        ),
+      );
+      expect(metrics, hasLength(98));
+      expect(failures, isEmpty, reason: failures.join('\n'));
     },
   );
 
@@ -286,6 +441,25 @@ double _verticalVariation(List<int> pixels, int width, int height) {
     }
   }
   return difference / samples;
+}
+
+double _p95AdjacentRgbStep(List<int> pixels, int width, int height) {
+  final steps = <double>[];
+  for (var y = 0; y < height - 1; y += 10) {
+    for (var x = 0; x < width - 1; x += 10) {
+      final offset = (y * width + x) * 4;
+      for (final neighbor in [offset + 4, offset + width * 4]) {
+        var difference = 0;
+        for (var channel = 0; channel < 3; channel++) {
+          difference +=
+              (pixels[offset + channel] - pixels[neighbor + channel]).abs();
+        }
+        steps.add(difference / 3);
+      }
+    }
+  }
+  steps.sort();
+  return steps[((steps.length - 1) * 0.95).round()];
 }
 
 double _varyingRows(List<int> pixels, int width, int height) {

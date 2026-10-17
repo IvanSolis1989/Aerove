@@ -141,8 +141,10 @@ void main() {
       await tester.tap(buttonOf(Mode.direct));
       await tester.pumpAndSettle();
       expect(container.read(patchClashConfigProvider).mode, Mode.direct);
-      expect(tester.widget<Text>(find.text(Mode.direct.label)).style!.color,
-          colorScheme.onSurface);
+      expect(
+        tester.widget<Text>(find.text(Mode.direct.label)).style!.color,
+        colorScheme.onSurface,
+      );
       expectClearModes();
       await tester.tap(buttonOf(Mode.rule));
       await tester.pumpAndSettle();

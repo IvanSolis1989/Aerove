@@ -142,12 +142,16 @@ void main() {
         );
         final toggle = switchOf(testCase);
         expect(find.byType(LiquidGlass), findsOneWidget);
-        expect(tester.widget<LiquidGlass>(find.byType(LiquidGlass)).style.tint,
-            Colors.transparent);
-        final containers = tester.widgetList<Container>(find.descendant(
-          of: find.byType(DashboardCard),
-          matching: find.byType(Container),
-        ));
+        expect(
+          tester.widget<LiquidGlass>(find.byType(LiquidGlass)).style.tint,
+          Colors.transparent,
+        );
+        final containers = tester.widgetList<Container>(
+          find.descendant(
+            of: find.byType(DashboardCard),
+            matching: find.byType(Container),
+          ),
+        );
         for (final box in containers) {
           final decoration = box.decoration;
           if (decoration is ShapeDecoration && decoration.color != null) {
