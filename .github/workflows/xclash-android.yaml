@@ -229,17 +229,50 @@ jobs:
           chmod +x "$RUNNER_TEMP/xclash-diagnostic/run_diagnostics.sh"
 
       - name: Run on Android API 37 emulator
-        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
-        with:
-          api-level: '37.0'
-          system-image-api-level: '37.0'
-          target: google_apis
-          arch: x86_64
-          profile: pixel_2
-          disk-size: 6G
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          disable-animations: true
-          script: bash "$RUNNER_TEMP/xclash-diagnostic/run_diagnostics.sh"
+        timeout-minutes: 18
+        shell: bash
+        env:
+          ANDROID_SERIAL: emulator-5554
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/xclash-diagnostic"
+          sdkmanager --install 'platforms;android-37.0' 'build-tools;37.0.0' emulator 'system-images;android-37.0;google_apis;x86_64'
+          printf 'no\n' | avdmanager create avd --force --name xclash-install --package 'system-images;android-37.0;google_apis;x86_64' --device pixel_2
+          printf '\ndisk.dataPartition.size=6G\n' >> "$HOME/.android/avd/xclash-install.avd/config.ini"
+          adb start-server
+          "$ANDROID_HOME/emulator/emulator" -avd xclash-install -port 5554 -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -partition-size 6144 -memory 4096 -cores 2 > "$root/logs/emulator-startup.txt" 2>&1 &
+          emulator_pid=$!
+          cleanup() {
+            if kill -0 "$emulator_pid" 2>/dev/null; then
+              timeout 10s adb logcat -d -v threadtime > "$root/logs/emulator-final-logcat.txt" 2>&1 || true
+              kill "$emulator_pid" 2>/dev/null || true
+              for _ in $(seq 1 10); do
+                kill -0 "$emulator_pid" 2>/dev/null || break
+                sleep 1
+              done
+              if kill -0 "$emulator_pid" 2>/dev/null; then kill -KILL "$emulator_pid" 2>/dev/null || true; fi
+            fi
+            wait "$emulator_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          ready=0
+          boot_deadline=$((SECONDS + 480))
+          while (( SECONDS < boot_deadline )); do
+            kill -0 "$emulator_pid" 2>/dev/null || { tail -80 "$root/logs/emulator-startup.txt"; exit 1; }
+            if [ "$(timeout 5s adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ] &&
+              timeout 5s adb shell service check package | grep -q found &&
+              timeout 5s adb shell service check activity | grep -q found &&
+              timeout 5s adb shell service check settings | grep -q found &&
+              timeout 5s adb shell cmd package path android | grep -q '^package:'; then
+              ready=1
+              break
+            fi
+            sleep 5
+          done
+          test "$ready" = 1 || { echo 'Android framework services did not become ready'; exit 1; }
+          adb shell df -h /data > "$root/logs/emulator-data-space.txt"
+          adb shell getprop ro.product.cpu.abilist > "$root/logs/emulator-abis.txt"
+          timeout 5m bash "$root/run_diagnostics.sh"
 
       - name: Collect emulator logs after failure
         if: always()
