@@ -1,0 +1,134 @@
+name: XClash Android
+
+on:
+  workflow_dispatch:
+    inputs:
+      prepare_sources:
+        description: Allow regenerated sources and formatting in the exported patch
+        type: boolean
+        default: false
+      build_apk:
+        description: Build the Android arm64 APK after verification
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xclash-android-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: '3.47.6'
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - name: Install dependencies
+        run: flutter pub get
+      - name: Generate and format sources
+        run: |
+          cp pubspec.yaml "$RUNNER_TEMP/xclash-pubspec.yaml"
+          sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
+          dart run intl_utils:generate
+          dart run build_runner build --delete-conflicting-outputs
+          dart format lib test
+          cp "$RUNNER_TEMP/xclash-pubspec.yaml" pubspec.yaml
+          git diff --binary -- lib test > "$RUNNER_TEMP/xclash-generated.patch"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xclash-generated
+          path: ${{ runner.temp }}/xclash-generated.patch
+      - name: Require committed generated sources
+        if: ${{ !inputs.prepare_sources }}
+        run: git diff --exit-code -- lib test
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos
+      - name: UI and configuration regressions
+        env:
+          XCLASH_SCREENSHOT_DIR: ${{ runner.temp }}/xclash-previews
+        run: |
+          sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
+          flutter test --reporter expanded \
+            test/models/config_test.dart test/common/preferences_test.dart \
+            test/views/aurora_settings_test.dart test/views/theme_test.dart \
+            test/widgets/aurora_wallpaper_test.dart test/widgets/aurora_app_test.dart \
+            test/widgets/navigation_dock_test.dart test/widgets/start_button_test.dart \
+            test/widgets/dashboard_layout_test.dart test/pages/home_test.dart \
+            test/l10n test/lint
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xclash-previews
+          path: ${{ runner.temp }}/xclash-previews
+          if-no-files-found: ignore
+
+  apk:
+    if: ${{ inputs.build_apk }}
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/download-artifact@v4
+        with:
+          name: xclash-generated
+          path: ${{ runner.temp }}/xclash-generated
+      - name: Apply verified generated sources
+        run: |
+          patch="$RUNNER_TEMP/xclash-generated/xclash-generated.patch"
+          if test -s "$patch"; then git apply "$patch"; fi
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+          cache-dependency-path: core/go.sum
+      - uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: r28c
+          link-to-sdk: true
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: plugins/rust_api/rust
+      - name: Build Android arm64
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          flutter pub get
+          flutter build apk --release --target-platform android-arm64
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk dist/XClash-android-arm64.apk
+          sha256sum dist/XClash-android-arm64.apk > dist/SHA256SUMS
+      - name: Android model and service regressions
+        working-directory: android
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          ./gradlew :common:testDebugUnitTest :service:testDebugUnitTest :app:testDebugUnitTest \
+            -Ptarget-platform=android-arm64 \
+            -x :app:compileFlutterBuildDebug -x :app:copyFlutterAssetsDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: XClash-android-arm64
+          path: dist/
