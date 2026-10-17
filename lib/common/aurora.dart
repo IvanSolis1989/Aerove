@@ -55,9 +55,8 @@ Color auroraTint(Color color, Brightness brightness) {
   final dark = brightness == Brightness.dark;
   var low = 0.0;
   var high = dark ? 0.78 : 0.58;
-  bool readable(Color tint) => dark
-      ? tint.computeLuminance() <= 0.16
-      : tint.computeLuminance() >= 0.74;
+  bool readable(Color tint) =>
+      dark ? tint.computeLuminance() <= 0.16 : tint.computeLuminance() >= 0.74;
   final tint = Color.lerp(base, color, high)!;
   if (readable(tint)) return tint;
   for (var i = 0; i < 12; i++) {

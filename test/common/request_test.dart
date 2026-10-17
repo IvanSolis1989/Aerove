@@ -140,11 +140,31 @@ void main() {
 
   group('checkForUpdate', () {
     for (final (description, installedVersion, tag, hasUpdate) in [
-      ('same version and build is current', '0.9.0', 'v0.9.0+2026101402', false),
+      (
+        'same version and build is current',
+        '0.9.0',
+        'v0.9.0+2026101402',
+        false,
+      ),
       ('a higher build is an update', '0.9.0', 'v0.9.0+2026101403', true),
-      ('a lower build is already superseded', '0.9.0', 'v0.9.0+2026101401', false),
-      ('same upstream version without a build is current', '0.9.0', 'v0.9.0', false),
-      ('higher upstream version without a build updates', '0.9.0', 'v0.9.1', true),
+      (
+        'a lower build is already superseded',
+        '0.9.0',
+        'v0.9.0+2026101401',
+        false,
+      ),
+      (
+        'same upstream version without a build is current',
+        '0.9.0',
+        'v0.9.0',
+        false,
+      ),
+      (
+        'higher upstream version without a build updates',
+        '0.9.0',
+        'v0.9.1',
+        true,
+      ),
       (
         'the installed preview and build is current',
         '0.9.1-preview.4-X',

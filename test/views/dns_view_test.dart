@@ -510,70 +510,71 @@ void main() {
       expect(overrides().dnsOverrideKeys, isEmpty);
     });
 
-    testWidgets('a policy picked from the sheet preserves the editable baseline', (
-      tester,
-    ) async {
-      await pumpView(tester, profile: true);
-      final appConfig = config();
-      final original = overrides();
-      final baseline = xclashDefaultDns.nameserverPolicy;
-      expect(baseline, hasLength(7));
+    testWidgets(
+      'a policy picked from the sheet preserves the editable baseline',
+      (tester) async {
+        await pumpView(tester, profile: true);
+        final appConfig = config();
+        final original = overrides();
+        final baseline = xclashDefaultDns.nameserverPolicy;
+        expect(baseline, hasLength(7));
 
-      await openAddSheet(tester, profile: true);
-      await tester.drag(
-        inSheet(currentAppLocalizations.addSettingEntry),
-        const Offset(0, -400),
-      );
-      await tester.pumpAndSettle();
-      await tester.dragUntilVisible(
-        find.text('Nameserver Policy'),
-        find.byType(SelectionSheet<DnsOverrideKey>),
-        const Offset(0, -200),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Nameserver Policy'));
-      await tester.pumpAndSettle();
+        await openAddSheet(tester, profile: true);
+        await tester.drag(
+          inSheet(currentAppLocalizations.addSettingEntry),
+          const Offset(0, -400),
+        );
+        await tester.pumpAndSettle();
+        await tester.dragUntilVisible(
+          find.text('Nameserver Policy'),
+          find.byType(SelectionSheet<DnsOverrideKey>),
+          const Offset(0, -200),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Nameserver Policy'));
+        await tester.pumpAndSettle();
 
-      expect(overrides().dnsOverrideKeys, {DnsOverrideKey.nameserverPolicy});
-      expect(overrides().dns.nameserverPolicy, baseline);
-      final selected = original.copyWith(
-        dnsOverrideKeys: {DnsOverrideKey.nameserverPolicy},
-      );
-      expect(overrides(), selected);
-      expect(config(), appConfig);
+        expect(overrides().dnsOverrideKeys, {DnsOverrideKey.nameserverPolicy});
+        expect(overrides().dns.nameserverPolicy, baseline);
+        final selected = original.copyWith(
+          dnsOverrideKeys: {DnsOverrideKey.nameserverPolicy},
+        );
+        expect(overrides(), selected);
+        expect(config(), appConfig);
 
-      await tester.binding.handlePopRoute();
-      await tester.pumpAndSettle();
-      expect(find.byType(SelectionSheet<DnsOverrideKey>), findsNothing);
-      await tester.tap(find.text('Nameserver Policy'));
-      await tester.pumpAndSettle();
-      expect(
-        tester.widget<MapEditView>(find.byType(MapEditView)).entries,
-        baseline,
-      );
-      await tester.tap(find.text('+.jsdelivr.net'));
-      await tester.pumpAndSettle();
-      expect(find.byType(TextFormField), findsNWidgets(2));
-      const resolver = 'https://example.com/dns-query';
-      await tester.enterText(find.byType(TextFormField).last, resolver);
-      await tester.tap(find.text(currentAppLocalizations.confirm));
-      await tester.pumpAndSettle();
-      expect(overrides(), selected);
-      await tester.binding.handlePopRoute();
-      await tester.pumpAndSettle();
-      final edited = {...baseline, '+.jsdelivr.net': resolver};
-      expect(overrides(), selected.copyWith.dns(nameserverPolicy: edited));
-      expect(config(), appConfig);
-      await tester.tap(find.text('Nameserver Policy'));
-      await tester.pumpAndSettle();
-      expect(
-        tester.widget<MapEditView>(find.byType(MapEditView)).entries,
-        edited,
-      );
-      await tester.binding.handlePopRoute();
-      await tester.pumpAndSettle();
-      expect(overrides(), selected.copyWith.dns(nameserverPolicy: edited));
-      expect(config(), appConfig);
-    });
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+        expect(find.byType(SelectionSheet<DnsOverrideKey>), findsNothing);
+        await tester.tap(find.text('Nameserver Policy'));
+        await tester.pumpAndSettle();
+        expect(
+          tester.widget<MapEditView>(find.byType(MapEditView)).entries,
+          baseline,
+        );
+        await tester.tap(find.text('+.jsdelivr.net'));
+        await tester.pumpAndSettle();
+        expect(find.byType(TextFormField), findsNWidgets(2));
+        const resolver = 'https://example.com/dns-query';
+        await tester.enterText(find.byType(TextFormField).last, resolver);
+        await tester.tap(find.text(currentAppLocalizations.confirm));
+        await tester.pumpAndSettle();
+        expect(overrides(), selected);
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+        final edited = {...baseline, '+.jsdelivr.net': resolver};
+        expect(overrides(), selected.copyWith.dns(nameserverPolicy: edited));
+        expect(config(), appConfig);
+        await tester.tap(find.text('Nameserver Policy'));
+        await tester.pumpAndSettle();
+        expect(
+          tester.widget<MapEditView>(find.byType(MapEditView)).entries,
+          edited,
+        );
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+        expect(overrides(), selected.copyWith.dns(nameserverPolicy: edited));
+        expect(config(), appConfig);
+      },
+    );
   });
 }

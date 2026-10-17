@@ -133,9 +133,9 @@ class _ThemeColorItem extends ConsumerWidget {
               pictogram: const GlyphIcon(AppGlyphs.blur),
             ),
           ],
-          onChanged: (enabled) => ref.read(themeSettingProvider.notifier).update(
-            (state) => state.copyWith(auroraEnabled: enabled),
-          ),
+          onChanged: (enabled) => ref
+              .read(themeSettingProvider.notifier)
+              .update((state) => state.copyWith(auroraEnabled: enabled)),
         ),
         if (gradient)
           const AuroraSettings()
@@ -158,8 +158,7 @@ class _PrimaryColorItem extends ConsumerWidget {
       destructive: true,
       confirmText: context.appLocalizations.reset,
     );
-    if (res != true || !context.mounted ||
-        _colorLocked(context, ref)) {
+    if (res != true || !context.mounted || _colorLocked(context, ref)) {
       return;
     }
     ref.read(themeSettingProvider.notifier).update((state) {
@@ -185,8 +184,7 @@ class _PrimaryColorItem extends ConsumerWidget {
       destructive: true,
       confirmText: appLocalizations.delete,
     );
-    if (res != true || !context.mounted ||
-        _colorLocked(context, ref)) {
+    if (res != true || !context.mounted || _colorLocked(context, ref)) {
       return;
     }
     ref.read(themeSettingProvider.notifier).update((state) {
@@ -274,10 +272,14 @@ class _PrimaryColorItem extends ConsumerWidget {
       Theme.of(context).platform == TargetPlatform.android &&
       ref.read(themeSettingProvider).auroraEnabled;
 
-  void _update(BuildContext context, WidgetRef ref, ThemeProps Function(ThemeProps state) update) {
-    ref.read(themeSettingProvider.notifier).update(
-      (state) => _colorLocked(context, ref) ? state : update(state),
-    );
+  void _update(
+    BuildContext context,
+    WidgetRef ref,
+    ThemeProps Function(ThemeProps state) update,
+  ) {
+    ref
+        .read(themeSettingProvider.notifier)
+        .update((state) => _colorLocked(context, ref) ? state : update(state));
   }
 
   @override
@@ -302,16 +304,17 @@ class _PrimaryColorItem extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (showHeader) InfoHeader(
-          info: Info(
-            label: appLocalizations.themeColor,
-            glyph: AppGlyphs.palette,
+        if (showHeader)
+          InfoHeader(
+            info: Info(
+              label: appLocalizations.themeColor,
+              glyph: AppGlyphs.palette,
+            ),
+            actions: [
+              if (!themeColors.isDefault)
+                _ResetButton(onPressed: () => _handleReset(context, ref)),
+            ],
           ),
-          actions: [
-            if (!themeColors.isDefault)
-              _ResetButton(onPressed: () => _handleReset(context, ref)),
-          ],
-        ),
         if (!showHeader && !themeColors.isDefault)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -795,9 +798,9 @@ class _LiquidGlassItem extends ConsumerWidget {
     final mode = ref.watch(
       themeSettingProvider.select((state) => state.liquidGlass),
     );
-    final locked = Theme.of(context).platform == TargetPlatform.android && ref.watch(
-      themeSettingProvider.select((state) => state.auroraEnabled),
-    );
+    final locked =
+        Theme.of(context).platform == TargetPlatform.android &&
+        ref.watch(themeSettingProvider.select((state) => state.auroraEnabled));
     final colorScheme = context.colorScheme;
     // Floating either way, as a docked bar stays a fill, over the list page,
     // whose rows run on under the bar where glass shows them.

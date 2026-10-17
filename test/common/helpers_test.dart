@@ -136,21 +136,33 @@ void main() {
 
     test('orders branded prerelease identifiers numerically', () {
       expect(compareVersions('0.9.1-pre.4-X', '0.9.1-pre.10-X'), lessThan(0));
-      expect(compareVersions('0.9.1-pre.10-X', '0.9.1-pre.4-X'), greaterThan(0));
+      expect(
+        compareVersions('0.9.1-pre.10-X', '0.9.1-pre.4-X'),
+        greaterThan(0),
+      );
       expect(compareVersions('0.9.1-pre.4-X', '0.9.1-pre.4'), 0);
     });
 
     test('an installed branded release with the same build is current', () {
       expect(compareVersions('v0.9.1-pre.4-X+42', '0.9.1-pre.4-X+42'), 0);
-      expect(compareVersions('0.9.1-pre.4-X+43', '0.9.1-pre.4-X+42'), greaterThan(0));
-      expect(compareVersions('0.9.1-pre.4-X+41', '0.9.1-pre.4-X+42'), lessThan(0));
+      expect(
+        compareVersions('0.9.1-pre.4-X+43', '0.9.1-pre.4-X+42'),
+        greaterThan(0),
+      );
+      expect(
+        compareVersions('0.9.1-pre.4-X+41', '0.9.1-pre.4-X+42'),
+        lessThan(0),
+      );
       expect(compareVersions('0.9.1-pre.4-X', '0.9.1-pre.4-X+0'), 0);
     });
 
     test('a stable version outranks its prerelease regardless of build', () {
       expect(compareVersions('0.9.1-X+1', '0.9.1-pre.10-X+99'), greaterThan(0));
       expect(compareVersions('0.9.1-pre.10-X+99', '0.9.1-X+1'), lessThan(0));
-      expect(compareVersions('0.9.1-pre.4-X+99', '0.9.1-pre.10-X+1'), lessThan(0));
+      expect(
+        compareVersions('0.9.1-pre.4-X+99', '0.9.1-pre.10-X+1'),
+        lessThan(0),
+      );
     });
 
     test('follows prerelease numeric, string and identifier-length order', () {
@@ -165,7 +177,10 @@ void main() {
         '1.0.0-X',
       ];
       for (var index = 1; index < versions.length; index++) {
-        expect(compareVersions(versions[index - 1], versions[index]), lessThan(0));
+        expect(
+          compareVersions(versions[index - 1], versions[index]),
+          lessThan(0),
+        );
       }
       expect(compareVersions('1.0.0-1-X', '1.0.0--1-X'), lessThan(0));
     });

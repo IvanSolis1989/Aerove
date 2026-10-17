@@ -12,43 +12,59 @@ void main() {
   testWidgets('wallpaper enables glass and restores the saved preference', (
     tester,
   ) async {
-    final container = ProviderContainer(overrides: [
-      themeSettingProvider.overrideWithBuild(
-        (_, _) => const ThemeProps(liquidGlass: LiquidGlassMode.none),
-      ),
-    ]);
+    final container = ProviderContainer(
+      overrides: [
+        themeSettingProvider.overrideWithBuild(
+          (_, _) => const ThemeProps(liquidGlass: LiquidGlassMode.none),
+        ),
+      ],
+    );
     addTearDown(container.dispose);
     bool? enabled;
-    await tester.pumpWidget(UncontrolledProviderScope(
-      container: container,
-      child: MaterialApp(
-        theme: ThemeData(platform: TargetPlatform.android),
-        builder: (context, child) => AuroraAppSurface(child: child!),
-        home: ThemeManager(child: Builder(builder: (context) {
-          enabled = LiquidGlassScope.of(context);
-          return const SizedBox.shrink();
-        })),
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+          theme: ThemeData(platform: TargetPlatform.android),
+          builder: (context, child) => AuroraAppSurface(child: child!),
+          home: ThemeManager(
+            child: Builder(
+              builder: (context) {
+                enabled = LiquidGlassScope.of(context);
+                return const SizedBox.shrink();
+              },
+            ),
+          ),
+        ),
       ),
-    ));
+    );
     await tester.pumpAndSettle();
     expect(enabled, isTrue);
-    expect(container.read(themeSettingProvider).liquidGlass, LiquidGlassMode.none);
-    container.read(themeSettingProvider.notifier).update(
-      (state) => state.copyWith(auroraEnabled: false),
+    expect(
+      container.read(themeSettingProvider).liquidGlass,
+      LiquidGlassMode.none,
     );
+    container
+        .read(themeSettingProvider.notifier)
+        .update((state) => state.copyWith(auroraEnabled: false));
     await tester.pumpAndSettle();
     expect(enabled, isFalse);
-    container.read(themeSettingProvider.notifier).update(
-      (state) => state.copyWith(liquidGlass: LiquidGlassMode.standard),
-    );
+    container
+        .read(themeSettingProvider.notifier)
+        .update(
+          (state) => state.copyWith(liquidGlass: LiquidGlassMode.standard),
+        );
     await tester.pumpAndSettle();
     expect(enabled, isTrue);
-    container.read(themeSettingProvider.notifier).update(
-      (state) => state.copyWith(auroraEnabled: false),
-    );
+    container
+        .read(themeSettingProvider.notifier)
+        .update((state) => state.copyWith(auroraEnabled: false));
     await tester.pumpAndSettle();
     expect(enabled, isTrue);
-    expect(container.read(themeSettingProvider).liquidGlass, LiquidGlassMode.standard);
+    expect(
+      container.read(themeSettingProvider).liquidGlass,
+      LiquidGlassMode.standard,
+    );
   });
 
   testWidgets('following the system picks up a font scale changed while the '

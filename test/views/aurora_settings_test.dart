@@ -49,23 +49,25 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('palette contains no duplicate mode toggle and keeps its seed', (tester) async {
+  testWidgets('palette contains no duplicate mode toggle and keeps its seed', (
+    tester,
+  ) async {
     await pumpSettings(tester);
     final original = readTheme();
     expect(find.byType(SeededAuroraWallpaper), findsOneWidget);
 
     expect(find.text('Random gradient wallpaper'), findsNothing);
     expect(find.byType(Switch), findsNothing);
-    container.read(themeSettingProvider.notifier).update(
-      (state) => state.copyWith(auroraEnabled: false),
-    );
+    container
+        .read(themeSettingProvider.notifier)
+        .update((state) => state.copyWith(auroraEnabled: false));
     await tester.pumpAndSettle();
     expect(readTheme().auroraEnabled, isFalse);
     expect(find.byType(SeededAuroraWallpaper), findsNothing);
 
-    container.read(themeSettingProvider.notifier).update(
-      (state) => state.copyWith(auroraEnabled: true),
-    );
+    container
+        .read(themeSettingProvider.notifier)
+        .update((state) => state.copyWith(auroraEnabled: true));
     await tester.pumpAndSettle();
     expect(readTheme(), original);
   });
@@ -78,9 +80,9 @@ void main() {
       final seed = readTheme().auroraSeed;
       for (var count = 1; count <= 3; count++) {
         final palette = colors.take(count).toList();
-        container.read(themeSettingProvider.notifier).update(
-          (state) => state.copyWith(auroraColors: palette),
-        );
+        container
+            .read(themeSettingProvider.notifier)
+            .update((state) => state.copyWith(auroraColors: palette));
         await pumpSettings(tester, brightness: brightness);
         final preview = tester.widget<SeededAuroraWallpaper>(
           find.byType(SeededAuroraWallpaper),
@@ -88,8 +90,10 @@ void main() {
         expect(preview.brightness, brightness);
         expect(preview.colors.map((color) => color.toARGB32()), palette);
         expect(preview.seed, seed);
-        expect(tester.getSize(find.byType(SeededAuroraWallpaper)).height,
-            lessThan(160));
+        expect(
+          tester.getSize(find.byType(SeededAuroraWallpaper)).height,
+          lessThan(160),
+        );
         expect(readTheme().auroraSeed, seed);
       }
     });

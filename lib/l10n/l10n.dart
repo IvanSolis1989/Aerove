@@ -715,6 +715,16 @@ class AppLocalizations {
     return Intl.message('Theme mode', name: 'themeMode', desc: '', args: []);
   }
 
+  /// `Solid theme color`
+  String get solidThemeColor {
+    return Intl.message(
+      'Solid theme color',
+      name: 'solidThemeColor',
+      desc: '',
+      args: [],
+    );
+  }
+
   /// `Theme color`
   String get themeColor {
     return Intl.message('Theme color', name: 'themeColor', desc: '', args: []);
@@ -7832,6 +7842,56 @@ class AppLocalizations {
     return Intl.message(
       'All referenced proxy providers',
       name: 'allReferencedProxyProviders',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Random gradient wallpaper`
+  String get auroraWallpaper {
+    return Intl.message(
+      'Random gradient wallpaper',
+      name: 'auroraWallpaper',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Choose 1–3 colors for a soft aurora. The pattern stays until you change it.`
+  String get auroraWallpaperDescription {
+    return Intl.message(
+      'Choose 1–3 colors for a soft aurora. The pattern stays until you change it.',
+      name: 'auroraWallpaperDescription',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Wallpaper colors`
+  String get auroraColors {
+    return Intl.message(
+      'Wallpaper colors',
+      name: 'auroraColors',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Edit wallpaper color {index}`
+  String auroraEditColor(Object index) {
+    return Intl.message(
+      'Edit wallpaper color $index',
+      name: 'auroraEditColor',
+      desc: '',
+      args: [index],
+    );
+  }
+
+  /// `New wallpaper`
+  String get auroraRegenerate {
+    return Intl.message(
+      'New wallpaper',
+      name: 'auroraRegenerate',
       desc: '',
       args: [],
     );

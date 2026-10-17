@@ -71,44 +71,65 @@ void main() {
     );
   });
 
-  testWidgets('wallpaper removes the saved accent from light and dark controls', (
+  testWidgets(
+    'wallpaper removes the saved accent from light and dark controls',
+    (tester) async {
+      const pink = Color(0xFFFF2D55);
+      for (final brightness in Brightness.values) {
+        await pumpSurface(
+          tester,
+          brightness: brightness,
+          props: const ThemeProps(
+            primaryColor: 0xFFFF2D55,
+            liquidGlass: LiquidGlassMode.standard,
+          ),
+        );
+        final context = tester.element(find.byType(CommonCard));
+        final theme = Theme.of(context);
+        expect(theme.colorScheme.primary, isNot(pink));
+        expect(
+          theme.colorScheme.primary.r,
+          closeTo(theme.colorScheme.primary.g, 0.025),
+        );
+        expect(theme.colorScheme.onSurface.a, 1);
+        final button = tester.widget<FilledButton>(
+          find.descendant(
+            of: find.byType(CommonCard),
+            matching: find.byType(FilledButton),
+          ),
+        );
+        expect(button.style!.backgroundColor!.resolve({}), Colors.transparent);
+        expect(theme.filledButtonTheme.style!.backgroundBuilder, isNotNull);
+        expect(find.byType(LiquidGlassHost), findsOneWidget);
+        expect(
+          find.ancestor(
+            of: find.byType(SeededAuroraWallpaper),
+            matching: find.byType(LiquidGlassHost),
+          ),
+          findsOneWidget,
+        );
+      }
+    },
+  );
+
+  testWidgets('wallpaper enables effective glass without rewriting the mode', (
     tester,
   ) async {
-    const pink = Color(0xFFFF2D55);
-    for (final brightness in Brightness.values) {
-      await pumpSurface(
-        tester,
-        brightness: brightness,
-        props: const ThemeProps(
-          primaryColor: 0xFFFF2D55,
-          liquidGlass: LiquidGlassMode.standard,
-        ),
-      );
-      final context = tester.element(find.byType(CommonCard));
-      final theme = Theme.of(context);
-      expect(theme.colorScheme.primary, isNot(pink));
-      expect(theme.colorScheme.primary.r, closeTo(theme.colorScheme.primary.g, 0.025));
-      expect(theme.colorScheme.onSurface.a, 1);
-      final button = tester.widget<FilledButton>(find.descendant(
-        of: find.byType(CommonCard), matching: find.byType(FilledButton),
-      ));
-      expect(button.style!.backgroundColor!.resolve({}), Colors.transparent);
-      expect(theme.filledButtonTheme.style!.backgroundBuilder, isNotNull);
-      expect(find.byType(LiquidGlassHost), findsOneWidget);
-      expect(find.ancestor(
-        of: find.byType(SeededAuroraWallpaper),
-        matching: find.byType(LiquidGlassHost),
-      ), findsOneWidget);
-    }
-  });
-
-  testWidgets('wallpaper enables effective glass without rewriting the mode', (tester) async {
-    await pumpSurface(tester, props: const ThemeProps(liquidGlass: LiquidGlassMode.none));
+    await pumpSurface(
+      tester,
+      props: const ThemeProps(liquidGlass: LiquidGlassMode.none),
+    );
     final context = tester.element(find.byType(CommonCard));
     expect(AuroraAppearance.enabledOf(context), isTrue);
     expect(LiquidGlassScope.of(context), isTrue);
-    expect(tester.widget<LiquidGlassHost>(find.byType(LiquidGlassHost)).enabled, isTrue);
-    expect(Theme.of(context).filledButtonTheme.style!.backgroundBuilder, isNotNull);
+    expect(
+      tester.widget<LiquidGlassHost>(find.byType(LiquidGlassHost)).enabled,
+      isTrue,
+    );
+    expect(
+      Theme.of(context).filledButtonTheme.style!.backgroundBuilder,
+      isNotNull,
+    );
   });
 
   testWidgets('system brightness reaches the app and saved wallpaper', (
@@ -141,7 +162,10 @@ void main() {
     );
     await tester.pumpAndSettle();
     void expectBrightness(Brightness brightness) {
-      expect(Theme.of(tester.element(find.byKey(probeKey))).brightness, brightness);
+      expect(
+        Theme.of(tester.element(find.byKey(probeKey))).brightness,
+        brightness,
+      );
       final wallpaper = tester.widget<SeededAuroraWallpaper>(
         find.byType(SeededAuroraWallpaper),
       );
@@ -158,9 +182,9 @@ void main() {
       (ThemeMode.dark, Brightness.light, Brightness.dark),
       (ThemeMode.system, Brightness.light, Brightness.light),
     ]) {
-      container.read(themeSettingProvider.notifier).update(
-        (state) => state.copyWith(themeMode: mode),
-      );
+      container
+          .read(themeSettingProvider.notifier)
+          .update((state) => state.copyWith(themeMode: mode));
       tester.platformDispatcher.platformBrightnessTestValue = systemBrightness;
       await tester.pumpAndSettle();
       expectBrightness(expected);
@@ -244,7 +268,8 @@ void main() {
       );
       await tester.pumpAndSettle();
       final scaffold = find.byType(Scaffold);
-      final background = tester.widget<Scaffold>(scaffold).backgroundColor ??
+      final background =
+          tester.widget<Scaffold>(scaffold).backgroundColor ??
           Theme.of(tester.element(scaffold)).scaffoldBackgroundColor;
       if (fill != null) {
         expect(background, fill);
@@ -291,114 +316,128 @@ void main() {
   });
 
   for (final brightness in Brightness.values) {
-  for (final gradient in [true, false]) {
-  testWidgets('Android color modes screenshot ($brightness, gradient=$gradient)', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(430, 932);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
-    if (output != null) {
-      await tester.runAsync(() async {
-        final bytes = await File(
-          '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
-        ).readAsBytes();
-        final loader = FontLoader('XClashPreview');
-        loader.addFont(Future.value(ByteData.sublistView(bytes)));
-        await loader.load();
-      });
-    }
-    final container = ProviderContainer(
-      overrides: [
-        profilesProvider.overrideWith(TestProfiles.new),
-        themeSettingProvider.overrideWithBuild(
-          (_, _) => ThemeProps(
-            themeMode: brightness == Brightness.light ? ThemeMode.light : ThemeMode.dark,
-            auroraEnabled: gradient,
-            primaryColor: 0xFFFF2D55,
-          ),
-        ),
-      ],
-    );
-    addTearDown(container.dispose);
-    globalState.container = container;
-    container.read(viewSizeProvider.notifier).value = const Size(430, 932);
-    final captureKey = GlobalKey();
-    await tester.pumpWidget(
-      UncontrolledProviderScope(
-        container: container,
-        child: TestApp(
-          locale: const Locale('zh', 'CN'),
-          theme: ThemeData(
-            useMaterial3: true,
-            platform: TargetPlatform.android,
-            colorScheme: container.read(
-              genColorSchemeProvider(brightness),
-            ),
-            fontFamily: output == null ? null : 'XClashPreview',
-          ).withAppShapes,
-          homeBuilder: (child) => RepaintBoundary(
-            key: captureKey,
-            child: AuroraAppSurface(child: child),
-          ),
-          child: const ThemeView(),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    final pageScaffold = find.descendant(
-      of: find.byType(ThemeView),
-      matching: find.byType(Scaffold),
-    );
-    final pageContext = tester.element(pageScaffold);
-    expect(AuroraAppearance.enabledOf(pageContext), gradient);
-    if (gradient) {
-      expect(Theme.of(pageContext).colorScheme, auroraColorScheme(brightness));
-    }
-    expect(container.read(themeSettingProvider).primaryColor, 0xFFFF2D55);
-    if (gradient) expect(
-      tester.widget<Scaffold>(pageScaffold).backgroundColor ??
-          Theme.of(pageContext).scaffoldBackgroundColor,
-      Colors.transparent,
-    );
-    final wallpaperOption = find.text('随机渐变底图');
-    await tester.scrollUntilVisible(
-      wallpaperOption,
-      250,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.pumpAndSettle();
-    expect(wallpaperOption, findsOneWidget);
-    await Scrollable.ensureVisible(
-      tester.element(find.text('普通主题色')),
-      alignment: 0.1,
-    );
-    await tester.pumpAndSettle();
-    if (output != null) {
-      final boundary =
-          captureKey.currentContext!.findRenderObject()!
-              as RenderRepaintBoundary;
-      await tester.runAsync(() async {
-        final image = await boundary.toImage(pixelRatio: 2);
-        try {
-          final data = (await image.toByteData(format: ui.ImageByteFormat.png))!;
-          final directory = Directory(output)..createSync(recursive: true);
-          File(
-            '${directory.path}/xclash-android-theme-${gradient ? 'gradient' : 'solid'}-${brightness.name}.png',
-          ).writeAsBytesSync(data.buffer.asUint8List());
-          if (gradient && brightness == Brightness.light) {
-            File('${directory.path}/xclash-android-theme.png')
-                .writeAsBytesSync(data.buffer.asUint8List());
+    for (final gradient in [true, false]) {
+      testWidgets(
+        'Android color modes screenshot ($brightness, gradient=$gradient)',
+        (tester) async {
+          tester.view.physicalSize = const Size(430, 932);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+          if (output != null) {
+            await tester.runAsync(() async {
+              final bytes = await File(
+                '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+              ).readAsBytes();
+              final loader = FontLoader('XClashPreview');
+              loader.addFont(Future.value(ByteData.sublistView(bytes)));
+              await loader.load();
+            });
           }
-        } finally {
-          image.dispose();
-        }
-      });
+          final container = ProviderContainer(
+            overrides: [
+              profilesProvider.overrideWith(TestProfiles.new),
+              themeSettingProvider.overrideWithBuild(
+                (_, _) => ThemeProps(
+                  themeMode: brightness == Brightness.light
+                      ? ThemeMode.light
+                      : ThemeMode.dark,
+                  auroraEnabled: gradient,
+                  primaryColor: 0xFFFF2D55,
+                ),
+              ),
+            ],
+          );
+          addTearDown(container.dispose);
+          globalState.container = container;
+          container.read(viewSizeProvider.notifier).value = const Size(
+            430,
+            932,
+          );
+          final captureKey = GlobalKey();
+          await tester.pumpWidget(
+            UncontrolledProviderScope(
+              container: container,
+              child: TestApp(
+                locale: const Locale('zh', 'CN'),
+                theme: ThemeData(
+                  useMaterial3: true,
+                  platform: TargetPlatform.android,
+                  colorScheme: container.read(
+                    genColorSchemeProvider(brightness),
+                  ),
+                  fontFamily: output == null ? null : 'XClashPreview',
+                ).withAppShapes,
+                homeBuilder: (child) => RepaintBoundary(
+                  key: captureKey,
+                  child: AuroraAppSurface(child: child),
+                ),
+                child: const ThemeView(),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          final pageScaffold = find.descendant(
+            of: find.byType(ThemeView),
+            matching: find.byType(Scaffold),
+          );
+          final pageContext = tester.element(pageScaffold);
+          expect(AuroraAppearance.enabledOf(pageContext), gradient);
+          if (gradient) {
+            expect(
+              Theme.of(pageContext).colorScheme,
+              auroraColorScheme(brightness),
+            );
+          }
+          expect(container.read(themeSettingProvider).primaryColor, 0xFFFF2D55);
+          if (gradient)
+            expect(
+              tester.widget<Scaffold>(pageScaffold).backgroundColor ??
+                  Theme.of(pageContext).scaffoldBackgroundColor,
+              Colors.transparent,
+            );
+          final wallpaperOption = find.text('随机渐变底图');
+          await tester.scrollUntilVisible(
+            wallpaperOption,
+            250,
+            scrollable: find.byType(Scrollable).first,
+          );
+          await tester.pumpAndSettle();
+          expect(wallpaperOption, findsOneWidget);
+          await Scrollable.ensureVisible(
+            tester.element(find.text('普通主题色')),
+            alignment: 0.1,
+          );
+          await tester.pumpAndSettle();
+          if (output != null) {
+            final boundary =
+                captureKey.currentContext!.findRenderObject()!
+                    as RenderRepaintBoundary;
+            await tester.runAsync(() async {
+              final image = await boundary.toImage(pixelRatio: 2);
+              try {
+                final data = (await image.toByteData(
+                  format: ui.ImageByteFormat.png,
+                ))!;
+                final directory = Directory(output)
+                  ..createSync(recursive: true);
+                File(
+                  '${directory.path}/xclash-android-theme-${gradient ? 'gradient' : 'solid'}-${brightness.name}.png',
+                ).writeAsBytesSync(data.buffer.asUint8List());
+                if (gradient && brightness == Brightness.light) {
+                  File(
+                    '${directory.path}/xclash-android-theme.png',
+                  ).writeAsBytesSync(data.buffer.asUint8List());
+                }
+              } finally {
+                image.dispose();
+              }
+            });
+          }
+        },
+      );
     }
-  });
-  }
   }
 }
 

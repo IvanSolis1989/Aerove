@@ -55,9 +55,9 @@ void main() {
           theme: theme,
           homeBuilder: (child) => Builder(
             builder: (context) => MediaQuery(
-              data: MediaQuery.of(context).copyWith(
-                textScaler: TextScaler.linear(textScale),
-              ),
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: TextScaler.linear(textScale)),
               child: child,
             ),
           ),
@@ -123,9 +123,9 @@ void main() {
 
   group('primary color', () {
     setUp(() {
-      container.read(themeSettingProvider.notifier).update(
-        (state) => state.copyWith(auroraEnabled: false),
-      );
+      container
+          .read(themeSettingProvider.notifier)
+          .update((state) => state.copyWith(auroraEnabled: false));
     });
 
     Finder swatch(int color) => find.byWidgetPredicate(
@@ -172,16 +172,21 @@ void main() {
     testWidgets('color modes are exclusive and restore their saved settings', (
       tester,
     ) async {
-      container.read(themeSettingProvider.notifier).update(
-        (state) => state.copyWith(
-          primaryColor: 0xFFAF52DE,
-          colorStyle: ColorStyle.soft,
-          auroraColors: const [0xFF88BBCC, 0xFFAABBDD, 0xFFDDEEFF],
-          auroraSeed: 4242,
-        ),
-      );
+      container
+          .read(themeSettingProvider.notifier)
+          .update(
+            (state) => state.copyWith(
+              primaryColor: 0xFFAF52DE,
+              colorStyle: ColorStyle.soft,
+              auroraColors: const [0xFF88BBCC, 0xFFAABBDD, 0xFFDDEEFF],
+              auroraSeed: 4242,
+            ),
+          );
       final saved = readTheme();
-      await pumpThemeView(tester, theme: ThemeData(platform: TargetPlatform.android));
+      await pumpThemeView(
+        tester,
+        theme: ThemeData(platform: TargetPlatform.android),
+      );
       await tester.ensureVisible(find.text('Random gradient wallpaper'));
       await tester.tap(find.text('Random gradient wallpaper'));
       await tester.pumpAndSettle();
@@ -364,36 +369,46 @@ void main() {
 
   group('liquid glass', () {
     setUp(() {
-      container.read(themeSettingProvider.notifier).update(
-        (state) => state.copyWith(auroraEnabled: false),
-      );
+      container
+          .read(themeSettingProvider.notifier)
+          .update((state) => state.copyWith(auroraEnabled: false));
     });
 
-    testWidgets('gradient locks an effective tier and restores the saved choice', (
-      tester,
-    ) async {
-      await pumpThemeView(tester, theme: ThemeData(platform: TargetPlatform.android));
-      final group = find.byType(PreviewChoiceGroup<LiquidGlassMode>);
-      final seed = readTheme().auroraSeed;
-      await tester.ensureVisible(find.text('Random gradient wallpaper'));
-      await tester.tap(find.text('Random gradient wallpaper'));
-      await tester.pumpAndSettle();
-      await tester.ensureVisible(group);
-      expect(tester.widget<PreviewChoiceGroup<LiquidGlassMode>>(group).value, LiquidGlassMode.standard);
-      final ultra = find.descendant(of: group, matching: find.text('Ultra'));
-      await tester.tap(ultra, warnIfMissed: false);
-      await tester.pumpAndSettle();
-      expect(readTheme().liquidGlass, LiquidGlassMode.none);
-      expect(readTheme().auroraSeed, seed);
-      await tester.ensureVisible(find.text('Solid theme color'));
-      await tester.tap(find.text('Solid theme color'));
-      await tester.pumpAndSettle();
-      await tester.ensureVisible(group);
-      expect(tester.widget<PreviewChoiceGroup<LiquidGlassMode>>(group).value, LiquidGlassMode.none);
-      await tester.tap(ultra);
-      await tester.pumpAndSettle();
-      expect(readTheme().liquidGlass, LiquidGlassMode.ultra);
-    });
+    testWidgets(
+      'gradient locks an effective tier and restores the saved choice',
+      (tester) async {
+        await pumpThemeView(
+          tester,
+          theme: ThemeData(platform: TargetPlatform.android),
+        );
+        final group = find.byType(PreviewChoiceGroup<LiquidGlassMode>);
+        final seed = readTheme().auroraSeed;
+        await tester.ensureVisible(find.text('Random gradient wallpaper'));
+        await tester.tap(find.text('Random gradient wallpaper'));
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(group);
+        expect(
+          tester.widget<PreviewChoiceGroup<LiquidGlassMode>>(group).value,
+          LiquidGlassMode.standard,
+        );
+        final ultra = find.descendant(of: group, matching: find.text('Ultra'));
+        await tester.tap(ultra, warnIfMissed: false);
+        await tester.pumpAndSettle();
+        expect(readTheme().liquidGlass, LiquidGlassMode.none);
+        expect(readTheme().auroraSeed, seed);
+        await tester.ensureVisible(find.text('Solid theme color'));
+        await tester.tap(find.text('Solid theme color'));
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(group);
+        expect(
+          tester.widget<PreviewChoiceGroup<LiquidGlassMode>>(group).value,
+          LiquidGlassMode.none,
+        );
+        await tester.tap(ultra);
+        await tester.pumpAndSettle();
+        expect(readTheme().liquidGlass, LiquidGlassMode.ultra);
+      },
+    );
 
     testWidgets('is off until a tier is chosen, and switches back', (
       tester,

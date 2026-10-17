@@ -4,11 +4,14 @@ import 'color.dart';
 final _auroraSchemes = <Brightness, ColorScheme>{};
 
 ColorScheme auroraColorScheme(Brightness brightness) =>
-    _auroraSchemes.putIfAbsent(brightness, () => seededColorScheme(
-      seedColor: const Color(0xFF808080),
-      brightness: brightness,
-      style: ColorStyle.monochrome,
-    ));
+    _auroraSchemes.putIfAbsent(
+      brightness,
+      () => seededColorScheme(
+        seedColor: const Color(0xFF808080),
+        brightness: brightness,
+        style: ColorStyle.monochrome,
+      ),
+    );
 
 class AuroraAppearance extends InheritedWidget {
   const AuroraAppearance({

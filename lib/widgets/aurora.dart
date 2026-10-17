@@ -13,8 +13,12 @@ import 'package:material_ui/material_ui.dart';
 
 export 'package:fl_clash/ui/aurora.dart';
 
-LiquidGlassMode effectiveAuroraGlassMode(LiquidGlassMode stored, bool gradient) =>
-    gradient && stored == LiquidGlassMode.none ? LiquidGlassMode.standard : stored;
+LiquidGlassMode effectiveAuroraGlassMode(
+  LiquidGlassMode stored,
+  bool gradient,
+) => gradient && stored == LiquidGlassMode.none
+    ? LiquidGlassMode.standard
+    : stored;
 
 class AuroraAppSurface extends ConsumerWidget {
   const AuroraAppSurface({super.key, required this.child});
@@ -41,26 +45,32 @@ class AuroraAppSurface extends ConsumerWidget {
         !MediaQuery.highContrastOf(context) &&
         !(settings.pureBlack && theme.brightness == Brightness.dark);
     final glassColors = auroraColorScheme(theme.brightness);
-    final glassTheme = theme.copyWith(
-      colorScheme: glassColors,
-      extensions: [
-        for (final extension in theme.extensions.values)
-          if (extension is ElevatedColorScheme)
-            ElevatedColorScheme(glassColors.elevated)
-          else
-            extension,
-      ],
-    ).withAppSurfaces;
+    final glassTheme = theme
+        .copyWith(
+          colorScheme: glassColors,
+          extensions: [
+            for (final extension in theme.extensions.values)
+              if (extension is ElevatedColorScheme)
+                ElevatedColorScheme(glassColors.elevated)
+              else
+                extension,
+          ],
+        )
+        .withAppSurfaces;
     final glassMode = effectiveAuroraGlassMode(settings.liquidGlass, enabled);
     final glassEnabled = glassMode != LiquidGlassMode.none;
-    final glassButtons = (glassEnabled
-        ? LiquidGlass.buttonStyle(
-            (_) => LiquidGlassStyle.regular(glassColors),
-          )
-        : const ButtonStyle()).merge(FilledButton.styleFrom(
-      backgroundColor: Colors.transparent,
-      foregroundColor: glassColors.onSurface,
-    ));
+    final glassButtons =
+        (glassEnabled
+                ? LiquidGlass.buttonStyle(
+                    (_) => LiquidGlassStyle.regular(glassColors),
+                  )
+                : const ButtonStyle())
+            .merge(
+              FilledButton.styleFrom(
+                backgroundColor: Colors.transparent,
+                foregroundColor: glassColors.onSurface,
+              ),
+            );
     return LiquidGlassScope(
       enabled: glassEnabled,
       quality: glassMode == LiquidGlassMode.ultra
@@ -69,52 +79,57 @@ class AuroraAppSurface extends ConsumerWidget {
       child: LiquidGlassHost(
         enabled: glassEnabled,
         child: AuroraAppearance(
-      enabled: enabled,
-      child: Theme(
-        data: enabled
-            ? glassTheme.copyWith(
-                scaffoldBackgroundColor: Colors.transparent,
-                filledButtonTheme: FilledButtonThemeData(
-                  style: glassButtons.merge(glassTheme.filledButtonTheme.style),
-                ),
-                floatingActionButtonTheme: theme.floatingActionButtonTheme.copyWith(
-                  backgroundColor: glassColors.surfaceContainer.withValues(alpha: 0.28),
-                  foregroundColor: glassColors.onSurface,
-                ),
-              )
-            : theme,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            Positioned.fill(
-              child: enabled
-                  ? IgnorePointer(
-                      child: AnimatedSwitcher(
-                        duration: MediaQuery.disableAnimationsOf(context)
-                            ? Duration.zero
-                            : const Duration(milliseconds: 350),
-                        child: SizedBox.expand(
-                          key: ValueKey((
-                            settings.seed,
-                            Object.hashAll(settings.colors),
-                            theme.brightness,
-                          )),
-                          child: SeededAuroraWallpaper(
-                            colors: [
-                              for (final color in settings.colors) Color(color),
-                            ],
-                            seed: settings.seed,
-                            brightness: theme.brightness,
-                          ),
-                        ),
+          enabled: enabled,
+          child: Theme(
+            data: enabled
+                ? glassTheme.copyWith(
+                    scaffoldBackgroundColor: Colors.transparent,
+                    filledButtonTheme: FilledButtonThemeData(
+                      style: glassButtons.merge(
+                        glassTheme.filledButtonTheme.style,
                       ),
-                    )
-                  : const SizedBox.shrink(),
+                    ),
+                    floatingActionButtonTheme: theme.floatingActionButtonTheme
+                        .copyWith(
+                          backgroundColor: glassColors.surfaceContainer
+                              .withValues(alpha: 0.28),
+                          foregroundColor: glassColors.onSurface,
+                        ),
+                  )
+                : theme,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Positioned.fill(
+                  child: enabled
+                      ? IgnorePointer(
+                          child: AnimatedSwitcher(
+                            duration: MediaQuery.disableAnimationsOf(context)
+                                ? Duration.zero
+                                : const Duration(milliseconds: 350),
+                            child: SizedBox.expand(
+                              key: ValueKey((
+                                settings.seed,
+                                Object.hashAll(settings.colors),
+                                theme.brightness,
+                              )),
+                              child: SeededAuroraWallpaper(
+                                colors: [
+                                  for (final color in settings.colors)
+                                    Color(color),
+                                ],
+                                seed: settings.seed,
+                                brightness: theme.brightness,
+                              ),
+                            ),
+                          ),
+                        )
+                      : const SizedBox.shrink(),
+                ),
+                child,
+              ],
             ),
-            child,
-          ],
-        ),
-      ),
+          ),
         ),
       ),
     );

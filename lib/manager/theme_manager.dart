@@ -141,14 +141,14 @@ class ThemeManager extends ConsumerWidget {
         child: _AppMediaQuery(
           textScaler: TextScaler.linear(textScaleFactor),
           child: LayoutBuilder(
-              builder: (_, constraints) {
-                ref
-                    .read(themeActionProvider.notifier)
-                    .updateViewSize(
-                      Size(constraints.maxWidth, constraints.maxHeight),
-                    );
-                return _buildSystemUi(child);
-              },
+            builder: (_, constraints) {
+              ref
+                  .read(themeActionProvider.notifier)
+                  .updateViewSize(
+                    Size(constraints.maxWidth, constraints.maxHeight),
+                  );
+              return _buildSystemUi(child);
+            },
           ),
         ),
       ),
