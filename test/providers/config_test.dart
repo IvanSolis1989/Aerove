@@ -2,6 +2,7 @@ import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/config.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:riverpod/riverpod.dart';
 
@@ -82,9 +83,10 @@ void main() {
   });
 
   group('ThemeSetting provider', () {
-    test('default value is dark mode', () {
+    test('default value follows the system', () {
       final value = container.read(themeSettingProvider);
       expect(value.primaryColor, null);
+      expect(value.themeMode, ThemeMode.system);
     });
 
     test('can update state', () {

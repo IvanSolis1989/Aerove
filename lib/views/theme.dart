@@ -23,11 +23,11 @@ class ThemeView extends StatelessWidget {
       body: CustomScrollView(
         slivers: [
           SliverToBoxAdapter(child: SizedBox(height: context.appBarInset)),
+          const _ThemeModeItem(),
+          const SliverToBoxAdapter(child: SizedBox(height: 16)),
           const SliverToBoxAdapter(child: ThemeLivePreview()),
           if (Theme.of(context).platform == TargetPlatform.android)
             const SliverToBoxAdapter(child: AuroraSettings()),
-          const SliverToBoxAdapter(child: SizedBox(height: 16)),
-          const _ThemeModeItem(),
           const SliverToBoxAdapter(child: SizedBox(height: 16)),
           const _PureBlackItem(),
           const SliverToBoxAdapter(child: SizedBox(height: 16)),

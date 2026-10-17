@@ -146,7 +146,7 @@ class _AuroraPreview extends StatelessWidget {
       label: context.appLocalizations.preview,
       image: true,
       child: AspectRatio(
-        aspectRatio: 2,
+        aspectRatio: 2.6,
         child: ClipRSuperellipse(
           borderRadius: AppRadius.lg,
           child: SeededAuroraWallpaper(

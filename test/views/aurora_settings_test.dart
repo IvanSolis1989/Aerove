@@ -24,7 +24,10 @@ void main() {
 
   ThemeProps readTheme() => container.read(themeSettingProvider);
 
-  Future<void> pumpSettings(WidgetTester tester) async {
+  Future<void> pumpSettings(
+    WidgetTester tester, {
+    Brightness brightness = Brightness.light,
+  }) async {
     tester.view.physicalSize = const Size(430, 900);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -32,8 +35,13 @@ void main() {
     await tester.pumpWidget(
       UncontrolledProviderScope(
         container: container,
-        child: const TestApp(
-          child: Scaffold(body: SingleChildScrollView(child: AuroraSettings())),
+        child: TestApp(
+          child: Theme(
+            data: ThemeData(brightness: brightness),
+            child: const Scaffold(
+              body: SingleChildScrollView(child: AuroraSettings()),
+            ),
+          ),
         ),
       ),
     );
@@ -54,6 +62,31 @@ void main() {
     await tester.pumpAndSettle();
     expect(readTheme(), original);
   });
+
+  for (final brightness in Brightness.values) {
+    testWidgets('preview uses the selected palette and mode ($brightness)', (
+      tester,
+    ) async {
+      const colors = [0xFF6BD5D9, 0xFFC6ADE4, 0xFFA9DAC6];
+      final seed = readTheme().auroraSeed;
+      for (var count = 1; count <= 3; count++) {
+        final palette = colors.take(count).toList();
+        container.read(themeSettingProvider.notifier).update(
+          (state) => state.copyWith(auroraColors: palette),
+        );
+        await pumpSettings(tester, brightness: brightness);
+        final preview = tester.widget<SeededAuroraWallpaper>(
+          find.byType(SeededAuroraWallpaper),
+        );
+        expect(preview.brightness, brightness);
+        expect(preview.colors.map((color) => color.toARGB32()), palette);
+        expect(preview.seed, seed);
+        expect(tester.getSize(find.byType(SeededAuroraWallpaper)).height,
+            lessThan(160));
+        expect(readTheme().auroraSeed, seed);
+      }
+    });
+  }
 
   testWidgets('only a requested new wallpaper changes its seed', (
     tester,

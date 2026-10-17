@@ -63,6 +63,62 @@ void main() {
     );
   });
 
+  testWidgets('system brightness reaches the app and saved wallpaper', (
+    tester,
+  ) async {
+    addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+    tester.platformDispatcher.platformBrightnessTestValue = Brightness.light;
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    const probeKey = ValueKey('theme-brightness');
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: Consumer(
+          builder: (context, ref, _) => MaterialApp(
+            themeMode: ref.watch(themeSettingProvider).themeMode,
+            theme: ThemeData(
+              platform: TargetPlatform.android,
+              brightness: Brightness.light,
+            ),
+            darkTheme: ThemeData(
+              platform: TargetPlatform.android,
+              brightness: Brightness.dark,
+            ),
+            builder: (context, child) => AuroraAppSurface(child: child!),
+            home: const Scaffold(body: SizedBox(key: probeKey)),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    void expectBrightness(Brightness brightness) {
+      expect(Theme.of(tester.element(find.byKey(probeKey))).brightness, brightness);
+      final wallpaper = tester.widget<SeededAuroraWallpaper>(
+        find.byType(SeededAuroraWallpaper),
+      );
+      expect(wallpaper.brightness, brightness);
+      expect(wallpaper.seed, 271828);
+    }
+
+    expectBrightness(Brightness.light);
+    tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
+    await tester.pumpAndSettle();
+    expectBrightness(Brightness.dark);
+    for (final (mode, systemBrightness, expected) in [
+      (ThemeMode.light, Brightness.dark, Brightness.light),
+      (ThemeMode.dark, Brightness.light, Brightness.dark),
+      (ThemeMode.system, Brightness.light, Brightness.light),
+    ]) {
+      container.read(themeSettingProvider.notifier).update(
+        (state) => state.copyWith(themeMode: mode),
+      );
+      tester.platformDispatcher.platformBrightnessTestValue = systemBrightness;
+      await tester.pumpAndSettle();
+      expectBrightness(expected);
+    }
+  });
+
   testWidgets(
     'disabled, high contrast, pure black and desktop keep opaque surfaces',
     (tester) async {

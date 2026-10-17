@@ -596,7 +596,7 @@ void main() {
       const props = ThemeProps();
       expect(props.primaryColor, null);
       expect(props.primaryColors, defaultPrimaryColors);
-      expect(props.themeMode, ThemeMode.dark);
+      expect(props.themeMode, ThemeMode.system);
       expect(props.pureBlack, false);
       expect(props.auroraEnabled, true);
       expect(props.auroraColors, [0xFF9AAFC5, 0xFFC4BDD3]);
@@ -606,7 +606,19 @@ void main() {
 
     test('safeFromJson returns default on null', () {
       final result = ThemeProps.safeFromJson(null);
-      expect(result.themeMode, ThemeMode.dark);
+      expect(result.themeMode, ThemeMode.system);
+    });
+
+    test('missing mode follows system and saved explicit modes are kept', () {
+      expect(ThemeProps.fromJson({}).themeMode, ThemeMode.system);
+      expect(
+        ThemeProps.fromJson({'themeMode': 'light'}).themeMode,
+        ThemeMode.light,
+      );
+      expect(
+        ThemeProps.fromJson({'themeMode': 'dark'}).themeMode,
+        ThemeMode.dark,
+      );
     });
 
     test('older configs receive stable wallpaper defaults', () {

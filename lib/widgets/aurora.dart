@@ -134,31 +134,38 @@ class _AuroraPainter extends CustomPainter {
     required this.colors,
     required this.seed,
     required this.brightness,
-  }) : clouds = generateAuroraClouds(seed);
+  }) : clouds = generateAuroraClouds(seed, colorCount: colors.length),
+       tints = [for (final color in colors) auroraTint(color, brightness)];
 
   final List<Color> colors;
   final int seed;
   final Brightness brightness;
   final List<AuroraCloud> clouds;
+  final List<Color> tints;
 
   @override
   void paint(Canvas canvas, Size size) {
     if (size.isEmpty) return;
-    final dark = brightness == Brightness.dark;
-    final base = dark ? const Color(0xFF111419) : const Color(0xFFF7F8FA);
+    final base = auroraBaseColor(brightness);
     final bounds = Offset.zero & size;
-    canvas.drawRect(bounds, Paint()..color = base);
+    canvas.drawRect(
+      bounds,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+          colors: [
+            for (final tint in tints) Color.lerp(base, tint, 0.65)!,
+            if (tints.length == 1) Color.lerp(base, tints.single, 0.65)!,
+          ],
+        ).createShader(bounds),
+    );
     canvas.save();
     canvas.clipRect(bounds);
     canvas.scale(size.width, size.height);
     for (var i = 0; i < clouds.length; i++) {
       final cloud = clouds[i];
-      final input = HSLColor.fromColor(colors[i % colors.length]);
-      final softened = input
-          .withSaturation(input.saturation.clamp(0.08, 0.28))
-          .withLightness(dark ? 0.52 : 0.76)
-          .toColor();
-      final tint = Color.lerp(base, softened, dark ? 0.25 : 0.3)!;
+      final tint = tints[i % tints.length];
       canvas.save();
       canvas.translate(cloud.x, cloud.y);
       canvas.rotate(cloud.angle);
@@ -169,8 +176,8 @@ class _AuroraPainter extends CustomPainter {
         Paint()
           ..shader = RadialGradient(
             colors: [
-              tint.withValues(alpha: cloud.strength),
-              tint.withValues(alpha: cloud.strength * 0.3),
+              tint.withValues(alpha: cloud.strength + 0.25),
+              tint.withValues(alpha: (cloud.strength + 0.25) * 0.5),
               tint.withValues(alpha: 0),
             ],
             stops: const [0, 0.5, 1],
@@ -179,15 +186,6 @@ class _AuroraPainter extends CustomPainter {
       canvas.restore();
     }
     canvas.restore();
-    canvas.drawRect(
-      bounds,
-      Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [base.withValues(alpha: 0.7), base.withValues(alpha: 0)],
-        ).createShader(bounds),
-    );
   }
 
   @override

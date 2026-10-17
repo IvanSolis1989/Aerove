@@ -34,8 +34,13 @@ void main() {
 
   tearDown(() => container.dispose());
 
-  Future<void> pumpThemeView(WidgetTester tester) async {
-    tester.view.physicalSize = const Size(1400, 2400);
+  Future<void> pumpThemeView(
+    WidgetTester tester, {
+    Size size = const Size(1400, 2400),
+    ThemeData? theme,
+    double textScale = 1,
+  }) async {
+    tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -43,7 +48,18 @@ void main() {
     await tester.pumpWidget(
       UncontrolledProviderScope(
         container: container,
-        child: const TestApp(child: ThemeView()),
+        child: TestApp(
+          theme: theme,
+          homeBuilder: (child) => Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(
+                textScaler: TextScaler.linear(textScale),
+              ),
+              child: child,
+            ),
+          ),
+          child: const ThemeView(),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -52,10 +68,37 @@ void main() {
   ThemeProps readTheme() => container.read(themeSettingProvider);
 
   group('theme mode', () {
-    testWidgets('defaults to the dark theme', (tester) async {
+    testWidgets('android exposes every mode before the wallpaper settings', (
+      tester,
+    ) async {
+      await pumpThemeView(
+        tester,
+        size: const Size(390, 844),
+        theme: ThemeData(platform: TargetPlatform.android),
+        textScale: 1.5,
+      );
+
+      for (final (label, mode) in [
+        ('Auto', ThemeMode.system),
+        ('Light', ThemeMode.light),
+        ('Dark', ThemeMode.dark),
+      ]) {
+        final choice = find.text(label).hitTestable();
+        expect(choice, findsOneWidget);
+        await tester.tap(choice);
+        await tester.pumpAndSettle();
+        expect(readTheme().themeMode, mode);
+      }
+      expect(
+        tester.getTopLeft(find.text('Auto')).dy,
+        lessThan(tester.getTopLeft(find.byType(ThemeLivePreview)).dy),
+      );
+    });
+
+    testWidgets('defaults to following the system', (tester) async {
       await pumpThemeView(tester);
 
-      expect(readTheme().themeMode, ThemeMode.dark);
+      expect(readTheme().themeMode, ThemeMode.system);
     });
 
     testWidgets('switches to light and back to dark', (tester) async {
