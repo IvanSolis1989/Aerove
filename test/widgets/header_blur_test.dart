@@ -313,8 +313,11 @@ void main() {
             'alphaMismatches': alphaMismatches,
           },
         );
-        expect(gaussianDeviation, lessThanOrEqualTo(noise + 1),
-            reason: 'A normalized Gaussian preserves a constant field.');
+        expect(
+          gaussianDeviation,
+          lessThanOrEqualTo(noise + 1),
+          reason: 'A normalized Gaussian preserves a constant field.',
+        );
         expect(
           maxDeviation,
           lessThanOrEqualTo(bound),
@@ -325,29 +328,47 @@ void main() {
       }
       var taps = 0;
       final probe = _Probe(tester, 1, const Offset(17, 24), Brightness.dark);
-      Widget foreground() => Row(
-        children: [
-          const Text(
-            'Header title',
-            style: TextStyle(fontFamily: 'HeaderProbe', color: Colors.white),
-          ),
-          GestureDetector(
-            key: const ValueKey('header-action'),
-            behavior: HitTestBehavior.opaque,
-            onTap: () => taps++,
-            child: const SizedBox(
-              width: 40,
-              height: 40,
-              child: Text(
-                'GO',
-                style: TextStyle(
-                  fontFamily: 'HeaderProbe',
-                  color: Colors.white,
+      Widget foreground() => DefaultTextStyle(
+        style: const TextStyle(
+          inherit: false,
+          fontFamily: 'HeaderProbe',
+          fontSize: 14,
+          height: 1.3,
+          color: Colors.white,
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: SizedBox(
+            height: 40,
+            child: Row(
+              children: [
+                const Expanded(child: Text('Header title')),
+                GestureDetector(
+                  key: const ValueKey('header-action'),
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => taps++,
+                  child: const SizedBox(
+                    width: 40,
+                    height: 40,
+                    child: Center(child: Text('GO')),
+                  ),
                 ),
-              ),
+              ],
             ),
           ),
-        ],
+        ),
+      );
+      final foregroundMask = await _Probe(
+        tester,
+        1,
+        const Offset(17, 24),
+        Brightness.dark,
+        color: Colors.black,
+      ).render(
+        _Layer.none,
+        foreground: foreground(),
       );
       final baseline = await probe.render(
         _Layer.none,
@@ -357,14 +378,19 @@ void main() {
         _Layer.header,
         foreground: foreground(),
       );
+      expect(tester.takeException(), isNull);
+      final action = tester.getRect(find.byKey(const ValueKey('header-action')));
+      final capture = tester.getRect(find.byKey(probe.key));
+      expect(capture.contains(action.topLeft), isTrue);
+      expect(capture.contains(action.bottomRight), isTrue);
       await tester.tap(find.byKey(const ValueKey('header-action')));
       expect(taps, 1);
       // Fully opaque foreground pixels must survive the backdrop filter.
       var foregroundPixels = 0;
       for (var i = 0; i < baseline.length; i += 4) {
-        if (baseline[i] == 255 &&
-            baseline[i + 1] == 255 &&
-            baseline[i + 2] == 255) {
+        if (foregroundMask[i] == 255 &&
+            foregroundMask[i + 1] == 255 &&
+            foregroundMask[i + 2] == 255) {
           foregroundPixels++;
           expect(actual.sublist(i, i + 4), baseline.sublist(i, i + 4));
         }
@@ -444,11 +470,15 @@ class _Probe {
       ),
     );
     await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
     final boundary =
         key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+    expect(boundary.size, const Size(256, 256));
     return (await tester.runAsync(() async {
       final image = await boundary.toImage(pixelRatio: dpr);
       try {
+        expect(image.width, width);
+        expect(image.height, width);
         final data = (await image.toByteData())!;
         return Uint8List.fromList(
           data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
