@@ -9,11 +9,16 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: MediaQuery(
-          data: MediaQueryData.fromView(tester.view).copyWith(highContrast: true),
+          data: MediaQueryData.fromView(
+            tester.view,
+          ).copyWith(highContrast: true),
           child: LiquidGlassScope(
             enabled: true,
             child: TonalButtonTheme(
-              child: FilledButton(onPressed: () {}, child: const Text('Action')),
+              child: FilledButton(
+                onPressed: () {},
+                child: const Text('Action'),
+              ),
             ),
           ),
         ),
@@ -79,8 +84,19 @@ void main() {
         final button = find.widgetWithText(FilledButton, 'Scoped action');
         final buttonTheme = FilledButtonTheme.of(tester.element(button)).style!;
         expect(buttonTheme.backgroundBuilder, enabled ? isNotNull : isNull);
-        final foreground = buttonTheme.foregroundColor!.resolve({})!;
-        final source = Theme.of(tester.element(button)).colorScheme.onSurface;
+        final scheme = Theme.of(tester.element(button)).colorScheme;
+        if (!enabled) {
+          expect(buttonTheme.foregroundColor?.resolve({}), isNull);
+          final material = tester.widget<Material>(
+            find.descendant(of: button, matching: find.byType(Material)),
+          );
+          expect(material.color, scheme.primary);
+          expect(material.color?.a, 1);
+        }
+        final foreground = DefaultTextStyle.of(
+          tester.element(find.text('Scoped action')),
+        ).style.color!;
+        final source = enabled ? scheme.onSurface : scheme.onPrimary;
         expect(foreground.a, enabled ? 0.94 : source.a);
         expect(foreground.withValues(alpha: source.a), source);
         final segmentFills = tester

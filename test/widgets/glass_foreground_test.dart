@@ -266,20 +266,21 @@ void main() {
         final backdrop = brightness == Brightness.light
             ? const Color(0xFFF0E8F1)
             : const Color(0xFF38283D);
-        final inputTheme = ThemeData(
-          platform: TargetPlatform.android,
-          colorScheme: colors,
-          scaffoldBackgroundColor: backdrop,
-          fontFamily: 'Ahem',
-          filledButtonTheme: FilledButtonThemeData(
-            style: ButtonStyle(
-              foregroundColor: WidgetStatePropertyAll(colors.onPrimary),
-              padding: const WidgetStatePropertyAll(EdgeInsets.all(20)),
-            ),
-          ),
-        ).withAppShapes.withAppSurfaces.copyWith(
-          scaffoldBackgroundColor: backdrop,
-        );
+        final inputTheme =
+            ThemeData(
+              platform: TargetPlatform.android,
+              colorScheme: colors,
+              scaffoldBackgroundColor: backdrop,
+              fontFamily: 'Ahem',
+              filledButtonTheme: FilledButtonThemeData(
+                style: ButtonStyle(
+                  foregroundColor: WidgetStatePropertyAll(colors.onPrimary),
+                  padding: const WidgetStatePropertyAll(EdgeInsets.all(20)),
+                ),
+              ),
+            ).withAppShapes.withAppSurfaces.copyWith(
+              scaffoldBackgroundColor: backdrop,
+            );
         final capture = GlobalKey();
         await tester.pumpWidget(
           ProviderScope(

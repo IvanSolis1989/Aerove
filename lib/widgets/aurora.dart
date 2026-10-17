@@ -75,10 +75,7 @@ class AuroraAppSurface extends ConsumerWidget {
             surfaceTheme.copyWith(
               scaffoldBackgroundColor: Colors.transparent,
               filledButtonTheme: FilledButtonThemeData(
-                style:
-                    (surfaceTheme.filledButtonTheme.style ??
-                            const ButtonStyle())
-                        .merge(glassButtons),
+                style: glassButtons.merge(surfaceTheme.filledButtonTheme.style),
               ),
               floatingActionButtonTheme: theme.floatingActionButtonTheme
                   .copyWith(

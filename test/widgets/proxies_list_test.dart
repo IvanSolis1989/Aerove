@@ -200,6 +200,8 @@ void main() {
       }
     } finally {
       semantics.dispose();
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(Duration.zero);
     }
   });
 
@@ -213,9 +215,10 @@ void main() {
         '<rect width="1" height="1" fill="red"/></svg>',
       ),
     );
-    final group = _group(name, 0).copyWith(
-      icon: 'data:image/svg+xml;base64,$svg',
-    );
+    final group = _group(
+      name,
+      0,
+    ).copyWith(icon: 'data:image/svg+xml;base64,$svg');
     await pumpList(tester, groups: [group]);
     container.read(proxiesStyleSettingProvider.notifier).value = container
         .read(proxiesStyleSettingProvider)

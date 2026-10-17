@@ -82,73 +82,78 @@ abstract final class GlassForeground {
 
   static ThemeData theme(ThemeData theme) {
     final colors = theme.colorScheme;
-    return theme.copyWith(
-      colorScheme: colorScheme(colors),
-      extensions: [
-        theme.extension<_ForegroundSources>() ??
-            _ForegroundSources([
-              colors.onSurface,
+    return theme
+        .copyWith(
+          colorScheme: colorScheme(colors),
+          extensions: [
+            theme.extension<_ForegroundSources>() ??
+                _ForegroundSources([
+                  colors.onSurface,
+                  colors.onSurfaceVariant,
+                  colors.onInverseSurface,
+                  colors.onPrimary,
+                  colors.onPrimaryContainer,
+                  colors.onPrimaryFixed,
+                  colors.onPrimaryFixedVariant,
+                  colors.onSecondary,
+                  colors.onSecondaryContainer,
+                  colors.onSecondaryFixed,
+                  colors.onSecondaryFixedVariant,
+                  colors.onTertiary,
+                  colors.onTertiaryContainer,
+                  colors.onTertiaryFixed,
+                  colors.onTertiaryFixedVariant,
+                  colors.onError,
+                  colors.onErrorContainer,
+                  theme.iconTheme.color ?? colors.onSurface,
+                  theme.primaryIconTheme.color ?? colors.onPrimary,
+                ]),
+            for (final extension in theme.extensions.values)
+              if (extension is ElevatedColorScheme)
+                ElevatedColorScheme(colorScheme(extension.colorScheme))
+              else if (extension is! _ForegroundSources)
+                extension,
+          ],
+          iconTheme: theme.iconTheme.copyWith(
+            color: cap(theme.iconTheme.color ?? colors.onSurface),
+          ),
+          primaryIconTheme: theme.primaryIconTheme.copyWith(
+            color: cap(theme.primaryIconTheme.color ?? colors.onPrimary),
+          ),
+          textButtonTheme: TextButtonThemeData(
+            style: _button(theme.textButtonTheme.style, colors.primary),
+          ),
+          outlinedButtonTheme: OutlinedButtonThemeData(
+            style: _button(theme.outlinedButtonTheme.style, colors.primary),
+          ),
+          elevatedButtonTheme: ElevatedButtonThemeData(
+            style: _button(theme.elevatedButtonTheme.style, colors.primary),
+          ),
+          filledButtonTheme: FilledButtonThemeData(
+            style: _button(theme.filledButtonTheme.style, null),
+          ),
+          iconButtonTheme: IconButtonThemeData(
+            style: _button(
+              theme.iconButtonTheme.style,
               colors.onSurfaceVariant,
-              colors.onInverseSurface,
-              colors.onPrimary,
-              colors.onPrimaryContainer,
-              colors.onPrimaryFixed,
-              colors.onPrimaryFixedVariant,
-              colors.onSecondary,
-              colors.onSecondaryContainer,
-              colors.onSecondaryFixed,
-              colors.onSecondaryFixedVariant,
-              colors.onTertiary,
-              colors.onTertiaryContainer,
-              colors.onTertiaryFixed,
-              colors.onTertiaryFixedVariant,
-              colors.onError,
-              colors.onErrorContainer,
-              theme.iconTheme.color ?? colors.onSurface,
-              theme.primaryIconTheme.color ?? colors.onPrimary,
-            ]),
-        for (final extension in theme.extensions.values)
-          if (extension is ElevatedColorScheme)
-            ElevatedColorScheme(colorScheme(extension.colorScheme))
-          else if (extension is! _ForegroundSources)
-            extension,
-      ],
-      iconTheme: theme.iconTheme.copyWith(
-        color: cap(theme.iconTheme.color ?? colors.onSurface),
-      ),
-      primaryIconTheme: theme.primaryIconTheme.copyWith(
-        color: cap(theme.primaryIconTheme.color ?? colors.onPrimary),
-      ),
-      textButtonTheme: TextButtonThemeData(
-        style: _button(theme.textButtonTheme.style, colors.primary),
-      ),
-      outlinedButtonTheme: OutlinedButtonThemeData(
-        style: _button(theme.outlinedButtonTheme.style, colors.primary),
-      ),
-      elevatedButtonTheme: ElevatedButtonThemeData(
-        style: _button(theme.elevatedButtonTheme.style, colors.primary),
-      ),
-      filledButtonTheme: FilledButtonThemeData(
-        style: _button(theme.filledButtonTheme.style, null),
-      ),
-      iconButtonTheme: IconButtonThemeData(
-        style: _button(theme.iconButtonTheme.style, colors.onSurfaceVariant),
-      ),
-      floatingActionButtonTheme: theme.floatingActionButtonTheme.copyWith(
-        foregroundColor: cap(
-          theme.floatingActionButtonTheme.foregroundColor ??
-              colors.onPrimaryContainer,
-        ),
-      ),
-      appBarTheme: theme.appBarTheme.copyWith(
-        foregroundColor: cap(
-          theme.appBarTheme.foregroundColor ?? colors.onSurface,
-        ),
-        titleTextStyle: theme.appBarTheme.titleTextStyle == null
-            ? null
-            : textStyle(theme.appBarTheme.titleTextStyle!),
-      ),
-    ).withForegroundAlphaCap(opacity);
+            ),
+          ),
+          floatingActionButtonTheme: theme.floatingActionButtonTheme.copyWith(
+            foregroundColor: cap(
+              theme.floatingActionButtonTheme.foregroundColor ??
+                  colors.onPrimaryContainer,
+            ),
+          ),
+          appBarTheme: theme.appBarTheme.copyWith(
+            foregroundColor: cap(
+              theme.appBarTheme.foregroundColor ?? colors.onSurface,
+            ),
+            titleTextStyle: theme.appBarTheme.titleTextStyle == null
+                ? null
+                : textStyle(theme.appBarTheme.titleTextStyle!),
+          ),
+        )
+        .withForegroundAlphaCap(opacity);
   }
 }
 

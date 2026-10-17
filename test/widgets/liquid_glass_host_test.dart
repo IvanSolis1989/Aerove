@@ -475,10 +475,16 @@ void main() {
       }
       final pane = _capture().panes.single;
       for (final y in [20.0, 100.0, 180.0]) {
-        expect(await _behind(tester, pane, Offset(150, y)), _green,
-            reason: 'header=$header, green at y=$y');
-        expect(await _behind(tester, pane, Offset(185, y)), _red,
-            reason: 'header=$header, red at y=$y');
+        expect(
+          await _behind(tester, pane, Offset(150, y)),
+          _green,
+          reason: 'header=$header, green at y=$y',
+        );
+        expect(
+          await _behind(tester, pane, Offset(185, y)),
+          _red,
+          reason: 'header=$header, red at y=$y',
+        );
       }
     }
   });

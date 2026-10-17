@@ -210,9 +210,9 @@ void main() {
             child: TestApp(
               wrapInProviderScope: true,
               child: MediaQuery(
-                data: MediaQueryData.fromView(tester.view).copyWith(
-                  highContrast: highContrast,
-                ),
+                data: MediaQueryData.fromView(
+                  tester.view,
+                ).copyWith(highContrast: highContrast),
                 child: Scaffold(
                   body: CommonDialog(
                     title: 'Confirm',
