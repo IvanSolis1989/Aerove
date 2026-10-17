@@ -93,7 +93,11 @@ void main() {
     final colorScheme = Theme.of(
       tester.element(find.byType(OutboundModeCard)),
     ).colorScheme;
+    expect(find.byType(LiquidGlass), findsNothing);
     expect(decorationOf(tester, Mode.rule).color, colorScheme.primary);
+    for (final mode in Mode.values) {
+      expect(decorationOf(tester, mode).color!.a, 1);
+    }
     final innerRadius = startRadiusOf(tester, Mode.direct);
 
     await tester.tap(buttonOf(Mode.direct));
@@ -105,18 +109,47 @@ void main() {
     expect(startRadiusOf(tester, Mode.direct), greaterThan(innerRadius));
   });
 
-  testWidgets('the modes keep their fills with glass on', (tester) async {
-    await pump(
+  for (final quality in LiquidGlassQuality.values) {
+    testWidgets('the modes use clear ${quality.name} glass and still switch', (
       tester,
-      const LiquidGlassScope(enabled: true, child: OutboundModeCard()),
-    );
-    final colorScheme = Theme.of(
-      tester.element(find.byType(OutboundModeCard)),
-    ).colorScheme;
+    ) async {
+      await pump(
+        tester,
+        LiquidGlassScope(
+          enabled: true,
+          quality: quality,
+          child: const OutboundModeCard(),
+        ),
+      );
+      final colorScheme = Theme.of(
+        tester.element(find.byType(OutboundModeCard)),
+      ).colorScheme;
 
-    expect(find.byType(LiquidGlass), findsNothing);
-    expect(decorationOf(tester, Mode.rule).color, colorScheme.primary);
-  });
+      void expectClearModes() {
+        expect(find.byType(LiquidGlass), findsNWidgets(4));
+        for (final mode in Mode.values) {
+          expect(decorationOf(tester, mode).color!.a, lessThan(1));
+        }
+        for (final pane in tester.widgetList<LiquidGlass>(
+          find.byType(LiquidGlass),
+        )) {
+          expect(pane.style.tint, Colors.transparent);
+        }
+      }
+
+      expectClearModes();
+      await tester.tap(buttonOf(Mode.direct));
+      await tester.pumpAndSettle();
+      expect(container.read(patchClashConfigProvider).mode, Mode.direct);
+      expect(tester.widget<Text>(find.text(Mode.direct.label)).style!.color,
+          colorScheme.onSurface);
+      expectClearModes();
+      await tester.tap(buttonOf(Mode.rule));
+      await tester.pumpAndSettle();
+      expect(container.read(patchClashConfigProvider).mode, Mode.rule);
+      expectClearModes();
+    });
+  }
 
   testWidgets('a pressed mode swells alone, over its neighbours', (
     tester,

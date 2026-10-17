@@ -106,7 +106,8 @@ class _FormSheet extends StatelessWidget {
                 child: Material(
                   color: LiquidGlassScope.surfaceColorOf(
                     context,
-                    backgroundColor ?? SurfaceLevel.page.colorOf(theme.colorScheme),
+                    backgroundColor ??
+                        SurfaceLevel.page.colorOf(theme.colorScheme),
                   ),
                   shape: theme.dialogTheme.shape ?? AppShape.xxl,
                   clipBehavior: Clip.antiAlias,

@@ -172,7 +172,8 @@ class ApplicationState extends ConsumerState<Application> {
           builder: (context, child) {
             return ThemeCrossFade(
               child: AuroraAppSurface(
-                child: widget._testManagers?.call(child!) ??
+                child:
+                    widget._testManagers?.call(child!) ??
                     buildManagerStack(
                       isDesktop: system.isDesktop,
                       onConnectivityChanged: _handleConnectivityChanged,

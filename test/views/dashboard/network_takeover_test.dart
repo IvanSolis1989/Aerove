@@ -95,6 +95,10 @@ void main() {
     ) async {
       await pumpCard(tester, testCase.card);
 
+      expect(find.byType(LiquidGlass), findsNothing);
+      final track = tester.widget<Switch>(switchOf(testCase)).trackColor!;
+      expect(track.resolve({})!.a, 1);
+      expect(track.resolve({WidgetState.selected})!.a, 1);
       expect(testCase.read(container), testCase.initial);
       expect(tester.widget<Switch>(switchOf(testCase)).value, testCase.initial);
 
@@ -124,29 +128,56 @@ void main() {
     });
   }
 
-  testWidgets('a switch keeps its track with glass on and swells under a '
-      'press', (tester) async {
-    await pumpCard(
-      tester,
-      const LiquidGlassScope(enabled: true, child: NetworkTakeoverCard()),
-    );
-    final tun = switchOf(_rowCases[1]);
+  for (final quality in LiquidGlassQuality.values) {
+    for (final testCase in _rowCases) {
+      testWidgets('${testCase.name} uses clear ${quality.name} glass and '
+          'swells under a press', (tester) async {
+        await pumpCard(
+          tester,
+          LiquidGlassScope(
+            enabled: true,
+            quality: quality,
+            child: testCase.card,
+          ),
+        );
+        final toggle = switchOf(testCase);
+        expect(find.byType(LiquidGlass), findsOneWidget);
+        expect(tester.widget<LiquidGlass>(find.byType(LiquidGlass)).style.tint,
+            Colors.transparent);
+        final containers = tester.widgetList<Container>(find.descendant(
+          of: find.byType(DashboardCard),
+          matching: find.byType(Container),
+        ));
+        for (final box in containers) {
+          final decoration = box.decoration;
+          if (decoration is ShapeDecoration && decoration.color != null) {
+            expect(decoration.color!.a, lessThan(1));
+          }
+        }
+        final track = tester.widget<Switch>(toggle).trackColor!;
+        expect(track.resolve({})!.a, lessThan(1));
+        expect(track.resolve({WidgetState.selected})!.a, lessThan(1));
 
-    expect(find.byType(LiquidGlass), findsNothing);
-
-    final press = find.ancestor(of: tun, matching: find.byType(ElasticPress));
-    final gesture = await tester.startGesture(tester.getCenter(tun));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
-    expect(
-      tester.renderObject<RenderProxyBox>(press).child!.debugLayer,
-      isA<TransformLayer>(),
-    );
-    await gesture.up();
-    await tester.pumpAndSettle();
-
-    expect(container.read(patchClashConfigProvider).tun.enable, isTrue);
-  });
+        final press = find.ancestor(
+          of: toggle,
+          matching: find.byType(ElasticPress),
+        );
+        final gesture = await tester.startGesture(tester.getCenter(toggle));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(
+          tester.renderObject<RenderProxyBox>(press).child!.debugLayer,
+          isA<TransformLayer>(),
+        );
+        await gesture.up();
+        await tester.pumpAndSettle();
+        expect(testCase.read(container), !testCase.initial);
+        await tester.tap(find.text(testCase.title).last);
+        await tester.pumpAndSettle();
+        expect(testCase.read(container), testCase.initial);
+      });
+    }
+  }
 
   testWidgets('a row says what it is set to', (tester) async {
     await pumpCard(tester, const NetworkTakeoverCard());

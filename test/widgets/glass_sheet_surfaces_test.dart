@@ -4,6 +4,7 @@ import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/paged_sheet.dart';
 import 'package:fl_clash/ui/scaffold.dart';
 import 'package:fl_clash/ui/sheet.dart';
+import 'package:fl_clash/ui/surface.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -25,6 +26,7 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
       Rect? originalBounds;
+      Rect? originalSurfaceBounds;
       for (final (enabled, quality) in [
         (false, LiquidGlassQuality.ultra),
         (true, LiquidGlassQuality.standard),
@@ -60,36 +62,59 @@ void main() {
         );
         await tester.tap(find.text('open'));
         await tester.pumpAndSettle();
-        final sheetMaterials = find.ancestor(
-          of: find.byKey(_probe),
-          matching: find.byType(Material),
-        );
-        final painted = tester.widgetList<Material>(sheetMaterials).where(
-          (material) => material.color != null && material.color!.a > 0,
-        );
-        expect(painted, isNotEmpty);
+        final sheetMaterial = find
+            .ancestor(
+              of: find.byType(CommonScaffold),
+              matching: find.byType(Material),
+            )
+            .first;
+        final material = tester.widget<Material>(sheetMaterial);
+        final explicitColor =
+            kind != 'bottom' &&
+            enabled &&
+            quality == LiquidGlassQuality.ultra;
+        final baseColor = explicitColor
+            ? Colors.orange
+            : SurfaceLevel.page.colorOf(
+                Theme.of(tester.element(sheetMaterial)).colorScheme,
+              );
+        expect(material.color, isNotNull);
         expect(
-          painted.map((material) => material.color!.a),
-          enabled ? everyElement(lessThanOrEqualTo(0.24)) : contains(1.0),
+          material.color!.a,
+          enabled ? lessThanOrEqualTo(0.24) : 1.0,
         );
-        if (kind != 'bottom' && enabled && quality == LiquidGlassQuality.ultra) {
+        expect(
+          material.color!.toARGB32() & 0xFFFFFF,
+          baseColor.toARGB32() & 0xFFFFFF,
+        );
+        final sheetScaffold = find.descendant(
+          of: find.byType(CommonScaffold),
+          matching: find.byType(Scaffold),
+        );
+        if (kind == 'side') {
           expect(
-            painted.any((material) =>
-                material.color!.withValues(alpha: 1) == Colors.orange),
-            isTrue,
+            tester.widget<Scaffold>(sheetScaffold).backgroundColor,
+            enabled ? Colors.transparent : null,
           );
+        } else {
+          expect(sheetScaffold, findsNothing);
         }
-        final sheetScaffold = tester.widget<Scaffold>(
-          find.ancestor(of: find.byKey(_probe), matching: find.byType(Scaffold)).first,
-        );
-        expect(sheetScaffold.backgroundColor, enabled ? Colors.transparent : null);
         final bounds = tester.getRect(find.byKey(_probe));
         originalBounds ??= bounds;
         expect(bounds, originalBounds);
+        final surfaceBounds = tester.getRect(sheetMaterial);
+        originalSurfaceBounds ??= surfaceBounds;
+        expect(surfaceBounds, originalSurfaceBounds);
         final barrier = tester.widget<AnimatedModalBarrier>(
           find.byType(AnimatedModalBarrier).last,
         );
         expect(barrier.color.value!.a, greaterThan(0));
+        await tester.tapAt(const Offset(4, 4));
+        await tester.pumpAndSettle();
+        expect(find.byKey(_probe), findsNothing);
+        await tester.tap(find.text('open'));
+        await tester.pumpAndSettle();
+        expect(find.byKey(_probe), findsOneWidget);
         final context = tester.element(find.byKey(_probe));
         Navigator.of(context).pop();
         await tester.pumpAndSettle();
@@ -102,6 +127,7 @@ void main() {
   testWidgets('nested pages keep a translucent base in both glass qualities', (
     tester,
   ) async {
+    Rect? originalBounds;
     for (final (enabled, quality) in [
       (false, LiquidGlassQuality.ultra),
       (true, LiquidGlassQuality.standard),
@@ -111,62 +137,94 @@ void main() {
         LiquidGlassScope(
           enabled: enabled,
           quality: quality,
-          child: const MaterialApp(
-            home: PagedSheet(child: SizedBox.expand(key: _probe)),
-          ),
-        ),
-      );
-      final material = tester.widget<Material>(
-        find.descendant(of: find.byType(PagedSheet), matching: find.byType(Material)),
-      );
-      expect(material.color!.a, enabled ? 0.24 : 1);
-      expect(material.clipBehavior, Clip.antiAlias);
-    }
-  });
-
-  testWidgets('default alert action uses tinted glass and preserves its action', (
-    tester,
-  ) async {
-    var taps = 0;
-    for (final enabled in [false, true]) {
-      await tester.pumpWidget(
-        LiquidGlassScope(
-          enabled: enabled,
-          child: TestApp(
-            wrapInProviderScope: true,
-            child: Scaffold(
-              body: CommonDialog(
-                title: 'Confirm',
-                actions: [
-                  TextButton(
-                    onPressed: () => taps++,
-                    child: const Text('Continue'),
+          child: MaterialApp(
+            home: SheetProvider(
+              type: SheetType.bottomSheet,
+              child: SizedBox(
+                width: 400,
+                height: 600,
+                child: Align(
+                  alignment: Alignment.bottomCenter,
+                  child: PagedSheet(
+                    child: Navigator(
+                      onGenerateInitialRoutes: (_, _) => [
+                        PagedSheetRoute<void>(
+                          builder: (_) => const SizedBox(
+                            key: _probe,
+                            width: 400,
+                            height: 200,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ],
-                child: const Text('Body'),
+                ),
               ),
             ),
           ),
         ),
       );
       await tester.pumpAndSettle();
-      final button = find.widgetWithText(TextButton, 'Continue');
-      final context = tester.element(button);
-      final style = TextButtonTheme.of(context).style!;
-      final scheme = Theme.of(context).colorScheme;
-      expect(
-        style.backgroundColor!.resolve({}),
-        enabled ? Colors.transparent : scheme.primary,
+      final material = tester.widget<Material>(
+        find.descendant(
+          of: find.byType(PagedSheet),
+          matching: find.byType(Material),
+        ),
       );
-      expect(style.backgroundBuilder, enabled ? isNotNull : isNull);
-      expect(
-        style.foregroundColor!.resolve({}),
-        enabled ? scheme.primary : scheme.onPrimary,
-      );
-      await tester.tap(button);
-      await tester.pumpAndSettle();
+      expect(material.color!.a, enabled ? 0.24 : 1);
+      expect(material.clipBehavior, Clip.antiAlias);
+      final bounds = tester.getRect(find.byType(PagedSheet));
+      originalBounds ??= bounds;
+      expect(bounds, originalBounds);
+      expect(find.byKey(_probe), findsOneWidget);
       expect(tester.takeException(), isNull);
     }
-    expect(taps, 2);
   });
+
+  testWidgets(
+    'default alert action uses tinted glass and preserves its action',
+    (tester) async {
+      var taps = 0;
+      for (final enabled in [false, true]) {
+        await tester.pumpWidget(
+          LiquidGlassScope(
+            enabled: enabled,
+            child: TestApp(
+              wrapInProviderScope: true,
+              child: Scaffold(
+                body: CommonDialog(
+                  title: 'Confirm',
+                  actions: [
+                    TextButton(
+                      onPressed: () => taps++,
+                      child: const Text('Continue'),
+                    ),
+                  ],
+                  child: const Text('Body'),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final button = find.widgetWithText(TextButton, 'Continue');
+        final context = tester.element(button);
+        final style = TextButtonTheme.of(context).style!;
+        final scheme = Theme.of(context).colorScheme;
+        expect(
+          style.backgroundColor!.resolve({}),
+          enabled ? Colors.transparent : scheme.primary,
+        );
+        expect(style.backgroundBuilder, enabled ? isNotNull : isNull);
+        expect(
+          style.foregroundColor!.resolve({}),
+          enabled ? scheme.primary : scheme.onPrimary,
+        );
+        await tester.tap(button);
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+      }
+      expect(taps, 2);
+    },
+  );
 }

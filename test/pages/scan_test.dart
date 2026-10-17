@@ -203,11 +203,7 @@ void main() {
         platform.startError = const MobileScannerException(
           errorCode: MobileScannerErrorCode.permissionDenied,
         );
-        await pumpScanPage(
-          tester,
-          onPopped: (_) {},
-          glassQuality: quality,
-        );
+        await pumpScanPage(tester, onPopped: (_) {}, glassQuality: quality);
         final scaffold = tester.widget<Scaffold>(
           find.descendant(
             of: find.byType(ScanPage),

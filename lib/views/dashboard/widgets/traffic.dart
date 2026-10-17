@@ -287,7 +287,10 @@ class _SpeedTile extends StatelessWidget {
                   bottom: -_bleed,
                   height: chartHeight,
                   child: RepaintBoundary(
-                    child: _SpeedChart(direction: direction, traffics: traffics),
+                    child: _SpeedChart(
+                      direction: direction,
+                      traffics: traffics,
+                    ),
                   ),
                 ),
                 Padding(

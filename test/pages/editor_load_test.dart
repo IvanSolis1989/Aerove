@@ -20,45 +20,50 @@ import '../plugins/code_forge/support.dart';
 void main() {
   setUpAll(initEditorNative);
 
-  testWidgets('glass mode changes reach the actual editor background in place', (
-    tester,
-  ) async {
-    final mode = ValueNotifier<LiquidGlassQuality?>(null);
-    addTearDown(mode.dispose);
-    await tester.pumpWidget(
-      TestApp(
-        overrides: [
-          viewSizeProvider.overrideWithBuild((_, _) => const Size(1200, 1000)),
-        ],
-        child: ValueListenableBuilder(
-          valueListenable: mode,
-          builder: (_, quality, child) => LiquidGlassScope(
-            enabled: quality != null,
-            quality: quality ?? LiquidGlassQuality.standard,
-            child: child!,
+  testWidgets(
+    'glass mode changes reach the actual editor background in place',
+    (tester) async {
+      final mode = ValueNotifier<LiquidGlassQuality?>(null);
+      addTearDown(mode.dispose);
+      await tester.pumpWidget(
+        TestApp(
+          overrides: [
+            viewSizeProvider.overrideWithBuild(
+              (_, _) => const Size(1200, 1000),
+            ),
+          ],
+          child: ValueListenableBuilder(
+            valueListenable: mode,
+            builder: (_, quality, child) => LiquidGlassScope(
+              enabled: quality != null,
+              quality: quality ?? LiquidGlassQuality.standard,
+              child: child!,
+            ),
+            child: const EditorPage(title: 'Editor', content: 'mode: rule'),
           ),
-          child: const EditorPage(title: 'Editor', content: 'mode: rule'),
         ),
-      ),
-    );
-    await settle(tester);
-    final controller = tester.widget<CodeForge>(find.byType(CodeForge)).controller;
-    for (final quality in [
-      LiquidGlassQuality.standard,
-      LiquidGlassQuality.ultra,
-      null,
-    ]) {
-      mode.value = quality;
-      await settle(tester);
-      final editor = tester.widget<CodeForge>(find.byType(CodeForge));
-      expect(editor.controller, same(controller));
-      expect(
-        editor.editorTheme['root']!.backgroundColor!.a,
-        quality == null ? 1 : 0.24,
       );
-    }
-    await tester.pumpWidget(const SizedBox.shrink());
-  });
+      await settle(tester);
+      final controller = tester
+          .widget<CodeForge>(find.byType(CodeForge))
+          .controller;
+      for (final quality in [
+        LiquidGlassQuality.standard,
+        LiquidGlassQuality.ultra,
+        null,
+      ]) {
+        mode.value = quality;
+        await settle(tester);
+        final editor = tester.widget<CodeForge>(find.byType(CodeForge));
+        expect(editor.controller, same(controller));
+        expect(
+          editor.editorTheme['root']!.backgroundColor!.a,
+          quality == null ? 1 : 0.24,
+        );
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 
   testWidgets('mounts the editor only once loaded content arrives', (
     tester,

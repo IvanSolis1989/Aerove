@@ -32,10 +32,12 @@ void main() {
       await tester.pumpAndSettle();
       for (final type in [ErrorBanner, ThemeLivePreview]) {
         final container = tester.widget<Container>(
-          find.descendant(
-            of: find.byType(type),
-            matching: find.byType(Container),
-          ).first,
+          find
+              .descendant(
+                of: find.byType(type),
+                matching: find.byType(Container),
+              )
+              .first,
         );
         final decoration = container.decoration! as ShapeDecoration;
         expect(decoration.color!.a, quality == null ? 1 : 0.24);

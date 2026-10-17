@@ -42,6 +42,17 @@ class _GroupsState extends State<_Groups> with SingleTickerProviderStateMixin {
   );
 }
 
+void _expectBackdropColor(List<int> samples, Color backdrop) {
+  final expected = [backdrop.r * 255, backdrop.g * 255, backdrop.b * 255];
+  for (final offset in [0, 3]) {
+    for (var channel = 0; channel < 3; channel++) {
+      final actual = samples[offset + channel];
+      expect(actual, inInclusiveRange(2, 253));
+      expect(actual, closeTo(expected[channel], 40));
+    }
+  }
+}
+
 void main() {
   for (final brightness in Brightness.values) {
     for (final quality in LiquidGlassQuality.values) {
@@ -76,7 +87,10 @@ void main() {
                         children: [
                           if (wallpaper)
                             SeededAuroraWallpaper(
-                              colors: const [Color(0xFF65BDD2), Color(0xFFC589CA)],
+                              colors: const [
+                                Color(0xFF65BDD2),
+                                Color(0xFFC589CA),
+                              ],
                               seed: 271828,
                               brightness: brightness,
                             )
@@ -92,23 +106,28 @@ void main() {
                                   const NetworkSpeedCard(),
                                   const SizedBox(height: 16),
                                   Builder(
-                                    builder: (context) => DashboardConnectedButton(
-                                      selected: true,
-                                      first: true,
-                                      last: true,
-                                      outer: DashboardCorner.mobileBlock,
-                                      inner: DashboardCorner.tab,
-                                      background: DashboardColors.of(context).tone,
-                                      onTap: () {},
-                                      semanticLabel: 'Selected route',
-                                      builder: (foreground) => Padding(
-                                        padding: const EdgeInsets.all(16),
-                                        child: Text(
-                                          'Selected route',
-                                          style: TextStyle(color: foreground),
+                                    builder: (context) =>
+                                        DashboardConnectedButton(
+                                          selected: true,
+                                          first: true,
+                                          last: true,
+                                          outer: DashboardCorner.mobileBlock,
+                                          inner: DashboardCorner.tab,
+                                          background: DashboardColors.of(
+                                            context,
+                                          ).tone,
+                                          onTap: () {},
+                                          semanticLabel: 'Selected route',
+                                          builder: (foreground) => Padding(
+                                            padding: const EdgeInsets.all(16),
+                                            child: Text(
+                                              'Selected route',
+                                              style: TextStyle(
+                                                color: foreground,
+                                              ),
+                                            ),
+                                          ),
                                         ),
-                                      ),
-                                    ),
                                   ),
                                   const SizedBox(height: 16),
                                   const _Groups(),
@@ -132,25 +151,46 @@ void main() {
           expect(colors.track.a, glass ? lessThan(0.2) : 1.0);
           final selectedText = tester.widget<Text>(find.text('Selected route'));
           final scheme = Theme.of(context).colorScheme;
-          expect(selectedText.style!.color,
-              glass ? scheme.onSurface : scheme.onPrimary);
-          final tabStyle = tester.widget<AnimatedDefaultTextStyle>(
-            find.ancestor(
-              of: find.text('Route A'),
-              matching: find.byType(AnimatedDefaultTextStyle),
-            ).first,
+          expect(
+            selectedText.style!.color,
+            glass ? scheme.onSurface : scheme.onPrimary,
           );
-          expect(tabStyle.style.color,
-              glass ? scheme.onSurface : scheme.onPrimary);
+          final tabStyle = tester.widget<AnimatedDefaultTextStyle>(
+            find
+                .ancestor(
+                  of: find.text('Route A'),
+                  matching: find.byType(AnimatedDefaultTextStyle),
+                )
+                .first,
+          );
+          expect(
+            tabStyle.style.color,
+            glass ? scheme.onSurface : scheme.onPrimary,
+          );
           if (glass) {
-            expect(find.descendant(
-              of: find.byType(NetworkSpeedCard),
-              matching: find.byType(LiquidGlass),
-            ), findsNWidgets(3));
+            expect(
+              find.descendant(
+                of: find.byType(NetworkSpeedCard),
+                matching: find.byType(LiquidGlass),
+              ),
+              findsNWidgets(3),
+            );
+          }
+          if (glass) {
+            for (final pane in tester.widgetList<LiquidGlass>(
+              find.descendant(
+                of: find.byType(NetworkSpeedCard),
+                matching: find.byType(LiquidGlass),
+              ),
+            )) {
+              expect(pane.style.saturation, 1);
+              expect(pane.style.brightness, 1);
+              expect(pane.style.contrast, 0);
+            }
           }
           final card = tester.getRect(find.byType(NetworkSpeedCard));
-          final boundary = key.currentContext!.findRenderObject()!
-              as RenderRepaintBoundary;
+          final boundary =
+              key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
           final origin = boundary.localToGlobal(Offset.zero);
           final sample = Offset(card.right - 40, card.bottom - 45) - origin;
           final gap = Offset(card.center.dx, card.top + 50) - origin;
@@ -160,14 +200,15 @@ void main() {
               final rgba = (await image.toByteData(
                 format: ui.ImageByteFormat.rawRgba,
               ))!;
-              final offset = (sample.dy.floor() * image.width +
-                  sample.dx.floor()) * 4;
+              final offset =
+                  (sample.dy.floor() * image.width + sample.dx.floor()) * 4;
               final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
               if (output != null) {
                 final png = (await image.toByteData(
                   format: ui.ImageByteFormat.png,
                 ))!;
-                final directory = Directory(output)..createSync(recursive: true);
+                final directory = Directory(output)
+                  ..createSync(recursive: true);
                 final mode = aurora ? 'aurora' : 'ordinary';
                 final effect = glass
                     ? quality.name
@@ -175,12 +216,13 @@ void main() {
                 final tint = wallpaper
                     ? 'wallpaper'
                     : backdrop.toARGB32().toRadixString(16);
-                File('${directory.path}/dashboard-$mode-${brightness.name}-'
-                    '$effect-$tint.png')
-                    .writeAsBytesSync(png.buffer.asUint8List());
+                File(
+                  '${directory.path}/dashboard-$mode-${brightness.name}-'
+                  '$effect-$tint.png',
+                ).writeAsBytesSync(png.buffer.asUint8List());
               }
-              final gapOffset = (gap.dy.floor() * image.width +
-                  gap.dx.floor()) * 4;
+              final gapOffset =
+                  (gap.dy.floor() * image.width + gap.dx.floor()) * 4;
               return [
                 for (var i = 0; i < 3; i++) rgba.getUint8(offset + i),
                 for (var i = 0; i < 3; i++) rgba.getUint8(gapOffset + i),
@@ -197,24 +239,39 @@ void main() {
         final ordinarySecond = await render(false, second, glass: false);
         final clearFirst = await render(true, first);
         final clearSecond = await render(true, second);
-        int difference(List<int> a, List<int> b) =>
-            List.generate(3, (i) => (a[i] - b[i]).abs())
-                .reduce((a, b) => a + b);
-        expect(difference(clearFirst, clearSecond),
-            greaterThan(difference(ordinaryFirst, ordinarySecond) + 20));
+        int difference(List<int> a, List<int> b) => List.generate(
+          3,
+          (i) => (a[i] - b[i]).abs(),
+        ).reduce((a, b) => a + b);
+        expect(
+          difference(clearFirst, clearSecond),
+          greaterThan(difference(ordinaryFirst, ordinarySecond) + 20),
+        );
         final plainGlassFirst = await render(false, first);
         final plainGlassSecond = await render(false, second);
-        expect(difference(plainGlassFirst, plainGlassSecond),
-            greaterThan(difference(ordinaryFirst, ordinarySecond) + 20));
-        final backgroundDifference = [
-          (first.r - second.r).abs(),
-          (first.g - second.g).abs(),
-          (first.b - second.b).abs(),
-        ].reduce((a, b) => a + b) * 255;
-        expect(difference(clearFirst.sublist(3), clearSecond.sublist(3)),
-            greaterThan(backgroundDifference * 0.3));
-        expect(difference(plainGlassFirst.sublist(3), plainGlassSecond.sublist(3)),
-            greaterThan(backgroundDifference * 0.3));
+        expect(
+          difference(plainGlassFirst, plainGlassSecond),
+          greaterThan(difference(ordinaryFirst, ordinarySecond) + 20),
+        );
+        _expectBackdropColor(clearFirst, first);
+        _expectBackdropColor(clearSecond, second);
+        _expectBackdropColor(plainGlassFirst, first);
+        _expectBackdropColor(plainGlassSecond, second);
+        final backgroundDifference =
+            [
+              (first.r - second.r).abs(),
+              (first.g - second.g).abs(),
+              (first.b - second.b).abs(),
+            ].reduce((a, b) => a + b) *
+            255;
+        expect(
+          difference(clearFirst.sublist(3), clearSecond.sublist(3)),
+          greaterThan(backgroundDifference * 0.3),
+        );
+        expect(
+          difference(plainGlassFirst.sublist(3), plainGlassSecond.sublist(3)),
+          greaterThan(backgroundDifference * 0.3),
+        );
         await render(true, first, wallpaper: true);
         await tester.tap(find.text('Route B'));
         await tester.pumpAndSettle();

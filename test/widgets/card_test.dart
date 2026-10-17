@@ -73,10 +73,7 @@ void main() {
           button.style!.side!.resolve({WidgetState.focused})!.width,
           greaterThan(0.5),
         );
-        expect(
-          button.style!.backgroundColor!.resolve({}),
-          Colors.transparent,
-        );
+        expect(button.style!.backgroundColor!.resolve({}), Colors.transparent);
       }
       await tester.tap(find.text('Row 1'));
       await tester.pumpAndSettle();

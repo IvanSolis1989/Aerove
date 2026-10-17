@@ -674,7 +674,8 @@ class _CodeEditorState extends ConsumerState<_CodeEditor> {
       context,
       colorScheme.surface,
     );
-    final schemeChanged = colorScheme != _colorScheme ||
+    final schemeChanged =
+        colorScheme != _colorScheme ||
         _editorTheme['root']?.backgroundColor != background;
     if (schemeChanged) {
       _colorScheme = colorScheme;
@@ -1227,8 +1228,8 @@ class _FindOptionToggle extends StatelessWidget {
                     : null,
                 foregroundColor: selected
                     ? LiquidGlassScope.of(context)
-                        ? colorScheme.onSurface
-                        : colorScheme.onPrimary
+                          ? colorScheme.onSurface
+                          : colorScheme.onPrimary
                     : colorScheme.onSurfaceVariant,
                 fixedSize: Size.square(TonalButtonSize.compact.button),
                 minimumSize: Size.square(TonalButtonSize.compact.button),

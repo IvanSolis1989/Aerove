@@ -10,8 +10,7 @@ typedef AuroraMesh = ({
 
 final _auroraPositions = List<Offset>.unmodifiable([
   for (var row = 0; row <= 48; row++)
-    for (var column = 0; column <= 32; column++)
-      Offset(column / 32, row / 48),
+    for (var column = 0; column <= 32; column++) Offset(column / 32, row / 48),
 ]);
 
 final _auroraIndices = List<int>.unmodifiable([

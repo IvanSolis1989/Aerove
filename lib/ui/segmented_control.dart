@@ -93,8 +93,8 @@ class SegmentedControl<T> extends StatelessWidget {
                                   .copyWith(
                                     color: option == value
                                         ? LiquidGlassScope.of(context)
-                                            ? colorScheme.onSurface
-                                            : colorScheme.onPrimary
+                                              ? colorScheme.onSurface
+                                              : colorScheme.onPrimary
                                         : colorScheme.onSurfaceVariant,
                                   ),
                               child: Text(

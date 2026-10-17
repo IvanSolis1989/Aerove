@@ -34,10 +34,8 @@ void main() {
             debugShowCheckedModeBanner: false,
             theme: ThemeData(scaffoldBackgroundColor: color),
             themeAnimationStyle: AnimationStyle.noAnimation,
-            builder: (_, child) => ThemeCrossFade(
-              captureSnapshot: captureSnapshot,
-              child: child!,
-            ),
+            builder: (_, child) =>
+                ThemeCrossFade(captureSnapshot: captureSnapshot, child: child!),
             home: Builder(
               builder: (context) => ColoredBox(
                 color: Theme.of(
@@ -141,36 +139,37 @@ void main() {
     expect(tester.hasRunningAnimations, isFalse);
   });
 
-  testWidgets('a failed readback drops an active fade and paints the new theme', (
-    tester,
-  ) async {
-    var failCapture = false;
-    final failure = StateError('snapshot readback failed');
-    await pumpApp(
-      tester,
-      captureSnapshot: (capture) {
-        if (failCapture) throw failure;
-        return capture();
-      },
-    );
-    background.value = _blue;
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 60));
-    expect(tester.hasRunningAnimations, isTrue);
+  testWidgets(
+    'a failed readback drops an active fade and paints the new theme',
+    (tester) async {
+      var failCapture = false;
+      final failure = StateError('snapshot readback failed');
+      await pumpApp(
+        tester,
+        captureSnapshot: (capture) {
+          if (failCapture) throw failure;
+          return capture();
+        },
+      );
+      background.value = _blue;
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 60));
+      expect(tester.hasRunningAnimations, isTrue);
 
-    failCapture = true;
-    background.value = _green;
-    await tester.pump();
-    expect(tester.takeException(), same(failure));
-    expect(await pixel(tester), isColor(_green));
-    expect(tester.hasRunningAnimations, isFalse);
-    await tester.pumpAndSettle();
-    expect(await pixel(tester), isColor(_green));
+      failCapture = true;
+      background.value = _green;
+      await tester.pump();
+      expect(tester.takeException(), same(failure));
+      expect(await pixel(tester), isColor(_green));
+      expect(tester.hasRunningAnimations, isFalse);
+      await tester.pumpAndSettle();
+      expect(await pixel(tester), isColor(_green));
 
-    failCapture = false;
-    background.value = _red;
-    await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull);
-    expect(await pixel(tester), isColor(_red));
-  });
+      failCapture = false;
+      background.value = _red;
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(await pixel(tester), isColor(_red));
+    },
+  );
 }

@@ -455,7 +455,7 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
     if (!_controller.isDismissed && widget.group.all.isNotEmpty) {
       final extent = getRowExtent(widget.cardType);
       final decoration = ShapeDecoration(
-        color: AuroraAppearance.enabledOf(context)
+        color: LiquidGlassScope.of(context)
             ? Colors.transparent
             : context.raisedSurfaceLevel.colorOf(context.colorScheme),
         shape: AppShape.vertical(
@@ -486,7 +486,7 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
     } else {
       _rows = null;
     }
-    if (rows != null && AuroraAppearance.enabledOf(context)) {
+    if (rows != null && LiquidGlassScope.of(context)) {
       rows = _HeaderClippedRows(sliver: rows);
     }
     Widget buildHeader({double floating = 0, double lift = 0}) => SizedBox(
@@ -545,7 +545,7 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
                 ),
                 isExpand ? constraints.overlap : 0.0,
                 context.surfaceLevel.colorOf(context.colorScheme),
-                AuroraAppearance.enabledOf(context),
+                LiquidGlassScope.of(context),
               );
         if (header != null && state == headerState) {
           return header!;
@@ -701,7 +701,7 @@ class ListHeader extends ConsumerWidget {
     );
     return DecoratedBox(
       decoration: ShapeDecoration(
-        color: AuroraAppearance.enabledOf(context)
+        color: LiquidGlassScope.of(context)
             ? Colors.transparent
             : level.colorOf(colorScheme),
         shape: shape,

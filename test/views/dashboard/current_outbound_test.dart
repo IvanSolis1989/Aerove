@@ -587,7 +587,9 @@ void main() {
       await tester.pumpAndSettle();
     });
 
-    testWidgets('active glass stays clear without Aurora while toggling', (tester) async {
+    testWidgets('active glass stays clear without Aurora while toggling', (
+      tester,
+    ) async {
       container = containerWith();
       await pumpCard(tester, glass: true);
       await tester.pumpAndSettle();

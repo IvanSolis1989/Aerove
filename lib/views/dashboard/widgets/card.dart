@@ -41,9 +41,9 @@ class DashboardGlass extends StatelessWidget {
       return child;
     }
     return LiquidGlass(
-      style: LiquidGlassStyle.regular(context.colorScheme).copyWith(
-        tint: Colors.transparent,
-      ),
+      style: LiquidGlassStyle.regular(
+        context.colorScheme,
+      ).copyWith(tint: Colors.transparent),
       clipper: ShapeBorderClipper(
         shape: shape,
         textDirection: Directionality.of(context),
@@ -429,18 +429,19 @@ class DashboardConnectedButton extends StatelessWidget {
           builder: (context, amount, child) {
             final start = lerpDouble(startRest, outer, amount)!;
             final end = lerpDouble(endRest, outer, amount)!;
-            final shape = AppShape.of(
-              BorderRadius.horizontal(
-                left: Radius.circular(rtl ? end : start),
-                right: Radius.circular(rtl ? start : end),
-              ),
-            ).copyWith(
-              side: selected && LiquidGlassScope.of(context)
-                  ? BorderSide(
-                      color: colorScheme.onSurface.withValues(alpha: 0.45),
-                    )
-                  : BorderSide.none,
-            );
+            final shape =
+                AppShape.of(
+                  BorderRadius.horizontal(
+                    left: Radius.circular(rtl ? end : start),
+                    right: Radius.circular(rtl ? start : end),
+                  ),
+                ).copyWith(
+                  side: selected && LiquidGlassScope.of(context)
+                      ? BorderSide(
+                          color: colorScheme.onSurface.withValues(alpha: 0.45),
+                        )
+                      : BorderSide.none,
+                );
             return FocusRing(
               shape: shape,
               standsOff: selected,
@@ -471,8 +472,8 @@ class DashboardConnectedButton extends StatelessWidget {
           child: builder(
             selected
                 ? LiquidGlassScope.of(context)
-                    ? colorScheme.onSurface
-                    : colorScheme.onPrimary
+                      ? colorScheme.onSurface
+                      : colorScheme.onPrimary
                 : colorScheme.onSurfaceVariant,
           ),
         ),

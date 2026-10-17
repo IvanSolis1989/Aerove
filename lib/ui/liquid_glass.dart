@@ -95,7 +95,7 @@ class LiquidGlassStyle {
     this.hazeBlur = 0,
     this.refraction = 60,
     this.bevel = 20,
-    this.saturation = 1.5,
+    this.saturation = 1,
     this.brightness = 1,
     this.rim = 0.6,
     this.rimWidth = 1.3,
@@ -114,8 +114,6 @@ class LiquidGlassStyle {
     return dark
         ? LiquidGlassStyle(
             tint: colorScheme.surfaceContainerHighest.withValues(alpha: 0.62),
-            contrast: -0.4,
-            saturation: 2.84,
             rim: 0.28,
             rimWidth: 1.2,
             rimTail: 0.17,
@@ -125,8 +123,6 @@ class LiquidGlassStyle {
           )
         : const LiquidGlassStyle(
             tint: Color(0x8AFDFDFD),
-            contrast: 0.4,
-            saturation: 2.08,
             rim: 0.28,
             rimWidth: 1.2,
             rimTail: 0.17,
@@ -142,20 +138,16 @@ class LiquidGlassStyle {
     return dark
         ? LiquidGlassStyle(
             tint: colorScheme.surfaceContainerHighest.withValues(alpha: 0.48),
-            contrast: -0.4,
             blur: 0,
             haze: 0.72,
             hazeBlur: 15.6,
-            saturation: 1.925,
             rim: 0.35,
           )
         : const LiquidGlassStyle(
             tint: Color(0x93F4F4F4),
-            contrast: 0.4,
             blur: 0,
             haze: 0.72,
             hazeBlur: 15.6,
-            saturation: 2.1,
             hairline: 0.35,
           );
   }
@@ -167,17 +159,12 @@ class LiquidGlassStyle {
     return dark
         ? LiquidGlassStyle(
             tint: colorScheme.surfaceContainerHighest.withValues(alpha: 0.63),
-            contrast: -0.53,
             blur: 12,
-            saturation: 1.75,
-            brightness: 1.8,
             rim: 0,
           )
         : LiquidGlassStyle(
             tint: colorScheme.surfaceBright.withValues(alpha: 0.55),
             blur: 12,
-            saturation: 2,
-            brightness: 1.1,
             rim: 0,
           );
   }
@@ -189,7 +176,6 @@ class LiquidGlassStyle {
     final dark = colorScheme.brightness == Brightness.dark;
     return LiquidGlassStyle(
       tint: color.withValues(alpha: 0.82),
-      saturation: 1.2,
       rim: dark ? 0.14 : 0.2,
       rimWidth: 1.2,
       rimTail: 0.17,
@@ -208,7 +194,6 @@ class LiquidGlassStyle {
       refraction: -4.3,
       bevel: 5.5,
       saturation: 1,
-      brightness: dark ? 1.33 : 1,
       rim: dark ? 0.3 : 0.6,
       rimWidth: 1.1,
       endShade: 0.045,
@@ -219,14 +204,12 @@ class LiquidGlassStyle {
   }
 
   factory LiquidGlassStyle.lensContent(ColorScheme colorScheme) {
-    final dark = colorScheme.brightness == Brightness.dark;
-    return LiquidGlassStyle(
+    return const LiquidGlassStyle(
       tint: Colors.transparent,
       blur: 0,
       refraction: 14,
       bevel: 11.2,
       saturation: 1,
-      brightness: dark ? 1.33 : 1,
       rim: 0,
       dispersion: 3.6,
       rimBlur: 2.5,

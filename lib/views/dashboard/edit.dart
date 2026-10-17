@@ -634,10 +634,7 @@ class _RoundButton extends StatelessWidget {
         tooltip: tooltip,
         padding: EdgeInsets.zero,
         style: IconButton.styleFrom(
-          backgroundColor: LiquidGlassScope.surfaceColorOf(
-            context,
-            background,
-          ),
+          backgroundColor: LiquidGlassScope.surfaceColorOf(context, background),
           foregroundColor: foreground,
           minimumSize: const Size.square(28),
           fixedSize: const Size.square(28),

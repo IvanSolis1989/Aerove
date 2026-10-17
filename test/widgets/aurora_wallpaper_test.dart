@@ -80,8 +80,7 @@ void main() {
         final resizedOffset = (y * 2 * 320 + x * 2) * 4;
         for (var channel = 0; channel < 3; channel++) {
           expect(
-            (first[originalOffset + channel] -
-                    resized[resizedOffset + channel])
+            (first[originalOffset + channel] - resized[resizedOffset + channel])
                 .abs(),
             lessThanOrEqualTo(2),
           );
@@ -143,7 +142,8 @@ void main() {
               ),
             );
             final boundary =
-                key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+                key.currentContext!.findRenderObject()!
+                    as RenderRepaintBoundary;
             final name = 'aurora-${brightness.name}-$count-$seed';
             final bytes = (await tester.runAsync(() async {
               final image = await boundary.toImage();
@@ -194,8 +194,8 @@ void main() {
               final pixel = HSVColor.fromColor(color);
               if (pixel.saturation < 0.07) continue;
               for (var index = 0; index < palette.length; index++) {
-                final delta = (pixel.hue - HSVColor.fromColor(palette[index]).hue)
-                    .abs();
+                final delta =
+                    (pixel.hue - HSVColor.fromColor(palette[index]).hue).abs();
                 if (math.min(delta, 360 - delta) < 20) coverage[index]++;
               }
             }
@@ -222,8 +222,8 @@ void main() {
             };
             debugPrint('$name rendered pixels: ${jsonEncode(metrics[name])}');
             await tester.runAsync(
-              () =>
-                  File('${output.path}/aurora-pixel-metrics.json').writeAsString(
+              () => File('${output.path}/aurora-pixel-metrics.json')
+                  .writeAsString(
                     const JsonEncoder.withIndent('  ').convert(metrics),
                   ),
             );

@@ -336,9 +336,9 @@ void main() {
           TestApp(
             homeBuilder: (child) => Builder(
               builder: (context) => MediaQuery(
-                data: MediaQuery.of(context).copyWith(
-                  disableAnimations: disableAnimations,
-                ),
+                data: MediaQuery.of(
+                  context,
+                ).copyWith(disableAnimations: disableAnimations),
                 child: child,
               ),
             ),
@@ -375,7 +375,8 @@ void main() {
         );
         await tester.pumpAndSettle();
         expect(find.byType(LiquidGlass), findsNWidgets(2));
-        final clear = tester.widgetList<LiquidGlass>(find.byType(LiquidGlass))
+        final clear = tester
+            .widgetList<LiquidGlass>(find.byType(LiquidGlass))
             .where((pane) => pane.style.tint == Colors.transparent);
         expect(clear, hasLength(1));
         final gesture = await tester.startGesture(

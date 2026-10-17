@@ -662,9 +662,7 @@ class CommonScaffoldState extends State<CommonScaffold> {
                   automaticallyImplyLeading: false,
                   animateColor: true,
                   forceMaterialTransparency:
-                      isCompact ||
-                      !_isSearch ||
-                      LiquidGlassScope.of(context),
+                      isCompact || !_isSearch || LiquidGlassScope.of(context),
                   toolbarHeight: isCompact ? sheetToolbarHeight : null,
                   centerTitle: isCompact,
                   titleTextStyle: _isSearch

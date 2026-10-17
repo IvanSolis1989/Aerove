@@ -399,8 +399,8 @@ class _GroupTabState extends State<_GroupTab> {
             .copyWith(
               color: selected
                   ? LiquidGlassScope.of(context)
-                      ? colorScheme.onSurface
-                      : colorScheme.onPrimary
+                        ? colorScheme.onSurface
+                        : colorScheme.onPrimary
                   : colorScheme.onSurfaceVariant,
             ),
         child: EmojiText(widget.name, maxLines: 1),

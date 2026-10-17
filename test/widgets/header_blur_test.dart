@@ -18,7 +18,9 @@ import '../helpers/test_app.dart';
 import '../helpers/glyph_finders.dart';
 
 void main() {
-  testWidgets('only active glass page headers use an untinted blur', (tester) async {
+  testWidgets('only active glass page headers use an untinted blur', (
+    tester,
+  ) async {
     for (final enabled in [true, false]) {
       await tester.pumpWidget(
         TestApp(
@@ -28,10 +30,7 @@ void main() {
             child: const ViewScope(
               size: Size(390, 800),
               isMobile: true,
-              child: CommonScaffold(
-                title: 'Page',
-                body: SizedBox.expand(),
-              ),
+              child: CommonScaffold(title: 'Page', body: SizedBox.expand()),
             ),
           ),
         ),
@@ -98,7 +97,9 @@ void main() {
       expect(find.byType(TextField), findsOneWidget);
       final appBar = tester.widget<AppBar>(find.byType(AppBar));
       expect(appBar.forceMaterialTransparency, enabled);
-      final barTheme = Theme.of(tester.element(find.byType(AppBar))).appBarTheme;
+      final barTheme = Theme.of(
+        tester.element(find.byType(AppBar)),
+      ).appBarTheme;
       expect(barTheme.backgroundColor!.a, enabled ? 0 : 1);
       expect(find.byType(HeaderBlur), enabled ? findsOneWidget : findsNothing);
       final scaffold = tester.widget<Scaffold>(find.byType(Scaffold));

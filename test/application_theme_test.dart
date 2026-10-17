@@ -16,13 +16,23 @@ import 'helpers/test_profiles.dart';
 
 Widget _themeManager(Widget child) => ThemeManager(child: child);
 
-Future<Color> _pixel(
-  WidgetTester tester,
-  GlobalKey key, {
-  Offset? at,
-}) async {
-  final boundary = key.currentContext!.findRenderObject()!
-      as RenderRepaintBoundary;
+void _androidTest(
+  String description,
+  Future<void> Function(WidgetTester tester) body,
+) {
+  testWidgets(description, (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    try {
+      await body(tester);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+}
+
+Future<Color> _pixel(WidgetTester tester, GlobalKey key, {Offset? at}) async {
+  final boundary =
+      key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
   late Color color;
   await tester.runAsync(() async {
     final image = await boundary.toImage();
@@ -42,11 +52,9 @@ Future<Color> _pixel(
 }
 
 void main() {
-  testWidgets('theme page buttons change the real Application painted theme', (
+  _androidTest('theme page buttons change the real Application painted theme', (
     tester,
   ) async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.android;
-    addTearDown(() => debugDefaultTargetPlatformOverride = null);
     tester.view.physicalSize = const Size(430, 932);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -58,10 +66,8 @@ void main() {
           (_, _) => const AppSettingProps(locale: 'en'),
         ),
         themeSettingProvider.overrideWithBuild(
-          (_, _) => const ThemeProps(
-            themeMode: ThemeMode.dark,
-            auroraEnabled: false,
-          ),
+          (_, _) =>
+              const ThemeProps(themeMode: ThemeMode.dark, auroraEnabled: false),
         ),
       ],
     );
@@ -109,12 +115,10 @@ void main() {
 
   for (final wallpaper in [false, true]) {
     for (final reducedMotion in [false, true]) {
-      testWidgets(
+      _androidTest(
         'Application switches light/dark/system with wallpaper=$wallpaper '
         'and reducedMotion=$reducedMotion',
         (tester) async {
-          debugDefaultTargetPlatformOverride = TargetPlatform.android;
-          addTearDown(() => debugDefaultTargetPlatformOverride = null);
           tester.view.physicalSize = const Size(120, 240);
           tester.view.devicePixelRatio = 1;
           addTearDown(tester.view.resetPhysicalSize);

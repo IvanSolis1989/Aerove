@@ -44,6 +44,7 @@ void main() {
     Set<String> unfoldSet = const {'G0', 'G1', 'G2'},
     ValueListenable<Brightness>? brightness,
     bool aurora = false,
+    bool? glass,
   }) async {
     tester.view.physicalSize = const Size(900, 700);
     tester.view.devicePixelRatio = 1;
@@ -79,9 +80,9 @@ void main() {
                 data: MediaQuery.of(
                   context,
                 ).copyWith(padding: const EdgeInsets.only(top: 64)),
-                child: aurora
+                child: (glass ?? aurora)
                     ? AuroraAppearance(
-                        enabled: true,
+                        enabled: aurora,
                         child: LiquidGlassScope(
                           enabled: true,
                           child: LiquidGlassHost(enabled: true, child: child),
@@ -268,6 +269,23 @@ void main() {
     expect(cover.color, context.surfaceLevel.colorOf(context.colorScheme));
   });
 
+  testWidgets('glass without wallpaper also removes opaque proxy masks', (
+    tester,
+  ) async {
+    await pumpList(tester, glass: true, groups: [_group('G0', 4)]);
+    final header = headerOf('G0');
+    expect(surfaceOf(tester, 'G0').color, Colors.transparent);
+    final pinned = find.ancestor(
+      of: header,
+      matching: find.byType(PinnedHeaderSliver),
+    );
+    expect(
+      find.descendant(of: pinned, matching: find.byType(ColoredBox)),
+      findsNothing,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('Aurora proxy headers use one shaped glass without a page mask', (
     tester,
   ) async {
@@ -278,18 +296,47 @@ void main() {
       unfoldSet: const {},
     );
     final header = headerOf('G0');
+    final shapedPanes = find.byWidgetPredicate(
+      (widget) => widget is LiquidGlass && widget.clipper is ShapeBorderClipper,
+    );
+    final shell = find.descendant(of: header, matching: shapedPanes);
+    final buttonPanes = find.descendant(
+      of: header,
+      matching: find.byWidgetPredicate(
+        (widget) => widget is LiquidGlass && widget.clipper == null,
+      ),
+    );
     expect(surfaceOf(tester, 'G0').color, Colors.transparent);
+    expect(shell, findsOneWidget);
+    final group = tester.widget<CardGroup>(
+      find.descendant(of: header, matching: find.byType(CardGroup)),
+    );
     expect(
-      find.descendant(of: header, matching: find.byType(LiquidGlass)),
-      findsOneWidget,
+      (tester.widget<LiquidGlass>(shell).clipper! as ShapeBorderClipper).shape,
+      group.shape,
     );
     expect(
       find.descendant(
         of: find.descendant(of: header, matching: find.byType(CommonCard)),
-        matching: find.byType(LiquidGlass),
+        matching: shapedPanes,
       ),
       findsNothing,
     );
+    expect(buttonPanes, findsOneWidget);
+    expect(find.byType(LiquidGlassHost), findsOneWidget);
+    final sharedHost = tester.element(find.byType(LiquidGlassHost));
+    for (final pane in tester.widgetList<LiquidGlass>(buttonPanes)) {
+      expect(pane.style.tint.a, lessThan(1));
+      expect(
+        tester.element(
+          find.ancestor(
+            of: find.byWidget(pane),
+            matching: find.byType(LiquidGlassHost),
+          ),
+        ),
+        same(sharedHost),
+      );
+    }
     final pinned = find.ancestor(
       of: header,
       matching: find.byType(PinnedHeaderSliver),

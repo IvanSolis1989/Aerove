@@ -657,12 +657,13 @@ class _AlertAction extends StatelessWidget {
             ).copyWith(
               backgroundBuilder: glassDefault
                   ? LiquidGlass.buttonStyle(
-                      (_) => LiquidGlassStyle.tinted(
-                        colorScheme,
-                        colorScheme.primary,
-                      ).copyWith(
-                        tint: colorScheme.primary.withValues(alpha: 0.2),
-                      ),
+                      (_) =>
+                          LiquidGlassStyle.tinted(
+                            colorScheme,
+                            colorScheme.primary,
+                          ).copyWith(
+                            tint: colorScheme.primary.withValues(alpha: 0.2),
+                          ),
                     ).backgroundBuilder
                   : null,
               backgroundColor: WidgetStateProperty<Color?>.fromMap({

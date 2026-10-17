@@ -816,9 +816,9 @@ class _StartToggleState extends ConsumerState<_StartToggle>
                     child: glass
                         ? LiquidGlass(
                             style: clearSurface
-                                ? LiquidGlassStyle.regular(colorScheme).copyWith(
-                                    tint: Colors.transparent,
-                                  )
+                                ? LiquidGlassStyle.regular(
+                                    colorScheme,
+                                  ).copyWith(tint: Colors.transparent)
                                 : LiquidGlassStyle.tinted(colorScheme, color),
                             clipper: _MorphClipper(progress),
                             pressed: _pressed,

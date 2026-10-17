@@ -38,12 +38,11 @@ class AuroraAppSurface extends ConsumerWidget {
         ),
       ),
     );
-    final opaque = MediaQuery.highContrastOf(context) ||
+    final opaque =
+        MediaQuery.highContrastOf(context) ||
         (settings.pureBlack && theme.brightness == Brightness.dark);
     final enabled =
-        theme.platform == TargetPlatform.android &&
-        settings.enabled &&
-        !opaque;
+        theme.platform == TargetPlatform.android && settings.enabled && !opaque;
     final glassColors = auroraColorScheme(theme.brightness);
     final glassTheme = theme
         .copyWith(
@@ -191,10 +190,7 @@ class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper> {
   @override
   Widget build(BuildContext context) {
     return RepaintBoundary(
-      child: CustomPaint(
-        painter: _painter,
-        isComplex: true,
-      ),
+      child: CustomPaint(painter: _painter, isComplex: true),
     );
   }
 }
@@ -205,7 +201,11 @@ class _AuroraPainter extends CustomPainter {
     required this.seed,
     required this.brightness,
   }) {
-    final mesh = generateAuroraMesh(seed, colors: colors, brightness: brightness);
+    final mesh = generateAuroraMesh(
+      seed,
+      colors: colors,
+      brightness: brightness,
+    );
     _vertices = Vertices(
       VertexMode.triangles,
       mesh.positions,
