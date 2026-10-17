@@ -13,6 +13,8 @@ class Preferences {
   static Preferences? _instance;
   var _store = ResolveOnce(_open);
 
+  Future<SharedPreferences?> get sharedPreferences => _store.value;
+
   Future<bool> get isInit async => await _store.value != null;
 
   Preferences._internal();

@@ -5,7 +5,6 @@ import 'dart:ui' as ui;
 
 import 'package:fl_clash/common/aurora.dart';
 import 'package:fl_clash/widgets/aurora.dart';
-import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';

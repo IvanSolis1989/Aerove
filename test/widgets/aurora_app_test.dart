@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:fl_clash/ui/shape.dart';
@@ -391,12 +390,13 @@ void main() {
             );
           }
           expect(container.read(themeSettingProvider).primaryColor, 0xFFFF2D55);
-          if (gradient)
+          if (gradient) {
             expect(
               tester.widget<Scaffold>(pageScaffold).backgroundColor ??
                   Theme.of(pageContext).scaffoldBackgroundColor,
               Colors.transparent,
             );
+          }
           final wallpaperOption = find.text('随机渐变底图');
           await tester.scrollUntilVisible(
             wallpaperOption,

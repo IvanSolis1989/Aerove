@@ -317,8 +317,11 @@ void main() {
     await tester.tap(find.text(currentAppLocalizations.dnsMode));
     await tester.pumpAndSettle();
 
-    final options = find.byType(OptionsDialog<(DnsMode,)>);
+    final options = find.byType(CommonPopupMenu);
     expect(options, findsOneWidget);
+    final items = tester.widget<CommonPopupMenu>(options).items;
+    expect(items.map((item) => item.label), ['normal', 'fake-ip', 'redir-host']);
+    expect(items.map((item) => item.checked), [false, true, false]);
     Finder option(String label) =>
         find.descendant(of: options, matching: find.text(label));
     expect(option('normal'), findsOneWidget);
@@ -326,6 +329,11 @@ void main() {
     expect(option('redir-host'), findsOneWidget);
     expect(option(DnsMode.redirHost.name), findsNothing);
     expect(option(DnsMode.hosts.name), findsNothing);
+    await tester.tap(option('normal'));
+    await tester.pumpAndSettle();
+    expect(config().dns.enhancedMode, DnsMode.normal);
+    expect(config().dnsOverrideKeys, {DnsOverrideKey.enhancedMode});
+    expect(find.byType(CommonPopupMenu), findsNothing);
   });
 
   testWidgets('the add button disables while every key is listed', (
@@ -553,10 +561,19 @@ void main() {
         );
         await tester.tap(find.text('+.jsdelivr.net'));
         await tester.pumpAndSettle();
-        expect(find.byType(TextFormField), findsNWidgets(2));
+        expect(find.byType(FormRowTextField), findsNWidgets(2));
+        final valueField = find.descendant(
+          of: find.widgetWithText(FormRow, currentAppLocalizations.value),
+          matching: find.byType(TextField),
+        );
+        expect(valueField, findsOneWidget);
+        expect(
+          tester.widget<TextField>(valueField).controller!.text,
+          baseline['+.jsdelivr.net'],
+        );
         const resolver = 'https://example.com/dns-query';
-        await tester.enterText(find.byType(TextFormField).last, resolver);
-        await tester.tap(find.text(currentAppLocalizations.confirm));
+        await tester.enterText(valueField, resolver);
+        await tester.tap(find.byTooltip(currentAppLocalizations.confirm));
         await tester.pumpAndSettle();
         expect(overrides(), selected);
         await tester.binding.handlePopRoute();

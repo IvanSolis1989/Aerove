@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:drift/drift.dart' show Variable;
@@ -51,14 +50,14 @@ class XClashDefaults {
       _record?['complete'] == true ? _record!['scriptId'] as int : null;
 
   static Future<XClashDefaults?> open() async {
-    final storage = await preferences.sharedPreferencesCompleter.future;
+    final storage = await preferences.sharedPreferences;
     if (storage == null) {
       return null;
     }
     return XClashDefaults(
       storage: storage,
       database: database,
-      directory: await appPath.dataDir.future,
+      directory: Directory(await appPath.homeDirPath),
       loadScript: () async {
         final data = await rootBundle.load(xclashDefaultScriptAsset);
         return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
