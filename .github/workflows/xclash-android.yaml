@@ -236,6 +236,7 @@ jobs:
         run: |
           set -euo pipefail
           root="$RUNNER_TEMP/xclash-diagnostic"
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
           sdkmanager --install 'platforms;android-37.0' 'build-tools;37.0.0' emulator 'system-images;android-37.0;google_apis;x86_64'
           printf 'no\n' | avdmanager create avd --force --name xclash-install --package 'system-images;android-37.0;google_apis;x86_64' --device pixel_2
           printf '\ndisk.dataPartition.size=6G\n' >> "$HOME/.android/avd/xclash-install.avd/config.ini"
