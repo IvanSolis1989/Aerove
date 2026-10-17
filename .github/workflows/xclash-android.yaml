@@ -165,7 +165,7 @@ jobs:
           java-version: '17'
       - name: Verify recorded upstream release against official refs
         run: |
-          git fetch --no-tags https://github.com/chen08209/FlClash.git \
+          git fetch --no-tags --recurse-submodules=no https://github.com/chen08209/FlClash.git \
             '+refs/heads/*:refs/remotes/upstream/*' \
             '+refs/tags/v*:refs/upstream-tags/v*'
       - name: Restore persistent Android test signing key
@@ -287,7 +287,7 @@ jobs:
         run: |
           set -euo pipefail
           check_main_inputs() {
-            git fetch --no-tags origin main
+            git fetch --no-tags --recurse-submodules=no origin main
             main=$(git rev-parse FETCH_HEAD)
             if ! git merge-base --is-ancestor "$GITHUB_SHA" "$main"; then
               echo '::error::The build source is no longer an ancestor of main; publication stopped.'

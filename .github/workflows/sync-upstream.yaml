@@ -47,7 +47,7 @@ jobs:
           evidence="$RUNNER_TEMP/upstream-sync"
           mkdir -p "$evidence"
           git remote add upstream "$UPSTREAM_URL"
-          git fetch --no-tags upstream \
+          git fetch --no-tags --recurse-submodules=no upstream \
             '+refs/heads/*:refs/remotes/upstream/*' \
             '+refs/tags/v*:refs/upstream-tags/v*'
           base=$(git rev-parse HEAD)
@@ -274,7 +274,8 @@ jobs:
             [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
           done
           git bundle verify "$evidence/upstream-candidate.bundle"
-          git fetch "$evidence/upstream-candidate.bundle" refs/heads/sync-candidate:refs/remotes/sync/candidate
+          git fetch --recurse-submodules=no "$evidence/upstream-candidate.bundle" \
+            refs/heads/sync-candidate:refs/remotes/sync/candidate
           test "$(git rev-parse refs/remotes/sync/candidate)" = "$CANDIDATE"
           candidate_parents=$(git show -s --format=%P "$CANDIDATE")
           if [[ "$SYNC_ACTION" == merge ]]; then
