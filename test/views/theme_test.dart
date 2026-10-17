@@ -77,7 +77,11 @@ void main() {
       matching: find.byType(Scrollable),
     );
     final scrollable = scrollables.first;
-    for (var attempt = 0; attempt < 50 && setting.evaluate().isEmpty; attempt++) {
+    for (
+      var attempt = 0;
+      attempt < 50 && setting.evaluate().isEmpty;
+      attempt++
+    ) {
       await tester.drag(scrollable, const Offset(0, -300));
       await tester.pump(const Duration(milliseconds: 50));
     }
