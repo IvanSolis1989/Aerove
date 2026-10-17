@@ -61,6 +61,11 @@ jobs:
               @Override public void onCreate(Bundle state) {
                   super.onCreate(state);
                   String path = getIntent().getStringExtra("archive");
+                  if (path == null) {
+                      getFilesDir();
+                      finish();
+                      return;
+                  }
                   String expectedPackage = getIntent().getStringExtra("expectedPackage");
                   String expectedVersion = getIntent().getStringExtra("expectedVersion");
                   long expectedCode = getIntent().getLongExtra("expectedCode", -1L);
@@ -130,7 +135,7 @@ jobs:
           logs="$root/logs"
           mkdir -p "$logs" "$root/classes" "$root/dex"
           status=0
-          trap 'adb logcat -d -v threadtime > "$logs/logcat-final.txt" 2>&1 || true; adb shell dumpsys package com.follow.clash.dev > "$logs/dumpsys-xclash-final.txt" 2>&1 || true' EXIT
+          trap 'timeout 10s adb logcat -d -v threadtime > "$logs/logcat-final.txt" 2>&1 || true; timeout 10s adb shell dumpsys package com.follow.clash.dev > "$logs/dumpsys-xclash-final.txt" 2>&1 || true' EXIT
           {
             echo "Android SDK: $ANDROID_HOME"
             sdkmanager --list_installed 2>&1 || true
@@ -142,50 +147,6 @@ jobs:
             adb shell getprop ro.product.cpu.abi
             adb shell getconf PAGE_SIZE || true
           } > "$logs/emulator-environment.txt" 2>&1
-          platform="$ANDROID_HOME/platforms/android-37.0/android.jar"
-          bt="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
-          test -f "$platform" || { echo "Missing $platform" | tee -a "$logs/build-probe.txt"; exit 1; }
-          {
-            echo "Build tools: $bt"
-            javac --release 8 -classpath "$platform" -d "$root/classes" "$root/src/org/codex/archiveprobe/ProbeActivity.java"
-            "$bt/d8" --min-api 24 --output "$root/dex" "$root/classes/org/codex/archiveprobe/ProbeActivity.class"
-            "$bt/aapt" package -f -M "$root/AndroidManifest.xml" -I "$platform" -F "$root/probe-unsigned.apk"
-            (cd "$root/dex" && zip -q "$root/probe-unsigned.apk" classes.dex)
-            keytool -genkeypair -alias archiveprobe -keystore "$root/probe.p12" -storepass android -keypass android -storetype PKCS12 -dname 'CN=ArchiveProbe,O=Codex,C=US' -keyalg RSA -keysize 2048 -validity 3650 -noprompt
-            "$bt/apksigner" sign --ks "$root/probe.p12" --ks-pass pass:android --key-pass pass:android --out "$root/probe.apk" "$root/probe-unsigned.apk"
-            "$bt/apksigner" verify --verbose --print-certs "$root/probe.apk"
-          } > "$logs/build-probe.txt" 2>&1
-          adb install -r -t "$root/probe.apk" > "$logs/install-probe-app.txt" 2>&1 || { cat "$logs/install-probe-app.txt"; exit 1; }
-          adb shell run-as org.codex.archiveprobe mkdir -p files > "$logs/probe-private-dir.txt" 2>&1
-          probe_one() {
-            local which="$1" apk="$2" version="$3" code="$4"
-            local dest="/data/user/0/org.codex.archiveprobe/files/${which}.apk"
-            adb shell -T "run-as org.codex.archiveprobe sh -c 'cat > files/${which}.apk'" < "$apk" > "$logs/copy-${which}.txt" 2>&1 || return 1
-            local local_sha device_sha
-            local_sha="$(sha256sum "$apk" | awk '{print $1}')"
-            device_sha="$(adb shell -T "run-as org.codex.archiveprobe sha256sum files/${which}.apk" | awk '{print $1}')"
-            printf 'local=%s\ndevice=%s\n' "$local_sha" "$device_sha" > "$logs/archive-sha256-${which}.txt"
-            [ "$local_sha" = "$device_sha" ] || { echo "Probe archive hash mismatch: $which" >&2; return 1; }
-            adb logcat -c
-            adb shell am start -W -n org.codex.archiveprobe/.ProbeActivity \
-              --es archive "$dest" --es expectedPackage com.follow.clash.dev \
-              --es expectedVersion "$version" --el expectedCode "$code" \
-              --es expectedCert 0fc82c3b7b089b6244d9ed167b352ff76185417d07689853caca286fbdeb6e60 \
-              > "$logs/probe-start-${which}.txt" 2>&1 || true
-            local found=0
-            for _ in $(seq 1 30); do
-              if adb logcat -d -s ArchiveProbe:I ArchiveProbe:E | grep -q 'ARCHIVE_PROBE_\(PASS\|FAIL\)'; then found=1; break; fi
-              sleep 1
-            done
-            adb logcat -d -v threadtime -s ArchiveProbe:I ArchiveProbe:E > "$logs/archive-probe-${which}.txt" 2>&1 || true
-            if [ "$found" -eq 0 ] || grep -q 'ARCHIVE_PROBE_FAIL' "$logs/archive-probe-${which}.txt" || ! grep -q 'ARCHIVE_PROBE_PASS' "$logs/archive-probe-${which}.txt"; then
-              echo "Archive parse/metadata check failed for $which" | tee -a "$logs/results.txt"
-              return 1
-            fi
-            echo "Archive parse/metadata check passed for $which" | tee -a "$logs/results.txt"
-          }
-          probe_one old "$root/apks/old.apk" '0.9.0' 2026101407 || status=1
-          probe_one new "$root/apks/new.apk" '0.9.1-pre.4-X' 2026101714 || status=1
           # Install old first, then test replacement by the new release. Do not launch XClash.
           adb uninstall com.follow.clash.dev > "$logs/uninstall-before-install.txt" 2>&1 || true
           set +e
@@ -221,6 +182,51 @@ jobs:
             status=1
           fi
           cat "$logs/install-old.txt" "$logs/install-new-upgrade.txt" >> "$logs/results.txt" 2>/dev/null || true
+          platform="$ANDROID_HOME/platforms/android-37.0/android.jar"
+          bt="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          test -f "$platform" || { echo "Missing $platform" | tee -a "$logs/build-probe.txt"; exit 1; }
+          {
+            echo "Build tools: $bt"
+            javac --release 8 -classpath "$platform" -d "$root/classes" "$root/src/org/codex/archiveprobe/ProbeActivity.java"
+            "$bt/d8" --min-api 24 --output "$root/dex" "$root/classes/org/codex/archiveprobe/ProbeActivity.class"
+            "$bt/aapt" package -f -M "$root/AndroidManifest.xml" -I "$platform" -F "$root/probe-unsigned.apk"
+            (cd "$root/dex" && zip -q "$root/probe-unsigned.apk" classes.dex)
+            keytool -genkeypair -alias archiveprobe -keystore "$root/probe.p12" -storepass android -keypass android -storetype PKCS12 -dname 'CN=ArchiveProbe,O=Codex,C=US' -keyalg RSA -keysize 2048 -validity 3650 -noprompt
+            "$bt/apksigner" sign --ks "$root/probe.p12" --ks-pass pass:android --key-pass pass:android --out "$root/probe.apk" "$root/probe-unsigned.apk"
+            "$bt/apksigner" verify --verbose --print-certs "$root/probe.apk"
+          } > "$logs/build-probe.txt" 2>&1
+          adb install --no-streaming -r -t "$root/probe.apk" > "$logs/install-probe-app.txt" 2>&1 || { cat "$logs/install-probe-app.txt"; exit 1; }
+          adb shell am start -W -n org.codex.archiveprobe/.ProbeActivity > "$logs/probe-bootstrap.txt" 2>&1
+          adb shell run-as org.codex.archiveprobe mkdir -p files > "$logs/probe-private-dir.txt" 2>&1
+          probe_one() {
+            local which="$1" apk="$2" version="$3" code="$4"
+            local dest="/data/user/0/org.codex.archiveprobe/files/${which}.apk"
+            adb shell -T "run-as org.codex.archiveprobe sh -c 'cat > files/${which}.apk'" < "$apk" > "$logs/copy-${which}.txt" 2>&1 || return 1
+            local local_sha device_sha
+            local_sha="$(sha256sum "$apk" | awk '{print $1}')"
+            device_sha="$(adb shell -T "run-as org.codex.archiveprobe sha256sum files/${which}.apk" | awk '{print $1}')"
+            printf 'local=%s\ndevice=%s\n' "$local_sha" "$device_sha" > "$logs/archive-sha256-${which}.txt"
+            [ "$local_sha" = "$device_sha" ] || { echo "Probe archive hash mismatch: $which" >&2; return 1; }
+            adb logcat -c
+            adb shell am start -W -n org.codex.archiveprobe/.ProbeActivity \
+              --es archive "$dest" --es expectedPackage com.follow.clash.dev \
+              --es expectedVersion "$version" --el expectedCode "$code" \
+              --es expectedCert 0fc82c3b7b089b6244d9ed167b352ff76185417d07689853caca286fbdeb6e60 \
+              > "$logs/probe-start-${which}.txt" 2>&1 || true
+            local found=0
+            for _ in $(seq 1 30); do
+              if adb logcat -d -s ArchiveProbe:I | grep -q 'ARCHIVE_PROBE_\(PASS\|FAIL\)'; then found=1; break; fi
+              sleep 1
+            done
+            adb logcat -d -v threadtime -s ArchiveProbe:I > "$logs/archive-probe-${which}.txt" 2>&1 || true
+            if [ "$found" -eq 0 ] || grep -q 'ARCHIVE_PROBE_FAIL' "$logs/archive-probe-${which}.txt" || ! grep -q 'ARCHIVE_PROBE_PASS' "$logs/archive-probe-${which}.txt"; then
+              echo "Archive parse/metadata check failed for $which" | tee -a "$logs/results.txt"
+              return 1
+            fi
+            echo "Archive parse/metadata check passed for $which" | tee -a "$logs/results.txt"
+          }
+          probe_one old "$root/apks/old.apk" '0.9.0' 2026101407 || status=1
+          probe_one new "$root/apks/new.apk" '0.9.1-pre.4-X' 2026101714 || status=1
           # Archive parsing is the primary reproduction; native ABI mismatch is reported independently.
           grep -q 'ARCHIVE_PROBE_PASS' "$logs/archive-probe-old.txt" 2>/dev/null || status=1
           grep -q 'ARCHIVE_PROBE_PASS' "$logs/archive-probe-new.txt" 2>/dev/null || status=1
