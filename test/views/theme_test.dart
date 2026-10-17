@@ -335,10 +335,9 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final add = find.descendant(
-        of: find.byTooltip('Add'),
-        matching: find.byType(InkWell),
-      ).hitTestable();
+      final add = find
+          .descendant(of: find.byTooltip('Add'), matching: find.byType(InkWell))
+          .hitTestable();
       await tester.scrollUntilVisible(
         add,
         200,
@@ -354,10 +353,12 @@ void main() {
         200,
         scrollable: find
             .descendant(
-              of: find.ancestor(
-                of: find.byType(HexColorField),
-                matching: find.byType(ListView),
-              ).first,
+              of: find
+                  .ancestor(
+                    of: find.byType(HexColorField),
+                    matching: find.byType(ListView),
+                  )
+                  .first,
               matching: find.byType(Scrollable),
             )
             .first,
@@ -413,11 +414,20 @@ void main() {
       tester,
     ) async {
       for (final mode in [LiquidGlassMode.none, LiquidGlassMode.standard]) {
-        container.read(themeSettingProvider.notifier).update(
-          (state) => state.copyWith(auroraEnabled: false, liquidGlass: mode),
+        container
+            .read(themeSettingProvider.notifier)
+            .update(
+              (state) =>
+                  state.copyWith(auroraEnabled: false, liquidGlass: mode),
+            );
+        await pumpThemeView(
+          tester,
+          theme: ThemeData(platform: TargetPlatform.android),
         );
-        await pumpThemeView(tester, theme: ThemeData(platform: TargetPlatform.android));
-        await revealThemeSetting(tester, find.text('Random gradient wallpaper'));
+        await revealThemeSetting(
+          tester,
+          find.text('Random gradient wallpaper'),
+        );
         await tester.tap(find.text('Random gradient wallpaper'));
         await tester.pumpAndSettle();
         expect(readTheme().auroraEnabled, isTrue);
@@ -445,24 +455,33 @@ void main() {
         final choices = tester
             .widget<PreviewChoiceGroup<LiquidGlassMode>>(group)
             .choices;
-        final cards = tester.widgetList<CommonCard>(find.descendant(
-          of: group,
-          matching: find.byType(CommonCard),
-        )).toList();
+        final cards = tester
+            .widgetList<CommonCard>(
+              find.descendant(of: group, matching: find.byType(CommonCard)),
+            )
+            .toList();
         expect(cards, hasLength(3));
         expect(cards.first.onPressed, isNull);
         expect(cards[1].onPressed, isNotNull);
         expect(cards.last.onPressed, isNotNull);
-        expect(cards.first.shape, AppShape.of(AppRadius.vertical(top: AppCorner.xl)));
-        expect(cards[1].shape, AppShape.none);
-        expect(cards.last.shape, AppShape.of(AppRadius.vertical(bottom: AppCorner.xl)));
         expect(
-          choices.singleWhere((choice) => choice.value == LiquidGlassMode.none)
+          cards.first.shape,
+          AppShape.of(AppRadius.vertical(top: AppCorner.xl)),
+        );
+        expect(cards[1].shape, AppShape.none);
+        expect(
+          cards.last.shape,
+          AppShape.of(AppRadius.vertical(bottom: AppCorner.xl)),
+        );
+        expect(
+          choices
+              .singleWhere((choice) => choice.value == LiquidGlassMode.none)
               .enabled,
           isFalse,
         );
         expect(
-          choices.where((choice) => choice.value != LiquidGlassMode.none)
+          choices
+              .where((choice) => choice.value != LiquidGlassMode.none)
               .every((choice) => choice.enabled),
           isTrue,
         );
@@ -481,13 +500,24 @@ void main() {
         await tester.tap(standard);
         await tester.pumpAndSettle();
         expect(readTheme().liquidGlass, LiquidGlassMode.standard);
-        final restored = ThemeProps.fromJson(jsonDecode(jsonEncode(readTheme())));
+        final restored = ThemeProps.fromJson(
+          jsonDecode(jsonEncode(readTheme())),
+        );
         container.read(themeSettingProvider.notifier).update((_) => restored);
-        await pumpThemeView(tester, theme: ThemeData(platform: TargetPlatform.android));
+        await pumpThemeView(
+          tester,
+          theme: ThemeData(platform: TargetPlatform.android),
+        );
         await revealThemeSetting(tester, group);
         expect(readTheme().liquidGlass, LiquidGlassMode.standard);
-        expect(tester.widget<PreviewChoiceGroup<LiquidGlassMode>>(group).value, LiquidGlassMode.standard);
-        await revealThemeSetting(tester, find.text('Random gradient wallpaper'));
+        expect(
+          tester.widget<PreviewChoiceGroup<LiquidGlassMode>>(group).value,
+          LiquidGlassMode.standard,
+        );
+        await revealThemeSetting(
+          tester,
+          find.text('Random gradient wallpaper'),
+        );
         await tester.tap(find.text('Random gradient wallpaper'));
         await tester.pumpAndSettle();
         expect(readTheme().liquidGlass, LiquidGlassMode.standard);
@@ -505,7 +535,9 @@ void main() {
           LiquidGlassMode.standard,
         );
         expect(
-          tester.widget<PreviewChoiceGroup<LiquidGlassMode>>(group).choices
+          tester
+              .widget<PreviewChoiceGroup<LiquidGlassMode>>(group)
+              .choices
               .singleWhere((choice) => choice.value == LiquidGlassMode.none)
               .enabled,
           isTrue,

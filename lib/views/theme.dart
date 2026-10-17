@@ -135,12 +135,14 @@ class _ThemeColorItem extends ConsumerWidget {
           ],
           onChanged: (enabled) => ref
               .read(themeSettingProvider.notifier)
-              .update((state) => state.copyWith(
-                auroraEnabled: enabled,
-                liquidGlass: enabled && !state.auroraEnabled
-                    ? LiquidGlassMode.ultra
-                    : state.liquidGlass,
-              )),
+              .update(
+                (state) => state.copyWith(
+                  auroraEnabled: enabled,
+                  liquidGlass: enabled && !state.auroraEnabled
+                      ? LiquidGlassMode.ultra
+                      : state.liquidGlass,
+                ),
+              ),
         ),
         if (gradient)
           const AuroraSettings()

@@ -16,9 +16,8 @@ export 'package:fl_clash/ui/aurora.dart';
 LiquidGlassMode effectiveAuroraGlassMode(
   LiquidGlassMode stored,
   bool gradient,
-) => gradient && stored == LiquidGlassMode.none
-    ? LiquidGlassMode.ultra
-    : stored;
+) =>
+    gradient && stored == LiquidGlassMode.none ? LiquidGlassMode.ultra : stored;
 
 class AuroraAppSurface extends ConsumerWidget {
   const AuroraAppSurface({super.key, required this.child});
