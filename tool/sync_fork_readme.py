@@ -53,7 +53,7 @@ def main():
     args = parser.parse_args()
     updates = []
     try:
-        for filename in ('README.md', 'README_zh_CN.md'):
+        for filename in ('README.md', 'README_en.md'):
             path = args.root / filename
             before = path.read_text(encoding='utf-8')
             after = synchronize(before, args.repository)

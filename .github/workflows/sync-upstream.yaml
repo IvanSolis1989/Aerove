@@ -59,14 +59,15 @@ jobs:
             git diff --name-only --diff-filter=U > "$evidence/conflicted-files.txt"
             git diff --cc > "$evidence/merge-conflicts.patch"
             if ! test -s "$evidence/conflicted-files.txt" ||
-              grep -vEx 'README\.md|README_zh_CN\.md' "$evidence/conflicted-files.txt"; then
+              grep -vEx 'README\.md|README_en\.md|README_zh_CN\.md' "$evidence/conflicted-files.txt"; then
               echo '::error::Upstream merge failed. Resolve the recorded conflicts manually; main was not updated.'
               exit 1
             fi
           fi
-          git restore --source="$base" --staged --worktree -- README.md README_zh_CN.md
+          git restore --source="$base" --staged --worktree -- README.md README_en.md
+          git rm -f --ignore-unmatch -- README_zh_CN.md
           python3 tool/sync_fork_readme.py --repository "$GITHUB_REPOSITORY"
-          git add -- README.md README_zh_CN.md
+          git add -- README.md README_en.md
           git commit --no-edit
           candidate=$(git rev-parse HEAD)
           printf 'candidate=%s\n' "$candidate" | tee -a "$evidence/revisions.txt" >> "$GITHUB_OUTPUT"

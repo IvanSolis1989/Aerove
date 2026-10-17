@@ -6,7 +6,8 @@
 选择 `main` 立即运行。工作流只在此 fork 的 `main` 上运行，同一时间只处理一次同步。
 
 同步使用普通 merge，不 reset、rebase、force push，也不以 `ours`/`theirs` 整体覆盖文件。
-`README.md` 和 `README_zh_CN.md` 由 XClash 独立维护，完整介绍本仓库的功能、下载、构建和发布。
+`README.md` 为默认中文首页，`README_en.md` 为英文说明，均由 XClash 独立维护，
+完整介绍本仓库的功能、下载、构建和发布。上游的 `README_zh_CN.md` 不再导入。
 同步时精确保留 fork 基线中的这两个文件，不采用上游 README；只有这两份文档发生冲突时，
 可以自动保留本仓库版本，任何其他文件冲突仍停止。上游署名和 GPL 许可信息保留在本仓库文档中。
 合并提交前运行 `tool/sync_fork_readme.py --repository "$GITHUB_REPOSITORY"`，
