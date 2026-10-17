@@ -210,7 +210,10 @@ void main() {
     expect(find.byType(LiquidGlass), findsNothing);
     final button = tester.widget<FilledButton>(find.byType(FilledButton));
     expect(button.onPressed, isNull);
-    for (final states in [<WidgetState>{}, {WidgetState.disabled}]) {
+    for (final states in [
+      <WidgetState>{},
+      {WidgetState.disabled},
+    ]) {
       expect(
         button.style!.backgroundColor!.resolve(states),
         colorScheme.errorContainer,

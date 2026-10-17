@@ -74,10 +74,12 @@ void main() {
     await tester.scrollUntilVisible(
       setting,
       300,
-      scrollable: find.descendant(
-        of: find.byType(ThemeView),
-        matching: find.byType(Scrollable),
-      ).first,
+      scrollable: find
+          .descendant(
+            of: find.byType(ThemeView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
     );
     await tester.pumpAndSettle();
   }
@@ -343,10 +345,12 @@ void main() {
       await tester.scrollUntilVisible(
         find.byType(Palette),
         200,
-        scrollable: find.descendant(
-          of: find.byType(ListView).last,
-          matching: find.byType(Scrollable),
-        ).first,
+        scrollable: find
+            .descendant(
+              of: find.byType(ListView).last,
+              matching: find.byType(Scrollable),
+            )
+            .first,
       );
       await tester.pumpAndSettle();
       final pad = tester.getRect(
