@@ -106,7 +106,8 @@ https://sub-store-cloudflare.<你的子域>.workers.dev/?token=<管理Token>
 ## 版本更新
 
 本仓库**每小时自动检查一次上游更新**，选取所有分支可达的最高版本标签，包含预发布。
-通过验证后构建并发布 APK，版本号为“上游版本号 + `-X`”，例如 `0.9.1-pre.4-X`。
+**没有新版本时直接结束，不提交代码、不重新构建或发布 APK。** 检测到新版本并通过验证后才构建发布，
+版本号为“上游版本号 + `-X`”，例如 `0.9.1-pre.4-X`。
 GitHub 定时任务可能延迟；实际可下载版本以 [Releases](https://github.com/IvanSolis1989/XClash/releases/latest) 为准。
 只修改 README 等文档不会触发 APK 构建，也不会取消正在进行的构建。
 

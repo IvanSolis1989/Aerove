@@ -106,7 +106,8 @@ For deployment help, see the project's [quick start](https://github.com/realchen
 ## Updates
 
 This repository **checks upstream once per hour**, selecting the highest version tag reachable from any branch, including prereleases.
-After validation, it builds and publishes an APK named with the upstream version plus `-X`, such as `0.9.1-pre.4-X`.
+**With no new version, it exits without committing, rebuilding or publishing an APK.** A new version is built and published only after validation,
+using the upstream version plus `-X`, such as `0.9.1-pre.4-X`.
 GitHub schedules may be delayed; [Releases](https://github.com/IvanSolis1989/XClash/releases/latest) shows the available download.
 README and other documentation-only changes do not start APK builds or cancel active builds.
 
