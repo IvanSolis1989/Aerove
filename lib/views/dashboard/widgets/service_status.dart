@@ -8,6 +8,7 @@ import 'package:fl_clash/providers/outbound_ip.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/providers/routed_probe.dart';
 import 'package:fl_clash/providers/service_status.dart';
+import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/dashboard/probe_start_hold.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
@@ -359,7 +360,7 @@ class _ServiceCell extends StatelessWidget {
     final status = AppTextStyle.caption1
         .of(context, emphasized: true)
         .toTabular
-        .copyWith(color: color);
+        .copyWith(color: GlassForeground.colorOf(context, color));
     final badge = _ServiceBadge(
       target: service.target,
       size: height - _inset * 2,
@@ -525,7 +526,7 @@ class _StatusPill extends StatelessWidget {
           overflow: TextOverflow.ellipsis,
           style: AppTextStyle.caption1
               .of(context, emphasized: true)
-              .copyWith(color: colors.onContainer),
+              .copyWith(color: GlassForeground.colorOf(context, colors.onContainer)),
         ),
       ),
     );

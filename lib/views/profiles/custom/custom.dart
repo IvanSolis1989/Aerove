@@ -8,6 +8,7 @@ import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
+import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/config/dns.dart';
 import 'package:fl_clash/views/config/ntp.dart';
@@ -534,7 +535,7 @@ class _MoreSectionsView extends ConsumerWidget {
                         )
                       : appLocalizations.none,
                   style: hasDialerIssues
-                      ? TextStyle(color: context.colorScheme.error)
+                      ? TextStyle(color: GlassForeground.colorOf(context, context.colorScheme.error))
                       : null,
                 ),
                 CustomProxyDialersView(profileId),
@@ -546,7 +547,7 @@ class _MoreSectionsView extends ConsumerWidget {
                 Text(
                   _enabledText(appLocalizations, status.ntp),
                   style: hasNtpIssues
-                      ? TextStyle(color: context.colorScheme.error)
+                      ? TextStyle(color: GlassForeground.colorOf(context, context.colorScheme.error))
                       : null,
                 ),
                 NtpView(profileId),
@@ -592,7 +593,7 @@ class _CountText extends StatelessWidget {
     }
     return Text(
       '$issueCount / $count',
-      style: TextStyle(color: context.colorScheme.error),
+      style: TextStyle(color: GlassForeground.colorOf(context, context.colorScheme.error)),
     );
   }
 }
@@ -610,11 +611,11 @@ class _StatusText extends StatelessWidget {
     return Text(
       text,
       style: TextStyle(
-        color: invalid
+        color: GlassForeground.colorOf(context, invalid
             ? colorScheme.error
             : active
             ? colorScheme.tertiary
-            : colorScheme.onSurfaceVariant,
+            : colorScheme.onSurfaceVariant),
       ),
     );
   }

@@ -91,7 +91,11 @@ void main() {
           theme.colorScheme.primary.r,
           closeTo(theme.colorScheme.primary.g, 0.025),
         );
-        expect(theme.colorScheme.onSurface.a, 1);
+        expect(theme.colorScheme.onSurface.a, 0.94);
+        expect(
+          theme.colorScheme.onSurface.withValues(alpha: 1),
+          auroraColorScheme(brightness).onSurface,
+        );
         final button = tester.widget<FilledButton>(
           find.descendant(
             of: find.byType(CommonCard),
@@ -388,10 +392,18 @@ void main() {
           final pageContext = tester.element(pageScaffold);
           expect(AuroraAppearance.enabledOf(pageContext), gradient);
           if (gradient) {
+            final colors = Theme.of(pageContext).colorScheme;
+            final original = auroraColorScheme(brightness);
+            expect(colors.primary, original.primary);
+            expect(colors.surface, original.surface);
+            expect(colors.error, original.error);
+            expect(colors.onSurface.withValues(alpha: 1), original.onSurface);
+            expect(colors.onSurface.a, 0.94);
             expect(
-              Theme.of(pageContext).colorScheme,
-              auroraColorScheme(brightness),
+              colors.onSurfaceVariant.withValues(alpha: 1),
+              original.onSurfaceVariant,
             );
+            expect(colors.onSurfaceVariant.a, 0.94);
           }
           expect(container.read(themeSettingProvider).primaryColor, 0xFFFF2D55);
           if (gradient) {

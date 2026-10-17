@@ -3,6 +3,7 @@ import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/features/form/form.dart';
 import 'package:fl_clash/models/clash_config.dart';
 import 'package:fl_clash/providers/providers.dart';
+import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/config/rules.dart';
 import 'package:fl_clash/widgets/widgets.dart';
@@ -281,9 +282,9 @@ class _MatchTargetItem extends ConsumerWidget {
             .of(context)
             .toJetBrainsMono
             .copyWith(
-              color: invalid
+              color: GlassForeground.colorOf(context, invalid
                   ? context.colorScheme.error
-                  : context.colorScheme.tertiary,
+                  : context.colorScheme.tertiary),
             ),
       ),
       onPressed: () {

@@ -1,6 +1,7 @@
 import 'dart:math';
 
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/ui.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -32,7 +33,7 @@ class ExpireChip extends StatelessWidget {
             maxLines: 1,
             style: AppTextStyle.caption1
                 .of(context, emphasized: true)
-                .copyWith(color: color),
+                .copyWith(color: GlassForeground.colorOf(context, color)),
           ),
         ),
       ),

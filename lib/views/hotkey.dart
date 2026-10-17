@@ -3,6 +3,7 @@ import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
+import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter/services.dart';
@@ -186,7 +187,7 @@ class _HotKeyItem extends ConsumerWidget {
                 appLocalizations.hotkeyUnavailable,
                 style: AppTextStyle.footnote
                     .of(context)
-                    .copyWith(color: colorScheme.error),
+                    .copyWith(color: GlassForeground.colorOf(context, colorScheme.error)),
               ),
             ),
       trailing: key == null
@@ -194,7 +195,7 @@ class _HotKeyItem extends ConsumerWidget {
               appLocalizations.hotkeyNotSet,
               style: AppTextStyle.subheadline
                   .of(context)
-                  .copyWith(color: colorScheme.outline),
+                  .copyWith(color: GlassForeground.colorOf(context, colorScheme.outline)),
             )
           : Row(
               mainAxisSize: MainAxisSize.min,
@@ -462,7 +463,7 @@ class _HotKeyRecorderState extends ConsumerState<HotKeyRecorder> {
       padding: const EdgeInsets.only(top: 12),
       child: Text(
         text,
-        style: AppTextStyle.subheadline.of(context).copyWith(color: color),
+        style: AppTextStyle.subheadline.of(context).copyWith(color: GlassForeground.colorOf(context, color)),
       ),
     );
   }

@@ -2,6 +2,7 @@ import 'dart:ui' show ImageFilter, Vertices, VertexMode;
 
 import 'package:fl_clash/common/aurora.dart';
 import 'package:fl_clash/ui/aurora.dart';
+import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/shape.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/surface.dart';
@@ -58,7 +59,9 @@ class AuroraAppSurface extends ConsumerWidget {
         .withAppSurfaces;
     final glassMode = effectiveAuroraGlassMode(settings.liquidGlass, enabled);
     final glassEnabled = glassMode != LiquidGlassMode.none && !opaque;
-    final surfaceTheme = enabled ? glassTheme : theme;
+    final surfaceTheme = glassEnabled
+        ? GlassForeground.theme(enabled ? glassTheme : theme)
+        : theme;
     final surfaceColors = surfaceTheme.colorScheme;
     final glassButtons =
         (glassEnabled
@@ -98,37 +101,39 @@ class AuroraAppSurface extends ConsumerWidget {
                         ),
                   )
                 : theme,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                Positioned.fill(
-                  child: enabled
-                      ? IgnorePointer(
-                          child: AnimatedSwitcher(
-                            duration: MediaQuery.disableAnimationsOf(context)
-                                ? Duration.zero
-                                : const Duration(milliseconds: 350),
-                            child: SizedBox.expand(
-                              key: ValueKey((
-                                settings.seed,
-                                Object.hashAll(settings.colors),
-                                theme.brightness,
-                              )),
-                              child: SeededAuroraWallpaper(
-                                colors: [
-                                  for (final color in settings.colors)
-                                    Color(color),
-                                ],
-                                seed: settings.seed,
-                                brightness: theme.brightness,
+            child: GlassForegroundText(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Positioned.fill(
+                    child: enabled
+                        ? IgnorePointer(
+                            child: AnimatedSwitcher(
+                              duration: MediaQuery.disableAnimationsOf(context)
+                                  ? Duration.zero
+                                  : const Duration(milliseconds: 350),
+                              child: SizedBox.expand(
+                                key: ValueKey((
+                                  settings.seed,
+                                  Object.hashAll(settings.colors),
+                                  theme.brightness,
+                                )),
+                                child: SeededAuroraWallpaper(
+                                  colors: [
+                                    for (final color in settings.colors)
+                                      Color(color),
+                                  ],
+                                  seed: settings.seed,
+                                  brightness: theme.brightness,
+                                ),
                               ),
                             ),
-                          ),
-                        )
-                      : ColoredBox(color: theme.scaffoldBackgroundColor),
-                ),
-                child,
-              ],
+                          )
+                        : ColoredBox(color: theme.scaffoldBackgroundColor),
+                  ),
+                  child,
+                ],
+              ),
             ),
           ),
         ),

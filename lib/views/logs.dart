@@ -5,6 +5,7 @@ import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
+import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:material_ui/material_ui.dart';
@@ -246,7 +247,7 @@ class _LogBody extends StatelessWidget {
           if (route.error.isNotEmpty)
             TextSpan(
               text: '\n${route.error}',
-              style: styles.secondary.copyWith(color: errorColor),
+              style: styles.secondary.copyWith(color: errorColor == null ? null : GlassForeground.colorOf(context, errorColor!)),
             ),
           const TextSpan(text: '\n'),
           if (route.rule.isNotEmpty) ...[
@@ -257,7 +258,7 @@ class _LogBody extends StatelessWidget {
             text: route.proxy,
             style: AppTextStyle.footnote
                 .of(context, emphasized: true)
-                .copyWith(color: context.colorScheme.primary),
+                .copyWith(color: GlassForeground.colorOf(context, context.colorScheme.primary)),
           ),
           TextSpan(text: '\n$_sourceText', style: styles.secondary),
         ],

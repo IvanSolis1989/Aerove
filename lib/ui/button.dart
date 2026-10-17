@@ -1,4 +1,5 @@
 import 'package:fl_clash/ui/context.dart';
+import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/metrics.dart';
 import 'package:fl_clash/ui/shape.dart';
@@ -210,7 +211,7 @@ class TonalButtonTheme extends StatelessWidget {
             context.raisedSurfaceLevel.colorOf(colorScheme),
             opacity: 0.4,
           );
-    final foreground = colorScheme.onSurface;
+    final foreground = GlassForeground.colorOf(context, colorScheme.onSurface);
     final disabledForeground = foreground.withValues(alpha: 0.38);
     ButtonStyle? paneOf(bool Function(Set<WidgetState> states) tinted) {
       if (!paned) {

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:crypto/crypto.dart';
 import 'package:fl_clash/common/aurora.dart';
 import 'package:fl_clash/widgets/aurora.dart';
 import 'package:flutter/rendering.dart';
@@ -10,6 +11,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_color_utilities/material_color_utilities.dart'
     show Hct;
 import 'package:material_ui/material_ui.dart';
+
+const _baselineRun = '39042612930';
+const _baselineDarkPixelDigest =
+    '0d7cabb636d7980464c387da3bc9a3d6a3a067a930f8a3460ef80a29b9eb35fb';
+const _baselineLightMeanSaturation = 0.0895237717889811;
 
 void main() {
   test(
@@ -126,6 +132,8 @@ void main() {
     final key = GlobalKey();
     final metrics = <String, Object?>{};
     final failures = <String>[];
+    final darkPixelHashes = <String>[];
+    final lightMeanSaturations = <double>[];
     final output = Directory(
       Platform.environment['XCLASH_SCREENSHOT_DIR'] ?? 'build/aurora-review',
     );
@@ -143,6 +151,17 @@ void main() {
       'meshRows': 97,
       'sharedSourceSaturationCeiling': 0.60,
       'sourceSofteningBrightnessDependent': false,
+      'lightFinalSaturationMultiplier': 1.06,
+      'pixelBaseline': {
+        'githubActionsRun': _baselineRun,
+        'source': 'xclash-previews artifact, 300 by 600 opaque RGBA images',
+        'darkDigestEncoding':
+            'SHA256 of sorted image-stem:raw-RGBA-SHA256 entries joined by newline',
+        'darkImageCount': 49,
+        'darkPixelDigest': _baselineDarkPixelDigest,
+        'lightImageCount': 49,
+        'lightMeanSampledSaturation': _baselineLightMeanSaturation,
+      },
       'hardGates': {
         'opaqueAlpha': 255,
         'minimumSelectedHueCoverageExclusive': 0.01,
@@ -358,6 +377,13 @@ void main() {
               }
             }
             final meanLuminance = totalLuminance / samples;
+            final pixelDigest = sha256.convert(bytes).toString();
+            final meanSaturation = totalSaturation / samples;
+            if (brightness == Brightness.dark) {
+              darkPixelHashes.add('$name:$pixelDigest');
+            } else {
+              lightMeanSaturations.add(meanSaturation);
+            }
             final verticalVariation = _verticalVariation(bytes, 300, 600);
             final varyingRows = _varyingRows(bytes, 300, 600);
             final luminanceDeviation = math.sqrt(
@@ -397,6 +423,7 @@ void main() {
             failures.addAll(failedChecks.map((failure) => '$name: $failure'));
             metrics[name] = {
               'file': '$name.png',
+              'rawRgbaSha256': pixelDigest,
               'palette': paletteCase.key,
               'maximumSampledHctChroma': maxChroma,
               'minimumSampledValue': minimumValue,
@@ -406,7 +433,7 @@ void main() {
               'sourceRelativeMaximumValue': maximumSourceValue * 0.50 + 1 / 255,
               'minimumSampledSaturation': minimumSaturation,
               'maximumSampledSaturation': maximumSaturation,
-              'meanSampledSaturation': totalSaturation / samples,
+              'meanSampledSaturation': meanSaturation,
               'selectedSaturations': [
                 for (final selected in palette)
                   HSVColor.fromColor(selected).saturation,
@@ -458,6 +485,26 @@ void main() {
         }
       }
     }
+    darkPixelHashes.sort();
+    final darkDigest = sha256
+        .convert(utf8.encode(darkPixelHashes.join('\n')))
+        .toString();
+    final meanLightSaturation =
+        lightMeanSaturations.reduce((a, b) => a + b) /
+        lightMeanSaturations.length;
+    final saturationRatio = meanLightSaturation / _baselineLightMeanSaturation;
+    if (darkDigest != _baselineDarkPixelDigest) {
+      failures.add('dark RGBA pixels must match baseline run $_baselineRun');
+    }
+    if (saturationRatio <= 1.02 || saturationRatio > 1.08) {
+      failures.add('light mean saturation must increase by 2 to 8 percent');
+    }
+    manifest['brightnessComparison'] = {
+      'darkPixelDigest': darkDigest,
+      'darkPixelsUnchanged': darkDigest == _baselineDarkPixelDigest,
+      'lightMeanSampledSaturation': meanLightSaturation,
+      'lightSaturationRatio': saturationRatio,
+    };
     manifest['renderedImageCount'] = metrics.length;
     manifest['passedHardGates'] = failures.isEmpty;
     manifest['failedChecks'] = failures;
@@ -467,6 +514,8 @@ void main() {
       ).writeAsString(const JsonEncoder.withIndent('  ').convert(manifest)),
     );
     expect(metrics, hasLength(98));
+    expect(darkPixelHashes, hasLength(49));
+    expect(lightMeanSaturations, hasLength(49));
     expect(failures, isEmpty, reason: failures.join('\n'));
   });
 

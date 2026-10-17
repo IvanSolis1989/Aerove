@@ -10,6 +10,7 @@ import 'package:fl_clash/providers/ip_quality.dart';
 import 'package:fl_clash/providers/outbound_ip.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/providers/routed_probe.dart';
+import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
 import 'package:fl_clash/views/dashboard/probe_start_hold.dart';
@@ -327,7 +328,7 @@ class _ExitRow extends StatelessWidget {
             appLocalizations.serviceFailed,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: style.copyWith(color: colorScheme.error),
+            style: style.copyWith(color: GlassForeground.colorOf(context, colorScheme.error)),
           )
         : SkeletonText(width: 140, style: style);
     return Row(

@@ -1,5 +1,6 @@
 import 'package:fl_clash/ui/color.dart';
 import 'package:fl_clash/ui/context.dart';
+import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/measure.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
@@ -37,7 +38,7 @@ class CommonChip extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: AppTextStyle.caption1
                   .of(context, emphasized: true)
-                  .copyWith(color: foregroundColor),
+                  .copyWith(color: GlassForeground.colorOf(context, foregroundColor)),
             ),
           ),
           if (onDeleted != null)
@@ -89,7 +90,7 @@ class TonalChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final style = AppTextStyle.caption1
         .of(context, emphasized: true)
-        .copyWith(color: foregroundColor);
+        .copyWith(color: GlassForeground.colorOf(context, foregroundColor));
     final content = Padding(
       padding: _padding,
       child: _CapCentered(

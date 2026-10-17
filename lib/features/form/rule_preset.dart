@@ -1,6 +1,7 @@
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/clash_config.dart';
+import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:material_ui/material_ui.dart';
@@ -137,7 +138,7 @@ class _PresetSubtitle extends StatelessWidget {
             style: AppTextStyle.footnote
                 .of(context)
                 .toJetBrainsMono
-                .copyWith(color: context.colorScheme.tertiary),
+                .copyWith(color: GlassForeground.colorOf(context, context.colorScheme.tertiary)),
           ),
       ],
     );

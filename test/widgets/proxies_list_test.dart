@@ -108,9 +108,8 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  Finder headerOf(String groupName) => find.ancestor(
-    of: find.text(groupName, findRichText: true),
-    matching: find.byType(ListHeader),
+  Finder headerOf(String groupName) => find.byWidgetPredicate(
+    (widget) => widget is ListHeader && widget.group.name == groupName,
   );
 
   Finder actionOf(String groupName, String tooltip) => find.descendant(
@@ -167,7 +166,99 @@ void main() {
     );
     expect((well.decoration! as ShapeDecoration).color, Colors.transparent);
     expect(find.text('🌐'), findsOneWidget);
-    expect(find.text('全球 🌐 节点'), findsOneWidget);
+    expect(find.text('全球 节点'), findsOneWidget);
+    expect(find.text('全球 🌐 节点'), findsNothing);
+  });
+
+  testWidgets('group headings retain full semantics without emoji', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    addTearDown(semantics.dispose);
+    for (final (name, title) in [
+      ('普通 A1 名称', '普通 A1 名称'),
+      ('🤖 AI 🌐 服务', 'AI 服务'),
+      ('家庭 👨‍👩‍👧‍👦 👍🏽 🇭🇰 节点', '家庭 节点'),
+      ('🌐🇭🇰👨‍👩‍👧‍👦', ''),
+    ]) {
+      await pumpList(tester, groups: [_group(name, 0)]);
+      container.read(proxiesStyleSettingProvider.notifier).value = container
+          .read(proxiesStyleSettingProvider)
+          .copyWith(iconStyle: ProxiesIconStyle.filled);
+      await tester.pumpAndSettle();
+
+      expect(find.text(title), findsOneWidget, reason: name);
+      expect(
+        find.byWidgetPredicate(
+          (widget) => widget is Semantics && widget.properties.label == name,
+        ),
+        findsOneWidget,
+      );
+      expect(container.read(groupsProvider).single.name, name);
+    }
+  });
+
+  testWidgets('explicit images replace emoji decorations in titles', (
+    tester,
+  ) async {
+    const name = 'AI 🤖 服务';
+    final group = _group(name, 0).copyWith(
+      icon: 'data:image/svg+xml;base64,'
+          'PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=',
+    );
+    await pumpList(tester, groups: [group]);
+    container.read(proxiesStyleSettingProvider.notifier).value = container
+        .read(proxiesStyleSettingProvider)
+        .copyWith(iconStyle: ProxiesIconStyle.plain);
+    await tester.pumpAndSettle();
+
+    expect(find.text('AI 服务'), findsOneWidget);
+    expect(find.text(name), findsNothing);
+    expect(find.text('🤖'), findsNothing);
+    expect(
+      tester.widget<CommonTargetIcon>(find.byType(CommonTargetIcon)).src,
+      group.icon,
+    );
+
+    container.read(proxiesStyleSettingProvider.notifier).value = container
+        .read(proxiesStyleSettingProvider)
+        .copyWith(iconStyle: ProxiesIconStyle.hidden);
+    await tester.pumpAndSettle();
+
+    expect(find.text(name), findsOneWidget);
+    expect(find.byType(CommonTargetIcon), findsNothing);
+  });
+
+  testWidgets('display titles preserve identity, selection and node flags', (
+    tester,
+  ) async {
+    const name = '🌐 全球节点';
+    const node = '🇭🇰 Hong Kong';
+    final group = _group(name, 0).copyWith(
+      all: [const Proxy(name: node, type: 'ss')],
+    );
+    await pumpList(
+      tester,
+      groups: [group],
+      selectedMap: {name: node},
+      unfoldSet: {},
+    );
+
+    expect(find.text('全球节点'), findsOneWidget);
+    expect(find.text(node), findsOneWidget);
+    expect(container.read(selectedProxyNameProvider(name)), node);
+    expect(container.read(currentProfileProvider)?.selectedMap, {name: node});
+    expect(tester.widget<ListHeader>(headerOf(name)).group.name, name);
+
+    await tester.tap(actionOf(name, 'Delay test'));
+    await tester.pump();
+    expect(_RecordingProxiesAction.tested, [name]);
+
+    await tester.tap(find.text('全球节点'));
+    await tester.pumpAndSettle();
+    expect(container.read(unfoldSetProvider), contains(name));
+    expect(find.byKey(const ValueKey('$name.$node')), findsWidgets);
+    expect(container.read(selectedProxyNameProvider(name)), node);
   });
 
   testWidgets('scroll to selected lands the row under the pinned header', (

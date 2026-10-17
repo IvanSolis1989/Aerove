@@ -1,5 +1,6 @@
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/state.dart';
+import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter/services.dart';
@@ -78,10 +79,14 @@ class FormRow extends StatelessWidget {
     this.onPressed,
   });
 
-  Widget _buildTitle(double maxWidth) {
+  Widget _buildTitle(BuildContext context, double maxWidth) {
     final text = TooltipLabel(
       title,
-      style: titleStyle,
+      style: titleStyle?.color == null
+          ? titleStyle
+          : titleStyle!.copyWith(
+              color: GlassForeground.colorOf(context, titleStyle!.color!),
+            ),
       maxLines: _titleMaxLines,
     );
     if (trailing == null) {
@@ -108,7 +113,7 @@ class FormRow extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             spacing: _spacing,
             children: [
-              _buildTitle(constraints.maxWidth),
+              _buildTitle(context, constraints.maxWidth),
               if (trailing != null)
                 Flexible(
                   child: IconTheme(

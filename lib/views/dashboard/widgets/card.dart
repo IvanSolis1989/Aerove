@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'dart:ui' show lerpDouble;
 
 import 'package:fl_clash/state.dart';
+import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
 import 'package:fl_clash/views/dashboard/style.dart';
@@ -535,7 +536,7 @@ class DashboardChip extends StatelessWidget {
             style: AppTextStyle.caption1
                 .of(context, emphasized: true)
                 .toTabular
-                .copyWith(color: foreground),
+                .copyWith(color: GlassForeground.colorOf(context, foreground)),
           ),
         ],
       ),

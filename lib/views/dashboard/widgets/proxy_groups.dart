@@ -2,6 +2,7 @@ import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
+import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
 import 'package:fl_clash/views/dashboard/style.dart';
@@ -117,7 +118,7 @@ class _GroupDelay extends ConsumerWidget {
       style: AppTextStyle.caption1
           .of(context, emphasized: true)
           .toTabular
-          .copyWith(color: colorScheme.delayColor(delay > 0 ? delay : -1)),
+          .copyWith(color: GlassForeground.colorOf(context, colorScheme.delayColor(delay > 0 ? delay : -1))),
     );
   }
 }

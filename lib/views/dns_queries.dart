@@ -2,6 +2,7 @@ import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
+import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
@@ -280,9 +281,9 @@ class _DnsResult extends StatelessWidget {
             child: Text(
               summary,
               style: TextStyle(
-                color: dnsQuery.isFailed
+                color: GlassForeground.colorOf(context, dnsQuery.isFailed
                     ? context.colorScheme.error
-                    : context.colorScheme.onSurfaceVariant,
+                    : context.colorScheme.onSurfaceVariant),
               ),
             ),
           ),
@@ -323,6 +324,7 @@ class DnsQueryItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final styles = RecordTextStyles.of(context);
     final tone = dnsQuery.isFailed ? RecordTone.error : RecordTone.neutral;
+    final accentColor = tone.accentColor(context);
     final summary = dnsQuery.summary;
     return RecordListItem(
       onTap: () => _showDnsQueryDetail(context, dnsQuery),
@@ -347,7 +349,7 @@ class DnsQueryItem extends StatelessWidget {
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: styles.secondary.copyWith(
-                color: tone.accentColor(context),
+                color: accentColor == null ? null : GlassForeground.colorOf(context, accentColor),
               ),
             ),
           Wrap(
@@ -444,7 +446,7 @@ class _ErrorRow extends StatelessWidget {
         error,
         style: AppTextStyle.subheadline
             .of(context)
-            .copyWith(color: context.colorScheme.error),
+            .copyWith(color: GlassForeground.colorOf(context, context.colorScheme.error)),
       ),
     );
   }

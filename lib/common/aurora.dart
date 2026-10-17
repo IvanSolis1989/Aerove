@@ -145,6 +145,10 @@ AuroraMesh generateAuroraMesh(
     if (hsv.saturation < minimumSaturation) {
       color = hsv.withSaturation(minimumSaturation).toColor();
     }
+    final light = HSVColor.fromColor(color);
+    color = light
+        .withSaturation((light.saturation * 1.06).clamp(0.0, 1.0))
+        .toColor();
     return _readableLightAuroraTint(color, base);
   }
 

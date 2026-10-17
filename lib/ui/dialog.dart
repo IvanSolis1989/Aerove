@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:fl_clash/ui/color.dart';
 import 'package:fl_clash/ui/context.dart';
+import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/input.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/motion.dart';
@@ -639,7 +640,7 @@ class _AlertAction extends StatelessWidget {
       data: TextButtonThemeData(
         style:
             TextButton.styleFrom(
-              foregroundColor: foreground,
+              foregroundColor: GlassForeground.colorOf(context, foreground),
               disabledForegroundColor: colorScheme.onSurface.withValues(
                 alpha: 0.38,
               ),

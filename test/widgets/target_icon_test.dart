@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -22,6 +23,42 @@ Future<void> _pump(WidgetTester tester, Widget icon) {
 }
 
 void main() {
+  test('group titles remove whole emoji and preserve plain text', () {
+    for (final (name, title) in [
+      ('🌐全球节点', '全球节点'),
+      ('AI 🤖 服务 🌐', 'AI 服务'),
+      ('香港 🇭🇰 节点', '香港 节点'),
+      ('家庭 👨‍👩‍👧‍👦 节点 👍🏽', '家庭 节点'),
+      ('🏛️ 金融 1️⃣ 支付', '金融 支付'),
+      ('🌐🇭🇰👨‍👩‍👧‍👦👍🏽', ''),
+      ('  普通 A1 名称  ', '  普通 A1 名称  '),
+    ]) {
+      expect(groupTitleWithoutEmoji(name), title, reason: name);
+    }
+  });
+
+  testWidgets('group monogram caps its explicit foreground only in glass', (
+    tester,
+  ) async {
+    for (final glass in [false, true]) {
+      await _pump(
+        tester,
+        LiquidGlassScope(
+          enabled: glass,
+          child: const IconTheme(
+            data: IconThemeData(color: Colors.red),
+            child: GroupMonogram('🤖 AI'),
+          ),
+        ),
+      );
+      final text = tester.widget<Text>(find.text('🤖'));
+      expect(
+        text.style!.color,
+        glass ? GlassForeground.cap(Colors.red) : Colors.red,
+      );
+    }
+  });
+
   testWidgets('a group without an icon prefers its first complete emoji', (
     tester,
   ) async {

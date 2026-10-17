@@ -8,6 +8,7 @@ import 'package:fl_clash/features/features.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/providers/core.dart';
+import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/views/connection/connections.dart';
 import 'package:fl_clash/views/connection/requests.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
@@ -878,14 +879,14 @@ class _DnsResult extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
     if (query.error.isNotEmpty) {
-      return Text(query.error, style: TextStyle(color: colorScheme.error));
+      return Text(query.error, style: TextStyle(color: GlassForeground.colorOf(context, colorScheme.error)));
     }
     if (query.hasFailureRcode) {
       return Text(
         query.rcode,
         style: AppTextStyle.footnote
             .of(context, emphasized: true)
-            .copyWith(color: DashboardColors.of(context).warn),
+            .copyWith(color: GlassForeground.colorOf(context, DashboardColors.of(context).warn)),
       );
     }
     final answer = query.answers.firstOrNull ?? '—';

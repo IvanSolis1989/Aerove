@@ -5,6 +5,7 @@ import 'dart:ui' show ImageFilter, lerpDouble;
 
 import 'package:fl_clash/ui/color.dart';
 import 'package:fl_clash/ui/context.dart';
+import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/metrics.dart';
 import 'package:fl_clash/ui/motion.dart';
@@ -2066,7 +2067,7 @@ class _CommonPopupMenuState extends State<CommonPopupMenu>
                   overflow: TextOverflow.ellipsis,
                   style: AppTextStyle.subheadline
                       .of(context)
-                      .copyWith(color: foregroundColor),
+                      .copyWith(color: GlassForeground.colorOf(context, foregroundColor)),
                 ),
               ),
               if (arrow != null) ...[const SizedBox(width: 8), arrow],

@@ -3,6 +3,7 @@ import 'package:fl_clash/common/ip_quality.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/providers/ip_quality.dart';
+import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -113,7 +114,7 @@ class _IpQualityDetail extends ConsumerWidget {
                 title: localizations.ipType,
                 value: Text(
                   localizations.ipQualityFailed,
-                  style: TextStyle(color: context.colorScheme.error),
+                  style: TextStyle(color: GlassForeground.colorOf(context, context.colorScheme.error)),
                 ),
               )
             else
@@ -164,6 +165,7 @@ class _IpQualityDetail extends ConsumerWidget {
         ),
       ];
     }
+    final levelColor = quality.level.color(context);
     final flags = [
       if (quality.isTor) localizations.ipFlagTor,
       if (quality.isAbuser) localizations.ipFlagAbuser,
@@ -175,7 +177,7 @@ class _IpQualityDetail extends ConsumerWidget {
         title: localizations.ipQualityLevel,
         value: Text(
           quality.level.label(context),
-          style: TextStyle(color: quality.level.color(context)),
+          style: TextStyle(color: levelColor == null ? null : GlassForeground.colorOf(context, levelColor)),
         ),
       ),
       DetailRow(

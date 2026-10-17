@@ -1,3 +1,4 @@
+import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/glyph.dart';
 import 'package:fl_clash/ui/icons/glyph_painter.dart';
 import 'package:material_ui/material_ui.dart';
@@ -24,7 +25,7 @@ class GlyphIcon extends StatelessWidget {
           painter: GlyphPainter(
             glyph: glyph,
             fill: fill ?? iconTheme.fill ?? 0,
-            color: color.withValues(alpha: color.a * opacity),
+            color: GlassForeground.iconColorOf(context, color, opacity),
           ),
         ),
       ),

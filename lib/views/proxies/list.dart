@@ -804,22 +804,32 @@ class _GroupIcon extends ConsumerWidget {
   }
 }
 
-class _GroupSummary extends StatelessWidget {
+class _GroupSummary extends ConsumerWidget {
   const _GroupSummary({required this.groupName});
 
   final String groupName;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final iconStyle = ref.watch(
+      proxiesStyleSettingProvider.select((state) => state.iconStyle),
+    );
+    final title = iconStyle == ProxiesIconStyle.hidden
+        ? groupName
+        : groupTitleWithoutEmoji(groupName);
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        EmojiText(
-          groupName,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: AppTextStyle.callout.of(context, emphasized: true),
+        Semantics(
+          label: groupName,
+          excludeSemantics: true,
+          child: EmojiText(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTextStyle.callout.of(context, emphasized: true),
+          ),
         ),
         const SizedBox(height: 2),
         Flexible(flex: 1, child: _SelectedProxyName(groupName: groupName)),

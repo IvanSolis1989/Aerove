@@ -1,5 +1,6 @@
 library;
 
+import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/clash_config.dart';
@@ -155,7 +156,7 @@ class RuleItem extends StatelessWidget {
                               style: AppTextStyle.subheadline
                                   .of(context)
                                   .toJetBrainsMono
-                                  .copyWith(color: checkResult.color),
+                                  .copyWith(color: checkResult.color == null ? null : GlassForeground.colorOf(context, checkResult.color!)),
                             ),
                           ),
                         ),

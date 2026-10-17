@@ -271,7 +271,7 @@ class _ListEditViewState extends EditViewState<ListEditView, String> {
   @override
   Widget? buildSubtitle(String entry) {
     if (widget.itemValidator?.call(entry) case final error?) {
-      return Text(error, style: TextStyle(color: context.colorScheme.error));
+      return Text(error, style: TextStyle(color: GlassForeground.colorOf(context, context.colorScheme.error)));
     }
     return null;
   }

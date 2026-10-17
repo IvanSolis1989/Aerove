@@ -4,6 +4,7 @@ import 'package:emoji_regex/emoji_regex.dart';
 import 'package:fl_clash/common/cache.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/plugins/app.dart';
+import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/ui.dart';
 import 'package:flutter/foundation.dart';
@@ -131,17 +132,29 @@ class _ImagePlaceholder extends StatelessWidget {
   }
 }
 
+final _groupEmoji = emojiRegex();
+final _groupTitleWhitespace = RegExp(r'\s{2,}');
+
+String groupTitleWithoutEmoji(String name) {
+  final text = name.characters
+      .where((character) => !_groupEmoji.hasMatch(character))
+      .join();
+  if (text == name) {
+    return name;
+  }
+  return text.trim().replaceAll(_groupTitleWhitespace, ' ');
+}
+
 class GroupMonogram extends StatelessWidget {
   final String name;
 
   const GroupMonogram(this.name, {super.key});
 
   static final _letter = RegExp(r'[\p{L}\p{N}]', unicode: true);
-  static final _emoji = emojiRegex();
 
   String get _mark {
     for (final character in name.characters) {
-      if (_emoji.hasMatch(character)) {
+      if (_groupEmoji.hasMatch(character)) {
         return character;
       }
     }
@@ -171,7 +184,11 @@ class GroupMonogram extends StatelessWidget {
             size: size * 0.62,
             leading: size * 0.62,
             weight: FontWeight.w600,
-          ).copyWith(color: iconTheme.color),
+          ).copyWith(
+            color: iconTheme.color == null
+                ? null
+                : GlassForeground.colorOf(context, iconTheme.color!),
+          ),
         ),
       ),
     );
