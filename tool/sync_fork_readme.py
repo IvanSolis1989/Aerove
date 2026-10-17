@@ -25,8 +25,8 @@ def synchronize(text, repository):
     if len(recorded) != 1:
         raise ValueError('expected one xclash-repository marker')
     old = repository_name(recorded[0])
-    if '[FlClash](https://github.com/chen08209/FlClash)' not in text or '[GPL-3.0](LICENSE)' not in text:
-        raise ValueError('XClash README must retain upstream attribution and GPL-3.0 license')
+    if '[GPL-3.0](LICENSE)' not in text:
+        raise ValueError('XClash README must retain its GPL-3.0 license link')
     text = re.sub(REPOSITORY, f'<!-- xclash-repository: {repository} -->', text)
     text = re.sub(re.escape('https://github.com/' + old) + r'(?=[/).#?\s]|$)',
                   'https://github.com/' + repository, text)
@@ -38,10 +38,9 @@ def synchronize(text, repository):
                   'cd ' + repository.split('/')[1], text)
     required = (
         f'https://github.com/{repository}/releases/latest/download/XClash-android-arm64.apk',
-        f'git clone --recursive https://github.com/{repository}.git',
     )
     if any(link not in text for link in required):
-        raise ValueError('XClash README must include the fork stable APK and clone links')
+        raise ValueError('XClash README must include the fork stable APK link')
     return text
 
 

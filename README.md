@@ -5,119 +5,119 @@
 
 **简体中文** · [English](README_en.md)
 
-[![Release](https://img.shields.io/github/v/release/IvanSolis1989/XClash?style=flat-square)](https://github.com/IvanSolis1989/XClash/releases/latest)
-[![License](https://img.shields.io/github/license/IvanSolis1989/XClash?style=flat-square)](LICENSE)
-
-XClash 是基于 [FlClash](https://github.com/chen08209/FlClash) 开发、优先面向 Android 的代理客户端，
-以淡雅极光底图与轻玻璃表面为视觉方向。本分支目前重点开发 Android 界面，保留上游 Flutter 应用结构和
-mihomo 集成；外观调整不替换代理内核、路由引擎或服务生命周期。
+[![下载最新版](https://img.shields.io/github/v/release/IvanSolis1989/XClash?style=flat-square)](https://github.com/IvanSolis1989/XClash/releases/latest)
 
 ## 下载与安装
 
-请从本仓库的 [Releases](https://github.com/IvanSolis1989/XClash/releases/latest) 下载最新的
-**Android ARM64 预览版**，也可使用固定的
-[APK 下载链接](https://github.com/IvanSolis1989/XClash/releases/latest/download/XClash-android-arm64.apk)。
-发布资产同时包含 `SHA256SUMS` 和 `BUILD_INFO.json`，用于核对文件校验和、源码版本与构建来源。
+**[直接下载 Android APK](https://github.com/IvanSolis1989/XClash/releases/latest/download/XClash-android-arm64.apk)** · [全部版本](https://github.com/IvanSolis1989/XClash/releases)
 
-目前只发布 `arm64-v8a`，面向 **Android 7.0 及以上**；没有 XClash 桌面端、F-Droid 或 Homebrew 安装包。
-APK 由本分支 CI 构建；[Actions](https://github.com/IvanSolis1989/XClash/actions/workflows/xclash-android.yaml)
-用于查看构建日志与排查产物，安装请使用 Releases。
+支持 **Android 7.0 及以上、ARM64（arm64-v8a）**。下载 APK 后允许安装该来源的应用，按系统提示安装。
+更新前可在应用内备份配置。早期测试包签名不同，若提示签名冲突，请备份后卸载旧包再安装。
+发布页提供 `SHA256SUMS` 和 `BUILD_INFO.json`，可核对下载文件及对应源码。
 
-APK 显示版本由 `chen08209/FlClash` 任一分支可达的最高合法稳定版或预发布标签决定，并追加 `-X` 标记本分支版本；例如
-上游 `v0.9.1-pre.4` 显示为 `0.9.1-pre.4-X`。未打标签的开发提交不会触发同步。`pubspec.yaml` 保留上游原版本，
-APK 内部版本码使用本分支独立序号，不随上游构建号回退或冲突。`tool/upstream-version.json` 和 `BUILD_INFO.json`
-记录选中标签、目标提交、可达分支与 pubspec 来源。
+## 添加订阅与使用脚本
 
-当前预览版使用固定的**测试签名**，包 ID 为 `com.follow.clash.dev`，尚未完成真机验收。
-早期仅在 Actions 提供的 APK 使用临时签名，升级到 Release 时，Android 可能要求先卸载旧版；
-请先备份配置。本地构建也可能使用不同签名，不能保证直接覆盖 CI 发布的版本。
+1. 在配置页面添加订阅链接，保存并更新配置。
+2. 选中配置，确认已关联内置的 **Smart-Config-Kit** 脚本，然后启动连接。
+3. 在 **进阶配置 → 脚本** 查看脚本正文和来源链接。这里可以修改、复制或打开链接，也可以手动更新脚本。
 
-## 外观与操作
+新建的普通订阅及本地配置默认关联内置脚本；已有配置与备份恢复的数据保留原来的选择。
+删除脚本后不会自动补回。脚本来源：
 
-进入 **工具 → 主题 → 主题色彩**，在**普通主题色**与**随机渐变底图**之间二选一。
-选择渐变底图后设置 **1–3 种颜色**，点击**换一张**生成新构图。
-配色与随机种子随配置保存，重启后保持同一图案。这是静态、由种子确定的随机底图，不持续播放壁纸动画；
-界面表面采用克制的半透明效果，兼顾文字与控件的可读性。
-
-渐变模式停用普通主题配色，下方现有液态玻璃选项自动开启并锁定；切回普通主题色后恢复原来的配色与玻璃设置。
-默认跟随系统深浅色，也可在页面顶部选择浅色或深色。高对比度模式、深色纯黑模式会使用不透明表面，停用极光与玻璃效果。
-现有导航、仪表盘布局和代理操作控件继续保留。
-
-<p align="center">
-  <img src="snapshots/xclash-theme.png" alt="XClash 主题设置：淡蓝与浅紫底图" width="300">
-</p>
-
-上图由实际 Flutter widget 测试按 Android 模式渲染，**不是真机截图**，不能作为真机渲染性能或 VPN 连通性证明。
-
-## 国内网络默认配置
-
-新安装内置并关联 [Smart-Config-Kit 的 FlClash 专用脚本](https://github.com/IvanSolis1989/Smart-Config-Kit/tree/main/FlClash)，
-可在 **进阶配置 → 脚本** 查看内置正文和来源链接，并编辑链接、复制或打开来源、手动同步新版。
-普通订阅和本地配置默认使用该脚本；已有配置与恢复的数据保留原有选择。
-
-DNS 仅使用用户指定的方案：启动自举仅保留四个 DoH-over-IP 地址，移除明文兜底及原版默认 DNS；
-业务解析、分域策略、fallback 与私有节点适配沿用该脚本。客户端不追加系统 DNS，
-仅覆写为加密自举所需的 `default-nameserver`，其他 DNS 字段保持脚本结果。
-恢复默认也回到这套用户方案。VPN 系统代理、VPN/核心 IPv6 与应用绕过默认关闭，DNS 劫持开启。
-
-取值依据、来源版本、更新方式与验证边界见[国内网络默认基线](docs/network-defaults.md)。
-
-## 从源码构建 Android
-
-请对齐 [Android CI 工作流](.github/workflows/xclash-android.yaml)：**Flutter 3.47.6**、**Go 1.27.1**、
-**JDK 17**、Android SDK 与 **NDK r28c（`28.2.13676358`）**，以及通过 rustup 管理的 **Rust 1.99.0**。
-Rust 版本锁定在 [rust-toolchain.toml](plugins/rust_api/rust/rust-toolchain.toml)，Android SDK 版本见
-[libs.versions.toml](android/gradle/libs.versions.toml)（compile/target SDK 37）。
-确保 Flutter、Go、Java 和 cargo 可从 `PATH` 调用，并为 Flutter 配置 Android SDK。
-
-```sh
-git clone --recursive https://github.com/IvanSolis1989/XClash.git
-cd XClash
-flutter pub get
-flutter build apk --release --target-platform android-arm64
+```text
+https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/main/FlClash/FlClash%28mihomo%29.js
 ```
 
-APK 输出到 `build/app/outputs/flutter-apk/app-release.apk`。Flutter 原生构建 hook 与 Gradle 会编译所需的
-Rust 库和 Android Go 内核；打包时保持原生构建 hook 启用。未配置正式签名容器时，本仓库使用 debug 签名，
-并附加 `.dev` 包 ID 后缀。CI 从仓库 secret 恢复固定测试签名，其私有签名容器不随源码分发。
+## 主题设置
 
-Dart/UI 验证命令与原生 hook 的工具链要求见 [.agents/commands.md](.agents/commands.md)。提交代码前运行
-`flutter pub get`、`flutter analyze --no-fatal-infos` 及相关 `flutter test` 测试。
-Agent 在开发主机上启动应用时，必须使用 `--dart-define=SAFE_MODE=true`。
+进入 **工具 → 主题 → 主题色彩**，二选一：
 
-## 构建、发布与上游同步
+- **普通主题色**：使用原有主题配色，可自由调整下方液态玻璃选项。
+- **随机渐变底图**：选择 **1–3 种颜色**，点击 **换一张** 改变构图；下方液态玻璃自动开启并锁定。
 
-- **Android CI：** `main` 推送或手动运行会验证生成文件、静态分析、UI/配置回归及 Android 单元测试，并构建
-  ARM64 APK。满足条件的 `main` 构建成功后，由独立 Release 任务发布 APK 和来源文件；检查失败不发布新包。
-  源码同步与 APK 发布分别运行，后续 APK 构建失败不会撤销已合并的源码更新。
-- **上游同步：** 定时工作流在每小时 UTC 第 17 分钟检查上游各分支可达的最高稳定版或预发布标签；GitHub 调度可能延迟。
-  只合并标签对应提交，不自动跟随未打标签的开发提交。验证通过后才推进本分支 `main`；遇到冲突、验证失败或并发更新时保留原有 `main`。
-- **分支文档：** 这两份 README 由 XClash 独立维护。同步时从合并前的 fork 版本保留 README，不导入上游正文。
-  `tool/sync_fork_readme.py` 仅校正仓库派生链接与徽章；没有 XClash 自有文档标记的输入会被拒绝。
+切回普通主题色会恢复之前的主题配色和玻璃设置。渐变配色与构图会保存，重启后保持不变。
+深浅色默认**跟随系统**，也可在页面顶部指定浅色或深色。高对比度、深色纯黑模式使用不透明表面。
 
-触发方式、工作流权限限制、签名、失败证据和手动恢复见[上游同步说明](docs/upstream-sync.md)。
-自动合并不能保证未来的上游变更都符合本分支视觉设计，聚焦测试之外仍需人工界面验收。
+<p align="center">
+  <img src="snapshots/xclash-theme.png" alt="XClash 主题设置预览" width="300">
+</p>
 
-## 项目结构
+*界面预览由 Flutter 测试渲染。*
 
-| 路径 | 职责 |
+## DNS 默认设置
+
+内置脚本提供分流与防泄漏 DNS 配置。客户端不追加系统 DNS，启动自举仅使用以下四个加密地址：
+
+```yaml
+default-nameserver:
+  - https://223.5.5.5/dns-query
+  - https://223.6.6.6/dns-query
+  - https://8.8.8.8/dns-query
+  - https://1.1.1.1/dns-query
+```
+
+业务 DNS、分域策略及 fallback 由脚本配置。恢复默认也使用这套方案。
+VPN 系统代理、VPN/核心 IPv6、应用绕过默认关闭，DNS 劫持默认开启。
+具体取值见 [网络默认配置](docs/network-defaults.md)。
+
+## 在 Cloudflare 部署 SubStore
+
+以下使用 [sub-store-cloudflare](https://github.com/realchendahuang/sub-store-cloudflare) 新建部署，前端与后端一起部署到自己的 Cloudflare 账号。
+准备 Cloudflare、GitHub 或 GitLab 账号，以及自己的订阅链接。
+
+### 1. 准备两个随机 Token
+
+用密码管理器生成两个不同、各至少 32 字节的随机值并保存，分别作为管理 Token 和下载 Token。
+安装了 Node.js 的电脑也可运行：
+
+```sh
+node -e "const{randomBytes:r}=require('node:crypto');console.log(r(32).toString('base64url'));console.log(r(32).toString('base64url'))"
+```
+
+### 2. 部署到 Cloudflare
+
+点击 **[部署到 Cloudflare](https://deploy.workers.cloudflare.com/?url=https://github.com/realchendahuang/sub-store-cloudflare)**，登录并按提示导入仓库：
+
+| 项目 | 填写内容 |
 | --- | --- |
-| `lib/manager/theme_manager.dart`、`lib/widgets/aurora.dart` | 主题集成与种子底图渲染 |
-| `lib/views/`、`lib/widgets/` | 页面、主题控件及 Flutter 通用组件 |
-| `lib/core/`、`android/`、`core/` | 内核集成、Android 服务生命周期与 Go 包装层 |
-| `plugins/` | 本地 Flutter/原生依赖，包含 Rust 集成 |
-| `test/`、`android/tests/` | Flutter 与 Android 回归测试 |
-| `.github/workflows/`、`tool/` | 验证、打包、发布与维护自动化 |
+| Worker 名称 | 自定，例如 `sub-store-cloudflare` |
+| D1 数据库 | 新建数据库 |
+| `SUB_STORE_ADMIN_TOKEN` | 第一个随机值，作为 Secret 保存 |
+| `SUB_STORE_PUBLIC_DOWNLOAD_TOKEN` | 第二个随机值，作为 Secret 保存 |
+| 构建命令 | `pnpm run build` |
+| 部署命令 | `pnpm run deploy` |
 
-## 反馈与贡献
+等待构建和部署成功，保存 Cloudflare 显示的 Worker 地址。
 
-XClash 的问题与功能建议请提交到[本仓库 Issues](https://github.com/IvanSolis1989/XClash/issues)。
-请提供应用版本、Android 版本、复现步骤及是否启用极光底图；日志中应移除订阅凭据等隐私信息。
-修改应保留上游内核/服务的职责边界，并验证受影响行为。开发前阅读 [AGENTS.md](AGENTS.md) 及其链接的项目规则。
+### 3. 打开管理页面并添加订阅
 
-## 许可与上游归属
+在 Worker 地址后加上 `/?token=<管理Token>` 打开管理页面，例如：
 
-XClash 按 [GPL-3.0](LICENSE) 分发，基于 chen08209 及贡献者维护的
-[FlClash](https://github.com/chen08209/FlClash)，沿用 [mihomo](https://github.com/MetaCubeX/mihomo) 生态。
-保留上游版权与许可声明，各依赖继续适用自身许可证。本分支的界面与发布自动化由本仓库维护，
-XClash 安装包不是 FlClash 官方发行版。
+```text
+https://sub-store-cloudflare.<你的子域>.workers.dev/?token=<管理Token>
+```
+
+添加订阅源（Source），填入自己的订阅链接并保存；再进入默认的 `Daily` 组合订阅（Collection），确认已包含需要的订阅源。
+
+### 4. 导入 XClash
+
+在组合订阅卡片复制 **Mihomo / Clash Meta** 格式的下载链接，在 XClash 配置页面添加该链接。
+下载链接使用下载 Token；管理 Token 只用于管理页面。确认 XClash 能更新并显示节点，即完成接入。
+导入后保留 XClash 内置的 Smart-Config-Kit 脚本与 DNS 默认设置，分流脚本在 XClash 内执行。
+两个 Token 和完整订阅链接都应私下保存。
+
+部署问题可对照该项目的 [快速开始](https://github.com/realchendahuang/sub-store-cloudflare/blob/main/docs/quick-start.md)。
+
+## 版本更新
+
+本仓库**每小时自动检查一次上游更新**，选取所有分支可达的最高版本标签，包含预发布。
+通过验证后构建并发布 APK，版本号为“上游版本号 + `-X`”，例如 `0.9.1-pre.4-X`。
+GitHub 定时任务可能延迟；实际可下载版本以 [Releases](https://github.com/IvanSolis1989/XClash/releases/latest) 为准。
+只修改 README 等文档不会触发 APK 构建，也不会取消正在进行的构建。
+
+## 问题反馈
+
+请在 [Issues](https://github.com/IvanSolis1989/XClash/issues) 提供应用版本、Android 版本和复现步骤。
+主题问题请附上深浅色模式、配色和截图；提交日志前移除订阅链接及节点凭据。
+
+[GPL-3.0](LICENSE)

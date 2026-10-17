@@ -5,135 +5,119 @@
 
 [简体中文](README.md) · **English**
 
-[![Release](https://img.shields.io/github/v/release/IvanSolis1989/XClash?style=flat-square)](https://github.com/IvanSolis1989/XClash/releases/latest)
-[![License](https://img.shields.io/github/license/IvanSolis1989/XClash?style=flat-square)](LICENSE)
-
-XClash is an Android-first proxy client derived from [FlClash](https://github.com/chen08209/FlClash),
-with a quiet aurora background and subtle glass surfaces. This fork currently develops the Android interface;
-it retains the upstream Flutter application structure and mihomo integration. Changing the appearance does not
-replace the proxy core, routing engine or service lifecycle.
+[![Latest release](https://img.shields.io/github/v/release/IvanSolis1989/XClash?style=flat-square)](https://github.com/IvanSolis1989/XClash/releases/latest)
 
 ## Download and installation
 
-Download the latest **Android ARM64 preview** from this repository's
-[Releases](https://github.com/IvanSolis1989/XClash/releases/latest), or use the stable
-[APK download link](https://github.com/IvanSolis1989/XClash/releases/latest/download/XClash-android-arm64.apk).
-Release assets also include `SHA256SUMS` and `BUILD_INFO.json` for checksums, source revision and build provenance.
+**[Download Android APK](https://github.com/IvanSolis1989/XClash/releases/latest/download/XClash-android-arm64.apk)** · [All releases](https://github.com/IvanSolis1989/XClash/releases)
 
-Only `arm64-v8a` is published, targeting **Android 7.0 or later**. There are no XClash desktop, F-Droid or Homebrew releases.
-The APK is built by this fork's CI; [Actions](https://github.com/IvanSolis1989/XClash/actions/workflows/xclash-android.yaml)
-provides build logs and diagnostic artifacts. Use Releases for installation.
+Requires **Android 7.0 or newer and ARM64 (arm64-v8a)**. Allow installation from your download source and install the APK.
+Back up your configuration before upgrading. If an early test build has a conflicting signing key, back up, uninstall it, then install the new APK.
+Release assets include `SHA256SUMS` and `BUILD_INFO.json` for checking the file and its source revision.
 
-The displayed APK version follows the highest legal stable or prerelease tag reachable from any
-`chen08209/FlClash` branch, with `-X` added to identify this fork: upstream `v0.9.1-pre.4` becomes
-`0.9.1-pre.4-X`. Untagged development commits do not trigger synchronization. `pubspec.yaml` keeps the upstream
-version; the APK uses an independent fork build number so upstream build numbers cannot cause a rollback or collision.
-`tool/upstream-version.json` and `BUILD_INFO.json` record the selected tag, target commit, branches containing it and
-pubspec source.
+## Subscriptions and scripts
 
-The preview uses a persistent **test signing key** and application ID `com.follow.clash.dev`.
-Physical-device acceptance is still pending. Earlier Actions-only APKs used temporary signing keys;
-Android may require uninstalling those before installing a Release. Back up your configuration first.
-Locally built APKs may also have a different signing key and cannot necessarily update the CI build in place.
+1. Add a subscription URL on the configuration page, save it and update the profile.
+2. Select the profile, check that the bundled **Smart-Config-Kit** script is associated, then start the connection.
+3. Open **Advanced configuration → Scripts** to view its content and source URL, edit, copy or open the URL, or manually update the script.
 
-## Appearance and controls
+New ordinary subscriptions and local profiles use the bundled script by default. Existing and restored profiles retain their choices.
+Deleting the script prevents automatic reinstallation. Script source:
 
-Open **Tools → Theme → Theme colors**, then choose either **Solid theme color** or **Random gradient wallpaper**.
-In gradient mode, choose **1–3 colors**, then use **New wallpaper** to request a new composition. The palette and random seed are saved with your
-configuration, so the same pattern returns after restarting. It is a static seeded background, with no
-continuous wallpaper animation. The surfaces use restrained translucency to keep controls readable.
-
-Gradient mode suspends the ordinary theme palette and enables and locks the existing Liquid Glass setting.
-Choosing solid theme color restores the saved palette and glass setting. The default follows system brightness;
-light and dark modes remain available at the top of the page. High-contrast mode and dark pure-black mode use opaque
-surfaces instead of the aurora/glass treatment. Existing navigation, dashboard layout and proxy controls are retained.
-
-<p align="center">
-  <img src="snapshots/xclash-theme.png" alt="XClash theme settings with a soft blue and lavender background" width="300">
-</p>
-
-This preview is rendered from the actual Flutter widget test in Android mode. It is not a physical-device screenshot
-and does not demonstrate on-device rendering performance or VPN connectivity.
-
-## Network defaults for mainland China
-
-New installations include and select the [Smart-Config-Kit FlClash script](https://github.com/IvanSolis1989/Smart-Config-Kit/tree/main/FlClash)
-for new ordinary subscriptions and local profiles. Open **Advanced configuration → Scripts** to view its bundled
-content and source URL, edit or copy the URL, open the source, or manually sync a newer version.
-Existing profiles and restored data keep their selections.
-
-DNS uses the user's approved policy: four encrypted DoH-over-IP bootstrap endpoints, with the plaintext fallback
-and original client resolver defaults removed. Business DNS, domain policies, fallback and private-node adaptation
-come from the script. The client appends no system DNS and overrides only `default-nameserver` for encrypted
-bootstrap; all other script DNS fields remain intact. Reset returns to the same user defaults.
-VPN HTTP proxy, VPN/core IPv6 and application VPN bypass default to off; DNS hijacking defaults to on.
-
-See the [network default baseline](docs/network-defaults.md) for source versions, update behavior and validation limits.
-
-## Build Android from source
-
-Match the [Android CI workflow](.github/workflows/xclash-android.yaml): **Flutter 3.47.6**, **Go 1.27.1**,
-**JDK 17**, Android SDK and **NDK r28c (`28.2.13676358`)**, plus rustup with **Rust 1.99.0**.
-The Rust pin is in [rust-toolchain.toml](plugins/rust_api/rust/rust-toolchain.toml);
-Android SDK versions are in [libs.versions.toml](android/gradle/libs.versions.toml) (compile/target SDK 37).
-Ensure Flutter, Go, Java and cargo are available on `PATH`, and configure the Android SDK for Flutter.
-
-```sh
-git clone --recursive https://github.com/IvanSolis1989/XClash.git
-cd XClash
-flutter pub get
-flutter build apk --release --target-platform android-arm64
+```text
+https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/main/FlClash/FlClash%28mihomo%29.js
 ```
 
-The APK is written to `build/app/outputs/flutter-apk/app-release.apk`. Flutter's native build hooks and Gradle
-build the required Rust library and Android Go core; keep the native build hooks enabled when packaging.
-Without a configured release keystore, this repository uses debug signing with the `.dev` application ID.
-CI restores its persistent test key from a repository secret; that private signing container is not included in source.
+## Theme settings
 
-For Dart/UI checks, use the commands and native-hook requirements in [.agents/commands.md](.agents/commands.md).
-Before submitting code, run `flutter pub get`, `flutter analyze --no-fatal-infos`, and relevant `flutter test` suites.
-An agent running the application on a development host must use `--dart-define=SAFE_MODE=true`.
+Open **Tools → Theme → Theme colors** and choose one mode:
 
-## Builds, releases and upstream updates
+- **Solid theme color:** use the usual palette and adjust Liquid Glass independently.
+- **Random gradient wallpaper:** select **1–3 colors**, then use **New wallpaper** to change the composition. Liquid Glass turns on and is locked.
 
-- **Android CI:** a `main` push or manual run validates generated sources, analysis, UI/configuration regressions
-  and Android unit tests, then builds ARM64. Successful eligible `main` builds publish the APK and provenance files
-  through a separate Release job. Failed checks do not publish a new APK; source synchronization and APK publication
-  are separate runs, so an APK build failure does not undo an already merged source update.
-- **Upstream synchronization:** hourly at minute 17 UTC, the workflow selects the highest stable or prerelease tag
-  reachable from any upstream branch; GitHub may delay scheduled runs. It merges the tagged commit and does not follow
-  untagged development commits. The candidate is validated before this fork's `main` advances. Conflicts, failed
-  validation or a competing update leave the existing `main` in place.
-- **Fork documentation:** these two READMEs are maintained for XClash. Synchronization preserves the fork's README
-  files from its pre-merge revision; it does not import upstream README content. `tool/sync_fork_readme.py` only
-  updates repository-derived links and badges, and rejects documents without the XClash ownership marker.
+Switching back restores the saved ordinary palette and glass setting. The gradient palette and composition persist across restarts.
+Brightness defaults to **system**, with explicit light and dark options at the top. High-contrast and dark pure-black modes use opaque surfaces.
 
-See the [upstream synchronization guide](docs/upstream-sync.md) for triggers, workflow permission limits,
-signing, failure evidence and manual recovery. Automatic merging does not guarantee that future upstream changes
-preserve this fork's visual design; focused tests still need human UI review.
+<p align="center">
+  <img src="snapshots/xclash-theme.png" alt="XClash theme settings preview" width="300">
+</p>
 
-## Project layout
+*Preview rendered by a Flutter test.*
 
-| Path | Responsibility |
+## Default DNS
+
+The bundled script provides routing and the selected DNS policy. System DNS is not appended. Bootstrap uses only these encrypted endpoints:
+
+```yaml
+default-nameserver:
+  - https://223.5.5.5/dns-query
+  - https://223.6.6.6/dns-query
+  - https://8.8.8.8/dns-query
+  - https://1.1.1.1/dns-query
+```
+
+Business resolvers, domain policies and fallback come from the script. Reset returns to these defaults.
+VPN HTTP proxy, VPN/core IPv6 and application bypass default to off; DNS hijacking defaults to on.
+See [network defaults](docs/network-defaults.md) for the values.
+
+## Deploy SubStore on Cloudflare
+
+This new deployment uses [sub-store-cloudflare](https://github.com/realchendahuang/sub-store-cloudflare), which hosts its frontend and backend in your Cloudflare account.
+Prepare Cloudflare and GitHub or GitLab accounts, and your own subscription URL.
+
+### 1. Generate two tokens
+
+Generate and save two different random values of at least 32 bytes each in a password manager, one for administration and one for downloads.
+Alternatively, run this command with Node.js installed:
+
+```sh
+node -e "const{randomBytes:r}=require('node:crypto');console.log(r(32).toString('base64url'));console.log(r(32).toString('base64url'))"
+```
+
+### 2. Deploy
+
+Open **[Deploy to Cloudflare](https://deploy.workers.cloudflare.com/?url=https://github.com/realchendahuang/sub-store-cloudflare)**, sign in and import the repository:
+
+| Field | Value |
 | --- | --- |
-| `lib/manager/theme_manager.dart`, `lib/widgets/aurora.dart` | Theme integration and seeded background rendering |
-| `lib/views/`, `lib/widgets/` | Screens, theme controls and reusable Flutter components |
-| `lib/core/`, `android/`, `core/` | Core integration, Android service lifecycle and Go wrapper |
-| `plugins/` | Local Flutter/native dependencies, including Rust integration |
-| `test/`, `android/tests/` | Flutter and Android regressions |
-| `.github/workflows/`, `tool/` | Verification, packaging, publication and maintenance automation |
+| Worker name | Your choice, such as `sub-store-cloudflare` |
+| D1 database | Create a new database |
+| `SUB_STORE_ADMIN_TOKEN` | First random value, saved as a Secret |
+| `SUB_STORE_PUBLIC_DOWNLOAD_TOKEN` | Second random value, saved as a Secret |
+| Build command | `pnpm run build` |
+| Deploy command | `pnpm run deploy` |
 
-## Feedback and contributions
+Wait for a successful build and deployment, then save the Worker URL.
 
-Report XClash bugs and feature requests in [this repository's Issues](https://github.com/IvanSolis1989/XClash/issues).
-Include the app version, Android version, reproduction steps and whether the aurora option is enabled;
-remove subscription credentials and other private data from logs. Changes should preserve upstream core/service
-ownership and cover affected behavior. Start with [AGENTS.md](AGENTS.md) and the linked project rules.
+### 3. Open the management page and add a source
 
-## License and upstream attribution
+Append `/?token=<ADMIN_TOKEN>` to the Worker URL:
 
-XClash is distributed under [GPL-3.0](LICENSE). It is a fork of
-[FlClash](https://github.com/chen08209/FlClash) by chen08209 and its contributors, using the
-[mihomo](https://github.com/MetaCubeX/mihomo) ecosystem. Upstream copyright and license notices are preserved;
-bundled dependencies retain their respective licenses. XClash's interface work and release automation are maintained
-in this repository and are not official FlClash releases.
+```text
+https://sub-store-cloudflare.<YOUR_SUBDOMAIN>.workers.dev/?token=<ADMIN_TOKEN>
+```
+
+Create a Source using your subscription URL. Open the default `Daily` Collection and check that it includes the intended sources.
+
+### 4. Import into XClash
+
+Copy the **Mihomo / Clash Meta** download link from the Collection card and add it on XClash's configuration page.
+Download links use the download token; the admin token is only for management. Update the profile and check that nodes appear.
+Keep XClash's bundled Smart-Config-Kit script and default DNS settings; the routing script runs inside XClash.
+Keep both tokens and full subscription URLs private.
+
+For deployment help, see the project's [quick start](https://github.com/realchendahuang/sub-store-cloudflare/blob/main/docs/quick-start.md).
+
+## Updates
+
+This repository **checks upstream once per hour**, selecting the highest version tag reachable from any branch, including prereleases.
+After validation, it builds and publishes an APK named with the upstream version plus `-X`, such as `0.9.1-pre.4-X`.
+GitHub schedules may be delayed; [Releases](https://github.com/IvanSolis1989/XClash/releases/latest) shows the available download.
+README and other documentation-only changes do not start APK builds or cancel active builds.
+
+## Report a problem
+
+Open an [Issue](https://github.com/IvanSolis1989/XClash/issues) with your app version, Android version and reproduction steps.
+For theme problems, include brightness mode, palette and a screenshot. Remove subscription URLs and node credentials from logs.
+
+[GPL-3.0](LICENSE)
