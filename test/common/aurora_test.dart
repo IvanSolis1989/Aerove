@@ -14,14 +14,20 @@ void main() {
     for (var sample = 0; sample < 10; sample++) {
       final seed = random.nextInt(1 << 32);
       for (var count = 1; count <= 3; count++) {
+        final sourceValues = selected.take(count)
+            .map((color) => HSVColor.fromColor(color).value);
+        final minimumValue = sourceValues.reduce(math.min);
+        final maximumValue = sourceValues.reduce(math.max);
         final mesh = generateAuroraMesh(
           seed,
           colors: selected.take(count).toList(),
           brightness: Brightness.dark,
         );
         for (final color in mesh.colors) {
-          expect(color.computeLuminance(), greaterThanOrEqualTo(0.035));
-          expect(color.computeLuminance(), lessThanOrEqualTo(0.085));
+          final value = HSVColor.fromColor(color).value;
+          expect(value, greaterThanOrEqualTo(minimumValue * 0.32 - 1 / 255));
+          expect(value, lessThanOrEqualTo(maximumValue * 0.50 + 1 / 255));
+          expect(value, lessThan(0.51));
           expect(HSVColor.fromColor(color).saturation, greaterThan(0.07));
           expect(color, isNot(auroraBaseColor(Brightness.dark)));
         }
@@ -29,63 +35,91 @@ void main() {
     }
   });
 
-  test('dark single-color mapping changes value while retaining hue and saturation', () {
-    final expected = HSVColor.fromColor(selected.first);
-    final mesh = generateAuroraMesh(
-      832838199,
-      colors: selected.take(1).toList(),
-      brightness: Brightness.dark,
-    );
-    final values = <double>[];
-    for (final color in mesh.colors) {
-      final hsv = HSVColor.fromColor(color);
-      final delta = (hsv.hue - expected.hue).abs();
-      expect(math.min(delta, 360 - delta), lessThan(3));
-      expect(hsv.saturation, closeTo(expected.saturation, 0.012));
-      values.add(hsv.value);
-    }
-    expect(values.reduce(math.max) - values.reduce(math.min), greaterThan(0.08));
-  });
-
-  test('three hues remain continuous when one selection crosses 180 degrees', () {
-    AuroraMesh render(double thirdHue) => generateAuroraMesh(
-      832838199,
-      colors: [
-        HSVColor.fromAHSV(1, 0, 0.8, 0.9).toColor(),
-        HSVColor.fromAHSV(1, 170, 0.8, 0.9).toColor(),
-        HSVColor.fromAHSV(1, thirdHue, 0.8, 0.9).toColor(),
-      ],
-      brightness: Brightness.dark,
-    );
-    for (final (beforeHue, afterHue) in [(179.9, 180.1), (179.5, 180.5)]) {
-      final before = render(beforeHue);
-      final after = render(afterHue);
-      for (var index = 0; index < before.colors.length; index++) {
-        final previous = HSVColor.fromColor(before.colors[index]);
-        final next = HSVColor.fromColor(after.colors[index]);
-        final delta = (previous.hue - next.hue).abs();
-        expect(math.min(delta, 360 - delta), lessThan(4));
-        expect(previous.saturation, closeTo(0.8, 0.012));
-        expect(next.saturation, closeTo(0.8, 0.012));
+  test('pure RGB meshes attenuate value without changing hue or saturation', () {
+    for (final color in const [Color(0xFFFF0000), Color(0xFF00FF00), Color(0xFF0000FF)]) {
+      final source = HSVColor.fromColor(color);
+      final mesh = generateAuroraMesh(832838199, colors: [color], brightness: Brightness.dark);
+      for (final pixel in mesh.colors) {
+        final hsv = HSVColor.fromColor(pixel);
+        final delta = (hsv.hue - source.hue).abs();
+        expect(math.min(delta, 360 - delta), lessThan(3));
+        expect(hsv.saturation, closeTo(source.saturation, 0.012));
+        expect(hsv.value, lessThan(0.51));
+        expect(hsv.value, lessThan(source.value));
+        expect(hsv.value, greaterThanOrEqualTo(source.value * 0.32 - 1 / 255));
       }
     }
   });
 
-  test('dark hue interpolation crosses zero without a gray or opposite-hue seam', () {
-    final mesh = generateAuroraMesh(
-      624302977,
-      colors: [
-        HSVColor.fromAHSV(1, 350, 0.5, 0.8).toColor(),
-        HSVColor.fromAHSV(1, 10, 0.5, 0.8).toColor(),
-      ],
-      brightness: Brightness.dark,
-    );
-    for (final color in mesh.colors) {
-      final hsv = HSVColor.fromColor(color);
-      expect(math.min(hsv.hue, 360 - hsv.hue), lessThan(12));
-      expect(hsv.saturation, greaterThan(0.24));
-    }
-  });
+  test(
+    'dark single-color mapping changes value while retaining hue and saturation',
+    () {
+      final expected = HSVColor.fromColor(selected.first);
+      final mesh = generateAuroraMesh(
+        832838199,
+        colors: selected.take(1).toList(),
+        brightness: Brightness.dark,
+      );
+      final values = <double>[];
+      for (final color in mesh.colors) {
+        final hsv = HSVColor.fromColor(color);
+        final delta = (hsv.hue - expected.hue).abs();
+        expect(math.min(delta, 360 - delta), lessThan(3));
+        expect(hsv.saturation, closeTo(expected.saturation, 0.012));
+        values.add(hsv.value);
+      }
+      expect(
+        values.reduce(math.max) - values.reduce(math.min),
+        greaterThan(0.08),
+      );
+    },
+  );
+
+  test(
+    'three hues remain continuous when one selection crosses 180 degrees',
+    () {
+      AuroraMesh render(double thirdHue) => generateAuroraMesh(
+        832838199,
+        colors: [
+          HSVColor.fromAHSV(1, 0, 0.8, 0.9).toColor(),
+          HSVColor.fromAHSV(1, 170, 0.8, 0.9).toColor(),
+          HSVColor.fromAHSV(1, thirdHue, 0.8, 0.9).toColor(),
+        ],
+        brightness: Brightness.dark,
+      );
+      for (final (beforeHue, afterHue) in [(179.9, 180.1), (179.5, 180.5)]) {
+        final before = render(beforeHue);
+        final after = render(afterHue);
+        for (var index = 0; index < before.colors.length; index++) {
+          final previous = HSVColor.fromColor(before.colors[index]);
+          final next = HSVColor.fromColor(after.colors[index]);
+          final delta = (previous.hue - next.hue).abs();
+          expect(math.min(delta, 360 - delta), lessThan(4));
+          expect(previous.saturation, closeTo(0.8, 0.012));
+          expect(next.saturation, closeTo(0.8, 0.012));
+        }
+      }
+    },
+  );
+
+  test(
+    'dark hue interpolation crosses zero without a gray or opposite-hue seam',
+    () {
+      final mesh = generateAuroraMesh(
+        624302977,
+        colors: [
+          HSVColor.fromAHSV(1, 350, 0.5, 0.8).toColor(),
+          HSVColor.fromAHSV(1, 10, 0.5, 0.8).toColor(),
+        ],
+        brightness: Brightness.dark,
+      );
+      for (final color in mesh.colors) {
+        final hsv = HSVColor.fromColor(color);
+        expect(math.min(hsv.hue, 360 - hsv.hue), lessThan(12));
+        expect(hsv.saturation, greaterThan(0.24));
+      }
+    },
+  );
 
   test('saved seeds produce bounded, reproducible mesh fields', () {
     final first = generateAuroraMesh(
@@ -134,34 +168,41 @@ void main() {
   });
 
   for (final brightness in Brightness.values) {
-    test('fully saturated selections retain hue and readable brightness ($brightness)', () {
-      for (final color in const [
-        Color(0xFFFF0000),
-        Color(0xFF00FF00),
-        Color(0xFF0000FF),
-        Color(0xFFFF00FF),
-        Color(0xFF00FFFF),
-        Color(0xFFFFFF00),
-      ]) {
-        final tint = auroraTint(color, brightness);
-        if (brightness == Brightness.light) {
-          expect(Hct.fromInt(tint.toARGB32()).chroma, lessThanOrEqualTo(20));
-        } else {
-          expect(HSVColor.fromColor(tint).saturation, closeTo(1, 0.012));
-          expect(tint.computeLuminance(), inInclusiveRange(0.06, 0.07));
+    test(
+      'fully saturated selections retain hue and readable brightness ($brightness)',
+      () {
+        for (final color in const [
+          Color(0xFFFF0000),
+          Color(0xFF00FF00),
+          Color(0xFF0000FF),
+          Color(0xFFFF00FF),
+          Color(0xFF00FFFF),
+          Color(0xFFFFFF00),
+        ]) {
+          final tint = auroraTint(color, brightness);
+          if (brightness == Brightness.light) {
+            expect(Hct.fromInt(tint.toARGB32()).chroma, lessThanOrEqualTo(20));
+          } else {
+            expect(HSVColor.fromColor(tint).saturation, closeTo(1, 0.012));
+          final original = HSVColor.fromColor(color);
+          final darkValue = HSVColor.fromColor(tint).value;
+          expect(darkValue, closeTo(original.value * 0.42, 1 / 255));
+          expect(darkValue, lessThan(original.value));
+          expect(darkValue, lessThan(0.51));
+          }
+          final hueDelta =
+              (HSLColor.fromColor(tint).hue - HSLColor.fromColor(color).hue)
+                  .abs();
+          expect(hueDelta < 12 || hueDelta > 348, true);
+          expect(
+            tint.computeLuminance(),
+            brightness == Brightness.dark
+                ? lessThanOrEqualTo(0.161)
+                : greaterThanOrEqualTo(0.739),
+          );
         }
-        final hueDelta =
-            (HSLColor.fromColor(tint).hue - HSLColor.fromColor(color).hue)
-                .abs();
-        expect(hueDelta < 12 || hueDelta > 348, true);
-        expect(
-          tint.computeLuminance(),
-          brightness == Brightness.dark
-              ? lessThanOrEqualTo(0.161)
-              : greaterThanOrEqualTo(0.739),
-        );
-      }
-    });
+      },
+    );
 
     test(
       'tints preserve selected hue and readable luminance ($brightness)',

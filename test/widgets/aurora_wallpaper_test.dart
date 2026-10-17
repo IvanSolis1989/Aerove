@@ -106,344 +106,356 @@ void main() {
     }
   });
 
-  testWidgets(
-    'renders visible selected colors in light and dark for 1–3 colors',
-    (tester) async {
-      const selected = [
-        Color(0xFF6BD5D9),
-        Color(0xFFC6ADE4),
-        Color(0xFFA9DAC6),
-      ];
-      const saturated = [
-        Color(0xFFFF0000),
-        Color(0xFF00FF00),
-        Color(0xFF0000FF),
-      ];
-      const palettes = {'soft': selected, 'saturated': saturated};
-      const regressionSeeds = [12, 271828, 314159];
-      const masterSeed = 20261017;
-      final random = math.Random(masterSeed);
-      final randomSeeds = <int>[];
-      while (randomSeeds.length < 10) {
-        final seed = random.nextInt(1 << 32);
-        if (!regressionSeeds.contains(seed) && !randomSeeds.contains(seed)) {
-          randomSeeds.add(seed);
-        }
+  testWidgets('renders visible selected colors in light and dark for 1–3 colors', (
+    tester,
+  ) async {
+    const selected = [Color(0xFF6BD5D9), Color(0xFFC6ADE4), Color(0xFFA9DAC6)];
+    const saturated = [Color(0xFFFF0000), Color(0xFF00FF00), Color(0xFF0000FF)];
+    const palettes = {'soft': selected, 'saturated': saturated};
+    const regressionSeeds = [12, 271828, 314159];
+    const masterSeed = 20261017;
+    final random = math.Random(masterSeed);
+    final randomSeeds = <int>[];
+    while (randomSeeds.length < 10) {
+      final seed = random.nextInt(1 << 32);
+      if (!regressionSeeds.contains(seed) && !randomSeeds.contains(seed)) {
+        randomSeeds.add(seed);
       }
-      final seeds = [...regressionSeeds, ...randomSeeds];
-      final key = GlobalKey();
-      final metrics = <String, Object?>{};
-      final failures = <String>[];
-      final output = Directory(
-        Platform.environment['XCLASH_SCREENSHOT_DIR'] ?? 'build/aurora-review',
-      );
-      final manifest = {
-        'schemaVersion': 1,
-        'masterSeed': masterSeed,
-        'generator': 'dart:math Random(masterSeed).nextInt(1 << 32)',
-        'dartVersion': Platform.version,
-        'regressionSeeds': regressionSeeds,
-        'randomSeeds': randomSeeds,
-        'expectedImageCount': seeds.length * 6 + randomSeeds.length * 2,
-        'imageWidth': 300,
-        'imageHeight': 600,
-        'hardGates': {
-          'opaqueAlpha': 255,
-          'minimumSelectedHueCoverageExclusive': 0.01,
-          'hueToleranceDegreesExclusive': 20,
-          'minimumHueSampleSaturation': 0.07,
-          'minimumConsecutiveSeedMeanRgbDifferenceExclusive': 3,
-          'minimumVerticalMeanRgbDifferenceExclusive': 3,
-          'minimumVaryingRowFractionExclusive': 0.75,
-          'darkMinimumMeanLuminanceExclusive': 0.035,
-          'darkMinimumSampledLuminanceInclusive': 0.035,
-          'darkMaximumMappedSampledLuminanceInclusive': 0.085,
+    }
+    final seeds = [...regressionSeeds, ...randomSeeds];
+    final key = GlobalKey();
+    final metrics = <String, Object?>{};
+    final failures = <String>[];
+    final output = Directory(
+      Platform.environment['XCLASH_SCREENSHOT_DIR'] ?? 'build/aurora-review',
+    );
+    final manifest = {
+      'schemaVersion': 1,
+      'masterSeed': masterSeed,
+      'generator': 'dart:math Random(masterSeed).nextInt(1 << 32)',
+      'dartVersion': Platform.version,
+      'regressionSeeds': regressionSeeds,
+      'randomSeeds': randomSeeds,
+      'expectedImageCount': seeds.length * 6 + randomSeeds.length * 2,
+      'imageWidth': 300,
+      'imageHeight': 600,
+      'hardGates': {
+        'opaqueAlpha': 255,
+        'minimumSelectedHueCoverageExclusive': 0.01,
+        'hueToleranceDegreesExclusive': 20,
+        'minimumHueSampleSaturation': 0.07,
+        'minimumConsecutiveSeedMeanRgbDifferenceExclusive': 3,
+        'minimumVerticalMeanRgbDifferenceExclusive': 3,
+        'minimumVaryingRowFractionExclusive': 0.75,
+        'darkMaximumSampledValueExclusive': 0.51,
+        'darkMaximumSourceValueMultiplier': 0.50,
+        'darkMinimumSourceValueMultiplier': 0.30,
+        'channelQuantizationTolerance': 1 / 255,
+        'nearBlackValueThreshold': 0.20,
+        'nearBlackMinimumSourceValue': 0.70,
+        'darkMaximumNearBlackFractionInclusive': 0,
+        'darkMaximumNeutralFractionExclusive': 0.01,
+        'neutralSaturationThreshold': 0.07,
+        'darkMaximumLuminanceExclusive': 0.165,
+        'lightMinimumLuminanceExclusive': 0.73,
+        'lightMaximumSampledHctChromaInclusive': 20,
+      },
+      'visualReview': {
+        'darkSourcePolicy':
+            'retain original selected HSV hue and saturation without clipping; only value controls low brightness',
+        'retiredDarkMaximumHctChroma': 24,
+        'darkChromaGateRetirementReason':
+            'user explicitly requires dark to preserve selected saturation and become low-brightness color; the former chroma ceiling was an inferred anti-glare proxy that conflicted with that requirement',
+        'darkChromaReviewPolicy':
+            'record actual sampled HCT chroma for visual review; enforce low luminance, selected hue/saturation retention, zero near-black area, and no neutral holes instead of desaturating to satisfy a fixed chroma ceiling',
+        'darkValueAttenuationFactors': [0.32, 0.46, 0.50, 0.38],
+        'darkValueMappingIterations': 0,
+        'darkToneMappingSemantics':
+            'preserve source HSV hue and saturation; interpolate original selected value multiplied by fixed attenuation factors, with no equal-luminance compensation',
+        'retiredEqualLuminanceGates': {
+          'minimumSampledLuminance': 0.035,
+          'maximumMappedLuminance': 0.085,
           'nearBlackLuminanceThreshold': 0.02,
-          'darkMaximumNearBlackFractionInclusive': 0,
-          'darkMaximumNeutralFractionExclusive': 0.01,
-          'neutralSaturationThreshold': 0.07,
-          'darkMaximumLuminanceExclusive': 0.165,
-          'lightMinimumLuminanceExclusive': 0.73,
-          'lightMaximumSampledHctChromaInclusive': 20,
         },
-        'visualReview': {
-          'darkSourcePolicy': 'retain original selected HSV hue and saturation without clipping; only value controls low brightness',
-          'retiredDarkMaximumHctChroma': 24,
-          'darkChromaGateRetirementReason': 'user explicitly requires dark to preserve selected saturation and become low-brightness color; the former chroma ceiling was an inferred anti-glare proxy that conflicted with that requirement',
-          'darkChromaReviewPolicy': 'record actual sampled HCT chroma for visual review; enforce low luminance, selected hue/saturation retention, zero near-black area, and no neutral holes instead of desaturating to satisfy a fixed chroma ceiling',
-          'darkValueMappingIterations': 10,
-          'darkToneMappingSemantics': 'preserve source HSV hue and saturation; change only value to target luminance 0.04/0.065/0.08/0.05',
-          'retiredDarkLuminanceFloor': 0.07,
-          'darkLuminanceFloorChangeReason': 'user clarified dark means low-brightness color, not a desaturated gray background; the earlier floor was an inferred anti-hole proxy',
-          'status': 'requires independent review of actual rendered PNGs',
-          'softMaximumP95AdjacentRgbStep': 2,
-          'softMaximumLuminanceStandardDeviation': 0.10,
-          'criteria': [
-            'broad soft color transitions without visible mesh edges',
-            'visible chosen colors throughout, with no injected black or gray corners',
-            'no rigid stripes, harsh hotspots, or distracting detail',
-            'soft metric flags require inspection, not automatic approval',
-          ],
-          'randomSeedReviewGroups': [
-            for (final seed in randomSeeds)
+        'equalLuminanceRetirementReason': 'fixed luminance targets raised pure blue toward HSV value 1 because its maximum luminance is only 0.0722; dark now attenuates every selected value, and low-luminance colored blue is not classified as a black hole',
+        'retiredDarkLuminanceFloor': 0.07,
+        'darkLuminanceFloorChangeReason':
+            'user clarified dark means low-brightness color, not a desaturated gray background; the earlier floor was an inferred anti-hole proxy',
+        'status': 'requires independent review of actual rendered PNGs',
+        'softMaximumP95AdjacentRgbStep': 2,
+        'softMaximumLuminanceStandardDeviation': 0.10,
+        'criteria': [
+          'broad soft color transitions without visible mesh edges',
+          'visible chosen colors throughout, with no injected black or gray corners',
+          'no rigid stripes, harsh hotspots, or distracting detail',
+          'soft metric flags require inspection, not automatic approval',
+        ],
+        'randomSeedReviewGroups': [
+          for (final seed in randomSeeds)
+            {
+              'seed': seed,
+              'files': [
+                for (final brightness in Brightness.values)
+                  for (var count = 1; count <= 3; count++)
+                    'aurora-${brightness.name}-$count-$seed.png',
+                for (final brightness in Brightness.values)
+                  'aurora-saturated-${brightness.name}-3-$seed.png',
+              ],
+            },
+        ],
+      },
+      'images': [
+        for (final brightness in Brightness.values)
+          for (var count = 1; count <= 3; count++)
+            for (final seed in seeds)
               {
+                'file': 'aurora-${brightness.name}-$count-$seed.png',
                 'seed': seed,
-                'files': [
-                  for (final brightness in Brightness.values)
-                    for (var count = 1; count <= 3; count++)
-                      'aurora-${brightness.name}-$count-$seed.png',
-                  for (final brightness in Brightness.values)
-                    'aurora-saturated-${brightness.name}-3-$seed.png',
-                ],
-              },
-          ],
-        },
-        'images': [
-          for (final brightness in Brightness.values)
-            for (var count = 1; count <= 3; count++)
-              for (final seed in seeds)
-                {
-                  'file': 'aurora-${brightness.name}-$count-$seed.png',
-                  'seed': seed,
-                  'sample': randomSeeds.contains(seed)
-                      ? 'random'
-                      : 'regression',
-                  'brightness': brightness.name,
-                  'colorCount': count,
-                  'selectedColors': selected
-                      .take(count)
-                      .map((color) => color.toARGB32())
-                      .toList(),
-                },
-          for (final brightness in Brightness.values)
-            for (final seed in randomSeeds)
-              {
-                'file': 'aurora-saturated-${brightness.name}-3-$seed.png',
-                'seed': seed,
-                'sample': 'random',
-                'palette': 'saturated',
+                'sample': randomSeeds.contains(seed) ? 'random' : 'regression',
                 'brightness': brightness.name,
-                'colorCount': 3,
-                'selectedColors': saturated
+                'colorCount': count,
+                'selectedColors': selected
+                    .take(count)
                     .map((color) => color.toARGB32())
                     .toList(),
               },
-        ],
-      };
-      debugPrint('aurora random seeds: ${jsonEncode(randomSeeds)}');
-      await tester.runAsync(() async {
-        await output.create(recursive: true);
-        await File(
-          '${output.path}/aurora-review-manifest.json',
-        ).writeAsString(const JsonEncoder.withIndent('  ').convert(manifest));
-      });
-      for (final paletteCase in palettes.entries) {
-        for (final brightness in Brightness.values) {
-          for (final count in paletteCase.key == 'soft' ? [1, 2, 3] : [3]) {
-            final palette = paletteCase.value.take(count).toList();
-            List<int>? previous;
-            for (final seed
-                in paletteCase.key == 'soft' ? seeds : randomSeeds) {
-              await tester.pumpWidget(
-                Directionality(
-                  textDirection: TextDirection.ltr,
-                  child: Center(
-                    child: RepaintBoundary(
-                      key: key,
-                      child: SizedBox(
-                        width: 300,
-                        height: 600,
-                        child: SeededAuroraWallpaper(
-                          colors: palette,
-                          seed: seed,
-                          brightness: brightness,
-                        ),
+        for (final brightness in Brightness.values)
+          for (final seed in randomSeeds)
+            {
+              'file': 'aurora-saturated-${brightness.name}-3-$seed.png',
+              'seed': seed,
+              'sample': 'random',
+              'palette': 'saturated',
+              'brightness': brightness.name,
+              'colorCount': 3,
+              'selectedColors': saturated
+                  .map((color) => color.toARGB32())
+                  .toList(),
+            },
+      ],
+    };
+    debugPrint('aurora random seeds: ${jsonEncode(randomSeeds)}');
+    await tester.runAsync(() async {
+      await output.create(recursive: true);
+      await File(
+        '${output.path}/aurora-review-manifest.json',
+      ).writeAsString(const JsonEncoder.withIndent('  ').convert(manifest));
+    });
+    for (final paletteCase in palettes.entries) {
+      for (final brightness in Brightness.values) {
+        for (final count in paletteCase.key == 'soft' ? [1, 2, 3] : [3]) {
+          final palette = paletteCase.value.take(count).toList();
+          final sourceValues = [
+            for (final color in palette) HSVColor.fromColor(color).value,
+          ];
+          final minimumSourceValue = sourceValues.reduce(math.min);
+          final maximumSourceValue = sourceValues.reduce(math.max);
+          List<int>? previous;
+          for (final seed in paletteCase.key == 'soft' ? seeds : randomSeeds) {
+            await tester.pumpWidget(
+              Directionality(
+                textDirection: TextDirection.ltr,
+                child: Center(
+                  child: RepaintBoundary(
+                    key: key,
+                    child: SizedBox(
+                      width: 300,
+                      height: 600,
+                      child: SeededAuroraWallpaper(
+                        colors: palette,
+                        seed: seed,
+                        brightness: brightness,
                       ),
                     ),
                   ),
                 ),
-              );
-              final boundary =
-                  key.currentContext!.findRenderObject()!
-                      as RenderRepaintBoundary;
-              final prefix = paletteCase.key == 'soft'
-                  ? 'aurora'
-                  : 'aurora-saturated';
-              final name = '$prefix-${brightness.name}-$count-$seed';
-              final bytes = (await tester.runAsync(() async {
-                final image = await boundary.toImage();
-                try {
-                  final pixels = await image.toByteData(
-                    format: ui.ImageByteFormat.rawRgba,
-                  );
-                  final png = await image.toByteData(
-                    format: ui.ImageByteFormat.png,
-                  );
-                  await output.create(recursive: true);
-                  await File('${output.path}/$name.png').writeAsBytes(
-                    png!.buffer.asUint8List(
-                      png.offsetInBytes,
-                      png.lengthInBytes,
-                    ),
-                  );
-                  return pixels!.buffer
-                      .asUint8List(pixels.offsetInBytes, pixels.lengthInBytes)
-                      .toList();
-                } finally {
-                  image.dispose();
-                }
-              }))!;
-              final seedDifference = previous == null
-                  ? null
-                  : _meanPixelDifference(previous, bytes);
-              previous = bytes;
-              final coverage = List<int>.filled(count, 0);
-              var samples = 0;
-              var opaque = true;
-              var totalLuminance = 0.0;
-              var squaredLuminance = 0.0;
-              var minLuminance = 1.0;
-              var maxLuminance = 0.0;
-              var maxChroma = 0.0;
-              var nearBlackSamples = 0;
-              var neutralSamples = 0;
-              var minimumSaturation = 1.0;
-              var maximumSaturation = 0.0;
-              var totalSaturation = 0.0;
-              for (var offset = 0; offset < bytes.length; offset += 64) {
-                opaque = opaque && bytes[offset + 3] == 255;
-                final color = Color.fromARGB(
-                  255,
-                  bytes[offset],
-                  bytes[offset + 1],
-                  bytes[offset + 2],
+              ),
+            );
+            final boundary =
+                key.currentContext!.findRenderObject()!
+                    as RenderRepaintBoundary;
+            final prefix = paletteCase.key == 'soft'
+                ? 'aurora'
+                : 'aurora-saturated';
+            final name = '$prefix-${brightness.name}-$count-$seed';
+            final bytes = (await tester.runAsync(() async {
+              final image = await boundary.toImage();
+              try {
+                final pixels = await image.toByteData(
+                  format: ui.ImageByteFormat.rawRgba,
                 );
-                final luminance = color.computeLuminance();
-                if (luminance < 0.02) nearBlackSamples++;
-                if (offset % 1024 == 0) {
-                  maxChroma = math.max(
-                    maxChroma,
-                    Hct.fromInt(color.toARGB32()).chroma,
-                  );
-                }
-                minLuminance = math.min(minLuminance, luminance);
-                maxLuminance = math.max(maxLuminance, luminance);
-                totalLuminance += luminance;
-                squaredLuminance += luminance * luminance;
-                samples++;
-                final pixel = HSVColor.fromColor(color);
-                minimumSaturation = math.min(minimumSaturation, pixel.saturation);
-                maximumSaturation = math.max(maximumSaturation, pixel.saturation);
-                totalSaturation += pixel.saturation;
-                if (pixel.saturation < 0.07) neutralSamples++;
-                if (pixel.saturation < 0.07) continue;
-                for (var index = 0; index < palette.length; index++) {
-                  final delta =
-                      (pixel.hue - HSVColor.fromColor(palette[index]).hue)
-                          .abs();
-                  if (math.min(delta, 360 - delta) < 20) coverage[index]++;
-                }
+                final png = await image.toByteData(
+                  format: ui.ImageByteFormat.png,
+                );
+                await output.create(recursive: true);
+                await File('${output.path}/$name.png').writeAsBytes(
+                  png!.buffer.asUint8List(png.offsetInBytes, png.lengthInBytes),
+                );
+                return pixels!.buffer
+                    .asUint8List(pixels.offsetInBytes, pixels.lengthInBytes)
+                    .toList();
+              } finally {
+                image.dispose();
               }
-              final meanLuminance = totalLuminance / samples;
-              final verticalVariation = _verticalVariation(bytes, 300, 600);
-              final varyingRows = _varyingRows(bytes, 300, 600);
-              final luminanceDeviation = math.sqrt(
-                math.max(
-                  0,
-                  squaredLuminance / samples - meanLuminance * meanLuminance,
-                ),
+            }))!;
+            final seedDifference = previous == null
+                ? null
+                : _meanPixelDifference(previous, bytes);
+            previous = bytes;
+            final coverage = List<int>.filled(count, 0);
+            var samples = 0;
+            var opaque = true;
+            var totalLuminance = 0.0;
+            var squaredLuminance = 0.0;
+            var minLuminance = 1.0;
+            var maxLuminance = 0.0;
+            var maxChroma = 0.0;
+            var nearBlackSamples = 0;
+            var neutralSamples = 0;
+            var minimumSaturation = 1.0;
+            var maximumSaturation = 0.0;
+            var totalSaturation = 0.0;
+            var minimumValue = 1.0;
+            var maximumValue = 0.0;
+            for (var offset = 0; offset < bytes.length; offset += 64) {
+              opaque = opaque && bytes[offset + 3] == 255;
+              final color = Color.fromARGB(
+                255,
+                bytes[offset],
+                bytes[offset + 1],
+                bytes[offset + 2],
               );
-              final adjacentStep = _p95AdjacentRgbStep(bytes, 300, 600);
-              final failedChecks = <String>[
-                if (!opaque) 'opaque alpha must equal 255',
-                if (brightness == Brightness.light && maxChroma > 20)
-                  'light sampled HCT chroma must remain at or below 20',
-                if (seedDifference != null && seedDifference <= 3)
-                  'consecutive seed mean RGB difference must exceed 3',
-                if (verticalVariation <= 3)
-                  'vertical mean RGB difference must exceed 3',
-                if (varyingRows <= 0.75)
-                  'varying row fraction must exceed 0.75',
-                for (var index = 0; index < coverage.length; index++)
-                  if (coverage[index] / samples <= 0.01)
-                    'selected color $index hue coverage must exceed 0.01',
-                if (brightness == Brightness.dark) ...[
-                  if (nearBlackSamples != 0)
-                    'dark near-black area below luminance 0.02 must be zero',
-                  if (minLuminance < 0.035 || maxLuminance > 0.085)
-                    'dark HSV value mapping must keep sampled luminance within 0.035–0.085',
-                  if (neutralSamples / samples >= 0.01)
-                    'dark neutral area must stay below one percent',
-                  if (meanLuminance <= 0.035)
-                    'dark mean luminance must exceed 0.035',
-                  if (maxLuminance >= 0.165)
-                    'dark maximum luminance must be below 0.165',
-                ] else if (minLuminance <= 0.73)
-                  'light minimum luminance must exceed 0.73',
-              ];
-              failures.addAll(failedChecks.map((failure) => '$name: $failure'));
-              metrics[name] = {
-                'file': '$name.png',
-                'palette': paletteCase.key,
-                'maximumSampledHctChroma': maxChroma,
-                'minimumSampledSaturation': minimumSaturation,
-                'maximumSampledSaturation': maximumSaturation,
-                'meanSampledSaturation': totalSaturation / samples,
-                'selectedSaturations': [
-                  for (final selected in palette)
-                    HSVColor.fromColor(selected).saturation,
-                ],
-                'nearBlackFraction': nearBlackSamples / samples,
-                'neutralFraction': neutralSamples / samples,
-                'sample': randomSeeds.contains(seed) ? 'random' : 'regression',
-                'passedHardGates': failedChecks.isEmpty,
-                'failedChecks': failedChecks,
-                'consecutiveSeedMeanRgbDifference': seedDifference,
-                'verticalVariation': verticalVariation,
-                'varyingRowFraction': varyingRows,
-                'p95AdjacentRgbStep': adjacentStep,
-                'luminanceStandardDeviation': luminanceDeviation,
-                'softReviewFlags': [
-                  if (adjacentStep > 2) 'adjacent RGB step exceeds 2',
-                  if (luminanceDeviation > 0.10)
-                    'luminance standard deviation exceeds 0.10',
-                ],
-                'seed': seed,
-                'syntheticPalette': palette
-                    .map((color) => color.toARGB32())
-                    .toList(),
-                'meanLuminance': meanLuminance,
-                'minLuminance': minLuminance,
-                'maxLuminance': maxLuminance,
-                'selectedHueCoverage': [
-                  for (final visible in coverage) visible / samples,
-                ],
-                'minimumWhiteContrast': 1.05 / (maxLuminance + 0.05),
-                'minimumBlackContrast': (minLuminance + 0.05) / 0.05,
-              };
-              debugPrint('$name rendered pixels: ${jsonEncode(metrics[name])}');
-              await tester.runAsync(
-                () => File('${output.path}/aurora-pixel-metrics.json')
-                    .writeAsString(
-                      const JsonEncoder.withIndent('  ').convert(metrics),
-                    ),
-              );
+              final luminance = color.computeLuminance();
+              if (offset % 1024 == 0) {
+                maxChroma = math.max(
+                  maxChroma,
+                  Hct.fromInt(color.toARGB32()).chroma,
+                );
+              }
+              minLuminance = math.min(minLuminance, luminance);
+              maxLuminance = math.max(maxLuminance, luminance);
+              totalLuminance += luminance;
+              squaredLuminance += luminance * luminance;
+              samples++;
+              final pixel = HSVColor.fromColor(color);
+              minimumValue = math.min(minimumValue, pixel.value);
+              maximumValue = math.max(maximumValue, pixel.value);
+              if (pixel.value < 0.20) nearBlackSamples++;
+              minimumSaturation = math.min(minimumSaturation, pixel.saturation);
+              maximumSaturation = math.max(maximumSaturation, pixel.saturation);
+              totalSaturation += pixel.saturation;
+              if (pixel.saturation < 0.07) neutralSamples++;
+              if (pixel.saturation < 0.07) continue;
+              for (var index = 0; index < palette.length; index++) {
+                final delta =
+                    (pixel.hue - HSVColor.fromColor(palette[index]).hue).abs();
+                if (math.min(delta, 360 - delta) < 20) coverage[index]++;
+              }
             }
+            final meanLuminance = totalLuminance / samples;
+            final verticalVariation = _verticalVariation(bytes, 300, 600);
+            final varyingRows = _varyingRows(bytes, 300, 600);
+            final luminanceDeviation = math.sqrt(
+              math.max(
+                0,
+                squaredLuminance / samples - meanLuminance * meanLuminance,
+              ),
+            );
+            final adjacentStep = _p95AdjacentRgbStep(bytes, 300, 600);
+            final failedChecks = <String>[
+              if (!opaque) 'opaque alpha must equal 255',
+              if (brightness == Brightness.light && maxChroma > 20)
+                'light sampled HCT chroma must remain at or below 20',
+              if (seedDifference != null && seedDifference <= 3)
+                'consecutive seed mean RGB difference must exceed 3',
+              if (verticalVariation <= 3)
+                'vertical mean RGB difference must exceed 3',
+              if (varyingRows <= 0.75) 'varying row fraction must exceed 0.75',
+              for (var index = 0; index < coverage.length; index++)
+                if (coverage[index] / samples <= 0.01)
+                  'selected color $index hue coverage must exceed 0.01',
+              if (brightness == Brightness.dark) ...[
+                if (minimumSourceValue >= 0.70 && nearBlackSamples != 0)
+                  'dark near-black area below HSV value 0.20 must be zero for normal-value sources',
+                if (minimumValue < minimumSourceValue * 0.30 - 1 / 255)
+                  'dark value must retain its source-relative lower bound',
+                if (maximumValue >= 0.51 ||
+                    maximumValue > maximumSourceValue * 0.50 + 1 / 255)
+                  'dark value must stay below 0.51 and the attenuated source ceiling',
+                if (neutralSamples / samples >= 0.01)
+                  'dark neutral area must stay below one percent',
+                if (maxLuminance >= 0.165)
+                  'dark maximum luminance must be below 0.165',
+              ] else if (minLuminance <= 0.73)
+                'light minimum luminance must exceed 0.73',
+            ];
+            failures.addAll(failedChecks.map((failure) => '$name: $failure'));
+            metrics[name] = {
+              'file': '$name.png',
+              'palette': paletteCase.key,
+              'maximumSampledHctChroma': maxChroma,
+              'minimumSampledValue': minimumValue,
+              'maximumSampledValue': maximumValue,
+              'selectedValues': sourceValues,
+              'sourceRelativeMinimumValue': minimumSourceValue * 0.30 - 1 / 255,
+              'sourceRelativeMaximumValue': maximumSourceValue * 0.50 + 1 / 255,
+              'minimumSampledSaturation': minimumSaturation,
+              'maximumSampledSaturation': maximumSaturation,
+              'meanSampledSaturation': totalSaturation / samples,
+              'selectedSaturations': [
+                for (final selected in palette)
+                  HSVColor.fromColor(selected).saturation,
+              ],
+              'nearBlackFraction': nearBlackSamples / samples,
+              'neutralFraction': neutralSamples / samples,
+              'sample': randomSeeds.contains(seed) ? 'random' : 'regression',
+              'passedHardGates': failedChecks.isEmpty,
+              'failedChecks': failedChecks,
+              'consecutiveSeedMeanRgbDifference': seedDifference,
+              'verticalVariation': verticalVariation,
+              'varyingRowFraction': varyingRows,
+              'p95AdjacentRgbStep': adjacentStep,
+              'luminanceStandardDeviation': luminanceDeviation,
+              'softReviewFlags': [
+                if (adjacentStep > 2) 'adjacent RGB step exceeds 2',
+                if (luminanceDeviation > 0.10)
+                  'luminance standard deviation exceeds 0.10',
+              ],
+              'seed': seed,
+              'syntheticPalette': palette
+                  .map((color) => color.toARGB32())
+                  .toList(),
+              'meanLuminance': meanLuminance,
+              'minLuminance': minLuminance,
+              'maxLuminance': maxLuminance,
+              'selectedHueCoverage': [
+                for (final visible in coverage) visible / samples,
+              ],
+              'minimumWhiteContrast': 1.05 / (maxLuminance + 0.05),
+              'minimumBlackContrast': (minLuminance + 0.05) / 0.05,
+            };
+            debugPrint('$name rendered pixels: ${jsonEncode(metrics[name])}');
+            await tester.runAsync(
+              () => File('${output.path}/aurora-pixel-metrics.json')
+                  .writeAsString(
+                    const JsonEncoder.withIndent('  ').convert(metrics),
+                  ),
+            );
           }
         }
       }
-      manifest['renderedImageCount'] = metrics.length;
-      manifest['passedHardGates'] = failures.isEmpty;
-      manifest['failedChecks'] = failures;
-      await tester.runAsync(
-        () => File(
-          '${output.path}/aurora-review-manifest.json',
-        ).writeAsString(const JsonEncoder.withIndent('  ').convert(manifest)),
-      );
-      expect(metrics, hasLength(98));
-      expect(failures, isEmpty, reason: failures.join('\n'));
-    },
-  );
+    }
+    manifest['renderedImageCount'] = metrics.length;
+    manifest['passedHardGates'] = failures.isEmpty;
+    manifest['failedChecks'] = failures;
+    await tester.runAsync(
+      () => File(
+        '${output.path}/aurora-review-manifest.json',
+      ).writeAsString(const JsonEncoder.withIndent('  ').convert(manifest)),
+    );
+    expect(metrics, hasLength(98));
+    expect(failures, isEmpty, reason: failures.join('\n'));
+  });
 
   testWidgets('glass has local blur only when the appearance is enabled', (
     tester,

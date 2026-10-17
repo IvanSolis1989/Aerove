@@ -68,28 +68,30 @@ AuroraMesh generateAuroraMesh(
       (
         hue: unwrappedHues[sourceIndices[index]],
         saturation: sourceHsv[sourceIndices[index]].saturation,
-        luminance: [0.04, 0.065, 0.08, 0.05][index],
+        value: sourceHsv[sourceIndices[index]].value *
+            [0.32, 0.46, 0.50, 0.38][index],
       ),
   ];
-  final tints = dark ? <Color>[] : [
-    for (final color in palette) auroraTint(color, brightness),
-  ];
-  final corners = dark ? <Color>[] : [
-    _auroraTone(
-      tints.first,
-      tints.length == 1 ? 0.74 : 0.75,
-    ),
-    _auroraTone(
-      tints.length > 1 ? tints[1] : tints.first,
-      tints.length == 1 ? 0.95 : 0.76,
-    ),
-    _auroraTone(
-      tints.length > 2 ? tints[2] : tints.first,
-      tints.length == 1 ? 0.81 : 0.78,
-    ),
-    _auroraTone(tints.last, 0.88),
-  ];
-  final minimumSaturation = dark ? 0.0 : math.min(
+  final tints = dark
+      ? <Color>[]
+      : [for (final color in palette) auroraTint(color, brightness)];
+  final corners = dark
+      ? <Color>[]
+      : [
+          _auroraTone(tints.first, tints.length == 1 ? 0.74 : 0.75),
+          _auroraTone(
+            tints.length > 1 ? tints[1] : tints.first,
+            tints.length == 1 ? 0.95 : 0.76,
+          ),
+          _auroraTone(
+            tints.length > 2 ? tints[2] : tints.first,
+            tints.length == 1 ? 0.81 : 0.78,
+          ),
+          _auroraTone(tints.last, 0.88),
+        ];
+  final minimumSaturation = dark
+      ? 0.0
+      : math.min(
           0.08,
           corners
                   .map((color) => HSVColor.fromColor(color).saturation)
@@ -126,15 +128,12 @@ AuroraMesh generateAuroraMesh(
       final b = darkCorners[order[1]];
       final c = darkCorners[order[2]];
       final d = darkCorners[order[3]];
-      return _darkAuroraColor(
-        HSVColor.fromAHSV(
+      return HSVColor.fromAHSV(
           1,
           mix(a.hue, b.hue, c.hue, d.hue) % 360,
           mix(a.saturation, b.saturation, c.saturation, d.saturation),
-          1,
-        ),
-        mix(a.luminance, b.luminance, c.luminance, d.luminance),
-      );
+          mix(a.value, b.value, c.value, d.value),
+        ).toColor();
     }
     var color = Color.lerp(
       Color.lerp(corners[order[0]], corners[order[1]], u),
@@ -170,7 +169,8 @@ Color auroraBaseColor(Brightness brightness) => brightness == Brightness.dark
 
 Color auroraTint(Color color, Brightness brightness) {
   if (brightness == Brightness.dark) {
-    return _darkAuroraColor(HSVColor.fromColor(color), 0.065);
+    final hsv = HSVColor.fromColor(color);
+    return hsv.withValue(hsv.value * 0.42).toColor();
   }
   final base = auroraBaseColor(brightness);
   final tint = Color.lerp(base, color, 0.58)!;
@@ -196,24 +196,8 @@ List<double> _unwrapAuroraHues(List<HSVColor> palette) {
   }
   return [
     for (final color in palette)
-      color.saturation == 0
-          ? start
-          : start + (color.hue - start) % 360,
+      color.saturation == 0 ? start : start + (color.hue - start) % 360,
   ];
-}
-
-Color _darkAuroraColor(HSVColor source, double luminance) {
-  var low = 0.0;
-  var high = 1.0;
-  for (var i = 0; i < 10; i++) {
-    final middle = (low + high) / 2;
-    if (source.withValue(middle).toColor().computeLuminance() < luminance) {
-      low = middle;
-    } else {
-      high = middle;
-    }
-  }
-  return source.withValue((low + high) / 2).toColor();
 }
 
 Color _auroraTone(Color color, double luminance) {
@@ -228,9 +212,7 @@ Color _auroraTone(Color color, double luminance) {
       high = middle;
     }
   }
-  return _limitLightAuroraChroma(
-    hsl.withLightness((low + high) / 2).toColor(),
-  );
+  return _limitLightAuroraChroma(hsl.withLightness((low + high) / 2).toColor());
 }
 
 Color _limitLightAuroraChroma(Color readable) {
@@ -252,10 +234,7 @@ Color _limitLightAuroraChroma(Color readable) {
       high = middle;
     }
   }
-  return _readableLightAuroraTint(
-    Color.lerp(neutral, readable, low)!,
-    base,
-  );
+  return _readableLightAuroraTint(Color.lerp(neutral, readable, low)!, base);
 }
 
 Color _readableLightAuroraTint(Color tint, Color base) {

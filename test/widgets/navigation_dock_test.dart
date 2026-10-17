@@ -375,10 +375,22 @@ void main() {
         );
         await tester.pumpAndSettle();
         expect(find.byType(LiquidGlass), findsNWidgets(2));
-        final clear = tester
-            .widgetList<LiquidGlass>(find.byType(LiquidGlass))
-            .where((pane) => pane.style.tint == Colors.transparent);
-        expect(clear, hasLength(1));
+        final selectedGlass = find.descendant(
+          of: find.byType(FloatingNavigationBar),
+          matching: find.byWidgetPredicate(
+            (widget) => widget is LiquidGlass && widget.style.refraction < 0,
+          ),
+        );
+        expect(selectedGlass, findsOneWidget);
+        expect(
+          tester.widget<LiquidGlass>(selectedGlass).style.tint,
+          Colors.transparent,
+        );
+        expect(tester.getRect(selectedGlass), tester.getRect(_lens));
+        expect(
+          tester.getSize(selectedGlass).width,
+          lessThan(tester.getSize(find.byType(FloatingNavigationBar)).width),
+        );
         final gesture = await tester.startGesture(
           tester.getCenter(find.text('b')),
         );
@@ -387,6 +399,12 @@ void main() {
         await gesture.up();
         await tester.pumpAndSettle();
         expect(find.byType(LiquidGlass), findsNWidgets(2));
+        expect(selectedGlass, findsOneWidget);
+        expect(
+          tester.widget<LiquidGlass>(selectedGlass).style.tint,
+          Colors.transparent,
+        );
+        expect(tester.getRect(selectedGlass), tester.getRect(_lens));
         expect(selections, [1]);
         expect(tester.takeException(), isNull);
       });

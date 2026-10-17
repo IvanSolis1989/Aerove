@@ -55,10 +55,7 @@ void main() {
         expect(fill.a, enabled ? lessThan(1) : equals(1));
         final button = find.widgetWithText(FilledButton, 'Scoped action');
         final buttonTheme = FilledButtonTheme.of(tester.element(button)).style!;
-        expect(
-          buttonTheme.backgroundBuilder,
-          enabled ? isNotNull : isNull,
-        );
+        expect(buttonTheme.backgroundBuilder, enabled ? isNotNull : isNull);
         if (enabled) {
           expect(
             buttonTheme.foregroundColor!.resolve({}),
