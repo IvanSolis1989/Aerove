@@ -9,6 +9,35 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
 void main() {
+  test('built-in glass keeps backdrop colors through nested panes', () {
+    for (final brightness in Brightness.values) {
+      final scheme = ColorScheme.fromSeed(
+        seedColor: Colors.blue,
+        brightness: brightness,
+      );
+      for (final style in [
+        LiquidGlassStyle.regular(scheme),
+        LiquidGlassStyle.pill(scheme),
+        LiquidGlassStyle.lens(scheme),
+        LiquidGlassStyle.lensContent(scheme),
+      ]) {
+        expect(style.tint.a, 0);
+        expect(style.saturation, 1);
+        expect(style.brightness, 1);
+        expect(style.contrast, 0);
+      }
+      for (final style in [
+        LiquidGlassStyle.menu(scheme),
+        LiquidGlassStyle.alert(scheme),
+        LiquidGlassStyle.tinted(scheme, Colors.red),
+      ]) {
+        expect(style.tint.a, lessThanOrEqualTo(0.24));
+      }
+      final tint = Colors.red.withValues(alpha: 0.12);
+      expect(LiquidGlassStyle.tinted(scheme, tint).tint, tint);
+    }
+  });
+
   test('standard superellipse clippers preserve exact corner parameters', () {
     const size = Size(400, 56);
     for (final shape in [
@@ -253,63 +282,68 @@ void main() {
     }
   });
 
-  testWidgets('uncaptured glass preserves tint transparency over its backdrop', (
-    tester,
-  ) async {
-    final tint = const Color(0xFF00FF00).withValues(alpha: 0.82);
-    final tintedPixels = <Color>[];
-    for (final backdrop in [const Color(0xFFFF0000), const Color(0xFF0000FF)]) {
-      for (final fill in [tint, Colors.transparent]) {
-        final key = GlobalKey();
-        await tester.pumpWidget(
-          MaterialApp(
-            home: Center(
-              child: RepaintBoundary(
-                key: key,
-                child: SizedBox.square(
-                  dimension: 40,
-                  child: ColoredBox(
-                    color: backdrop,
-                    child: LiquidGlass(style: LiquidGlassStyle(tint: fill)),
+  testWidgets(
+    'uncaptured glass preserves tint transparency over its backdrop',
+    (tester) async {
+      final tint = const Color(0xFF00FF00).withValues(alpha: 0.82);
+      final tintedPixels = <Color>[];
+      for (final backdrop in [
+        const Color(0xFFFF0000),
+        const Color(0xFF0000FF),
+      ]) {
+        for (final fill in [tint, Colors.transparent]) {
+          final key = GlobalKey();
+          await tester.pumpWidget(
+            MaterialApp(
+              home: Center(
+                child: RepaintBoundary(
+                  key: key,
+                  child: SizedBox.square(
+                    dimension: 40,
+                    child: ColoredBox(
+                      color: backdrop,
+                      child: LiquidGlass(style: LiquidGlassStyle(tint: fill)),
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-        );
-        expect(find.byType(LiquidGlassHost), findsNothing);
-        final boundary = tester.renderObject<RenderRepaintBoundary>(
-          find.byKey(key),
-        );
-        final image = boundary.toImageSync();
-        try {
-          await tester.runAsync(() async {
-            final bytes = (await image.toByteData())!;
-            final at = ((image.height ~/ 2) * image.width + image.width ~/ 2) * 4;
-            final actual = Color.fromARGB(
-              bytes.getUint8(at + 3),
-              bytes.getUint8(at),
-              bytes.getUint8(at + 1),
-              bytes.getUint8(at + 2),
-            );
-            if (fill == Colors.transparent) {
-              expect(actual, backdrop);
-            } else {
-              final expected = Color.alphaBlend(fill, backdrop);
-              expect(actual.r, closeTo(expected.r, 2 / 255));
-              expect(actual.g, closeTo(expected.g, 2 / 255));
-              expect(actual.b, closeTo(expected.b, 2 / 255));
-              tintedPixels.add(actual);
-            }
-          });
-        } finally {
-          image.dispose();
+          );
+          expect(find.byType(LiquidGlassHost), findsNothing);
+          final boundary = tester.renderObject<RenderRepaintBoundary>(
+            find.byKey(key),
+          );
+          final image = boundary.toImageSync();
+          try {
+            await tester.runAsync(() async {
+              final bytes = (await image.toByteData())!;
+              final at =
+                  ((image.height ~/ 2) * image.width + image.width ~/ 2) * 4;
+              final actual = Color.fromARGB(
+                bytes.getUint8(at + 3),
+                bytes.getUint8(at),
+                bytes.getUint8(at + 1),
+                bytes.getUint8(at + 2),
+              );
+              if (fill == Colors.transparent) {
+                expect(actual, backdrop);
+              } else {
+                final expected = Color.alphaBlend(fill, backdrop);
+                expect(actual.r, closeTo(expected.r, 2 / 255));
+                expect(actual.g, closeTo(expected.g, 2 / 255));
+                expect(actual.b, closeTo(expected.b, 2 / 255));
+                tintedPixels.add(actual);
+              }
+            });
+          } finally {
+            image.dispose();
+          }
         }
       }
-    }
-    expect(tintedPixels[0].r - tintedPixels[1].r, greaterThan(0.15));
-    expect(tintedPixels[1].b - tintedPixels[0].b, greaterThan(0.15));
-  });
+      expect(tintedPixels[0].r - tintedPixels[1].r, greaterThan(0.15));
+      expect(tintedPixels[1].b - tintedPixels[0].b, greaterThan(0.15));
+    },
+  );
 
   testWidgets('a snapshot taken without panes holds only what stands on them', (
     tester,

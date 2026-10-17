@@ -268,10 +268,8 @@ class TonalButtonTheme extends StatelessWidget {
           style: filledFeedback.merge(
             FilledButton.styleFrom(
               backgroundColor: grouped ? fill : null,
-              foregroundColor: grouped || AuroraAppearance.enabledOf(context)
+              foregroundColor: grouped || effectiveGlass
                   ? foreground
-                  : paned
-                  ? colorScheme.onPrimary
                   : null,
               disabledBackgroundColor: grouped ? fill : null,
               disabledForegroundColor: grouped ? disabledForeground : null,

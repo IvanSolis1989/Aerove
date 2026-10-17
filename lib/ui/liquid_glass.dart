@@ -112,8 +112,8 @@ class LiquidGlassStyle {
   factory LiquidGlassStyle.regular(ColorScheme colorScheme) {
     final dark = colorScheme.brightness == Brightness.dark;
     return dark
-        ? LiquidGlassStyle(
-            tint: colorScheme.surfaceContainerHighest.withValues(alpha: 0.62),
+        ? const LiquidGlassStyle(
+            tint: Colors.transparent,
             rim: 0.28,
             rimWidth: 1.2,
             rimTail: 0.17,
@@ -122,7 +122,7 @@ class LiquidGlassStyle {
             hairlineSide: 0.75,
           )
         : const LiquidGlassStyle(
-            tint: Color(0x8AFDFDFD),
+            tint: Colors.transparent,
             rim: 0.28,
             rimWidth: 1.2,
             rimTail: 0.17,
@@ -136,15 +136,15 @@ class LiquidGlassStyle {
   factory LiquidGlassStyle.pill(ColorScheme colorScheme) {
     final dark = colorScheme.brightness == Brightness.dark;
     return dark
-        ? LiquidGlassStyle(
-            tint: colorScheme.surfaceContainerHighest.withValues(alpha: 0.48),
+        ? const LiquidGlassStyle(
+            tint: Colors.transparent,
             blur: 0,
             haze: 0.72,
             hazeBlur: 15.6,
             rim: 0.35,
           )
         : const LiquidGlassStyle(
-            tint: Color(0x93F4F4F4),
+            tint: Colors.transparent,
             blur: 0,
             haze: 0.72,
             hazeBlur: 15.6,
@@ -158,12 +158,12 @@ class LiquidGlassStyle {
     final dark = colorScheme.brightness == Brightness.dark;
     return dark
         ? LiquidGlassStyle(
-            tint: colorScheme.surfaceContainerHighest.withValues(alpha: 0.63),
+            tint: colorScheme.surfaceContainerHighest.withValues(alpha: 0.24),
             blur: 12,
             rim: 0,
           )
         : LiquidGlassStyle(
-            tint: colorScheme.surfaceBright.withValues(alpha: 0.55),
+            tint: colorScheme.surfaceBright.withValues(alpha: 0.24),
             blur: 12,
             rim: 0,
           );
@@ -175,7 +175,7 @@ class LiquidGlassStyle {
   factory LiquidGlassStyle.tinted(ColorScheme colorScheme, Color color) {
     final dark = colorScheme.brightness == Brightness.dark;
     return LiquidGlassStyle(
-      tint: color.withValues(alpha: 0.82),
+      tint: color.withValues(alpha: math.min(color.a, 0.24)),
       rim: dark ? 0.14 : 0.2,
       rimWidth: 1.2,
       rimTail: 0.17,

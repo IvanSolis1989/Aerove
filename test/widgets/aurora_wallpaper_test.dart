@@ -156,16 +156,25 @@ void main() {
           'minimumVerticalMeanRgbDifferenceExclusive': 3,
           'minimumVaryingRowFractionExclusive': 0.75,
           'darkMinimumMeanLuminanceExclusive': 0.035,
-          'darkMinimumSampledLuminanceInclusive': 0.07,
+          'darkMinimumSampledLuminanceInclusive': 0.035,
+          'darkMaximumMappedSampledLuminanceInclusive': 0.085,
+          'nearBlackLuminanceThreshold': 0.02,
           'darkMaximumNearBlackFractionInclusive': 0,
           'darkMaximumNeutralFractionExclusive': 0.01,
           'neutralSaturationThreshold': 0.07,
           'darkMaximumLuminanceExclusive': 0.165,
           'lightMinimumLuminanceExclusive': 0.73,
-          'darkMaximumSampledHctChromaInclusive': 24,
           'lightMaximumSampledHctChromaInclusive': 20,
         },
         'visualReview': {
+          'darkSourcePolicy': 'retain original selected HSV hue and saturation without clipping; only value controls low brightness',
+          'retiredDarkMaximumHctChroma': 24,
+          'darkChromaGateRetirementReason': 'user explicitly requires dark to preserve selected saturation and become low-brightness color; the former chroma ceiling was an inferred anti-glare proxy that conflicted with that requirement',
+          'darkChromaReviewPolicy': 'record actual sampled HCT chroma for visual review; enforce low luminance, selected hue/saturation retention, zero near-black area, and no neutral holes instead of desaturating to satisfy a fixed chroma ceiling',
+          'darkValueMappingIterations': 10,
+          'darkToneMappingSemantics': 'preserve source HSV hue and saturation; change only value to target luminance 0.04/0.065/0.08/0.05',
+          'retiredDarkLuminanceFloor': 0.07,
+          'darkLuminanceFloorChangeReason': 'user clarified dark means low-brightness color, not a desaturated gray background; the earlier floor was an inferred anti-hole proxy',
           'status': 'requires independent review of actual rendered PNGs',
           'softMaximumP95AdjacentRgbStep': 2,
           'softMaximumLuminanceStandardDeviation': 0.10,
@@ -298,6 +307,9 @@ void main() {
               var maxChroma = 0.0;
               var nearBlackSamples = 0;
               var neutralSamples = 0;
+              var minimumSaturation = 1.0;
+              var maximumSaturation = 0.0;
+              var totalSaturation = 0.0;
               for (var offset = 0; offset < bytes.length; offset += 64) {
                 opaque = opaque && bytes[offset + 3] == 255;
                 final color = Color.fromARGB(
@@ -307,7 +319,7 @@ void main() {
                   bytes[offset + 2],
                 );
                 final luminance = color.computeLuminance();
-                if (luminance < 0.07) nearBlackSamples++;
+                if (luminance < 0.02) nearBlackSamples++;
                 if (offset % 1024 == 0) {
                   maxChroma = math.max(
                     maxChroma,
@@ -320,6 +332,9 @@ void main() {
                 squaredLuminance += luminance * luminance;
                 samples++;
                 final pixel = HSVColor.fromColor(color);
+                minimumSaturation = math.min(minimumSaturation, pixel.saturation);
+                maximumSaturation = math.max(maximumSaturation, pixel.saturation);
+                totalSaturation += pixel.saturation;
                 if (pixel.saturation < 0.07) neutralSamples++;
                 if (pixel.saturation < 0.07) continue;
                 for (var index = 0; index < palette.length; index++) {
@@ -341,8 +356,8 @@ void main() {
               final adjacentStep = _p95AdjacentRgbStep(bytes, 300, 600);
               final failedChecks = <String>[
                 if (!opaque) 'opaque alpha must equal 255',
-                if (maxChroma > (brightness == Brightness.dark ? 24 : 20))
-                  'sampled HCT chroma must remain inside the brightness cap',
+                if (brightness == Brightness.light && maxChroma > 20)
+                  'light sampled HCT chroma must remain at or below 20',
                 if (seedDifference != null && seedDifference <= 3)
                   'consecutive seed mean RGB difference must exceed 3',
                 if (verticalVariation <= 3)
@@ -354,7 +369,9 @@ void main() {
                     'selected color $index hue coverage must exceed 0.01',
                 if (brightness == Brightness.dark) ...[
                   if (nearBlackSamples != 0)
-                    'dark sampled luminance must stay at or above 0.07',
+                    'dark near-black area below luminance 0.02 must be zero',
+                  if (minLuminance < 0.035 || maxLuminance > 0.085)
+                    'dark HSV value mapping must keep sampled luminance within 0.035–0.085',
                   if (neutralSamples / samples >= 0.01)
                     'dark neutral area must stay below one percent',
                   if (meanLuminance <= 0.035)
@@ -369,6 +386,13 @@ void main() {
                 'file': '$name.png',
                 'palette': paletteCase.key,
                 'maximumSampledHctChroma': maxChroma,
+                'minimumSampledSaturation': minimumSaturation,
+                'maximumSampledSaturation': maximumSaturation,
+                'meanSampledSaturation': totalSaturation / samples,
+                'selectedSaturations': [
+                  for (final selected in palette)
+                    HSVColor.fromColor(selected).saturation,
+                ],
                 'nearBlackFraction': nearBlackSamples / samples,
                 'neutralFraction': neutralSamples / samples,
                 'sample': randomSeeds.contains(seed) ? 'random' : 'regression',

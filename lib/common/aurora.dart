@@ -53,38 +53,55 @@ AuroraMesh generateAuroraMesh(
   final centerX = 0.46 + next() * 0.08;
   final centerY = 0.46 + next() * 0.08;
   final base = auroraBaseColor(brightness);
-  final tints = [
-    for (final color in normalizeAuroraColors(colors))
-      auroraTint(color, brightness),
-  ];
+  final palette = normalizeAuroraColors(colors);
   final dark = brightness == Brightness.dark;
-  final corners = [
-    _auroraTone(tints.first, dark ? 0.15 : 0.75, brightness),
+  final sourceHsv = [for (final color in palette) HSVColor.fromColor(color)];
+  final sourceIndices = [
+    0,
+    palette.length > 1 ? 1 : 0,
+    palette.length > 2 ? 2 : 0,
+    palette.length - 1,
+  ];
+  final unwrappedHues = _unwrapAuroraHues(sourceHsv);
+  final darkCorners = [
+    for (var index = 0; index < 4; index++)
+      (
+        hue: unwrappedHues[sourceIndices[index]],
+        saturation: sourceHsv[sourceIndices[index]].saturation,
+        luminance: [0.04, 0.065, 0.08, 0.05][index],
+      ),
+  ];
+  final tints = dark ? <Color>[] : [
+    for (final color in palette) auroraTint(color, brightness),
+  ];
+  final corners = dark ? <Color>[] : [
+    _auroraTone(
+      tints.first,
+      tints.length == 1 ? 0.74 : 0.75,
+    ),
     _auroraTone(
       tints.length > 1 ? tints[1] : tints.first,
-      dark ? 0.11 : (tints.length == 1 ? 0.89 : 0.76),
-      brightness,
+      tints.length == 1 ? 0.95 : 0.76,
     ),
     _auroraTone(
       tints.length > 2 ? tints[2] : tints.first,
-      dark ? 0.13 : (tints.length == 1 ? 0.83 : 0.78),
-      brightness,
+      tints.length == 1 ? 0.81 : 0.78,
     ),
-    _auroraTone(tints.last, dark ? 0.085 : 0.88, brightness),
+    _auroraTone(tints.last, 0.88),
   ];
-  // Opposing selected hues can cancel in RGB; a palette-relative floor keeps
-  // that blend colored while leaving intentionally neutral palettes neutral.
-  final minimumSaturation = math.min(
-    dark ? 0.12 : 0.08,
-    corners
-        .map((color) => HSVColor.fromColor(color).saturation)
-        .reduce(math.min) * 0.8,
-  );
-  for (var i = corners.length - 1; i > 0; i--) {
+  final minimumSaturation = dark ? 0.0 : math.min(
+          0.08,
+          corners
+                  .map((color) => HSVColor.fromColor(color).saturation)
+                  .reduce(math.min) *
+              0.8,
+        );
+  final order = [0, 1, 2, 3];
+  for (var i = order.length - 1; i > 0; i--) {
     final other = (next() * (i + 1)).floor();
-    final color = corners[i];
-    corners[i] = corners[other];
-    corners[other] = color;
+    final index = order[i];
+    order[i] = order[other];
+    order[other] = index;
   }
   double smooth(double value) {
     final t = (value / 0.58 + 0.5).clamp(0.0, 1.0);
@@ -102,16 +119,33 @@ AuroraMesh generateAuroraMesh(
     y += math.sin(x * frequency * 1.25 + phaseY) * warp;
     final u = smooth(x);
     final v = smooth(y);
+    double mix(double a, double b, double c, double d) =>
+        (a + (b - a) * u) * (1 - v) + (c + (d - c) * u) * v;
+    if (dark) {
+      final a = darkCorners[order[0]];
+      final b = darkCorners[order[1]];
+      final c = darkCorners[order[2]];
+      final d = darkCorners[order[3]];
+      return _darkAuroraColor(
+        HSVColor.fromAHSV(
+          1,
+          mix(a.hue, b.hue, c.hue, d.hue) % 360,
+          mix(a.saturation, b.saturation, c.saturation, d.saturation),
+          1,
+        ),
+        mix(a.luminance, b.luminance, c.luminance, d.luminance),
+      );
+    }
     var color = Color.lerp(
-      Color.lerp(corners[0], corners[1], u),
-      Color.lerp(corners[2], corners[3], u),
+      Color.lerp(corners[order[0]], corners[order[1]], u),
+      Color.lerp(corners[order[2]], corners[order[3]], u),
       v,
     )!;
     final hsv = HSVColor.fromColor(color);
     if (hsv.saturation < minimumSaturation) {
       color = hsv.withSaturation(minimumSaturation).toColor();
     }
-    return _readableAuroraTint(color, base, brightness);
+    return _readableLightAuroraTint(color, base);
   }
 
   return (
@@ -135,14 +169,54 @@ Color auroraBaseColor(Brightness brightness) => brightness == Brightness.dark
     : const Color(0xFFF7F8FA);
 
 Color auroraTint(Color color, Brightness brightness) {
+  if (brightness == Brightness.dark) {
+    return _darkAuroraColor(HSVColor.fromColor(color), 0.065);
+  }
   final base = auroraBaseColor(brightness);
-  final dark = brightness == Brightness.dark;
-  final tint = Color.lerp(base, color, dark ? 0.78 : 0.58)!;
-  final readable = _readableAuroraTint(tint, base, brightness);
-  return _limitAuroraChroma(readable, brightness);
+  final tint = Color.lerp(base, color, 0.58)!;
+  final readable = _readableLightAuroraTint(tint, base);
+  return _limitLightAuroraChroma(readable);
 }
 
-Color _auroraTone(Color color, double luminance, Brightness brightness) {
+List<double> _unwrapAuroraHues(List<HSVColor> palette) {
+  final hues = [
+    for (final color in palette)
+      if (color.saturation > 0) color.hue,
+  ]..sort();
+  if (hues.isEmpty) return List.filled(palette.length, 0);
+  var start = hues.first;
+  var largestGap = -1.0;
+  for (var index = 0; index < hues.length; index++) {
+    final next = (index + 1) % hues.length;
+    final gap = hues[next] + (next == 0 ? 360 : 0) - hues[index];
+    if (gap > largestGap) {
+      largestGap = gap;
+      start = hues[next];
+    }
+  }
+  return [
+    for (final color in palette)
+      color.saturation == 0
+          ? start
+          : start + (color.hue - start) % 360,
+  ];
+}
+
+Color _darkAuroraColor(HSVColor source, double luminance) {
+  var low = 0.0;
+  var high = 1.0;
+  for (var i = 0; i < 10; i++) {
+    final middle = (low + high) / 2;
+    if (source.withValue(middle).toColor().computeLuminance() < luminance) {
+      low = middle;
+    } else {
+      high = middle;
+    }
+  }
+  return source.withValue((low + high) / 2).toColor();
+}
+
+Color _auroraTone(Color color, double luminance) {
   final hsl = HSLColor.fromColor(color);
   var low = 0.0;
   var high = 1.0;
@@ -154,18 +228,16 @@ Color _auroraTone(Color color, double luminance, Brightness brightness) {
       high = middle;
     }
   }
-  return _limitAuroraChroma(
+  return _limitLightAuroraChroma(
     hsl.withLightness((low + high) / 2).toColor(),
-    brightness,
   );
 }
 
-Color _limitAuroraChroma(Color readable, Brightness brightness) {
-  final base = auroraBaseColor(brightness);
-  final cap = brightness == Brightness.dark ? 24.0 : 20.0;
+Color _limitLightAuroraChroma(Color readable) {
+  final base = auroraBaseColor(Brightness.light);
   // HCT chroma is nonlinear under RGB interpolation; the raster's 8-bit
   // quantization also needs headroom beyond the source tint's measured chroma.
-  final sourceLimit = cap - 1.5;
+  const sourceLimit = 18.5;
   final hct = Hct.fromInt(readable.toARGB32());
   if (hct.chroma <= sourceLimit) return readable;
   final neutral = Color(Hct.from(0, 0, hct.tone).toInt());
@@ -180,30 +252,14 @@ Color _limitAuroraChroma(Color readable, Brightness brightness) {
       high = middle;
     }
   }
-  return _readableAuroraTint(
+  return _readableLightAuroraTint(
     Color.lerp(neutral, readable, low)!,
     base,
-    brightness,
   );
 }
 
-Color _readableAuroraTint(Color tint, Color base, Brightness brightness) {
-  final dark = brightness == Brightness.dark;
-  if (dark && tint.computeLuminance() < 0.08) {
-    var low = 0.0;
-    var high = 1.0;
-    for (var i = 0; i < 12; i++) {
-      final middle = (low + high) / 2;
-      if (Color.lerp(tint, Colors.white, middle)!.computeLuminance() < 0.08) {
-        low = middle;
-      } else {
-        high = middle;
-      }
-    }
-    return Color.lerp(tint, Colors.white, high)!;
-  }
-  bool readable(Color tint) =>
-      dark ? tint.computeLuminance() <= 0.16 : tint.computeLuminance() >= 0.74;
+Color _readableLightAuroraTint(Color tint, Color base) {
+  bool readable(Color tint) => tint.computeLuminance() >= 0.74;
   if (readable(tint)) return tint;
   var low = 0.0;
   var high = 1.0;

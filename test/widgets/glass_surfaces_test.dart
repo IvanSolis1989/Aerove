@@ -54,10 +54,17 @@ void main() {
         final fill = InputDecorationTheme.of(field).fillColor!;
         expect(fill.a, enabled ? lessThan(1) : equals(1));
         final button = find.widgetWithText(FilledButton, 'Scoped action');
+        final buttonTheme = FilledButtonTheme.of(tester.element(button)).style!;
         expect(
-          FilledButtonTheme.of(tester.element(button)).style!.backgroundBuilder,
+          buttonTheme.backgroundBuilder,
           enabled ? isNotNull : isNull,
         );
+        if (enabled) {
+          expect(
+            buttonTheme.foregroundColor!.resolve({}),
+            Theme.of(tester.element(button)).colorScheme.onSurface,
+          );
+        }
         final segmentFills = tester
             .widgetList<DecoratedBox>(
               find.descendant(
