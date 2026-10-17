@@ -167,9 +167,7 @@ List<Color> normalizeAuroraColors(List<Color> colors) {
 Color _softAuroraSource(Color color) {
   final opaque = color.withValues(alpha: 1);
   final hsv = HSVColor.fromColor(opaque);
-  return hsv.saturation > 0.60
-      ? hsv.withSaturation(0.60).toColor()
-      : opaque;
+  return hsv.saturation > 0.60 ? hsv.withSaturation(0.60).toColor() : opaque;
 }
 
 Color auroraBaseColor(Brightness brightness) => brightness == Brightness.dark

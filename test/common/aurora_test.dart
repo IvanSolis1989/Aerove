@@ -9,20 +9,27 @@ import 'package:material_ui/material_ui.dart';
 void main() {
   const selected = [Color(0xFF6BD5D9), Color(0xFFC6ADE4), Color(0xFFA9DAC6)];
 
-  test('shared source softening retains hue and value in both brightness paths', () {
-    expect(normalizeAuroraColors(selected), selected);
-    for (final color in const [Color(0xFFFF0000), Color(0xFF00FF00), Color(0xFF0000FF)]) {
-      final original = HSVColor.fromColor(color);
-      final shared = normalizeAuroraColors([color]).single;
-      final source = HSVColor.fromColor(shared);
-      expect(source.hue, closeTo(original.hue, 1));
-      expect(source.value, closeTo(original.value, 1 / 255));
-      expect(source.saturation, closeTo(0.60, 1 / 255));
-      for (final brightness in Brightness.values) {
-        expect(auroraTint(color, brightness), auroraTint(shared, brightness));
+  test(
+    'shared source softening retains hue and value in both brightness paths',
+    () {
+      expect(normalizeAuroraColors(selected), selected);
+      for (final color in const [
+        Color(0xFFFF0000),
+        Color(0xFF00FF00),
+        Color(0xFF0000FF),
+      ]) {
+        final original = HSVColor.fromColor(color);
+        final shared = normalizeAuroraColors([color]).single;
+        final source = HSVColor.fromColor(shared);
+        expect(source.hue, closeTo(original.hue, 1));
+        expect(source.value, closeTo(original.value, 1 / 255));
+        expect(source.saturation, closeTo(0.60, 1 / 255));
+        for (final brightness in Brightness.values) {
+          expect(auroraTint(color, brightness), auroraTint(shared, brightness));
+        }
       }
-    }
-  });
+    },
+  );
 
   test('ten random seeds have no injected dark or neutral mesh regions', () {
     final random = math.Random(20261017);
