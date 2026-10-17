@@ -13,11 +13,13 @@ class PreviewChoice<T> {
     required this.value,
     required this.label,
     required this.pictogram,
+    this.enabled = true,
   });
 
   final T value;
   final String label;
   final Widget pictogram;
+  final bool enabled;
 }
 
 class PreviewChoiceGroup<T> extends StatelessWidget {
@@ -52,7 +54,9 @@ class PreviewChoiceGroup<T> extends StatelessWidget {
                   trailing: choice.value == value
                       ? const SelectionCheck()
                       : null,
-                  onPressed: () => onChanged(choice.value),
+                  onPressed: choice.enabled
+                      ? () => onChanged(choice.value)
+                      : null,
                 ),
             ],
           ),

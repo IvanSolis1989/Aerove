@@ -33,9 +33,10 @@ https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/main/FlClash/Fl
 Open **Tools → Theme → Theme colors** and choose one mode:
 
 - **Solid theme color:** use the usual palette and adjust Liquid Glass independently.
-- **Random gradient wallpaper:** select **1–3 colors**, then use **New wallpaper** to change the composition. Liquid Glass turns on and is locked.
+- **Random gradient wallpaper:** select **1–3 colors**, then use **New wallpaper** to change the composition. Liquid Glass switches to Ultra; only None is disabled. Standard and Ultra remain selectable.
 
-Switching back restores the saved ordinary palette and glass setting. The gradient palette and composition persist across restarts.
+Switching back restores the ordinary palette and makes None selectable again. A manually selected glass quality is saved.
+The gradient palette and composition also persist across restarts.
 Brightness defaults to **system**, with explicit light and dark options at the top. High-contrast and dark pure-black modes use opaque surfaces.
 
 <p align="center">

@@ -17,7 +17,7 @@ LiquidGlassMode effectiveAuroraGlassMode(
   LiquidGlassMode stored,
   bool gradient,
 ) => gradient && stored == LiquidGlassMode.none
-    ? LiquidGlassMode.standard
+    ? LiquidGlassMode.ultra
     : stored;
 
 class AuroraAppSurface extends ConsumerWidget {

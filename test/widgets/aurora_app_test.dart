@@ -122,6 +122,7 @@ void main() {
     final context = tester.element(find.byType(CommonCard));
     expect(AuroraAppearance.enabledOf(context), isTrue);
     expect(LiquidGlassScope.of(context), isTrue);
+    expect(LiquidGlassScope.qualityOf(context), LiquidGlassQuality.ultra);
     expect(
       tester.widget<LiquidGlassHost>(find.byType(LiquidGlassHost)).enabled,
       isTrue,

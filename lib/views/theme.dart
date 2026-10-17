@@ -135,7 +135,12 @@ class _ThemeColorItem extends ConsumerWidget {
           ],
           onChanged: (enabled) => ref
               .read(themeSettingProvider.notifier)
-              .update((state) => state.copyWith(auroraEnabled: enabled)),
+              .update((state) => state.copyWith(
+                auroraEnabled: enabled,
+                liquidGlass: enabled && !state.auroraEnabled
+                    ? LiquidGlassMode.ultra
+                    : state.liquidGlass,
+              )),
         ),
         if (gradient)
           const AuroraSettings()
@@ -798,7 +803,7 @@ class _LiquidGlassItem extends ConsumerWidget {
     final mode = ref.watch(
       themeSettingProvider.select((state) => state.liquidGlass),
     );
-    final locked =
+    final requiresGlass =
         Theme.of(context).platform == TargetPlatform.android &&
         ref.watch(themeSettingProvider.select((state) => state.auroraEnabled));
     final colorScheme = context.colorScheme;
@@ -812,15 +817,16 @@ class _LiquidGlassItem extends ConsumerWidget {
         selected: 1,
       ),
     );
-    final choices = PreviewChoiceGroup<LiquidGlassMode>(
+    return PreviewChoiceGroup<LiquidGlassMode>(
       info: Info(
         label: appLocalizations.liquidGlass,
         glyph: AppGlyphs.liquidGlass,
       ),
-      value: effectiveAuroraGlassMode(mode, locked),
+      value: effectiveAuroraGlassMode(mode, requiresGlass),
       choices: [
         PreviewChoice(
           value: LiquidGlassMode.none,
+          enabled: !requiresGlass,
           label: appLocalizations.none,
           pictogram: preview(false),
         ),
@@ -836,21 +842,11 @@ class _LiquidGlassItem extends ConsumerWidget {
         ),
       ],
       onChanged: (value) {
-        if (locked) return;
+        if (requiresGlass && value == LiquidGlassMode.none) return;
         ref
             .read(themeSettingProvider.notifier)
             .update((state) => state.copyWith(liquidGlass: value));
       },
-    );
-    return Semantics(
-      enabled: !locked,
-      child: ExcludeFocus(
-        excluding: locked,
-        child: AbsorbPointer(
-          absorbing: locked,
-          child: DisabledMask(status: locked, child: choices),
-        ),
-      ),
     );
   }
 }
