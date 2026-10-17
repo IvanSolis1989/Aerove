@@ -69,7 +69,8 @@ class XClashDefaults {
 
   File get _journal => File(p.join(_directory.path, 'xclash-defaults.json'));
 
-  File _scriptFile(int id) => File(p.join(_directory.path, 'scripts', '$id.js'));
+  File _scriptFile(int id) =>
+      File(p.join(_directory.path, 'scripts', '$id.js'));
 
   // This journal stays outside backup entries: deletion and installation state
   // belong to this device, whereas restored profiles retain their own scripts.
@@ -90,8 +91,7 @@ class XClashDefaults {
         await _directory.list().any(
           (entry) => entry.path != '${_journal.path}.pending',
         );
-    final freshAndroid =
-        isAndroid && _storage.getKeys().isEmpty && !hasFiles;
+    final freshAndroid = isAndroid && _storage.getKeys().isEmpty && !hasFiles;
     _record = {
       'scriptId': _createId(),
       'freshAndroid': freshAndroid,
@@ -150,7 +150,9 @@ class XClashDefaults {
       utf8.decode(await _loadScript()).replaceAll('\r\n', '\n'),
     );
     if (sha256.convert(bytes).toString() != xclashDefaultScriptSha256) {
-      throw StateError('Bundled Smart-Config-Kit script integrity check failed');
+      throw StateError(
+        'Bundled Smart-Config-Kit script integrity check failed',
+      );
     }
     final existing = await _database.scriptsDao.query().get();
     final script =
@@ -165,8 +167,7 @@ class XClashDefaults {
           lastUpdateTime: DateTime.now(),
         );
     final applyPreset =
-        record['freshAndroid'] == true &&
-        !await _hasRows(ignoringScriptId: id);
+        record['freshAndroid'] == true && !await _hasRows(ignoringScriptId: id);
     final replaceLegacyDns =
         record['legacyDns'] == true &&
         config.patchClashConfig.dns == defaultDns &&
@@ -204,9 +205,9 @@ class XClashDefaults {
         profile.scriptId != null) {
       return profile;
     }
-    final saved = await (_database.select(_database.profiles)
-          ..where((row) => row.id.equals(profile.id)))
-        .getSingleOrNull();
+    final saved = await (_database.select(
+      _database.profiles,
+    )..where((row) => row.id.equals(profile.id))).getSingleOrNull();
     if (saved != null) {
       return profile;
     }
@@ -242,10 +243,8 @@ class XClashDefaults {
     ),
   );
 
-  Future<void> _writeJournal() => _writeAtomic(
-    _journal,
-    utf8.encode(jsonEncode(_record)),
-  );
+  Future<void> _writeJournal() =>
+      _writeAtomic(_journal, utf8.encode(jsonEncode(_record)));
 
   Future<void> _writeAtomic(File target, List<int> bytes) async {
     await target.parent.create(recursive: true);

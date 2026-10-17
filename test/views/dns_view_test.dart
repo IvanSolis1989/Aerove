@@ -212,28 +212,37 @@ void main() {
     expect(find.text(emptyLabel()), findsOneWidget);
   });
 
-  testWidgets('resetting and re-adding bootstrap DNS restores only four DoH resolvers', (
-    tester,
-  ) async {
-    await pumpView(tester);
-    setKeys({DnsOverrideKey.defaultNameserver});
-    container.read(patchClashConfigProvider.notifier).update(
-      (state) => state.copyWith.dns(defaultNameserver: ['114.114.114.114']),
-    );
-    await tester.pump();
+  testWidgets(
+    'resetting and re-adding bootstrap DNS restores only four DoH resolvers',
+    (tester) async {
+      await pumpView(tester);
+      setKeys({DnsOverrideKey.defaultNameserver});
+      container
+          .read(patchClashConfigProvider.notifier)
+          .update(
+            (state) =>
+                state.copyWith.dns(defaultNameserver: ['114.114.114.114']),
+          );
+      await tester.pump();
 
-    await tester.tap(find.byTooltip(currentAppLocalizations.remove));
-    await tester.pumpAndSettle();
-    expect(config().dns.defaultNameserver, xclashBootstrapNameservers);
+      await tester.tap(find.byTooltip(currentAppLocalizations.remove));
+      await tester.pumpAndSettle();
+      expect(config().dns.defaultNameserver, xclashBootstrapNameservers);
 
-    await openAddSheet(tester);
-    await tester.tap(find.text('Default Nameserver'));
-    await tester.pumpAndSettle();
-    expect(config().dnsOverrideKeys, {DnsOverrideKey.defaultNameserver});
-    expect(config().dns.defaultNameserver, xclashBootstrapNameservers);
-    expect(config().dns.defaultNameserver.every((value) => value.startsWith('https://')), true);
-    expect(find.text(currentAppLocalizations.itemsCount(4)), findsOneWidget);
-  });
+      await openAddSheet(tester);
+      await tester.tap(find.text('Default Nameserver'));
+      await tester.pumpAndSettle();
+      expect(config().dnsOverrideKeys, {DnsOverrideKey.defaultNameserver});
+      expect(config().dns.defaultNameserver, xclashBootstrapNameservers);
+      expect(
+        config().dns.defaultNameserver.every(
+          (value) => value.startsWith('https://'),
+        ),
+        true,
+      );
+      expect(find.text(currentAppLocalizations.itemsCount(4)), findsOneWidget);
+    },
+  );
 
   testWidgets('a list entry without a description summarises its items', (
     tester,

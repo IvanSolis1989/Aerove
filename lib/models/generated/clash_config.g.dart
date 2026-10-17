@@ -492,7 +492,7 @@ Map<String, dynamic> _$ProfileTunToJson(_ProfileTun instance) =>
 _ProfileOverrides _$ProfileOverridesFromJson(Map<String, dynamic> json) =>
     _ProfileOverrides(
       dns: json['dns'] == null
-          ? defaultDns
+          ? xclashDefaultDns
           : Dns.safeDnsFromJson(json['dns'] as Map<String, Object?>),
       dnsOverrideKeys: json['dns-override-keys'] == null
           ? const {}
@@ -829,7 +829,7 @@ _PatchClashConfig _$PatchClashConfigFromJson(Map<String, dynamic> json) =>
           ? defaultTun
           : Tun.safeFormJson(json['tun'] as Map<String, Object?>?),
       dns: json['dns'] == null
-          ? defaultDns
+          ? xclashDefaultDns
           : Dns.safeDnsFromJson(json['dns'] as Map<String, Object?>),
       dnsOverrideKeys: json['dns-override-keys'] == null
           ? const {}

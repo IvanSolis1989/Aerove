@@ -75,14 +75,15 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('shows the current saved URL rather than a fixed recommended URL', (
-    tester,
-  ) async {
-    const edited = 'https://example.com/user-edited-script.js';
-    await pumpScripts(tester, [remote.copyWith(url: edited)]);
-    expect(find.text(edited), findsOneWidget);
-    expect(find.text(xclashDefaultScriptUrl), findsNothing);
-  });
+  testWidgets(
+    'shows the current saved URL rather than a fixed recommended URL',
+    (tester) async {
+      const edited = 'https://example.com/user-edited-script.js';
+      await pumpScripts(tester, [remote.copyWith(url: edited)]);
+      expect(find.text(edited), findsOneWidget);
+      expect(find.text(xclashDefaultScriptUrl), findsNothing);
+    },
+  );
 
   testWidgets('source actions copy the saved URL and open its confirmation', (
     tester,
@@ -172,13 +173,14 @@ void main() {
     await tester.pumpAndSettle();
   });
 
-  testWidgets('a removed default script is not recreated by opening the library', (
-    tester,
-  ) async {
-    final container = await pumpScripts(tester, const []);
-    expect(find.text('Smart-Config-Kit'), findsNothing);
-    expect(find.text(xclashDefaultScriptUrl), findsNothing);
-    expect(container.read(scriptsProvider).value, isEmpty);
-    expect(tester.takeException(), isNull);
-  });
+  testWidgets(
+    'a removed default script is not recreated by opening the library',
+    (tester) async {
+      final container = await pumpScripts(tester, const []);
+      expect(find.text('Smart-Config-Kit'), findsNothing);
+      expect(find.text(xclashDefaultScriptUrl), findsNothing);
+      expect(container.read(scriptsProvider).value, isEmpty);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

@@ -376,7 +376,9 @@ class ProfilesAction extends _$ProfilesAction {
         final profile = await (item.shareLinks.isEmpty
             ? _download(item.profile)
             : _fromShareLinks(item.profile, item.shareLinks));
-        putProfile(await xclashDefaults?.associateNewProfile(profile) ?? profile);
+        putProfile(
+          await xclashDefaults?.associateNewProfile(profile) ?? profile,
+        );
       },
       label: (item) => item.shareLinks.firstOrNull ?? item.profile.url,
       concurrency: maxConcurrentImports,
