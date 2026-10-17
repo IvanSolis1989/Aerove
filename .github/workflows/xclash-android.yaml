@@ -142,7 +142,7 @@ jobs:
             adb shell getprop ro.product.cpu.abi
             adb shell getconf PAGE_SIZE || true
           } > "$logs/emulator-environment.txt" 2>&1
-          platform="$ANDROID_HOME/platforms/android-37/android.jar"
+          platform="$ANDROID_HOME/platforms/android-37.0/android.jar"
           bt="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           test -f "$platform" || { echo "Missing $platform" | tee -a "$logs/build-probe.txt"; exit 1; }
           {
@@ -231,7 +231,7 @@ jobs:
       - name: Run on Android API 37 emulator
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
-          api-level: '37'
+          api-level: '37.0'
           system-image-api-level: '37.0'
           target: google_apis
           arch: x86_64
@@ -242,12 +242,15 @@ jobs:
 
       - name: Collect emulator logs after failure
         if: always()
+        timeout-minutes: 1
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/xclash-diagnostic/logs"
-          adb logcat -d -v threadtime > "$RUNNER_TEMP/xclash-diagnostic/logs/logcat-post-step.txt" 2>&1 || true
-          adb shell getprop > "$RUNNER_TEMP/xclash-diagnostic/logs/device-properties.txt" 2>&1 || true
-          adb shell dumpsys package com.follow.clash.dev > "$RUNNER_TEMP/xclash-diagnostic/logs/dumpsys-xclash-post-step.txt" 2>&1 || true
+          if timeout 5s adb get-state >/dev/null 2>&1; then
+            timeout 10s adb logcat -d -v threadtime > "$RUNNER_TEMP/xclash-diagnostic/logs/logcat-post-step.txt" 2>&1 || true
+            timeout 10s adb shell getprop > "$RUNNER_TEMP/xclash-diagnostic/logs/device-properties.txt" 2>&1 || true
+            timeout 10s adb shell dumpsys package com.follow.clash.dev > "$RUNNER_TEMP/xclash-diagnostic/logs/dumpsys-xclash-post-step.txt" 2>&1 || true
+          fi
 
       - name: Upload diagnostic logs
         if: always()
