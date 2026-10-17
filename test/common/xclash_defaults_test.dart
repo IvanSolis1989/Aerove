@@ -76,44 +76,50 @@ void main() {
 
   File scriptFile() => File('${home.path}/scripts/123.js');
 
-  test('open uses the owned preference store and public support path', () async {
-    await mockPreferences();
-    final owned = await SharedPreferences.getInstance();
-    SharedPreferences.setMockInitialValues({'version': 1});
-    final replacement = await SharedPreferences.getInstance();
-    await useAppPaths(home);
-    final previousDatabase = database;
-    database = db;
-    addTearDown(() => database = previousDatabase);
+  test(
+    'open uses the owned preference store and public support path',
+    () async {
+      await mockPreferences();
+      final owned = await SharedPreferences.getInstance();
+      SharedPreferences.setMockInitialValues({'version': 1});
+      final replacement = await SharedPreferences.getInstance();
+      await useAppPaths(home);
+      final previousDatabase = database;
+      database = db;
+      addTearDown(() => database = previousDatabase);
 
-    final defaults = (await XClashDefaults.open())!;
-    await defaults.prepare(isAndroid: true);
-    final config = await defaults.initialize(initial);
+      final defaults = (await XClashDefaults.open())!;
+      await defaults.prepare(isAndroid: true);
+      final config = await defaults.initialize(initial);
 
-    expect(config.vpnProps.dnsHijacking, true);
-    expect(owned.getString(configKey), isNotNull);
-    expect(replacement.getString(configKey), isNull);
-    final script = (await db.scriptsDao.query().get()).single;
-    expect(defaults.recommendedScriptId, script.id);
-    expect(await File('${home.path}/scripts/${script.id}.js').exists(), true);
-  });
+      expect(config.vpnProps.dnsHijacking, true);
+      expect(owned.getString(configKey), isNotNull);
+      expect(replacement.getString(configKey), isNull);
+      final script = (await db.scriptsDao.query().get()).single;
+      expect(defaults.recommendedScriptId, script.id);
+      expect(await File('${home.path}/scripts/${script.id}.js').exists(), true);
+    },
+  );
 
-  test('open respects preference rebind after a test store replacement', () async {
-    await mockPreferences();
-    SharedPreferences.setMockInitialValues({'version': 1});
-    await preferences.rebind();
-    await useAppPaths(home);
-    final previousDatabase = database;
-    database = db;
-    addTearDown(() => database = previousDatabase);
+  test(
+    'open respects preference rebind after a test store replacement',
+    () async {
+      await mockPreferences();
+      SharedPreferences.setMockInitialValues({'version': 1});
+      await preferences.rebind();
+      await useAppPaths(home);
+      final previousDatabase = database;
+      database = db;
+      addTearDown(() => database = previousDatabase);
 
-    final defaults = (await XClashDefaults.open())!;
-    await defaults.prepare(isAndroid: true);
-    expect(await defaults.initialize(initial), initial);
-    expect(await preferences.getVersion(), 1);
-    expect(await preferences.getConfigMap(), isNull);
-    expect(await db.scriptsDao.query().get(), hasLength(1));
-  });
+      final defaults = (await XClashDefaults.open())!;
+      await defaults.prepare(isAndroid: true);
+      expect(await defaults.initialize(initial), initial);
+      expect(await preferences.getVersion(), 1);
+      expect(await preferences.getConfigMap(), isNull);
+      expect(await db.scriptsDao.query().get(), hasLength(1));
+    },
+  );
 
   test(
     'fresh Android installation saves exact script and source URL',

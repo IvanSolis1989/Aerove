@@ -320,7 +320,11 @@ void main() {
     final options = find.byType(CommonPopupMenu);
     expect(options, findsOneWidget);
     final items = tester.widget<CommonPopupMenu>(options).items;
-    expect(items.map((item) => item.label), ['normal', 'fake-ip', 'redir-host']);
+    expect(items.map((item) => item.label), [
+      'normal',
+      'fake-ip',
+      'redir-host',
+    ]);
     expect(items.map((item) => item.checked), [false, true, false]);
     Finder option(String label) =>
         find.descendant(of: options, matching: find.text(label));
