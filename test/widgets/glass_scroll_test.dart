@@ -180,9 +180,9 @@ void main() {
           await expectGlass('pulled');
           if (ui.ImageFilter.isShaderFilterSupported) {
             expect(
-              tester.widgetList<ImageFiltered>(
-                find.byType(ImageFiltered),
-              ).where((filter) => filter.enabled),
+              tester
+                  .widgetList<ImageFiltered>(find.byType(ImageFiltered))
+                  .where((filter) => filter.enabled),
               isNotEmpty,
             );
           }

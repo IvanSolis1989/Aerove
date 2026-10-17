@@ -326,40 +326,41 @@ void main() {
     expect(await scaleAt(LiquidGlassQuality.standard), lessThan(1));
   });
 
-  testWidgets('an image-filtered pane retains the backdrop outside its effect', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      _app(
-        Stack(
-          children: [
-            const Positioned.fill(child: ColoredBox(color: _red)),
-            Positioned.fill(
-              child: ImageFiltered(
-                imageFilter: ui.ImageFilter.blur(sigmaX: 1, sigmaY: 1),
-                child: Stack(
-                  children: [
-                    const Positioned(
-                      left: 100,
-                      top: 100,
-                      width: 100,
-                      height: 100,
-                      child: ColoredBox(color: _green),
-                    ),
-                    _pane(const Rect.fromLTWH(100, 100, 200, 100)),
-                  ],
+  testWidgets(
+    'an image-filtered pane retains the backdrop outside its effect',
+    (tester) async {
+      await tester.pumpWidget(
+        _app(
+          Stack(
+            children: [
+              const Positioned.fill(child: ColoredBox(color: _red)),
+              Positioned.fill(
+                child: ImageFiltered(
+                  imageFilter: ui.ImageFilter.blur(sigmaX: 1, sigmaY: 1),
+                  child: Stack(
+                    children: [
+                      const Positioned(
+                        left: 100,
+                        top: 100,
+                        width: 100,
+                        height: 100,
+                        child: ColoredBox(color: _green),
+                      ),
+                      _pane(const Rect.fromLTWH(100, 100, 200, 100)),
+                    ],
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
-      ),
-    );
-    final pane = _capture().panes.single;
-    expect(await _behind(tester, pane, const Offset(150, 150)), _green);
-    expect(await _behind(tester, pane, const Offset(199, 150)), _green);
-    expect(await _behind(tester, pane, const Offset(250, 150)), _red);
-  });
+      );
+      final pane = _capture().panes.single;
+      expect(await _behind(tester, pane, const Offset(150, 150)), _green);
+      expect(await _behind(tester, pane, const Offset(199, 150)), _green);
+      expect(await _behind(tester, pane, const Offset(250, 150)), _red);
+    },
+  );
 
   testWidgets('a matrix filter transforms a pane after its backdrop is read', (
     tester,

@@ -124,10 +124,7 @@ void main() {
       const src = 'https://example.com/still.png';
       await _pump(
         tester,
-        const CommonTargetIcon(
-          src: src,
-          fallback: GroupMonogram('AI 🤖 服务'),
-        ),
+        const CommonTargetIcon(src: src, fallback: GroupMonogram('AI 🤖 服务')),
       );
       await tester.pump();
 

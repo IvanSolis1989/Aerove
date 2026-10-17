@@ -764,9 +764,7 @@ class _GroupIcon extends ConsumerWidget {
                 decoration: ShapeDecoration(
                   color: LiquidGlassScope.of(context)
                       ? Colors.transparent
-                      : context.raisedSurfaceLevel.colorOf(
-                          context.colorScheme,
-                        ),
+                      : context.raisedSurfaceLevel.colorOf(context.colorScheme),
                   shape: AppShape.all(AppCorner.xl.ap(context) - _headerInset),
                 ),
                 clipBehavior: Clip.antiAlias,

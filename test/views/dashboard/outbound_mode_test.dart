@@ -175,7 +175,10 @@ void main() {
               matching: find.byType(LiquidGlass),
             );
             final pane = panes.first;
-            final clip = tester.widget<LiquidGlass>(pane).clipper!.getClip(size);
+            final clip = tester
+                .widget<LiquidGlass>(pane)
+                .clipper!
+                .getClip(size);
             for (var x = 0; x <= 8; x++) {
               for (var y = 0; y <= 8; y++) {
                 final point = Offset(size.width * x / 8, size.height * y / 8);

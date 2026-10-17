@@ -775,9 +775,7 @@ bool _drawsOffscreen(Layer layer) {
       :final clipBehavior,
     ) => clipBehavior == Clip.antiAliasWithSaveLayer,
     OpacityLayer(:final alpha) => alpha != null && alpha < 255,
-    ColorFilterLayer() ||
-    ShaderMaskLayer() ||
-    BackdropFilterLayer() => true,
+    ColorFilterLayer() || ShaderMaskLayer() || BackdropFilterLayer() => true,
     _ => false,
   };
 }
@@ -873,10 +871,8 @@ class _Replay {
               colorFilter,
             ),
             ImageFilterLayer(:final imageFilter?)
-                when !entry.ancestors.contains(layer) => (
-              Paint()..imageFilter = imageFilter,
-              imageFilter,
-            ),
+                when !entry.ancestors.contains(layer) =>
+              (Paint()..imageFilter = imageFilter, imageFilter),
             BackdropFilterLayer() => (Paint(), BlendMode.srcOver),
             ShaderMaskLayer(:final shader) => (Paint(), shader),
             _ => null,
