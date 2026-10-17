@@ -281,9 +281,12 @@ class _DnsResult extends StatelessWidget {
             child: Text(
               summary,
               style: TextStyle(
-                color: GlassForeground.colorOf(context, dnsQuery.isFailed
-                    ? context.colorScheme.error
-                    : context.colorScheme.onSurfaceVariant),
+                color: GlassForeground.colorOf(
+                  context,
+                  dnsQuery.isFailed
+                      ? context.colorScheme.error
+                      : context.colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
           ),
@@ -349,7 +352,9 @@ class DnsQueryItem extends StatelessWidget {
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: styles.secondary.copyWith(
-                color: accentColor == null ? null : GlassForeground.colorOf(context, accentColor),
+                color: accentColor == null
+                    ? null
+                    : GlassForeground.colorOf(context, accentColor),
               ),
             ),
           Wrap(
@@ -446,7 +451,12 @@ class _ErrorRow extends StatelessWidget {
         error,
         style: AppTextStyle.subheadline
             .of(context)
-            .copyWith(color: GlassForeground.colorOf(context, context.colorScheme.error)),
+            .copyWith(
+              color: GlassForeground.colorOf(
+                context,
+                context.colorScheme.error,
+              ),
+            ),
       ),
     );
   }

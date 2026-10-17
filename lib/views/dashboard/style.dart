@@ -153,7 +153,12 @@ abstract final class DashboardText {
       .caption1
       .of(context)
       .toTabular
-      .copyWith(color: GlassForeground.colorOf(context, color ?? context.colorScheme.onSurfaceVariant));
+      .copyWith(
+        color: GlassForeground.colorOf(
+          context,
+          color ?? context.colorScheme.onSurfaceVariant,
+        ),
+      );
 
   static TextStyle figure(
     BuildContext context,
@@ -162,7 +167,10 @@ abstract final class DashboardText {
   }) => style
       .of(context, emphasized: true)
       .toTabular
-      .copyWith(color: color == null ? null : GlassForeground.colorOf(context, color), letterSpacing: -0.02 * style.size);
+      .copyWith(
+        color: color == null ? null : GlassForeground.colorOf(context, color),
+        letterSpacing: -0.02 * style.size,
+      );
 
   static TextStyle unit(
     BuildContext context, [

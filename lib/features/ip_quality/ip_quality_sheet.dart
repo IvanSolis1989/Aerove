@@ -114,7 +114,12 @@ class _IpQualityDetail extends ConsumerWidget {
                 title: localizations.ipType,
                 value: Text(
                   localizations.ipQualityFailed,
-                  style: TextStyle(color: GlassForeground.colorOf(context, context.colorScheme.error)),
+                  style: TextStyle(
+                    color: GlassForeground.colorOf(
+                      context,
+                      context.colorScheme.error,
+                    ),
+                  ),
                 ),
               )
             else
@@ -177,7 +182,11 @@ class _IpQualityDetail extends ConsumerWidget {
         title: localizations.ipQualityLevel,
         value: Text(
           quality.level.label(context),
-          style: TextStyle(color: levelColor == null ? null : GlassForeground.colorOf(context, levelColor)),
+          style: TextStyle(
+            color: levelColor == null
+                ? null
+                : GlassForeground.colorOf(context, levelColor),
+          ),
         ),
       ),
       DetailRow(

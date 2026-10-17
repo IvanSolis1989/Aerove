@@ -535,7 +535,12 @@ class _MoreSectionsView extends ConsumerWidget {
                         )
                       : appLocalizations.none,
                   style: hasDialerIssues
-                      ? TextStyle(color: GlassForeground.colorOf(context, context.colorScheme.error))
+                      ? TextStyle(
+                          color: GlassForeground.colorOf(
+                            context,
+                            context.colorScheme.error,
+                          ),
+                        )
                       : null,
                 ),
                 CustomProxyDialersView(profileId),
@@ -547,7 +552,12 @@ class _MoreSectionsView extends ConsumerWidget {
                 Text(
                   _enabledText(appLocalizations, status.ntp),
                   style: hasNtpIssues
-                      ? TextStyle(color: GlassForeground.colorOf(context, context.colorScheme.error))
+                      ? TextStyle(
+                          color: GlassForeground.colorOf(
+                            context,
+                            context.colorScheme.error,
+                          ),
+                        )
                       : null,
                 ),
                 NtpView(profileId),
@@ -593,7 +603,9 @@ class _CountText extends StatelessWidget {
     }
     return Text(
       '$issueCount / $count',
-      style: TextStyle(color: GlassForeground.colorOf(context, context.colorScheme.error)),
+      style: TextStyle(
+        color: GlassForeground.colorOf(context, context.colorScheme.error),
+      ),
     );
   }
 }
@@ -611,11 +623,14 @@ class _StatusText extends StatelessWidget {
     return Text(
       text,
       style: TextStyle(
-        color: GlassForeground.colorOf(context, invalid
-            ? colorScheme.error
-            : active
-            ? colorScheme.tertiary
-            : colorScheme.onSurfaceVariant),
+        color: GlassForeground.colorOf(
+          context,
+          invalid
+              ? colorScheme.error
+              : active
+              ? colorScheme.tertiary
+              : colorScheme.onSurfaceVariant,
+        ),
       ),
     );
   }

@@ -110,6 +110,7 @@ class _GroupDelay extends ConsumerWidget {
       return const SizedBox.shrink();
     }
     final colorScheme = context.colorScheme;
+    final color = colorScheme.delayColor(delay > 0 ? delay : -1);
     return Text(
       delay > 0
           ? '$delay ms'
@@ -118,7 +119,9 @@ class _GroupDelay extends ConsumerWidget {
       style: AppTextStyle.caption1
           .of(context, emphasized: true)
           .toTabular
-          .copyWith(color: GlassForeground.colorOf(context, colorScheme.delayColor(delay > 0 ? delay : -1))),
+          .copyWith(
+            color: color == null ? null : GlassForeground.colorOf(context, color),
+          ),
     );
   }
 }

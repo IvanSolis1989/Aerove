@@ -9,12 +9,14 @@ abstract final class GlassForeground {
       color.a > opacity ? color.withValues(alpha: opacity) : color;
 
   static Color colorOf(BuildContext context, Color color) =>
-      LiquidGlassScope.of(context) && MediaQuery.maybeHighContrastOf(context) != true
+      LiquidGlassScope.of(context) &&
+          MediaQuery.maybeHighContrastOf(context) != true
       ? cap(color)
       : color;
 
   static Color iconColorOf(BuildContext context, Color color, double opacity) {
-    final enabled = LiquidGlassScope.of(context) &&
+    final enabled =
+        LiquidGlassScope.of(context) &&
         MediaQuery.maybeHighContrastOf(context) != true;
     var original = color;
     if (enabled && opacity < 1) {
@@ -31,12 +33,12 @@ abstract final class GlassForeground {
     return enabled ? cap(result) : result;
   }
 
-  static TextStyle textStyle(TextStyle style) => style.color == null
-      ? style
-      : style.copyWith(color: cap(style.color!));
+  static TextStyle textStyle(TextStyle style) =>
+      style.color == null ? style : style.copyWith(color: cap(style.color!));
 
   static TextTheme textTheme(TextTheme theme) {
-    TextStyle? apply(TextStyle? style) => style == null ? null : textStyle(style);
+    TextStyle? apply(TextStyle? style) =>
+        style == null ? null : textStyle(style);
     return theme.copyWith(
       displayLarge: apply(theme.displayLarge),
       displayMedium: apply(theme.displayMedium),
@@ -56,14 +58,17 @@ abstract final class GlassForeground {
     );
   }
 
-  static ButtonStyle _button(ButtonStyle? style, Color fallback) {
+  static ButtonStyle _button(ButtonStyle? style, Color? fallback) {
     final base = style ?? const ButtonStyle();
     return base.copyWith(
-      foregroundColor: WidgetStateProperty.resolveWith((states) {
-        final color = base.foregroundColor?.resolve(states);
-        if (states.contains(WidgetState.disabled)) return color;
-        return cap(color ?? fallback);
-      }),
+      foregroundColor: base.foregroundColor == null && fallback == null
+          ? null
+          : WidgetStateProperty.resolveWith((states) {
+              final color = base.foregroundColor?.resolve(states);
+              if (states.contains(WidgetState.disabled)) return color;
+              final resolved = color ?? fallback;
+              return resolved == null ? null : cap(resolved);
+            }),
       iconColor: base.iconColor == null
           ? null
           : WidgetStateProperty.resolveWith((states) {
@@ -101,27 +106,28 @@ abstract final class GlassForeground {
     return theme.copyWith(
       colorScheme: colorScheme(colors),
       extensions: [
-        theme.extension<_ForegroundSources>() ?? _ForegroundSources([
-          colors.onSurface,
-          colors.onSurfaceVariant,
-          colors.onInverseSurface,
-          colors.onPrimary,
-          colors.onPrimaryContainer,
-          colors.onPrimaryFixed,
-          colors.onPrimaryFixedVariant,
-          colors.onSecondary,
-          colors.onSecondaryContainer,
-          colors.onSecondaryFixed,
-          colors.onSecondaryFixedVariant,
-          colors.onTertiary,
-          colors.onTertiaryContainer,
-          colors.onTertiaryFixed,
-          colors.onTertiaryFixedVariant,
-          colors.onError,
-          colors.onErrorContainer,
-          theme.iconTheme.color ?? colors.onSurface,
-          theme.primaryIconTheme.color ?? colors.onPrimary,
-        ]),
+        theme.extension<_ForegroundSources>() ??
+            _ForegroundSources([
+              colors.onSurface,
+              colors.onSurfaceVariant,
+              colors.onInverseSurface,
+              colors.onPrimary,
+              colors.onPrimaryContainer,
+              colors.onPrimaryFixed,
+              colors.onPrimaryFixedVariant,
+              colors.onSecondary,
+              colors.onSecondaryContainer,
+              colors.onSecondaryFixed,
+              colors.onSecondaryFixedVariant,
+              colors.onTertiary,
+              colors.onTertiaryContainer,
+              colors.onTertiaryFixed,
+              colors.onTertiaryFixedVariant,
+              colors.onError,
+              colors.onErrorContainer,
+              theme.iconTheme.color ?? colors.onSurface,
+              theme.primaryIconTheme.color ?? colors.onPrimary,
+            ]),
         for (final extension in theme.extensions.values)
           if (extension is ElevatedColorScheme)
             ElevatedColorScheme(colorScheme(extension.colorScheme))
@@ -146,7 +152,7 @@ abstract final class GlassForeground {
         style: _button(theme.elevatedButtonTheme.style, colors.primary),
       ),
       filledButtonTheme: FilledButtonThemeData(
-        style: _button(theme.filledButtonTheme.style, colors.onPrimary),
+        style: _button(theme.filledButtonTheme.style, null),
       ),
       iconButtonTheme: IconButtonThemeData(
         style: _button(theme.iconButtonTheme.style, colors.onSurfaceVariant),
@@ -194,7 +200,8 @@ class GlassForegroundText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final enabled = LiquidGlassScope.of(context) &&
+    final enabled =
+        LiquidGlassScope.of(context) &&
         MediaQuery.maybeHighContrastOf(context) != true;
     final original = DefaultTextStyle.of(context).style;
     return DefaultTextStyle.merge(

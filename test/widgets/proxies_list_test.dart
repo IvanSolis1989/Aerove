@@ -203,7 +203,8 @@ void main() {
   ) async {
     const name = 'AI 🤖 服务';
     final group = _group(name, 0).copyWith(
-      icon: 'data:image/svg+xml;base64,'
+      icon:
+          'data:image/svg+xml;base64,'
           'PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=',
     );
     await pumpList(tester, groups: [group]);

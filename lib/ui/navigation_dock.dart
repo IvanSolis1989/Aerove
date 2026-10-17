@@ -1541,7 +1541,10 @@ class _FloatingBarItemState extends State<_FloatingBarItem> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
-    final color = GlassForeground.colorOf(context, colorScheme.onSurfaceVariant);
+    final color = GlassForeground.colorOf(
+      context,
+      colorScheme.onSurfaceVariant,
+    );
     var tint = colorScheme.primary;
     if (widget.part == _LensPart.inside &&
         LiquidGlassScope.qualityOf(context) == LiquidGlassQuality.standard) {

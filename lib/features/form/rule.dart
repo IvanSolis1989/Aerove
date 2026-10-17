@@ -156,7 +156,14 @@ class RuleItem extends StatelessWidget {
                               style: AppTextStyle.subheadline
                                   .of(context)
                                   .toJetBrainsMono
-                                  .copyWith(color: checkResult.color == null ? null : GlassForeground.colorOf(context, checkResult.color!)),
+                                  .copyWith(
+                                    color: checkResult.color == null
+                                        ? null
+                                        : GlassForeground.colorOf(
+                                            context,
+                                            checkResult.color!,
+                                          ),
+                                  ),
                             ),
                           ),
                         ),

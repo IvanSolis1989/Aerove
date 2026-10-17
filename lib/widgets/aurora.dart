@@ -59,22 +59,34 @@ class AuroraAppSurface extends ConsumerWidget {
         .withAppSurfaces;
     final glassMode = effectiveAuroraGlassMode(settings.liquidGlass, enabled);
     final glassEnabled = glassMode != LiquidGlassMode.none && !opaque;
-    final surfaceTheme = glassEnabled
-        ? GlassForeground.theme(enabled ? glassTheme : theme)
-        : theme;
+    final surfaceTheme = enabled ? glassTheme : theme;
     final surfaceColors = surfaceTheme.colorScheme;
-    final glassButtons =
-        (glassEnabled
-                ? LiquidGlass.buttonStyle(
-                    (_) => LiquidGlassStyle.regular(surfaceColors),
-                  )
-                : const ButtonStyle())
-            .merge(
-              FilledButton.styleFrom(
-                backgroundColor: Colors.transparent,
+    final glassButtons = LiquidGlass.buttonStyle(
+      (_) => LiquidGlassStyle.regular(surfaceColors),
+    ).merge(
+      FilledButton.styleFrom(
+        backgroundColor: Colors.transparent,
+        foregroundColor: surfaceColors.onSurface,
+      ),
+    );
+    final effectiveTheme = glassEnabled
+        ? GlassForeground.theme(
+            surfaceTheme.copyWith(
+              scaffoldBackgroundColor: Colors.transparent,
+              filledButtonTheme: FilledButtonThemeData(
+                style: (surfaceTheme.filledButtonTheme.style ??
+                        const ButtonStyle())
+                    .merge(glassButtons),
+              ),
+              floatingActionButtonTheme: theme.floatingActionButtonTheme.copyWith(
+                backgroundColor: surfaceColors.surfaceContainer.withValues(
+                  alpha: 0.28,
+                ),
                 foregroundColor: surfaceColors.onSurface,
               ),
-            );
+            ),
+          )
+        : theme;
     return LiquidGlassScope(
       enabled: glassEnabled,
       quality: glassMode == LiquidGlassMode.ultra
@@ -85,22 +97,7 @@ class AuroraAppSurface extends ConsumerWidget {
         child: AuroraAppearance(
           enabled: enabled,
           child: Theme(
-            data: glassEnabled
-                ? surfaceTheme.copyWith(
-                    scaffoldBackgroundColor: Colors.transparent,
-                    filledButtonTheme: FilledButtonThemeData(
-                      style: glassButtons.merge(
-                        surfaceTheme.filledButtonTheme.style,
-                      ),
-                    ),
-                    floatingActionButtonTheme: theme.floatingActionButtonTheme
-                        .copyWith(
-                          backgroundColor: surfaceColors.surfaceContainer
-                              .withValues(alpha: 0.28),
-                          foregroundColor: surfaceColors.onSurface,
-                        ),
-                  )
-                : theme,
+            data: effectiveTheme,
             child: GlassForegroundText(
               child: Stack(
                 fit: StackFit.expand,

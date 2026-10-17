@@ -282,9 +282,12 @@ class _MatchTargetItem extends ConsumerWidget {
             .of(context)
             .toJetBrainsMono
             .copyWith(
-              color: GlassForeground.colorOf(context, invalid
-                  ? context.colorScheme.error
-                  : context.colorScheme.tertiary),
+              color: GlassForeground.colorOf(
+                context,
+                invalid
+                    ? context.colorScheme.error
+                    : context.colorScheme.tertiary,
+              ),
             ),
       ),
       onPressed: () {

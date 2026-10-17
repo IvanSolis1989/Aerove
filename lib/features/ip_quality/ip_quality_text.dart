@@ -29,7 +29,9 @@ class IpQualityText extends ConsumerWidget {
       style = (style ?? const TextStyle()).toJetBrainsMono;
     }
     if (color != null) {
-      style = (style ?? const TextStyle()).copyWith(color: GlassForeground.colorOf(context, color));
+      style = (style ?? const TextStyle()).copyWith(
+        color: GlassForeground.colorOf(context, color),
+      );
     }
     return Tooltip(
       preferBelow: false,

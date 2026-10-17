@@ -38,7 +38,9 @@ class CommonChip extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: AppTextStyle.caption1
                   .of(context, emphasized: true)
-                  .copyWith(color: GlassForeground.colorOf(context, foregroundColor)),
+                  .copyWith(
+                    color: GlassForeground.colorOf(context, foregroundColor),
+                  ),
             ),
           ),
           if (onDeleted != null)

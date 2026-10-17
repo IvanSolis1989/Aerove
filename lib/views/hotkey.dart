@@ -187,7 +187,12 @@ class _HotKeyItem extends ConsumerWidget {
                 appLocalizations.hotkeyUnavailable,
                 style: AppTextStyle.footnote
                     .of(context)
-                    .copyWith(color: GlassForeground.colorOf(context, colorScheme.error)),
+                    .copyWith(
+                      color: GlassForeground.colorOf(
+                        context,
+                        colorScheme.error,
+                      ),
+                    ),
               ),
             ),
       trailing: key == null
@@ -195,7 +200,12 @@ class _HotKeyItem extends ConsumerWidget {
               appLocalizations.hotkeyNotSet,
               style: AppTextStyle.subheadline
                   .of(context)
-                  .copyWith(color: GlassForeground.colorOf(context, colorScheme.outline)),
+                  .copyWith(
+                    color: GlassForeground.colorOf(
+                      context,
+                      colorScheme.outline,
+                    ),
+                  ),
             )
           : Row(
               mainAxisSize: MainAxisSize.min,
@@ -463,7 +473,13 @@ class _HotKeyRecorderState extends ConsumerState<HotKeyRecorder> {
       padding: const EdgeInsets.only(top: 12),
       child: Text(
         text,
-        style: AppTextStyle.subheadline.of(context).copyWith(color: GlassForeground.colorOf(context, color)),
+        style: AppTextStyle.subheadline
+            .of(context)
+            .copyWith(
+              color: color == null
+                  ? null
+                  : GlassForeground.colorOf(context, color),
+            ),
       ),
     );
   }

@@ -366,10 +366,7 @@ void main() {
         const Offset(17, 24),
         Brightness.dark,
         color: Colors.black,
-      ).render(
-        _Layer.none,
-        foreground: foreground(),
-      );
+      ).render(_Layer.none, foreground: foreground());
       final baseline = await probe.render(
         _Layer.none,
         foreground: foreground(),
@@ -379,7 +376,9 @@ void main() {
         foreground: foreground(),
       );
       expect(tester.takeException(), isNull);
-      final action = tester.getRect(find.byKey(const ValueKey('header-action')));
+      final action = tester.getRect(
+        find.byKey(const ValueKey('header-action')),
+      );
       final capture = tester.getRect(find.byKey(probe.key));
       expect(capture.contains(action.topLeft), isTrue);
       expect(capture.contains(action.bottomRight), isTrue);

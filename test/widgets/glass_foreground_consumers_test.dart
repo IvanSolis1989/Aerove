@@ -60,8 +60,10 @@ void main() {
             find.byType(TooltipLabel),
           );
           expect(
-            labels.singleWhere((label) => label.text == 'Explicit form')
-                .style!.color,
+            labels
+                .singleWhere((label) => label.text == 'Explicit form')
+                .style!
+                .color,
             expected,
           );
           expect(

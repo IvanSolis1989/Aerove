@@ -879,14 +879,24 @@ class _DnsResult extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
     if (query.error.isNotEmpty) {
-      return Text(query.error, style: TextStyle(color: GlassForeground.colorOf(context, colorScheme.error)));
+      return Text(
+        query.error,
+        style: TextStyle(
+          color: GlassForeground.colorOf(context, colorScheme.error),
+        ),
+      );
     }
     if (query.hasFailureRcode) {
       return Text(
         query.rcode,
         style: AppTextStyle.footnote
             .of(context, emphasized: true)
-            .copyWith(color: GlassForeground.colorOf(context, DashboardColors.of(context).warn)),
+            .copyWith(
+              color: GlassForeground.colorOf(
+                context,
+                DashboardColors.of(context).warn,
+              ),
+            ),
       );
     }
     final answer = query.answers.firstOrNull ?? '—';

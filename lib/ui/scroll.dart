@@ -667,7 +667,9 @@ class _ScrollbarHintPill extends StatelessWidget {
               Text(
                 '×1/${(1 / rate).round()}',
                 key: const ValueKey('scrollbarScrubRate'),
-                style: style.copyWith(color: GlassForeground.colorOf(context, colorScheme.primary)),
+                style: style.copyWith(
+                  color: GlassForeground.colorOf(context, colorScheme.primary),
+                ),
               ),
             ],
           ],

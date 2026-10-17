@@ -138,7 +138,12 @@ class _PresetSubtitle extends StatelessWidget {
             style: AppTextStyle.footnote
                 .of(context)
                 .toJetBrainsMono
-                .copyWith(color: GlassForeground.colorOf(context, context.colorScheme.tertiary)),
+                .copyWith(
+                  color: GlassForeground.colorOf(
+                    context,
+                    context.colorScheme.tertiary,
+                  ),
+                ),
           ),
       ],
     );

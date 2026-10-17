@@ -279,6 +279,9 @@ class _DelayTextState extends ConsumerState<_DelayText> {
     final delay = ref.watch(
       delayProvider(proxyName: widget.proxy.name, testUrl: widget.testUrl),
     );
+    final delayColor = delay == null
+        ? null
+        : context.colorScheme.delayColor(delay);
     final phase = ref.watch(
       delayTestPhaseProvider(
         proxyName: widget.proxy.name,
@@ -339,7 +342,9 @@ class _DelayTextState extends ConsumerState<_DelayText> {
                             .of(context, emphasized: true)
                             .copyWith(
                               overflow: TextOverflow.ellipsis,
-                              color: GlassForeground.colorOf(context, context.colorScheme.delayColor(delay)),
+                              color: delayColor == null
+                                  ? null
+                                  : GlassForeground.colorOf(context, delayColor),
                             ),
                       ),
                     ),

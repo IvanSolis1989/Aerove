@@ -362,7 +362,9 @@ class _AddOrEditRuleViewState extends ConsumerState<_AddOrEditRuleView> {
                 ruleProvider ?? appLocalizations.selectRuleSet,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: context.listTitleStyle.copyWith(color: GlassForeground.colorOf(context, foregroundColor)),
+                style: context.listTitleStyle.copyWith(
+                  color: GlassForeground.colorOf(context, foregroundColor),
+                ),
               ),
             ),
           ),
