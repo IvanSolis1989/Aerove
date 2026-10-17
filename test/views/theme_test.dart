@@ -72,16 +72,17 @@ void main() {
   ThemeProps readTheme() => container.read(themeSettingProvider);
 
   Future<void> revealThemeSetting(WidgetTester tester, Finder setting) async {
-    await tester.scrollUntilVisible(
-      setting.first,
-      300,
-      scrollable: find
-          .descendant(
-            of: find.byType(ThemeView),
-            matching: find.byType(Scrollable),
-          )
-          .first,
+    final scrollables = find.descendant(
+      of: find.byType(ThemeView),
+      matching: find.byType(Scrollable),
     );
+    final scrollable = scrollables.first;
+    for (var attempt = 0; attempt < 50 && setting.evaluate().isEmpty; attempt++) {
+      await tester.drag(scrollable, const Offset(0, -300));
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(setting.evaluate(), isNotEmpty);
+    await tester.ensureVisible(setting.first);
     await tester.pumpAndSettle();
   }
 
