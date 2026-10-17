@@ -22,28 +22,36 @@ class DashboardColors {
 
   factory DashboardColors.of(BuildContext context) {
     final colorScheme = context.colorScheme;
-    final card = AuroraAppearance.surfaceColorOf(
-      context,
-      SurfaceLevel.card.colorOf(colorScheme),
-    );
+    final glass = LiquidGlassScope.of(context);
+    Color neutral(Color color, double alpha) =>
+        glass ? color.withValues(alpha: alpha) : color;
+    final card = glass
+        ? Colors.transparent
+        : SurfaceLevel.card.colorOf(colorScheme);
     return DashboardColors._(
-      page: AuroraAppearance.enabledOf(context)
+      page: LiquidGlassScope.of(context)
           ? Colors.transparent
           : SurfaceLevel.page.colorOf(colorScheme),
       card: card,
-      tone: SurfaceLevel.block.colorOf(colorScheme),
-      tone2: SurfaceLevel.inset.colorOf(colorScheme),
-      track: colorScheme.surfaceContainerHighest,
+      tone: neutral(SurfaceLevel.block.colorOf(colorScheme), 0.08),
+      tone2: neutral(SurfaceLevel.inset.colorOf(colorScheme), 0.12),
+      track: neutral(colorScheme.surfaceContainerHighest, 0.16),
       thumb: colorScheme.outline,
       series2: Color.alphaBlend(
         colorScheme.primary.withValues(alpha: 0.45),
         card,
       ),
       ok: colorScheme.success,
-      okContainer: colorScheme.successContainer,
+      okContainer: LiquidGlassScope.surfaceColorOf(
+        context,
+        colorScheme.successContainer,
+      ),
       onOkContainer: colorScheme.onSuccessContainer,
       warn: colorScheme.warning,
-      warnContainer: colorScheme.warningContainer,
+      warnContainer: LiquidGlassScope.surfaceColorOf(
+        context,
+        colorScheme.warningContainer,
+      ),
       onWarnContainer: colorScheme.onWarningContainer,
     );
   }

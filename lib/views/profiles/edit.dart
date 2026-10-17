@@ -237,11 +237,13 @@ class _EditProfileViewState extends ConsumerState<EditProfileView> {
       },
     );
     final data = await BaseNavigator.push<String>(context, editorPage);
-    if (data == null) {
+    if (data == null || !mounted) {
       return;
     }
     _rawText = data;
-    _fileData = Uint8List.fromList(utf8.encode(data));
+    setState(() {
+      _fileData = Uint8List.fromList(utf8.encode(data));
+    });
     _fileInfoNotifier.value = _fileInfoNotifier.value?.copyWith(
       size: _fileData?.length ?? 0,
       lastModified: DateTime.now(),
@@ -251,10 +253,13 @@ class _EditProfileViewState extends ConsumerState<EditProfileView> {
   Future<void> _uploadProfileFile() async {
     final platformFile = await globalState.safeRun(picker.pickerFile);
     if (platformFile == null) return;
-    _fileData = await platformFile.readBytes();
+    final fileData = await platformFile.readBytes();
     if (!mounted) {
       return;
     }
+    setState(() {
+      _fileData = fileData;
+    });
     _fileInfoNotifier.value = _fileInfoNotifier.value?.copyWith(
       size: _fileData?.length ?? 0,
       lastModified: DateTime.now(),
@@ -335,13 +340,12 @@ class _EditProfileViewState extends ConsumerState<EditProfileView> {
       policy: PageTraversalPolicy(),
       child: PageFocusScope(
         child: CommonPopScope(
-          onPop: (context) {
-            if (_fileData == null) {
-              return true;
-            }
-            _handleBack();
-            return false;
-          },
+          onPop: _fileData == null
+              ? null
+              : (_) {
+                  _handleBack();
+                  return false;
+                },
           child: CommonScaffold(
             title: appLocalizations.edit,
             confirmationAction: IconButtonData(

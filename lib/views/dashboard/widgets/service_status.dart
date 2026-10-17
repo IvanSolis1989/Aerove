@@ -514,7 +514,7 @@ class _StatusPill extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: ShapeDecoration(
-        color: colors.container,
+        color: LiquidGlassScope.surfaceColorOf(context, colors.container),
         shape: AppShape.full,
       ),
       child: Padding(
@@ -643,7 +643,11 @@ class _ServiceBadge extends StatelessWidget {
     return CustomPaint(
       size: Size.square(size),
       painter: _BadgePainter(
-        color: color ?? context.raisedSurfaceLevel.colorOf(colorScheme),
+        color: LiquidGlassScope.surfaceColorOf(
+          context,
+          color ?? context.raisedSurfaceLevel.colorOf(colorScheme),
+          opacity: 0.08,
+        ),
         radius: radius ?? AppCorner.fit(size),
         dot: dot,
         dotRadius: max(size / 10, 4),

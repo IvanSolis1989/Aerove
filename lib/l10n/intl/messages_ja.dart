@@ -1498,7 +1498,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "strategy": MessageLookupByLibrary.simpleMessage("戦略"),
     "strictRoute": MessageLookupByLibrary.simpleMessage("厳格なルーティング"),
     "strictRouteDesc": MessageLookupByLibrary.simpleMessage(
-      "厳格なルーティングは DNS などの通信が TUN を迂回するのを防ぎます。有効にすると他のデバイスからこの端末にアクセスできなくなります。",
+      "厳格なルーティングは DNS などの通信が TUN を迂回するのを防ぎます。IPv6 がオフの場合、この端末の IPv6 通信は遮断されます。",
     ),
     "style": MessageLookupByLibrary.simpleMessage("スタイル"),
     "submit": MessageLookupByLibrary.simpleMessage("送信"),

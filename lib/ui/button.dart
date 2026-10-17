@@ -101,7 +101,7 @@ class _TonalButtonGroupState extends State<TonalButtonGroup> {
       child: Row(mainAxisSize: MainAxisSize.min, children: widget.children),
     );
     return ElasticPress(
-      child: TonalButtonTheme.glassOf(context)
+      child: TonalButtonTheme.glassOf(context) || LiquidGlassScope.of(context)
           ? Listener(
               onPointerDown: _handlePointerDown,
               onPointerUp: _handlePointerEnd,
@@ -147,25 +147,31 @@ class TonalButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final glyph = this.glyph;
     final label = Text(this.label);
+    final button = TonalButtonTheme(
+      grouped: true,
+      size: size,
+      child: glyph == null
+          ? FilledButton(onPressed: onPressed, child: label)
+          : FilledButton.icon(
+              onPressed: onPressed,
+              icon: GlyphIcon(glyph, fill: 1),
+              label: label,
+            ),
+    );
     return ElasticPress(
       enabled: onPressed != null,
-      child: DecoratedBox(
-        decoration: ShapeDecoration(
-          color: context.raisedSurfaceLevel.colorOf(context.colorScheme),
-          shape: AppShape.full,
-        ),
-        child: TonalButtonTheme(
-          grouped: true,
-          size: size,
-          child: glyph == null
-              ? FilledButton(onPressed: onPressed, child: label)
-              : FilledButton.icon(
-                  onPressed: onPressed,
-                  icon: GlyphIcon(glyph, fill: 1),
-                  label: label,
-                ),
-        ),
-      ),
+      child: TonalButtonTheme.glassOf(context) || LiquidGlassScope.of(context)
+          ? LiquidGlass(
+              style: LiquidGlassStyle.regular(context.colorScheme),
+              child: button,
+            )
+          : DecoratedBox(
+              decoration: ShapeDecoration(
+                color: context.raisedSurfaceLevel.colorOf(context.colorScheme),
+                shape: AppShape.full,
+              ),
+              child: button,
+            ),
     );
   }
 }
@@ -195,10 +201,11 @@ class TonalButtonTheme extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
-    final paned = glass && !grouped;
+    final effectiveGlass = glass || LiquidGlassScope.of(context);
+    final paned = effectiveGlass && !grouped;
     final fill = grouped || paned
         ? Colors.transparent
-        : AuroraAppearance.surfaceColorOf(
+        : LiquidGlassScope.surfaceColorOf(
             context,
             context.raisedSurfaceLevel.colorOf(colorScheme),
             opacity: 0.4,

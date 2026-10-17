@@ -1,13 +1,13 @@
 {
-  "pubspec_source_commit": "a8655b0809085905da71fad1d323fc1f34879e79",
-  "pubspec_version": "0.9.1+2026101701",
+  "pubspec_source_commit": "8d4f9744948751f1273fe871e1d05276fac09b0e",
+  "pubspec_version": "0.9.1+2026101702",
   "repository": "chen08209/FlClash",
   "schema_version": 1,
-  "source_commit": "a8655b0809085905da71fad1d323fc1f34879e79",
-  "tag": "v0.9.1-pre.4",
-  "tag_commit": "a8655b0809085905da71fad1d323fc1f34879e79",
   "source_branches": [
-    "dev"
+    "main"
   ],
-  "version": "0.9.1-pre.4"
+  "source_commit": "8d4f9744948751f1273fe871e1d05276fac09b0e",
+  "tag": "v0.9.1",
+  "tag_commit": "8d4f9744948751f1273fe871e1d05276fac09b0e",
+  "version": "0.9.1"
 }

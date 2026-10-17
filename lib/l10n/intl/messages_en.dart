@@ -1748,7 +1748,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "strategy": MessageLookupByLibrary.simpleMessage("Strategy"),
     "strictRoute": MessageLookupByLibrary.simpleMessage("Strict route"),
     "strictRouteDesc": MessageLookupByLibrary.simpleMessage(
-      "Strict route keeps traffic such as DNS from bypassing TUN, and other devices can no longer reach this one.",
+      "Strict route keeps traffic such as DNS from bypassing TUN, and with IPv6 off it blocks this device\'s IPv6 connections.",
     ),
     "style": MessageLookupByLibrary.simpleMessage("Style"),
     "submit": MessageLookupByLibrary.simpleMessage("Submit"),

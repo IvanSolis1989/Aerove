@@ -492,7 +492,9 @@ class _LiftedCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final shadows = DashboardShadows.e2(context);
+    final shadows = LiquidGlassScope.of(context)
+        ? const <BoxShadow>[]
+        : DashboardShadows.e2(context);
     final shape = AppShape.all(DashboardCorner.mobileCard);
     return AnimatedBuilder(
       animation: animation,
@@ -632,7 +634,10 @@ class _RoundButton extends StatelessWidget {
         tooltip: tooltip,
         padding: EdgeInsets.zero,
         style: IconButton.styleFrom(
-          backgroundColor: background,
+          backgroundColor: LiquidGlassScope.surfaceColorOf(
+            context,
+            background,
+          ),
           foregroundColor: foreground,
           minimumSize: const Size.square(28),
           fixedSize: const Size.square(28),

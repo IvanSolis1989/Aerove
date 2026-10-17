@@ -166,6 +166,18 @@ ProxiesTabControllerState proxiesTabControllerState(Ref ref) {
 }
 
 @riverpod
+bool currentGroupDelayTesting(Ref ref) {
+  final currentGroupName = ref.watch(
+    proxiesTabControllerStateProvider.select((state) => state.currentGroupName),
+  );
+  return ref.watch(
+    delayTestingGroupsProvider.select(
+      (state) => state.contains(currentGroupName),
+    ),
+  );
+}
+
+@riverpod
 String realTestUrl(Ref ref, [String? testUrl]) {
   final currentTestUrl = ref.watch(appSettingProvider).testUrl;
   return testUrl.takeFirstValid([currentTestUrl]);

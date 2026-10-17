@@ -2157,6 +2157,48 @@ final class ProxiesTabControllerStateProvider
 String _$proxiesTabControllerStateHash() =>
     r'548db61efef2c47c2694c855436276fcd3529956';
 
+@ProviderFor(currentGroupDelayTesting)
+final currentGroupDelayTestingProvider = CurrentGroupDelayTestingProvider._();
+
+final class CurrentGroupDelayTestingProvider
+    extends $FunctionalProvider<bool, bool, bool>
+    with $Provider<bool> {
+  CurrentGroupDelayTestingProvider._()
+    : super(
+        from: null,
+        argument: null,
+        retry: null,
+        name: r'currentGroupDelayTestingProvider',
+        isAutoDispose: true,
+        dependencies: null,
+        $allTransitiveDependencies: null,
+      );
+
+  @override
+  String debugGetCreateSourceHash() => _$currentGroupDelayTestingHash();
+
+  @$internal
+  @override
+  $ProviderElement<bool> $createElement($ProviderPointer pointer) =>
+      $ProviderElement(pointer);
+
+  @override
+  bool create(Ref ref) {
+    return currentGroupDelayTesting(ref);
+  }
+
+  /// {@macro riverpod.override_with_value}
+  Override overrideWithValue(bool value) {
+    return $ProviderOverride(
+      origin: this,
+      providerOverride: $SyncValueProvider<bool>(value),
+    );
+  }
+}
+
+String _$currentGroupDelayTestingHash() =>
+    r'8eff21356efb7ad6b208b0badfc9081d94aa2fb4';
+
 @ProviderFor(realTestUrl)
 final realTestUrlProvider = RealTestUrlFamily._();
 

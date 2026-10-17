@@ -1,4 +1,5 @@
 import 'package:fl_clash/ui/context.dart';
+import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/shape.dart';
 import 'package:fl_clash/ui/surface.dart';
 import 'package:fl_clash/ui/typography.dart';
@@ -28,7 +29,10 @@ class SegmentedControl<T> extends StatelessWidget {
       height: _height,
       padding: const EdgeInsets.all(_inset),
       decoration: ShapeDecoration(
-        color: context.raisedSurfaceLevel.colorOf(colorScheme),
+        color: LiquidGlassScope.surfaceColorOf(
+          context,
+          context.raisedSurfaceLevel.colorOf(colorScheme),
+        ),
         shape: AppShape.full,
       ),
       child: Stack(
@@ -46,7 +50,10 @@ class SegmentedControl<T> extends StatelessWidget {
                 heightFactor: 1,
                 child: DecoratedBox(
                   decoration: ShapeDecoration(
-                    color: colorScheme.primary,
+                    color: LiquidGlassScope.surfaceColorOf(
+                      context,
+                      colorScheme.primary,
+                    ),
                     shape: AppShape.full,
                   ),
                 ),
@@ -85,7 +92,9 @@ class SegmentedControl<T> extends StatelessWidget {
                                   .of(context, emphasized: option == value)
                                   .copyWith(
                                     color: option == value
-                                        ? colorScheme.onPrimary
+                                        ? LiquidGlassScope.of(context)
+                                            ? colorScheme.onSurface
+                                            : colorScheme.onPrimary
                                         : colorScheme.onSurfaceVariant,
                                   ),
                               child: Text(

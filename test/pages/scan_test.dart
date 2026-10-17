@@ -6,6 +6,7 @@ import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/ui/activate_box.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/null_status.dart';
+import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/surface.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
@@ -118,7 +119,7 @@ void main() {
     addTearDown(platform.close);
   });
 
-  /// The scan effect repeats for as long as the page is mounted, so
+  /// The scan effect repeats for as long as the camera runs, so
   /// `pumpAndSettle` only returns once the page has been popped or unmounted.
   Future<void> pumpFrames(WidgetTester tester) async {
     await tester.pump();
@@ -127,20 +128,25 @@ void main() {
 
   /// Pushes the page onto a route so `Navigator.pop` from `_handleBarcode` has
   /// something to pop, and reports what the page popped with.
-  Future<void> pumpScanPage(
+  Future<void> pushScanPage(
     WidgetTester tester, {
     required void Function(String? result) onPopped,
     VoidCallback? onBelowPopped,
+    LiquidGlassQuality? glassQuality,
   }) async {
     late BuildContext hostContext;
     await tester.pumpWidget(
       ProviderScope(
-        child: TestApp(
-          child: Builder(
-            builder: (context) {
-              hostContext = context;
-              return const SizedBox.shrink();
-            },
+        child: LiquidGlassScope(
+          enabled: glassQuality != null,
+          quality: glassQuality ?? LiquidGlassQuality.standard,
+          child: TestApp(
+            child: Builder(
+              builder: (context) {
+                hostContext = context;
+                return const SizedBox.shrink();
+              },
+            ),
           ),
         ),
       ),
@@ -162,7 +168,22 @@ void main() {
           )
           .then(onPopped),
     );
-    await pumpFrames(tester);
+    await tester.pump();
+  }
+
+  Future<void> pumpScanPage(
+    WidgetTester tester, {
+    required void Function(String? result) onPopped,
+    VoidCallback? onBelowPopped,
+    LiquidGlassQuality? glassQuality,
+  }) async {
+    await pushScanPage(
+      tester,
+      onPopped: onPopped,
+      onBelowPopped: onBelowPopped,
+      glassQuality: glassQuality,
+    );
+    await tester.pump(const Duration(seconds: 1));
   }
 
   Future<void> sendLifecycle(WidgetTester tester, AppLifecycleState state) {
@@ -175,6 +196,31 @@ void main() {
   }
 
   group('ScanPage lifecycle', () {
+    for (final quality in [null, ...LiquidGlassQuality.values]) {
+      testWidgets('camera error fallback respects glass mode $quality', (
+        tester,
+      ) async {
+        platform.startError = const MobileScannerException(
+          errorCode: MobileScannerErrorCode.permissionDenied,
+        );
+        await pumpScanPage(
+          tester,
+          onPopped: (_) {},
+          glassQuality: quality,
+        );
+        final scaffold = tester.widget<Scaffold>(
+          find.descendant(
+            of: find.byType(ScanPage),
+            matching: find.byType(Scaffold),
+          ),
+        );
+        expect(scaffold.backgroundColor!.a, quality == null ? 1 : 0.24);
+        expect(find.byType(NullStatus), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      });
+    }
+
     testWidgets('disposing the page does not break the dispose contract', (
       tester,
     ) async {
@@ -221,6 +267,19 @@ void main() {
   });
 
   group('ScanPage barcode handling', () {
+    testWidgets(
+      'the whole preview scans, since the platform takes a code first seen '
+      'outside a scan window for a duplicate once it is inside',
+      (tester) async {
+        await pumpScanPage(tester, onPopped: (_) {});
+
+        expect(
+          tester.widget<MobileScanner>(find.byType(MobileScanner)).scanWindow,
+          isNull,
+        );
+      },
+    );
+
     testWidgets('a url barcode pops its raw value', (tester) async {
       String? result;
       var popped = false;
@@ -374,6 +433,32 @@ void main() {
   });
 
   group('ScanPage app lifecycle', () {
+    testWidgets('the camera starts only once the push has settled', (
+      tester,
+    ) async {
+      await pushScanPage(tester, onPopped: (_) {});
+      await sendLifecycle(tester, AppLifecycleState.resumed);
+      await tester.pump();
+
+      expect(platform.startCalls, 0);
+
+      await tester.pump(const Duration(seconds: 1));
+
+      expect(platform.startCalls, 1);
+    });
+
+    testWidgets('the scan effect waits for the camera to run', (tester) async {
+      final gate = Completer<void>();
+      platform.startGate = gate;
+      await pumpScanPage(tester, onPopped: (_) {});
+
+      await tester.pumpAndSettle();
+      gate.complete();
+      await tester.pump();
+
+      expect(tester.hasRunningAnimations, isTrue);
+    });
+
     testWidgets('a resume during a pending start does not start again', (
       tester,
     ) async {

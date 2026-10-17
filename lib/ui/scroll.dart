@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:fl_clash/ui/context.dart';
+import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/scroll_behavior.dart';
 import 'package:fl_clash/ui/shape.dart';
 import 'package:fl_clash/ui/surface.dart';
@@ -644,7 +645,10 @@ class _ScrollbarHintPill extends StatelessWidget {
     return DecoratedBox(
       key: const ValueKey('scrollbarHintPill'),
       decoration: ShapeDecoration(
-        color: SurfaceLevel.floatingOf(colorScheme).colorOf(colorScheme),
+        color: LiquidGlassScope.surfaceColorOf(
+          context,
+          SurfaceLevel.floatingOf(colorScheme).colorOf(colorScheme),
+        ),
         shape: AppShape.sm,
         shadows: kElevationToShadow[2],
       ),

@@ -1,4 +1,4 @@
-import 'dart:ui' show ImageFilter;
+import 'dart:ui' show ImageFilter, Vertices, VertexMode;
 
 import 'package:fl_clash/common/aurora.dart';
 import 'package:fl_clash/ui/aurora.dart';
@@ -38,11 +38,12 @@ class AuroraAppSurface extends ConsumerWidget {
         ),
       ),
     );
+    final opaque = MediaQuery.highContrastOf(context) ||
+        (settings.pureBlack && theme.brightness == Brightness.dark);
     final enabled =
         theme.platform == TargetPlatform.android &&
         settings.enabled &&
-        !MediaQuery.highContrastOf(context) &&
-        !(settings.pureBlack && theme.brightness == Brightness.dark);
+        !opaque;
     final glassColors = auroraColorScheme(theme.brightness);
     final glassTheme = theme
         .copyWith(
@@ -57,17 +58,19 @@ class AuroraAppSurface extends ConsumerWidget {
         )
         .withAppSurfaces;
     final glassMode = effectiveAuroraGlassMode(settings.liquidGlass, enabled);
-    final glassEnabled = glassMode != LiquidGlassMode.none;
+    final glassEnabled = glassMode != LiquidGlassMode.none && !opaque;
+    final surfaceTheme = enabled ? glassTheme : theme;
+    final surfaceColors = surfaceTheme.colorScheme;
     final glassButtons =
         (glassEnabled
                 ? LiquidGlass.buttonStyle(
-                    (_) => LiquidGlassStyle.regular(glassColors),
+                    (_) => LiquidGlassStyle.regular(surfaceColors),
                   )
                 : const ButtonStyle())
             .merge(
               FilledButton.styleFrom(
                 backgroundColor: Colors.transparent,
-                foregroundColor: glassColors.onSurface,
+                foregroundColor: surfaceColors.onSurface,
               ),
             );
     return LiquidGlassScope(
@@ -80,19 +83,19 @@ class AuroraAppSurface extends ConsumerWidget {
         child: AuroraAppearance(
           enabled: enabled,
           child: Theme(
-            data: enabled
-                ? glassTheme.copyWith(
+            data: glassEnabled
+                ? surfaceTheme.copyWith(
                     scaffoldBackgroundColor: Colors.transparent,
                     filledButtonTheme: FilledButtonThemeData(
                       style: glassButtons.merge(
-                        glassTheme.filledButtonTheme.style,
+                        surfaceTheme.filledButtonTheme.style,
                       ),
                     ),
                     floatingActionButtonTheme: theme.floatingActionButtonTheme
                         .copyWith(
-                          backgroundColor: glassColors.surfaceContainer
+                          backgroundColor: surfaceColors.surfaceContainer
                               .withValues(alpha: 0.28),
-                          foregroundColor: glassColors.onSurface,
+                          foregroundColor: surfaceColors.onSurface,
                         ),
                   )
                 : theme,
@@ -123,7 +126,7 @@ class AuroraAppSurface extends ConsumerWidget {
                             ),
                           ),
                         )
-                      : const SizedBox.shrink(),
+                      : ColoredBox(color: theme.scaffoldBackgroundColor),
                 ),
                 child,
               ],
@@ -135,7 +138,7 @@ class AuroraAppSurface extends ConsumerWidget {
   }
 }
 
-class SeededAuroraWallpaper extends StatelessWidget {
+class SeededAuroraWallpaper extends StatefulWidget {
   const SeededAuroraWallpaper({
     super.key,
     required this.colors,
@@ -148,14 +151,48 @@ class SeededAuroraWallpaper extends StatelessWidget {
   final Brightness brightness;
 
   @override
+  State<SeededAuroraWallpaper> createState() => _SeededAuroraWallpaperState();
+}
+
+class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper> {
+  late _AuroraPainter _painter;
+
+  @override
+  void initState() {
+    super.initState();
+    _updatePainter();
+  }
+
+  void _updatePainter() {
+    _painter = _AuroraPainter(
+      colors: normalizeAuroraColors(widget.colors),
+      seed: widget.seed,
+      brightness: widget.brightness,
+    );
+  }
+
+  @override
+  void didUpdateWidget(SeededAuroraWallpaper oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.seed != oldWidget.seed ||
+        widget.brightness != oldWidget.brightness ||
+        !listEquals(widget.colors, oldWidget.colors)) {
+      _painter.dispose();
+      _updatePainter();
+    }
+  }
+
+  @override
+  void dispose() {
+    _painter.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return RepaintBoundary(
       child: CustomPaint(
-        painter: _AuroraPainter(
-          colors: normalizeAuroraColors(colors),
-          seed: seed,
-          brightness: brightness,
-        ),
+        painter: _painter,
         isComplex: true,
       ),
     );
@@ -167,57 +204,30 @@ class _AuroraPainter extends CustomPainter {
     required this.colors,
     required this.seed,
     required this.brightness,
-  }) : clouds = generateAuroraClouds(seed, colorCount: colors.length),
-       tints = [for (final color in colors) auroraTint(color, brightness)];
+  }) {
+    final mesh = generateAuroraMesh(seed, colors: colors, brightness: brightness);
+    _vertices = Vertices(
+      VertexMode.triangles,
+      mesh.positions,
+      colors: mesh.colors,
+      indices: mesh.indices,
+    );
+  }
 
   final List<Color> colors;
   final int seed;
   final Brightness brightness;
-  final List<AuroraCloud> clouds;
-  final List<Color> tints;
+  late final Vertices _vertices;
+  final _paint = Paint()..isAntiAlias = false;
+
+  void dispose() => _vertices.dispose();
 
   @override
   void paint(Canvas canvas, Size size) {
     if (size.isEmpty) return;
-    final base = auroraBaseColor(brightness);
-    final bounds = Offset.zero & size;
-    canvas.drawRect(
-      bounds,
-      Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.centerLeft,
-          end: Alignment.centerRight,
-          colors: [
-            for (final tint in tints) Color.lerp(base, tint, 0.65)!,
-            if (tints.length == 1) Color.lerp(base, tints.single, 0.65)!,
-          ],
-        ).createShader(bounds),
-    );
     canvas.save();
-    canvas.clipRect(bounds);
     canvas.scale(size.width, size.height);
-    for (var i = 0; i < clouds.length; i++) {
-      final cloud = clouds[i];
-      final tint = tints[i % tints.length];
-      canvas.save();
-      canvas.translate(cloud.x, cloud.y);
-      canvas.rotate(cloud.angle);
-      canvas.scale(cloud.radiusX, cloud.radiusY);
-      canvas.drawCircle(
-        Offset.zero,
-        1,
-        Paint()
-          ..shader = RadialGradient(
-            colors: [
-              tint.withValues(alpha: cloud.strength + 0.25),
-              tint.withValues(alpha: (cloud.strength + 0.25) * 0.5),
-              tint.withValues(alpha: 0),
-            ],
-            stops: const [0, 0.5, 1],
-          ).createShader(const Rect.fromLTRB(-1, -1, 1, 1)),
-      );
-      canvas.restore();
-    }
+    canvas.drawVertices(_vertices, BlendMode.dst, _paint);
     canvas.restore();
   }
 

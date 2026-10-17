@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:fl_clash/ui/context.dart';
+import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/scroll_behavior.dart';
 import 'package:fl_clash/ui/shape.dart';
 import 'package:fl_clash/ui/surface.dart';
@@ -781,7 +782,10 @@ class _SnapSheetState extends State<_SnapSheet>
   @override
   Widget build(BuildContext context) {
     final route = widget.route;
-    final sheetColor = SurfaceLevel.page.colorOf(context.colorScheme);
+    final sheetColor = LiquidGlassScope.surfaceColorOf(
+      context,
+      SurfaceLevel.page.colorOf(context.colorScheme),
+    );
     final theme = Theme.of(context);
     Widget content = route.builder(context, _scrollController);
     if (route.fitsContent) {

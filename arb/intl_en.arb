@@ -824,7 +824,7 @@
   "keepAliveIdle": "TCP keep-alive idle",
   "disableKeepAlive": "Disable TCP keep-alive",
   "routingMark": "Routing mark",
-  "strictRouteDesc": "Strict route keeps traffic such as DNS from bypassing TUN, and other devices can no longer reach this one.",
+  "strictRouteDesc": "Strict route keeps traffic such as DNS from bypassing TUN, and with IPv6 off it blocks this device's IPv6 connections.",
   "initFailed": "Startup failed",
   "initFailedTip": "FlClash ran into an error while starting and can't continue. Copy the details to report the problem. If it keeps happening, clearing the data usually lets the app start again.",
   "errorDetails": "Error details",

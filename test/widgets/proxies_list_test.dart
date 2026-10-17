@@ -7,6 +7,7 @@ import 'package:fl_clash/views/proxies/card.dart';
 import 'package:fl_clash/views/proxies/list.dart';
 import 'package:fl_clash/widgets/widgets.dart' hide ListHeader;
 import 'package:flutter/foundation.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -42,6 +43,7 @@ void main() {
     List<Group>? groups,
     Set<String> unfoldSet = const {'G0', 'G1', 'G2'},
     ValueListenable<Brightness>? brightness,
+    bool aurora = false,
   }) async {
     tester.view.physicalSize = const Size(900, 700);
     tester.view.devicePixelRatio = 1;
@@ -77,7 +79,15 @@ void main() {
                 data: MediaQuery.of(
                   context,
                 ).copyWith(padding: const EdgeInsets.only(top: 64)),
-                child: child,
+                child: aurora
+                    ? AuroraAppearance(
+                        enabled: true,
+                        child: LiquidGlassScope(
+                          enabled: true,
+                          child: LiquidGlassHost(enabled: true, child: child),
+                        ),
+                      )
+                    : child,
               ),
             ),
           ),
@@ -256,6 +266,59 @@ void main() {
     );
     expect(context.colorScheme.brightness, Brightness.dark);
     expect(cover.color, context.surfaceLevel.colorOf(context.colorScheme));
+  });
+
+  testWidgets('Aurora proxy headers use one shaped glass without a page mask', (
+    tester,
+  ) async {
+    await pumpList(
+      tester,
+      aurora: true,
+      groups: [_group('G0', 40)],
+      unfoldSet: const {},
+    );
+    final header = headerOf('G0');
+    expect(surfaceOf(tester, 'G0').color, Colors.transparent);
+    expect(
+      find.descendant(of: header, matching: find.byType(LiquidGlass)),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.descendant(of: header, matching: find.byType(CommonCard)),
+        matching: find.byType(LiquidGlass),
+      ),
+      findsNothing,
+    );
+    final pinned = find.ancestor(
+      of: header,
+      matching: find.byType(PinnedHeaderSliver),
+    );
+    expect(
+      find.descendant(of: pinned, matching: find.byType(ColoredBox)),
+      findsNothing,
+    );
+
+    await tester.tap(find.text('G0'));
+    await tester.pumpAndSettle();
+    final before = tester.getRect(header);
+    final position = tester.state<ScrollableState>(scrollable()).position;
+    position.jumpTo(200);
+    await tester.pumpAndSettle();
+    final after = tester.getRect(header);
+    expect(after.top, before.top);
+    expect(
+      tester.layers.whereType<ClipRectLayer>().map((layer) => layer.clipRect),
+      contains(
+        predicate<Rect?>(
+          (rect) => rect != null && (rect.top - after.bottom).abs() < 0.01,
+          'a row paint clip below the pinned header',
+        ),
+      ),
+    );
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(Duration.zero);
   });
 
   testWidgets('the last row sits as far from the bottom of its group card as '

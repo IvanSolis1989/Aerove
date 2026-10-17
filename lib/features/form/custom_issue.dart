@@ -149,7 +149,10 @@ class _Banner extends StatelessWidget {
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(16),
-      decoration: ShapeDecoration(color: color, shape: AppShape.xl),
+      decoration: ShapeDecoration(
+        color: LiquidGlassScope.surfaceColorOf(context, color),
+        shape: AppShape.xl,
+      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         spacing: 8,

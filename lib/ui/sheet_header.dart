@@ -6,7 +6,9 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
 
+import 'header_blur.dart';
 import 'inherited.dart';
+import 'liquid_glass.dart';
 
 class SheetDragHandle extends StatelessWidget {
   const SheetDragHandle({super.key});
@@ -68,6 +70,7 @@ class FloatingHeader extends StatelessWidget {
     required this.backgroundColor,
     this.fadeStart = 0.5,
     this.overhang = 0,
+    this.blur = false,
     required this.child,
   });
 
@@ -77,6 +80,7 @@ class FloatingHeader extends StatelessWidget {
   final Color backgroundColor;
   final double fadeStart;
   final double overhang;
+  final bool blur;
   final Widget child;
 
   Gradient _scrimOf(double height) {
@@ -112,11 +116,18 @@ class FloatingHeader extends StatelessWidget {
           bottom: -overhang,
           child: IgnorePointer(
             child: LayoutBuilder(
-              builder: (_, constraints) => DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: _scrimOf(constraints.maxHeight),
-                ),
-              ),
+              builder: (_, constraints) => blur
+                  ? HeaderBlur(
+                      fadeStart:
+                          (constraints.maxHeight - overhang) *
+                          fadeStart /
+                          constraints.maxHeight,
+                    )
+                  : DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: _scrimOf(constraints.maxHeight),
+                      ),
+                    ),
             ),
           ),
         ),
@@ -156,6 +167,7 @@ class FloatingHeaderBody extends StatelessWidget {
           right: 0,
           child: FloatingHeader(
             backgroundColor: backgroundColor,
+            blur: LiquidGlassScope.of(context),
             child: header,
           ),
         ),

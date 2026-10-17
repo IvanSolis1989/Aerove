@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:fl_clash/ui/color.dart';
 import 'package:fl_clash/ui/drag_back.dart';
+import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/shape.dart';
 import 'package:fl_clash/ui/sheet_navigator.dart';
 import 'package:fl_clash/ui/surface.dart';
@@ -47,9 +48,11 @@ class _SideSheetState extends State<SideSheet> {
   Widget build(BuildContext context) {
     return Material(
       key: _childKey,
-      color:
-          widget.backgroundColor ??
-          SurfaceLevel.page.colorOf(Theme.of(context).colorScheme),
+      color: LiquidGlassScope.surfaceColorOf(
+        context,
+        widget.backgroundColor ??
+            SurfaceLevel.page.colorOf(Theme.of(context).colorScheme),
+      ),
       shape: AppShape.none,
       child: widget.builder(context),
     );
@@ -374,8 +377,10 @@ class ModalSideSheetRoute<T> extends PopupRoute<T>
           final colorScheme = Theme.of(context).colorScheme;
           return _ModalSideSheet<T>(
             route: this,
-            backgroundColor:
-                backgroundColor ?? SurfaceLevel.page.colorOf(colorScheme),
+            backgroundColor: LiquidGlassScope.surfaceColorOf(
+              context,
+              backgroundColor ?? SurfaceLevel.page.colorOf(colorScheme),
+            ),
           );
         },
       ),

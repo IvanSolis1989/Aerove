@@ -124,14 +124,12 @@ class _StandardContentState extends ConsumerState<StandardContent> {
     final addedRules = ref.watch(profileRulesProvider(_profileId)).value ?? [];
     final selectedRules = ref.watch(itemsProvider(_key));
     return CommonPopScope(
-      onPop: (_) {
-        if (selectedRules.isNotEmpty) {
-          ref.read(itemsProvider(_key).notifier).value = {};
-          return false;
-        }
-        Navigator.of(context).pop();
-        return false;
-      },
+      onPop: selectedRules.isEmpty
+          ? null
+          : (_) {
+              ref.read(itemsProvider(_key).notifier).value = {};
+              return false;
+            },
       child: SliverMainAxisGroup(
         slivers: [
           const SliverToBoxAdapter(child: SizedBox(height: 24)),

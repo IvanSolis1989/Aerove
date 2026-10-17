@@ -824,7 +824,7 @@
   "keepAliveIdle": "Inactividad de keep-alive TCP",
   "disableKeepAlive": "Desactivar keep-alive TCP",
   "routingMark": "Marca de enrutamiento",
-  "strictRouteDesc": "La ruta estricta evita que el tráfico, como el DNS, eluda TUN, y los demás dispositivos ya no pueden acceder a este.",
+  "strictRouteDesc": "La ruta estricta evita que el tráfico, como el DNS, eluda TUN y, con IPv6 desactivado, bloquea las conexiones IPv6 de este dispositivo.",
   "initFailed": "Error al iniciar",
   "initFailedTip": "FlClash encontró un error al iniciarse y no puede continuar. Copia los detalles para informar del problema. Si sigue ocurriendo, borrar los datos suele permitir que la app vuelva a iniciarse.",
   "errorDetails": "Detalles del error",

@@ -312,12 +312,16 @@ class _DelayTextState extends ConsumerState<_DelayText> {
                         size: measure.textHeight(AppTextStyle.caption2),
                         color: context.colorScheme.onSurfaceVariant.opacity38,
                       ),
-                      null => IconButton(
-                        tooltip: context.appLocalizations.delayTest,
-                        icon: const GlyphIcon(AppGlyphs.bolt),
-                        iconSize: measure.textHeight(AppTextStyle.caption2),
-                        padding: EdgeInsets.zero,
-                        onPressed: _handleTestCurrentDelay,
+                      null => Tooltip(
+                        message: context.appLocalizations.delayTest,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: _handleTestCurrentDelay,
+                          child: GlyphIcon(
+                            AppGlyphs.bolt,
+                            size: measure.textHeight(AppTextStyle.caption2),
+                          ),
+                        ),
                       ),
                     }),
                   )

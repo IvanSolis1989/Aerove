@@ -11,7 +11,6 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 
 import 'fade_box.dart';
-import 'aurora.dart';
 import 'liquid_glass.dart';
 import 'scaffold.dart';
 import 'text.dart';
@@ -101,6 +100,50 @@ class InfoHeader extends StatelessWidget {
 
 const commonCardIconSize = 20.0;
 
+class CardGroup extends StatelessWidget {
+  const CardGroup({super.key, this.shape = AppShape.xl, required this.child});
+
+  final OutlinedBorder shape;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = LiquidGlassScope.of(context);
+    return Stack(
+      fit: StackFit.passthrough,
+      clipBehavior: Clip.none,
+      children: [
+        Positioned.fill(
+          child: enabled
+              ? LiquidGlass(
+                  style: LiquidGlassStyle.regular(context.colorScheme),
+                  clipper: ShapeBorderClipper(
+                    shape: shape,
+                    textDirection: Directionality.of(context),
+                  ),
+                )
+              : const SizedBox.shrink(),
+        ),
+        _CardGroupScope(enabled: enabled, child: child),
+      ],
+    );
+  }
+}
+
+class _CardGroupScope extends InheritedWidget {
+  const _CardGroupScope({required this.enabled, required super.child});
+
+  final bool enabled;
+
+  static bool of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<_CardGroupScope>()?.enabled ??
+      false;
+
+  @override
+  bool updateShouldNotify(_CardGroupScope oldWidget) =>
+      enabled != oldWidget.enabled;
+}
+
 class CommonCard extends StatelessWidget {
   const CommonCard({
     super.key,
@@ -115,6 +158,7 @@ class CommonCard extends StatelessWidget {
     this.statesController,
     this.inert = false,
     this.fillsSelection = false,
+    this.grouped = false,
     required this.child,
   }) : isSelected = isSelected ?? false;
 
@@ -126,6 +170,7 @@ class CommonCard extends StatelessWidget {
   /// A selected card keeps its fill unless [fillsSelection]; callers mark it.
   final bool isSelected;
   final bool fillsSelection;
+  final bool grouped;
   final bool isError;
   final void Function()? onPressed;
   final Widget child;
@@ -144,7 +189,10 @@ class CommonCard extends StatelessWidget {
       final side = focusRingSide(colorScheme);
       return isError ? side.copyWith(color: colorScheme.error) : side;
     }
-    if (AuroraAppearance.enabledOf(context)) {
+    if (grouped && _CardGroupScope.of(context)) {
+      return BorderSide.none;
+    }
+    if (LiquidGlassScope.of(context)) {
       return BorderSide(
         color: isSelected
             ? colorScheme.primary.withValues(alpha: 0.6)
@@ -160,15 +208,18 @@ class CommonCard extends StatelessWidget {
   Color _buildBackgroundColor(BuildContext context, SurfaceLevel level) {
     final colorScheme = context.colorScheme;
     if (isError) {
-      return colorScheme.errorContainer;
+      return LiquidGlassScope.surfaceColorOf(
+        context,
+        colorScheme.errorContainer,
+      );
     }
-    if (AuroraAppearance.enabledOf(context)) {
+    if (LiquidGlassScope.of(context)) {
       return Colors.transparent;
     }
     if (_filled) {
       return colorScheme.primary;
     }
-    return AuroraAppearance.surfaceColorOf(context, level.colorOf(colorScheme));
+    return level.colorOf(colorScheme);
   }
 
   Color _buildForegroundColor(BuildContext context) {
@@ -176,7 +227,7 @@ class CommonCard extends StatelessWidget {
     if (isError) {
       return colorScheme.onErrorContainer;
     }
-    if (_filled && !AuroraAppearance.enabledOf(context)) {
+    if (_filled && !LiquidGlassScope.of(context)) {
       return colorScheme.onPrimary;
     }
     return colorScheme.onSurfaceVariant;
@@ -187,7 +238,7 @@ class CommonCard extends StatelessWidget {
     if (isError) {
       return colorScheme.onErrorContainer;
     }
-    if (_filled && !AuroraAppearance.enabledOf(context)) {
+    if (_filled && !LiquidGlassScope.of(context)) {
       return colorScheme.onPrimary;
     }
     return colorScheme.primary;
@@ -197,8 +248,10 @@ class CommonCard extends StatelessWidget {
     final iconColor = _buildIconColor(context);
     final foregroundColor = _buildForegroundColor(context);
     final remote = RemoteFocusAdapter.isEnabledOf(context);
+    final glass = LiquidGlassScope.of(context);
+    final groupSurface = grouped && _CardGroupScope.of(context);
     final cardShape = shape ?? AppShape.all(radius ?? AppCorner.md);
-    final glassStyle = AuroraAppearance.enabledOf(context) && !isError
+    final glassStyle = glass && !isError && !groupSurface
         ? LiquidGlass.buttonStyle(
             (_) => LiquidGlassStyle.regular(context.colorScheme),
             clipper: ShapeBorderClipper(
@@ -223,7 +276,7 @@ class CommonCard extends StatelessWidget {
               disabledForegroundColor: inert ? foregroundColor : null,
               elevation: 0,
             ).copyWith(
-              backgroundBuilder: isError && AuroraAppearance.enabledOf(context)
+              backgroundBuilder: glass && (isError || groupSurface)
                   ? (context, states, child) => child ?? const SizedBox.shrink()
                   : glassStyle?.backgroundBuilder,
               backgroundColor: WidgetStatePropertyAll(

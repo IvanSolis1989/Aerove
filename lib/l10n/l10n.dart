@@ -6828,10 +6828,10 @@ class AppLocalizations {
     );
   }
 
-  /// `Strict route keeps traffic such as DNS from bypassing TUN, and other devices can no longer reach this one.`
+  /// `Strict route keeps traffic such as DNS from bypassing TUN, and with IPv6 off it blocks this device's IPv6 connections.`
   String get strictRouteDesc {
     return Intl.message(
-      'Strict route keeps traffic such as DNS from bypassing TUN, and other devices can no longer reach this one.',
+      'Strict route keeps traffic such as DNS from bypassing TUN, and with IPv6 off it blocks this device\'s IPv6 connections.',
       name: 'strictRouteDesc',
       desc: '',
       args: [],

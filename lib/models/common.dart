@@ -21,7 +21,6 @@ abstract class NavigationItem with _$NavigationItem {
     required Glyph glyph,
     required PageLabel label,
     required WidgetBuilder builder,
-    @Default(true) bool keep,
     String? path,
     @Default([NavigationItemMode.mobile, NavigationItemMode.desktop])
     List<NavigationItemMode> modes,

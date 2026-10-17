@@ -404,7 +404,10 @@ class _ColorSwatches extends ConsumerWidget {
     return Container(
       padding: const EdgeInsets.all(_inset),
       decoration: ShapeDecoration(
-        color: level.colorOf(colorScheme),
+        color: LiquidGlassScope.surfaceColorOf(
+          context,
+          level.colorOf(colorScheme),
+        ),
         shape: AppShape.xl,
       ),
       child: SurfaceScope(
@@ -586,12 +589,18 @@ class _EyedropperBadge extends StatelessWidget {
       height: size,
       padding: const EdgeInsets.all(_gap),
       decoration: ShapeDecoration(
-        color: context.surfaceLevel.colorOf(colorScheme),
+        color: LiquidGlassScope.surfaceColorOf(
+          context,
+          context.surfaceLevel.colorOf(colorScheme),
+        ),
         shape: AppShape.circle,
       ),
       child: DecoratedBox(
         decoration: ShapeDecoration(
-          color: context.raisedSurfaceLevel.colorOf(colorScheme),
+          color: LiquidGlassScope.surfaceColorOf(
+            context,
+            context.raisedSurfaceLevel.colorOf(colorScheme),
+          ),
           shape: AppShape.circle,
         ),
         child: Center(
@@ -632,7 +641,10 @@ class _AddColorButton extends StatelessWidget {
                   width: _ColorSwatch.dot,
                   height: _ColorSwatch.dot,
                   decoration: ShapeDecoration(
-                    color: context.raisedSurfaceLevel.colorOf(colorScheme),
+                    color: LiquidGlassScope.surfaceColorOf(
+                      context,
+                      context.raisedSurfaceLevel.colorOf(colorScheme),
+                    ),
                     shape: AppShape.circle,
                   ),
                   child: GlyphIcon(
@@ -927,7 +939,10 @@ class _FontFamilyItem extends ConsumerWidget {
         ],
       ),
     );
-    final cardColor = context.raisedSurfaceLevel.colorOf(colorScheme);
+    final cardColor = LiquidGlassScope.surfaceColorOf(
+      context,
+      context.raisedSurfaceLevel.colorOf(colorScheme),
+    );
     Widget card(VoidCallback onTap) => Material(
       color: cardColor,
       shape: AppShape.lg,
@@ -1028,7 +1043,10 @@ class _TextScaleFactorItemState extends ConsumerState<_TextScaleFactorItem> {
               Container(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                 decoration: ShapeDecoration(
-                  color: level.colorOf(colorScheme),
+                  color: LiquidGlassScope.surfaceColorOf(
+                    context,
+                    level.colorOf(colorScheme),
+                  ),
                   shape: AppShape.lg,
                 ),
                 child: Column(
@@ -1074,7 +1092,10 @@ class _TextScaleFactorItemState extends ConsumerState<_TextScaleFactorItem> {
                             vertical: 4,
                           ),
                           decoration: ShapeDecoration(
-                            color: level.next.colorOf(colorScheme),
+                            color: LiquidGlassScope.surfaceColorOf(
+                              context,
+                              level.next.colorOf(colorScheme),
+                            ),
                             shape: AppShape.full,
                           ),
                           child: Text(
@@ -1274,7 +1295,10 @@ class _CustomColorPreview extends ConsumerWidget {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: ShapeDecoration(
-        color: level.colorOf(context.colorScheme),
+        color: LiquidGlassScope.surfaceColorOf(
+          context,
+          level.colorOf(context.colorScheme),
+        ),
         shape: AppShape.xl,
       ),
       child: SurfaceScope(

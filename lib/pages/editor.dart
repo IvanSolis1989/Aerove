@@ -571,7 +571,10 @@ class _EditorBody extends StatelessWidget {
         FadeBox(
           child: isLoading
               ? Container(
-                  color: context.colorScheme.surface,
+                  color: LiquidGlassScope.surfaceColorOf(
+                    context,
+                    context.colorScheme.surface,
+                  ),
                   alignment: Alignment.center,
                   child: const CommonCircleLoading.page(),
                 )
@@ -667,10 +670,15 @@ class _CodeEditorState extends ConsumerState<_CodeEditor> {
 
   void _updateStyles(BuildContext context, EditorFontSize fontSize) {
     final colorScheme = context.colorScheme;
-    final schemeChanged = colorScheme != _colorScheme;
+    final background = LiquidGlassScope.surfaceColorOf(
+      context,
+      colorScheme.surface,
+    );
+    final schemeChanged = colorScheme != _colorScheme ||
+        _editorTheme['root']?.backgroundColor != background;
     if (schemeChanged) {
       _colorScheme = colorScheme;
-      _editorTheme = _highlightTheme(colorScheme, widget.language);
+      _editorTheme = _highlightTheme(colorScheme, widget.language, background);
       _selectionStyle = CodeSelectionStyle(
         cursorColor: colorScheme.primary,
         selectionColor: colorScheme.primary.opacity30,
@@ -868,6 +876,7 @@ class _NoMouseDragScroll extends StatelessWidget {
 Map<String, TextStyle> _highlightTheme(
   ColorScheme colorScheme,
   Language language,
+  Color background,
 ) {
   final palette = colorScheme.brightness == Brightness.dark
       ? atomOneDarkTheme
@@ -884,7 +893,7 @@ Map<String, TextStyle> _highlightTheme(
     if (language == Language.json) 'keyword': palette['literal']!,
     'root': TextStyle(
       color: colorScheme.onSurface,
-      backgroundColor: colorScheme.surface,
+      backgroundColor: background,
     ),
   };
 }
@@ -937,7 +946,10 @@ class FindPanel extends StatelessWidget implements PreferredSizeWidget {
         child: Container(
           margin: EdgeInsets.only(top: topInset),
           padding: _findPanelPadding,
-          color: context.surfaceLevel.colorOf(context.colorScheme),
+          color: LiquidGlassScope.surfaceColorOf(
+            context,
+            context.surfaceLevel.colorOf(context.colorScheme),
+          ),
           child: LayoutBuilder(builder: _buildRows),
         ),
       ),
@@ -1163,7 +1175,10 @@ class _FindField extends StatelessWidget {
       decoration: InputDecoration(
         constraints: BoxConstraints.tightFor(height: height),
         filled: true,
-        fillColor: context.raisedSurfaceLevel.colorOf(colorScheme),
+        fillColor: LiquidGlassScope.surfaceColorOf(
+          context,
+          context.raisedSurfaceLevel.colorOf(colorScheme),
+        ),
         hintText: hintText,
         border: pill.copyWith(borderSide: BorderSide.none),
         enabledBorder: pill.copyWith(borderSide: BorderSide.none),
@@ -1204,9 +1219,16 @@ class _FindOptionToggle extends StatelessWidget {
         style: ElasticPress.buttonStyle
             .merge(
               IconButton.styleFrom(
-                backgroundColor: selected ? colorScheme.primary : null,
+                backgroundColor: selected
+                    ? LiquidGlassScope.surfaceColorOf(
+                        context,
+                        colorScheme.primary,
+                      )
+                    : null,
                 foregroundColor: selected
-                    ? colorScheme.onPrimary
+                    ? LiquidGlassScope.of(context)
+                        ? colorScheme.onSurface
+                        : colorScheme.onPrimary
                     : colorScheme.onSurfaceVariant,
                 fixedSize: Size.square(TonalButtonSize.compact.button),
                 minimumSize: Size.square(TonalButtonSize.compact.button),
@@ -1248,8 +1270,13 @@ class _FindBarButton extends StatelessWidget {
           onPressed: onPressed,
           style: selected
               ? IconButton.styleFrom(
-                  backgroundColor: colorScheme.primary,
-                  foregroundColor: colorScheme.onPrimary,
+                  backgroundColor: LiquidGlassScope.surfaceColorOf(
+                    context,
+                    colorScheme.primary,
+                  ),
+                  foregroundColor: LiquidGlassScope.of(context)
+                      ? colorScheme.onSurface
+                      : colorScheme.onPrimary,
                 ).merge(focusRingStyle(colorScheme, standsOff: true))
               : null,
           icon: GlyphIcon(glyph),

@@ -766,7 +766,10 @@ class _StartToggleState extends ConsumerState<_StartToggle>
     final fill = enabled
         ? colorScheme.primary
         : DashboardColors.of(context).tone2;
-    final ink = enabled ? colorScheme.onPrimary : colorScheme.onSurfaceVariant;
+    final clearSurface = LiquidGlassScope.of(context);
+    final ink = enabled && !clearSurface
+        ? colorScheme.onPrimary
+        : colorScheme.onSurfaceVariant;
     final tooltip = widget.suspended
         ? appLocalizations.suspended
         : widget.running
@@ -803,7 +806,7 @@ class _StartToggleState extends ConsumerState<_StartToggle>
                     painter: _MorphPainter(
                       progress: progress,
                       color: glass ? null : color,
-                      shadow: enabled
+                      shadow: enabled && !clearSurface
                           ? colorScheme.primary.withValues(alpha: 0.3)
                           : Colors.transparent,
                       ring: _focused
@@ -812,7 +815,11 @@ class _StartToggleState extends ConsumerState<_StartToggle>
                     ),
                     child: glass
                         ? LiquidGlass(
-                            style: LiquidGlassStyle.tinted(colorScheme, color),
+                            style: clearSurface
+                                ? LiquidGlassStyle.regular(colorScheme).copyWith(
+                                    tint: Colors.transparent,
+                                  )
+                                : LiquidGlassStyle.tinted(colorScheme, color),
                             clipper: _MorphClipper(progress),
                             pressed: _pressed,
                             child: child,

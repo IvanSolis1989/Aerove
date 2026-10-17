@@ -551,7 +551,10 @@ class _IconTile extends StatelessWidget {
               clipBehavior: Clip.none,
               children: [
                 Material(
-                  color: context.raisedSurfaceLevel.colorOf(colorScheme),
+                  color: LiquidGlassScope.surfaceColorOf(
+                    context,
+                    context.raisedSurfaceLevel.colorOf(colorScheme),
+                  ),
                   shape: AppShape.md,
                   clipBehavior: Clip.antiAlias,
                   child: InkWell(

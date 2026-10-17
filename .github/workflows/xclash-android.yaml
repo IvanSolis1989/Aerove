@@ -111,6 +111,9 @@ jobs:
           path.write_text(text)
           PY
           flutter test --reporter expanded \
+            test/application_theme_test.dart \
+            test/features/glass_feature_surfaces_test.dart \
+            test/pages/editor_load_test.dart test/pages/scan_test.dart \
             test/models/config_test.dart test/models/dns_override_test.dart test/providers/config_test.dart \
             test/manager/theme_manager_test.dart \
             test/common/preferences_test.dart test/common/tray_menu_test.dart \
@@ -122,6 +125,7 @@ jobs:
             test/providers/action_test.dart \
             test/views/aurora_settings_test.dart test/views/theme_test.dart \
             test/views/dns_view_test.dart test/views/scripts_source_test.dart \
+            test/views/proxies_list_test.dart test/views/dashboard/ \
             test/views/script_content_test.dart test/pages/home_test.dart \
             test/widgets/ test/l10n/ test/lint/
       - uses: actions/upload-artifact@v4

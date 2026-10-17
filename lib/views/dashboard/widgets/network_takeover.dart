@@ -256,12 +256,14 @@ class VpnCard extends ConsumerWidget {
             shape: enabled
                 ? MaterialShapes.cookie6Sided
                 : MaterialShapes.circle,
-            color: enabled ? colorScheme.primary : colors.tone,
+            color: enabled && !LiquidGlassScope.of(context)
+                ? colorScheme.primary
+                : colors.tone,
             size: _iconSize,
             child: GlyphIcon(
               AppGlyphs.vpn,
               size: 22,
-              color: enabled
+              color: enabled && !LiquidGlassScope.of(context)
                   ? colorScheme.onPrimary
                   : colorScheme.onSurfaceVariant,
             ),

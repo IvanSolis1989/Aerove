@@ -19,7 +19,6 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
 import 'button.dart';
-import 'aurora.dart';
 import 'chip.dart';
 import 'dialog.dart';
 import 'inherited.dart';
@@ -199,7 +198,9 @@ class CommonScaffoldState extends State<CommonScaffold> {
         return Theme(
           data: theme.copyWith(
             appBarTheme: theme.appBarTheme.copyWith(
-              backgroundColor: _searchingBackgroundColor,
+              backgroundColor: LiquidGlassScope.of(context)
+                  ? Colors.transparent
+                  : _searchingBackgroundColor,
               titleTextStyle: AppTextStyle.body.of(context),
               toolbarTextStyle: AppTextStyle.subheadline.of(context),
             ),
@@ -621,11 +622,8 @@ class CommonScaffoldState extends State<CommonScaffold> {
     return FloatingHeader(
       backgroundColor:
           widget.backgroundColor ??
-          AuroraAppearance.surfaceColorOf(
-            context,
-            SurfaceLevel.page.colorOf(context.colorScheme),
-            opacity: 0.82,
-          ),
+          SurfaceLevel.page.colorOf(context.colorScheme),
+      blur: LiquidGlassScope.of(context),
       fadeStart: top / (top + pageToolbarHeight),
       overhang: _headerOverhang,
       child: appBar,
@@ -663,8 +661,10 @@ class CommonScaffoldState extends State<CommonScaffold> {
                   clipBehavior: Clip.none,
                   automaticallyImplyLeading: false,
                   animateColor: true,
-                  // A searching bar carries its own opaque theme.
-                  forceMaterialTransparency: isCompact || !_isSearch,
+                  forceMaterialTransparency:
+                      isCompact ||
+                      !_isSearch ||
+                      LiquidGlassScope.of(context),
                   toolbarHeight: isCompact ? sheetToolbarHeight : null,
                   centerTitle: isCompact,
                   titleTextStyle: _isSearch
@@ -814,6 +814,12 @@ class CommonScaffoldState extends State<CommonScaffold> {
             child: body,
           )
         : body;
+    final backgroundColor = LiquidGlassScope.of(context)
+        ? LiquidGlassScope.surfaceColorOf(
+            context,
+            widget.backgroundColor ?? Colors.transparent,
+          )
+        : widget.backgroundColor;
     if (!isCompact) {
       return AppBarInsetScope(
         child: Scaffold(
@@ -821,7 +827,7 @@ class CommonScaffoldState extends State<CommonScaffold> {
           extendBodyBehindAppBar: barFloats,
           body: _BodyScope(child: content),
           resizeToAvoidBottomInset: widget.resizeToAvoidBottomInset,
-          backgroundColor: widget.backgroundColor,
+          backgroundColor: backgroundColor,
         ),
       );
     }
@@ -852,7 +858,7 @@ class CommonScaffoldState extends State<CommonScaffold> {
         child: Scaffold(
           body: footed,
           resizeToAvoidBottomInset: widget.resizeToAvoidBottomInset,
-          backgroundColor: widget.backgroundColor,
+          backgroundColor: backgroundColor,
         ),
       );
     }

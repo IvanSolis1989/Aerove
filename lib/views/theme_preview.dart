@@ -197,7 +197,10 @@ class _ThemeLivePreviewState extends ConsumerState<ThemeLivePreview>
       padding: const EdgeInsets.symmetric(vertical: 24),
       alignment: Alignment.center,
       decoration: ShapeDecoration(
-        color: context.raisedSurfaceLevel.colorOf(context.colorScheme),
+        color: LiquidGlassScope.surfaceColorOf(
+          context,
+          context.raisedSurfaceLevel.colorOf(context.colorScheme),
+        ),
         shape: AppShape.xxl,
       ),
       child: SizedBox(

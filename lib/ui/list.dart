@@ -591,9 +591,11 @@ Widget generateSection({
     children: [
       if (items.isNotEmpty && title != null)
         ListHeader(title: title, actions: actions),
-      Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [...genItems],
+      CardGroup(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [...genItems],
+        ),
       ),
       if (items.isNotEmpty && footer != null) ListFooter(text: footer),
     ],

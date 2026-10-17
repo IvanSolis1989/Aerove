@@ -613,13 +613,23 @@ class _AlertAction extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
-    final fill = this.fill ?? context.raisedSurfaceLevel.colorOf(colorScheme);
-    final foreground = isDefault
+    final glassDefault = isDefault && LiquidGlassScope.of(context);
+    final fill = LiquidGlassScope.surfaceColorOf(
+      context,
+      this.fill ?? context.raisedSurfaceLevel.colorOf(colorScheme),
+    );
+    final foreground = glassDefault
+        ? colorScheme.primary
+        : isDefault
         ? colorScheme.onPrimary
         : destructive
         ? colorScheme.destructive
         : colorScheme.onSurface;
-    final background = isDefault ? colorScheme.primary : fill;
+    final background = glassDefault
+        ? Colors.transparent
+        : isDefault
+        ? colorScheme.primary
+        : fill;
     final pressedShare = switch ((isDefault, colorScheme.brightness)) {
       (true, Brightness.dark) => _pressedDarkDefaultShare,
       (false, Brightness.dark) => 1.0,
@@ -645,6 +655,16 @@ class _AlertAction extends StatelessWidget {
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               splashFactory: NoSplash.splashFactory,
             ).copyWith(
+              backgroundBuilder: glassDefault
+                  ? LiquidGlass.buttonStyle(
+                      (_) => LiquidGlassStyle.tinted(
+                        colorScheme,
+                        colorScheme.primary,
+                      ).copyWith(
+                        tint: colorScheme.primary.withValues(alpha: 0.2),
+                      ),
+                    ).backgroundBuilder
+                  : null,
               backgroundColor: WidgetStateProperty<Color?>.fromMap({
                 WidgetState.disabled: fill,
                 WidgetState.pressed: background.withValues(

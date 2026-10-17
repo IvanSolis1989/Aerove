@@ -2,6 +2,7 @@ import 'package:fl_clash/ui/context.dart';
 import 'package:fl_clash/ui/dialog.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/l10n.dart';
+import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/shape.dart';
 import 'package:fl_clash/ui/surface.dart';
 import 'package:flutter/services.dart';
@@ -333,7 +334,10 @@ class FilledInputTheme extends StatelessWidget {
     return InputDecorationTheme(
       data: InputDecorationTheme.of(context).copyWith(
         filled: true,
-        fillColor: fillColor ?? context.raisedSurfaceLevel.colorOf(colorScheme),
+        fillColor: LiquidGlassScope.surfaceColorOf(
+          context,
+          fillColor ?? context.raisedSurfaceLevel.colorOf(colorScheme),
+        ),
         hoverColor: Colors.transparent,
         floatingLabelBehavior: FloatingLabelBehavior.never,
         contentPadding: contentPadding,

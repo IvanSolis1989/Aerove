@@ -311,7 +311,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       final glass = find.byType(LiquidGlass);
-      expect(glass, findsOneWidget);
+      expect(glass, findsNWidgets(2));
 
       final gesture = await tester.startGesture(
         tester.getCenter(find.text('b')),
@@ -321,9 +321,75 @@ void main() {
 
       await gesture.up();
       await tester.pumpAndSettle();
-      expect(glass, findsOneWidget);
+      expect(glass, findsNWidgets(2));
       expect(tester.takeException(), isNull);
     });
+
+    for (final disableAnimations in [false, true]) {
+      testWidgets('Aurora keeps a clear resting lens on ${quality.name} glass '
+          '(reduced motion: $disableAnimations)', (tester) async {
+        tester.view.physicalSize = _mobileSize;
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final selections = <int>[];
+        await tester.pumpWidget(
+          TestApp(
+            homeBuilder: (child) => Builder(
+              builder: (context) => MediaQuery(
+                data: MediaQuery.of(context).copyWith(
+                  disableAnimations: disableAnimations,
+                ),
+                child: child,
+              ),
+            ),
+            child: AuroraAppearance(
+              enabled: true,
+              child: LiquidGlassScope(
+                enabled: true,
+                quality: quality,
+                child: LiquidGlassHost(
+                  enabled: true,
+                  child: Scaffold(
+                    body: Align(
+                      alignment: Alignment.bottomCenter,
+                      child: NavigationDock(
+                        destinations: const [
+                          NavigationDockDestination(
+                            glyph: AppGlyphs.dashboard,
+                            label: 'a',
+                          ),
+                          NavigationDockDestination(
+                            glyph: AppGlyphs.tools,
+                            label: 'b',
+                          ),
+                        ],
+                        selectedIndex: 0,
+                        onSelected: selections.add,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.byType(LiquidGlass), findsNWidgets(2));
+        final clear = tester.widgetList<LiquidGlass>(find.byType(LiquidGlass))
+            .where((pane) => pane.style.tint == Colors.transparent);
+        expect(clear, hasLength(1));
+        final gesture = await tester.startGesture(
+          tester.getCenter(find.text('b')),
+        );
+        await tester.pumpAndSettle();
+        expect(find.byType(LiquidGlass), findsNWidgets(lifted));
+        await gesture.up();
+        await tester.pumpAndSettle();
+        expect(find.byType(LiquidGlass), findsNWidgets(2));
+        expect(selections, [1]);
+        expect(tester.takeException(), isNull);
+      });
+    }
   }
 
   testWidgets('the bar swells under a pointer and stretches past its end', (

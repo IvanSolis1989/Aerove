@@ -1,3 +1,5 @@
+import 'dart:ui' as ui show Image;
+
 import 'package:fl_clash/ui/theme_cross_fade.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -14,7 +16,11 @@ void main() {
   setUp(() => background = ValueNotifier(_red));
   tearDown(() => background.dispose());
 
-  Future<void> pumpApp(WidgetTester tester, {double opacity = 1}) async {
+  Future<void> pumpApp(
+    WidgetTester tester, {
+    double opacity = 1,
+    ui.Image? Function(ui.Image? Function() capture)? captureSnapshot,
+  }) async {
     tester.view.physicalSize = const Size(40, 40);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -28,7 +34,10 @@ void main() {
             debugShowCheckedModeBanner: false,
             theme: ThemeData(scaffoldBackgroundColor: color),
             themeAnimationStyle: AnimationStyle.noAnimation,
-            builder: (_, child) => ThemeCrossFade(child: child!),
+            builder: (_, child) => ThemeCrossFade(
+              captureSnapshot: captureSnapshot,
+              child: child!,
+            ),
             home: Builder(
               builder: (context) => ColoredBox(
                 color: Theme.of(
@@ -130,5 +139,38 @@ void main() {
 
     expect(await pixel(tester), isColor(_blue));
     expect(tester.hasRunningAnimations, isFalse);
+  });
+
+  testWidgets('a failed readback drops an active fade and paints the new theme', (
+    tester,
+  ) async {
+    var failCapture = false;
+    final failure = StateError('snapshot readback failed');
+    await pumpApp(
+      tester,
+      captureSnapshot: (capture) {
+        if (failCapture) throw failure;
+        return capture();
+      },
+    );
+    background.value = _blue;
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 60));
+    expect(tester.hasRunningAnimations, isTrue);
+
+    failCapture = true;
+    background.value = _green;
+    await tester.pump();
+    expect(tester.takeException(), same(failure));
+    expect(await pixel(tester), isColor(_green));
+    expect(tester.hasRunningAnimations, isFalse);
+    await tester.pumpAndSettle();
+    expect(await pixel(tester), isColor(_green));
+
+    failCapture = false;
+    background.value = _red;
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(await pixel(tester), isColor(_red));
   });
 }

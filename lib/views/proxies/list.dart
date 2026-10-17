@@ -6,6 +6,7 @@ import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
+import 'package:flutter/rendering.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -454,7 +455,9 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
     if (!_controller.isDismissed && widget.group.all.isNotEmpty) {
       final extent = getRowExtent(widget.cardType);
       final decoration = ShapeDecoration(
-        color: context.raisedSurfaceLevel.colorOf(context.colorScheme),
+        color: AuroraAppearance.enabledOf(context)
+            ? Colors.transparent
+            : context.raisedSurfaceLevel.colorOf(context.colorScheme),
         shape: AppShape.vertical(
           top: AppCorner.none,
           bottom: AppCorner.xl.ap(context),
@@ -483,6 +486,9 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
     } else {
       _rows = null;
     }
+    if (rows != null && AuroraAppearance.enabledOf(context)) {
+      rows = _HeaderClippedRows(sliver: rows);
+    }
     Widget buildHeader({double floating = 0, double lift = 0}) => SizedBox(
       height: listHeaderHeight,
       child: ListHeader(
@@ -505,55 +511,102 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
     );
   }
 
-  /// Rounds the header and lifts it as its own rows scroll under it, and lets
-  /// the shadow go before the end of the group pushes it out. The page color
-  /// behind its upper half hides the rows that went under it, which would
-  /// otherwise show around its top corners and above it.
+  /// Opaque themes cover rows behind the header with page fill; glass themes
+  /// clip those rows instead. Headers outside the cache build no content.
   Widget _buildPinnedHeader(
     bool isExpand,
     Widget Function({double floating, double lift}) buildHeader,
   ) {
     final columns = widget.columns;
-    final rowsExtent = isExpand
-        ? _rowsExtent(
-            (widget.group.all.length + columns - 1) ~/ columns,
-            _rowExtent,
-          )
-        : 0.0;
-    (double, double, double, Color)? headerState;
+    final rowCount = (widget.group.all.length + columns - 1) ~/ columns;
+    final rowsExtent = isExpand ? _rowsExtent(rowCount, _rowExtent) : 0.0;
+    final groupExtent =
+        listHeaderHeight +
+        (_controller.isDismissed
+            ? 0.0
+            : _rowsExtent(rowCount, getRowExtent(widget.cardType)));
+    (double, double, double, Color, bool)? headerState;
     Widget? header;
     return SliverLayoutBuilder(
       builder: (context, constraints) {
+        final beyondCache =
+            constraints.remainingCacheExtent <= 0 ||
+            constraints.scrollOffset + constraints.cacheOrigin >= groupExtent;
         final under = isExpand
             ? constraints.scrollOffset + constraints.overlap
             : 0.0;
-        final state = (
-          (under / _liftDistance).clamp(0.0, 1.0),
-          (min(under, rowsExtent - under) / _liftDistance).clamp(0.0, 1.0),
-          isExpand ? constraints.overlap : 0.0,
-          context.surfaceLevel.colorOf(context.colorScheme),
-        );
-        if (state == headerState) {
+        final state = beyondCache
+            ? null
+            : (
+                (under / _liftDistance).clamp(0.0, 1.0),
+                (min(under, rowsExtent - under) / _liftDistance).clamp(
+                  0.0,
+                  1.0,
+                ),
+                isExpand ? constraints.overlap : 0.0,
+                context.surfaceLevel.colorOf(context.colorScheme),
+                AuroraAppearance.enabledOf(context),
+              );
+        if (header != null && state == headerState) {
           return header!;
         }
         headerState = state;
-        final (floating, lift, cover, pageColor) = state;
+        if (state == null) {
+          return header = PinnedHeaderSliver(
+            child: SizedBox(height: listHeaderHeight),
+          );
+        }
+        final (floating, lift, cover, pageColor, aurora) = state;
         return header = PinnedHeaderSliver(
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Positioned(
-                top: -cover,
-                left: 0,
-                right: 0,
-                height: cover + listHeaderHeight / 2,
-                child: ColoredBox(color: pageColor),
-              ),
-              buildHeader(floating: floating, lift: lift),
-            ],
+          child: RepaintBoundary(
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                if (!aurora)
+                  Positioned(
+                    top: -cover,
+                    left: 0,
+                    right: 0,
+                    height: cover + listHeaderHeight / 2,
+                    child: ColoredBox(color: pageColor),
+                  ),
+                buildHeader(floating: floating, lift: lift),
+              ],
+            ),
           ),
         );
       },
+    );
+  }
+}
+
+class _HeaderClippedRows extends SingleChildRenderObjectWidget {
+  const _HeaderClippedRows({required Widget sliver}) : super(child: sliver);
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderHeaderClippedRows();
+}
+
+class _RenderHeaderClippedRows extends RenderProxySliver {
+  final _clip = LayerHandle<ClipRectLayer>();
+
+  @override
+  void dispose() {
+    _clip.layer = null;
+    super.dispose();
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    final extent = geometry?.paintExtent ?? 0;
+    final covered = constraints.overlap.clamp(0.0, extent);
+    _clip.layer = context.pushClipRect(
+      needsCompositing,
+      offset,
+      Rect.fromLTRB(0, covered, constraints.crossAxisExtent, extent),
+      super.paint,
+      oldLayer: _clip.layer,
     );
   }
 }
@@ -601,6 +654,7 @@ class ListHeader extends ConsumerWidget {
         : context.raisedSurfaceLevel;
     final radius = AppCorner.xl.ap(context);
     final card = CommonCard(
+      grouped: true,
       enterActionsOnRight: true,
       enterAnimated: enterAnimated,
       key: key,
@@ -641,21 +695,27 @@ class ListHeader extends ConsumerWidget {
         onChange(groupName);
       },
     );
+    final shape = AppShape.vertical(
+      top: radius,
+      bottom: unfolded ? radius * floating : radius,
+    );
     return DecoratedBox(
       decoration: ShapeDecoration(
-        color: level.colorOf(colorScheme),
-        shape: AppShape.vertical(
-          top: radius,
-          bottom: unfolded ? radius * floating : radius,
-        ),
+        color: AuroraAppearance.enabledOf(context)
+            ? Colors.transparent
+            : level.colorOf(colorScheme),
+        shape: shape,
         shadows: lift == 0 ? null : _floatingShadows(colorScheme, lift),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(_headerButtonInset),
-        child: SurfaceScope(
-          // CommonCard fills one level above its scope.
-          level: SurfaceLevel.values[level.index - 1],
-          child: card,
+      child: CardGroup(
+        shape: shape,
+        child: Padding(
+          padding: const EdgeInsets.all(_headerButtonInset),
+          child: SurfaceScope(
+            // CommonCard fills one level above its scope.
+            level: SurfaceLevel.values[level.index - 1],
+            child: card,
+          ),
         ),
       ),
     );

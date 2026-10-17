@@ -377,7 +377,10 @@ class _AccessViewState extends ConsumerState<AccessView>
   }) {
     final appLocalizations = context.appLocalizations;
     final level = context.raisedSurfaceLevel;
-    final backgroundColor = level.colorOf(context.colorScheme);
+    final backgroundColor = LiquidGlassScope.surfaceColorOf(
+      context,
+      level.colorOf(context.colorScheme),
+    );
     if (!enable) {
       return MaterialBanner(
         backgroundColor: backgroundColor,

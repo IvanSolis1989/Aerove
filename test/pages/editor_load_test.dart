@@ -7,6 +7,7 @@ import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/navigator.dart';
 import 'package:fl_clash/ui/popup.dart';
+import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:flutter/gestures.dart' show kSecondaryButton;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -18,6 +19,46 @@ import '../plugins/code_forge/support.dart';
 
 void main() {
   setUpAll(initEditorNative);
+
+  testWidgets('glass mode changes reach the actual editor background in place', (
+    tester,
+  ) async {
+    final mode = ValueNotifier<LiquidGlassQuality?>(null);
+    addTearDown(mode.dispose);
+    await tester.pumpWidget(
+      TestApp(
+        overrides: [
+          viewSizeProvider.overrideWithBuild((_, _) => const Size(1200, 1000)),
+        ],
+        child: ValueListenableBuilder(
+          valueListenable: mode,
+          builder: (_, quality, child) => LiquidGlassScope(
+            enabled: quality != null,
+            quality: quality ?? LiquidGlassQuality.standard,
+            child: child!,
+          ),
+          child: const EditorPage(title: 'Editor', content: 'mode: rule'),
+        ),
+      ),
+    );
+    await settle(tester);
+    final controller = tester.widget<CodeForge>(find.byType(CodeForge)).controller;
+    for (final quality in [
+      LiquidGlassQuality.standard,
+      LiquidGlassQuality.ultra,
+      null,
+    ]) {
+      mode.value = quality;
+      await settle(tester);
+      final editor = tester.widget<CodeForge>(find.byType(CodeForge));
+      expect(editor.controller, same(controller));
+      expect(
+        editor.editorTheme['root']!.backgroundColor!.a,
+        quality == null ? 1 : 0.24,
+      );
+    }
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 
   testWidgets('mounts the editor only once loaded content arrives', (
     tester,

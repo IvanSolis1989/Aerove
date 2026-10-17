@@ -1,7 +1,6 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
-import 'package:fl_clash/ui/aurora.dart';
 import 'package:fl_clash/ui/card.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/shape.dart';
@@ -10,6 +9,35 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
 void main() {
+  test('standard superellipse clippers preserve exact corner parameters', () {
+    const size = Size(400, 56);
+    for (final shape in [
+      AppShape.none,
+      AppShape.lg,
+      AppShape.top(AppCorner.xl),
+      AppShape.vertical(bottom: AppCorner.xl),
+      AppShape.full,
+    ]) {
+      final glassShape = LiquidGlassShape.fromClipper(
+        ShapeBorderClipper(shape: shape, textDirection: TextDirection.ltr),
+        size,
+      );
+      expect(glassShape, isA<LiquidGlassCorners>());
+      expect(
+        (glassShape as LiquidGlassCorners).radius,
+        shape.borderRadius.resolve(TextDirection.ltr),
+      );
+    }
+    expect(
+      LiquidGlassShape.fromClipper(const _Diamond(), size),
+      isA<LiquidGlassOutline>(),
+    );
+    expect(
+      (LiquidGlassShape.fromClipper(null, size) as LiquidGlassCorners).radius,
+      BorderRadius.circular(28),
+    );
+  });
+
   test('a profile reads how far an outline reaches each way', () {
     final box = liquidGlassProfile(
       Path()..addRect(const Rect.fromLTWH(0, 0, 40, 20)),
@@ -118,7 +146,7 @@ void main() {
     });
   });
 
-  testWidgets('Aurora card glass follows grouped corners when disabled too', (
+  testWidgets('active card glass follows grouped corners when disabled too', (
     tester,
   ) async {
     const size = Size(240, 64);
@@ -139,7 +167,7 @@ void main() {
             ),
             home: LiquidGlassHost(
               enabled: true,
-              child: AuroraAppearance(
+              child: LiquidGlassScope(
                 enabled: true,
                 child: Center(
                   child: SizedBox.fromSize(
@@ -180,7 +208,7 @@ void main() {
     }
   });
 
-  testWidgets('Aurora error cards retain their opaque error surface', (
+  testWidgets('glass error cards retain a transparent semantic error tint', (
     tester,
   ) async {
     final colorScheme = ColorScheme.fromSeed(seedColor: Colors.blue);
@@ -194,7 +222,7 @@ void main() {
             ),
           ),
         ),
-        home: const AuroraAppearance(
+        home: const LiquidGlassScope(
           enabled: true,
           child: Center(
             child: CommonCard(
@@ -216,7 +244,7 @@ void main() {
     ]) {
       expect(
         button.style!.backgroundColor!.resolve(states),
-        colorScheme.errorContainer,
+        colorScheme.errorContainer.withValues(alpha: 0.24),
       );
       expect(
         button.style!.foregroundColor!.resolve(states),

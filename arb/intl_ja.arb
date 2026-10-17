@@ -824,7 +824,7 @@
   "keepAliveIdle": "TCP キープアライブ待機時間",
   "disableKeepAlive": "TCP キープアライブを無効化",
   "routingMark": "ルーティングマーク",
-  "strictRouteDesc": "厳格なルーティングは DNS などの通信が TUN を迂回するのを防ぎます。有効にすると他のデバイスからこの端末にアクセスできなくなります。",
+  "strictRouteDesc": "厳格なルーティングは DNS などの通信が TUN を迂回するのを防ぎます。IPv6 がオフの場合、この端末の IPv6 通信は遮断されます。",
   "initFailed": "起動に失敗しました",
   "initFailedTip": "FlClash の起動中にエラーが発生したため、続行できません。詳細をコピーして問題を報告できます。繰り返し発生する場合は、データを消去すると起動できるようになることがあります。",
   "errorDetails": "エラーの詳細",

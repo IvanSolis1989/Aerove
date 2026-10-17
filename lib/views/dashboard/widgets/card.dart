@@ -29,6 +29,30 @@ double dashboardCardRadius(DashboardDensity density) => density.isDesktop
     ? DashboardCorner.desktopCard
     : DashboardCorner.mobileCard;
 
+class DashboardGlass extends StatelessWidget {
+  const DashboardGlass({super.key, required this.shape, required this.child});
+
+  final OutlinedBorder shape;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!LiquidGlassScope.of(context)) {
+      return child;
+    }
+    return LiquidGlass(
+      style: LiquidGlassStyle.regular(context.colorScheme).copyWith(
+        tint: Colors.transparent,
+      ),
+      clipper: ShapeBorderClipper(
+        shape: shape,
+        textDirection: Directionality.of(context),
+      ),
+      child: child,
+    );
+  }
+}
+
 class DashboardCard extends StatelessWidget {
   const DashboardCard({
     super.key,
@@ -52,7 +76,7 @@ class DashboardCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final density = DashboardDensityScope.of(context);
     final shape = AppShape.all(dashboardCardRadius(density)).copyWith(
-      side: AuroraAppearance.enabledOf(context)
+      side: LiquidGlassScope.of(context)
           ? BorderSide(
               color: context.colorScheme.outlineVariant.withValues(alpha: 0.38),
               width: 0.5,
@@ -66,25 +90,30 @@ class DashboardCard extends StatelessWidget {
     return Semantics(
       container: true,
       label: semanticLabel,
-      child: Container(
-        clipBehavior: clipBehavior,
-        decoration: ShapeDecoration(
-          color: DashboardColors.of(context).card,
-          shape: shape,
-          shadows: DashboardShadows.e1(context),
-        ),
-        child: Material(
-          type: MaterialType.transparency,
-          child: onTap == null
-              ? content
-              : FocusRing(
-                  shape: shape,
-                  child: InkWell(
-                    customBorder: shape,
-                    onTap: onTap,
-                    child: content,
+      child: DashboardGlass(
+        shape: shape,
+        child: Container(
+          clipBehavior: clipBehavior,
+          decoration: ShapeDecoration(
+            color: DashboardColors.of(context).card,
+            shape: shape,
+            shadows: LiquidGlassScope.of(context)
+                ? null
+                : DashboardShadows.e1(context),
+          ),
+          child: Material(
+            type: MaterialType.transparency,
+            child: onTap == null
+                ? content
+                : FocusRing(
+                    shape: shape,
+                    child: InkWell(
+                      customBorder: shape,
+                      onTap: onTap,
+                      child: content,
+                    ),
                   ),
-                ),
+          ),
         ),
       ),
     );
@@ -405,31 +434,46 @@ class DashboardConnectedButton extends StatelessWidget {
                 left: Radius.circular(rtl ? end : start),
                 right: Radius.circular(rtl ? start : end),
               ),
+            ).copyWith(
+              side: selected && LiquidGlassScope.of(context)
+                  ? BorderSide(
+                      color: colorScheme.onSurface.withValues(alpha: 0.45),
+                    )
+                  : BorderSide.none,
             );
             return FocusRing(
               shape: shape,
               standsOff: selected,
-              child: Container(
-                clipBehavior: Clip.antiAlias,
-                decoration: ShapeDecoration(
-                  color: Color.lerp(background, colorScheme.primary, amount),
-                  shape: shape,
-                ),
-                child: Material(
-                  type: MaterialType.transparency,
-                  child: InkWell(
-                    customBorder: shape,
-                    splashFactory: NoSplash.splashFactory,
-                    highlightColor: Colors.transparent,
-                    onTap: onTap,
-                    child: child,
+              child: DashboardGlass(
+                shape: shape,
+                child: Container(
+                  clipBehavior: Clip.antiAlias,
+                  decoration: ShapeDecoration(
+                    color: LiquidGlassScope.of(context)
+                        ? background
+                        : Color.lerp(background, colorScheme.primary, amount),
+                    shape: shape,
+                  ),
+                  child: Material(
+                    type: MaterialType.transparency,
+                    child: InkWell(
+                      customBorder: shape,
+                      splashFactory: NoSplash.splashFactory,
+                      highlightColor: Colors.transparent,
+                      onTap: onTap,
+                      child: child,
+                    ),
                   ),
                 ),
               ),
             );
           },
           child: builder(
-            selected ? colorScheme.onPrimary : colorScheme.onSurfaceVariant,
+            selected
+                ? LiquidGlassScope.of(context)
+                    ? colorScheme.onSurface
+                    : colorScheme.onPrimary
+                : colorScheme.onSurfaceVariant,
           ),
         ),
       ),
@@ -465,7 +509,10 @@ class DashboardChip extends StatelessWidget {
     return Container(
       height: large ? 28 : 24,
       padding: EdgeInsets.symmetric(horizontal: large ? 12 : 10),
-      decoration: ShapeDecoration(color: background, shape: AppShape.full),
+      decoration: ShapeDecoration(
+        color: LiquidGlassScope.surfaceColorOf(context, background),
+        shape: AppShape.full,
+      ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         spacing: 6,
@@ -517,7 +564,10 @@ class DashboardBlock extends StatelessWidget {
     final content = Padding(padding: padding, child: child);
     return Container(
       decoration: ShapeDecoration(
-        color: color ?? DashboardColors.of(context).tone,
+        color: LiquidGlassScope.surfaceColorOf(
+          context,
+          color ?? DashboardColors.of(context).tone,
+        ),
         shape: shape,
       ),
       child: onTap == null
@@ -567,7 +617,7 @@ class ShapeBadge extends StatelessWidget {
     return CustomPaint(
       painter: ShapePainter(
         path: shapePathOf(shape),
-        color: color,
+        color: LiquidGlassScope.surfaceColorOf(context, color),
         rotation: rotation,
         ring: ring,
       ),
@@ -683,9 +733,12 @@ class DashboardSwitch extends StatelessWidget {
               ),
               trackOutlineWidth: const WidgetStatePropertyAll(0),
               trackColor: WidgetStateProperty.resolveWith(
-                (states) => states.contains(WidgetState.selected)
-                    ? colorScheme.primary
-                    : colors.track,
+                (states) => LiquidGlassScope.surfaceColorOf(
+                  context,
+                  states.contains(WidgetState.selected)
+                      ? colorScheme.primary
+                      : colors.track,
+                ),
               ),
               thumbColor: WidgetStateProperty.resolveWith(
                 (states) => states.contains(WidgetState.selected)

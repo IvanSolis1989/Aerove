@@ -4,6 +4,7 @@ import 'dart:ui' show lerpDouble;
 import 'package:fl_clash/ui/context.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/l10n.dart';
+import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/scroll_behavior.dart';
 import 'package:fl_clash/ui/shape.dart';
 import 'package:fl_clash/ui/surface.dart';
@@ -209,7 +210,10 @@ class _SidebarOverlay extends StatelessWidget {
               child: FocusScope(
                 autofocus: true,
                 child: Material(
-                  color: colorScheme.chromeSurface,
+                  color: LiquidGlassScope.surfaceColorOf(
+                    context,
+                    colorScheme.chromeSurface,
+                  ),
                   shape: BorderDirectional(
                     end: Divider.createBorderSide(context),
                   ),

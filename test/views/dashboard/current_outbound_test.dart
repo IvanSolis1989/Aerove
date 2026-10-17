@@ -495,15 +495,19 @@ void main() {
       WidgetTester tester, {
       DashboardDensity density = DashboardDensity.standard,
       bool glass = false,
+      bool aurora = false,
     }) async {
       globalState.container = container;
       await tester.pumpWidget(
         UncontrolledProviderScope(
           container: container,
           child: TestApp(
-            child: LiquidGlassScope(
-              enabled: glass,
-              child: _card(density: density),
+            child: AuroraAppearance(
+              enabled: aurora,
+              child: LiquidGlassScope(
+                enabled: glass,
+                child: _card(density: density),
+              ),
             ),
           ),
         ),
@@ -581,6 +585,21 @@ void main() {
       );
       await gesture.cancel();
       await tester.pumpAndSettle();
+    });
+
+    testWidgets('active glass stays clear without Aurora while toggling', (tester) async {
+      container = containerWith();
+      await pumpCard(tester, glass: true);
+      await tester.pumpAndSettle();
+      LiquidGlass pane() => tester.widget<LiquidGlass>(
+        find.descendant(of: startButton(), matching: find.byType(LiquidGlass)),
+      );
+      expect(pane().style.tint, Colors.transparent);
+      await tester.tap(startButton());
+      await tester.pumpAndSettle();
+      expect(container.read(isStartProvider), isTrue);
+      expect(pane().style.tint, Colors.transparent);
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('is off without a profile', (tester) async {

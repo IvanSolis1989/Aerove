@@ -824,7 +824,7 @@
   "keepAliveIdle": "Inactivité keep-alive TCP",
   "disableKeepAlive": "Désactiver le keep-alive TCP",
   "routingMark": "Marque de routage",
-  "strictRouteDesc": "La route stricte empêche le trafic tel que le DNS de contourner TUN, et les autres appareils ne peuvent plus joindre celui-ci.",
+  "strictRouteDesc": "La route stricte empêche le trafic tel que le DNS de contourner TUN et, avec IPv6 désactivé, bloque les connexions IPv6 de cet appareil.",
   "initFailed": "Échec du démarrage",
   "initFailedTip": "FlClash a rencontré une erreur au démarrage et ne peut pas continuer. Copiez les détails pour signaler le problème. Si cela se reproduit, effacer les données permet généralement de relancer l’app.",
   "errorDetails": "Détails de l’erreur",

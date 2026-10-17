@@ -16,6 +16,7 @@ import 'package:fl_clash/ui/ui.dart';
 import 'package:fl_clash/widgets/aurora.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'pages/pages.dart';
@@ -54,7 +55,18 @@ Widget buildManagerStack({
 }
 
 class Application extends ConsumerStatefulWidget {
-  const Application({super.key});
+  const Application({super.key}) : _testHome = null, _testManagers = null;
+
+  @visibleForTesting
+  const Application.forTesting({
+    super.key,
+    required Widget home,
+    required Widget Function(Widget child) wrapManagers,
+  }) : _testHome = home,
+       _testManagers = wrapManagers;
+
+  final Widget? _testHome;
+  final Widget Function(Widget child)? _testManagers;
 
   @override
   ConsumerState<Application> createState() => ApplicationState();
@@ -71,6 +83,7 @@ class ApplicationState extends ConsumerState<Application> {
   @override
   void initState() {
     super.initState();
+    if (widget._testHome != null) return;
     SystemNavigator.setFrameworkHandlesBack(true);
     WidgetsBinding.instance.addPostFrameCallback((timeStamp) async {
       if (globalState.navigatorKey.currentContext != null) {
@@ -159,16 +172,17 @@ class ApplicationState extends ConsumerState<Application> {
           builder: (context, child) {
             return ThemeCrossFade(
               child: AuroraAppSurface(
-                child: buildManagerStack(
-                  isDesktop: system.isDesktop,
-                  onConnectivityChanged: _handleConnectivityChanged,
-                  terminateSignals: _terminateSignals,
-                  child: RemoteFocusAdapter(
-                    enabled: system.isTV,
-                    floatingKeyboard: app?.floatingKeyboard,
-                    child: child!,
-                  ),
-                ),
+                child: widget._testManagers?.call(child!) ??
+                    buildManagerStack(
+                      isDesktop: system.isDesktop,
+                      onConnectivityChanged: _handleConnectivityChanged,
+                      terminateSignals: _terminateSignals,
+                      child: RemoteFocusAdapter(
+                        enabled: system.isTV,
+                        floatingKeyboard: app?.floatingKeyboard,
+                        child: child!,
+                      ),
+                    ),
               ),
             );
           },
@@ -183,13 +197,13 @@ class ApplicationState extends ConsumerState<Application> {
           home: KeyboardInsetHold(child: child!),
         );
       },
-      child: const HomePage(),
+      child: widget._testHome ?? const HomePage(),
     );
   }
 
   @override
   void dispose() {
-    linkManager.destroy();
+    if (widget._testHome == null) linkManager.destroy();
     _autoUpdateProfilesTaskTimer?.cancel();
     super.dispose();
   }

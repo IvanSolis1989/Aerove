@@ -1469,7 +1469,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "strategy": MessageLookupByLibrary.simpleMessage("전략"),
     "strictRoute": MessageLookupByLibrary.simpleMessage("엄격한 라우팅"),
     "strictRouteDesc": MessageLookupByLibrary.simpleMessage(
-      "엄격한 라우팅은 DNS 등의 트래픽이 TUN을 우회하지 못하게 하며, 다른 기기는 이 기기에 접속할 수 없게 됩니다.",
+      "엄격한 라우팅은 DNS 등의 트래픽이 TUN을 우회하지 못하게 하며, IPv6가 꺼져 있으면 이 기기의 IPv6 연결을 차단합니다.",
     ),
     "style": MessageLookupByLibrary.simpleMessage("스타일"),
     "submit": MessageLookupByLibrary.simpleMessage("제출"),

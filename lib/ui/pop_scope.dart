@@ -6,6 +6,9 @@ import 'inherited.dart';
 
 class CommonPopScope extends StatelessWidget {
   final Widget child;
+
+  /// Any handler vetoes the pop up front, which also turns off the drag back,
+  /// so pass one only while there is something to intercept.
   final FutureOr<bool> Function(BuildContext context)? onPop;
   final FutureOr<void> Function()? onPopSuccess;
 

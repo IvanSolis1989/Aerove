@@ -11,12 +11,9 @@ import 'package:flutter/physics.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
-import 'package:material_color_utilities/material_color_utilities.dart'
-    show Hct;
 import 'package:material_ui/material_ui.dart';
 
 import 'liquid_glass.dart';
-import 'aurora.dart';
 
 const double _barHeight = 62;
 const double _barPadding = 4;
@@ -1158,7 +1155,7 @@ class _FloatingNavigationBarState extends State<FloatingNavigationBar>
       child: Material(
         color: glass
             ? Colors.transparent
-            : AuroraAppearance.surfaceColorOf(
+            : LiquidGlassScope.surfaceColorOf(
                 context,
                 SurfaceLevel.floatingOf(colorScheme).colorOf(colorScheme),
                 opacity: 0.42,
@@ -1335,18 +1332,12 @@ class _Lens extends StatelessWidget {
   final Rect rect;
   final double lift;
 
-  /// On glass the lens rests as a platter in the secondary hue, sunk in dark
-  /// mode as iOS's tab bar marks its selection, and clears as it lifts into
-  /// the [_GlassLens].
   final bool glass;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
     final lifted = lift.clamp(0.0, 1.0);
-    final tone = colorScheme.brightness == Brightness.dark ? 4.0 : 90.0;
-    final hct = Hct.fromInt(colorScheme.secondary.toARGB32())..tone = tone;
-    final platter = Color(hct.toInt()).withValues(alpha: 0.85);
     return PositionedDirectional(
       start: rect.left,
       top: rect.top,
@@ -1355,7 +1346,7 @@ class _Lens extends StatelessWidget {
       child: DecoratedBox(
         decoration: ShapeDecoration(
           color: glass
-              ? platter.withValues(alpha: platter.a * (1 - lifted))
+              ? Colors.transparent
               : Color.alphaBlend(
                   colorScheme.onSurface.withValues(alpha: 0.08 * lifted),
                   SurfaceLevel.floatingOf(
@@ -1369,8 +1360,7 @@ class _Lens extends StatelessWidget {
   }
 }
 
-/// The clear lens a lifted selection becomes on glass. The destinations stand
-/// on it, as iOS draws them over its lens, so it bends only the bar.
+/// The destinations paint above this pane, so it bends only the bar.
 class _GlassLens extends StatelessWidget {
   const _GlassLens({required this.rect, required this.lift});
 
@@ -1379,7 +1369,8 @@ class _GlassLens extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (lift <= 0) {
+    final strength = LiquidGlassScope.of(context) ? 1.0 : lift;
+    if (strength <= 0) {
       return const SizedBox.shrink();
     }
     final colorScheme = context.colorScheme;
@@ -1391,7 +1382,7 @@ class _GlassLens extends StatelessWidget {
       height: rect.height,
       child: IgnorePointer(
         child: LiquidGlass(
-          style: LiquidGlassStyle.lens(colorScheme).scale(lift),
+          style: LiquidGlassStyle.lens(colorScheme).scale(strength),
           shadows: _lensShadows(colorScheme, lift),
         ),
       ),

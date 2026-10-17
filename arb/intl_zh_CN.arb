@@ -824,7 +824,7 @@
   "keepAliveIdle": "TCP 保持活动空闲时间",
   "disableKeepAlive": "禁用 TCP 保持活动",
   "routingMark": "路由标记",
-  "strictRouteDesc": "严格路由防止 DNS 等流量绕过虚拟网卡，开启后其他设备将无法访问本机。",
+  "strictRouteDesc": "严格路由防止 DNS 等流量绕过虚拟网卡，关闭 IPv6 时会阻断本机的 IPv6 连接。",
   "initFailed": "启动失败",
   "initFailedTip": "FlClash 启动时出错，无法继续运行。可以复制错误详情用于反馈；如果问题反复出现，清除数据后通常可以重新启动。",
   "errorDetails": "错误详情",

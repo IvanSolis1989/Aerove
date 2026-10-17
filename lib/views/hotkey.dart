@@ -135,7 +135,10 @@ class _HotKeyIntro extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: ShapeDecoration(
-        color: context.raisedSurfaceLevel.colorOf(colorScheme),
+        color: LiquidGlassScope.surfaceColorOf(
+          context,
+          context.raisedSurfaceLevel.colorOf(colorScheme),
+        ),
         shape: AppShape.xl,
       ),
       child: Row(
@@ -271,11 +274,14 @@ class _KeyCap extends StatelessWidget {
       constraints: BoxConstraints(minWidth: side, minHeight: side),
       padding: EdgeInsets.symmetric(horizontal: isLarge ? 12 : 7),
       decoration: ShapeDecoration(
-        color: isPlaceholder
-            ? Colors.transparent
-            : isError
-            ? colorScheme.errorContainer
-            : context.raisedSurfaceLevel.colorOf(colorScheme),
+        color: LiquidGlassScope.surfaceColorOf(
+          context,
+          isPlaceholder
+              ? Colors.transparent
+              : isError
+              ? colorScheme.errorContainer
+              : context.raisedSurfaceLevel.colorOf(colorScheme),
+        ),
         shape: isLarge ? AppShape.md : AppShape.sm,
       ),
       child: Align(
@@ -412,7 +418,10 @@ class _HotKeyRecorderState extends ConsumerState<HotKeyRecorder> {
       padding: const EdgeInsets.all(16),
       alignment: Alignment.center,
       decoration: ShapeDecoration(
-        color: level.colorOf(colorScheme),
+        color: LiquidGlassScope.surfaceColorOf(
+          context,
+          level.colorOf(colorScheme),
+        ),
         shape: AppShape.md.copyWith(
           side: BorderSide(
             color: isError ? colorScheme.error : colorScheme.primary,

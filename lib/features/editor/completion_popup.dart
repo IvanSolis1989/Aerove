@@ -125,7 +125,12 @@ class _EditorCompletionPopupState extends State<EditorCompletionPopup> {
             horizontal: _suggestionItemPadding,
           ),
           decoration: ShapeDecoration(
-            color: selected ? colorScheme.primaryContainer : null,
+            color: selected
+                ? LiquidGlassScope.surfaceColorOf(
+                    context,
+                    colorScheme.primaryContainer,
+                  )
+                : null,
             shape: _suggestionItemShape,
           ),
           child: Row(
@@ -181,9 +186,12 @@ class _EditorCompletionPopupState extends State<EditorCompletionPopup> {
         return Material(
           type: MaterialType.card,
           elevation: 8,
-          color: SurfaceLevel.floatingOf(
-            context.colorScheme,
-          ).colorOf(context.colorScheme),
+          color: LiquidGlassScope.surfaceColorOf(
+            context,
+            SurfaceLevel.floatingOf(
+              context.colorScheme,
+            ).colorOf(context.colorScheme),
+          ),
           textStyle: widget.textStyle,
           clipBehavior: Clip.antiAlias,
           shape: _suggestionShape,

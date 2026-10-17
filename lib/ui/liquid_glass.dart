@@ -62,6 +62,16 @@ class LiquidGlassScope extends InheritedWidget {
 
   static bool of(BuildContext context) => _of(context)?.enabled ?? false;
 
+  static Color surfaceColorOf(
+    BuildContext context,
+    Color fallback, {
+    double opacity = 0.24,
+  }) => !of(context)
+      ? fallback
+      : fallback.withValues(
+          alpha: math.min(fallback.a, opacity.clamp(0.0, 0.95)),
+        );
+
   static LiquidGlassQuality qualityOf(BuildContext context) =>
       _of(context)?.quality ?? LiquidGlassQuality.ultra;
 
@@ -284,8 +294,8 @@ class LiquidGlassStyle {
     );
   }
 
-  LiquidGlassStyle copyWith({double? blur}) => LiquidGlassStyle(
-    tint: tint,
+  LiquidGlassStyle copyWith({Color? tint, double? blur}) => LiquidGlassStyle(
+    tint: tint ?? this.tint,
     contrast: contrast,
     blur: blur ?? this.blur,
     haze: haze,
@@ -793,11 +803,11 @@ class _RenderLiquidGlass extends RenderProxyBox {
     }
   }
 
-  Path? _outline;
-  Size? _outlineSize;
+  LiquidGlassShape? _shape;
+  Size? _shapeSize;
 
   void _reclip() {
-    _outline = null;
+    _shape = null;
     markNeedsPaint();
   }
 
@@ -877,16 +887,12 @@ class _RenderLiquidGlass extends RenderProxyBox {
     super.dispose();
   }
 
-  Path? get _currentOutline {
-    final clipper = _clipper;
-    if (clipper == null) {
-      return null;
+  LiquidGlassShape get _currentShape {
+    if (_shape == null || _shapeSize != size) {
+      _shape = LiquidGlassShape.fromClipper(_clipper, size);
+      _shapeSize = size;
     }
-    if (_outline == null || _outlineSize != size) {
-      _outline = clipper.getClip(size);
-      _outlineSize = size;
-    }
-    return _outline;
+    return _shape!;
   }
 
   @override
@@ -894,13 +900,10 @@ class _RenderLiquidGlass extends RenderProxyBox {
     if (size.isEmpty) {
       _pane.clear();
     } else {
-      final outline = _currentOutline;
       _pane.paint(
         context,
         offset & size,
-        shape: outline != null
-            ? LiquidGlassOutline(outline)
-            : LiquidGlassCorners(BorderRadius.circular(size.shortestSide / 2)),
+        shape: _currentShape,
         style: _style,
         shadows: _shadows,
         glow:
@@ -921,6 +924,24 @@ class _RenderLiquidGlass extends RenderProxyBox {
 
 sealed class LiquidGlassShape {
   const LiquidGlassShape();
+
+  factory LiquidGlassShape.fromClipper(
+    CustomClipper<Path>? clipper,
+    Size size,
+  ) {
+    if (clipper == null) {
+      return LiquidGlassCorners.circular(size.shortestSide / 2);
+    }
+    if (clipper is ShapeBorderClipper) {
+      final shape = clipper.shape;
+      if (shape is RoundedSuperellipseBorder) {
+        return LiquidGlassCorners(
+          shape.borderRadius.resolve(clipper.textDirection),
+        );
+      }
+    }
+    return LiquidGlassOutline(clipper.getClip(size));
+  }
 }
 
 /// A rounded rectangle, no corner rounder than half the pane's short side.

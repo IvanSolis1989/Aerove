@@ -300,7 +300,11 @@ class _StatTile extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: ShapeDecoration(
-        color: context.raisedSurfaceLevel.colorOf(colorScheme),
+        color: LiquidGlassScope.surfaceColorOf(
+          context,
+          context.raisedSurfaceLevel.colorOf(colorScheme),
+          opacity: 0.08,
+        ),
         shape: AppShape.all(AppCorner.lg),
       ),
       child: Column(

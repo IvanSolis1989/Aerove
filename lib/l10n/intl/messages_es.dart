@@ -1879,7 +1879,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "strategy": MessageLookupByLibrary.simpleMessage("Estrategia"),
     "strictRoute": MessageLookupByLibrary.simpleMessage("Ruta estricta"),
     "strictRouteDesc": MessageLookupByLibrary.simpleMessage(
-      "La ruta estricta evita que el tráfico, como el DNS, eluda TUN, y los demás dispositivos ya no pueden acceder a este.",
+      "La ruta estricta evita que el tráfico, como el DNS, eluda TUN y, con IPv6 desactivado, bloquea las conexiones IPv6 de este dispositivo.",
     ),
     "style": MessageLookupByLibrary.simpleMessage("Estilo"),
     "submit": MessageLookupByLibrary.simpleMessage("Enviar"),

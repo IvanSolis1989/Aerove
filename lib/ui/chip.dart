@@ -2,6 +2,7 @@ import 'package:fl_clash/ui/color.dart';
 import 'package:fl_clash/ui/context.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/measure.dart';
+import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/shape.dart';
 import 'package:fl_clash/ui/surface.dart';
 import 'package:fl_clash/ui/typography.dart';
@@ -54,7 +55,10 @@ class CommonChip extends StatelessWidget {
       ),
     );
     return Material(
-      color: context.raisedSurfaceLevel.colorOf(colorScheme),
+      color: LiquidGlassScope.surfaceColorOf(
+        context,
+        context.raisedSurfaceLevel.colorOf(colorScheme),
+      ),
       shape: AppShape.sm,
       clipBehavior: Clip.antiAlias,
       child: content,
@@ -99,7 +103,7 @@ class TonalChip extends StatelessWidget {
       ),
     );
     return Material(
-      color: color,
+      color: LiquidGlassScope.surfaceColorOf(context, color),
       shape: AppShape.sm,
       clipBehavior: Clip.antiAlias,
       child: onPressed == null
@@ -210,7 +214,10 @@ class MetaChip extends StatelessWidget {
     final colorScheme = context.colorScheme;
     return DecoratedBox(
       decoration: ShapeDecoration(
-        color: context.raisedSurfaceLevel.colorOf(colorScheme),
+        color: LiquidGlassScope.surfaceColorOf(
+          context,
+          context.raisedSurfaceLevel.colorOf(colorScheme),
+        ),
         shape: AppShape.sm,
       ),
       child: Padding(

@@ -8,6 +8,8 @@ import 'package:fl_clash/state.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/ui.dart';
 import 'package:fl_clash/views/proxies/card.dart';
+import 'package:fl_clash/views/proxies/group_tabs.dart';
+import 'package:fl_clash/views/proxies/proxies.dart';
 import 'package:fl_clash/views/proxies/tab.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -165,7 +167,7 @@ void main() {
     await tester.pump();
 
     final tabs = find.descendant(
-      of: find.byType(SingleChildScrollView),
+      of: find.byType(GroupTabs),
       matching: find.byType(Scrollable),
     );
     final position = tester.state<ScrollableState>(tabs).position;
@@ -306,6 +308,86 @@ void main() {
     await tester.pump();
 
     expect(tester.widget(card), same(before));
+  });
+
+  testWidgets('lays each tab out at the width its label takes', (tester) async {
+    const names = ['A', '🚀 节点选择', 'Group with a long name'];
+    globalContainer
+        .read(_tabStateProvider.notifier)
+        .set(_tabState([for (final name in names) _group(name)], current: 'A'));
+    await pumpTabView(tester);
+
+    for (final name in names) {
+      final tab = tabOf(name);
+      expect(
+        tester.getSize(tab).width,
+        closeTo(
+          tester
+              .renderObject<RenderBox>(tab)
+              .getMaxIntrinsicWidth(double.infinity),
+          1,
+        ),
+        reason: name,
+      );
+    }
+  });
+
+  testWidgets('builds only the tabs in view and opens on a far current one', (
+    tester,
+  ) async {
+    globalContainer
+        .read(_tabStateProvider.notifier)
+        .set(
+          _tabState([
+            for (var i = 0; i < 200; i++) _group('Group $i'),
+          ], current: 'Group 180'),
+        );
+    await pumpTabView(tester);
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      find
+          .descendant(
+            of: find.byType(GroupTabs),
+            matching: find.byType(CommonCard),
+            skipOffstage: false,
+          )
+          .evaluate()
+          .length,
+      lessThan(30),
+    );
+    final current = tester.getRect(tabOf('Group 180'));
+    final more = tester.getRect(find.byGlyph(AppGlyphs.chevronDown));
+    expect(isTabSelected(tester, 'Group 180'), isTrue);
+    expect(current.left, greaterThanOrEqualTo(0));
+    expect(current.right, lessThan(more.left));
+  });
+
+  testWidgets('the bar following the current group leaves the page built', (
+    tester,
+  ) async {
+    globalContainer
+        .read(proxiesStyleSettingProvider.notifier)
+        .update((state) => state.copyWith(type: ProxiesType.tab));
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: globalContainer,
+        child: const TestApp(child: ProxiesView()),
+      ),
+    );
+    await tester.pump();
+    final tabs = tester.widget(find.byType(GroupTabs));
+
+    final state = globalContainer.read(_tabStateProvider);
+    globalContainer
+        .read(_tabStateProvider.notifier)
+        .set(state.copyWith(currentGroupName: 'C'));
+    globalContainer.read(delayTestingGroupsProvider.notifier).start('C');
+    await tester.pump();
+
+    expect(globalContainer.read(currentGroupDelayTestingProvider), isTrue);
+    expect(tester.widget(find.byType(GroupTabs)), same(tabs));
   });
 
   testWidgets('rebuilds the tab bar when groups return', (tester) async {

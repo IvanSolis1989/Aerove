@@ -233,7 +233,7 @@ void main() {
     expect(tester.binding.hasScheduledFrame, isFalse);
   });
 
-  testWidgets('page fill follows wallpaper while explicit fills stay opaque', (
+  testWidgets('page fill follows glass and explicit fills preserve their hue', (
     tester,
   ) async {
     for (final (enabled, fill) in [
@@ -273,7 +273,7 @@ void main() {
           tester.widget<Scaffold>(scaffold).backgroundColor ??
           Theme.of(tester.element(scaffold)).scaffoldBackgroundColor;
       if (fill != null) {
-        expect(background, fill);
+        expect(background, fill.withValues(alpha: 0.24));
       } else if (enabled) {
         expect(background, Colors.transparent);
       } else {

@@ -1351,7 +1351,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "strategy": MessageLookupByLibrary.simpleMessage("策略"),
     "strictRoute": MessageLookupByLibrary.simpleMessage("严格路由"),
     "strictRouteDesc": MessageLookupByLibrary.simpleMessage(
-      "严格路由防止 DNS 等流量绕过虚拟网卡，开启后其他设备将无法访问本机。",
+      "严格路由防止 DNS 等流量绕过虚拟网卡，关闭 IPv6 时会阻断本机的 IPv6 连接。",
     ),
     "style": MessageLookupByLibrary.simpleMessage("风格"),
     "submit": MessageLookupByLibrary.simpleMessage("提交"),

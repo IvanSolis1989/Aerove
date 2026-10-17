@@ -270,67 +270,71 @@ class _SpeedTile extends StatelessWidget {
           _minChartHeight,
           constraints.maxWidth / _aspectRatio - textHeight - _chartGap + _bleed,
         );
-        return Container(
-          clipBehavior: Clip.antiAlias,
-          decoration: ShapeDecoration(
-            color: DashboardColors.of(context).tone,
-            shape: AppShape.all(DashboardCorner.mobileBlock),
-          ),
-          child: Stack(
-            children: [
-              Positioned(
-                left: -_bleed,
-                right: -_bleed,
-                bottom: -_bleed,
-                height: chartHeight,
-                child: RepaintBoundary(
-                  child: _SpeedChart(direction: direction, traffics: traffics),
+        final shape = AppShape.all(DashboardCorner.mobileBlock);
+        return DashboardGlass(
+          shape: shape,
+          child: Container(
+            clipBehavior: Clip.antiAlias,
+            decoration: ShapeDecoration(
+              color: DashboardColors.of(context).tone,
+              shape: shape,
+            ),
+            child: Stack(
+              children: [
+                Positioned(
+                  left: -_bleed,
+                  right: -_bleed,
+                  bottom: -_bleed,
+                  height: chartHeight,
+                  child: RepaintBoundary(
+                    child: _SpeedChart(direction: direction, traffics: traffics),
+                  ),
                 ),
-              ),
-              Padding(
-                padding: _padding.copyWith(
-                  bottom: chartHeight - _bleed + _chartGap,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      spacing: 4,
-                      children: [
-                        GlyphIcon(direction.glyph, size: 16, color: color),
-                        Flexible(
-                          child: Text(
-                            direction.labelOf(context),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: AppTextStyle.footnote
-                                .of(context, emphasized: true)
-                                .copyWith(
-                                  color: context.colorScheme.onSurfaceVariant,
-                                ),
+                Padding(
+                  padding: _padding.copyWith(
+                    bottom: chartHeight - _bleed + _chartGap,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        spacing: 4,
+                        children: [
+                          GlyphIcon(direction.glyph, size: 16, color: color),
+                          Flexible(
+                            child: Text(
+                              direction.labelOf(context),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: AppTextStyle.footnote
+                                  .of(context, emphasized: true)
+                                  .copyWith(
+                                    color: context.colorScheme.onSurfaceVariant,
+                                  ),
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: _titleGap),
-                    _Figure(
-                      show: show,
-                      unit: _speedUnit(show),
-                      style: AppTextStyle.title1,
-                      unitStyle: AppTextStyle.footnote,
-                    ),
-                    Text(
-                      context.appLocalizations.trafficTotal(
-                        dashboardTraffic(total),
+                        ],
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: DashboardText.label(context),
-                    ),
-                  ],
+                      const SizedBox(height: _titleGap),
+                      _Figure(
+                        show: show,
+                        unit: _speedUnit(show),
+                        style: AppTextStyle.title1,
+                        unitStyle: AppTextStyle.footnote,
+                      ),
+                      Text(
+                        context.appLocalizations.trafficTotal(
+                          dashboardTraffic(total),
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: DashboardText.label(context),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         );
       },

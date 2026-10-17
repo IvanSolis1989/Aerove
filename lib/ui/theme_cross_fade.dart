@@ -1,6 +1,7 @@
 import 'dart:ui' as ui show Image;
 
 import 'package:fl_clash/ui/context.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/rendering.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -10,10 +11,13 @@ class ThemeCrossFade extends StatefulWidget {
   const ThemeCrossFade({
     super.key,
     this.duration = kThemeAnimationDuration,
+    this.captureSnapshot,
     required this.child,
   });
 
   final Duration duration;
+  @visibleForTesting
+  final ui.Image? Function(ui.Image? Function() capture)? captureSnapshot;
   final Widget child;
 
   @override
@@ -57,7 +61,25 @@ class _ThemeCrossFadeState extends State<ThemeCrossFade>
     if (fade is! _RenderThemeCrossFade) {
       return;
     }
-    final image = fade.capture(MediaQuery.devicePixelRatioOf(context));
+    final ui.Image? image;
+    try {
+      ui.Image? capture() =>
+          fade.capture(MediaQuery.devicePixelRatioOf(context));
+      final captureSnapshot = widget.captureSnapshot;
+      image = captureSnapshot == null ? capture() : captureSnapshot(capture);
+    } catch (error, stack) {
+      _controller.stop();
+      _drop();
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stack,
+          library: 'theme cross fade',
+          context: ErrorDescription('while capturing the previous theme frame'),
+        ),
+      );
+      return;
+    }
     if (image == null) {
       return;
     }
