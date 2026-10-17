@@ -1,7 +1,10 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
-import 'package:fl_clash/widgets/widgets.dart';
+import 'package:fl_clash/ui/aurora.dart';
+import 'package:fl_clash/ui/card.dart';
+import 'package:fl_clash/ui/liquid_glass.dart';
+import 'package:fl_clash/ui/shape.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -113,6 +116,110 @@ void main() {
       expect(alphaAt(20, 20), greaterThan(0));
       expect(alphaAt(20, 3), greaterThan(0));
     });
+  });
+
+  testWidgets('Aurora card glass follows grouped corners when disabled too', (
+    tester,
+  ) async {
+    const size = Size(240, 64);
+    for (final (shape, roundTop, roundBottom) in [
+      (AppShape.top(AppCorner.xl), true, false),
+      (AppShape.vertical(bottom: AppCorner.xl), false, true),
+      (AppShape.none, false, false),
+    ]) {
+      for (final inert in [false, true]) {
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: ThemeData(
+              filledButtonTheme: FilledButtonThemeData(
+                style: LiquidGlass.buttonStyle(
+                  (_) => const LiquidGlassStyle(tint: Colors.blue),
+                ),
+              ),
+            ),
+            home: LiquidGlassHost(
+              enabled: true,
+              child: AuroraAppearance(
+                enabled: true,
+                child: Center(
+                  child: SizedBox.fromSize(
+                    size: size,
+                    child: CommonCard(
+                      shape: shape,
+                      inert: inert,
+                      onPressed: () {},
+                      child: const Text('Card'),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        final glass = tester.widget<LiquidGlass>(
+          find.descendant(
+            of: find.byType(CommonCard),
+            matching: find.byType(LiquidGlass),
+          ),
+        );
+        final clipper = glass.clipper! as ShapeBorderClipper;
+        final path = clipper.getClip(size);
+        expect(clipper.shape, shape);
+        expect(path.contains(const Offset(1, 1)), !roundTop);
+        expect(path.contains(const Offset(239, 1)), !roundTop);
+        expect(path.contains(const Offset(1, 63)), !roundBottom);
+        expect(path.contains(const Offset(239, 63)), !roundBottom);
+        expect(find.byType(LiquidGlassHost), findsOneWidget);
+        final button = tester.widget<FilledButton>(find.byType(FilledButton));
+        expect(button.onPressed, inert ? isNull : isNotNull);
+        expect(
+          button.style!.backgroundColor!.resolve({WidgetState.disabled}),
+          Colors.transparent,
+        );
+      }
+    }
+  });
+
+  testWidgets('Aurora error cards retain their opaque error surface', (
+    tester,
+  ) async {
+    final colorScheme = ColorScheme.fromSeed(seedColor: Colors.blue);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(
+          colorScheme: colorScheme,
+          filledButtonTheme: FilledButtonThemeData(
+            style: LiquidGlass.buttonStyle(
+              (_) => LiquidGlassStyle.regular(colorScheme),
+            ),
+          ),
+        ),
+        home: const AuroraAppearance(
+          enabled: true,
+          child: Center(
+            child: CommonCard(
+              shape: AppShape.none,
+              isError: true,
+              inert: true,
+              child: Text('Error'),
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(find.byType(LiquidGlass), findsNothing);
+    final button = tester.widget<FilledButton>(find.byType(FilledButton));
+    expect(button.onPressed, isNull);
+    for (final states in [<WidgetState>{}, {WidgetState.disabled}]) {
+      expect(
+        button.style!.backgroundColor!.resolve(states),
+        colorScheme.errorContainer,
+      );
+      expect(
+        button.style!.foregroundColor!.resolve(states),
+        colorScheme.onErrorContainer,
+      );
+    }
   });
 
   testWidgets('a snapshot taken without panes holds only what stands on them', (

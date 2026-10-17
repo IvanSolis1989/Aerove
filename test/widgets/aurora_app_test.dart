@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:fl_clash/ui/shape.dart';
+import 'package:fl_clash/ui/context.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
@@ -277,6 +278,8 @@ void main() {
       } else {
         expect(background, Colors.teal);
       }
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(Duration.zero);
     }
   });
 
@@ -405,11 +408,16 @@ void main() {
           );
           await tester.pumpAndSettle();
           expect(wallpaperOption, findsOneWidget);
+          final colorHeader = find.text('主题色彩');
           await Scrollable.ensureVisible(
-            tester.element(find.text('普通主题色')),
-            alignment: 0.1,
+            tester.element(colorHeader),
+            alignment: 0.15,
           );
           await tester.pumpAndSettle();
+          expect(
+            tester.getTopLeft(colorHeader).dy,
+            greaterThanOrEqualTo(pageContext.appBarInset),
+          );
           if (output != null) {
             final boundary =
                 captureKey.currentContext!.findRenderObject()!

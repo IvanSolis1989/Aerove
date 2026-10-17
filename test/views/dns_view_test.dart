@@ -577,7 +577,16 @@ void main() {
         );
         const resolver = 'https://example.com/dns-query';
         await tester.enterText(valueField, resolver);
-        await tester.tap(find.byTooltip(currentAppLocalizations.confirm));
+        final confirm = find.descendant(
+          of: find.byType(FormPage),
+          matching: find.widgetWithText(
+            TextButton,
+            currentAppLocalizations.confirm,
+          ),
+        );
+        expect(confirm, findsOneWidget);
+        expect(tester.widget<TextButton>(confirm).onPressed, isNotNull);
+        await tester.tap(confirm);
         await tester.pumpAndSettle();
         expect(overrides(), selected);
         await tester.binding.handlePopRoute();

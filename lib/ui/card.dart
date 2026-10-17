@@ -12,6 +12,7 @@ import 'package:flutter/services.dart';
 
 import 'fade_box.dart';
 import 'aurora.dart';
+import 'liquid_glass.dart';
 import 'scaffold.dart';
 import 'text.dart';
 
@@ -196,6 +197,16 @@ class CommonCard extends StatelessWidget {
     final iconColor = _buildIconColor(context);
     final foregroundColor = _buildForegroundColor(context);
     final remote = RemoteFocusAdapter.isEnabledOf(context);
+    final cardShape = shape ?? AppShape.all(radius ?? AppCorner.md);
+    final glassStyle = AuroraAppearance.enabledOf(context) && !isError
+        ? LiquidGlass.buttonStyle(
+            (_) => LiquidGlassStyle.regular(context.colorScheme),
+            clipper: ShapeBorderClipper(
+              shape: cardShape,
+              textDirection: Directionality.of(context),
+            ),
+          )
+        : null;
     return ValueListenableBuilder(
       valueListenable: FocusMovedByKey.instance,
       builder: (context, movedByKey, content) => FilledButton(
@@ -204,7 +215,7 @@ class CommonCard extends StatelessWidget {
         style:
             FilledButton.styleFrom(
               padding: padding ?? EdgeInsets.zero,
-              shape: shape ?? AppShape.all(radius ?? AppCorner.md),
+              shape: cardShape,
               iconSize: commonCardIconSize,
               iconColor: iconColor,
               foregroundColor: foregroundColor,
@@ -214,7 +225,7 @@ class CommonCard extends StatelessWidget {
             ).copyWith(
               backgroundBuilder: isError && AuroraAppearance.enabledOf(context)
                   ? (context, states, child) => child ?? const SizedBox.shrink()
-                  : null,
+                  : glassStyle?.backgroundBuilder,
               backgroundColor: WidgetStatePropertyAll(
                 _buildBackgroundColor(context, level),
               ),

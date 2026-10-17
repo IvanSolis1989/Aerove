@@ -70,6 +70,18 @@ void main() {
 
   ThemeProps readTheme() => container.read(themeSettingProvider);
 
+  Future<void> revealThemeSetting(WidgetTester tester, Finder setting) async {
+    await tester.scrollUntilVisible(
+      setting,
+      300,
+      scrollable: find.descendant(
+        of: find.byType(ThemeView),
+        matching: find.byType(Scrollable),
+      ).first,
+    );
+    await tester.pumpAndSettle();
+  }
+
   group('theme mode', () {
     testWidgets('android exposes every mode before the wallpaper settings', (
       tester,
@@ -328,6 +340,15 @@ void main() {
       await tester.tap(find.byTooltip('Add'));
       await tester.pumpAndSettle();
 
+      await tester.scrollUntilVisible(
+        find.byType(Palette),
+        200,
+        scrollable: find.descendant(
+          of: find.byType(ListView).last,
+          matching: find.byType(Scrollable),
+        ).first,
+      );
+      await tester.pumpAndSettle();
       final pad = tester.getRect(
         find.descendant(
           of: find.byType(Palette),
@@ -534,6 +555,7 @@ void main() {
       tester,
     ) async {
       await pumpThemeView(tester);
+      await revealThemeSetting(tester, find.text('Aa'));
 
       expect(readTheme().fontFamily, isNull);
       expect(find.text('Default'), findsOneWidget);
@@ -564,6 +586,7 @@ void main() {
         return ['Arrival Sans'];
       };
       await pumpThemeView(tester);
+      await revealThemeSetting(tester, find.text('Aa'));
 
       await tester.tap(find.text('Aa').first);
       await tester.pump();
@@ -588,6 +611,7 @@ void main() {
       final families = Completer<List<String>>();
       systemFontFamiliesReader = () => families.future;
       await pumpThemeView(tester);
+      await revealThemeSetting(tester, find.text('Aa'));
 
       await tester.tap(find.text('Aa').first);
       await tester.pump();
@@ -609,6 +633,7 @@ void main() {
           .read(themeSettingProvider.notifier)
           .update((state) => state.copyWith(fontFamily: 'Beta Serif'));
       await pumpThemeView(tester);
+      await revealThemeSetting(tester, find.text('Aa'));
 
       expect(
         tester.widget<Text>(find.text('Beta Serif')).style?.fontFamily,
@@ -628,6 +653,7 @@ void main() {
         return families;
       };
       await pumpThemeView(tester);
+      await revealThemeSetting(tester, find.text('Aa'));
       await tester.tap(find.text('Aa').first);
       for (var i = 0; i < 20 && !loaded; i++) {
         await tester.pump(const Duration(milliseconds: 50));
@@ -659,6 +685,7 @@ void main() {
     ) async {
       systemFontFamiliesReader = () async => throw const OSError('fc', 1);
       await pumpThemeView(tester);
+      await revealThemeSetting(tester, find.text('Aa'));
 
       await openFonts(tester);
 
@@ -671,6 +698,7 @@ void main() {
   group('text scale', () {
     testWidgets('follows the system until custom is picked', (tester) async {
       await pumpThemeView(tester);
+      await revealThemeSetting(tester, find.text('Custom'));
 
       expect(readTheme().textScale.enable, isFalse);
       expect(tester.widget<Slider>(find.byType(Slider)).onChanged, isNull);
@@ -689,6 +717,7 @@ void main() {
 
     testWidgets('writes the scale only when the drag ends', (tester) async {
       await pumpThemeView(tester);
+      await revealThemeSetting(tester, find.text('Custom'));
       await tester.tap(find.text('Custom'));
       await tester.pumpAndSettle();
       final before = readTheme().textScale.scale;
@@ -712,6 +741,7 @@ void main() {
           );
 
       await pumpThemeView(tester);
+      await revealThemeSetting(tester, find.text('Custom'));
 
       expect(find.text('120%'), findsOneWidget);
 

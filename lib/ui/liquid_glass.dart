@@ -658,12 +658,14 @@ class LiquidGlass extends StatelessWidget {
 
   /// Replaces a button's fill with glass.
   static ButtonStyle buttonStyle(
-    LiquidGlassStyle Function(Set<WidgetState> states) styleOf,
-  ) {
+    LiquidGlassStyle Function(Set<WidgetState> states) styleOf, {
+    CustomClipper<Path>? clipper,
+  }) {
     return ButtonStyle(
       backgroundColor: const WidgetStatePropertyAll(Colors.transparent),
       backgroundBuilder: (context, states, child) => LiquidGlass(
         style: styleOf(states),
+        clipper: clipper,
         pressed: states.contains(WidgetState.pressed),
         child: child,
       ),
