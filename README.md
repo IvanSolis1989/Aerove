@@ -1,127 +1,114 @@
-<div align="center">
-
-<img src="assets/images/icon.png" alt="XClash" width="88">
+<!-- xclash-owned-readme -->
+<!-- xclash-repository: IvanSolis1989/XClash -->
 
 # XClash
 
-[XClash](https://github.com/IvanSolis1989/XClash) is a [GPL-3.0](LICENSE) fork of
-[FlClash](https://github.com/chen08209/FlClash) by chen08209. Development currently focuses on Android,
-with a soft aurora and glass visual direction. Upstream authorship and license notices are preserved.
-The existing Android package ID is retained for compatibility in this phase.
-
-Open **Tools → Theme → Random gradient wallpaper** to choose 1–3 colors and request a new pattern.
-The palette and seed are saved with the configuration. Disable it to restore ordinary surfaces;
-high contrast and dark pure-black mode keep opaque surfaces.
-[Android build records](https://github.com/IvanSolis1989/XClash/actions/workflows/xclash-android.yaml)
-· [Upstream sync guide](docs/upstream-sync.md)
-
 **English** · [简体中文](README_zh_CN.md)
 
-[![Release](https://img.shields.io/github/v/release/IvanSolis1989/XClash?style=flat-square&label=release)](https://github.com/IvanSolis1989/XClash/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/IvanSolis1989/XClash/total?style=flat-square&logo=github)](https://github.com/IvanSolis1989/XClash/releases)
+[![Release](https://img.shields.io/github/v/release/IvanSolis1989/XClash?style=flat-square)](https://github.com/IvanSolis1989/XClash/releases/latest)
 [![License](https://img.shields.io/github/license/IvanSolis1989/XClash?style=flat-square)](LICENSE)
-[![Upstream Telegram](https://img.shields.io/badge/Upstream_Telegram-channel-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/FlClash)
 
-[Repository](https://github.com/IvanSolis1989/XClash) · [Download](#download) · [Changelog](CHANGELOG.md) · [Build from source](#build-from-source)
+XClash is an Android-first proxy client derived from [FlClash](https://github.com/chen08209/FlClash),
+with a quiet aurora background and subtle glass surfaces. This fork currently develops the Android interface;
+it retains the upstream Flutter application structure and mihomo integration. Changing the appearance does not
+replace the proxy core, routing engine or service lifecycle.
 
-</div>
+## Download and installation
 
-Upstream screenshots and architecture documentation are retained below; downloads refer to this fork.
+Download the latest **Android ARM64 preview** from this repository's
+[Releases](https://github.com/IvanSolis1989/XClash/releases/latest), or use the stable
+[APK download link](https://github.com/IvanSolis1989/XClash/releases/latest/download/XClash-android-arm64.apk).
+Release assets also include `SHA256SUMS` and `BUILD_INFO.json` for checksums, source revision and build provenance.
+
+Only `arm64-v8a` is published, targeting **Android 7.0 or later**. There are no XClash desktop, F-Droid or Homebrew releases.
+The APK is built by this fork's CI; [Actions](https://github.com/IvanSolis1989/XClash/actions/workflows/xclash-android.yaml)
+provides build logs and diagnostic artifacts. Use Releases for installation.
+
+The preview uses a persistent **test signing key** and application ID `com.follow.clash.dev`.
+Physical-device acceptance is still pending. Earlier Actions-only APKs used temporary signing keys;
+Android may require uninstalling those before installing a Release. Back up your configuration first.
+Locally built APKs may also have a different signing key and cannot necessarily update the CI build in place.
+
+## Appearance and controls
+
+Open **Tools → Theme → Random gradient wallpaper**. Enable the background, choose **1–3 colors**,
+then use **New wallpaper** to request a new composition. The palette and random seed are saved with your
+configuration, so the same pattern returns after restarting. It is a static seeded background, with no
+continuous wallpaper animation. The surfaces use restrained translucency to keep controls readable.
+
+Disable the option to return to ordinary theme surfaces. High-contrast mode and dark pure-black mode use opaque
+surfaces instead of the aurora/glass treatment. Existing navigation, dashboard layout and proxy controls are retained.
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="snapshots/preview-dark.png">
-    <img alt="FlClash dashboard on a MacBook and a phone" src="snapshots/preview.png" width="92%">
-  </picture>
+  <img src="snapshots/xclash-theme.png" alt="XClash theme settings with a soft blue and lavender background" width="300">
 </p>
 
-## Features
+This preview is rendered from the actual Flutter widget test in Android mode. It is not a physical-device screenshot
+and does not demonstrate on-device rendering performance or VPN connectivity.
 
-- **Android first** in this fork; upstream also supports Windows, macOS and Linux.
-- **mihomo (Clash.Meta) core** with rule routing, proxy groups, latency tests, system proxy and TUN mode.
-- **Profiles** from a subscription link or a file, with a built-in editor, override scripts, and custom rules,
-  proxies and proxy groups.
-- **Live views** of connections, requests, DNS queries and logs.
-- **Material You design with Apple-style interaction**: dynamic color, light and dark themes, continuous corners,
-  sheets that snap between heights, and layouts that adapt from phones to desktops.
-- **Backup and restore** through WebDAV or a local file.
-- **Platform touches**: a Quick Settings tile, per-app proxy and Android TV support on Android; a tray menu and
-  global hotkeys on the desktop.
-- **Open source and ad-free**, licensed under GPL-3.0.
+## Build Android from source
 
-## Download
+Match the [Android CI workflow](.github/workflows/xclash-android.yaml): **Flutter 3.47.6**, **Go 1.27.1**,
+**JDK 17**, Android SDK and **NDK r28c (`28.2.13676358`)**, plus rustup with **Rust 1.99.0**.
+The Rust pin is in [rust-toolchain.toml](plugins/rust_api/rust/rust-toolchain.toml);
+Android SDK versions are in [libs.versions.toml](android/gradle/libs.versions.toml) (compile/target SDK 37).
+Ensure Flutter, Go, Java and cargo are available on `PATH`, and configure the Android SDK for Flutter.
 
-Get this fork from [XClash Releases](https://github.com/IvanSolis1989/XClash/releases/latest), or download the [Android ARM64 APK](https://github.com/IvanSolis1989/XClash/releases/latest/download/XClash-android-arm64.apk) directly.
-
-Only Android `arm64-v8a` APKs are published at present; other architectures and desktop platforms are not released.
-These Android previews use a persistent test signing key; physical-device acceptance is pending.
-Actions pages provide build records only.
-
-<p>
-  <a href="https://github.com/IvanSolis1989/XClash/releases/latest"><img alt="Get it on GitHub" src="snapshots/get-it-on-github.svg" height="56"></a>
-</p>
-
-## Usage
-
-**Import a profile from a link.** Opening a link in this form imports the subscription into FlClash. The `clashmeta://`
-and `flclash://` schemes work the same way.
-
-```text
-clash://install-config?url=<URL-encoded subscription link>
-```
-
-**Automate on Android.** Tasker, MacroDroid and similar apps can start, stop or toggle the proxy by starting an
-activity with one of these actions:
-
-```text
-com.follow.clash.action.START
-com.follow.clash.action.STOP
-com.follow.clash.action.TOGGLE
-```
-
-From a computer, the same works over adb:
-
-```bash
-adb shell am start -a com.follow.clash.action.TOGGLE
-```
-
-## Build from source
-
-You need [Flutter](https://docs.flutter.dev/get-started/install) 3.47 (release builds use 3.47.6),
-[Go](https://go.dev/dl/) 1.27 and [Rust](https://rustup.rs/) installed through rustup. Each platform builds on its own
-host, except Android, which builds anywhere.
-
-```bash
+```sh
 git clone --recursive https://github.com/IvanSolis1989/XClash.git
 cd XClash
 flutter pub get
-dart setup.dart android   # or windows, macos, linux
+flutter build apk --release --target-platform android-arm64
 ```
 
-Packages land in `dist/`. The Go core and the Rust libraries are compiled as part of the Flutter build.
+The APK is written to `build/app/outputs/flutter-apk/app-release.apk`. Flutter's native build hooks and Gradle
+build the required Rust library and Android Go core; keep the native build hooks enabled when packaging.
+Without a configured release keystore, this repository uses debug signing with the `.dev` application ID.
+CI restores its persistent test key from a repository secret; that private signing container is not included in source.
 
-| Platform | Also needed |
+For Dart/UI checks, use the commands and native-hook requirements in [.agents/commands.md](.agents/commands.md).
+Before submitting code, run `flutter pub get`, `flutter analyze --no-fatal-infos`, and relevant `flutter test` suites.
+An agent running the application on a development host must use `--dart-define=SAFE_MODE=true`.
+
+## Builds, releases and upstream updates
+
+- **Android CI:** a `main` push or manual run validates generated sources, analysis, UI/configuration regressions
+  and Android unit tests, then builds ARM64. Successful eligible `main` builds publish the APK and provenance files
+  through a separate Release job. Failed checks do not publish a new APK; source synchronization and APK publication
+  are separate runs, so an APK build failure does not undo an already merged source update.
+- **Upstream synchronization:** the scheduled workflow checks `chen08209/FlClash/main` hourly at minute 17 UTC;
+  GitHub may delay scheduled runs. It uses an ordinary merge, validates the candidate and only then advances this
+  fork's `main`. Conflicts, failed validation or a competing update leave the existing `main` in place.
+- **Fork documentation:** these two READMEs are maintained for XClash. Synchronization preserves the fork's README
+  files from its pre-merge revision; it does not import upstream README content. `tool/sync_fork_readme.py` only
+  updates repository-derived links and badges, and rejects documents without the XClash ownership marker.
+
+See the [upstream synchronization guide](docs/upstream-sync.md) for triggers, workflow permission limits,
+signing, failure evidence and manual recovery. Automatic merging does not guarantee that future upstream changes
+preserve this fork's visual design; focused tests still need human UI review.
+
+## Project layout
+
+| Path | Responsibility |
 | --- | --- |
-| Android | Android SDK with the NDK. Add `--arch arm64` to build a single ABI. |
-| Windows | GCC (MinGW-w64) for the core and [Inno Setup](https://jrsoftware.org/isinfo.php) 6 for the installer. |
-| macOS | Xcode and Node.js. The script installs `appdmg` through npm. |
-| Linux | Debian or Ubuntu. The script installs the build packages with apt and downloads `appimagetool`. |
+| `lib/manager/theme_manager.dart`, `lib/widgets/aurora.dart` | Theme integration and seeded background rendering |
+| `lib/views/`, `lib/widgets/` | Screens, theme controls and reusable Flutter components |
+| `lib/core/`, `android/`, `core/` | Core integration, Android service lifecycle and Go wrapper |
+| `plugins/` | Local Flutter/native dependencies, including Rust integration |
+| `test/`, `android/tests/` | Flutter and Android regressions |
+| `.github/workflows/`, `tool/` | Verification, packaging, publication and maintenance automation |
 
-Run `dart setup.dart --help` for the remaining options, such as `--targets` to build only some package formats.
+## Feedback and contributions
 
-## Support
+Report XClash bugs and feature requests in [this repository's Issues](https://github.com/IvanSolis1989/XClash/issues).
+Include the app version, Android version, reproduction steps and whether the aurora option is enabled;
+remove subscription credentials and other private data from logs. Changes should preserve upstream core/service
+ownership and cover affected behavior. Start with [AGENTS.md](AGENTS.md) and the linked project rules.
 
-Star this fork to support it; report bugs and feature requests in [XClash Issues](https://github.com/IvanSolis1989/XClash/issues).
+## License and upstream attribution
 
-Upstream community: [FlClash Telegram channel](https://t.me/FlClash).
-
-<a href="https://star-history.com/#IvanSolis1989/XClash&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=IvanSolis1989/XClash&type=Date&theme=dark">
-    <img alt="Star history" src="https://api.star-history.com/svg?repos=IvanSolis1989/XClash&type=Date" width="640">
-  </picture>
-</a>
-
-## License
-
-FlClash is released under the [GPL-3.0 license](LICENSE).
+XClash is distributed under [GPL-3.0](LICENSE). It is a fork of
+[FlClash](https://github.com/chen08209/FlClash) by chen08209 and its contributors, using the
+[mihomo](https://github.com/MetaCubeX/mihomo) ecosystem. Upstream copyright and license notices are preserved;
+bundled dependencies retain their respective licenses. XClash's interface work and release automation are maintained
+in this repository and are not official FlClash releases.

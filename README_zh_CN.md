@@ -1,120 +1,103 @@
-<div align="center">
-
-<img src="assets/images/icon.png" alt="XClash" width="88">
+<!-- xclash-owned-readme -->
+<!-- xclash-repository: IvanSolis1989/XClash -->
 
 # XClash
 
-[XClash](https://github.com/IvanSolis1989/XClash) 是基于 chen08209 的
-[FlClash](https://github.com/chen08209/FlClash) 开发的 [GPL-3.0](LICENSE) 分支。
-现阶段优先开发 Android 版，视觉方向为淡雅极光与玻璃质感，保留上游作者署名和许可声明。
-本阶段保留现有 Android 包 ID 以维持兼容性。
-
-在 **工具 → 主题 → 随机渐变底图** 中选择 1–3 色，点击“换一张”改变图案。
-配色和图案随配置保存；关闭后恢复普通主题，高对比度或深色纯黑模式使用实色表面。
-[Android 构建记录](https://github.com/IvanSolis1989/XClash/actions/workflows/xclash-android.yaml)
-· [上游自动同步说明](docs/upstream-sync.md)
-
 [English](README.md) · **简体中文**
 
-[![Release](https://img.shields.io/github/v/release/IvanSolis1989/XClash?style=flat-square&label=release)](https://github.com/IvanSolis1989/XClash/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/IvanSolis1989/XClash/total?style=flat-square&logo=github)](https://github.com/IvanSolis1989/XClash/releases)
+[![Release](https://img.shields.io/github/v/release/IvanSolis1989/XClash?style=flat-square)](https://github.com/IvanSolis1989/XClash/releases/latest)
 [![License](https://img.shields.io/github/license/IvanSolis1989/XClash?style=flat-square)](LICENSE)
-[![Upstream Telegram](https://img.shields.io/badge/Upstream_Telegram-channel-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/FlClash)
 
-[仓库](https://github.com/IvanSolis1989/XClash) · [下载](#下载) · [更新日志](CHANGELOG.md) · [从源码构建](#从源码构建)
+XClash 是基于 [FlClash](https://github.com/chen08209/FlClash) 开发、优先面向 Android 的代理客户端，
+以淡雅极光底图与轻玻璃表面为视觉方向。本分支目前重点开发 Android 界面，保留上游 Flutter 应用结构和
+mihomo 集成；外观调整不替换代理内核、路由引擎或服务生命周期。
 
-</div>
+## 下载与安装
 
-以下保留上游截图和架构文档；下载入口均指向本分支。
+请从本仓库的 [Releases](https://github.com/IvanSolis1989/XClash/releases/latest) 下载最新的
+**Android ARM64 预览版**，也可使用固定的
+[APK 下载链接](https://github.com/IvanSolis1989/XClash/releases/latest/download/XClash-android-arm64.apk)。
+发布资产同时包含 `SHA256SUMS` 和 `BUILD_INFO.json`，用于核对文件校验和、源码版本与构建来源。
+
+目前只发布 `arm64-v8a`，面向 **Android 7.0 及以上**；没有 XClash 桌面端、F-Droid 或 Homebrew 安装包。
+APK 由本分支 CI 构建；[Actions](https://github.com/IvanSolis1989/XClash/actions/workflows/xclash-android.yaml)
+用于查看构建日志与排查产物，安装请使用 Releases。
+
+当前预览版使用固定的**测试签名**，包 ID 为 `com.follow.clash.dev`，尚未完成真机验收。
+早期仅在 Actions 提供的 APK 使用临时签名，升级到 Release 时，Android 可能要求先卸载旧版；
+请先备份配置。本地构建也可能使用不同签名，不能保证直接覆盖 CI 发布的版本。
+
+## 外观与操作
+
+进入 **工具 → 主题 → 随机渐变底图**，启用底图后选择 **1–3 种颜色**，点击**换一张**生成新构图。
+配色与随机种子随配置保存，重启后保持同一图案。这是静态、由种子确定的随机底图，不持续播放壁纸动画；
+界面表面采用克制的半透明效果，兼顾文字与控件的可读性。
+
+关闭开关可恢复普通主题表面。高对比度模式、深色纯黑模式会使用不透明表面，停用极光与玻璃效果。
+现有导航、仪表盘布局和代理操作控件继续保留。
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="snapshots/preview-dark.png">
-    <img alt="FlClash 在 MacBook 与手机上的仪表盘" src="snapshots/preview.png" width="92%">
-  </picture>
+  <img src="snapshots/xclash-theme.png" alt="XClash 主题设置：淡蓝与浅紫底图" width="300">
 </p>
 
-## 功能
+上图由实际 Flutter widget 测试按 Android 模式渲染，**不是真机截图**，不能作为真机渲染性能或 VPN 连通性证明。
 
-- **本分支优先支持 Android**；上游还支持 Windows、macOS 和 Linux。
-- **mihomo（Clash.Meta）内核**：规则分流、代理组、延迟测试、系统代理与 TUN 模式。
-- **配置管理**：通过订阅链接或文件导入配置，内置编辑器，支持覆写脚本以及自定义规则、代理和代理组。
-- **实时查看**连接、请求、DNS 查询和日志。
-- **Material You 设计，融合 Apple 式交互**：支持动态取色、浅色与深色主题，连续曲率圆角，弹出面板可在几档高度间吸附，布局随屏幕从手机到桌面自适应。
-- **备份与恢复**：通过 WebDAV 或本地文件。
-- **平台细节**：Android 上有快捷设置磁贴、分应用代理和 Android TV 支持；桌面端有托盘菜单和全局快捷键。
-- **开源无广告**，以 GPL-3.0 协议发布。
+## 从源码构建 Android
 
-## 下载
+请对齐 [Android CI 工作流](.github/workflows/xclash-android.yaml)：**Flutter 3.47.6**、**Go 1.27.1**、
+**JDK 17**、Android SDK 与 **NDK r28c（`28.2.13676358`）**，以及通过 rustup 管理的 **Rust 1.99.0**。
+Rust 版本锁定在 [rust-toolchain.toml](plugins/rust_api/rust/rust-toolchain.toml)，Android SDK 版本见
+[libs.versions.toml](android/gradle/libs.versions.toml)（compile/target SDK 37）。
+确保 Flutter、Go、Java 和 cargo 可从 `PATH` 调用，并为 Flutter 配置 Android SDK。
 
-从 [XClash Releases](https://github.com/IvanSolis1989/XClash/releases/latest) 获取本分支发布版本，或直接下载 [Android ARM64 APK](https://github.com/IvanSolis1989/XClash/releases/latest/download/XClash-android-arm64.apk)。
-
-目前仅发布 Android `arm64-v8a` APK；其他架构和桌面平台暂未发布。
-当前为固定测试签名的 Android 预览版，尚未完成真机验收。
-Actions 页面仅用于查看构建记录。
-
-<p>
-  <a href="https://github.com/IvanSolis1989/XClash/releases/latest"><img alt="Get it on GitHub" src="snapshots/get-it-on-github.svg" height="56"></a>
-</p>
-
-## 使用
-
-**通过链接导入配置。** 打开下面格式的链接，即可把订阅导入 FlClash。`clashmeta://` 和 `flclash://` 开头的链接同样可用。
-
-```text
-clash://install-config?url=<经过 URL 编码的订阅链接>
-```
-
-**Android 自动化。** Tasker、MacroDroid 等应用可以用下面的 Action 启动 Activity，从而启动、停止或切换代理：
-
-```text
-com.follow.clash.action.START
-com.follow.clash.action.STOP
-com.follow.clash.action.TOGGLE
-```
-
-在电脑上也可以通过 adb 触发：
-
-```bash
-adb shell am start -a com.follow.clash.action.TOGGLE
-```
-
-## 从源码构建
-
-需要 [Flutter](https://docs.flutter.dev/get-started/install) 3.47（正式版构建使用 3.47.6）、[Go](https://go.dev/dl/) 1.27，
-以及通过 rustup 安装的 [Rust](https://rustup.rs/)。桌面端需要在对应系统上构建，Android 在任意系统上都能构建。
-
-```bash
+```sh
 git clone --recursive https://github.com/IvanSolis1989/XClash.git
 cd XClash
 flutter pub get
-dart setup.dart android   # 或 windows、macos、linux
+flutter build apk --release --target-platform android-arm64
 ```
 
-安装包输出到 `dist/`。Go 内核和 Rust 库会在 Flutter 构建过程中一并编译。
+APK 输出到 `build/app/outputs/flutter-apk/app-release.apk`。Flutter 原生构建 hook 与 Gradle 会编译所需的
+Rust 库和 Android Go 内核；打包时保持原生构建 hook 启用。未配置正式签名容器时，本仓库使用 debug 签名，
+并附加 `.dev` 包 ID 后缀。CI 从仓库 secret 恢复固定测试签名，其私有签名容器不随源码分发。
 
-| 平台 | 额外依赖 |
+Dart/UI 验证命令与原生 hook 的工具链要求见 [.agents/commands.md](.agents/commands.md)。提交代码前运行
+`flutter pub get`、`flutter analyze --no-fatal-infos` 及相关 `flutter test` 测试。
+Agent 在开发主机上启动应用时，必须使用 `--dart-define=SAFE_MODE=true`。
+
+## 构建、发布与上游同步
+
+- **Android CI：** `main` 推送或手动运行会验证生成文件、静态分析、UI/配置回归及 Android 单元测试，并构建
+  ARM64 APK。满足条件的 `main` 构建成功后，由独立 Release 任务发布 APK 和来源文件；检查失败不发布新包。
+  源码同步与 APK 发布分别运行，后续 APK 构建失败不会撤销已合并的源码更新。
+- **上游同步：** 定时工作流在每小时 UTC 第 17 分钟检查 `chen08209/FlClash/main`；GitHub 调度可能延迟。
+  使用普通 merge，在候选版本验证通过后才推进本分支 `main`。遇到冲突、验证失败或并发更新时保留原有 `main`。
+- **分支文档：** 这两份 README 由 XClash 独立维护。同步时从合并前的 fork 版本保留 README，不导入上游正文。
+  `tool/sync_fork_readme.py` 仅校正仓库派生链接与徽章；没有 XClash 自有文档标记的输入会被拒绝。
+
+触发方式、工作流权限限制、签名、失败证据和手动恢复见[上游同步说明](docs/upstream-sync.md)。
+自动合并不能保证未来的上游变更都符合本分支视觉设计，聚焦测试之外仍需人工界面验收。
+
+## 项目结构
+
+| 路径 | 职责 |
 | --- | --- |
-| Android | 带 NDK 的 Android SDK。加上 `--arch arm64` 可以只构建单个 ABI。 |
-| Windows | 编译内核用的 GCC（MinGW-w64），以及打包安装程序用的 [Inno Setup](https://jrsoftware.org/isinfo.php) 6。 |
-| macOS | Xcode 与 Node.js。脚本会通过 npm 安装 `appdmg`。 |
-| Linux | Debian 或 Ubuntu。脚本会用 apt 安装构建所需的软件包，并下载 `appimagetool`。 |
+| `lib/manager/theme_manager.dart`、`lib/widgets/aurora.dart` | 主题集成与种子底图渲染 |
+| `lib/views/`、`lib/widgets/` | 页面、主题控件及 Flutter 通用组件 |
+| `lib/core/`、`android/`、`core/` | 内核集成、Android 服务生命周期与 Go 包装层 |
+| `plugins/` | 本地 Flutter/原生依赖，包含 Rust 集成 |
+| `test/`、`android/tests/` | Flutter 与 Android 回归测试 |
+| `.github/workflows/`、`tool/` | 验证、打包、发布与维护自动化 |
 
-其余选项可以运行 `dart setup.dart --help` 查看，例如用 `--targets` 只构建部分安装包格式。
+## 反馈与贡献
 
-## 支持
+XClash 的问题与功能建议请提交到[本仓库 Issues](https://github.com/IvanSolis1989/XClash/issues)。
+请提供应用版本、Android 版本、复现步骤及是否启用极光底图；日志中应移除订阅凭据等隐私信息。
+修改应保留上游内核/服务的职责边界，并验证受影响行为。开发前阅读 [AGENTS.md](AGENTS.md) 及其链接的项目规则。
 
-欢迎给本分支点 Star；Bug 与功能建议请提交到 [XClash Issues](https://github.com/IvanSolis1989/XClash/issues)。
+## 许可与上游归属
 
-上游社区：[FlClash Telegram 频道](https://t.me/FlClash)。
-
-<a href="https://star-history.com/#IvanSolis1989/XClash&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=IvanSolis1989/XClash&type=Date&theme=dark">
-    <img alt="Star history" src="https://api.star-history.com/svg?repos=IvanSolis1989/XClash&type=Date" width="640">
-  </picture>
-</a>
-
-## 许可证
-
-FlClash 以 [GPL-3.0 协议](LICENSE)发布。
+XClash 按 [GPL-3.0](LICENSE) 分发，基于 chen08209 及贡献者维护的
+[FlClash](https://github.com/chen08209/FlClash)，沿用 [mihomo](https://github.com/MetaCubeX/mihomo) 生态。
+保留上游版权与许可声明，各依赖继续适用自身许可证。本分支的界面与发布自动化由本仓库维护，
+XClash 安装包不是 FlClash 官方发行版。

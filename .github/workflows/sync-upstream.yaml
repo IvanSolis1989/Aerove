@@ -58,9 +58,13 @@ jobs:
           if ! git merge --no-ff --no-commit "$upstream" 2>&1 | tee "$evidence/merge.log"; then
             git diff --name-only --diff-filter=U > "$evidence/conflicted-files.txt"
             git diff --cc > "$evidence/merge-conflicts.patch"
-            echo '::error::Upstream merge failed. Resolve the recorded conflicts manually; main was not updated.'
-            exit 1
+            if ! test -s "$evidence/conflicted-files.txt" ||
+              grep -vEx 'README\.md|README_zh_CN\.md' "$evidence/conflicted-files.txt"; then
+              echo '::error::Upstream merge failed. Resolve the recorded conflicts manually; main was not updated.'
+              exit 1
+            fi
           fi
+          git restore --source="$base" --staged --worktree -- README.md README_zh_CN.md
           python3 tool/sync_fork_readme.py --repository "$GITHUB_REPOSITORY"
           git add -- README.md README_zh_CN.md
           git commit --no-edit

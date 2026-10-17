@@ -6,9 +6,12 @@
 选择 `main` 立即运行。工作流只在此 fork 的 `main` 上运行，同一时间只处理一次同步。
 
 同步使用普通 merge，不 reset、rebase、force push，也不以 `ours`/`theirs` 整体覆盖文件。
+`README.md` 和 `README_zh_CN.md` 由 XClash 独立维护，完整介绍本仓库的功能、下载、构建和发布。
+同步时精确保留 fork 基线中的这两个文件，不采用上游 README；只有这两份文档发生冲突时，
+可以自动保留本仓库版本，任何其他文件冲突仍停止。上游署名和 GPL 许可信息保留在本仓库文档中。
 合并提交前运行 `tool/sync_fork_readme.py --repository "$GITHUB_REPOSITORY"`，
-将 README 的下载段、徽章、源码及问题反馈入口校正到当前 fork，同时保留上游署名。
-文档修正随同一个双父合并提交进入验证；Android 工作流再次以 `--check` 检查链接，漂移时停止。
+只校正自有文档中由仓库名派生的链接，不从上游生成 README。
+文档与源码随同一个双父合并提交进入验证；Android 工作流再次以 `--check` 检查链接，漂移时停止。
 上游没有新提交时直接结束。发现新提交时，以当前 fork main 为第一父提交建立合并提交，
 在只有读权限的任务中运行 Flutter 3.47.6 的 `pub get`、`analyze --no-fatal-infos`、
 配置模型/Provider、更新请求、主题、导航、启动按钮、Aurora 设置/壁纸/应用组件、本地化及 lint 测试。
