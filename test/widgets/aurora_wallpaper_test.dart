@@ -7,7 +7,8 @@ import 'package:fl_clash/common/aurora.dart';
 import 'package:fl_clash/widgets/aurora.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:material_color_utilities/material_color_utilities.dart' show Hct;
+import 'package:material_color_utilities/material_color_utilities.dart'
+    show Hct;
 import 'package:material_ui/material_ui.dart';
 
 void main() {
@@ -155,6 +156,10 @@ void main() {
           'minimumVerticalMeanRgbDifferenceExclusive': 3,
           'minimumVaryingRowFractionExclusive': 0.75,
           'darkMinimumMeanLuminanceExclusive': 0.035,
+          'darkMinimumSampledLuminanceInclusive': 0.07,
+          'darkMaximumNearBlackFractionInclusive': 0,
+          'darkMaximumNeutralFractionExclusive': 0.01,
+          'neutralSaturationThreshold': 0.07,
           'darkMaximumLuminanceExclusive': 0.165,
           'lightMinimumLuminanceExclusive': 0.73,
           'darkMaximumSampledHctChromaInclusive': 24,
@@ -166,7 +171,7 @@ void main() {
           'softMaximumLuminanceStandardDeviation': 0.10,
           'criteria': [
             'broad soft color transitions without visible mesh edges',
-            'balanced negative space and visible chosen colors',
+            'visible chosen colors throughout, with no injected black or gray corners',
             'no rigid stripes, harsh hotspots, or distracting detail',
             'soft metric flags require inspection, not automatic approval',
           ],
@@ -191,7 +196,9 @@ void main() {
                 {
                   'file': 'aurora-${brightness.name}-$count-$seed.png',
                   'seed': seed,
-                  'sample': randomSeeds.contains(seed) ? 'random' : 'regression',
+                  'sample': randomSeeds.contains(seed)
+                      ? 'random'
+                      : 'regression',
                   'brightness': brightness.name,
                   'colorCount': count,
                   'selectedColors': selected
@@ -217,16 +224,17 @@ void main() {
       debugPrint('aurora random seeds: ${jsonEncode(randomSeeds)}');
       await tester.runAsync(() async {
         await output.create(recursive: true);
-        await File('${output.path}/aurora-review-manifest.json').writeAsString(
-          const JsonEncoder.withIndent('  ').convert(manifest),
-        );
+        await File(
+          '${output.path}/aurora-review-manifest.json',
+        ).writeAsString(const JsonEncoder.withIndent('  ').convert(manifest));
       });
       for (final paletteCase in palettes.entries) {
         for (final brightness in Brightness.values) {
           for (final count in paletteCase.key == 'soft' ? [1, 2, 3] : [3]) {
             final palette = paletteCase.value.take(count).toList();
             List<int>? previous;
-            for (final seed in paletteCase.key == 'soft' ? seeds : randomSeeds) {
+            for (final seed
+                in paletteCase.key == 'soft' ? seeds : randomSeeds) {
               await tester.pumpWidget(
                 Directionality(
                   textDirection: TextDirection.ltr,
@@ -264,7 +272,10 @@ void main() {
                   );
                   await output.create(recursive: true);
                   await File('${output.path}/$name.png').writeAsBytes(
-                    png!.buffer.asUint8List(png.offsetInBytes, png.lengthInBytes),
+                    png!.buffer.asUint8List(
+                      png.offsetInBytes,
+                      png.lengthInBytes,
+                    ),
                   );
                   return pixels!.buffer
                       .asUint8List(pixels.offsetInBytes, pixels.lengthInBytes)
@@ -285,6 +296,8 @@ void main() {
               var minLuminance = 1.0;
               var maxLuminance = 0.0;
               var maxChroma = 0.0;
+              var nearBlackSamples = 0;
+              var neutralSamples = 0;
               for (var offset = 0; offset < bytes.length; offset += 64) {
                 opaque = opaque && bytes[offset + 3] == 255;
                 final color = Color.fromARGB(
@@ -294,6 +307,7 @@ void main() {
                   bytes[offset + 2],
                 );
                 final luminance = color.computeLuminance();
+                if (luminance < 0.07) nearBlackSamples++;
                 if (offset % 1024 == 0) {
                   maxChroma = math.max(
                     maxChroma,
@@ -306,10 +320,12 @@ void main() {
                 squaredLuminance += luminance * luminance;
                 samples++;
                 final pixel = HSVColor.fromColor(color);
+                if (pixel.saturation < 0.07) neutralSamples++;
                 if (pixel.saturation < 0.07) continue;
                 for (var index = 0; index < palette.length; index++) {
                   final delta =
-                      (pixel.hue - HSVColor.fromColor(palette[index]).hue).abs();
+                      (pixel.hue - HSVColor.fromColor(palette[index]).hue)
+                          .abs();
                   if (math.min(delta, 360 - delta) < 20) coverage[index]++;
                 }
               }
@@ -317,8 +333,10 @@ void main() {
               final verticalVariation = _verticalVariation(bytes, 300, 600);
               final varyingRows = _varyingRows(bytes, 300, 600);
               final luminanceDeviation = math.sqrt(
-                math.max(0, squaredLuminance / samples -
-                    meanLuminance * meanLuminance),
+                math.max(
+                  0,
+                  squaredLuminance / samples - meanLuminance * meanLuminance,
+                ),
               );
               final adjacentStep = _p95AdjacentRgbStep(bytes, 300, 600);
               final failedChecks = <String>[
@@ -335,6 +353,10 @@ void main() {
                   if (coverage[index] / samples <= 0.01)
                     'selected color $index hue coverage must exceed 0.01',
                 if (brightness == Brightness.dark) ...[
+                  if (nearBlackSamples != 0)
+                    'dark sampled luminance must stay at or above 0.07',
+                  if (neutralSamples / samples >= 0.01)
+                    'dark neutral area must stay below one percent',
                   if (meanLuminance <= 0.035)
                     'dark mean luminance must exceed 0.035',
                   if (maxLuminance >= 0.165)
@@ -347,6 +369,8 @@ void main() {
                 'file': '$name.png',
                 'palette': paletteCase.key,
                 'maximumSampledHctChroma': maxChroma,
+                'nearBlackFraction': nearBlackSamples / samples,
+                'neutralFraction': neutralSamples / samples,
                 'sample': randomSeeds.contains(seed) ? 'random' : 'regression',
                 'passedHardGates': failedChecks.isEmpty,
                 'failedChecks': failedChecks,
@@ -388,9 +412,9 @@ void main() {
       manifest['passedHardGates'] = failures.isEmpty;
       manifest['failedChecks'] = failures;
       await tester.runAsync(
-        () => File('${output.path}/aurora-review-manifest.json').writeAsString(
-          const JsonEncoder.withIndent('  ').convert(manifest),
-        ),
+        () => File(
+          '${output.path}/aurora-review-manifest.json',
+        ).writeAsString(const JsonEncoder.withIndent('  ').convert(manifest)),
       );
       expect(metrics, hasLength(98));
       expect(failures, isEmpty, reason: failures.join('\n'));
@@ -451,8 +475,8 @@ double _p95AdjacentRgbStep(List<int> pixels, int width, int height) {
       for (final neighbor in [offset + 4, offset + width * 4]) {
         var difference = 0;
         for (var channel = 0; channel < 3; channel++) {
-          difference +=
-              (pixels[offset + channel] - pixels[neighbor + channel]).abs();
+          difference += (pixels[offset + channel] - pixels[neighbor + channel])
+              .abs();
         }
         steps.add(difference / 3);
       }

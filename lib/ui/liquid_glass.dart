@@ -1293,7 +1293,7 @@ class _LiquidGlassLayer extends Layer {
     if (haze > 0) {
       drawSlot(_hazeSample, Paint()..color = Color.fromRGBO(0, 0, 0, haze));
     }
-    _drawFrost(canvas, overCapture: true);
+    _drawFrost(canvas);
     canvas.restore();
   }
 
@@ -1316,14 +1316,8 @@ class _LiquidGlassLayer extends Layer {
     return recorder.endRecording();
   }
 
-  /// Thickens the tint to stand in for the frost, unless the pane lies
-  /// [overCapture], which holds the blur.
-  void _drawFrost(Canvas canvas, {bool overCapture = false}) {
-    final tint = style.tint;
-    final fill = Paint()
-      ..color = overCapture
-          ? tint
-          : tint.withValues(alpha: math.min(1, tint.a + 0.2));
+  void _drawFrost(Canvas canvas) {
+    final fill = Paint()..color = style.tint;
     final rim = style.rim;
     final stroke = Paint()
       ..style = PaintingStyle.stroke

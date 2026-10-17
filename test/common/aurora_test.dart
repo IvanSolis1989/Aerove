@@ -1,10 +1,33 @@
+import 'dart:math' as math;
+
 import 'package:fl_clash/common/aurora.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:material_color_utilities/material_color_utilities.dart' show Hct;
+import 'package:material_color_utilities/material_color_utilities.dart'
+    show Hct;
 import 'package:material_ui/material_ui.dart';
 
 void main() {
   const selected = [Color(0xFF6BD5D9), Color(0xFFC6ADE4), Color(0xFFA9DAC6)];
+
+  test('ten random seeds have no injected dark or neutral mesh regions', () {
+    final random = math.Random(20261017);
+    for (var sample = 0; sample < 10; sample++) {
+      final seed = random.nextInt(1 << 32);
+      for (var count = 1; count <= 3; count++) {
+        final mesh = generateAuroraMesh(
+          seed,
+          colors: selected.take(count).toList(),
+          brightness: Brightness.dark,
+        );
+        for (final color in mesh.colors) {
+          expect(color.computeLuminance(), greaterThanOrEqualTo(0.079));
+          expect(color.computeLuminance(), lessThanOrEqualTo(0.161));
+          expect(HSVColor.fromColor(color).saturation, greaterThan(0.07));
+          expect(color, isNot(auroraBaseColor(Brightness.dark)));
+        }
+      }
+    }
+  });
 
   test('saved seeds produce bounded, reproducible mesh fields', () {
     final first = generateAuroraMesh(
@@ -67,9 +90,9 @@ void main() {
           Hct.fromInt(tint.toARGB32()).chroma,
           lessThanOrEqualTo(brightness == Brightness.dark ? 24 : 20),
         );
-        final hueDelta = (HSLColor.fromColor(tint).hue -
-                HSLColor.fromColor(color).hue)
-            .abs();
+        final hueDelta =
+            (HSLColor.fromColor(tint).hue - HSLColor.fromColor(color).hue)
+                .abs();
         expect(hueDelta < 12 || hueDelta > 348, true);
         expect(
           tint.computeLuminance(),

@@ -1,10 +1,12 @@
 import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/ui/dialog.dart';
+import 'package:fl_clash/ui/form_sheet.dart';
 import 'package:fl_clash/ui/inherited.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/paged_sheet.dart';
 import 'package:fl_clash/ui/scaffold.dart';
 import 'package:fl_clash/ui/sheet.dart';
+import 'package:fl_clash/ui/side_sheet.dart';
 import 'package:fl_clash/ui/surface.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -33,12 +35,16 @@ void main() {
         (true, LiquidGlassQuality.standard),
         (true, LiquidGlassQuality.ultra),
       ]) {
+        final props = enabled && quality == LiquidGlassQuality.ultra
+            ? const SheetProps(backgroundColor: Colors.orange)
+            : const SheetProps();
         await tester.pumpWidget(
           LiquidGlassScope(
             enabled: enabled,
             quality: quality,
             child: TestApp(
               key: UniqueKey(),
+              includeNavigatorKey: false,
               overrides: [viewSizeProvider.overrideWithBuild((_, _) => size)],
               theme: ThemeData(brightness: Brightness.dark),
               child: Scaffold(
@@ -46,9 +52,7 @@ void main() {
                   builder: (context) => TextButton(
                     onPressed: () => show<void>(
                       context: context,
-                      props: enabled && quality == LiquidGlassQuality.ultra
-                          ? const SheetProps(backgroundColor: Colors.orange)
-                          : const SheetProps(),
+                      props: props,
                       builder: (_) => const CommonScaffold(
                         title: 'Sheet',
                         body: SizedBox(key: _probe, height: 200),
@@ -63,6 +67,20 @@ void main() {
         );
         await tester.tap(find.text('open'));
         await tester.pumpAndSettle();
+        final route = ModalRoute.of(tester.element(find.byKey(_probe)));
+        if (kind == 'side') {
+          expect(route, isA<ModalSideSheetRoute<void>>());
+          expect(
+            (route! as ModalSideSheetRoute<void>).backgroundColor,
+            props.backgroundColor,
+          );
+        } else if (kind == 'form') {
+          expect(route, isA<FormSheetRoute<void>>());
+          expect(
+            (route! as FormSheetRoute<void>).backgroundColor,
+            props.backgroundColor,
+          );
+        }
         final sheetMaterial = find
             .ancestor(
               of: find.byType(CommonScaffold),

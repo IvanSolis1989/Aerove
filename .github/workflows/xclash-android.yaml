@@ -320,16 +320,16 @@ jobs:
             fi
           fi
           {
-            printf '# XClash Android preview\n\n'
-            printf 'Android ARM64 APK with random gradient wallpaper and subtle glass surfaces.\n\n'
-            printf 'Source: `%s`\n\nBuild: %s/%s/actions/runs/%s\n\n' "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
-            printf 'Uses a persistent test signing key and package ID `com.follow.clash.dev`. Physical-device acceptance is still pending.\n'
-            printf 'When replacing the earlier Actions-only APK, Android may require uninstalling that build first because its temporary signing key differs. Back up your configuration before doing so.\n\n'
-            printf 'SHA-256 checksums are in `SHA256SUMS`; source and build details are in `BUILD_INFO.json`.\n'
+            printf '# XClash Android\n\n'
+            printf '适用于 Android ARM64，内置随机流体渐变底图与液态玻璃主题。\n\n'
+            printf '版本：`%s`\n\n' "$(jq -r .version dist/BUILD_INFO.json)"
+            printf '源码：`%s`\n\n构建记录：%s/%s/actions/runs/%s\n\n' "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+            printf '使用固定测试签名，包名为 `com.follow.clash.dev`。目标设备上的玻璃效果仍需安装后验收。\n\n'
+            printf '下载后可用 `SHA256SUMS` 核对文件完整性；上游版本、源码和构建信息见 `BUILD_INFO.json`。\n'
           } > "$RUNNER_TEMP/xclash-release.md"
           if test -z "$existing"; then
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-              --title "XClash $TAG · Android preview" --draft --notes-file "$RUNNER_TEMP/xclash-release.md"
+              --title "XClash $TAG · 安卓版" --draft --notes-file "$RUNNER_TEMP/xclash-release.md"
           fi
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" \
             dist/XClash-android-arm64.apk dist/SHA256SUMS dist/BUILD_INFO.json --clobber
