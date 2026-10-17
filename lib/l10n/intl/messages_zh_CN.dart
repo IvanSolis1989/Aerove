@@ -20,163 +20,165 @@ typedef String MessageIfAbsent(String messageStr, List<dynamic> args);
 class MessageLookup extends MessageLookupByLibrary {
   String get localeName => 'zh_CN';
 
-  static String m0(count, skipped) => "将添加 ${count} 项，跳过 ${skipped} 项已存在";
+  static String m0(index) => "编辑底图颜色 ${index}";
 
-  static String m1(detail) => "清除数据失败：${detail}";
+  static String m1(count, skipped) => "将添加 ${count} 项，跳过 ${skipped} 项已存在";
 
-  static String m2(code) =>
+  static String m2(detail) => "清除数据失败：${detail}";
+
+  static String m3(code) =>
       "Windows 拒绝运行 FlClashCore.exe（错误 ${code}）。智能应用控制、AppLocker 等应用控制策略会拦截未签名程序，请在该策略中放行 FlClash 或关闭策略后重试。";
 
-  static String m3(name) =>
+  static String m4(name) =>
       "应用连续两次未能完成启动。为打断崩溃循环，已取消选中配置 ${name}，并跳过本次自动配置，你可以随时重新选中它。";
 
-  static String m4(url) => "是否要通过 ${url} 创建配置？";
+  static String m5(url) => "是否要通过 ${url} 创建配置？";
 
-  static String m5(message) => "内核无法解析该代理：${message}";
+  static String m6(message) => "内核无法解析该代理：${message}";
 
-  static String m6(proxy, target) =>
+  static String m7(proxy, target) =>
       "${proxy} 经 ${target} 拨号，而 ${target} 又会回到 ${proxy}，形成环路";
 
-  static String m7(name) => "名称 ${name} 已被其他代理或策略组使用";
+  static String m8(name) => "名称 ${name} 已被其他代理或策略组使用";
 
-  static String m8(path) => "策略组之间存在循环引用：${path}";
+  static String m9(path) => "策略组之间存在循环引用：${path}";
 
-  static String m9(name) => "空组兜底只能是代理，${name} 不存在或是策略组";
+  static String m10(name) => "空组兜底只能是代理，${name} 不存在或是策略组";
 
-  static String m10(name, message) => "${name}不是有效的正则：${message}";
+  static String m11(name, message) => "${name}不是有效的正则：${message}";
 
-  static String m11(name) => "拨号代理 ${name} 不存在";
+  static String m12(name) => "拨号代理 ${name} 不存在";
 
-  static String m12(names) => "以下代理集不存在：${names}";
+  static String m13(names) => "以下代理集不存在：${names}";
 
-  static String m13(names) => "以下代理或策略不存在：${names}";
+  static String m14(names) => "以下代理或策略不存在：${names}";
 
-  static String m14(name) => "${name} 是内置策略名，不能在此使用";
+  static String m15(name) => "${name} 是内置策略名，不能在此使用";
 
-  static String m15(count) => "${count} 项存在问题，应用配置可能失败";
-
-  static String m16(count) => "${count} 天前";
+  static String m16(count) => "${count} 项存在问题，应用配置可能失败";
 
   static String m17(count) => "${count} 天前";
 
-  static String m18(label) => "确定删除选中的${label}吗？";
+  static String m18(count) => "${count} 天前";
 
-  static String m19(label) => "确定删除当前${label}吗？";
+  static String m19(label) => "确定删除选中的${label}吗？";
 
-  static String m20(label) => "${label}详情";
+  static String m20(label) => "确定删除当前${label}吗？";
 
-  static String m21(name) => "经 ${name} 拨号会绕回使用它的代理，连接已中止";
+  static String m21(label) => "${label}详情";
 
-  static String m22(label) => "${label}不能为空";
+  static String m22(name) => "经 ${name} 拨号会绕回使用它的代理，连接已中止";
 
-  static String m23(label) => "${label}当前已存在";
+  static String m23(label) => "${label}不能为空";
 
-  static String m24(count) => "${count} 项失败";
+  static String m24(label) => "${label}当前已存在";
 
-  static String m25(label, message) => "${label}：${message}";
+  static String m25(count) => "${count} 项失败";
 
-  static String m26(name) => "${name} 已是最新版本";
+  static String m26(label, message) => "${label}：${message}";
 
-  static String m27(name) => "${name} 已更新";
+  static String m27(name) => "${name} 已是最新版本";
 
-  static String m28(action) => "已被“${action}”使用，保存后将移到这里";
+  static String m28(name) => "${name} 已更新";
 
-  static String m29(modifiers) => "至少包含 ${modifiers} 中的一个";
+  static String m29(action) => "已被“${action}”使用，保存后将移到这里";
 
-  static String m30(count) => "${count} 小时前";
+  static String m30(modifiers) => "至少包含 ${modifiers} 中的一个";
 
   static String m31(count) => "${count} 小时前";
 
-  static String m32(count) => "${count} 小时";
+  static String m32(count) => "${count} 小时前";
 
-  static String m33(target) => "${target} 是一个无效的策略";
+  static String m33(count) => "${count} 小时";
 
-  static String m34(proxyName) => "${proxyName} 是一个无效的代理";
+  static String m34(target) => "${target} 是一个无效的策略";
 
-  static String m35(providerName) => "${providerName} 是一个无效的代理集";
+  static String m35(proxyName) => "${proxyName} 是一个无效的代理";
 
-  static String m36(ruleSet) => "${ruleSet} 不是有效的规则集";
+  static String m36(providerName) => "${providerName} 是一个无效的代理集";
 
-  static String m37(subRule) => "${subRule} 是一个无效的SUB_RULE";
+  static String m37(ruleSet) => "${ruleSet} 不是有效的规则集";
 
-  static String m38(count) => "${count} 项";
+  static String m38(subRule) => "${subRule} 是一个无效的SUB_RULE";
 
-  static String m39(line, message) => "第 ${line} 行：${message}";
+  static String m39(count) => "${count} 项";
 
-  static String m40(appName) =>
+  static String m40(line, message) => "第 ${line} 行：${message}";
+
+  static String m41(appName) =>
       "1. 打开 系统设置 > 隐私与安全性\n2. 选择 定位服务\n3. 在右侧列表中找到并勾选 ${appName}\n\n完成设置后，返回应用即可正常使用。感谢您的配合。";
 
-  static String m41(label, max) => "${label}最多${max}个字符";
+  static String m42(label, max) => "${label}最多${max}个字符";
 
-  static String m42(size) => "已释放 ${size}";
-
-  static String m43(count) => "${count} 分钟前";
+  static String m43(size) => "已释放 ${size}";
 
   static String m44(count) => "${count} 分钟前";
 
-  static String m45(count) => "${count} 个月前";
+  static String m45(count) => "${count} 分钟前";
 
   static String m46(count) => "${count} 个月前";
 
-  static String m47(code) => "服务器拒绝访问（HTTP ${code}），链接可能已过期或凭据有误";
+  static String m47(count) => "${count} 个月前";
 
-  static String m48(code) => "服务器拒绝了请求（HTTP ${code}）";
+  static String m48(code) => "服务器拒绝访问（HTTP ${code}），链接可能已过期或凭据有误";
 
-  static String m49(code) => "该地址下没有内容（HTTP ${code}），请确认链接是否正确";
+  static String m49(code) => "服务器拒绝了请求（HTTP ${code}）";
 
-  static String m50(detail) => "网络请求失败：${detail}";
+  static String m50(code) => "该地址下没有内容（HTTP ${code}），请确认链接是否正确";
 
-  static String m51(code) => "服务器出现问题（HTTP ${code}），请稍后再试";
+  static String m51(detail) => "网络请求失败：${detail}";
 
-  static String m52(label) => "暂无${label}";
+  static String m52(code) => "服务器出现问题（HTTP ${code}），请稍后再试";
 
-  static String m53(label, min, max) => "${label}必须在 ${min} 到 ${max} 之间";
+  static String m53(label) => "暂无${label}";
 
-  static String m54(label) => "${label}必须为数字";
+  static String m54(label, min, max) => "${label}必须在 ${min} 到 ${max} 之间";
 
-  static String m55(label) => "${label} 必须在 1024 到 49151 之间";
+  static String m55(label) => "${label}必须为数字";
 
-  static String m56(label, profiles) =>
+  static String m56(label) => "${label} 必须在 1024 到 49151 之间";
+
+  static String m57(label, profiles) =>
       "${label} 仍被 ${profiles} 使用，删除后这些配置会异常。确定删除吗？";
 
-  static String m57(count, label) =>
+  static String m58(count, label) =>
       "${Intl.plural(count, other: '${label} 个代理')}";
 
-  static String m58(name, count) => "${name} 等 ${count} 个代理";
+  static String m59(name, count) => "${name} 等 ${count} 个代理";
 
-  static String m59(removed) =>
+  static String m60(removed) =>
       "以下代理将被删除：${removed}。改了名字的行按新代理处理，自定义配置中对被删除代理的引用会标为缺失。确定应用吗？";
 
-  static String m60(removed, added) =>
+  static String m61(removed, added) =>
       "以下代理将被删除：${removed}。以下代理将新增：${added}。改了名字的行按新代理处理，自定义配置中对被删除代理的引用会标为缺失。确定应用吗？";
 
-  static String m61(label) =>
+  static String m62(label) =>
       "${label} 仍被当前配置的规则、策略组、拨号代理、DNS 或 NTP 引用，删除后这些引用会失效。确定删除吗？";
 
-  static String m62(count, label) =>
+  static String m63(count, label) =>
       "${Intl.plural(count, other: '${label} 条规则')}";
 
-  static String m63(appName) => "${appName}（安全模式）";
+  static String m64(appName) => "${appName}（安全模式）";
 
-  static String m64(count) => "${count} 秒";
+  static String m65(count) => "${count} 秒";
 
-  static String m65(count) => "${count} 项生效";
+  static String m66(count) => "${count} 项生效";
 
-  static String m66(count) => "已选择 ${count} 项";
+  static String m67(count) => "已选择 ${count} 项";
 
-  static String m67(time) => "检测于 ${time}";
+  static String m68(time) => "检测于 ${time}";
 
-  static String m68(count) => "${count} 项设置";
+  static String m69(count) => "${count} 项设置";
 
-  static String m69(link) => "无法从 ${link} 中读取代理";
+  static String m70(link) => "无法从 ${link} 中读取代理";
 
-  static String m70(label) => "${label}只能是一项";
+  static String m71(label) => "${label}只能是一项";
 
-  static String m71(label) => "${label}必须为URL";
-
-  static String m72(count) => "${count} 年前";
+  static String m72(label) => "${label}必须为URL";
 
   static String m73(count) => "${count} 年前";
+
+  static String m74(count) => "${count} 年前";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -243,6 +245,13 @@ class MessageLookup extends MessageLookupByLibrary {
     "appIconDesign": MessageLookupByLibrary.simpleMessage("应用图标设计"),
     "appProxiesEmpty": MessageLookupByLibrary.simpleMessage("暂无本地代理"),
     "appendSystemDns": MessageLookupByLibrary.simpleMessage("追加系统DNS"),
+    "auroraColors": MessageLookupByLibrary.simpleMessage("底图配色"),
+    "auroraEditColor": m0,
+    "auroraRegenerate": MessageLookupByLibrary.simpleMessage("换一张"),
+    "auroraWallpaper": MessageLookupByLibrary.simpleMessage("随机渐变底图"),
+    "auroraWallpaperDescription": MessageLookupByLibrary.simpleMessage(
+      "选择 1–3 种颜色生成淡雅极光，图案保持不变，直到主动换图。",
+    ),
     "authentication": MessageLookupByLibrary.simpleMessage("认证"),
     "authenticationDesc": MessageLookupByLibrary.simpleMessage(
       "认证开启后，使用本地代理端口需要账号密码。",
@@ -281,7 +290,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "batchLinkInputTip": MessageLookupByLibrary.simpleMessage("每行一个链接"),
     "batchListInputTip": MessageLookupByLibrary.simpleMessage("每行一项，也可用逗号分隔"),
     "batchMapInputTip": MessageLookupByLibrary.simpleMessage("每行一条，键和值之间用空格分隔"),
-    "batchPreviewTip": m0,
+    "batchPreviewTip": m1,
     "batchUrlInputTip": MessageLookupByLibrary.simpleMessage("每行一个URL"),
     "batteryOptimizationDesc": MessageLookupByLibrary.simpleMessage(
       "忽略电池优化可保证应用在后台运行。",
@@ -328,7 +337,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "clearDataAndExitTip": MessageLookupByLibrary.simpleMessage(
       "将删除所有配置、设置和本地数据，随后关闭应用。重新打开即可从头开始。",
     ),
-    "clearDataFailed": m1,
+    "clearDataFailed": m2,
     "clearSearch": MessageLookupByLibrary.simpleMessage("清除搜索"),
     "clientFingerprint": MessageLookupByLibrary.simpleMessage("客户端指纹"),
     "clipboardExport": MessageLookupByLibrary.simpleMessage("导出剪贴板"),
@@ -365,38 +374,38 @@ class MessageLookup extends MessageLookupByLibrary {
     "copyLink": MessageLookupByLibrary.simpleMessage("复制链接"),
     "copySuccess": MessageLookupByLibrary.simpleMessage("复制成功"),
     "core": MessageLookupByLibrary.simpleMessage("内核"),
-    "coreBlockedByPolicyTip": m2,
+    "coreBlockedByPolicyTip": m3,
     "coreBlockedBySmartAppControlTip": MessageLookupByLibrary.simpleMessage(
       "Windows 智能应用控制拦截了未签名的 FlClashCore.exe。请打开 Windows 安全中心 → 应用和浏览器控制 → 智能应用控制设置，选择「关闭」后重新启动 FlClash。智能应用控制关闭后无法再开启，除非重装 Windows。",
     ),
     "coreStatus": MessageLookupByLibrary.simpleMessage("核心状态"),
     "country": MessageLookupByLibrary.simpleMessage("区域"),
     "crashDetected": MessageLookupByLibrary.simpleMessage("检测到崩溃"),
-    "crashDetectedTip": m3,
+    "crashDetectedTip": m4,
     "crashTest": MessageLookupByLibrary.simpleMessage("崩溃测试"),
     "crashlytics": MessageLookupByLibrary.simpleMessage("崩溃分析"),
     "crashlyticsTip": MessageLookupByLibrary.simpleMessage(
       "崩溃分析开启后，应用崩溃时会上传不含敏感信息的日志。",
     ),
     "create": MessageLookupByLibrary.simpleMessage("创建"),
-    "createProfileFromUrlTip": m4,
+    "createProfileFromUrlTip": m5,
     "creationTime": MessageLookupByLibrary.simpleMessage("创建时间"),
     "custom": MessageLookupByLibrary.simpleMessage("自定义"),
-    "customIssueCoreRejected": m5,
-    "customIssueDialerLoop": m6,
-    "customIssueDuplicateName": m7,
+    "customIssueCoreRejected": m6,
+    "customIssueDialerLoop": m7,
+    "customIssueDuplicateName": m8,
     "customIssueEmptyName": MessageLookupByLibrary.simpleMessage("名称为空"),
-    "customIssueGroupLoop": m8,
-    "customIssueInvalidEmptyFallback": m9,
-    "customIssueInvalidFilter": m10,
-    "customIssueMissingDialer": m11,
-    "customIssueMissingProviders": m12,
-    "customIssueMissingProxies": m13,
+    "customIssueGroupLoop": m9,
+    "customIssueInvalidEmptyFallback": m10,
+    "customIssueInvalidFilter": m11,
+    "customIssueMissingDialer": m12,
+    "customIssueMissingProviders": m13,
+    "customIssueMissingProxies": m14,
     "customIssueNoProxySource": MessageLookupByLibrary.simpleMessage(
       "未选择任何代理或代理集，内核会拒绝该策略组",
     ),
-    "customIssueReservedName": m14,
-    "customIssuesSummary": m15,
+    "customIssueReservedName": m15,
+    "customIssuesSummary": m16,
     "customProfile": MessageLookupByLibrary.simpleMessage("自定义"),
     "customProfileDesc": MessageLookupByLibrary.simpleMessage(
       "基于应用代理和其他配置组建策略组与规则",
@@ -415,8 +424,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "databaseWriteFailedTip": MessageLookupByLibrary.simpleMessage(
       "保存更改失败，已回滚",
     ),
-    "daysAgo": m16,
-    "daysAgoShort": m17,
+    "daysAgo": m17,
+    "daysAgoShort": m18,
     "defaultSelected": MessageLookupByLibrary.simpleMessage("默认选中"),
     "defaultText": MessageLookupByLibrary.simpleMessage("默认"),
     "definitionNotMap": MessageLookupByLibrary.simpleMessage(
@@ -426,15 +435,15 @@ class MessageLookup extends MessageLookupByLibrary {
     "delayFailed": MessageLookupByLibrary.simpleMessage("失败"),
     "delayTest": MessageLookupByLibrary.simpleMessage("延迟测试"),
     "delete": MessageLookupByLibrary.simpleMessage("删除"),
-    "deleteMultipTip": m18,
-    "deleteTip": m19,
+    "deleteMultipTip": m19,
+    "deleteTip": m20,
     "desc": MessageLookupByLibrary.simpleMessage(
       "基于ClashMeta的多平台代理客户端，简单易用，开源无广告。",
     ),
     "destination": MessageLookupByLibrary.simpleMessage("目标地址"),
     "destinationGeoIP": MessageLookupByLibrary.simpleMessage("目标地理定位"),
     "destinationIPASN": MessageLookupByLibrary.simpleMessage("目标IP ASN"),
-    "details": m20,
+    "details": m21,
     "detectionTip": MessageLookupByLibrary.simpleMessage("依赖第三方api，仅供参考"),
     "developerMode": MessageLookupByLibrary.simpleMessage("开发者模式"),
     "developerModeEnableTip": MessageLookupByLibrary.simpleMessage("开发者模式已启用。"),
@@ -442,7 +451,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "dialerProxyDesc": MessageLookupByLibrary.simpleMessage(
       "拨号代理为连接 NTP 服务器使用的出站。",
     ),
-    "dialerProxyLoopStopped": m21,
+    "dialerProxyLoopStopped": m22,
     "direct": MessageLookupByLibrary.simpleMessage("直连"),
     "disableIcmpForwarding": MessageLookupByLibrary.simpleMessage("禁用ICMP转发"),
     "disableIcmpForwardingDesc": MessageLookupByLibrary.simpleMessage(
@@ -552,7 +561,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "editSsid": MessageLookupByLibrary.simpleMessage("编辑SSID"),
     "editorUnavailable": MessageLookupByLibrary.simpleMessage("编辑器不可用"),
     "emptyFallback": MessageLookupByLibrary.simpleMessage("空组兜底"),
-    "emptyTip": m22,
+    "emptyTip": m23,
     "en": MessageLookupByLibrary.simpleMessage("英语"),
     "enabled": MessageLookupByLibrary.simpleMessage("已开启"),
     "entries": MessageLookupByLibrary.simpleMessage("个条目"),
@@ -568,7 +577,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "excludeSsidsDesc": MessageLookupByLibrary.simpleMessage(
       "连接到被排除 SSID 的 Wi-Fi 时，将会自动切换应用运行状态。",
     ),
-    "existsTip": m23,
+    "existsTip": m24,
     "exit": MessageLookupByLibrary.simpleMessage("退出"),
     "exitFullScreen": MessageLookupByLibrary.simpleMessage("退出全屏"),
     "exitNodes": MessageLookupByLibrary.simpleMessage("出口节点"),
@@ -590,8 +599,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "externalLink": MessageLookupByLibrary.simpleMessage("外部链接"),
     "extraLarge": MessageLookupByLibrary.simpleMessage("超大"),
     "fade": MessageLookupByLibrary.simpleMessage("淡入"),
-    "failedCount": m24,
-    "failedItem": m25,
+    "failedCount": m25,
+    "failedItem": m26,
     "fakeipFilter": MessageLookupByLibrary.simpleMessage("Fake-IP过滤"),
     "fakeipFilterMode": MessageLookupByLibrary.simpleMessage("Fake-IP过滤模式"),
     "fakeipFilterModeDesc": MessageLookupByLibrary.simpleMessage(
@@ -626,8 +635,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "fruitSaladScheme": MessageLookupByLibrary.simpleMessage("果缤纷"),
     "general": MessageLookupByLibrary.simpleMessage("常规"),
     "geoResources": MessageLookupByLibrary.simpleMessage("Geo"),
-    "geoSkipped": m26,
-    "geoUpdated": m27,
+    "geoSkipped": m27,
+    "geoUpdated": m28,
     "geodataLoader": MessageLookupByLibrary.simpleMessage("Geo低内存模式"),
     "global": MessageLookupByLibrary.simpleMessage("全局"),
     "go": MessageLookupByLibrary.simpleMessage("前往"),
@@ -650,20 +659,20 @@ class MessageLookup extends MessageLookupByLibrary {
     "hopInterval": MessageLookupByLibrary.simpleMessage("跳跃间隔"),
     "host": MessageLookupByLibrary.simpleMessage("主机"),
     "hostname": MessageLookupByLibrary.simpleMessage("主机名"),
-    "hotkeyConflictWith": m28,
+    "hotkeyConflictWith": m29,
     "hotkeyDesc": MessageLookupByLibrary.simpleMessage(
       "全局快捷键在窗口隐藏时依然生效，点击操作即可录制组合键。",
     ),
     "hotkeyManagement": MessageLookupByLibrary.simpleMessage("快捷键管理"),
-    "hotkeyNeedsModifier": m29,
+    "hotkeyNeedsModifier": m30,
     "hotkeyNotSet": MessageLookupByLibrary.simpleMessage("未设置"),
     "hotkeyUnavailable": MessageLookupByLibrary.simpleMessage(
       "未能注册，可能已被其他应用占用",
     ),
     "hours": MessageLookupByLibrary.simpleMessage("小时"),
-    "hoursAgo": m30,
-    "hoursAgoShort": m31,
-    "hoursCount": m32,
+    "hoursAgo": m31,
+    "hoursAgoShort": m32,
+    "hoursCount": m33,
     "icon": MessageLookupByLibrary.simpleMessage("图标"),
     "iconRecords": MessageLookupByLibrary.simpleMessage("图标记录"),
     "iconSets": MessageLookupByLibrary.simpleMessage("图标集"),
@@ -733,20 +742,20 @@ class MessageLookup extends MessageLookupByLibrary {
     "invalidNetworkContent": MessageLookupByLibrary.simpleMessage(
       "仅支持 tcp 或 udp",
     ),
-    "invalidPolicy": m33,
+    "invalidPolicy": m34,
     "invalidPortRangeContent": MessageLookupByLibrary.simpleMessage(
       "请输入端口或范围，如 443 或 8000-9000",
     ),
     "invalidProfileQrcode": MessageLookupByLibrary.simpleMessage(
       "该二维码不包含配置文件链接",
     ),
-    "invalidProxy": m34,
-    "invalidProxyProvider": m35,
+    "invalidProxy": m35,
+    "invalidProxyProvider": m36,
     "invalidRangeContent": MessageLookupByLibrary.simpleMessage(
       "请输入数字或范围，如 80 或 8000-9000，多个用 / 分隔",
     ),
-    "invalidRuleSet": m36,
-    "invalidSubRule": m37,
+    "invalidRuleSet": m37,
+    "invalidSubRule": m38,
     "ipAddress": MessageLookupByLibrary.simpleMessage("IP 地址"),
     "ipAsn": MessageLookupByLibrary.simpleMessage("ASN"),
     "ipFlagAbuser": MessageLookupByLibrary.simpleMessage("滥用记录"),
@@ -777,7 +786,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "开启 IPv6 后，VPN 允许 IPv6 入站。",
     ),
     "ipv6Timeout": MessageLookupByLibrary.simpleMessage("IPv6超时（毫秒）"),
-    "itemsCount": m38,
+    "itemsCount": m39,
     "ja": MessageLookupByLibrary.simpleMessage("日语"),
     "justNow": MessageLookupByLibrary.simpleMessage("刚刚"),
     "keepAliveIdle": MessageLookupByLibrary.simpleMessage("TCP 保持活动空闲时间"),
@@ -793,7 +802,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "layout": MessageLookupByLibrary.simpleMessage("布局"),
     "light": MessageLookupByLibrary.simpleMessage("浅色"),
-    "lineIssueTip": m39,
+    "lineIssueTip": m40,
     "lineWrap": MessageLookupByLibrary.simpleMessage("自动换行"),
     "link": MessageLookupByLibrary.simpleMessage("链接"),
     "linkDesc": MessageLookupByLibrary.simpleMessage("通过订阅链接或代理分享链接获取配置文件"),
@@ -818,7 +827,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "locationPermissionDesc": MessageLookupByLibrary.simpleMessage(
       "根据系统要求，获取Wi-Fi名称需要您授予位置权限。Android 上请选择“始终允许”，否则应用在后台时无法获取 Wi-Fi 名称。",
     ),
-    "locationPermissionGuide": m40,
+    "locationPermissionGuide": m41,
     "locationPermissionRequired": MessageLookupByLibrary.simpleMessage(
       "需要位置权限",
     ),
@@ -834,7 +843,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "matchSourceIp": MessageLookupByLibrary.simpleMessage("匹配来源IP"),
     "matchTarget": MessageLookupByLibrary.simpleMessage("MATCH-TARGET"),
     "maxFailedTimes": MessageLookupByLibrary.simpleMessage("最大失败次数"),
-    "maxLengthTip": m41,
+    "maxLengthTip": m42,
     "maximize": MessageLookupByLibrary.simpleMessage("最大化"),
     "memoryAppResident": MessageLookupByLibrary.simpleMessage("常驻内存"),
     "memoryAppShared": MessageLookupByLibrary.simpleMessage("应用及共享"),
@@ -851,25 +860,25 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "memoryInfo": MessageLookupByLibrary.simpleMessage("内存信息"),
     "memoryReleased": MessageLookupByLibrary.simpleMessage("内存已释放"),
-    "memoryReleasedSize": m42,
+    "memoryReleasedSize": m43,
     "messageTest": MessageLookupByLibrary.simpleMessage("消息测试"),
     "messageTestTip": MessageLookupByLibrary.simpleMessage("这是一条消息。"),
     "min": MessageLookupByLibrary.simpleMessage("最小"),
     "minimize": MessageLookupByLibrary.simpleMessage("最小化"),
     "minimizeOnExit": MessageLookupByLibrary.simpleMessage("退出时最小化"),
-    "minutesAgo": m43,
-    "minutesAgoShort": m44,
+    "minutesAgo": m44,
+    "minutesAgoShort": m45,
     "mixedPort": MessageLookupByLibrary.simpleMessage("混合端口"),
     "mode": MessageLookupByLibrary.simpleMessage("模式"),
     "monochromeScheme": MessageLookupByLibrary.simpleMessage("单色"),
-    "monthsAgo": m45,
-    "monthsAgoShort": m46,
+    "monthsAgo": m46,
+    "monthsAgoShort": m47,
     "more": MessageLookupByLibrary.simpleMessage("更多"),
     "name": MessageLookupByLibrary.simpleMessage("名称"),
     "navigationBarStyle": MessageLookupByLibrary.simpleMessage("底栏"),
     "network": MessageLookupByLibrary.simpleMessage("网络"),
-    "networkAccessDeniedError": m47,
-    "networkBadResponseError": m48,
+    "networkAccessDeniedError": m48,
+    "networkBadResponseError": m49,
     "networkCancelledError": MessageLookupByLibrary.simpleMessage("请求已取消"),
     "networkConnectionError": MessageLookupByLibrary.simpleMessage(
       "无法连接到服务器，请检查网络连接或代理设置",
@@ -879,13 +888,13 @@ class MessageLookup extends MessageLookupByLibrary {
       "无法解析服务器地址，请确认链接正确且 DNS 可用",
     ),
     "networkName": MessageLookupByLibrary.simpleMessage("网络名称"),
-    "networkNotFoundError": m49,
+    "networkNotFoundError": m50,
     "networkRateLimitedError": MessageLookupByLibrary.simpleMessage(
       "请求过于频繁（HTTP 429），请稍后再试",
     ),
-    "networkRequestFailed": m50,
+    "networkRequestFailed": m51,
     "networkSecret": MessageLookupByLibrary.simpleMessage("网络密码"),
-    "networkServerError": m51,
+    "networkServerError": m52,
     "networkSpeed": MessageLookupByLibrary.simpleMessage("网络速度"),
     "networkTimeoutError": MessageLookupByLibrary.simpleMessage(
       "请求超时，请检查网络或代理后重试",
@@ -915,9 +924,9 @@ class MessageLookup extends MessageLookupByLibrary {
       "开启 NTP 后从 NTP 服务器获取时间，而非系统时钟。",
     ),
     "nullProfileDesc": MessageLookupByLibrary.simpleMessage("添加一个配置文件后即可开始使用"),
-    "nullTip": m52,
-    "numberRangeTip": m53,
-    "numberTip": m54,
+    "nullTip": m53,
+    "numberRangeTip": m54,
+    "numberTip": m55,
     "obfs": MessageLookupByLibrary.simpleMessage("混淆"),
     "obfsHost": MessageLookupByLibrary.simpleMessage("混淆主机"),
     "obfsMode": MessageLookupByLibrary.simpleMessage("混淆模式"),
@@ -961,7 +970,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "port": MessageLookupByLibrary.simpleMessage("端口"),
     "portConflictTip": MessageLookupByLibrary.simpleMessage("请输入不同的端口"),
     "portHopping": MessageLookupByLibrary.simpleMessage("端口跳跃"),
-    "portTip": m55,
+    "portTip": m56,
     "ports": MessageLookupByLibrary.simpleMessage("端口"),
     "preSharedKey": MessageLookupByLibrary.simpleMessage("预共享密钥"),
     "prerequisites": MessageLookupByLibrary.simpleMessage("前置条件"),
@@ -997,19 +1006,19 @@ class MessageLookup extends MessageLookupByLibrary {
     "protocol": MessageLookupByLibrary.simpleMessage("协议"),
     "protocolParam": MessageLookupByLibrary.simpleMessage("协议参数"),
     "protocolVersion": MessageLookupByLibrary.simpleMessage("协议版本"),
-    "providerInUse": m56,
+    "providerInUse": m57,
     "providerUrlTip": MessageLookupByLibrary.simpleMessage("仅支持远程资源"),
     "providers": MessageLookupByLibrary.simpleMessage("外部资源"),
     "proxies": MessageLookupByLibrary.simpleMessage("代理"),
-    "proxiesCount": m57,
+    "proxiesCount": m58,
     "proxiesEmpty": MessageLookupByLibrary.simpleMessage("代理为空"),
-    "proxiesProfileLabel": m58,
-    "proxiesRemovedTip": m59,
-    "proxiesReplacedTip": m60,
+    "proxiesProfileLabel": m59,
+    "proxiesRemovedTip": m60,
+    "proxiesReplacedTip": m61,
     "proxyChains": MessageLookupByLibrary.simpleMessage("代理链"),
     "proxyGroup": MessageLookupByLibrary.simpleMessage("策略组"),
     "proxyGroupEmpty": MessageLookupByLibrary.simpleMessage("策略组为空"),
-    "proxyGroupInUse": m61,
+    "proxyGroupInUse": m62,
     "proxyGroupNameDuplicate": MessageLookupByLibrary.simpleMessage("策略组名称重复"),
     "proxyProviders": MessageLookupByLibrary.simpleMessage("代理集"),
     "proxyProvidersEmpty": MessageLookupByLibrary.simpleMessage("代理集为空"),
@@ -1186,10 +1195,10 @@ class MessageLookup extends MessageLookupByLibrary {
       "规则必须以受支持的类型开头，例如 DOMAIN,example.com,DIRECT",
     ),
     "rules": MessageLookupByLibrary.simpleMessage("规则"),
-    "rulesCount": m62,
+    "rulesCount": m63,
     "runTime": MessageLookupByLibrary.simpleMessage("启动时间"),
     "safeMode": MessageLookupByLibrary.simpleMessage("安全模式"),
-    "safeModeAppTitle": m63,
+    "safeModeAppTitle": m64,
     "save": MessageLookupByLibrary.simpleMessage("保存"),
     "saveChanges": MessageLookupByLibrary.simpleMessage("是否保存更改？"),
     "script": MessageLookupByLibrary.simpleMessage("脚本"),
@@ -1197,9 +1206,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "scrollToSelected": MessageLookupByLibrary.simpleMessage("滚动到已选"),
     "search": MessageLookupByLibrary.simpleMessage("搜索"),
     "seconds": MessageLookupByLibrary.simpleMessage("秒"),
-    "secondsCount": m64,
+    "secondsCount": m65,
     "secretKey": MessageLookupByLibrary.simpleMessage("密钥"),
-    "sectionsInEffect": m65,
+    "sectionsInEffect": m66,
     "selectAll": MessageLookupByLibrary.simpleMessage("全选"),
     "selectProxies": MessageLookupByLibrary.simpleMessage("选择代理"),
     "selectProxyProviders": MessageLookupByLibrary.simpleMessage("选择代理集"),
@@ -1207,13 +1216,13 @@ class MessageLookup extends MessageLookupByLibrary {
     "selectSplitStrategy": MessageLookupByLibrary.simpleMessage("请选择分流策略"),
     "selectSubRule": MessageLookupByLibrary.simpleMessage("请选择子规则"),
     "selected": MessageLookupByLibrary.simpleMessage("已选择"),
-    "selectedCountTitle": m66,
+    "selectedCountTitle": m67,
     "server": MessageLookupByLibrary.simpleMessage("服务器"),
     "serviceAvailable": MessageLookupByLibrary.simpleMessage("可用"),
     "serviceBlocked": MessageLookupByLibrary.simpleMessage("已被封禁"),
     "serviceCheck": MessageLookupByLibrary.simpleMessage("检测"),
     "serviceCheckAll": MessageLookupByLibrary.simpleMessage("全部检测"),
-    "serviceCheckedAt": m67,
+    "serviceCheckedAt": m68,
     "serviceComingSoon": MessageLookupByLibrary.simpleMessage("即将上线"),
     "serviceDisallowedIsp": MessageLookupByLibrary.simpleMessage("不允许的 ISP"),
     "serviceFailed": MessageLookupByLibrary.simpleMessage("检测失败"),
@@ -1226,8 +1235,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "serviceUnsupportedRegion": MessageLookupByLibrary.simpleMessage("地区不支持"),
     "settingEntries": MessageLookupByLibrary.simpleMessage("设置项"),
     "settings": MessageLookupByLibrary.simpleMessage("设置"),
-    "settingsCount": m68,
-    "shareLinkUnreadable": m69,
+    "settingsCount": m69,
+    "shareLinkUnreadable": m70,
     "shareLinksInvalid": MessageLookupByLibrary.simpleMessage("无法从链接中读取代理"),
     "show": MessageLookupByLibrary.simpleMessage("显示"),
     "showLess": MessageLookupByLibrary.simpleMessage("收起"),
@@ -1246,7 +1255,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "singleShareLinkOnly": MessageLookupByLibrary.simpleMessage(
       "这里只能填写一条链接，多条请在列表的快速编辑中填写",
     ),
-    "singleValueTip": m70,
+    "singleValueTip": m71,
     "size": MessageLookupByLibrary.simpleMessage("尺寸"),
     "skipCertVerify": MessageLookupByLibrary.simpleMessage("跳过证书验证"),
     "skipDomain": MessageLookupByLibrary.simpleMessage("跳过域名"),
@@ -1347,7 +1356,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "upload": MessageLookupByLibrary.simpleMessage("上传"),
     "uploadBandwidth": MessageLookupByLibrary.simpleMessage("上行带宽"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
-    "urlTip": m71,
+    "urlTip": m72,
     "useHosts": MessageLookupByLibrary.simpleMessage("使用Hosts"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage("使用系统Hosts"),
     "usedTraffic": MessageLookupByLibrary.simpleMessage("已用流量"),
@@ -1370,8 +1379,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "writeToSystemDesc": MessageLookupByLibrary.simpleMessage(
       "写入系统会同时设置系统时钟，Android 上不生效。",
     ),
-    "yearsAgo": m72,
-    "yearsAgoShort": m73,
+    "yearsAgo": m73,
+    "yearsAgoShort": m74,
     "yes": MessageLookupByLibrary.simpleMessage("是"),
     "zhCN": MessageLookupByLibrary.simpleMessage("中文简体"),
   };

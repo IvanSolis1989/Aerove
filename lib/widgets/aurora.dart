@@ -63,14 +63,15 @@ class AuroraAppSurface extends ConsumerWidget {
     return AuroraAppearance(
       enabled: enabled,
       child: Theme(
-              data: enabled
-                  ? theme.copyWith(scaffoldBackgroundColor: Colors.transparent)
-                  : theme,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  Positioned.fill(
-                    child: enabled ? IgnorePointer(
+        data: enabled
+            ? theme.copyWith(scaffoldBackgroundColor: Colors.transparent)
+            : theme,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Positioned.fill(
+              child: enabled
+                  ? IgnorePointer(
                       child: AnimatedSwitcher(
                         duration: MediaQuery.disableAnimationsOf(context)
                             ? Duration.zero
@@ -82,18 +83,21 @@ class AuroraAppSurface extends ConsumerWidget {
                             theme.brightness,
                           )),
                           child: SeededAuroraWallpaper(
-                            colors: [for (final color in settings.colors) Color(color)],
+                            colors: [
+                              for (final color in settings.colors) Color(color),
+                            ],
                             seed: settings.seed,
                             brightness: theme.brightness,
                           ),
                         ),
                       ),
-                    ) : const SizedBox.shrink(),
-                  ),
-                  child,
-                ],
-              ),
+                    )
+                  : const SizedBox.shrink(),
             ),
+            child,
+          ],
+        ),
+      ),
     );
   }
 }

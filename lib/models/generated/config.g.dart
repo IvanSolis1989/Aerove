@@ -361,6 +361,11 @@ _ThemeProps _$ThemePropsFromJson(Map<String, dynamic> json) => _ThemeProps(
       DynamicSchemeVariant.content,
   pureBlack: json['pureBlack'] as bool? ?? false,
   sidebarBlur: json['sidebarBlur'] as bool? ?? true,
+  auroraEnabled: json['auroraEnabled'] as bool? ?? true,
+  auroraColors: json['auroraColors'] == null
+      ? const [0xFF9AAFC5, 0xFFC4BDD3]
+      : _auroraColorsFromJson(json['auroraColors']),
+  auroraSeed: (json['auroraSeed'] as num?)?.toInt() ?? 271828,
   textScale: json['textScale'] == null
       ? const TextScale()
       : TextScale.fromJson(json['textScale'] as Map<String, dynamic>),
@@ -375,6 +380,9 @@ Map<String, dynamic> _$ThemePropsToJson(_ThemeProps instance) =>
       'schemeVariant': _$DynamicSchemeVariantEnumMap[instance.schemeVariant]!,
       'pureBlack': instance.pureBlack,
       'sidebarBlur': instance.sidebarBlur,
+      'auroraEnabled': instance.auroraEnabled,
+      'auroraColors': instance.auroraColors,
+      'auroraSeed': instance.auroraSeed,
       'textScale': instance.textScale,
       'systemFontFamily': instance.fontFamily,
     };

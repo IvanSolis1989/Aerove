@@ -33,9 +33,7 @@ void main() {
       UncontrolledProviderScope(
         container: container,
         child: const TestApp(
-          child: Scaffold(
-            body: SingleChildScrollView(child: AuroraSettings()),
-          ),
+          child: Scaffold(body: SingleChildScrollView(child: AuroraSettings())),
         ),
       ),
     );
@@ -57,7 +55,9 @@ void main() {
     expect(readTheme(), original);
   });
 
-  testWidgets('only a requested new wallpaper changes its seed', (tester) async {
+  testWidgets('only a requested new wallpaper changes its seed', (
+    tester,
+  ) async {
     await pumpSettings(tester);
     final original = readTheme();
     await tester.pumpAndSettle();
@@ -70,9 +70,12 @@ void main() {
     final seed = readTheme().auroraSeed;
     await tester.pumpAndSettle();
     expect(readTheme().auroraSeed, seed);
-    expect(tester.widget<SeededAuroraWallpaper>(
-      find.byType(SeededAuroraWallpaper),
-    ).seed, seed);
+    expect(
+      tester
+          .widget<SeededAuroraWallpaper>(find.byType(SeededAuroraWallpaper))
+          .seed,
+      seed,
+    );
   });
 
   testWidgets('adds a third color and hides the add action', (tester) async {
@@ -118,7 +121,10 @@ void main() {
     final previews = tester.widgetList<SeededAuroraWallpaper>(
       find.byType(SeededAuroraWallpaper),
     );
-    expect(previews.last.colors.first.toARGB32(), isNot(original.auroraColors.first));
+    expect(
+      previews.last.colors.first.toARGB32(),
+      isNot(original.auroraColors.first),
+    );
     expect(previews.last.seed, original.auroraSeed);
     expect(readTheme(), original);
 

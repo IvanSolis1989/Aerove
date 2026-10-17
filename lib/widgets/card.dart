@@ -151,7 +151,8 @@ class CommonCard extends StatelessWidget {
     }
     if (type == CommonCardType.filled) {
       if (AuroraAppearance.enabledOf(context)) {
-        final emphasized = isSelected ||
+        final emphasized =
+            isSelected ||
             states.contains(WidgetState.hovered) ||
             states.contains(WidgetState.focused) ||
             states.contains(WidgetState.pressed);

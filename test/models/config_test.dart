@@ -671,7 +671,9 @@ void main() {
     });
 
     test('a single valid wallpaper color remains a single color', () {
-      final props = ThemeProps.fromJson({'auroraColors': [0x00112233]});
+      final props = ThemeProps.fromJson({
+        'auroraColors': [0x00112233],
+      });
       expect(props.auroraColors, [0xFF112233]);
     });
   });

@@ -9,6 +9,11 @@
 现阶段优先开发 Android 版，视觉方向为淡雅极光与玻璃质感，保留上游作者署名和许可声明。
 本阶段保留现有 Android 包 ID 以维持兼容性。
 
+在 **工具 → 主题 → 随机渐变底图** 中选择 1–3 色，点击“换一张”改变图案。
+配色和图案随配置保存；关闭后恢复普通主题，高对比度或深色纯黑模式使用实色表面。
+[Android 构建与 APK](https://github.com/IvanSolis1989/XClash/actions/workflows/xclash-android.yaml)
+· [上游自动同步说明](docs/upstream-sync.md)
+
 [English](README.md) · **简体中文**
 
 [![Release](https://img.shields.io/github/v/release/chen08209/FlClash?style=flat-square&label=release)](https://github.com/chen08209/FlClash/releases/latest)

@@ -1,4 +1,5 @@
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/widgets/aurora.dart';
 import 'package:fl_clash/icons/icons.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -239,7 +240,13 @@ class TonalButtonTheme extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
-    final fill = grouped ? Colors.transparent : colorScheme.secondaryContainer;
+    final fill = grouped
+        ? Colors.transparent
+        : AuroraAppearance.surfaceColorOf(
+            context,
+            colorScheme.secondaryContainer,
+            opacity: 0.4,
+          );
     final foreground = colorScheme.onSecondaryContainer;
     final disabledForeground = foreground.withValues(alpha: 0.38);
     ButtonStyle feedback(Color? tint) => ButtonStyle(

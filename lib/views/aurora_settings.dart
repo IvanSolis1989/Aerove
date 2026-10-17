@@ -63,9 +63,9 @@ class AuroraSettings extends ConsumerWidget {
           subtitle: (strings) => strings.auroraWallpaperDescription,
           leading: const GlyphIcon(AppGlyphs.blur),
           onChanged: (ref, value) {
-            ref.read(themeSettingProvider.notifier).update(
-              (state) => state.copyWith(auroraEnabled: value),
-            );
+            ref
+                .read(themeSettingProvider.notifier)
+                .update((state) => state.copyWith(auroraEnabled: value));
           },
         ),
         if (theme.auroraEnabled) ...[
@@ -202,7 +202,8 @@ class _AuroraPaletteDialogState extends State<_AuroraPaletteDialog> {
           child: Text(strings.cancel),
         ),
         TextButton(
-          onPressed: () => Navigator.of(context).pop(_controller.value.toARGB32()),
+          onPressed: () =>
+              Navigator.of(context).pop(_controller.value.toARGB32()),
           child: Text(strings.confirm),
         ),
       ],

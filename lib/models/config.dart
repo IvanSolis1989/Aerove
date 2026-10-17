@@ -386,7 +386,8 @@ abstract class ThemeProps with _$ThemeProps {
     @Default(true) bool sidebarBlur,
     @Default(true) bool auroraEnabled,
     @JsonKey(fromJson: _auroraColorsFromJson)
-    @Default([0xFF9AAFC5, 0xFFC4BDD3]) List<int> auroraColors,
+    @Default([0xFF9AAFC5, 0xFFC4BDD3])
+    List<int> auroraColors,
     @Default(271828) int auroraSeed,
     @Default(TextScale()) TextScale textScale,
     // `fontFamily` held the names of a removed enum, which old configs may

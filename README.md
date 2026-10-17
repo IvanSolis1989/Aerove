@@ -9,6 +9,12 @@
 with a soft aurora and glass visual direction. Upstream authorship and license notices are preserved.
 The existing Android package ID is retained for compatibility in this phase.
 
+Open **Tools → Theme → Random gradient wallpaper** to choose 1–3 colors and request a new pattern.
+The palette and seed are saved with the configuration. Disable it to restore ordinary surfaces;
+high contrast and dark pure-black mode keep opaque surfaces.
+[Android builds and APK](https://github.com/IvanSolis1989/XClash/actions/workflows/xclash-android.yaml)
+· [Upstream sync guide](docs/upstream-sync.md)
+
 **English** · [简体中文](README_zh_CN.md)
 
 [![Release](https://img.shields.io/github/v/release/chen08209/FlClash?style=flat-square&label=release)](https://github.com/chen08209/FlClash/releases/latest)

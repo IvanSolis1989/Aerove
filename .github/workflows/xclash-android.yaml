@@ -35,6 +35,8 @@ jobs:
           cache: true
       - name: Install dependencies
         run: flutter pub get
+      - name: Test repository commit hooks
+        run: bash tool/hooks/test.sh
       - name: Generate and format sources
         run: |
           cp pubspec.yaml "$RUNNER_TEMP/xclash-pubspec.yaml"
@@ -44,23 +46,34 @@ jobs:
           dart format lib test
           cp "$RUNNER_TEMP/xclash-pubspec.yaml" pubspec.yaml
           git diff --binary -- lib test > "$RUNNER_TEMP/xclash-generated.patch"
+          git add -- lib test
+          git write-tree > "$RUNNER_TEMP/xclash-verified-tree.txt"
+          git restore --staged -- lib test
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: xclash-generated
-          path: ${{ runner.temp }}/xclash-generated.patch
+          path: |
+            ${{ runner.temp }}/xclash-generated.patch
+            ${{ runner.temp }}/xclash-verified-tree.txt
       - name: Require committed generated sources
         if: ${{ !inputs.prepare_sources }}
         run: git diff --exit-code -- lib test
       - name: Analyze
         run: flutter analyze --no-fatal-infos
+      - name: Install preview font
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-noto-cjk
       - name: UI and configuration regressions
         env:
           XCLASH_SCREENSHOT_DIR: ${{ runner.temp }}/xclash-previews
         run: |
           sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
           flutter test --reporter expanded \
-            test/models/config_test.dart test/common/preferences_test.dart \
+            test/models/config_test.dart test/providers/config_test.dart \
+            test/manager/theme_manager_test.dart \
+            test/common/preferences_test.dart test/common/tray_menu_test.dart \
             test/views/aurora_settings_test.dart test/views/theme_test.dart \
             test/widgets/aurora_wallpaper_test.dart test/widgets/aurora_app_test.dart \
             test/widgets/navigation_dock_test.dart test/widgets/start_button_test.dart \
