@@ -173,34 +173,6 @@ class DashboardCardHeader extends StatelessWidget {
         ...leading,
       ],
     );
-    if (mobile) {
-      return ConstrainedBox(
-        constraints: BoxConstraints(minHeight: 26 * scale),
-        child: Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              spacing: 8,
-              children: [
-                if (glyph case final glyph?)
-                  GlyphIcon(glyph, size: glyphSize, color: iconColor),
-                Flexible(
-                  child: GlassText(
-                    title,
-                    style: style,
-                  ),
-                ),
-              ],
-            ),
-            ...leading,
-            ...end,
-          ],
-        ),
-      );
-    }
     return SizedBox(
       height: (mobile ? 26 : height) * scale,
       child: Row(
@@ -539,7 +511,7 @@ class DashboardChip extends StatelessWidget {
       DashboardChipTone.warn => (colors.warnContainer, colors.onWarnContainer),
     };
     return Container(
-      height: (large ? 28 : 24) * MediaQuery.textScalerOf(context).scale(1),
+      height: large ? 28 : 24,
       padding: EdgeInsets.symmetric(horizontal: large ? 12 : 10),
       decoration: ShapeDecoration(
         color: LiquidGlassScope.surfaceColorOf(context, background),
@@ -557,16 +529,13 @@ class DashboardChip extends StatelessWidget {
               ),
               child: const SizedBox.square(dimension: 6),
             ),
-          Flexible(
-            child: GlassText(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AppTextStyle.caption1
-                  .of(context, emphasized: true)
-                  .toTabular
-                  .copyWith(color: foreground),
-            ),
+          GlassText(
+            label,
+            maxLines: 1,
+            style: AppTextStyle.caption1
+                .of(context, emphasized: true)
+                .toTabular
+                .copyWith(color: foreground),
           ),
         ],
       ),

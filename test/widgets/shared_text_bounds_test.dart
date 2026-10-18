@@ -486,6 +486,9 @@ void main() {
             seedColor: Colors.teal,
             brightness: brightness,
           );
+          Future<List<Map<String, Object?>>> render(
+            LiquidGlassQuality? activeQuality,
+          ) async {
           await tester.pumpWidget(
             UncontrolledProviderScope(
               container: container,
@@ -515,10 +518,10 @@ void main() {
                           child: RepaintBoundary(
                             key: capture,
                             child: LiquidGlassScope(
-                              enabled: quality != null,
-                              quality: quality ?? LiquidGlassQuality.standard,
+                              enabled: activeQuality != null,
+                              quality: activeQuality ?? LiquidGlassQuality.standard,
                               child: LiquidGlassHost(
-                                enabled: quality != null,
+                                enabled: activeQuality != null,
                                 child: Stack(
                                   fit: StackFit.expand,
                                   children: [
@@ -586,7 +589,12 @@ void main() {
             ),
           );
           await tester.pumpAndSettle();
-          final rows = await _glyphRows(tester, capture, name);
+          return _glyphRows(tester, capture,
+            activeQuality == null && quality != null ? '$name-reference-none' : name);
+          }
+          final reference = await render(null);
+          final rows = quality == null ? reference : await render(quality);
+          expect(rows.length, reference.length);
           final protocols = rows.where(
             (row) => _protocols.contains(row['text']),
           );
@@ -604,12 +612,16 @@ void main() {
                   'Vertical glyph loss is distinct from recorded horizontal ellipsis: $name $row',
             );
           }
-          for (final row in delays) {
-            expect(row['ellipsis'], isFalse, reason: '$name $row');
-          }
-          for (final row in protocols) {
-            expect(row['ellipsis'], isFalse,
-              reason: 'Protocol metadata must remain complete: $name $row');
+          for (final (index, row) in rows.indexed) {
+            final original = reference[index];
+            expect(original['inkRows'] as int, greaterThan(0), reason: '$name $original');
+            expect(original['missingRows'], isEmpty, reason: '$name $original');
+            for (final field in ['text', 'bounds', 'layoutWidth', 'ellipsis']) {
+              expect(row[field], original[field],
+                reason: 'Glass must preserve the original layout and horizontal ellipsis: $name $row');
+            }
+            expect(row['missingRows'], isEmpty,
+              reason: 'Glass must preserve the glyph support of the original layout: $name $row');
           }
           expect(tester.takeException(), isNull);
           await tester.pumpWidget(const SizedBox.shrink());

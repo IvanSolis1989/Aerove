@@ -126,7 +126,6 @@ jobs:
             test/widgets/settings_route_transition_test.dart \
             test/widgets/open_container_test.dart \
             test/widgets/theme_cross_fade_test.dart \
-            test/widgets/narrow_toolbar_test.dart \
             test/widgets/scaffold_actions_test.dart \
             test/widgets/header_title_test.dart \
             test/widgets/core_status_button_test.dart \

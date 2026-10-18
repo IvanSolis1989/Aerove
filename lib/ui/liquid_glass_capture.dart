@@ -1366,7 +1366,7 @@ class _Replay {
         layer.maskRect,
         Paint()
           ..shader = inkShader
-          ..blendMode = BlendMode.srcIn,
+          ..blendMode = BlendMode.srcATop,
       );
       drawn.add(layer.maskRect);
     }

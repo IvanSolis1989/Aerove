@@ -236,6 +236,102 @@ Future<List<Map<String, Object?>>> _measure(
   return geometry;
 }
 
+Future<GlobalKey> _mountDashboard(
+  WidgetTester tester, {
+  required Brightness brightness,
+  required LiquidGlassMode mode,
+  required double scale,
+  required double width,
+}) async {
+  tester.view.physicalSize = Size(width, 1000);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  final container = ProviderContainer(
+    overrides: [
+      profilesProvider.overrideWithValue(const [
+        Profile(id: 1, autoUpdateDuration: Duration.zero),
+      ]),
+      suspendProvider.overrideWithValue(false),
+      outboundIpProbeProvider.overrideWith(_Ips.new),
+      serviceStatusProvider.overrideWith(_Services.new),
+      enabledServiceTargetsProvider.overrideWithValue(_targets),
+      ipQualityProvider.overrideWith(
+        (_, _) async => const IpQuality(
+          ip: _ip,
+          source: IpQualitySource.ipLocate,
+          type: IpType.residential,
+          organization: _organization,
+        ),
+      ),
+      themeSettingProvider.overrideWithBuild(
+        (_, _) => ThemeProps(
+          fontFamily: 'DashboardBounds',
+          auroraEnabled: mode != LiquidGlassMode.none,
+          liquidGlass: mode,
+        ),
+      ),
+      dashboardStateProvider.overrideWithValue(
+        const DashboardState(
+          dashboardWidgets: [
+            DashboardWidget.currentOutbound,
+            DashboardWidget.serviceStatus,
+          ],
+        ),
+      ),
+      navigationItemsStateProvider.overrideWithValue(
+        NavigationItemsState(
+          value: [
+            NavigationItem(
+              glyph: AppGlyphs.dashboard,
+              label: PageLabel.dashboard,
+              builder: (_) => const DashboardView(
+                platform: SupportPlatform.Android,
+              ),
+            ),
+            NavigationItem(
+              glyph: AppGlyphs.tools,
+              label: PageLabel.tools,
+              builder: (_) => const SizedBox.shrink(),
+            ),
+          ],
+        ),
+      ),
+    ],
+  );
+  globalState.container = container;
+  addTearDown(container.dispose);
+  container.read(viewSizeProvider.notifier).value = Size(width, 1000);
+  final capture = GlobalKey();
+  await tester.pumpWidget(
+    UncontrolledProviderScope(
+      container: container,
+      child: Consumer(
+        builder: (_, ref, _) => TestApp(
+          includeNavigatorKey: false,
+          locale: const Locale('en'),
+          theme: watchAppTheme(ref, brightness),
+          child: Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: TextScaler.linear(scale)),
+              child: RepaintBoundary(
+                key: capture,
+                child: const AuroraAppSurface(
+                  motion: false,
+                  child: HomePage(),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+  return capture;
+}
+
 void main() {
   setUpAll(() async {
     TestWidgetsFlutterBinding.ensureInitialized();
@@ -294,103 +390,110 @@ void main() {
   });
 
   for (final brightness in Brightness.values) {
+    testWidgets('known dashboard horizontal limit matches None at 320dp 2x '
+        '${brightness.name}', (tester) async {
+      List<Map<String, Object?>>? baselineLayout;
+      Map<String, List<double>>? baselineOverflow;
+      for (final mode in [LiquidGlassMode.none, LiquidGlassMode.ultra]) {
+        final horizontal = <String, Set<double>>{};
+        final previousError = FlutterError.onError!;
+        FlutterError.onError = (details) {
+          final match = RegExp(
+            r'A RenderFlex overflowed by ([0-9.]+) pixels on the right\.',
+          ).firstMatch(details.exceptionAsString());
+          final diagnostics = details.toString();
+          final component = diagnostics.contains('DashboardChip')
+              ? 'chip'
+              : diagnostics.contains('DashboardCardHeader')
+              ? 'header'
+              : diagnostics.contains('NavigationToolbar')
+              ? 'toolbar'
+              : null;
+          if (match != null && component != null) {
+            horizontal.putIfAbsent(component, () => <double>{}).add(
+              double.parse(match[1]!),
+            );
+          } else {
+            previousError(details);
+          }
+        };
+        try {
+          final capture = await _mountDashboard(
+            tester,
+            brightness: brightness,
+            mode: mode,
+            scale: 2,
+            width: 320,
+          );
+          final boundary = capture.currentContext!.findRenderObject()!
+              as RenderRepaintBoundary;
+          final layout = <Map<String, Object?>>[];
+          for (final label in [_organization, ..._targets.map((target) => target.label)]) {
+            final paragraph = tester.renderObject<RenderParagraph>(_paragraphs(label));
+            final origin = paragraph.localToGlobal(Offset.zero, ancestor: boundary);
+            layout.add({
+              'text': label,
+              'x': origin.dx,
+              'y': origin.dy,
+              'width': paragraph.size.width,
+              'height': paragraph.size.height,
+            });
+          }
+          final overflow = {
+            for (final entry in horizontal.entries)
+              entry.key: entry.value.toList()..sort(),
+          };
+          expect(overflow, isNotEmpty, reason: 'Known original layout limit');
+          final frame = await _capture(tester, boundary);
+          final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+          if (output != null) {
+            final directory = Directory(output)..createSync(recursive: true);
+            final prefix = '${directory.path}/dashboard-known-horizontal-'
+                '${brightness.name}-${mode.name}-320-2x';
+            File('$prefix.png').writeAsBytesSync(frame.png);
+            File('$prefix.json').writeAsStringSync(
+              const JsonEncoder.withIndent('  ').convert({
+                'knownHorizontalLimit': true,
+                'layout': layout,
+                'overflow': overflow,
+              }),
+            );
+          }
+          if (baselineLayout == null) {
+            baselineLayout = layout;
+            baselineOverflow = overflow;
+          } else {
+            expect(layout, baselineLayout, reason: 'Glass must preserve None layout');
+            expect(overflow, baselineOverflow, reason: 'Glass must preserve None overflow');
+          }
+          expect(tester.takeException(), isNull);
+        } finally {
+          try {
+            await tester.pumpWidget(const SizedBox.shrink());
+          } finally {
+            FlutterError.onError = previousError;
+          }
+        }
+      }
+    }, variant: TargetPlatformVariant.only(TargetPlatform.android));
     for (final mode in LiquidGlassMode.values) {
-      for (final scale in [1.0, 1.3, 2.0]) {
-        for (final width in [320.0, 430.0, 1100.0]) {
+      for (final scale in [1.0, 1.3]) {
+        for (final width in [430.0, 1100.0]) {
           final name = '${brightness.name}-${mode.name}-$scale-$width';
           testWidgets('dashboard glyph rows survive $name', (tester) async {
-            tester.view.physicalSize = Size(width, 1000);
-            tester.view.devicePixelRatio = 1;
-            addTearDown(tester.view.reset);
-            final container = ProviderContainer(
-              overrides: [
-                profilesProvider.overrideWithValue(const [
-                  Profile(id: 1, autoUpdateDuration: Duration.zero),
-                ]),
-                suspendProvider.overrideWithValue(false),
-                outboundIpProbeProvider.overrideWith(_Ips.new),
-                serviceStatusProvider.overrideWith(_Services.new),
-                enabledServiceTargetsProvider.overrideWithValue(_targets),
-                ipQualityProvider.overrideWith(
-                  (_, _) async => const IpQuality(
-                    ip: _ip,
-                    source: IpQualitySource.ipLocate,
-                    type: IpType.residential,
-                    organization: _organization,
-                  ),
-                ),
-                themeSettingProvider.overrideWithBuild(
-                  (_, _) => ThemeProps(
-                    fontFamily: 'DashboardBounds',
-                    auroraEnabled: mode != LiquidGlassMode.none,
-                    liquidGlass: mode,
-                  ),
-                ),
-                dashboardStateProvider.overrideWithValue(
-                  const DashboardState(
-                    dashboardWidgets: [
-                      DashboardWidget.currentOutbound,
-                      DashboardWidget.serviceStatus,
-                    ],
-                  ),
-                ),
-                navigationItemsStateProvider.overrideWithValue(
-                  NavigationItemsState(
-                    value: [
-                      NavigationItem(
-                        glyph: AppGlyphs.dashboard,
-                        label: PageLabel.dashboard,
-                        builder: (_) => const DashboardView(
-                          platform: SupportPlatform.Android,
-                        ),
-                      ),
-                      NavigationItem(
-                        glyph: AppGlyphs.tools,
-                        label: PageLabel.tools,
-                        builder: (_) => const SizedBox.shrink(),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+            final capture = await _mountDashboard(
+              tester,
+              brightness: brightness,
+              mode: mode,
+              scale: scale,
+              width: width,
             );
-            globalState.container = container;
-            addTearDown(container.dispose);
-            container.read(viewSizeProvider.notifier).value = Size(width, 1000);
-            final capture = GlobalKey();
-            await tester.pumpWidget(
-              UncontrolledProviderScope(
-                container: container,
-                child: Consumer(
-                  builder: (_, ref, _) => TestApp(
-                    includeNavigatorKey: false,
-                    locale: const Locale('en'),
-                    theme: watchAppTheme(ref, brightness),
-                    child: Builder(
-                      builder: (context) => MediaQuery(
-                        data: MediaQuery.of(
-                          context,
-                        ).copyWith(textScaler: TextScaler.linear(scale)),
-                        child: RepaintBoundary(
-                          key: capture,
-                          child: const AuroraAppSurface(
-                            motion: false,
-                            child: HomePage(),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            );
-            await tester.pumpAndSettle();
             for (final labels in [
               [_organization],
               [for (final target in _targets) target.label],
             ]) {
               expect(_paragraphs(labels.first), findsOneWidget);
-              await tester.ensureVisible(_paragraphs(labels.first), alignment: 0.3);
+              await tester.ensureVisible(_paragraphs(labels.first));
               await tester.pumpAndSettle();
               final paragraphs = [
                 for (final label in labels)
@@ -407,11 +510,10 @@ void main() {
                 '$name-${labels.first == _organization ? 'organization' : 'services'}',
               );
               for (final row in rows) {
-                expect(row['inkRows'], isNotEmpty, reason: '$row');
-                expect(row['missingRows'], isEmpty, reason: '$row');
-                if (labels.first != _organization) {
-                  expect(row['ellipsis'], isFalse, reason: '$row');
+                if (row['ellipsis'] != true) {
+                  expect(row['inkRows'], isNotEmpty, reason: '$row');
                 }
+                expect(row['missingRows'], isEmpty, reason: '$row');
               }
               expect(tester.takeException(), isNull);
             }

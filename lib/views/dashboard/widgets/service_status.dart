@@ -317,42 +317,21 @@ class _ServiceGrid extends StatelessWidget {
         ),
       );
     }
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        var labelWidth = 0.0;
-        for (final service in services) {
-          final painter = TextPainter(
-            text: TextSpan(
-              text: service.target.label,
-              style: AppTextStyle.footnote.of(context, emphasized: true),
-            ),
-            textDirection: Directionality.of(context),
-            textScaler: MediaQuery.textScalerOf(context),
-          )..layout();
-          labelWidth = max(labelWidth, painter.width);
-          painter.dispose();
-        }
-        final minimumWidth = cellHeight - _ServiceCell._inset * 2 + 27 + labelWidth;
-        final columns = !fill && constraints.maxWidth < minimumWidth * 2 + gap
-            ? 1
-            : _columns;
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          spacing: gap,
-          children: [
-            for (var start = 0; start < services.length; start += columns)
-              Row(
-                spacing: gap,
-                children: [
-                  for (final service in services.skip(start).take(columns))
-                    Expanded(
-                      child: _ServiceCell(service: service, height: cellHeight),
-                    ),
-                ],
-              ),
-          ],
-        );
-      },
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      spacing: gap,
+      children: [
+        for (var start = 0; start < services.length; start += _columns)
+          Row(
+            spacing: gap,
+            children: [
+              for (final service in services.skip(start).take(_columns))
+                Expanded(
+                  child: _ServiceCell(service: service, height: cellHeight),
+                ),
+            ],
+          ),
+      ],
     );
   }
 }

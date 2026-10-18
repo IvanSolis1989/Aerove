@@ -25,6 +25,135 @@ void main() {
     if (ui.ImageFilter.isShaderFilterSupported) await GlassInk.prepare();
   });
 
+  testWidgets('ink preserves glyphs beyond its logical mask in scene and replay', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(280, 180);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    const background = Color(0xFF16353F);
+    const frame = Rect.fromLTWH(60, 70, 36, 16);
+    final capture = GlobalKey();
+    Future<List<int>> render(String name, {
+      bool enabled = true,
+      bool replay = false,
+      bool clipped = false,
+      bool legacy = false,
+    }) async {
+      Widget glyph = const GlassInk(
+        source: Colors.white,
+        role: GlassInkRole.body,
+        child: _OverhangingGlyph(),
+      );
+      if (legacy) {
+        glyph = ShaderMask(
+          shaderCallback: (bounds) => const LinearGradient(
+            colors: [Colors.white, Colors.white],
+          ).createShader(bounds),
+          blendMode: BlendMode.srcIn,
+          child: const _OverhangingGlyph(),
+        );
+      }
+      if (clipped) glyph = ClipRect(child: glyph);
+      await tester.pumpWidget(MaterialApp(
+        theme: ThemeData(brightness: Brightness.dark),
+        home: LiquidGlassScope(enabled: enabled, child: LiquidGlassHost(
+          enabled: true,
+          child: Stack(fit: StackFit.expand, children: [
+            const Positioned.fill(child: LiquidGlassColorField(
+              child: LiquidGlassColorSource(child: ColoredBox(color: background)),
+            )),
+            Positioned.fill(child: RepaintBoundary(key: capture,
+              child: Stack(clipBehavior: Clip.none, children: [
+                Positioned.fromRect(rect: frame, child: glyph),
+                if (replay) const Positioned.fill(child: LiquidGlass(
+                  style: LiquidGlassStyle(tint: Colors.transparent, blur: 0,
+                    refraction: 0, bevel: 0, rim: 0),
+                  clipper: ShapeBorderClipper(shape: AppShape.none),
+                  child: SizedBox.expand(),
+                )),
+              ]),
+            )),
+          ]),
+        )),
+      ));
+      await tester.pumpAndSettle();
+      final boundary = capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+      return (await tester.runAsync(() async {
+        final image = await boundary.toImage();
+        try {
+          final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+          if (output != null) {
+            Directory(output).createSync(recursive: true);
+            final png = await image.toByteData(format: ui.ImageByteFormat.png);
+            File('$output/ink-overhang-$name.png').writeAsBytesSync(png!.buffer.asUint8List());
+          }
+          return (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!
+              .buffer.asUint8List().toList();
+        } finally {
+          image.dispose();
+        }
+      }))!;
+    }
+    final plain = await render('plain', enabled: false);
+    final legacy = await render('legacy-src-in', legacy: true);
+    final active = await render('scene');
+    final replayed = await render('replay', replay: true);
+    expect(LiquidGlassHost.debugLastCapture!.panes, hasLength(1));
+    expect(LiquidGlassHost.debugLastCapture!.panes.single.wallpaper, isFalse);
+    final clipped = await render('clipped', clipped: true);
+    var outside = 0, vertical = 0, changedInside = 0, replayedOutside = 0;
+    var maximumReplayError = 0;
+    var legacyMissing = 0;
+    for (var y = 0; y < 180; y++) {
+      for (var x = 0; x < 280; x++) {
+        final index = (y * 280 + x) * 4;
+        expect(active[index + 3], closeTo(plain[index + 3], 1),
+          reason: 'Scene must preserve original glyph alpha at $x,$y');
+        final inside = frame.contains(Offset(x + 0.5, y + 0.5));
+        if (!inside) expect(clipped[index + 3], 0);
+        if (plain[index + 3] != 255) continue;
+        if (!inside) {
+          outside++;
+          if (legacy[index + 3] < 128) legacyMissing++;
+          if (y < frame.top || y >= frame.bottom) vertical++;
+          if ((replayed[index] - (background.r * 255).round()).abs() > 20 ||
+              (replayed[index + 1] - (background.g * 255).round()).abs() > 20 ||
+              (replayed[index + 2] - (background.b * 255).round()).abs() > 20) {
+            replayedOutside++;
+          }
+        } else if (active[index] != plain[index] ||
+            active[index + 1] != plain[index + 1] ||
+            active[index + 2] != plain[index + 2]) {
+          changedInside++;
+        }
+        for (var channel = 0; channel < 3; channel++) {
+          maximumReplayError = math.max(maximumReplayError,
+            (active[index + channel] - replayed[index + channel]).abs());
+        }
+      }
+    }
+    final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+    if (output != null) {
+      File('$output/ink-overhang-support.json').writeAsStringSync(jsonEncode({
+        'outsideOpaqueGlyphPixels': outside,
+        'legacyMissingOpaqueGlyphPixels': legacyMissing,
+        'verticalOpaqueGlyphPixels': vertical,
+        'replayedOutsideGlyphPixels': replayedOutside,
+        'changedInsideGlyphPixels': changedInside,
+        'maximumReplayChannelError': maximumReplayError,
+      }));
+    }
+    expect(outside, greaterThan(20));
+    expect(legacyMissing, greaterThan(20),
+      reason: 'The fixture must reproduce srcIn deleting overhanging glyphs');
+    expect(vertical, greaterThan(20));
+    expect(replayedOutside, outside);
+    expect(changedInside, greaterThan(20));
+    expect(maximumReplayError, lessThanOrEqualTo(2));
+    expect(tester.takeException(), isNull);
+  }, skip: !ui.ImageFilter.isShaderFilterSupported);
+
   testWidgets('covered ink freezes its appearance instead of removing text', (
     tester,
   ) async {
@@ -719,4 +848,40 @@ Future<void> _realTextEnvelope(
   expect(colored, greaterThan(25));
   expect(minimumContrast, greaterThanOrEqualTo(4.5));
   expect(tester.takeException(), isNull);
+}
+
+class _OverhangingGlyph extends LeafRenderObjectWidget {
+  const _OverhangingGlyph();
+
+  @override
+  RenderObject createRenderObject(BuildContext context) => _OverhangingGlyphRender();
+}
+
+class _OverhangingGlyphRender extends RenderBox {
+  @override
+  bool get alwaysNeedsCompositing => true;
+
+  final _text = TextPainter(
+    text: const TextSpan(text: 'HH', style: TextStyle(
+      fontFamily: 'GeometryLatin', fontSize: 32, height: 1, color: Colors.white,
+    )),
+    textDirection: TextDirection.ltr,
+  )..layout();
+
+  @override
+  void performLayout() => size = constraints.constrain(const Size(36, 16));
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    final bounds = Rect.fromLTWH(offset.dx - 16, offset.dy - 16, 96, 64);
+    final recorder = ui.PictureRecorder();
+    _text.paint(Canvas(recorder, bounds), offset + const Offset(-12, -12));
+    context.addLayer(PictureLayer(bounds)..picture = recorder.endRecording());
+  }
+
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
 }

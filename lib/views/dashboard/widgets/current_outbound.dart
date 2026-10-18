@@ -140,12 +140,11 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
           ),
           Padding(
             padding: metrics.padding,
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final stacked = !density.isDesktop &&
-                    constraints.maxWidth <
-                        300 * DashboardDensityScope.scaleOf(context);
-                final details = Column(
+            child: Row(
+              spacing: metrics.gap,
+              children: [
+                Expanded(
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       DashboardCardHeader(
@@ -182,8 +181,9 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
                         gap: metrics.cellGap,
                       ),
                     ],
-                  );
-                final toggle = SizedBox(
+                  ),
+                ),
+                SizedBox(
                   width: metrics.buttonSlot,
                   child: Center(
                     child: _StartToggle(
@@ -193,24 +193,8 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
                       suspended: suspended,
                     ),
                   ),
-                );
-                return stacked
-                    ? Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        spacing: metrics.gap,
-                        children: [
-                          details,
-                          Align(
-                            alignment: AlignmentDirectional.centerEnd,
-                            child: toggle,
-                          ),
-                        ],
-                      )
-                    : Row(
-                        spacing: metrics.gap,
-                        children: [Expanded(child: details), toggle],
-                      );
-              },
+                ),
+              ],
             ),
           ),
         ],
@@ -371,7 +355,7 @@ class _ExitRow extends StatelessWidget {
               const SizedBox(height: 4),
               if (failed)
                 SizedBox(
-                  height: _chipHeight(large) * DashboardDensityScope.scaleOf(context),
+                  height: _chipHeight(large),
                   child: Align(
                     alignment: AlignmentDirectional.centerStart,
                     child: GlassText(
@@ -425,10 +409,15 @@ class _IpChips extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final quality = this.quality;
-    final height = _chipHeight(large) * DashboardDensityScope.scaleOf(context);
-    final chips = Wrap(
+    final height = _chipHeight(large);
+    // Chips that do not fit wrap onto a clipped second line; the details
+    // sheet still lists them all.
+    return SizedBox(
+      height: height,
+      child: ClipRect(
+        child: Wrap(
           spacing: 6,
-          runSpacing: 6,
+          runSpacing: height,
           children: switch (quality) {
             final quality? => [
               DashboardChip(label: quality.type.label(context), large: large),
@@ -454,9 +443,9 @@ class _IpChips extends StatelessWidget {
               ),
             ],
           },
-        );
-    if (!DashboardDensityScope.of(context).isDesktop) return chips;
-    return SizedBox(height: height, child: ClipRect(child: chips));
+        ),
+      ),
+    );
   }
 }
 
@@ -610,36 +599,24 @@ class _Cells extends StatelessWidget {
       IpQuality(asn: final asn?) => 'AS$asn',
       _ => null,
     };
-    final runtime = _Cell(
+    return Row(
+      spacing: gap,
+      children: [
+        _Cell(
           label: appLocalizations.runTime,
           value: active ? const _RunTimeValue() : const _Placeholder(),
-        );
-    final source = _Cell(
+        ),
+        Flexible(
+          child: _Cell(
             label: appLocalizations.ipOrganization,
             value: organization != null
                 ? _CellText(organization)
                 : loading
                 ? SkeletonText(width: 96, style: _cellStyle(context))
                 : const _Placeholder(),
-          );
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (!DashboardDensityScope.of(context).isDesktop &&
-            constraints.maxWidth < 300 * DashboardDensityScope.scaleOf(context)) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            spacing: 12,
-            children: [runtime, source],
-          );
-        }
-        return Row(
-          spacing: gap,
-          children: [
-            Flexible(child: runtime),
-            Expanded(flex: 2, child: source),
-          ],
-        );
-      },
+          ),
+        ),
+      ],
     );
   }
 }

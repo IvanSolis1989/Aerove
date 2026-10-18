@@ -555,7 +555,7 @@ class LiquidGlassInkLayer extends OffsetLayer {
       offset.dy,
       oldLayer: engineLayer as ui.OffsetEngineLayer?,
     );
-    builder.pushShaderMask(effect, maskRect, BlendMode.srcIn);
+    builder.pushShaderMask(effect, maskRect, BlendMode.srcATop);
     addChildrenToScene(builder);
     builder
       ..pop()
