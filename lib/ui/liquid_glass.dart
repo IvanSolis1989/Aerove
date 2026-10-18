@@ -1356,13 +1356,6 @@ class _LiquidGlassLayer extends Layer {
   }) {
     _capturedPass = pass;
     _showingFrozen = false;
-    assert(() {
-      coverageKey = [
-        ...coverageKey,
-        LiquidGlassHost.debugFeatherBranchOverride,
-      ];
-      return true;
-    }());
     final program = this.program;
     final uniforms = <double>[
       atlas.width.toDouble(),
@@ -1440,13 +1433,6 @@ class _LiquidGlassLayer extends Layer {
     List<_GlassFeather> feathers,
     void Function(Canvas) paintLive,
   ) {
-    var frozen = true;
-    var live = true;
-    assert(() {
-      frozen = LiquidGlassHost.debugFeatherBranchOverride != 'live';
-      live = LiquidGlassHost.debugFeatherBranchOverride != 'frozen';
-      return true;
-    }());
     final groups = <List<_GlassFeather>>[];
     for (final feather in feathers) {
       var bounds = feather.path.getBounds().intersect(rect);
@@ -1521,8 +1507,8 @@ class _LiquidGlassLayer extends Layer {
         ..save()
         ..clipPath(strip, doAntiAlias: false)
         ..saveLayer(bounds, Paint())
-        ..saveLayer(bounds, Paint());
-      if (frozen) canvas.drawPicture(_frozenPicture!);
+        ..saveLayer(bounds, Paint())
+        ..drawPicture(_frozenPicture!);
       if (simple) {
         group.single.mask(canvas, inverse: true);
       } else {
@@ -1530,11 +1516,8 @@ class _LiquidGlassLayer extends Layer {
       }
       canvas
         ..restore()
-        ..saveLayer(bounds, Paint()..blendMode = BlendMode.plus)
-        ..save()
-        ..clipPath(liveRegion, doAntiAlias: false);
-      if (live) paintLive(canvas);
-      canvas.restore();
+        ..saveLayer(bounds, Paint()..blendMode = BlendMode.plus);
+      paintLive(canvas);
       if (simple) {
         group.single.mask(canvas);
       } else {

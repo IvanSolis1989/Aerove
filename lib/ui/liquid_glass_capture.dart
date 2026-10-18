@@ -76,9 +76,6 @@ class LiquidGlassHost extends StatelessWidget {
   debugLastFeatherCapture;
 
   @visibleForTesting
-  static String? debugFeatherBranchOverride;
-
-  @visibleForTesting
   static bool? debugCarryBandsOverride;
 
   @visibleForTesting
