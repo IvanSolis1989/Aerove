@@ -189,37 +189,46 @@ void main() {
         final frozen = await _shot(tester, 'oracle-frozen-$quality');
         expect(LiquidGlassHost.debugLastFeatherCapture!.stripPixels, 0);
         assert(() {
-          LiquidGlassHost.debugFeatherPaintProbe = (paint, rect, outside, region) {
-            for (final mode in ['unclipped', 'outside', 'region', 'combined', 'merged', 'rect']) {
-              final recorder = ui.PictureRecorder();
-              final canvas = Canvas(recorder)..drawColor(Colors.green, BlendMode.src);
-              canvas.save();
-              if (mode == 'outside' || mode == 'combined') {
-                canvas.clipPath(outside, doAntiAlias: false);
-              }
-              if (mode == 'region' || mode == 'combined') {
-                canvas.clipPath(region, doAntiAlias: false);
-              }
-              if (mode == 'merged') {
-                canvas.clipPath(
-                  Path.combine(PathOperation.intersect, outside, region),
-                  doAntiAlias: false,
-                );
-              }
-              if (mode == 'rect') {
-                canvas.clipRect(
-                  Rect.fromLTRB(rect.left, 125, rect.right, rect.bottom),
-                  doAntiAlias: false,
-                );
-              }
-              paint(canvas);
-              canvas.restore();
-              final picture = recorder.endRecording();
-              probeImages[mode]?.dispose();
-              probeImages[mode] = picture.toImageSync(320, 240);
-              picture.dispose();
-            }
-          };
+          LiquidGlassHost.debugFeatherPaintProbe =
+              (paint, rect, outside, region) {
+                for (final mode in [
+                  'unclipped',
+                  'outside',
+                  'region',
+                  'combined',
+                  'merged',
+                  'rect',
+                ]) {
+                  final recorder = ui.PictureRecorder();
+                  final canvas = Canvas(recorder)
+                    ..drawColor(Colors.green, BlendMode.src);
+                  canvas.save();
+                  if (mode == 'outside' || mode == 'combined') {
+                    canvas.clipPath(outside, doAntiAlias: false);
+                  }
+                  if (mode == 'region' || mode == 'combined') {
+                    canvas.clipPath(region, doAntiAlias: false);
+                  }
+                  if (mode == 'merged') {
+                    canvas.clipPath(
+                      Path.combine(PathOperation.intersect, outside, region),
+                      doAntiAlias: false,
+                    );
+                  }
+                  if (mode == 'rect') {
+                    canvas.clipRect(
+                      Rect.fromLTRB(rect.left, 125, rect.right, rect.bottom),
+                      doAntiAlias: false,
+                    );
+                  }
+                  paint(canvas);
+                  canvas.restore();
+                  final picture = recorder.endRecording();
+                  probeImages[mode]?.dispose();
+                  probeImages[mode] = picture.toImageSync(320, 240);
+                  picture.dispose();
+                }
+              };
           return true;
         }());
         late final List<int> mixed;
@@ -229,7 +238,17 @@ void main() {
         } finally {
           LiquidGlassHost.debugFeatherPaintProbe = null;
         }
-        expect(probeImages.keys, containsAll(['unclipped', 'outside', 'region', 'combined', 'merged', 'rect']));
+        expect(
+          probeImages.keys,
+          containsAll([
+            'unclipped',
+            'outside',
+            'region',
+            'combined',
+            'merged',
+            'rect',
+          ]),
+        );
         await tester.runAsync(() async {
           for (final entry in probeImages.entries) {
             final image = entry.value;
@@ -238,9 +257,12 @@ void main() {
             ))!.buffer.asUint8List().toList();
             final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
             if (output != null) {
-              final png = (await image.toByteData(format: ui.ImageByteFormat.png))!;
-              File('$output/header-body-${entry.key}-$quality.png')
-                  .writeAsBytesSync(png.buffer.asUint8List());
+              final png = (await image.toByteData(
+                format: ui.ImageByteFormat.png,
+              ))!;
+              File(
+                '$output/header-body-${entry.key}-$quality.png',
+              ).writeAsBytesSync(png.buffer.asUint8List());
             }
           }
         });
@@ -317,7 +339,9 @@ void main() {
               name: 'below',
             ),
           ]) {
-            final image = await (control.debugLayer! as OffsetLayer).toImage(crop.rect);
+            final image = await (control.debugLayer! as OffsetLayer).toImage(
+              crop.rect,
+            );
             try {
               expect(image.width, crop.rect.width);
               expect(image.height, crop.rect.height);
@@ -328,7 +352,8 @@ void main() {
               for (var y = 0; y < image.height; y++) {
                 for (var x = 0; x < 120; x++) {
                   final from = (y * 120 + x) * 4;
-                  final to = ((y + 60 + crop.rect.top.toInt()) * 320 + x + 40) * 4;
+                  final to =
+                      ((y + 60 + crop.rect.top.toInt()) * 320 + x + 40) * 4;
                   final alpha = rgba[from + 3] / 255;
                   final dx = x + 0.5 - 60;
                   final dy = y + crop.rect.top + 0.5 - 60;
@@ -337,7 +362,8 @@ void main() {
                   if (dx * dx + dy * dy > 61 * 61) expect(rgba[from + 3], 0);
                   for (var channel = 0; channel < 3; channel++) {
                     crop.pixels[to + channel] =
-                        (rgba[from + channel] + background[channel] * (1 - alpha))
+                        (rgba[from + channel] +
+                                background[channel] * (1 - alpha))
                             .round()
                             .clamp(0, 255);
                     if (interior) {
@@ -374,14 +400,18 @@ void main() {
                 var delta = 0;
                 for (var channel = 0; channel < 4; channel++) {
                   final difference =
-                      (entry.value[index + channel] - live[index + channel]).abs();
+                      (entry.value[index + channel] - live[index + channel])
+                          .abs();
                   if (difference > delta) delta = difference;
                 }
                 if (delta > maximum) maximum = delta;
                 if (delta > 2) changed++;
               }
             }
-            lowerDeltas[entry.key] = {'maximum': maximum, 'pixelsOver2': changed};
+            lowerDeltas[entry.key] = {
+              'maximum': maximum,
+              'pixelsOver2': changed,
+            };
           }
           File(
             '$output/header-aa-endpoints-${quality.name}.json',
