@@ -664,48 +664,62 @@ void main() {
         await render(Colors.green, 1);
         final frozen = await _shot(tester, 'oracle-frozen-$quality');
         final frozenStrip = List<int>.of(frozen);
+        final frozenAbove = List<int>.of(frozen);
         final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
         final frozenControl = tester.renderObject<RenderRepaintBoundary>(
           find.byKey(_scene),
         );
         await tester.runAsync(() async {
-          final image = await (frozenControl.debugLayer! as OffsetLayer).toImage(
-            const Rect.fromLTWH(40, 110, 120, 15),
-          );
-          try {
-            expect(image.width, 120);
-            expect(image.height, 15);
-            final rgba = (await image.toByteData(
-              format: ui.ImageByteFormat.rawRgba,
-            ))!.buffer.asUint8List();
-            for (var y = 0; y < 15; y++) {
-              for (var x = 0; x < 120; x++) {
-                final from = (y * 120 + x) * 4;
-                final to = ((y + 110) * 320 + x + 40) * 4;
-                expect(rgba[from + 3], 255);
-                final dx = x + 0.5 - 60;
-                final dy = y + 50.5 - 60;
-                if (dx * dx + dy * dy < 58 * 58) {
-                  for (var channel = 0; channel < 3; channel++) {
-                    expect(
-                      rgba[from + channel],
-                      closeTo(frozen[to + channel], 2),
-                    );
+          for (final crop in [
+            (
+              rect: const Rect.fromLTWH(40, 110, 120, 15),
+              pixels: frozenStrip,
+              name: 'strip',
+            ),
+            (
+              rect: const Rect.fromLTWH(40, 60, 120, 50),
+              pixels: frozenAbove,
+              name: 'above',
+            ),
+          ]) {
+            final image = await (frozenControl.debugLayer! as OffsetLayer).toImage(
+              crop.rect,
+            );
+            try {
+              expect(image.width, 120);
+              expect(image.height, crop.rect.height);
+              final rgba = (await image.toByteData(
+                format: ui.ImageByteFormat.rawRgba,
+              ))!.buffer.asUint8List();
+              for (var y = 0; y < image.height; y++) {
+                for (var x = 0; x < 120; x++) {
+                  final from = (y * 120 + x) * 4;
+                  final to = ((y + crop.rect.top.toInt()) * 320 + x + 40) * 4;
+                  expect(rgba[from + 3], 255);
+                  final dx = x + 0.5 - 60;
+                  final dy = y + crop.rect.top + 0.5 - 120;
+                  if (dx * dx + dy * dy < 58 * 58) {
+                    for (var channel = 0; channel < 3; channel++) {
+                      expect(
+                        rgba[from + channel],
+                        closeTo(frozen[to + channel], 2),
+                      );
+                    }
                   }
+                  crop.pixels.setRange(to, to + 4, rgba, from);
                 }
-                frozenStrip.setRange(to, to + 4, rgba, from);
               }
+              if (output != null) {
+                final png = (await image.toByteData(
+                  format: ui.ImageByteFormat.png,
+                ))!;
+                File(
+                  '$output/header-native-frozen-${crop.name}-$quality.png',
+                ).writeAsBytesSync(png.buffer.asUint8List());
+              }
+            } finally {
+              image.dispose();
             }
-            if (output != null) {
-              final png = (await image.toByteData(
-                format: ui.ImageByteFormat.png,
-              ))!;
-              File(
-                '$output/header-native-frozen-strip-$quality.png',
-              ).writeAsBytesSync(png.buffer.asUint8List());
-            }
-          } finally {
-            image.dispose();
           }
         });
         expect(LiquidGlassHost.debugLastFeatherCapture!.stripPixels, 0);
@@ -840,6 +854,12 @@ void main() {
               'frozen': _pixel(frozen, 159, 122),
               'nativeFrozenStrip': _pixel(frozenStrip, 159, 122),
               'mixed': _pixel(mixed, 159, 122),
+              'aboveEdge': {
+                'position': [43, 100],
+                'frozen': _pixel(frozen, 43, 100),
+                'nativeFrozenAbove': _pixel(frozenAbove, 43, 100),
+                'mixed': _pixel(mixed, 43, 100),
+              },
               'belowEdge': {
                 'position': [43, 140],
                 'direct': _pixel(live, 43, 140),
@@ -892,8 +912,11 @@ void main() {
           }
         }
         expect(changedPixels, greaterThan(500));
-        for (final row in [100, ...List.generate(55, (index) => 125 + index)]) {
-          final expected = row < 110 ? frozen : nativeBelow;
+        for (final row in [
+          ...List.generate(50, (index) => 60 + index),
+          ...List.generate(55, (index) => 125 + index),
+        ]) {
+          final expected = row < 110 ? frozenAbove : nativeBelow;
           for (var x = 0; x < 320; x++) {
             final index = (row * 320 + x) * 4;
             for (var channel = 0; channel < 4; channel++) {

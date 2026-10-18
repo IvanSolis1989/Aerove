@@ -84,9 +84,10 @@ Finder _paragraphs(String text) => find.byWidgetPredicate(
 
 Future<({ByteData rgba, Uint8List png, int width, int height})> _capture(
   WidgetTester tester,
-  RenderRepaintBoundary boundary,
-) async => (await tester.runAsync(() async {
-  final image = await boundary.toImage();
+  RenderRepaintBoundary boundary, {
+  double pixelRatio = 1,
+}) async => (await tester.runAsync(() async {
+  final image = await boundary.toImage(pixelRatio: pixelRatio);
   try {
     return (
       rgba: (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!,
@@ -105,12 +106,14 @@ Future<List<Map<String, Object?>>> _measure(
   WidgetTester tester,
   RenderRepaintBoundary boundary,
   List<RenderParagraph> paragraphs,
-  String name,
-) async {
-  final painted = await _capture(tester, boundary);
+  String name, {
+  double pixelRatio = 1,
+}) async {
+  final painted = await _capture(tester, boundary, pixelRatio: pixelRatio);
   final original = [for (final paragraph in paragraphs) paragraph.text];
   final recorder = ui.PictureRecorder();
   final canvas = Canvas(recorder);
+  canvas.scale(pixelRatio);
   final geometry = <Map<String, Object?>>[];
   final regions = <Rect>[];
   for (final paragraph in paragraphs) {
@@ -128,11 +131,21 @@ Future<List<Map<String, Object?>>> _measure(
     )..layout(minWidth: paragraph.size.width, maxWidth: paragraph.size.width);
     final origin = paragraph.localToGlobal(Offset.zero, ancestor: boundary);
     painter.paint(canvas, origin);
-    regions.add((origin & paragraph.size).inflate(4));
+    regions.add(Rect.fromLTWH(
+      origin.dx * pixelRatio,
+      origin.dy * pixelRatio,
+      paragraph.size.width * pixelRatio,
+      paragraph.size.height * pixelRatio,
+    ).inflate(4 * pixelRatio));
     final clips = <String>[];
+    final ancestors = <Map<String, Object?>>[];
     RenderObject child = paragraph;
     while (child.parent != null) {
       final parent = child.parent!;
+      ancestors.add({
+        'type': parent.runtimeType.toString(),
+        'paintBounds': parent.paintBounds.toString(),
+      });
       final clip = parent.describeApproximatePaintClip(child);
       if (clip != null) {
         final rect = MatrixUtils.transformRect(
@@ -147,8 +160,13 @@ Future<List<Map<String, Object?>>> _measure(
     geometry.add({
       'text': paragraph.text.toPlainText(),
       'paragraph': (origin & paragraph.size).toString(),
+      'pixelRatio': pixelRatio,
+      'lineBoxHeight': painter.height,
+      'paragraphPaintBounds': paragraph.paintBounds.toString(),
+      'paragraphOverflow': paragraph.overflow.name,
       'ellipsis': painter.didExceedMaxLines,
       'clips': clips,
+      'ancestors': ancestors,
     });
     painter.dispose();
   }
@@ -176,7 +194,7 @@ Future<List<Map<String, Object?>>> _measure(
       paragraphs[i].text = _paintSpan(original[i], Colors.transparent);
     }
     await tester.pump();
-    blank = await _capture(tester, boundary);
+    blank = await _capture(tester, boundary, pixelRatio: pixelRatio);
   } finally {
     for (var i = 0; i < paragraphs.length; i++) {
       paragraphs[i].text = original[i];
@@ -242,9 +260,11 @@ Future<GlobalKey> _mountDashboard(
   required LiquidGlassMode mode,
   required double scale,
   required double width,
+  double pixelRatio = 1,
+  String organization = _organization,
 }) async {
-  tester.view.physicalSize = Size(width, 1000);
-  tester.view.devicePixelRatio = 1;
+  tester.view.physicalSize = Size(width * pixelRatio, 1000 * pixelRatio);
+  tester.view.devicePixelRatio = pixelRatio;
   addTearDown(tester.view.reset);
   final container = ProviderContainer(
     overrides: [
@@ -256,11 +276,11 @@ Future<GlobalKey> _mountDashboard(
       serviceStatusProvider.overrideWith(_Services.new),
       enabledServiceTargetsProvider.overrideWithValue(_targets),
       ipQualityProvider.overrideWith(
-        (_, _) async => const IpQuality(
+        (_, _) async => IpQuality(
           ip: _ip,
           source: IpQualitySource.ipLocate,
           type: IpType.residential,
-          organization: _organization,
+          organization: organization,
         ),
       ),
       themeSettingProvider.overrideWithBuild(
@@ -387,6 +407,60 @@ void main() {
   });
 
   for (final brightness in Brightness.values) {
+    testWidgets('ellipsized organization keeps descenders at DPR3 '
+        '${brightness.name}', (tester) async {
+      const organization = 'Telekomunikasi gjpqy Indonesia long organization';
+      Map<String, Object?>? nativeLayout;
+      final samples = <Map<String, Object?>>[];
+      for (final mode in LiquidGlassMode.values) {
+        final capture = await _mountDashboard(
+          tester,
+          brightness: brightness,
+          mode: mode,
+          scale: 1,
+          width: 430,
+          pixelRatio: 3,
+          organization: organization,
+        );
+        final paragraphFinder = _paragraphs(organization);
+        expect(paragraphFinder, findsOneWidget);
+        await tester.ensureVisible(paragraphFinder);
+        await tester.pumpAndSettle();
+        final paragraph = tester.renderObject<RenderParagraph>(paragraphFinder);
+        final style = paragraph.text.style;
+        final layout = <String, Object?>{
+          'size': paragraph.size,
+          'fontFamily': style?.fontFamily,
+          'fontSize': style?.fontSize,
+          'height': style?.height,
+          'weight': style?.fontWeight,
+          'letterSpacing': style?.letterSpacing,
+          'maxLines': paragraph.maxLines,
+          'overflow': paragraph.overflow,
+        };
+        if (nativeLayout == null) {
+          nativeLayout = layout;
+        } else {
+          expect(layout, nativeLayout, reason: 'Ink must preserve text layout');
+        }
+        final rows = await _measure(
+          tester,
+          capture.currentContext!.findRenderObject()! as RenderRepaintBoundary,
+          [paragraph],
+          'organization-descenders-${brightness.name}-${mode.name}-dpr3',
+          pixelRatio: 3,
+        );
+        samples.add({'mode': mode.name, ...rows.single});
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      }
+      for (final sample in samples) {
+        expect(sample['ellipsis'], isTrue);
+        expect(sample['inkRows'], isNotEmpty);
+        expect(sample['missingRows'], isEmpty, reason: '$sample');
+      }
+    }, variant: TargetPlatformVariant.only(TargetPlatform.android));
     testWidgets('known dashboard horizontal limit matches None at 320dp 2x '
         '${brightness.name}', (tester) async {
       List<Map<String, Object?>>? baselineLayout;

@@ -28,6 +28,27 @@ Color _pixel(Uint8List bytes, int x, int y, {int scale = 1}) {
   );
 }
 
+Color _meanPixel(Uint8List bytes, int x, int y, {required int scale}) {
+  final half = scale * 3 ~/ 2;
+  final channels = List<double>.filled(4, 0);
+  var count = 0;
+  for (var py = y * scale - half; py <= y * scale + half; py++) {
+    for (var px = x * scale - half; px <= x * scale + half; px++) {
+      final offset = (py * 400 * scale + px) * 4;
+      for (var channel = 0; channel < channels.length; channel++) {
+        channels[channel] += bytes[offset + channel];
+      }
+      count++;
+    }
+  }
+  return Color.from(
+    alpha: channels[3] / (255 * count),
+    red: channels[0] / (255 * count),
+    green: channels[1] / (255 * count),
+    blue: channels[2] / (255 * count),
+  );
+}
+
 double _distance(Color a, Color b) =>
     (a.r - b.r).abs() + (a.g - b.g).abs() + (a.b - b.b).abs();
 
@@ -299,8 +320,9 @@ void main() {
           pixelRatio: 3,
         );
         expect(filled.length, 1200 * 480 * 4);
-        final behind = _pixel(empty, 45, 80, scale: 3);
-        final water = _pixel(filled, 45, 80, scale: 3);
+        // A 3dp patch keeps backdrop dithering from deciding a hue channel.
+        final behind = _meanPixel(empty, 45, 80, scale: 3);
+        final water = _meanPixel(filled, 45, 80, scale: 3);
         expect(_distance(water, behind), inExclusiveRange(0.065, 0.18));
         expect(water.b - behind.b, greaterThan(0.02));
         _expectDryRim(filled, empty, scale: 3);
