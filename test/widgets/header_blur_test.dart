@@ -32,6 +32,241 @@ void main() {
     final font = FontLoader('HeaderProbe')
       ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'));
     await font.load();
+    if (ui.ImageFilter.isShaderFilterSupported) {
+      await ui.FragmentProgram.fromAsset('shaders/liquid_glass.frag');
+    }
+  });
+  testWidgets('sheet optical header appears only over scrolled content', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 320);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final controller = ScrollController();
+    final key = GlobalKey();
+    Future<Uint8List> shot(String name) async {
+      final boundary =
+          key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+      return (await tester.runAsync(() async {
+        final image = await boundary.toImage();
+        try {
+          final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+          if (output != null) {
+            final png = (await image.toByteData(format: ui.ImageByteFormat.png))!;
+            File('$output/$name.png').writeAsBytesSync(png.buffer.asUint8List());
+          }
+          return (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!
+              .buffer.asUint8List();
+        } finally {
+          image.dispose();
+        }
+      }))!;
+    }
+
+    try {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RepaintBoundary(
+            key: key,
+            child: LiquidGlassScope(
+              enabled: true,
+              child: LiquidGlassHost(
+                enabled: true,
+                wallpaperOnly: true,
+                child: Stack(
+                  children: [
+                    const Positioned.fill(
+                      child: LiquidGlassColorField(
+                        child: LiquidGlassColorSource(
+                          child: CustomPaint(painter: _Wallpaper(Brightness.light)),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      left: 24,
+                      top: 72,
+                      width: 272,
+                      height: 224,
+                      child: FloatingHeaderBody(
+                        backgroundColor: Colors.white,
+                        header: const SizedBox(height: 64),
+                        body: SingleChildScrollView(
+                          controller: controller,
+                          child: const SizedBox(height: 1000),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.byType(HeaderBlur), findsNothing);
+      final initial = await shot('sheet-header-opening');
+      controller.jumpTo(64);
+      await tester.pump();
+      if (ui.ImageFilter.isShaderFilterSupported) {
+        await tester.runAsync(() async {
+          await ui.FragmentProgram.fromAsset(
+            'shaders/liquid_glass.frag',
+          ).timeout(const Duration(seconds: 30));
+        });
+      }
+      await tester.pump();
+      if (ui.ImageFilter.isShaderFilterSupported) {
+        expect(LiquidGlass.debugShaderReady, isTrue);
+      }
+      expect(find.byType(HeaderBlur), findsOneWidget);
+      final header = find.byType(HeaderBlur);
+      final pane = find.descendant(of: header, matching: find.byType(LiquidGlass));
+      expect(pane, findsOneWidget);
+      expect(find.descendant(of: header, matching: find.byType(BackdropFilter)), findsNothing);
+      expect(tester.getRect(pane), const Rect.fromLTWH(24, 72, 272, 64));
+      final optical = await shot('sheet-header-scrolled');
+      var changed = 0;
+      var outside = 0;
+      for (var y = 0; y < 320; y++) {
+        for (var x = 0; x < 320; x++) {
+          final inside = x >= 24 && x < 296 && y >= 72 && y < 136;
+          for (var channel = 0; channel < 4; channel++) {
+            final index = (y * 320 + x) * 4 + channel;
+            final delta = (initial[index] - optical[index]).abs();
+            if (inside && delta > 2) changed++;
+            if (!inside) outside = math.max(outside, delta);
+          }
+        }
+      }
+      if (ui.ImageFilter.isShaderFilterSupported) expect(changed, greaterThan(100));
+      expect(outside, 0);
+      controller.jumpTo(0);
+      await tester.pump();
+      await tester.pump();
+      expect(find.byType(HeaderBlur), findsNothing);
+      expect(await shot('sheet-header-top-restored'), initial);
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      controller.dispose();
+    }
+  });
+  testWidgets('sheet header keeps None and high contrast native fallbacks', (
+    tester,
+  ) async {
+    for (final enabled in [false, true]) {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MediaQuery(
+            data: const MediaQueryData(highContrast: true),
+            child: LiquidGlassScope(
+              enabled: enabled,
+              child: const FloatingHeaderBody(
+                backgroundColor: Colors.black,
+                header: SizedBox(height: 64),
+                body: SingleChildScrollView(child: SizedBox(height: 1000)),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.byType(HeaderBlur), enabled ? findsOneWidget : findsNothing);
+      expect(find.byType(BackdropFilter), enabled ? findsOneWidget : findsNothing);
+      expect(find.byType(LiquidGlass), findsNothing);
+      expect(tester.widget<FloatingHeader>(find.byType(FloatingHeader)).showBackground, isTrue);
+    }
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+  testWidgets('optical header samples lower text once without lower glass', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 240);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final key = GlobalKey();
+    Future<Uint8List> render(bool text) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RepaintBoundary(
+            key: key,
+            child: LiquidGlassScope(
+              enabled: true,
+              child: LiquidGlassHost(
+                enabled: true,
+                wallpaperOnly: true,
+                child: Stack(
+                  children: [
+                    const Positioned.fill(
+                      child: LiquidGlassColorField(
+                        child: LiquidGlassColorSource(
+                          child: ColoredBox(color: Color(0xFF204060)),
+                        ),
+                      ),
+                    ),
+                    if (text)
+                      const Positioned(
+                        left: 32,
+                        top: 8,
+                        child: Text(
+                          'READABLE',
+                          style: TextStyle(
+                            fontFamily: 'HeaderProbe',
+                            fontSize: 28,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    const Positioned.fill(
+                      child: HeaderBlur(fadeHeight: 64, liquidGlass: true),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      final boundary = key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+      return (await tester.runAsync(() async {
+        final image = await boundary.toImage();
+        try {
+          final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+          if (output != null) {
+            final png = (await image.toByteData(format: ui.ImageByteFormat.png))!;
+            File('$output/sheet-header-lower-text-$text.png')
+                .writeAsBytesSync(png.buffer.asUint8List());
+          }
+          return (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!
+              .buffer.asUint8List();
+        } finally {
+          image.dispose();
+        }
+      }))!;
+    }
+
+    final empty = await render(false);
+    final text = await render(true);
+    expect(LiquidGlassHost.debugLastFlatCapture!.groups, 1);
+    expect(LiquidGlassHost.debugLastCapture!.panes, hasLength(1));
+    expect(find.byType(LiquidGlassHost), findsOneWidget);
+    expect(find.byType(BackdropFilter), findsNothing);
+    var contribution = 0;
+    for (var y = 0; y < 32; y++) {
+      for (var x = 16; x < 280; x++) {
+        for (var channel = 0; channel < 3; channel++) {
+          final index = (y * 320 + x) * 4 + channel;
+          contribution += (text[index] - empty[index]).abs();
+        }
+      }
+    }
+    expect(contribution, greaterThan(1000));
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
   });
   testWidgets('only active glass page headers use an untinted blur', (
     tester,

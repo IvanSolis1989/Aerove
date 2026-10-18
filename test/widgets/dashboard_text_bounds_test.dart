@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:crypto/crypto.dart';
 import 'package:fl_clash/common/service_probe.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/manager/theme_manager.dart';
@@ -29,6 +30,10 @@ import '../helpers/test_app.dart';
 
 const _organization = 'PT TELKOM INDONESIA';
 const _ip = '203.0.113.9';
+const _androidFont = 'DashboardAndroidRoboto';
+final _androidFontPath = Platform.environment['XCLASH_ANDROID_ROBOTO_FONT'];
+const _miSansFont = 'DashboardMiSans';
+final _miSansFontPath = Platform.environment['XCLASH_MISANS_FONT'];
 const _targets = [
   ServiceTarget.google,
   ServiceTarget.github,
@@ -116,6 +121,7 @@ Future<List<Map<String, Object?>>> _measure(
   canvas.scale(pixelRatio);
   final geometry = <Map<String, Object?>>[];
   final regions = <Rect>[];
+  final glyphRegions = <List<({String text, int index, Rect rect})>>[];
   for (final paragraph in paragraphs) {
     final painter = TextPainter(
       text: _paintSpan(paragraph.text, Colors.white),
@@ -131,6 +137,27 @@ Future<List<Map<String, Object?>>> _measure(
     )..layout(minWidth: paragraph.size.width, maxWidth: paragraph.size.width);
     final origin = paragraph.localToGlobal(Offset.zero, ancestor: boundary);
     painter.paint(canvas, origin);
+    final metrics = painter.computeLineMetrics();
+    final text = paragraph.text.toPlainText(includeSemanticsLabels: false);
+    final glyphs = <({String text, int index, Rect rect})>[];
+    for (var index = 0; index < text.length; index++) {
+      if (!RegExp('[A-Za-z]').hasMatch(text[index])) continue;
+      for (final box in painter.getBoxesForSelection(
+        TextSelection(baseOffset: index, extentOffset: index + 1),
+      )) {
+        glyphs.add((
+          text: text[index],
+          index: index,
+          rect: Rect.fromLTRB(
+            (origin.dx + box.left) * pixelRatio,
+            (origin.dy - 4) * pixelRatio,
+            (origin.dx + box.right) * pixelRatio,
+            (origin.dy + paragraph.size.height + 4) * pixelRatio,
+          ),
+        ));
+      }
+    }
+    glyphRegions.add(glyphs);
     regions.add(Rect.fromLTWH(
       origin.dx * pixelRatio,
       origin.dy * pixelRatio,
@@ -162,6 +189,20 @@ Future<List<Map<String, Object?>>> _measure(
       'paragraph': (origin & paragraph.size).toString(),
       'pixelRatio': pixelRatio,
       'lineBoxHeight': painter.height,
+      'fontFamily': paragraph.text.style?.fontFamily,
+      'fontFixtureVersion': paragraph.text.style?.fontFamily == _miSansFont
+          ? 'MiSans VF 4.009'
+          : paragraph.text.style?.fontFamily == _androidFont
+          ? 'AOSP Roboto 3.005'
+          : 'bundled JetBrainsMono Regular',
+      'fontSize': paragraph.text.style?.fontSize,
+      'fontWeight': paragraph.text.style?.fontWeight?.value,
+      'fontHeight': paragraph.text.style?.height,
+      'textScale': paragraph.textScaler.scale(15) / 15,
+      'originPhysical': [origin.dx * pixelRatio, origin.dy * pixelRatio],
+      'baselinesPhysical': [
+        for (final line in metrics) (origin.dy + line.baseline) * pixelRatio,
+      ],
       'paragraphPaintBounds': paragraph.paintBounds.toString(),
       'paragraphOverflow': paragraph.overflow.name,
       'ellipsis': painter.didExceedMaxLines,
@@ -208,6 +249,7 @@ Future<List<Map<String, Object?>>> _measure(
     final missingRows = <int>[];
     final inkRows = <int>[];
     final visibleRows = <int>[];
+    final missingPoints = <List<int>>[];
     for (var y = region.top.ceil(); y < region.bottom.floor(); y++) {
       var ink = 0;
       var visible = 0;
@@ -222,7 +264,11 @@ Future<List<Map<String, Object?>>> _measure(
                       blank.rgba.getUint8(offset + channel))
                   .abs();
         }
-        if (difference >= 3) visible++;
+        if (difference >= 3) {
+          visible++;
+        } else {
+          missingPoints.add([x, y]);
+        }
       }
       if (ink >= 3) {
         inkRows.add(y);
@@ -230,10 +276,37 @@ Future<List<Map<String, Object?>>> _measure(
         if (visible < ink * 0.6) missingRows.add(y);
       }
     }
+    final glyphs = <Map<String, Object?>>[];
+    final baselines = geometry[i]['baselinesPhysical']! as List<double>;
+    for (final glyph in glyphRegions[i]) {
+      final bounds = glyph.rect.intersect(region);
+      var strong = 0, descent = 0;
+      for (var y = bounds.top.ceil(); y < bounds.bottom.floor(); y++) {
+        for (var x = bounds.left.ceil(); x < bounds.right.floor(); x++) {
+          if (expected.getUint8((y * painted.width + x) * 4 + 3) < 180) continue;
+          strong++;
+          if (baselines.isNotEmpty && y + 0.5 >= baselines.first) descent++;
+        }
+      }
+      glyphs.add({
+        'text': glyph.text,
+        'index': glyph.index,
+        'physicalBounds': glyph.rect.toString(),
+        'strongPixels': strong,
+        'descentStrongPixels': descent,
+        'missingPoints': [
+          for (final point in missingPoints)
+            if (glyph.rect.contains(Offset(point[0] + 0.5, point[1] + 0.5)))
+              point,
+        ],
+      });
+    }
     geometry[i].addAll({
       'inkRows': inkRows,
       'visibleRows': visibleRows,
       'missingRows': missingRows,
+      'missingPoints': missingPoints,
+      'glyphs': glyphs,
     });
   }
   if (output != null) {
@@ -262,6 +335,8 @@ Future<GlobalKey> _mountDashboard(
   required double width,
   double pixelRatio = 1,
   String organization = _organization,
+  String fontFamily = 'DashboardBounds',
+  Offset paintShift = Offset.zero,
 }) async {
   tester.view.physicalSize = Size(width * pixelRatio, 1000 * pixelRatio);
   tester.view.devicePixelRatio = pixelRatio;
@@ -285,7 +360,7 @@ Future<GlobalKey> _mountDashboard(
       ),
       themeSettingProvider.overrideWithBuild(
         (_, _) => ThemeProps(
-          fontFamily: 'DashboardBounds',
+          fontFamily: fontFamily,
           auroraEnabled: mode != LiquidGlassMode.none,
           liquidGlass: mode,
         ),
@@ -337,7 +412,10 @@ Future<GlobalKey> _mountDashboard(
               ),
               child: RepaintBoundary(
                 key: capture,
-                child: const AuroraAppSurface(motion: false, child: HomePage()),
+                child: Transform.translate(
+                  offset: paintShift,
+                  child: const AuroraAppSurface(motion: false, child: HomePage()),
+                ),
               ),
             ),
           ),
@@ -355,6 +433,20 @@ void main() {
     final font = FontLoader('DashboardBounds')
       ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'));
     await font.load();
+    if (_androidFontPath case final path?) {
+      final bytes = await File(path).readAsBytes();
+      expect(sha256.convert(bytes).toString(),
+        '9ca9debb09459bf4e3e7f826f5cd0f35f253902b85684921fce2ba3f28dd0f50');
+      await (FontLoader(_androidFont)
+        ..addFont(Future.value(ByteData.sublistView(bytes)))).load();
+    }
+    if (_miSansFontPath case final path?) {
+      final bytes = await File(path).readAsBytes();
+      expect(sha256.convert(bytes).toString(),
+        '0ddef90648998900175cfdca9a6f087a2544c182f130b0ad4f7e94a03a115e79');
+      await (FontLoader(_miSansFont)
+        ..addFont(Future.value(ByteData.sublistView(bytes)))).load();
+    }
     if (Platform.environment['XCLASH_REQUIRE_IMPELLER'] == 'true') {
       expect(ui.ImageFilter.isShaderFilterSupported, isTrue);
     }
@@ -406,61 +498,149 @@ void main() {
     expect(rows.single['clips'].toString(), contains('RenderClipRect'));
   });
 
-  for (final brightness in Brightness.values) {
-    testWidgets('ellipsized organization keeps descenders at DPR3 '
-        '${brightness.name}', (tester) async {
-      const organization = 'Telekomunikasi gjpqy Indonesia long organization';
-      Map<String, Object?>? nativeLayout;
-      final samples = <Map<String, Object?>>[];
-      for (final mode in LiquidGlassMode.values) {
-        final capture = await _mountDashboard(
-          tester,
-          brightness: brightness,
-          mode: mode,
-          scale: 1,
-          width: 430,
-          pixelRatio: 3,
-          organization: organization,
-        );
-        final paragraphFinder = _paragraphs(organization);
-        expect(paragraphFinder, findsOneWidget);
-        await tester.ensureVisible(paragraphFinder);
-        await tester.pumpAndSettle();
-        final paragraph = tester.renderObject<RenderParagraph>(paragraphFinder);
-        final style = paragraph.text.style;
-        final layout = <String, Object?>{
-          'size': paragraph.size,
-          'fontFamily': style?.fontFamily,
-          'fontSize': style?.fontSize,
-          'height': style?.height,
-          'weight': style?.fontWeight,
-          'letterSpacing': style?.letterSpacing,
-          'maxLines': paragraph.maxLines,
-          'overflow': paragraph.overflow,
-        };
-        if (nativeLayout == null) {
-          nativeLayout = layout;
-        } else {
-          expect(layout, nativeLayout, reason: 'Ink must preserve text layout');
+  testWidgets('point detector catches a partial descender hidden by row voting', (
+    tester,
+  ) async {
+    final cutout = ValueNotifier<Rect?>(null);
+    addTearDown(cutout.dispose);
+    final capture = GlobalKey();
+    await tester.pumpWidget(TestApp(
+      theme: ThemeData(fontFamily: 'DashboardBounds'),
+      child: Align(
+        alignment: Alignment.topLeft,
+        child: SizedBox(
+          width: 200,
+          height: 70,
+          child: RepaintBoundary(
+            key: capture,
+            child: ColoredBox(
+              color: Colors.white,
+              child: ValueListenableBuilder<Rect?>(
+                valueListenable: cutout,
+                builder: (context, hole, _) => ClipPath(
+                  clipper: _Cutout(hole),
+                  child: Align(
+                    alignment: Alignment.topLeft,
+                    child: Text('Google gjy', style: AppTextStyle.body.of(context)),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    final boundary = capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+    final paragraph = tester.renderObject<RenderParagraph>(_paragraphs('Google gjy'));
+    final image = await _capture(tester, boundary);
+    final g = paragraph.getBoxesForSelection(
+      const TextSelection(baseOffset: 7, extentOffset: 8),
+    ).single;
+    final baseline = paragraph.getDistanceToBaseline(TextBaseline.alphabetic)!;
+    Rect? selected;
+    for (var y = baseline.ceil(); y < paragraph.size.height && selected == null; y++) {
+      var strong = 0;
+      for (var x = 0; x < image.width; x++) {
+        if (image.rgba.getUint8((y * image.width + x) * 4) < 70) strong++;
+      }
+      if (strong < 4) continue;
+      for (var x = g.left.ceil(); x < g.right.floor(); x++) {
+        if (image.rgba.getUint8((y * image.width + x) * 4) < 70) {
+          selected = Rect.fromLTWH(x.toDouble(), y.toDouble(), 1, 1);
+          break;
         }
-        final rows = await _measure(
-          tester,
-          capture.currentContext!.findRenderObject()! as RenderRepaintBoundary,
-          [paragraph],
-          'organization-descenders-${brightness.name}-${mode.name}-dpr3',
-          pixelRatio: 3,
-        );
-        samples.add({'mode': mode.name, ...rows.single});
-        expect(tester.takeException(), isNull);
-        await tester.pumpWidget(const SizedBox.shrink());
-        await tester.pump();
       }
-      for (final sample in samples) {
-        expect(sample['ellipsis'], isTrue);
-        expect(sample['inkRows'], isNotEmpty);
-        expect(sample['missingRows'], isEmpty, reason: '$sample');
-      }
-    }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+    }
+    expect(selected, isNotNull);
+    cutout.value = selected;
+    await tester.pump();
+    final rows = await _measure(tester, boundary, [paragraph], 'point-detector-control');
+    expect(rows.single['missingRows'], isEmpty);
+    expect(rows.single['missingPoints'], isNotEmpty);
+    final glyphs = rows.single['glyphs']! as List<Map<String, Object?>>;
+    expect(glyphs.singleWhere((glyph) => glyph['index'] == 7)['missingPoints'], isNotEmpty);
+  });
+
+  for (final brightness in Brightness.values) {
+    for (final family in [
+      if (_miSansFontPath != null) _miSansFont,
+      'DashboardBounds',
+      if (_androidFontPath != null) _androidFont,
+    ]) {
+      testWidgets('ellipsized organization keeps descenders at DPR3 '
+          '${brightness.name} $family', (tester) async {
+        const organization = 'Telekomunikasi gjpqy Indonesia long organization';
+        Map<String, Object?>? nativeLayout;
+        final samples = <Map<String, Object?>>[];
+        final firstBaselines = <LiquidGlassMode, double>{};
+        for (final phase in [0.0, 1 / 3, 2 / 3]) {
+          for (final mode in LiquidGlassMode.values) {
+            final capture = await _mountDashboard(
+              tester,
+              brightness: brightness,
+              mode: mode,
+              scale: 1,
+              width: 430,
+              pixelRatio: 3,
+              organization: organization,
+              fontFamily: family,
+              paintShift: Offset(0, phase / 3),
+            );
+            final paragraphFinder = _paragraphs(organization);
+            expect(paragraphFinder, findsOneWidget);
+            await tester.ensureVisible(paragraphFinder);
+            await tester.pumpAndSettle();
+            final paragraph = tester.renderObject<RenderParagraph>(paragraphFinder);
+            final style = paragraph.text.style;
+            final layout = <String, Object?>{
+              'size': paragraph.size,
+              'fontFamily': style?.fontFamily,
+              'fontSize': style?.fontSize,
+              'height': style?.height,
+              'weight': style?.fontWeight,
+              'letterSpacing': style?.letterSpacing,
+              'maxLines': paragraph.maxLines,
+              'overflow': paragraph.overflow,
+            };
+            if (nativeLayout == null) {
+              nativeLayout = layout;
+            } else {
+              expect(layout, nativeLayout, reason: 'Ink must preserve text layout');
+            }
+            final rows = await _measure(
+              tester,
+              capture.currentContext!.findRenderObject()! as RenderRepaintBoundary,
+              [paragraph],
+              'organization-descenders-${brightness.name}-${mode.name}-'
+                  '$family-phase${phase.toStringAsFixed(3)}-dpr3',
+              pixelRatio: 3,
+            );
+            final baseline = (rows.single['baselinesPhysical']! as List<double>).single;
+            if (phase == 0) {
+              firstBaselines[mode] = baseline;
+            } else {
+              expect(baseline, closeTo(firstBaselines[mode]! + phase, 1e-6));
+            }
+            samples.add({'mode': mode.name, ...rows.single});
+            expect(tester.takeException(), isNull);
+            await tester.pumpWidget(const SizedBox.shrink());
+            await tester.pump();
+          }
+        }
+        for (final sample in samples) {
+          expect(sample['ellipsis'], isTrue);
+          expect(sample['inkRows'], isNotEmpty);
+          expect(sample['missingRows'], isEmpty, reason: '$sample');
+          expect(sample['missingPoints'], isEmpty, reason: '$sample');
+          final glyphs = sample['glyphs']! as List<Map<String, Object?>>;
+          final descenders = glyphs.where((glyph) =>
+            'gjpqy'.contains(glyph['text']! as String) &&
+            (glyph['descentStrongPixels']! as int) > 0);
+          expect(descenders.length, greaterThanOrEqualTo(2), reason: '$sample');
+        }
+      }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+    }
     testWidgets('known dashboard horizontal limit matches None at 320dp 2x '
         '${brightness.name}', (tester) async {
       List<Map<String, Object?>>? baselineLayout;
@@ -618,4 +798,20 @@ void main() {
       }
     }
   }
+}
+
+class _Cutout extends CustomClipper<Path> {
+  const _Cutout(this.hole);
+  final Rect? hole;
+
+  @override
+  Path getClip(Size size) {
+    final full = Path()..addRect(Offset.zero & size);
+    return hole == null ? full : Path.combine(
+      PathOperation.difference, full, Path()..addRect(hole!),
+    );
+  }
+
+  @override
+  bool shouldReclip(_Cutout oldClipper) => oldClipper.hole != hole;
 }

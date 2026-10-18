@@ -59,9 +59,13 @@ List<Widget> _underlay() => [
   ),
 ];
 
-Widget _app(Widget home, LiquidGlassQuality quality, {bool enabled = true}) =>
+Widget _app(Widget home, LiquidGlassQuality quality, {
+  bool enabled = true,
+  Brightness brightness = Brightness.light,
+}) =>
     MaterialApp(
       theme: ThemeData(
+        brightness: brightness,
         platform: TargetPlatform.android,
       ).withAppShapes.withAppSurfaces,
       localizationsDelegates: const [
@@ -148,6 +152,90 @@ void main() {
       ).timeout(const Duration(seconds: 30));
     }
   });
+
+  for (final brightness in Brightness.values) {
+    for (final quality in [null, ...LiquidGlassQuality.values]) {
+      for (final kind in ['bottom', 'snap', 'side', 'form']) {
+        testWidgets('sheet $kind has an undimmed dismissible barrier $brightness $quality', (
+          tester,
+        ) async {
+          final mobile = kind == 'bottom' || kind == 'snap';
+          final size = Size(mobile ? 400 : 800, 700);
+          tester.view.physicalSize = size;
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+          var underlayTaps = 0;
+          var actions = 0;
+          Widget panel(BuildContext _) => SizedBox(
+            height: 220,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('Sheet panel'),
+                TextButton(
+                  onPressed: () => actions++,
+                  child: const Text('Sheet action'),
+                ),
+              ],
+            ),
+          );
+          await tester.pumpWidget(_app(
+            ViewScope(
+              size: size,
+              isMobile: mobile,
+              child: Navigator(onGenerateRoute: (_) => MaterialPageRoute<void>(
+                builder: (context) => Scaffold(
+                  backgroundColor: Colors.transparent,
+                  body: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => underlayTaps++,
+                    child: Center(child: TextButton(
+                      onPressed: () {
+                        switch (kind) {
+                          case 'bottom' || 'side':
+                            unawaited(showSheet<void>(context: context, builder: panel));
+                          case 'snap':
+                            unawaited(showSnapSheet<void>(context,
+                              builder: (context, _) => panel(context),
+                            ));
+                          case 'form':
+                            unawaited(showFormSheet<void>(context: context, builder: panel));
+                        }
+                      },
+                      child: const Text('Open sheet'),
+                    )),
+                  ),
+                ),
+              )),
+            ),
+            quality ?? LiquidGlassQuality.standard,
+            enabled: quality != null,
+            brightness: brightness,
+          ));
+          await tester.pumpAndSettle();
+          final before = await _shot(tester, '$kind-${brightness.name}-${quality?.name ?? 'none'}-barrier-before');
+          await tester.tap(find.text('Open sheet'));
+          await tester.pumpAndSettle();
+          final route = ModalRoute.of(tester.element(find.text('Sheet panel')))!;
+          expect(route.barrierColor?.a ?? 0, 0);
+          expect(route.barrierDismissible, isTrue);
+          expect(route.barrierLabel, isNotEmpty);
+          final opened = await _shot(tester, '$kind-${brightness.name}-${quality?.name ?? 'none'}-barrier-open');
+          expect(_pixel(opened, 10, 10), _pixel(before, 10, 10));
+          await tester.tap(find.text('Sheet action'));
+          await tester.pumpAndSettle();
+          expect(actions, 1);
+          expect(find.text('Sheet panel'), findsOneWidget);
+          final taps = underlayTaps;
+          await tester.tapAt(const Offset(10, 10));
+          await tester.pumpAndSettle();
+          expect(find.text('Sheet panel'), findsNothing);
+          expect(underlayTaps, taps);
+          expect(tester.takeException(), isNull);
+        });
+      }
+    }
+  }
 
   for (final quality in LiquidGlassQuality.values) {
     testWidgets(
@@ -279,7 +367,6 @@ void main() {
         unawaited(
           navigator.currentState!.push(
             SnapSheetRoute<void>(
-              sheetBarrierColor: Colors.black.withValues(alpha: 0.32),
               barrierLabel: 'Dismiss',
               detents: const [0.5, 0.85],
               builder: (_, controller) => ColoredBox(
@@ -345,10 +432,7 @@ void main() {
         (200, top.floor() - 20),
         (2, top.floor() + 1),
       ]) {
-        final expected = Color.alphaBlend(
-          Colors.black.withValues(alpha: 0.32),
-          _pixel(before, point.$1, point.$2),
-        );
+        final expected = _pixel(before, point.$1, point.$2);
         final actual = _pixel(opened, point.$1, point.$2);
         expect(actual.r, closeTo(expected.r, 2 / 255));
         expect(actual.g, closeTo(expected.g, 2 / 255));
@@ -423,7 +507,6 @@ void main() {
           builder: (context) => TextButton(
             onPressed: () => Navigator.of(context).push(
               SnapSheetRoute<void>(
-                sheetBarrierColor: Colors.black.withValues(alpha: 0.32),
                 barrierLabel: 'Dismiss',
                 builder: (_, _) => const ColoredBox(color: Colors.orange),
               ),

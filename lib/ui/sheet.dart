@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:fl_clash/ui/color.dart';
 import 'package:fl_clash/ui/context.dart';
 import 'package:fl_clash/ui/inherited.dart';
 import 'package:fl_clash/ui/navigator.dart';
@@ -72,7 +71,7 @@ Future<T?> showFormSheet<T>({
     FormSheetRoute<T>(
       builder: builder,
       backgroundColor: props.backgroundColor,
-      barrierColor: context.colorScheme.modalScrim,
+      barrierColor: Colors.transparent,
       barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
     ),
   );
@@ -89,7 +88,7 @@ Future<T?> _showBottomSheet<T>(
       builder: (sheetContext, _) => builder(sheetContext),
       detents: props.detents,
       fitsContent: true,
-      sheetBarrierColor: context.colorScheme.modalScrim,
+      sheetBarrierColor: Colors.transparent,
       barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
     ),
   );
@@ -103,7 +102,7 @@ Future<T?> _showSideSheet<T>(
   return showModalSideSheet<T>(
     context: context,
     backgroundColor: backgroundColor,
-    barrierColor: context.colorScheme.modalScrim,
+    barrierColor: Colors.transparent,
     builder: (sheetContext) {
       return SheetProvider(
         type: SheetType.sideSheet,
@@ -180,7 +179,6 @@ Future<T?> showSnapSheet<T>(
       );
     }
 
-    final barrierColor = context.colorScheme.modalScrim;
     final Future<T?> closed;
     if (isMobile) {
       final navigator = sheetNavigatorOf(context);
@@ -188,7 +186,7 @@ Future<T?> showSnapSheet<T>(
         SnapSheetRoute<T>(
           builder: home,
           initialScrollOffset: initialScrollOffset,
-          sheetBarrierColor: barrierColor,
+          sheetBarrierColor: Colors.transparent,
           barrierLabel: MaterialLocalizations.of(
             context,
           ).modalBarrierDismissLabel,

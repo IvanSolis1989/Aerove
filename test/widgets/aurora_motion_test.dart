@@ -227,7 +227,7 @@ void main() {
   );
 
   testWidgets(
-    'display refresh cadences repaint the background at twenty-four fps',
+    'display refresh cadences repaint the background at thirty fps',
     (tester) async {
       for (final refreshRate in [60, 120]) {
         final key = GlobalKey();
@@ -253,8 +253,8 @@ void main() {
             boundary.debugAsymmetricPaintCount;
         expect(
           paints,
-          inInclusiveRange(23, 24),
-          reason: '$refreshRate Hz must retain the accumulated 24 fps cadence',
+          inInclusiveRange(29, 30),
+          reason: '$refreshRate Hz must retain the accumulated 30 fps cadence',
         );
         expect(builds, originalBuilds);
         await tester.pumpWidget(const SizedBox.shrink());

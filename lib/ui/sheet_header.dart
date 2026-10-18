@@ -71,6 +71,8 @@ class FloatingHeader extends StatelessWidget {
     this.fadeStart = 0.5,
     this.overhang = 0,
     this.blur = false,
+    this.liquidGlass = false,
+    this.showBackground = true,
     required this.child,
   });
 
@@ -81,6 +83,8 @@ class FloatingHeader extends StatelessWidget {
   final double fadeStart;
   final double overhang;
   final bool blur;
+  final bool liquidGlass;
+  final bool showBackground;
   final Widget child;
 
   Gradient _scrimOf(double height) {
@@ -109,7 +113,7 @@ class FloatingHeader extends StatelessWidget {
     return Stack(
       clipBehavior: Clip.none,
       children: [
-        Positioned(
+        if (showBackground) Positioned(
           top: 0,
           left: 0,
           right: 0,
@@ -121,6 +125,7 @@ class FloatingHeader extends StatelessWidget {
                       fadeHeight: constraints.maxHeight,
                       fullStrengthHeight:
                           (constraints.maxHeight - overhang) * 0.35,
+                      liquidGlass: liquidGlass,
                     )
                   : DecoratedBox(
                       decoration: BoxDecoration(
@@ -138,7 +143,7 @@ class FloatingHeader extends StatelessWidget {
 
 /// Floats [header] over [body], fading it out so content reads through it
 /// as it scrolls past; [footer] sits on its own surface.
-class FloatingHeaderBody extends StatelessWidget {
+class FloatingHeaderBody extends StatefulWidget {
   const FloatingHeaderBody({
     super.key,
     required this.backgroundColor,
@@ -153,30 +158,64 @@ class FloatingHeaderBody extends StatelessWidget {
   final Widget? footer;
 
   @override
+  State<FloatingHeaderBody> createState() => _FloatingHeaderBodyState();
+}
+
+class _FloatingHeaderBodyState extends State<FloatingHeaderBody> {
+  bool _scrolledUnder = false;
+
+  void _updateScroll(ScrollMetrics metrics) {
+    if (metrics.axis != Axis.vertical) return;
+    final scrolledUnder = metrics.extentBefore > 0;
+    if (_scrolledUnder == scrolledUnder) return;
+    setState(() => _scrolledUnder = scrolledUnder);
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final enabled = LiquidGlassScope.of(context);
+    final glass = enabled && !MediaQuery.highContrastOf(context);
     return Stack(
       children: [
-        ScrollConfiguration(
-          behavior: const ShowBarScrollBehavior(),
-          child: body,
+        NotificationListener<ScrollNotification>(
+          onNotification: (notification) {
+            if (notification.depth == 0) _updateScroll(notification.metrics);
+            return false;
+          },
+          child: NotificationListener<ScrollMetricsNotification>(
+            onNotification: (notification) {
+              if (notification.depth == 0) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted) _updateScroll(notification.metrics);
+                });
+              }
+              return false;
+            },
+            child: ScrollConfiguration(
+              behavior: const ShowBarScrollBehavior(),
+              child: widget.body,
+            ),
+          ),
         ),
         Positioned(
           top: 0,
           left: 0,
           right: 0,
           child: FloatingHeader(
-            backgroundColor: backgroundColor,
-            blur: LiquidGlassScope.of(context),
-            child: header,
+            backgroundColor: widget.backgroundColor,
+            blur: enabled,
+            liquidGlass: glass,
+            showBackground: !glass || _scrolledUnder,
+            child: widget.header,
           ),
         ),
-        if (footer != null)
+        if (widget.footer != null)
           Positioned(
             bottom: 0,
             left: 0,
             right: 0,
             child: SheetOverhangLift(
-              child: Material(type: MaterialType.transparency, child: footer),
+              child: Material(type: MaterialType.transparency, child: widget.footer),
             ),
           ),
       ],

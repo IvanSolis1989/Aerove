@@ -195,7 +195,7 @@ void main() {
               frostedVariance,
               lessThan(rawVariance * 0.1),
               reason:
-                  'A 32% scrim alone leaves >40% variance; the whole-sheet frost must suppress background glyphs.',
+                  'The whole-sheet frost must suppress background glyphs without a dimming barrier.',
             );
             await _checkTitle(tester, capture, after);
             final gesture = await tester.startGesture(
@@ -276,10 +276,10 @@ Future<Uint8List> _checkCorners(
       .widget<SheetSurface>(find.byType(SheetSurface).first)
       .shape
       .getOuterPath(rect);
-  final barrier = tester
-      .widget<AnimatedModalBarrier>(find.byType(AnimatedModalBarrier).last)
-      .color
-      .value!;
+  expect(find.byType(AnimatedModalBarrier), findsNothing);
+  final barrier = tester.widget<ModalBarrier>(find.byType(ModalBarrier).last);
+  expect(barrier.dismissible, isTrue);
+  expect(barrier.color?.a ?? 0, 0);
   final y = rect.top.ceil() + 1;
   expect(y, inInclusiveRange(0, 799));
   for (final x in [1, 388]) {
@@ -295,14 +295,11 @@ Future<Uint8List> _checkCorners(
     }
     final at = (y * 390 + x) * 4;
     for (var channel = 0; channel < 3; channel++) {
-      final tint = [barrier.r, barrier.g, barrier.b][channel] * 255;
-      final expected =
-          before[at + channel] * (1 - barrier.a) + tint * barrier.a;
       expect(
         image[at + channel],
-        closeTo(expected, 1),
+        closeTo(before[at + channel], 1),
         reason:
-            'The superellipse cutout must show only the dimmed page, including toolbar corners.',
+            'The superellipse cutout must show the undimmed page, including toolbar corners.',
       );
     }
   }

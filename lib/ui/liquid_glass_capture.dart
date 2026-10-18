@@ -563,6 +563,9 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     for (Layer? child = layer.firstChild; child != null;) {
       switch (child) {
         case final _LiquidGlassLayer pane:
+          final boundary = chain
+              .whereType<_LiquidGlassOcclusionLayer>()
+              .lastOrNull;
           found.add(
             _Behind(
                 pane,
@@ -575,14 +578,10 @@ class _LiquidGlassHostLayer extends ContainerLayer {
                 rootToHost,
                 chain.toSet(),
               )
-              ..flatBoundary = wallpaperOnly && !pane.contentBackdrop
-                  ? chain
-                        .whereType<_LiquidGlassOcclusionLayer>()
-                        .where(
-                          (layer) =>
-                              layer.mode == LiquidGlassOcclusionMode.freeze,
-                        )
-                        .lastOrNull
+              ..flatBoundary = wallpaperOnly &&
+                      !pane.contentBackdrop &&
+                      boundary?.captureContent == true
+                  ? boundary
                   : null,
           );
         case final ContainerLayer container:

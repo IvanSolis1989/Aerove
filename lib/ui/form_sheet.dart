@@ -18,7 +18,7 @@ class FormSheetRoute<T> extends PopupRoute<T>
     with SheetCoverRouteMixin<T>, AlertMotionRouteMixin<T>, AlertHostRoute<T> {
   FormSheetRoute({
     required this.builder,
-    required this.barrierColor,
+    this.barrierColor = Colors.transparent,
     required this.barrierLabel,
     this.backgroundColor,
   });

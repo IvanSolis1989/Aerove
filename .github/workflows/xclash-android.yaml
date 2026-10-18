@@ -89,6 +89,37 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y fonts-noto-cjk
+      - name: Prepare device font regression fixture
+        run: |
+          python3 - "$RUNNER_TEMP/misans-fixture" <<'PY'
+          from pathlib import Path
+          import hashlib, struct, sys, urllib.parse, urllib.request, zlib
+          output = Path(sys.argv[1])
+          output.mkdir(parents=True, exist_ok=True)
+          first, last = 213458452, 227869191
+          request = urllib.request.Request(
+              'https://hyperos.mi.com/font-download/MiSans.zip',
+              headers={'Range': f'bytes={first}-{last}', 'User-Agent': 'Mozilla/5.0'})
+          with urllib.request.urlopen(request, timeout=60) as response:
+              assert response.status == 206
+              assert response.headers.get('Content-Range') == f'bytes {first}-{last}/227880072'
+              data = response.read(last - first + 2)
+          assert len(data) == last - first + 1
+          header = struct.unpack_from('<4s5H3L2H', data)
+          assert header[0] == b'PK\x03\x04' and header[3] == 8 and not header[2] & 1
+          assert data[30:30 + header[9]].endswith(b'/MiSansVF.ttf')
+          start = 30 + header[9] + header[10]
+          font = zlib.decompress(data[start:start + 14410630], -15)
+          assert len(font) == 20093424 and zlib.crc32(font) & 0xffffffff == 3747145830
+          assert hashlib.sha256(font).hexdigest() == '0ddef90648998900175cfdca9a6f087a2544c182f130b0ad4f7e94a03a115e79'
+          (output / 'MiSansVF.ttf').write_bytes(font)
+          license_url = 'https://hyperos.mi.com/font-download/' + urllib.parse.quote('MiSans字体知识产权许可协议.pdf')
+          with urllib.request.urlopen(license_url, timeout=30) as response:
+              license_data = response.read(1000000)
+          assert hashlib.sha256(license_data).hexdigest() == '4a93a27cd2bd81b3b5ecfd0a853144a876fa26938a93a68443c67d74172fcb86'
+          (output / 'MiSans-license.pdf').write_bytes(license_data)
+          PY
+          echo "XCLASH_MISANS_FONT=$RUNNER_TEMP/misans-fixture/MiSansVF.ttf" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -112,8 +143,8 @@ jobs:
           cp pubspec.yaml "$RUNNER_TEMP/feather-pubspec.yaml"
           trap 'cp "$RUNNER_TEMP/feather-pubspec.yaml" pubspec.yaml' EXIT
           sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
-          flutter test --enable-impeller --reporter expanded test/widgets/header_blur_occlusion_test.dart
-          XCLASH_REQUIRE_IMPELLER=false XCLASH_SCREENSHOT_DIR="$XCLASH_SCREENSHOT_DIR/software" flutter test --reporter expanded test/widgets/header_blur_occlusion_test.dart
+          flutter test --enable-impeller --reporter expanded test/widgets/header_blur_occlusion_test.dart test/widgets/header_blur_test.dart
+          XCLASH_REQUIRE_IMPELLER=false XCLASH_SCREENSHOT_DIR="$XCLASH_SCREENSHOT_DIR/software" flutter test --reporter expanded test/widgets/header_blur_occlusion_test.dart test/widgets/header_blur_test.dart
       - name: Upload feather blend evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -131,7 +162,7 @@ jobs:
           cp pubspec.yaml "$RUNNER_TEMP/reported-pubspec.yaml"
           trap 'cp "$RUNNER_TEMP/reported-pubspec.yaml" pubspec.yaml' EXIT
           sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
-          tests=(test/widgets/aurora_lifecycle_test.dart test/widgets/theme_cross_fade_test.dart test/widgets/subscription_usage_fill_test.dart test/widgets/dashboard_text_bounds_test.dart test/views/dashboard/foreground_test.dart test/views/dashboard/traffic_test.dart test/views/aurora_settings_test.dart)
+          tests=(test/widgets/aurora_activity_test.dart test/widgets/aurora_motion_test.dart test/widgets/aurora_lifecycle_test.dart test/widgets/theme_cross_fade_test.dart test/widgets/subscription_usage_fill_test.dart test/widgets/dashboard_text_bounds_test.dart test/widgets/proxies_scroll_work_test.dart test/widgets/sheet_occlusion_test.dart test/widgets/sheet_surface_render_test.dart test/views/dashboard/foreground_test.dart test/views/dashboard/traffic_test.dart test/views/aurora_settings_test.dart)
           flutter test --enable-impeller --reporter expanded "${tests[@]}"
           XCLASH_REQUIRE_IMPELLER=false XCLASH_SCREENSHOT_DIR="$XCLASH_SCREENSHOT_DIR/software" flutter test --reporter expanded "${tests[@]}"
       - name: Upload reported regression evidence
@@ -158,6 +189,7 @@ jobs:
             test/pages/home_test.dart \
             test/widgets/aurora_transform_test.dart \
             test/widgets/aurora_motion_test.dart \
+            test/widgets/aurora_activity_test.dart \
             test/widgets/aurora_lifecycle_test.dart \
             test/widgets/aurora_text_colors_test.dart \
             test/widgets/glass_ink_cache_test.dart \
@@ -179,6 +211,7 @@ jobs:
             test/widgets/core_status_button_test.dart \
             test/widgets/proxy_card_focus_test.dart \
             test/widgets/proxies_list_test.dart \
+            test/widgets/proxies_scroll_work_test.dart \
             test/widgets/proxies_tab_test.dart \
             test/widgets/floating_scrollbar_test.dart \
             test/widgets/scrollbar_inset_test.dart \

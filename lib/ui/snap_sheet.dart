@@ -53,7 +53,7 @@ const _wheelTurnGap = Duration(milliseconds: 500);
 class SnapSheetRoute<T> extends PopupRoute<T> with SheetCoverRouteMixin<T> {
   SnapSheetRoute({
     required this.builder,
-    required this.sheetBarrierColor,
+    this.sheetBarrierColor = Colors.transparent,
     required this.barrierLabel,
     this.detents = snapSheetDetents,
     this.fitsContent = false,

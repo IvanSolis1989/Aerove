@@ -9,12 +9,14 @@ class HeaderBlur extends StatelessWidget {
     super.key,
     required this.fadeHeight,
     this.fullStrengthHeight = 0,
+    this.liquidGlass = false,
   });
 
   static const _sigma = 12.0;
 
   final double fadeHeight;
   final double fullStrengthHeight;
+  final bool liquidGlass;
 
   @override
   Widget build(BuildContext context) {
@@ -30,7 +32,7 @@ class HeaderBlur extends StatelessWidget {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              if (glass)
+              if (glass && !liquidGlass)
                 Positioned(
                   top: 0,
                   left: 0,
@@ -43,7 +45,30 @@ class HeaderBlur extends StatelessWidget {
                     child: SizedBox.expand(),
                   ),
                 ),
-              BackdropFilter(
+              if (glass && liquidGlass)
+                LiquidGlassOcclusion(
+                  shape: AppShape.none,
+                  bottomFeather: 12,
+                  mode: LiquidGlassOcclusionMode.plain,
+                  captureContent: true,
+                  child: ShaderMask(
+                    blendMode: BlendMode.dstIn,
+                    shaderCallback: (bounds) => _HeaderBlurMask.gradient(
+                      (fullStrengthHeight / fadeHeight).clamp(0.0, 1.0),
+                    ).createShader(bounds),
+                    child: const LiquidGlass(
+                      style: LiquidGlassStyle(
+                        tint: Colors.transparent,
+                        blur: _sigma,
+                        refraction: 12,
+                        bevel: 12,
+                        rim: 0,
+                      ),
+                      clipper: ShapeBorderClipper(shape: AppShape.none),
+                    ),
+                  ),
+                )
+              else BackdropFilter(
                 filter: ui.ImageFilter.blur(
                   sigmaX: _sigma,
                   sigmaY: _sigma,
@@ -76,6 +101,16 @@ class _HeaderBlurMask extends CustomPainter {
     return Colors.white.withValues(alpha: 1 - t * t * (3 - 2 * t));
   }, growable: false);
 
+  static LinearGradient gradient(double fullStrengthFraction) => LinearGradient(
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: _colors,
+    stops: [
+      for (var index = 0; index <= _steps; index++)
+        fullStrengthFraction + (1 - fullStrengthFraction) * index / _steps,
+    ],
+  );
+
   @override
   void paint(Canvas canvas, Size size) {
     final rect = Offset.zero & size;
@@ -83,16 +118,7 @@ class _HeaderBlurMask extends CustomPainter {
       rect,
       Paint()
         ..blendMode = BlendMode.dstIn
-        ..shader = LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: _colors,
-          stops: [
-            for (var index = 0; index <= _steps; index++)
-              fullStrengthFraction +
-                  (1 - fullStrengthFraction) * index / _steps,
-          ],
-        ).createShader(rect),
+        ..shader = gradient(fullStrengthFraction).createShader(rect),
     );
   }
 

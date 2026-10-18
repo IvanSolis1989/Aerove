@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui' show ImageFilter, Vertices, VertexMode;
 
 import 'package:fl_clash/common/aurora.dart';
@@ -225,9 +226,174 @@ class _AuroraAppSurfaceState extends ConsumerState<AuroraAppSurface>
     );
     return TickerMode(
       enabled: _foreground,
-      child: Offstage(offstage: !_visible, child: surface),
+      child: AuroraMotionActivity(
+        enabled: enabled && widget.motion,
+        child: Offstage(offstage: !_visible, child: surface),
+      ),
     );
   }
+}
+
+class AuroraMotionActivity extends StatefulWidget {
+  const AuroraMotionActivity({
+    super.key,
+    this.enabled = true,
+    required this.child,
+  });
+
+  final bool enabled;
+  final Widget child;
+
+  static ValueListenable<int>? rateOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<_AuroraActivityRate>()?.rate;
+
+  @override
+  State<AuroraMotionActivity> createState() => _AuroraMotionActivityState();
+}
+
+class _AuroraMotionActivityState extends State<AuroraMotionActivity>
+    with WidgetsBindingObserver {
+  static const _idleDelay = Duration(milliseconds: 350);
+
+  final _rate = ValueNotifier(30);
+  final _pointers = <int>{};
+  final _scrolls = <BuildContext>{};
+  Timer? _idleTimer;
+  bool _foreground = true;
+  bool _accepting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _foreground = switch (WidgetsBinding.instance.lifecycleState) {
+      null || AppLifecycleState.resumed => true,
+      _ => false,
+    };
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncEnabled();
+  }
+
+  @override
+  void didUpdateWidget(AuroraMotionActivity oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncEnabled();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _foreground = state == AppLifecycleState.resumed;
+    _syncEnabled();
+  }
+
+  void _syncEnabled() {
+    _accepting =
+        widget.enabled &&
+        _foreground &&
+        TickerMode.valuesOf(context).enabled &&
+        !(MediaQuery.maybeOf(context)?.disableAnimations ?? false);
+    if (!_accepting) {
+      _idleTimer?.cancel();
+      _idleTimer = null;
+      _pointers.clear();
+      _scrolls.clear();
+      _rate.value = 30;
+    }
+  }
+
+  void _activate() {
+    _idleTimer?.cancel();
+    _idleTimer = null;
+    _rate.value = 15;
+  }
+
+  void _release() {
+    if (_rate.value == 30 || _pointers.isNotEmpty) return;
+    _idleTimer?.cancel();
+    _idleTimer = Timer(_idleDelay, () {
+      _idleTimer = null;
+      // Disposed scrollables may never send ScrollEndNotification.
+      _scrolls.removeWhere((source) => !source.mounted);
+      if (_scrolls.isEmpty) {
+        _rate.value = 30;
+      } else {
+        _release();
+      }
+    });
+  }
+
+  bool _onScroll(ScrollNotification notification) {
+    if (!_accepting) return false;
+    final source = notification.context ?? context;
+    if (notification is ScrollStartNotification ||
+        notification is ScrollUpdateNotification ||
+        notification is OverscrollNotification) {
+      if (_scrolls.add(source)) {
+        _activate();
+        _release();
+      }
+    } else if (notification is ScrollEndNotification) {
+      _scrolls.remove(source);
+      _release();
+    }
+    return false;
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _idleTimer?.cancel();
+    _rate.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _AuroraActivityRate(
+      rate: _rate,
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (event) {
+          if (!_accepting) return;
+          _pointers.add(event.pointer);
+          _activate();
+        },
+        onPointerUp: (event) {
+          if (!_accepting) return;
+          _pointers.remove(event.pointer);
+          _release();
+        },
+        onPointerCancel: (event) {
+          if (!_accepting) return;
+          _pointers.remove(event.pointer);
+          _release();
+        },
+        onPointerSignal: (_) {
+          if (!_accepting) return;
+          _activate();
+          _release();
+        },
+        child: NotificationListener<ScrollNotification>(
+          onNotification: _onScroll,
+          child: widget.child,
+        ),
+      ),
+    );
+  }
+}
+
+class _AuroraActivityRate extends InheritedWidget {
+  const _AuroraActivityRate({required this.rate, required super.child});
+
+  final ValueListenable<int> rate;
+
+  @override
+  bool updateShouldNotify(_AuroraActivityRate oldWidget) =>
+      !identical(rate, oldWidget.rate);
 }
 
 class SeededAuroraWallpaper extends StatefulWidget {
@@ -252,12 +418,14 @@ class SeededAuroraWallpaper extends StatefulWidget {
 
 class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
-  static const _framesPerSecond = 24;
+  int _framesPerSecond = 30;
+  ValueListenable<int>? _activityRate;
 
   late _AuroraPainter _painter;
   late final Ticker _ticker;
   late final ValueNotifier<({bool square, Duration elapsed})> _frame;
   Duration _runBase = Duration.zero;
+  Duration _rateEpoch = Duration.zero;
   int _lastPublishedFrame = 0;
   bool _foreground = true;
 
@@ -276,7 +444,7 @@ class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper>
     ));
     _ticker = createTicker((elapsed) {
       final frame =
-          elapsed.inMicroseconds *
+          (elapsed - _rateEpoch).inMicroseconds *
           _framesPerSecond ~/
           Duration.microsecondsPerSecond;
       if (frame <= _lastPublishedFrame) return;
@@ -290,7 +458,22 @@ class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final rate = AuroraMotionActivity.rateOf(context);
+    if (!identical(_activityRate, rate)) {
+      _activityRate?.removeListener(_onRateChanged);
+      _activityRate = rate;
+      _activityRate?.addListener(_onRateChanged);
+      _onRateChanged();
+    }
     _syncTicker();
+  }
+
+  void _onRateChanged() {
+    final rate = _activityRate?.value ?? 30;
+    if (rate == _framesPerSecond) return;
+    _framesPerSecond = rate;
+    _rateEpoch = _ticker.lastElapsedDuration ?? Duration.zero;
+    _lastPublishedFrame = 0;
   }
 
   @override
@@ -308,6 +491,7 @@ class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper>
         !(MediaQuery.maybeOf(context)?.disableAnimations ?? false);
     if (running && !_ticker.isActive) {
       _runBase = _frame.value.elapsed;
+      _rateEpoch = Duration.zero;
       _lastPublishedFrame = 0;
       _ticker.start();
     } else if (!running && _ticker.isActive) {
@@ -349,6 +533,7 @@ class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _activityRate?.removeListener(_onRateChanged);
     _ticker.dispose();
     _painter.dispose();
     _frame.dispose();

@@ -9,12 +9,15 @@ class LiquidGlassOcclusion extends SingleChildRenderObjectWidget {
     required this.shape,
     this.bottomFeather = 0,
     this.mode = LiquidGlassOcclusionMode.freeze,
+    bool? captureContent,
     required super.child,
-  });
+  }) : captureContent =
+           captureContent ?? mode == LiquidGlassOcclusionMode.freeze;
 
   final ShapeBorder shape;
   final double bottomFeather;
   final LiquidGlassOcclusionMode mode;
+  final bool captureContent;
 
   @override
   RenderObject createRenderObject(BuildContext context) => _GlassOcclusionBox(
@@ -22,6 +25,7 @@ class LiquidGlassOcclusion extends SingleChildRenderObjectWidget {
     Directionality.of(context),
     bottomFeather,
     mode,
+    captureContent,
   );
 
   @override
@@ -33,6 +37,7 @@ class LiquidGlassOcclusion extends SingleChildRenderObjectWidget {
       ..shape = shape
       ..bottomFeather = bottomFeather
       ..mode = mode
+      ..captureContent = captureContent
       ..textDirection = Directionality.of(context)
       ..markNeedsPaint();
   }
@@ -44,12 +49,14 @@ class _GlassOcclusionBox extends RenderProxyBox {
     this.textDirection,
     this.bottomFeather,
     this.mode,
+    this.captureContent,
   );
 
   ShapeBorder shape;
   TextDirection textDirection;
   double bottomFeather;
   LiquidGlassOcclusionMode mode;
+  bool captureContent;
   final _layer = LayerHandle<_LiquidGlassOcclusionLayer>();
 
   @override
@@ -64,6 +71,7 @@ class _GlassOcclusionBox extends RenderProxyBox {
       Offset.zero & size,
       bottomFeather,
       mode,
+      captureContent,
     );
     layer.offset = offset;
     context.pushLayer(layer, super.paint, Offset.zero);
@@ -101,6 +109,7 @@ class _LiquidGlassOcclusionLayer extends OffsetLayer {
   (ShapeBorder, TextDirection, Rect, double)? geometry;
   Path path = Path();
   LiquidGlassOcclusionMode mode = LiquidGlassOcclusionMode.freeze;
+  bool captureContent = true;
 
   void configure(
     ShapeBorder shape,
@@ -108,11 +117,13 @@ class _LiquidGlassOcclusionLayer extends OffsetLayer {
     Rect rect, [
     double feather = 0,
     LiquidGlassOcclusionMode mode = LiquidGlassOcclusionMode.freeze,
+    bool captureContent = true,
   ]) {
     final key = (shape, direction, rect, math.max(0.0, feather));
-    if (geometry == key && this.mode == mode) return;
+    if (geometry == key && this.mode == mode && this.captureContent == captureContent) return;
     geometry = key;
     this.mode = mode;
+    this.captureContent = captureContent;
     path = shape.getOuterPath(rect, textDirection: direction);
     markNeedsAddToScene();
   }
