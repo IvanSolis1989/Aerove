@@ -72,7 +72,10 @@ void main() {
     for (final quality in LiquidGlassQuality.values) {
       testWidgets('dashboard data and units take local color at DPR3 '
           '${brightness.name} ${quality.name}', (tester) async {
-        tester.view.physicalSize = const Size(_width * _dpr, _height * _dpr);
+        tester.view.physicalSize = Size(
+          (_width * _dpr).toDouble(),
+          (_height * _dpr).toDouble(),
+        );
         tester.view.devicePixelRatio = _dpr.toDouble();
         addTearDown(tester.view.reset);
         tester.binding.handleAppLifecycleStateChanged(
