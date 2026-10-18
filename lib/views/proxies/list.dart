@@ -219,7 +219,6 @@ class _ProxiesListViewState extends ConsumerState<ProxiesListView> {
               final barInset = context.appBarInset;
               return CommonScrollBar(
                 controller: _controller,
-                thumbVisibility: true,
                 child: CustomScrollView(
                   key: proxiesListStoreKey,
                   controller: _controller,

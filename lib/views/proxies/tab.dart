@@ -252,7 +252,6 @@ class ProxyGroupView extends ConsumerWidget {
     final proxies = group.all;
     return CommonScrollBar(
       controller: controller,
-      thumbVisibility: true,
       child: GridView.builder(
         key: _getPageStorageKey(ref),
         controller: controller,

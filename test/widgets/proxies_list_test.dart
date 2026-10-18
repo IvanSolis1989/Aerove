@@ -8,8 +8,10 @@ import 'package:fl_clash/state.dart';
 import 'package:fl_clash/ui/sliver_glass_group.dart';
 import 'package:fl_clash/views/proxies/card.dart';
 import 'package:fl_clash/views/proxies/list.dart';
+import 'package:fl_clash/views/proxies/tab.dart';
 import 'package:fl_clash/widgets/widgets.dart' hide ListHeader;
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -18,6 +20,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../helpers/test_app.dart';
 import '../helpers/test_profiles.dart';
+import '../helpers/scrollbar.dart';
 
 class _RecordingProxiesAction extends ProxiesAction {
   static final List<String> tested = [];
@@ -49,6 +52,8 @@ void main() {
     ValueListenable<Brightness>? brightness,
     bool aurora = false,
     bool? glass,
+    LiquidGlassQuality quality = LiquidGlassQuality.standard,
+    Widget? view,
   }) async {
     tester.view.physicalSize = const Size(900, 700);
     tester.view.devicePixelRatio = 1;
@@ -89,6 +94,7 @@ void main() {
                         enabled: aurora,
                         child: LiquidGlassScope(
                           enabled: true,
+                          quality: quality,
                           child: LiquidGlassHost(enabled: true, child: child),
                         ),
                       )
@@ -97,14 +103,14 @@ void main() {
             ),
           ),
           child: brightness == null
-              ? const ProxiesListView()
+              ? view ?? const ProxiesListView()
               : ValueListenableBuilder(
                   valueListenable: brightness,
                   builder: (_, brightness, child) => Theme(
                     data: ThemeData(brightness: brightness),
                     child: child!,
                   ),
-                  child: const ProxiesListView(),
+                  child: view ?? const ProxiesListView(),
                 ),
         ),
       ),
@@ -174,6 +180,71 @@ void main() {
   Future<void> unmountList(WidgetTester tester) async {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(Duration.zero);
+  }
+
+  for (final tab in [false, true]) {
+    for (final quality in [null, ...LiquidGlassQuality.values]) {
+      testWidgets('proxy ${tab ? 'tab' : 'list'} scrollbar fades and remains '
+          'scrubbable (${quality?.name ?? 'none'})', (tester) async {
+        final group = _group('G0', 160);
+        final controller = ScrollController();
+        try {
+          await pumpList(tester,
+            groups: [group],
+            glass: quality != null,
+            quality: quality ?? LiquidGlassQuality.standard,
+            view: tab ? ProxyGroupView(group: group, controller: controller,
+              columns: 3, cardType: ProxyCardType.standard) : null,
+          );
+          final viewport = find.byType(tab ? GridView : CustomScrollView).first;
+          final scrollable = find.descendant(of: viewport,
+            matching: find.byType(Scrollable)).first;
+          final position = tester.state<ScrollableState>(scrollable).position;
+          double opacity() => scrollbarPainter(tester).fadeoutOpacityAnimation.value;
+          expect(position.maxScrollExtent, greaterThan(100));
+          expect(tester.widget<CommonScrollBar>(find.byType(CommonScrollBar).first)
+              .thumbVisibility, isFalse);
+          await tester.pump(const Duration(seconds: 2));
+          await tester.pump(const Duration(milliseconds: 300));
+          expect(opacity(), 0);
+
+          await tester.drag(viewport, const Offset(0, -160));
+          await tester.pump(const Duration(milliseconds: 300));
+          expect(opacity(), 1);
+          await tester.pump(const Duration(seconds: 2));
+          await tester.pump(const Duration(milliseconds: 300));
+          expect(opacity(), 0);
+
+          await tester.drag(viewport, const Offset(0, -80));
+          await tester.pump(const Duration(milliseconds: 300));
+          expect(opacity(), 1);
+          final thumb = await revealScrollbarThumb(tester, scrollable: scrollable);
+          if (Theme.of(tester.element(viewport)).platform == TargetPlatform.macOS) {
+            final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+            await mouse.addPointer(location: Offset.zero);
+            await mouse.moveTo(thumb);
+            await tester.pump(const Duration(milliseconds: 150));
+            expect(scrollbarPainter(tester).thickness, 10);
+            await mouse.removePointer();
+            await tester.pump(const Duration(milliseconds: 150));
+          }
+          final before = position.pixels;
+          final gesture = await tester.startGesture(thumb);
+          await gesture.moveBy(const Offset(0, 40));
+          await tester.pump(const Duration(milliseconds: 150));
+          expect(position.pixels, greaterThan(before));
+          await tester.pump(const Duration(seconds: 2));
+          expect(opacity(), 1);
+          await gesture.up();
+          await tester.pumpAndSettle(const Duration(seconds: 2));
+          expect(opacity(), 0);
+          expect(tester.takeException(), isNull);
+        } finally {
+          await unmountList(tester);
+          controller.dispose();
+        }
+      }, variant: const TargetPlatformVariant({TargetPlatform.android, TargetPlatform.macOS}));
+    }
   }
 
   testWidgets('glass leaves the filled group icon well transparent', (
