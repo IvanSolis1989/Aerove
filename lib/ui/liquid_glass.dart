@@ -1357,7 +1357,10 @@ class _LiquidGlassLayer extends Layer {
     _capturedPass = pass;
     _showingFrozen = false;
     assert(() {
-      coverageKey = [...coverageKey, LiquidGlassHost.debugFeatherBranchOverride];
+      coverageKey = [
+        ...coverageKey,
+        LiquidGlassHost.debugFeatherBranchOverride,
+      ];
       return true;
     }());
     final program = this.program;

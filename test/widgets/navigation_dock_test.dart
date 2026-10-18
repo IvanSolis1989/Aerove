@@ -330,9 +330,7 @@ void main() {
       expect(tester.getSize(destination).width, greaterThanOrEqualTo(48));
       expect(tester.getSize(destination).height, greaterThanOrEqualTo(48));
 
-      final gesture = await tester.startGesture(
-        tester.getCenter(destination),
-      );
+      final gesture = await tester.startGesture(tester.getCenter(destination));
       await tester.pumpAndSettle();
       expect(glass, findsNWidgets(lifted));
 

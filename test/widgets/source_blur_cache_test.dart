@@ -354,7 +354,10 @@ void main() {
     tester.renderObject(find.byType(LiquidGlassHost)).markNeedsPaint();
     await tester.pump(const Duration(milliseconds: 16));
     final before = LiquidGlassHost.debugLastSourceBlurCapture!;
-    expect(before.sourceBlurBuilds, ui.ImageFilter.isShaderFilterSupported ? 1 : 0);
+    expect(
+      before.sourceBlurBuilds,
+      ui.ImageFilter.isShaderFilterSupported ? 1 : 0,
+    );
     await _shot(tester);
     final after = LiquidGlassHost.debugLastSourceBlurCapture!;
     expect(after.sourceBlurBuilds, before.sourceBlurBuilds);
@@ -392,12 +395,16 @@ void main() {
         final result = _oracle(before, after, [
           for (final rect in _rects) rect.inflate(2),
         ], 1);
-        if (!ui.ImageFilter.isShaderFilterSupported) expect(after.bytes, before.bytes);
+        if (!ui.ImageFilter.isShaderFilterSupported)
+          expect(after.bytes, before.bytes);
         maximum = math.max(maximum, result.maximum);
         maximumRms = math.max(maximumRms, result.rms);
         contrast = math.max(contrast, result.contrast);
         final stats = LiquidGlassHost.debugLastSourceBlurCapture!;
-        expect(stats.sourceBlurBuilds, ui.ImageFilter.isShaderFilterSupported ? 2 : 0);
+        expect(
+          stats.sourceBlurBuilds,
+          ui.ImageFilter.isShaderFilterSupported ? 2 : 0,
+        );
         expect(stats.entries, ui.ImageFilter.isShaderFilterSupported ? 2 : 0);
         expect(stats.sourceBlurPixels, lessThanOrEqualTo(8 * 1024 * 1024));
       }
@@ -447,11 +454,22 @@ void main() {
           true,
         );
         final stats = LiquidGlassHost.debugLastSourceBlurCapture!;
-        expect(stats.sourceBlurBuilds, ui.ImageFilter.isShaderFilterSupported ? 2 : 0);
-        expect(stats.sourceBlurPixels, ui.ImageFilter.isShaderFilterSupported ? 2 * 1024 * 1024 : 0);
+        expect(
+          stats.sourceBlurBuilds,
+          ui.ImageFilter.isShaderFilterSupported ? 2 : 0,
+        );
+        expect(
+          stats.sourceBlurPixels,
+          ui.ImageFilter.isShaderFilterSupported ? 2 * 1024 * 1024 : 0,
+        );
         expect(stats.evictions, 0);
         expect(stats.pinned, ui.ImageFilter.isShaderFilterSupported ? 3 : 0);
-        expect(stats.reasons[ui.ImageFilter.isShaderFilterSupported ? 'budget' : 'backend'], greaterThan(0));
+        expect(
+          stats.reasons[ui.ImageFilter.isShaderFilterSupported
+              ? 'budget'
+              : 'backend'],
+          greaterThan(0),
+        );
       }
       final generation = LiquidGlassHost.debugLastSourceBlurCapture!.generation;
       await _pump(
@@ -466,8 +484,14 @@ void main() {
       );
       final changed = LiquidGlassHost.debugLastSourceBlurCapture!;
       expect(changed.generation, greaterThan(generation));
-      expect(changed.sourceBlurBuilds, ui.ImageFilter.isShaderFilterSupported ? 4 : 0);
-      expect(changed.sourceBlurPixels, ui.ImageFilter.isShaderFilterSupported ? 2 * 1024 * 1024 : 0);
+      expect(
+        changed.sourceBlurBuilds,
+        ui.ImageFilter.isShaderFilterSupported ? 4 : 0,
+      );
+      expect(
+        changed.sourceBlurPixels,
+        ui.ImageFilter.isShaderFilterSupported ? 2 * 1024 * 1024 : 0,
+      );
       LiquidGlassHost.debugSourceBlurBudgetOverride = 0;
       await _pump(
         tester,
