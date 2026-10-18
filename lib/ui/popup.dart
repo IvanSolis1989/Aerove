@@ -554,6 +554,7 @@ class _RenderPopupMorph extends RenderProxyBox {
        _glass = glass;
 
   late final _pane = LiquidGlassPane(markNeedsPaint);
+  final _occlusion = LiquidGlassOcclusionPane();
 
   Animation<double> grow;
   Animation<double> moveX;
@@ -704,6 +705,7 @@ class _RenderPopupMorph extends RenderProxyBox {
   @override
   void dispose() {
     _pane.dispose();
+    _occlusion.dispose();
     super.dispose();
   }
 
@@ -773,6 +775,7 @@ class _RenderPopupMorph extends RenderProxyBox {
   }) {
     final child = this.child!;
     if (frame == null) {
+      _occlusion.clear();
       _pane.clear();
       context.paintChild(child, offset);
       return;
@@ -796,6 +799,7 @@ class _RenderPopupMorph extends RenderProxyBox {
     // The source control stays visible until its snapshot exists, so the
     // platter would only cover it.
     if (sourceImage != null && image == null) {
+      _occlusion.clear();
       return;
     }
     final reveal = frame.reveal;
@@ -803,6 +807,7 @@ class _RenderPopupMorph extends RenderProxyBox {
     // is revealed, or a sub menu leaves the root's bounds, the platter steps
     // aside instead of clipping the levels until the spring settles.
     if (!frame.platter && !size.isEmpty) {
+      _occlusion.clear();
       _pane.clear();
       context.pushTransform(
         needsCompositing,
@@ -812,107 +817,121 @@ class _RenderPopupMorph extends RenderProxyBox {
       );
       return;
     }
-    final glass = _glass;
-    final settled = progress.clamp(0.0, 1.0);
-    final rim = glass?.rim.scale(settled);
-    // Returning cards keep their own fill and shadow as they fade into the
-    // platter's; on glass they stand bare and the platter holds throughout.
-    final platter = returning && glass == null ? 1 - reveal : 1.0;
-    final path = clip.shift(offset);
-    if (glass != null) {
-      // Frosted as the card and shadowed after, so one capture serves the morph.
-      _pane.paint(
-        context,
-        rect.shift(offset),
-        shape: LiquidGlassCorners.circular(math.max(0.0, radius)),
-        style: LiquidGlassStyle.lerp(
-          glass.from,
-          glass.to,
-          settled,
-        ).copyWith(blur: glass.to.blur),
-        hold: bounds
-            .expandToInclude(from)
-            .inflate(size.longestSide * _overshootPerLongestSide)
-            .shift(offset),
-        rim: rim,
-      );
-    }
-    final canvas = context.canvas;
-    final reach = _shadows.fold(
-      0.0,
-      (reach, shadow) =>
-          math.max(reach, shadow.blurSigma * 3 + shadow.offset.distance),
-    );
-    // The blur shades under the platter too; keep that out of fading content.
-    canvas
-      ..save()
-      ..clipPath(
-        Path()
-          ..fillType = PathFillType.evenOdd
-          ..addRect(path.getBounds().inflate(reach))
-          ..addPath(path, Offset.zero),
-      );
-    final corners = AppRadius.all(math.max(0.0, radius));
-    for (final shadow in _shadows) {
-      canvas.drawRSuperellipse(
-        corners.toRSuperellipse(rect.shift(offset + shadow.offset)),
-        shadow.toPaint()
-          ..color = shadow.color.withValues(
-            alpha: shadow.color.a * settled * platter,
-          ),
-      );
-    }
-    canvas.restore();
-    final Color fill;
-    if (glass == null) {
-      final surface = Color.lerp(_sourceColor, _surfaceColor, settled)!;
-      fill = surface.withValues(alpha: surface.a * platter);
-    } else {
-      fill = _sourceColor.withValues(alpha: _sourceColor.a * (1 - settled));
-    }
-    canvas.drawPath(path, Paint()..color = fill);
-    rim?.paintLine(context.canvas, rect.shift(offset), math.max(0.0, radius));
-    final glyph = 1 - reveal;
-    if (image != null && glyph > 0) {
-      final source = from.shift(rect.center - from.center + offset);
-      context.canvas.drawImageRect(
-        image,
-        Offset.zero & Size(image.width.toDouble(), image.height.toDouble()),
-        source,
-        Paint()
-          ..color = Color.fromRGBO(0, 0, 0, glyph)
-          ..filterQuality = FilterQuality.medium,
-      );
-    }
-    if (reveal <= 0 || size.isEmpty) {
-      return;
-    }
-    // Opening, the content fills the platter and is cut to it; returning, it
-    // shrinks whole inside it.
-    final transform = _contentTransform(rect, fit: returning);
-    final sigma = _maxContentBlur * (1 - reveal);
-    void paintContent(PaintingContext context, Offset offset) =>
-        context.pushOpacity(
-          offset,
-          Color.getAlphaFromOpacity(reveal),
-          (context, offset) => context.pushLayer(
-            ImageFilterLayer(
-              imageFilter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
-            ),
-            (context, offset) => context.pushTransform(
-              needsCompositing,
-              offset,
-              transform,
-              (context, offset) => context.paintChild(child, offset),
-            ),
-            offset,
-          ),
+    void paintSurface(PaintingContext context, Offset offset) {
+      final glass = _glass;
+      final settled = progress.clamp(0.0, 1.0);
+      final rim = glass?.rim.scale(settled);
+      // Returning cards keep their own fill and shadow as they fade into the
+      // platter's; on glass they stand bare and the platter holds throughout.
+      final platter = returning && glass == null ? 1 - reveal : 1.0;
+      final path = clip.shift(offset);
+      if (glass != null) {
+        // Frosted as the card and shadowed after, so one capture serves the morph.
+        _pane.paint(
+          context,
+          rect.shift(offset),
+          shape: LiquidGlassCorners.circular(math.max(0.0, radius)),
+          style: LiquidGlassStyle.lerp(
+            glass.from,
+            glass.to,
+            settled,
+          ).copyWith(blur: glass.to.blur),
+          hold: bounds
+              .expandToInclude(from)
+              .inflate(size.longestSide * _overshootPerLongestSide)
+              .shift(offset),
+          rim: rim,
         );
-    if (returning) {
-      paintContent(context, offset);
-      return;
+      }
+      final canvas = context.canvas;
+      final reach = _shadows.fold(
+        0.0,
+        (reach, shadow) =>
+            math.max(reach, shadow.blurSigma * 3 + shadow.offset.distance),
+      );
+      // The blur shades under the platter too; keep that out of fading content.
+      canvas
+        ..save()
+        ..clipPath(
+          Path()
+            ..fillType = PathFillType.evenOdd
+            ..addRect(path.getBounds().inflate(reach))
+            ..addPath(path, Offset.zero),
+        );
+      final corners = AppRadius.all(math.max(0.0, radius));
+      for (final shadow in _shadows) {
+        canvas.drawRSuperellipse(
+          corners.toRSuperellipse(rect.shift(offset + shadow.offset)),
+          shadow.toPaint()
+            ..color = shadow.color.withValues(
+              alpha: shadow.color.a * settled * platter,
+            ),
+        );
+      }
+      canvas.restore();
+      final Color fill;
+      if (glass == null) {
+        final surface = Color.lerp(_sourceColor, _surfaceColor, settled)!;
+        fill = surface.withValues(alpha: surface.a * platter);
+      } else {
+        fill = _sourceColor.withValues(alpha: _sourceColor.a * (1 - settled));
+      }
+      canvas.drawPath(path, Paint()..color = fill);
+      _pane.paintRim(context, rect.shift(offset), math.max(0.0, radius), rim);
+      final glyph = 1 - reveal;
+      if (image != null && glyph > 0) {
+        final source = from.shift(rect.center - from.center + offset);
+        context.canvas.drawImageRect(
+          image,
+          Offset.zero & Size(image.width.toDouble(), image.height.toDouble()),
+          source,
+          Paint()
+            ..color = Color.fromRGBO(0, 0, 0, glyph)
+            ..filterQuality = FilterQuality.medium,
+        );
+      }
+      if (reveal <= 0 || size.isEmpty) {
+        return;
+      }
+      // Opening, the content fills the platter and is cut to it; returning, it
+      // shrinks whole inside it.
+      final transform = _contentTransform(rect, fit: returning);
+      final sigma = _maxContentBlur * (1 - reveal);
+      void paintContent(PaintingContext context, Offset offset) =>
+          context.pushOpacity(
+            offset,
+            Color.getAlphaFromOpacity(reveal),
+            (context, offset) => context.pushLayer(
+              ImageFilterLayer(
+                imageFilter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+              ),
+              (context, offset) => context.pushTransform(
+                needsCompositing,
+                offset,
+                transform,
+                (context, offset) => context.paintChild(child, offset),
+              ),
+              offset,
+            ),
+          );
+      if (returning) {
+        paintContent(context, offset);
+        return;
+      }
+      context.pushClipPath(needsCompositing, offset, bounds, clip, paintContent);
     }
-    context.pushClipPath(needsCompositing, offset, bounds, clip, paintContent);
+    if (_glass == null) {
+      _occlusion.clear();
+      paintSurface(context, offset);
+    } else {
+      _occlusion.paint(
+        context,
+        offset,
+        rect: rect,
+        shape: AppShape.all(math.max(0.0, radius)),
+        painter: paintSurface,
+      );
+    }
   }
 
   Matrix4 _contentTransform(Rect rect, {bool fit = false}) {
@@ -2518,6 +2537,7 @@ class _RenderPopupMenuCard extends RenderProxyBox {
        _bare = bare;
 
   late final _pane = LiquidGlassPane(markNeedsPaint);
+  final _occlusion = LiquidGlassOcclusionPane();
   final _clip = LayerHandle<ClipPathLayer>();
 
   double _grow;
@@ -2631,6 +2651,7 @@ class _RenderPopupMenuCard extends RenderProxyBox {
   @override
   void dispose() {
     _pane.dispose();
+    _occlusion.dispose();
     _clip.layer = null;
     super.dispose();
   }
@@ -2640,50 +2661,65 @@ class _RenderPopupMenuCard extends RenderProxyBox {
     final child = this.child;
     final rect = _rect;
     if (child == null || rect.isEmpty) {
+      _occlusion.clear();
       _pane.clear();
       _clip.layer = null;
       return;
     }
-    final radius = _radius;
-    final shape = AppShape.all(radius).getOuterPath(rect);
-    final glass = _glass;
-    if (glass == null) {
-      final canvas = context.canvas;
-      final surface = shape.shift(offset);
-      final corners = AppRadius.all(radius);
-      for (final shadow in _shadows) {
-        canvas.drawRSuperellipse(
-          corners.toRSuperellipse(rect.shift(offset + shadow.offset)),
-          shadow.toPaint(),
-        );
-      }
-      canvas.drawPath(surface, Paint()..color = _fill);
-    } else if (_bare) {
-      _pane.clear();
-    } else {
-      _pane.paint(
-        context,
-        rect.shift(offset),
-        shape: LiquidGlassCorners.circular(radius),
-        style: glass,
-        shadows: _shadows,
-        hold: (Offset.zero & size).shift(offset),
-        rim: _rim,
-      );
-      _rim?.paintLine(context.canvas, rect.shift(offset), radius);
-    }
-    _clip.layer = context.pushClipPath(
-      needsCompositing,
-      offset,
-      Offset.zero & size,
-      shape,
-      (context, offset) {
-        context.paintChild(child, offset);
-        if (_dim.a > 0) {
-          context.canvas.drawPath(shape.shift(offset), Paint()..color = _dim);
+    void paintSurface(PaintingContext context, Offset offset) {
+      final radius = _radius;
+      final shape = AppShape.all(radius).getOuterPath(rect);
+      final glass = _glass;
+      if (glass == null) {
+        final canvas = context.canvas;
+        final surface = shape.shift(offset);
+        final corners = AppRadius.all(radius);
+        for (final shadow in _shadows) {
+          canvas.drawRSuperellipse(
+            corners.toRSuperellipse(rect.shift(offset + shadow.offset)),
+            shadow.toPaint(),
+          );
         }
-      },
-      oldLayer: _clip.layer,
-    );
+        canvas.drawPath(surface, Paint()..color = _fill);
+      } else if (_bare) {
+        _pane.clear();
+      } else {
+        _pane.paint(
+          context,
+          rect.shift(offset),
+          shape: LiquidGlassCorners.circular(radius),
+          style: glass,
+          shadows: _shadows,
+          hold: (Offset.zero & size).shift(offset),
+          rim: _rim,
+        );
+        _pane.paintRim(context, rect.shift(offset), radius, _rim);
+      }
+      _clip.layer = context.pushClipPath(
+        needsCompositing,
+        offset,
+        Offset.zero & size,
+        shape,
+        (context, offset) {
+          context.paintChild(child, offset);
+          if (_dim.a > 0) {
+            context.canvas.drawPath(shape.shift(offset), Paint()..color = _dim);
+          }
+        },
+        oldLayer: _clip.layer,
+      );
+    }
+    if (_glass == null || _bare) {
+      _occlusion.clear();
+      paintSurface(context, offset);
+    } else {
+      _occlusion.paint(
+        context,
+        offset,
+        rect: rect,
+        shape: AppShape.all(_radius),
+        painter: paintSurface,
+      );
+    }
   }
 }

@@ -971,6 +971,7 @@ class LiquidGlassPane {
   final VoidCallback onReady;
 
   final _layer = LayerHandle<_LiquidGlassLayer>();
+  final _rimLayer = LayerHandle<_LiquidGlassDecorationLayer>();
   Path? _profiled;
   List<double> _profile = _flatProfile;
 
@@ -1030,7 +1031,27 @@ class LiquidGlassPane {
     }
   }
 
-  void clear() => _layer.layer = null;
+  void paintRim(
+    PaintingContext context,
+    Rect rect,
+    double radius,
+    LiquidGlassRim? rim,
+  ) {
+    if (rim == null) {
+      _rimLayer.layer = null;
+      return;
+    }
+    final layer = _rimLayer.layer ??= _LiquidGlassDecorationLayer();
+    layer.offset = rect.topLeft;
+    context.pushLayer(layer, (context, offset) {
+      rim.paintLine(context.canvas, offset & rect.size, radius);
+    }, Offset.zero);
+  }
+
+  void clear() {
+    _layer.layer = null;
+    _rimLayer.layer = null;
+  }
 
   void dispose() {
     _GlassProgram.forget(onReady);
@@ -1120,6 +1141,8 @@ abstract final class _GlassProgram {
       ui.FragmentProgram.fromAsset(_shaderAsset);
 }
 
+class _LiquidGlassDecorationLayer extends OffsetLayer {}
+
 class _LiquidGlassLayer extends Layer {
   static int _skipped = 0;
 
@@ -1140,7 +1163,66 @@ class _LiquidGlassLayer extends Layer {
 
   int _capturedPass = -1;
   ui.Picture? _captured;
+  Rect _capturedRect = Rect.zero;
   ui.FragmentShader? _captureShader;
+  bool _showingFrozen = false;
+  ui.Image? _frozenImage;
+  ui.Picture? _frozenPicture;
+  (Rect, BorderRadius, Path?, List<double>, LiquidGlassStyle, LiquidGlassRim?,
+    ui.FragmentProgram?, LiquidGlassGlow)? _frozenKey;
+
+  bool _freezeCaptured() {
+    final key = (rect, corners, outline, profile, style, rim, program, glow);
+    if (_frozenPicture != null && _frozenKey == key) return true;
+    if (_frozenPicture != null) _thawCaptured();
+    final captured = _captured;
+    if (captured == null || rect.isEmpty || _capturedRect != rect) return false;
+    final scale = math.min(_coveredPixelsPerDp, _maxCoveredSide / rect.longestSide);
+    final recorder = ui.PictureRecorder();
+    Canvas(recorder)
+      ..scale(scale)
+      ..translate(-rect.left, -rect.top)
+      ..drawPicture(captured);
+    final picture = recorder.endRecording();
+    final image = picture.toImageSync(
+      math.max(1, (rect.width * scale).ceil()),
+      math.max(1, (rect.height * scale).ceil()),
+    );
+    picture.dispose();
+    final frozen = ui.PictureRecorder();
+    Canvas(frozen).drawImageRect(
+      image,
+      Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+      rect,
+      Paint()..filterQuality = FilterQuality.low,
+    );
+    _frozenImage = image;
+    _frozenPicture = frozen.endRecording();
+    _frozenKey = key;
+    return true;
+  }
+
+  void _thawCaptured() {
+    if (_frozenPicture == null) return;
+    _dropCaptured();
+    _frozenPicture?.dispose();
+    _frozenPicture = null;
+    _frozenImage?.dispose();
+    _frozenImage = null;
+    _frozenKey = null;
+  }
+
+  void _captureFrozen(int pass) {
+    _capturedPass = pass;
+    if (_showingFrozen) return;
+    final recorder = ui.PictureRecorder();
+    Canvas(recorder).drawPicture(_frozenPicture!);
+    _captured?.dispose();
+    _captured = recorder.endRecording();
+    _captureKey = null;
+    _showingFrozen = true;
+  }
+
   (ui.Image, Path?, BlendMode, ui.FragmentProgram?, List<double>, List<Object?>)?
   _captureKey;
 
@@ -1150,6 +1232,7 @@ class _LiquidGlassLayer extends Layer {
   @override
   void dispose() {
     _frost?.dispose();
+    _thawCaptured();
     _dropCaptured();
     _captureShader?.dispose();
     super.dispose();
@@ -1238,6 +1321,7 @@ class _LiquidGlassLayer extends Layer {
     List<Object?> coverageKey = const [],
   }) {
     _capturedPass = pass;
+    _showingFrozen = false;
     final program = this.program;
     final uniforms = <double>[
       atlas.width.toDouble(),
@@ -1269,7 +1353,10 @@ class _LiquidGlassLayer extends Layer {
     }
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
-    if (visible != null) canvas.clipPath(visible);
+    if (visible != null) {
+      if (_frozenPicture case final frozen?) canvas.drawPicture(frozen);
+      canvas.clipPath(visible);
+    }
     if (program == null) {
       _frostFrom(canvas, atlas, mapping, blendMode, style);
     } else {
@@ -1289,6 +1376,7 @@ class _LiquidGlassLayer extends Layer {
     }
     _captured?.dispose();
     _captured = recorder.endRecording();
+    _capturedRect = rect;
     _captureKey = (atlas, outline, blendMode, program, uniforms, coverageKey);
   }
 
@@ -1336,12 +1424,15 @@ class _LiquidGlassLayer extends Layer {
   /// shows.
   void _captureNothing(int pass) {
     _capturedPass = pass;
+    _thawCaptured();
     _dropCaptured();
   }
 
   void _dropCaptured() {
+    _showingFrozen = false;
     _captured?.dispose();
     _captured = null;
+    _capturedRect = Rect.zero;
     _captureKey = null;
   }
 

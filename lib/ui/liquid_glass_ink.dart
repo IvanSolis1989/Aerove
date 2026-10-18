@@ -38,6 +38,7 @@ typedef LiquidGlassInkCapture = ({
   int sourceCaptures,
   int fallbackCaptures,
   int filterUpdates,
+  int frozenMasks,
 });
 
 /// An opaque, self-contained background whose ancestors may move independently.
@@ -198,13 +199,25 @@ class LiquidGlassInkLayer extends OffsetLayer {
   bool dark = false;
   ui.FragmentProgram? program;
   ui.FragmentShader? _shader;
-  ui.ImageFilter? _filter;
+  ui.Shader? _effect;
   ui.Image? _filteredField;
   List<double> _uniforms = const [];
   ui.Image? _field;
   Size _fieldSize = Size.zero;
   Matrix4 _mapping = Matrix4.identity();
   bool _filterDirty = true;
+  bool inkFrozen = false;
+
+  void _thaw() {
+    if (!inkFrozen) return;
+    inkFrozen = false;
+    _filterDirty = true;
+    markNeedsAddToScene();
+  }
+
+  void _freeze() {
+    if (program != null) inkFrozen = true;
+  }
 
   void configure({
     required Offset offset,
@@ -220,6 +233,7 @@ class LiquidGlassInkLayer extends OffsetLayer {
         this.dark != dark || !identical(this.program, program);
     this.offset = offset;
     if (!changed) return;
+    _thaw();
     this.size = size;
     this.strength = strength;
     this.source = source;
@@ -238,24 +252,30 @@ class LiquidGlassInkLayer extends OffsetLayer {
   }
 
   bool _publishField(ui.Image? field, Size fieldSize, Matrix4 mapping) {
+    if (inkFrozen) return false;
     if (!_filterDirty && identical(_field, field) && _fieldSize == fieldSize &&
         listEquals(_mapping.storage, mapping.storage)) {
       return false;
     }
-    final previous = _filter;
+    final previousUniforms = _uniforms;
+    final previousField = _filteredField;
     _field = field;
     _fieldSize = fieldSize;
     _mapping = mapping;
     _filterDirty = true;
-    final changed = !identical(previous, filter);
+    inkShader;
+    final changed = !identical(previousUniforms, _uniforms) ||
+        !identical(previousField, _filteredField);
     if (changed) {
       markNeedsAddToScene();
     }
     return changed;
   }
 
-  ui.ImageFilter? get filter {
-    if (!_filterDirty) return _filter;
+  Rect get maskRect => Offset.zero & size;
+
+  ui.Shader? get inkShader {
+    if (!_filterDirty) return _effect;
     _filterDirty = false;
     final field = _field;
     final program = this.program;
@@ -264,11 +284,11 @@ class LiquidGlassInkLayer extends OffsetLayer {
       _shader = null;
       _filteredField = null;
       _uniforms = const [];
-      return _filter = null;
+      return _effect = null;
     }
     final origin = MatrixUtils.transformPoint(_mapping, Offset.zero);
-    final x = MatrixUtils.transformPoint(_mapping, Offset(size.width, 0));
-    final y = MatrixUtils.transformPoint(_mapping, Offset(0, size.height));
+    final x = MatrixUtils.transformPoint(_mapping, const Offset(1, 0));
+    final y = MatrixUtils.transformPoint(_mapping, const Offset(0, 1));
     final values = [
       _fieldSize.width,
       _fieldSize.height,
@@ -287,25 +307,25 @@ class LiquidGlassInkLayer extends OffsetLayer {
       source.b,
     ];
     if (identical(field, _filteredField) && listEquals(values, _uniforms)) {
-      return _filter;
+      return _effect;
     }
     final shader = _shader ??= program.fragmentShader();
     for (final (index, value) in values.indexed) {
       if (_uniforms.length <= index || _uniforms[index] != value) {
-        shader.setFloat(index + 2, value);
+        shader.setFloat(index, value);
       }
     }
     if (!identical(field, _filteredField)) {
-      shader.setImageSampler(1, field, filterQuality: FilterQuality.low);
+      shader.setImageSampler(0, field, filterQuality: FilterQuality.low);
     }
     _filteredField = field;
     _uniforms = values;
-    return _filter = ui.ImageFilter.shader(shader);
+    return _effect = shader;
   }
 
   @override
   void addToScene(ui.SceneBuilder builder) {
-    final effect = filter;
+    final effect = inkShader;
     if (effect == null) {
       super.addToScene(builder);
       return;
@@ -315,11 +335,9 @@ class LiquidGlassInkLayer extends OffsetLayer {
       offset.dy,
       oldLayer: engineLayer as ui.OffsetEngineLayer?,
     );
-    builder.pushClipRect(Offset.zero & size);
-    builder.pushImageFilter(effect);
+    builder.pushShaderMask(effect, maskRect, BlendMode.srcIn);
     addChildrenToScene(builder);
     builder
-      ..pop()
       ..pop()
       ..pop();
   }
@@ -331,35 +349,162 @@ class LiquidGlassInkLayer extends OffsetLayer {
   }
 }
 
+class LiquidGlassBackdrop extends LeafRenderObjectWidget {
+  const LiquidGlassBackdrop({super.key});
+
+  @override
+  RenderObject createRenderObject(BuildContext context) => _BackdropBox();
+}
+
+class _BackdropBox extends RenderBox {
+  final _layer = LayerHandle<LiquidGlassBackdropLayer>();
+
+  @override
+  bool get alwaysNeedsCompositing => true;
+
+  @override
+  bool get sizedByParent => true;
+
+  @override
+  Size computeDryLayout(BoxConstraints constraints) => constraints.biggest;
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    final layer = _layer.layer ??= LiquidGlassBackdropLayer();
+    layer.configure(offset, size);
+    context.pushLayer(layer, (context, offset) {}, Offset.zero);
+  }
+
+  @override
+  void dispose() {
+    _layer.layer = null;
+    super.dispose();
+  }
+}
+
+class LiquidGlassBackdropLayer extends OffsetLayer {
+  Size size = Size.zero;
+  ui.Picture? backdropPicture;
+  ui.Image? _field;
+  Size _fieldSize = Size.zero;
+  Matrix4 _mapping = Matrix4.zero();
+
+  void configure(Offset offset, Size size) {
+    this.offset = offset;
+    if (this.size == size) return;
+    this.size = size;
+    _mapping = Matrix4.zero();
+    markNeedsAddToScene();
+  }
+
+  void _publishField(ui.Image? image, Size fieldSize, Matrix4 mapping) {
+    if (identical(image, _field) && fieldSize == _fieldSize &&
+        listEquals(mapping.storage, _mapping.storage)) return;
+    _field = image;
+    _fieldSize = fieldSize;
+    _mapping = mapping;
+    backdropPicture?.dispose();
+    backdropPicture = null;
+    final inverse = Matrix4.tryInvert(mapping);
+    if (image != null && inverse != null && !size.isEmpty) {
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(recorder)
+        ..clipRect(Offset.zero & size)
+        ..transform(inverse.storage);
+      canvas.drawImageRect(image,
+        Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+        Offset.zero & fieldSize, Paint()..filterQuality = FilterQuality.low);
+      backdropPicture = recorder.endRecording();
+    }
+    markNeedsAddToScene();
+  }
+
+  @override
+  void addToScene(ui.SceneBuilder builder) {
+    engineLayer = builder.pushOffset(offset.dx, offset.dy,
+      oldLayer: engineLayer as ui.OffsetEngineLayer?);
+    final picture = backdropPicture;
+    if (picture != null) builder.addPicture(Offset.zero, picture);
+    builder.pop();
+  }
+
+  @override
+  void dispose() {
+    backdropPicture?.dispose();
+    super.dispose();
+  }
+}
+
 extension _InkCapture on _LiquidGlassHostLayer {
   void _captureInk() {
     (_ColorFieldLayer, Matrix4)? field;
     final inks = <(LiquidGlassInkLayer, Matrix4)>[];
-    void visit(ContainerLayer layer, Matrix4 matrix) {
+    final backdrops = <(LiquidGlassBackdropLayer, Matrix4)>[];
+    final covers = <_GlassCoverage>[];
+    void visit(ContainerLayer layer, Matrix4 matrix, bool opaque) {
       for (Layer? child = layer.firstChild; child != null;) {
         if (child is ContainerLayer) {
           final next = _within(child, matrix);
+          final solid = opaque && (child is! OpacityLayer || child.alpha == 255);
+          if (child is _LiquidGlassOcclusionLayer && solid) {
+            covers.add(_GlassCoverage(child, next, inks.length));
+          }
           if (child is _ColorFieldLayer) field = (child, next);
           if (child is LiquidGlassInkLayer) inks.add((child, next));
-          visit(child, next);
+          if (child is LiquidGlassBackdropLayer) backdrops.add((child, next));
+          visit(child, next, solid);
         }
         child = child.nextSibling;
       }
     }
 
-    visit(this, Matrix4.identity());
+    visit(this, Matrix4.identity(), true);
+    final updating = <(LiquidGlassInkLayer, Matrix4)>[];
+    final covered = <LiquidGlassInkLayer>{};
+    for (final (index, entry) in inks.indexed) {
+      final (ink, matrix) = entry;
+      Path? remaining;
+      final bounds = MatrixUtils.transformRect(matrix, ink.maskRect);
+      var hidden = false;
+      for (final cover in covers) {
+        if (index >= cover.before || !bounds.overlaps(cover.bounds)) continue;
+        if (cover.layer.geometry?.$1 is RoundedSuperellipseBorder &&
+            [bounds.topLeft, bounds.topRight, bounds.bottomLeft, bounds.bottomRight]
+                .every(cover.path.contains)) {
+          hidden = true;
+          break;
+        }
+        remaining ??= (Path()..addRect(ink.maskRect)).transform(matrix.storage);
+        remaining = Path.combine(PathOperation.difference, remaining, cover.path);
+        if (remaining.getBounds().isEmpty) {
+          hidden = true;
+          break;
+        }
+      }
+      if (hidden) {
+        covered.add(ink);
+      } else {
+        ink._thaw();
+      }
+      if (!ink.inkFrozen) updating.add(entry);
+    }
     final viewport = field;
     final selected = viewport == null ? null : viewport.$1.source(viewport.$2);
     final snapshot = selected?.$1 ?? viewport?.$1;
     final toHost = selected?.$2 ?? viewport?.$2;
     final before = snapshot?._image;
-    final image = inks.isEmpty ? null : snapshot?.capture();
+    final image = updating.isEmpty && backdrops.isEmpty ? null : snapshot?.capture();
     if (image != null) {
       viewport?.$1.select(image);
     }
     final inverse = toHost == null ? null : Matrix4.tryInvert(toHost);
+    for (final (backdrop, matrix) in backdrops) {
+      backdrop._publishField(inverse == null ? null : image,
+        snapshot?.size ?? Size.zero,
+        inverse == null ? Matrix4.identity() : (inverse.clone()..multiply(matrix)));
+    }
     var updates = 0;
-    for (final (ink, matrix) in inks) {
+    for (final (ink, matrix) in updating) {
       if (ink._publishField(
         inverse == null ? null : image,
         snapshot?.size ?? Size.zero,
@@ -367,6 +512,9 @@ extension _InkCapture on _LiquidGlassHostLayer {
       )) {
         updates++;
       }
+    }
+    for (final ink in covered) {
+      ink._freeze();
     }
     assert(() {
       final counters = _inkCounters[this] ??= _InkCounters();
@@ -395,6 +543,7 @@ extension _InkCapture on _LiquidGlassHostLayer {
         sourceCaptures: counters.sourceCaptures,
         fallbackCaptures: counters.fallbackCaptures,
         filterUpdates: counters.filterUpdates,
+        frozenMasks: inks.where((entry) => entry.$1.inkFrozen).length,
       );
       return true;
     }());

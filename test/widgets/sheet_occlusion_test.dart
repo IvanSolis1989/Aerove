@@ -208,9 +208,9 @@ void main() {
       }
       expect(_pixel(optimized, 360, 630), Colors.green,
         reason: 'ordinary lower content remains available to sheet sampling');
-      expect(_pixel(optimized, 80, 535), Colors.blue,
-        reason: 'covered glass is not replayed into the sheet');
-      expect(_pixel(original, 80, 535), isNot(Colors.blue));
+      expect(_pixel(optimized, 80, 535), _pixel(original, 80, 535),
+        reason: 'the generic host keeps the cached lower glass appearance');
+      expect(_pixel(optimized, 80, 535), isNot(Colors.blue));
       await tester.pump();
       final stable = await _shot(tester, '${quality.name}-stable');
       expect(stable.bytes, optimized.bytes);

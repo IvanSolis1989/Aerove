@@ -16,6 +16,7 @@ typedef _Pane = ({
   Rect place,
   double scale,
   int level,
+  bool wallpaper,
   ui.Image atlas,
 });
 
@@ -128,6 +129,37 @@ void main() {
     expect(pane.pane, const Rect.fromLTWH(100, 100, 200, 100));
     expect(pane.level, 0);
     expect(await _behind(tester, pane, const Offset(200, 150)), _red);
+  });
+
+  testWidgets('a destination backdrop resets only its own sampling region', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _app(
+        Stack(
+          children: [
+            const Positioned.fill(
+              child: LiquidGlassColorField(
+                child: LiquidGlassColorSource(child: ColoredBox(color: _blue)),
+              ),
+            ),
+            const Positioned.fill(child: ColoredBox(color: _red)),
+            const Positioned(
+              left: 100,
+              top: 100,
+              width: 200,
+              height: 100,
+              child: LiquidGlassBackdrop(),
+            ),
+            _pane(const Rect.fromLTWH(80, 80, 260, 140)),
+          ],
+        ),
+      ),
+    );
+    final pane = _capture().panes.single;
+    expect(await _behind(tester, pane, const Offset(200, 150)), _blue);
+    expect(await _behind(tester, pane, const Offset(90, 150)), _red);
+    expect(await _behind(tester, pane, const Offset(320, 150)), _red);
   });
 
   testWidgets('a frame that leaves the backdrop as it was keeps the capture', (

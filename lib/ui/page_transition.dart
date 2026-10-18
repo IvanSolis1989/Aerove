@@ -13,6 +13,8 @@ mixin SharedXPageRouteMixin<T> on PageRoute<T>, DragBackRouteMixin<T> {
 
   Color backdropOf(Color surface, {required bool dragging});
 
+  bool get usesWallpaperBackdrop => false;
+
   @override
   bool get maintainState => true;
 
@@ -42,7 +44,8 @@ mixin SharedXPageRouteMixin<T> on PageRoute<T>, DragBackRouteMixin<T> {
     Animation<double> secondaryAnimation,
     Widget child,
   ) {
-    final surface = LiquidGlassScope.of(context)
+    final glass = LiquidGlassScope.of(context);
+    final surface = glass
         ? Colors.transparent
         : SurfaceLevel.page.colorOf(ColorScheme.of(context));
     final dragging = isDragBackActive;
@@ -59,6 +62,7 @@ mixin SharedXPageRouteMixin<T> on PageRoute<T>, DragBackRouteMixin<T> {
           slide: SharedXPageTransition.pageSlide,
           overSettledPage: _overSettledPage,
           uncoveredByGesture: navigator!.userGestureInProgress,
+          wallpaperBackdrop: glass && usesWallpaperBackdrop,
           child: ColoredBox(
             color: backdropOf(surface, dragging: dragging),
             child: child,
@@ -81,6 +85,7 @@ class SharedXPageTransition extends StatelessWidget {
     required this.slide,
     required this.overSettledPage,
     this.uncoveredByGesture = false,
+    this.wallpaperBackdrop = false,
     required this.child,
   });
 
@@ -104,6 +109,7 @@ class SharedXPageTransition extends StatelessWidget {
   /// then trails the finger and fades in as far as it is uncovered, instead
   /// of showing only near the end of the drag.
   final bool uncoveredByGesture;
+  final bool wallpaperBackdrop;
   final Widget child;
 
   static final _slideCurve = CurveTween(curve: Curves.easeInOutCubicEmphasized);
@@ -145,6 +151,16 @@ class SharedXPageTransition extends StatelessWidget {
     );
   }
 
+  Widget _withBackdrop(Widget child) => wallpaperBackdrop
+      ? Stack(
+          fit: StackFit.expand,
+          children: [
+            const Positioned.fill(child: LiquidGlassBackdrop()),
+            child,
+          ],
+        )
+      : child;
+
   @override
   Widget build(BuildContext context) {
     final enterSlide = _slide(slide, Offset.zero);
@@ -185,11 +201,13 @@ class SharedXPageTransition extends StatelessWidget {
         _fadeOut,
         SlideTransition(
           position: enterSlide.animate(animation),
-          child: _PageFade(
-            opacity: _takeOver.animate(animation),
-            color: color,
-            opaque: true,
-            child: child,
+          child: _withBackdrop(
+            _PageFade(
+              opacity: _takeOver.animate(animation),
+              color: color,
+              opaque: true,
+              child: child,
+            ),
           ),
         ),
       ),
@@ -200,11 +218,13 @@ class SharedXPageTransition extends StatelessWidget {
           _fadeIn,
           SlideTransition(
             position: exitSlide.animate(animation),
-            child: _PageFade(
-              opacity: _handBack.animate(animation),
-              color: color,
-              opaque: true,
-              child: child,
+            child: _withBackdrop(
+              _PageFade(
+                opacity: _handBack.animate(animation),
+                color: color,
+                opaque: true,
+                child: child,
+              ),
             ),
           ),
         ),

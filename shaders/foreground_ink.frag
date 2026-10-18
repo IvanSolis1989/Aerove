@@ -1,7 +1,6 @@
 #version 460 core
 #include <flutter/runtime_effect.glsl>
 precision highp float;
-uniform vec2 uSize;
 uniform vec2 uFieldSize;
 uniform vec2 uOrigin;
 uniform vec2 uAxisX;
@@ -11,7 +10,6 @@ uniform float uDark;
 uniform float uContrast;
 uniform float uAlpha;
 uniform vec3 uSource;
-uniform sampler2D uMask;
 uniform sampler2D uField;
 out vec4 fragColor;
 
@@ -52,15 +50,11 @@ vec3 readable(vec3 ink, vec3 background, float backgroundLuminance, float alpha)
   return mix(ink, pole, high);
 }
 void main() {
-  vec2 uv = FlutterFragCoord().xy / uSize;
-  vec4 mask = texture(uMask, uv);
-  if (mask.a < 0.001) { fragColor = mask; return; }
-  vec2 position = uOrigin + uAxisX * uv.x + uAxisY * uv.y;
+  vec2 local = FlutterFragCoord().xy;
+  vec2 position = uOrigin + uAxisX * local.x + uAxisY * local.y;
   vec3 background = texture(uField, clamp(position / uFieldSize, 0.0, 1.0)).rgb;
-  vec3 source = mask.rgb / mask.a;
-  if (length(source - uSource) > 0.15) { fragColor = mask; return; }
   float backgroundLuminance = luminance(background);
   vec3 colored = readable(vivid(background), background, backgroundLuminance, 1.0);
-  vec3 ink = readable(mix(source, colored, uStrength), background, backgroundLuminance, uAlpha);
-  fragColor = vec4(ink * mask.a, mask.a);
+  vec3 ink = readable(mix(uSource, colored, uStrength), background, backgroundLuminance, uAlpha);
+  fragColor = vec4(ink, 1.0);
 }

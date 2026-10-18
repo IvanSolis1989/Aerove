@@ -111,6 +111,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(readTheme().auroraSeed, isNot(original.auroraSeed));
     expect(readTheme().auroraColors, original.auroraColors);
+    final now = DateTime.now();
+    expect(readTheme().auroraRotationMonth, now.year * 100 + now.month);
     final seed = readTheme().auroraSeed;
     await tester.pumpAndSettle();
     expect(readTheme().auroraSeed, seed);

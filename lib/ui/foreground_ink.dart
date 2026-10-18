@@ -65,7 +65,8 @@ class GlassText extends Text {
   Widget build(BuildContext context) {
     final original = super.build(context);
     final resolved = DefaultTextStyle.of(context).style.merge(style);
-    if (resolved.foreground != null) return original;
+    if (resolved.foreground != null || resolved.background != null ||
+        resolved.backgroundColor != null) return original;
     final text = data ?? textSpan?.toPlainText() ?? '';
     final color = resolved.color ?? Theme.of(context).colorScheme.onSurface;
     if (_emojiPattern.hasMatch(text) || !_plainSpan(textSpan, color)) {
@@ -90,12 +91,71 @@ class GlassText extends Text {
           ),
         ) ??
         0;
-    return GlassInk(source: color, role: role, outset: outset, child: original);
+    if (!GlassForeground.colorsInk(context, color)) return original;
+    final hasShadows = resolved.shadows?.isNotEmpty == true;
+    final fill = hasShadows
+        ? _text(resolved.copyWith(shadows: const [])).build(context)
+        : original;
+    final ink = GlassInk(source: color, role: role, outset: outset, child: fill);
+    if (!hasShadows) return ink;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        ExcludeSemantics(
+          child: _text(
+            resolved.copyWith(color: Colors.transparent),
+            shadowOnly: true,
+          ).build(context),
+        ),
+        ink,
+      ],
+    );
+  }
+
+  Text _text(TextStyle resolved, {bool shadowOnly = false}) {
+    InlineSpan span(InlineSpan value) {
+      final text = value as TextSpan;
+      return TextSpan(
+        text: text.text,
+        style: text.style?.copyWith(
+          color: shadowOnly ? Colors.transparent : text.style?.color,
+          shadows: shadowOnly ? text.style?.shadows : const [],
+        ),
+        children: text.children?.map(span).toList(),
+        recognizer: text.recognizer,
+        mouseCursor: text.mouseCursor,
+        onEnter: text.onEnter,
+        onExit: text.onExit,
+        semanticsLabel: text.semanticsLabel,
+        locale: text.locale,
+        spellOut: text.spellOut,
+      );
+    }
+
+    return Text.rich(
+      span(textSpan ?? TextSpan(text: data)),
+      style: resolved,
+      strutStyle: strutStyle,
+      textAlign: textAlign,
+      textDirection: textDirection,
+      locale: locale,
+      softWrap: softWrap,
+      overflow: overflow,
+      textScaler: textScaler,
+      maxLines: maxLines,
+      semanticsLabel: semanticsLabel,
+      textWidthBasis: textWidthBasis,
+      textHeightBehavior: textHeightBehavior,
+      selectionColor: selectionColor,
+    );
   }
 
   bool _plainSpan(InlineSpan? span, Color source) {
     if (span == null) return true;
-    if (span is! TextSpan || span.style?.foreground != null) return false;
+    if (span is! TextSpan || span.style?.foreground != null ||
+        span.style?.background != null || span.style?.backgroundColor != null) {
+      return false;
+    }
     final color = span.style?.color;
     if (color != null && color != source) return false;
     return span.children?.every((child) => _plainSpan(child, source)) ?? true;
@@ -177,14 +237,45 @@ class _InkRender extends RenderProxyBox {
   @override
   bool get alwaysNeedsCompositing => true;
 
+  Rect _contentBounds = Rect.zero;
+
+  @override
+  void performLayout() {
+    super.performLayout();
+    Rect? textBounds;
+    var overhang = 2.0;
+    void visit(RenderObject object) {
+      if (object is RenderParagraph) {
+        final transform = object.getTransformTo(this);
+        if (object.text.style?.fontStyle == FontStyle.italic) {
+          overhang = math.max(overhang, (object.text.style?.fontSize ?? 17) * 0.25);
+        }
+        for (final box in object.getBoxesForSelection(TextSelection(
+          baseOffset: 0,
+          extentOffset: object.text.toPlainText(includeSemanticsLabels: false).length,
+        ))) {
+          final bounds = MatrixUtils.transformRect(transform, box.toRect());
+          textBounds = textBounds?.expandToInclude(bounds) ?? bounds;
+        }
+      }
+      object.visitChildren(visit);
+    }
+    if (child case final child?) visit(child);
+    _contentBounds = textBounds?.inflate(overhang) ?? (Offset.zero & size);
+  }
+
+  Rect get _inkBounds => _contentBounds.inflate(outset);
+
+  @override
+  Rect get paintBounds => hasSize ? _inkBounds : Rect.zero;
+
   @override
   void paint(PaintingContext context, Offset offset) {
     final layer = _layer.layer ??= LiquidGlassInkLayer();
-    final inset = Offset(outset, outset);
-    final bounds = Size(size.width + outset * 2, size.height + outset * 2);
+    final bounds = _inkBounds;
     layer.configure(
-      offset: offset - inset,
-      size: bounds,
+      offset: offset + bounds.topLeft,
+      size: bounds.size,
       strength: role.strength,
       source: source,
       contrast: role == GlassInkRole.icon ? 3.2 : 4.7,
@@ -193,9 +284,9 @@ class _InkRender extends RenderProxyBox {
     );
     context.pushLayer(
       layer,
-      (context, offset) => super.paint(context, offset + inset),
+      (context, offset) => super.paint(context, offset - bounds.topLeft),
       Offset.zero,
-      childPaintBounds: Offset.zero & bounds,
+      childPaintBounds: Offset.zero & bounds.size,
     );
   }
 

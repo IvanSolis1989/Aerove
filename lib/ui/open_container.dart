@@ -337,6 +337,7 @@ class _OpenContainerRoute<T> extends ModalRoute<T>
           closedColor: closedColor ?? (glass ? Colors.transparent : surface),
           openColor: glass ? Colors.transparent : surface,
           settledColor: glass ? Colors.transparent : theme.canvasColor,
+          backdrop: glass ? const LiquidGlassBackdrop() : null,
           closed: _hostsClosed.value
               ? IgnorePointer(
                   child: ExcludeFocus(
@@ -405,7 +406,7 @@ class _OpenOpacity extends Animation<double>
   double get value => route._fade;
 }
 
-enum _Slot { closed, open }
+enum _Slot { backdrop, closed, open }
 
 /// Grows the container from the closed child's rect to the whole route by
 /// painting alone: the open page is laid out once at its final size and
@@ -417,6 +418,7 @@ class _ContainerTransition
     required this.closedColor,
     required this.openColor,
     required this.settledColor,
+    required this.backdrop,
     required this.closed,
     required this.open,
   });
@@ -425,6 +427,7 @@ class _ContainerTransition
   final Color closedColor;
   final Color openColor;
   final Color settledColor;
+  final Widget? backdrop;
   final Widget? closed;
   final Widget open;
 
@@ -433,6 +436,7 @@ class _ContainerTransition
 
   @override
   Widget? childForSlot(_Slot slot) => switch (slot) {
+    _Slot.backdrop => backdrop,
     _Slot.closed => closed,
     _Slot.open => open,
   };
@@ -518,6 +522,7 @@ class _RenderContainerTransition extends RenderBox
 
   RenderBox? get _closed => childForSlot(_Slot.closed);
   RenderBox? get _open => childForSlot(_Slot.open);
+  RenderBox? get _backdrop => childForSlot(_Slot.backdrop);
 
   final _clipLayer = LayerHandle<ContainerLayer>();
   final _closedTransformLayer = LayerHandle<TransformLayer>();
@@ -585,6 +590,7 @@ class _RenderContainerTransition extends RenderBox
   void performLayout() {
     size = constraints.biggest;
     _closed?.layout(BoxConstraints.tight(_closedRect?.size ?? Size.zero));
+    _backdrop?.layout(BoxConstraints.tight(size));
     _open?.layout(BoxConstraints.tight(size));
   }
 
@@ -595,18 +601,27 @@ class _RenderContainerTransition extends RenderBox
       _clipLayer.layer = null;
       _closedTransformLayer.layer = null;
       context.canvas.drawRect(offset & size, Paint()..color = _settledColor);
+      if (_backdrop case final backdrop?) {
+        context.paintChild(backdrop, offset);
+      }
       context.paintChild(_open!, offset);
       return;
     }
     final path = _route._shapeTween.lerp(_route._progress)?.getOuterPath(rect);
     final color = Paint()
       ..color = Color.lerp(_closedColor, _openColor, _route._fade)!;
-    if (path == null) {
-      context.canvas.drawRect(rect.shift(offset), color);
-    } else {
-      context.canvas.drawPath(path.shift(offset), color);
+    if (_backdrop == null) {
+      if (path == null) {
+        context.canvas.drawRect(rect.shift(offset), color);
+      } else {
+        context.canvas.drawPath(path.shift(offset), color);
+      }
     }
     void paintContents(PaintingContext context, Offset offset) {
+      if (_backdrop case final backdrop?) {
+        context.paintChild(backdrop, offset + rect.topLeft);
+        context.canvas.drawRect(rect.shift(offset), color);
+      }
       final closed = _closed;
       final transform = _closedTransform(rect);
       if (closed != null && transform != null) {

@@ -25,6 +25,31 @@ const _seeds = [
 ];
 
 void main() {
+  test('motion preserves phase and advances the previous field 1.5 times faster', () {
+    final motion = AuroraMotion(832838199);
+    for (final (time, angle, x, y) in [
+      (Duration.zero, 4.739799584346775, -3.5765689743074005, -18.430129919413606),
+      (
+        const Duration(seconds: 2),
+        4.821105173932716,
+        3.870231449716876,
+        -13.506492279045206,
+      ),
+      (
+        const Duration(seconds: 5),
+        4.938434929924863,
+        15.658694973112853,
+        -4.772230509060998,
+      ),
+    ]) {
+      final pose = motion.at(time, const Size(390, 844));
+      expect(pose.angle, closeTo(angle, 1e-10));
+      expect(pose.translation.dx, closeTo(x, 1e-10));
+      expect(pose.translation.dy, closeTo(y, 1e-10));
+      expect(pose.side, closeTo(1065.5201878294001, 1e-9));
+    }
+  });
+
   test('square overscan covers every viewport corner throughout motion', () {
     for (final size in [
       const Size(390, 844),
@@ -76,8 +101,8 @@ void main() {
         xDirections.add(shift.dx > 0);
         yDirections.add(shift.dy > 0);
         speeds.add(shift.distance / 0.016);
-        expect(shift.distance, lessThan(0.1));
-        expect(_angleDistance(current.angle, next.angle), lessThan(0.000745));
+        expect(shift.distance, lessThan(0.146));
+        expect(_angleDistance(current.angle, next.angle), lessThan(0.001118));
       }
       expect(xDirections, hasLength(2));
       expect(yDirections, hasLength(2));
@@ -88,8 +113,8 @@ void main() {
         longTime + const Duration(milliseconds: 16),
         size,
       );
-      expect((before.translation - after.translation).distance, lessThan(0.1));
-      expect(_angleDistance(before.angle, after.angle), lessThan(0.000745));
+      expect((before.translation - after.translation).distance, lessThan(0.146));
+      expect(_angleDistance(before.angle, after.angle), lessThan(0.001118));
       expect(
         AuroraMotion(seed + 1).at(Duration.zero, size),
         isNot(motion.at(Duration.zero, size)),
@@ -101,8 +126,8 @@ void main() {
     final metrics = <String, Object>{};
     const interval = Duration(milliseconds: 100);
     for (final (size, translationLimit) in [
-      (const Size(390, 844), 6.05),
-      (const Size(720, 720), 11.16),
+      (const Size(390, 844), 9.07),
+      (const Size(720, 720), 16.74),
     ]) {
       var maxTranslation = 0.0;
       var maxRotation = 0.0;
@@ -125,7 +150,7 @@ void main() {
           );
           expect(
             rotation,
-            inInclusiveRange(0.87, 2.666),
+            inInclusiveRange(1.305, 4.0),
             reason: 'seed=$seed size=$size second=$second degrees/s',
           );
         }
@@ -134,27 +159,28 @@ void main() {
           final next = motion.at(Duration(seconds: second + 5), size);
           expect(
             (next.translation - current.translation).distance,
-            greaterThan(3 * size.shortestSide / 390),
+            greaterThan(4.5 * size.shortestSide / 390),
             reason:
                 'seed=$seed second=$second must visibly drift in five seconds',
           );
           expect(
             _angleDistance(next.angle, current.angle) * 180 / math.pi,
-            greaterThan(4.35),
+            greaterThan(6.52),
             reason:
                 'seed=$seed second=$second must visibly rotate in five seconds',
           );
         }
       }
       expect(maxTranslation, greaterThan(translationLimit * 0.6));
-      expect(maxRotation, greaterThan(2.1));
+      expect(maxRotation, greaterThan(3.15));
       metrics['${size.width.toInt()}x${size.height.toInt()}'] = {
         'maxTranslationDpPerSecond': maxTranslation,
         'maxRotationDegreesPerSecond': maxRotation,
         'translationLimitDpPerSecond': translationLimit,
-        'rotationMinimumDegreesPerSecond': 0.87,
-        'rotationLimitDegreesPerSecond': 2.666,
-        'baseRotationPeriodSeconds': [160, 280],
+        'rotationMinimumDegreesPerSecond': 1.305,
+        'rotationLimitDegreesPerSecond': 4.0,
+        'baseRotationPeriodSeconds': [160 / 1.5, 280 / 1.5],
+        'motionSpeedMultiplier': 1.5,
       };
     }
     final directory = Platform.environment['XCLASH_SCREENSHOT_DIR'];
@@ -251,12 +277,20 @@ void main() {
     final resumed = await _pixels(tester, key);
     await tester.pump(const Duration(seconds: 30));
     expect(await _pixels(tester, key), isNot(resumed));
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
-    await tester.pump();
+    for (final state in [
+      AppLifecycleState.inactive,
+      AppLifecycleState.hidden,
+      AppLifecycleState.paused,
+      AppLifecycleState.detached,
+    ]) {
+      tester.binding.handleAppLifecycleStateChanged(state);
+      await tester.pump();
+      final background = await _pixels(tester, key);
+      await tester.pump(const Duration(minutes: 5));
+      expect(await _pixels(tester, key), background);
+      expect(tester.binding.hasScheduledFrame, isFalse);
+    }
     final background = await _pixels(tester, key);
-    await tester.pump(const Duration(minutes: 5));
-    expect(await _pixels(tester, key), background);
-    expect(tester.binding.hasScheduledFrame, isFalse);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
     expect(await _pixels(tester, key), background);

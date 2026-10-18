@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:fl_clash/common/aurora_rotation.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/common/system_dns.dart';
 import 'package:fl_clash/enum/enum.dart';
@@ -23,9 +24,16 @@ class AppStateManager extends ConsumerStatefulWidget {
 
 class _AppStateManagerState extends ConsumerState<AppStateManager>
     with WidgetsBindingObserver {
+  late final AuroraMonthlyRotation _auroraRotation;
+
   @override
   void initState() {
     super.initState();
+    _auroraRotation = AuroraMonthlyRotation(
+      onCheck: (now) => ref
+          .read(themeSettingProvider.notifier)
+          .update((theme) => rotateAuroraForMonth(theme, now)),
+    );
     WidgetsBinding.instance.addObserver(this);
     // A desktop build started to the tray mounts while hidden, and a paused
     // render never runs a post-frame callback.
@@ -37,6 +45,11 @@ class _AppStateManagerState extends ConsumerState<AppStateManager>
     ref.listenManual(configProvider, (prev, next) {
       if (prev != next) {
         ref.read(storeActionProvider.notifier).savePreferencesDebounce();
+      }
+    });
+    ref.listenManual(themeSettingProvider, (prev, next) {
+      if (prev?.auroraEnabled != next.auroraEnabled) {
+        _auroraRotation.check();
       }
     });
     ref.listenManual(groupsProvider, (prev, next) {
@@ -71,17 +84,20 @@ class _AppStateManagerState extends ConsumerState<AppStateManager>
 
   @override
   void dispose() {
+    _auroraRotation.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
   void _updateVisible(AppLifecycleState? state) {
     ref.read(appVisibleProvider.notifier).value = switch (state) {
-      null || AppLifecycleState.resumed || AppLifecycleState.inactive => true,
+      null || AppLifecycleState.resumed => true,
+      AppLifecycleState.inactive ||
       AppLifecycleState.hidden ||
       AppLifecycleState.paused ||
       AppLifecycleState.detached => false,
     };
+    _auroraRotation.setActive(ref.read(appVisibleProvider));
   }
 
   @override

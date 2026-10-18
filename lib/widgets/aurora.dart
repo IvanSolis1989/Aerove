@@ -22,14 +22,45 @@ LiquidGlassMode effectiveAuroraGlassMode(
 ) =>
     gradient && stored == LiquidGlassMode.none ? LiquidGlassMode.ultra : stored;
 
-class AuroraAppSurface extends ConsumerWidget {
+class AuroraAppSurface extends ConsumerStatefulWidget {
   const AuroraAppSurface({super.key, this.motion = true, required this.child});
 
   final bool motion;
   final Widget child;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AuroraAppSurface> createState() => _AuroraAppSurfaceState();
+}
+
+class _AuroraAppSurfaceState extends ConsumerState<AuroraAppSurface>
+    with WidgetsBindingObserver {
+  late bool _foreground;
+
+  @override
+  void initState() {
+    super.initState();
+    _foreground = switch (WidgetsBinding.instance.lifecycleState) {
+      null || AppLifecycleState.resumed => true,
+      _ => false,
+    };
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final foreground = state == AppLifecycleState.resumed;
+    if (_foreground == foreground) return;
+    setState(() => _foreground = foreground);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final settings = ref.watch(
       themeSettingProvider.select(
@@ -130,7 +161,7 @@ class AuroraAppSurface extends ConsumerWidget {
             ),
           )
         : theme;
-    return LiquidGlassScope(
+    final surface = LiquidGlassScope(
       enabled: glassEnabled,
       quality: glassMode == LiquidGlassMode.ultra
           ? LiquidGlassQuality.ultra
@@ -166,7 +197,7 @@ class AuroraAppSurface extends ConsumerWidget {
                                   ],
                                   seed: settings.seed,
                                   brightness: theme.brightness,
-                                  motion: motion,
+                                  motion: widget.motion,
                                 ),
                               ),
                             ),
@@ -174,12 +205,16 @@ class AuroraAppSurface extends ConsumerWidget {
                         : ColoredBox(color: theme.scaffoldBackgroundColor),
                   ),
                 ),
-                child,
+                widget.child,
               ],
             ),
           ),
         ),
       ),
+    );
+    return TickerMode(
+      enabled: _foreground,
+      child: Offstage(offstage: !_foreground, child: surface),
     );
   }
 }

@@ -104,6 +104,7 @@ class _FormSheet extends StatelessWidget {
               child: SizedBox(
                 width: double.infinity,
                 child: SheetSurface(
+                  occludesGlass: true,
                   color:
                       backgroundColor ??
                       SurfaceLevel.page.colorOf(theme.colorScheme),

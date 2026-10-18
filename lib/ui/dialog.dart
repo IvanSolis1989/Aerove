@@ -262,6 +262,7 @@ class _RenderAlertGlass extends RenderProxyBox {
   _RenderAlertGlass(this._style, this._rim, this._shadows);
 
   late final _pane = LiquidGlassPane(markNeedsPaint);
+  final _occlusion = LiquidGlassOcclusionPane();
 
   LiquidGlassStyle _style;
   set style(LiquidGlassStyle value) {
@@ -296,6 +297,7 @@ class _RenderAlertGlass extends RenderProxyBox {
   @override
   void dispose() {
     _pane.dispose();
+    _occlusion.dispose();
     super.dispose();
   }
 
@@ -303,19 +305,29 @@ class _RenderAlertGlass extends RenderProxyBox {
   void paint(PaintingContext context, Offset offset) {
     if (_surfaceIn(this) == null) {
       _pane.clear();
-    } else {
-      final rect = _surfaceRectIn(this).shift(offset);
-      _pane.paint(
-        context,
-        rect,
-        shape: LiquidGlassCorners.circular(AppCorner.alert),
-        style: _style,
-        shadows: _shadows,
-        rim: _rim,
-      );
-      _rim.paintLine(context.canvas, rect, AppCorner.alert);
+      _occlusion.clear();
+      super.paint(context, offset);
+      return;
     }
-    super.paint(context, offset);
+    final rect = _surfaceRectIn(this);
+    _occlusion.paint(
+      context,
+      offset,
+      rect: rect,
+      shape: AppShape.all(AppCorner.alert),
+      painter: (context, offset) {
+        _pane.paint(
+          context,
+          rect.shift(offset),
+          shape: LiquidGlassCorners.circular(AppCorner.alert),
+          style: _style,
+          shadows: _shadows,
+          rim: _rim,
+        );
+        _pane.paintRim(context, rect.shift(offset), AppCorner.alert, _rim);
+        super.paint(context, offset);
+      },
+    );
   }
 }
 

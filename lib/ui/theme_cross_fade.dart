@@ -24,7 +24,7 @@ class ThemeCrossFade extends StatefulWidget {
 }
 
 class _ThemeCrossFadeState extends State<ThemeCrossFade>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late final _controller = AnimationController(
     vsync: this,
     duration: widget.duration,
@@ -33,6 +33,19 @@ class _ThemeCrossFadeState extends State<ThemeCrossFade>
   ThemeData? _theme;
   ui.Image? _snapshot;
   Size? _snapshotSize;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) return;
+    _controller.stop();
+    if (_snapshot != null) setState(_drop);
+  }
 
   @override
   void didChangeDependencies() {
@@ -50,7 +63,8 @@ class _ThemeCrossFadeState extends State<ThemeCrossFade>
       return;
     }
     switch (WidgetsBinding.instance.lifecycleState) {
-      case AppLifecycleState.hidden ||
+      case AppLifecycleState.inactive ||
+          AppLifecycleState.hidden ||
           AppLifecycleState.paused ||
           AppLifecycleState.detached:
         return;
@@ -102,6 +116,7 @@ class _ThemeCrossFadeState extends State<ThemeCrossFade>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _controller.dispose();
     _drop();
     super.dispose();

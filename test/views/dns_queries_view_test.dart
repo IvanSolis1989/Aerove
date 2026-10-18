@@ -1,5 +1,6 @@
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
+import 'package:fl_clash/features/features.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
@@ -88,6 +89,93 @@ void main() {
   Future<void> teardownView(WidgetTester tester) async {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(seconds: 2));
+  }
+
+  for (final glass in [false, true]) {
+    testWidgets('DNS and connection record titles share their neutral style '
+        '(glass: $glass)', (tester) async {
+      tester.view.physicalSize = _listSize;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final colors = ColorScheme.fromSeed(
+        seedColor: Colors.teal,
+        brightness: Brightness.dark,
+      );
+      TrackerInfo tracker(String host) => TrackerInfo(
+        id: host,
+        start: DateTime.utc(2026, 9, 18),
+        metadata: Metadata(
+          network: 'tcp',
+          host: host,
+          destinationIP: '1.1.1.1',
+          destinationPort: '443',
+        ),
+        rule: 'DOMAIN',
+        rulePayload: host,
+        chains: const ['DIRECT'],
+      );
+      try {
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: container,
+            child: TestApp(
+              theme: ThemeData(colorScheme: colors),
+              child: LiquidGlassScope(
+                enabled: glass,
+                child: Column(
+                  children: [
+                    DnsQueryItem(dnsQuery: _dnsQuery('dns.test')),
+                    TrackerInfoItem(
+                      trackerInfo: tracker('recent.test'),
+                      detailTitle: 'Recent',
+                    ),
+                    TrackerInfoItem(
+                      trackerInfo: tracker('live.test'),
+                      detailTitle: 'Live',
+                      isLive: true,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        final titleStyles = <TextStyle>[];
+        for (final host in ['dns.test', 'recent.test', 'live.test']) {
+          final title = find.byWidgetPredicate(
+            (widget) => widget is GlassText &&
+                widget.textSpan?.toPlainText().startsWith(host) == true,
+          );
+          expect(title, findsOneWidget);
+          final text = tester.widget<GlassText>(title);
+          final span = text.textSpan! as TextSpan;
+          final main = span.text != null
+              ? span
+              : span.children!.first as TextSpan;
+          titleStyles.add(main.style!);
+          expect(main.style!.color, colors.onSurface);
+          expect(
+            find.descendant(of: title, matching: find.byType(GlassInk)),
+            findsNothing,
+          );
+        }
+        expect(titleStyles[0], titleStyles[1]);
+        expect(titleStyles[0], titleStyles[2]);
+        final summary = find.text('1.1.1.1').first;
+        expect(
+          tester.widget<GlassText>(summary).style?.color,
+          colors.onSurfaceVariant,
+        );
+        expect(
+          find.descendant(of: summary, matching: find.byType(GlassInk)),
+          glass ? findsOneWidget : findsNothing,
+        );
+        expect(tester.takeException(), isNull);
+      } finally {
+        await teardownView(tester);
+      }
+    });
   }
 
   testWidgets('shows the empty state without any query', (tester) async {

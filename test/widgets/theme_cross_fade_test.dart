@@ -139,6 +139,63 @@ void main() {
     expect(tester.hasRunningAnimations, isFalse);
   });
 
+  for (final lifecycle in [
+    AppLifecycleState.inactive,
+    AppLifecycleState.hidden,
+    AppLifecycleState.paused,
+    AppLifecycleState.detached,
+  ]) {
+    testWidgets('drops the fade and refuses background snapshots ($lifecycle)', (
+      tester,
+    ) async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      addTearDown(() {
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      });
+      var captures = 0;
+      await pumpApp(
+        tester,
+        captureSnapshot: (capture) {
+          captures++;
+          return capture();
+        },
+      );
+      final mountedState = tester.state(find.byType(ThemeCrossFade));
+      background.value = _blue;
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 60));
+      expect(captures, 1);
+      expect(tester.hasRunningAnimations, isTrue);
+
+      tester.binding.handleAppLifecycleStateChanged(lifecycle);
+      expect(tester.hasRunningAnimations, isFalse);
+      await tester.pump();
+      expect(await pixel(tester), isColor(_blue));
+      background.value = _green;
+      await tester.pump();
+      await tester.pump(const Duration(minutes: 3));
+      expect(captures, 1);
+      expect(tester.hasRunningAnimations, isFalse);
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      expect(await pixel(tester), isColor(_green));
+      expect(tester.state(find.byType(ThemeCrossFade)), same(mountedState));
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      expect(captures, 1);
+      expect(await pixel(tester), isColor(_green));
+      expect(tester.hasRunningAnimations, isFalse);
+      background.value = _red;
+      await tester.pump();
+      expect(captures, 2);
+      expect(await pixel(tester), isColor(_green));
+      await tester.pumpAndSettle();
+      expect(await pixel(tester), isColor(_red));
+      await tester.pumpWidget(const SizedBox.shrink());
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets(
     'a failed readback drops an active fade and paints the new theme',
     (tester) async {

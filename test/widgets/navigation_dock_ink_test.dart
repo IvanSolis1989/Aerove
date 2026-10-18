@@ -67,7 +67,9 @@ class _FixtureState extends State<_Fixture> {
                     top: 16,
                     width: 40,
                     height: 40,
-                    child: LiquidGlass(style: LiquidGlassStyle(blur: 2)),
+                    child: LiquidGlass(
+                      style: LiquidGlassStyle(tint: Colors.transparent, blur: 2),
+                    ),
                   ),
                 Align(
                   alignment: Alignment.bottomCenter,

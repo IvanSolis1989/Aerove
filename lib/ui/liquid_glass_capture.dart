@@ -17,6 +17,8 @@ const double _atlasStep = 32;
 // one painted there does not raise it a level.
 const double _levelReach = 2.5;
 const double _heldFrostShare = 0.9;
+const double _coveredPixelsPerDp = 0.5;
+const double _maxCoveredSide = 1024;
 // Offsets into a pane's mapping, in the order of the shader's uniforms.
 const _hazeSample = 10;
 const _hazeShare = 18;
@@ -61,6 +63,8 @@ class LiquidGlassHost extends StatelessWidget {
 
   @visibleForTesting
   static LiquidGlassCapture? debugLastCapture;
+  @visibleForTesting
+  static ({int snapshots, int kept, int pixels, int groups})? debugLastFlatCapture;
 
   @visibleForTesting
   static LiquidGlassInkCapture? debugLastInkCapture;
@@ -320,6 +324,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
 
   final _atlases = <({ui.Image image, List<_Band> bands})>[];
   int _replayedPanes = 0;
+  final _flatSnapshots = <_LiquidGlassOcclusionLayer, _FlatSnapshot>{};
 
   @override
   void addToScene(ui.SceneBuilder builder) {
@@ -333,6 +338,8 @@ class _LiquidGlassHostLayer extends ContainerLayer {
       atlas.image.dispose();
     }
     _atlases.clear();
+    for (final cached in _flatSnapshots.values) { cached.image.dispose(); }
+    _flatSnapshots.clear();
     super.dispose();
   }
 
@@ -358,7 +365,27 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     final placed = <_Behind>[];
     for (final (index, entry) in found.indexed) {
       if (!entry.pane.contentBackdrop) entry.wallpaper = wallpaper;
+      if (entry.wallpaper == null) {
+        entry.flatBoundary = null;
+      } else if (entry.flatContent) {
+        entry.root = this;
+        entry.rootToHost = Matrix4.identity();
+      }
       _occlude(entry, index, coverage);
+      if (entry.visible != null) {
+        if (entry.pane._freezeCaptured()) {
+          if (entry.visibleBounds.isEmpty) {
+            entry.pane._captureFrozen(_pass);
+            continue;
+          }
+        } else {
+          entry.freezeAfterCapture = true;
+          entry.coveredVisible = entry.visible;
+          entry.visible = null;
+        }
+      } else {
+        entry.pane._thawCaptured();
+      }
       if (_place(entry)) {
         placed.add(entry);
         if (entry.style.haze > 0) {
@@ -371,6 +398,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
         entry.pane._captureNothing(_pass);
       }
     }
+    _prepareFlatSnapshots(placed);
     var levels = 0;
     final contentLevel = placed.any((entry) => entry.wallpaper != null) ? 1 : 0;
     for (final (index, entry) in placed.indexed) {
@@ -464,13 +492,15 @@ class _LiquidGlassHostLayer extends ContainerLayer {
               root,
               rootToHost,
               chain.toSet(),
-            ),
+            )..flatBoundary = wallpaperOnly && !pane.contentBackdrop
+                ? chain.whereType<_LiquidGlassOcclusionLayer>().lastOrNull : null,
           );
         case final ContainerLayer container:
           final offscreen = _drawsOffscreen(container);
           final transform = _within(container, toHost);
           if (container is _ColorFieldLayer) _field = (container, transform);
-          if (container is _LiquidGlassOcclusionLayer) {
+          if (container is _LiquidGlassOcclusionLayer &&
+              !chain.any((layer) => layer is OpacityLayer && (layer.alpha ?? 255) < 255)) {
             coverage.add(_GlassCoverage(container, transform, found.length));
           }
           _gather(
@@ -594,6 +624,72 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     return true;
   }
 
+  void _prepareFlatSnapshots(List<_Behind> entries) {
+    final groups = <_LiquidGlassOcclusionLayer, List<_Behind>>{};
+    for (final entry in entries) {
+      if (entry.flatBoundary case final boundary? when entry.wallpaper != null) {
+        (groups[boundary] ??= []).add(entry);
+      }
+    }
+    var snapshots = 0;
+    var kept = 0;
+    for (final group in groups.entries) {
+      final members = group.value;
+      final requested = members.map((entry) => entry.haze == null
+          ? entry.slot : entry.slot.expandToInclude(entry.haze!.slot))
+          .reduce((a, b) => a.expandToInclude(b));
+      final previous = _flatSnapshots[group.key];
+      final area = previous != null && _encloses(previous.bounds, requested)
+          ? previous.bounds : requested;
+      final scale = math.min(_coveredPixelsPerDp, _maxCoveredSide / area.longestSide);
+      final key = <Object?>[area, scale];
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(recorder)
+        ..scale(scale)
+        ..translate(-area.left, -area.top);
+      final entry = members.first;
+      entry.flatCaptureBounds = area;
+      entry.flatUI = true;
+      _Replay(canvas, key, entry).run();
+      entry.flatUI = false;
+      entry.flatCaptureBounds = null;
+      final picture = recorder.endRecording();
+      final _FlatSnapshot cached;
+      if (previous != null && listEquals(previous.key, key)) {
+        picture.dispose();
+        cached = previous;
+        kept++;
+      } else {
+        final image = picture.toImageSync(
+          math.max(1, (area.width * scale).ceil()),
+          math.max(1, (area.height * scale).ceil()),
+        );
+        picture.dispose();
+        previous?.image.dispose();
+        cached = (image: image, bounds: area, key: key);
+        _flatSnapshots[group.key] = cached;
+        snapshots++;
+      }
+      for (final entry in members) {
+        entry.flatSnapshot = cached;
+        entry.haze?.flatSnapshot = cached;
+      }
+    }
+    for (final boundary in _flatSnapshots.keys.toList()) {
+      if (!groups.containsKey(boundary)) {
+        _flatSnapshots.remove(boundary)!.image.dispose();
+      }
+    }
+    assert(() {
+      LiquidGlassHost.debugLastFlatCapture = (
+        snapshots: snapshots, kept: kept, groups: groups.length,
+        pixels: _flatSnapshots.values.fold(0,
+          (sum, cached) => sum + cached.image.width * cached.image.height),
+      );
+      return true;
+    }());
+  }
+
   ({ui.Image atlas, bool taken, int kept}) _snapshot(
     int level,
     List<_Behind> members,
@@ -640,13 +736,21 @@ class _LiquidGlassHostLayer extends ContainerLayer {
             wallpaper.image, wallpaper.size, ...wallpaper.toHost.storage,
           ]);
           canvas
+            ..save()
             ..transform(wallpaper.toHost.storage)
             ..drawImageRect(
               wallpaper.image,
               Rect.fromLTWH(0, 0, wallpaper.image.width.toDouble(), wallpaper.image.height.toDouble()),
               Offset.zero & wallpaper.size,
               Paint()..filterQuality = FilterQuality.low,
-            );
+            )
+            ..restore();
+          if (entry.flatSnapshot case final cached?) {
+            drawn.addAll([cached.image, cached.bounds]);
+            canvas.drawImageRect(cached.image,
+              Rect.fromLTWH(0, 0, cached.image.width.toDouble(), cached.image.height.toDouble()),
+              cached.bounds, Paint()..filterQuality = FilterQuality.low);
+          }
         } else {
           canvas.transform(entry.rootToHost.storage);
           final replay = _Replay(canvas, drawn, entry)..run();
@@ -762,6 +866,9 @@ class _LiquidGlassHostLayer extends ContainerLayer {
       visible: entry.visible?.transform(Matrix4.inverted(entry.toHost).storage),
       coverageKey: entry.coverageKey,
     );
+    if (entry.freezeAfterCapture && pane._freezeCaptured()) {
+      if (entry.coveredVisible!.getBounds().isEmpty) pane._captureFrozen(_pass);
+    }
   }
 
   List<double> _sampling(_Behind slot) {
@@ -799,6 +906,8 @@ typedef _Placement = ({
 });
 
 typedef _Band = ({Rect rect, double sigma, List<Object?> drawn});
+typedef _FlatSnapshot = ({ui.Image image, Rect bounds, List<Object?> key});
+
 typedef _Wallpaper = ({ui.Image image, Size size, Matrix4 toHost});
 
 bool _encloses(Rect outer, Rect inner) =>
@@ -826,7 +935,9 @@ class _Behind {
       ancestors = owner.ancestors,
       hazed = true,
       visible = owner.visible,
-      wallpaper = owner.wallpaper;
+      wallpaper = owner.wallpaper,
+      flatBoundary = owner.flatBoundary,
+      flatSnapshot = owner.flatSnapshot;
 
   final _LiquidGlassLayer pane;
   final LiquidGlassStyle style;
@@ -834,8 +945,8 @@ class _Behind {
 
   /// The host, or below it the nearest layer that draws offscreen: a backdrop
   /// filter there would read only that layer's texture.
-  final ContainerLayer root;
-  final Matrix4 rootToHost;
+  ContainerLayer root;
+  Matrix4 rootToHost;
   final Set<ContainerLayer> ancestors;
 
   /// Captures the backdrop again for the pane's [LiquidGlassStyle.haze].
@@ -844,6 +955,13 @@ class _Behind {
   late final Rect device = MatrixUtils.transformRect(toHost, pane.rect);
   Path? visible;
   _Wallpaper? wallpaper;
+  _LiquidGlassOcclusionLayer? flatBoundary;
+  bool get flatContent => flatBoundary != null;
+  _FlatSnapshot? flatSnapshot;
+  bool flatUI = false;
+  Rect? flatCaptureBounds;
+  bool freezeAfterCapture = false;
+  Path? coveredVisible;
   Rect get visibleBounds => visible?.getBounds() ?? device;
   final coverageKey = <Object?>[];
 
@@ -899,7 +1017,8 @@ bool _drawsOffscreen(Layer layer) {
       :final clipBehavior,
     ) => clipBehavior == Clip.antiAliasWithSaveLayer,
     OpacityLayer(:final alpha) => alpha != null && alpha < 255,
-    ColorFilterLayer() || ShaderMaskLayer() || BackdropFilterLayer() => true,
+    ColorFilterLayer() || ShaderMaskLayer() || BackdropFilterLayer() ||
+    LiquidGlassInkLayer() => true,
     _ => false,
   };
 }
@@ -923,6 +1042,8 @@ class _Replay {
   void run() => _walk(entry.root, root: true);
 
   bool _walk(ContainerLayer layer, {required bool root}) {
+    if (entry.flatContent && layer is _LiquidGlassDecorationLayer) return false;
+    if (entry.flatUI && layer is _ColorFieldLayer) return false;
     if (!root && !entry.ancestors.contains(layer) && !_mayShow(layer)) {
       return false;
     }
@@ -930,14 +1051,27 @@ class _Replay {
     final outer = _toHost.last;
     _toHost.add(geometry == null ? outer : (outer.clone()..multiply(geometry)));
     _entered.add((layer, geometry, root));
+    if (layer case LiquidGlassBackdropLayer(:final backdropPicture?)
+        when _shows(Offset.zero & layer.size)) {
+      if (entry.flatUI) {
+        while (_saves.length < _entered.length) {
+          _saves.add(_apply(_entered[_saves.length]));
+        }
+        canvas.drawRect(Offset.zero & layer.size, Paint()..blendMode = BlendMode.clear);
+        drawn.addAll([layer, layer.size]);
+      } else {
+        _draw(backdropPicture);
+      }
+    }
     var reached = false;
     for (Layer? child = layer.firstChild; child != null && !reached;) {
       switch (child) {
-        case _ when identical(child, entry.pane):
+        case _ when identical(child, entry.flatUI ? entry.flatBoundary : entry.pane):
           reached = true;
         case final _LiquidGlassLayer pane
             when pane._capturedPass == _LiquidGlassHostLayer._pass:
-          if (pane._captured case final picture? when _shows(pane.rect)) {
+          if (pane._captured case final picture?
+              when !entry.flatContent && _shows(pane.rect)) {
             panes++;
             _draw(picture);
           }
@@ -965,7 +1099,7 @@ class _Replay {
   }
 
   bool _shows(Rect bounds) =>
-      MatrixUtils.transformRect(_toHost.last, bounds).overlaps(entry.slot);
+      MatrixUtils.transformRect(_toHost.last, bounds).overlaps(entry.flatCaptureBounds ?? entry.slot);
 
   void _draw(ui.Picture picture) {
     while (_saves.length < _entered.length) {
@@ -996,9 +1130,9 @@ class _Replay {
               Paint()..colorFilter = colorFilter,
               colorFilter,
             ),
-            LiquidGlassInkLayer(:final filter?) => (
-              Paint()..imageFilter = filter,
-              filter,
+            LiquidGlassInkLayer(:final inkShader?) => (
+              Paint(),
+              (inkShader, layer._filteredField, layer._uniforms, layer.maskRect),
             ),
             ImageFilterLayer(:final imageFilter?)
                 when !entry.ancestors.contains(layer) =>
@@ -1069,6 +1203,13 @@ class _Replay {
       return;
     }
     final saves = _saves.removeLast();
+    if (layer case LiquidGlassInkLayer(:final inkShader?) when !root) {
+      canvas.drawRect(
+        layer.maskRect,
+        Paint()..shader = inkShader..blendMode = BlendMode.srcIn,
+      );
+      drawn.add(layer.maskRect);
+    }
     if (layer case ShaderMaskLayer(
       :final shader?,
       :final maskRect?,

@@ -1,5 +1,4 @@
-import 'dart:math';
-
+import 'package:fl_clash/common/aurora_rotation.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/providers/config.dart';
@@ -107,11 +106,7 @@ class AuroraSettings extends ConsumerWidget {
               child: FilledButton.tonalIcon(
                 onPressed: () {
                   ref.read(themeSettingProvider.notifier).update((state) {
-                    if (!state.auroraEnabled) return state;
-                    final seed =
-                        (state.auroraSeed + 1 + Random().nextInt(0x3ffffffe)) %
-                        0x7fffffff;
-                    return state.copyWith(auroraSeed: seed);
+                    return shuffleAuroraWallpaper(state);
                   });
                 },
                 icon: const GlyphIcon(AppGlyphs.shuffle, fill: 1),

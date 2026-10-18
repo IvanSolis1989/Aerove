@@ -47,6 +47,7 @@ class _SideSheetState extends State<SideSheet> {
   @override
   Widget build(BuildContext context) {
     return SheetSurface(
+      occludesGlass: true,
       key: _childKey,
       color:
           widget.backgroundColor ??

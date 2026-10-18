@@ -192,6 +192,9 @@ class CommonRoute<T> extends PageRoute<T>
   CommonRoute({required this.builder});
 
   @override
+  bool get usesWallpaperBackdrop => true;
+
+  @override
   bool sharesMotionWith(Route<dynamic>? route) => route is CommonRoute;
 
   @override

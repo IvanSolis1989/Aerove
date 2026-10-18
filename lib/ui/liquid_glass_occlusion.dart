@@ -41,7 +41,7 @@ class _GlassOcclusionBox extends RenderProxyBox {
   @override
   void paint(PaintingContext context, Offset offset) {
     final layer = _layer.layer ??= _LiquidGlassOcclusionLayer();
-    layer.configure(shape, textDirection, size);
+    layer.configure(shape, textDirection, Offset.zero & size);
     layer.offset = offset;
     context.pushLayer(layer, super.paint, Offset.zero);
   }
@@ -53,15 +53,36 @@ class _GlassOcclusionBox extends RenderProxyBox {
   }
 }
 
+class LiquidGlassOcclusionPane {
+  final _layer = LayerHandle<_LiquidGlassOcclusionLayer>();
+
+  void paint(
+    PaintingContext context,
+    Offset offset, {
+    required Rect rect,
+    required ShapeBorder shape,
+    required PaintingContextCallback painter,
+  }) {
+    final layer = _layer.layer ??= _LiquidGlassOcclusionLayer();
+    layer.configure(shape, TextDirection.ltr, rect);
+    layer.offset = offset;
+    context.pushLayer(layer, painter, Offset.zero);
+  }
+
+  void clear() => _layer.layer = null;
+
+  void dispose() => clear();
+}
+
 class _LiquidGlassOcclusionLayer extends OffsetLayer {
-  (ShapeBorder, TextDirection, Size)? geometry;
+  (ShapeBorder, TextDirection, Rect)? geometry;
   Path path = Path();
 
-  void configure(ShapeBorder shape, TextDirection direction, Size size) {
-    final key = (shape, direction, size);
+  void configure(ShapeBorder shape, TextDirection direction, Rect rect) {
+    final key = (shape, direction, rect);
     if (geometry == key) return;
     geometry = key;
-    path = shape.getOuterPath(Offset.zero & size, textDirection: direction);
+    path = shape.getOuterPath(rect, textDirection: direction);
     markNeedsAddToScene();
   }
 }
