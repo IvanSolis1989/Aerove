@@ -426,6 +426,7 @@ class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper>
   late final ValueNotifier<({bool square, Duration elapsed})> _frame;
   Duration _runBase = Duration.zero;
   Duration _rateEpoch = Duration.zero;
+  Duration _lastTickElapsed = Duration.zero;
   int _lastPublishedFrame = 0;
   bool _foreground = true;
 
@@ -443,6 +444,7 @@ class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper>
       elapsed: widget.motionTime ?? Duration.zero,
     ));
     _ticker = createTicker((elapsed) {
+      _lastTickElapsed = elapsed;
       final frame =
           (elapsed - _rateEpoch).inMicroseconds *
           _framesPerSecond ~/
@@ -472,7 +474,7 @@ class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper>
     final rate = _activityRate?.value ?? 30;
     if (rate == _framesPerSecond) return;
     _framesPerSecond = rate;
-    _rateEpoch = _ticker.lastElapsedDuration ?? Duration.zero;
+    _rateEpoch = _lastTickElapsed;
     _lastPublishedFrame = 0;
   }
 
@@ -492,6 +494,7 @@ class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper>
     if (running && !_ticker.isActive) {
       _runBase = _frame.value.elapsed;
       _rateEpoch = Duration.zero;
+      _lastTickElapsed = Duration.zero;
       _lastPublishedFrame = 0;
       _ticker.start();
     } else if (!running && _ticker.isActive) {
