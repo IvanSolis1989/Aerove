@@ -369,7 +369,7 @@ _ThemeProps _$ThemePropsFromJson(Map<String, dynamic> json) => _ThemeProps(
       LiquidGlassMode.ultra,
   auroraEnabled: json['auroraEnabled'] as bool? ?? true,
   auroraColors: json['auroraColors'] == null
-      ? const [0xFF9AAFC5, 0xFFC4BDD3]
+      ? const [0xFF65BDD2, 0xFFC589CA, 0xFF75CCA8]
       : _auroraColorsFromJson(json['auroraColors']),
   auroraSeed: (json['auroraSeed'] as num?)?.toInt() ?? 271828,
   textScale: json['textScale'] == null
