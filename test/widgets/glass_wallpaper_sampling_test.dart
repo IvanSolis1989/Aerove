@@ -117,7 +117,8 @@ void main() {
                               offset: Offset(-shift, 0),
                               child: const LiquidGlassColorSource(
                                 child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
                                   children: [
                                     Expanded(child: ColoredBox(color: _pink)),
                                     Expanded(child: ColoredBox(color: _blue)),
@@ -157,8 +158,9 @@ void main() {
         );
         await tester.pump();
         for (final color in [_pink, _blue]) {
-          final source = find.byWidgetPredicate((widget) =>
-              widget is ColoredBox && widget.color == color);
+          final source = find.byWidgetPredicate(
+            (widget) => widget is ColoredBox && widget.color == color,
+          );
           expect(tester.getSize(source), const Size(400, 300));
         }
       }

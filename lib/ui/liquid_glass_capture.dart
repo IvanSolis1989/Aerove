@@ -1312,7 +1312,9 @@ class _Replay {
         ClipRectLayer(:final clipBehavior) ||
         ClipRRectLayer(:final clipBehavior) ||
         ClipRSuperellipseLayer(:final clipBehavior) ||
-        ClipPathLayer(:final clipBehavior) => clipBehavior == Clip.antiAliasWithSaveLayer,
+        ClipPathLayer(
+          :final clipBehavior,
+        ) => clipBehavior == Clip.antiAliasWithSaveLayer,
         _ => false,
       };
       if (!root && isolated) {

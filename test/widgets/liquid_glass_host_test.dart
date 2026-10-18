@@ -16,7 +16,9 @@ class _DestinationMask extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) => canvas.drawRect(
     Offset.zero & size,
-    Paint()..color = Colors.transparent..blendMode = BlendMode.dstIn,
+    Paint()
+      ..color = Colors.transparent
+      ..blendMode = BlendMode.dstIn,
   );
 
   @override
@@ -478,23 +480,50 @@ void main() {
   });
 
   for (final shape in ['rect', 'superellipse', 'path']) {
-    testWidgets('a sibling $shape save-layer clip isolates destination masks', (tester) async {
+    testWidgets('a sibling $shape save-layer clip isolates destination masks', (
+      tester,
+    ) async {
       const mask = CustomPaint(painter: _DestinationMask());
       final clipped = switch (shape) {
-        'rect' => const ClipRect(clipBehavior: Clip.antiAliasWithSaveLayer, child: mask),
-        'superellipse' => const ClipRSuperellipse(
-          borderRadius: AppRadius.lg, clipBehavior: Clip.antiAliasWithSaveLayer, child: mask,
+        'rect' => const ClipRect(
+          clipBehavior: Clip.antiAliasWithSaveLayer,
+          child: mask,
         ),
-        _ => const ClipPath(clipper: ShapeBorderClipper(shape: AppShape.lg),
-          clipBehavior: Clip.antiAliasWithSaveLayer, child: mask),
+        'superellipse' => const ClipRSuperellipse(
+          borderRadius: AppRadius.lg,
+          clipBehavior: Clip.antiAliasWithSaveLayer,
+          child: mask,
+        ),
+        _ => const ClipPath(
+          clipper: ShapeBorderClipper(shape: AppShape.lg),
+          clipBehavior: Clip.antiAliasWithSaveLayer,
+          child: mask,
+        ),
       };
-      await tester.pumpWidget(_app(Stack(children: [
-        const Positioned.fill(child: ColoredBox(color: _red)),
-        const Positioned(left: 100, top: 100, width: 100, height: 100,
-          child: ColoredBox(color: _green)),
-        Positioned(left: 100, top: 100, width: 100, height: 100, child: clipped),
-        _pane(const Rect.fromLTWH(80, 80, 180, 180)),
-      ])));
+      await tester.pumpWidget(
+        _app(
+          Stack(
+            children: [
+              const Positioned.fill(child: ColoredBox(color: _red)),
+              const Positioned(
+                left: 100,
+                top: 100,
+                width: 100,
+                height: 100,
+                child: ColoredBox(color: _green),
+              ),
+              Positioned(
+                left: 100,
+                top: 100,
+                width: 100,
+                height: 100,
+                child: clipped,
+              ),
+              _pane(const Rect.fromLTWH(80, 80, 180, 180)),
+            ],
+          ),
+        ),
+      );
       final pane = _capture().panes.single;
       expect(await _behind(tester, pane, const Offset(150, 150)), _green);
       expect(await _behind(tester, pane, const Offset(101, 101)), _green);

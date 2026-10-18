@@ -1413,12 +1413,7 @@ class _LiquidGlassLayer extends Layer {
     final canvas = Canvas(recorder);
     _featherBands.clear();
     if (visible != null && feathers.isNotEmpty && _frozenPicture != null) {
-      _paintFeathered(
-        canvas,
-        covered ?? Path(),
-        feathers,
-        paintLive,
-      );
+      _paintFeathered(canvas, covered ?? Path(), feathers, paintLive);
     } else {
       if (visible != null) {
         if (_frozenPicture case final frozen?) canvas.drawPicture(frozen);
@@ -1507,10 +1502,7 @@ class _LiquidGlassLayer extends Layer {
             covered,
             strip,
           ).getBounds().isEmpty;
-      _featherBands.add((
-        rect: bounds,
-        surfaces: simple ? 3 : 5,
-      ));
+      _featherBands.add((rect: bounds, surfaces: simple ? 3 : 5));
       canvas
         ..save()
         ..clipPath(strip, doAntiAlias: false)

@@ -223,13 +223,19 @@ void main() {
   });
 
   for (final input in ['labels', 'font', 'scaler', 'direction']) {
-    testWidgets('label metrics follow changed $input on the same dock state', (tester) async {
+    testWidgets('label metrics follow changed $input on the same dock state', (
+      tester,
+    ) async {
       final initial = input == 'font'
           ? const ['iiiiiiiiiiii', 'WW', 'Tools']
           : const ['Home', 'Profiles', 'Tools'];
       final next = input == 'labels' ? _labels : initial;
-      final scaler = input == 'scaler' ? const TextScaler.linear(1.4) : TextScaler.noScaling;
-      final direction = input == 'direction' ? TextDirection.rtl : TextDirection.ltr;
+      final scaler = input == 'scaler'
+          ? const TextScaler.linear(1.4)
+          : TextScaler.noScaling;
+      final direction = input == 'direction'
+          ? TextDirection.rtl
+          : TextDirection.ltr;
       final family = input == 'font' ? 'DockMetrics' : 'Ahem';
       final key = GlobalKey<_FixtureState>();
       try {
@@ -250,17 +256,22 @@ void main() {
         if (input != 'direction') {
           expect(updated, isNot(before));
         }
-        expect(tester.getCenter(_glyph(0).first).dx < tester.getCenter(_glyph(2).first).dx,
-          direction == TextDirection.ltr);
-        await tester.pumpWidget(_Fixture(
-          key: GlobalKey<_FixtureState>(),
-          glass: false,
-          quality: LiquidGlassQuality.standard,
-          labels: List.of(next),
-          scaler: scaler,
-          direction: direction,
-          fontFamily: family,
-        ));
+        expect(
+          tester.getCenter(_glyph(0).first).dx <
+              tester.getCenter(_glyph(2).first).dx,
+          direction == TextDirection.ltr,
+        );
+        await tester.pumpWidget(
+          _Fixture(
+            key: GlobalKey<_FixtureState>(),
+            glass: false,
+            quality: LiquidGlassQuality.standard,
+            labels: List.of(next),
+            scaler: scaler,
+            direction: direction,
+            fontFamily: family,
+          ),
+        );
         await tester.pumpAndSettle();
         final fresh = _metrics(tester, next.first);
         expect(updated.label.width, closeTo(fresh.label.width, 1e-6));

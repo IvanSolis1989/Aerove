@@ -36,16 +36,48 @@ import '../helpers/test_profiles.dart';
 const _size = Size(390, 800);
 const _steps = [0.0, 0.1, 0.25, 0.5, 0.75, 1.0];
 const _identityRgb = ColorFilter.matrix([
-  1, 0, 0, 0, 0,
-  0, 1, 0, 0, 0,
-  0, 0, 1, 0, 0,
-  0, 0, 0, 1, 0,
+  1,
+  0,
+  0,
+  0,
+  0,
+  0,
+  1,
+  0,
+  0,
+  0,
+  0,
+  0,
+  1,
+  0,
+  0,
+  0,
+  0,
+  0,
+  1,
+  0,
 ]);
 const _sentinelRgb = ColorFilter.matrix([
-  -1, 0, 0, 0, 255,
-  0, -1, 0, 0, 255,
-  0, 0, -1, 0, 255,
-  0, 0, 0, 1, 0,
+  -1,
+  0,
+  0,
+  0,
+  255,
+  0,
+  -1,
+  0,
+  0,
+  255,
+  0,
+  0,
+  -1,
+  0,
+  255,
+  0,
+  0,
+  0,
+  1,
+  0,
 ]);
 const _profileName = 'Handover example profile';
 const _profile = Profile(
@@ -268,9 +300,13 @@ void main() {
                 'transientBackdropIsolation': isolated,
                 'actualCapture': actualCapture,
                 'oracleCapture': oracleCapture,
-                'captureLayoutMatches': const DeepCollectionEquality().equals(
-                      actualCapture['panes'], oracleCapture['panes'],
-                    ) && actualCapture['atlasPixels'] == oracleCapture['atlasPixels'],
+                'captureLayoutMatches':
+                    const DeepCollectionEquality().equals(
+                      actualCapture['panes'],
+                      oracleCapture['panes'],
+                    ) &&
+                    actualCapture['atlasPixels'] ==
+                        oracleCapture['atlasPixels'],
                 'referenceNoise': noise,
                 'residualBytes': residual,
                 'outsideResidualBytes': outsideResidual,
@@ -392,10 +428,12 @@ void main() {
             );
             if (quality != null) {
               expect(
-                frames.where((frame) => frame['captureLayoutMatches'] != true)
+                frames
+                    .where((frame) => frame['captureLayoutMatches'] != true)
                     .toList(),
                 isEmpty,
-                reason: 'Changing Home RGB must preserve every pane, atlas slot, scale and size.',
+                reason:
+                    'Changing Home RGB must preserve every pane, atlas slot, scale and size.',
               );
               expect(
                 frames
@@ -527,7 +565,10 @@ Map<String, Object?> _captureState() {
   final ink = LiquidGlassHost.debugLastInkCapture;
   final glass = LiquidGlassHost.debugLastCapture;
   List<double> coordinates(Rect rect) => [
-    rect.left, rect.top, rect.right, rect.bottom,
+    rect.left,
+    rect.top,
+    rect.right,
+    rect.bottom,
   ];
   return {
     'inkGeneration': ink?.generation,

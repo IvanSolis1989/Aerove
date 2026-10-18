@@ -79,7 +79,11 @@ void main() {
         tester.view.physicalSize = const Size(320, 240);
         tester.view.devicePixelRatio = 1;
         addTearDown(tester.view.reset);
-        Future<void> render(Color color, int cover, {bool isolated = false}) async {
+        Future<void> render(
+          Color color,
+          int cover, {
+          bool isolated = false,
+        }) async {
           const marker = LiquidGlassOcclusion(
             shape: AppShape.none,
             bottomFeather: 12,
@@ -87,8 +91,13 @@ void main() {
           );
           const pane = LiquidGlass(
             style: LiquidGlassStyle(
-              tint: Color(0x33FF0000), blur: 0, refraction: 0, bevel: 0,
-              rim: 0.6, rimWidth: 1, hairline: 0.2,
+              tint: Color(0x33FF0000),
+              blur: 0,
+              refraction: 0,
+              bevel: 0,
+              rim: 0.6,
+              rimWidth: 1,
+              hairline: 0.2,
             ),
             clipper: ShapeBorderClipper(shape: AppShape.circle),
           );
@@ -115,9 +124,12 @@ void main() {
                           top: 60,
                           width: 120,
                           height: 120,
-                          child: isolated ? const RepaintBoundary(
-                            key: ValueKey('resolved-live-pane'), child: pane,
-                          ) : pane,
+                          child: isolated
+                              ? const RepaintBoundary(
+                                  key: ValueKey('resolved-live-pane'),
+                                  child: pane,
+                                )
+                              : pane,
                         ),
                         if (cover == 1)
                           const Positioned.fill(
@@ -192,8 +204,9 @@ void main() {
           try {
             expect(image.width, 120);
             expect(image.height, 120);
-            final rgba = (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!
-                .buffer.asUint8List();
+            final rgba = (await image.toByteData(
+              format: ui.ImageByteFormat.rawRgba,
+            ))!.buffer.asUint8List();
             expect(rgba[3], 0);
             expect(rgba[(60 * 120 + 60) * 4 + 3], 255);
             final background = _pixel(live, 5, 116);
@@ -203,21 +216,29 @@ void main() {
                 final to = ((y + 60) * 320 + x + 40) * 4;
                 final alpha = rgba[from + 3] / 255;
                 for (var channel = 0; channel < 3; channel++) {
-                  resolved[to + channel] = (rgba[from + channel] +
-                      background[channel] * (1 - alpha)).round().clamp(0, 255);
+                  resolved[to + channel] =
+                      (rgba[from + channel] + background[channel] * (1 - alpha))
+                          .round()
+                          .clamp(0, 255);
                 }
               }
             }
-          } finally { image.dispose(); }
+          } finally {
+            image.dispose();
+          }
         });
         final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
         if (output != null) {
-          File('$output/header-aa-endpoints-${quality.name}.json').writeAsStringSync(jsonEncode({
-            'direct': _pixel(live, 159, 122),
-            'resolved': _pixel(resolved, 159, 122),
-            'frozen': _pixel(frozen, 159, 122),
-            'mixed': _pixel(mixed, 159, 122),
-          }));
+          File(
+            '$output/header-aa-endpoints-${quality.name}.json',
+          ).writeAsStringSync(
+            jsonEncode({
+              'direct': _pixel(live, 159, 122),
+              'resolved': _pixel(resolved, 159, 122),
+              'frozen': _pixel(frozen, 159, 122),
+              'mixed': _pixel(mixed, 159, 122),
+            }),
+          );
         }
         var changedPixels = 0;
         for (var y = 110; y < 125; y++) {

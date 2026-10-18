@@ -850,7 +850,8 @@ class _FloatingNavigationBarState extends State<FloatingNavigationBar>
     TextScaler scaler,
     TextDirection direction,
     List<({double width, double height})> sizes,
-  })? _labelMetrics;
+  })?
+  _labelMetrics;
 
   List<({double width, double height})> _labelSizes(TextStyle style) {
     final labels = [for (final item in widget.destinations) item.label];
@@ -865,7 +866,8 @@ class _FloatingNavigationBarState extends State<FloatingNavigationBar>
       return previous.sizes;
     }
     final sizes = [
-      for (final label in labels) _measureLabel(label, style, scaler, direction),
+      for (final label in labels)
+        _measureLabel(label, style, scaler, direction),
     ];
     _labelMetrics = (
       labels: labels,

@@ -886,7 +886,12 @@ Future<void> _realTextEnvelope(
       (a.r - b.r).abs(),
       math.max((a.g - b.g).abs(), (a.b - b.b).abs()),
     );
-    final nativePixel = Color.fromARGB(255, native[index], native[index + 1], native[index + 2]);
+    final nativePixel = Color.fromARGB(
+      255,
+      native[index],
+      native[index + 1],
+      native[index + 2],
+    );
     final point = [(index ~/ 4) % 520, index ~/ (4 * 520)];
     if (distance(nativePixel, under) > 0.18 && distance(actual, under) < 0.05) {
       additionalMissing++;
@@ -923,7 +928,8 @@ Future<void> _realTextEnvelope(
       '$output/ink-real-envelope-${brightness.name}-${direction.name}-$scale.json',
     ).writeAsStringSync(
       jsonEncode({
-        'supportOracle': 'same native ShaderMask; plain Text AA differences are retained separately',
+        'supportOracle':
+            'same native ShaderMask; plain Text AA differences are retained separately',
         'supported': supported,
         'missing': missing,
         'nativeShaderMissing': nativeMissing,
@@ -941,7 +947,8 @@ Future<void> _realTextEnvelope(
   expect(
     additionalMissing,
     0,
-    reason: 'Ink must retain every strongly painted native ShaderMask glyph pixel',
+    reason:
+        'Ink must retain every strongly painted native ShaderMask glyph pixel',
   );
   expect(opaque, greaterThan(50));
   expect(colored, greaterThan(25));

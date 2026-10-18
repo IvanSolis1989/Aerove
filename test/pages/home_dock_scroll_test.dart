@@ -90,8 +90,12 @@ void main() {
         UserScrollNotification(
           direction: ScrollDirection.reverse,
           metrics: vertical.position,
-          context: tester.element(find.byKey(const ValueKey('vertical-content'))),
-        ).dispatch(tester.element(find.byKey(const ValueKey('vertical-content'))));
+          context: tester.element(
+            find.byKey(const ValueKey('vertical-content')),
+          ),
+        ).dispatch(
+          tester.element(find.byKey(const ValueKey('vertical-content'))),
+        );
         final driven = vertical.animateTo(
           500,
           duration: const Duration(milliseconds: 100),

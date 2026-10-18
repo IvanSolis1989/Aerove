@@ -55,7 +55,11 @@ Future<_FieldProbe> _fieldProbe(WidgetTester tester) async {
   LiquidGlassInkLayer? ink;
   Matrix4? inkToRoot;
   void visit(ContainerLayer parent, Matrix4 toRoot) {
-    for (Layer? child = parent.firstChild; child != null; child = child.nextSibling) {
+    for (
+      Layer? child = parent.firstChild;
+      child != null;
+      child = child.nextSibling
+    ) {
       if (child is! ContainerLayer) continue;
       final next = toRoot.clone();
       if (child is OffsetLayer) {
@@ -71,11 +75,12 @@ Future<_FieldProbe> _fieldProbe(WidgetTester tester) async {
       visit(child, next);
     }
   }
+
   visit(tester.binding.renderViews.first.debugLayer!, Matrix4.identity());
   final field = ink!.debugField!;
-  final bytes = (await tester.runAsync(() => field.$1.toByteData(
-    format: ui.ImageByteFormat.rawRgba,
-  )))!;
+  final bytes = (await tester.runAsync(
+    () => field.$1.toByteData(format: ui.ImageByteFormat.rawRgba),
+  ))!;
   return (
     bytes: bytes.buffer.asUint8List().toList(),
     width: field.$1.width,
@@ -87,23 +92,36 @@ Future<_FieldProbe> _fieldProbe(WidgetTester tester) async {
 }
 
 Offset _sourcePoint(_FieldProbe field, Offset point) {
-  final local = MatrixUtils.transformPoint(Matrix4.inverted(field.inkToRoot), point);
+  final local = MatrixUtils.transformPoint(
+    Matrix4.inverted(field.inkToRoot),
+    point,
+  );
   return MatrixUtils.transformPoint(field.inkToField, local);
 }
 
 List<double> _bilinear(_FieldProbe field, Offset source) {
-  final x = (source.dx / field.size.width).clamp(0.0, 1.0).toDouble() * field.width - 0.5;
-  final y = (source.dy / field.size.height).clamp(0.0, 1.0).toDouble() * field.height - 0.5;
+  final x =
+      (source.dx / field.size.width).clamp(0.0, 1.0).toDouble() * field.width -
+      0.5;
+  final y =
+      (source.dy / field.size.height).clamp(0.0, 1.0).toDouble() *
+          field.height -
+      0.5;
   final left = x.floor(), top = y.floor();
   final dx = x - left, dy = y - top;
-  double at(int column, int row, int channel) => field.bytes[
-    ((row.clamp(0, field.height - 1).toInt() * field.width + column.clamp(0, field.width - 1).toInt()) * 4) + channel
-  ].toDouble();
-  return [for (var channel = 0; channel < 4; channel++)
-    at(left, top, channel) * (1 - dx) * (1 - dy) +
-    at(left + 1, top, channel) * dx * (1 - dy) +
-    at(left, top + 1, channel) * (1 - dx) * dy +
-    at(left + 1, top + 1, channel) * dx * dy];
+  double at(int column, int row, int channel) => field
+      .bytes[((row.clamp(0, field.height - 1).toInt() * field.width +
+                  column.clamp(0, field.width - 1).toInt()) *
+              4) +
+          channel]
+      .toDouble();
+  return [
+    for (var channel = 0; channel < 4; channel++)
+      at(left, top, channel) * (1 - dx) * (1 - dy) +
+          at(left + 1, top, channel) * dx * (1 - dy) +
+          at(left, top + 1, channel) * (1 - dx) * dy +
+          at(left + 1, top + 1, channel) * dx * dy,
+  ];
 }
 
 Map<String, Object> _sampleField(_FieldProbe field, Offset point) {
@@ -125,19 +143,36 @@ Matrix4 _referenceSourceMapping(Matrix4 pose) {
 
 List<double> _referenceMesh(Offset source, Brightness brightness) {
   final colors = brightness == Brightness.dark
-      ? <List<double>>[[23, 64, 74], [73, 32, 73], [35, 75, 63]]
-      : <List<double>>[[192, 230, 236], [233, 206, 232], [198, 232, 212]];
+      ? <List<double>>[
+          [23, 64, 74],
+          [73, 32, 73],
+          [35, 75, 63],
+        ]
+      : <List<double>>[
+          [192, 230, 236],
+          [233, 206, 232],
+          [198, 232, 212],
+        ];
   final u = source.dx / 800, v = source.dy / 800;
-  return [for (var channel = 0; channel < 3; channel++)
-    u + v <= 1
-      ? colors[0][channel] * (1 - u - v) + colors[1][channel] * u + colors[2][channel] * v
-      : colors[1][channel] * (1 - v) + colors[0][channel] * (u + v - 1) + colors[2][channel] * (1 - u)];
+  return [
+    for (var channel = 0; channel < 3; channel++)
+      u + v <= 1
+          ? colors[0][channel] * (1 - u - v) +
+                colors[1][channel] * u +
+                colors[2][channel] * v
+          : colors[1][channel] * (1 - v) +
+                colors[0][channel] * (u + v - 1) +
+                colors[2][channel] * (1 - u),
+  ];
 }
 
 double _luminance(List<double> rgb) {
   double linear(double value) => value <= 0.04045
-      ? value / 12.92 : math.pow((value + 0.055) / 1.055, 2.4).toDouble();
-  return linear(rgb[0]) * 0.2126 + linear(rgb[1]) * 0.7152 + linear(rgb[2]) * 0.0722;
+      ? value / 12.92
+      : math.pow((value + 0.055) / 1.055, 2.4).toDouble();
+  return linear(rgb[0]) * 0.2126 +
+      linear(rgb[1]) * 0.7152 +
+      linear(rgb[2]) * 0.0722;
 }
 
 double _contrast(List<double> a, List<double> b) {
@@ -156,7 +191,9 @@ List<int> _referenceBodyInk(List<double> rgba, Brightness brightness) {
     var from = 0.0, to = 1.0;
     for (var step = 0; step < 8; step++) {
       final amount = (from + to) / 2;
-      final candidate = [for (final value in rgb) value + (pole - value) * amount];
+      final candidate = [
+        for (final value in rgb) value + (pole - value) * amount,
+      ];
       if (_contrast(candidate, background) >= 4.7) {
         to = amount;
       } else {
@@ -165,16 +202,24 @@ List<int> _referenceBodyInk(List<double> rgba, Brightness brightness) {
     }
     return [for (final value in rgb) value + (pole - value) * to];
   }
+
   var color = background;
   if (high - low >= 0.015) {
-    final saturation = math.min(dark ? 0.92 : 0.97,
-      (high - low) / math.max(high, 0.001) * (dark ? 2.70 : 3.1) + (dark ? 0.175 : 0.22));
+    final saturation = math.min(
+      dark ? 0.92 : 0.97,
+      (high - low) / math.max(high, 0.001) * (dark ? 2.70 : 3.1) +
+          (dark ? 0.175 : 0.22),
+    );
     final peak = dark ? 0.95 : 0.97;
-    color = [for (final value in background)
-      peak * (1 - saturation + (value - low) / (high - low) * saturation)];
+    color = [
+      for (final value in background)
+        peak * (1 - saturation + (value - low) / (high - low) * saturation),
+    ];
   }
   color = readable(color);
-  color = readable([for (final value in color) (dark ? 0.08 : 0.0) + value * 0.92]);
+  color = readable([
+    for (final value in color) (dark ? 0.08 : 0.0) + value * 0.92,
+  ]);
   return [for (final value in color) (value * 255).round()];
 }
 
@@ -335,8 +380,9 @@ void main() {
         }
       }
       expect(point, isNotNull);
-      final bodyRects = [for (var i = 0; i < 40; i += 2)
-        tester.getRect(find.text('H$i'))];
+      final bodyRects = [
+        for (var i = 0; i < 40; i += 2) tester.getRect(find.text('H$i')),
+      ];
       await tester.pumpWidget(
         _scene(capture: key, pose: pose, brightness: brightness),
       );
@@ -420,47 +466,87 @@ void main() {
           for (var x = rect.left.ceil(); x < rect.right.floor(); x++) {
             final index = (y * 360 + x) * 4;
             final sample = Offset(x + 0.5, y + 0.5);
-            if (!seen.add(index) || _pixel(none, sample) != sourceColor) continue;
+            if (!seen.add(index) || _pixel(none, sample) != sourceColor)
+              continue;
             supported++;
-            final expectedSource = MatrixUtils.transformPoint(expectedMapping, sample);
-            final actualSource = MatrixUtils.transformPoint(actualMapping, sample);
-            final actualViewport = MatrixUtils.transformPoint(viewportMapping, sample);
-            maximumUvError = math.max(maximumUvError,
-              math.max((actualSource - expectedSource).distance, (actualViewport - sample).distance));
+            final expectedSource = MatrixUtils.transformPoint(
+              expectedMapping,
+              sample,
+            );
+            final actualSource = MatrixUtils.transformPoint(
+              actualMapping,
+              sample,
+            );
+            final actualViewport = MatrixUtils.transformPoint(
+              viewportMapping,
+              sample,
+            );
+            maximumUvError = math.max(
+              maximumUvError,
+              math.max(
+                (actualSource - expectedSource).distance,
+                (actualViewport - sample).distance,
+              ),
+            );
             final cachedInput = _bilinear(sourceField, expectedSource);
             final viewportInput = _bilinear(viewportField, sample);
             final analytic = _referenceMesh(expectedSource, brightness);
             final sourceExpected = _referenceBodyInk(cachedInput, brightness);
-            final viewportExpected = _referenceBodyInk(viewportInput, brightness);
+            final viewportExpected = _referenceBodyInk(
+              viewportInput,
+              brightness,
+            );
             final cachedActual = <double>[], viewportActual = <double>[];
             var sourceDistance = 0.0, viewportDistance = 0.0;
             for (var channel = 0; channel < 3; channel++) {
-              maximumRawError = math.max(maximumRawError,
-                math.max((cachedInput[channel] - analytic[channel]).abs(),
-                  (viewportInput[channel] - analytic[channel]).abs()));
-              maximumInputDifference = math.max(maximumInputDifference,
-                (cachedInput[channel] - viewportInput[channel]).abs());
-              final a = (moved[index + channel] - sourceExpected[channel]).abs();
-              final b = (fallback[index + channel] - viewportExpected[channel]).abs();
+              maximumRawError = math.max(
+                maximumRawError,
+                math.max(
+                  (cachedInput[channel] - analytic[channel]).abs(),
+                  (viewportInput[channel] - analytic[channel]).abs(),
+                ),
+              );
+              maximumInputDifference = math.max(
+                maximumInputDifference,
+                (cachedInput[channel] - viewportInput[channel]).abs(),
+              );
+              final a = (moved[index + channel] - sourceExpected[channel])
+                  .abs();
+              final b = (fallback[index + channel] - viewportExpected[channel])
+                  .abs();
               sourceError = math.max(sourceError, a);
               viewportError = math.max(viewportError, b);
               sourceSquared += a * a;
               viewportSquared += b * b;
               cachedActual.add(moved[index + channel] / 255);
               viewportActual.add(fallback[index + channel] / 255);
-              sourceDistance = math.max(sourceDistance,
-                (moved[index + channel] - cachedInput[channel]).abs() / 255);
-              viewportDistance = math.max(viewportDistance,
-                (fallback[index + channel] - viewportInput[channel]).abs() / 255);
+              sourceDistance = math.max(
+                sourceDistance,
+                (moved[index + channel] - cachedInput[channel]).abs() / 255,
+              );
+              viewportDistance = math.max(
+                viewportDistance,
+                (fallback[index + channel] - viewportInput[channel]).abs() /
+                    255,
+              );
             }
             if (moved[index + 3] != none[index + 3] ||
-                fallback[index + 3] != none[index + 3]) alphaLoss++;
+                fallback[index + 3] != none[index + 3])
+              alphaLoss++;
             if (sourceDistance < 0.05) missingSource++;
             if (viewportDistance < 0.05) missingViewport++;
-            sourceContrast = math.min(sourceContrast,
-              _contrast(cachedActual, [for (var i = 0; i < 3; i++) cachedInput[i] / 255]));
-            viewportContrast = math.min(viewportContrast,
-              _contrast(viewportActual, [for (var i = 0; i < 3; i++) viewportInput[i] / 255]));
+            sourceContrast = math.min(
+              sourceContrast,
+              _contrast(cachedActual, [
+                for (var i = 0; i < 3; i++) cachedInput[i] / 255,
+              ]),
+            );
+            viewportContrast = math.min(
+              viewportContrast,
+              _contrast(viewportActual, [
+                for (var i = 0; i < 3; i++) viewportInput[i] / 255,
+              ]),
+            );
           }
         }
       }
@@ -469,9 +555,18 @@ void main() {
       _record('${brightness.name}-reference', {
         'maxError': maximumError,
         'rms': rms,
-        'comparison': 'cross-representation report; each input has its own strict CPU oracle',
-        'sameInputSource': {'maximum': sourceError, 'rms': sourceRms, 'minimumContrast': sourceContrast},
-        'sameInputViewport': {'maximum': viewportError, 'rms': viewportRms, 'minimumContrast': viewportContrast},
+        'comparison':
+            'cross-representation report; each input has its own strict CPU oracle',
+        'sameInputSource': {
+          'maximum': sourceError,
+          'rms': sourceRms,
+          'minimumContrast': sourceContrast,
+        },
+        'sameInputViewport': {
+          'maximum': viewportError,
+          'rms': viewportRms,
+          'minimumContrast': viewportContrast,
+        },
         'sourceUvMaximumErrorDp': maximumUvError,
         'meshRawMaximumErrorLevels': maximumRawError,
         'rawRepresentationsMaximumDifferenceLevels': maximumInputDifference,
@@ -480,8 +575,14 @@ void main() {
         'frameAlphaDifferences': frameAlphaDifferences,
         'missingSource': missingSource,
         'missingViewport': missingViewport,
-        'sourceField': _sampleField(sourceField, Offset((worstIndex ~/ 4) % 360 + 0.5, worstIndex ~/ (360 * 4) + 0.5)),
-        'viewportField': _sampleField(viewportField, Offset((worstIndex ~/ 4) % 360 + 0.5, worstIndex ~/ (360 * 4) + 0.5)),
+        'sourceField': _sampleField(
+          sourceField,
+          Offset((worstIndex ~/ 4) % 360 + 0.5, worstIndex ~/ (360 * 4) + 0.5),
+        ),
+        'viewportField': _sampleField(
+          viewportField,
+          Offset((worstIndex ~/ 4) % 360 + 0.5, worstIndex ~/ (360 * 4) + 0.5),
+        ),
         'point': [(worstIndex ~/ 4) % 360, worstIndex ~/ (360 * 4)],
         'sourceRgba': moved.sublist(
           worstIndex - worstIndex % 4,

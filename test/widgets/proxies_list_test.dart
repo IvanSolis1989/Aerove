@@ -184,66 +184,94 @@ void main() {
 
   for (final tab in [false, true]) {
     for (final quality in [null, ...LiquidGlassQuality.values]) {
-      testWidgets('proxy ${tab ? 'tab' : 'list'} scrollbar fades and remains '
-          'scrubbable (${quality?.name ?? 'none'})', (tester) async {
-        final group = _group('G0', 160);
-        final controller = ScrollController();
-        try {
-          await pumpList(tester,
-            groups: [group],
-            glass: quality != null,
-            quality: quality ?? LiquidGlassQuality.standard,
-            view: tab ? ProxyGroupView(group: group, controller: controller,
-              columns: 3, cardType: ProxyCardType.standard) : null,
-          );
-          final viewport = find.byType(tab ? GridView : CustomScrollView).first;
-          final scrollable = find.descendant(of: viewport,
-            matching: find.byType(Scrollable)).first;
-          final position = tester.state<ScrollableState>(scrollable).position;
-          double opacity() => scrollbarPainter(tester).fadeoutOpacityAnimation.value;
-          expect(position.maxScrollExtent, greaterThan(100));
-          expect(tester.widget<CommonScrollBar>(find.byType(CommonScrollBar).first)
-              .thumbVisibility, isFalse);
-          await tester.pump(const Duration(seconds: 2));
-          await tester.pump(const Duration(milliseconds: 300));
-          expect(opacity(), 0);
+      testWidgets(
+        'proxy ${tab ? 'tab' : 'list'} scrollbar fades and remains '
+        'scrubbable (${quality?.name ?? 'none'})',
+        (tester) async {
+          final group = _group('G0', 160);
+          final controller = ScrollController();
+          try {
+            await pumpList(
+              tester,
+              groups: [group],
+              glass: quality != null,
+              quality: quality ?? LiquidGlassQuality.standard,
+              view: tab
+                  ? ProxyGroupView(
+                      group: group,
+                      controller: controller,
+                      columns: 3,
+                      cardType: ProxyCardType.standard,
+                    )
+                  : null,
+            );
+            final viewport = find
+                .byType(tab ? GridView : CustomScrollView)
+                .first;
+            final scrollable = find
+                .descendant(of: viewport, matching: find.byType(Scrollable))
+                .first;
+            final position = tester.state<ScrollableState>(scrollable).position;
+            double opacity() =>
+                scrollbarPainter(tester).fadeoutOpacityAnimation.value;
+            expect(position.maxScrollExtent, greaterThan(100));
+            expect(
+              tester
+                  .widget<CommonScrollBar>(find.byType(CommonScrollBar).first)
+                  .thumbVisibility,
+              isFalse,
+            );
+            await tester.pump(const Duration(seconds: 2));
+            await tester.pump(const Duration(milliseconds: 300));
+            expect(opacity(), 0);
 
-          await tester.drag(viewport, const Offset(0, -160));
-          await tester.pump(const Duration(milliseconds: 300));
-          expect(opacity(), 1);
-          await tester.pump(const Duration(seconds: 2));
-          await tester.pump(const Duration(milliseconds: 300));
-          expect(opacity(), 0);
+            await tester.drag(viewport, const Offset(0, -160));
+            await tester.pump(const Duration(milliseconds: 300));
+            expect(opacity(), 1);
+            await tester.pump(const Duration(seconds: 2));
+            await tester.pump(const Duration(milliseconds: 300));
+            expect(opacity(), 0);
 
-          await tester.drag(viewport, const Offset(0, -80));
-          await tester.pump(const Duration(milliseconds: 300));
-          expect(opacity(), 1);
-          final thumb = await revealScrollbarThumb(tester, scrollable: scrollable);
-          if (Theme.of(tester.element(viewport)).platform == TargetPlatform.macOS) {
-            final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
-            await mouse.addPointer(location: Offset.zero);
-            await mouse.moveTo(thumb);
+            await tester.drag(viewport, const Offset(0, -80));
+            await tester.pump(const Duration(milliseconds: 300));
+            expect(opacity(), 1);
+            final thumb = await revealScrollbarThumb(
+              tester,
+              scrollable: scrollable,
+            );
+            if (Theme.of(tester.element(viewport)).platform ==
+                TargetPlatform.macOS) {
+              final mouse = await tester.createGesture(
+                kind: PointerDeviceKind.mouse,
+              );
+              await mouse.addPointer(location: Offset.zero);
+              await mouse.moveTo(thumb);
+              await tester.pump(const Duration(milliseconds: 150));
+              expect(scrollbarPainter(tester).thickness, 10);
+              await mouse.removePointer();
+              await tester.pump(const Duration(milliseconds: 150));
+            }
+            final before = position.pixels;
+            final gesture = await tester.startGesture(thumb);
+            await gesture.moveBy(const Offset(0, 40));
             await tester.pump(const Duration(milliseconds: 150));
-            expect(scrollbarPainter(tester).thickness, 10);
-            await mouse.removePointer();
-            await tester.pump(const Duration(milliseconds: 150));
+            expect(position.pixels, greaterThan(before));
+            await tester.pump(const Duration(seconds: 2));
+            expect(opacity(), 1);
+            await gesture.up();
+            await tester.pumpAndSettle(const Duration(seconds: 2));
+            expect(opacity(), 0);
+            expect(tester.takeException(), isNull);
+          } finally {
+            await unmountList(tester);
+            controller.dispose();
           }
-          final before = position.pixels;
-          final gesture = await tester.startGesture(thumb);
-          await gesture.moveBy(const Offset(0, 40));
-          await tester.pump(const Duration(milliseconds: 150));
-          expect(position.pixels, greaterThan(before));
-          await tester.pump(const Duration(seconds: 2));
-          expect(opacity(), 1);
-          await gesture.up();
-          await tester.pumpAndSettle(const Duration(seconds: 2));
-          expect(opacity(), 0);
-          expect(tester.takeException(), isNull);
-        } finally {
-          await unmountList(tester);
-          controller.dispose();
-        }
-      }, variant: const TargetPlatformVariant({TargetPlatform.android, TargetPlatform.macOS}));
+        },
+        variant: const TargetPlatformVariant({
+          TargetPlatform.android,
+          TargetPlatform.macOS,
+        }),
+      );
     }
   }
 
