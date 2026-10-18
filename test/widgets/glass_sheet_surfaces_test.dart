@@ -98,8 +98,17 @@ void main() {
         expect(material.color, isNotNull);
         expect(material.color!.a, enabled ? 0 : 1.0);
         final surfaceColor = enabled
-            ? tester.widget<LiquidGlass>(find.descendant(
-                of: sheetMaterial, matching: find.byType(LiquidGlass)).first).style.tint
+            ? tester
+                  .widget<LiquidGlass>(
+                    find
+                        .descendant(
+                          of: sheetMaterial,
+                          matching: find.byType(LiquidGlass),
+                        )
+                        .first,
+                  )
+                  .style
+                  .tint
             : material.color!;
         expect(surfaceColor.a, enabled ? lessThanOrEqualTo(0.24) : 1.0);
         expect(
@@ -192,8 +201,14 @@ void main() {
       );
       expect(material.color!.a, enabled ? 0 : 1);
       if (enabled) {
-        final pane = tester.widget<LiquidGlass>(find.descendant(
-          of: find.byType(PagedSheet), matching: find.byType(LiquidGlass)).first);
+        final pane = tester.widget<LiquidGlass>(
+          find
+              .descendant(
+                of: find.byType(PagedSheet),
+                matching: find.byType(LiquidGlass),
+              )
+              .first,
+        );
         expect(pane.style.blur, 16);
         expect(pane.style.tint.a, 0.24);
       }

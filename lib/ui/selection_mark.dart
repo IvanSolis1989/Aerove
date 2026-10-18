@@ -102,10 +102,11 @@ class _SelectionBadgePainter extends CustomPainter {
       Paint()..blendMode = tonal ? BlendMode.srcOver : BlendMode.dstOut,
     );
     canvas.translate(3, 3);
-    GlyphPainter(glyph: glyph, fill: 1, color: color).paint(
-      canvas,
-      Size(size.width - 6, size.height - 6),
-    );
+    GlyphPainter(
+      glyph: glyph,
+      fill: 1,
+      color: color,
+    ).paint(canvas, Size(size.width - 6, size.height - 6));
     canvas.restore();
   }
 

@@ -14,15 +14,36 @@ void main() {
   ) async {
     final semantics = tester.ensureSemantics();
     addTearDown(semantics.dispose);
-    final opacity = AnimationController(vsync: tester,
-      duration: const Duration(milliseconds: 300));
+    final opacity = AnimationController(
+      vsync: tester,
+      duration: const Duration(milliseconds: 300),
+    );
     addTearDown(opacity.dispose);
-    await tester.pumpWidget(MaterialApp(home: LiquidGlassFade(
-      opacity: opacity,
-      child: const Semantics(container: true, label: 'Fading settings',
-        child: SizedBox(width: 100, height: 100)),
-    )));
-    for (final value in [0.0, 0.001, 0.003, 0.1, 0.5, 1.0, 0.5, 0.001, 0.0, 0.5, 0.0]) {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LiquidGlassFade(
+          opacity: opacity,
+          child: const Semantics(
+            container: true,
+            label: 'Fading settings',
+            child: SizedBox(width: 100, height: 100),
+          ),
+        ),
+      ),
+    );
+    for (final value in [
+      0.0,
+      0.001,
+      0.003,
+      0.1,
+      0.5,
+      1.0,
+      0.5,
+      0.001,
+      0.0,
+      0.5,
+      0.0,
+    ]) {
       opacity.value = value;
       await tester.pump();
       bool includesSettings(SemanticsNode node) {
@@ -34,7 +55,9 @@ void main() {
         });
         return found;
       }
-      final root = tester.binding.pipelineOwner.semanticsOwner!.rootSemanticsNode!;
+
+      final root =
+          tester.binding.pipelineOwner.semanticsOwner!.rootSemanticsNode!;
       expect(includesSettings(root), Color.getAlphaFromOpacity(value) != 0);
       expect(tester.takeException(), isNull);
     }

@@ -78,9 +78,7 @@ void main() {
         'fill="#00ee80"/></svg>',
       ),
     );
-    final png = base64Encode(
-      (await tester.runAsync(() => _squarePng(64)))!,
-    );
+    final png = base64Encode((await tester.runAsync(() => _squarePng(64)))!);
     final boundaryKey = GlobalKey();
 
     Future<Uint8List> render(bool glass) async {
@@ -160,8 +158,9 @@ void main() {
             final bytes = (await image.toByteData(
               format: ui.ImageByteFormat.png,
             ))!;
-            File('${directory.path}/target-icons-${glass ? 'ultra' : 'none'}.png')
-                .writeAsBytesSync(bytes.buffer.asUint8List());
+            File(
+              '${directory.path}/target-icons-${glass ? 'ultra' : 'none'}.png',
+            ).writeAsBytesSync(bytes.buffer.asUint8List());
           }
           return rgba.buffer.asUint8List();
         } finally {
@@ -177,7 +176,11 @@ void main() {
         const Color(0xFF3A7EBC),
       );
       final svgPixel = (40 * 360 + 192) * 4;
-      for (final (channel, value) in [blended.r, blended.g, blended.b].indexed) {
+      for (final (channel, value) in [
+        blended.r,
+        blended.g,
+        blended.b,
+      ].indexed) {
         expect(none[svgPixel + channel], closeTo(value * 255, 1));
       }
       final ultra = await render(true);
@@ -187,14 +190,21 @@ void main() {
         for (var y = 24; y < 88; y++) {
           for (var x = 16 + icon * 80; x < 80 + icon * 80; x++) {
             final offset = (y * 360 + x) * 4;
-            if (none[offset] != 0x3A || none[offset + 1] != 0x7E ||
-                none[offset + 2] != 0xBC) painted++;
+            if (none[offset] != 0x3A ||
+                none[offset + 1] != 0x7E ||
+                none[offset + 2] != 0xBC)
+              painted++;
             for (var channel = 0; channel < 4; channel++) {
-              if (none[offset + channel] != ultra[offset + channel]) different++;
+              if (none[offset + channel] != ultra[offset + channel])
+                different++;
             }
           }
         }
-        expect(painted, greaterThan(20), reason: 'icon $icon must really paint');
+        expect(
+          painted,
+          greaterThan(20),
+          reason: 'icon $icon must really paint',
+        );
         expect(different, 0, reason: 'icon $icon must preserve RGBA');
       }
     } finally {

@@ -545,27 +545,34 @@ void main() {
         final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
         if (output != null) {
           Directory(output).createSync(recursive: true);
-          File('$output/foreground-protected-lifecycle.json')
-              .writeAsStringSync(jsonEncode(stages));
+          File(
+            '$output/foreground-protected-lifecycle.json',
+          ).writeAsStringSync(jsonEncode(stages));
         }
       }
 
       record('start');
-      final result = await tester.runAsync(() => action().timeout(
-        const Duration(seconds: 30),
-        onTimeout: () => throw TimeoutException('protected ink $stage'),
-      ));
+      final result = await tester.runAsync(
+        () => action().timeout(
+          const Duration(seconds: 30),
+          onTimeout: () => throw TimeoutException('protected ink $stage'),
+        ),
+      );
       record('done');
       return result;
     }
 
-    final asset = (await realAsync('asset', () => rootBundle.load(
-      'assets/images/icon.png',
-    )))!.buffer.asUint8List();
+    final asset = (await realAsync(
+      'asset',
+      () => rootBundle.load('assets/images/icon.png'),
+    ))!.buffer.asUint8List();
     final imageProvider = MemoryImage(asset);
     await tester.pumpWidget(const SizedBox.shrink());
     final imageContext = tester.element(find.byType(SizedBox));
-    await realAsync('precache', () => precacheImage(imageProvider, imageContext));
+    await realAsync(
+      'precache',
+      () => precacheImage(imageProvider, imageContext),
+    );
     for (final brightness in Brightness.values) {
       final source = brightness == Brightness.dark
           ? Colors.white
@@ -687,31 +694,35 @@ void main() {
           ])
             name: tester.getRect(find.byKey(ValueKey(name))).shift(-origin),
         };
-        return (await realAsync('readback-$brightness-$enabled-$highContrast', () async {
-          final image = await boundary.toImage();
-          try {
-            final data = (await image.toByteData(
-              format: ui.ImageByteFormat.rawRgba,
-            ))!;
-            final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
-            if (output != null) {
-              final directory = Directory(output)..createSync(recursive: true);
-              final png = (await image.toByteData(
-                format: ui.ImageByteFormat.png,
+        return (await realAsync(
+          'readback-$brightness-$enabled-$highContrast',
+          () async {
+            final image = await boundary.toImage();
+            try {
+              final data = (await image.toByteData(
+                format: ui.ImageByteFormat.rawRgba,
               ))!;
-              File(
-                '${directory.path}/foreground-protected-${brightness.name}-$enabled-$highContrast.png',
-              ).writeAsBytesSync(png.buffer.asUint8List());
+              final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+              if (output != null) {
+                final directory = Directory(output)
+                  ..createSync(recursive: true);
+                final png = (await image.toByteData(
+                  format: ui.ImageByteFormat.png,
+                ))!;
+                File(
+                  '${directory.path}/foreground-protected-${brightness.name}-$enabled-$highContrast.png',
+                ).writeAsBytesSync(png.buffer.asUint8List());
+              }
+              return (
+                bytes: data.buffer.asUint8List(),
+                width: image.width,
+                bounds: bounds,
+              );
+            } finally {
+              image.dispose();
             }
-            return (
-              bytes: data.buffer.asUint8List(),
-              width: image.width,
-              bounds: bounds,
-            );
-          } finally {
-            image.dispose();
-          }
-        }))!;
+          },
+        ))!;
       }
 
       final original = await render(false, false);

@@ -31,18 +31,34 @@ void main() {
     await font.load();
   });
 
-  testWidgets('sheet bases retain opaque None and high contrast fallbacks', (tester) async {
+  testWidgets('sheet bases retain opaque None and high contrast fallbacks', (
+    tester,
+  ) async {
     for (final (enabled, highContrast) in [(false, false), (true, true)]) {
-      await tester.pumpWidget(MaterialApp(home: MediaQuery(
-        data: const MediaQueryData().copyWith(highContrast: highContrast),
-        child: LiquidGlassScope(enabled: enabled,
-          child: const SheetSurface(color: Colors.orange, shape: AppShape.xxl,
-            child: SizedBox(width: 200, height: 200)),
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MediaQuery(
+            data: const MediaQueryData().copyWith(highContrast: highContrast),
+            child: LiquidGlassScope(
+              enabled: enabled,
+              child: const SheetSurface(
+                color: Colors.orange,
+                shape: AppShape.xxl,
+                child: SizedBox(width: 200, height: 200),
+              ),
+            ),
+          ),
         ),
-      )));
+      );
       expect(find.byType(LiquidGlass), findsNothing);
-      final material = tester.widget<Material>(find.descendant(
-        of: find.byType(SheetSurface), matching: find.byType(Material)).first);
+      final material = tester.widget<Material>(
+        find
+            .descendant(
+              of: find.byType(SheetSurface),
+              matching: find.byType(Material),
+            )
+            .first,
+      );
       expect(material.color, Colors.orange);
       expect(material.clipBehavior, Clip.antiAlias);
       expect(tester.takeException(), isNull);
@@ -51,113 +67,182 @@ void main() {
 
   for (final brightness in Brightness.values) {
     for (final quality in LiquidGlassQuality.values) {
-      testWidgets('dashboard feed modal frosts its full surface $brightness $quality', (tester) async {
-        tester.view.physicalSize = _size;
-        tester.view.devicePixelRatio = 1;
-        addTearDown(tester.view.reset);
-        final container = ProviderContainer(overrides: [
-          profilesProvider.overrideWith(TestProfiles.new),
-        ]);
-        globalState.container = container;
-        container.read(viewSizeProvider.notifier).value = _size;
-        final notifier = container.read(dnsQueriesProvider.notifier);
-        for (var index = 0; index < 40; index++) {
-          notifier.addQuery(DnsQuery(domain: 'sample-$index.example', type: 'A',
-            answers: const ['192.0.2.1'], rcode: 'NOERROR', delay: 12,
-            time: DateTime.utc(2026, 10, 18)));
-        }
-        final capture = GlobalKey();
-        final ink = brightness == Brightness.light ? Colors.black : Colors.white;
-        final base = ThemeData(brightness: brightness, fontFamily: 'SheetSurfaceProbe',
-          platform: TargetPlatform.android);
-        final theme = base.copyWith(textTheme: base.textTheme.apply(
-          bodyColor: ink, displayColor: ink));
-        try {
-        await tester.pumpWidget(UncontrolledProviderScope(container: container,
-          child: Directionality(textDirection: TextDirection.ltr,
-            child: RepaintBoundary(key: capture,
-              child: LiquidGlassScope(enabled: true, quality: quality,
-                child: LiquidGlassHost(enabled: true,
-                  child: Stack(fit: StackFit.expand, children: [
-                    const CustomPaint(painter: _Backdrop()),
-                    TestApp(includeNavigatorKey: false, theme: theme,
-                      child: const Scaffold(backgroundColor: Colors.transparent,
-                        body: Align(alignment: Alignment.topCenter,
-                          child: Padding(padding: EdgeInsets.all(16),
-                            child: ConnectionStatsCard())))),
-                  ]),
+      testWidgets(
+        'dashboard feed modal frosts its full surface $brightness $quality',
+        (tester) async {
+          tester.view.physicalSize = _size;
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+          final container = ProviderContainer(
+            overrides: [profilesProvider.overrideWith(TestProfiles.new)],
+          );
+          globalState.container = container;
+          container.read(viewSizeProvider.notifier).value = _size;
+          final notifier = container.read(dnsQueriesProvider.notifier);
+          for (var index = 0; index < 40; index++) {
+            notifier.addQuery(
+              DnsQuery(
+                domain: 'sample-$index.example',
+                type: 'A',
+                answers: const ['192.0.2.1'],
+                rcode: 'NOERROR',
+                delay: 12,
+                time: DateTime.utc(2026, 10, 18),
+              ),
+            );
+          }
+          final capture = GlobalKey();
+          final ink = brightness == Brightness.light
+              ? Colors.black
+              : Colors.white;
+          final base = ThemeData(
+            brightness: brightness,
+            fontFamily: 'SheetSurfaceProbe',
+            platform: TargetPlatform.android,
+          );
+          final theme = base.copyWith(
+            textTheme: base.textTheme.apply(bodyColor: ink, displayColor: ink),
+          );
+          try {
+            await tester.pumpWidget(
+              UncontrolledProviderScope(
+                container: container,
+                child: Directionality(
+                  textDirection: TextDirection.ltr,
+                  child: RepaintBoundary(
+                    key: capture,
+                    child: LiquidGlassScope(
+                      enabled: true,
+                      quality: quality,
+                      child: LiquidGlassHost(
+                        enabled: true,
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            const CustomPaint(painter: _Backdrop()),
+                            TestApp(
+                              includeNavigatorKey: false,
+                              theme: theme,
+                              child: const Scaffold(
+                                backgroundColor: Colors.transparent,
+                                body: Align(
+                                  alignment: Alignment.topCenter,
+                                  child: Padding(
+                                    padding: EdgeInsets.all(16),
+                                    child: ConnectionStatsCard(),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               ),
-            ),
-          ),
-        ));
-        await tester.pumpAndSettle();
-        final prefix = 'modal-${brightness.name}-${quality.name}';
-        final before = await _picture(tester, capture, '$prefix-before');
-        final stat = find.descendant(of: find.byType(ConnectionStatsCard),
-          matching: find.text('DNS queries'));
-        expect(stat, findsOneWidget);
-        await tester.tap(stat);
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 160));
-        await _checkCorners(tester, capture, before, '$prefix-enter');
-        await tester.pumpAndSettle();
-        expect(find.byType(DnsQueriesView), findsOneWidget);
-        expect(find.byType(LiquidGlassHost), findsOneWidget);
-        final surfaces = find.byType(SheetSurface);
-        expect(surfaces, findsNWidgets(2));
-        final bases = tester.widgetList<LiquidGlass>(find.byType(LiquidGlass))
-            .where((pane) => pane.style.blur == 16 && pane.style.refraction == 0);
-        expect(bases, hasLength(1));
-        final rect = tester.getRect(surfaces.first);
-        final after = await _checkCorners(tester, capture, before, '$prefix-open');
-        final region = Rect.fromLTWH(2, rect.top + 100, 2, 120);
-        final rawVariance = _variance(before, region);
-        final frostedVariance = _variance(after, region);
-        final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
-        if (output != null) {
-          await tester.runAsync(() => File('$output/$prefix-metrics.json').writeAsString(jsonEncode({
-            'shaderFilterSupported': ui.ImageFilter.isShaderFilterSupported,
-            'rawBackgroundVariance': rawVariance,
-            'sheetBackgroundVariance': frostedVariance,
-            'varianceRatio': frostedVariance / rawVariance,
-            'wholeSheetPanes': bases.length,
-          })));
-        }
-        expect(rawVariance, greaterThan(0));
-        expect(frostedVariance, lessThan(rawVariance * 0.1),
-          reason: 'A 32% scrim alone leaves >40% variance; the whole-sheet frost must suppress background glyphs.');
-        await _checkTitle(tester, capture, after);
-        final gesture = await tester.startGesture(Offset(195, rect.top + 20));
-        try {
-          await gesture.moveBy(const Offset(0, -80));
-          await tester.pump();
-          await _checkCorners(tester, capture, before, '$prefix-drag');
-        } finally {
-          await gesture.up();
-        }
-        await tester.pumpAndSettle();
-        await _checkCorners(tester, capture, before, '$prefix-expanded');
-        await tester.drag(find.descendant(of: find.byType(DnsQueriesView),
-          matching: find.byType(Scrollable)).first, const Offset(0, -100));
-        await tester.pumpAndSettle();
-        await _checkCorners(tester, capture, before, '$prefix-scroll');
-        Navigator.of(tester.element(find.byType(DnsQueriesView))).pop();
-        await tester.pumpAndSettle();
-        expect(find.byType(DnsQueriesView), findsNothing);
-        expect(tester.takeException(), isNull);
-        } finally {
-          await tester.pumpWidget(const SizedBox.shrink());
-          container.dispose();
-        }
-      });
+            );
+            await tester.pumpAndSettle();
+            final prefix = 'modal-${brightness.name}-${quality.name}';
+            final before = await _picture(tester, capture, '$prefix-before');
+            final stat = find.descendant(
+              of: find.byType(ConnectionStatsCard),
+              matching: find.text('DNS queries'),
+            );
+            expect(stat, findsOneWidget);
+            await tester.tap(stat);
+            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 160));
+            await _checkCorners(tester, capture, before, '$prefix-enter');
+            await tester.pumpAndSettle();
+            expect(find.byType(DnsQueriesView), findsOneWidget);
+            expect(find.byType(LiquidGlassHost), findsOneWidget);
+            final surfaces = find.byType(SheetSurface);
+            expect(surfaces, findsNWidgets(2));
+            final bases = tester
+                .widgetList<LiquidGlass>(find.byType(LiquidGlass))
+                .where(
+                  (pane) => pane.style.blur == 16 && pane.style.refraction == 0,
+                );
+            expect(bases, hasLength(1));
+            final rect = tester.getRect(surfaces.first);
+            final after = await _checkCorners(
+              tester,
+              capture,
+              before,
+              '$prefix-open',
+            );
+            final region = Rect.fromLTWH(2, rect.top + 100, 2, 120);
+            final rawVariance = _variance(before, region);
+            final frostedVariance = _variance(after, region);
+            final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+            if (output != null) {
+              await tester.runAsync(
+                () => File('$output/$prefix-metrics.json').writeAsString(
+                  jsonEncode({
+                    'shaderFilterSupported':
+                        ui.ImageFilter.isShaderFilterSupported,
+                    'rawBackgroundVariance': rawVariance,
+                    'sheetBackgroundVariance': frostedVariance,
+                    'varianceRatio': frostedVariance / rawVariance,
+                    'wholeSheetPanes': bases.length,
+                  }),
+                ),
+              );
+            }
+            expect(rawVariance, greaterThan(0));
+            expect(
+              frostedVariance,
+              lessThan(rawVariance * 0.1),
+              reason:
+                  'A 32% scrim alone leaves >40% variance; the whole-sheet frost must suppress background glyphs.',
+            );
+            await _checkTitle(tester, capture, after);
+            final gesture = await tester.startGesture(
+              Offset(195, rect.top + 20),
+            );
+            try {
+              await gesture.moveBy(const Offset(0, -80));
+              await tester.pump();
+              await _checkCorners(tester, capture, before, '$prefix-drag');
+            } finally {
+              await gesture.up();
+            }
+            await tester.pumpAndSettle();
+            await _checkCorners(tester, capture, before, '$prefix-expanded');
+            await tester.drag(
+              find
+                  .descendant(
+                    of: find.byType(DnsQueriesView),
+                    matching: find.byType(Scrollable),
+                  )
+                  .first,
+              const Offset(0, -100),
+            );
+            await tester.pumpAndSettle();
+            await _checkCorners(tester, capture, before, '$prefix-scroll');
+            Navigator.of(tester.element(find.byType(DnsQueriesView))).pop();
+            await tester.pumpAndSettle();
+            expect(find.byType(DnsQueriesView), findsNothing);
+            expect(tester.takeException(), isNull);
+          } finally {
+            await tester.pumpWidget(const SizedBox.shrink());
+            container.dispose();
+          }
+        },
+      );
     }
   }
 }
 
-Future<Uint8List> _picture(WidgetTester tester, GlobalKey key, String name) async {
+Future<Uint8List> _picture(
+  WidgetTester tester,
+  GlobalKey key,
+  String name,
+) async {
   expect(tester.takeException(), isNull);
-  final boundary = key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+  final boundary =
+      key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
   return (await tester.runAsync(() async {
     final image = await boundary.toImage();
     try {
@@ -166,29 +251,45 @@ Future<Uint8List> _picture(WidgetTester tester, GlobalKey key, String name) asyn
       if (output != null) {
         await Directory(output).create(recursive: true);
         final png = (await image.toByteData(format: ui.ImageByteFormat.png))!;
-        await File('$output/$name.png').writeAsBytes(png.buffer.asUint8List(
-          png.offsetInBytes, png.lengthInBytes));
+        await File('$output/$name.png').writeAsBytes(
+          png.buffer.asUint8List(png.offsetInBytes, png.lengthInBytes),
+        );
       }
-      return Uint8List.fromList(data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes));
+      return Uint8List.fromList(
+        data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+      );
     } finally {
       image.dispose();
     }
   }))!;
 }
 
-Future<Uint8List> _checkCorners(WidgetTester tester, GlobalKey key, Uint8List before, String name) async {
+Future<Uint8List> _checkCorners(
+  WidgetTester tester,
+  GlobalKey key,
+  Uint8List before,
+  String name,
+) async {
   final image = await _picture(tester, key, name);
   final rect = tester.getRect(find.byType(SheetSurface).first);
-  final barrier = tester.widget<AnimatedModalBarrier>(find.byType(AnimatedModalBarrier).last).color.value!;
+  final barrier = tester
+      .widget<AnimatedModalBarrier>(find.byType(AnimatedModalBarrier).last)
+      .color
+      .value!;
   final y = rect.top.ceil() + 1;
   expect(y, inInclusiveRange(0, 799));
   for (final x in [1, 388]) {
     final at = (y * 390 + x) * 4;
     for (var channel = 0; channel < 3; channel++) {
       final tint = [barrier.r, barrier.g, barrier.b][channel] * 255;
-      final expected = before[at + channel] * (1 - barrier.a) + tint * barrier.a;
-      expect(image[at + channel], closeTo(expected, 1),
-        reason: 'The superellipse cutout must show only the dimmed page, including toolbar corners.');
+      final expected =
+          before[at + channel] * (1 - barrier.a) + tint * barrier.a;
+      expect(
+        image[at + channel],
+        closeTo(expected, 1),
+        reason:
+            'The superellipse cutout must show only the dimmed page, including toolbar corners.',
+      );
     }
   }
   return image;
@@ -210,8 +311,15 @@ double _variance(Uint8List pixels, Rect region) {
   return square / count - (sum / count) * (sum / count);
 }
 
-Future<void> _checkTitle(WidgetTester tester, GlobalKey key, Uint8List actual) async {
-  final title = find.descendant(of: find.byType(DnsQueriesView), matching: find.text('DNS queries'));
+Future<void> _checkTitle(
+  WidgetTester tester,
+  GlobalKey key,
+  Uint8List actual,
+) async {
+  final title = find.descendant(
+    of: find.byType(DnsQueriesView),
+    matching: find.text('DNS queries'),
+  );
   final element = tester.element(title);
   final text = tester.widget<Text>(title);
   final defaults = DefaultTextStyle.of(element);
@@ -220,10 +328,15 @@ Future<void> _checkTitle(WidgetTester tester, GlobalKey key, Uint8List actual) a
   final rect = tester.getRect(title).shift(-tester.getTopLeft(find.byKey(key)));
   final recorder = ui.PictureRecorder();
   final canvas = Canvas(recorder)..drawColor(Colors.black, BlendMode.src);
-  final painter = TextPainter(textDirection: TextDirection.ltr,
+  final painter = TextPainter(
+    textDirection: TextDirection.ltr,
     textScaler: MediaQuery.textScalerOf(element),
     textHeightBehavior: text.textHeightBehavior ?? defaults.textHeightBehavior,
-    text: TextSpan(text: text.data, style: style.copyWith(color: Colors.white, shadows: const [])));
+    text: TextSpan(
+      text: text.data,
+      style: style.copyWith(color: Colors.white, shadows: const []),
+    ),
+  );
   painter.layout(maxWidth: rect.width);
   painter.paint(canvas, rect.topLeft);
   painter.dispose();
@@ -238,7 +351,10 @@ Future<void> _checkTitle(WidgetTester tester, GlobalKey key, Uint8List actual) a
         sharp++;
         final color = style.color!;
         for (var channel = 0; channel < 3; channel++) {
-          expect(actual[i + channel], closeTo([color.r, color.g, color.b][channel] * 255, 1));
+          expect(
+            actual[i + channel],
+            closeTo([color.r, color.g, color.b][channel] * 255, 1),
+          );
         }
       }
       expect(sharp, greaterThan(0));
@@ -255,14 +371,28 @@ class _Backdrop extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     for (var y = 0.0; y < size.height; y += 8) {
-      canvas.drawRect(Rect.fromLTWH(0, y, size.width, 8), Paint()..color =
-        (y ~/ 8).isEven ? const Color(0xFF6B9DB7) : const Color(0xFFDBD2A4));
+      canvas.drawRect(
+        Rect.fromLTWH(0, y, size.width, 8),
+        Paint()
+          ..color = (y ~/ 8).isEven
+              ? const Color(0xFF6B9DB7)
+              : const Color(0xFFDBD2A4),
+      );
     }
-    final text = TextPainter(textDirection: TextDirection.ltr,
-      text: const TextSpan(text: 'Background text 012345', style: TextStyle(
-        fontFamily: 'SheetSurfaceProbe', fontSize: 15, color: Colors.black)));
+    final text = TextPainter(
+      textDirection: TextDirection.ltr,
+      text: const TextSpan(
+        text: 'Background text 012345',
+        style: TextStyle(
+          fontFamily: 'SheetSurfaceProbe',
+          fontSize: 15,
+          color: Colors.black,
+        ),
+      ),
+    );
     text.layout();
-    for (var y = 0.0; y < size.height; y += 32) text.paint(canvas, Offset(0, y));
+    for (var y = 0.0; y < size.height; y += 32)
+      text.paint(canvas, Offset(0, y));
     text.dispose();
   }
 

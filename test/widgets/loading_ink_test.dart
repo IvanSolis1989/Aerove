@@ -17,45 +17,53 @@ void main() {
     }
   });
 
-  testWidgets('busy action uses icon ink and preserves fallback and state colors', (
-    tester,
-  ) async {
-    final semantics = tester.ensureSemantics();
-    addTearDown(semantics.dispose);
-    final colors = ColorScheme.fromSeed(seedColor: Colors.blue);
-    for (final enabled in [false, true]) {
-      for (final highContrast in [false, true]) {
-        for (final explicit in [null, colors.error, Colors.green, Colors.orange]) {
-          await tester.pumpWidget(
-            MaterialApp(
-              theme: ThemeData(colorScheme: colors),
-              home: MediaQuery(
-                data: MediaQueryData(highContrast: highContrast),
-                child: LiquidGlassScope(
-                  enabled: enabled,
-                  child: Center(
-                    child: CommonCircleLoading(
-                      color: explicit,
-                      semanticLabel: 'Updating',
+  testWidgets(
+    'busy action uses icon ink and preserves fallback and state colors',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      addTearDown(semantics.dispose);
+      final colors = ColorScheme.fromSeed(seedColor: Colors.blue);
+      for (final enabled in [false, true]) {
+        for (final highContrast in [false, true]) {
+          for (final explicit in [
+            null,
+            colors.error,
+            Colors.green,
+            Colors.orange,
+          ]) {
+            await tester.pumpWidget(
+              MaterialApp(
+                theme: ThemeData(colorScheme: colors),
+                home: MediaQuery(
+                  data: MediaQueryData(highContrast: highContrast),
+                  child: LiquidGlassScope(
+                    enabled: enabled,
+                    child: Center(
+                      child: CommonCircleLoading(
+                        color: explicit,
+                        semanticLabel: 'Updating',
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-          );
-          final ink = tester.widget<GlassInk>(find.byType(GlassInk));
-          expect(ink.role, GlassInkRole.icon);
-          expect(
-            ink.source,
-            explicit ??
-                (enabled && !highContrast ? colors.onSurface : colors.primary),
-          );
-          expect(find.bySemanticsLabel('Updating'), findsOneWidget);
+            );
+            final ink = tester.widget<GlassInk>(find.byType(GlassInk));
+            expect(ink.role, GlassInkRole.icon);
+            expect(
+              ink.source,
+              explicit ??
+                  (enabled && !highContrast
+                      ? colors.onSurface
+                      : colors.primary),
+            );
+            expect(find.bySemanticsLabel('Updating'), findsOneWidget);
+          }
         }
       }
-    }
-    await tester.pumpWidget(const SizedBox.shrink());
-  });
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 
   for (final quality in LiquidGlassQuality.values) {
     testWidgets('busy action follows moving background ${quality.name}', (
@@ -134,7 +142,8 @@ void main() {
 
       Future<({List<int> bytes, int width})> frame(String tag) async {
         final boundary =
-            capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+            capture.currentContext!.findRenderObject()!
+                as RenderRepaintBoundary;
         return (await tester.runAsync(() async {
           final image = await boundary.toImage();
           try {
@@ -172,7 +181,10 @@ void main() {
         expect(_pixel(await frame('high-contrast'), point), colors.primary);
         for (final state in [colors.error, Colors.green, Colors.orange]) {
           await mount(color: state);
-          expect(_pixel(await frame('state-${state.toARGB32()}'), point), state);
+          expect(
+            _pixel(await frame('state-${state.toARGB32()}'), point),
+            state,
+          );
         }
         await mount();
         final samples = <Color>[];
@@ -191,8 +203,7 @@ void main() {
           final light = pixel.computeLuminance();
           final under = background.computeLuminance();
           expect(
-            (math.max(light, under) + 0.05) /
-                (math.min(light, under) + 0.05),
+            (math.max(light, under) + 0.05) / (math.min(light, under) + 0.05),
             greaterThanOrEqualTo(3),
           );
           samples.add(pixel);

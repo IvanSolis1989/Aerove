@@ -104,7 +104,8 @@ class _FormSheet extends StatelessWidget {
               child: SizedBox(
                 width: double.infinity,
                 child: SheetSurface(
-                  color: backgroundColor ??
+                  color:
+                      backgroundColor ??
                       SurfaceLevel.page.colorOf(theme.colorScheme),
                   shape: theme.dialogTheme.shape ?? AppShape.xxl,
                   child: MediaQuery.removeViewInsets(

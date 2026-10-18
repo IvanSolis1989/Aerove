@@ -2,9 +2,13 @@ import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:material_ui/material_ui.dart';
 
 class SheetSurface extends StatelessWidget {
-  const SheetSurface({super.key, required this.color, required this.shape,
+  const SheetSurface({
+    super.key,
+    required this.color,
+    required this.shape,
     this.animationDuration = const Duration(milliseconds: 200),
-    required this.child});
+    required this.child,
+  });
 
   final Color color;
   final ShapeBorder shape;
@@ -13,21 +17,34 @@ class SheetSurface extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final glass = LiquidGlassScope.of(context) &&
-        !MediaQuery.highContrastOf(context);
-    final enclosed = context.dependOnInheritedWidgetOfExactType<_SheetGlassScope>() != null;
+    final glass =
+        LiquidGlassScope.of(context) && !MediaQuery.highContrastOf(context);
+    final enclosed =
+        context.dependOnInheritedWidgetOfExactType<_SheetGlassScope>() != null;
     final content = glass && !enclosed
-        ? Stack(fit: StackFit.passthrough, children: [
-            Positioned.fill(child: IgnorePointer(child: LiquidGlass(
-              style: LiquidGlassStyle(
-                tint: LiquidGlassScope.surfaceColorOf(context, color),
-                blur: 16, refraction: 0, bevel: 0, rim: 0,
+        ? Stack(
+            fit: StackFit.passthrough,
+            children: [
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: LiquidGlass(
+                    style: LiquidGlassStyle(
+                      tint: LiquidGlassScope.surfaceColorOf(context, color),
+                      blur: 16,
+                      refraction: 0,
+                      bevel: 0,
+                      rim: 0,
+                    ),
+                    clipper: ShapeBorderClipper(
+                      shape: shape,
+                      textDirection: Directionality.of(context),
+                    ),
+                  ),
+                ),
               ),
-              clipper: ShapeBorderClipper(shape: shape,
-                textDirection: Directionality.of(context)),
-            ))),
-            child,
-          ])
+              child,
+            ],
+          )
         : child;
     return Material(
       animationDuration: animationDuration,
@@ -36,7 +53,9 @@ class SheetSurface extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: glass
           ? Theme(
-              data: Theme.of(context).copyWith(scaffoldBackgroundColor: Colors.transparent),
+              data: Theme.of(
+                context,
+              ).copyWith(scaffoldBackgroundColor: Colors.transparent),
               child: _SheetGlassScope(child: content),
             )
           : content,

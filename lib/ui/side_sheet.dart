@@ -48,7 +48,8 @@ class _SideSheetState extends State<SideSheet> {
   Widget build(BuildContext context) {
     return SheetSurface(
       key: _childKey,
-      color: widget.backgroundColor ??
+      color:
+          widget.backgroundColor ??
           SurfaceLevel.page.colorOf(Theme.of(context).colorScheme),
       shape: AppShape.none,
       child: widget.builder(context),
@@ -374,7 +375,8 @@ class ModalSideSheetRoute<T> extends PopupRoute<T>
           final colorScheme = Theme.of(context).colorScheme;
           return _ModalSideSheet<T>(
             route: this,
-            backgroundColor: backgroundColor ?? SurfaceLevel.page.colorOf(colorScheme),
+            backgroundColor:
+                backgroundColor ?? SurfaceLevel.page.colorOf(colorScheme),
           );
         },
       ),

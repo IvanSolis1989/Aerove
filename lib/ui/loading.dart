@@ -49,7 +49,8 @@ class _CommonCircleLoadingState extends State<CommonCircleLoading>
   Widget build(BuildContext context) {
     final side = widget.size ?? IconTheme.of(context).size ?? Glyph.size;
     final colors = context.colorScheme;
-    final color = widget.color ??
+    final color =
+        widget.color ??
         (GlassForeground.colorsInk(context, colors.onSurface)
             ? colors.onSurface
             : colors.primary);

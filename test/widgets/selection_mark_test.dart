@@ -31,23 +31,30 @@ void main() {
     tester,
   ) async {
     final theme = ThemeData();
-    await tester.pumpWidget(MaterialApp(
-      theme: theme,
-      home: const LiquidGlassScope(
-        enabled: false,
-        child: Row(children: [
-          SelectionBadge(size: 32),
-          SelectionBadge.preferred(size: 32),
-          SelectionBadge.preferred(size: 32, inUse: true),
-        ]),
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: theme,
+        home: const LiquidGlassScope(
+          enabled: false,
+          child: Row(
+            children: [
+              SelectionBadge(size: 32),
+              SelectionBadge.preferred(size: 32),
+              SelectionBadge.preferred(size: 32, inUse: true),
+            ],
+          ),
+        ),
       ),
-    ));
-    final decorations = tester.widgetList<DecoratedBox>(
-      find.descendant(
-        of: find.byType(SelectionBadge),
-        matching: find.byType(DecoratedBox),
-      ),
-    ).map((widget) => (widget.decoration as ShapeDecoration).color).toList();
+    );
+    final decorations = tester
+        .widgetList<DecoratedBox>(
+          find.descendant(
+            of: find.byType(SelectionBadge),
+            matching: find.byType(DecoratedBox),
+          ),
+        )
+        .map((widget) => (widget.decoration as ShapeDecoration).color)
+        .toList();
     expect(decorations, [
       theme.colorScheme.primary,
       theme.colorScheme.primary.withValues(alpha: 0.14),
@@ -58,7 +65,9 @@ void main() {
     }
     final icons = tester.widgetList<GlyphIcon>(find.byType(GlyphIcon)).toList();
     expect(icons.map((icon) => icon.glyph), [
-      AppGlyphs.check, AppGlyphs.pin, AppGlyphs.pin,
+      AppGlyphs.check,
+      AppGlyphs.pin,
+      AppGlyphs.pin,
     ]);
     expect(icons.map((icon) => icon.color), [
       theme.colorScheme.onPrimary,
@@ -82,38 +91,56 @@ void main() {
             ? const [Color(0xFF173940), Color(0xFF3B203B)]
             : const [Color(0xFFBDE5EC), Color(0xFFEAD0E8)];
         Future<List<int>> render(bool enabled, bool moved) async {
-          await tester.pumpWidget(MaterialApp(
-            theme: theme,
-            themeAnimationStyle: AnimationStyle.noAnimation,
-            builder: (context, child) => RepaintBoundary(
-              key: capture,
-              child: LiquidGlassScope(
-                enabled: enabled,
-                quality: quality,
-                child: LiquidGlassHost(
+          await tester.pumpWidget(
+            MaterialApp(
+              theme: theme,
+              themeAnimationStyle: AnimationStyle.noAnimation,
+              builder: (context, child) => RepaintBoundary(
+                key: capture,
+                child: LiquidGlassScope(
                   enabled: enabled,
-                  child: Stack(fit: StackFit.expand, children: [
-                    Positioned.fill(child: LiquidGlassColorField(
-                      child: CustomPaint(
-                        painter: _Fields(backgrounds, moved),
-                      ),
-                    )),
-                    child!,
-                  ]),
+                  quality: quality,
+                  child: LiquidGlassHost(
+                    enabled: enabled,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Positioned.fill(
+                          child: LiquidGlassColorField(
+                            child: CustomPaint(
+                              painter: _Fields(backgrounds, moved),
+                            ),
+                          ),
+                        ),
+                        child!,
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              home: const Scaffold(
+                backgroundColor: Colors.transparent,
+                body: Stack(
+                  children: [
+                    Positioned(
+                      left: 40,
+                      top: 40,
+                      child: SelectionBadge(size: 48),
+                    ),
+                    Positioned(
+                      left: 160,
+                      top: 40,
+                      child: SelectionBadge(size: 48),
+                    ),
+                  ],
                 ),
               ),
             ),
-            home: const Scaffold(
-              backgroundColor: Colors.transparent,
-              body: Stack(children: [
-                Positioned(left: 40, top: 40, child: SelectionBadge(size: 48)),
-                Positioned(left: 160, top: 40, child: SelectionBadge(size: 48)),
-              ]),
-            ),
-          ));
+          );
           await tester.pumpAndSettle();
-          final boundary = capture.currentContext!.findRenderObject()!
-              as RenderRepaintBoundary;
+          final boundary =
+              capture.currentContext!.findRenderObject()!
+                  as RenderRepaintBoundary;
           return (await tester.runAsync(() async {
             final image = await boundary.toImage();
             try {
@@ -126,8 +153,10 @@ void main() {
                 final png = (await image.toByteData(
                   format: ui.ImageByteFormat.png,
                 ))!;
-                File('$output/badge-${brightness.name}-${quality.name}-'
-                    '$enabled-$moved.png').writeAsBytesSync(png.buffer.asUint8List());
+                File(
+                  '$output/badge-${brightness.name}-${quality.name}-'
+                  '$enabled-$moved.png',
+                ).writeAsBytesSync(png.buffer.asUint8List());
               }
               return bytes;
             } finally {
@@ -135,6 +164,7 @@ void main() {
             }
           }))!;
         }
+
         final ordinary = await render(false, false);
         final first = await render(true, false);
         final moved = await render(true, true);
@@ -169,8 +199,9 @@ void main() {
         }
         final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
         if (output != null) {
-          File('$output/badge-${brightness.name}-${quality.name}-samples.json')
-              .writeAsStringSync(jsonEncode(samples));
+          File(
+            '$output/badge-${brightness.name}-${quality.name}-samples.json',
+          ).writeAsStringSync(jsonEncode(samples));
         }
         expect(await render(false, false), ordinary);
         expect(tester.takeException(), isNull);

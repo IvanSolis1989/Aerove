@@ -155,142 +155,148 @@ void main() {
     }
   });
 
-  testWidgets('native blur holds over the title and fades through the bar foot', (
-    tester,
-  ) async {
-    for (final dpr in [1.0, 3.0]) {
-      tester.view.devicePixelRatio = dpr;
-      tester.view.physicalSize = Size(320 * dpr, 320 * dpr);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      addTearDown(tester.view.resetPhysicalSize);
-      for (final offset in [
-        Offset.zero,
-        const Offset(17, 24),
-        const Offset(17 + 2 / 3, 24 + 1 / 3),
-      ]) {
-        for (final brightness in Brightness.values) {
-          final probe = _Probe(tester, dpr, offset, brightness);
-          final baseline = await probe.render(_Layer.none);
-          final gaussian = await probe.render(_Layer.gaussian);
-          final repeated = await probe.render(_Layer.gaussian);
-          final actual = await probe.render(_Layer.header);
-          final expected = Uint8List.fromList(baseline);
-          final error = Uint8List(baseline.length);
-          var noise = 0;
-          for (var i = 0; i < gaussian.length; i++) {
-            noise = math.max(noise, (gaussian[i] - repeated[i]).abs());
-          }
-          var maxError = 0;
-          var changedTop = 0;
-          var bottomMismatches = 0;
-          final rowError = List<int>.filled(probe.width, 0);
-          final rowAlpha = List<double?>.filled(probe.width, null);
-          for (var y = 0; y < probe.width; y++) {
-            final localY = (y + 0.5) / dpr - offset.dy;
-            final t = ((localY - 44.8) / 115.2).clamp(0.0, 1.0);
-            final alpha = localY < 0 ? 0.0 : 1 - t * t * (3 - 2 * t);
-            var covariance = 0.0;
-            var contrast = 0.0;
-            for (var x = 0; x < probe.width; x++) {
-              final localX = (x + 0.5) / dpr - offset.dx;
-              final inside = localX >= 0 && localX < 224;
-              for (var c = 0; c < 4; c++) {
-                final i = (y * probe.width + x) * 4 + c;
-                if (inside && localY >= 0 && localY < 160) {
-                  expected[i] =
-                      (baseline[i] * (1 - alpha) + gaussian[i] * alpha).round();
-                }
-                final delta = (actual[i] - expected[i]).abs();
-                error[i] = c == 3 ? 255 : math.min(255, delta * 16);
-                if (localY >= 160 && actual[i] != baseline[i]) {
-                  bottomMismatches++;
-                }
-                if (inside &&
-                    localY >= 0 &&
-                    localY < 8 &&
-                    actual[i] != baseline[i]) {
-                  changedTop++;
-                }
-                // Fractional clip coverage is separate from the alpha oracle.
-                if (localX >= 1 && localX < 223 && localY >= 1 && localY < 160) {
-                  maxError = math.max(maxError, delta);
-                  rowError[y] = math.max(rowError[y], delta);
-                  if (c < 3) {
-                    final blurred = gaussian[i] - baseline[i];
-                    covariance += (actual[i] - baseline[i]) * blurred;
-                    contrast += blurred * blurred;
+  testWidgets(
+    'native blur holds over the title and fades through the bar foot',
+    (tester) async {
+      for (final dpr in [1.0, 3.0]) {
+        tester.view.devicePixelRatio = dpr;
+        tester.view.physicalSize = Size(320 * dpr, 320 * dpr);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetPhysicalSize);
+        for (final offset in [
+          Offset.zero,
+          const Offset(17, 24),
+          const Offset(17 + 2 / 3, 24 + 1 / 3),
+        ]) {
+          for (final brightness in Brightness.values) {
+            final probe = _Probe(tester, dpr, offset, brightness);
+            final baseline = await probe.render(_Layer.none);
+            final gaussian = await probe.render(_Layer.gaussian);
+            final repeated = await probe.render(_Layer.gaussian);
+            final actual = await probe.render(_Layer.header);
+            final expected = Uint8List.fromList(baseline);
+            final error = Uint8List(baseline.length);
+            var noise = 0;
+            for (var i = 0; i < gaussian.length; i++) {
+              noise = math.max(noise, (gaussian[i] - repeated[i]).abs());
+            }
+            var maxError = 0;
+            var changedTop = 0;
+            var bottomMismatches = 0;
+            final rowError = List<int>.filled(probe.width, 0);
+            final rowAlpha = List<double?>.filled(probe.width, null);
+            for (var y = 0; y < probe.width; y++) {
+              final localY = (y + 0.5) / dpr - offset.dy;
+              final t = ((localY - 44.8) / 115.2).clamp(0.0, 1.0);
+              final alpha = localY < 0 ? 0.0 : 1 - t * t * (3 - 2 * t);
+              var covariance = 0.0;
+              var contrast = 0.0;
+              for (var x = 0; x < probe.width; x++) {
+                final localX = (x + 0.5) / dpr - offset.dx;
+                final inside = localX >= 0 && localX < 224;
+                for (var c = 0; c < 4; c++) {
+                  final i = (y * probe.width + x) * 4 + c;
+                  if (inside && localY >= 0 && localY < 160) {
+                    expected[i] =
+                        (baseline[i] * (1 - alpha) + gaussian[i] * alpha)
+                            .round();
+                  }
+                  final delta = (actual[i] - expected[i]).abs();
+                  error[i] = c == 3 ? 255 : math.min(255, delta * 16);
+                  if (localY >= 160 && actual[i] != baseline[i]) {
+                    bottomMismatches++;
+                  }
+                  if (inside &&
+                      localY >= 0 &&
+                      localY < 8 &&
+                      actual[i] != baseline[i]) {
+                    changedTop++;
+                  }
+                  // Fractional clip coverage is separate from the alpha oracle.
+                  if (localX >= 1 &&
+                      localX < 223 &&
+                      localY >= 1 &&
+                      localY < 160) {
+                    maxError = math.max(maxError, delta);
+                    rowError[y] = math.max(rowError[y], delta);
+                    if (c < 3) {
+                      final blurred = gaussian[i] - baseline[i];
+                      covariance += (actual[i] - baseline[i]) * blurred;
+                      contrast += blurred * blurred;
+                    }
                   }
                 }
               }
+              if (contrast > 1000) rowAlpha[y] = covariance / contrast;
             }
-            if (contrast > 1000) rowAlpha[y] = covariance / contrast;
+            final sampledAlpha = <double>[];
+            for (final localY in [16.0, 40.0, 64.0, 96.0, 128.0, 152.0]) {
+              final row = ((localY + offset.dy) * dpr).floor();
+              final measured = rowAlpha[row];
+              expect(measured, isNotNull);
+              final center = (row + 0.5) / dpr - offset.dy;
+              final t = ((center - 44.8) / 115.2).clamp(0.0, 1.0);
+              final expectedAlpha = 1 - t * t * (3 - 2 * t);
+              final actualAlpha = measured!;
+              expect(actualAlpha, closeTo(expectedAlpha, 0.03));
+              sampledAlpha.add(actualAlpha);
+            }
+            expect(sampledAlpha[2], greaterThan(0.9));
+            expect(sampledAlpha[3], inInclusiveRange(0.54, 0.61));
+            expect(sampledAlpha[4], inInclusiveRange(0.16, 0.23));
+            expect(sampledAlpha[5], lessThan(0.03));
+            for (var index = 2; index < sampledAlpha.length; index++) {
+              expect(sampledAlpha[index], lessThan(sampledAlpha[index - 1]));
+            }
+            // Two 8-bit blend roundings plus smoothstep's 16-segment error:
+            // max |f''| * (1/16)^2 / 8 * 255 < 1 channel unit.
+            final quantizationBound = (2 + 6 * 255 / (8 * 16 * 16)).ceil();
+            await probe.export(
+              {
+                'baseline': baseline,
+                'fullGaussian': gaussian,
+                'masked': actual,
+                'expected': expected,
+                'error-x16': error,
+              },
+              {
+                'shaderFilterSupported': ui.ImageFilter.isShaderFilterSupported,
+                'requireImpeller':
+                    Platform.environment['XCLASH_REQUIRE_IMPELLER'],
+                'backendEvidence':
+                    'Flutter offscreen; not Android GPU validation',
+                'dpr': dpr,
+                'offset': [offset.dx, offset.dy],
+                'brightness': brightness.name,
+                'referenceRepeatNoise': noise,
+                'quantizationBound': quantizationBound,
+                'maxError': maxError,
+                'rowError': rowError,
+                'rowAlpha': rowAlpha,
+                'sampledAlpha': sampledAlpha,
+                'fullStrengthHeight': 44.8,
+                'fadeEndHeight': 160,
+                'bottomMismatches': bottomMismatches,
+              },
+            );
+            expect(changedTop, greaterThan(0));
+            expect(
+              bottomMismatches,
+              0,
+              reason:
+                  'Below the extended bar foot must equal baseline exactly.',
+            );
+            expect(
+              maxError,
+              lessThanOrEqualTo(noise + quantizationBound),
+              reason: 'Gaussian alpha mixing must not create texture ghosts.',
+            );
+            expect(tester.takeException(), isNull);
           }
-          final sampledAlpha = <double>[];
-          for (final localY in [16.0, 40.0, 64.0, 96.0, 128.0, 152.0]) {
-            final row = ((localY + offset.dy) * dpr).floor();
-            final measured = rowAlpha[row];
-            expect(measured, isNotNull);
-            final center = (row + 0.5) / dpr - offset.dy;
-            final t = ((center - 44.8) / 115.2).clamp(0.0, 1.0);
-            final expectedAlpha = 1 - t * t * (3 - 2 * t);
-            final actualAlpha = measured!;
-            expect(actualAlpha, closeTo(expectedAlpha, 0.03));
-            sampledAlpha.add(actualAlpha);
-          }
-          expect(sampledAlpha[2], greaterThan(0.9));
-          expect(sampledAlpha[3], inInclusiveRange(0.54, 0.61));
-          expect(sampledAlpha[4], inInclusiveRange(0.16, 0.23));
-          expect(sampledAlpha[5], lessThan(0.03));
-          for (var index = 2; index < sampledAlpha.length; index++) {
-            expect(sampledAlpha[index], lessThan(sampledAlpha[index - 1]));
-          }
-          // Two 8-bit blend roundings plus smoothstep's 16-segment error:
-          // max |f''| * (1/16)^2 / 8 * 255 < 1 channel unit.
-          final quantizationBound = (2 + 6 * 255 / (8 * 16 * 16)).ceil();
-          await probe.export(
-            {
-              'baseline': baseline,
-              'fullGaussian': gaussian,
-              'masked': actual,
-              'expected': expected,
-              'error-x16': error,
-            },
-            {
-              'shaderFilterSupported': ui.ImageFilter.isShaderFilterSupported,
-              'requireImpeller':
-                  Platform.environment['XCLASH_REQUIRE_IMPELLER'],
-              'backendEvidence':
-                  'Flutter offscreen; not Android GPU validation',
-              'dpr': dpr,
-              'offset': [offset.dx, offset.dy],
-              'brightness': brightness.name,
-              'referenceRepeatNoise': noise,
-              'quantizationBound': quantizationBound,
-              'maxError': maxError,
-              'rowError': rowError,
-              'rowAlpha': rowAlpha,
-              'sampledAlpha': sampledAlpha,
-              'fullStrengthHeight': 44.8,
-              'fadeEndHeight': 160,
-              'bottomMismatches': bottomMismatches,
-            },
-          );
-          expect(changedTop, greaterThan(0));
-          expect(
-            bottomMismatches,
-            0,
-            reason: 'Below the extended bar foot must equal baseline exactly.',
-          );
-          expect(
-            maxError,
-            lessThanOrEqualTo(noise + quantizationBound),
-            reason: 'Gaussian alpha mixing must not create texture ghosts.',
-          );
-          expect(tester.takeException(), isNull);
         }
       }
-    }
-  });
+    },
+  );
 
   testWidgets(
     'solid backdrops keep their color and header controls stay sharp',
