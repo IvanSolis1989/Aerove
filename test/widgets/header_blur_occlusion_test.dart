@@ -189,9 +189,13 @@ void main() {
       await render(Colors.blue, true, modalFeather: true);
       for (final color in [Colors.green, Colors.red]) {
         final overlap = await render(color, true, modalFeather: true);
-        final expected = color == Colors.green
-            ? [112, 140, 64, 255]
-            : [255, 0, 0, 255];
+        final tinted = Color.alphaBlend(_style.tint, color).toARGB32();
+        final expected = [
+          (tinted >> 16) & 255,
+          (tinted >> 8) & 255,
+          tinted & 255,
+          255,
+        ];
         for (final y in [126, 128, 134]) {
           for (var channel = 0; channel < 4; channel++) {
             expect(
@@ -224,7 +228,19 @@ void main() {
       );
       expect(LiquidGlassHost.debugLastCapture!.panes, isEmpty);
       expect(_pixel(coveredOverlap, 120, 104)[2], greaterThan(80));
-      expect(_pixel(coveredOverlap, 240, 104)[0], greaterThan(250));
+      final redTinted = Color.alphaBlend(_style.tint, Colors.red).toARGB32();
+      final redExpected = [
+        (redTinted >> 16) & 255,
+        (redTinted >> 8) & 255,
+        redTinted & 255,
+        255,
+      ];
+      for (var channel = 0; channel < 4; channel++) {
+        expect(
+          _pixel(coveredOverlap, 240, 104)[channel],
+          closeTo(redExpected[channel], 2),
+        );
+      }
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
     });
@@ -335,6 +351,7 @@ void main() {
               );
             }
             final reference = await render(top, tab, elapsed, reference: true);
+            expect(tester.getRect(find.byType(GlassText)).right, lessThan(280));
             var maximum = 0;
             var worst = '';
             for (var y = 0; y < 300; y++) {
@@ -357,8 +374,8 @@ void main() {
               reason: 'no stale header band $top tab$tab t$elapsed $worst',
             );
             for (var y = 100; y < 135; y++) {
-              final a = ((y * 3) * 960 + 240 * 3) * 4;
-              final b = (((y + 1) * 3) * 960 + 240 * 3) * 4;
+              final a = ((y * 3) * 960 + 280 * 3) * 4;
+              final b = (((y + 1) * 3) * 960 + 280 * 3) * 4;
               for (var channel = 0; channel < 3; channel++) {
                 expect(
                   (actual[a + channel] - actual[b + channel]).abs(),
@@ -646,6 +663,51 @@ void main() {
         await render(Colors.blue, 1);
         await render(Colors.green, 1);
         final frozen = await _shot(tester, 'oracle-frozen-$quality');
+        final frozenStrip = List<int>.of(frozen);
+        final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+        final frozenControl = tester.renderObject<RenderRepaintBoundary>(
+          find.byKey(_scene),
+        );
+        await tester.runAsync(() async {
+          final image = await (frozenControl.debugLayer! as OffsetLayer).toImage(
+            const Rect.fromLTWH(40, 110, 120, 15),
+          );
+          try {
+            expect(image.width, 120);
+            expect(image.height, 15);
+            final rgba = (await image.toByteData(
+              format: ui.ImageByteFormat.rawRgba,
+            ))!.buffer.asUint8List();
+            for (var y = 0; y < 15; y++) {
+              for (var x = 0; x < 120; x++) {
+                final from = (y * 120 + x) * 4;
+                final to = ((y + 110) * 320 + x + 40) * 4;
+                expect(rgba[from + 3], 255);
+                final dx = x + 0.5 - 60;
+                final dy = y + 50.5 - 60;
+                if (dx * dx + dy * dy < 58 * 58) {
+                  for (var channel = 0; channel < 3; channel++) {
+                    expect(
+                      rgba[from + channel],
+                      closeTo(frozen[to + channel], 2),
+                    );
+                  }
+                }
+                frozenStrip.setRange(to, to + 4, rgba, from);
+              }
+            }
+            if (output != null) {
+              final png = (await image.toByteData(
+                format: ui.ImageByteFormat.png,
+              ))!;
+              File(
+                '$output/header-native-frozen-strip-$quality.png',
+              ).writeAsBytesSync(png.buffer.asUint8List());
+            }
+          } finally {
+            image.dispose();
+          }
+        });
         expect(LiquidGlassHost.debugLastFeatherCapture!.stripPixels, 0);
         await render(Colors.green, 2);
         final mixed = await _shot(tester, 'oracle-mixed-$quality');
@@ -666,7 +728,6 @@ void main() {
         final resolved = List<int>.of(live);
         final nativeStrip = List<int>.of(live);
         final nativeBelow = List<int>.of(live);
-        final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
         final control = tester.renderObject<RenderRepaintBoundary>(
           find.byKey(const ValueKey('resolved-live-pane')),
         );
@@ -777,6 +838,7 @@ void main() {
               'resolved': _pixel(resolved, 159, 122),
               'nativeStrip': _pixel(nativeStrip, 159, 122),
               'frozen': _pixel(frozen, 159, 122),
+              'nativeFrozenStrip': _pixel(frozenStrip, 159, 122),
               'mixed': _pixel(mixed, 159, 122),
               'belowEdge': {
                 'position': [43, 140],
@@ -791,6 +853,7 @@ void main() {
                 'resolved': _pixel(resolved, 40, 121),
                 'nativeStrip': _pixel(nativeStrip, 40, 121),
                 'frozen': _pixel(frozen, 40, 121),
+                'nativeFrozenStrip': _pixel(frozenStrip, 40, 121),
                 'mixed': _pixel(mixed, 40, 121),
               },
             }),
@@ -810,7 +873,7 @@ void main() {
             if ((frozen[index] - live[index]).abs() > 4) changedPixels++;
             for (var channel = 0; channel < 4; channel++) {
               final expected =
-                  frozen[index + channel] * (1 - weight) +
+                  frozenStrip[index + channel] * (1 - weight) +
                   nativeStrip[index + channel] * weight;
               expect(
                 mixed[index + channel],
@@ -905,22 +968,16 @@ void main() {
                               nativePlain
                                   ? Positioned.fromRect(
                                       rect: _top,
-                                      child: const ClipRSuperellipse(
-                                        borderRadius: AppRadius.full,
-                                        child: ColoredBox(
-                                          color: Color(0x33FF0000),
-                                        ),
+                                      child: const ColoredBox(
+                                        color: Color(0x33FF0000),
                                       ),
                                     )
                                   : _pane(_top),
                               nativePlain
                                   ? Positioned.fromRect(
                                       rect: _crossing,
-                                      child: const ClipRSuperellipse(
-                                        borderRadius: AppRadius.full,
-                                        child: ColoredBox(
-                                          color: Color(0x33FF0000),
-                                        ),
+                                      child: const ColoredBox(
+                                        color: Color(0x33FF0000),
                                       ),
                                     )
                                   : _pane(_crossing),
