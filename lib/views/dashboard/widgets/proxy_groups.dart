@@ -132,13 +132,15 @@ class _SelectedName extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final name = ref.watch(selectedProxyNameProvider(group.name)) ?? '';
     final base = DashboardText.rowTitle(context);
-    return EmojiText(
-      name.isEmpty ? '—' : name,
+    final style = isBuiltinOutbound(name)
+        ? base.copyWith(color: context.colorScheme.onSurfaceVariant)
+        : base;
+    return GlassText.rich(
+      EmojiText.spanOf(name.isEmpty ? '—' : name, style),
+      inkRole: GlassInkRole.body,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
-      style: isBuiltinOutbound(name)
-          ? base.copyWith(color: context.colorScheme.onSurfaceVariant)
-          : base,
+      style: style,
     );
   }
 }
@@ -356,10 +358,18 @@ class _GroupsFigure extends StatelessWidget {
           ),
           TextSpan(
             text: ' ${context.appLocalizations.groupCountUnit}',
-            style: DashboardText.unit(context),
+            style: DashboardText.unit(context).copyWith(
+              color: LiquidGlassScope.of(context)
+                  ? context.colorScheme.onSurface
+                  : null,
+            ),
           ),
         ],
       ),
+      style: LiquidGlassScope.of(context)
+          ? TextStyle(color: context.colorScheme.onSurface)
+          : null,
+      inkRole: GlassInkRole.body,
       maxLines: 1,
     );
     return DashboardCappedRow(

@@ -114,8 +114,12 @@ class ProfilesCard extends ConsumerWidget {
     final nameRow = Row(
       children: [
         Flexible(
-          child: EmojiText(
-            profile?.realLabel ?? appLocalizations.addProfile,
+          child: GlassText.rich(
+            EmojiText.spanOf(
+              profile?.realLabel ?? appLocalizations.addProfile,
+              name.of(context, emphasized: true),
+            ),
+            inkRole: GlassInkRole.body,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: name.of(context, emphasized: true),
@@ -271,9 +275,14 @@ class _ConfigStatsState extends ConsumerState<_ConfigStats>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (value != null)
-          GlassText(dashboardCount(value), maxLines: 1, style: figure)
+          GlassText(
+            dashboardCount(value),
+            inkRole: GlassInkRole.body,
+            maxLines: 1,
+            style: figure,
+          )
         else if (configCountsFailed)
-          GlassText('—', maxLines: 1, style: figure)
+          GlassText('—', inkRole: GlassInkRole.body, maxLines: 1, style: figure)
         else
           SkeletonText(width: widget.figure.size * 1.5, style: figure),
         GlassText(name, maxLines: 1, style: label),
@@ -314,6 +323,22 @@ class _UsageMeter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final glass = LiquidGlassScope.of(context);
+    final source = context.colorScheme.onSurface;
+    final warning = usage.share >= _nearlyUsedShare;
+    Widget progress({bool active = true, bool track = true}) => CustomPaint(
+      painter: _WavyProgressPainter(
+        value: usage.share,
+        active: warning
+            ? DashboardColors.of(context).warn
+            : glass
+            ? source
+            : context.colorScheme.primary,
+        track: DashboardColors.of(context).tone2,
+        paintActive: active,
+        paintTrack: track,
+      ),
+    );
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -324,7 +349,8 @@ class _UsageMeter extends StatelessWidget {
               context,
               figure,
             ).copyWith(letterSpacing: 0);
-            final unit = DashboardText.unit(context, AppTextStyle.footnote);
+            final unit = DashboardText.unit(context, AppTextStyle.footnote)
+                .copyWith(color: glass ? source : null);
             final used = ' ${context.appLocalizations.usedShort}';
             final traffic =
                 '${dashboardTraffic(usage.used)} / ${dashboardTraffic(usage.total)}';
@@ -350,6 +376,8 @@ class _UsageMeter extends StatelessWidget {
                       if (showUnit) TextSpan(text: used, style: unit),
                     ],
                   ),
+                  style: glass ? TextStyle(color: source) : null,
+                  inkRole: GlassInkRole.body,
                 ),
                 Expanded(
                   child: GlassText(
@@ -367,15 +395,19 @@ class _UsageMeter extends StatelessWidget {
         SizedBox(height: gap),
         SizedBox(
           height: 12,
-          child: CustomPaint(
-            painter: _WavyProgressPainter(
-              value: usage.share,
-              active: usage.share >= _nearlyUsedShare
-                  ? DashboardColors.of(context).warn
-                  : context.colorScheme.primary,
-              track: DashboardColors.of(context).tone2,
-            ),
-          ),
+          child: glass && !warning
+              ? Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    progress(active: false),
+                    GlassInk(
+                      source: source,
+                      role: GlassInkRole.icon,
+                      child: progress(track: false),
+                    ),
+                  ],
+                )
+              : progress(),
         ),
       ],
     );
@@ -389,6 +421,8 @@ class _WavyProgressPainter extends CustomPainter {
     required this.value,
     required this.active,
     required this.track,
+    this.paintActive = true,
+    this.paintTrack = true,
   });
 
   static const _stroke = 4.0;
@@ -400,6 +434,8 @@ class _WavyProgressPainter extends CustomPainter {
   final double value;
   final Color active;
   final Color track;
+  final bool paintActive;
+  final bool paintTrack;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -411,7 +447,7 @@ class _WavyProgressPainter extends CustomPainter {
       ..strokeWidth = _stroke
       ..strokeCap = StrokeCap.round
       ..style = PaintingStyle.stroke;
-    if (value > 0) {
+    if (paintActive && value > 0) {
       final wave = Path()..moveTo(start, mid);
       for (var x = start; x <= split; x += 1) {
         wave.lineTo(
@@ -422,14 +458,14 @@ class _WavyProgressPainter extends CustomPainter {
       canvas.drawPath(wave, paint..color = active);
     }
     final trackStart = value > 0 ? split + _gap + _stroke : start;
-    if (trackStart < end - _stop) {
+    if (paintTrack && trackStart < end - _stop) {
       canvas.drawLine(
         Offset(trackStart, mid),
         Offset(end - _stop - _gap, mid),
         paint..color = track,
       );
     }
-    if (value < 1) {
+    if (paintActive && value < 1) {
       canvas.drawCircle(
         Offset(end - _stop / 2, mid),
         _stop / 2,
@@ -442,5 +478,7 @@ class _WavyProgressPainter extends CustomPainter {
   bool shouldRepaint(_WavyProgressPainter oldDelegate) =>
       oldDelegate.value != value ||
       oldDelegate.active != active ||
-      oldDelegate.track != track;
+      oldDelegate.track != track ||
+      oldDelegate.paintActive != paintActive ||
+      oldDelegate.paintTrack != paintTrack;
 }

@@ -33,6 +33,7 @@ class _ThemeCrossFadeState extends State<ThemeCrossFade>
   ThemeData? _theme;
   ui.Image? _snapshot;
   Size? _snapshotSize;
+  bool _inactive = false;
 
   @override
   void initState() {
@@ -42,7 +43,14 @@ class _ThemeCrossFadeState extends State<ThemeCrossFade>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    final wasInactive = _inactive;
+    _inactive = state == AppLifecycleState.inactive;
     _controller.stop();
+    if (_inactive) return;
+    if (state == AppLifecycleState.resumed && wasInactive && _snapshot != null) {
+      _controller.forward();
+      return;
+    }
     if (state == AppLifecycleState.resumed || _snapshot != null) {
       setState(() {
         _drop();

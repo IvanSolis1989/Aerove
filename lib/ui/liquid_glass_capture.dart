@@ -31,6 +31,7 @@ typedef LiquidGlassCapture = ({
   int clippedPanes,
   int replayedPanes,
   int atlasPixels,
+  int coveredRecordings,
   List<
     ({
       Rect pane,
@@ -406,10 +407,16 @@ class _LiquidGlassHostLayer extends ContainerLayer {
         entry.rootToHost = Matrix4.identity();
       }
       _occlude(entry, index, coverage);
-      if (entry.visible != null) {
+      if (entry.visible != null && entry.needsFreeze) {
         if (entry.pane._freezeCaptured()) {
           if (entry.visibleBounds.isEmpty) {
-            entry.pane._captureFrozen(_pass);
+            if (entry.plain == null) {
+              entry.pane._captureFrozen(_pass);
+            } else {
+              final inverse = Matrix4.inverted(entry.toHost).storage;
+              entry.pane._captureCovered(_pass, entry.style,
+                entry.covered?.transform(inverse), entry.plain?.transform(inverse), entry.coverageKey, entry.feathers);
+            }
             continue;
           }
         } else {
@@ -419,6 +426,10 @@ class _LiquidGlassHostLayer extends ContainerLayer {
         }
       } else {
         entry.pane._thawCaptured();
+      }
+      if (entry.visible != null && entry.visibleBounds.isEmpty) {
+        entry.pane._capturePlain(_pass, entry.style);
+        continue;
       }
       if (_place(entry)) {
         placed.add(entry);
@@ -512,6 +523,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
           0,
           (sum, atlas) => sum + atlas.image.width * atlas.image.height,
         ),
+        coveredRecordings: found.fold(0, (sum, entry) => sum + entry.pane._coveredRecordings),
         panes: [
           for (final entry in placed)
             (
@@ -555,7 +567,9 @@ class _LiquidGlassHostLayer extends ContainerLayer {
                 chain.toSet(),
               )
               ..flatBoundary = wallpaperOnly && !pane.contentBackdrop
-                  ? chain.whereType<_LiquidGlassOcclusionLayer>().lastOrNull
+                  ? chain.whereType<_LiquidGlassOcclusionLayer>()
+                        .where((layer) => layer.mode == LiquidGlassOcclusionMode.freeze)
+                        .lastOrNull
                   : null,
           );
         case final ContainerLayer container:
@@ -585,7 +599,11 @@ class _LiquidGlassHostLayer extends ContainerLayer {
 
   void _occlude(_Behind entry, int index, List<_GlassCoverage> coverage) {
     Path? visible;
-    for (final cover in coverage) {
+    for (final cover in [
+      ...coverage.where((cover) => cover.layer.mode == LiquidGlassOcclusionMode.freeze),
+      ...coverage.where((cover) => cover.layer.mode == LiquidGlassOcclusionMode.plain),
+    ]) {
+      final plain = cover.layer.mode == LiquidGlassOcclusionMode.plain;
       final feather = cover.feather;
       if (index >= cover.before ||
           entry.ancestors.contains(cover.layer) ||
@@ -610,13 +628,20 @@ class _LiquidGlassHostLayer extends ContainerLayer {
           : Path.combine(PathOperation.intersect, visible, feather.path);
       if (overlap.getBounds().isEmpty && (inBand?.getBounds().isEmpty ?? true))
         continue;
+      if (!plain) entry.needsFreeze = true;
       if (!overlap.getBounds().isEmpty) {
         visible = Path.combine(PathOperation.difference, visible, cover.path);
-        entry.covered = Path.combine(
+        final previous = plain ? entry.plain : entry.covered;
+        final combined = Path.combine(
           PathOperation.union,
-          entry.covered ?? Path(),
+          previous ?? Path(),
           cover.path,
         );
+        if (plain) {
+          entry.plain = combined;
+        } else {
+          entry.covered = combined;
+        }
       }
       if (inBand != null && !inBand.getBounds().isEmpty) {
         final inverse = Matrix4.tryInvert(entry.toHost);
@@ -626,6 +651,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
               cover.layer.geometry!.$3,
               cover.layer.geometry!.$4,
               inverse..multiply(cover.toHost),
+              plain: plain,
             ),
           );
         }
@@ -634,6 +660,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
       entry.coverageKey.addAll([
         cover.layer.path,
         cover.layer.geometry!.$4,
+        cover.layer.mode,
         ...cover.toHost.storage,
       ]);
       if (visible.getBounds().isEmpty) break;
@@ -1001,9 +1028,19 @@ class _LiquidGlassHostLayer extends ContainerLayer {
       coverageKey: entry.coverageKey,
       feathers: entry.feathers,
       covered: entry.covered?.transform(Matrix4.inverted(entry.toHost).storage),
+      plain: entry.plain?.transform(Matrix4.inverted(entry.toHost).storage),
+      prepareFreeze: entry.freezeAfterCapture,
     );
     if (entry.freezeAfterCapture && pane._freezeCaptured()) {
-      if (entry.coveredVisible!.getBounds().isEmpty) pane._captureFrozen(_pass);
+      if (entry.coveredVisible!.getBounds().isEmpty) {
+        if (entry.plain == null) {
+          pane._captureFrozen(_pass);
+        } else {
+          final inverse = Matrix4.inverted(entry.toHost).storage;
+          pane._captureCovered(_pass, entry.style,
+            entry.covered?.transform(inverse), entry.plain?.transform(inverse), entry.coverageKey, entry.feathers);
+        }
+      }
     }
   }
 
@@ -1105,6 +1142,8 @@ class _Behind {
   bool freezeAfterCapture = false;
   Path? coveredVisible;
   Path? covered;
+  Path? plain;
+  bool needsFreeze = false;
   final feathers = <_GlassFeather>[];
   Rect get visibleBounds => visible?.getBounds() ?? device;
   final coverageKey = <Object?>[];

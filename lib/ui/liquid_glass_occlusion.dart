@@ -1,20 +1,24 @@
 part of 'liquid_glass.dart';
 
+enum LiquidGlassOcclusionMode { freeze, plain }
+
 /// Keeps glass below a covering surface outside its actual painted outline.
 class LiquidGlassOcclusion extends SingleChildRenderObjectWidget {
   const LiquidGlassOcclusion({
     super.key,
     required this.shape,
     this.bottomFeather = 0,
+    this.mode = LiquidGlassOcclusionMode.freeze,
     required super.child,
   });
 
   final ShapeBorder shape;
   final double bottomFeather;
+  final LiquidGlassOcclusionMode mode;
 
   @override
   RenderObject createRenderObject(BuildContext context) =>
-      _GlassOcclusionBox(shape, Directionality.of(context), bottomFeather);
+      _GlassOcclusionBox(shape, Directionality.of(context), bottomFeather, mode);
 
   @override
   void updateRenderObject(
@@ -24,17 +28,19 @@ class LiquidGlassOcclusion extends SingleChildRenderObjectWidget {
     render
       ..shape = shape
       ..bottomFeather = bottomFeather
+      ..mode = mode
       ..textDirection = Directionality.of(context)
       ..markNeedsPaint();
   }
 }
 
 class _GlassOcclusionBox extends RenderProxyBox {
-  _GlassOcclusionBox(this.shape, this.textDirection, this.bottomFeather);
+  _GlassOcclusionBox(this.shape, this.textDirection, this.bottomFeather, this.mode);
 
   ShapeBorder shape;
   TextDirection textDirection;
   double bottomFeather;
+  LiquidGlassOcclusionMode mode;
   final _layer = LayerHandle<_LiquidGlassOcclusionLayer>();
 
   @override
@@ -43,7 +49,7 @@ class _GlassOcclusionBox extends RenderProxyBox {
   @override
   void paint(PaintingContext context, Offset offset) {
     final layer = _layer.layer ??= _LiquidGlassOcclusionLayer();
-    layer.configure(shape, textDirection, Offset.zero & size, bottomFeather);
+    layer.configure(shape, textDirection, Offset.zero & size, bottomFeather, mode);
     layer.offset = offset;
     context.pushLayer(layer, super.paint, Offset.zero);
   }
@@ -79,16 +85,19 @@ class LiquidGlassOcclusionPane {
 class _LiquidGlassOcclusionLayer extends OffsetLayer {
   (ShapeBorder, TextDirection, Rect, double)? geometry;
   Path path = Path();
+  LiquidGlassOcclusionMode mode = LiquidGlassOcclusionMode.freeze;
 
   void configure(
     ShapeBorder shape,
     TextDirection direction,
     Rect rect, [
     double feather = 0,
+    LiquidGlassOcclusionMode mode = LiquidGlassOcclusionMode.freeze,
   ]) {
     final key = (shape, direction, rect, math.max(0.0, feather));
-    if (geometry == key) return;
+    if (geometry == key && this.mode == mode) return;
     geometry = key;
+    this.mode = mode;
     path = shape.getOuterPath(rect, textDirection: direction);
     markNeedsAddToScene();
   }
@@ -108,11 +117,12 @@ class _GlassCoverage {
 }
 
 class _GlassFeather {
-  _GlassFeather(Rect rect, double extent, this.transform)
+  _GlassFeather(Rect rect, double extent, this.transform, {this.plain = false})
     : band = Rect.fromLTWH(rect.left, rect.bottom, rect.width, extent);
 
   final Rect band;
   final Matrix4 transform;
+  final bool plain;
   late final Path path = (Path()..addRect(band)).transform(transform.storage);
 
   static final _live = List<Color>.generate(17, (index) {

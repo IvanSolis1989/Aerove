@@ -6,13 +6,14 @@ import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/ui/foreground_ink.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/widgets/aurora.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
 void main() {
   for (final mode in LiquidGlassMode.values) {
-    testWidgets('non-resumed UI stops ticks, paint, and captures ($mode)', (
+    testWidgets('inactive retains the frame; hidden UI stops rendering ($mode)', (
       tester,
     ) async {
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
@@ -25,6 +26,7 @@ void main() {
         await tester.runAsync(GlassInk.prepare);
       }
       final key = GlobalKey<_ProbeState>();
+      final capture = GlobalKey();
       final container = ProviderContainer(
         overrides: [
           themeSettingProvider.overrideWithBuild(
@@ -41,10 +43,13 @@ void main() {
           container: container,
           child: MaterialApp(
             theme: ThemeData(platform: TargetPlatform.android),
-            home: AuroraAppSurface(
-              child: Material(
-                type: MaterialType.transparency,
-                child: _Probe(key: key),
+            home: RepaintBoundary(
+              key: capture,
+              child: AuroraAppSurface(
+                child: Material(
+                  type: MaterialType.transparency,
+                  child: _Probe(key: key),
+                ),
               ),
             ),
           ),
@@ -53,6 +58,10 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
       final state = key.currentState!;
+      final surfaceState = tester.state(find.byType(AuroraAppSurface));
+      final wallpaperState = mode == LiquidGlassMode.none
+          ? null
+          : tester.state(find.byType(SeededAuroraWallpaper));
       expect(state.ticks, greaterThan(0));
       expect(state.paints, greaterThan(0));
       if (mode != LiquidGlassMode.none) {
@@ -62,15 +71,61 @@ void main() {
         }
       }
       final seed = container.read(themeSettingProvider).auroraSeed;
+      final surfaceOffstage = find.descendant(
+        of: find.byType(AuroraAppSurface),
+        matching: find.byType(Offstage, skipOffstage: false),
+        skipOffstage: false,
+      );
+      expect(surfaceOffstage, findsOneWidget);
+      final visibleFrame = await _pixels(tester, capture);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump();
+      expect(await _pixels(tester, capture), visibleFrame);
+      expect(
+        tester.widget<Offstage>(surfaceOffstage).offstage,
+        isFalse,
+      );
+      state.context.findRenderObject()!.markNeedsPaint();
+      await tester.pump();
+      expect(await _pixels(tester, capture), visibleFrame);
+      final inactiveTicks = state.ticks;
+      final inactivePaints = state.paints;
+      final inactiveBuilds = state.builds;
+      LiquidGlassHost.debugLastCapture = null;
+      LiquidGlassHost.debugLastInkCapture = null;
+      await tester.pump(const Duration(minutes: 3));
+      expect(state.ticks, inactiveTicks);
+      expect(state.paints, inactivePaints);
+      expect(state.builds, inactiveBuilds);
+      expect(LiquidGlassHost.debugLastCapture, isNull);
+      expect(LiquidGlassHost.debugLastInkCapture, isNull);
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      expect(await _pixels(tester, capture), visibleFrame);
+      expect(key.currentState, same(state));
+      expect(container.read(themeSettingProvider).auroraSeed, seed);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(state.ticks, greaterThan(inactiveTicks));
+      expect(state.paints, greaterThan(inactivePaints));
+      expect(key.currentState, same(state));
+      expect(tester.state(find.byType(AuroraAppSurface)), same(surfaceState));
+      if (wallpaperState != null) {
+        expect(tester.state(find.byType(SeededAuroraWallpaper)), same(wallpaperState));
+      }
 
       for (final lifecycle in [
-        AppLifecycleState.inactive,
         AppLifecycleState.hidden,
         AppLifecycleState.paused,
         AppLifecycleState.detached,
       ]) {
         tester.binding.handleAppLifecycleStateChanged(lifecycle);
+        tester.binding.scheduleForcedFrame();
         await tester.pump();
+        expect(
+          tester.widget<Offstage>(surfaceOffstage).offstage,
+          isTrue,
+        );
         final ticks = state.ticks;
         final paints = state.paints;
         final builds = state.builds;
@@ -95,6 +150,10 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
         expect(state.ticks, greaterThan(ticks));
         expect(state.paints, greaterThan(paints));
+        expect(tester.state(find.byType(AuroraAppSurface)), same(surfaceState));
+        if (wallpaperState != null) {
+          expect(tester.state(find.byType(SeededAuroraWallpaper)), same(wallpaperState));
+        }
         if (mode != LiquidGlassMode.none) {
           expect(LiquidGlassHost.debugLastCapture, isNotNull);
           if (ui.ImageFilter.isShaderFilterSupported) {
@@ -109,6 +168,21 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+}
+
+Future<List<int>> _pixels(WidgetTester tester, GlobalKey capture) async {
+  final boundary = capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+  late List<int> bytes;
+  await tester.runAsync(() async {
+    final image = boundary.toImageSync();
+    try {
+      bytes = (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!
+          .buffer.asUint8List();
+    } finally {
+      image.dispose();
+    }
+  });
+  return bytes;
 }
 
 class _Probe extends StatefulWidget {

@@ -36,6 +36,7 @@ class AuroraAppSurface extends ConsumerStatefulWidget {
 class _AuroraAppSurfaceState extends ConsumerState<AuroraAppSurface>
     with WidgetsBindingObserver {
   late bool _foreground;
+  late bool _visible;
 
   @override
   void initState() {
@@ -44,14 +45,22 @@ class _AuroraAppSurfaceState extends ConsumerState<AuroraAppSurface>
       null || AppLifecycleState.resumed => true,
       _ => false,
     };
+    _visible = switch (WidgetsBinding.instance.lifecycleState) {
+      null || AppLifecycleState.resumed || AppLifecycleState.inactive => true,
+      _ => false,
+    };
     WidgetsBinding.instance.addObserver(this);
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final foreground = state == AppLifecycleState.resumed;
-    if (_foreground == foreground) return;
-    setState(() => _foreground = foreground);
+    final visible = foreground || state == AppLifecycleState.inactive;
+    if (_foreground == foreground && _visible == visible) return;
+    setState(() {
+      _foreground = foreground;
+      _visible = visible;
+    });
   }
 
   @override
@@ -216,7 +225,7 @@ class _AuroraAppSurfaceState extends ConsumerState<AuroraAppSurface>
     );
     return TickerMode(
       enabled: _foreground,
-      child: Offstage(offstage: !_foreground, child: surface),
+      child: Offstage(offstage: !_visible, child: surface),
     );
   }
 }

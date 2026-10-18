@@ -79,6 +79,7 @@ class _Count extends StatelessWidget {
   Widget build(BuildContext context) {
     return GlassText(
       dashboardCount(count),
+      inkRole: GlassInkRole.body,
       maxLines: 1,
       style: DashboardText.figure(
         context,

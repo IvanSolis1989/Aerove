@@ -221,12 +221,18 @@ class DashboardFitText extends StatelessWidget {
           return FittedBox(
             fit: BoxFit.scaleDown,
             alignment: AlignmentDirectional.centerStart,
-            child: GlassText(text, maxLines: 1, style: style),
+            child: GlassText(
+              text,
+              inkRole: GlassInkRole.body,
+              maxLines: 1,
+              style: style,
+            ),
           );
         }
         return TooltipText(
           text: GlassText(
             text,
+            inkRole: GlassInkRole.body,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: style,

@@ -232,10 +232,19 @@ class _MemorySummary extends StatelessWidget {
               ),
               TextSpan(
                 text: ' ${total.unit}',
-                style: DashboardText.unit(context, AppTextStyle.footnote),
+                style: DashboardText.unit(context, AppTextStyle.footnote)
+                    .copyWith(
+                      color: LiquidGlassScope.of(context)
+                          ? colorScheme.onSurface
+                          : null,
+                    ),
               ),
             ],
           ),
+          style: LiquidGlassScope.of(context)
+              ? TextStyle(color: colorScheme.onSurface)
+              : null,
+          inkRole: GlassInkRole.body,
           maxLines: 1,
         ),
         if (mobile) const SizedBox(height: 14) else const Spacer(),
@@ -526,6 +535,7 @@ class _MemoryOverview extends StatelessWidget {
             children: [
               GlassText(
                 total.value,
+                inkRole: GlassInkRole.body,
                 style: AppTextStyle.title1
                     .of(context, emphasized: true)
                     .copyWith(color: colorScheme.onSurface),
@@ -533,6 +543,7 @@ class _MemoryOverview extends StatelessWidget {
               const SizedBox(width: 6),
               GlassText(
                 total.unit,
+                inkRole: GlassInkRole.body,
                 style: AppTextStyle.headline
                     .of(context)
                     .copyWith(color: colorScheme.onSurfaceVariant),

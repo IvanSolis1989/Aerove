@@ -18,8 +18,8 @@ const _scene = ValueKey('usageScene');
 const _label = ValueKey('usageLabel');
 const _info = SubscriptionInfo(download: 16, total: 100);
 
-Color _pixel(Uint8List bytes, int x, int y) {
-  final offset = (y * 400 + x) * 4;
+Color _pixel(Uint8List bytes, int x, int y, {int scale = 1}) {
+  final offset = (y * scale * 400 * scale + x * scale) * 4;
   return Color.fromARGB(
     bytes[offset + 3],
     bytes[offset],
@@ -39,13 +39,13 @@ double _contrast(Color a, Color b) {
       : (second + 0.05) / (first + 0.05);
 }
 
-void _expectDryRim(Uint8List actual, Uint8List empty) {
+void _expectDryRim(Uint8List actual, Uint8List empty, {int scale = 1}) {
   for (var y = 28; y < 132; y++) {
     for (var x = 20; x < 380; x++) {
       if (x < 25 || x >= 375 || y < 33 || y >= 127) {
         expect(
-          _pixel(actual, x, y),
-          _pixel(empty, x, y),
+          _pixel(actual, x, y, scale: scale),
+          _pixel(empty, x, y, scale: scale),
           reason: 'The glass tube wall at ($x, $y) must remain dry',
         );
       }
@@ -57,12 +57,13 @@ Future<Uint8List> _snapshot(
   WidgetTester tester,
   String name, {
   Key boundaryKey = _scene,
+  double pixelRatio = 1,
 }) async {
   final boundary = tester.renderObject<RenderRepaintBoundary>(
     find.byKey(boundaryKey),
   );
   return (await tester.runAsync(() async {
-    final image = await boundary.toImage();
+    final image = await boundary.toImage(pixelRatio: pixelRatio);
     try {
       final rgba = (await image.toByteData(
         format: ui.ImageByteFormat.rawRgba,
@@ -93,6 +94,7 @@ Future<void> _pump(
   TextDirection direction = TextDirection.ltr,
   Size cardSize = const Size(360, 104),
   Color seedColor = Colors.blue,
+  List<Color>? backdrop,
 }) async {
   final colors = ColorScheme.fromSeed(
     seedColor: seedColor,
@@ -124,12 +126,12 @@ Future<void> _pump(
                         child: DecoratedBox(
                           decoration: BoxDecoration(
                             gradient: LinearGradient(
-                              colors: brightness == Brightness.light
+                              colors: backdrop ?? (brightness == Brightness.light
                                   ? const [Color(0xFFEABEA7), Color(0xFF9DCDDF)]
                                   : const [
                                       Color(0xFF11252D),
                                       Color(0xFF493026),
-                                    ],
+                                    ]),
                             ),
                           ),
                         ),
@@ -259,6 +261,61 @@ void main() {
   });
 
   setUp(() => LiquidGlassHost.debugLastCapture = null);
+
+  for (final mode in [LiquidGlassMode.standard, LiquidGlassMode.ultra]) {
+    testWidgets('light pastel water remains visible and transparent at DPR 3 '
+        '(${mode.name})', (tester) async {
+      tester.view.physicalSize = const Size(1200, 480);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      const backdrop = [Color(0xFFD9EADF), Color(0xFFEFE6EC)];
+      try {
+        await _pump(
+          tester,
+          brightness: Brightness.light,
+          mode: mode,
+          backdrop: backdrop,
+          info: const SubscriptionInfo(total: 100),
+        );
+        final empty = await _snapshot(tester, 'light-pastel-${mode.name}-3x-empty',
+          pixelRatio: 3);
+        await _pump(tester, brightness: Brightness.light, mode: mode,
+          backdrop: backdrop);
+        final filled = await _snapshot(tester, 'light-pastel-${mode.name}-3x-16',
+          pixelRatio: 3);
+        expect(filled.length, 1200 * 480 * 4);
+        final behind = _pixel(empty, 45, 80, scale: 3);
+        final water = _pixel(filled, 45, 80, scale: 3);
+        expect(_distance(water, behind), inExclusiveRange(0.065, 0.18));
+        expect(water.b - behind.b, greaterThan(0.02));
+        _expectDryRim(filled, empty, scale: 3);
+        expect(_pixel(filled, 200, 80, scale: 3),
+          _pixel(empty, 200, 80, scale: 3));
+        await _pump(tester, brightness: Brightness.light, mode: mode,
+          backdrop: backdrop, text: true);
+        final readable = await _snapshot(tester,
+          'light-pastel-${mode.name}-3x-readable', pixelRatio: 3);
+        final bounds = tester.getRect(find.byKey(_label));
+        final contrasts = <double>[];
+        for (var y = bounds.top.ceil(); y < bounds.bottom.floor(); y++) {
+          for (var x = bounds.left.ceil(); x < bounds.right.floor(); x++) {
+            final ink = _pixel(readable, x, y, scale: 3);
+            final background = _pixel(filled, x, y, scale: 3);
+            if (_distance(ink, background) > 0.3) {
+              contrasts.add(_contrast(ink, background));
+            }
+          }
+        }
+        contrasts.sort();
+        expect(contrasts.length, greaterThan(20));
+        expect(contrasts[(contrasts.length * 0.9).floor()],
+          greaterThanOrEqualTo(4.5));
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump(Duration.zero);
+      }
+    });
+  }
 
   for (final brightness in Brightness.values) {
     for (final mode in LiquidGlassMode.values) {

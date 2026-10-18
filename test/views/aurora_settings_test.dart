@@ -1,10 +1,17 @@
+import 'dart:io';
+import 'dart:ui' as ui;
+
 import 'package:fl_clash/common/app_localizations.dart';
+import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/state.dart';
+import 'package:fl_clash/ui/ui.dart';
 import 'package:fl_clash/views/aurora_settings.dart';
 import 'package:fl_clash/widgets/aurora.dart';
+import 'package:fl_clash/widgets/palette.dart';
+import 'package:flutter/rendering.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -47,6 +54,92 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+  }
+
+  for (final brightness in Brightness.values) {
+    for (final mode in LiquidGlassMode.values) {
+      testWidgets('wallpaper swatches retain their RGBA throughout the fill '
+          '($brightness, $mode, DPR 3)', (tester) async {
+        tester.view.physicalSize = const Size(1290, 2700);
+        tester.view.devicePixelRatio = 3;
+        addTearDown(tester.view.reset);
+        const colors = [0xFFFF0000, 0xFF00FF00, 0xFF0000FF];
+        container.read(themeSettingProvider.notifier).update((state) =>
+          state.copyWith(auroraEnabled: true, auroraColors: colors,
+            liquidGlass: mode));
+        const captureKey = ValueKey('wallpaperColorSwatches');
+        try {
+          await tester.pumpWidget(
+            UncontrolledProviderScope(
+              container: container,
+              child: TestApp(
+                theme: ThemeData(
+                  brightness: brightness,
+                  platform: mode == LiquidGlassMode.none
+                      ? TargetPlatform.windows
+                      : TargetPlatform.android,
+                ),
+                child: RepaintBoundary(
+                  key: captureKey,
+                  child: const AuroraAppSurface(
+                    motion: false,
+                    child: Scaffold(
+                      body: SingleChildScrollView(child: AuroraSettings()),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          final boundary = tester.renderObject<RenderRepaintBoundary>(
+            find.byKey(captureKey),
+          );
+          final image = await tester.runAsync(() => boundary.toImage(pixelRatio: 3));
+          try {
+            final data = (await tester.runAsync(() =>
+              image!.toByteData(format: ui.ImageByteFormat.rawRgba)))!;
+            final bytes = data.buffer.asUint8List();
+            for (var index = 0; index < colors.length; index++) {
+              final button = find.byTooltip('Edit wallpaper color ${index + 1}');
+              expect(LiquidGlassScope.of(tester.element(button)),
+                mode != LiquidGlassMode.none);
+              final swatch = tester.getRect(button);
+              for (final offset in const [
+                Offset.zero, Offset(-16, 0), Offset(16, 0),
+                Offset(0, -16), Offset(0, 16), Offset(-12, -12),
+              ]) {
+                final point = (swatch.center + offset) * 3;
+                final pixel = (point.dy.floor() * image!.width + point.dx.floor()) * 4;
+                final actual = Color.fromARGB(bytes[pixel + 3], bytes[pixel],
+                  bytes[pixel + 1], bytes[pixel + 2]);
+                expect(actual.toARGB32(), colors[index], reason: 'swatch $index at $offset');
+              }
+            }
+            final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+            if (output != null) {
+              final png = (await tester.runAsync(() =>
+                image!.toByteData(format: ui.ImageByteFormat.png)))!;
+              final directory = Directory(output)..createSync(recursive: true);
+              File('${directory.path}/aurora-swatches-${brightness.name}-${mode.name}-3x.png')
+                .writeAsBytesSync(png.buffer.asUint8List());
+            }
+          } finally {
+            image!.dispose();
+          }
+          await tester.tap(find.byTooltip('Edit wallpaper color 1'));
+          await tester.pumpAndSettle();
+          expect(find.byType(Palette), findsOneWidget);
+          expect(container.read(themeSettingProvider).auroraColors, colors);
+          await tester.tap(find.text('Cancel'));
+          await tester.pumpAndSettle();
+          expect(find.byType(Palette), findsNothing);
+        } finally {
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump();
+        }
+      });
+    }
   }
 
   testWidgets('palette contains no duplicate mode toggle and keeps its seed', (

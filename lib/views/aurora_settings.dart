@@ -75,6 +75,9 @@ class AuroraSettings extends ConsumerWidget {
                       style: IconButton.styleFrom(
                         backgroundColor: Color(theme.auroraColors[index]),
                         shape: AppShape.sm,
+                      ).copyWith(
+                        backgroundBuilder: (_, _, child) =>
+                            child ?? const SizedBox.shrink(),
                       ),
                       onPressed: () => _editColor(context, ref, index: index),
                       icon: const SizedBox.shrink(),

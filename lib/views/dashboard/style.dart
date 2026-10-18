@@ -162,7 +162,11 @@ abstract final class DashboardText {
       .of(context, emphasized: true)
       .toTabular
       .copyWith(
-        color: color == null ? null : color,
+        color:
+            color ??
+            (LiquidGlassScope.of(context)
+                ? context.colorScheme.onSurface
+                : null),
         letterSpacing: -0.02 * style.size,
       );
 

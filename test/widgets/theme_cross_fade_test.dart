@@ -139,8 +139,52 @@ void main() {
     expect(tester.hasRunningAnimations, isFalse);
   });
 
+  testWidgets('inactive freezes the visible fade and resumes without recapture', (
+    tester,
+  ) async {
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    addTearDown(() => tester.binding.handleAppLifecycleStateChanged(
+      AppLifecycleState.resumed,
+    ));
+    var captures = 0;
+    await pumpApp(tester, captureSnapshot: (capture) {
+      captures++;
+      return capture();
+    });
+    final mountedState = tester.state(find.byType(ThemeCrossFade));
+    background.value = _blue;
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 60));
+    final visibleFrame = await pixel(tester);
+    expect(captures, 1);
+    expect(tester.hasRunningAnimations, isTrue);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    expect(await pixel(tester), visibleFrame);
+    await tester.pump(const Duration(minutes: 3));
+    expect(await pixel(tester), visibleFrame);
+    expect(tester.hasRunningAnimations, isFalse);
+    expect(tester.binding.hasScheduledFrame, isFalse);
+    expect(captures, 1);
+    expect(tester.state(find.byType(ThemeCrossFade)), same(mountedState));
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(await pixel(tester), visibleFrame);
+    expect(tester.hasRunningAnimations, isTrue);
+    expect(captures, 1);
+    await tester.pumpAndSettle();
+    expect(await pixel(tester), isColor(_blue));
+    background.value = _green;
+    await tester.pump();
+    expect(captures, 2);
+    expect(await pixel(tester), isColor(_blue));
+    await tester.pumpAndSettle();
+    expect(await pixel(tester), isColor(_green));
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(tester.takeException(), isNull);
+  });
+
   for (final lifecycle in [
-    AppLifecycleState.inactive,
     AppLifecycleState.hidden,
     AppLifecycleState.paused,
     AppLifecycleState.detached,
@@ -183,7 +227,7 @@ void main() {
         expect(tester.binding.hasScheduledFrame, isFalse);
         expect(
           await pixel(tester),
-          isColor(lifecycle == AppLifecycleState.inactive ? _green : _blue),
+          isColor(_blue),
           reason: 'Suspended framework rendering retains its last frame.',
         );
         expect(tester.state(find.byType(ThemeCrossFade)), same(mountedState));

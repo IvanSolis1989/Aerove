@@ -39,6 +39,7 @@ class HeaderBlur extends StatelessWidget {
                   child: const LiquidGlassOcclusion(
                     shape: AppShape.none,
                     bottomFeather: 12,
+                    mode: LiquidGlassOcclusionMode.plain,
                     child: SizedBox.expand(),
                   ),
                 ),
