@@ -10,6 +10,19 @@ const _green = Color(0xFF00FF00);
 const _blue = Color(0xFF0000FF);
 const _clear = LiquidGlassStyle(tint: Colors.transparent, blur: 0);
 
+class _DestinationMask extends CustomPainter {
+  const _DestinationMask();
+
+  @override
+  void paint(Canvas canvas, Size size) => canvas.drawRect(
+    Offset.zero & size,
+    Paint()..color = Colors.transparent..blendMode = BlendMode.dstIn,
+  );
+
+  @override
+  bool shouldRepaint(_DestinationMask oldDelegate) => false;
+}
+
 typedef _Pane = ({
   Rect pane,
   Rect slot,
@@ -463,6 +476,31 @@ void main() {
     expect(color.r, inExclusiveRange(0, 1));
     expect(color.g, inExclusiveRange(0, 1));
   });
+
+  for (final shape in ['rect', 'superellipse', 'path']) {
+    testWidgets('a sibling $shape save-layer clip isolates destination masks', (tester) async {
+      const mask = CustomPaint(painter: _DestinationMask());
+      final clipped = switch (shape) {
+        'rect' => const ClipRect(clipBehavior: Clip.antiAliasWithSaveLayer, child: mask),
+        'superellipse' => const ClipRSuperellipse(
+          borderRadius: AppRadius.lg, clipBehavior: Clip.antiAliasWithSaveLayer, child: mask,
+        ),
+        _ => const ClipPath(clipper: ShapeBorderClipper(shape: AppShape.lg),
+          clipBehavior: Clip.antiAliasWithSaveLayer, child: mask),
+      };
+      await tester.pumpWidget(_app(Stack(children: [
+        const Positioned.fill(child: ColoredBox(color: _red)),
+        const Positioned(left: 100, top: 100, width: 100, height: 100,
+          child: ColoredBox(color: _green)),
+        Positioned(left: 100, top: 100, width: 100, height: 100, child: clipped),
+        _pane(const Rect.fromLTWH(80, 80, 180, 180)),
+      ])));
+      final pane = _capture().panes.single;
+      expect(await _behind(tester, pane, const Offset(150, 150)), _green);
+      expect(await _behind(tester, pane, const Offset(101, 101)), _green);
+      expect(await _behind(tester, pane, const Offset(90, 150)), _red);
+    });
+  }
 
   testWidgets('a sibling backdrop mask cannot erase the captured wallpaper', (
     tester,

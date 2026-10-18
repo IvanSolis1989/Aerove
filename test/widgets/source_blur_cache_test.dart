@@ -512,7 +512,10 @@ void main() {
         }
       }
       expect(LiquidGlassHost.debugLastSourceBlurCapture!.sourceBlurBuilds, 0);
-      expect(LiquidGlassHost.debugLastSourceBlurCapture!.reasons['optics'], greaterThan(0));
+      expect(
+        LiquidGlassHost.debugLastSourceBlurCapture!.reasons['optics'],
+        greaterThan(0),
+      );
       await _pump(
         tester,
         _app(

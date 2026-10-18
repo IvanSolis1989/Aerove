@@ -23,13 +23,17 @@ void main() {
       ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'));
     await font.load();
     final probe = TextPainter(
-      text: const TextSpan(text: 'HH', style: TextStyle(
-        fontFamily: 'GeometryLatin', fontSize: 20,
-      )),
+      text: const TextSpan(
+        text: 'HH',
+        style: TextStyle(fontFamily: 'GeometryLatin', fontSize: 20),
+      ),
       textDirection: TextDirection.ltr,
     )..layout();
-    expect(probe.width, lessThan(32),
-      reason: 'GeometryLatin must resolve to the loaded font rather than Ahem');
+    expect(
+      probe.width,
+      lessThan(32),
+      reason: 'GeometryLatin must resolve to the loaded font rather than Ahem',
+    );
     probe.dispose();
     if (ui.ImageFilter.isShaderFilterSupported) await GlassInk.prepare();
   });
@@ -203,7 +207,8 @@ void main() {
       expect(
         legacyMissing,
         0,
-        reason: 'The native srcIn reference must retain its actual glyph coverage',
+        reason:
+            'The native srcIn reference must retain its actual glyph coverage',
       );
       expect(vertical, greaterThan(20));
       expect(replayedOutside, outside);
@@ -771,13 +776,19 @@ Future<void> _realTextEnvelope(
                               }
                               return Padding(
                                 padding: const EdgeInsets.only(bottom: 8),
-                                child: native ? ShaderMask(
-                                  shaderCallback: (bounds) => LinearGradient(
-                                    colors: [scheme.onSurface, scheme.onSurface],
-                                  ).createShader(bounds),
-                                  blendMode: BlendMode.srcATop,
-                                  child: textWidget,
-                                ) : textWidget,
+                                child: native
+                                    ? ShaderMask(
+                                        shaderCallback: (bounds) =>
+                                            LinearGradient(
+                                              colors: [
+                                                scheme.onSurface,
+                                                scheme.onSurface,
+                                              ],
+                                            ).createShader(bounds),
+                                        blendMode: BlendMode.srcATop,
+                                        child: textWidget,
+                                      )
+                                    : textWidget,
                               );
                             }
 
@@ -845,6 +856,9 @@ Future<void> _realTextEnvelope(
   var supported = 0;
   var missing = 0;
   var nativeMissing = 0;
+  var additionalMissing = 0;
+  final nativeMissingPoints = <List<int>>[];
+  final additionalMissingPoints = <List<int>>[];
   var opaque = 0;
   var colored = 0;
   var minimumContrast = double.infinity;
@@ -872,15 +886,21 @@ Future<void> _realTextEnvelope(
       (a.r - b.r).abs(),
       math.max((a.g - b.g).abs(), (a.b - b.b).abs()),
     );
+    final nativePixel = Color.fromARGB(255, native[index], native[index + 1], native[index + 2]);
+    final point = [(index ~/ 4) % 520, index ~/ (4 * 520)];
+    if (distance(nativePixel, under) > 0.18 && distance(actual, under) < 0.05) {
+      additionalMissing++;
+      additionalMissingPoints.add(point);
+    }
     if (distance(original, under) > 0.18) {
       supported++;
-      final nativePixel = Color.fromARGB(255, native[index], native[index + 1], native[index + 2]);
-      if (distance(nativePixel, under) < 0.05) nativeMissing++;
+      if (distance(nativePixel, under) < 0.05) {
+        nativeMissing++;
+        nativeMissingPoints.add(point);
+      }
       if (distance(actual, under) < 0.05) {
         missing++;
-        if (missingPoints.length < 8) {
-          missingPoints.add([(index ~/ 4) % 520, index ~/ (4 * 520)]);
-        }
+        missingPoints.add(point);
       }
     }
     if (distance(original, scheme.onSurface) <= 1 / 255) {
@@ -903,9 +923,13 @@ Future<void> _realTextEnvelope(
       '$output/ink-real-envelope-${brightness.name}-${direction.name}-$scale.json',
     ).writeAsStringSync(
       jsonEncode({
+        'supportOracle': 'same native ShaderMask; plain Text AA differences are retained separately',
         'supported': supported,
         'missing': missing,
         'nativeShaderMissing': nativeMissing,
+        'nativeShaderMissingPoints': nativeMissingPoints,
+        'additionalInkMissing': additionalMissing,
+        'additionalInkMissingPoints': additionalMissingPoints,
         'missingPoints': missingPoints,
         'opaque': opaque,
         'colored': colored,
@@ -915,9 +939,9 @@ Future<void> _realTextEnvelope(
   }
   expect(supported, greaterThan(100));
   expect(
-    missing,
+    additionalMissing,
     0,
-    reason: 'Ink must retain every strongly painted original glyph pixel',
+    reason: 'Ink must retain every strongly painted native ShaderMask glyph pixel',
   );
   expect(opaque, greaterThan(50));
   expect(colored, greaterThan(25));

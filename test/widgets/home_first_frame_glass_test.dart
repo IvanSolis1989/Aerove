@@ -131,7 +131,8 @@ void main() {
               String phase,
               int elapsed,
             ) async {
-              final sharedShaderReadyBeforeReadback = LiquidGlass.debugShaderReady;
+              final sharedShaderReadyBeforeReadback =
+                  LiquidGlass.debugShaderReady;
               final shaderBackendSupportedBeforeReadback =
                   ui.ImageFilter.isShaderFilterSupported;
               final page = find.byKey(ValueKey('page-${label.name}'));
@@ -204,15 +205,21 @@ void main() {
               double? repeatHeaderVariance;
               int? referencePixelNoise;
               int? controlPixelDelta;
-              final headerVisible = built && alpha > 1 / 255 &&
+              final headerVisible =
+                  built &&
+                  alpha > 1 / 255 &&
                   pageRect.intersect(Offset.zero & _size).width > 0;
               final filterFinder = find.descendant(
                 of: header,
                 matching: find.byType(BackdropFilter),
               );
-              if (quality != null && headerVisible && headerCrop.width >= 16 &&
+              if (quality != null &&
+                  headerVisible &&
+                  headerCrop.width >= 16 &&
                   filterFinder.evaluate().length == 1) {
-                final filter = tester.renderObject<RenderBackdropFilter>(filterFinder);
+                final filter = tester.renderObject<RenderBackdropFilter>(
+                  filterFinder,
+                );
                 final original = filter.filter;
                 final identity = ui.ImageFilter.blur(sigmaX: 0, sigmaY: 0);
                 late Uint8List control;
@@ -222,7 +229,9 @@ void main() {
                   expect(identical(filter.filter, identity), isTrue);
                   expect(tester.getRect(page), pageRect);
                   control = await _snapshot(
-                    tester, capture, '$name-${label.name}-$phase-$elapsed-header-control',
+                    tester,
+                    capture,
+                    '$name-${label.name}-$phase-$elapsed-header-control',
                   );
                 } finally {
                   filter.filter = original;
@@ -230,7 +239,9 @@ void main() {
                   expect(tester.getRect(page), pageRect);
                 }
                 final repeat = await _snapshot(
-                  tester, capture, '$name-${label.name}-$phase-$elapsed-header-repeat',
+                  tester,
+                  capture,
+                  '$name-${label.name}-$phase-$elapsed-header-repeat',
                 );
                 controlHeaderVariance = _variance(control, headerCrop);
                 repeatHeaderVariance = _variance(repeat, headerCrop);
@@ -254,7 +265,8 @@ void main() {
                 'headerBlurWidgets': header.evaluate().length,
                 'shaderBackendSupportedBeforeReadback':
                     shaderBackendSupportedBeforeReadback,
-                'sharedShaderReadyBeforeReadback': sharedShaderReadyBeforeReadback,
+                'sharedShaderReadyBeforeReadback':
+                    sharedShaderReadyBeforeReadback,
                 'headerCrop': [
                   headerCrop.left,
                   headerCrop.top,
@@ -299,16 +311,24 @@ void main() {
                     '$label $phase $elapsed: header stripe variance $headerVariance did not fall below unblurred $rawHeaderVariance.',
                   );
                 }
-                if (headerCrop.width >= 16 && (controlHeaderVariance == null ||
-                    repeatHeaderVariance == null || referencePixelNoise == null ||
-                    controlPixelDelta == null)) {
-                  failures.add('$label $phase $elapsed: incoming header control was not captured.');
+                if (headerCrop.width >= 16 &&
+                    (controlHeaderVariance == null ||
+                        repeatHeaderVariance == null ||
+                        referencePixelNoise == null ||
+                        controlPixelDelta == null)) {
+                  failures.add(
+                    '$label $phase $elapsed: incoming header control was not captured.',
+                  );
                 } else if (controlHeaderVariance != null &&
-                    repeatHeaderVariance != null && headerVariance != null) {
-                  final varianceNoise = (headerVariance - repeatHeaderVariance).abs();
+                    repeatHeaderVariance != null &&
+                    headerVariance != null) {
+                  final varianceNoise = (headerVariance - repeatHeaderVariance)
+                      .abs();
                   if (controlHeaderVariance - headerVariance <= varianceNoise ||
                       controlPixelDelta! <= referencePixelNoise!) {
-                    failures.add('$label $phase $elapsed: incoming blur did not reduce its own sharp stripes beyond repeated-frame noise.');
+                    failures.add(
+                      '$label $phase $elapsed: incoming blur did not reduce its own sharp stripes beyond repeated-frame noise.',
+                    );
                   }
                 }
               }
@@ -357,14 +377,13 @@ void main() {
             if (output != null) {
               await tester.runAsync(() async {
                 await File('$output/$name.json').writeAsString(
-                  const JsonEncoder.withIndent(
-                    '  ',
-                  ).convert({
+                  const JsonEncoder.withIndent('  ').convert({
                     'timingEvidence': {
                       'frameClock': 'Flutter test virtual animation clock',
                       'asyncReadbackAndFileIoBetweenFrames': true,
                       'coldShaderWallClockLatencyMeasured': false,
-                      'shaderReadySemantics': 'Shared program cache state at sample entry, before asynchronous readback; not per-pane program usage in the already-painted frame.',
+                      'shaderReadySemantics':
+                          'Shared program cache state at sample entry, before asynchronous readback; not per-pane program usage in the already-painted frame.',
                     },
                     'frames': frames,
                     'failures': failures,
@@ -406,7 +425,8 @@ class _ProbePage extends StatelessWidget {
         Positioned(
           left: 24,
           top: 170,
-          width: 280,
+          // Both fade pages paint at once; distinct bounds identify their atlases.
+          width: 280 + label.index.toDouble(),
           height: 150,
           child: SizedBox(
             key: ValueKey('pane-${label.name}'),
@@ -428,9 +448,13 @@ class _ProbePage extends StatelessWidget {
 
 Finder _dockTarget(String label) => find.descendant(
   of: find.byType(NavigationDock),
-  matching: find.byWidgetPredicate((widget) => widget is Semantics &&
-      widget.properties.label == label && widget.properties.button == true &&
-      widget.properties.onTap != null),
+  matching: find.byWidgetPredicate(
+    (widget) =>
+        widget is Semantics &&
+        widget.properties.label == label &&
+        widget.properties.button == true &&
+        widget.properties.onTap != null,
+  ),
 );
 
 class _Checker extends CustomPainter {

@@ -490,9 +490,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
               (hostRect.width * devicePixelRatio).ceil() *
               (hostRect.height * devicePixelRatio).ceil();
           stripPixels += pixels;
-          final surface = MatrixUtils.transformRect(entry.toHost, band.surface).intersect(bounds);
-          surfacePixels += (surface.width * devicePixelRatio).ceil() *
-              (surface.height * devicePixelRatio).ceil() * band.surfaces;
+          surfacePixels += pixels * band.surfaces;
         }
       }
       LiquidGlassHost.debugLastFeatherCapture = (
@@ -1310,6 +1308,18 @@ class _Replay {
     }
     if (_clip(layer)) {
       saves++;
+      final isolated = switch (layer) {
+        ClipRectLayer(:final clipBehavior) ||
+        ClipRRectLayer(:final clipBehavior) ||
+        ClipRSuperellipseLayer(:final clipBehavior) ||
+        ClipPathLayer(:final clipBehavior) => clipBehavior == Clip.antiAliasWithSaveLayer,
+        _ => false,
+      };
+      if (!root && isolated) {
+        canvas.saveLayer(null, Paint());
+        drawn.add(Clip.antiAliasWithSaveLayer);
+        saves++;
+      }
     }
     return saves;
   }

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:collection/collection.dart';
 import 'package:fl_clash/common/app_localizations.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/l10n/l10n.dart';
@@ -34,6 +35,18 @@ import '../helpers/test_profiles.dart';
 
 const _size = Size(390, 800);
 const _steps = [0.0, 0.1, 0.25, 0.5, 0.75, 1.0];
+const _identityRgb = ColorFilter.matrix([
+  1, 0, 0, 0, 0,
+  0, 1, 0, 0, 0,
+  0, 0, 1, 0, 0,
+  0, 0, 0, 1, 0,
+]);
+const _sentinelRgb = ColorFilter.matrix([
+  -1, 0, 0, 0, 255,
+  0, -1, 0, 0, 255,
+  0, 0, -1, 0, 255,
+  0, 0, 0, 1, 0,
+]);
 const _profileName = 'Handover example profile';
 const _profile = Profile(
   id: 721,
@@ -68,7 +81,7 @@ void main() {
           tester.view.physicalSize = _size;
           tester.view.devicePixelRatio = 1;
           final semantics = tester.ensureSemantics();
-          final homeVisible = ValueNotifier(true);
+          final homeActual = ValueNotifier(true);
           final container = ProviderContainer(
             overrides: [
               profilesProvider.overrideWith(() => TestProfiles([_profile])),
@@ -147,9 +160,13 @@ void main() {
                     ),
                   ),
                   home: ValueListenableBuilder<bool>(
-                    valueListenable: homeVisible,
-                    builder: (_, visible, child) =>
-                        Opacity(opacity: visible ? 1 : 0, child: child),
+                    valueListenable: homeActual,
+                    builder: (_, actual, child) => quality == null
+                        ? Opacity(opacity: actual ? 1 : 0, child: child)
+                        : ColorFiltered(
+                            colorFilter: actual ? _identityRgb : _sentinelRgb,
+                            child: child!,
+                          ),
                     child: const HomePage(),
                   ),
                 ),
@@ -202,19 +219,20 @@ void main() {
                 capture,
                 '$prefix-$phase-$progress',
               );
-              // Keep the same route, layout, clock and wallpaper. Only the
-              // underlying Home paint is removed for an independent oracle.
-              homeVisible.value = false;
+              final actualCapture = _captureState();
+              // Keep glass atlas allocation stable while perturbing only Home RGB.
+              homeActual.value = false;
               await tester.pump();
               await tester.pump();
               final oracle = await _pixels(
                 tester,
                 capture,
-                '$prefix-$phase-$progress-wallpaper',
+                '$prefix-$phase-$progress-${quality == null ? 'wallpaper' : 'rgb-control'}',
               );
+              final oracleCapture = _captureState();
               await tester.pump();
               final repeat = await _pixels(tester, capture, null);
-              homeVisible.value = true;
+              homeActual.value = true;
               await tester.pump();
               await tester.pump();
               final noise = _maxDelta(oracle, repeat);
@@ -248,6 +266,11 @@ void main() {
                 'progress': progress,
                 'animation': route.animation?.value,
                 'transientBackdropIsolation': isolated,
+                'actualCapture': actualCapture,
+                'oracleCapture': oracleCapture,
+                'captureLayoutMatches': const DeepCollectionEquality().equals(
+                      actualCapture['panes'], oracleCapture['panes'],
+                    ) && actualCapture['atlasPixels'] == oracleCapture['atlasPixels'],
                 'referenceNoise': noise,
                 'residualBytes': residual,
                 'outsideResidualBytes': outsideResidual,
@@ -275,7 +298,8 @@ void main() {
               previous = progress;
             }
             await tester.pumpAndSettle();
-            if (quality != null) expect(_expectBackdropIsolation(route), isFalse);
+            if (quality != null)
+              expect(_expectBackdropIsolation(route), isFalse);
             final drag = await tester.startGesture(const Offset(18, 600));
             await drag.moveBy(const Offset(30, 0));
             await drag.moveBy(const Offset(100, 0));
@@ -288,7 +312,8 @@ void main() {
             await tester.pumpAndSettle();
             expect(route.animation!.value, 1);
             expect(route.navigator!.userGestureInProgress, isFalse);
-            if (quality != null) expect(_expectBackdropIsolation(route), isFalse);
+            if (quality != null)
+              expect(_expectBackdropIsolation(route), isFalse);
 
             route.navigator!.pop();
             await tester.pump();
@@ -345,6 +370,9 @@ void main() {
                         ui.ImageFilter.isShaderFilterSupported,
                     'requireImpeller':
                         Platform.environment['XCLASH_REQUIRE_IMPELLER'],
+                    'underlyingControl': quality == null
+                        ? 'hide Home paint'
+                        : 'invert Home RGB with unchanged alpha and ColorFilter layer',
                     'frames': frames,
                   }),
                 );
@@ -364,6 +392,12 @@ void main() {
             );
             if (quality != null) {
               expect(
+                frames.where((frame) => frame['captureLayoutMatches'] != true)
+                    .toList(),
+                isEmpty,
+                reason: 'Changing Home RGB must preserve every pane, atlas slot, scale and size.',
+              );
+              expect(
                 frames
                     .where(
                       (frame) =>
@@ -379,7 +413,7 @@ void main() {
           } finally {
             await tester.pumpWidget(const SizedBox.shrink());
             await tester.pump();
-            homeVisible.dispose();
+            homeActual.dispose();
             container.dispose();
             semantics.dispose();
             tester.view.reset();
@@ -460,25 +494,61 @@ class _IdleSetupAction extends SetupAction {
 
 Finder _dockTarget(String label) => find.descendant(
   of: find.byType(NavigationDock),
-  matching: find.byWidgetPredicate((widget) => widget is Semantics &&
-      widget.properties.label == label && widget.properties.button == true &&
-      widget.properties.onTap != null),
+  matching: find.byWidgetPredicate(
+    (widget) =>
+        widget is Semantics &&
+        widget.properties.label == label &&
+        widget.properties.button == true &&
+        widget.properties.onTap != null,
+  ),
 );
 
 bool _expectBackdropIsolation(ModalRoute<dynamic> route) {
   final backdrop = find.byType(LiquidGlassBackdrop);
   expect(backdrop, findsWidgets);
-  final transient = route.animation!.isAnimating ||
+  final transient =
+      route.animation!.isAnimating ||
       route.secondaryAnimation!.isAnimating ||
       route.navigator!.userGestureInProgress;
-  final clips = backdrop.evaluate().map(
-    (element) => element.findAncestorWidgetOfExactType<ClipRect>(),
-  ).toSet();
+  final clips = backdrop
+      .evaluate()
+      .map((element) => element.findAncestorWidgetOfExactType<ClipRect>())
+      .toSet();
   expect(clips, hasLength(1));
   expect(clips.single, isNotNull);
-  expect(clips.single!.clipBehavior,
-      transient ? Clip.antiAliasWithSaveLayer : Clip.hardEdge);
+  expect(
+    clips.single!.clipBehavior,
+    transient ? Clip.antiAliasWithSaveLayer : Clip.hardEdge,
+  );
   return transient;
+}
+
+Map<String, Object?> _captureState() {
+  final ink = LiquidGlassHost.debugLastInkCapture;
+  final glass = LiquidGlassHost.debugLastCapture;
+  List<double> coordinates(Rect rect) => [
+    rect.left, rect.top, rect.right, rect.bottom,
+  ];
+  return {
+    'inkGeneration': ink?.generation,
+    'inkSourceCaptures': ink?.sourceCaptures,
+    'inkFallbackCaptures': ink?.fallbackCaptures,
+    'inkTexturePixels': ink?.texturePixels,
+    'atlasPixels': glass?.atlasPixels,
+    'panes': [
+      for (final pane in glass?.panes ?? [])
+        {
+          'pane': coordinates(pane.pane),
+          'slot': coordinates(pane.slot),
+          'place': coordinates(pane.place),
+          'scale': pane.scale,
+          'level': pane.level,
+          'wallpaper': pane.wallpaper,
+          'atlasWidth': pane.atlas.width,
+          'atlasHeight': pane.atlas.height,
+        },
+    ],
+  };
 }
 
 class _EmptyRules extends ProfileRules {

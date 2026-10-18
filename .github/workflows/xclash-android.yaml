@@ -108,12 +108,12 @@ jobs:
             test/widgets/navigation_dock_ink_test.dart \
             test/widgets/navigation_dock_collapse_test.dart \
             test/pages/home_dock_scroll_test.dart \
+            test/pages/home_test.dart \
             test/widgets/aurora_transform_test.dart \
             test/widgets/aurora_motion_test.dart \
             test/widgets/aurora_lifecycle_test.dart \
             test/widgets/aurora_text_colors_test.dart \
             test/widgets/glass_ink_cache_test.dart \
-            test/widgets/glass_ink_processing_test.dart \
             test/widgets/glass_ink_geometry_test.dart \
             test/widgets/dashboard_text_bounds_test.dart \
             test/widgets/shared_text_bounds_test.dart \
@@ -133,6 +133,9 @@ jobs:
             test/widgets/core_status_button_test.dart \
             test/widgets/proxy_card_focus_test.dart \
             test/widgets/proxies_list_test.dart \
+            test/widgets/proxies_tab_test.dart \
+            test/widgets/floating_scrollbar_test.dart \
+            test/widgets/scrollbar_inset_test.dart \
             test/views/proxies_list_test.dart \
             test/widgets/subscription_usage_fill_test.dart \
             test/views/dashboard/current_outbound_test.dart \

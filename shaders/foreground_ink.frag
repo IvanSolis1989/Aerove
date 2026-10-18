@@ -10,9 +10,7 @@ uniform float uDark;
 uniform float uContrast;
 uniform float uAlpha;
 uniform vec3 uSource;
-uniform float uCacheMode;
 uniform sampler2D uField;
-uniform sampler2D uProcessed;
 out vec4 fragColor;
 
 float luminance(vec3 c) {
@@ -54,26 +52,9 @@ vec3 readable(vec3 ink, vec3 background, float backgroundLuminance, float alpha)
 void main() {
   vec2 local = FlutterFragCoord().xy;
   vec2 position = uOrigin + uAxisX * local.x + uAxisY * local.y;
-  vec2 uv = clamp(position / uFieldSize, 0.0, 1.0);
-  vec3 background = texture(uField, uv).rgb;
+  vec3 background = texture(uField, clamp(position / uFieldSize, 0.0, 1.0)).rgb;
   float backgroundLuminance = luminance(background);
-  vec3 colored;
-  if (uCacheMode > 1.5) {
-    vec4 cached = texture(uProcessed, uv);
-    if (cached.a > 0.996 || abs(cached.a - 0.5) < 0.004) {
-      colored = cached.rgb / cached.a;
-    } else {
-      colored = readable(vivid(background), background, backgroundLuminance, 1.0);
-    }
-  } else {
-    colored = readable(vivid(background), background, backgroundLuminance, 1.0);
-  }
-  if (uCacheMode > 0.5 && uCacheMode < 1.5) {
-    float pole = (backgroundLuminance + 0.05) / 0.05 >
-        1.05 / (backgroundLuminance + 0.05) ? 1.0 : 0.5;
-    fragColor = vec4(colored * pole, pole);
-    return;
-  }
+  vec3 colored = readable(vivid(background), background, backgroundLuminance, 1.0);
   vec3 ink = readable(mix(uSource, colored, uStrength), background, backgroundLuminance, uAlpha);
   fragColor = vec4(ink, 1.0);
 }

@@ -176,8 +176,10 @@ class SharedXPageTransition extends StatelessWidget {
             ?backdropGesture,
           ]),
           builder: (_, child) => ClipRect(
-            clipBehavior: (backdropAnimation ?? animation).isAnimating ||
-                    secondaryAnimation.isAnimating || backdropGesture?.value == true
+            clipBehavior:
+                (backdropAnimation ?? animation).isAnimating ||
+                    secondaryAnimation.isAnimating ||
+                    backdropGesture?.value == true
                 ? Clip.antiAliasWithSaveLayer
                 : Clip.hardEdge,
             child: child,
@@ -219,33 +221,17 @@ class SharedXPageTransition extends StatelessWidget {
       ),
       child: child,
     );
-    return _isolateBackdrop(DualTransitionBuilder(
-      animation: animation,
-      forwardBuilder: (_, animation, child) => _overPageBelow(
-        animation,
-        _fadeOut,
-        SlideTransition(
-          position: enterSlide.animate(animation),
-          child: _withBackdrop(
-            _PageFade(
-              opacity: _takeOver.animate(animation),
-              color: color,
-              opaque: true,
-              child: child,
-            ),
-          ),
-        ),
-      ),
-      reverseBuilder: (_, animation, child) => IgnorePointer(
-        ignoring: animation.status == AnimationStatus.forward,
-        child: _overPageBelow(
+    return _isolateBackdrop(
+      DualTransitionBuilder(
+        animation: animation,
+        forwardBuilder: (_, animation, child) => _overPageBelow(
           animation,
-          _fadeIn,
+          _fadeOut,
           SlideTransition(
-            position: exitSlide.animate(animation),
+            position: enterSlide.animate(animation),
             child: _withBackdrop(
               _PageFade(
-                opacity: _handBack.animate(animation),
+                opacity: _takeOver.animate(animation),
                 color: color,
                 opaque: true,
                 child: child,
@@ -253,12 +239,30 @@ class SharedXPageTransition extends StatelessWidget {
             ),
           ),
         ),
+        reverseBuilder: (_, animation, child) => IgnorePointer(
+          ignoring: animation.status == AnimationStatus.forward,
+          child: _overPageBelow(
+            animation,
+            _fadeIn,
+            SlideTransition(
+              position: exitSlide.animate(animation),
+              child: _withBackdrop(
+                _PageFade(
+                  opacity: _handBack.animate(animation),
+                  color: color,
+                  opaque: true,
+                  child: child,
+                ),
+              ),
+            ),
+          ),
+        ),
+        child: ColoredBox(
+          color: secondaryAnimation.isAnimating ? color : Colors.transparent,
+          child: covered,
+        ),
       ),
-      child: ColoredBox(
-        color: secondaryAnimation.isAnimating ? color : Colors.transparent,
-        child: covered,
-      ),
-    ));
+    );
   }
 }
 

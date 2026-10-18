@@ -56,200 +56,10 @@ class _ColorSourceBox extends RenderRepaintBoundary {
   }) => (oldLayer ?? _ColorSourceLayer())..size = size;
 }
 
-/// Counters accumulate per source; entries and pixels cover all resident caches.
-typedef LiquidGlassInkProcessing = ({
-  int hits,
-  int misses,
-  int builds,
-  int bypasses,
-  int entries,
-  int pixels,
-  int sourceChanges,
-  int buildCpuMicros,
-  int stableFrames,
-});
-
-class _ProcessedInkImage {
-  _ProcessedInkImage(this.owner, this.image);
-  final _ProcessedInkCache owner;
-  final ui.Image image;
-  int references = 0;
-  bool retired = false;
-  Duration? lastFrame;
-
-  void retain() => references++;
-
-  void release() {
-    assert(references > 0);
-    references--;
-    if (references == 0 && retired) owner._disposeImage(this);
-  }
-}
-
-class _ProcessedInkCache {
-  static Duration? _lastBuildFrame;
-  static final _resident = <_ProcessedInkImage>{};
-  static Duration? get _frame =>
-      SchedulerBinding.instance.schedulerPhase == SchedulerPhase.idle
-      ? null
-      : SchedulerBinding.instance.currentFrameTimeStamp;
-  final _entries = <(bool, double, ui.FragmentProgram), _ProcessedInkImage>{};
-  final _images = <_ProcessedInkImage>{};
-  ui.Image? _source;
-  Size _size = Size.zero;
-  Duration? _lastFrame;
-  int stableFrames = 0;
-  int hits = 0;
-  int misses = 0;
-  int builds = 0;
-  int bypasses = 0;
-  int sourceChanges = 0;
-  int buildCpuMicros = 0;
-
-  void observe(ui.Image source, Size size) {
-    final frame = _frame;
-    if (!identical(_source, source) || _size != size) {
-      _retire();
-      _source = source;
-      _size = size;
-      _lastFrame = frame;
-      stableFrames = frame == null ? 0 : 1;
-      sourceChanges++;
-    } else if (frame != null && _lastFrame != frame) {
-      _lastFrame = frame;
-      stableFrames++;
-    }
-  }
-
-  _ProcessedInkImage? resolve(LiquidGlassInkLayer ink) {
-    final program = ink.program;
-    final source = _source;
-    if (program == null || source == null) return null;
-    final key = ink._processingKey!;
-    final found = _entries[key];
-    if (found != null) {
-      found.lastFrame = _frame ?? found.lastFrame;
-      _resident.remove(found);
-      _resident.add(found);
-      _entries.remove(key);
-      _entries[key] = found;
-      hits++;
-      return found;
-    }
-    misses++;
-    final frame = _frame;
-    if (frame == null || stableFrames < 2 || _lastBuildFrame == frame) {
-      bypasses++;
-      return null;
-    }
-    if (_resident.length >= 2) {
-      final unused = _resident
-          .where((entry) => entry.references == 0 && entry.lastFrame != frame)
-          .firstOrNull;
-      if (unused == null) {
-        bypasses++;
-        return null;
-      }
-      unused.owner._entries.removeWhere(
-        (key, entry) => identical(entry, unused),
-      );
-      unused.retired = true;
-      unused.owner._disposeImage(unused);
-    }
-    _lastBuildFrame = frame;
-    final stopwatch = Stopwatch()..start();
-    final scale = math.min(1.0, 256 / math.max(source.width, source.height));
-    final width = math.max(1, (source.width * scale).floor());
-    final height = math.max(1, (source.height * scale).floor());
-    final shader = program.fragmentShader();
-    final values = <double>[
-      _size.width,
-      _size.height,
-      0,
-      0,
-      _size.width / width,
-      0,
-      0,
-      _size.height / height,
-      1,
-      ink.dark ? 1 : 0,
-      ink.contrast,
-      1,
-      0,
-      0,
-      0,
-      1,
-    ];
-    for (final (index, value) in values.indexed) {
-      shader.setFloat(index, value);
-    }
-    shader.setImageSampler(0, source, filterQuality: FilterQuality.low);
-    shader.setImageSampler(1, source, filterQuality: FilterQuality.low);
-    final recorder = ui.PictureRecorder();
-    Canvas(recorder).drawRect(
-      Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
-      Paint()..shader = shader,
-    );
-    final picture = recorder.endRecording();
-    final ui.Image image;
-    try {
-      image = picture.toImageSync(width, height);
-    } finally {
-      picture.dispose();
-      shader.dispose();
-      stopwatch.stop();
-      buildCpuMicros += stopwatch.elapsedMicroseconds;
-    }
-    final entry = _ProcessedInkImage(this, image);
-    entry.lastFrame = frame;
-    _images.add(entry);
-    _resident.add(entry);
-    _entries[key] = entry;
-    builds++;
-    return entry;
-  }
-
-  void _disposeImage(_ProcessedInkImage entry) {
-    if (_images.remove(entry)) {
-      _resident.remove(entry);
-      entry.image.dispose();
-    }
-  }
-
-  void _retire() {
-    for (final entry in _entries.values) {
-      entry.retired = true;
-      if (entry.references == 0) _disposeImage(entry);
-    }
-    _entries.clear();
-  }
-
-  LiquidGlassInkProcessing get metrics => (
-    hits: hits,
-    misses: misses,
-    builds: builds,
-    bypasses: bypasses,
-    entries: _resident.length,
-    pixels: _resident.fold(
-      0,
-      (sum, entry) => sum + entry.image.width * entry.image.height,
-    ),
-    sourceChanges: sourceChanges,
-    buildCpuMicros: buildCpuMicros,
-    stableFrames: stableFrames,
-  );
-
-  void dispose() {
-    _retire();
-    _source = null;
-  }
-}
-
 abstract class _ColorSnapshotLayer extends OffsetLayer {
   Size size = Size.zero;
   ui.Image? _image;
   List<Object?> _key = const [];
-  final _processedInk = _ProcessedInkCache();
 
   ui.Image? capture() {
     if (size.isEmpty) return null;
@@ -298,7 +108,6 @@ abstract class _ColorSnapshotLayer extends OffsetLayer {
 
   @override
   void dispose() {
-    _processedInk.dispose();
     _image?.dispose();
     _image = null;
     super.dispose();
@@ -401,16 +210,6 @@ class _InkCounters {
 final _inkCounters = Expando<_InkCounters>();
 
 class LiquidGlassInkLayer extends OffsetLayer {
-  @visibleForTesting
-  static bool? debugProcessedFieldOverride;
-  @visibleForTesting
-  static LiquidGlassInkProcessing? debugLastProcessing;
-  @visibleForTesting
-  static int get debugProcessedImageCount =>
-      _ProcessedInkCache._resident.length;
-  static bool get _processedEnabled =>
-      debugProcessedFieldOverride ??
-      const bool.fromEnvironment('AEROVE_PROCESSED_INK_FIELDS');
   Size size = Size.zero;
   double strength = 1;
   double alpha = 1;
@@ -418,12 +217,9 @@ class LiquidGlassInkLayer extends OffsetLayer {
   double contrast = 4.5;
   bool dark = false;
   ui.FragmentProgram? program;
-  (bool, double, ui.FragmentProgram)? _processingKey;
   ui.FragmentShader? _shader;
   ui.Shader? _effect;
   ui.Image? _filteredField;
-  ui.Image? _sampledProcessed;
-  _ProcessedInkImage? _processed;
   List<double> _uniforms = const [];
   ui.Image? _field;
   Size _fieldSize = Size.zero;
@@ -470,35 +266,22 @@ class LiquidGlassInkLayer extends OffsetLayer {
     if (!identical(this.program, program)) {
       _shader?.dispose();
       _shader = null;
-      _processed?.release();
-      _processed = null;
-      _sampledProcessed = null;
       _filteredField = null;
       _uniforms = const [];
     }
     this.program = program;
-    _processingKey = program == null ? null : (dark, contrast, program);
     _filterDirty = true;
     markNeedsAddToScene();
   }
 
-  bool _publishField(
-    ui.Image? field,
-    Size fieldSize,
-    Matrix4 mapping,
-    _ProcessedInkImage? processed,
-  ) {
+  bool _publishField(ui.Image? field, Size fieldSize, Matrix4 mapping) {
     if (inkFrozen) return false;
     if (!_filterDirty &&
         identical(_field, field) &&
         _fieldSize == fieldSize &&
-        listEquals(_mapping.storage, mapping.storage) &&
-        identical(_processed, processed)) {
+        listEquals(_mapping.storage, mapping.storage)) {
       return false;
     }
-    final previousProcessed = _processed;
-    if (!identical(previousProcessed, processed)) processed?.retain();
-    _processed = processed;
     final previousUniforms = _uniforms;
     final previousField = _filteredField;
     _field = field;
@@ -506,7 +289,6 @@ class LiquidGlassInkLayer extends OffsetLayer {
     _mapping = mapping;
     _filterDirty = true;
     inkShader;
-    if (!identical(previousProcessed, processed)) previousProcessed?.release();
     final changed =
         !identical(previousUniforms, _uniforms) ||
         !identical(previousField, _filteredField);
@@ -515,6 +297,10 @@ class LiquidGlassInkLayer extends OffsetLayer {
     }
     return changed;
   }
+
+  @visibleForTesting
+  (ui.Image, Size, Matrix4)? get debugField =>
+      _field == null ? null : (_field!, _fieldSize, _mapping.clone());
 
   Rect get maskRect => Offset.zero & size;
 
@@ -526,7 +312,6 @@ class LiquidGlassInkLayer extends OffsetLayer {
     if (field == null || program == null || size.isEmpty) {
       _shader?.dispose();
       _shader = null;
-      _sampledProcessed = null;
       _filteredField = null;
       _uniforms = const [];
       return _effect = null;
@@ -550,12 +335,8 @@ class LiquidGlassInkLayer extends OffsetLayer {
       source.r,
       source.g,
       source.b,
-      _processed == null ? 0.0 : 2.0,
     ];
-    final processed = _processed?.image ?? field;
-    if (identical(field, _filteredField) &&
-        identical(processed, _sampledProcessed) &&
-        listEquals(values, _uniforms)) {
+    if (identical(field, _filteredField) && listEquals(values, _uniforms)) {
       return _effect;
     }
     final shader = _shader ??= program.fragmentShader();
@@ -567,10 +348,6 @@ class LiquidGlassInkLayer extends OffsetLayer {
     if (!identical(field, _filteredField)) {
       shader.setImageSampler(0, field, filterQuality: FilterQuality.low);
     }
-    if (!identical(processed, _sampledProcessed)) {
-      shader.setImageSampler(1, processed, filterQuality: FilterQuality.low);
-    }
-    _sampledProcessed = processed;
     _filteredField = field;
     _uniforms = values;
     return _effect = shader;
@@ -598,8 +375,6 @@ class LiquidGlassInkLayer extends OffsetLayer {
   @override
   void dispose() {
     _shader?.dispose();
-    _processed?.release();
-    _processed = null;
     super.dispose();
   }
 }
@@ -771,10 +546,6 @@ extension _InkCapture on _LiquidGlassHostLayer {
     if (image != null) {
       viewport?.$1.select(image);
     }
-    final processing = LiquidGlassInkLayer._processedEnabled && image != null
-        ? snapshot?._processedInk
-        : null;
-    if (processing != null) processing.observe(image!, snapshot!.size);
     final inverse = toHost == null ? null : Matrix4.tryInvert(toHost);
     for (final (backdrop, matrix) in backdrops) {
       backdrop._publishField(
@@ -786,14 +557,6 @@ extension _InkCapture on _LiquidGlassHostLayer {
       );
     }
     var updates = 0;
-    final variants =
-        <(bool, double, ui.FragmentProgram), _ProcessedInkImage?>{};
-    _ProcessedInkImage? prepared(LiquidGlassInkLayer ink) {
-      final key = ink._processingKey;
-      if (processing == null || key == null) return null;
-      return variants.putIfAbsent(key, () => processing.resolve(ink));
-    }
-
     for (final (ink, matrix) in updating) {
       if (ink._publishField(
         inverse == null ? null : image,
@@ -801,7 +564,6 @@ extension _InkCapture on _LiquidGlassHostLayer {
         inverse == null
             ? Matrix4.identity()
             : (inverse.clone()..multiply(matrix)),
-        inverse == null ? null : prepared(ink),
       )) {
         updates++;
       }
@@ -810,7 +572,6 @@ extension _InkCapture on _LiquidGlassHostLayer {
       ink._freeze();
     }
     assert(() {
-      LiquidGlassInkLayer.debugLastProcessing = snapshot?._processedInk.metrics;
       final counters = _inkCounters[this] ??= _InkCounters();
       if (image != null && !identical(before, image)) {
         if (selected == null) {

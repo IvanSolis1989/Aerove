@@ -311,9 +311,7 @@ Future<GlobalKey> _mountDashboard(
           theme: watchAppTheme(ref, brightness),
           child: Builder(
             builder: (context) => MediaQuery(
-              data: MediaQuery.of(
-                context,
-              ).copyWith(
+              data: MediaQuery.of(context).copyWith(
                 textScaler: TextScaler.linear(scale),
                 disableAnimations: true,
               ),
@@ -402,8 +400,8 @@ void main() {
           ).firstMatch(details.exceptionAsString());
           final diagnostics = [
             details.toString(),
-            for (final node in details.informationCollector?.call() ??
-                <DiagnosticsNode>[])
+            for (final node
+                in details.informationCollector?.call() ?? <DiagnosticsNode>[])
               node.toStringDeep(minLevel: DiagnosticLevel.hidden),
           ].join('\n');
           final component = diagnostics.contains('DashboardChip')

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -78,11 +79,18 @@ void main() {
         tester.view.physicalSize = const Size(320, 240);
         tester.view.devicePixelRatio = 1;
         addTearDown(tester.view.reset);
-        Future<void> render(Color color, int cover) async {
+        Future<void> render(Color color, int cover, {bool isolated = false}) async {
           const marker = LiquidGlassOcclusion(
             shape: AppShape.none,
             bottomFeather: 12,
             child: SizedBox.expand(),
+          );
+          const pane = LiquidGlass(
+            style: LiquidGlassStyle(
+              tint: Color(0x33FF0000), blur: 0, refraction: 0, bevel: 0,
+              rim: 0.6, rimWidth: 1, hairline: 0.2,
+            ),
+            clipper: ShapeBorderClipper(shape: AppShape.circle),
           );
           await tester.pumpWidget(
             MaterialApp(
@@ -102,23 +110,14 @@ void main() {
                             child: ColoredBox(color: color),
                           ),
                         ),
-                        const Positioned(
+                        Positioned(
                           left: 40,
                           top: 60,
                           width: 120,
                           height: 120,
-                          child: LiquidGlass(
-                            style: LiquidGlassStyle(
-                              tint: Color(0x33FF0000),
-                              blur: 0,
-                              refraction: 0,
-                              bevel: 0,
-                              rim: 0.6,
-                              rimWidth: 1,
-                              hairline: 0.2,
-                            ),
-                            clipper: ShapeBorderClipper(shape: AppShape.circle),
-                          ),
+                          child: isolated ? const RepaintBoundary(
+                            key: ValueKey('resolved-live-pane'), child: pane,
+                          ) : pane,
                         ),
                         if (cover == 1)
                           const Positioned.fill(
@@ -173,15 +172,53 @@ void main() {
         final cost = LiquidGlassHost.debugLastFeatherCapture!;
         expect(cost.panes, 1);
         expect(cost.stripPixels, 120 * 15);
-        expect(cost.surfacePixels, 122 * 17 * 3);
+        expect(cost.surfacePixels, 120 * 15 * 3);
         await render(Colors.green, 4);
         final crossed = await _shot(tester, 'oracle-crossed-$quality');
         expect(
           LiquidGlassHost.debugLastFeatherCapture!.surfacePixels,
-          122 * 17 * 5,
+          120 * 15 * 5,
         );
         await render(Colors.green, 0);
         final live = await _shot(tester, 'oracle-live-$quality');
+        await render(Colors.green, 0, isolated: true);
+        await _shot(tester, 'oracle-isolated-live-$quality');
+        final resolved = List<int>.of(live);
+        final control = tester.renderObject<RenderRepaintBoundary>(
+          find.byKey(const ValueKey('resolved-live-pane')),
+        );
+        await tester.runAsync(() async {
+          final image = await control.toImage();
+          try {
+            expect(image.width, 120);
+            expect(image.height, 120);
+            final rgba = (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!
+                .buffer.asUint8List();
+            expect(rgba[3], 0);
+            expect(rgba[(60 * 120 + 60) * 4 + 3], 255);
+            final background = _pixel(live, 5, 116);
+            for (var y = 0; y < 120; y++) {
+              for (var x = 0; x < 120; x++) {
+                final from = (y * 120 + x) * 4;
+                final to = ((y + 60) * 320 + x + 40) * 4;
+                final alpha = rgba[from + 3] / 255;
+                for (var channel = 0; channel < 3; channel++) {
+                  resolved[to + channel] = (rgba[from + channel] +
+                      background[channel] * (1 - alpha)).round().clamp(0, 255);
+                }
+              }
+            }
+          } finally { image.dispose(); }
+        });
+        final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+        if (output != null) {
+          File('$output/header-aa-endpoints-${quality.name}.json').writeAsStringSync(jsonEncode({
+            'direct': _pixel(live, 159, 122),
+            'resolved': _pixel(resolved, 159, 122),
+            'frozen': _pixel(frozen, 159, 122),
+            'mixed': _pixel(mixed, 159, 122),
+          }));
+        }
         var changedPixels = 0;
         for (var y = 110; y < 125; y++) {
           final t = (y + 0.5 - 110) / 15;
@@ -192,7 +229,7 @@ void main() {
             for (var channel = 0; channel < 4; channel++) {
               final expected =
                   frozen[index + channel] * (1 - weight) +
-                  live[index + channel] * weight;
+                  resolved[index + channel] * weight;
               expect(
                 mixed[index + channel],
                 closeTo(expected, 2),
@@ -389,7 +426,7 @@ void main() {
         expect(LiquidGlassHost.debugLastFeatherCapture!.stripPixels, 320 * 12);
         expect(
           LiquidGlassHost.debugLastFeatherCapture!.surfacePixels,
-          320 * 14 * 3,
+          320 * 12 * 3,
         );
         final stable = await _shot(tester, 'stable-$quality');
         expect(stable, moving);

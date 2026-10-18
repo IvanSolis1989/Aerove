@@ -160,11 +160,7 @@ void main() {
       open();
       await tester.pumpAndSettle();
       expect(LiquidGlassHost.debugLastCapture!.clippedPanes, greaterThan(0));
-      await tester.tap(
-        find.byWidgetPredicate(
-          (widget) => widget is Text && widget.data == 'Choose',
-        ),
-      );
+      await tester.tap(find.text('Choose', findRichText: true));
       await tester.pumpAndSettle();
       expect(selected, isTrue);
       expect(find.byType(PopupMenuCard), findsNothing);

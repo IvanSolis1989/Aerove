@@ -117,6 +117,7 @@ void main() {
                               offset: Offset(-shift, 0),
                               child: const LiquidGlassColorSource(
                                 child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.stretch,
                                   children: [
                                     Expanded(child: ColoredBox(color: _pink)),
                                     Expanded(child: ColoredBox(color: _blue)),
@@ -155,10 +156,16 @@ void main() {
           ),
         );
         await tester.pump();
+        for (final color in [_pink, _blue]) {
+          final source = find.byWidgetPredicate((widget) =>
+              widget is ColoredBox && widget.color == color);
+          expect(tester.getSize(source), const Size(400, 300));
+        }
       }
 
       await mount(wallpaperOnly: false);
       final generic = await _shot(tester, '${quality.name}-generic');
+      expect(_pixel(generic, 10, 150), _pink);
       expect(_pixel(generic, 100, 100), isNot(_pink));
       final old = LiquidGlassHost.debugLastCapture!;
       expect(
@@ -181,7 +188,7 @@ void main() {
       final dock = await _shot(tester, '${quality.name}-dock');
       final captured = LiquidGlassHost.debugLastCapture!;
       expect(_pixel(dock, 100, 100), _pink);
-      expect(_pixel(dock, 130, 130), Colors.orange);
+      expect(_pixel(dock, 130, 130).toARGB32(), Colors.orange.toARGB32());
       expect(
         captured.panes
             .where((pane) => pane.pane != _dock)
@@ -196,8 +203,9 @@ void main() {
       expect(captured.replayedPanes, greaterThan(0));
       await mount(wallpaperOnly: true, shift: 300);
       final moved = await _shot(tester, '${quality.name}-moved');
+      expect(_pixel(moved, 390, 290), _blue);
       expect(_pixel(moved, 100, 100), _blue);
-      expect(_pixel(moved, 130, 130), Colors.orange);
+      expect(_pixel(moved, 130, 130).toARGB32(), Colors.orange.toARGB32());
       await tester.pump();
       final stable = await _shot(tester, '${quality.name}-stable');
       expect(stable.bytes, moved.bytes);

@@ -457,7 +457,8 @@ Future<void> _expectSolid(
   Offset point,
   Color color,
 ) async {
-  final boundary = capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+  final boundary =
+      capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
   late ByteData bytes;
   late int width;
   await tester.runAsync(() async {
@@ -470,13 +471,20 @@ Future<void> _expectSolid(
   for (var y = point.dy.floor(); y < point.dy.floor() + 4; y++) {
     for (var x = point.dx.floor(); x < point.dx.floor() + 4; x++) {
       final index = (y * width + x) * 4;
-      expect([
-        bytes.getUint8(index), bytes.getUint8(index + 1),
-        bytes.getUint8(index + 2), bytes.getUint8(index + 3),
-      ], [
-        (expected >> 16) & 255, (expected >> 8) & 255,
-        expected & 255, (expected >> 24) & 255,
-      ]);
+      expect(
+        [
+          bytes.getUint8(index),
+          bytes.getUint8(index + 1),
+          bytes.getUint8(index + 2),
+          bytes.getUint8(index + 3),
+        ],
+        [
+          (expected >> 16) & 255,
+          (expected >> 8) & 255,
+          expected & 255,
+          (expected >> 24) & 255,
+        ],
+      );
     }
   }
 }

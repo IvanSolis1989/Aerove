@@ -96,11 +96,14 @@ class DashboardCard extends StatelessWidget {
           clipBehavior: clipBehavior,
           decoration: ShapeDecoration(
             color: DashboardColors.of(context).card,
-            shape: shape,
+            shape: shape.copyWith(side: BorderSide.none),
             shadows: LiquidGlassScope.of(context)
                 ? null
                 : DashboardShadows.e1(context),
           ),
+          foregroundDecoration: LiquidGlassScope.of(context)
+              ? ShapeDecoration(shape: shape)
+              : null,
           child: Material(
             type: MaterialType.transparency,
             child: onTap == null
