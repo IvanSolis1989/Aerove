@@ -23,6 +23,8 @@ const double _edgeMargin = 21;
 const double _shadowRoom = 8;
 const double _hitSlop = 8;
 const double _maxItemExtent = 86;
+const double _compactItemExtent = 56;
+const double _compactBarHeight = 56;
 const double _minLensWidth = 84;
 const _fullWidthCount = 5;
 const double _iconSize = 28;
@@ -124,20 +126,22 @@ Rect _lensRect({
   );
 }
 
-/// Spaces destinations as iOS's tab bar does: the resting lens overhangs its
-/// destination by [_barPadding] and never narrows below [_minLensWidth].
+/// Keeps the lens overhang while narrowing its minimum with the label layout.
 ({double pitch, double lens, double inset}) _dockLayout(
   double span,
-  int count,
-) {
+  int count, [
+  double collapse = 0,
+]) {
   if (count <= 1) {
     return (pitch: span - _barPadding * 2, lens: span, inset: _barPadding);
   }
   final pitch = (span - _barPadding * 2) / count;
-  if (pitch + _barPadding * 2 >= _minLensWidth) {
+  final minimum = _minLensWidth +
+      (_compactItemExtent + _barPadding * 2 - _minLensWidth) * collapse;
+  if (pitch + _barPadding * 2 >= minimum) {
     return (pitch: pitch, lens: pitch + _barPadding * 2, inset: _barPadding);
   }
-  final lens = math.min(_minLensWidth, span);
+  final lens = math.min(minimum, span);
   final closed = (span - lens) / (count - 1);
   return (pitch: closed, lens: lens, inset: (lens - closed) / 2);
 }
@@ -307,17 +311,19 @@ class NavigationDockDestination {
   final String label;
 }
 
-class NavigationDock extends StatelessWidget {
+class NavigationDock extends StatefulWidget {
   const NavigationDock({
     super.key,
     required this.destinations,
     required this.selectedIndex,
     required this.onSelected,
+    this.collapsed = false,
   });
 
   final List<NavigationDockDestination> destinations;
   final int selectedIndex;
   final ValueChanged<int> onSelected;
+  final bool collapsed;
 
   static double heightOf(BuildContext context) {
     return _barHeight +
@@ -333,52 +339,113 @@ class NavigationDock extends StatelessWidget {
       heightOf(context) + _bottomMarginOf(context);
 
   @override
+  State<NavigationDock> createState() => _NavigationDockState();
+}
+
+class _NavigationDockState extends State<NavigationDock>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _collapse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 300),
+    value: widget.collapsed ? 1 : 0,
+  );
+
+  void _syncCollapse() {
+    final target = widget.collapsed ? 1.0 : 0.0;
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _collapse.value = target;
+    } else if (_collapse.value != target) {
+      _collapse.animateTo(target, curve: Curves.easeInOutCubic);
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncCollapse();
+  }
+
+  @override
+  void didUpdateWidget(NavigationDock oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.collapsed != widget.collapsed) _syncCollapse();
+  }
+
+  @override
+  void dispose() {
+    _collapse.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final height = heightOf(context);
-    final dock = Padding(
-      padding: EdgeInsets.fromLTRB(
-        _edgeMargin,
-        _shadowRoom,
-        _edgeMargin,
-        _bottomMarginOf(context),
-      ),
-      child: _HitSlop(
-        child: SizedBox(
-          height: height,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Flexible(
-                child: _HitSlop(
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxWidth: destinations.length >= _fullWidthCount
-                          ? double.infinity
-                          : destinations.length * _maxItemExtent +
-                                _barPadding * 4,
-                    ),
-                    child: FloatingNavigationBar(
-                      destinations: destinations,
-                      selectedIndex: selectedIndex,
-                      onSelected: onSelected,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+    final height = NavigationDock.heightOf(context);
+    final bottom = NavigationDock._bottomMarginOf(context);
     // The bar rebuilds every frame its lens or a press moves; a scope of its
     // own keeps that to the dock (.agents/architecture.md, Rebuild Scopes).
     return SizedBox(
       width: double.infinity,
-      height: _shadowRoom + height + _bottomMarginOf(context),
-      child: RepaintBoundary(child: LayoutBuilder(builder: (_, _) => dock)),
+      height: _shadowRoom + height + bottom,
+      child: RepaintBoundary(
+        child: AnimatedBuilder(
+          animation: _collapse,
+          builder: (_, _) => Padding(
+            padding: EdgeInsets.fromLTRB(
+              _edgeMargin,
+              _shadowRoom,
+              _edgeMargin,
+              bottom,
+            ),
+            child: _HitSlop(child: LayoutBuilder(
+              builder: (_, constraints) {
+                final progress = _collapse.value;
+                final count = widget.destinations.length;
+                final expanded = count >= _fullWidthCount
+                    ? constraints.maxWidth
+                    : math.min(
+                        constraints.maxWidth,
+                        count * _maxItemExtent + _barPadding * 4,
+                      );
+                final compact = math.min(
+                  expanded,
+                  count * _compactItemExtent + _barPadding * 4,
+                );
+                return Align(
+                  alignment: Alignment.bottomCenter,
+                  child: _HitSlop(
+                    child: SizedBox(
+                      width: expanded + (compact - expanded) * progress,
+                      height: height + (_compactBarHeight - height) * progress,
+                      child: _DockCollapse(
+                        progress: progress,
+                        child: FloatingNavigationBar(
+                          destinations: widget.destinations,
+                          selectedIndex: widget.selectedIndex,
+                          onSelected: widget.onSelected,
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            )),
+          ),
+        ),
+      ),
     );
   }
+}
+
+class _DockCollapse extends InheritedWidget {
+  const _DockCollapse({required this.progress, required super.child});
+
+  final double progress;
+
+  static double of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<_DockCollapse>()?.progress ?? 0;
+
+  @override
+  bool updateShouldNotify(_DockCollapse oldWidget) => progress != oldWidget.progress;
 }
 
 /// Lets a touch that misses the dock by at most [_hitSlop] still reach it.
@@ -803,6 +870,7 @@ class _FloatingNavigationBarState extends State<FloatingNavigationBar>
   ({double pitch, double lens, double inset}) get _layout => _dockLayout(
     context.size!.width - _barPadding * 2,
     widget.destinations.length,
+    _DockCollapse.of(context),
   );
 
   @override
@@ -1119,6 +1187,7 @@ class _FloatingNavigationBarState extends State<FloatingNavigationBar>
   @override
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
+    final collapse = _DockCollapse.of(context);
     final labelStyle = AppTextStyle.custom(
       context,
       size: _labelSize,
@@ -1175,6 +1244,7 @@ class _FloatingNavigationBarState extends State<FloatingNavigationBar>
                     final layout = _dockLayout(
                       constraints.maxWidth,
                       widget.destinations.length,
+                      collapse,
                     );
                     final room = layout.pitch - _labelInset * 2;
                     final labelScale = widest <= room
@@ -1209,6 +1279,7 @@ class _FloatingNavigationBarState extends State<FloatingNavigationBar>
                                   fontSize: _labelSize * labelScale,
                                 ),
                                 labelHeight: lineHeight,
+                                labelVisibility: 1 - collapse,
                                 labelOverflows:
                                     labels[index].width * labelScale > room,
                                 onActivate: () => widget.onSelected(index),
@@ -1498,6 +1569,7 @@ class _FloatingBarItem extends StatefulWidget {
     required this.lift,
     required this.labelStyle,
     required this.labelHeight,
+    required this.labelVisibility,
     required this.labelOverflows,
     required this.onActivate,
   });
@@ -1516,6 +1588,7 @@ class _FloatingBarItem extends StatefulWidget {
   final ValueListenable<double> lift;
   final TextStyle? labelStyle;
   final double labelHeight;
+  final double labelVisibility;
   final bool labelOverflows;
   final VoidCallback onActivate;
 
@@ -1538,6 +1611,18 @@ class _FloatingBarItemState extends State<_FloatingBarItem> {
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
     final color = colorScheme.onSurfaceVariant;
+    final glass = LiquidGlassScope.of(context);
+    final label = GlassText(
+      widget.destination.label,
+      maxLines: 1,
+      softWrap: false,
+      overflow: TextOverflow.ellipsis,
+      style: widget.labelStyle?.copyWith(
+        color: glass
+            ? color
+            : color.withValues(alpha: color.a * widget.labelVisibility),
+      ),
+    );
     var tint = colorScheme.primary;
     if (widget.part == _LensPart.inside &&
         LiquidGlassScope.qualityOf(context) == LiquidGlassQuality.standard) {
@@ -1558,7 +1643,7 @@ class _FloatingBarItemState extends State<_FloatingBarItem> {
       lift: widget.lift,
       parallax: widget.parallax,
       index: widget.index,
-      color: LiquidGlassScope.of(context) ? Colors.transparent : tint,
+      color: glass ? Colors.transparent : tint,
       textDirection: Directionality.of(context),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: _labelInset),
@@ -1571,16 +1656,19 @@ class _FloatingBarItemState extends State<_FloatingBarItem> {
               color: color,
               fill: 1,
             ),
-            const SizedBox(height: _labelGap),
+            SizedBox(height: _labelGap * widget.labelVisibility),
             SizedBox(
-              height: widget.labelHeight,
-              child: Center(
-                child: GlassText(
-                  widget.destination.label,
-                  maxLines: 1,
-                  softWrap: false,
-                  overflow: TextOverflow.ellipsis,
-                  style: widget.labelStyle?.copyWith(color: color),
+              height: widget.labelHeight * widget.labelVisibility,
+              child: OverflowBox(
+                minHeight: widget.labelHeight,
+                maxHeight: widget.labelHeight,
+                child: Center(
+                  child: Transform.scale(
+                    scale: widget.labelVisibility,
+                    child: glass
+                        ? Opacity(opacity: widget.labelVisibility, child: label)
+                        : label,
+                  ),
                 ),
               ),
             ),

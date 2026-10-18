@@ -6,6 +6,7 @@ import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -49,17 +50,65 @@ class HomePage extends ConsumerWidget {
   }
 }
 
-class _HomeShell extends ConsumerWidget {
+class _HomeShell extends ConsumerStatefulWidget {
   const _HomeShell({required this.child});
 
   final Widget child;
+
+  @override
+  ConsumerState<_HomeShell> createState() => _HomeShellState();
+}
+
+class _HomeShellState extends ConsumerState<_HomeShell> {
+  final _dockCollapsed = ValueNotifier(false);
+  ScrollDirection _scrollDirection = ScrollDirection.idle;
+  double _scrollTravel = 0;
+
+  bool _handleScroll(ScrollNotification notification) {
+    if (notification.metrics.axis != Axis.vertical ||
+        notification.context
+                ?.getInheritedWidgetOfExactType<PageActivityScope>()
+                ?.isActive ==
+            false) {
+      return false;
+    }
+    if (notification is UserScrollNotification) {
+      _scrollDirection = notification.direction;
+      _scrollTravel = 0;
+    }
+    if (notification is ScrollUpdateNotification) {
+      if (notification.metrics.extentBefore <= 0) {
+        _dockCollapsed.value = false;
+        _scrollTravel = 0;
+      } else if (notification.dragDetails != null &&
+          _scrollDirection != ScrollDirection.idle) {
+        _scrollTravel += (notification.scrollDelta ?? 0).abs();
+        if (_scrollTravel >= 12) {
+          _dockCollapsed.value = _scrollDirection == ScrollDirection.reverse;
+        }
+      }
+    }
+    return false;
+  }
+
+  @override
+  void dispose() {
+    _dockCollapsed.dispose();
+    super.dispose();
+  }
 
   void _handleToPage(PageLabel pageLabel, WidgetRef ref) {
     ref.read(currentPageLabelProvider.notifier).toPage(pageLabel);
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
+    ref.listen(currentPageLabelProvider, (previous, next) {
+      if (previous == next) return;
+      _dockCollapsed.value = false;
+      _scrollDirection = ScrollDirection.idle;
+      _scrollTravel = 0;
+    });
     final state = ref.watch(navigationStateProvider);
     final isMobile = state.viewMode == ViewMode.mobile;
     final navigationItems = state.navigationItems;
@@ -82,7 +131,10 @@ class _HomeShell extends ConsumerWidget {
                       inset: isMobile && floating
                           ? NavigationDock.insetOf(context)
                           : 0,
-                      child: _BodyPadding(isMobile: isMobile, child: child),
+                      child: NotificationListener<ScrollNotification>(
+                        onNotification: isMobile && floating ? _handleScroll : null,
+                        child: _BodyPadding(isMobile: isMobile, child: widget.child),
+                      ),
                     ),
                   ),
                 ),
@@ -93,7 +145,10 @@ class _HomeShell extends ConsumerWidget {
                   child: AnimatedVisibility.bottomNavigation(
                     visible: isMobile && floating,
                     child: _NavigationPadding(
-                      child: NavigationDock(
+                      child: ValueListenableBuilder<bool>(
+                        valueListenable: _dockCollapsed,
+                        builder: (context, collapsed, child) => NavigationDock(
+                        collapsed: collapsed,
                         destinations: [
                           for (final item in navigationItems)
                             NavigationDockDestination(
@@ -105,6 +160,7 @@ class _HomeShell extends ConsumerWidget {
                         onSelected: (index) {
                           _handleToPage(navigationItems[index].label, ref);
                         },
+                        ),
                       ),
                     ),
                   ),

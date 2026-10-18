@@ -106,6 +106,8 @@ jobs:
           flutter test --enable-impeller --reporter expanded \
             test/widgets/ink_motion_baseline_test.dart \
             test/widgets/navigation_dock_ink_test.dart \
+            test/widgets/navigation_dock_collapse_test.dart \
+            test/pages/home_dock_scroll_test.dart \
             test/widgets/aurora_transform_test.dart \
             test/widgets/aurora_motion_test.dart \
             test/widgets/aurora_lifecycle_test.dart \
