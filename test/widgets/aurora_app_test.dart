@@ -46,7 +46,7 @@ void main() {
           ),
           builder: (context, child) => MediaQuery(
             data: MediaQuery.of(context).copyWith(highContrast: highContrast),
-            child: AuroraAppSurface(child: child!),
+            child: AuroraAppSurface(motion: false, child: child!),
           ),
           home: const Scaffold(
             body: Center(child: CommonCard(child: Text('XClash'))),
@@ -91,7 +91,7 @@ void main() {
           theme.colorScheme.primary.r,
           closeTo(theme.colorScheme.primary.g, 0.025),
         );
-        expect(theme.colorScheme.onSurface.a, 0.94);
+        expect(theme.colorScheme.onSurface.a, 0.86);
         expect(
           theme.colorScheme.onSurface.withValues(alpha: 1),
           auroraColorScheme(brightness).onSurface,
@@ -159,7 +159,7 @@ void main() {
               platform: TargetPlatform.android,
               brightness: Brightness.dark,
             ),
-            builder: (context, child) => AuroraAppSurface(child: child!),
+            builder: (context, child) => AuroraAppSurface(motion: false, child: child!),
             home: const Scaffold(body: SizedBox(key: probeKey)),
           ),
         ),
@@ -262,7 +262,7 @@ void main() {
               platform: TargetPlatform.android,
               scaffoldBackgroundColor: Colors.teal,
             ),
-            homeBuilder: (child) => AuroraAppSurface(child: child),
+            homeBuilder: (child) => AuroraAppSurface(motion: false, child: child),
             child: CommonScaffold(
               title: 'Page',
               backgroundColor: fill,
@@ -301,6 +301,7 @@ void main() {
         child: MaterialApp(
           theme: ThemeData(platform: TargetPlatform.android),
           builder: (context, child) => AuroraAppSurface(
+            motion: false,
             child: _MountProbe(
               onMount: () => mounts++,
               onDispose: () => disposals++,
@@ -378,7 +379,7 @@ void main() {
                 ).withAppShapes,
                 homeBuilder: (child) => RepaintBoundary(
                   key: captureKey,
-                  child: AuroraAppSurface(child: child),
+                  child: AuroraAppSurface(motion: false, child: child),
                 ),
                 child: const ThemeView(),
               ),
@@ -398,12 +399,12 @@ void main() {
             expect(colors.surface, original.surface);
             expect(colors.error, original.error);
             expect(colors.onSurface.withValues(alpha: 1), original.onSurface);
-            expect(colors.onSurface.a, 0.94);
+            expect(colors.onSurface.a, 0.86);
             expect(
               colors.onSurfaceVariant.withValues(alpha: 1),
               original.onSurfaceVariant,
             );
-            expect(colors.onSurfaceVariant.a, 0.94);
+            expect(colors.onSurfaceVariant.a, 0.86);
           }
           expect(container.read(themeSettingProvider).primaryColor, 0xFFFF2D55);
           if (gradient) {

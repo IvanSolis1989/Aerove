@@ -1,4 +1,5 @@
 import 'package:fl_clash/ui/drag_back.dart';
+import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/surface.dart';
 import 'package:flutter/rendering.dart';
 import 'package:material_ui/material_ui.dart';
@@ -41,7 +42,9 @@ mixin SharedXPageRouteMixin<T> on PageRoute<T>, DragBackRouteMixin<T> {
     Animation<double> secondaryAnimation,
     Widget child,
   ) {
-    final surface = SurfaceLevel.page.colorOf(ColorScheme.of(context));
+    final surface = LiquidGlassScope.of(context)
+        ? Colors.transparent
+        : SurfaceLevel.page.colorOf(ColorScheme.of(context));
     final dragging = isDragBackActive;
     return dragBackDetector(
       dragBackSlide(
@@ -288,6 +291,9 @@ class _RenderPageFade extends RenderProxyBox {
   bool _opaque;
   bool _visible = true;
 
+  @override
+  bool get alwaysNeedsCompositing => child != null && _color.a == 0;
+
   set opacity(Animation<double> value) {
     if (identical(value, _opacity)) {
       return;
@@ -305,6 +311,7 @@ class _RenderPageFade extends RenderProxyBox {
       return;
     }
     _color = value;
+    markNeedsCompositingBitsUpdate();
     markNeedsPaint();
   }
 
@@ -346,6 +353,10 @@ class _RenderPageFade extends RenderProxyBox {
     }
     if (opacity == 1) {
       super.paint(context, offset);
+      return;
+    }
+    if (_color.a == 0) {
+      LiquidGlassFade.push(context, offset, (opacity * 255).round(), super.paint);
       return;
     }
     if (_opaque) {

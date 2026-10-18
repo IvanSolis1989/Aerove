@@ -101,9 +101,15 @@ class InfoHeader extends StatelessWidget {
 const commonCardIconSize = 20.0;
 
 class CardGroup extends StatelessWidget {
-  const CardGroup({super.key, this.shape = AppShape.xl, required this.child});
+  const CardGroup({
+    super.key,
+    this.shape = AppShape.xl,
+    this.paintSurface = true,
+    required this.child,
+  });
 
   final OutlinedBorder shape;
+  final bool paintSurface;
   final Widget child;
 
   @override
@@ -114,7 +120,7 @@ class CardGroup extends StatelessWidget {
       clipBehavior: Clip.none,
       children: [
         Positioned.fill(
-          child: enabled
+          child: enabled && paintSurface
               ? LiquidGlass(
                   style: LiquidGlassStyle.regular(context.colorScheme),
                   clipper: ShapeBorderClipper(

@@ -4,15 +4,23 @@ import 'package:fl_clash/ui/typography.dart';
 import 'package:material_ui/material_ui.dart';
 
 abstract final class GlassForeground {
-  static const opacity = 0.94;
+  static const opacity = 0.86;
 
   static Color cap(Color color) =>
       color.a > opacity ? color.withValues(alpha: opacity) : color;
 
+  static bool _sameRgb(Color a, Color b) =>
+      a.r == b.r && a.g == b.g && a.b == b.b;
+
+  static Color _capFor(Color color, ColorScheme colors) =>
+      _sameRgb(color, colors.error) || _sameRgb(color, colors.onErrorContainer)
+      ? color
+      : cap(color);
+
   static Color colorOf(BuildContext context, Color color) =>
       LiquidGlassScope.of(context) &&
           MediaQuery.maybeHighContrastOf(context) != true
-      ? cap(color)
+      ? _capFor(color, Theme.of(context).colorScheme)
       : color;
 
   static Color iconColorOf(BuildContext context, Color color, double opacity) {
@@ -31,13 +39,17 @@ abstract final class GlassForeground {
       }
     }
     final result = original.withValues(alpha: original.a * opacity);
-    return enabled ? cap(result) : result;
+    return enabled ? _capFor(result, Theme.of(context).colorScheme) : result;
   }
 
   static TextStyle textStyle(TextStyle style) =>
       style.color == null ? style : style.copyWith(color: cap(style.color!));
 
-  static ButtonStyle _button(ButtonStyle? style, Color? fallback) {
+  static ButtonStyle _button(
+    ButtonStyle? style,
+    Color? fallback,
+    ColorScheme colors,
+  ) {
     final base = style ?? const ButtonStyle();
     return base.copyWith(
       foregroundColor: base.foregroundColor == null && fallback == null
@@ -46,7 +58,7 @@ abstract final class GlassForeground {
               final color = base.foregroundColor?.resolve(states);
               if (states.contains(WidgetState.disabled)) return color;
               final resolved = color ?? fallback;
-              return resolved == null ? null : cap(resolved);
+              return resolved == null ? null : _capFor(resolved, colors);
             }),
       iconColor: base.iconColor == null
           ? null
@@ -55,7 +67,7 @@ abstract final class GlassForeground {
               if (color == null || states.contains(WidgetState.disabled)) {
                 return color;
               }
-              return cap(color);
+              return _capFor(color, colors);
             }),
     );
   }
@@ -76,8 +88,6 @@ abstract final class GlassForeground {
     onTertiaryContainer: cap(colors.onTertiaryContainer),
     onTertiaryFixed: cap(colors.onTertiaryFixed),
     onTertiaryFixedVariant: cap(colors.onTertiaryFixedVariant),
-    onError: cap(colors.onError),
-    onErrorContainer: cap(colors.onErrorContainer),
   );
 
   static ThemeData theme(ThemeData theme) {
@@ -103,8 +113,6 @@ abstract final class GlassForeground {
                   colors.onTertiaryContainer,
                   colors.onTertiaryFixed,
                   colors.onTertiaryFixedVariant,
-                  colors.onError,
-                  colors.onErrorContainer,
                   theme.iconTheme.color ?? colors.onSurface,
                   theme.primaryIconTheme.color ?? colors.onPrimary,
                 ]),
@@ -121,21 +129,30 @@ abstract final class GlassForeground {
             color: cap(theme.primaryIconTheme.color ?? colors.onPrimary),
           ),
           textButtonTheme: TextButtonThemeData(
-            style: _button(theme.textButtonTheme.style, colors.primary),
+            style: _button(theme.textButtonTheme.style, colors.primary, colors),
           ),
           outlinedButtonTheme: OutlinedButtonThemeData(
-            style: _button(theme.outlinedButtonTheme.style, colors.primary),
+            style: _button(
+              theme.outlinedButtonTheme.style,
+              colors.primary,
+              colors,
+            ),
           ),
           elevatedButtonTheme: ElevatedButtonThemeData(
-            style: _button(theme.elevatedButtonTheme.style, colors.primary),
+            style: _button(
+              theme.elevatedButtonTheme.style,
+              colors.primary,
+              colors,
+            ),
           ),
           filledButtonTheme: FilledButtonThemeData(
-            style: _button(theme.filledButtonTheme.style, null),
+            style: _button(theme.filledButtonTheme.style, null, colors),
           ),
           iconButtonTheme: IconButtonThemeData(
             style: _button(
               theme.iconButtonTheme.style,
               colors.onSurfaceVariant,
+              colors,
             ),
           ),
           floatingActionButtonTheme: theme.floatingActionButtonTheme.copyWith(

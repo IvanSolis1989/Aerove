@@ -343,7 +343,10 @@ class _ConsentBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: SurfaceLevel.page.colorOf(context.colorScheme),
+        color: LiquidGlassScope.surfaceColorOf(
+          context,
+          SurfaceLevel.page.colorOf(context.colorScheme),
+        ),
       ),
       child: SafeArea(
         top: false,
@@ -401,7 +404,10 @@ class _RestateDialogState extends State<_RestateDialog> {
   Widget _buildStatement(String statement) {
     return DecoratedBox(
       decoration: ShapeDecoration(
-        color: context.raisedSurfaceLevel.colorOf(context.colorScheme),
+        color: LiquidGlassScope.surfaceColorOf(
+          context,
+          context.raisedSurfaceLevel.colorOf(context.colorScheme),
+        ),
         shape: AppShape.lg,
       ),
       child: Padding(

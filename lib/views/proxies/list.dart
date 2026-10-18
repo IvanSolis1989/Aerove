@@ -5,6 +5,7 @@ import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
+import 'package:fl_clash/ui/sliver_glass_group.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter/rendering.dart';
 import 'package:material_ui/material_ui.dart';
@@ -447,6 +448,7 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
   @override
   Widget build(BuildContext context) {
     final groupName = widget.group.name;
+    final glass = LiquidGlassScope.of(context);
     final isExpand = ref.watch(
       unfoldSetProvider.select((state) => state.contains(groupName)),
     );
@@ -499,15 +501,21 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
         key: ValueKey(groupName),
         isExpand: isExpand,
         unfolded: unfolded,
+        hasGlassEnvelope: glass,
         group: widget.group,
         onChange: widget.onChange,
       ),
     );
+    final slivers = [_buildPinnedHeader(isExpand, buildHeader), ?rows];
     return SliverPadding(
       padding: EdgeInsets.only(bottom: widget.gap),
-      sliver: SliverMainAxisGroup(
-        slivers: [_buildPinnedHeader(isExpand, buildHeader), ?rows],
-      ),
+      sliver: glass
+          ? SliverGlassGroup(
+              shape: AppShape.all(AppCorner.xl.ap(context)),
+              style: LiquidGlassStyle.regular(context.colorScheme),
+              slivers: slivers,
+            )
+          : SliverMainAxisGroup(slivers: slivers),
     );
   }
 
@@ -621,6 +629,8 @@ class ListHeader extends ConsumerWidget {
   /// Whether the rows have settled under the header, squaring its bottom.
   final bool unfolded;
 
+  final bool hasGlassEnvelope;
+
   final bool enterAnimated;
 
   /// How far the group's own rows have scrolled under the pinned header, as a
@@ -635,6 +645,7 @@ class ListHeader extends ConsumerWidget {
     this.enterAnimated = true,
     this.floating = 0,
     this.lift = 0,
+    this.hasGlassEnvelope = false,
     required this.group,
     required this.onChange,
     required this.onScrollToSelected,
@@ -697,7 +708,7 @@ class ListHeader extends ConsumerWidget {
     );
     final shape = AppShape.vertical(
       top: radius,
-      bottom: unfolded ? radius * floating : radius,
+      bottom: hasGlassEnvelope ? 0 : unfolded ? radius * floating : radius,
     );
     return DecoratedBox(
       decoration: ShapeDecoration(
@@ -705,10 +716,13 @@ class ListHeader extends ConsumerWidget {
             ? Colors.transparent
             : level.colorOf(colorScheme),
         shape: shape,
-        shadows: lift == 0 ? null : _floatingShadows(colorScheme, lift),
+        shadows: lift == 0 || hasGlassEnvelope
+            ? null
+            : _floatingShadows(colorScheme, lift),
       ),
       child: CardGroup(
         shape: shape,
+        paintSurface: !hasGlassEnvelope,
         child: Padding(
           padding: const EdgeInsets.all(_headerButtonInset),
           child: SurfaceScope(

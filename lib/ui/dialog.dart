@@ -614,7 +614,8 @@ class _AlertAction extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
-    final glassDefault = isDefault && LiquidGlassScope.of(context);
+    final glass = LiquidGlassScope.of(context);
+    final glassDefault = isDefault && glass;
     final fill = LiquidGlassScope.surfaceColorOf(
       context,
       this.fill ?? context.raisedSurfaceLevel.colorOf(colorScheme),
@@ -626,7 +627,7 @@ class _AlertAction extends StatelessWidget {
         : destructive
         ? colorScheme.destructive
         : colorScheme.onSurface;
-    final background = glassDefault
+    final background = glass
         ? Colors.transparent
         : isDefault
         ? colorScheme.primary
@@ -656,19 +657,20 @@ class _AlertAction extends StatelessWidget {
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               splashFactory: NoSplash.splashFactory,
             ).copyWith(
-              backgroundBuilder: glassDefault
+              backgroundBuilder: glass
                   ? LiquidGlass.buttonStyle(
-                      (_) =>
-                          LiquidGlassStyle.tinted(
+                      (_) => glassDefault
+                          ? LiquidGlassStyle.tinted(
                             colorScheme,
                             colorScheme.primary,
                           ).copyWith(
                             tint: colorScheme.primary.withValues(alpha: 0.2),
-                          ),
+                          )
+                          : LiquidGlassStyle.regular(colorScheme),
                     ).backgroundBuilder
                   : null,
               backgroundColor: WidgetStateProperty<Color?>.fromMap({
-                WidgetState.disabled: fill,
+                WidgetState.disabled: glass ? Colors.transparent : fill,
                 WidgetState.pressed: background.withValues(
                   alpha: background.a * pressedShare,
                 ),

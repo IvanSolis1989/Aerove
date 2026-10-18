@@ -1,3 +1,7 @@
+import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
 import 'package:fl_clash/features/form/form.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
@@ -9,6 +13,9 @@ import 'package:fl_clash/providers/state.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/ui/paged_sheet.dart';
 import 'package:fl_clash/ui/popup.dart';
+import 'package:fl_clash/ui/liquid_glass.dart';
+import 'package:fl_clash/ui/open_container.dart';
+import 'package:fl_clash/ui/card.dart';
 import 'package:fl_clash/views/config/advanced.dart';
 import 'package:fl_clash/views/config/custom_resources.dart';
 import 'package:fl_clash/views/config/dns.dart';
@@ -33,6 +40,7 @@ import 'package:fl_clash/views/views.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/rendering.dart';
 
 import '../helpers/test_app.dart';
 import '../helpers/test_database_providers.dart';
@@ -123,6 +131,93 @@ void main() {
     'Advanced configuration': AdvancedConfigView,
     'Custom profile resources': CustomResourcesView,
   };
+
+  for (final brightness in Brightness.values) {
+    for (final quality in [null, ...LiquidGlassQuality.values]) {
+      for (final label in ['Theme', 'General', 'Advanced configuration']) {
+        testWidgets('mobile $label route wallpaper $brightness $quality', (
+          tester,
+        ) async {
+          tester.view.physicalSize = const Size(390, 800);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          final container = ProviderContainer(
+            overrides: [profilesProvider.overrideWith(TestProfiles.new)],
+          );
+          addTearDown(container.dispose);
+          globalState.container = container;
+          container.read(viewSizeProvider.notifier).update(
+            (_) => const Size(390, 800),
+          );
+          final key = GlobalKey();
+          final theme = ThemeData(
+            brightness: brightness,
+            platform: TargetPlatform.android,
+          );
+          await tester.pumpWidget(UncontrolledProviderScope(
+            container: container,
+            child: RepaintBoundary(key: key, child: Stack(
+              fit: StackFit.expand,
+              children: [
+                const CustomPaint(painter: _RouteWallpaper()),
+                LiquidGlassScope(
+                  enabled: quality != null,
+                  quality: quality ?? LiquidGlassQuality.standard,
+                  child: TestApp(
+                    includeNavigatorKey: false,
+                    theme: theme,
+                    child: const ToolsView(),
+                  ),
+                ),
+              ],
+            )),
+          ));
+          await tester.pumpAndSettle();
+          final prefix = 'settings-${brightness.name}-${quality?.name ?? 'none'}-$label';
+          final before = await _routePixels(tester, key, '$prefix-before');
+          final target = find.text(label);
+          await tester.scrollUntilVisible(target, 300,
+            scrollable: find.byType(Scrollable).first);
+          expect(find.ancestor(of: target, matching: find.byType(OpenContainer<dynamic>)),
+            findsOneWidget);
+          await tester.tap(target);
+          await tester.pumpAndSettle();
+          expect(find.byType(toolDestinations[label]!), findsOneWidget);
+          final after = await _routePixels(tester, key, '$prefix-open');
+          final pageContext = tester.element(find.byType(toolDestinations[label]!));
+          expect(LiquidGlassScope.of(pageContext), quality != null);
+          if (quality != null) {
+            expect(find.byType(LiquidGlass), findsWidgets);
+            expect(find.byType(CardGroup), findsWidgets);
+          }
+          for (var y = 200; y < 700; y++) {
+            final at = (y * 390 + 2) * 4;
+            if (quality != null) {
+              expect(after.sublist(at, at + 4), before.sublist(at, at + 4),
+                reason: 'Settled page must retain the external wallpaper at y=$y.');
+            } else {
+              final color = theme.canvasColor;
+              expect(after.sublist(at, at + 4), [
+                (color.r * 255).round(), (color.g * 255).round(),
+                (color.b * 255).round(), 255,
+              ]);
+            }
+          }
+          Navigator.of(pageContext).pop();
+          await tester.pumpAndSettle();
+          final returned = await _routePixels(tester, key, '$prefix-return');
+          for (var y = 200; y < 700; y++) {
+            final at = (y * 390 + 2) * 4;
+            expect(returned.sublist(at, at + 4), before.sublist(at, at + 4));
+          }
+          expect(find.byType(ToolsView), findsOneWidget);
+          expect(tester.takeException(), isNull);
+          await tester.pumpWidget(const SizedBox.shrink());
+        });
+      }
+    }
+  }
 
   for (final entry in toolDestinations.entries) {
     testWidgets('tools opens ${entry.key}', (tester) async {
@@ -517,4 +612,52 @@ class _TestProxyGroups extends ProxyGroups {
 
   @override
   void order(int oldIndex, int newIndex) {}
+}
+
+
+Future<Uint8List> _routePixels(
+  WidgetTester tester,
+  GlobalKey key,
+  String name,
+) async {
+  expect(tester.takeException(), isNull);
+  final boundary = key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+  expect(boundary.size, const Size(390, 800));
+  return (await tester.runAsync(() async {
+    final image = await boundary.toImage();
+    try {
+      expect(image.width, 390);
+      expect(image.height, 800);
+      final data = (await image.toByteData())!;
+      final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+      if (output != null) {
+        await Directory(output).create(recursive: true);
+        final png = (await image.toByteData(format: ui.ImageByteFormat.png))!;
+        await File('$output/$name.png').writeAsBytes(
+          png.buffer.asUint8List(png.offsetInBytes, png.lengthInBytes),
+        );
+      }
+      return Uint8List.fromList(data.buffer.asUint8List(
+        data.offsetInBytes, data.lengthInBytes,
+      ));
+    } finally {
+      image.dispose();
+    }
+  }))!;
+}
+
+class _RouteWallpaper extends CustomPainter {
+  const _RouteWallpaper();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (var y = 0.0; y < size.height; y += 20) {
+      canvas.drawRect(Rect.fromLTWH(0, y, size.width, 20),
+        Paint()..color = (y ~/ 20).isEven
+            ? const Color(0xFF4679B2) : const Color(0xFFB5824A));
+    }
+  }
+
+  @override
+  bool shouldRepaint(_RouteWallpaper oldDelegate) => false;
 }

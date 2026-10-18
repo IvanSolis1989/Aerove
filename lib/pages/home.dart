@@ -67,7 +67,7 @@ class _HomeShell extends ConsumerWidget {
       appSettingProvider.select((state) => state.floatingNavigationBar),
     );
     return Material(
-      color: AuroraAppearance.enabledOf(context)
+      color: LiquidGlassScope.of(context)
           ? Colors.transparent
           : SurfaceLevel.page.colorOf(context.colorScheme),
       child: Column(

@@ -1,7 +1,12 @@
 import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/ui/paged_sheet.dart';
 import 'package:fl_clash/ui/route_motion_hold.dart';
+import 'package:fl_clash/ui/liquid_glass.dart';
+import 'package:fl_clash/ui/navigator.dart';
+import 'package:fl_clash/ui/surface.dart';
+import 'package:fl_clash/ui/page_transition.dart';
 import 'package:fl_clash/ui/sheet.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -60,6 +65,144 @@ class _ArrivalState extends State<_Arrival> with RouteSettledMixin<_Arrival> {
 }
 
 void main() {
+  testWidgets('gesture route alpha is real at 0.1, 0.3 and 0.5', (tester) async {
+    final key = GlobalKey();
+    for (final alpha in [0.1, 0.3, 0.5]) {
+      await tester.pumpWidget(MaterialApp(
+        home: Center(child: RepaintBoundary(key: key,
+          child: SizedBox.square(dimension: 80, child: Stack(children: [
+            const Positioned.fill(child: ColoredBox(color: Colors.blue)),
+            SharedXPageTransition(
+              animation: kAlwaysCompleteAnimation,
+              secondaryAnimation: AlwaysStoppedAnimation(alpha),
+              color: Colors.transparent,
+              slide: Offset.zero,
+              overSettledPage: true,
+              uncoveredByGesture: true,
+              child: const ColoredBox(color: Colors.red, child: SizedBox.expand()),
+            ),
+          ])),
+        )),
+      ));
+      await tester.pump();
+      final image = (key.currentContext!.findRenderObject()! as RenderRepaintBoundary)
+          .toImageSync();
+      try {
+        final bytes = (await tester.runAsync(image.toByteData))!;
+        final at = (40 * image.width + 40) * 4;
+        expect(bytes.getUint8(at), closeTo(alpha * 255, 1));
+        expect(bytes.getUint8(at + 1), 0);
+        expect(bytes.getUint8(at + 2), closeTo((1 - alpha) * 255, 1));
+        expect(bytes.getUint8(at + 3), 255);
+      } finally {
+        image.dispose();
+      }
+    }
+  });
+
+  testWidgets('transparent route fade composites intermediate content alpha', (
+    tester,
+  ) async {
+    final key = GlobalKey();
+    for (final progress in [0.1, 0.3, 0.5]) {
+      await tester.pumpWidget(MaterialApp(
+        home: Center(child: RepaintBoundary(key: key,
+          child: SizedBox.square(dimension: 80, child: Stack(children: [
+            const Positioned.fill(child: ColoredBox(color: Colors.blue)),
+            SharedXPageTransition(
+              animation: AlwaysStoppedAnimation(progress),
+              secondaryAnimation: kAlwaysDismissedAnimation,
+              color: Colors.transparent,
+              slide: Offset.zero,
+              overSettledPage: true,
+              child: const ColoredBox(color: Colors.red, child: SizedBox.expand()),
+            ),
+          ])),
+        )),
+      ));
+      await tester.pump();
+      final image = (key.currentContext!.findRenderObject()! as RenderRepaintBoundary)
+          .toImageSync();
+      try {
+        final bytes = (await tester.runAsync(image.toByteData))!;
+        final at = (40 * image.width + 40) * 4;
+        final alpha = progress < 0.2
+            ? 0.0
+            : const Interval(0.15, 0.55, curve: Curves.easeOutCubic)
+                .transform(progress);
+        expect(bytes.getUint8(at), closeTo(alpha * 255, 1));
+        expect(bytes.getUint8(at + 1), 0);
+        expect(bytes.getUint8(at + 2), closeTo((1 - alpha) * 255, 1));
+        expect(bytes.getUint8(at + 3), 255);
+      } finally {
+        image.dispose();
+      }
+    }
+  });
+
+  for (final brightness in Brightness.values) {
+    for (final quality in LiquidGlassQuality.values) {
+      for (final glass in [false, true]) {
+        testWidgets('route backdrop survives push and return '
+            '$brightness $quality glass=$glass', (tester) async {
+          const backdrop = Color(0xFF286C85);
+          final capture = GlobalKey();
+          final routeNavigator = GlobalKey<NavigatorState>();
+          final colors = ColorScheme.fromSeed(
+            seedColor: Colors.blue,
+            brightness: brightness,
+          );
+          await tester.pumpWidget(MaterialApp(
+            navigatorKey: routeNavigator,
+            theme: ThemeData(colorScheme: colors),
+            builder: (_, child) => LiquidGlassScope(
+              enabled: glass,
+              quality: quality,
+              child: RepaintBoundary(
+                key: capture,
+                child: Stack(fit: StackFit.expand, children: [
+                  const ColoredBox(color: backdrop),
+                  child!,
+                ]),
+              ),
+            ),
+            home: const SizedBox.expand(),
+          ));
+          Future<Color> pixel() async {
+            final boundary = capture.currentContext!.findRenderObject()!
+                as RenderRepaintBoundary;
+            final image = boundary.toImageSync();
+            try {
+              final bytes = (await tester.runAsync(image.toByteData))!;
+              final at = ((image.height ~/ 2) * image.width + image.width ~/ 2) * 4;
+              return Color.fromARGB(bytes.getUint8(at + 3),
+                  bytes.getUint8(at), bytes.getUint8(at + 1), bytes.getUint8(at + 2));
+            } finally {
+              image.dispose();
+            }
+          }
+          await tester.pumpAndSettle();
+          expect(await pixel(), backdrop);
+          routeNavigator.currentState!.push(CommonRoute<void>(
+            builder: (_) => const Scaffold(backgroundColor: Colors.transparent),
+          ));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 120));
+          if (glass) expect(await pixel(), backdrop);
+          await tester.pumpAndSettle();
+          expect(await pixel(), glass ? backdrop : SurfaceLevel.page.colorOf(colors));
+          routeNavigator.currentState!.pop();
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 120));
+          if (glass) expect(await pixel(), backdrop);
+          await tester.pumpAndSettle();
+          expect(await pixel(), backdrop);
+          expect(tester.takeException(), isNull);
+        });
+      }
+    }
+  }
+
   late ValueNotifier<int> source;
   late GlobalKey<NavigatorState> navigator;
 

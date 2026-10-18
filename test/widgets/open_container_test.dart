@@ -1,4 +1,5 @@
 import 'package:fl_clash/ui/open_container.dart';
+import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/surface.dart';
 import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
@@ -7,6 +8,50 @@ import 'package:flutter_test/flutter_test.dart';
 const _viewSize = Size(800, 600);
 
 void main() {
+  for (final quality in LiquidGlassQuality.values) {
+    testWidgets('glass $quality keeps its route and transition transparent', (
+      tester,
+    ) async {
+      await tester.pumpWidget(LiquidGlassScope(
+        enabled: true,
+        quality: quality,
+        child: MaterialApp(home: Scaffold(
+          backgroundColor: Colors.transparent,
+          body: Center(child: SizedBox(width: 160, height: 80,
+            child: OpenContainer<void>(
+              closedColor: Colors.red,
+              closedShape: const RoundedSuperellipseBorder(
+                borderRadius: BorderRadius.all(Radius.circular(24)),
+              ),
+              closedBuilder: (_, open) => TextButton(
+                onPressed: open, child: const Text('Open glass')),
+              openBuilder: (_, close) => TextButton(
+                onPressed: close, child: const Text('Close glass')),
+            ),
+          )),
+        )),
+      ));
+      await tester.tap(find.text('Open glass'));
+      await tester.pump();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 150));
+      final navigator = find.byType(Navigator);
+      expect(navigator, paints..path(color: Colors.transparent));
+      await tester.pumpAndSettle();
+      final route = ModalRoute.of(tester.element(find.text('Close glass')))!;
+      expect(route.opaque, isTrue);
+      expect(route.barrierColor, isNull);
+      expect(navigator, paints..rect(color: Colors.transparent));
+      await tester.tap(find.text('Close glass'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(navigator, paints..path(color: Colors.red));
+      await tester.pumpAndSettle();
+      expect(find.text('Open glass'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('OpenContainer opens, closes, and returns a value', (
     tester,
   ) async {

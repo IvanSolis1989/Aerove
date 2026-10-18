@@ -241,7 +241,7 @@ void main() {
         expect(style.backgroundBuilder, enabled ? isNotNull : isNull);
         final foreground = style.foregroundColor!.resolve({})!;
         final source = enabled ? scheme.primary : scheme.onPrimary;
-        expect(foreground.a, enabled && !highContrast ? 0.94 : 1);
+        expect(foreground.a, enabled && !highContrast ? 0.86 : 1);
         expect(foreground.withValues(alpha: source.a), source);
         await tester.tap(button);
         await tester.pumpAndSettle();

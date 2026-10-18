@@ -639,6 +639,12 @@ class CommonScaffoldState extends State<CommonScaffold> {
         isMobileView &&
         ModalRoute.of(context)?.impliesAppBarDismissal == true;
     final compactTitle = isCompact || pushed;
+    final titleStyle = compactTitle
+        ? AppTextStyle.headline.of(context)
+        : AppTextStyle.pageTitle.of(context);
+    final titleShadow = !isCompact &&
+        LiquidGlassScope.of(context) &&
+        !MediaQuery.highContrastOf(context);
     final titleEndInset = appBarActionInset(
       _isCompactBar(context, isMobileView),
     );
@@ -667,9 +673,22 @@ class CommonScaffoldState extends State<CommonScaffold> {
                   centerTitle: isCompact,
                   titleTextStyle: _isSearch
                       ? null
-                      : compactTitle
-                      ? AppTextStyle.headline.of(context)
-                      : AppTextStyle.pageTitle.of(context),
+                      : titleShadow
+                      ? titleStyle.copyWith(
+                          shadows: [
+                            context.colorScheme.brightness == Brightness.light
+                                ? const Shadow(
+                                    color: Color(0x73FFFFFF),
+                                    blurRadius: 3,
+                                  )
+                                : const Shadow(
+                                    color: Color(0x66000000),
+                                    blurRadius: 2,
+                                    offset: Offset(0, 1),
+                                  ),
+                          ],
+                        )
+                      : titleStyle,
                   leading: leading,
                   // The leading slot already trails its button by a margin.
                   titleSpacing: leading == null ? null : 0,

@@ -1,6 +1,7 @@
 import 'dart:ui' show ImageFilter, Vertices, VertexMode;
 
 import 'package:fl_clash/common/aurora.dart';
+import 'package:fl_clash/common/aurora_motion.dart';
 import 'package:fl_clash/ui/aurora.dart';
 import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/shape.dart';
@@ -9,6 +10,7 @@ import 'package:fl_clash/ui/surface.dart';
 import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -21,8 +23,9 @@ LiquidGlassMode effectiveAuroraGlassMode(
     gradient && stored == LiquidGlassMode.none ? LiquidGlassMode.ultra : stored;
 
 class AuroraAppSurface extends ConsumerWidget {
-  const AuroraAppSurface({super.key, required this.child});
+  const AuroraAppSurface({super.key, this.motion = true, required this.child});
 
+  final bool motion;
   final Widget child;
 
   @override
@@ -61,6 +64,31 @@ class AuroraAppSurface extends ConsumerWidget {
     final glassEnabled = glassMode != LiquidGlassMode.none && !opaque;
     final surfaceTheme = enabled ? glassTheme : theme;
     final surfaceColors = surfaceTheme.colorScheme;
+    final glassPane = LiquidGlass.buttonStyle(
+      (_) => LiquidGlassStyle.regular(surfaceColors),
+    );
+    ButtonStyle neutralGlass(ButtonStyle? original, {bool outlined = false}) {
+      final style = glassPane.merge(original).copyWith(
+        backgroundBuilder: (context, states, child) => LiquidGlass(
+          style: LiquidGlassStyle.regular(surfaceColors),
+          clipper: ShapeBorderClipper(
+            shape: original?.shape?.resolve(states) ?? AppShape.full,
+            textDirection: Directionality.of(context),
+          ),
+          pressed: states.contains(WidgetState.pressed),
+          child: child,
+        ),
+      );
+      if (!outlined) return style;
+      return style.copyWith(
+        side: WidgetStateProperty.resolveWith((states) {
+          return original?.side?.resolve(states) ??
+              (states.contains(WidgetState.focused)
+                  ? focusRingSide(surfaceColors)
+                  : BorderSide.none);
+        }),
+      );
+    }
     final glassButtons =
         LiquidGlass.buttonStyle(
           (_) => LiquidGlassStyle.regular(surfaceColors),
@@ -76,6 +104,21 @@ class AuroraAppSurface extends ConsumerWidget {
               scaffoldBackgroundColor: Colors.transparent,
               filledButtonTheme: FilledButtonThemeData(
                 style: glassButtons.merge(surfaceTheme.filledButtonTheme.style),
+              ),
+              outlinedButtonTheme: OutlinedButtonThemeData(
+                style: neutralGlass(
+                  surfaceTheme.outlinedButtonTheme.style,
+                  outlined: true,
+                ),
+              ),
+              textButtonTheme: TextButtonThemeData(
+                style: neutralGlass(surfaceTheme.textButtonTheme.style),
+              ),
+              iconButtonTheme: IconButtonThemeData(
+                style: neutralGlass(surfaceTheme.iconButtonTheme.style),
+              ),
+              elevatedButtonTheme: ElevatedButtonThemeData(
+                style: neutralGlass(surfaceTheme.elevatedButtonTheme.style),
               ),
               floatingActionButtonTheme: theme.floatingActionButtonTheme
                   .copyWith(
@@ -122,6 +165,7 @@ class AuroraAppSurface extends ConsumerWidget {
                                   ],
                                   seed: settings.seed,
                                   brightness: theme.brightness,
+                                  motion: motion,
                                 ),
                               ),
                             ),
@@ -145,23 +189,78 @@ class SeededAuroraWallpaper extends StatefulWidget {
     required this.colors,
     required this.seed,
     required this.brightness,
+    this.motion = false,
+    this.motionTime,
   });
 
   final List<Color> colors;
   final int seed;
   final Brightness brightness;
+  final bool motion;
+  final Duration? motionTime;
 
   @override
   State<SeededAuroraWallpaper> createState() => _SeededAuroraWallpaperState();
 }
 
-class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper> {
+class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper>
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+  static const _paintInterval = Duration(microseconds: 33333);
+
   late _AuroraPainter _painter;
+  late final Ticker _ticker;
+  late final ValueNotifier<({bool square, Duration elapsed})> _frame;
+  Duration _runBase = Duration.zero;
+  Duration _lastPublishedTick = Duration.zero;
+  bool _foreground = true;
+
+  bool get _square => widget.motion || widget.motionTime != null;
 
   @override
   void initState() {
     super.initState();
+    _foreground = switch (WidgetsBinding.instance.lifecycleState) {
+      null || AppLifecycleState.resumed => true,
+      _ => false,
+    };
+    _frame = ValueNotifier((
+      square: _square,
+      elapsed: widget.motionTime ?? Duration.zero,
+    ));
+    _ticker = createTicker((elapsed) {
+      if (elapsed - _lastPublishedTick < _paintInterval) return;
+      _lastPublishedTick = elapsed;
+      _frame.value = (square: true, elapsed: _runBase + elapsed);
+    });
+    WidgetsBinding.instance.addObserver(this);
     _updatePainter();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncTicker();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _foreground = state == AppLifecycleState.resumed;
+    _syncTicker();
+  }
+
+  void _syncTicker() {
+    final running = widget.motion &&
+        widget.motionTime == null &&
+        _foreground &&
+        TickerMode.of(context) &&
+        !(MediaQuery.maybeOf(context)?.disableAnimations ?? false);
+    if (running && !_ticker.isActive) {
+      _runBase = _frame.value.elapsed;
+      _lastPublishedTick = Duration.zero;
+      _ticker.start();
+    } else if (!running && _ticker.isActive) {
+      _ticker.stop();
+    }
   }
 
   void _updatePainter() {
@@ -169,30 +268,47 @@ class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper> {
       colors: normalizeAuroraColors(widget.colors),
       seed: widget.seed,
       brightness: widget.brightness,
+      frame: _frame,
     );
   }
 
   @override
   void didUpdateWidget(SeededAuroraWallpaper oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.seed != oldWidget.seed && _ticker.isActive) {
+      _ticker.stop();
+    }
     if (widget.seed != oldWidget.seed ||
         widget.brightness != oldWidget.brightness ||
         !listEquals(widget.colors, oldWidget.colors)) {
       _painter.dispose();
       _updatePainter();
     }
+    _frame.value = (
+      square: _square,
+      elapsed: widget.motionTime ??
+          (widget.seed == oldWidget.seed ? _frame.value.elapsed : Duration.zero),
+    );
+    _syncTicker();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _ticker.dispose();
     _painter.dispose();
+    _frame.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return RepaintBoundary(
-      child: CustomPaint(painter: _painter, isComplex: true),
+      child: CustomPaint(
+        painter: _painter,
+        isComplex: true,
+        willChange: widget.motion && widget.motionTime == null,
+      ),
     );
   }
 }
@@ -202,7 +318,8 @@ class _AuroraPainter extends CustomPainter {
     required this.colors,
     required this.seed,
     required this.brightness,
-  }) {
+    required this.frame,
+  }) : _motion = AuroraMotion(seed), super(repaint: frame) {
     final mesh = generateAuroraMesh(
       seed,
       colors: colors,
@@ -219,6 +336,8 @@ class _AuroraPainter extends CustomPainter {
   final List<Color> colors;
   final int seed;
   final Brightness brightness;
+  final ValueListenable<({bool square, Duration elapsed})> frame;
+  final AuroraMotion _motion;
   late final Vertices _vertices;
   final _paint = Paint()..isAntiAlias = false;
 
@@ -228,7 +347,20 @@ class _AuroraPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (size.isEmpty) return;
     canvas.save();
-    canvas.scale(size.width, size.height);
+    if (frame.value.square) {
+      final pose = _motion.at(frame.value.elapsed, size);
+      canvas
+        ..clipRect(Offset.zero & size)
+        ..translate(
+          size.width / 2 + pose.translation.dx,
+          size.height / 2 + pose.translation.dy,
+        )
+        ..rotate(pose.angle)
+        ..scale(pose.side, pose.side)
+        ..translate(-0.5, -0.5);
+    } else {
+      canvas.scale(size.width, size.height);
+    }
     canvas.drawVertices(_vertices, BlendMode.dst, _paint);
     canvas.restore();
   }

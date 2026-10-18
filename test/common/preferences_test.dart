@@ -3,8 +3,10 @@ import 'dart:convert';
 import 'package:fl_clash/common/boot_record.dart';
 import 'package:fl_clash/common/constant.dart';
 import 'package:fl_clash/common/preferences.dart';
+import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../helpers/preferences.dart';
@@ -58,6 +60,43 @@ void main() {
       expect(restored, isNotNull);
       expect(restored!.currentProfileId, 42);
       expect(restored.excludeSSIDs, ['home']);
+    });
+
+    test('fresh store uses system gradient ultra and round-trips', () async {
+      final config = Config.realFromJson(await preferences.getConfigMap());
+      expect(config.themeProps.themeMode, ThemeMode.system);
+      expect(config.themeProps.auroraEnabled, true);
+      expect(config.themeProps.liquidGlass, LiquidGlassMode.ultra);
+      expect(config.themeProps.pureBlack, false);
+      expect(await preferences.saveConfig(config), true);
+      expect(await preferences.getConfig(), config);
+    });
+
+    test('stored ordinary theme choices survive loading and saving', () async {
+      for (final mode in [LiquidGlassMode.none, LiquidGlassMode.standard]) {
+        for (final themeMode in ThemeMode.values) {
+          await store.setString(
+            configKey,
+            jsonEncode({
+              'themeProps': {
+                'auroraEnabled': false,
+                'liquidGlass': mode.name,
+                'themeMode': themeMode.name,
+                'pureBlack': true,
+                'auroraSeed': 17,
+              },
+            }),
+          );
+          final config = (await preferences.getConfig())!;
+          expect(config.themeProps.auroraEnabled, false);
+          expect(config.themeProps.liquidGlass, mode);
+          expect(config.themeProps.themeMode, themeMode);
+          expect(config.themeProps.pureBlack, true);
+          expect(config.themeProps.auroraSeed, 17);
+          expect(await preferences.saveConfig(config), true);
+          expect(await preferences.getConfig(), config);
+        }
+      }
     });
 
     test('getConfigMap returns null for malformed JSON', () async {

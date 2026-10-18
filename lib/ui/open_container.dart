@@ -1,6 +1,7 @@
 import 'package:fl_clash/ui/deferred_push.dart';
 import 'package:fl_clash/ui/drag_back.dart';
 import 'package:fl_clash/ui/keyboard_inset_hold.dart';
+import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/surface.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/foundation.dart';
@@ -312,6 +313,7 @@ class _OpenContainerRoute<T> extends ModalRoute<T>
   ) {
     final theme = Theme.of(context);
     final surface = SurfaceLevel.page.colorOf(theme.colorScheme);
+    final glass = LiquidGlassScope.of(context);
     final open = FadeTransition(
       opacity: _openOpacity,
       child: RepaintBoundary(
@@ -333,8 +335,8 @@ class _OpenContainerRoute<T> extends ModalRoute<T>
         return _ContainerTransition(
           route: this,
           closedColor: closedColor ?? surface,
-          openColor: surface,
-          settledColor: theme.canvasColor,
+          openColor: glass ? Colors.transparent : surface,
+          settledColor: glass ? Colors.transparent : theme.canvasColor,
           closed: _hostsClosed.value
               ? IgnorePointer(
                   child: ExcludeFocus(

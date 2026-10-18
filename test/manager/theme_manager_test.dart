@@ -26,7 +26,7 @@ void main() {
         container: container,
         child: MaterialApp(
           theme: ThemeData(platform: TargetPlatform.android),
-          builder: (context, child) => AuroraAppSurface(child: child!),
+          builder: (context, child) => AuroraAppSurface(motion: false, child: child!),
           home: ThemeManager(
             child: Builder(
               builder: (context) {

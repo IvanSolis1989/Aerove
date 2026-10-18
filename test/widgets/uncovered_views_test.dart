@@ -221,6 +221,62 @@ void main() {
     expect(tester.takeException(), null);
   });
 
+  testWidgets('about neutral surfaces respect active glass', (tester) async {
+    final container = _containerFor(tester);
+    for (final brightness in Brightness.values) {
+      for (final enabled in [false, true]) {
+        await tester.pumpWidget(UncontrolledProviderScope(
+          container: container,
+          child: TestApp(theme: ThemeData(brightness: brightness),
+            child: LiquidGlassScope(enabled: enabled, child: const AboutView()),
+          ),
+        ));
+        await tester.pumpAndSettle();
+        final hero = find.byWidgetPredicate(
+          (widget) => widget.runtimeType.toString() == '_AboutHero',
+        );
+        final heroContext = tester.element(hero);
+        final colors = Theme.of(heroContext).colorScheme;
+        final neutral = heroContext.raisedSurfaceLevel.colorOf(colors);
+        final expected = enabled ? neutral.withValues(alpha: 0.24) : neutral;
+        final logo = find.byWidgetPredicate(
+          (widget) => widget.runtimeType.toString() == '_DeveloperModeDetector',
+        );
+        Color? fillOf(Finder parent) =>
+            (tester.widget<DecoratedBox>(find.descendant(
+              of: parent, matching: find.byType(DecoratedBox),
+            )).decoration as ShapeDecoration).color;
+        expect(fillOf(logo), expected);
+        final license = find.ancestor(of: find.text('GPL-3.0'),
+          matching: find.byWidgetPredicate(
+            (widget) => widget.runtimeType.toString() == '_Pill',
+          ));
+        expect(fillOf(license), expected);
+        final version = find.ancestor(of: find.text('v0.0.0'),
+          matching: find.byWidgetPredicate(
+            (widget) => widget.runtimeType.toString() == '_Pill',
+          ));
+        expect(fillOf(version), colors.primary);
+        final badges = find.byWidgetPredicate(
+          (widget) => widget.runtimeType.toString() == '_LinkBadge',
+        );
+        expect(badges, findsWidgets);
+        for (final element in badges.evaluate()) {
+          final badge = find.byWidget(element.widget);
+          final fill = tester.widget<DecoratedBox>(find.descendant(
+            of: badge, matching: find.byType(DecoratedBox),
+          ));
+          final context = element;
+          final scheme = Theme.of(context).colorScheme;
+          final original = context.raisedSurfaceLevel.colorOf(scheme);
+          expect((fill.decoration as ShapeDecoration).color,
+              enabled ? original.withValues(alpha: 0.24) : original);
+        }
+        expect(tester.takeException(), isNull);
+      }
+    }
+  });
+
   testWidgets('about view shows progress while checking for updates', (
     tester,
   ) async {

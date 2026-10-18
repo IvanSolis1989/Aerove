@@ -1,4 +1,5 @@
 import 'package:fl_clash/application.dart';
+import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/manager/theme_manager.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/config.dart';
@@ -67,7 +68,11 @@ void main() {
         ),
         themeSettingProvider.overrideWithBuild(
           (_, _) =>
-              const ThemeProps(themeMode: ThemeMode.dark, auroraEnabled: false),
+              const ThemeProps(
+                themeMode: ThemeMode.dark,
+                auroraEnabled: false,
+                liquidGlass: LiquidGlassMode.none,
+              ),
         ),
       ],
     );
@@ -166,7 +171,12 @@ void main() {
           );
 
           Future<void> expectBrightness(Brightness expected) async {
-            await tester.pumpAndSettle();
+            if (wallpaper && !reducedMotion) {
+              await tester.pump();
+              await tester.pump(const Duration(milliseconds: 500));
+            } else {
+              await tester.pumpAndSettle();
+            }
             expect(tester.takeException(), isNull);
             expect(leafBrightness, expected);
             final material = tester.widget<MaterialApp>(

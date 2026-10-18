@@ -152,7 +152,10 @@ class _AboutHero extends StatelessWidget {
             onEnterDeveloperMode: onEnterDeveloperMode,
             child: DecoratedBox(
               decoration: ShapeDecoration(
-                color: context.raisedSurfaceLevel.colorOf(colorScheme),
+                color: LiquidGlassScope.surfaceColorOf(
+                  context,
+                  context.raisedSurfaceLevel.colorOf(colorScheme),
+                ),
                 shape: AppShape.all(AppCorner.fit(_logoSize)),
               ),
               child: Padding(
@@ -183,7 +186,10 @@ class _AboutHero extends StatelessWidget {
               ),
               _Pill(
                 label: 'GPL-3.0',
-                color: context.raisedSurfaceLevel.colorOf(colorScheme),
+                color: LiquidGlassScope.surfaceColorOf(
+                  context,
+                  context.raisedSurfaceLevel.colorOf(colorScheme),
+                ),
                 foregroundColor: colorScheme.onSurfaceVariant,
               ),
             ],
@@ -250,7 +256,10 @@ class _LinkBadge extends StatelessWidget {
     final colorScheme = context.colorScheme;
     return DecoratedBox(
       decoration: ShapeDecoration(
-        color: context.raisedSurfaceLevel.colorOf(colorScheme),
+        color: LiquidGlassScope.surfaceColorOf(
+          context,
+          context.raisedSurfaceLevel.colorOf(colorScheme),
+        ),
         shape: AppShape.md,
       ),
       child: SizedBox.square(

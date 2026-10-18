@@ -147,7 +147,7 @@ AuroraMesh generateAuroraMesh(
     }
     final light = HSVColor.fromColor(color);
     color = light
-        .withSaturation((light.saturation * 1.06).clamp(0.0, 1.0))
+        .withSaturation((light.saturation * 1.10).clamp(0.0, 1.0))
         .toColor();
     return _readableLightAuroraTint(color, base);
   }
