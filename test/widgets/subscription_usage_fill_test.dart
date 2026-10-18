@@ -126,12 +126,17 @@ Future<void> _pump(
                         child: DecoratedBox(
                           decoration: BoxDecoration(
                             gradient: LinearGradient(
-                              colors: backdrop ?? (brightness == Brightness.light
-                                  ? const [Color(0xFFEABEA7), Color(0xFF9DCDDF)]
-                                  : const [
-                                      Color(0xFF11252D),
-                                      Color(0xFF493026),
-                                    ]),
+                              colors:
+                                  backdrop ??
+                                  (brightness == Brightness.light
+                                      ? const [
+                                          Color(0xFFEABEA7),
+                                          Color(0xFF9DCDDF),
+                                        ]
+                                      : const [
+                                          Color(0xFF11252D),
+                                          Color(0xFF493026),
+                                        ]),
                             ),
                           ),
                         ),
@@ -277,24 +282,44 @@ void main() {
           backdrop: backdrop,
           info: const SubscriptionInfo(total: 100),
         );
-        final empty = await _snapshot(tester, 'light-pastel-${mode.name}-3x-empty',
-          pixelRatio: 3);
-        await _pump(tester, brightness: Brightness.light, mode: mode,
-          backdrop: backdrop);
-        final filled = await _snapshot(tester, 'light-pastel-${mode.name}-3x-16',
-          pixelRatio: 3);
+        final empty = await _snapshot(
+          tester,
+          'light-pastel-${mode.name}-3x-empty',
+          pixelRatio: 3,
+        );
+        await _pump(
+          tester,
+          brightness: Brightness.light,
+          mode: mode,
+          backdrop: backdrop,
+        );
+        final filled = await _snapshot(
+          tester,
+          'light-pastel-${mode.name}-3x-16',
+          pixelRatio: 3,
+        );
         expect(filled.length, 1200 * 480 * 4);
         final behind = _pixel(empty, 45, 80, scale: 3);
         final water = _pixel(filled, 45, 80, scale: 3);
         expect(_distance(water, behind), inExclusiveRange(0.065, 0.18));
         expect(water.b - behind.b, greaterThan(0.02));
         _expectDryRim(filled, empty, scale: 3);
-        expect(_pixel(filled, 200, 80, scale: 3),
-          _pixel(empty, 200, 80, scale: 3));
-        await _pump(tester, brightness: Brightness.light, mode: mode,
-          backdrop: backdrop, text: true);
-        final readable = await _snapshot(tester,
-          'light-pastel-${mode.name}-3x-readable', pixelRatio: 3);
+        expect(
+          _pixel(filled, 200, 80, scale: 3),
+          _pixel(empty, 200, 80, scale: 3),
+        );
+        await _pump(
+          tester,
+          brightness: Brightness.light,
+          mode: mode,
+          backdrop: backdrop,
+          text: true,
+        );
+        final readable = await _snapshot(
+          tester,
+          'light-pastel-${mode.name}-3x-readable',
+          pixelRatio: 3,
+        );
         final bounds = tester.getRect(find.byKey(_label));
         final contrasts = <double>[];
         for (var y = bounds.top.ceil(); y < bounds.bottom.floor(); y++) {
@@ -308,8 +333,10 @@ void main() {
         }
         contrasts.sort();
         expect(contrasts.length, greaterThan(20));
-        expect(contrasts[(contrasts.length * 0.9).floor()],
-          greaterThanOrEqualTo(4.5));
+        expect(
+          contrasts[(contrasts.length * 0.9).floor()],
+          greaterThanOrEqualTo(4.5),
+        );
       } finally {
         await tester.pumpWidget(const SizedBox.shrink());
         await tester.pump(Duration.zero);

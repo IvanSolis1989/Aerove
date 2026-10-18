@@ -64,9 +64,15 @@ void main() {
         tester.view.devicePixelRatio = 3;
         addTearDown(tester.view.reset);
         const colors = [0xFFFF0000, 0xFF00FF00, 0xFF0000FF];
-        container.read(themeSettingProvider.notifier).update((state) =>
-          state.copyWith(auroraEnabled: true, auroraColors: colors,
-            liquidGlass: mode));
+        container
+            .read(themeSettingProvider.notifier)
+            .update(
+              (state) => state.copyWith(
+                auroraEnabled: true,
+                auroraColors: colors,
+                liquidGlass: mode,
+              ),
+            );
         const captureKey = ValueKey('wallpaperColorSwatches');
         try {
           await tester.pumpWidget(
@@ -95,34 +101,56 @@ void main() {
           final boundary = tester.renderObject<RenderRepaintBoundary>(
             find.byKey(captureKey),
           );
-          final image = await tester.runAsync(() => boundary.toImage(pixelRatio: 3));
+          final image = await tester.runAsync(
+            () => boundary.toImage(pixelRatio: 3),
+          );
           try {
-            final data = (await tester.runAsync(() =>
-              image!.toByteData(format: ui.ImageByteFormat.rawRgba)))!;
+            final data = (await tester.runAsync(
+              () => image!.toByteData(format: ui.ImageByteFormat.rawRgba),
+            ))!;
             final bytes = data.buffer.asUint8List();
             for (var index = 0; index < colors.length; index++) {
-              final button = find.byTooltip('Edit wallpaper color ${index + 1}');
-              expect(LiquidGlassScope.of(tester.element(button)),
-                mode != LiquidGlassMode.none);
+              final button = find.byTooltip(
+                'Edit wallpaper color ${index + 1}',
+              );
+              expect(
+                LiquidGlassScope.of(tester.element(button)),
+                mode != LiquidGlassMode.none,
+              );
               final swatch = tester.getRect(button);
               for (final offset in const [
-                Offset.zero, Offset(-16, 0), Offset(16, 0),
-                Offset(0, -16), Offset(0, 16), Offset(-12, -12),
+                Offset.zero,
+                Offset(-16, 0),
+                Offset(16, 0),
+                Offset(0, -16),
+                Offset(0, 16),
+                Offset(-12, -12),
               ]) {
                 final point = (swatch.center + offset) * 3;
-                final pixel = (point.dy.floor() * image!.width + point.dx.floor()) * 4;
-                final actual = Color.fromARGB(bytes[pixel + 3], bytes[pixel],
-                  bytes[pixel + 1], bytes[pixel + 2]);
-                expect(actual.toARGB32(), colors[index], reason: 'swatch $index at $offset');
+                final pixel =
+                    (point.dy.floor() * image!.width + point.dx.floor()) * 4;
+                final actual = Color.fromARGB(
+                  bytes[pixel + 3],
+                  bytes[pixel],
+                  bytes[pixel + 1],
+                  bytes[pixel + 2],
+                );
+                expect(
+                  actual.toARGB32(),
+                  colors[index],
+                  reason: 'swatch $index at $offset',
+                );
               }
             }
             final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
             if (output != null) {
-              final png = (await tester.runAsync(() =>
-                image!.toByteData(format: ui.ImageByteFormat.png)))!;
+              final png = (await tester.runAsync(
+                () => image!.toByteData(format: ui.ImageByteFormat.png),
+              ))!;
               final directory = Directory(output)..createSync(recursive: true);
-              File('${directory.path}/aurora-swatches-${brightness.name}-${mode.name}-3x.png')
-                .writeAsBytesSync(png.buffer.asUint8List());
+              File(
+                '${directory.path}/aurora-swatches-${brightness.name}-${mode.name}-3x.png',
+              ).writeAsBytesSync(png.buffer.asUint8List());
             }
           } finally {
             image!.dispose();

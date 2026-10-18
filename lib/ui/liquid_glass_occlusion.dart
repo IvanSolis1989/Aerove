@@ -17,8 +17,12 @@ class LiquidGlassOcclusion extends SingleChildRenderObjectWidget {
   final LiquidGlassOcclusionMode mode;
 
   @override
-  RenderObject createRenderObject(BuildContext context) =>
-      _GlassOcclusionBox(shape, Directionality.of(context), bottomFeather, mode);
+  RenderObject createRenderObject(BuildContext context) => _GlassOcclusionBox(
+    shape,
+    Directionality.of(context),
+    bottomFeather,
+    mode,
+  );
 
   @override
   void updateRenderObject(
@@ -35,7 +39,12 @@ class LiquidGlassOcclusion extends SingleChildRenderObjectWidget {
 }
 
 class _GlassOcclusionBox extends RenderProxyBox {
-  _GlassOcclusionBox(this.shape, this.textDirection, this.bottomFeather, this.mode);
+  _GlassOcclusionBox(
+    this.shape,
+    this.textDirection,
+    this.bottomFeather,
+    this.mode,
+  );
 
   ShapeBorder shape;
   TextDirection textDirection;
@@ -49,7 +58,13 @@ class _GlassOcclusionBox extends RenderProxyBox {
   @override
   void paint(PaintingContext context, Offset offset) {
     final layer = _layer.layer ??= _LiquidGlassOcclusionLayer();
-    layer.configure(shape, textDirection, Offset.zero & size, bottomFeather, mode);
+    layer.configure(
+      shape,
+      textDirection,
+      Offset.zero & size,
+      bottomFeather,
+      mode,
+    );
     layer.offset = offset;
     context.pushLayer(layer, super.paint, Offset.zero);
   }

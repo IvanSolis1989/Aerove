@@ -72,13 +72,14 @@ class AuroraSettings extends ConsumerWidget {
                     dimension: 48,
                     child: IconButton(
                       tooltip: strings.auroraEditColor(index + 1),
-                      style: IconButton.styleFrom(
-                        backgroundColor: Color(theme.auroraColors[index]),
-                        shape: AppShape.sm,
-                      ).copyWith(
-                        backgroundBuilder: (_, _, child) =>
-                            child ?? const SizedBox.shrink(),
-                      ),
+                      style:
+                          IconButton.styleFrom(
+                            backgroundColor: Color(theme.auroraColors[index]),
+                            shape: AppShape.sm,
+                          ).copyWith(
+                            backgroundBuilder: (_, _, child) =>
+                                child ?? const SizedBox.shrink(),
+                          ),
                       onPressed: () => _editColor(context, ref, index: index),
                       icon: const SizedBox.shrink(),
                     ),

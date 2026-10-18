@@ -1272,7 +1272,12 @@ class _LiquidGlassLayer extends Layer {
     }
   }
 
-  void _paintCovered(Canvas canvas, LiquidGlassStyle style, Path? covered, Path? plain) {
+  void _paintCovered(
+    Canvas canvas,
+    LiquidGlassStyle style,
+    Path? covered,
+    Path? plain,
+  ) {
     if (_frozenPicture != null) {
       canvas.save();
       if (covered != null) canvas.clipPath(covered, doAntiAlias: false);
@@ -1286,7 +1291,12 @@ class _LiquidGlassLayer extends Layer {
     canvas.restore();
   }
 
-  void _paintBand(Canvas canvas, LiquidGlassStyle style, Path covered, List<_GlassFeather> group) {
+  void _paintBand(
+    Canvas canvas,
+    LiquidGlassStyle style,
+    Path covered,
+    List<_GlassFeather> group,
+  ) {
     if (group.every((feather) => !feather.plain)) {
       if (_frozenPicture != null) canvas.drawPicture(_frozenPicture!);
       return;
@@ -1296,7 +1306,10 @@ class _LiquidGlassLayer extends Layer {
       frozen = Path.combine(PathOperation.union, frozen, feather.path);
     }
     canvas.save();
-    canvas.clipPath(Path.combine(PathOperation.difference, Path()..addRect(rect), frozen), doAntiAlias: false);
+    canvas.clipPath(
+      Path.combine(PathOperation.difference, Path()..addRect(rect), frozen),
+      doAntiAlias: false,
+    );
     _paintPlain(canvas, style);
     canvas.restore();
     if (_frozenPicture != null && !frozen.getBounds().isEmpty) {
@@ -1322,7 +1335,14 @@ class _LiquidGlassLayer extends Layer {
     _plainKey = key;
   }
 
-  void _captureCovered(int pass, LiquidGlassStyle style, Path? covered, Path? plain, List<Object?> coverageKey, List<_GlassFeather> feathers) {
+  void _captureCovered(
+    int pass,
+    LiquidGlassStyle style,
+    Path? covered,
+    Path? plain,
+    List<Object?> coverageKey,
+    List<_GlassFeather> feathers,
+  ) {
     if (covered == null && feathers.every((feather) => feather.plain)) {
       _capturePlain(pass, style);
       return;
@@ -1331,7 +1351,13 @@ class _LiquidGlassLayer extends Layer {
     _featherBands.clear();
     _plainKey = null;
     final key = <Object?>[
-      rect, corners, outline, profile, style, _frozenPicture, ...coverageKey,
+      rect,
+      corners,
+      outline,
+      profile,
+      style,
+      _frozenPicture,
+      ...coverageKey,
     ];
     if (_captured != null && listEquals(_coveredKey, key)) return;
     var priority = covered ?? Path();
@@ -1339,7 +1365,14 @@ class _LiquidGlassLayer extends Layer {
       priority = Path.combine(PathOperation.union, priority, feather.path);
     }
     final recorder = ui.PictureRecorder();
-    _paintCovered(Canvas(recorder), style, priority, plain == null ? null : Path.combine(PathOperation.difference, plain, priority));
+    _paintCovered(
+      Canvas(recorder),
+      style,
+      priority,
+      plain == null
+          ? null
+          : Path.combine(PathOperation.difference, plain, priority),
+    );
     _captured?.dispose();
     _captured = recorder.endRecording();
     _capturedRect = rect;
@@ -1540,9 +1573,19 @@ class _LiquidGlassLayer extends Layer {
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     _featherBands.clear();
-    if (visible != null && feathers.isNotEmpty &&
-        (_frozenPicture != null || plain != null || feathers.any((feather) => feather.plain))) {
-      _paintFeathered(canvas, covered ?? Path(), plain, feathers, paintLive, style);
+    if (visible != null &&
+        feathers.isNotEmpty &&
+        (_frozenPicture != null ||
+            plain != null ||
+            feathers.any((feather) => feather.plain))) {
+      _paintFeathered(
+        canvas,
+        covered ?? Path(),
+        plain,
+        feathers,
+        paintLive,
+        style,
+      );
     } else {
       if (visible != null) {
         _paintCovered(canvas, style, covered, plain);
@@ -1564,7 +1607,9 @@ class _LiquidGlassLayer extends Layer {
     void Function(Canvas) paintLive,
     LiquidGlassStyle style,
   ) {
-    final covered = plain == null ? frozenCoverage : Path.combine(PathOperation.union, frozenCoverage, plain);
+    final covered = plain == null
+        ? frozenCoverage
+        : Path.combine(PathOperation.union, frozenCoverage, plain);
     final groups = <List<_GlassFeather>>[];
     for (final feather in feathers) {
       var bounds = feather.path.getBounds().intersect(rect);
@@ -1612,7 +1657,9 @@ class _LiquidGlassLayer extends Layer {
       ..save()
       ..clipPath(covered, doAntiAlias: false);
     _paintCovered(canvas, style, frozenCoverage, plain);
-    canvas..restore()..clipPath(liveRegion, doAntiAlias: false);
+    canvas
+      ..restore()
+      ..clipPath(liveRegion, doAntiAlias: false);
     paintLive(canvas);
     canvas.restore();
     for (final group in groups) {

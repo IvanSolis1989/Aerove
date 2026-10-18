@@ -414,8 +414,14 @@ class _LiquidGlassHostLayer extends ContainerLayer {
               entry.pane._captureFrozen(_pass);
             } else {
               final inverse = Matrix4.inverted(entry.toHost).storage;
-              entry.pane._captureCovered(_pass, entry.style,
-                entry.covered?.transform(inverse), entry.plain?.transform(inverse), entry.coverageKey, entry.feathers);
+              entry.pane._captureCovered(
+                _pass,
+                entry.style,
+                entry.covered?.transform(inverse),
+                entry.plain?.transform(inverse),
+                entry.coverageKey,
+                entry.feathers,
+              );
             }
             continue;
           }
@@ -523,7 +529,10 @@ class _LiquidGlassHostLayer extends ContainerLayer {
           0,
           (sum, atlas) => sum + atlas.image.width * atlas.image.height,
         ),
-        coveredRecordings: found.fold(0, (sum, entry) => sum + entry.pane._coveredRecordings),
+        coveredRecordings: found.fold(
+          0,
+          (sum, entry) => sum + entry.pane._coveredRecordings,
+        ),
         panes: [
           for (final entry in placed)
             (
@@ -567,8 +576,12 @@ class _LiquidGlassHostLayer extends ContainerLayer {
                 chain.toSet(),
               )
               ..flatBoundary = wallpaperOnly && !pane.contentBackdrop
-                  ? chain.whereType<_LiquidGlassOcclusionLayer>()
-                        .where((layer) => layer.mode == LiquidGlassOcclusionMode.freeze)
+                  ? chain
+                        .whereType<_LiquidGlassOcclusionLayer>()
+                        .where(
+                          (layer) =>
+                              layer.mode == LiquidGlassOcclusionMode.freeze,
+                        )
                         .lastOrNull
                   : null,
           );
@@ -600,8 +613,12 @@ class _LiquidGlassHostLayer extends ContainerLayer {
   void _occlude(_Behind entry, int index, List<_GlassCoverage> coverage) {
     Path? visible;
     for (final cover in [
-      ...coverage.where((cover) => cover.layer.mode == LiquidGlassOcclusionMode.freeze),
-      ...coverage.where((cover) => cover.layer.mode == LiquidGlassOcclusionMode.plain),
+      ...coverage.where(
+        (cover) => cover.layer.mode == LiquidGlassOcclusionMode.freeze,
+      ),
+      ...coverage.where(
+        (cover) => cover.layer.mode == LiquidGlassOcclusionMode.plain,
+      ),
     ]) {
       final plain = cover.layer.mode == LiquidGlassOcclusionMode.plain;
       final feather = cover.feather;
@@ -1037,8 +1054,14 @@ class _LiquidGlassHostLayer extends ContainerLayer {
           pane._captureFrozen(_pass);
         } else {
           final inverse = Matrix4.inverted(entry.toHost).storage;
-          pane._captureCovered(_pass, entry.style,
-            entry.covered?.transform(inverse), entry.plain?.transform(inverse), entry.coverageKey, entry.feathers);
+          pane._captureCovered(
+            _pass,
+            entry.style,
+            entry.covered?.transform(inverse),
+            entry.plain?.transform(inverse),
+            entry.coverageKey,
+            entry.feathers,
+          );
         }
       }
     }

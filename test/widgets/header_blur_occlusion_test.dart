@@ -31,7 +31,11 @@ Widget _pane(Rect rect) => Positioned.fromRect(
   ),
 );
 
-Future<List<int>> _shot(WidgetTester tester, String tag, {double pixelRatio = 1}) async {
+Future<List<int>> _shot(
+  WidgetTester tester,
+  String tag, {
+  double pixelRatio = 1,
+}) async {
   final boundary = tester.renderObject<RenderRepaintBoundary>(
     find.byKey(_scene),
   );
@@ -74,67 +78,150 @@ void main() {
   });
 
   for (final quality in LiquidGlassQuality.values) {
-    testWidgets('modal freeze takes priority over header plain $quality', (tester) async {
+    testWidgets('modal freeze takes priority over header plain $quality', (
+      tester,
+    ) async {
       tester.view.physicalSize = const Size(320, 240);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
-      Future<List<int>> render(Color color, bool header, {double height = 200, bool modalFeather = false, double modalBottom = 124}) async {
-        await tester.pumpWidget(MaterialApp(home: RepaintBoundary(key: _scene,
-          child: LiquidGlassScope(enabled: true, quality: quality,
-            child: LiquidGlassHost(enabled: true, wallpaperOnly: true,
-              child: Stack(fit: StackFit.expand, children: [
-                LiquidGlassColorField(child: LiquidGlassColorSource(child: ColoredBox(color: color))),
-                _pane(Rect.fromLTWH(0, 0, 320, height)),
-                Positioned(left: 0, top: 0, width: 160, height: modalFeather ? modalBottom : 200,
-                  child: LiquidGlassOcclusion(shape: AppShape.none, bottomFeather: modalFeather ? 12 : 0,
-                    child: const SizedBox.expand())),
-                if (header) const Positioned.fill(child: HeaderBlur(fadeHeight: 120, fullStrengthHeight: 48)),
-              ]),
+      Future<List<int>> render(
+        Color color,
+        bool header, {
+        double height = 200,
+        bool modalFeather = false,
+        double modalBottom = 124,
+      }) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: RepaintBoundary(
+              key: _scene,
+              child: LiquidGlassScope(
+                enabled: true,
+                quality: quality,
+                child: LiquidGlassHost(
+                  enabled: true,
+                  wallpaperOnly: true,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      LiquidGlassColorField(
+                        child: LiquidGlassColorSource(
+                          child: ColoredBox(color: color),
+                        ),
+                      ),
+                      _pane(Rect.fromLTWH(0, 0, 320, height)),
+                      Positioned(
+                        left: 0,
+                        top: 0,
+                        width: 160,
+                        height: modalFeather ? modalBottom : 200,
+                        child: LiquidGlassOcclusion(
+                          shape: AppShape.none,
+                          bottomFeather: modalFeather ? 12 : 0,
+                          child: const SizedBox.expand(),
+                        ),
+                      ),
+                      if (header)
+                        const Positioned.fill(
+                          child: HeaderBlur(
+                            fadeHeight: 120,
+                            fullStrengthHeight: 48,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
             ),
           ),
-        )));
+        );
         await tester.pump();
         await tester.pump();
-        return _shot(tester, 'modal-header-$quality-${color.toARGB32().toRadixString(16)}-$header-$height-$modalFeather-$modalBottom');
+        return _shot(
+          tester,
+          'modal-header-$quality-${color.toARGB32().toRadixString(16)}-$header-$height-$modalFeather-$modalBottom',
+        );
       }
+
       final frozen = await render(Colors.blue, false);
       final mixed = await render(Colors.green, true);
       for (var channel = 0; channel < 4; channel++) {
-        expect(_pixel(mixed, 80, 40)[channel], closeTo(_pixel(frozen, 80, 40)[channel], 2));
-        expect(_pixel(mixed, 240, 40)[channel], closeTo(_pixel(mixed, 240, 170)[channel], 2));
+        expect(
+          _pixel(mixed, 80, 40)[channel],
+          closeTo(_pixel(frozen, 80, 40)[channel], 2),
+        );
+        expect(
+          _pixel(mixed, 240, 40)[channel],
+          closeTo(_pixel(mixed, 240, 170)[channel], 2),
+        );
       }
       expect(_pixel(mixed, 240, 40), isNot(_pixel(frozen, 240, 40)));
       expect(LiquidGlassHost.debugLastCapture!.panes, hasLength(1));
-      expect(LiquidGlassHost.debugLastCapture!.panes.single.slot.contains(const Offset(240, 40)), isFalse);
+      expect(
+        LiquidGlassHost.debugLastCapture!.panes.single.slot.contains(
+          const Offset(240, 40),
+        ),
+        isFalse,
+      );
       final full = await render(Colors.green, true, height: 80);
       expect(LiquidGlassHost.debugLastCapture!.panes, isEmpty);
       final recordings = LiquidGlassHost.debugLastCapture!.coveredRecordings;
       expect(recordings, greaterThan(0));
       for (var pass = 0; pass < 3; pass++) {
         await tester.pump(const Duration(milliseconds: 16));
-        expect(await _shot(tester, 'mixed-covered-stable-$quality-$pass'), full);
-        expect(LiquidGlassHost.debugLastCapture!.coveredRecordings, recordings,
-          reason: 'same mixed coverage must reuse its recorded Picture');
+        expect(
+          await _shot(tester, 'mixed-covered-stable-$quality-$pass'),
+          full,
+        );
+        expect(
+          LiquidGlassHost.debugLastCapture!.coveredRecordings,
+          recordings,
+          reason: 'same mixed coverage must reuse its recorded Picture',
+        );
       }
       await render(Colors.red, false, height: 80);
       final reentered = await render(Colors.red, true, height: 80);
-      expect(LiquidGlassHost.debugLastCapture!.coveredRecordings, greaterThan(recordings));
+      expect(
+        LiquidGlassHost.debugLastCapture!.coveredRecordings,
+        greaterThan(recordings),
+      );
       expect(reentered, isNot(full));
       await render(Colors.blue, true, modalFeather: true);
       for (final color in [Colors.green, Colors.red]) {
         final overlap = await render(color, true, modalFeather: true);
-        final expected = color == Colors.green ? [112, 140, 64, 255] : [255, 0, 0, 255];
+        final expected = color == Colors.green
+            ? [112, 140, 64, 255]
+            : [255, 0, 0, 255];
         for (final y in [126, 128, 134]) {
           for (var channel = 0; channel < 4; channel++) {
-            expect(_pixel(overlap, 240, y)[channel], closeTo(expected[channel], 2),
-              reason: 'header-only pixels cannot read the modal frozen frame $color $y');
+            expect(
+              _pixel(overlap, 240, y)[channel],
+              closeTo(expected[channel], 2),
+              reason:
+                  'header-only pixels cannot read the modal frozen frame $color $y',
+            );
           }
         }
-        expect(_pixel(overlap, 80, 126)[2], greaterThan(expected[2] + 40),
-          reason: 'the actual modal feather must keep its cached contribution');
+        expect(
+          _pixel(overlap, 80, 126)[2],
+          greaterThan(expected[2] + 40),
+          reason: 'the actual modal feather must keep its cached contribution',
+        );
       }
-      await render(Colors.blue, true, height: 110, modalFeather: true, modalBottom: 100);
-      final coveredOverlap = await render(Colors.red, true, height: 110, modalFeather: true, modalBottom: 100);
+      await render(
+        Colors.blue,
+        true,
+        height: 110,
+        modalFeather: true,
+        modalBottom: 100,
+      );
+      final coveredOverlap = await render(
+        Colors.red,
+        true,
+        height: 110,
+        modalFeather: true,
+        modalBottom: 100,
+      );
       expect(LiquidGlassHost.debugLastCapture!.panes, isEmpty);
       expect(_pixel(coveredOverlap, 120, 104)[2], greaterThan(80));
       expect(_pixel(coveredOverlap, 240, 104)[0], greaterThan(250));
@@ -142,147 +229,240 @@ void main() {
       await tester.pump();
     });
 
-    testWidgets('DPR3 header reveals moving Aurora across tabs and scroll positions $quality', (tester) async {
-      tester.view.physicalSize = const Size(960, 720);
-      tester.view.devicePixelRatio = 3;
-      addTearDown(tester.view.reset);
-      Future<List<int>> render(double top, int tab, int seconds, {bool reference = false, bool header = true}) async {
-        await tester.pumpWidget(MaterialApp(
-          home: RepaintBoundary(key: _scene,
-            child: LiquidGlassScope(enabled: true, quality: quality,
-              child: LiquidGlassHost(enabled: true, wallpaperOnly: true,
-                child: Stack(fit: StackFit.expand, children: [
-                  LiquidGlassColorField(child: SeededAuroraWallpaper(
-                    colors: const [Color(0xFF32C59A), Color(0xFF3648C7), Color(0xFFD33479)],
-                    seed: 271828, brightness: Brightness.dark,
-                    motionTime: Duration(seconds: seconds),
-                  )),
-                  Positioned(key: ValueKey('tab-$tab'), left: 16, top: top, width: 288, height: 80,
-                    child: reference
-                        ? const ClipRSuperellipse(borderRadius: AppRadius.xl,
-                            child: ColoredBox(color: Color(0x33FF0000)))
-                        : const LiquidGlass(style: _style,
-                            clipper: ShapeBorderClipper(shape: AppShape.xl)),
+    testWidgets(
+      'DPR3 header reveals moving Aurora across tabs and scroll positions $quality',
+      (tester) async {
+        tester.view.physicalSize = const Size(960, 720);
+        tester.view.devicePixelRatio = 3;
+        addTearDown(tester.view.reset);
+        Future<List<int>> render(
+          double top,
+          int tab,
+          int seconds, {
+          bool reference = false,
+          bool header = true,
+        }) async {
+          await tester.pumpWidget(
+            MaterialApp(
+              home: RepaintBoundary(
+                key: _scene,
+                child: LiquidGlassScope(
+                  enabled: true,
+                  quality: quality,
+                  child: LiquidGlassHost(
+                    enabled: true,
+                    wallpaperOnly: true,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        LiquidGlassColorField(
+                          child: SeededAuroraWallpaper(
+                            colors: const [
+                              Color(0xFF32C59A),
+                              Color(0xFF3648C7),
+                              Color(0xFFD33479),
+                            ],
+                            seed: 271828,
+                            brightness: Brightness.dark,
+                            motionTime: Duration(seconds: seconds),
+                          ),
+                        ),
+                        Positioned(
+                          key: ValueKey('tab-$tab'),
+                          left: 16,
+                          top: top,
+                          width: 288,
+                          height: 80,
+                          child: reference
+                              ? const ClipRSuperellipse(
+                                  borderRadius: AppRadius.xl,
+                                  child: ColoredBox(color: Color(0x33FF0000)),
+                                )
+                              : const LiquidGlass(
+                                  style: _style,
+                                  clipper: ShapeBorderClipper(
+                                    shape: AppShape.xl,
+                                  ),
+                                ),
+                        ),
+                        Positioned(
+                          left: 42,
+                          top: top + 26,
+                          child: GlassText(
+                            'VISIBLE TAB $tab',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ),
+                        if (header)
+                          const Positioned.fill(
+                            child: HeaderBlur(
+                              fadeHeight: 120,
+                              fullStrengthHeight: 48,
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
-                  Positioned(left: 42, top: top + 26,
-                    child: GlassText('VISIBLE TAB $tab', style: const TextStyle(color: Colors.white, fontSize: 16))),
-                  if (header) const Positioned.fill(child: HeaderBlur(fadeHeight: 120, fullStrengthHeight: 48)),
-                ]),
+                ),
               ),
             ),
-          ),
-        ));
-        final pixels = await _shot(tester, 'aurora-dpr3-$quality-$top-$tab-$seconds-$reference-$header', pixelRatio: 3);
-        expect(pixels, hasLength(960 * 720 * 4));
-        return pixels;
-      }
-      var elapsed = 0;
-      var motionDifference = 0;
-      List<int>? previous;
-      for (final top in [12.0, 90.0, 150.0]) {
-        for (final tab in [0, 1, 0]) {
-          final actual = await render(top, tab, elapsed);
-          final capture = LiquidGlassHost.debugLastCapture!;
-          expect(LiquidGlassHost.debugLastFlatCapture!.groups, 0);
-          if (top == 12) {
-            expect(capture.panes, isEmpty,
-              reason: 'fully header-covered panes must skip the atlas');
-          }
-          final reference = await render(top, tab, elapsed, reference: true);
-          var maximum = 0;
-          var worst = '';
-          for (var y = 0; y < 300; y++) {
-            for (var x = 0; x < 960; x++) {
-              final index = (y * 960 + x) * 4;
-              for (var channel = 0; channel < 4; channel++) {
-                final delta = (actual[index + channel] - reference[index + channel]).abs();
-                if (delta > maximum) {
-                  maximum = delta;
-                  worst = '$x,$y channel $channel';
+          );
+          final pixels = await _shot(
+            tester,
+            'aurora-dpr3-$quality-$top-$tab-$seconds-$reference-$header',
+            pixelRatio: 3,
+          );
+          expect(pixels, hasLength(960 * 720 * 4));
+          return pixels;
+        }
+
+        var elapsed = 0;
+        var motionDifference = 0;
+        List<int>? previous;
+        for (final top in [12.0, 90.0, 150.0]) {
+          for (final tab in [0, 1, 0]) {
+            final actual = await render(top, tab, elapsed);
+            final capture = LiquidGlassHost.debugLastCapture!;
+            expect(LiquidGlassHost.debugLastFlatCapture!.groups, 0);
+            if (top == 12) {
+              expect(
+                capture.panes,
+                isEmpty,
+                reason: 'fully header-covered panes must skip the atlas',
+              );
+            }
+            final reference = await render(top, tab, elapsed, reference: true);
+            var maximum = 0;
+            var worst = '';
+            for (var y = 0; y < 300; y++) {
+              for (var x = 0; x < 960; x++) {
+                final index = (y * 960 + x) * 4;
+                for (var channel = 0; channel < 4; channel++) {
+                  final delta =
+                      (actual[index + channel] - reference[index + channel])
+                          .abs();
+                  if (delta > maximum) {
+                    maximum = delta;
+                    worst = '$x,$y channel $channel';
+                  }
                 }
               }
             }
-          }
-          expect(maximum, lessThanOrEqualTo(2),
-            reason: 'no stale header band $top tab$tab t$elapsed $worst');
-          for (var y = 100; y < 135; y++) {
-            final a = ((y * 3) * 960 + 240 * 3) * 4;
-            final b = (((y + 1) * 3) * 960 + 240 * 3) * 4;
-            for (var channel = 0; channel < 3; channel++) {
-              expect((actual[a + channel] - actual[b + channel]).abs(), lessThanOrEqualTo(18),
-                reason: 'DPR3 real header seam $top $y channel $channel');
+            expect(
+              maximum,
+              lessThanOrEqualTo(2),
+              reason: 'no stale header band $top tab$tab t$elapsed $worst',
+            );
+            for (var y = 100; y < 135; y++) {
+              final a = ((y * 3) * 960 + 240 * 3) * 4;
+              final b = (((y + 1) * 3) * 960 + 240 * 3) * 4;
+              for (var channel = 0; channel < 3; channel++) {
+                expect(
+                  (actual[a + channel] - actual[b + channel]).abs(),
+                  lessThanOrEqualTo(18),
+                  reason: 'DPR3 real header seam $top $y channel $channel',
+                );
+              }
             }
-          }
-          final index = (200 * 3 * 960 + 300 * 3) * 4;
-          if (previous != null) {
-            for (var channel = 0; channel < 3; channel++) {
-              motionDifference += (actual[index + channel] - previous[index + channel]).abs();
+            final index = (200 * 3 * 960 + 300 * 3) * 4;
+            if (previous != null) {
+              for (var channel = 0; channel < 3; channel++) {
+                motionDifference +=
+                    (actual[index + channel] - previous[index + channel]).abs();
+              }
             }
+            previous = actual;
+            elapsed += 4;
           }
-          previous = actual;
-          elapsed += 4;
         }
-      }
-      expect(motionDifference, greaterThan(5));
-      final revealed = await render(12, 1, elapsed, header: false);
-      expect(LiquidGlassHost.debugLastCapture!.panes, hasLength(1));
-      expect(LiquidGlassHost.debugLastCapture!.occludedPanes, 0);
-      expect(revealed, isNot(previous));
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pump();
-    });
+        expect(motionDifference, greaterThan(5));
+        final revealed = await render(12, 1, elapsed, header: false);
+        expect(LiquidGlassHost.debugLastCapture!.panes, hasLength(1));
+        expect(LiquidGlassHost.debugLastCapture!.occludedPanes, 0);
+        expect(revealed, isNot(previous));
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      },
+    );
 
-    testWidgets('frozen contours retain native DPR3 coverage $quality', (tester) async {
+    testWidgets('frozen contours retain native DPR3 coverage $quality', (
+      tester,
+    ) async {
       tester.view.physicalSize = const Size(960, 720);
       tester.view.devicePixelRatio = 3;
       addTearDown(tester.view.reset);
-      Future<List<int>> render(double top, {bool cover = false, bool reference = false}) async {
-        await tester.pumpWidget(MaterialApp(
-          home: RepaintBoundary(
-            key: _scene,
-            child: LiquidGlassScope(
-              enabled: true,
-              quality: quality,
-              child: LiquidGlassHost(
+      Future<List<int>> render(
+        double top, {
+        bool cover = false,
+        bool reference = false,
+      }) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: RepaintBoundary(
+              key: _scene,
+              child: LiquidGlassScope(
                 enabled: true,
-                wallpaperOnly: true,
-                child: Stack(fit: StackFit.expand, children: [
-                  const LiquidGlassColorField(child: LiquidGlassColorSource(
-                    child: ColoredBox(color: Colors.black),
-                  )),
-                  Positioned(left: 16, top: top, width: 288, height: 120,
-                    child: reference
-                        ? const ClipRSuperellipse(
-                            borderRadius: AppRadius.xl,
-                            child: ColoredBox(color: Color(0xFF808080)),
-                          )
-                        : const LiquidGlass(
-                            style: LiquidGlassStyle(
-                              tint: Color(0x80FFFFFF),
-                              blur: 0,
-                              refraction: 0,
-                              bevel: 0,
-                              rim: 0,
-                            ),
-                            clipper: ShapeBorderClipper(shape: AppShape.xl),
+                quality: quality,
+                child: LiquidGlassHost(
+                  enabled: true,
+                  wallpaperOnly: true,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      const LiquidGlassColorField(
+                        child: LiquidGlassColorSource(
+                          child: ColoredBox(color: Colors.black),
+                        ),
+                      ),
+                      Positioned(
+                        left: 16,
+                        top: top,
+                        width: 288,
+                        height: 120,
+                        child: reference
+                            ? const ClipRSuperellipse(
+                                borderRadius: AppRadius.xl,
+                                child: ColoredBox(color: Color(0xFF808080)),
+                              )
+                            : const LiquidGlass(
+                                style: LiquidGlassStyle(
+                                  tint: Color(0x80FFFFFF),
+                                  blur: 0,
+                                  refraction: 0,
+                                  bevel: 0,
+                                  rim: 0,
+                                ),
+                                clipper: ShapeBorderClipper(shape: AppShape.xl),
+                              ),
+                      ),
+                      if (cover)
+                        const Positioned(
+                          left: 0,
+                          top: 0,
+                          width: 320,
+                          height: 110,
+                          child: LiquidGlassOcclusion(
+                            shape: AppShape.none,
+                            bottomFeather: 12,
+                            child: SizedBox.expand(),
                           ),
+                        ),
+                    ],
                   ),
-                  if (cover) const Positioned(left: 0, top: 0, width: 320, height: 110,
-                    child: LiquidGlassOcclusion(
-                      shape: AppShape.none,
-                      bottomFeather: 12,
-                      child: SizedBox.expand(),
-                    ),
-                  ),
-                ]),
+                ),
               ),
             ),
           ),
-        ));
+        );
         await tester.pump();
         await tester.pump();
         return (await tester.runAsync(() async {
-          final boundary = tester.renderObject<RenderRepaintBoundary>(find.byKey(_scene));
+          final boundary = tester.renderObject<RenderRepaintBoundary>(
+            find.byKey(_scene),
+          );
           final image = await boundary.toImage(pixelRatio: 3);
           try {
             expect(image.width, 960);
@@ -290,17 +470,22 @@ void main() {
             final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
             if (output != null) {
               Directory(output).createSync(recursive: true);
-              final png = (await image.toByteData(format: ui.ImageByteFormat.png))!;
-              File('$output/header-dpr3-$quality-$top-$cover-$reference.png')
-                  .writeAsBytesSync(png.buffer.asUint8List());
+              final png = (await image.toByteData(
+                format: ui.ImageByteFormat.png,
+              ))!;
+              File(
+                '$output/header-dpr3-$quality-$top-$cover-$reference.png',
+              ).writeAsBytesSync(png.buffer.asUint8List());
             }
-            return (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!
-                .buffer.asUint8List().toList();
+            return (await image.toByteData(
+              format: ui.ImageByteFormat.rawRgba,
+            ))!.buffer.asUint8List().toList();
           } finally {
             image.dispose();
           }
         }))!;
       }
+
       for (final top in [86.0, 74.0, 62.0]) {
         await render(top);
         final frozen = await render(top, cover: true);
@@ -313,24 +498,42 @@ void main() {
           for (var x = 0; x < 960; x++) {
             final index = (y * 960 + x) * 4;
             if (reference[index] == 0 && frozen[index] > 2) outsideLeak++;
-            if (reference[index] >= 126 && frozen[index] < 124) interiorMissing++;
+            if (reference[index] >= 126 && frozen[index] < 124)
+              interiorMissing++;
             for (var channel = 0; channel < 4; channel++) {
-              final delta = (frozen[index + channel] - reference[index + channel]).abs();
+              final delta =
+                  (frozen[index + channel] - reference[index + channel]).abs();
               if (delta > maximum) {
                 maximum = delta;
-                worst = {'x': x, 'y': y, 'channel': channel,
-                  'actual': frozen[index + channel], 'expected': reference[index + channel]};
+                worst = {
+                  'x': x,
+                  'y': y,
+                  'channel': channel,
+                  'actual': frozen[index + channel],
+                  'expected': reference[index + channel],
+                };
               }
             }
           }
         }
         final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
         if (output != null) {
-          File('$output/header-frozen-contour-dpr3-$quality-$top.json').writeAsStringSync(jsonEncode({
-            'maximum': maximum, 'worst': worst, 'outsideLeak': outsideLeak, 'interiorMissing': interiorMissing,
-          }));
+          File(
+            '$output/header-frozen-contour-dpr3-$quality-$top.json',
+          ).writeAsStringSync(
+            jsonEncode({
+              'maximum': maximum,
+              'worst': worst,
+              'outsideLeak': outsideLeak,
+              'interiorMissing': interiorMissing,
+            }),
+          );
         }
-        expect(maximum, lessThanOrEqualTo(2), reason: 'native frozen contour $top $worst');
+        expect(
+          maximum,
+          lessThanOrEqualTo(2),
+          reason: 'native frozen contour $top $worst',
+        );
         expect(outsideLeak, 0);
         expect(interiorMissing, 0);
       }
@@ -700,14 +903,26 @@ void main() {
                           child: Stack(
                             children: [
                               nativePlain
-                                  ? Positioned.fromRect(rect: _top, child: const ClipRSuperellipse(
-                                      borderRadius: AppRadius.full,
-                                      child: ColoredBox(color: Color(0x33FF0000))))
+                                  ? Positioned.fromRect(
+                                      rect: _top,
+                                      child: const ClipRSuperellipse(
+                                        borderRadius: AppRadius.full,
+                                        child: ColoredBox(
+                                          color: Color(0x33FF0000),
+                                        ),
+                                      ),
+                                    )
                                   : _pane(_top),
                               nativePlain
-                                  ? Positioned.fromRect(rect: _crossing, child: const ClipRSuperellipse(
-                                      borderRadius: AppRadius.full,
-                                      child: ColoredBox(color: Color(0x33FF0000))))
+                                  ? Positioned.fromRect(
+                                      rect: _crossing,
+                                      child: const ClipRSuperellipse(
+                                        borderRadius: AppRadius.full,
+                                        child: ColoredBox(
+                                          color: Color(0x33FF0000),
+                                        ),
+                                      ),
+                                    )
                                   : _pane(_crossing),
                               if (text)
                                 const Positioned(
@@ -798,8 +1013,12 @@ void main() {
             closeTo(_pixel(plainReference, 280, 8)[channel], 2),
           );
         }
-        expect(_pixel(moving, 280, 8), isNot(_pixel(initial, 280, 8)),
-          reason: 'header tint must reveal the live wallpaper instead of old RGB');
+        expect(
+          _pixel(moving, 280, 8),
+          isNot(_pixel(initial, 280, 8)),
+          reason:
+              'header tint must reveal the live wallpaper instead of old RGB',
+        );
         expect(capture.panes, hasLength(2));
         expect(
           _pixel(moving, 160, 150),
@@ -819,10 +1038,7 @@ void main() {
         }
         expect(feather.panes, 1);
         expect(feather.stripPixels, 320 * 12);
-        expect(
-          feather.surfacePixels,
-          320 * 12 * 3,
-        );
+        expect(feather.surfacePixels, 320 * 12 * 3);
         await render(color: Colors.green);
         final stable = await _shot(tester, 'stable-$quality');
         expect(stable, moving);

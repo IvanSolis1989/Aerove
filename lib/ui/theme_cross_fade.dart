@@ -47,7 +47,9 @@ class _ThemeCrossFadeState extends State<ThemeCrossFade>
     _inactive = state == AppLifecycleState.inactive;
     _controller.stop();
     if (_inactive) return;
-    if (state == AppLifecycleState.resumed && wasInactive && _snapshot != null) {
+    if (state == AppLifecycleState.resumed &&
+        wasInactive &&
+        _snapshot != null) {
       _controller.forward();
       return;
     }

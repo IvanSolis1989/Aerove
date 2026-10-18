@@ -46,10 +46,8 @@ Color _pixel(List<int> bytes, int x, int y) {
   return Color.fromARGB(bytes[i + 3], bytes[i], bytes[i + 1], bytes[i + 2]);
 }
 
-double _distance(Color a, Color b) => math.max(
-  (a.r - b.r).abs(),
-  math.max((a.g - b.g).abs(), (a.b - b.b).abs()),
-);
+double _distance(Color a, Color b) =>
+    math.max((a.r - b.r).abs(), math.max((a.g - b.g).abs(), (a.b - b.b).abs()));
 
 double _contrast(Color a, Color b) {
   final x = a.computeLuminance(), y = b.computeLuminance();
@@ -74,13 +72,12 @@ void main() {
     for (final quality in LiquidGlassQuality.values) {
       testWidgets('dashboard data and units take local color at DPR3 '
           '${brightness.name} ${quality.name}', (tester) async {
-        tester.view.physicalSize = const Size(
-          _width * _dpr,
-          _height * _dpr,
-        );
+        tester.view.physicalSize = const Size(_width * _dpr, _height * _dpr);
         tester.view.devicePixelRatio = _dpr.toDouble();
         addTearDown(tester.view.reset);
-        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
         final container = ProviderContainer(
           overrides: [
             profilesProvider.overrideWith(() => TestProfiles([_profile])),
@@ -185,10 +182,10 @@ void main() {
                 final png = (await image.toByteData(
                   format: ui.ImageByteFormat.png,
                 ))!;
-                File('$output/dashboard-data-${brightness.name}-'
-                    '${quality.name}-$tag.png').writeAsBytesSync(
-                  png.buffer.asUint8List(),
-                );
+                File(
+                  '$output/dashboard-data-${brightness.name}-'
+                  '${quality.name}-$tag.png',
+                ).writeAsBytesSync(png.buffer.asUint8List());
               }
               return (await image.toByteData(
                 format: ui.ImageByteFormat.rawRgba,
@@ -200,16 +197,12 @@ void main() {
         }
 
         final plain = await render('plain', ink: false);
-        final paragraphs = <({
-          String text,
-          Rect bounds,
-          Color source,
-          double contrast,
-        })>[];
+        final paragraphs =
+            <({String text, Rect bounds, Color source, double contrast})>[];
         for (final widget in tester.widgetList<GlassText>(
           find.byWidgetPredicate(
-            (widget) => widget is GlassText &&
-                widget.inkRole == GlassInkRole.body,
+            (widget) =>
+                widget is GlassText && widget.inkRole == GlassInkRole.body,
           ),
         )) {
           final paragraph = find.descendant(
@@ -233,12 +226,15 @@ void main() {
             for (final child in span.children!) {
               final value = child.toPlainText();
               final boxes = render.getBoxesForSelection(
-                TextSelection(baseOffset: offset, extentOffset: offset + value.length),
+                TextSelection(
+                  baseOffset: offset,
+                  extentOffset: offset + value.length,
+                ),
               );
               if (boxes.isNotEmpty && value.trim().isNotEmpty) {
-                final box = boxes.map((box) => box.toRect()).reduce(
-                  (a, b) => a.expandToInclude(b),
-                );
+                final box = boxes
+                    .map((box) => box.toRect())
+                    .reduce((a, b) => a.expandToInclude(b));
                 paragraphs.add((
                   text: '$text [${value.trim()}]',
                   bounds: box.shift(render.localToGlobal(Offset.zero)),
@@ -258,8 +254,10 @@ void main() {
         final wave = find.descendant(
           of: find.byType(ProfilesCard),
           matching: find.byWidgetPredicate(
-            (widget) => widget is SizedBox &&
-                widget.height == 12 && widget.child is Stack,
+            (widget) =>
+                widget is SizedBox &&
+                widget.height == 12 &&
+                widget.child is Stack,
           ),
         );
         expect(wave, findsOneWidget);
@@ -277,12 +275,20 @@ void main() {
           var supported = 0, colored = 0, responding = 0;
           var minimumContrast = double.infinity;
           final bounds = paragraph.bounds;
-          for (var y = (bounds.top * _dpr).ceil();
-              y < (bounds.bottom * _dpr).floor(); y++) {
-            for (var x = (bounds.left * _dpr).ceil();
-                x < (bounds.right * _dpr).floor(); x++) {
+          for (
+            var y = (bounds.top * _dpr).ceil();
+            y < (bounds.bottom * _dpr).floor();
+            y++
+          ) {
+            for (
+              var x = (bounds.left * _dpr).ceil();
+              x < (bounds.right * _dpr).floor();
+              x++
+            ) {
               final field = Color.lerp(
-                fields[0], fields[1], (x + 0.5) / (_width * _dpr),
+                fields[0],
+                fields[1],
+                (x + 0.5) / (_width * _dpr),
               )!;
               final source = Color.alphaBlend(paragraph.source, field);
               if (_distance(_pixel(plain, x, y), source) > 1 / 255) {
@@ -291,7 +297,8 @@ void main() {
               supported++;
               final a = _pixel(actual, x, y), b = _pixel(moved, x, y);
               if (_distance(a, source) > 0.05 &&
-                  HSVColor.fromColor(a).saturation > 0.08) colored++;
+                  HSVColor.fromColor(a).saturation > 0.08)
+                colored++;
               if (_distance(a, b) > 0.01) responding++;
               minimumContrast = math.min(minimumContrast, _contrast(a, field));
               expect(a.a, 1);
@@ -305,21 +312,39 @@ void main() {
             'minimumContrast': minimumContrast,
           });
           if (output != null) {
-            File('$output/dashboard-data-${brightness.name}-${quality.name}.json')
-                .writeAsStringSync(jsonEncode(reports));
+            File(
+              '$output/dashboard-data-${brightness.name}-${quality.name}.json',
+            ).writeAsStringSync(jsonEncode(reports));
           }
           expect(supported, greaterThan(20), reason: paragraph.text);
-          expect(colored / supported, greaterThan(0.85), reason: paragraph.text);
-          expect(responding / supported, greaterThan(0.85), reason: paragraph.text);
-          expect(minimumContrast, greaterThanOrEqualTo(paragraph.contrast),
-            reason: paragraph.text);
+          expect(
+            colored / supported,
+            greaterThan(0.85),
+            reason: paragraph.text,
+          );
+          expect(
+            responding / supported,
+            greaterThan(0.85),
+            reason: paragraph.text,
+          );
+          expect(
+            minimumContrast,
+            greaterThanOrEqualTo(paragraph.contrast),
+            reason: paragraph.text,
+          );
         }
         final none = await render('none', glass: false);
-        final noneControl = await render('none-control', glass: false, ink: false);
+        final noneControl = await render(
+          'none-control',
+          glass: false,
+          ink: false,
+        );
         var noneDifference = 0;
         for (var i = 0; i < none.length; i++) {
-          noneDifference = math.max(noneDifference,
-            (none[i] - noneControl[i]).abs());
+          noneDifference = math.max(
+            noneDifference,
+            (none[i] - noneControl[i]).abs(),
+          );
         }
         expect(noneDifference, 0);
         expect(find.byType(GlassInk), findsWidgets);
@@ -342,9 +367,10 @@ class _Field extends CustomPainter {
     final bounds = Offset.zero & size;
     canvas.drawRect(
       bounds,
-      Paint()..shader = LinearGradient(
-        colors: moved ? colors.reversed.toList() : colors,
-      ).createShader(bounds),
+      Paint()
+        ..shader = LinearGradient(
+          colors: moved ? colors.reversed.toList() : colors,
+        ).createShader(bounds),
     );
   }
 

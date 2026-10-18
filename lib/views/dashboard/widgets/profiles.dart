@@ -349,8 +349,10 @@ class _UsageMeter extends StatelessWidget {
               context,
               figure,
             ).copyWith(letterSpacing: 0);
-            final unit = DashboardText.unit(context, AppTextStyle.footnote)
-                .copyWith(color: glass ? source : null);
+            final unit = DashboardText.unit(
+              context,
+              AppTextStyle.footnote,
+            ).copyWith(color: glass ? source : null);
             final used = ' ${context.appLocalizations.usedShort}';
             final traffic =
                 '${dashboardTraffic(usage.used)} / ${dashboardTraffic(usage.total)}';
