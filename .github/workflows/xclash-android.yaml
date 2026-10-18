@@ -123,7 +123,7 @@ jobs:
           if-no-files-found: ignore
       - name: Verify reported UI regressions
         id: reported
-        if: ${{ !cancelled() && steps.analyze.outcome == 'success' && steps.feather.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
         env:
           XCLASH_REQUIRE_IMPELLER: 'true'
           XCLASH_SCREENSHOT_DIR: ${{ runner.temp }}/xclash-previews/reported
