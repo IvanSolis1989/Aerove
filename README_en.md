@@ -10,6 +10,14 @@ Thanks to [chen08209/FlClash](https://github.com/chen08209/FlClash) for the upst
 
 [![Latest release](https://img.shields.io/github/v/release/IvanSolis1989/Aerove?style=flat-square)](https://github.com/IvanSolis1989/Aerove/releases/latest)
 
+## Interface preview
+
+Light and dark views with the same palette, rendered from the actual application in an offline state. [Render details](docs/screenshots/render-info.json)
+
+| Light | Dark |
+| --- | --- |
+| <img src="docs/screenshots/readme-light.png" alt="Aerove light Liquid Glass interface" width="300"> | <img src="docs/screenshots/readme-dark.png" alt="Aerove dark Liquid Glass interface" width="300"> |
+
 ## Download and installation
 
 **[Download Android APK](https://github.com/IvanSolis1989/Aerove/releases/latest/download/Aerove-android-arm64.apk)** · [All releases](https://github.com/IvanSolis1989/Aerove/releases)

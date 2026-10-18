@@ -10,6 +10,14 @@ Aerove 基于 FlClash，主要优化安卓版 UI 与图标。
 
 [![下载最新版](https://img.shields.io/github/v/release/IvanSolis1989/Aerove?style=flat-square)](https://github.com/IvanSolis1989/Aerove/releases/latest)
 
+## 界面预览
+
+同一配色下的浅色与深色界面，来自应用页面的实际离线渲染。[渲染来源](docs/screenshots/render-info.json)
+
+| 浅色 | 深色 |
+| --- | --- |
+| <img src="docs/screenshots/readme-light.png" alt="Aerove 浅色液态玻璃界面" width="300"> | <img src="docs/screenshots/readme-dark.png" alt="Aerove 深色液态玻璃界面" width="300"> |
+
 ## 下载与安装
 
 **[直接下载 Android APK](https://github.com/IvanSolis1989/Aerove/releases/latest/download/Aerove-android-arm64.apk)** · [全部版本](https://github.com/IvanSolis1989/Aerove/releases)

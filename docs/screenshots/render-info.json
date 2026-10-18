@@ -1,0 +1,74 @@
+{
+  "application": "Aerove",
+  "source": "e655d0ee49987f3bb09752bc938c9f92b7126459",
+  "sourceUrl": "https://github.com/IvanSolis1989/Aerove/tree/e655d0ee49987f3bb09752bc938c9f92b7126459",
+  "workflow": "https://github.com/IvanSolis1989/Aerove/actions/runs/39110185375",
+  "renderer": "Flutter 3.47.6 Impeller, actual application widget tree; offline render, not a physical Android screenshot",
+  "harnessCommit": "78dc6f243017d8c1dd205881a075a11b98c7c9e4",
+  "harnessPath": "test/readme_showcase_test.dart",
+  "logicalSize": [
+    430,
+    932
+  ],
+  "outputSize": [
+    860,
+    1864
+  ],
+  "seed": 271828,
+  "palette": [
+    "#65BDD2",
+    "#C589CA",
+    "#75CCA8"
+  ],
+  "glassQuality": "ultra",
+  "language": "zh_CN",
+  "state": "Offline empty profiles and connections; runtime managers omitted; zero network attempts",
+  "images": [
+    {
+      "file": "readme-light.png",
+      "mode": "light",
+      "sha256": "4c2d9b6d9796dc7a1301c1134a1bc9ae36e5b22ae83d0571a482a271cdad3d69",
+      "bytes": 183523,
+      "metadata": {
+        "source": "e655d0ee49987f3bb09752bc938c9f92b7126459",
+        "rendering": "Flutter Impeller offscreen, not an Android device screenshot",
+        "page": "dashboard",
+        "logicalSize": [
+          430,
+          932
+        ],
+        "exportScale": 2,
+        "locale": "zh_CN",
+        "font": "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "seed": 271828,
+        "quality": "ultra",
+        "data": "Offline empty profile/connection state; no synthetic connected status",
+        "networkAttempts": 0,
+        "managers": "Application.forTesting + production ThemeManager; runtime managers omitted"
+      }
+    },
+    {
+      "file": "readme-dark.png",
+      "mode": "dark",
+      "sha256": "22efb8910700bc26cc5ca8d33b3ee002ab385ce3ef83a62b7b0c01488ffebacc",
+      "bytes": 233817,
+      "metadata": {
+        "source": "e655d0ee49987f3bb09752bc938c9f92b7126459",
+        "rendering": "Flutter Impeller offscreen, not an Android device screenshot",
+        "page": "dashboard",
+        "logicalSize": [
+          430,
+          932
+        ],
+        "exportScale": 2,
+        "locale": "zh_CN",
+        "font": "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "seed": 271828,
+        "quality": "ultra",
+        "data": "Offline empty profile/connection state; no synthetic connected status",
+        "networkAttempts": 0,
+        "managers": "Application.forTesting + production ThemeManager; runtime managers omitted"
+      }
+    }
+  ]
+}
