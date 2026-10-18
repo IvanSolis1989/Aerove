@@ -225,7 +225,10 @@ void main() {
             await tester.pump(const Duration(milliseconds: 300));
             expect(opacity(), 0);
 
+            final initialOffset = position.pixels;
             await tester.drag(viewport, const Offset(0, -160));
+            await tester.pump();
+            expect(position.pixels, greaterThan(initialOffset));
             await tester.pump(const Duration(milliseconds: 300));
             expect(opacity(), 1);
             await tester.pump(const Duration(seconds: 2));
@@ -233,6 +236,7 @@ void main() {
             expect(opacity(), 0);
 
             await tester.drag(viewport, const Offset(0, -80));
+            await tester.pump();
             await tester.pump(const Duration(milliseconds: 300));
             expect(opacity(), 1);
             final thumb = await revealScrollbarThumb(
@@ -246,6 +250,7 @@ void main() {
               );
               await mouse.addPointer(location: Offset.zero);
               await mouse.moveTo(thumb);
+              await tester.pump();
               await tester.pump(const Duration(milliseconds: 150));
               expect(scrollbarPainter(tester).thickness, 10);
               await mouse.removePointer();
@@ -254,6 +259,7 @@ void main() {
             final before = position.pixels;
             final gesture = await tester.startGesture(thumb);
             await gesture.moveBy(const Offset(0, 40));
+            await tester.pump();
             await tester.pump(const Duration(milliseconds: 150));
             expect(position.pixels, greaterThan(before));
             await tester.pump(const Duration(seconds: 2));

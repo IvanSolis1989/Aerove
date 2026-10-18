@@ -1508,15 +1508,6 @@ class _LiquidGlassLayer extends Layer {
         ..clipPath(strip, doAntiAlias: false)
         ..saveLayer(bounds, Paint())
         ..saveLayer(bounds, Paint())
-        ..drawPicture(_frozenPicture!);
-      if (simple) {
-        group.single.mask(canvas, inverse: true);
-      } else {
-        _maskFeather(canvas, bounds, covered, group, BlendMode.dstOut);
-      }
-      canvas
-        ..restore()
-        ..saveLayer(bounds, Paint()..blendMode = BlendMode.plus)
         ..save()
         ..clipPath(liveRegion, doAntiAlias: false);
       paintLive(canvas);
@@ -1525,6 +1516,15 @@ class _LiquidGlassLayer extends Layer {
         group.single.mask(canvas);
       } else {
         _maskFeather(canvas, bounds, covered, group, BlendMode.dstIn);
+      }
+      canvas
+        ..restore()
+        ..saveLayer(bounds, Paint()..blendMode = BlendMode.plus)
+        ..drawPicture(_frozenPicture!);
+      if (simple) {
+        group.single.mask(canvas, inverse: true);
+      } else {
+        _maskFeather(canvas, bounds, covered, group, BlendMode.dstOut);
       }
       canvas
         ..restore()

@@ -252,6 +252,16 @@ void main() {
                 '$prefix-$phase-$progress',
               );
               final actualCapture = _captureState();
+              final probeTheme = quality != null && entry.key == 'Theme' &&
+                  (phase == 'held-drag' ||
+                      (phase == 'push' && progress == 0.75) ||
+                      (phase == 'pop' && progress == 0.1));
+              final actualThemeAtlas = probeTheme
+                  ? await _themeAtlasProbe(
+                      tester, '$prefix-$phase-$progress-actual-atlas',
+                      held: phase == 'held-drag',
+                    )
+                  : null;
               // Keep glass atlas allocation stable while perturbing only Home RGB.
               homeActual.value = false;
               await tester.pump();
@@ -262,6 +272,12 @@ void main() {
                 '$prefix-$phase-$progress-${quality == null ? 'wallpaper' : 'rgb-control'}',
               );
               final oracleCapture = _captureState();
+              final oracleThemeAtlas = probeTheme
+                  ? await _themeAtlasProbe(
+                      tester, '$prefix-$phase-$progress-rgb-control-atlas',
+                      held: phase == 'held-drag',
+                    )
+                  : null;
               await tester.pump();
               final repeat = await _pixels(tester, capture, null);
               homeActual.value = true;
@@ -300,6 +316,8 @@ void main() {
                 'transientBackdropIsolation': isolated,
                 'actualCapture': actualCapture,
                 'oracleCapture': oracleCapture,
+                'actualThemeAtlas': actualThemeAtlas,
+                'oracleThemeAtlas': oracleThemeAtlas,
                 'captureLayoutMatches':
                     const DeepCollectionEquality().equals(
                       actualCapture['panes'],
@@ -589,6 +607,86 @@ Map<String, Object?> _captureState() {
           'atlasHeight': pane.atlas.height,
         },
     ],
+  };
+}
+
+Future<Map<String, Object?>> _themeAtlasProbe(
+  WidgetTester tester,
+  String name, {
+  required bool held,
+}) async {
+  final label = find.descendant(
+    of: find.byType(ThemeView),
+    matching: find.text('Standard'),
+  );
+  expect(label, findsOneWidget);
+  final labelRect = tester.getRect(label);
+  final matches = LiquidGlassHost.debugLastCapture!.panes.where(
+    (pane) => pane.wallpaper && pane.pane.contains(labelRect.center),
+  ).toList();
+  expect(matches, hasLength(1));
+  final pane = matches.single;
+  final atlas = pane.atlas.clone();
+  final width = atlas.width;
+  final height = atlas.height;
+  late Uint8List bytes;
+  await tester.runAsync(() async {
+    try {
+      bytes = (await atlas.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
+      ))!.buffer.asUint8List();
+      final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+      if (output != null) {
+        final png = (await atlas.toByteData(format: ui.ImageByteFormat.png))!;
+        await Directory(output).create(recursive: true);
+        await File('$output/$name.png').writeAsBytes(png.buffer.asUint8List());
+      }
+    } finally {
+      atlas.dispose();
+    }
+  });
+  List<double> rect(Rect value) => [
+    value.left, value.top, value.right, value.bottom,
+  ];
+  Map<String, Object?> sample(Offset host) {
+    final texture = pane.place.topLeft +
+        (host - pane.slot.topLeft) * pane.scale;
+    final x = texture.dx.floor();
+    final y = texture.dy.floor();
+    return {
+      'host': [host.dx, host.dy],
+      'texture': [texture.dx, texture.dy],
+      'textureFloor': [x, y],
+      'neighborhood': [
+        for (var dy = -1; dy <= 1; dy++)
+          for (var dx = -1; dx <= 1; dx++)
+            {
+              'xy': [x + dx, y + dy],
+              'rgba': x + dx >= 0 && x + dx < width &&
+                      y + dy >= 0 && y + dy < height
+                  ? bytes.sublist(
+                      ((y + dy) * width + x + dx) * 4,
+                      ((y + dy) * width + x + dx) * 4 + 4,
+                    )
+                  : null,
+            },
+      ],
+    };
+  }
+  return {
+    'png': '$name.png',
+    'selection': 'wallpaper pane containing Theme Standard label center',
+    'label': rect(labelRect),
+    'pane': rect(pane.pane),
+    'slot': rect(pane.slot),
+    'place': rect(pane.place),
+    'scale': pane.scale,
+    'level': pane.level,
+    'wallpaper': pane.wallpaper,
+    'atlasWidth': width,
+    'atlasHeight': height,
+    'trackedTopArc': sample(pane.pane.topLeft + const Offset(128, 2 / 3)),
+    if (held) 'fixedScenePoint': sample(const Offset(244, 766)),
   };
 }
 

@@ -203,6 +203,8 @@ void main() {
                   : null;
               double? controlHeaderVariance;
               double? repeatHeaderVariance;
+              double? stripeContrastReduction;
+              double? stripeContrastRepeatNoise;
               int? referencePixelNoise;
               int? controlPixelDelta;
               final headerVisible =
@@ -247,6 +249,18 @@ void main() {
                 repeatHeaderVariance = _variance(repeat, headerCrop);
                 referencePixelNoise = _maxDelta(image, repeat, headerCrop);
                 controlPixelDelta = _maxDelta(image, control, headerCrop);
+                stripeContrastReduction = _stripeContrastDelta(
+                  control,
+                  image,
+                  headerCrop,
+                  pageRect.left,
+                );
+                stripeContrastRepeatNoise = _stripeContrastDelta(
+                  repeat,
+                  image,
+                  headerCrop,
+                  pageRect.left,
+                ).abs();
               }
               frames.add({
                 'page': label.name,
@@ -281,6 +295,8 @@ void main() {
                 'incomingBlurRepeatVariance': repeatHeaderVariance,
                 'headerReferencePixelNoise': referencePixelNoise,
                 'headerControlPixelDelta': controlPixelDelta,
+                'incomingStripeContrastReduction': stripeContrastReduction,
+                'incomingStripeContrastRepeatNoise': stripeContrastRepeatNoise,
               });
               if (quality != null &&
                   built &&
@@ -314,6 +330,8 @@ void main() {
                 if (headerCrop.width >= 16 &&
                     (controlHeaderVariance == null ||
                         repeatHeaderVariance == null ||
+                        stripeContrastReduction == null ||
+                        stripeContrastRepeatNoise == null ||
                         referencePixelNoise == null ||
                         controlPixelDelta == null)) {
                   failures.add(
@@ -321,10 +339,9 @@ void main() {
                   );
                 } else if (controlHeaderVariance != null &&
                     repeatHeaderVariance != null &&
-                    headerVariance != null) {
-                  final varianceNoise = (headerVariance - repeatHeaderVariance)
-                      .abs();
-                  if (controlHeaderVariance - headerVariance <= varianceNoise ||
+                    stripeContrastReduction != null &&
+                    stripeContrastRepeatNoise != null) {
+                  if (stripeContrastReduction <= stripeContrastRepeatNoise ||
                       controlPixelDelta! <= referencePixelNoise!) {
                     failures.add(
                       '$label $phase $elapsed: incoming blur did not reduce its own sharp stripes beyond repeated-frame noise.',
@@ -531,6 +548,30 @@ double _stripeVariance(Rect rect, double pageLeft) {
     count++;
   }
   return square / count - (sum / count) * (sum / count);
+}
+
+// Paired subtraction isolates incoming stripes when another fading page overlaps.
+double _stripeContrastDelta(
+  Uint8List control,
+  Uint8List actual,
+  Rect rect,
+  double pageLeft,
+) {
+  var sum = 0.0;
+  var count = 0;
+  for (var y = rect.top.toInt(); y < rect.bottom; y++) {
+    for (var x = rect.left.toInt(); x < rect.right; x++) {
+      final index = (y * _size.width.toInt() + x) * 4;
+      final luminanceDelta =
+          (control[index] - actual[index]) * 0.2126 +
+          (control[index + 1] - actual[index + 1]) * 0.7152 +
+          (control[index + 2] - actual[index + 2]) * 0.0722;
+      final polarity = ((x + 0.5 - pageLeft) ~/ 8).isEven ? -1 : 1;
+      sum += luminanceDelta * polarity;
+      count++;
+    }
+  }
+  return sum / count;
 }
 
 class _HeaderStripes extends CustomPainter {
