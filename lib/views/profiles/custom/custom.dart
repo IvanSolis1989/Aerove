@@ -534,9 +534,7 @@ class _MoreSectionsView extends ConsumerWidget {
                         )
                       : appLocalizations.none,
                   style: hasDialerIssues
-                      ? TextStyle(
-                          color: context.colorScheme.error,
-                        )
+                      ? TextStyle(color: context.colorScheme.error)
                       : null,
                 ),
                 CustomProxyDialersView(profileId),
@@ -548,9 +546,7 @@ class _MoreSectionsView extends ConsumerWidget {
                 GlassText(
                   _enabledText(appLocalizations, status.ntp),
                   style: hasNtpIssues
-                      ? TextStyle(
-                          color: context.colorScheme.error,
-                        )
+                      ? TextStyle(color: context.colorScheme.error)
                       : null,
                 ),
                 NtpView(profileId),
@@ -596,9 +592,7 @@ class _CountText extends StatelessWidget {
     }
     return GlassText(
       '$issueCount / $count',
-      style: TextStyle(
-        color: context.colorScheme.error,
-      ),
+      style: TextStyle(color: context.colorScheme.error),
     );
   }
 }
@@ -617,10 +611,10 @@ class _StatusText extends StatelessWidget {
       text,
       style: TextStyle(
         color: invalid
-              ? colorScheme.error
-              : active
-              ? colorScheme.tertiary
-              : colorScheme.onSurfaceVariant,
+            ? colorScheme.error
+            : active
+            ? colorScheme.tertiary
+            : colorScheme.onSurfaceVariant,
       ),
     );
   }

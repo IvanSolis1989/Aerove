@@ -102,33 +102,32 @@ class AuroraAppSurface extends ConsumerWidget {
         );
     final effectiveTheme = glassEnabled
         ? surfaceTheme.copyWith(
-              scaffoldBackgroundColor: Colors.transparent,
-              filledButtonTheme: FilledButtonThemeData(
-                style: glassButtons.merge(surfaceTheme.filledButtonTheme.style),
+            scaffoldBackgroundColor: Colors.transparent,
+            filledButtonTheme: FilledButtonThemeData(
+              style: glassButtons.merge(surfaceTheme.filledButtonTheme.style),
+            ),
+            outlinedButtonTheme: OutlinedButtonThemeData(
+              style: neutralGlass(
+                surfaceTheme.outlinedButtonTheme.style,
+                outlined: true,
               ),
-              outlinedButtonTheme: OutlinedButtonThemeData(
-                style: neutralGlass(
-                  surfaceTheme.outlinedButtonTheme.style,
-                  outlined: true,
-                ),
+            ),
+            textButtonTheme: TextButtonThemeData(
+              style: neutralGlass(surfaceTheme.textButtonTheme.style),
+            ),
+            iconButtonTheme: IconButtonThemeData(
+              style: neutralGlass(surfaceTheme.iconButtonTheme.style),
+            ),
+            elevatedButtonTheme: ElevatedButtonThemeData(
+              style: neutralGlass(surfaceTheme.elevatedButtonTheme.style),
+            ),
+            floatingActionButtonTheme: theme.floatingActionButtonTheme.copyWith(
+              backgroundColor: surfaceColors.surfaceContainer.withValues(
+                alpha: 0.28,
               ),
-              textButtonTheme: TextButtonThemeData(
-                style: neutralGlass(surfaceTheme.textButtonTheme.style),
-              ),
-              iconButtonTheme: IconButtonThemeData(
-                style: neutralGlass(surfaceTheme.iconButtonTheme.style),
-              ),
-              elevatedButtonTheme: ElevatedButtonThemeData(
-                style: neutralGlass(surfaceTheme.elevatedButtonTheme.style),
-              ),
-              floatingActionButtonTheme: theme.floatingActionButtonTheme
-                  .copyWith(
-                    backgroundColor: surfaceColors.surfaceContainer.withValues(
-                      alpha: 0.28,
-                    ),
-                    foregroundColor: surfaceColors.onSurface,
-                  ),
-            )
+              foregroundColor: surfaceColors.onSurface,
+            ),
+          )
         : theme;
     return LiquidGlassScope(
       enabled: glassEnabled,
@@ -142,11 +141,11 @@ class AuroraAppSurface extends ConsumerWidget {
           child: Theme(
             data: effectiveTheme,
             child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  Positioned.fill(
-                    child: LiquidGlassColorField(
-                      child: enabled
+              fit: StackFit.expand,
+              children: [
+                Positioned.fill(
+                  child: LiquidGlassColorField(
+                    child: enabled
                         ? IgnorePointer(
                             child: AnimatedSwitcher(
                               duration: MediaQuery.disableAnimationsOf(context)
@@ -171,11 +170,11 @@ class AuroraAppSurface extends ConsumerWidget {
                             ),
                           )
                         : ColoredBox(color: theme.scaffoldBackgroundColor),
-                    ),
                   ),
-                  child,
-                ],
-              ),
+                ),
+                child,
+              ],
+            ),
           ),
         ),
       ),

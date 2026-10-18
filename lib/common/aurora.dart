@@ -84,10 +84,7 @@ AuroraMesh generateAuroraMesh(
             tints.length > 1 ? tints[1] : tints.first,
             tints.length == 1 ? 0.88 : 0.76,
           ),
-          _auroraTone(
-            tints.length > 2 ? tints[2] : tints.first,
-            0.78,
-          ),
+          _auroraTone(tints.length > 2 ? tints[2] : tints.first, 0.78),
           _auroraTone(tints.last, 0.84),
         ];
   final minimumSaturation = dark

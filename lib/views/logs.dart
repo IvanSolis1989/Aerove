@@ -247,9 +247,7 @@ class _LogBody extends StatelessWidget {
             TextSpan(
               text: '\n${route.error}',
               style: styles.secondary.copyWith(
-                color: errorColor == null
-                    ? null
-                    : errorColor!,
+                color: errorColor == null ? null : errorColor!,
               ),
             ),
           const TextSpan(text: '\n'),
@@ -261,9 +259,7 @@ class _LogBody extends StatelessWidget {
             text: route.proxy,
             style: AppTextStyle.footnote
                 .of(context, emphasized: true)
-                .copyWith(
-                  color: context.colorScheme.primary,
-                ),
+                .copyWith(color: context.colorScheme.primary),
           ),
           TextSpan(text: '\n$_sourceText', style: styles.secondary),
         ],

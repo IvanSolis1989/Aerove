@@ -56,7 +56,7 @@ class LiquidGlassHost extends StatelessWidget {
 
   @visibleForTesting
   static ({int generation, int masks, int maskPixels, int texturePixels})?
-      debugLastInkCapture;
+  debugLastInkCapture;
 
   @visibleForTesting
   static bool? debugCarryBandsOverride;
@@ -875,8 +875,10 @@ class _Replay {
               Paint()..colorFilter = colorFilter,
               colorFilter,
             ),
-            LiquidGlassInkLayer(:final filter?) =>
-              (Paint()..imageFilter = filter, filter),
+            LiquidGlassInkLayer(:final filter?) => (
+              Paint()..imageFilter = filter,
+              filter,
+            ),
             ImageFilterLayer(:final imageFilter?)
                 when !entry.ancestors.contains(layer) =>
               (Paint()..imageFilter = imageFilter, imageFilter),

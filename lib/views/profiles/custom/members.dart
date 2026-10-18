@@ -841,7 +841,11 @@ class _MemberPickerState<M> extends ConsumerState<_MemberPicker<M>> {
       isSelected: isSelected,
       onPressed: () => _handleToggle(member),
       title: TooltipText(
-        text: GlassText(entry.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+        text: GlassText(
+          entry.title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
       ),
       subtitle: switch (subtitle) {
         null => null,

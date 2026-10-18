@@ -101,9 +101,7 @@ class ProfilesCard extends ConsumerWidget {
           text,
           maxLines: 1,
           style: _daysLeft(expiry) <= _soonDays
-              ? label.copyWith(
-                  color: DashboardColors.of(context).warn,
-                )
+              ? label.copyWith(color: DashboardColors.of(context).warn)
               : label,
         ),
       ),

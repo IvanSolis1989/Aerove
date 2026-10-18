@@ -7,12 +7,14 @@ abstract final class GlassForeground {
 
   static bool colorsInk(BuildContext context, Color color) {
     if (!LiquidGlassScope.of(context) ||
-        MediaQuery.maybeHighContrastOf(context) == true || color.a < 0.70) {
+        MediaQuery.maybeHighContrastOf(context) == true ||
+        color.a < 0.70) {
       return false;
     }
     final colors = Theme.of(context).colorScheme;
     if (_sameRgb(color, colors.error) ||
-        _sameRgb(color, colors.onErrorContainer)) return false;
+        _sameRgb(color, colors.onErrorContainer))
+      return false;
     return _sameRgb(color, colors.onSurface) ||
         _sameRgb(color, colors.onSurfaceVariant) ||
         HSVColor.fromColor(color).saturation < 0.20;
@@ -20,5 +22,4 @@ abstract final class GlassForeground {
 
   static Color iconColorOf(BuildContext context, Color color, double opacity) =>
       color.withValues(alpha: color.a * opacity);
-
 }

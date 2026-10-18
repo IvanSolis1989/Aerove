@@ -490,7 +490,11 @@ class _ServiceTitle extends StatelessWidget {
         spacing: 8,
         children: [
           Flexible(
-            child: GlassText(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+            child: GlassText(
+              name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
           ConstrainedBox(
             constraints: BoxConstraints(
@@ -525,9 +529,7 @@ class _StatusPill extends StatelessWidget {
           overflow: TextOverflow.ellipsis,
           style: AppTextStyle.caption1
               .of(context, emphasized: true)
-              .copyWith(
-                color: colors.onContainer,
-              ),
+              .copyWith(color: colors.onContainer),
         ),
       ),
     );

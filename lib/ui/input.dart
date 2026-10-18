@@ -216,7 +216,10 @@ class _InputDialogState extends State<InputDialog> {
             );
           },
         ),
-        TextButton(onPressed: _handleUpdate, child: GlassText(localizations.submit)),
+        TextButton(
+          onPressed: _handleUpdate,
+          child: GlassText(localizations.submit),
+        ),
       ],
       child: Form(
         autovalidateMode: widget.autovalidateMode,

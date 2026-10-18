@@ -51,9 +51,7 @@ class FilterRegexText extends StatelessWidget {
       style: AppTextStyle.footnote
           .of(context)
           .toJetBrainsMono
-          .copyWith(
-            color: context.colorScheme.tertiary,
-          ),
+          .copyWith(color: context.colorScheme.tertiary),
     );
   }
 }

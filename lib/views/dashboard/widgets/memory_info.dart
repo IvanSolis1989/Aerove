@@ -375,7 +375,9 @@ class _MemoryDetailSheetState extends ConsumerState<MemoryDetailSheet>
   ) {
     final core = snapshot.core;
     if (core == null) {
-      return [ListItem(title: GlassText(appLocalizations.memoryCoreNotRunning))];
+      return [
+        ListItem(title: GlassText(appLocalizations.memoryCoreNotRunning)),
+      ];
     }
     final total = snapshot.coreTotal;
     return [

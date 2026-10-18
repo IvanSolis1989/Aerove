@@ -178,17 +178,12 @@ class GroupMonogram extends StatelessWidget {
         child: EmojiText(
           mark,
           maxLines: 1,
-          style:
-              AppTextStyle.custom(
-                context,
-                size: size * 0.62,
-                leading: size * 0.62,
-                weight: FontWeight.w600,
-              ).copyWith(
-                color: iconTheme.color == null
-                    ? null
-                    : iconTheme.color!,
-              ),
+          style: AppTextStyle.custom(
+            context,
+            size: size * 0.62,
+            leading: size * 0.62,
+            weight: FontWeight.w600,
+          ).copyWith(color: iconTheme.color == null ? null : iconTheme.color!),
         ),
       ),
     );

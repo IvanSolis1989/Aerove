@@ -177,7 +177,11 @@ class _HotKeyItem extends ConsumerWidget {
     return DecorationListItem(
       contentPadding: EdgeInsets.only(left: 16, right: key == null ? 16 : 6),
       leading: GlyphIcon(_glyphOf(action)),
-      title: GlassText(action.label, maxLines: 2, overflow: TextOverflow.ellipsis),
+      title: GlassText(
+        action.label,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      ),
       subtitle: failure == null
           ? null
           : Tooltip(
@@ -186,9 +190,7 @@ class _HotKeyItem extends ConsumerWidget {
                 appLocalizations.hotkeyUnavailable,
                 style: AppTextStyle.footnote
                     .of(context)
-                    .copyWith(
-                      color: colorScheme.error,
-                    ),
+                    .copyWith(color: colorScheme.error),
               ),
             ),
       trailing: key == null
@@ -196,9 +198,7 @@ class _HotKeyItem extends ConsumerWidget {
               appLocalizations.hotkeyNotSet,
               style: AppTextStyle.subheadline
                   .of(context)
-                  .copyWith(
-                    color: colorScheme.outline,
-                  ),
+                  .copyWith(color: colorScheme.outline),
             )
           : Row(
               mainAxisSize: MainAxisSize.min,
@@ -291,7 +291,10 @@ class _KeyCap extends StatelessWidget {
       child: Align(
         widthFactor: 1,
         heightFactor: 1,
-        child: GlassText(label, style: textStyle.copyWith(color: foregroundColor)),
+        child: GlassText(
+          label,
+          style: textStyle.copyWith(color: foregroundColor),
+        ),
       ),
     );
   }
@@ -468,11 +471,7 @@ class _HotKeyRecorderState extends ConsumerState<HotKeyRecorder> {
         text,
         style: AppTextStyle.subheadline
             .of(context)
-            .copyWith(
-              color: color == null
-                  ? null
-                  : color,
-            ),
+            .copyWith(color: color == null ? null : color),
       ),
     );
   }

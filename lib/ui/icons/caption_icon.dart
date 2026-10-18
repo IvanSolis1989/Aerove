@@ -22,11 +22,8 @@ class CaptionIcon extends StatelessWidget {
       source: color,
       role: GlassInkRole.icon,
       child: CustomPaint(
-      size: const Size.square(captionGlyphSize),
-      painter: _CaptionGlyphPainter(
-        glyph: glyph,
-        color: color,
-      ),
+        size: const Size.square(captionGlyphSize),
+        painter: _CaptionGlyphPainter(glyph: glyph, color: color),
       ),
     );
   }

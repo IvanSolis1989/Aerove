@@ -327,9 +327,7 @@ class _ExitRow extends StatelessWidget {
             appLocalizations.serviceFailed,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: style.copyWith(
-              color: colorScheme.error,
-            ),
+            style: style.copyWith(color: colorScheme.error),
           )
         : SkeletonText(width: 140, style: style);
     return Row(

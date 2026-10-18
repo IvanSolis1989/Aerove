@@ -23,17 +23,17 @@ class GlyphIcon extends StatelessWidget {
       source: resolved,
       role: GlassInkRole.icon,
       child: SizedBox.square(
-      dimension: side,
-      child: Center(
-        child: CustomPaint(
-          size: Size.square(side),
-          painter: GlyphPainter(
-            glyph: glyph,
-            fill: fill ?? iconTheme.fill ?? 0,
-            color: resolved,
+        dimension: side,
+        child: Center(
+          child: CustomPaint(
+            size: Size.square(side),
+            painter: GlyphPainter(
+              glyph: glyph,
+              fill: fill ?? iconTheme.fill ?? 0,
+              color: resolved,
+            ),
           ),
         ),
-      ),
       ),
     );
     if (glyph.matchTextDirection &&

@@ -300,41 +300,42 @@ class _RecordTableHeader<T> extends StatelessWidget {
       child: CardGroup(
         shape: AppShape.all(AppCorner.fit(height)),
         child: Material(
-        color: LiquidGlassScope.of(context) ? Colors.transparent : context.raisedSurfaceLevel.colorOf(colorScheme),
-        shape: AppShape.all(AppCorner.fit(height)),
-        clipBehavior: Clip.antiAlias,
-        child: TableColumnResizer(
-          columns: table.layouts,
-          widths: table.widths,
-          onResize: onResize,
-          onResizeEnd: onResizeEnd,
-          onReset: onReset,
-          child: TableCells(
+          color: LiquidGlassScope.of(context)
+              ? Colors.transparent
+              : context.raisedSurfaceLevel.colorOf(colorScheme),
+          shape: AppShape.all(AppCorner.fit(height)),
+          clipBehavior: Clip.antiAlias,
+          child: TableColumnResizer(
             columns: table.layouts,
             widths: table.widths,
-            height: height,
-            inset: 0,
-            cells: [
-              for (final column in table.columns)
-                RecordHeaderCell(
-                  label: column.layout.label,
-                  end: column.layout.end,
-                  style: style,
-                  inset: _recordCellInset,
-                  descending: sort?.columnId == column.id
-                      ? sort?.descending
-                      : null,
-                  onTap: column.sortKey == null ? null : () => onSort(column),
-                ),
-            ],
+            onResize: onResize,
+            onResizeEnd: onResizeEnd,
+            onReset: onReset,
+            child: TableCells(
+              columns: table.layouts,
+              widths: table.widths,
+              height: height,
+              inset: 0,
+              cells: [
+                for (final column in table.columns)
+                  RecordHeaderCell(
+                    label: column.layout.label,
+                    end: column.layout.end,
+                    style: style,
+                    inset: _recordCellInset,
+                    descending: sort?.columnId == column.id
+                        ? sort?.descending
+                        : null,
+                    onTap: column.sortKey == null ? null : () => onSort(column),
+                  ),
+              ],
+            ),
           ),
         ),
-      ),
       ),
     );
   }
 }
-
 
 /// The width a fixed column takes to show [label] whole in its header.
 double recordHeaderWidth(BuildContext context, String label) =>
@@ -432,7 +433,11 @@ class RecordTableRow extends StatelessWidget {
     final shape = AppShape.all(AppCorner.fit(table.rowHeight));
     final level = striped ? context.raisedSurfaceLevel : context.surfaceLevel;
     final fill = striped
-        ? LiquidGlassScope.surfaceColorOf(context, level.colorOf(colorScheme), opacity: 0.12)
+        ? LiquidGlassScope.surfaceColorOf(
+            context,
+            level.colorOf(colorScheme),
+            opacity: 0.12,
+          )
         : null;
     Widget row = Material(
       type: MaterialType.transparency,
@@ -465,7 +470,10 @@ class RecordTableRow extends StatelessWidget {
     }
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: _recordTableMargin),
-      child: CardGroup(shape: shape, child: SurfaceScope(level: level, child: row)),
+      child: CardGroup(
+        shape: shape,
+        child: SurfaceScope(level: level, child: row),
+      ),
     );
   }
 }

@@ -72,15 +72,24 @@ class GlassText extends Text {
       return original;
     }
     final size = resolved.fontSize ?? 17;
-    final role = inkRole ?? (size >= 22
-        ? GlassInkRole.title
-        : size <= 13
-        ? GlassInkRole.small
-        : (resolved.fontWeight?.value ?? 400) >= 600
-        ? GlassInkRole.section
-        : GlassInkRole.body);
-    final outset = resolved.shadows?.fold<double>(0, (reach, shadow) =>
-        math.max(reach, shadow.offset.distance + shadow.blurRadius * 2 + 2)) ?? 0;
+    final role =
+        inkRole ??
+        (size >= 22
+            ? GlassInkRole.title
+            : size <= 13
+            ? GlassInkRole.small
+            : (resolved.fontWeight?.value ?? 400) >= 600
+            ? GlassInkRole.section
+            : GlassInkRole.body);
+    final outset =
+        resolved.shadows?.fold<double>(
+          0,
+          (reach, shadow) => math.max(
+            reach,
+            shadow.offset.distance + shadow.blurRadius * 2 + 2,
+          ),
+        ) ??
+        0;
     return GlassInk(source: color, role: role, outset: outset, child: original);
   }
 
@@ -139,7 +148,8 @@ class _InkBox extends SingleChildRenderObjectWidget {
   final bool dark;
 
   @override
-  RenderObject createRenderObject(BuildContext context) => _InkRender(role, source, outset, dark);
+  RenderObject createRenderObject(BuildContext context) =>
+      _InkRender(role, source, outset, dark);
 
   @override
   void updateRenderObject(BuildContext context, covariant _InkRender render) {
@@ -207,25 +217,28 @@ abstract final class _InkProgram {
   static ui.FragmentProgram? request(VoidCallback ready) {
     if (_program != null || _failed) return _program;
     _waiting.add(ready);
-    _loading ??= ui.FragmentProgram.fromAsset('shaders/foreground_ink.frag').then(
-      (program) {
-        _program = program;
-        final callbacks = _waiting.toList();
-        _waiting.clear();
-        for (final callback in callbacks) {
-          callback();
-        }
-      },
-      onError: (Object error, StackTrace stack) {
-        _failed = true;
-        _waiting.clear();
-        FlutterError.reportError(FlutterErrorDetails(
-          exception: error,
-          stack: stack,
-          library: 'foreground ink',
-        ));
-      },
-    );
+    _loading ??= ui.FragmentProgram.fromAsset('shaders/foreground_ink.frag')
+        .then(
+          (program) {
+            _program = program;
+            final callbacks = _waiting.toList();
+            _waiting.clear();
+            for (final callback in callbacks) {
+              callback();
+            }
+          },
+          onError: (Object error, StackTrace stack) {
+            _failed = true;
+            _waiting.clear();
+            FlutterError.reportError(
+              FlutterErrorDetails(
+                exception: error,
+                stack: stack,
+                library: 'foreground ink',
+              ),
+            );
+          },
+        );
     return null;
   }
 

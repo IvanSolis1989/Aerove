@@ -63,33 +63,35 @@ class RecordListItem extends StatelessWidget {
       child: CardGroup(
         shape: shape,
         child: DecoratedBox(
-        decoration: ShapeDecoration(
-          color: LiquidGlassScope.of(context) ? Colors.transparent : level.colorOf(context.colorScheme),
-          shape: shape,
-        ),
-        child: Material(
-          type: MaterialType.transparency,
-          child: SurfaceScope(
-            level: level,
-            child: ListTileTheme.merge(
-              shape: shape,
-              child: ListItem(
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-                minVerticalPadding: 0,
-                minTileHeight: 0,
-                horizontalTitleGap: 12,
-                tileTitleAlignment: ListTileTitleAlignment.top,
-                onTap: onTap,
-                title: header,
-                subtitle: Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: body,
+          decoration: ShapeDecoration(
+            color: LiquidGlassScope.of(context)
+                ? Colors.transparent
+                : level.colorOf(context.colorScheme),
+            shape: shape,
+          ),
+          child: Material(
+            type: MaterialType.transparency,
+            child: SurfaceScope(
+              level: level,
+              child: ListTileTheme.merge(
+                shape: shape,
+                child: ListItem(
+                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+                  minVerticalPadding: 0,
+                  minTileHeight: 0,
+                  horizontalTitleGap: 12,
+                  tileTitleAlignment: ListTileTitleAlignment.top,
+                  onTap: onTap,
+                  title: header,
+                  subtitle: Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: body,
+                  ),
                 ),
               ),
             ),
           ),
         ),
-      ),
       ),
     );
   }

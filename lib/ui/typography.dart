@@ -83,8 +83,6 @@ extension AppTypographyThemeExt on ThemeData {
     textTheme: _onAppScale(textTheme),
     primaryTextTheme: _onAppScale(primaryTextTheme),
   );
-
-
 }
 
 TextTheme _onAppScale(TextTheme theme) => theme.copyWith(

@@ -83,9 +83,7 @@ class FormRow extends StatelessWidget {
       title,
       style: titleStyle?.color == null
           ? titleStyle
-          : titleStyle!.copyWith(
-              color: titleStyle!.color!,
-            ),
+          : titleStyle!.copyWith(color: titleStyle!.color!),
       maxLines: _titleMaxLines,
     );
     if (trailing == null) {

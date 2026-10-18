@@ -25,9 +25,7 @@ class AuroraMotion {
         (340, 170),
         (750, 360),
       ])
-        (base + (next() * range).round()) *
-            Duration.microsecondsPerSecond ~/
-            5,
+        (base + (next() * range).round()) * Duration.microsecondsPerSecond ~/ 5,
     ];
   }
 

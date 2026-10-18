@@ -273,9 +273,7 @@ class _ListEditViewState extends EditViewState<ListEditView, String> {
     if (widget.itemValidator?.call(entry) case final error?) {
       return GlassText(
         error,
-        style: TextStyle(
-          color: context.colorScheme.error,
-        ),
+        style: TextStyle(color: context.colorScheme.error),
       );
     }
     return null;

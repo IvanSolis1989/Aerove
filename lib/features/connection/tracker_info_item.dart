@@ -118,7 +118,9 @@ class TrackerInfoItem extends ConsumerWidget {
         ],
       ),
       children: [
-        GlassText(trackerInfo.start.getLastUpdateTimeDesc(context, compact: true)),
+        GlassText(
+          trackerInfo.start.getLastUpdateTimeDesc(context, compact: true),
+        ),
         network,
       ],
     );

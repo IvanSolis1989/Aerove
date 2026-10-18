@@ -46,7 +46,9 @@ void main() {
         tester.view.devicePixelRatio = 1;
         addTearDown(tester.view.resetPhysicalSize);
         addTearDown(tester.view.resetDevicePixelRatio);
-        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
         final rendered = <LiquidGlassMode, List<Color>>{};
         for (final (mode, highContrast, pureBlack, backdrop) in [
           (LiquidGlassMode.standard, false, false, const Color(0xFF2040C0)),
@@ -74,8 +76,12 @@ void main() {
           final container = ProviderContainer(
             overrides: [
               profilesProvider.overrideWith(TestProfiles.new),
-              coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
-              coreStatusProvider.overrideWithBuild((_, _) => CoreStatus.connected),
+              coreHandlerProvider.overrideWithValue(
+                CoreController.scoped(core),
+              ),
+              coreStatusProvider.overrideWithBuild(
+                (_, _) => CoreStatus.connected,
+              ),
               themeSettingProvider.overrideWithBuild(
                 (_, _) => ThemeProps(
                   auroraEnabled: false,
@@ -89,26 +95,33 @@ void main() {
             globalState.container = container;
             container.read(viewSizeProvider.notifier).value = size;
             container.read(requestsProvider.notifier).addRequest(tracker);
-            container.read(dnsQueriesProvider.notifier).addQuery(
-              DnsQuery(
-                domain: 'glass-record.test',
-                type: 'A',
-                time: DateTime.utc(2026),
-                answers: const ['192.0.2.1'],
-              ),
-            );
+            container
+                .read(dnsQueriesProvider.notifier)
+                .addQuery(
+                  DnsQuery(
+                    domain: 'glass-record.test',
+                    type: 'A',
+                    time: DateTime.utc(2026),
+                    answers: const ['192.0.2.1'],
+                  ),
+                );
             final captureKey = GlobalKey();
             await tester.pumpWidget(
               UncontrolledProviderScope(
                 container: container,
                 child: MaterialApp(
                   navigatorKey: globalState.navigatorKey,
-                  theme: ThemeData(
-                    platform: TargetPlatform.android,
-                    brightness: pureBlack ? Brightness.dark : Brightness.light,
-                  ).withAppShapes.withAppSurfaces.copyWith(
-                    scaffoldBackgroundColor: pureBlack ? Colors.black : backdrop,
-                  ),
+                  theme:
+                      ThemeData(
+                        platform: TargetPlatform.android,
+                        brightness: pureBlack
+                            ? Brightness.dark
+                            : Brightness.light,
+                      ).withAppShapes.withAppSurfaces.copyWith(
+                        scaffoldBackgroundColor: pureBlack
+                            ? Colors.black
+                            : backdrop,
+                      ),
                   localizationsDelegates: const [
                     AppLocalizations.delegate,
                     AppUiLocalizations.delegate,
@@ -116,7 +129,9 @@ void main() {
                   ],
                   supportedLocales: AppLocalizations.delegate.supportedLocales,
                   builder: (context, child) => MediaQuery(
-                    data: MediaQuery.of(context).copyWith(highContrast: highContrast),
+                    data: MediaQuery.of(
+                      context,
+                    ).copyWith(highContrast: highContrast),
                     child: wrapAppScopes(
                       context,
                       RepaintBoundary(
@@ -133,7 +148,8 @@ void main() {
                             openDashboardFeed(context, feed);
                           } else {
                             BaseNavigator.push<void>(context, switch (feed) {
-                              DashboardFeed.connections => const ConnectionsView(),
+                              DashboardFeed.connections =>
+                                const ConnectionsView(),
                               DashboardFeed.requests => const RequestsView(),
                               DashboardFeed.dns => const DnsQueriesView(),
                             });
@@ -150,53 +166,86 @@ void main() {
             await tester.pump(const Duration(milliseconds: 500));
             await tester.pump(const Duration(milliseconds: 500));
             await tester.pumpAndSettle();
-            final glass = mode != LiquidGlassMode.none && !highContrast && !pureBlack;
+            final glass =
+                mode != LiquidGlassMode.none && !highContrast && !pureBlack;
             final record = entry == 'table'
                 ? find.byType(RecordTableRow).first
                 : find.byType(RecordListItem).first;
             expect(record, findsOneWidget);
-            final group = find.descendant(
-              of: record,
-              matching: find.byType(CardGroup),
-            ).first;
-            final panes = find.descendant(of: group, matching: find.byType(LiquidGlass));
+            final group = find
+                .descendant(of: record, matching: find.byType(CardGroup))
+                .first;
+            final panes = find.descendant(
+              of: group,
+              matching: find.byType(LiquidGlass),
+            );
             expect(panes, glass ? findsWidgets : findsNothing);
-            final chips = tester.widgetList<TonalChip>(
-              find.descendant(of: record, matching: find.byType(TonalChip)),
-            ).where((chip) => chip.onPressed != null);
+            final chips = tester
+                .widgetList<TonalChip>(
+                  find.descendant(of: record, matching: find.byType(TonalChip)),
+                )
+                .where((chip) => chip.onPressed != null);
             for (final chip in chips) {
               expect(
-                find.descendant(of: find.byWidget(chip), matching: find.byType(LiquidGlass)),
+                find.descendant(
+                  of: find.byWidget(chip),
+                  matching: find.byType(LiquidGlass),
+                ),
                 glass ? findsOneWidget : findsNothing,
               );
             }
             expect(find.byType(LiquidGlassHost), findsOneWidget);
-            final fills = tester.widgetList<DecoratedBox>(
-              find.descendant(of: record, matching: find.byType(DecoratedBox)),
-            ).map((box) => box.decoration).whereType<ShapeDecoration>()
-                .map((box) => box.color).whereType<Color>();
+            final fills = tester
+                .widgetList<DecoratedBox>(
+                  find.descendant(
+                    of: record,
+                    matching: find.byType(DecoratedBox),
+                  ),
+                )
+                .map((box) => box.decoration)
+                .whereType<ShapeDecoration>()
+                .map((box) => box.color)
+                .whereType<Color>();
             if (glass) {
               expect(fills.every((color) => color.a < 1), isTrue);
               final rect = tester.getRect(group);
               final capture = LiquidGlassHost.debugLastCapture!;
-              expect(capture.panes.where((pane) =>
-                  (pane.pane.width - rect.width).abs() < 0.5 &&
-                  (pane.pane.height - rect.height).abs() < 0.5), hasLength(1));
-              final boundary = tester.renderObject<RenderRepaintBoundary>(find.byKey(captureKey));
-              final point = boundary.globalToLocal(Offset(rect.left + 6, rect.center.dy));
+              expect(
+                capture.panes.where(
+                  (pane) =>
+                      (pane.pane.width - rect.width).abs() < 0.5 &&
+                      (pane.pane.height - rect.height).abs() < 0.5,
+                ),
+                hasLength(1),
+              );
+              final boundary = tester.renderObject<RenderRepaintBoundary>(
+                find.byKey(captureKey),
+              );
+              final point = boundary.globalToLocal(
+                Offset(rect.left + 6, rect.center.dy),
+              );
               final image = boundary.toImageSync();
               try {
                 final color = (await tester.runAsync(() async {
                   final bytes = (await image.toByteData())!;
-                  final at = (point.dy.floor() * image.width + point.dx.floor()) * 4;
+                  final at =
+                      (point.dy.floor() * image.width + point.dx.floor()) * 4;
                   final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
                   if (output != null) {
-                    final png = (await image.toByteData(format: ui.ImageByteFormat.png))!;
+                    final png = (await image.toByteData(
+                      format: ui.ImageByteFormat.png,
+                    ))!;
                     await Directory(output).create(recursive: true);
-                    await File('$output/xclash-record-${feed.name}-$entry-${mode.name}-${backdrop.toARGB32()}.png')
-                        .writeAsBytes(png.buffer.asUint8List());
+                    await File(
+                      '$output/xclash-record-${feed.name}-$entry-${mode.name}-${backdrop.toARGB32()}.png',
+                    ).writeAsBytes(png.buffer.asUint8List());
                   }
-                  return Color.fromARGB(255, bytes.getUint8(at), bytes.getUint8(at + 1), bytes.getUint8(at + 2));
+                  return Color.fromARGB(
+                    255,
+                    bytes.getUint8(at),
+                    bytes.getUint8(at + 1),
+                    bytes.getUint8(at + 2),
+                  );
                 }))!;
                 (rendered[mode] ??= []).add(color);
               } finally {
@@ -204,7 +253,8 @@ void main() {
               }
             } else {
               expect(LiquidGlassScope.of(tester.element(record)), isFalse);
-              if (entry != 'table') expect(fills.any((color) => color.a == 1), isTrue);
+              if (entry != 'table')
+                expect(fills.any((color) => color.a == 1), isTrue);
             }
             expect(tester.takeException(), isNull);
           } finally {

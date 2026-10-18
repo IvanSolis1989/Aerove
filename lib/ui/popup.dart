@@ -2068,9 +2068,7 @@ class _CommonPopupMenuState extends State<CommonPopupMenu>
                   overflow: TextOverflow.ellipsis,
                   style: AppTextStyle.subheadline
                       .of(context)
-                      .copyWith(
-                        color: foregroundColor,
-                      ),
+                      .copyWith(color: foregroundColor),
                 ),
               ),
               if (arrow != null) ...[const SizedBox(width: 8), arrow],

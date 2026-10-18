@@ -51,6 +51,7 @@ class _ColorFieldLayer extends OffsetLayer {
         child = child.nextSibling;
       }
     }
+
     visit(this);
     if (_image != null && listEquals(key, _key)) return _image;
     final scale = math.min(1.0, 1024 / size.longestSide);
@@ -98,12 +99,21 @@ class LiquidGlassInkLayer extends OffsetLayer {
     final x = MatrixUtils.transformPoint(_mapping, Offset(size.width, 0));
     final y = MatrixUtils.transformPoint(_mapping, Offset(0, size.height));
     final values = [
-      _fieldSize.width, _fieldSize.height,
-      origin.dx, origin.dy,
-      x.dx - origin.dx, x.dy - origin.dy,
-      y.dx - origin.dx, y.dy - origin.dy,
-      strength, dark ? 1.0 : 0.0, contrast, alpha,
-      source.r, source.g, source.b,
+      _fieldSize.width,
+      _fieldSize.height,
+      origin.dx,
+      origin.dy,
+      x.dx - origin.dx,
+      x.dy - origin.dy,
+      y.dx - origin.dx,
+      y.dy - origin.dy,
+      strength,
+      dark ? 1.0 : 0.0,
+      contrast,
+      alpha,
+      source.r,
+      source.g,
+      source.b,
     ];
     if (identical(field, _filteredField) && listEquals(values, _uniforms)) {
       return _filter;
@@ -157,6 +167,7 @@ extension _InkCapture on _LiquidGlassHostLayer {
         child = child.nextSibling;
       }
     }
+
     visit(this, Matrix4.identity());
     final source = field;
     final image = inks.isEmpty ? null : source?.$1.capture();
@@ -173,9 +184,16 @@ extension _InkCapture on _LiquidGlassHostLayer {
       LiquidGlassHost.debugLastInkCapture = (
         generation: source?.$1.generation ?? 0,
         masks: inks.length,
-        maskPixels: inks.fold(0, (sum, ink) =>
-            sum + (ink.$1.size.width * ink.$1.size.height *
-                devicePixelRatio * devicePixelRatio).ceil()),
+        maskPixels: inks.fold(
+          0,
+          (sum, ink) =>
+              sum +
+              (ink.$1.size.width *
+                      ink.$1.size.height *
+                      devicePixelRatio *
+                      devicePixelRatio)
+                  .ceil(),
+        ),
         texturePixels: image == null ? 0 : image.width * image.height,
       );
       return true;

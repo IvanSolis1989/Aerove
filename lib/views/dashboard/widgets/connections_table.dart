@@ -520,7 +520,10 @@ class _TableState<T> extends ConsumerState<_Table<T>>
             items.length * rowHeight + 2 > constraints.maxHeight - headerHeight;
         final shape = AppShape.all(DashboardCorner.tableHeader);
         final fill = ShapeDecoration(
-          color: LiquidGlassScope.surfaceColorOf(context, DashboardColors.of(context).tone),
+          color: LiquidGlassScope.surfaceColorOf(
+            context,
+            DashboardColors.of(context).tone,
+          ),
           shape: shape,
         );
         final body = ListView.builder(
@@ -659,7 +662,10 @@ class _Source extends StatelessWidget {
           width: 22,
           height: 22,
           decoration: ShapeDecoration(
-            color: LiquidGlassScope.surfaceColorOf(context, DashboardColors.of(context).tone2),
+            color: LiquidGlassScope.surfaceColorOf(
+              context,
+              DashboardColors.of(context).tone2,
+            ),
             shape: AppShape.all(7),
           ),
           child: Center(
@@ -878,21 +884,14 @@ class _DnsResult extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
     if (query.error.isNotEmpty) {
-      return GlassText(
-        query.error,
-        style: TextStyle(
-          color: colorScheme.error,
-        ),
-      );
+      return GlassText(query.error, style: TextStyle(color: colorScheme.error));
     }
     if (query.hasFailureRcode) {
       return GlassText(
         query.rcode,
         style: AppTextStyle.footnote
             .of(context, emphasized: true)
-            .copyWith(
-              color: DashboardColors.of(context).warn,
-            ),
+            .copyWith(color: DashboardColors.of(context).warn),
       );
     }
     final answer = query.answers.firstOrNull ?? '—';
@@ -904,7 +903,10 @@ class _DnsResult extends StatelessWidget {
             margin: const EdgeInsetsDirectional.only(end: 6),
             padding: const EdgeInsets.symmetric(horizontal: 6),
             decoration: ShapeDecoration(
-              color: LiquidGlassScope.surfaceColorOf(context, DashboardColors.of(context).tone),
+              color: LiquidGlassScope.surfaceColorOf(
+                context,
+                DashboardColors.of(context).tone,
+              ),
               shape: AppShape.full,
             ),
             child: Center(

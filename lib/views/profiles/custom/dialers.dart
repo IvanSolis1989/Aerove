@@ -147,7 +147,11 @@ class _ProxyDialerItem extends ConsumerWidget {
       onPressed: onPressed,
       contentPadding: const EdgeInsets.only(left: 16, right: 8),
       title: TooltipText(
-        text: GlassText(proxy.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+        text: GlassText(
+          proxy.name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
       ),
       subtitle: target == null
           ? null

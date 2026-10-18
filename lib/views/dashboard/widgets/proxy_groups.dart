@@ -118,11 +118,7 @@ class _GroupDelay extends ConsumerWidget {
       style: AppTextStyle.caption1
           .of(context, emphasized: true)
           .toTabular
-          .copyWith(
-            color: color == null
-                ? null
-                : color,
-          ),
+          .copyWith(color: color == null ? null : color),
     );
   }
 }

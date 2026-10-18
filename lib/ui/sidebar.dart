@@ -401,24 +401,28 @@ class _SidebarButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final glass = LiquidGlassScope.of(context);
     final button = Material(
-            color: glass ? Colors.transparent : selected == true ? colors.selectedFill : Colors.transparent,
-            shape: _itemShape,
-            child: InkWell(
-              onTap: onTap,
-              customBorder: _itemShape,
-              mouseCursor: SystemMouseCursors.basic,
-              splashFactory: NoSplash.splashFactory,
-              overlayColor: colors.overlay,
-              child: Tooltip(
-                message: tooltip,
-                excludeFromSemantics: !tooltipIsLabel,
-                child: IconTheme.merge(
-                  data: IconThemeData(size: _iconSize, color: colors.icon),
-                  child: SizedBox(height: height, child: child),
-                ),
-              ),
-            ),
-          );
+      color: glass
+          ? Colors.transparent
+          : selected == true
+          ? colors.selectedFill
+          : Colors.transparent,
+      shape: _itemShape,
+      child: InkWell(
+        onTap: onTap,
+        customBorder: _itemShape,
+        mouseCursor: SystemMouseCursors.basic,
+        splashFactory: NoSplash.splashFactory,
+        overlayColor: colors.overlay,
+        child: Tooltip(
+          message: tooltip,
+          excludeFromSemantics: !tooltipIsLabel,
+          child: IconTheme.merge(
+            data: IconThemeData(size: _iconSize, color: colors.icon),
+            child: SizedBox(height: height, child: child),
+          ),
+        ),
+      ),
+    );
     return Padding(
       padding: EdgeInsets.symmetric(
         horizontal: sideInset,
@@ -432,7 +436,9 @@ class _SidebarButton extends StatelessWidget {
           shape: _itemShape,
           child: glass && selected == true
               ? LiquidGlass(
-                  style: LiquidGlassStyle.regular(context.colorScheme).copyWith(tint: colors.selectedFill),
+                  style: LiquidGlassStyle.regular(
+                    context.colorScheme,
+                  ).copyWith(tint: colors.selectedFill),
                   clipper: ShapeBorderClipper(shape: _itemShape),
                   child: button,
                 )

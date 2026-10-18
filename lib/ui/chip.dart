@@ -38,9 +38,7 @@ class CommonChip extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: AppTextStyle.caption1
                   .of(context, emphasized: true)
-                  .copyWith(
-                    color: foregroundColor,
-                  ),
+                  .copyWith(color: foregroundColor),
             ),
           ),
           if (onDeleted != null)
@@ -107,7 +105,9 @@ class TonalChip extends StatelessWidget {
     );
     final glass = onPressed != null && LiquidGlassScope.of(context);
     final material = Material(
-      color: glass ? Colors.transparent : LiquidGlassScope.surfaceColorOf(context, color),
+      color: glass
+          ? Colors.transparent
+          : LiquidGlassScope.surfaceColorOf(context, color),
       shape: AppShape.sm,
       clipBehavior: Clip.antiAlias,
       child: onPressed == null
@@ -117,7 +117,11 @@ class TonalChip extends StatelessWidget {
     return glass
         ? LiquidGlass(
             style: LiquidGlassStyle.regular(context.colorScheme).copyWith(
-              tint: LiquidGlassScope.surfaceColorOf(context, color, opacity: 0.12),
+              tint: LiquidGlassScope.surfaceColorOf(
+                context,
+                color,
+                opacity: 0.12,
+              ),
             ),
             clipper: const ShapeBorderClipper(shape: AppShape.sm),
             child: material,

@@ -191,19 +191,19 @@ class _BlockConnectionButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final button = InkWell(
-          onTap: onPressed,
-          customBorder: AppShape.circle,
-          child: SizedBox.square(
-            dimension: 28,
-            child: Center(
-              child: GlyphIcon(
-                AppGlyphs.block,
-                size: 16,
-                color: context.colorScheme.onSurfaceVariant,
-              ),
-            ),
+      onTap: onPressed,
+      customBorder: AppShape.circle,
+      child: SizedBox.square(
+        dimension: 28,
+        child: Center(
+          child: GlyphIcon(
+            AppGlyphs.block,
+            size: 16,
+            color: context.colorScheme.onSurfaceVariant,
           ),
-        );
+        ),
+      ),
+    );
     return Tooltip(
       message: context.appLocalizations.blockConnection,
       child: Semantics(

@@ -152,9 +152,7 @@ abstract final class DashboardText {
       .caption1
       .of(context)
       .toTabular
-      .copyWith(
-        color: color ?? context.colorScheme.onSurfaceVariant,
-      );
+      .copyWith(color: color ?? context.colorScheme.onSurfaceVariant);
 
   static TextStyle figure(
     BuildContext context,

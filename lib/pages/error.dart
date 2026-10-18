@@ -77,7 +77,10 @@ class _InitErrorScreenState extends State<InitErrorScreen> {
 
   void _showSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: GlassText(message), behavior: SnackBarBehavior.floating),
+      SnackBar(
+        content: GlassText(message),
+        behavior: SnackBarBehavior.floating,
+      ),
     );
   }
 

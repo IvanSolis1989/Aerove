@@ -76,9 +76,7 @@ void main() {
     }
   });
 
-  testWidgets('explicit glyph disabled alpha stays unchanged', (
-    tester,
-  ) async {
+  testWidgets('explicit glyph disabled alpha stays unchanged', (tester) async {
     const disabled = Color.fromRGBO(255, 0, 0, 0.38);
     await tester.pumpWidget(
       const TestApp(
@@ -95,7 +93,6 @@ void main() {
       ),
     );
     expect((paint.painter! as GlyphPainter).color, disabled);
-
   });
 
   testWidgets('error foreground roles preserve their RGB and alpha', (
@@ -343,10 +340,7 @@ void main() {
         expected,
         reason: '$mode highContrast=$highContrast pureBlack=$pureBlack',
       );
-      expect(
-        Theme.of(context).colorScheme.onSurface.a,
-        1.0,
-      );
+      expect(Theme.of(context).colorScheme.onSurface.a, 1.0);
       final disabled = Colors.red.withValues(alpha: 0.38);
       expect(GlassForeground.colorsInk(context, disabled), isFalse);
     }
@@ -514,96 +508,220 @@ void main() {
     }
   });
 
-  testWidgets('ink keeps emoji images error disabled and high contrast pixels', (tester) async {
-    tester.view.physicalSize = const Size(400,260);
+  testWidgets('ink keeps emoji images error disabled and high contrast pixels', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 260);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    final asset=(await rootBundle.load('assets/images/icon.png')).buffer.asUint8List();
-    final emoji=FontLoader('InkEmoji')..addFont(rootBundle.load('assets/fonts/Twemoji.Mozilla.ttf'));
+    final asset = (await rootBundle.load(
+      'assets/images/icon.png',
+    )).buffer.asUint8List();
+    final emoji = FontLoader('InkEmoji')
+      ..addFont(rootBundle.load('assets/fonts/Twemoji.Mozilla.ttf'));
     await tester.runAsync(emoji.load);
-    if(ui.ImageFilter.isShaderFilterSupported) await tester.runAsync(GlassInk.prepare);
-    for(final brightness in Brightness.values) {
-      final source=brightness==Brightness.dark?Colors.white:Colors.black;
-      final colors=auroraColorScheme(brightness);
-      final background=brightness==Brightness.dark?const Color(0xFF173940):const Color(0xFFBDE5EC);
-      final capture=GlobalKey();
-      Future<({List<int> bytes,int width,Map<String,Rect> bounds})> render(bool enabled,bool highContrast) async {
-        await tester.pumpWidget(MaterialApp(
-          theme:ThemeData(colorScheme:colors,fontFamily:'Ahem'),
-          darkTheme:ThemeData(colorScheme:colors,fontFamily:'Ahem'),
-          themeMode:brightness==Brightness.dark?ThemeMode.dark:ThemeMode.light,
-          themeAnimationStyle:AnimationStyle.noAnimation,
-          builder:(context,child)=>MediaQuery(
-            data:MediaQuery.of(context).copyWith(highContrast:highContrast),
-            child:RepaintBoundary(key:capture,
-              child:LiquidGlassScope(enabled:enabled,
-                child:LiquidGlassHost(enabled:enabled,
-                  child:Stack(fit:StackFit.expand,children:[
-                    Positioned.fill(child:LiquidGlassColorField(child:ColoredBox(color:background))),
-                    child!,
-                  ]),
+    if (ui.ImageFilter.isShaderFilterSupported)
+      await tester.runAsync(GlassInk.prepare);
+    for (final brightness in Brightness.values) {
+      final source = brightness == Brightness.dark
+          ? Colors.white
+          : Colors.black;
+      final colors = auroraColorScheme(brightness);
+      final background = brightness == Brightness.dark
+          ? const Color(0xFF173940)
+          : const Color(0xFFBDE5EC);
+      final capture = GlobalKey();
+      Future<({List<int> bytes, int width, Map<String, Rect> bounds})> render(
+        bool enabled,
+        bool highContrast,
+      ) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: ThemeData(colorScheme: colors, fontFamily: 'Ahem'),
+            darkTheme: ThemeData(colorScheme: colors, fontFamily: 'Ahem'),
+            themeMode: brightness == Brightness.dark
+                ? ThemeMode.dark
+                : ThemeMode.light,
+            themeAnimationStyle: AnimationStyle.noAnimation,
+            builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(highContrast: highContrast),
+              child: RepaintBoundary(
+                key: capture,
+                child: LiquidGlassScope(
+                  enabled: enabled,
+                  child: LiquidGlassHost(
+                    enabled: enabled,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Positioned.fill(
+                          child: LiquidGlassColorField(
+                            child: ColoredBox(color: background),
+                          ),
+                        ),
+                        child!,
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ),
+            home: Scaffold(
+              backgroundColor: Colors.transparent,
+              body: Stack(
+                children: [
+                  Positioned(
+                    left: 10,
+                    top: 10,
+                    child: GlassText(
+                      'H',
+                      style: TextStyle(
+                        fontFamily: 'Ahem',
+                        fontSize: 40,
+                        color: source,
+                      ),
+                    ),
+                  ),
+                  const Positioned(
+                    left: 100,
+                    top: 10,
+                    child: GlassText(
+                      '😀',
+                      key: ValueKey('protectedEmoji'),
+                      style: TextStyle(fontFamily: 'InkEmoji', fontSize: 40),
+                    ),
+                  ),
+                  Positioned(
+                    left: 220,
+                    top: 10,
+                    child: Image.memory(
+                      asset,
+                      key: const ValueKey('protectedImage'),
+                      width: 48,
+                      height: 48,
+                    ),
+                  ),
+                  Positioned(
+                    left: 100,
+                    top: 120,
+                    child: GlassText(
+                      'E',
+                      key: const ValueKey('protectedError'),
+                      style: TextStyle(
+                        fontFamily: 'Ahem',
+                        fontSize: 40,
+                        color: colors.error,
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 220,
+                    top: 120,
+                    child: GlyphIcon(
+                      AppGlyphs.tools,
+                      key: const ValueKey('protectedDisabled'),
+                      size: 48,
+                      color: source.withValues(alpha: .38),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
-          home:Scaffold(backgroundColor:Colors.transparent,body:Stack(children:[
-            Positioned(left:10,top:10,child:GlassText('H',style:TextStyle(fontFamily:'Ahem',fontSize:40,color:source))),
-            const Positioned(left:100,top:10,child:GlassText('😀',key:ValueKey('protectedEmoji'),
-              style:TextStyle(fontFamily:'InkEmoji',fontSize:40))),
-            Positioned(left:220,top:10,child:Image.memory(asset,key:const ValueKey('protectedImage'),width:48,height:48)),
-            Positioned(left:100,top:120,child:GlassText('E',key:const ValueKey('protectedError'),
-              style:TextStyle(fontFamily:'Ahem',fontSize:40,color:colors.error))),
-            Positioned(left:220,top:120,child:GlyphIcon(AppGlyphs.tools,key:const ValueKey('protectedDisabled'),
-              size:48,color:source.withValues(alpha:.38))),
-          ])),
-        ));
-        await tester.runAsync(()=>precacheImage(MemoryImage(asset),tester.element(find.byType(Image))));
+        );
+        await tester.runAsync(
+          () => precacheImage(
+            MemoryImage(asset),
+            tester.element(find.byType(Image)),
+          ),
+        );
         await tester.pumpAndSettle();
-        final boundary=capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
-        final origin=boundary.localToGlobal(Offset.zero);
-        final bounds={for(final name in ['protectedEmoji','protectedImage','protectedError','protectedDisabled'])
-          name:tester.getRect(find.byKey(ValueKey(name))).shift(-origin)};
+        final boundary =
+            capture.currentContext!.findRenderObject()!
+                as RenderRepaintBoundary;
+        final origin = boundary.localToGlobal(Offset.zero);
+        final bounds = {
+          for (final name in [
+            'protectedEmoji',
+            'protectedImage',
+            'protectedError',
+            'protectedDisabled',
+          ])
+            name: tester.getRect(find.byKey(ValueKey(name))).shift(-origin),
+        };
         return (await tester.runAsync(() async {
-          final image=await boundary.toImage();
+          final image = await boundary.toImage();
           try {
-            final data=(await image.toByteData(format:ui.ImageByteFormat.rawRgba))!;
-            final output=Platform.environment['XCLASH_SCREENSHOT_DIR'];
-            if(output!=null) {
-              final directory=Directory(output)..createSync(recursive:true);
-              final png=(await image.toByteData(format:ui.ImageByteFormat.png))!;
-              File('${directory.path}/foreground-protected-${brightness.name}-$enabled-$highContrast.png')
-                .writeAsBytesSync(png.buffer.asUint8List());
+            final data = (await image.toByteData(
+              format: ui.ImageByteFormat.rawRgba,
+            ))!;
+            final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+            if (output != null) {
+              final directory = Directory(output)..createSync(recursive: true);
+              final png = (await image.toByteData(
+                format: ui.ImageByteFormat.png,
+              ))!;
+              File(
+                '${directory.path}/foreground-protected-${brightness.name}-$enabled-$highContrast.png',
+              ).writeAsBytesSync(png.buffer.asUint8List());
             }
-            return(bytes:data.buffer.asUint8List(),width:image.width,bounds:bounds);
-          } finally { image.dispose(); }
+            return (
+              bytes: data.buffer.asUint8List(),
+              width: image.width,
+              bounds: bounds,
+            );
+          } finally {
+            image.dispose();
+          }
         }))!;
       }
-      final original=await render(false,false);
-      for(final highContrast in [false,true]) {
-        final actual=await render(true,highContrast);
-        for(final name in original.bounds.keys) {
-          final rect=original.bounds[name]!;
-          expect(actual.bounds[name],rect);
-          for(var y=rect.top.ceil();y<rect.bottom.floor();y++) {
-            for(var x=rect.left.ceil();x<rect.right.floor();x++) {
-              final point=Offset(x+.5,y+.5);
-              expect(_pixel(actual.bytes,actual.width,point),
-                _pixel(original.bytes,original.width,point),reason:'$name $point');
+
+      final original = await render(false, false);
+      for (final highContrast in [false, true]) {
+        final actual = await render(true, highContrast);
+        for (final name in original.bounds.keys) {
+          final rect = original.bounds[name]!;
+          expect(actual.bounds[name], rect);
+          for (var y = rect.top.ceil(); y < rect.bottom.floor(); y++) {
+            for (var x = rect.left.ceil(); x < rect.right.floor(); x++) {
+              final point = Offset(x + .5, y + .5);
+              expect(
+                _pixel(actual.bytes, actual.width, point),
+                _pixel(original.bytes, original.width, point),
+                reason: '$name $point',
+              );
             }
           }
         }
-        if(ui.ImageFilter.isShaderFilterSupported) {
-          expect(LiquidGlassHost.debugLastInkCapture!.masks,highContrast?0:1);
-          final neutral=_pixel(actual.bytes,actual.width,const Offset(25,25));
-          final old=_pixel(original.bytes,original.width,const Offset(25,25));
-          expect(neutral==old,highContrast);
-          if(!highContrast) {
-            expect(LiquidGlassHost.debugLastInkCapture!.texturePixels,lessThanOrEqualTo(1024*1024));
-            expect(LiquidGlassHost.debugLastInkCapture!.maskPixels,lessThan(400*260~/2));
+        if (ui.ImageFilter.isShaderFilterSupported) {
+          expect(
+            LiquidGlassHost.debugLastInkCapture!.masks,
+            highContrast ? 0 : 1,
+          );
+          final neutral = _pixel(
+            actual.bytes,
+            actual.width,
+            const Offset(25, 25),
+          );
+          final old = _pixel(
+            original.bytes,
+            original.width,
+            const Offset(25, 25),
+          );
+          expect(neutral == old, highContrast);
+          if (!highContrast) {
+            expect(
+              LiquidGlassHost.debugLastInkCapture!.texturePixels,
+              lessThanOrEqualTo(1024 * 1024),
+            );
+            expect(
+              LiquidGlassHost.debugLastInkCapture!.maskPixels,
+              lessThan(400 * 260 ~/ 2),
+            );
           }
         }
       }
-      expect(tester.takeException(),isNull);
+      expect(tester.takeException(), isNull);
     }
   });
 
@@ -617,7 +735,9 @@ void main() {
         await tester.runAsync(GlassInk.prepare);
         final capture = GlobalKey();
         final colors = auroraColorScheme(brightness);
-        final source = brightness == Brightness.dark ? Colors.white : Colors.black;
+        final source = brightness == Brightness.dark
+            ? Colors.white
+            : Colors.black;
         final backdrops = brightness == Brightness.dark
             ? const [Color(0xFF173940), Color(0xFF3B203B)]
             : const [Color(0xFFBDE5EC), Color(0xFFEAD0E8)];
@@ -631,81 +751,154 @@ void main() {
           Duration? motionTime,
         }) async {
           final visible = ink ? source : Colors.transparent;
-          final scheme = ink ? colors : colors.copyWith(
-            primary: Colors.transparent,
-            onSurface: Colors.transparent,
-            onSurfaceVariant: Colors.transparent,
-          );
-          await tester.pumpWidget(MaterialApp(
-            theme: ThemeData(colorScheme: scheme, fontFamily: 'Ahem'),
-            darkTheme: ThemeData(colorScheme: scheme, fontFamily: 'Ahem'),
-            themeMode: brightness == Brightness.dark ? ThemeMode.dark : ThemeMode.light,
-            themeAnimationStyle: AnimationStyle.noAnimation,
-            builder: (context, child) => wrapAppScopes(context,
-              RepaintBoundary(key: capture,
-                child: LiquidGlassScope(enabled: enabled, quality: quality,
-                  child: LiquidGlassHost(enabled: enabled,
-                    child: Stack(fit: StackFit.expand, children: [
-                      Positioned.fill(child: LiquidGlassColorField(
-                        child: motionTime == null
-                            ? CustomPaint(painter: _InkFields(backdrops, swapped))
-                            : SeededAuroraWallpaper(
-                                colors: const [Color(0xFF65BDD2), Color(0xFFC589CA), Color(0xFF75CCA8)],
-                                seed: 271828, brightness: brightness,
-                                motion: false, motionTime: motionTime,
-                              ),
-                      )),
-                      child!,
-                    ]),
+          final scheme = ink
+              ? colors
+              : colors.copyWith(
+                  primary: Colors.transparent,
+                  onSurface: Colors.transparent,
+                  onSurfaceVariant: Colors.transparent,
+                );
+          await tester.pumpWidget(
+            MaterialApp(
+              theme: ThemeData(colorScheme: scheme, fontFamily: 'Ahem'),
+              darkTheme: ThemeData(colorScheme: scheme, fontFamily: 'Ahem'),
+              themeMode: brightness == Brightness.dark
+                  ? ThemeMode.dark
+                  : ThemeMode.light,
+              themeAnimationStyle: AnimationStyle.noAnimation,
+              builder: (context, child) => wrapAppScopes(
+                context,
+                RepaintBoundary(
+                  key: capture,
+                  child: LiquidGlassScope(
+                    enabled: enabled,
+                    quality: quality,
+                    child: LiquidGlassHost(
+                      enabled: enabled,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          Positioned.fill(
+                            child: LiquidGlassColorField(
+                              child: motionTime == null
+                                  ? CustomPaint(
+                                      painter: _InkFields(backdrops, swapped),
+                                    )
+                                  : SeededAuroraWallpaper(
+                                      colors: const [
+                                        Color(0xFF65BDD2),
+                                        Color(0xFFC589CA),
+                                        Color(0xFF75CCA8),
+                                      ],
+                                      seed: 271828,
+                                      brightness: brightness,
+                                      motion: false,
+                                      motionTime: motionTime,
+                                    ),
+                            ),
+                          ),
+                          child!,
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              home: Scaffold(
+                backgroundColor: Colors.transparent,
+                body: Builder(
+                  builder: (context) => Stack(
+                    children: [
+                      for (final (name, left, top, role) in [
+                        ('bodyLeft', 24.0, 24.0, GlassInkRole.body),
+                        ('bodyRight', 244.0, 24.0, GlassInkRole.body),
+                        ('titleLeft', 24.0, 220.0, GlassInkRole.title),
+                        ('titleRight', 244.0, 220.0, GlassInkRole.title),
+                      ])
+                        Positioned(
+                          left: left,
+                          top: top,
+                          child: GlassText.rich(
+                            TextSpan(
+                              text: 'H',
+                              style: TextStyle(color: visible),
+                            ),
+                            key: ValueKey(name),
+                            inkRole: role,
+                            style: AppTextStyle.display
+                                .of(context)
+                                .copyWith(fontFamily: 'Ahem', color: visible),
+                          ),
+                        ),
+                      for (final (name, left) in [
+                        ('glyphLeft', 24.0),
+                        ('glyphRight', 244.0),
+                      ])
+                        Positioned(
+                          left: left,
+                          top: 120,
+                          child: GlyphIcon(
+                            AppGlyphs.dashboard,
+                            key: ValueKey(name),
+                            size: 48,
+                            fill: 1,
+                            color: visible,
+                          ),
+                        ),
+                      Align(
+                        alignment: Alignment.bottomCenter,
+                        child: NavigationDock(
+                          destinations: const [
+                            NavigationDockDestination(
+                              glyph: AppGlyphs.dashboard,
+                              label: 'Home',
+                            ),
+                            NavigationDockDestination(
+                              glyph: AppGlyphs.tools,
+                              label: 'Tools',
+                            ),
+                          ],
+                          selectedIndex: 0,
+                          onSelected: (_) {},
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
             ),
-            home: Scaffold(backgroundColor: Colors.transparent,
-              body: Builder(builder: (context) => Stack(children: [
-                for (final (name, left, top, role) in [
-                  ('bodyLeft', 24.0, 24.0, GlassInkRole.body),
-                  ('bodyRight', 244.0, 24.0, GlassInkRole.body),
-                  ('titleLeft', 24.0, 220.0, GlassInkRole.title),
-                  ('titleRight', 244.0, 220.0, GlassInkRole.title),
-                ]) Positioned(left: left, top: top,
-                  child: GlassText.rich(
-                    TextSpan(text: 'H', style: TextStyle(color: visible)),
-                    key: ValueKey(name), inkRole: role,
-                    style: AppTextStyle.display.of(context).copyWith(
-                      fontFamily: 'Ahem', color: visible,
-                    ),
-                  ),
-                ),
-                for (final (name, left) in [('glyphLeft', 24.0), ('glyphRight', 244.0)])
-                  Positioned(left: left, top: 120,
-                    child: GlyphIcon(AppGlyphs.dashboard, key: ValueKey(name),
-                      size: 48, fill: 1, color: visible),
-                  ),
-                Align(alignment: Alignment.bottomCenter,
-                  child: NavigationDock(destinations: const [
-                    NavigationDockDestination(glyph: AppGlyphs.dashboard, label: 'Home'),
-                    NavigationDockDestination(glyph: AppGlyphs.tools, label: 'Tools'),
-                  ], selectedIndex: 0, onSelected: (_) {}),
-                ),
-              ])),
-            ),
-          ));
+          );
           await tester.pumpAndSettle();
-          final boundary = capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+          final boundary =
+              capture.currentContext!.findRenderObject()!
+                  as RenderRepaintBoundary;
           final origin = boundary.localToGlobal(Offset.zero);
           final bounds = <String, Rect>{
-            for (final name in ['bodyLeft','bodyRight','glyphLeft','glyphRight','titleLeft','titleRight'])
+            for (final name in [
+              'bodyLeft',
+              'bodyRight',
+              'glyphLeft',
+              'glyphRight',
+              'titleLeft',
+              'titleRight',
+            ])
               name: tester.getRect(find.byKey(ValueKey(name))).shift(-origin),
           };
           final dock = find.byType(NavigationDock);
           final labels = find.descendant(of: dock, matching: find.text('Home'));
-          final glyphs = find.descendant(of: dock, matching: find.byWidgetPredicate(
-            (widget) => widget is GlyphIcon && widget.glyph == AppGlyphs.dashboard,
-          ));
-          for (final (name, finder) in [('dock',labels), ('dockGlyph',glyphs)]) {
+          final glyphs = find.descendant(
+            of: dock,
+            matching: find.byWidgetPredicate(
+              (widget) =>
+                  widget is GlyphIcon && widget.glyph == AppGlyphs.dashboard,
+            ),
+          );
+          for (final (name, finder) in [
+            ('dock', labels),
+            ('dockGlyph', glyphs),
+          ]) {
             final rect = tester.getRect(finder.first);
-            for (var i=1; i<finder.evaluate().length; i++) {
+            for (var i = 1; i < finder.evaluate().length; i++) {
               expect(tester.getRect(finder.at(i)), rect);
             }
             bounds[name] = rect.shift(-origin);
@@ -713,86 +906,162 @@ void main() {
           return (await tester.runAsync(() async {
             final image = await boundary.toImage();
             try {
-              final bytes = (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!;
+              final bytes = (await image.toByteData(
+                format: ui.ImageByteFormat.rawRgba,
+              ))!;
               if (output != null) {
-                final directory = Directory(output)..createSync(recursive: true);
-                final png = (await image.toByteData(format: ui.ImageByteFormat.png))!;
-                File('${directory.path}/foreground-ink-${brightness.name}-${quality.name}-$tag.png')
-                  .writeAsBytesSync(png.buffer.asUint8List());
+                final directory = Directory(output)
+                  ..createSync(recursive: true);
+                final png = (await image.toByteData(
+                  format: ui.ImageByteFormat.png,
+                ))!;
+                File(
+                  '${directory.path}/foreground-ink-${brightness.name}-${quality.name}-$tag.png',
+                ).writeAsBytesSync(png.buffer.asUint8List());
               }
-              return (bytes: bytes.buffer.asUint8List(), width: image.width, bounds: bounds);
-            } finally { image.dispose(); }
+              return (
+                bytes: bytes.buffer.asUint8List(),
+                width: image.width,
+                bounds: bounds,
+              );
+            } finally {
+              image.dispose();
+            }
           }))!;
         }
+
         final control = await render('opaque-control', enabled: false);
-        final points = <String,Offset>{};
+        final points = <String, Offset>{};
         for (final name in control.bounds.keys) {
           final expected = name.startsWith('dock') ? colors.primary : source;
           final rect = control.bounds[name]!.deflate(2);
-          for (var y=rect.top.ceil(); y<rect.bottom && !points.containsKey(name); y++) {
-            for (var x=rect.left.ceil(); x<rect.right; x++) {
-              final point = Offset(x+.5,y+.5);
-              final solid = [for (var dy=-1;dy<=1;dy++) for(var dx=-1;dx<=1;dx++)
-                _pixel(control.bytes,control.width,point+Offset(dx.toDouble(),dy.toDouble()))
-              ].every((color) => List.generate(3,(i) =>
-                (_channels(color)[i]-_channels(expected)[i]).abs()<1.5/255).every((x)=>x));
-              if(solid) { points[name]=point;break; }
+          for (
+            var y = rect.top.ceil();
+            y < rect.bottom && !points.containsKey(name);
+            y++
+          ) {
+            for (var x = rect.left.ceil(); x < rect.right; x++) {
+              final point = Offset(x + .5, y + .5);
+              final solid =
+                  [
+                    for (var dy = -1; dy <= 1; dy++)
+                      for (var dx = -1; dx <= 1; dx++)
+                        _pixel(
+                          control.bytes,
+                          control.width,
+                          point + Offset(dx.toDouble(), dy.toDouble()),
+                        ),
+                  ].every(
+                    (color) => List.generate(
+                      3,
+                      (i) =>
+                          (_channels(color)[i] - _channels(expected)[i]).abs() <
+                          1.5 / 255,
+                    ).every((x) => x),
+                  );
+              if (solid) {
+                points[name] = point;
+                break;
+              }
             }
           }
-          expect(points.containsKey(name),isTrue,reason:'$name solid opaque interior');
+          expect(
+            points.containsKey(name),
+            isTrue,
+            reason: '$name solid opaque interior',
+          );
         }
-        final frames = <Map<String,Color>>[];
-        for(final swapped in [false,true]) {
-          final under = await render('under-$swapped',ink:false,swapped:swapped);
-          final actual = await render('actual-$swapped',swapped:swapped);
-          final measured=<String,Color>{};
-          for(final name in points.keys) {
-            expect(actual.bounds[name],control.bounds[name]);
-            final point=points[name]!;
-            final background=_pixel(under.bytes,under.width,point);
-            final painted=_pixel(actual.bytes,actual.width,point);
-            final hsv=HSVColor.fromColor(painted);
-            final base=HSVColor.fromColor(background);
-            final gap=(hsv.hue-base.hue).abs();
-            final hueGap=math.min(gap,360-gap);
-            samples.add({'role':name,'swapped':swapped,'point':[point.dx,point.dy],
-              'under':_channels(background),'actual':_channels(painted),
-              'hueGap':hueGap,'saturation':hsv.saturation,'underSaturation':base.saturation,
-              'contrast':_contrast(painted,background),
+        final frames = <Map<String, Color>>[];
+        for (final swapped in [false, true]) {
+          final under = await render(
+            'under-$swapped',
+            ink: false,
+            swapped: swapped,
+          );
+          final actual = await render('actual-$swapped', swapped: swapped);
+          final measured = <String, Color>{};
+          for (final name in points.keys) {
+            expect(actual.bounds[name], control.bounds[name]);
+            final point = points[name]!;
+            final background = _pixel(under.bytes, under.width, point);
+            final painted = _pixel(actual.bytes, actual.width, point);
+            final hsv = HSVColor.fromColor(painted);
+            final base = HSVColor.fromColor(background);
+            final gap = (hsv.hue - base.hue).abs();
+            final hueGap = math.min(gap, 360 - gap);
+            samples.add({
+              'role': name,
+              'swapped': swapped,
+              'point': [point.dx, point.dy],
+              'under': _channels(background),
+              'actual': _channels(painted),
+              'hueGap': hueGap,
+              'saturation': hsv.saturation,
+              'underSaturation': base.saturation,
+              'contrast': _contrast(painted, background),
             });
-            if(output!=null) {
-              File('$output/foreground-ink-${brightness.name}-${quality.name}.json')
-                .writeAsStringSync(const JsonEncoder.withIndent('  ').convert(samples));
+            if (output != null) {
+              File(
+                '$output/foreground-ink-${brightness.name}-${quality.name}.json',
+              ).writeAsStringSync(
+                const JsonEncoder.withIndent('  ').convert(samples),
+              );
             }
-            expect(hueGap,lessThan(20),reason:name);
-            if(!name.startsWith('title')) {
-              expect(hsv.saturation,greaterThan(base.saturation+0.10),reason:name);
+            expect(hueGap, lessThan(20), reason: name);
+            if (!name.startsWith('title')) {
+              expect(
+                hsv.saturation,
+                greaterThan(base.saturation + 0.10),
+                reason: name,
+              );
             }
-            expect(_contrast(painted,background),greaterThanOrEqualTo(
-              name.contains('glyph') || name=='dockGlyph' ? 3 : 4.5),reason:name);
-            measured[name]=painted;
+            expect(
+              _contrast(painted, background),
+              greaterThanOrEqualTo(
+                name.contains('glyph') || name == 'dockGlyph' ? 3 : 4.5,
+              ),
+              reason: name,
+            );
+            measured[name] = painted;
           }
           frames.add(measured);
         }
-        for(final name in points.keys) {
-          expect(frames[0][name],isNot(frames[1][name]),reason:'$name follows current background');
+        for (final name in points.keys) {
+          expect(
+            frames[0][name],
+            isNot(frames[1][name]),
+            reason: '$name follows current background',
+          );
         }
-        final before = await render('motion-before',motionTime:Duration.zero);
-        final after = await render('motion-after',motionTime:const Duration(seconds:700));
-        var moved=0;
-        for(final name in ['bodyLeft','bodyRight','glyphLeft','glyphRight']) {
-          final point=points[name]!;
-          if(_pixel(before.bytes,before.width,point)!=_pixel(after.bytes,after.width,point)) moved++;
+        final before = await render('motion-before', motionTime: Duration.zero);
+        final after = await render(
+          'motion-after',
+          motionTime: const Duration(seconds: 700),
+        );
+        var moved = 0;
+        for (final name in [
+          'bodyLeft',
+          'bodyRight',
+          'glyphLeft',
+          'glyphRight',
+        ]) {
+          final point = points[name]!;
+          if (_pixel(before.bytes, before.width, point) !=
+              _pixel(after.bytes, after.width, point))
+            moved++;
         }
-        expect(moved,greaterThanOrEqualTo(2));
-        final generation=LiquidGlassHost.debugLastInkCapture!.generation;
+        expect(moved, greaterThanOrEqualTo(2));
+        final generation = LiquidGlassHost.debugLastInkCapture!.generation;
         await tester.pump();
-        final stable = await render('motion-stable',motionTime:const Duration(seconds:700));
-        expect(stable.bytes,after.bytes);
-        expect(LiquidGlassHost.debugLastInkCapture!.generation,generation);
-        expect(LiquidGlassHost.debugLastInkCapture!.masks,greaterThan(1));
-        expect(tester.takeException(),isNull);
-      },skip:!ui.ImageFilter.isShaderFilterSupported);
+        final stable = await render(
+          'motion-stable',
+          motionTime: const Duration(seconds: 700),
+        );
+        expect(stable.bytes, after.bytes);
+        expect(LiquidGlassHost.debugLastInkCapture!.generation, generation);
+        expect(LiquidGlassHost.debugLastInkCapture!.masks, greaterThan(1));
+        expect(tester.takeException(), isNull);
+      }, skip: !ui.ImageFilter.isShaderFilterSupported);
     }
   }
 
@@ -878,7 +1147,10 @@ void main() {
                               style: AppTextStyle.body.of(context),
                             ),
                             const SizedBox(height: 12),
-                            GlassText('Small: readable labels 123', style: style),
+                            GlassText(
+                              'Small: readable labels 123',
+                              style: style,
+                            ),
                             const SizedBox(height: 12),
                             const GlyphIcon(
                               AppGlyphs.dashboard,
@@ -947,10 +1219,17 @@ class _InkFields extends CustomPainter {
   final bool swapped;
   @override
   void paint(Canvas canvas, Size size) {
-    canvas.drawRect(Offset.zero & size, Paint()..color=colors[swapped?1:0]);
-    canvas.drawRect(Rect.fromLTWH(size.width/2,0,size.width/2,size.height),
-      Paint()..color=colors[swapped?0:1]);
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..color = colors[swapped ? 1 : 0],
+    );
+    canvas.drawRect(
+      Rect.fromLTWH(size.width / 2, 0, size.width / 2, size.height),
+      Paint()..color = colors[swapped ? 0 : 1],
+    );
   }
+
   @override
-  bool shouldRepaint(_InkFields old) => old.swapped!=swapped || old.colors!=colors;
+  bool shouldRepaint(_InkFields old) =>
+      old.swapped != swapped || old.colors != colors;
 }

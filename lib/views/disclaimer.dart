@@ -149,30 +149,33 @@ class _DisclaimerIntro extends StatelessWidget {
     final colorScheme = context.colorScheme;
     return CardGroup(
       child: DecoratedBox(
-      decoration: ShapeDecoration(
-        color: LiquidGlassScope.of(context)
-            ? Colors.transparent
-            : context.raisedSurfaceLevel.colorOf(colorScheme),
-        shape: AppShape.xl,
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            GlyphIcon(AppGlyphs.gavel, size: 28, color: colorScheme.primary),
-            const SizedBox(width: 16),
-            Expanded(
-              child: GlassText(
-                text,
-                style: AppTextStyle.subheadline
-                    .of(context)
-                    .copyWith(color: colorScheme.onSurfaceVariant, height: 1.6),
-              ),
-            ),
-          ],
+        decoration: ShapeDecoration(
+          color: LiquidGlassScope.of(context)
+              ? Colors.transparent
+              : context.raisedSurfaceLevel.colorOf(colorScheme),
+          shape: AppShape.xl,
         ),
-      ),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              GlyphIcon(AppGlyphs.gavel, size: 28, color: colorScheme.primary),
+              const SizedBox(width: 16),
+              Expanded(
+                child: GlassText(
+                  text,
+                  style: AppTextStyle.subheadline
+                      .of(context)
+                      .copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                        height: 1.6,
+                      ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -223,7 +226,10 @@ class _DisclaimerTerm extends StatelessWidget {
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: GlassText(title, style: AppTextStyle.headline.of(context)),
+                child: GlassText(
+                  title,
+                  style: AppTextStyle.headline.of(context),
+                ),
               ),
             ],
           ),

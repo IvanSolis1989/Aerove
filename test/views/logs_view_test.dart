@@ -64,7 +64,10 @@ void main() {
 
     expect(hintFinder(), findsOneWidget);
     final label = tester.widget<Text>(
-      find.descendant(of: find.byKey(hintKey), matching: find.bySubtype<Text>()),
+      find.descendant(
+        of: find.byKey(hintKey),
+        matching: find.bySubtype<Text>(),
+      ),
     );
     expect(seedLogs().map((log) => log.dateTime), contains(label.data));
 

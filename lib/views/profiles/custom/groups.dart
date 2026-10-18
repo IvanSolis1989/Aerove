@@ -805,7 +805,11 @@ class _EditProxyGroupViewState extends ConsumerState<EditProxyGroupView> {
         children: [
           if (invalid) CustomIssueButton(issues: issues),
           Flexible(
-            child: GlassText(value, maxLines: 1, overflow: TextOverflow.ellipsis),
+            child: GlassText(
+              value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
           const GlyphIcon(AppGlyphs.chevronForward),
         ],

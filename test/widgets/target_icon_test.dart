@@ -51,10 +51,7 @@ void main() {
         ),
       );
       final text = tester.widget<Text>(find.text('🤖'));
-      expect(
-        text.style!.color,
-        Colors.red,
-      );
+      expect(text.style!.color, Colors.red);
     }
   });
 

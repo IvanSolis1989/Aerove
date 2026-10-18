@@ -282,8 +282,8 @@ class _MatchTargetItem extends ConsumerWidget {
             .toJetBrainsMono
             .copyWith(
               color: invalid
-                    ? context.colorScheme.error
-                    : context.colorScheme.tertiary,
+                  ? context.colorScheme.error
+                  : context.colorScheme.tertiary,
             ),
       ),
       onPressed: () {

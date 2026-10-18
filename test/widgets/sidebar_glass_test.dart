@@ -51,21 +51,24 @@ void main() {
           final container = ProviderContainer(
             overrides: [
               navigationItemsStateProvider.overrideWithValue(
-                NavigationItemsState(value: [
-                  NavigationItem(
-                    glyph: AppGlyphs.dashboard,
-                    label: PageLabel.dashboard,
-                    builder: (_) => const SizedBox.expand(),
-                  ),
-                  NavigationItem(
-                    glyph: AppGlyphs.tools,
-                    label: PageLabel.tools,
-                    builder: (_) => const SizedBox.expand(),
-                  ),
-                ]),
+                NavigationItemsState(
+                  value: [
+                    NavigationItem(
+                      glyph: AppGlyphs.dashboard,
+                      label: PageLabel.dashboard,
+                      builder: (_) => const SizedBox.expand(),
+                    ),
+                    NavigationItem(
+                      glyph: AppGlyphs.tools,
+                      label: PageLabel.tools,
+                      builder: (_) => const SizedBox.expand(),
+                    ),
+                  ],
+                ),
               ),
               appSettingProvider.overrideWithBuild(
-                (_, _) => AppSettingProps(sidebarExpanded: layout == 'expanded'),
+                (_, _) =>
+                    AppSettingProps(sidebarExpanded: layout == 'expanded'),
               ),
               themeSettingProvider.overrideWithBuild(
                 (_, _) => ThemeProps(
@@ -84,12 +87,15 @@ void main() {
               UncontrolledProviderScope(
                 container: container,
                 child: MaterialApp(
-                  theme: ThemeData(
-                    platform: TargetPlatform.android,
-                    brightness: brightness,
-                  ).withAppShapes.withAppSurfaces.copyWith(
-                    scaffoldBackgroundColor: pureBlack ? Colors.black : backdrop,
-                  ),
+                  theme:
+                      ThemeData(
+                        platform: TargetPlatform.android,
+                        brightness: brightness,
+                      ).withAppShapes.withAppSurfaces.copyWith(
+                        scaffoldBackgroundColor: pureBlack
+                            ? Colors.black
+                            : backdrop,
+                      ),
                   localizationsDelegates: const [
                     AppLocalizations.delegate,
                     AppUiLocalizations.delegate,
@@ -97,7 +103,9 @@ void main() {
                   ],
                   supportedLocales: AppLocalizations.delegate.supportedLocales,
                   builder: (context, child) => MediaQuery(
-                    data: MediaQuery.of(context).copyWith(highContrast: highContrast),
+                    data: MediaQuery.of(
+                      context,
+                    ).copyWith(highContrast: highContrast),
                     child: wrapAppScopes(
                       context,
                       RepaintBoundary(
@@ -112,36 +120,50 @@ void main() {
             );
             await tester.pumpAndSettle();
             final sidebar = find.byType(NavigationSidebar);
-            expect(tester.getSize(sidebar).width, layout == 'expanded' ? 220 : 48);
+            expect(
+              tester.getSize(sidebar).width,
+              layout == 'expanded' ? 220 : 48,
+            );
             if (layout == 'overlay') {
               await tester.tap(find.byTooltip('Show more'));
               await tester.pumpAndSettle();
             }
             final pane = layout == 'overlay'
-                ? find.byWidgetPredicate((widget) => widget is Material && widget.elevation == 8)
+                ? find.byWidgetPredicate(
+                    (widget) => widget is Material && widget.elevation == 8,
+                  )
                 : sidebar;
             final paneRect = tester.getRect(pane);
             final selected = find.byKey(const ValueKey('Dashboard')).last;
             final selectedRect = tester.getRect(selected);
-            final glass = mode != LiquidGlassMode.none && !highContrast && !pureBlack;
+            final glass =
+                mode != LiquidGlassMode.none && !highContrast && !pureBlack;
             expect(find.byType(LiquidGlassHost), findsOneWidget);
-            final sidebarPanes = find.descendant(of: pane, matching: find.byType(LiquidGlass));
+            final sidebarPanes = find.descendant(
+              of: pane,
+              matching: find.byType(LiquidGlass),
+            );
             expect(sidebarPanes, glass ? findsWidgets : findsNothing);
             expect(
               find.descendant(of: selected, matching: find.byType(LiquidGlass)),
               glass ? findsOneWidget : findsNothing,
             );
-            final boundary = tester.renderObject<RenderRepaintBoundary>(find.byKey(captureKey));
+            final boundary = tester.renderObject<RenderRepaintBoundary>(
+              find.byKey(captureKey),
+            );
             final image = boundary.toImageSync();
             try {
               final pixels = (await tester.runAsync(() async {
                 final bytes = (await image.toByteData())!;
                 final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
                 if (output != null && glass) {
-                  final png = (await image.toByteData(format: ui.ImageByteFormat.png))!;
+                  final png = (await image.toByteData(
+                    format: ui.ImageByteFormat.png,
+                  ))!;
                   await Directory(output).create(recursive: true);
-                  await File('$output/xclash-sidebar-$layout-${brightness.name}-${mode.name}-${backdrop.toARGB32()}.png')
-                      .writeAsBytes(png.buffer.asUint8List());
+                  await File(
+                    '$output/xclash-sidebar-$layout-${brightness.name}-${mode.name}-${backdrop.toARGB32()}.png',
+                  ).writeAsBytes(png.buffer.asUint8List());
                 }
                 return [
                   for (final point in [
@@ -150,9 +172,19 @@ void main() {
                   ])
                     Color.fromARGB(
                       255,
-                      bytes.getUint8((point.dy.floor() * image.width + point.dx.floor()) * 4),
-                      bytes.getUint8((point.dy.floor() * image.width + point.dx.floor()) * 4 + 1),
-                      bytes.getUint8((point.dy.floor() * image.width + point.dx.floor()) * 4 + 2),
+                      bytes.getUint8(
+                        (point.dy.floor() * image.width + point.dx.floor()) * 4,
+                      ),
+                      bytes.getUint8(
+                        (point.dy.floor() * image.width + point.dx.floor()) *
+                                4 +
+                            1,
+                      ),
+                      bytes.getUint8(
+                        (point.dy.floor() * image.width + point.dx.floor()) *
+                                4 +
+                            2,
+                      ),
                     ),
                 ];
               }))!;
@@ -174,15 +206,27 @@ void main() {
               image.dispose();
             }
             if (layout != 'overlay') {
-              await tester.tap(find.byTooltip(layout == 'expanded' ? 'Show less' : 'Show more'));
+              await tester.tap(
+                find.byTooltip(
+                  layout == 'expanded' ? 'Show less' : 'Show more',
+                ),
+              );
               await tester.pumpAndSettle();
-              expect(tester.getSize(sidebar).width, layout == 'expanded' ? 48 : 220);
+              expect(
+                tester.getSize(sidebar).width,
+                layout == 'expanded' ? 48 : 220,
+              );
             }
             await tester.tap(find.byKey(const ValueKey('Tools')).last);
             await tester.pumpAndSettle();
             expect(container.read(currentPageLabelProvider), PageLabel.tools);
             if (layout == 'overlay') {
-              expect(find.byWidgetPredicate((widget) => widget is Material && widget.elevation == 8), findsNothing);
+              expect(
+                find.byWidgetPredicate(
+                  (widget) => widget is Material && widget.elevation == 8,
+                ),
+                findsNothing,
+              );
             }
             expect(tester.takeException(), isNull);
           } finally {
@@ -197,8 +241,14 @@ void main() {
         for (final pair in samples.values) {
           expect(pair, hasLength(2));
           for (var point = 0; point < 2; point++) {
-            expect((pair[0][point].r - pair[1][point].r).abs(), greaterThan(0.2));
-            expect((pair[0][point].b - pair[1][point].b).abs(), greaterThan(0.2));
+            expect(
+              (pair[0][point].r - pair[1][point].r).abs(),
+              greaterThan(0.2),
+            );
+            expect(
+              (pair[0][point].b - pair[1][point].b).abs(),
+              greaterThan(0.2),
+            );
           }
         }
       });

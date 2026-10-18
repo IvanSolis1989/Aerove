@@ -175,7 +175,9 @@ void main() {
             final exit = find.widgetWithText(OutlinedButton, 'Exit');
             final agree = find.widgetWithText(FilledButton, 'Agree');
             final intro = find.ancestor(
-              of: find.text(tester.element(exit).appLocalizations.disclaimerDesc),
+              of: find.text(
+                tester.element(exit).appLocalizations.disclaimerDesc,
+              ),
               matching: find.byType(CardGroup),
             );
             expect(intro, findsOneWidget);
@@ -187,13 +189,19 @@ void main() {
             final introFill = tester.widget<DecoratedBox>(
               find.descendant(
                 of: intro,
-                matching: find.byWidgetPredicate((widget) =>
-                    widget is DecoratedBox &&
-                    widget.decoration is ShapeDecoration &&
-                    (widget.decoration as ShapeDecoration).shape == AppShape.xl),
+                matching: find.byWidgetPredicate(
+                  (widget) =>
+                      widget is DecoratedBox &&
+                      widget.decoration is ShapeDecoration &&
+                      (widget.decoration as ShapeDecoration).shape ==
+                          AppShape.xl,
+                ),
               ),
             );
-            expect((introFill.decoration as ShapeDecoration).color, Colors.transparent);
+            expect(
+              (introFill.decoration as ShapeDecoration).color,
+              Colors.transparent,
+            );
 
             for (final button in [exit, agree]) {
               expect(

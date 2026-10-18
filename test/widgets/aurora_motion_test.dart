@@ -135,12 +135,14 @@ void main() {
           expect(
             (next.translation - current.translation).distance,
             greaterThan(3 * size.shortestSide / 390),
-            reason: 'seed=$seed second=$second must visibly drift in five seconds',
+            reason:
+                'seed=$seed second=$second must visibly drift in five seconds',
           );
           expect(
             _angleDistance(next.angle, current.angle) * 180 / math.pi,
             greaterThan(0.5),
-            reason: 'seed=$seed second=$second must visibly rotate in five seconds',
+            reason:
+                'seed=$seed second=$second must visibly rotate in five seconds',
           );
         }
       }
@@ -321,7 +323,9 @@ void main() {
           } else {
             expect(maximumValue, lessThan(0.51));
           }
-          final difference = first == null ? 0.0 : _pixelDifference(first, pixels);
+          final difference = first == null
+              ? 0.0
+              : _pixelDifference(first, pixels);
           if (first != null) {
             expect(
               difference,

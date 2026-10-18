@@ -341,9 +341,7 @@ class _DelayTextState extends ConsumerState<_DelayText> {
                             .of(context, emphasized: true)
                             .copyWith(
                               overflow: TextOverflow.ellipsis,
-                              color: delayColor == null
-                                  ? null
-                                  : delayColor,
+                              color: delayColor == null ? null : delayColor,
                             ),
                       ),
                     ),

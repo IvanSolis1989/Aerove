@@ -62,7 +62,10 @@ class ChipTitle extends StatelessWidget {
     final chip = this.chip;
     final titleWidth = MeasureScope.of(context)
         .computeTextSize(
-          GlassText(title, style: DefaultTextStyle.of(context).style.merge(style)),
+          GlassText(
+            title,
+            style: DefaultTextStyle.of(context).style.merge(style),
+          ),
         )
         .width;
     final chipsWidth =
