@@ -72,6 +72,8 @@ void main() {
     }
   });
 
+  tearDown(() => LiquidGlassHost.debugFeatherBranchOverride = null);
+
   for (final quality in LiquidGlassQuality.values) {
     testWidgets(
       'transformed feather matches premultiplied frozen live oracle $quality',
@@ -185,6 +187,15 @@ void main() {
         expect(cost.panes, 1);
         expect(cost.stripPixels, 120 * 15);
         expect(cost.surfacePixels, 120 * 15 * 3);
+        final branches = <String, List<int>>{};
+        for (final branch in ['frozen', 'live']) {
+          LiquidGlassHost.debugFeatherBranchOverride = branch;
+          await render(Colors.green, 2);
+          branches[branch] = await _shot(tester, 'oracle-$branch-only-$quality');
+        }
+        LiquidGlassHost.debugFeatherBranchOverride = null;
+        await render(Colors.green, 2);
+        final repeatedMixed = await _shot(tester, 'oracle-mixed-repeat-$quality');
         await render(Colors.green, 4);
         final crossed = await _shot(tester, 'oracle-crossed-$quality');
         expect(
@@ -237,9 +248,21 @@ void main() {
               'resolved': _pixel(resolved, 159, 122),
               'frozen': _pixel(frozen, 159, 122),
               'mixed': _pixel(mixed, 159, 122),
+              'branches': [
+                for (final point in [(159, 122), (40, 121), (100, 116)])
+                  {'x': point.$1, 'y': point.$2,
+                    'weightT': (point.$2 + 0.5 - 110) / 15,
+                    'background': _pixel(live, 5, 116),
+                    'frozenEndpoint': _pixel(frozen, point.$1, point.$2),
+                    'liveEndpoint': _pixel(resolved, point.$1, point.$2),
+                    'frozenOnly': _pixel(branches['frozen']!, point.$1, point.$2),
+                    'liveOnly': _pixel(branches['live']!, point.$1, point.$2),
+                    'mixed': _pixel(mixed, point.$1, point.$2)},
+              ],
             }),
           );
         }
+        expect(repeatedMixed, mixed, reason: 'branch probes must not alter the full composite');
         var changedPixels = 0;
         for (var y = 110; y < 125; y++) {
           final t = (y + 0.5 - 110) / 15;

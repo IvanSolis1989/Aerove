@@ -76,6 +76,9 @@ class LiquidGlassHost extends StatelessWidget {
   debugLastFeatherCapture;
 
   @visibleForTesting
+  static String? debugFeatherBranchOverride;
+
+  @visibleForTesting
   static bool? debugCarryBandsOverride;
 
   @visibleForTesting
@@ -992,7 +995,9 @@ class _LiquidGlassHostLayer extends ContainerLayer {
         ...haze == null ? _noHaze : _sampling(haze),
         if (haze == null) 0 else entry.style.haze,
       ],
-      identical(entry.root, this) ? BlendMode.srcOver : BlendMode.src,
+      entry.wallpaper != null || identical(entry.root, this)
+          ? BlendMode.srcOver
+          : BlendMode.src,
       entry.style,
       visible: entry.visible?.transform(Matrix4.inverted(entry.toHost).storage),
       coverageKey: entry.coverageKey,

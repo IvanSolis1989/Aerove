@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:fl_clash/ui/foreground_ink.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
@@ -60,7 +62,10 @@ void main() {
 
     await frame(Duration.zero);
     final before = LiquidGlassHost.debugLastInkCapture!;
-    expect(before.masks, greaterThan(0));
+    final supported = ui.ImageFilter.isShaderFilterSupported;
+    expect(before.masks, supported ? greaterThan(0) : 0);
+    expect(before.sourceCaptures, supported ? greaterThan(0) : 0);
+    expect(before.fallbackCaptures, 0);
     for (var index = 1; index <= 30; index++) {
       await frame(Duration(milliseconds: index * 34));
     }
@@ -74,6 +79,18 @@ void main() {
       before.generation,
       reason: 'A fixed wallpaper mesh only changes its sampling transform.',
     );
+    expect(after.masks, before.masks);
+    expect(after.sourceCaptures, before.sourceCaptures);
+    expect(after.fallbackCaptures, 0);
+    if (supported) {
+      expect(after.filterUpdates, greaterThan(before.filterUpdates));
+    } else {
+      expect(after.filterUpdates, 0);
+      expect(after.maskPixels, 0);
+      expect(after.texturePixels, 0);
+    }
+    expect(find.text('16.8 KB/s'), findsOneWidget);
+    expect(find.byType(GlyphIcon), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
   });

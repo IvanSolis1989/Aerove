@@ -33,6 +33,13 @@ const _tabs = [
   (PageLabel.tools, AppGlyphs.tools, 'Tools'),
 ];
 
+typedef _HeaderSignal = ({
+  double contrast,
+  double contrastNoise,
+  int pixelDelta,
+  int pixelNoise,
+});
+
 void main() {
   setUpAll(() async {
     if (Platform.environment['XCLASH_REQUIRE_IMPELLER'] == 'true') {
@@ -205,6 +212,8 @@ void main() {
               double? repeatHeaderVariance;
               double? stripeContrastReduction;
               double? stripeContrastRepeatNoise;
+              double? maximumOccludedSignalLsb;
+              _HeaderSignal? unoccludedHeaderSignal;
               int? referencePixelNoise;
               int? controlPixelDelta;
               final headerVisible =
@@ -261,6 +270,41 @@ void main() {
                   headerCrop,
                   pageRect.left,
                 ).abs();
+                if (animation == TabAnimation.fade &&
+                    label == _tabs.first.$1 &&
+                    controlPixelDelta == 0 && referencePixelNoise == 0) {
+                  // The first PageView slot is painted below the other fading tabs.
+                  var transmission = Color.getAlphaFromOpacity(alpha) / 255;
+                  for (final (other, _, _) in _tabs.skip(1)) {
+                    final otherPage = find.byKey(ValueKey('page-${other.name}'));
+                    if (otherPage.evaluate().isEmpty) continue;
+                    final otherFade = find.ancestor(
+                      of: otherPage, matching: find.byType(LiquidGlassFade),
+                    );
+                    expect(otherFade, findsOneWidget);
+                    transmission *= 1 - Color.getAlphaFromOpacity(
+                      tester.widget<LiquidGlassFade>(otherFade).opacity.value,
+                    ) / 255;
+                  }
+                  maximumOccludedSignalLsb = 255 * transmission;
+                  if (maximumOccludedSignalLsb < 0.5) {
+                    final originalCapture = _captureStamp();
+                    unoccludedHeaderSignal = await _unoccludedHeaderSignal(
+                      tester, capture, label, filter, headerCrop, pageRect.left,
+                      '$name-${label.name}-$phase-$elapsed',
+                    );
+                    expect(tester.getRect(page), pageRect);
+                    expect(_captureStamp(), originalCapture);
+                    final restored = await _snapshot(
+                      tester, capture,
+                      '$name-${label.name}-$phase-$elapsed-composited-restored',
+                    );
+                    expect(
+                      _maxDelta(image, restored, headerCrop),
+                      lessThanOrEqualTo(referencePixelNoise),
+                    );
+                  }
+                }
               }
               frames.add({
                 'page': label.name,
@@ -297,6 +341,16 @@ void main() {
                 'headerControlPixelDelta': controlPixelDelta,
                 'incomingStripeContrastReduction': stripeContrastReduction,
                 'incomingStripeContrastRepeatNoise': stripeContrastRepeatNoise,
+                'maximumOccludedSignalLsb': maximumOccludedSignalLsb,
+                'originalCompositedHeaderSignalZero':
+                    controlPixelDelta == 0 && referencePixelNoise == 0,
+                'unoccludedHeaderSignal': unoccludedHeaderSignal == null ? null : {
+                  'scope': 'Same incoming opacity, filter, geometry and clock; other fixture pages temporarily unpainted. The original composited signal was zero at 8-bit readback.',
+                  'contrast': unoccludedHeaderSignal.contrast,
+                  'contrastNoise': unoccludedHeaderSignal.contrastNoise,
+                  'pixelDelta': unoccludedHeaderSignal.pixelDelta,
+                  'pixelNoise': unoccludedHeaderSignal.pixelNoise,
+                },
               });
               if (quality != null &&
                   built &&
@@ -341,8 +395,15 @@ void main() {
                     repeatHeaderVariance != null &&
                     stripeContrastReduction != null &&
                     stripeContrastRepeatNoise != null) {
-                  if (stripeContrastReduction <= stripeContrastRepeatNoise ||
-                      controlPixelDelta! <= referencePixelNoise!) {
+                  final contrast = unoccludedHeaderSignal?.contrast ??
+                      stripeContrastReduction;
+                  final contrastNoise = unoccludedHeaderSignal?.contrastNoise ??
+                      stripeContrastRepeatNoise;
+                  final delta = unoccludedHeaderSignal?.pixelDelta ??
+                      controlPixelDelta!;
+                  final noise = unoccludedHeaderSignal?.pixelNoise ??
+                      referencePixelNoise!;
+                  if (contrast <= contrastNoise || delta <= noise) {
                     failures.add(
                       '$label $phase $elapsed: incoming blur did not reduce its own sharp stripes beyond repeated-frame noise.',
                     );
@@ -515,6 +576,81 @@ Future<Uint8List> _snapshot(
     image.dispose();
   });
   return bytes;
+}
+
+Future<_HeaderSignal> _unoccludedHeaderSignal(
+  WidgetTester tester,
+  GlobalKey capture,
+  PageLabel incoming,
+  RenderBackdropFilter filter,
+  Rect crop,
+  double pageLeft,
+  String name,
+) async {
+  final saved = <(Element, LiquidGlassFade, RenderObject)>[];
+  final original = filter.filter;
+  late Uint8List actual;
+  late Uint8List control;
+  late Uint8List repeat;
+  try {
+    for (final (label, _, _) in _tabs) {
+      if (label == incoming) continue;
+      final page = find.byKey(ValueKey('page-${label.name}'));
+      if (page.evaluate().isEmpty) continue;
+      final fade = find.ancestor(
+        of: page, matching: find.byType(LiquidGlassFade),
+      );
+      expect(fade, findsOneWidget);
+      final element = fade.evaluate().single;
+      final widget = tester.widget<LiquidGlassFade>(fade);
+      final render = element.renderObject!;
+      saved.add((element, widget, render));
+      const LiquidGlassFade(opacity: kAlwaysDismissedAnimation)
+          .updateRenderObject(element, render);
+    }
+    await tester.pump();
+    actual = await _snapshot(tester, capture, '$name-unoccluded');
+    filter.filter = ui.ImageFilter.blur(sigmaX: 0, sigmaY: 0);
+    await tester.pump();
+    control = await _snapshot(tester, capture, '$name-unoccluded-control');
+    filter.filter = original;
+    await tester.pump();
+    repeat = await _snapshot(tester, capture, '$name-unoccluded-repeat');
+  } finally {
+    filter.filter = original;
+    for (final (element, widget, render) in saved) {
+      widget.updateRenderObject(element, render);
+    }
+    await tester.pump();
+  }
+  return (
+    contrast: _stripeContrastDelta(control, actual, crop, pageLeft),
+    contrastNoise: _stripeContrastDelta(repeat, actual, crop, pageLeft).abs(),
+    pixelDelta: _maxDelta(actual, control, crop),
+    pixelNoise: _maxDelta(actual, repeat, crop),
+  );
+}
+
+Map<String, Object?> _captureStamp() {
+  final glass = LiquidGlassHost.debugLastCapture;
+  final ink = LiquidGlassHost.debugLastInkCapture;
+  List<double> coordinates(Rect rect) => [
+    rect.left, rect.top, rect.right, rect.bottom,
+  ];
+  return {
+    'atlasPixels': glass?.atlasPixels,
+    'sourceCaptures': ink?.sourceCaptures,
+    'fallbackCaptures': ink?.fallbackCaptures,
+    'generation': ink?.generation,
+    'panes': [
+      for (final pane in glass?.panes ?? [])
+        [
+          coordinates(pane.pane), coordinates(pane.slot), coordinates(pane.place),
+          pane.scale, pane.level, pane.wallpaper,
+          pane.atlas.width, pane.atlas.height,
+        ],
+    ],
+  };
 }
 
 double _variance(Uint8List bytes, Rect rect) {

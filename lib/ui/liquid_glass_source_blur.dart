@@ -231,6 +231,10 @@ extension _SourceBlurCapture on _LiquidGlassHostLayer {
           cache.zeroSigma++;
           continue;
         }
+        if (!ui.ImageFilter.isShaderFilterSupported) {
+          cache.fallback('backend');
+          continue;
+        }
         final sigma = _sourceSigma(entry, source);
         if (sigma == null) continue;
         plans.add((entry, sigma));

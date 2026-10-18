@@ -27,6 +27,17 @@ final _lens = find.descendant(
 );
 const _addLabel = 'Add';
 
+Finder _destinationButton(String label) => find.descendant(
+  of: find.byType(FloatingNavigationBar),
+  matching: find.byWidgetPredicate(
+    (widget) =>
+        widget is Semantics &&
+        widget.properties.button == true &&
+        widget.properties.label == label &&
+        widget.properties.onTap != null,
+  ),
+);
+
 IconButtonData _addAction() {
   return IconButtonData(
     glyph: AppGlyphs.add,
@@ -286,6 +297,7 @@ void main() {
       tester.view.physicalSize = _mobileSize;
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
+      final selections = <int>[];
       await tester.pumpWidget(
         TestApp(
           wrapInProviderScope: true,
@@ -305,16 +317,21 @@ void main() {
               NavigationDockDestination(glyph: AppGlyphs.tools, label: 'b'),
             ],
             selectedIndex: 0,
-            onSelected: (_) {},
+            onSelected: selections.add,
           ),
         ),
       );
       await tester.pumpAndSettle();
       final glass = find.byType(LiquidGlass);
       expect(glass, findsNWidgets(2));
+      final destination = _destinationButton('b');
+      expect(find.text('b'), findsNWidgets(2));
+      expect(destination, findsOneWidget);
+      expect(tester.getSize(destination).width, greaterThanOrEqualTo(48));
+      expect(tester.getSize(destination).height, greaterThanOrEqualTo(48));
 
       final gesture = await tester.startGesture(
-        tester.getCenter(find.text('b')),
+        tester.getCenter(destination),
       );
       await tester.pumpAndSettle();
       expect(glass, findsNWidgets(lifted));
@@ -322,6 +339,7 @@ void main() {
       await gesture.up();
       await tester.pumpAndSettle();
       expect(glass, findsNWidgets(2));
+      expect(selections, [1]);
       expect(tester.takeException(), isNull);
     });
 
@@ -391,8 +409,13 @@ void main() {
           tester.getSize(selectedGlass).width,
           lessThan(tester.getSize(find.byType(FloatingNavigationBar)).width),
         );
+        final destination = _destinationButton('b');
+        expect(find.text('b'), findsNWidgets(2));
+        expect(destination, findsOneWidget);
+        expect(tester.getSize(destination).width, greaterThanOrEqualTo(48));
+        expect(tester.getSize(destination).height, greaterThanOrEqualTo(48));
         final gesture = await tester.startGesture(
-          tester.getCenter(find.text('b')),
+          tester.getCenter(destination),
         );
         await tester.pumpAndSettle();
         expect(find.byType(LiquidGlass), findsNWidgets(lifted));
