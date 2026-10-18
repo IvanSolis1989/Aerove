@@ -59,37 +59,38 @@ List<Widget> _underlay() => [
   ),
 ];
 
-Widget _app(Widget home, LiquidGlassQuality quality, {
+Widget _app(
+  Widget home,
+  LiquidGlassQuality quality, {
   bool enabled = true,
   Brightness brightness = Brightness.light,
-}) =>
-    MaterialApp(
-      theme: ThemeData(
-        brightness: brightness,
-        platform: TargetPlatform.android,
-      ).withAppShapes.withAppSurfaces,
-      localizationsDelegates: const [
-        AppLocalizations.delegate,
-        AppUiLocalizations.delegate,
-        ...GlobalMaterialLocalizations.delegates,
-      ],
-      supportedLocales: AppLocalizations.delegate.supportedLocales,
-      builder: (context, child) => wrapAppScopes(
-        context,
-        RepaintBoundary(
-          key: _scene,
-          child: LiquidGlassScope(
-            enabled: enabled,
-            quality: quality,
-            child: LiquidGlassHost(
-              enabled: enabled,
-              child: ColoredBox(color: Colors.blue, child: child!),
-            ),
-          ),
+}) => MaterialApp(
+  theme: ThemeData(
+    brightness: brightness,
+    platform: TargetPlatform.android,
+  ).withAppShapes.withAppSurfaces,
+  localizationsDelegates: const [
+    AppLocalizations.delegate,
+    AppUiLocalizations.delegate,
+    ...GlobalMaterialLocalizations.delegates,
+  ],
+  supportedLocales: AppLocalizations.delegate.supportedLocales,
+  builder: (context, child) => wrapAppScopes(
+    context,
+    RepaintBoundary(
+      key: _scene,
+      child: LiquidGlassScope(
+        enabled: enabled,
+        quality: quality,
+        child: LiquidGlassHost(
+          enabled: enabled,
+          child: ColoredBox(color: Colors.blue, child: child!),
         ),
       ),
-      home: home,
-    );
+    ),
+  ),
+  home: home,
+);
 
 Future<({Uint8List bytes, int width})> _shot(
   WidgetTester tester,
@@ -156,83 +157,111 @@ void main() {
   for (final brightness in Brightness.values) {
     for (final quality in [null, ...LiquidGlassQuality.values]) {
       for (final kind in ['bottom', 'snap', 'side', 'form']) {
-        testWidgets('sheet $kind has an undimmed dismissible barrier $brightness $quality', (
-          tester,
-        ) async {
-          final mobile = kind == 'bottom' || kind == 'snap';
-          final size = Size(mobile ? 400 : 800, 700);
-          tester.view.physicalSize = size;
-          tester.view.devicePixelRatio = 1;
-          addTearDown(tester.view.reset);
-          var underlayTaps = 0;
-          var actions = 0;
-          Widget panel(BuildContext _) => SizedBox(
-            height: 220,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text('Sheet panel'),
-                TextButton(
-                  onPressed: () => actions++,
-                  child: const Text('Sheet action'),
-                ),
-              ],
-            ),
-          );
-          await tester.pumpWidget(_app(
-            ViewScope(
-              size: size,
-              isMobile: mobile,
-              child: Navigator(onGenerateRoute: (_) => MaterialPageRoute<void>(
-                builder: (context) => Scaffold(
-                  backgroundColor: Colors.transparent,
-                  body: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () => underlayTaps++,
-                    child: Center(child: TextButton(
-                      onPressed: () {
-                        switch (kind) {
-                          case 'bottom' || 'side':
-                            unawaited(showSheet<void>(context: context, builder: panel));
-                          case 'snap':
-                            unawaited(showSnapSheet<void>(context,
-                              builder: (context, _) => panel(context),
-                            ));
-                          case 'form':
-                            unawaited(showFormSheet<void>(context: context, builder: panel));
-                        }
-                      },
-                      child: const Text('Open sheet'),
-                    )),
+        testWidgets(
+          'sheet $kind has an undimmed dismissible barrier $brightness $quality',
+          (tester) async {
+            final mobile = kind == 'bottom' || kind == 'snap';
+            final size = Size(mobile ? 400 : 800, 700);
+            tester.view.physicalSize = size;
+            tester.view.devicePixelRatio = 1;
+            addTearDown(tester.view.reset);
+            var underlayTaps = 0;
+            var actions = 0;
+            Widget panel(BuildContext _) => SizedBox(
+              height: 220,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Sheet panel'),
+                  TextButton(
+                    onPressed: () => actions++,
+                    child: const Text('Sheet action'),
+                  ),
+                ],
+              ),
+            );
+            await tester.pumpWidget(
+              _app(
+                ViewScope(
+                  size: size,
+                  isMobile: mobile,
+                  child: Navigator(
+                    onGenerateRoute: (_) => MaterialPageRoute<void>(
+                      builder: (context) => Scaffold(
+                        backgroundColor: Colors.transparent,
+                        body: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () => underlayTaps++,
+                          child: Center(
+                            child: TextButton(
+                              onPressed: () {
+                                switch (kind) {
+                                  case 'bottom' || 'side':
+                                    unawaited(
+                                      showSheet<void>(
+                                        context: context,
+                                        builder: panel,
+                                      ),
+                                    );
+                                  case 'snap':
+                                    unawaited(
+                                      showSnapSheet<void>(
+                                        context,
+                                        builder: (context, _) => panel(context),
+                                      ),
+                                    );
+                                  case 'form':
+                                    unawaited(
+                                      showFormSheet<void>(
+                                        context: context,
+                                        builder: panel,
+                                      ),
+                                    );
+                                }
+                              },
+                              child: const Text('Open sheet'),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
-              )),
-            ),
-            quality ?? LiquidGlassQuality.standard,
-            enabled: quality != null,
-            brightness: brightness,
-          ));
-          await tester.pumpAndSettle();
-          final before = await _shot(tester, '$kind-${brightness.name}-${quality?.name ?? 'none'}-barrier-before');
-          await tester.tap(find.text('Open sheet'));
-          await tester.pumpAndSettle();
-          final route = ModalRoute.of(tester.element(find.text('Sheet panel')))!;
-          expect(route.barrierColor?.a ?? 0, 0);
-          expect(route.barrierDismissible, isTrue);
-          expect(route.barrierLabel, isNotEmpty);
-          final opened = await _shot(tester, '$kind-${brightness.name}-${quality?.name ?? 'none'}-barrier-open');
-          expect(_pixel(opened, 10, 10), _pixel(before, 10, 10));
-          await tester.tap(find.text('Sheet action'));
-          await tester.pumpAndSettle();
-          expect(actions, 1);
-          expect(find.text('Sheet panel'), findsOneWidget);
-          final taps = underlayTaps;
-          await tester.tapAt(const Offset(10, 10));
-          await tester.pumpAndSettle();
-          expect(find.text('Sheet panel'), findsNothing);
-          expect(underlayTaps, taps);
-          expect(tester.takeException(), isNull);
-        });
+                quality ?? LiquidGlassQuality.standard,
+                enabled: quality != null,
+                brightness: brightness,
+              ),
+            );
+            await tester.pumpAndSettle();
+            final before = await _shot(
+              tester,
+              '$kind-${brightness.name}-${quality?.name ?? 'none'}-barrier-before',
+            );
+            await tester.tap(find.text('Open sheet'));
+            await tester.pumpAndSettle();
+            final route = ModalRoute.of(
+              tester.element(find.text('Sheet panel')),
+            )!;
+            expect(route.barrierColor?.a ?? 0, 0);
+            expect(route.barrierDismissible, isTrue);
+            expect(route.barrierLabel, isNotEmpty);
+            final opened = await _shot(
+              tester,
+              '$kind-${brightness.name}-${quality?.name ?? 'none'}-barrier-open',
+            );
+            expect(_pixel(opened, 10, 10), _pixel(before, 10, 10));
+            await tester.tap(find.text('Sheet action'));
+            await tester.pumpAndSettle();
+            expect(actions, 1);
+            expect(find.text('Sheet panel'), findsOneWidget);
+            final taps = underlayTaps;
+            await tester.tapAt(const Offset(10, 10));
+            await tester.pumpAndSettle();
+            expect(find.text('Sheet panel'), findsNothing);
+            expect(underlayTaps, taps);
+            expect(tester.takeException(), isNull);
+          },
+        );
       }
     }
   }

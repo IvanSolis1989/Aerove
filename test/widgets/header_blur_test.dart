@@ -52,11 +52,16 @@ void main() {
         try {
           final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
           if (output != null) {
-            final png = (await image.toByteData(format: ui.ImageByteFormat.png))!;
-            File('$output/$name.png').writeAsBytesSync(png.buffer.asUint8List());
+            final png = (await image.toByteData(
+              format: ui.ImageByteFormat.png,
+            ))!;
+            File(
+              '$output/$name.png',
+            ).writeAsBytesSync(png.buffer.asUint8List());
           }
-          return (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!
-              .buffer.asUint8List();
+          return (await image.toByteData(
+            format: ui.ImageByteFormat.rawRgba,
+          ))!.buffer.asUint8List();
         } finally {
           image.dispose();
         }
@@ -78,7 +83,9 @@ void main() {
                     const Positioned.fill(
                       child: LiquidGlassColorField(
                         child: LiquidGlassColorSource(
-                          child: CustomPaint(painter: _Wallpaper(Brightness.light)),
+                          child: CustomPaint(
+                            painter: _Wallpaper(Brightness.light),
+                          ),
                         ),
                       ),
                     ),
@@ -121,9 +128,15 @@ void main() {
       }
       expect(find.byType(HeaderBlur), findsOneWidget);
       final header = find.byType(HeaderBlur);
-      final pane = find.descendant(of: header, matching: find.byType(LiquidGlass));
+      final pane = find.descendant(
+        of: header,
+        matching: find.byType(LiquidGlass),
+      );
       expect(pane, findsOneWidget);
-      expect(find.descendant(of: header, matching: find.byType(BackdropFilter)), findsNothing);
+      expect(
+        find.descendant(of: header, matching: find.byType(BackdropFilter)),
+        findsNothing,
+      );
       expect(tester.getRect(pane), const Rect.fromLTWH(24, 72, 272, 64));
       final optical = await shot('sheet-header-scrolled');
       var changed = 0;
@@ -139,7 +152,8 @@ void main() {
           }
         }
       }
-      if (ui.ImageFilter.isShaderFilterSupported) expect(changed, greaterThan(100));
+      if (ui.ImageFilter.isShaderFilterSupported)
+        expect(changed, greaterThan(100));
       expect(outside, 0);
       controller.jumpTo(0);
       await tester.pump();
@@ -174,9 +188,17 @@ void main() {
       );
       await tester.pump();
       expect(find.byType(HeaderBlur), enabled ? findsOneWidget : findsNothing);
-      expect(find.byType(BackdropFilter), enabled ? findsOneWidget : findsNothing);
+      expect(
+        find.byType(BackdropFilter),
+        enabled ? findsOneWidget : findsNothing,
+      );
       expect(find.byType(LiquidGlass), findsNothing);
-      expect(tester.widget<FloatingHeader>(find.byType(FloatingHeader)).showBackground, isTrue);
+      expect(
+        tester
+            .widget<FloatingHeader>(find.byType(FloatingHeader))
+            .showBackground,
+        isTrue,
+      );
     }
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
@@ -231,18 +253,23 @@ void main() {
         ),
       );
       await tester.pump();
-      final boundary = key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+      final boundary =
+          key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
       return (await tester.runAsync(() async {
         final image = await boundary.toImage();
         try {
           final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
           if (output != null) {
-            final png = (await image.toByteData(format: ui.ImageByteFormat.png))!;
-            File('$output/sheet-header-lower-text-$text.png')
-                .writeAsBytesSync(png.buffer.asUint8List());
+            final png = (await image.toByteData(
+              format: ui.ImageByteFormat.png,
+            ))!;
+            File(
+              '$output/sheet-header-lower-text-$text.png',
+            ).writeAsBytesSync(png.buffer.asUint8List());
           }
-          return (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!
-              .buffer.asUint8List();
+          return (await image.toByteData(
+            format: ui.ImageByteFormat.rawRgba,
+          ))!.buffer.asUint8List();
         } finally {
           image.dispose();
         }

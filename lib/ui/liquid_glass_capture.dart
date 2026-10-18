@@ -578,7 +578,8 @@ class _LiquidGlassHostLayer extends ContainerLayer {
                 rootToHost,
                 chain.toSet(),
               )
-              ..flatBoundary = wallpaperOnly &&
+              ..flatBoundary =
+                  wallpaperOnly &&
                       !pane.contentBackdrop &&
                       boundary?.captureContent == true
                   ? boundary

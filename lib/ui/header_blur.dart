@@ -68,20 +68,21 @@ class HeaderBlur extends StatelessWidget {
                     ),
                   ),
                 )
-              else BackdropFilter(
-                filter: ui.ImageFilter.blur(
-                  sigmaX: _sigma,
-                  sigmaY: _sigma,
-                  tileMode: TileMode.clamp,
-                ),
-                blendMode: BlendMode.srcOver,
-                child: CustomPaint(
-                  painter: _HeaderBlurMask(
-                    (fullStrengthHeight / fadeHeight).clamp(0.0, 1.0),
+              else
+                BackdropFilter(
+                  filter: ui.ImageFilter.blur(
+                    sigmaX: _sigma,
+                    sigmaY: _sigma,
+                    tileMode: TileMode.clamp,
                   ),
-                  child: const SizedBox.expand(),
+                  blendMode: BlendMode.srcOver,
+                  child: CustomPaint(
+                    painter: _HeaderBlurMask(
+                      (fullStrengthHeight / fadeHeight).clamp(0.0, 1.0),
+                    ),
+                    child: const SizedBox.expand(),
+                  ),
                 ),
-              ),
             ],
           ),
         ),

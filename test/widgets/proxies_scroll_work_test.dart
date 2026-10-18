@@ -21,7 +21,9 @@ import '../helpers/test_profiles.dart';
 Group _group(int index, int nodes) => Group(
   type: GroupType.Selector,
   name: 'Group $index',
-  all: [for (var i = 0; i < nodes; i++) Proxy(name: 'Node $index-$i', type: 'ss')],
+  all: [
+    for (var i = 0; i < nodes; i++) Proxy(name: 'Node $index-$i', type: 'ss'),
+  ],
 );
 
 final _layoutLine = RegExp(r'^Laying out \([^)]*\) (\S+)#([a-z0-9]+)');
@@ -83,7 +85,10 @@ class _WorkCounter {
   Map<String, Object?> toJson() => {
     'widgetBuildCallsByType': Map.of(builds),
     'actualLayoutCallsByRenderType': Map.of(layouts),
-    'groupRootActualLayoutCalls': groupLayouts.values.fold<int>(0, (a, b) => a + b),
+    'groupRootActualLayoutCalls': groupLayouts.values.fold<int>(
+      0,
+      (a, b) => a + b,
+    ),
     'groupRootsActuallyLaidOut': groupLayouts.length,
     'renderPaintCallsByType': Map.of(paints),
     'nodeRenderPaintCalls': nodePaintCalls,
@@ -97,35 +102,49 @@ Map<String, Object?> _snapshot(WidgetTester tester) {
   var offscreenCards = 0;
   for (final card in cards) {
     final render = card.findRenderObject()! as RenderBox;
-    final rect = MatrixUtils.transformRect(render.getTransformTo(null), render.paintBounds);
+    final rect = MatrixUtils.transformRect(
+      render.getTransformTo(null),
+      render.paintBounds,
+    );
     if (!rect.overlaps(viewport)) offscreenCards++;
   }
   var paneLayers = 0;
   var inkLayers = 0;
   void visit(ContainerLayer parent) {
-    for (Layer? layer = parent.firstChild; layer != null; layer = layer.nextSibling) {
+    for (
+      Layer? layer = parent.firstChild;
+      layer != null;
+      layer = layer.nextSibling
+    ) {
       if (layer.runtimeType.toString() == '_LiquidGlassLayer') paneLayers++;
       if (layer is LiquidGlassInkLayer) inkLayers++;
       if (layer is ContainerLayer) visit(layer);
     }
   }
+
   visit(tester.binding.renderViews.first.debugLayer!);
   final capture = LiquidGlassHost.debugLastCapture;
   final inks = LiquidGlassHost.debugLastInkCapture;
   return {
     'mountedCardsIncludingOffstage': cards.length,
     'mountedOffscreenCards': offscreenCards,
-    'mountedGroupSkeletons': find.byWidgetPredicate(
-      (widget) => widget.runtimeType.toString() == '_GroupSliver',
-      skipOffstage: false,
-    ).evaluate().length,
-    'mountedHeaderContents': find.byType(ListHeader, skipOffstage: false).evaluate().length,
+    'mountedGroupSkeletons': find
+        .byWidgetPredicate(
+          (widget) => widget.runtimeType.toString() == '_GroupSliver',
+          skipOffstage: false,
+        )
+        .evaluate()
+        .length,
+    'mountedHeaderContents': find
+        .byType(ListHeader, skipOffstage: false)
+        .evaluate()
+        .length,
     'retainedPaneLayers': paneLayers,
     'retainedInkLayers': inkLayers,
     'sampledPanes': capture?.panes.length ?? 0,
-    'sampledPanesFullyOutsideViewport': capture?.panes.where(
-      (pane) => !pane.pane.overlaps(viewport),
-    ).length ?? 0,
+    'sampledPanesFullyOutsideViewport':
+        capture?.panes.where((pane) => !pane.pane.overlaps(viewport)).length ??
+        0,
     'atlasPixels': capture?.atlasPixels ?? 0,
     'snapshots': capture?.snapshots ?? 0,
     'inkMasks': inks?.masks ?? 0,
@@ -145,10 +164,14 @@ void main() {
       const JsonEncoder.withIndent('  ').convert({
         'viewportLogical': [390, 600],
         'dpr': 1,
-        'layoutCounter': 'Flutter debugPrintLayouts, actual performLayout only; not early-return layout invocations',
-        'timing': 'No FPS or duration claim; instrumentation has debug overhead',
-        'dataBoundary': 'Synthetic local models and currentGroupsState fixture; real list/grid/card/Host rendering',
-        'paneBoundary': 'Retained layer count and sampled viewport rectangles are separate; no private offscreen registration counter is invented',
+        'layoutCounter':
+            'Flutter debugPrintLayouts, actual performLayout only; not early-return layout invocations',
+        'timing':
+            'No FPS or duration claim; instrumentation has debug overhead',
+        'dataBoundary':
+            'Synthetic local models and currentGroupsState fixture; real list/grid/card/Host rendering',
+        'paneBoundary':
+            'Retained layer count and sampled viewport rectangles are separate; no private offscreen registration counter is invented',
         'cases': reports,
       }),
     );
@@ -165,118 +188,153 @@ void main() {
     ],
   ];
   for (final scenario in cases) {
-    testWidgets('real proxy scroll work ${scenario.grid ? 'grid' : 'collapsed'} '
-        'G${scenario.groups} N${scenario.nodes} ${scenario.mode.name}', (tester) async {
-      tester.view.physicalSize = const Size(390, 600);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      final groups = [for (var i = 0; i < scenario.groups; i++) _group(i, scenario.nodes)];
-      final profile = Profile.normal().copyWith(unfoldSet: const {});
-      final container = ProviderContainer(overrides: [
-        viewModeProvider.overrideWithValue(ViewMode.mobile),
-        currentProfileIdProvider.overrideWithBuild((_, _) => profile.id),
-        profilesProvider.overrideWith(() => TestProfiles([profile])),
-        currentGroupsStateProvider.overrideWithValue(GroupsState(value: groups)),
-      ]);
-      globalState.container = container;
-      container.read(groupsProvider.notifier).value = groups;
-      final controller = ScrollController();
-      final work = _WorkCounter();
-      final oldPrint = debugPrint;
-      final oldLayouts = debugPrintLayouts;
-      final oldBuild = debugOnRebuildDirtyWidget;
-      final oldPaint = debugOnProfilePaint;
-      final oldProfilePaints = debugProfilePaintsEnabled;
-      final frames = <Map<String, Object?>>[];
-      LiquidGlassHost.debugLastCapture = null;
-      LiquidGlassHost.debugLastInkCapture = null;
-      try {
-        await tester.pumpWidget(UncontrolledProviderScope(
-          container: container,
-          child: TestApp(
-            homeBuilder: (child) => Scaffold(body: LiquidGlassScope(
-              enabled: scenario.mode != LiquidGlassMode.none,
-              quality: scenario.mode == LiquidGlassMode.ultra
-                  ? LiquidGlassQuality.ultra : LiquidGlassQuality.standard,
-              child: LiquidGlassHost(
-                enabled: scenario.mode != LiquidGlassMode.none,
-                wallpaperOnly: true,
-                child: Stack(children: [
-                  const Positioned.fill(child: LiquidGlassColorField(
-                    child: ColoredBox(color: Color(0xFF284858)),
-                  )),
-                  child,
-                ]),
-              ),
-            )),
-            child: scenario.grid ? ProxyGroupView(
-              group: groups.first, controller: controller, columns: 2,
-              cardType: ProxyCardType.standard,
-            ) : const ProxiesListView(),
-          ),
-        ));
-        await tester.pumpAndSettle();
-        final skeletons = find.byWidgetPredicate(
-          (widget) => widget.runtimeType.toString() == '_GroupSliver',
-          skipOffstage: false,
+    testWidgets(
+      'real proxy scroll work ${scenario.grid ? 'grid' : 'collapsed'} '
+      'G${scenario.groups} N${scenario.nodes} ${scenario.mode.name}',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 600);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final groups = [
+          for (var i = 0; i < scenario.groups; i++) _group(i, scenario.nodes),
+        ];
+        final profile = Profile.normal().copyWith(unfoldSet: const {});
+        final container = ProviderContainer(
+          overrides: [
+            viewModeProvider.overrideWithValue(ViewMode.mobile),
+            currentProfileIdProvider.overrideWithBuild((_, _) => profile.id),
+            profilesProvider.overrideWith(() => TestProfiles([profile])),
+            currentGroupsStateProvider.overrideWithValue(
+              GroupsState(value: groups),
+            ),
+          ],
         );
-        for (final element in skeletons.evaluate()) {
-          final id = _renderIdentity(element.findRenderObject()!);
-          if (id != null) work.groupRenderIds.add(id);
-        }
-        debugPrintLayouts = true;
-        debugPrint = (message, {wrapWidth}) {
-          if (message?.startsWith('Laying out ') == true) {
-            work.layout(message!);
-          } else {
-            oldPrint(message, wrapWidth: wrapWidth);
+        globalState.container = container;
+        container.read(groupsProvider.notifier).value = groups;
+        final controller = ScrollController();
+        final work = _WorkCounter();
+        final oldPrint = debugPrint;
+        final oldLayouts = debugPrintLayouts;
+        final oldBuild = debugOnRebuildDirtyWidget;
+        final oldPaint = debugOnProfilePaint;
+        final oldProfilePaints = debugProfilePaintsEnabled;
+        final frames = <Map<String, Object?>>[];
+        LiquidGlassHost.debugLastCapture = null;
+        LiquidGlassHost.debugLastInkCapture = null;
+        try {
+          await tester.pumpWidget(
+            UncontrolledProviderScope(
+              container: container,
+              child: TestApp(
+                homeBuilder: (child) => Scaffold(
+                  body: LiquidGlassScope(
+                    enabled: scenario.mode != LiquidGlassMode.none,
+                    quality: scenario.mode == LiquidGlassMode.ultra
+                        ? LiquidGlassQuality.ultra
+                        : LiquidGlassQuality.standard,
+                    child: LiquidGlassHost(
+                      enabled: scenario.mode != LiquidGlassMode.none,
+                      wallpaperOnly: true,
+                      child: Stack(
+                        children: [
+                          const Positioned.fill(
+                            child: LiquidGlassColorField(
+                              child: ColoredBox(color: Color(0xFF284858)),
+                            ),
+                          ),
+                          child,
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                child: scenario.grid
+                    ? ProxyGroupView(
+                        group: groups.first,
+                        controller: controller,
+                        columns: 2,
+                        cardType: ProxyCardType.standard,
+                      )
+                    : const ProxiesListView(),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          final skeletons = find.byWidgetPredicate(
+            (widget) => widget.runtimeType.toString() == '_GroupSliver',
+            skipOffstage: false,
+          );
+          for (final element in skeletons.evaluate()) {
+            final id = _renderIdentity(element.findRenderObject()!);
+            if (id != null) work.groupRenderIds.add(id);
           }
-        };
-        debugOnRebuildDirtyWidget = work.build;
-        debugOnProfilePaint = work.paint;
-        debugProfilePaintsEnabled = true;
-        frames.add({'step': 0, ..._snapshot(tester)});
-        final scrollable = find.descendant(
-          of: find.byType(scenario.grid ? GridView : CustomScrollView),
-          matching: find.byType(Scrollable),
-        ).first;
-        final position = tester.state<ScrollableState>(scrollable).position;
-        expect(position.maxScrollExtent, greaterThan(0));
-        for (var step = 1; step <= 3; step++) {
-          work.clear();
-          position.jumpTo(position.maxScrollExtent * step / 4);
-          await tester.pump(const Duration(milliseconds: 16));
-          final snapshot = _snapshot(tester);
-          frames.add({'step': step, 'scrollPixels': position.pixels,
-            ...snapshot, ...work.toJson()});
-          if (!scenario.grid) {
-            expect(snapshot['mountedCardsIncludingOffstage'], 0);
-            expect(work.nodePaintCalls, 0);
-            expect(work.builds['ProxyCard'] ?? 0, 0);
-            expect(snapshot['mountedGroupSkeletons'], scenario.groups);
-            expect(work.groupLayouts, isNotEmpty);
-          } else {
-            expect(snapshot['mountedCardsIncludingOffstage'] as int,
-              inInclusiveRange(1, 49));
-            expect(work.groupRenderIds, isEmpty);
-            expect(work.nodePaintCalls, greaterThan(0));
+          debugPrintLayouts = true;
+          debugPrint = (message, {wrapWidth}) {
+            if (message?.startsWith('Laying out ') == true) {
+              work.layout(message!);
+            } else {
+              oldPrint(message, wrapWidth: wrapWidth);
+            }
+          };
+          debugOnRebuildDirtyWidget = work.build;
+          debugOnProfilePaint = work.paint;
+          debugProfilePaintsEnabled = true;
+          frames.add({'step': 0, ..._snapshot(tester)});
+          final scrollable = find
+              .descendant(
+                of: find.byType(scenario.grid ? GridView : CustomScrollView),
+                matching: find.byType(Scrollable),
+              )
+              .first;
+          final position = tester.state<ScrollableState>(scrollable).position;
+          expect(position.maxScrollExtent, greaterThan(0));
+          for (var step = 1; step <= 3; step++) {
+            work.clear();
+            position.jumpTo(position.maxScrollExtent * step / 4);
+            await tester.pump(const Duration(milliseconds: 16));
+            final snapshot = _snapshot(tester);
+            frames.add({
+              'step': step,
+              'scrollPixels': position.pixels,
+              ...snapshot,
+              ...work.toJson(),
+            });
+            if (!scenario.grid) {
+              expect(snapshot['mountedCardsIncludingOffstage'], 0);
+              expect(work.nodePaintCalls, 0);
+              expect(work.builds['ProxyCard'] ?? 0, 0);
+              expect(snapshot['mountedGroupSkeletons'], scenario.groups);
+              expect(work.groupLayouts, isNotEmpty);
+            } else {
+              expect(
+                snapshot['mountedCardsIncludingOffstage'] as int,
+                inInclusiveRange(1, 49),
+              );
+              expect(work.groupRenderIds, isEmpty);
+              expect(work.nodePaintCalls, greaterThan(0));
+            }
+            expect(snapshot['sampledPanesFullyOutsideViewport'], 0);
           }
-          expect(snapshot['sampledPanesFullyOutsideViewport'], 0);
+          reports.add({
+            'grid': scenario.grid,
+            'groups': scenario.groups,
+            'nodesPerGroup': scenario.nodes,
+            'mode': scenario.mode.name,
+            'frames': frames,
+          });
+          expect(tester.takeException(), isNull);
+        } finally {
+          debugPrint = oldPrint;
+          debugPrintLayouts = oldLayouts;
+          debugOnRebuildDirtyWidget = oldBuild;
+          debugOnProfilePaint = oldPaint;
+          debugProfilePaintsEnabled = oldProfilePaints;
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump();
+          controller.dispose();
+          container.dispose();
         }
-        reports.add({'grid': scenario.grid, 'groups': scenario.groups,
-          'nodesPerGroup': scenario.nodes, 'mode': scenario.mode.name, 'frames': frames});
-        expect(tester.takeException(), isNull);
-      } finally {
-        debugPrint = oldPrint;
-        debugPrintLayouts = oldLayouts;
-        debugOnRebuildDirtyWidget = oldBuild;
-        debugOnProfilePaint = oldPaint;
-        debugProfilePaintsEnabled = oldProfilePaints;
-        await tester.pumpWidget(const SizedBox.shrink());
-        await tester.pump();
-        controller.dispose();
-        container.dispose();
-      }
-    });
+      },
+    );
   }
 }

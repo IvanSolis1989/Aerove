@@ -10,7 +10,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
 void main() {
-  testWidgets('all pointers must release before idle restoration', (tester) async {
+  testWidgets('all pointers must release before idle restoration', (
+    tester,
+  ) async {
     late ValueListenable<int> rate;
     var builds = 0;
     await tester.pumpWidget(
@@ -137,10 +139,8 @@ void main() {
               return ListView.builder(
                 controller: controller,
                 itemCount: 200,
-                itemBuilder: (_, index) => SizedBox(
-                  height: 60,
-                  child: Text('$index'),
-                ),
+                itemBuilder: (_, index) =>
+                    SizedBox(height: 60, child: Text('$index')),
               );
             },
           ),
@@ -168,156 +168,163 @@ void main() {
   });
 
   for (final refreshRate in [60, 120]) {
-    testWidgets('adaptive cadence preserves the motion clock at $refreshRate Hz', (
-      tester,
-    ) async {
-      late ValueListenable<int> rate;
-      var builds = 0;
-      await tester.pumpWidget(
-        MaterialApp(
-          home: AuroraMotionActivity(
-            child: Builder(
-              builder: (context) {
-                builds++;
-                rate = AuroraMotionActivity.rateOf(context)!;
-                return const Center(
-                  child: SizedBox(
-                    width: 180,
-                    height: 300,
-                    child: SeededAuroraWallpaper(
-                      colors: [Color(0xFF65BDD2), Color(0xFFC589CA)],
-                      seed: 271828,
-                      brightness: Brightness.light,
-                      motion: true,
+    testWidgets(
+      'adaptive cadence preserves the motion clock at $refreshRate Hz',
+      (tester) async {
+        late ValueListenable<int> rate;
+        var builds = 0;
+        await tester.pumpWidget(
+          MaterialApp(
+            home: AuroraMotionActivity(
+              child: Builder(
+                builder: (context) {
+                  builds++;
+                  rate = AuroraMotionActivity.rateOf(context)!;
+                  return const Center(
+                    child: SizedBox(
+                      width: 180,
+                      height: 300,
+                      child: SeededAuroraWallpaper(
+                        colors: [Color(0xFF65BDD2), Color(0xFFC589CA)],
+                        seed: 271828,
+                        brightness: Brightness.light,
+                        motion: true,
+                      ),
                     ),
-                  ),
-                );
-              },
+                  );
+                },
+              ),
             ),
           ),
-        ),
-      );
-      await tester.pump();
-      final start = tester.binding.currentFrameTimeStamp;
-      final originalBuilds = builds;
-      final source = tester.renderObject<RenderBox>(
-        find.byType(LiquidGlassColorSource),
-      );
-      final boundary = tester.renderObject<RenderRepaintBoundary>(
-        find.descendant(
-          of: find.byType(SeededAuroraWallpaper),
-          matching: find.byType(RepaintBoundary),
-        ),
-      );
-      Future<int> countPaints() async {
-        boundary.debugResetMetrics();
-        final interval = Duration(
-          microseconds: (Duration.microsecondsPerSecond / refreshRate).round(),
         );
-        for (var frame = 0; frame < refreshRate; frame++) {
-          await tester.pump(interval);
+        await tester.pump();
+        final start = tester.binding.currentFrameTimeStamp;
+        final originalBuilds = builds;
+        final source = tester.renderObject<RenderBox>(
+          find.byType(LiquidGlassColorSource),
+        );
+        final boundary = tester.renderObject<RenderRepaintBoundary>(
+          find.descendant(
+            of: find.byType(SeededAuroraWallpaper),
+            matching: find.byType(RepaintBoundary),
+          ),
+        );
+        Future<int> countPaints() async {
+          boundary.debugResetMetrics();
+          final interval = Duration(
+            microseconds: (Duration.microsecondsPerSecond / refreshRate)
+                .round(),
+          );
+          for (var frame = 0; frame < refreshRate; frame++) {
+            await tester.pump(interval);
+          }
+          final actual = source.getTransformTo(null).storage;
+          final expected = AuroraMotion(271828).at(
+            tester.binding.currentFrameTimeStamp - start,
+            const Size(180, 300),
+          );
+          final angle = math.atan2(actual[1], actual[0]);
+          final difference = math.atan2(
+            math.sin(angle - expected.angle),
+            math.cos(angle - expected.angle),
+          );
+          expect(difference.abs(), lessThan(0.006));
+          return boundary.debugSymmetricPaintCount +
+              boundary.debugAsymmetricPaintCount;
         }
-        final actual = source.getTransformTo(null).storage;
-        final expected = AuroraMotion(271828).at(
-          tester.binding.currentFrameTimeStamp - start,
-          const Size(180, 300),
-        );
-        final angle = math.atan2(actual[1], actual[0]);
-        final difference = math.atan2(
-          math.sin(angle - expected.angle),
-          math.cos(angle - expected.angle),
-        );
-        expect(difference.abs(), lessThan(0.006));
-        return boundary.debugSymmetricPaintCount +
-            boundary.debugAsymmetricPaintCount;
-      }
 
-      expect(await countPaints(), inInclusiveRange(29, 30));
-      final gesture = await tester.startGesture(
-        tester.getCenter(find.byType(SeededAuroraWallpaper)),
-      );
-      expect(rate.value, 15);
-      expect(await countPaints(), inInclusiveRange(14, 15));
-      await gesture.up();
-      await tester.pump(const Duration(milliseconds: 349));
-      expect(rate.value, 15);
-      await tester.pump(const Duration(milliseconds: 1));
-      expect(rate.value, 30);
-      expect(await countPaints(), inInclusiveRange(29, 30));
-      expect(builds, originalBuilds);
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pump();
-      expect(tester.binding.hasScheduledFrame, isFalse);
-    });
+        expect(await countPaints(), inInclusiveRange(29, 30));
+        final gesture = await tester.startGesture(
+          tester.getCenter(find.byType(SeededAuroraWallpaper)),
+        );
+        expect(rate.value, 15);
+        expect(await countPaints(), inInclusiveRange(14, 15));
+        await gesture.up();
+        await tester.pump(const Duration(milliseconds: 349));
+        expect(rate.value, 15);
+        await tester.pump(const Duration(milliseconds: 1));
+        expect(rate.value, 30);
+        expect(await countPaints(), inInclusiveRange(29, 30));
+        expect(builds, originalBuilds);
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+        expect(tester.binding.hasScheduledFrame, isFalse);
+      },
+    );
   }
 
-  testWidgets('disabled activity and lifecycle clear the idle timer and inputs', (
-    tester,
-  ) async {
-    late ValueListenable<int> rate;
-    Widget scene({
-      bool enabled = true,
-      bool reduced = false,
-      bool ticker = true,
-    }) => MediaQuery(
-      data: MediaQueryData(disableAnimations: reduced),
-      child: Directionality(
-        textDirection: TextDirection.ltr,
-        child: TickerMode(
-          enabled: ticker,
-          child: AuroraMotionActivity(
-            enabled: enabled,
-            child: Builder(
-              builder: (context) {
-                rate = AuroraMotionActivity.rateOf(context)!;
-                return const SizedBox.expand();
-              },
+  testWidgets(
+    'disabled activity and lifecycle clear the idle timer and inputs',
+    (tester) async {
+      late ValueListenable<int> rate;
+      Widget scene({
+        bool enabled = true,
+        bool reduced = false,
+        bool ticker = true,
+      }) => MediaQuery(
+        data: MediaQueryData(disableAnimations: reduced),
+        child: Directionality(
+          textDirection: TextDirection.ltr,
+          child: TickerMode(
+            enabled: ticker,
+            child: AuroraMotionActivity(
+              enabled: enabled,
+              child: Builder(
+                builder: (context) {
+                  rate = AuroraMotionActivity.rateOf(context)!;
+                  return const SizedBox.expand();
+                },
+              ),
             ),
           ),
         ),
-      ),
-    );
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-    addTearDown(() {
+      );
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-    });
-    for (final disabled in [
-      scene(enabled: false),
-      scene(reduced: true),
-      scene(ticker: false),
-    ]) {
+      addTearDown(() {
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+      });
+      for (final disabled in [
+        scene(enabled: false),
+        scene(reduced: true),
+        scene(ticker: false),
+      ]) {
+        await tester.pumpWidget(scene());
+        final gesture = await tester.startGesture(const Offset(20, 20));
+        await gesture.up();
+        expect(rate.value, 15);
+        await tester.pumpWidget(disabled);
+        expect(rate.value, 30);
+        await tester.pump(const Duration(minutes: 1));
+        expect(rate.value, 30);
+        expect(tester.binding.hasScheduledFrame, isFalse);
+      }
       await tester.pumpWidget(scene());
+      for (final state in [
+        AppLifecycleState.inactive,
+        AppLifecycleState.hidden,
+        AppLifecycleState.paused,
+        AppLifecycleState.detached,
+      ]) {
+        final gesture = await tester.startGesture(const Offset(20, 20));
+        expect(rate.value, 15);
+        tester.binding.handleAppLifecycleStateChanged(state);
+        expect(rate.value, 30);
+        await gesture.cancel();
+        await tester.pump(const Duration(minutes: 1));
+        expect(tester.binding.hasScheduledFrame, isFalse);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.pump();
+        expect(rate.value, 30);
+      }
       final gesture = await tester.startGesture(const Offset(20, 20));
       await gesture.up();
-      expect(rate.value, 15);
-      await tester.pumpWidget(disabled);
-      expect(rate.value, 30);
-      await tester.pump(const Duration(minutes: 1));
-      expect(rate.value, 30);
-      expect(tester.binding.hasScheduledFrame, isFalse);
-    }
-    await tester.pumpWidget(scene());
-    for (final state in [
-      AppLifecycleState.inactive,
-      AppLifecycleState.hidden,
-      AppLifecycleState.paused,
-      AppLifecycleState.detached,
-    ]) {
-      final gesture = await tester.startGesture(const Offset(20, 20));
-      expect(rate.value, 15);
-      tester.binding.handleAppLifecycleStateChanged(state);
-      expect(rate.value, 30);
-      await gesture.cancel();
-      await tester.pump(const Duration(minutes: 1));
-      expect(tester.binding.hasScheduledFrame, isFalse);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-      await tester.pump();
-      expect(rate.value, 30);
-    }
-    final gesture = await tester.startGesture(const Offset(20, 20));
-    await gesture.up();
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump(const Duration(seconds: 1));
-    expect(tester.takeException(), isNull);
-  });
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 1));
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

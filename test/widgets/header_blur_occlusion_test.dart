@@ -682,9 +682,8 @@ void main() {
               name: 'above',
             ),
           ]) {
-            final image = await (frozenControl.debugLayer! as OffsetLayer).toImage(
-              crop.rect,
-            );
+            final image = await (frozenControl.debugLayer! as OffsetLayer)
+                .toImage(crop.rect);
             try {
               expect(image.width, 120);
               expect(image.height, crop.rect.height);

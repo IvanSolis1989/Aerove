@@ -113,28 +113,29 @@ class FloatingHeader extends StatelessWidget {
     return Stack(
       clipBehavior: Clip.none,
       children: [
-        if (showBackground) Positioned(
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: -overhang,
-          child: IgnorePointer(
-            child: LayoutBuilder(
-              builder: (_, constraints) => blur
-                  ? HeaderBlur(
-                      fadeHeight: constraints.maxHeight,
-                      fullStrengthHeight:
-                          (constraints.maxHeight - overhang) * 0.35,
-                      liquidGlass: liquidGlass,
-                    )
-                  : DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: _scrimOf(constraints.maxHeight),
+        if (showBackground)
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: -overhang,
+            child: IgnorePointer(
+              child: LayoutBuilder(
+                builder: (_, constraints) => blur
+                    ? HeaderBlur(
+                        fadeHeight: constraints.maxHeight,
+                        fullStrengthHeight:
+                            (constraints.maxHeight - overhang) * 0.35,
+                        liquidGlass: liquidGlass,
+                      )
+                    : DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: _scrimOf(constraints.maxHeight),
+                        ),
                       ),
-                    ),
+              ),
             ),
           ),
-        ),
         child,
       ],
     );
@@ -215,7 +216,10 @@ class _FloatingHeaderBodyState extends State<FloatingHeaderBody> {
             left: 0,
             right: 0,
             child: SheetOverhangLift(
-              child: Material(type: MaterialType.transparency, child: widget.footer),
+              child: Material(
+                type: MaterialType.transparency,
+                child: widget.footer,
+              ),
             ),
           ),
       ],

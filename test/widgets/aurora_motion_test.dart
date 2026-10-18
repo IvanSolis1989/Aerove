@@ -226,44 +226,43 @@ void main() {
     },
   );
 
-  testWidgets(
-    'display refresh cadences repaint the background at thirty fps',
-    (tester) async {
-      for (final refreshRate in [60, 120]) {
-        final key = GlobalKey();
-        var builds = 0;
-        await tester.pumpWidget(_scene(key, foregroundBuild: () => builds++));
-        await tester.pump();
-        final boundary = tester.renderObject<RenderRepaintBoundary>(
-          find.descendant(
-            of: find.byType(SeededAuroraWallpaper),
-            matching: find.byType(RepaintBoundary),
-          ),
-        );
-        boundary.debugResetMetrics();
-        final originalBuilds = builds;
-        final interval = Duration(
-          microseconds: (Duration.microsecondsPerSecond / refreshRate).round(),
-        );
-        for (var frame = 0; frame < refreshRate; frame++) {
-          await tester.pump(interval);
-        }
-        final paints =
-            boundary.debugSymmetricPaintCount +
-            boundary.debugAsymmetricPaintCount;
-        expect(
-          paints,
-          inInclusiveRange(29, 30),
-          reason: '$refreshRate Hz must retain the accumulated 30 fps cadence',
-        );
-        expect(builds, originalBuilds);
-        await tester.pumpWidget(const SizedBox.shrink());
-        await tester.pump();
-        expect(tester.binding.hasScheduledFrame, isFalse);
-        expect(tester.takeException(), isNull);
+  testWidgets('display refresh cadences repaint the background at thirty fps', (
+    tester,
+  ) async {
+    for (final refreshRate in [60, 120]) {
+      final key = GlobalKey();
+      var builds = 0;
+      await tester.pumpWidget(_scene(key, foregroundBuild: () => builds++));
+      await tester.pump();
+      final boundary = tester.renderObject<RenderRepaintBoundary>(
+        find.descendant(
+          of: find.byType(SeededAuroraWallpaper),
+          matching: find.byType(RepaintBoundary),
+        ),
+      );
+      boundary.debugResetMetrics();
+      final originalBuilds = builds;
+      final interval = Duration(
+        microseconds: (Duration.microsecondsPerSecond / refreshRate).round(),
+      );
+      for (var frame = 0; frame < refreshRate; frame++) {
+        await tester.pump(interval);
       }
-    },
-  );
+      final paints =
+          boundary.debugSymmetricPaintCount +
+          boundary.debugAsymmetricPaintCount;
+      expect(
+        paints,
+        inInclusiveRange(29, 30),
+        reason: '$refreshRate Hz must retain the accumulated 30 fps cadence',
+      );
+      expect(builds, originalBuilds);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      expect(tester.takeException(), isNull);
+    }
+  });
 
   testWidgets('reduced motion, ticker mode, and background pause active time', (
     tester,

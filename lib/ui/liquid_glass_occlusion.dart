@@ -120,7 +120,10 @@ class _LiquidGlassOcclusionLayer extends OffsetLayer {
     bool captureContent = true,
   ]) {
     final key = (shape, direction, rect, math.max(0.0, feather));
-    if (geometry == key && this.mode == mode && this.captureContent == captureContent) return;
+    if (geometry == key &&
+        this.mode == mode &&
+        this.captureContent == captureContent)
+      return;
     geometry = key;
     this.mode = mode;
     this.captureContent = captureContent;
