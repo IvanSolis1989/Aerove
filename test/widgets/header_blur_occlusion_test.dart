@@ -266,6 +266,8 @@ void main() {
         await _shot(tester, 'oracle-isolated-live-$quality');
         await _captureInput(tester, 'isolated-live-$quality');
         final resolved = List<int>.of(live);
+        final nativeStrip = List<int>.of(live);
+        final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
         final control = tester.renderObject<RenderRepaintBoundary>(
           find.byKey(const ValueKey('resolved-live-pane')),
         );
@@ -279,6 +281,11 @@ void main() {
             ))!.buffer.asUint8List();
             expect(rgba[3], 0);
             expect(rgba[(60 * 120 + 60) * 4 + 3], 255);
+            if (output != null) {
+              final png = (await image.toByteData(format: ui.ImageByteFormat.png))!;
+              File('$output/header-native-full-$quality.png')
+                  .writeAsBytesSync(png.buffer.asUint8List());
+            }
             final background = _pixel(live, 5, 116);
             for (var y = 0; y < 120; y++) {
               for (var x = 0; x < 120; x++) {
@@ -296,8 +303,39 @@ void main() {
           } finally {
             image.dispose();
           }
+          final strip = await (control.debugLayer! as OffsetLayer).toImage(
+            const Rect.fromLTWH(0, 50, 120, 15),
+          );
+          try {
+            expect(strip.width, 120);
+            expect(strip.height, 15);
+            final rgba = (await strip.toByteData(
+              format: ui.ImageByteFormat.rawRgba,
+            ))!.buffer.asUint8List();
+            expect(rgba[(7 * 120 + 60) * 4 + 3], 255);
+            final background = _pixel(live, 5, 116);
+            for (var y = 0; y < 15; y++) {
+              for (var x = 0; x < 120; x++) {
+                final from = (y * 120 + x) * 4;
+                final to = ((y + 110) * 320 + x + 40) * 4;
+                final alpha = rgba[from + 3] / 255;
+                for (var channel = 0; channel < 3; channel++) {
+                  nativeStrip[to + channel] =
+                      (rgba[from + channel] + background[channel] * (1 - alpha))
+                          .round()
+                          .clamp(0, 255);
+                }
+              }
+            }
+            if (output != null) {
+              final png = (await strip.toByteData(format: ui.ImageByteFormat.png))!;
+              File('$output/header-native-strip-$quality.png')
+                  .writeAsBytesSync(png.buffer.asUint8List());
+            }
+          } finally {
+            strip.dispose();
+          }
         });
-        final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
         if (output != null) {
           File(
             '$output/header-aa-endpoints-${quality.name}.json',
@@ -305,6 +343,7 @@ void main() {
             jsonEncode({
               'direct': _pixel(live, 159, 122),
               'resolved': _pixel(resolved, 159, 122),
+              'nativeStrip': _pixel(nativeStrip, 159, 122),
               'frozen': _pixel(frozen, 159, 122),
               'mixed': _pixel(mixed, 159, 122),
               'maskOne': _pixel(maskOne, 159, 122),
@@ -312,6 +351,7 @@ void main() {
                 'position': [40, 121],
                 'direct': _pixel(live, 40, 121),
                 'resolved': _pixel(resolved, 40, 121),
+                'nativeStrip': _pixel(nativeStrip, 40, 121),
                 'frozen': _pixel(frozen, 40, 121),
                 'mixed': _pixel(mixed, 40, 121),
                 'maskOne': _pixel(maskOne, 40, 121),
@@ -322,14 +362,24 @@ void main() {
         var changedPixels = 0;
         for (var y = 110; y < 125; y++) {
           final t = (y + 0.5 - 110) / 15;
-          final weight = t * t * (3 - 2 * t);
+          final stop = (t * 16).floor();
+          final before = stop / 16;
+          final after = (stop + 1) / 16;
+          final a = before * before * (3 - 2 * before);
+          final b = after * after * (3 - 2 * after);
+          final weight = a + (b - a) * (t * 16 - stop);
           for (var x = 0; x < 320; x++) {
             final index = (y * 320 + x) * 4;
             if ((frozen[index] - live[index]).abs() > 4) changedPixels++;
             for (var channel = 0; channel < 4; channel++) {
+              expect(
+                maskOne[index + channel],
+                closeTo(nativeStrip[index + channel], 2),
+                reason: 'independent native strip endpoint $x,$y channel $channel',
+              );
               final expected =
                   frozen[index + channel] * (1 - weight) +
-                  resolved[index + channel] * weight;
+                  nativeStrip[index + channel] * weight;
               expect(
                 mixed[index + channel],
                 closeTo(expected, 2),
