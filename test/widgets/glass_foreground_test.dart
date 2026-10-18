@@ -186,13 +186,15 @@ void main() {
         final colors = auroraColorScheme(brightness);
         final source = colors.onSurface.withValues(alpha: sourceAlpha);
         final base = ThemeData(colorScheme: colors);
-        final input = base.copyWith(
-          textTheme: base.textTheme.apply(
-            bodyColor: source,
-            displayColor: source,
-          ),
-          iconTheme: IconThemeData(color: source),
-        ).withAppTypography;
+        final input = base
+            .copyWith(
+              textTheme: base.textTheme.apply(
+                bodyColor: source,
+                displayColor: source,
+              ),
+              iconTheme: IconThemeData(color: source),
+            )
+            .withAppTypography;
         final roles = [
           (AppTextStyle.pageTitle, 0.94),
           (AppTextStyle.headline, 0.86),
@@ -845,10 +847,7 @@ void main() {
             saveDiagnostics();
             expect(response, closeTo(isIcon ? 0.50 : 0.36, 0.02));
             for (var i = 0; i < 3; i++) {
-              expect(
-                result[i] * 255,
-                closeTo(predicted[i], 2),
-              );
+              expect(result[i] * 255, closeTo(predicted[i], 2));
             }
             expect(
               _contrast(painted, behind),

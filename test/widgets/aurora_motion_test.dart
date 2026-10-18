@@ -142,9 +142,9 @@ void main() {
     final directory = Platform.environment['XCLASH_SCREENSHOT_DIR'];
     if (directory != null && directory.isNotEmpty) {
       await Directory(directory).create(recursive: true);
-      await File('$directory/aurora-motion-speed-metrics.json').writeAsString(
-        const JsonEncoder.withIndent('  ').convert(metrics),
-      );
+      await File(
+        '$directory/aurora-motion-speed-metrics.json',
+      ).writeAsString(const JsonEncoder.withIndent('  ').convert(metrics));
     }
   });
 

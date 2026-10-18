@@ -201,10 +201,12 @@ void main() {
                       (point.dy.floor() * image.width + point.dx.floor()) * 4,
                     ),
                     bytes.getUint8(
-                      (point.dy.floor() * image.width + point.dx.floor()) * 4 + 1,
+                      (point.dy.floor() * image.width + point.dx.floor()) * 4 +
+                          1,
                     ),
                     bytes.getUint8(
-                      (point.dy.floor() * image.width + point.dx.floor()) * 4 + 2,
+                      (point.dy.floor() * image.width + point.dx.floor()) * 4 +
+                          2,
                     ),
                   ),
               ]);
