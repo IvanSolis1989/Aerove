@@ -136,7 +136,8 @@ Rect _lensRect({
     return (pitch: span - _barPadding * 2, lens: span, inset: _barPadding);
   }
   final pitch = (span - _barPadding * 2) / count;
-  final minimum = _minLensWidth +
+  final minimum =
+      _minLensWidth +
       (_compactItemExtent + _barPadding * 2 - _minLensWidth) * collapse;
   if (pitch + _barPadding * 2 >= minimum) {
     return (pitch: pitch, lens: pitch + _barPadding * 2, inset: _barPadding);
@@ -289,14 +290,15 @@ class _DockSurface extends StatelessWidget {
 }
 
 ({double width, double height}) _measureLabel(
-  BuildContext context,
   String label,
   TextStyle? style,
+  TextScaler scaler,
+  TextDirection direction,
 ) {
   final painter = TextPainter(
     text: TextSpan(text: label, style: style),
-    textScaler: MediaQuery.textScalerOf(context),
-    textDirection: Directionality.of(context),
+    textScaler: scaler,
+    textDirection: direction,
     maxLines: 1,
   )..layout();
   final size = (width: painter.width, height: painter.height);
@@ -396,39 +398,42 @@ class _NavigationDockState extends State<NavigationDock>
               _edgeMargin,
               bottom,
             ),
-            child: _HitSlop(child: LayoutBuilder(
-              builder: (_, constraints) {
-                final progress = _collapse.value;
-                final count = widget.destinations.length;
-                final expanded = count >= _fullWidthCount
-                    ? constraints.maxWidth
-                    : math.min(
-                        constraints.maxWidth,
-                        count * _maxItemExtent + _barPadding * 4,
-                      );
-                final compact = math.min(
-                  expanded,
-                  count * _compactItemExtent + _barPadding * 4,
-                );
-                return Align(
-                  alignment: Alignment.bottomCenter,
-                  child: _HitSlop(
-                    child: SizedBox(
-                      width: expanded + (compact - expanded) * progress,
-                      height: height + (_compactBarHeight - height) * progress,
-                      child: _DockCollapse(
-                        progress: progress,
-                        child: FloatingNavigationBar(
-                          destinations: widget.destinations,
-                          selectedIndex: widget.selectedIndex,
-                          onSelected: widget.onSelected,
+            child: _HitSlop(
+              child: LayoutBuilder(
+                builder: (_, constraints) {
+                  final progress = _collapse.value;
+                  final count = widget.destinations.length;
+                  final expanded = count >= _fullWidthCount
+                      ? constraints.maxWidth
+                      : math.min(
+                          constraints.maxWidth,
+                          count * _maxItemExtent + _barPadding * 4,
+                        );
+                  final compact = math.min(
+                    expanded,
+                    count * _compactItemExtent + _barPadding * 4,
+                  );
+                  return Align(
+                    alignment: Alignment.bottomCenter,
+                    child: _HitSlop(
+                      child: SizedBox(
+                        width: expanded + (compact - expanded) * progress,
+                        height:
+                            height + (_compactBarHeight - height) * progress,
+                        child: _DockCollapse(
+                          progress: progress,
+                          child: FloatingNavigationBar(
+                            destinations: widget.destinations,
+                            selectedIndex: widget.selectedIndex,
+                            onSelected: widget.onSelected,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                );
-              },
-            )),
+                  );
+                },
+              ),
+            ),
           ),
         ),
       ),
@@ -442,10 +447,12 @@ class _DockCollapse extends InheritedWidget {
   final double progress;
 
   static double of(BuildContext context) =>
-      context.dependOnInheritedWidgetOfExactType<_DockCollapse>()?.progress ?? 0;
+      context.dependOnInheritedWidgetOfExactType<_DockCollapse>()?.progress ??
+      0;
 
   @override
-  bool updateShouldNotify(_DockCollapse oldWidget) => progress != oldWidget.progress;
+  bool updateShouldNotify(_DockCollapse oldWidget) =>
+      progress != oldWidget.progress;
 }
 
 /// Lets a touch that misses the dock by at most [_hitSlop] still reach it.
@@ -837,6 +844,39 @@ class FloatingNavigationBar extends StatefulWidget {
 
 class _FloatingNavigationBarState extends State<FloatingNavigationBar>
     with TickerProviderStateMixin {
+  ({
+    List<String> labels,
+    TextStyle style,
+    TextScaler scaler,
+    TextDirection direction,
+    List<({double width, double height})> sizes,
+  })? _labelMetrics;
+
+  List<({double width, double height})> _labelSizes(TextStyle style) {
+    final labels = [for (final item in widget.destinations) item.label];
+    final scaler = MediaQuery.textScalerOf(context);
+    final direction = Directionality.of(context);
+    final previous = _labelMetrics;
+    if (previous != null &&
+        listEquals(previous.labels, labels) &&
+        previous.style == style &&
+        previous.scaler == scaler &&
+        previous.direction == direction) {
+      return previous.sizes;
+    }
+    final sizes = [
+      for (final label in labels) _measureLabel(label, style, scaler, direction),
+    ];
+    _labelMetrics = (
+      labels: labels,
+      style: style,
+      scaler: scaler,
+      direction: direction,
+      sizes: sizes,
+    );
+    return sizes;
+  }
+
   late final _Spring _lens = _Spring(this, _selectedIndex.toDouble());
   late final _Spring _lift = _Spring(this, 0);
   late final _Spring _hover = _Spring(this, 0);
@@ -1194,10 +1234,7 @@ class _FloatingNavigationBarState extends State<FloatingNavigationBar>
       leading: _labelLeading,
       weight: FontWeight.w500,
     );
-    final labels = [
-      for (final destination in widget.destinations)
-        _measureLabel(context, destination.label, labelStyle),
-    ];
+    final labels = _labelSizes(labelStyle);
     final widest = labels.fold(
       0.0,
       (width, label) => math.max(width, label.width),

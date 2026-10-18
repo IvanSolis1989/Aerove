@@ -132,8 +132,13 @@ class _HomeShellState extends ConsumerState<_HomeShell> {
                           ? NavigationDock.insetOf(context)
                           : 0,
                       child: NotificationListener<ScrollNotification>(
-                        onNotification: isMobile && floating ? _handleScroll : null,
-                        child: _BodyPadding(isMobile: isMobile, child: widget.child),
+                        onNotification: isMobile && floating
+                            ? _handleScroll
+                            : null,
+                        child: _BodyPadding(
+                          isMobile: isMobile,
+                          child: widget.child,
+                        ),
                       ),
                     ),
                   ),
@@ -148,18 +153,18 @@ class _HomeShellState extends ConsumerState<_HomeShell> {
                       child: ValueListenableBuilder<bool>(
                         valueListenable: _dockCollapsed,
                         builder: (context, collapsed, child) => NavigationDock(
-                        collapsed: collapsed,
-                        destinations: [
-                          for (final item in navigationItems)
-                            NavigationDockDestination(
-                              glyph: item.glyph,
-                              label: item.label.label,
-                            ),
-                        ],
-                        selectedIndex: state.currentIndex,
-                        onSelected: (index) {
-                          _handleToPage(navigationItems[index].label, ref);
-                        },
+                          collapsed: collapsed,
+                          destinations: [
+                            for (final item in navigationItems)
+                              NavigationDockDestination(
+                                glyph: item.glyph,
+                                label: item.label.label,
+                              ),
+                          ],
+                          selectedIndex: state.currentIndex,
+                          onSelected: (index) {
+                            _handleToPage(navigationItems[index].label, ref);
+                          },
                         ),
                       ),
                     ),
