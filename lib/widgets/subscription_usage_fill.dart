@@ -5,7 +5,7 @@ import 'package:fl_clash/ui/ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
-import 'package:intl/intl.dart';
+import 'package:intl/intl.dart' show NumberFormat;
 import 'package:material_ui/material_ui.dart';
 
 double? _shareOf(SubscriptionInfo? info) {
@@ -223,11 +223,13 @@ class _UsageFillRender extends RenderBox {
   bool get visible {
     if (!attached || !hasSize || size.isEmpty) return false;
     final viewport = RenderAbstractViewport.maybeOf(this);
-    return viewport is! RenderBox ||
-        MatrixUtils.transformRect(
-          getTransformTo(viewport),
-          paintBounds,
-        ).overlaps(Offset.zero & viewport.size);
+    if (viewport case RenderBox viewportBox) {
+      return MatrixUtils.transformRect(
+        getTransformTo(viewportBox),
+        paintBounds,
+      ).overlaps(Offset.zero & viewportBox.size);
+    }
+    return true;
   }
 
   void update(_UsageFillBackground next) {

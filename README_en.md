@@ -5,6 +5,9 @@
 
 [简体中文](README.md) · **English**
 
+Aerove is based on FlClash, with improvements to the Android UI and app icon.
+Thanks to [chen08209/FlClash](https://github.com/chen08209/FlClash) for the upstream project.
+
 [![Latest release](https://img.shields.io/github/v/release/IvanSolis1989/Aerove?style=flat-square)](https://github.com/IvanSolis1989/Aerove/releases/latest)
 
 ## Download and installation
@@ -29,6 +32,8 @@ https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/main/FlClash/Fl
 ```
 
 ## Theme settings
+
+Fresh installations start with the animated gradient wallpaper and Ultra Liquid Glass enabled. Light and dark modes follow the system; you can switch to the ordinary UI at any time.
 
 Open **Tools → Theme → Theme colors** and choose one mode:
 
