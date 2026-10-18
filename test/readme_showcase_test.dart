@@ -80,7 +80,6 @@ void main() {
           themeMode: brightness == Brightness.light ? ThemeMode.light : ThemeMode.dark,
           auroraEnabled: true,
           auroraSeed: 271828,
-          liquidGlass: LiquidGlassMode.ultra,
           pureBlack: false,
           fontFamily: 'ReadmeShowcase',
         )),
@@ -120,7 +119,7 @@ void main() {
         final context = tester.element(find.byType(HomePage));
         expect(Theme.of(context).brightness, brightness);
         expect(Theme.of(context).textTheme.bodyLarge!.fontFamily, 'ReadmeShowcase');
-        expect(LiquidGlassScope.qualityOf(context), LiquidGlassQuality.ultra);
+        expect(LiquidGlassScope.qualityOf(context), LiquidGlassQuality.standard);
         expect(networkAttempts, 0);
         final boundary = capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
         expect(boundary.size, const Size(430, 932));
@@ -142,7 +141,7 @@ void main() {
               'locale': 'zh_CN',
               'font': fontPath,
               'seed': 271828,
-              'quality': 'ultra',
+              'quality': 'standard',
               'data': 'Offline empty profile/connection state; no synthetic connected status',
               'networkAttempts': networkAttempts,
               'managers': 'Application.forTesting + production ThemeManager; runtime managers omitted',
