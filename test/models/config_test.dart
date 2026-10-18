@@ -697,7 +697,7 @@ void main() {
       expect(props.pureBlack, false);
       expect(props.auroraEnabled, true);
       expect(props.liquidGlass, LiquidGlassMode.ultra);
-      expect(props.auroraColors, [0xFF9AAFC5, 0xFFC4BDD3]);
+      expect(props.auroraColors, [0xFF65BDD2, 0xFFC589CA, 0xFF75CCA8]);
       expect(props.auroraSeed, 271828);
       expect(props.textScale.scale, 1.0);
     });
@@ -724,9 +724,16 @@ void main() {
     test('older configs receive stable wallpaper defaults', () {
       final props = ThemeProps.fromJson({'themeMode': 'light'});
       expect(props.auroraEnabled, true);
-      expect(props.auroraColors, [0xFF9AAFC5, 0xFFC4BDD3]);
+      expect(props.auroraColors, [0xFF65BDD2, 0xFFC589CA, 0xFF75CCA8]);
       expect(props.auroraSeed, 271828);
       expect(props.themeMode, ThemeMode.light);
+    });
+
+    test('saved previous default colors remain explicit user colors', () {
+      const saved = [0xFF9AAFC5, 0xFFC4BDD3];
+      final props = ThemeProps.fromJson({'auroraColors': saved});
+      expect(props.auroraColors, saved);
+      expect(roundTrip(props.toJson, ThemeProps.fromJson).auroraColors, saved);
     });
 
     test('fresh and partial JSON use ultra without changing saved modes', () {
@@ -803,7 +810,7 @@ void main() {
           'auroraSeed': 77,
           'auroraColors': value,
         });
-        expect(props.auroraColors, [0xFF9AAFC5, 0xFFC4BDD3]);
+        expect(props.auroraColors, [0xFF65BDD2, 0xFFC589CA, 0xFF75CCA8]);
         expect(props.themeMode, ThemeMode.light);
         expect(props.auroraSeed, 77);
       }

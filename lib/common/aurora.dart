@@ -161,7 +161,7 @@ AuroraMesh generateAuroraMesh(
 
 List<Color> normalizeAuroraColors(List<Color> colors) {
   final palette = colors.isEmpty
-      ? const [Color(0xFF9AAFC5), Color(0xFFC4BDD3)]
+      ? const [Color(0xFF65BDD2), Color(0xFFC589CA), Color(0xFF75CCA8)]
       : colors.take(3);
   return List.unmodifiable([
     for (final color in palette) _softAuroraSource(color),

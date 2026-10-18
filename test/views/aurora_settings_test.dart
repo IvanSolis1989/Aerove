@@ -123,6 +123,9 @@ void main() {
   });
 
   testWidgets('adds a third color and hides the add action', (tester) async {
+    container.read(themeSettingProvider.notifier).update(
+      (state) => state.copyWith(auroraColors: [0xFF9AAFC5, 0xFFC4BDD3]),
+    );
     await pumpSettings(tester);
     final seed = readTheme().auroraSeed;
     await tester.tap(find.byTooltip('Add'));
@@ -136,6 +139,9 @@ void main() {
   });
 
   testWidgets('removes a color but cannot remove the last one', (tester) async {
+    container.read(themeSettingProvider.notifier).update(
+      (state) => state.copyWith(auroraColors: [0xFF9AAFC5, 0xFFC4BDD3]),
+    );
     await pumpSettings(tester);
     final seed = readTheme().auroraSeed;
     await tester.tap(find.byTooltip('Edit wallpaper color 1'));

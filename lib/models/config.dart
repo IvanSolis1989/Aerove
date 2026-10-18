@@ -433,7 +433,7 @@ List<int> _auroraColorsFromJson(Object? value) {
   if (value is! List ||
       value.isEmpty ||
       value.any((color) => color is! int || color < 0 || color > 0xFFFFFFFF)) {
-    return const [0xFF9AAFC5, 0xFFC4BDD3];
+    return const [0xFF65BDD2, 0xFFC589CA, 0xFF75CCA8];
   }
   return value.take(3).map((color) => (color as int) | 0xFF000000).toList();
 }
@@ -475,7 +475,7 @@ abstract class ThemeProps with _$ThemeProps {
     LiquidGlassMode liquidGlass,
     @Default(true) bool auroraEnabled,
     @JsonKey(fromJson: _auroraColorsFromJson)
-    @Default([0xFF9AAFC5, 0xFFC4BDD3])
+    @Default([0xFF65BDD2, 0xFFC589CA, 0xFF75CCA8])
     List<int> auroraColors,
     @Default(271828) int auroraSeed,
     @Default(TextScale()) TextScale textScale,

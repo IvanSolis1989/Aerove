@@ -9,6 +9,16 @@ import 'package:material_ui/material_ui.dart';
 void main() {
   const selected = [Color(0xFF6BD5D9), Color(0xFFC6ADE4), Color(0xFFA9DAC6)];
 
+  test('empty input uses the fresh cyan purple green palette', () {
+    expect(normalizeAuroraColors([]), const [
+      Color(0xFF65BDD2),
+      Color(0xFFC589CA),
+      Color(0xFF75CCA8),
+    ]);
+    const saved = [Color(0xFF9AAFC5), Color(0xFFC4BDD3)];
+    expect(normalizeAuroraColors(saved), saved);
+  });
+
   test(
     'shared source softening retains hue and value in both brightness paths',
     () {
