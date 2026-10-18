@@ -54,6 +54,8 @@ class _Figure extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final glass = LiquidGlassScope.of(context);
+    final source = context.colorScheme.onSurface;
     return GlassText.rich(
       TextSpan(
         children: [
@@ -63,10 +65,16 @@ class _Figure extends StatelessWidget {
           ),
           TextSpan(
             text: ' $unit',
-            style: DashboardText.unit(context, unitStyle),
+            style: glass
+                ? DashboardText.unit(context, unitStyle).copyWith(color: source)
+                : DashboardText.unit(context, unitStyle),
           ),
         ],
       ),
+      style: glass
+          ? DefaultTextStyle.of(context).style.copyWith(color: source)
+          : null,
+      inkRole: GlassInkRole.body,
       maxLines: 1,
       overflow: TextOverflow.clip,
     );
@@ -92,6 +100,9 @@ class _SpeedChart extends StatelessWidget {
       minScale: _minSpeedScale,
       baselineRatio: 1,
       color: direction.colorOf(context),
+      strokeInk: LiquidGlassScope.of(context)
+          ? context.colorScheme.onSurface
+          : null,
     );
   }
 }

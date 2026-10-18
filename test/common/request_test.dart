@@ -103,7 +103,7 @@ void main() {
       expect(
         requested,
         Uri.parse(
-          'https://api.github.com/repos/IvanSolis1989/XClash/releases/latest',
+          'https://api.github.com/repos/IvanSolis1989/Aerove/releases/latest',
         ),
       );
     });
@@ -192,7 +192,7 @@ void main() {
     ]) {
       test(description, () async {
         globalState.packageInfo = PackageInfo(
-          appName: 'XClash',
+          appName: 'Aerove',
           packageName: 'com.follow.clash',
           version: installedVersion,
           buildNumber: '2026101402',

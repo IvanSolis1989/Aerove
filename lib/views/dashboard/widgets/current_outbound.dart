@@ -521,7 +521,10 @@ class _CountryBadgeState extends State<_CountryBadge>
         : colorScheme.onSurfaceVariant;
     final enabled = !widget.checking;
     final size = widget.size;
-    final code = widget.countryCode;
+    final code = widget.countryCode?.trim().toUpperCase();
+    final flag = code?.countryFlagEmoji;
+    final hasFlag =
+        flag != null && flag != code && code != 'XX' && code != 'ZZ';
     final tooltip = context.appLocalizations.retry;
     final color = Color.alphaBlend(
       foreground.withValues(alpha: enabled && _hovered ? 0.08 : 0),
@@ -551,21 +554,21 @@ class _CountryBadgeState extends State<_CountryBadge>
                 ring: _focused ? focusRingSide(colorScheme) : null,
                 child: child,
               ),
-              child: code == null || code.isEmpty
+              child: !hasFlag
                   ? GlyphIcon(
                       AppGlyphs.proxies,
                       size: size * 0.42,
                       color: foreground,
                     )
-                  : GlassText(
-                      code.toUpperCase(),
-                      maxLines: 1,
-                      style: AppTextStyle.footnote
-                          .of(context, emphasized: true)
-                          .copyWith(
-                            color: foreground,
-                            letterSpacing: 0.04 * AppTextStyle.footnote.size,
-                          ),
+                  : Semantics(
+                      label: code,
+                      child: ExcludeSemantics(
+                        child: EmojiText(
+                          flag,
+                          maxLines: 1,
+                          style: AppTextStyle.title2.of(context),
+                        ),
+                      ),
                     ),
             ),
           ),

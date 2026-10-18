@@ -1,8 +1,8 @@
-# XClash 国内网络默认基线
+# Aerove 国内网络默认基线
 
 默认方案采用 [Smart-Config-Kit 的 FlClash 专用脚本](https://github.com/IvanSolis1989/Smart-Config-Kit/tree/main/FlClash)，
 DNS 的业务解析器、分域策略、回退链和私有节点适配由该脚本维护。
-按用户最新要求，XClash 仅将自举解析器收紧为下列四个 DoH-over-IP 地址，不保留明文兜底，
+按用户最新要求，Aerove 仅将自举解析器收紧为下列四个 DoH-over-IP 地址，不保留明文兜底，
 不再使用 FlClash 原有的默认 DNS 列表：
 
 ```text
@@ -24,7 +24,7 @@ JavaScript Git blob 为 `b92cdae0b826e43e6fc0237ec739d3d5bec134c2`。
 https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/main/FlClash/FlClash%28mihomo%29.js
 ```
 
-XClash 代码的上游同步与这份脚本的更新是两条独立流程。当前脚本通过脚本库的更新操作刷新，
+Aerove 代码的上游同步与这份脚本的更新是两条独立流程。当前脚本通过脚本库的更新操作刷新，
 不把订阅自动更新误称为脚本自动更新，也不自行假设源仓库要求某个更新周期。
 
 ## DNS 所有权

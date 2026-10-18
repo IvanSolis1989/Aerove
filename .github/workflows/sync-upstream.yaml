@@ -18,7 +18,7 @@ env:
 
 jobs:
   validate:
-    if: github.repository == 'IvanSolis1989/XClash' && github.ref == 'refs/heads/main'
+    if: github.repository == 'IvanSolis1989/Aerove' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     outputs:
@@ -317,7 +317,7 @@ jobs:
           GH_TOKEN="$SYNC_TOKEN" gh workflow run xclash-android.yaml \
             --repo "$GITHUB_REPOSITORY" --ref main \
             -f prepare_sources=false -f build_apk=true -f publish_release=true
-          printf 'Dispatched XClash Android on main for validation, APK build and Release publication.\n' >> "$GITHUB_STEP_SUMMARY"
+          printf 'Dispatched Aerove Android on main for validation, APK build and Release publication.\n' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload publish evidence
         if: always()

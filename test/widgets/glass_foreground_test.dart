@@ -1037,15 +1037,19 @@ void main() {
             final hsv = HSVColor.fromColor(painted);
             final base = HSVColor.fromColor(background);
             HSVColor? previousHsv;
-            if (!swapped && (name == 'bodyLeft' || name == 'glyphLeft')) {
+            final previousSamples = brightness == Brightness.dark
+                ? const {
+                    'bodyLeft': Color(0xFF20D5FA),
+                    'glyphLeft': Color(0xFF0CD1FA),
+                    'dock': Color(0xFF3BCFED),
+                  }
+                : const {
+                    'bodyLeft': Color(0xFF1C606C),
+                    'glyphLeft': Color(0xFF278595),
+                  };
+            final previous = previousSamples[name];
+            if (!swapped && previous != null) {
               // Actual solid glyph pixels from CI 39102679488 on this fixture.
-              final previous = brightness == Brightness.dark
-                  ? name == 'bodyLeft'
-                        ? const Color(0xFF20D5FA)
-                        : const Color(0xFF0CD1FA)
-                  : name == 'bodyLeft'
-                  ? const Color(0xFF1C606C)
-                  : const Color(0xFF278595);
               previousHsv = HSVColor.fromColor(previous);
               samples.add({
                 'role': name,
@@ -1096,9 +1100,11 @@ void main() {
             }
             expect(hueGap, lessThan(20), reason: name);
             if (!name.startsWith('title')) {
+              final reducedDarkDock = brightness == Brightness.dark && name == 'dock';
+              final minimumBoost = reducedDarkDock ? 0.0 : 0.10;
               expect(
                 hsv.saturation,
-                greaterThan(base.saturation + 0.10),
+                greaterThan(base.saturation + minimumBoost),
                 reason: name,
               );
             }

@@ -2,7 +2,7 @@
 
 `Sync upstream` 工作流每小时 UTC 第 17 分钟检查
 [`chen08209/FlClash`](https://github.com/chen08209/FlClash) 的上游发布标签，
-合并到 `IvanSolis1989/XClash/main`。也可在仓库 **Actions → Sync upstream → Run workflow**
+合并到 `IvanSolis1989/Aerove/main`。也可在仓库 **Actions → Sync upstream → Run workflow**
 选择 `main` 立即运行。工作流只在此 fork 的 `main` 上运行，同一时间只处理一次同步。
 
 每次检查都会从官方上游 remote 获取全部分支到 `refs/remotes/upstream/*`，并把 `v*` 标签放入独立的
@@ -12,7 +12,7 @@
 不会跟随未打标签的分支开发提交，也不依赖固定分支名。
 
 同步使用普通 merge，不 reset、rebase、force push，也不以 `ours`/`theirs` 整体覆盖文件。
-`README.md` 为默认中文首页，`README_en.md` 为英文说明，均由 XClash 独立维护，
+`README.md` 为默认中文首页，`README_en.md` 为英文说明，均由 Aerove 独立维护，
 完整介绍本仓库的功能、下载、构建和发布。上游的 `README_zh_CN.md` 不再导入。
 同步时精确保留 fork 基线中的这两个文件，不采用上游 README；只有这两份文档发生冲突时，
 可以自动保留本仓库版本，任何其他文件冲突仍停止。上游署名和 GPL 许可信息保留在本仓库文档中。
@@ -37,10 +37,10 @@ source/tag peeled commit、发现时包含该 tag commit 的上游分支、tag �
 写权限任务不执行合并后的仓库脚本或 Flutter 代码。
 
 推送后确认远端 SHA，只有合并相对 fork 基线改变了 APK 输入时，才通过 `workflow_dispatch`
-触发 `XClash Android`，参数为
+触发 `Aerove Android`，参数为
 `ref=main`、`prepare_sources=false`、`build_apk=true`、`publish_release=true`。
 该工作流执行 Android 验证和原生构建，成功后自动发布 APK、`SHA256SUMS` 和 `BUILD_INFO.json`
-到本仓库 [Releases](https://github.com/IvanSolis1989/XClash/releases/latest)。
+到本仓库 [Releases](https://github.com/IvanSolis1989/Aerove/releases/latest)。
 默认分支的普通 push 也会运行同一构建发布流程；Actions artifacts 继续保留用于排查。
 根目录 `README*.md`、`AGENTS.md`、`CLAUDE.md`、`CHANGELOG.md`，`docs/`、`snapshots/` 全部文件，
 以及 `.agents/` 中的 Markdown 文档属于非 APK 输入；仅这些文件变化时，普通 push 不触发构建，
@@ -54,7 +54,7 @@ source/tag peeled commit、发现时包含该 tag commit 的上游分支、tag �
 
 ## Android 发布与签名
 
-`XClash Android` 先验证、再构建和执行 Android 单元测试，全部成功后才由独立
+`Aerove Android` 先验证、再构建和执行 Android 单元测试，全部成功后才由独立
 `contents: write` 任务创建草稿、上传资产并公开为 latest。发布任务检出实际构建 SHA，
 在上传前和公开前各获取一次最新 main：构建 SHA 必须仍是 main 的祖先，且其后变化只能是
 上述非 APK 文档。README 等文档更新不会阻止已完成的包发布；任何代码、资源、依赖或打包变化
@@ -69,7 +69,7 @@ pubspec 来源版本与当前 `pubspec.yaml`，并确认 source commit 已包含
 构建失败。`pubspec.yaml` 保留上游内容；内部 Android versionCode 固定为 `2026101700 + GITHUB_RUN_NUMBER`，
 不读取或累加上游 build number。Release tag 为 `v<显示版本>+<内部versionCode>`，且 APK 使用同一名称和编号。
 构建编号只用于 CI 打包，不回写 pubspec；`BUILD_INFO.json` 保存上游 source/tag/pubspec 来源，便于核对。
-README 的 `/releases/latest/download/XClash-android-arm64.apk` 始终指向最近成功发布的 ARM64 APK。
+README 的 `/releases/latest/download/Aerove-android-arm64.apk` 始终指向最近成功发布的 ARM64 APK。
 
 仓库 secret `XCLASH_ANDROID_DEBUG_KEYSTORE` 保存固定 Android 测试签名容器的 base64，
 CI 还原到私有 runner 的默认 debug keystore；缺失时构建失败，不生成临时签名替代。

@@ -9,6 +9,7 @@ import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/profiles/custom/custom.dart';
 import 'package:fl_clash/views/profiles/extend/extend.dart';
 import 'package:fl_clash/widgets/widgets.dart';
+import 'package:fl_clash/widgets/subscription_usage_fill.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -324,7 +325,11 @@ class ProfileItem extends ConsumerWidget {
     final info = _subscriptionInfo;
     if (info != null && info.usage != null) {
       final used = info.upload + info.download;
-      return '${used.traffic.show} / ${info.total.traffic.show}';
+      final traffic = '${used.traffic.show} / ${info.total.traffic.show}';
+      final percent = SubscriptionUsageFill.percentageOf(context, info);
+      return percent == null
+          ? traffic
+          : '$traffic · $percent ${context.appLocalizations.usedShort}';
     }
     final appLocalizations = context.appLocalizations;
     return switch (profile.type) {
@@ -492,25 +497,28 @@ class ProfileItem extends ConsumerWidget {
         onPressed: () {
           onChanged(profile.id);
         },
-        child: ListItem(
-          key: Key(profile.id.toString()),
-          minTileHeight: _profileItemHeight,
-          minVerticalPadding: listRowVerticalPadding,
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            spacing: 8,
-            children: [
-              if (profile.type == ProfileType.custom)
-                _GroupsCountChip(profileId: profile.id)
-              else
-                _buildTrailing(context, isUpdating: isUpdating),
-              if (isSelected) const SelectionBadge(size: 24),
-            ],
-          ),
-          title: _ProfileCardTitle(
-            profile: profile,
-            expire: subscriptionInfo?.expireDate,
-            subtitle: _subtitle(context),
+        child: SubscriptionUsageFill(
+          info: subscriptionInfo,
+          child: ListItem(
+            key: Key(profile.id.toString()),
+            minTileHeight: _profileItemHeight,
+            minVerticalPadding: listRowVerticalPadding,
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              spacing: 8,
+              children: [
+                if (profile.type == ProfileType.custom)
+                  _GroupsCountChip(profileId: profile.id)
+                else
+                  _buildTrailing(context, isUpdating: isUpdating),
+                if (isSelected) const SelectionBadge(size: 24),
+              ],
+            ),
+            title: _ProfileCardTitle(
+              profile: profile,
+              expire: subscriptionInfo?.expireDate,
+              subtitle: _subtitle(context),
+            ),
           ),
         ),
       ),

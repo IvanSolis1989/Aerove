@@ -1,4 +1,4 @@
-"""Update repository-derived links in XClash-owned README files."""
+"""Update repository-derived links in Aerove-owned README files."""
 
 import argparse
 from pathlib import Path
@@ -20,13 +20,13 @@ def repository_name(value):
 
 def synchronize(text, repository):
     if text.count(OWNERSHIP) != 1:
-        raise ValueError('refusing README without XClash ownership marker; preserve the fork README before syncing')
+        raise ValueError('refusing README without Aerove ownership marker; preserve the fork README before syncing')
     recorded = re.findall(REPOSITORY, text)
     if len(recorded) != 1:
         raise ValueError('expected one xclash-repository marker')
     old = repository_name(recorded[0])
     if '[GPL-3.0](LICENSE)' not in text:
-        raise ValueError('XClash README must retain its GPL-3.0 license link')
+        raise ValueError('Aerove README must retain its GPL-3.0 license link')
     text = re.sub(REPOSITORY, f'<!-- xclash-repository: {repository} -->', text)
     text = re.sub(re.escape('https://github.com/' + old) + r'(?=[/).#?\s]|$)',
                   'https://github.com/' + repository, text)
@@ -37,10 +37,10 @@ def synchronize(text, repository):
     text = re.sub(r'(?m)^cd ' + re.escape(old.split('/')[1]) + '$',
                   'cd ' + repository.split('/')[1], text)
     required = (
-        f'https://github.com/{repository}/releases/latest/download/XClash-android-arm64.apk',
+        f'https://github.com/{repository}/releases/latest/download/Aerove-android-arm64.apk',
     )
     if any(link not in text for link in required):
-        raise ValueError('XClash README must include the fork stable APK link')
+        raise ValueError('Aerove README must include the fork stable APK link')
     return text
 
 

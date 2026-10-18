@@ -67,7 +67,10 @@ fun Context.ensureNotificationChannel() {
         return
     }
     val manager = getSystemService(NotificationManager::class.java) ?: return
-    if (manager.getNotificationChannel(GlobalState.NOTIFICATION_CHANNEL) != null) {
+    val existing = manager.getNotificationChannel(GlobalState.NOTIFICATION_CHANNEL)
+    if (existing != null) {
+        existing.name = getString(R.string.service_channel_name)
+        manager.createNotificationChannel(existing)
         return
     }
     manager.createNotificationChannel(

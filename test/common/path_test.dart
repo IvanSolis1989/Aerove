@@ -11,6 +11,16 @@ import '../helpers/app_paths.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test(
+    'exported files use the display brand while internal identity stays stable',
+    () {
+      expect(displayAppName, 'Aerove');
+      expect(appName, 'FlClash');
+      expect(getBackupFileName(), startsWith('Aerove_backup_'));
+      expect(logFileName, startsWith('Aerove_'));
+    },
+  );
+
   late Directory root;
 
   setUpAll(() async {

@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:fl_clash/ui/foreground_ink.dart';
 import 'package:material_ui/material_ui.dart';
 
 class LineChart extends StatefulWidget {
@@ -11,6 +12,7 @@ class LineChart extends StatefulWidget {
     required this.minScale,
     required this.color,
     required this.baselineRatio,
+    this.strokeInk,
   }) : assert(capacity > 1),
        assert(minScale > 0);
 
@@ -26,6 +28,7 @@ class LineChart extends StatefulWidget {
   final double minScale;
 
   final Color color;
+  final Color? strokeInk;
 
   /// Where the zero line sits, as a share of the height from the top.
   final double baselineRatio;
@@ -62,17 +65,31 @@ class _LineChartState extends State<LineChart> {
 
   @override
   Widget build(BuildContext context) {
-    return RepaintBoundary(
-      child: SizedBox.expand(
-        child: CustomPaint(
+    CustomPaint paint({bool fill = true, bool stroke = true, Color? color}) =>
+        CustomPaint(
           painter: _LineChartPainter(
             series: _series,
             capacity: widget.capacity,
             minScale: widget.minScale,
-            color: widget.color,
+            color: color ?? widget.color,
             baselineRatio: widget.baselineRatio,
+            drawFill: fill,
+            drawStroke: stroke,
           ),
-        ),
+        );
+    final ink = widget.strokeInk;
+    return RepaintBoundary(
+      child: SizedBox.expand(
+        child: ink == null
+            ? paint()
+            : Stack(fit: StackFit.expand, children: [
+                paint(stroke: false),
+                GlassInk(
+                  source: ink,
+                  role: GlassInkRole.icon,
+                  child: paint(fill: false, color: ink),
+                ),
+              ]),
       ),
     );
   }
@@ -144,6 +161,8 @@ class _LineChartPainter extends CustomPainter {
     required this.minScale,
     required this.color,
     required this.baselineRatio,
+    this.drawFill = true,
+    this.drawStroke = true,
   }) : _strokePaint = Paint()
          ..color = color
          ..strokeWidth = _strokeWidth
@@ -159,6 +178,8 @@ class _LineChartPainter extends CustomPainter {
   final double minScale;
   final Color color;
   final double baselineRatio;
+  final bool drawFill;
+  final bool drawStroke;
 
   final Paint _strokePaint;
 
@@ -203,10 +224,14 @@ class _LineChartPainter extends CustomPainter {
       ..color = color.withValues(alpha: color.a * _fillOpacity);
     canvas
       ..save()
-      ..clipRect(Offset.zero & size)
-      ..drawPath(area, fillPaint)
-      ..drawPath(line, _strokePaint)
-      ..restore();
+      ..clipRect(Offset.zero & size);
+    if (drawFill) {
+      canvas.drawPath(area, fillPaint);
+    }
+    if (drawStroke) {
+      canvas.drawPath(line, _strokePaint);
+    }
+    canvas.restore();
   }
 
   @override
@@ -215,6 +240,8 @@ class _LineChartPainter extends CustomPainter {
         oldDelegate.capacity != capacity ||
         oldDelegate.minScale != minScale ||
         oldDelegate.color != color ||
-        oldDelegate.baselineRatio != baselineRatio;
+        oldDelegate.baselineRatio != baselineRatio ||
+        oldDelegate.drawFill != drawFill ||
+        oldDelegate.drawStroke != drawStroke;
   }
 }

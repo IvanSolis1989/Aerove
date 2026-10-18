@@ -95,6 +95,7 @@ Widget _card({DashboardDensity density = DashboardDensity.standard}) =>
 Widget _app(
   Future<IpQuality> Function(Ref ref, String ip) quality, {
   DashboardDensity density = DashboardDensity.standard,
+  String countryCode = 'GB',
 }) {
   return TestApp(
     locale: const Locale('en'),
@@ -102,10 +103,10 @@ Widget _app(
       profilesProvider.overrideWithValue(const [_profile]),
       suspendProvider.overrideWithValue(false),
       outboundIpProbeProvider.overrideWithBuild(
-        (_, _) => const RoutedProbeState({
+        (_, _) => RoutedProbeState({
           routedOutbound: ProbeEntry(
             phase: ProbePhase.fresh,
-            value: IpInfo(ip: _ip, countryCode: 'GB'),
+            value: IpInfo(ip: _ip, countryCode: countryCode),
           ),
         }),
       ),
@@ -169,6 +170,50 @@ void main() {
   setUpAll(() => registerFallbackValue(const OutboundIpParams(timeout: 0)));
 
   group('the exit address', () {
+    testWidgets('normalizes the exit country to an untinted flag', (tester) async {
+      final semantics = tester.ensureSemantics();
+      try {
+        await tester.pumpWidget(
+          _app((_, _) async => _residential, countryCode: ' hk '),
+        );
+        await tester.pump();
+        final flag = find.byWidgetPredicate(
+          (widget) => widget is EmojiText && widget.text == '🇭🇰',
+        );
+        expect(flag, findsOneWidget);
+        expect(find.text('HK'), findsNothing);
+        expect(
+          find.descendant(of: flag, matching: find.byType(GlassInk)),
+          findsNothing,
+        );
+        expect(find.bySemanticsLabel(RegExp('HK')), findsOneWidget);
+        expect(find.byTooltip('Retry'), findsOneWidget);
+        expect(tester.widget<InkResponse>(_clover()).onTap, isNotNull);
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        semantics.dispose();
+      }
+    });
+
+    for (final country in ['', ' ', 'USA', '??', 'XX', 'ZZ']) {
+      testWidgets('keeps the country placeholder for "$country"', (tester) async {
+        await tester.pumpWidget(
+          _app((_, _) async => _residential, countryCode: country),
+        );
+        await tester.pump();
+        expect(
+          find.descendant(of: _clover(), matching: find.byGlyph(AppGlyphs.proxies)),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(of: _clover(), matching: find.byType(EmojiText)),
+          findsNothing,
+        );
+        expect(find.byTooltip('Retry'), findsOneWidget);
+        expect(tester.widget<InkResponse>(_clover()).onTap, isNotNull);
+      });
+    }
+
     testWidgets('shows with its country, type, quality and organization', (
       tester,
     ) async {
@@ -176,7 +221,7 @@ void main() {
       await tester.pump();
 
       expect(find.text(_ip), findsOneWidget);
-      expect(find.text('GB'), findsOneWidget);
+      expect(find.text('🇬🇧'), findsOneWidget);
       expect(find.text('Residential'), findsOneWidget);
       expect(_chip(tester, 'Quality Good').tone, DashboardChipTone.ok);
       expect(find.text('Example Broadband'), findsOneWidget);
@@ -214,7 +259,7 @@ void main() {
       );
       await tester.pump();
 
-      expect(find.text('GB'), findsOneWidget);
+      expect(find.text('🇬🇧'), findsOneWidget);
       expect(find.text('Not running'), findsOneWidget);
       expect(_chip(tester, 'Unknown type').tone, DashboardChipTone.idle);
       expect(find.byType(DashboardChip), findsNWidgets(2));

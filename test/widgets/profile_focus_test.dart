@@ -5,6 +5,7 @@ import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/views/profiles/profiles.dart';
 import 'package:fl_clash/widgets/widgets.dart';
+import 'package:fl_clash/widgets/subscription_usage_fill.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/foundation.dart';
@@ -95,6 +96,52 @@ Future<ProviderContainer> pumpProfiles(
 }
 
 void main() {
+  testWidgets('the liquid background preserves profile selection and usage semantics', (tester) async {
+    final profile = urlProfile('liquid profile');
+    final container = await pumpProfiles(tester, profiles: [profile]);
+    final semantics = tester.ensureSemantics();
+    int? selected;
+    try {
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: TestApp(
+            child: MediaQuery(
+              data: MediaQueryData.fromView(tester.view).copyWith(disableAnimations: true),
+              child: LiquidGlassScope(
+                enabled: true,
+                child: LiquidGlassHost(
+                  enabled: true,
+                  child: Center(
+                    child: SizedBox(
+                      width: 360,
+                      child: ProfileItem(
+                        profile: profile,
+                        groupValue: null,
+                        onChanged: (id) => selected = id,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.bySemanticsLabel(RegExp('75%')), findsWidgets);
+      final card = tester.getRect(find.byType(ProfileItem));
+      await tester.tapAt(Offset(card.left + 12, card.center.dy));
+      await tester.pump();
+      expect(selected, profile.id);
+      expect(container.read(profilesProvider).single.subscriptionInfo, profile.subscriptionInfo);
+    } finally {
+      semantics.dispose();
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(Duration.zero);
+    }
+  });
+
   testWidgets('a focused profile card opens its menu', (tester) async {
     final profiles = [
       urlProfile('url 1'),
@@ -151,7 +198,12 @@ void main() {
     final container = await pumpProfiles(tester, profiles: [url, file]);
 
     expect(find.byTooltip(currentAppLocalizations.edit), findsNothing);
-    expect(find.text('3KB / 4KB'), findsOneWidget);
+    expect(find.text('3KB / 4KB · 75% ${currentAppLocalizations.usedShort}'), findsOneWidget);
+    expect(
+      tester.widgetList<SubscriptionUsageFill>(find.byType(SubscriptionUsageFill))
+          .where((fill) => fill.info == url.subscriptionInfo),
+      hasLength(1),
+    );
     expect(find.text('5m ago'), findsOneWidget);
 
     container.read(updatingKeysProvider.notifier).start(url.updatingKey);
