@@ -282,9 +282,12 @@ void main() {
             expect(rgba[3], 0);
             expect(rgba[(60 * 120 + 60) * 4 + 3], 255);
             if (output != null) {
-              final png = (await image.toByteData(format: ui.ImageByteFormat.png))!;
-              File('$output/header-native-full-$quality.png')
-                  .writeAsBytesSync(png.buffer.asUint8List());
+              final png = (await image.toByteData(
+                format: ui.ImageByteFormat.png,
+              ))!;
+              File(
+                '$output/header-native-full-$quality.png',
+              ).writeAsBytesSync(png.buffer.asUint8List());
             }
             final background = _pixel(live, 5, 116);
             for (var y = 0; y < 120; y++) {
@@ -328,9 +331,12 @@ void main() {
               }
             }
             if (output != null) {
-              final png = (await strip.toByteData(format: ui.ImageByteFormat.png))!;
-              File('$output/header-native-strip-$quality.png')
-                  .writeAsBytesSync(png.buffer.asUint8List());
+              final png = (await strip.toByteData(
+                format: ui.ImageByteFormat.png,
+              ))!;
+              File(
+                '$output/header-native-strip-$quality.png',
+              ).writeAsBytesSync(png.buffer.asUint8List());
             }
           } finally {
             strip.dispose();
@@ -375,7 +381,8 @@ void main() {
               expect(
                 maskOne[index + channel],
                 closeTo(nativeStrip[index + channel], 2),
-                reason: 'independent native strip endpoint $x,$y channel $channel',
+                reason:
+                    'independent native strip endpoint $x,$y channel $channel',
               );
               final expected =
                   frozen[index + channel] * (1 - weight) +
