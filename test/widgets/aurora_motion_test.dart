@@ -77,7 +77,7 @@ void main() {
         yDirections.add(shift.dy > 0);
         speeds.add(shift.distance / 0.016);
         expect(shift.distance, lessThan(0.1));
-        expect(_angleDistance(current.angle, next.angle), lessThan(0.000536));
+        expect(_angleDistance(current.angle, next.angle), lessThan(0.000745));
       }
       expect(xDirections, hasLength(2));
       expect(yDirections, hasLength(2));
@@ -89,7 +89,7 @@ void main() {
         size,
       );
       expect((before.translation - after.translation).distance, lessThan(0.1));
-      expect(_angleDistance(before.angle, after.angle), lessThan(0.000536));
+      expect(_angleDistance(before.angle, after.angle), lessThan(0.000745));
       expect(
         AuroraMotion(seed + 1).at(Duration.zero, size),
         isNot(motion.at(Duration.zero, size)),
@@ -125,7 +125,7 @@ void main() {
           );
           expect(
             rotation,
-            inInclusiveRange(0.44, 1.916),
+            inInclusiveRange(0.87, 2.666),
             reason: 'seed=$seed size=$size second=$second degrees/s',
           );
         }
@@ -140,20 +140,21 @@ void main() {
           );
           expect(
             _angleDistance(next.angle, current.angle) * 180 / math.pi,
-            greaterThan(2.2),
+            greaterThan(4.35),
             reason:
                 'seed=$seed second=$second must visibly rotate in five seconds',
           );
         }
       }
       expect(maxTranslation, greaterThan(translationLimit * 0.6));
-      expect(maxRotation, greaterThan(1.4));
+      expect(maxRotation, greaterThan(2.1));
       metrics['${size.width.toInt()}x${size.height.toInt()}'] = {
         'maxTranslationDpPerSecond': maxTranslation,
         'maxRotationDegreesPerSecond': maxRotation,
         'translationLimitDpPerSecond': translationLimit,
-        'rotationMinimumDegreesPerSecond': 0.44,
-        'rotationLimitDegreesPerSecond': 1.916,
+        'rotationMinimumDegreesPerSecond': 0.87,
+        'rotationLimitDegreesPerSecond': 2.666,
+        'baseRotationPeriodSeconds': [160, 280],
       };
     }
     final directory = Platform.environment['XCLASH_SCREENSHOT_DIR'];

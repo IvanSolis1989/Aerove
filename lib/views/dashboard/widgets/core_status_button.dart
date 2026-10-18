@@ -87,10 +87,13 @@ class _CoreStatusButtonState extends ConsumerState<CoreStatusButton> {
     final coreStatus = _holdTimer != null ? CoreStatus.connecting : _status;
     final appLocalizations = context.appLocalizations;
     final colorScheme = context.colorScheme;
-    final glass = TonalButtonTheme.glassOf(context);
-    ButtonStyle? tinted(Color? color) => glass && color != null
+    final glass =
+        LiquidGlassScope.of(context) || TonalButtonTheme.glassOf(context);
+    ButtonStyle? tinted(Color? color) => glass
         ? LiquidGlass.buttonStyle(
-            (_) => LiquidGlassStyle.tinted(colorScheme, color),
+            (_) => color == null
+                ? LiquidGlassStyle.regular(colorScheme)
+                : LiquidGlassStyle.tinted(colorScheme, color),
           )
         : null;
     final statusColor = switch (coreStatus) {

@@ -102,7 +102,7 @@ jobs:
           cp pubspec.yaml "$RUNNER_TEMP/ink-pubspec.yaml"
           trap 'cp "$RUNNER_TEMP/ink-pubspec.yaml" pubspec.yaml' EXIT
           sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
-          flutter test --enable-impeller --reporter expanded test/widgets/glass_foreground_test.dart test/widgets/target_icon_test.dart test/widgets/selection_mark_test.dart test/widgets/loading_ink_test.dart
+          flutter test --enable-impeller --reporter expanded test/widgets/glass_foreground_test.dart test/widgets/target_icon_test.dart test/widgets/selection_mark_test.dart test/widgets/loading_ink_test.dart test/widgets/core_status_button_test.dart
       - name: UI and configuration regressions
         if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
         env:

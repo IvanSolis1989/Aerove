@@ -1036,6 +1036,26 @@ void main() {
             final painted = _pixel(actual.bytes, actual.width, point);
             final hsv = HSVColor.fromColor(painted);
             final base = HSVColor.fromColor(background);
+            HSVColor? previousHsv;
+            if (!swapped && (name == 'bodyLeft' || name == 'glyphLeft')) {
+              // Actual solid glyph pixels from CI 39102679488 on this fixture.
+              final previous = brightness == Brightness.dark
+                  ? name == 'bodyLeft'
+                      ? const Color(0xFF20D5FA)
+                      : const Color(0xFF0CD1FA)
+                  : name == 'bodyLeft'
+                      ? const Color(0xFF1C606C)
+                      : const Color(0xFF278595);
+              previousHsv = HSVColor.fromColor(previous);
+              samples.add({
+                'role': name,
+                'referenceRun': '39102679488',
+                'reference': _channels(previous),
+                'actual': _channels(painted),
+                'valueDelta': hsv.value - previousHsv.value,
+                'saturationDelta': hsv.saturation - previousHsv.saturation,
+              });
+            }
             final gap = (hsv.hue - base.hue).abs();
             final hueGap = math.min(gap, 360 - gap);
             samples.add({
@@ -1055,6 +1075,16 @@ void main() {
               ).writeAsStringSync(
                 const JsonEncoder.withIndent('  ').convert(samples),
               );
+            }
+            if (previousHsv != null) {
+              if (brightness == Brightness.dark) {
+                expect(hsv.value - previousHsv.value, inExclusiveRange(-0.06, -0.008));
+                expect(hsv.saturation - previousHsv.saturation,
+                    inExclusiveRange(-0.06, -0.008));
+              } else {
+                expect(hsv.value, greaterThan(previousHsv.value + 0.005));
+                expect(hsv.saturation, greaterThan(previousHsv.saturation + 0.03));
+              }
             }
             expect(hueGap, lessThan(20), reason: name);
             if (!name.startsWith('title')) {

@@ -272,6 +272,8 @@ Future<Uint8List> _checkCorners(
 ) async {
   final image = await _picture(tester, key, name);
   final rect = tester.getRect(find.byType(SheetSurface).first);
+  final path = tester.widget<SheetSurface>(find.byType(SheetSurface).first)
+      .shape.getOuterPath(rect);
   final barrier = tester
       .widget<AnimatedModalBarrier>(find.byType(AnimatedModalBarrier).last)
       .color
@@ -279,6 +281,12 @@ Future<Uint8List> _checkCorners(
   final y = rect.top.ceil() + 1;
   expect(y, inInclusiveRange(0, 799));
   for (final x in [1, 388]) {
+    for (final dx in [-1.0, 0.0, 1.0]) {
+      for (final dy in [-1.0, 0.0, 1.0]) {
+        expect(path.contains(Offset(x + 0.5 + dx, y + 0.5 + dy)), isFalse,
+          reason: 'Cutout probes need a full pixel of clearance from the superellipse.');
+      }
+    }
     final at = (y * 390 + x) * 4;
     for (var channel = 0; channel < 3; channel++) {
       final tint = [barrier.r, barrier.g, barrier.b][channel] * 255;
@@ -325,44 +333,62 @@ Future<void> _checkTitle(
   final defaults = DefaultTextStyle.of(element);
   final style = defaults.style.merge(text.style);
   expect(style.color!.a, 1);
+  final ink = style.color!;
+  final channels = [
+    (ink.r * 255).round(),
+    (ink.g * 255).round(),
+    (ink.b * 255).round(),
+  ];
   final rect = tester.getRect(title).shift(-tester.getTopLeft(find.byKey(key)));
   final recorder = ui.PictureRecorder();
-  final canvas = Canvas(recorder)..drawColor(Colors.black, BlendMode.src);
+  final canvas = Canvas(recorder)..drawColor(
+    ink.computeLuminance() < 0.5 ? Colors.white : Colors.black,
+    BlendMode.src,
+  );
   final painter = TextPainter(
     textDirection: TextDirection.ltr,
     textScaler: MediaQuery.textScalerOf(element),
     textHeightBehavior: text.textHeightBehavior ?? defaults.textHeightBehavior,
     text: TextSpan(
       text: text.data,
-      style: style.copyWith(color: Colors.white, shadows: const []),
+      style: style.copyWith(shadows: const []),
     ),
   );
   painter.layout(maxWidth: rect.width);
   painter.paint(canvas, rect.topLeft);
   painter.dispose();
   final picture = recorder.endRecording();
-  await tester.runAsync(() async {
+  final reference = (await tester.runAsync(() async {
     final mask = await picture.toImage(390, 800);
     try {
       final pixels = (await mask.toByteData())!;
-      var sharp = 0;
-      for (var i = 0; i < pixels.lengthInBytes; i += 4) {
-        if (pixels.getUint8(i) != 255) continue;
-        sharp++;
-        final color = style.color!;
-        for (var channel = 0; channel < 3; channel++) {
-          expect(
-            actual[i + channel],
-            closeTo([color.r, color.g, color.b][channel] * 255, 1),
-          );
-        }
+      final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+      if (output != null) {
+        final png = (await mask.toByteData(format: ui.ImageByteFormat.png))!;
+        final brightness = Theme.of(element).brightness.name;
+        final quality = LiquidGlassScope.qualityOf(element).name;
+        await File('$output/modal-$brightness-$quality-title-reference.png')
+            .writeAsBytes(png.buffer.asUint8List(png.offsetInBytes, png.lengthInBytes));
       }
-      expect(sharp, greaterThan(0));
+      return Uint8List.fromList(pixels.buffer.asUint8List(
+        pixels.offsetInBytes, pixels.lengthInBytes));
     } finally {
       mask.dispose();
       picture.dispose();
     }
-  });
+  }))!;
+  var sharp = 0;
+  for (var i = 0; i < reference.length; i += 4) {
+    if (reference[i] != channels[0] || reference[i + 1] != channels[1] ||
+        reference[i + 2] != channels[2]) continue;
+    sharp++;
+    for (var channel = 0; channel < 3; channel++) {
+      expect(actual[i + channel], closeTo(channels[channel], 1),
+        reason: 'Opaque title core at (${i ~/ 4 % 390}, ${i ~/ (390 * 4)}) '
+            'must match its independent ink-polarity glyph reference.');
+    }
+  }
+  expect(sharp, greaterThan(0));
 }
 
 class _Backdrop extends CustomPainter {

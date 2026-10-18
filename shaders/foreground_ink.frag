@@ -32,8 +32,9 @@ vec3 vivid(vec3 c) {
   float span = hi - lo;
   if (span < 0.015) return c;
   vec3 hue = (c - lo) / span;
-  float saturation = min(0.95, span / max(hi, 0.001) * 2.8 + 0.18);
-  float peak = 0.94 + 0.04 * uDark;
+  float saturation = min(mix(0.97, 0.92, uDark),
+      span / max(hi, 0.001) * mix(3.1, 2.70, uDark) + mix(0.22, 0.175, uDark));
+  float peak = mix(0.97, 0.95, uDark);
   return mix(vec3(peak), hue * peak, saturation);
 }
 vec3 readable(vec3 ink, vec3 background, float backgroundLuminance, float alpha) {

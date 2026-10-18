@@ -39,6 +39,7 @@ class TestApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final app = MaterialApp(
+      debugShowCheckedModeBanner: false,
       navigatorKey: includeNavigatorKey ? globalState.navigatorKey : null,
       locale: locale,
       theme: theme,

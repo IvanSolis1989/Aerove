@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:fl_clash/common/app_localizations.dart';
+import 'package:fl_clash/common/constant.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/manager/app_manager.dart';
@@ -33,7 +34,10 @@ void main() {
       testWidgets('$layout sidebar transmits two backdrops in $brightness', (
         tester,
       ) async {
-        final size = Size(layout == 'overlay' ? 900 : 1400, 900);
+        final size = Size(
+          layout == 'overlay' ? maxLaptopWidth.toDouble() : 1400,
+          900,
+        );
         tester.view.physicalSize = size;
         tester.view.devicePixelRatio = 1;
         addTearDown(tester.view.resetPhysicalSize);
@@ -127,6 +131,7 @@ void main() {
               layout == 'expanded' ? 220 : 48,
             );
             if (layout == 'overlay') {
+              expect(tester.widget<NavigationSidebar>(sidebar).onToggle, isNull);
               await tester.tap(find.byTooltip(labels.showMore));
               await tester.pumpAndSettle();
             }
@@ -135,6 +140,7 @@ void main() {
                     (widget) => widget is Material && widget.elevation == 8,
                   )
                 : sidebar;
+            expect(pane, findsOneWidget);
             final paneRect = tester.getRect(pane);
             final selected = find.byKey(const ValueKey('Dashboard')).last;
             final selectedRect = tester.getRect(selected);
