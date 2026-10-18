@@ -272,11 +272,11 @@ class VpnCard extends ConsumerWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
+                GlassText(
                   'VPN',
                   style: AppTextStyle.callout.of(context, emphasized: true),
                 ),
-                Text(
+                GlassText(
                   enabled
                       ? appLocalizations.enabled
                       : appLocalizations.disabled,

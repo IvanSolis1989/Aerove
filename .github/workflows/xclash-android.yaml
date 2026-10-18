@@ -93,6 +93,15 @@ jobs:
         with:
           workspaces: plugins/rust_api/rust
           cache-directories: .dart_tool/hooks_runner
+      - name: Verify luminous ink rendering
+        env:
+          XCLASH_REQUIRE_IMPELLER: 'true'
+          XCLASH_SCREENSHOT_DIR: ${{ runner.temp }}/xclash-previews/ink-probe
+        run: |
+          cp pubspec.yaml "$RUNNER_TEMP/ink-pubspec.yaml"
+          trap 'cp "$RUNNER_TEMP/ink-pubspec.yaml" pubspec.yaml' EXIT
+          sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
+          flutter test --enable-impeller --reporter expanded --name 'ink follows local background and motion|ink keeps emoji' test/widgets/glass_foreground_test.dart
       - name: UI and configuration regressions
         env:
           XCLASH_SCREENSHOT_DIR: ${{ runner.temp }}/xclash-previews
@@ -118,6 +127,8 @@ jobs:
               test/widgets/liquid_glass_host_test.dart test/widgets/glass_foreground_test.dart \
               test/widgets/sliver_glass_group_test.dart test/widgets/header_title_test.dart \
               test/widgets/aurora_motion_test.dart test/widgets/glass_button_test.dart \
+              test/widgets/record_glass_routes_test.dart test/widgets/sidebar_glass_test.dart \
+              test/widgets/settings_route_transition_test.dart \
               test/widgets/open_container_test.dart test/widgets/route_motion_hold_test.dart || test_status=1
           flutter test --reporter expanded \
             test/application_theme_test.dart \
@@ -138,6 +149,16 @@ jobs:
             test/views/script_content_test.dart test/pages/home_test.dart \
             test/widgets/ test/l10n/ test/lint/ || test_status=1
           exit "$test_status"
+      - name: Render README application previews
+        env:
+          XCLASH_SCREENSHOT_DIR: ${{ runner.temp }}/xclash-previews/readme
+        run: |
+          cp pubspec.yaml "$RUNNER_TEMP/readme-pubspec.yaml"
+          trap 'cp "$RUNNER_TEMP/readme-pubspec.yaml" pubspec.yaml' EXIT
+          sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
+          curl --fail --location --retry 2 https://raw.githubusercontent.com/IvanSolis1989/XClash/3f8a11e61d1399ba1097b2296b90ee6083f4d073/test/readme_showcase_test.dart -o test/readme_showcase_test.dart
+          dart format test/readme_showcase_test.dart
+          flutter test --enable-impeller --dart-define=SAFE_MODE=true --reporter expanded test/readme_showcase_test.dart
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -4,7 +4,6 @@ import 'package:fl_clash/features/form/form.dart';
 import 'package:fl_clash/models/clash_config.dart';
 import 'package:fl_clash/pages/editor.dart';
 import 'package:fl_clash/providers/providers.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:material_ui/material_ui.dart';
@@ -257,7 +256,7 @@ class _AddOrEditRuleViewState extends ConsumerState<_AddOrEditRuleView> {
         children: [
           Flexible(
             child: TooltipText(
-              text: Text(
+              text: GlassText(
                 action.name,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -358,12 +357,12 @@ class _AddOrEditRuleViewState extends ConsumerState<_AddOrEditRuleView> {
             ),
           Flexible(
             child: TooltipText(
-              text: Text(
+              text: GlassText(
                 ruleProvider ?? appLocalizations.selectRuleSet,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: context.listTitleStyle.copyWith(
-                  color: GlassForeground.colorOf(context, foregroundColor),
+                  color: foregroundColor,
                 ),
               ),
             ),
@@ -455,12 +454,12 @@ class _AddOrEditRuleViewState extends ConsumerState<_AddOrEditRuleView> {
               Flexible(
                 flex: 1,
                 child: TooltipText(
-                  text: Text(
+                  text: GlassText(
                     target ?? appLocalizations.selectSplitStrategy,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: context.listTitleStyle.copyWith(
-                      color: GlassForeground.colorOf(context, foregroundColor),
+                      color: foregroundColor,
                     ),
                   ),
                 ),

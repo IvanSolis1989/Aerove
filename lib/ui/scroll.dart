@@ -1,8 +1,9 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:fl_clash/ui/foreground_ink.dart';
+
 import 'package:fl_clash/ui/context.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/scroll_behavior.dart';
 import 'package:fl_clash/ui/shape.dart';
@@ -658,17 +659,17 @@ class _ScrollbarHintPill extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
+            GlassText(
               label,
               style: style.copyWith(color: colorScheme.onSurfaceVariant),
             ),
             if (rate != null && rate < 1) ...[
               const SizedBox(width: 6),
-              Text(
+              GlassText(
                 '×1/${(1 / rate).round()}',
                 key: const ValueKey('scrollbarScrubRate'),
                 style: style.copyWith(
-                  color: GlassForeground.colorOf(context, colorScheme.primary),
+                  color: colorScheme.primary,
                 ),
               ),
             ],

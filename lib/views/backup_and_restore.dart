@@ -163,8 +163,8 @@ class _BackupAndRestoreState extends ConsumerState<BackupAndRestore>
               if (dav == null)
                 ListItem(
                   leading: const GlyphIcon(AppGlyphs.account),
-                  title: Text(appLocalizations.noInfo),
-                  subtitle: Text(appLocalizations.pleaseBindWebDAV),
+                  title: GlassText(appLocalizations.noInfo),
+                  subtitle: GlassText(appLocalizations.pleaseBindWebDAV),
                   trailing: TonalButton(
                     label: appLocalizations.bind,
                     onPressed: () {
@@ -176,7 +176,7 @@ class _BackupAndRestoreState extends ConsumerState<BackupAndRestore>
                 ListItem(
                   leading: const GlyphIcon(AppGlyphs.account),
                   title: TooltipText(
-                    text: Text(
+                    text: GlassText(
                       dav.user,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -187,7 +187,7 @@ class _BackupAndRestoreState extends ConsumerState<BackupAndRestore>
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        Text(appLocalizations.connectivity),
+                        GlassText(appLocalizations.connectivity),
                         _DavConnectionIndicator(connection: _davConnection),
                       ],
                     ),
@@ -200,8 +200,8 @@ class _BackupAndRestoreState extends ConsumerState<BackupAndRestore>
                   ),
                 ),
                 ListItem.input(
-                  title: Text(appLocalizations.file),
-                  subtitle: Text(dav.fileName),
+                  title: GlassText(appLocalizations.file),
+                  subtitle: GlassText(dav.fileName),
                   dialogTitle: appLocalizations.file,
                   value: dav.fileName,
                   resetValue: defaultDavFileName,
@@ -214,13 +214,13 @@ class _BackupAndRestoreState extends ConsumerState<BackupAndRestore>
                   onTap: () {
                     _backupOnWebDAV();
                   },
-                  title: Text(appLocalizations.backup),
+                  title: GlassText(appLocalizations.backup),
                 ),
                 ListItem(
                   onTap: () {
                     _restoreOnWebDAV();
                   },
-                  title: Text(appLocalizations.restore),
+                  title: GlassText(appLocalizations.restore),
                 ),
               ],
             ],
@@ -232,13 +232,13 @@ class _BackupAndRestoreState extends ConsumerState<BackupAndRestore>
                 onTap: () {
                   _backupOnLocal();
                 },
-                title: Text(appLocalizations.backup),
+                title: GlassText(appLocalizations.backup),
               ),
               ListItem(
                 onTap: () {
                   _restoreOnLocal();
                 },
-                title: Text(appLocalizations.restore),
+                title: GlassText(appLocalizations.restore),
               ),
             ],
           ),
@@ -320,13 +320,13 @@ class _RestoreOptionsDialogState extends State<RestoreOptionsDialog> {
             onTap: () {
               _handleOnTab(RestoreOption.onlyProfiles);
             },
-            title: Text(appLocalizations.restoreOnlyConfig),
+            title: GlassText(appLocalizations.restoreOnlyConfig),
           ),
           ListItem(
             onTap: () {
               _handleOnTab(RestoreOption.all);
             },
-            title: Text(appLocalizations.restoreAllData),
+            title: GlassText(appLocalizations.restoreAllData),
           ),
         ],
       ),

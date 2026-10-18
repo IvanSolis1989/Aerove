@@ -1,7 +1,6 @@
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/providers/ip_quality.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
@@ -30,13 +29,13 @@ class IpQualityText extends ConsumerWidget {
     }
     if (color != null) {
       style = (style ?? const TextStyle()).copyWith(
-        color: GlassForeground.colorOf(context, color),
+        color: color,
       );
     }
     return Tooltip(
       preferBelow: false,
       message: shownIp,
-      child: Text(
+      child: GlassText(
         shownIp,
         style: style,
         maxLines: 1,

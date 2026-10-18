@@ -1,7 +1,8 @@
 import 'dart:math' as math;
 
+import 'package:fl_clash/ui/foreground_ink.dart';
+
 import 'package:fl_clash/ui/context.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/shape.dart';
 import 'package:fl_clash/ui/surface.dart';
@@ -1541,10 +1542,7 @@ class _FloatingBarItemState extends State<_FloatingBarItem> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
-    final color = GlassForeground.colorOf(
-      context,
-      colorScheme.onSurfaceVariant,
-    );
+    final color = colorScheme.onSurfaceVariant;
     var tint = colorScheme.primary;
     if (widget.part == _LensPart.inside &&
         LiquidGlassScope.qualityOf(context) == LiquidGlassQuality.standard) {
@@ -1565,7 +1563,7 @@ class _FloatingBarItemState extends State<_FloatingBarItem> {
       lift: widget.lift,
       parallax: widget.parallax,
       index: widget.index,
-      color: tint,
+      color: LiquidGlassScope.of(context) ? Colors.transparent : tint,
       textDirection: Directionality.of(context),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: _labelInset),
@@ -1582,7 +1580,7 @@ class _FloatingBarItemState extends State<_FloatingBarItem> {
             SizedBox(
               height: widget.labelHeight,
               child: Center(
-                child: Text(
+                child: GlassText(
                   widget.destination.label,
                   maxLines: 1,
                   softWrap: false,
@@ -1972,6 +1970,11 @@ class _RenderLensTint extends RenderProxyBox {
     Rect lensBounds,
     Matrix4? motion,
   ) {
+    if (_color.a == 0) {
+      _tint.layer = null;
+      _paintMoved(context, offset, motion, _insideMotion);
+      return;
+    }
     final filter = ColorFilter.mode(_color, BlendMode.srcIn);
     if (needsCompositing) {
       _tint.layer = context.pushColorFilter(

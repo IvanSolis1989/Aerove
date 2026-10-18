@@ -1,3 +1,4 @@
+import 'package:fl_clash/ui/foreground_ink.dart';
 import 'package:fl_clash/ui/context.dart';
 import 'package:fl_clash/ui/typography.dart';
 import 'package:material_ui/material_ui.dart';
@@ -24,7 +25,7 @@ class SettingTextCard extends StatelessWidget {
       fillsSelection: true,
       child: Padding(
         padding: const EdgeInsets.all(12),
-        child: Text(
+        child: GlassText(
           text,
           style: AppTextStyle.subheadline
               .of(context)

@@ -49,7 +49,7 @@ class PreviewChoiceGroup<T> extends StatelessWidget {
               for (final choice in choices)
                 DecorationListItem(
                   leading: ExcludeSemantics(child: choice.pictogram),
-                  title: Text(choice.label),
+                  title: GlassText(choice.label),
                   isSelected: choice.value == value,
                   trailing: choice.value == value
                       ? const SelectionCheck()

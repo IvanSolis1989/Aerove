@@ -2,7 +2,6 @@ import 'dart:math' as math;
 import 'dart:ui' show lerpDouble;
 
 import 'package:fl_clash/state.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
 import 'package:fl_clash/views/dashboard/style.dart';
@@ -164,7 +163,7 @@ class DashboardCardHeader extends StatelessWidget {
       spacing: 8,
       children: [
         Flexible(
-          child: Text(
+          child: GlassText(
             title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
@@ -219,11 +218,11 @@ class DashboardFitText extends StatelessWidget {
           return FittedBox(
             fit: BoxFit.scaleDown,
             alignment: AlignmentDirectional.centerStart,
-            child: Text(text, maxLines: 1, style: style),
+            child: GlassText(text, maxLines: 1, style: style),
           );
         }
         return TooltipText(
-          text: Text(
+          text: GlassText(
             text,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
@@ -530,13 +529,13 @@ class DashboardChip extends StatelessWidget {
               ),
               child: const SizedBox.square(dimension: 6),
             ),
-          Text(
+          GlassText(
             label,
             maxLines: 1,
             style: AppTextStyle.caption1
                 .of(context, emphasized: true)
                 .toTabular
-                .copyWith(color: GlassForeground.colorOf(context, foreground)),
+                .copyWith(color: foreground),
           ),
         ],
       ),
@@ -861,14 +860,14 @@ class DashboardSwitchRow extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
+                GlassText(
                   title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: DashboardText.rowTitle(context),
                 ),
                 if (subtitle case final subtitle?)
-                  Text(
+                  GlassText(
                     subtitle,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,

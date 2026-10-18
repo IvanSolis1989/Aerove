@@ -8,7 +8,6 @@ import 'package:fl_clash/providers/outbound_ip.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/providers/routed_probe.dart';
 import 'package:fl_clash/providers/service_status.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/dashboard/probe_start_hold.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
@@ -360,7 +359,7 @@ class _ServiceCell extends StatelessWidget {
     final status = AppTextStyle.caption1
         .of(context, emphasized: true)
         .toTabular
-        .copyWith(color: GlassForeground.colorOf(context, color));
+        .copyWith(color: color);
     final badge = _ServiceBadge(
       target: service.target,
       size: height - _inset * 2,
@@ -374,7 +373,7 @@ class _ServiceCell extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
+          GlassText(
             service.target.label,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
@@ -383,7 +382,7 @@ class _ServiceCell extends StatelessWidget {
           if (service.loading)
             SkeletonText(width: 44, style: status)
           else
-            Text(
+            GlassText(
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -491,7 +490,7 @@ class _ServiceTitle extends StatelessWidget {
         spacing: 8,
         children: [
           Flexible(
-            child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+            child: GlassText(name, maxLines: 1, overflow: TextOverflow.ellipsis),
           ),
           ConstrainedBox(
             constraints: BoxConstraints(
@@ -520,14 +519,14 @@ class _StatusPill extends StatelessWidget {
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        child: Text(
+        child: GlassText(
           label,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: AppTextStyle.caption1
               .of(context, emphasized: true)
               .copyWith(
-                color: GlassForeground.colorOf(context, colors.onContainer),
+                color: colors.onContainer,
               ),
         ),
       ),
@@ -565,7 +564,7 @@ class _OutboundIpLine extends StatelessWidget {
       spacing: 4,
       children: [
         if (flag != null)
-          Text(
+          GlassText(
             flag.countryFlagEmoji,
             style: style?.copyWith(fontFamily: FontFamily.twEmoji.value),
           ),
@@ -577,7 +576,7 @@ class _OutboundIpLine extends StatelessWidget {
           Flexible(child: SkeletonText(width: 88, style: style))
         else if (fallback != null)
           Flexible(
-            child: Text(
+            child: GlassText(
               fallback,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -609,7 +608,7 @@ class _NoValue extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ExcludeSemantics(
-      child: Text(
+      child: GlassText(
         '—',
         style: style?.copyWith(color: context.colorScheme.onSurfaceVariant),
       ),
@@ -910,14 +909,14 @@ class _ServiceManageItem extends StatelessWidget {
               radius: _rowBadgeRadius,
               enabled: enabled,
             ),
-            title: Text(
+            title: GlassText(
               target.label,
               style: enabled
                   ? null
                   : TextStyle(color: context.colorScheme.onSurfaceVariant),
             ),
             subtitle: shown
-                ? Text(context.appLocalizations.serviceShownOnDashboard)
+                ? GlassText(context.appLocalizations.serviceShownOnDashboard)
                 : null,
             trailing: Switch(value: enabled, onChanged: onChanged),
           ),
@@ -1032,7 +1031,7 @@ class _ServiceRowTrailing extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
         if (delay != null)
-          Text(
+          GlassText(
             '$delay ms',
             style: AppTextStyle.footnote
                 .of(context, emphasized: true)
@@ -1040,7 +1039,7 @@ class _ServiceRowTrailing extends StatelessWidget {
                 .copyWith(color: context.colorScheme.onSurface),
           ),
         if (checkedAt != null)
-          Text(
+          GlassText(
             checkedAt.showTime.trim(),
             style: numeric?.copyWith(
               color: context.colorScheme.onSurfaceVariant,

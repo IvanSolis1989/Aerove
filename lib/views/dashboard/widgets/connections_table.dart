@@ -8,7 +8,6 @@ import 'package:fl_clash/features/features.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/providers/core.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/views/connection/connections.dart';
 import 'package:fl_clash/views/connection/requests.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
@@ -417,7 +416,7 @@ class _TabCount extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
+    return GlassText(
       dashboardCount(count),
       maxLines: 1,
       style: AppTextStyle.subheadline
@@ -455,7 +454,7 @@ class _FeedSegment extends StatelessWidget {
               style: TextStyle(color: foreground),
               child: count,
             ),
-            Text(
+            GlassText(
               label,
               maxLines: 1,
               style: AppTextStyle.footnote
@@ -521,7 +520,7 @@ class _TableState<T> extends ConsumerState<_Table<T>>
             items.length * rowHeight + 2 > constraints.maxHeight - headerHeight;
         final shape = AppShape.all(DashboardCorner.tableHeader);
         final fill = ShapeDecoration(
-          color: DashboardColors.of(context).tone,
+          color: LiquidGlassScope.surfaceColorOf(context, DashboardColors.of(context).tone),
           shape: shape,
         );
         final body = ListView.builder(
@@ -596,7 +595,7 @@ class _TableState<T> extends ConsumerState<_Table<T>>
                   ? Center(
                       child: Padding(
                         padding: const EdgeInsets.only(bottom: 24),
-                        child: Text(
+                        child: GlassText(
                           context.appLocalizations.noData,
                           style: DashboardText.label(context),
                         ),
@@ -623,7 +622,7 @@ class _Muted extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(text, style: _muted(context));
+    return GlassText(text, style: _muted(context));
   }
 }
 
@@ -635,7 +634,7 @@ class _Number extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
+    return GlassText(
       text,
       style: TextStyle(
         fontFeatures: const [FontFeature.tabularFigures()],
@@ -660,11 +659,11 @@ class _Source extends StatelessWidget {
           width: 22,
           height: 22,
           decoration: ShapeDecoration(
-            color: DashboardColors.of(context).tone2,
+            color: LiquidGlassScope.surfaceColorOf(context, DashboardColors.of(context).tone2),
             shape: AppShape.all(7),
           ),
           child: Center(
-            child: Text(
+            child: GlassText(
               letter,
               style: AppTextStyle.caption2
                   .of(context, emphasized: true)
@@ -673,7 +672,7 @@ class _Source extends StatelessWidget {
           ),
         ),
         Flexible(
-          child: Text(
+          child: GlassText(
             name.isEmpty ? '—' : name,
             style: AppTextStyle.footnote.of(context, emphasized: true),
           ),
@@ -840,7 +839,7 @@ List<RecordColumn<DnsQuery>> _dnsColumns(BuildContext context) {
     ),
     RecordColumn(
       TableColumn('domain', appLocalizations.domain, flex: 1.3),
-      cell: (context, query) => Text(
+      cell: (context, query) => GlassText(
         query.domain,
         style: AppTextStyle.footnote.of(context, emphasized: true),
       ),
@@ -879,23 +878,20 @@ class _DnsResult extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
     if (query.error.isNotEmpty) {
-      return Text(
+      return GlassText(
         query.error,
         style: TextStyle(
-          color: GlassForeground.colorOf(context, colorScheme.error),
+          color: colorScheme.error,
         ),
       );
     }
     if (query.hasFailureRcode) {
-      return Text(
+      return GlassText(
         query.rcode,
         style: AppTextStyle.footnote
             .of(context, emphasized: true)
             .copyWith(
-              color: GlassForeground.colorOf(
-                context,
-                DashboardColors.of(context).warn,
-              ),
+              color: DashboardColors.of(context).warn,
             ),
       );
     }
@@ -908,11 +904,11 @@ class _DnsResult extends StatelessWidget {
             margin: const EdgeInsetsDirectional.only(end: 6),
             padding: const EdgeInsets.symmetric(horizontal: 6),
             decoration: ShapeDecoration(
-              color: DashboardColors.of(context).tone,
+              color: LiquidGlassScope.surfaceColorOf(context, DashboardColors.of(context).tone),
               shape: AppShape.full,
             ),
             child: Center(
-              child: Text(
+              child: GlassText(
                 context.appLocalizations.cache,
                 style: AppTextStyle.caption2
                     .of(context, emphasized: true)
@@ -921,7 +917,7 @@ class _DnsResult extends StatelessWidget {
             ),
           ),
         Flexible(
-          child: Text(
+          child: GlassText(
             answer,
             style: const TextStyle(
               fontFeatures: [FontFeature.tabularFigures()],

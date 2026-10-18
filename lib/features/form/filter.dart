@@ -1,6 +1,5 @@
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/ui.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -45,7 +44,7 @@ class FilterRegexText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
+    return GlassText(
       regex,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
@@ -53,10 +52,7 @@ class FilterRegexText extends StatelessWidget {
           .of(context)
           .toJetBrainsMono
           .copyWith(
-            color: GlassForeground.colorOf(
-              context,
-              context.colorScheme.tertiary,
-            ),
+            color: context.colorScheme.tertiary,
           ),
     );
   }

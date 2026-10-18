@@ -60,7 +60,7 @@ bool _hasFocus(WidgetTester tester, Key key) {
   }
   final label = find.descendant(
     of: find.byKey(key),
-    matching: find.byType(Text),
+    matching: find.bySubtype<Text>(),
   );
   return Focus.of(tester.element(label.first)).hasPrimaryFocus;
 }

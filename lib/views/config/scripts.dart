@@ -146,12 +146,12 @@ class _ScriptsViewState extends ConsumerState<ScriptsView> {
           position: ItemPosition.get(index, scripts.length),
           child: DecorationListItem(
             contentPadding: const EdgeInsets.only(left: 16),
-            title: Text(
+            title: GlassText(
               script.label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
-            subtitle: Text(
+            subtitle: GlassText(
               script.url ?? context.appLocalizations.local,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,

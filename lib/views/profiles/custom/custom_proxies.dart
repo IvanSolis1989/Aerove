@@ -530,7 +530,7 @@ class _NodeItem extends ConsumerWidget {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
-      subtitle: Text(proxy.type, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: GlassText(proxy.type, maxLines: 1, overflow: TextOverflow.ellipsis),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -654,7 +654,7 @@ class _ShareLinkDialogState extends State<_ShareLinkDialog> {
       actions: [
         TextButton(
           onPressed: _reading ? null : _submit,
-          child: Text(appLocalizations.confirm),
+          child: GlassText(appLocalizations.confirm),
         ),
       ],
       child: TextField(
@@ -1160,7 +1160,7 @@ class _EditCustomProxyViewState extends ConsumerState<_EditCustomProxyView> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Flexible(
-            child: Text(
+            child: GlassText(
               value,
               style: context.listTitleStyle.copyWith(
                 color: context.colorScheme.onSurfaceVariant,
@@ -1562,7 +1562,7 @@ class _ProxyValuesView extends ConsumerWidget {
             isSelected,
             onToggleSelected,
           ) => SelectedDecorationListItem(
-            title: Text(value),
+            title: GlassText(value),
             isEditing: isEditing,
             isSelected: isSelected,
             onSelected: onToggleSelected,

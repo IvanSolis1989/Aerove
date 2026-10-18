@@ -137,7 +137,7 @@ class _EditorCompletionPopupState extends State<EditorCompletionPopup> {
             children: [
               SizedBox(
                 width: math.min(labelWidth, rowWidth),
-                child: Text(
+                child: GlassText(
                   suggestion.label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -153,7 +153,7 @@ class _EditorCompletionPopupState extends State<EditorCompletionPopup> {
                   rowWidth - labelWidth > _suggestionDetailGap) ...[
                 const SizedBox(width: _suggestionDetailGap),
                 Expanded(
-                  child: Text(
+                  child: GlassText(
                     detail,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,

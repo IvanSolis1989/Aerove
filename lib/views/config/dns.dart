@@ -386,8 +386,8 @@ class _PolicyItem extends ConsumerWidget {
     final policy = ref.watch(model.selectModel(select));
     return ListItem.open(
       leading: leading,
-      title: Text(title),
-      subtitle: Text(
+      title: GlassText(title),
+      subtitle: GlassText(
         policy.isEmpty
             ? appLocalizations.none
             : appLocalizations.itemsCount(policy.length),
@@ -397,8 +397,8 @@ class _PolicyItem extends ConsumerWidget {
         entries: policy,
         keyMaxLength: TextInputLimits.domain,
         valueMaxLength: TextInputLimits.dnsServer,
-        titleBuilder: (item) => Text(item.key),
-        subtitleBuilder: (item) => Text(item.value),
+        titleBuilder: (item) => GlassText(item.key),
+        subtitleBuilder: (item) => GlassText(item.value),
       ),
       onChanged: (value) {
         if (value is! Map) {

@@ -211,7 +211,7 @@ class TrackerTargetText extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final port = trackerInfo.metadata.destinationPort;
-    return Text.rich(
+    return GlassText.rich(
       TextSpan(
         children: [
           TextSpan(text: trackerInfo.title),
@@ -233,7 +233,7 @@ class TrackerRuleText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text.rich(
+    return GlassText.rich(
       TextSpan(
         children: [
           TextSpan(

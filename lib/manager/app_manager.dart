@@ -236,7 +236,9 @@ class AppSidebarContainer extends ConsumerWidget {
           AnimatedVisibility.sidebar(
             visible: hasSidebar,
             child: Material(
-              color: blur
+              color: LiquidGlassScope.of(context)
+                  ? Colors.transparent
+                  : blur
                   ? chrome.withValues(alpha: kSidebarBlurOpacity)
                   : chrome,
               shape: BorderDirectional(end: Divider.createBorderSide(context)),

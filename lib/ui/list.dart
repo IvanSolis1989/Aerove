@@ -1,5 +1,7 @@
 import 'dart:math' as math;
 
+import 'package:fl_clash/ui/foreground_ink.dart';
+
 import 'package:collection/collection.dart';
 import 'package:fl_clash/common/input_limits.dart';
 import 'package:fl_clash/ui/context.dart';
@@ -543,7 +545,7 @@ class ListHeader extends StatelessWidget {
           spacing: 12,
           children: [
             Expanded(
-              child: Text(
+              child: GlassText(
                 title,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
@@ -570,7 +572,7 @@ class ListFooter extends StatelessWidget {
       alignment: Alignment.centerLeft,
       padding:
           const EdgeInsets.only(left: 16, right: 16, top: 8) * 1.mAp(context),
-      child: Text(text, style: context.listCaptionStyle),
+      child: GlassText(text, style: context.listCaptionStyle),
     );
   }
 }

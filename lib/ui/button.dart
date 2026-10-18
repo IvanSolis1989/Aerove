@@ -1,5 +1,5 @@
+import 'package:fl_clash/ui/foreground_ink.dart';
 import 'package:fl_clash/ui/context.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/metrics.dart';
 import 'package:fl_clash/ui/shape.dart';
@@ -36,7 +36,7 @@ class MoreActionButton extends StatelessWidget {
           minVerticalPadding: listRowVerticalPadding,
           titleTextStyle: context.listTitleStyle,
           contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-          title: Text(label),
+          title: GlassText(label),
           trailing:
               trailing ?? const GlyphIcon(AppGlyphs.chevronForward, size: 18),
         ),
@@ -147,7 +147,7 @@ class TonalButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final glyph = this.glyph;
-    final label = Text(this.label);
+    final label = GlassText(this.label);
     final button = TonalButtonTheme(
       grouped: true,
       size: size,
@@ -211,7 +211,7 @@ class TonalButtonTheme extends StatelessWidget {
             context.raisedSurfaceLevel.colorOf(colorScheme),
             opacity: 0.4,
           );
-    final foreground = GlassForeground.colorOf(context, colorScheme.onSurface);
+    final foreground = colorScheme.onSurface;
     final disabledForeground = foreground.withValues(alpha: 0.38);
     ButtonStyle? paneOf(bool Function(Set<WidgetState> states) tinted) {
       if (!paned) {

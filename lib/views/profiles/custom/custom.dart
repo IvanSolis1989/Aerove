@@ -8,7 +8,6 @@ import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/config/dns.dart';
 import 'package:fl_clash/views/config/ntp.dart';
@@ -52,7 +51,7 @@ Widget _sectionRow(
 ) {
   return ListItem(
     leading: GlyphIcon(glyph),
-    title: Text(title),
+    title: GlassText(title),
     subtitle: state,
     trailing: const GlyphIcon(AppGlyphs.chevronForward),
     onTap: () => _push(context, view),
@@ -283,7 +282,7 @@ class _CustomProfileViewState extends ConsumerState<CustomProfileView> {
             CommonPopupBox(
               targetBuilder: (open) => FilledButton(
                 onPressed: _loaded && !_importing ? open : null,
-                child: Text(appLocalizations.import),
+                child: GlassText(appLocalizations.import),
               ),
               popupBuilder: (_) => CommonPopupMenu(
                 items: [
@@ -527,7 +526,7 @@ class _MoreSectionsView extends ConsumerWidget {
                 context,
                 AppGlyphs.link,
                 appLocalizations.dialerProxy,
-                Text(
+                GlassText(
                   dialerCount > 0
                       ? appLocalizations.proxiesCount(
                           dialerCount,
@@ -536,10 +535,7 @@ class _MoreSectionsView extends ConsumerWidget {
                       : appLocalizations.none,
                   style: hasDialerIssues
                       ? TextStyle(
-                          color: GlassForeground.colorOf(
-                            context,
-                            context.colorScheme.error,
-                          ),
+                          color: context.colorScheme.error,
                         )
                       : null,
                 ),
@@ -549,14 +545,11 @@ class _MoreSectionsView extends ConsumerWidget {
                 context,
                 AppGlyphs.clock,
                 'NTP',
-                Text(
+                GlassText(
                   _enabledText(appLocalizations, status.ntp),
                   style: hasNtpIssues
                       ? TextStyle(
-                          color: GlassForeground.colorOf(
-                            context,
-                            context.colorScheme.error,
-                          ),
+                          color: context.colorScheme.error,
                         )
                       : null,
                 ),
@@ -566,7 +559,7 @@ class _MoreSectionsView extends ConsumerWidget {
                 context,
                 AppGlyphs.eye,
                 appLocalizations.sniffer,
-                Text(_enabledText(appLocalizations, status.sniffer)),
+                GlassText(_enabledText(appLocalizations, status.sniffer)),
                 SnifferView(profileId),
               ),
               if (showsTun)
@@ -574,7 +567,7 @@ class _MoreSectionsView extends ConsumerWidget {
                   context,
                   AppGlyphs.vpn,
                   appLocalizations.tun,
-                  Text(
+                  GlassText(
                     status.tunSettings > 0
                         ? appLocalizations.settingsCount(status.tunSettings)
                         : appLocalizations.defaultText,
@@ -599,12 +592,12 @@ class _CountText extends StatelessWidget {
   Widget build(BuildContext context) {
     final count = this.count?.toString() ?? '';
     if (issueCount == 0) {
-      return Text(count);
+      return GlassText(count);
     }
-    return Text(
+    return GlassText(
       '$issueCount / $count',
       style: TextStyle(
-        color: GlassForeground.colorOf(context, context.colorScheme.error),
+        color: context.colorScheme.error,
       ),
     );
   }
@@ -620,17 +613,14 @@ class _StatusText extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
-    return Text(
+    return GlassText(
       text,
       style: TextStyle(
-        color: GlassForeground.colorOf(
-          context,
-          invalid
+        color: invalid
               ? colorScheme.error
               : active
               ? colorScheme.tertiary
               : colorScheme.onSurfaceVariant,
-        ),
       ),
     );
   }

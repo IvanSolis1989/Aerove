@@ -1,6 +1,7 @@
 import 'dart:ui' show ClipOp;
 
-import 'package:fl_clash/ui/glass_foreground.dart';
+import 'package:fl_clash/ui/foreground_ink.dart';
+
 import 'package:material_ui/material_ui.dart';
 
 /// Windows 11 renders every caption glyph as a 10x10 Segoe Fluent icon.
@@ -17,11 +18,15 @@ class CaptionIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     final color =
         IconTheme.of(context).color ?? Theme.of(context).colorScheme.onSurface;
-    return CustomPaint(
+    return GlassInk(
+      source: color,
+      role: GlassInkRole.icon,
+      child: CustomPaint(
       size: const Size.square(captionGlyphSize),
       painter: _CaptionGlyphPainter(
         glyph: glyph,
-        color: GlassForeground.colorOf(context, color),
+        color: color,
+      ),
       ),
     );
   }

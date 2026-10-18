@@ -60,9 +60,11 @@ class RecordListItem extends StatelessWidget {
     final level = context.raisedSurfaceLevel;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: DecoratedBox(
+      child: CardGroup(
+        shape: shape,
+        child: DecoratedBox(
         decoration: ShapeDecoration(
-          color: level.colorOf(context.colorScheme),
+          color: LiquidGlassScope.of(context) ? Colors.transparent : level.colorOf(context.colorScheme),
           shape: shape,
         ),
         child: Material(
@@ -87,6 +89,7 @@ class RecordListItem extends StatelessWidget {
             ),
           ),
         ),
+      ),
       ),
     );
   }
@@ -158,7 +161,7 @@ class RecordTimestamp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(dateTime, maxLines: 1);
+    return GlassText(dateTime, maxLines: 1);
   }
 }
 
@@ -167,7 +170,7 @@ class RecordArrow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
+    return GlassText(
       '→',
       style: RecordTextStyles.of(context).secondary.toJetBrainsMono,
     );
@@ -182,7 +185,7 @@ class DetailRow extends StatelessWidget {
   const DetailRow({super.key, required this.title, this.value, this.copyText});
 
   DetailRow.text({super.key, required this.title, required String value})
-    : value = Text(value),
+    : value = GlassText(value),
       copyText = value;
 
   Future<void> _copy(BuildContext context, String text) async {
@@ -198,12 +201,12 @@ class DetailRow extends StatelessWidget {
     return DecorationListItem(
       onPressed: copyText == null ? null : () => _copy(context, copyText),
       title: value == null
-          ? Text(title)
+          ? GlassText(title)
           : Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               spacing: 20,
               children: [
-                Text(title),
+                GlassText(title),
                 Expanded(
                   child: Align(
                     alignment: Alignment.centerRight,

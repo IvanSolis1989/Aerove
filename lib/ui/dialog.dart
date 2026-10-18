@@ -1,8 +1,9 @@
 import 'dart:math' as math;
 
+import 'package:fl_clash/ui/foreground_ink.dart';
+
 import 'package:fl_clash/ui/color.dart';
 import 'package:fl_clash/ui/context.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/input.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/motion.dart';
@@ -432,15 +433,15 @@ class CommonDialog extends StatelessWidget {
     final trailing = this.trailing;
     if (!hasFields) {
       return trailing == null
-          ? Text(title)
+          ? GlassText(title)
           : Row(
               children: [
-                Expanded(child: Text(title)),
+                Expanded(child: GlassText(title)),
                 trailing,
               ],
             );
     }
-    final text = Text(title, textAlign: TextAlign.center);
+    final text = GlassText(title, textAlign: TextAlign.center);
     if (trailing == null) {
       return SizedBox(width: double.infinity, child: text);
     }
@@ -641,7 +642,7 @@ class _AlertAction extends StatelessWidget {
       data: TextButtonThemeData(
         style:
             TextButton.styleFrom(
-              foregroundColor: GlassForeground.colorOf(context, foreground),
+              foregroundColor: foreground,
               disabledForegroundColor: colorScheme.onSurface.withValues(
                 alpha: 0.38,
               ),

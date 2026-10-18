@@ -43,13 +43,13 @@ class SubscriptionInfoView extends StatelessWidget {
         .copyWith(color: context.colorScheme.onSurfaceVariant);
     final metaStyle = AppTextStyle.footnote.of(context).toLight;
     final trafficLabel = '$useShow / $totalShow';
-    final trafficText = Text(
+    final trafficText = GlassText(
       trafficLabel,
       style: valueStyle,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
     );
-    final expireText = Text(
+    final expireText = GlassText(
       expireShow,
       style: metaStyle,
       maxLines: 1,
@@ -94,7 +94,7 @@ class SubscriptionInfoDetailView extends StatelessWidget {
 
   Widget _buildItem({String? label, required String value}) {
     return DecorationListItem(
-      title: Text(label ?? value),
+      title: GlassText(label ?? value),
       subtitle: label == null ? null : TooltipLabel(value),
     );
   }

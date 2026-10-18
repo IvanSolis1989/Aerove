@@ -77,7 +77,7 @@ class _InitErrorScreenState extends State<InitErrorScreen> {
 
   void _showSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+      SnackBar(content: GlassText(message), behavior: SnackBarBehavior.floating),
     );
   }
 
@@ -105,16 +105,16 @@ class _InitErrorScreenState extends State<InitErrorScreen> {
                 onPressed: () {
                   Navigator.of(context).pop(false);
                 },
-                child: Text(appLocalizations.cancel),
+                child: GlassText(appLocalizations.cancel),
               ),
               TextButton(
                 onPressed: () {
                   Navigator.of(context).pop(true);
                 },
-                child: Text(appLocalizations.confirm),
+                child: GlassText(appLocalizations.confirm),
               ),
             ],
-            child: Text(appLocalizations.clearDataAndExitTip),
+            child: GlassText(appLocalizations.clearDataAndExitTip),
           );
         },
       ),
@@ -189,7 +189,7 @@ class _InitErrorScreenState extends State<InitErrorScreen> {
                           ),
                         ),
                         const SizedBox(height: 20),
-                        Text(
+                        GlassText(
                           appLocalizations.initFailed,
                           style: AppTextStyle.title2.of(
                             context,
@@ -197,7 +197,7 @@ class _InitErrorScreenState extends State<InitErrorScreen> {
                           ),
                         ),
                         const SizedBox(height: 8),
-                        Text(
+                        GlassText(
                           appLocalizations.initFailedTip,
                           style: AppTextStyle.subheadline
                               .of(context)
@@ -246,20 +246,20 @@ class _InitErrorScreenState extends State<InitErrorScreen> {
                       foregroundColor: colorScheme.error,
                     ),
                     icon: const GlyphIcon(AppGlyphs.broom, size: 18),
-                    label: Text(appLocalizations.clearData),
+                    label: GlassText(appLocalizations.clearData),
                   ),
                 ),
                 ElasticButton(
                   child: OutlinedButton.icon(
                     onPressed: _copyDetails,
                     icon: const GlyphIcon(AppGlyphs.copy, size: 18),
-                    label: Text(appLocalizations.copy),
+                    label: GlassText(appLocalizations.copy),
                   ),
                 ),
                 ElasticButton(
                   child: FilledButton(
                     onPressed: _isExiting ? null : _exit,
-                    child: Text(appLocalizations.exit),
+                    child: GlassText(appLocalizations.exit),
                   ),
                 ),
               ],
@@ -289,7 +289,7 @@ class _ErrorSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
+        GlassText(
           label,
           style: AppTextStyle.subheadline.of(context, emphasized: true),
         ),

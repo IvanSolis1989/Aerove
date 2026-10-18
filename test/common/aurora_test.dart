@@ -228,7 +228,7 @@ void main() {
         ]) {
           final tint = auroraTint(color, brightness);
           if (brightness == Brightness.light) {
-            expect(Hct.fromInt(tint.toARGB32()).chroma, lessThanOrEqualTo(20));
+            expect(Hct.fromInt(tint.toARGB32()).chroma, lessThanOrEqualTo(30));
           } else {
             expect(HSVColor.fromColor(tint).saturation, closeTo(0.60, 0.012));
             final original = HSVColor.fromColor(color);

@@ -3,7 +3,6 @@ import 'dart:ui' show ImageFilter, Vertices, VertexMode;
 import 'package:fl_clash/common/aurora.dart';
 import 'package:fl_clash/common/aurora_motion.dart';
 import 'package:fl_clash/ui/aurora.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/shape.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/surface.dart';
@@ -102,8 +101,7 @@ class AuroraAppSurface extends ConsumerWidget {
           ),
         );
     final effectiveTheme = glassEnabled
-        ? GlassForeground.theme(
-            surfaceTheme.copyWith(
+        ? surfaceTheme.copyWith(
               scaffoldBackgroundColor: Colors.transparent,
               filledButtonTheme: FilledButtonThemeData(
                 style: glassButtons.merge(surfaceTheme.filledButtonTheme.style),
@@ -130,8 +128,7 @@ class AuroraAppSurface extends ConsumerWidget {
                     ),
                     foregroundColor: surfaceColors.onSurface,
                   ),
-            ),
-          )
+            )
         : theme;
     return LiquidGlassScope(
       enabled: glassEnabled,
@@ -144,12 +141,12 @@ class AuroraAppSurface extends ConsumerWidget {
           enabled: enabled,
           child: Theme(
             data: effectiveTheme,
-            child: GlassForegroundText(
-              child: Stack(
+            child: Stack(
                 fit: StackFit.expand,
                 children: [
                   Positioned.fill(
-                    child: enabled
+                    child: LiquidGlassColorField(
+                      child: enabled
                         ? IgnorePointer(
                             child: AnimatedSwitcher(
                               duration: MediaQuery.disableAnimationsOf(context)
@@ -174,11 +171,11 @@ class AuroraAppSurface extends ConsumerWidget {
                             ),
                           )
                         : ColoredBox(color: theme.scaffoldBackgroundColor),
+                    ),
                   ),
                   child,
                 ],
               ),
-            ),
           ),
         ),
       ),

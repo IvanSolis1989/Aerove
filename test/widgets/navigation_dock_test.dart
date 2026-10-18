@@ -637,7 +637,7 @@ void main() {
           .widgetList<Text>(
             find.descendant(
               of: find.byType(FloatingNavigationBar),
-              matching: find.byType(Text),
+              matching: find.bySubtype<Text>(),
             ),
           )
           .toList();

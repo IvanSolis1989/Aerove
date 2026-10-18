@@ -1,7 +1,6 @@
 import 'dart:math';
 
 import 'package:fl_clash/common/common.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/ui.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -28,12 +27,12 @@ class ExpireChip extends StatelessWidget {
         ),
         child: Padding(
           padding: _padding,
-          child: Text(
+          child: GlassText(
             expire.show,
             maxLines: 1,
             style: AppTextStyle.caption1
                 .of(context, emphasized: true)
-                .copyWith(color: GlassForeground.colorOf(context, color)),
+                .copyWith(color: color),
           ),
         ),
       ),
@@ -63,7 +62,7 @@ class ChipTitle extends StatelessWidget {
     final chip = this.chip;
     final titleWidth = MeasureScope.of(context)
         .computeTextSize(
-          Text(title, style: DefaultTextStyle.of(context).style.merge(style)),
+          GlassText(title, style: DefaultTextStyle.of(context).style.merge(style)),
         )
         .width;
     final chipsWidth =
@@ -78,7 +77,7 @@ class ChipTitle extends StatelessWidget {
     final style = this.style;
     final chip = this.chip;
     final expire = this.expire;
-    final text = Text(
+    final text = GlassText(
       title,
       style: style,
       strutStyle: StrutStyle.fromTextStyle(

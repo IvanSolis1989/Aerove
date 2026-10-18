@@ -426,7 +426,7 @@ class _CurrentIcon extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   TooltipText(
-                    text: Text(
+                    text: GlassText(
                       description.title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -434,7 +434,7 @@ class _CurrentIcon extends StatelessWidget {
                     ),
                   ),
                   if (subtitle != null && subtitle.isNotEmpty)
-                    Text(
+                    GlassText(
                       subtitle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -579,7 +579,7 @@ class _IconTile extends StatelessWidget {
                   const Positioned(top: -4, right: -4, child: SelectionBadge()),
               ],
             ),
-            Text(
+            GlassText(
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,

@@ -372,7 +372,7 @@ class _ScanPageState extends ConsumerState<ScanPage>
             valueListenable: _invalidHint,
             builder: (context, invalid, _) => Semantics(
               liveRegion: true,
-              child: Text(
+              child: GlassText(
                 invalid
                     ? appLocalizations.invalidProfileQrcode
                     : appLocalizations.qrcodeDesc,

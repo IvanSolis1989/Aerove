@@ -347,13 +347,13 @@ class _ResourceItem extends StatelessWidget {
       menuItems: _menuItems(context),
       child: DecorationListItem(
         onPressed: onEdit,
-        title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+        title: GlassText(title, maxLines: 1, overflow: TextOverflow.ellipsis),
         subtitle: lastUpdateTime != null || pending
             ? LastUpdateTimeText(
                 lastUpdateDate: lastUpdateTime,
                 style: subtitleStyle,
               )
-            : Text(context.appLocalizations.unknown, style: subtitleStyle),
+            : GlassText(context.appLocalizations.unknown, style: subtitleStyle),
         trailing: _buildTrailing(context),
       ),
     );

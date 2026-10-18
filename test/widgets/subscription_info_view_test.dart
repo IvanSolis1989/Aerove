@@ -42,7 +42,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byType(SubscriptionInfoView),
-        matching: find.byType(Text),
+        matching: find.bySubtype<Text>(),
       ),
       findsOneWidget,
     );
@@ -79,7 +79,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byType(SubscriptionInfoView),
-        matching: find.byType(Text),
+        matching: find.bySubtype<Text>(),
       ),
       findsNWidgets(2),
     );

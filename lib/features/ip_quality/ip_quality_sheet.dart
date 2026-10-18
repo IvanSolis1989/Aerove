@@ -3,7 +3,6 @@ import 'package:fl_clash/common/ip_quality.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/providers/ip_quality.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -64,7 +63,7 @@ class _HideIpItem extends ConsumerWidget {
         .read(appSettingProvider.notifier)
         .update((state) => state.copyWith(hideIp: value));
     return DecorationListItem(
-      title: Text(context.appLocalizations.hideIp),
+      title: GlassText(context.appLocalizations.hideIp),
       onPressed: () => update(!hideIp),
       trailing: Switch(value: hideIp, onChanged: update),
     );
@@ -94,7 +93,7 @@ class _IpQualityDetail extends ConsumerWidget {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(_tipInset, 8, _tipInset, 0),
-          child: Text(
+          child: GlassText(
             localizations.detectionTip,
             style: AppTextStyle.body
                 .of(context)
@@ -112,13 +111,10 @@ class _IpQualityDetail extends ConsumerWidget {
             if (failed)
               DetailRow(
                 title: localizations.ipType,
-                value: Text(
+                value: GlassText(
                   localizations.ipQualityFailed,
                   style: TextStyle(
-                    color: GlassForeground.colorOf(
-                      context,
-                      context.colorScheme.error,
-                    ),
+                    color: context.colorScheme.error,
                   ),
                 ),
               )
@@ -138,7 +134,7 @@ class _IpQualityDetail extends ConsumerWidget {
               for (final failure in error.failures)
                 DetailRow(
                   title: failure.source.label,
-                  value: Text(failure.status.label(context)),
+                  value: GlassText(failure.status.label(context)),
                 ),
             ],
           ),
@@ -180,23 +176,23 @@ class _IpQualityDetail extends ConsumerWidget {
     return [
       DetailRow(
         title: localizations.ipQualityLevel,
-        value: Text(
+        value: GlassText(
           quality.level.label(context),
           style: TextStyle(
             color: levelColor == null
                 ? null
-                : GlassForeground.colorOf(context, levelColor),
+                : levelColor,
           ),
         ),
       ),
       DetailRow(
         title: localizations.ipType,
-        value: Text(quality.type.label(context)),
+        value: GlassText(quality.type.label(context)),
       ),
       DetailRow(
         title: localizations.ipFlags,
         value: flags.isEmpty
-            ? Text(localizations.none)
+            ? GlassText(localizations.none)
             : Wrap(
                 spacing: 6,
                 runSpacing: 4,
@@ -212,8 +208,8 @@ class _IpQualityDetail extends ConsumerWidget {
     Widget valueOf(String? text, {required double width}) =>
         switch ((quality, text)) {
           (null, _) => SkeletonText(width: width),
-          (_, final text?) => Text(text),
-          _ => const Text('—'),
+          (_, final text?) => GlassText(text),
+          _ => const GlassText('—'),
         };
     final organization = quality?.organization;
     final asn = switch (quality?.asn) {

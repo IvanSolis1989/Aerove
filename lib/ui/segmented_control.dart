@@ -1,3 +1,4 @@
+import 'package:fl_clash/ui/foreground_ink.dart';
 import 'package:fl_clash/ui/context.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/shape.dart';
@@ -97,7 +98,7 @@ class SegmentedControl<T> extends StatelessWidget {
                                               : colorScheme.onPrimary
                                         : colorScheme.onSurfaceVariant,
                                   ),
-                              child: Text(
+                              child: GlassText(
                                 label,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,

@@ -104,7 +104,7 @@ class IntranetIpCard extends ConsumerWidget {
               alignment: AlignmentDirectional.centerStart,
               child: switch (localIp) {
                 null => SkeletonText(width: 120, style: style),
-                '' => Text(
+                '' => GlassText(
                   appLocalizations.noNetwork,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,

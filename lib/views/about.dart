@@ -47,8 +47,8 @@ class AboutView extends ConsumerWidget {
   }) {
     return ListItem(
       leading: _LinkBadge(glyph: glyph),
-      title: Text(title),
-      subtitle: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+      title: GlassText(title),
+      subtitle: GlassText(label, maxLines: 1, overflow: TextOverflow.ellipsis),
       trailing: const GlyphIcon(AppGlyphs.openExternal),
       onTap: () {
         dialogs.openUrl(url);
@@ -115,8 +115,8 @@ class AboutView extends ConsumerWidget {
                   leading: CircleAvatar(
                     foregroundImage: AssetImage(contributor.avatar),
                   ),
-                  title: Text(contributor.name),
-                  subtitle: Text(appLocalizations.appIconDesign),
+                  title: GlassText(contributor.name),
+                  subtitle: GlassText(appLocalizations.appIconDesign),
                 ),
             ],
           ),
@@ -169,7 +169,7 @@ class _AboutHero extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 20),
-          Text(
+          GlassText(
             displayAppName,
             style: AppTextStyle.title2.of(context, emphasized: true),
           ),
@@ -197,7 +197,7 @@ class _AboutHero extends StatelessWidget {
           const SizedBox(height: 16),
           ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 420),
-            child: Text(
+            child: GlassText(
               appLocalizations.desc,
               textAlign: TextAlign.center,
               style: AppTextStyle.subheadline
@@ -235,7 +235,7 @@ class _Pill extends StatelessWidget {
       decoration: ShapeDecoration(color: color, shape: AppShape.full),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        child: Text(
+        child: GlassText(
           label,
           style: AppTextStyle.caption1
               .of(context, emphasized: true)

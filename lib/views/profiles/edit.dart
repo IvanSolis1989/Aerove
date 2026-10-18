@@ -513,7 +513,7 @@ class _AutoUpdateIntervalField extends StatelessWidget {
               onChanged: onChanged,
             ),
           ),
-          Text(
+          GlassText(
             appLocalizations.minutes,
             style: AppTextStyle.subheadline.of(context),
           ),
@@ -538,7 +538,7 @@ class _ProfileFileItem extends StatelessWidget {
     final style = context.listCaptionStyle;
     final lastModified = fileInfo.lastModified;
     if (lastModified == null) {
-      return Text(context.appLocalizations.unknown, style: style);
+      return GlassText(context.appLocalizations.unknown, style: style);
     }
     return LastUpdateTimeText(lastUpdateDate: lastModified, style: style);
   }
@@ -575,12 +575,12 @@ class _ProfileFileItem extends StatelessWidget {
                     menuItems: _menuItems(context),
                     child: DecorationListItem(
                       contentPadding: const EdgeInsets.only(left: 16),
-                      title: Text(appLocalizations.profile),
+                      title: GlassText(appLocalizations.profile),
                       subtitle: _buildSubtitle(context, fileInfo),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text(
+                          GlassText(
                             fileInfo.size.traffic.show,
                             style: context.listCaptionStyle,
                           ),

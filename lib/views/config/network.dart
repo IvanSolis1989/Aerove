@@ -276,7 +276,7 @@ class LoopbackItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListItem(
-      title: Text(context.appLocalizations.loopback),
+      title: GlassText(context.appLocalizations.loopback),
       onTap: () {
         windows?.runas(
           '"${join(dirname(Platform.resolvedExecutable), "EnableLoopback.exe")}"',
@@ -312,8 +312,8 @@ class _NumberItem extends ConsumerWidget {
     final label = title(appLocalizations);
     final value = ref.watch(patchClashConfigProvider.select(select));
     return ListItem.input(
-      title: Text(label),
-      subtitle: Text(
+      title: GlassText(label),
+      subtitle: GlassText(
         isSeconds ? appLocalizations.secondsCount(value) : '$value',
       ),
       dialogTitle: label,

@@ -117,7 +117,7 @@ class _Title extends ConsumerWidget {
                         children: [
                           GlyphIcon(_getIcon(type)),
                           const SizedBox(width: 8),
-                          Flexible(child: Text(_getTitle(context, type))),
+                          Flexible(child: GlassText(_getTitle(context, type))),
                         ],
                       ),
                     ),
@@ -128,7 +128,7 @@ class _Title extends ConsumerWidget {
           const SizedBox(height: 12),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
+            child: GlassText(
               _getDesc(context, extendType),
               style: AppTextStyle.footnote
                   .of(context)

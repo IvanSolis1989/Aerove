@@ -193,7 +193,7 @@ void main() {
 
     expect(find.byKey(hintKey), findsOneWidget);
     final label = tester.widget<Text>(
-      find.descendant(of: find.byKey(hintKey), matching: find.byType(Text)),
+      find.descendant(of: find.byKey(hintKey), matching: find.bySubtype<Text>()),
     );
     expect(label.data, requests.last.start.showFull);
     // The hint is pinned to the thumb: at the newest end the thumb center

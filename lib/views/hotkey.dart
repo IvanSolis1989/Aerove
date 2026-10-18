@@ -3,7 +3,6 @@ import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter/services.dart';
@@ -147,7 +146,7 @@ class _HotKeyIntro extends StatelessWidget {
         children: [
           GlyphIcon(AppGlyphs.keyboard, color: colorScheme.primary),
           Expanded(
-            child: Text(
+            child: GlassText(
               context.appLocalizations.hotkeyDesc,
               style: AppTextStyle.subheadline
                   .of(context)
@@ -178,33 +177,27 @@ class _HotKeyItem extends ConsumerWidget {
     return DecorationListItem(
       contentPadding: EdgeInsets.only(left: 16, right: key == null ? 16 : 6),
       leading: GlyphIcon(_glyphOf(action)),
-      title: Text(action.label, maxLines: 2, overflow: TextOverflow.ellipsis),
+      title: GlassText(action.label, maxLines: 2, overflow: TextOverflow.ellipsis),
       subtitle: failure == null
           ? null
           : Tooltip(
               message: failure,
-              child: Text(
+              child: GlassText(
                 appLocalizations.hotkeyUnavailable,
                 style: AppTextStyle.footnote
                     .of(context)
                     .copyWith(
-                      color: GlassForeground.colorOf(
-                        context,
-                        colorScheme.error,
-                      ),
+                      color: colorScheme.error,
                     ),
               ),
             ),
       trailing: key == null
-          ? Text(
+          ? GlassText(
               appLocalizations.hotkeyNotSet,
               style: AppTextStyle.subheadline
                   .of(context)
                   .copyWith(
-                    color: GlassForeground.colorOf(
-                      context,
-                      colorScheme.outline,
-                    ),
+                    color: colorScheme.outline,
                   ),
             )
           : Row(
@@ -298,7 +291,7 @@ class _KeyCap extends StatelessWidget {
       child: Align(
         widthFactor: 1,
         heightFactor: 1,
-        child: Text(label, style: textStyle.copyWith(color: foregroundColor)),
+        child: GlassText(label, style: textStyle.copyWith(color: foregroundColor)),
       ),
     );
   }
@@ -415,7 +408,7 @@ class _HotKeyRecorderState extends ConsumerState<HotKeyRecorder> {
         ],
       );
     } else {
-      content = Text(
+      content = GlassText(
         context.appLocalizations.pressKeyboard,
         textAlign: TextAlign.center,
         style: AppTextStyle.body
@@ -471,14 +464,14 @@ class _HotKeyRecorderState extends ConsumerState<HotKeyRecorder> {
     }
     return Padding(
       padding: const EdgeInsets.only(top: 12),
-      child: Text(
+      child: GlassText(
         text,
         style: AppTextStyle.subheadline
             .of(context)
             .copyWith(
               color: color == null
                   ? null
-                  : GlassForeground.colorOf(context, color),
+                  : color,
             ),
       ),
     );
@@ -512,7 +505,7 @@ class _HotKeyRecorderState extends ConsumerState<HotKeyRecorder> {
             onPressed: () {
               Navigator.of(context).pop();
             },
-            child: Text(appLocalizations.cancel),
+            child: GlassText(appLocalizations.cancel),
           ),
           if (widget.hotKeyAction.key != null)
             TextButton(
@@ -522,11 +515,11 @@ class _HotKeyRecorderState extends ConsumerState<HotKeyRecorder> {
                   context.colorScheme.destructive,
                 ),
               ),
-              child: Text(appLocalizations.remove),
+              child: GlassText(appLocalizations.remove),
             ),
           TextButton(
             onPressed: isValid ? _handleSave : null,
-            child: Text(appLocalizations.save),
+            child: GlassText(appLocalizations.save),
           ),
         ],
         child: Column(

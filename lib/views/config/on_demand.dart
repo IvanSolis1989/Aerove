@@ -150,7 +150,7 @@ class _OnDemandViewState extends ConsumerState<OnDemandView>
           child: SelectedDecorationListItem(
             isEditing: isEditing,
             title: TooltipText(
-              text: Text(ssid, maxLines: 2, overflow: TextOverflow.ellipsis),
+              text: GlassText(ssid, maxLines: 2, overflow: TextOverflow.ellipsis),
             ),
             isSelected: isSelected,
             onSelected: () {
@@ -212,14 +212,14 @@ class _OnDemandViewState extends ConsumerState<OnDemandView>
               ExcludeSemantics(
                 child: Opacity(
                   opacity: 0,
-                  child: Text(
+                  child: GlassText(
                     authorized
                         ? appLocalizations.tapToAuthorize
                         : appLocalizations.authorized,
                   ),
                 ),
               ),
-              Text(
+              GlassText(
                 authorized
                     ? appLocalizations.authorized
                     : appLocalizations.tapToAuthorize,

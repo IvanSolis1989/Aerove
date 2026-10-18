@@ -1,3 +1,4 @@
+import 'package:fl_clash/ui/foreground_ink.dart';
 part of 'input.dart';
 
 /// Public for `MapEditView`, whose entries are entered in a form.
@@ -271,10 +272,10 @@ class _ListEditViewState extends EditViewState<ListEditView, String> {
   @override
   Widget? buildSubtitle(String entry) {
     if (widget.itemValidator?.call(entry) case final error?) {
-      return Text(
+      return GlassText(
         error,
         style: TextStyle(
-          color: GlassForeground.colorOf(context, context.colorScheme.error),
+          color: context.colorScheme.error,
         ),
       );
     }

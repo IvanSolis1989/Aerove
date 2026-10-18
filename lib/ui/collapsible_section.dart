@@ -1,5 +1,7 @@
 import 'dart:math' as math;
 
+import 'package:fl_clash/ui/foreground_ink.dart';
+
 import 'package:fl_clash/ui/context.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/item_position.dart';
@@ -128,7 +130,7 @@ class _SliverCollapsibleSectionState extends State<SliverCollapsibleSection>
                   spacing: 8,
                   children: [
                     Expanded(
-                      child: Text.rich(
+                      child: GlassText.rich(
                         TextSpan(
                           children: [
                             TextSpan(text: widget.label),

@@ -2,7 +2,6 @@ import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
@@ -278,15 +277,12 @@ class _DnsResult extends StatelessWidget {
           _DnsKeyword(dnsQuery.rcode, tone: RecordTone.error),
         if (summary.isNotEmpty)
           Flexible(
-            child: Text(
+            child: GlassText(
               summary,
               style: TextStyle(
-                color: GlassForeground.colorOf(
-                  context,
-                  dnsQuery.isFailed
+                color: dnsQuery.isFailed
                       ? context.colorScheme.error
                       : context.colorScheme.onSurfaceVariant,
-                ),
               ),
             ),
           ),
@@ -332,7 +328,7 @@ class DnsQueryItem extends StatelessWidget {
     return RecordListItem(
       onTap: () => _showDnsQueryDetail(context, dnsQuery),
       header: RecordHeader(
-        trailing: Text('${dnsQuery.delay} ms'),
+        trailing: GlassText('${dnsQuery.delay} ms'),
         children: [
           RecordTimestamp(dnsQuery.time.showFull),
           RecordLabel(
@@ -345,16 +341,16 @@ class DnsQueryItem extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         spacing: 4,
         children: [
-          Text(dnsQuery.domain, style: styles.title),
+          GlassText(dnsQuery.domain, style: styles.title),
           if (summary.isNotEmpty)
-            Text(
+            GlassText(
               summary,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: styles.secondary.copyWith(
                 color: accentColor == null
                     ? null
-                    : GlassForeground.colorOf(context, accentColor),
+                    : accentColor,
               ),
             ),
           Wrap(
@@ -371,7 +367,7 @@ class DnsQueryItem extends StatelessWidget {
                   onPressed: () => onClickKeyword?.call(tag),
                 ),
               if (dnsQuery.upstream.isNotEmpty)
-                Text(dnsQuery.upstream, style: styles.secondary),
+                GlassText(dnsQuery.upstream, style: styles.secondary),
             ],
           ),
         ],
@@ -447,15 +443,12 @@ class _ErrorRow extends StatelessWidget {
     return DecorationListItem(
       onPressed: () => _copy(context, error),
       minVerticalPadding: 14,
-      title: Text(
+      title: GlassText(
         error,
         style: AppTextStyle.subheadline
             .of(context)
             .copyWith(
-              color: GlassForeground.colorOf(
-                context,
-                context.colorScheme.error,
-              ),
+              color: context.colorScheme.error,
             ),
       ),
     );

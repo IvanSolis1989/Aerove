@@ -152,7 +152,7 @@ class _ProxyProviderItem extends ConsumerWidget {
       contentPadding: const EdgeInsets.only(left: 16, right: 8),
       onPressed: invalid ? null : () => _handleEdit(context, ref),
       title: TooltipText(
-        text: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+        text: GlassText(name, maxLines: 1, overflow: TextOverflow.ellipsis),
       ),
       subtitle: lastUpdateDate == null || invalid
           ? null
@@ -225,7 +225,7 @@ class _RuleProviderItemState extends State<_RuleProviderItem> {
           invalid: widget.invalid,
           contentPadding: const EdgeInsets.only(left: 16, right: 8),
           title: TooltipText(
-            text: Text(
+            text: GlassText(
               widget.name,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -442,7 +442,7 @@ class _ProxyProviderOptionsViewState
               hintText: context.appLocalizations.optional,
             ),
           ),
-          Text(suffix, style: AppTextStyle.subheadline.of(context)),
+          GlassText(suffix, style: AppTextStyle.subheadline.of(context)),
         ],
       ),
     );
@@ -573,7 +573,7 @@ class _ProxyProviderOptionsViewState
           mainAxisSize: MainAxisSize.min,
           children: [
             Flexible(
-              child: Text(
+              child: GlassText(
                 (proxyOverride.ipVersion ?? IpVersion.dual).value,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,

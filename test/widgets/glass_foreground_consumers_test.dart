@@ -1,5 +1,4 @@
 import 'package:fl_clash/features/form/form_row.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -45,9 +44,7 @@ void main() {
               ),
             ),
           );
-          final expected = enabled && !highContrast
-              ? GlassForeground.cap(source)
-              : source;
+          final expected = source;
           expect(
             tester.widget<Text>(find.text('Explicit chip')).style!.color,
             expected,

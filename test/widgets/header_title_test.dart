@@ -4,7 +4,6 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:fl_clash/ui/liquid_glass.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/scaffold.dart';
 import 'package:fl_clash/ui/view_scope.dart';
 import 'package:flutter/rendering.dart';
@@ -229,9 +228,7 @@ Future<Uint8List> _titleScene(
     platform: TargetPlatform.android,
     fontFamily: 'PageTitleProbe',
   );
-  final theme = enabled && !highContrast
-      ? GlassForeground.theme(baseTheme)
-      : baseTheme;
+  final theme = baseTheme;
   await tester.pumpWidget(const SizedBox.shrink());
   await tester.pumpWidget(
     TestApp(

@@ -238,7 +238,7 @@ class _SelectionSheetState<T> extends ConsumerState<SelectionSheet<T>>
         : ItemPosition.get(index, section.items.length);
     final subtitle = section.subtitleBuilder?.call(context, item);
     final title = TooltipText(
-      text: Text(
+      text: GlassText(
         widget.labelBuilder(item),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,

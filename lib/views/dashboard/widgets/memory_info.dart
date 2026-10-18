@@ -223,7 +223,7 @@ class _MemorySummary extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: mobile ? MainAxisSize.min : MainAxisSize.max,
       children: [
-        Text.rich(
+        GlassText.rich(
           TextSpan(
             children: [
               TextSpan(
@@ -261,8 +261,8 @@ class _MemorySummary extends StatelessWidget {
                     ),
                     child: const SizedBox.square(dimension: 8),
                   ),
-                  Text(part.label, style: DashboardText.label(context)),
-                  Text(
+                  GlassText(part.label, style: DashboardText.label(context)),
+                  GlassText(
                     '${part.bytes.traffic.value} ${part.bytes.traffic.unit}',
                     style: AppTextStyle.footnote
                         .of(context, emphasized: true)
@@ -375,7 +375,7 @@ class _MemoryDetailSheetState extends ConsumerState<MemoryDetailSheet>
   ) {
     final core = snapshot.core;
     if (core == null) {
-      return [ListItem(title: Text(appLocalizations.memoryCoreNotRunning))];
+      return [ListItem(title: GlassText(appLocalizations.memoryCoreNotRunning))];
     }
     final total = snapshot.coreTotal;
     return [
@@ -469,7 +469,7 @@ class _MemorySection extends StatelessWidget {
       children: [
         ListHeader(
           title: title,
-          trailing: Text(
+          trailing: GlassText(
             bytes.traffic.show,
             style: AppTextStyle.footnote
                 .of(context)
@@ -511,7 +511,7 @@ class _MemoryOverview extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
+          GlassText(
             appLocalizations.total,
             style: AppTextStyle.headline
                 .of(context)
@@ -522,14 +522,14 @@ class _MemoryOverview extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.baseline,
             textBaseline: TextBaseline.alphabetic,
             children: [
-              Text(
+              GlassText(
                 total.value,
                 style: AppTextStyle.title1
                     .of(context, emphasized: true)
                     .copyWith(color: colorScheme.onSurface),
               ),
               const SizedBox(width: 6),
-              Text(
+              GlassText(
                 total.unit,
                 style: AppTextStyle.headline
                     .of(context)
@@ -548,7 +548,7 @@ class _MemoryOverview extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          Text(
+          GlassText(
             snapshot.coreInProcess
                 ? appLocalizations.memoryEstimateSharedDesc
                 : appLocalizations.memoryEstimateDesc,
@@ -640,8 +640,8 @@ class _MemoryRow extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         spacing: 20,
         children: [
-          Flexible(child: Text(label)),
-          Text(
+          Flexible(child: GlassText(label)),
+          GlassText(
             '${percent.fixed(decimals: 1)}%',
             style: AppTextStyle.subheadline
                 .of(context)

@@ -1,6 +1,5 @@
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/state.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter/services.dart';
@@ -85,7 +84,7 @@ class FormRow extends StatelessWidget {
       style: titleStyle?.color == null
           ? titleStyle
           : titleStyle!.copyWith(
-              color: GlassForeground.colorOf(context, titleStyle!.color!),
+              color: titleStyle!.color!,
             ),
       maxLines: _titleMaxLines,
     );
@@ -220,7 +219,7 @@ class FormRowTextField extends StatelessWidget {
             ? null
             : Padding(
                 padding: const EdgeInsetsDirectional.only(end: _caretMargin),
-                child: Text(
+                child: GlassText(
                   hintText,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,

@@ -77,7 +77,7 @@ void main() {
     final texts = find
         .descendant(
           of: find.byWidget(context.widget),
-          matching: find.byType(Text),
+          matching: find.bySubtype<Text>(),
         )
         .evaluate()
         .map((element) => (element.widget as Text).data)

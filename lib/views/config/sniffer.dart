@@ -188,8 +188,8 @@ class _SniffItem extends ConsumerWidget {
     );
     return ListItem.open(
       leading: leading,
-      title: Text(overrideKey.label(appLocalizations)),
-      subtitle: Text(
+      title: GlassText(overrideKey.label(appLocalizations)),
+      subtitle: GlassText(
         _portsText(appLocalizations, ports),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,

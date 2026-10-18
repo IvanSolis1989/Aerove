@@ -39,8 +39,8 @@ class UaItem extends ConsumerWidget {
       patchClashConfigProvider.select((state) => state.globalUa),
     );
     return ListItem.open(
-      title: Text(appLocalizations.userAgent),
-      subtitle: Text(globalUa ?? appLocalizations.defaultText),
+      title: GlassText(appLocalizations.userAgent),
+      subtitle: GlassText(globalUa ?? appLocalizations.defaultText),
       widget: const UserAgentsView(),
     );
   }
@@ -56,8 +56,8 @@ class TestUrlItem extends ConsumerWidget {
       appSettingProvider.select((state) => state.testUrl),
     );
     return ListItem.input(
-      title: Text(appLocalizations.testUrl),
-      subtitle: Text(testUrl),
+      title: GlassText(appLocalizations.testUrl),
+      subtitle: GlassText(testUrl),
       resetValue: defaultTestUrl,
       dialogTitle: appLocalizations.testUrl,
       value: testUrl,
@@ -100,8 +100,8 @@ class PortItem extends ConsumerWidget {
       patchClashConfigProvider.select((state) => state.mixedPort),
     );
     return ListItem(
-      title: Text(appLocalizations.port),
-      subtitle: Text('$mixedPort'),
+      title: GlassText(appLocalizations.port),
+      subtitle: GlassText('$mixedPort'),
       onTap: () {
         handleShowPortForm(context);
       },
@@ -119,8 +119,8 @@ class HostsItem extends ConsumerWidget {
       patchClashConfigProvider.select((state) => state.hosts),
     );
     return ListItem.open(
-      title: const Text('Hosts'),
-      subtitle: Text(
+      title: const GlassText('Hosts'),
+      subtitle: GlassText(
         hosts.isEmpty
             ? appLocalizations.none
             : appLocalizations.itemsCount(hosts.length),
@@ -130,8 +130,8 @@ class HostsItem extends ConsumerWidget {
         entries: hosts,
         keyMaxLength: TextInputLimits.domain,
         valueMaxLength: TextInputLimits.hostValue,
-        titleBuilder: (item) => Text(item.key),
-        subtitleBuilder: (item) => Text(item.value),
+        titleBuilder: (item) => GlassText(item.key),
+        subtitleBuilder: (item) => GlassText(item.value),
       ),
       onChanged: (value) {
         ref
@@ -275,7 +275,7 @@ class GeneralView extends ConsumerWidget {
         update: (state, value) => state.copyWith(autoRun: value),
       ),
       ListItem.open(
-        title: Text(appLocalizations.onDemand),
+        title: GlassText(appLocalizations.onDemand),
         widget: const OnDemandView(),
       ),
       _appSettingToggle(

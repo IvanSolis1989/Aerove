@@ -921,7 +921,7 @@ class _GroupActions extends StatelessWidget {
               ],
             )
           else
-            Text(
+            GlassText(
               groupType,
               style: AppTextStyle.caption1
                   .of(context, emphasized: true)

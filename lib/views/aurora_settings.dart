@@ -115,7 +115,7 @@ class AuroraSettings extends ConsumerWidget {
                   });
                 },
                 icon: const GlyphIcon(AppGlyphs.shuffle, fill: 1),
-                label: Text(strings.auroraRegenerate),
+                label: GlassText(strings.auroraRegenerate),
               ),
             ),
           ),
@@ -186,16 +186,16 @@ class _AuroraPaletteDialogState extends State<_AuroraPaletteDialog> {
         if (widget.index != null && widget.colors.length > 1)
           TextButton(
             onPressed: () => Navigator.of(context).pop(-1),
-            child: Text(strings.delete),
+            child: GlassText(strings.delete),
           ),
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: Text(strings.cancel),
+          child: GlassText(strings.cancel),
         ),
         TextButton(
           onPressed: () =>
               Navigator.of(context).pop(_controller.value.toARGB32()),
-          child: Text(strings.confirm),
+          child: GlassText(strings.confirm),
         ),
       ],
       child: Column(

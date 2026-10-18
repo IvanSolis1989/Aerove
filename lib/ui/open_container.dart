@@ -314,27 +314,27 @@ class _OpenContainerRoute<T> extends ModalRoute<T>
     final theme = Theme.of(context);
     final surface = SurfaceLevel.page.colorOf(theme.colorScheme);
     final glass = LiquidGlassScope.of(context);
-    final open = FadeTransition(
-      opacity: _openOpacity,
-      child: RepaintBoundary(
-        child: Material(
-          type: MaterialType.transparency,
-          child: Builder(
-            builder: (BuildContext context) {
-              return KeyboardInsetHold(
-                child: openBuilder(context, closeContainer),
-              );
-            },
-          ),
+    final page = RepaintBoundary(
+      child: Material(
+        type: MaterialType.transparency,
+        child: Builder(
+          builder: (BuildContext context) {
+            return KeyboardInsetHold(
+              child: openBuilder(context, closeContainer),
+            );
+          },
         ),
       ),
     );
+    final open = glass
+        ? LiquidGlassFade(opacity: _openOpacity, child: page)
+        : FadeTransition(opacity: _openOpacity, child: page);
     return ListenableBuilder(
       listenable: _closedChanges,
       builder: (BuildContext context, Widget? open) {
         return _ContainerTransition(
           route: this,
-          closedColor: closedColor ?? surface,
+          closedColor: closedColor ?? (glass ? Colors.transparent : surface),
           openColor: glass ? Colors.transparent : surface,
           settledColor: glass ? Colors.transparent : theme.canvasColor,
           closed: _hostsClosed.value

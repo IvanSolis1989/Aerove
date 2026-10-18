@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' show lerpDouble;
 
+import 'package:fl_clash/ui/foreground_ink.dart';
+
 import 'package:fl_clash/ui/context.dart';
 import 'package:fl_clash/ui/fade_box.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
@@ -202,7 +204,7 @@ class _NullStatusState extends State<NullStatus> {
                 SizedBox(height: compact ? 12 : 16),
                 _EnterItem(
                   delay: _staggerStep,
-                  child: Text(
+                  child: GlassText(
                     label,
                     textAlign: TextAlign.center,
                     style: AppTextStyle.headline
@@ -215,7 +217,7 @@ class _NullStatusState extends State<NullStatus> {
                 const SizedBox(height: 8),
                 _EnterItem(
                   delay: _staggerStep * 2,
-                  child: Text(
+                  child: GlassText(
                     description,
                     textAlign: TextAlign.center,
                     style: AppTextStyle.subheadline

@@ -91,7 +91,7 @@ void main() {
           theme.colorScheme.primary.r,
           closeTo(theme.colorScheme.primary.g, 0.025),
         );
-        expect(theme.colorScheme.onSurface.a, 0.64);
+        expect(theme.colorScheme.onSurface.a, 1.0);
         expect(
           theme.colorScheme.onSurface.withValues(alpha: 1),
           auroraColorScheme(brightness).onSurface,
@@ -416,12 +416,12 @@ void main() {
             expect(colors.surface, original.surface);
             expect(colors.error, original.error);
             expect(colors.onSurface.withValues(alpha: 1), original.onSurface);
-            expect(colors.onSurface.a, 0.64);
+            expect(colors.onSurface.a, 1.0);
             expect(
               colors.onSurfaceVariant.withValues(alpha: 1),
               original.onSurfaceVariant,
             );
-            expect(colors.onSurfaceVariant.a, 0.64);
+            expect(colors.onSurfaceVariant.a, 1.0);
           }
           expect(container.read(themeSettingProvider).primaryColor, 0xFFFF2D55);
           if (gradient) {

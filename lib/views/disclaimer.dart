@@ -111,7 +111,7 @@ class DisclaimerView extends StatelessWidget {
                 children: [
                   Padding(
                     padding: const EdgeInsets.only(bottom: 20),
-                    child: Text(
+                    child: GlassText(
                       appLocalizations.disclaimer,
                       style: AppTextStyle.title2.of(context, emphasized: true),
                     ),
@@ -147,9 +147,12 @@ class _DisclaimerIntro extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
-    return DecoratedBox(
+    return CardGroup(
+      child: DecoratedBox(
       decoration: ShapeDecoration(
-        color: context.raisedSurfaceLevel.colorOf(colorScheme),
+        color: LiquidGlassScope.of(context)
+            ? Colors.transparent
+            : context.raisedSurfaceLevel.colorOf(colorScheme),
         shape: AppShape.xl,
       ),
       child: Padding(
@@ -160,7 +163,7 @@ class _DisclaimerIntro extends StatelessWidget {
             GlyphIcon(AppGlyphs.gavel, size: 28, color: colorScheme.primary),
             const SizedBox(width: 16),
             Expanded(
-              child: Text(
+              child: GlassText(
                 text,
                 style: AppTextStyle.subheadline
                     .of(context)
@@ -169,6 +172,7 @@ class _DisclaimerIntro extends StatelessWidget {
             ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -199,13 +203,16 @@ class _DisclaimerTerm extends StatelessWidget {
             children: [
               DecoratedBox(
                 decoration: ShapeDecoration(
-                  color: context.raisedSurfaceLevel.colorOf(colorScheme),
+                  color: LiquidGlassScope.surfaceColorOf(
+                    context,
+                    context.raisedSurfaceLevel.colorOf(colorScheme),
+                  ),
                   shape: AppShape.full,
                 ),
                 child: SizedBox.square(
                   dimension: _badgeSize,
                   child: Center(
-                    child: Text(
+                    child: GlassText(
                       '$index',
                       style: AppTextStyle.caption1
                           .of(context, emphasized: true)
@@ -216,7 +223,7 @@ class _DisclaimerTerm extends StatelessWidget {
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: Text(title, style: AppTextStyle.headline.of(context)),
+                child: GlassText(title, style: AppTextStyle.headline.of(context)),
               ),
             ],
           ),
@@ -245,7 +252,7 @@ class _TermParagraphs extends StatelessWidget {
         for (final (index, paragraph) in paragraphs.indexed)
           Padding(
             padding: EdgeInsets.only(top: index == 0 ? 0 : 10),
-            child: Text(paragraph, style: style),
+            child: GlassText(paragraph, style: style),
           ),
       ],
     );
@@ -293,7 +300,7 @@ class _ConsentBar extends StatelessWidget {
         onPressed: () {
           Navigator.of(context).pop(false);
         },
-        child: Text(context.appLocalizations.exit),
+        child: GlassText(context.appLocalizations.exit),
       ),
     );
   }
@@ -313,7 +320,7 @@ class _ConsentBar extends StatelessWidget {
     return ElasticButton(
       child: FilledButton(
         onPressed: () => _handleAgree(context),
-        child: Text(context.appLocalizations.agree),
+        child: GlassText(context.appLocalizations.agree),
       ),
     );
   }
@@ -435,7 +442,7 @@ class _RestateDialogState extends State<_RestateDialog> {
           onPressed: () {
             Navigator.of(context).pop(false);
           },
-          child: Text(appLocalizations.cancel),
+          child: GlassText(appLocalizations.cancel),
         ),
         TextButton(
           onPressed: canConfirm
@@ -443,13 +450,13 @@ class _RestateDialogState extends State<_RestateDialog> {
                   Navigator.of(context).pop(true);
                 }
               : null,
-          child: Text(appLocalizations.confirm),
+          child: GlassText(appLocalizations.confirm),
         ),
       ],
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
+          GlassText(
             tip,
             style: AppTextStyle.subheadline
                 .of(context)
@@ -478,7 +485,7 @@ class _RestateDialogState extends State<_RestateDialog> {
         confirmation: generateSection(
           items: [
             ListItem.checkbox(
-              title: Text(appLocalizations.disclaimerAcknowledgeLabel),
+              title: GlassText(appLocalizations.disclaimerAcknowledgeLabel),
               value: _acknowledged,
               onChanged: (value) {
                 setState(() => _acknowledged = value ?? false);

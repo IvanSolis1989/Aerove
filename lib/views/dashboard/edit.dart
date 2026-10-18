@@ -530,7 +530,7 @@ class _SectionLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 4, 8, 10),
-      child: Text(
+      child: GlassText(
         text,
         style: AppTextStyle.footnote
             .of(context, emphasized: true)
@@ -589,14 +589,14 @@ class _AddRow extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
+                GlassText(
                   label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: AppTextStyle.subheadline.of(context, emphasized: true),
                 ),
                 if (description != null)
-                  Text(
+                  GlassText(
                     description,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,

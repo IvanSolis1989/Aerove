@@ -3,7 +3,6 @@ import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/features/form/form.dart';
 import 'package:fl_clash/models/clash_config.dart';
 import 'package:fl_clash/providers/providers.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/config/rules.dart';
 import 'package:fl_clash/widgets/widgets.dart';
@@ -276,18 +275,15 @@ class _MatchTargetItem extends ConsumerWidget {
         !clashConfig.proxies.any((item) => item.name == matchTarget);
     return MoreActionButton(
       label: appLocalizations.matchTarget,
-      trailing: Text(
+      trailing: GlassText(
         matchTarget ?? appLocalizations.followProfile,
         style: AppTextStyle.subheadline
             .of(context)
             .toJetBrainsMono
             .copyWith(
-              color: GlassForeground.colorOf(
-                context,
-                invalid
+              color: invalid
                     ? context.colorScheme.error
                     : context.colorScheme.tertiary,
-              ),
             ),
       ),
       onPressed: () {

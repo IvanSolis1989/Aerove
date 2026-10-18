@@ -1,3 +1,4 @@
+import 'package:fl_clash/ui/foreground_ink.dart';
 import 'package:fl_clash/ui/context.dart';
 import 'package:fl_clash/ui/dialog.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
@@ -204,18 +205,18 @@ class _InputDialogState extends State<InputDialog> {
             if (widget.resetValue != null && value.text != widget.resetValue) {
               return TextButton(
                 onPressed: _handleReset,
-                child: Text(localizations.reset),
+                child: GlassText(localizations.reset),
               );
             }
             return TextButton(
               onPressed: () {
                 Navigator.of(context).pop();
               },
-              child: Text(localizations.cancel),
+              child: GlassText(localizations.cancel),
             );
           },
         ),
-        TextButton(onPressed: _handleUpdate, child: Text(localizations.submit)),
+        TextButton(onPressed: _handleUpdate, child: GlassText(localizations.submit)),
       ],
       child: Form(
         autovalidateMode: widget.autovalidateMode,

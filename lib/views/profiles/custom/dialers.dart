@@ -147,11 +147,11 @@ class _ProxyDialerItem extends ConsumerWidget {
       onPressed: onPressed,
       contentPadding: const EdgeInsets.only(left: 16, right: 8),
       title: TooltipText(
-        text: Text(proxy.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+        text: GlassText(proxy.name, maxLines: 1, overflow: TextOverflow.ellipsis),
       ),
       subtitle: target == null
           ? null
-          : Text(target, maxLines: 1, overflow: TextOverflow.ellipsis),
+          : GlassText(target, maxLines: 1, overflow: TextOverflow.ellipsis),
       trailing: issues.isEmpty ? null : CustomIssueButton(issues: issues),
     );
   }

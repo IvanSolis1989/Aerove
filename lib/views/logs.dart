@@ -5,7 +5,6 @@ import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:material_ui/material_ui.dart';
@@ -236,7 +235,7 @@ class _LogBody extends StatelessWidget {
         children: [
           SelectableText(payload.message, style: styles.primary),
           if (payload.tag.isNotEmpty)
-            Text(payload.tag, style: styles.secondary),
+            GlassText(payload.tag, style: styles.secondary),
         ],
       );
     }
@@ -250,7 +249,7 @@ class _LogBody extends StatelessWidget {
               style: styles.secondary.copyWith(
                 color: errorColor == null
                     ? null
-                    : GlassForeground.colorOf(context, errorColor!),
+                    : errorColor!,
               ),
             ),
           const TextSpan(text: '\n'),
@@ -263,10 +262,7 @@ class _LogBody extends StatelessWidget {
             style: AppTextStyle.footnote
                 .of(context, emphasized: true)
                 .copyWith(
-                  color: GlassForeground.colorOf(
-                    context,
-                    context.colorScheme.primary,
-                  ),
+                  color: context.colorScheme.primary,
                 ),
           ),
           TextSpan(text: '\n$_sourceText', style: styles.secondary),

@@ -1,7 +1,10 @@
+import 'package:fl_clash/ui/foreground_ink.dart';
 import 'package:emoji_regex/emoji_regex.dart';
 import 'package:fl_clash/ui/measure.dart';
 import 'package:fl_clash/ui/text_style.dart';
 import 'package:material_ui/material_ui.dart';
+
+final _emojiPattern = emojiRegex();
 
 class TooltipText extends StatelessWidget {
   final Text text;
@@ -40,7 +43,7 @@ class TooltipLabel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return TooltipText(
-      text: Text(
+      text: GlassText(
         text,
         maxLines: maxLines,
         overflow: TextOverflow.ellipsis,
@@ -67,7 +70,7 @@ class EmojiText extends StatelessWidget {
   /// The spans [EmojiText] lays [text] out in, emoji in their own font.
   static TextSpan spanOf(String text, TextStyle? style) {
     final List<TextSpan> spans = [];
-    final matches = emojiRegex().allMatches(text);
+    final matches = _emojiPattern.allMatches(text);
 
     int lastMatchEnd = 0;
     for (final match in matches) {
@@ -119,7 +122,7 @@ class EmojiText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text.rich(
+    return GlassText.rich(
       spanOf(text, style),
       style: style,
       maxLines: maxLines,

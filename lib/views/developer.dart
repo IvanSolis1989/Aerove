@@ -20,7 +20,7 @@ class DeveloperView extends ConsumerWidget {
       title: appLocalizations.options,
       items: [
         ListItem(
-          title: Text(appLocalizations.messageTest),
+          title: GlassText(appLocalizations.messageTest),
           onTap: () {
             for (final level in MessageLevel.values) {
               context.showNotifier(
@@ -31,7 +31,7 @@ class DeveloperView extends ConsumerWidget {
           },
         ),
         ListItem(
-          title: Text(appLocalizations.logsTest),
+          title: GlassText(appLocalizations.logsTest),
           onTap: () {
             for (int i = 0; i < 1000; i++) {
               ref
@@ -46,7 +46,7 @@ class DeveloperView extends ConsumerWidget {
         ),
         if (globalState.canCrashCore)
           ListItem(
-            title: Text(appLocalizations.crashTest),
+            title: GlassText(appLocalizations.crashTest),
             onTap: () async {
               final coreAction = ref.read(coreActionProvider.notifier);
               final res = await dialogs.showMessage(
@@ -60,7 +60,7 @@ class DeveloperView extends ConsumerWidget {
             },
           ),
         ListItem(
-          title: Text(appLocalizations.clearData),
+          title: GlassText(appLocalizations.clearData),
           onTap: () async {
             final storeAction = ref.read(storeActionProvider.notifier);
             final res = await dialogs.showMessage(
@@ -75,7 +75,7 @@ class DeveloperView extends ConsumerWidget {
           },
         ),
         ListItem(
-          title: Text(appLocalizations.pruneCache),
+          title: GlassText(appLocalizations.pruneCache),
           onTap: () async {
             await ref.read(storeActionProvider.notifier).shakingStore();
           },
@@ -100,7 +100,7 @@ class DeveloperView extends ConsumerWidget {
           generateSection(
             items: [
               ListItem.toggle(
-                title: Text(appLocalizations.developerMode),
+                title: GlassText(appLocalizations.developerMode),
                 value: enable,
                 onChanged: (value) {
                   ref

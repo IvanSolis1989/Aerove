@@ -145,7 +145,7 @@ Future<void> _expectClosesWithoutIssues(WidgetTester tester) async {
   final form = find.byType(ErrorBanner, skipOffstage: false);
   final message = find.descendant(
     of: form,
-    matching: find.byType(Text),
+    matching: find.bySubtype<Text>(),
     skipOffstage: false,
   );
   for (var frame = 0; frame < 120 && form.evaluate().isNotEmpty; frame++) {

@@ -330,7 +330,7 @@ class _ClashProvidersViewState extends ConsumerState<ClashProvidersView> {
               title: provider.label,
               chip: provider.behavior.name,
             ),
-            subtitle: Text(
+            subtitle: GlassText(
               provider.isRemote
                   ? context.appLocalizations.remote
                   : context.appLocalizations.local,

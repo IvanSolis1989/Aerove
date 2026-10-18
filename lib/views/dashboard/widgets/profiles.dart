@@ -5,7 +5,6 @@ import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
 import 'package:fl_clash/views/dashboard/style.dart';
@@ -98,20 +97,17 @@ class ProfilesCard extends ConsumerWidget {
     final Widget? end = switch ((endText, expiry)) {
       (final text?, final expiry?) => Tooltip(
         message: _expiryText(context, expiry),
-        child: Text(
+        child: GlassText(
           text,
           maxLines: 1,
           style: _daysLeft(expiry) <= _soonDays
               ? label.copyWith(
-                  color: GlassForeground.colorOf(
-                    context,
-                    DashboardColors.of(context).warn,
-                  ),
+                  color: DashboardColors.of(context).warn,
                 )
               : label,
         ),
       ),
-      (final text?, null) => Text(text, maxLines: 1, style: label),
+      (final text?, null) => GlassText(text, maxLines: 1, style: label),
       _ => null,
     };
     final sync = profile != null && profile.type == ProfileType.url
@@ -195,7 +191,7 @@ class ProfilesCard extends ConsumerWidget {
                   spacing: _rowGap,
                   children: [
                     Expanded(
-                      child: Text(
+                      child: GlassText(
                         (fits ? updated : time) ?? '',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -277,12 +273,12 @@ class _ConfigStatsState extends ConsumerState<_ConfigStats>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (value != null)
-          Text(dashboardCount(value), maxLines: 1, style: figure)
+          GlassText(dashboardCount(value), maxLines: 1, style: figure)
         else if (configCountsFailed)
-          Text('—', maxLines: 1, style: figure)
+          GlassText('—', maxLines: 1, style: figure)
         else
           SkeletonText(width: widget.figure.size * 1.5, style: figure),
-        Text(name, maxLines: 1, style: label),
+        GlassText(name, maxLines: 1, style: label),
       ],
     );
     return LayoutBuilder(
@@ -349,7 +345,7 @@ class _UsageMeter extends StatelessWidget {
               textBaseline: TextBaseline.alphabetic,
               spacing: _rowGap,
               children: [
-                Text.rich(
+                GlassText.rich(
                   TextSpan(
                     children: [
                       TextSpan(text: _percentOf(usage.share), style: percent),
@@ -358,7 +354,7 @@ class _UsageMeter extends StatelessWidget {
                   ),
                 ),
                 Expanded(
-                  child: Text(
+                  child: GlassText(
                     traffic,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,

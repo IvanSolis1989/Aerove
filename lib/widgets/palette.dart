@@ -474,14 +474,14 @@ class _LabeledSlider extends StatelessWidget {
         Row(
           children: [
             Expanded(
-              child: Text(
+              child: GlassText(
                 label,
                 style: AppTextStyle.subheadline
                     .of(context, emphasized: true)
                     .copyWith(color: context.colorScheme.onSurfaceVariant),
               ),
             ),
-            Text(
+            GlassText(
               value,
               style: style.copyWith(
                 fontFeatures: const [FontFeature.tabularFigures()],

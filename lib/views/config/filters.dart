@@ -121,7 +121,7 @@ class _FilterItem extends StatelessWidget {
       onPressed: isEditing ? onSelected : onPressed,
       contentPadding: const EdgeInsets.only(left: 16),
       title: TooltipText(
-        text: Text(filter.label, maxLines: 1, overflow: TextOverflow.ellipsis),
+        text: GlassText(filter.label, maxLines: 1, overflow: TextOverflow.ellipsis),
       ),
       subtitle: FilterRegexText(filter.regex),
       trailing: CommonCheckBox(

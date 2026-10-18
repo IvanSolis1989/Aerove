@@ -1,5 +1,4 @@
 import 'package:fl_clash/common/common.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/ui.dart';
 import 'package:intl/intl.dart' show NumberFormat;
 import 'package:material_ui/material_ui.dart';
@@ -154,10 +153,7 @@ abstract final class DashboardText {
       .of(context)
       .toTabular
       .copyWith(
-        color: GlassForeground.colorOf(
-          context,
-          color ?? context.colorScheme.onSurfaceVariant,
-        ),
+        color: color ?? context.colorScheme.onSurfaceVariant,
       );
 
   static TextStyle figure(
@@ -168,7 +164,7 @@ abstract final class DashboardText {
       .of(context, emphasized: true)
       .toTabular
       .copyWith(
-        color: color == null ? null : GlassForeground.colorOf(context, color),
+        color: color == null ? null : color,
         letterSpacing: -0.02 * style.size,
       );
 

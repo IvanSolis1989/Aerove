@@ -10,7 +10,6 @@ import 'package:fl_clash/providers/ip_quality.dart';
 import 'package:fl_clash/providers/outbound_ip.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/providers/routed_probe.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
 import 'package:fl_clash/views/dashboard/probe_start_hold.dart';
@@ -324,12 +323,12 @@ class _ExitRow extends StatelessWidget {
             ),
           )
         : failed
-        ? Text(
+        ? GlassText(
             appLocalizations.serviceFailed,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: style.copyWith(
-              color: GlassForeground.colorOf(context, colorScheme.error),
+              color: colorScheme.error,
             ),
           )
         : SkeletonText(width: 140, style: style);
@@ -361,7 +360,7 @@ class _ExitRow extends StatelessWidget {
                   height: _chipHeight(large),
                   child: Align(
                     alignment: AlignmentDirectional.centerStart,
-                    child: Text(
+                    child: GlassText(
                       appLocalizations.tapIconToRetry,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -560,7 +559,7 @@ class _CountryBadgeState extends State<_CountryBadge>
                       size: size * 0.42,
                       color: foreground,
                     )
-                  : Text(
+                  : GlassText(
                       code.toUpperCase(),
                       maxLines: 1,
                       style: AppTextStyle.footnote
@@ -633,7 +632,7 @@ class _Cell extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
+        GlassText(
           label,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
@@ -656,7 +655,7 @@ class _CellText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
+    return GlassText(
       text,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
@@ -670,7 +669,7 @@ class _Placeholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text('—', maxLines: 1, style: _cellStyle(context));
+    return GlassText('—', maxLines: 1, style: _cellStyle(context));
   }
 }
 

@@ -541,7 +541,7 @@ class _ProfileCardTitle extends StatelessWidget {
           style: AppTextStyle.headline.of(context),
         ),
         const SizedBox(height: _infoGap),
-        Text(
+        GlassText(
           subtitle,
           style: AppTextStyle.footnote.of(context).toLighter,
           maxLines: 1,
@@ -605,7 +605,7 @@ class _ReorderableProfilesSheetState
       child: DecorationListItem(
         contentPadding: const EdgeInsets.only(left: 16),
         trailing: SortHandle(index: index),
-        title: Text(profile.realLabel),
+        title: GlassText(profile.realLabel),
       ),
     );
   }

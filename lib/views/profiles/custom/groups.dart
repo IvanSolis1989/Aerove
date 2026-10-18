@@ -408,13 +408,13 @@ class _ProxyGroupItem extends ConsumerWidget {
         ),
       ),
       title: TooltipText(
-        text: Text(
+        text: GlassText(
           proxyGroup.name,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
       ),
-      subtitle: Text(proxyGroup.type.name),
+      subtitle: GlassText(proxyGroup.type.name),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -759,7 +759,7 @@ class _EditProxyGroupViewState extends ConsumerState<EditProxyGroupView> {
               spacing: 4,
               children: [
                 Flexible(child: field),
-                Text(suffix, style: AppTextStyle.subheadline.of(context)),
+                GlassText(suffix, style: AppTextStyle.subheadline.of(context)),
               ],
             ),
     );
@@ -805,7 +805,7 @@ class _EditProxyGroupViewState extends ConsumerState<EditProxyGroupView> {
         children: [
           if (invalid) CustomIssueButton(issues: issues),
           Flexible(
-            child: Text(value, maxLines: 1, overflow: TextOverflow.ellipsis),
+            child: GlassText(value, maxLines: 1, overflow: TextOverflow.ellipsis),
           ),
           const GlyphIcon(AppGlyphs.chevronForward),
         ],
@@ -877,7 +877,7 @@ class _EditProxyGroupViewState extends ConsumerState<EditProxyGroupView> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Flexible(
-            child: Text(
+            child: GlassText(
               type.name,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -910,7 +910,7 @@ class _EditProxyGroupViewState extends ConsumerState<EditProxyGroupView> {
               ),
             )
           else
-            Text(
+            GlassText(
               appLocalizations.optional,
               style: context.listTitleStyle.copyWith(
                 color: context.colorScheme.onSurfaceVariant,

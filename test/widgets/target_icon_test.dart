@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -54,7 +53,7 @@ void main() {
       final text = tester.widget<Text>(find.text('🤖'));
       expect(
         text.style!.color,
-        glass ? GlassForeground.cap(Colors.red) : Colors.red,
+        Colors.red,
       );
     }
   });

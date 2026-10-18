@@ -79,16 +79,16 @@ AuroraMesh generateAuroraMesh(
   final corners = dark
       ? <Color>[]
       : [
-          _auroraTone(tints.first, tints.length == 1 ? 0.74 : 0.75),
+          _auroraTone(tints.first, 0.74),
           _auroraTone(
             tints.length > 1 ? tints[1] : tints.first,
-            tints.length == 1 ? 0.95 : 0.76,
+            tints.length == 1 ? 0.88 : 0.76,
           ),
           _auroraTone(
             tints.length > 2 ? tints[2] : tints.first,
-            tints.length == 1 ? 0.81 : 0.78,
+            0.78,
           ),
-          _auroraTone(tints.last, 0.88),
+          _auroraTone(tints.last, 0.84),
         ];
   final minimumSaturation = dark
       ? 0.0
@@ -185,7 +185,7 @@ Color auroraTint(Color color, Brightness brightness) {
     return hsv.withValue(hsv.value * 0.42).toColor();
   }
   final base = auroraBaseColor(brightness);
-  final tint = Color.lerp(base, source, 0.58)!;
+  final tint = Color.lerp(base, source, 0.72)!;
   final readable = _readableLightAuroraTint(tint, base);
   return _limitLightAuroraChroma(readable);
 }
@@ -231,7 +231,7 @@ Color _limitLightAuroraChroma(Color readable) {
   final base = auroraBaseColor(Brightness.light);
   // HCT chroma is nonlinear under RGB interpolation; the raster's 8-bit
   // quantization also needs headroom beyond the source tint's measured chroma.
-  const sourceLimit = 18.5;
+  const sourceLimit = 30.0;
   final hct = Hct.fromInt(readable.toARGB32());
   if (hct.chroma <= sourceLimit) return readable;
   final neutral = Color(Hct.from(0, 0, hct.tone).toInt());

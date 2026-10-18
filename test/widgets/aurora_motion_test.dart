@@ -10,7 +10,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
-const _colors = [Color(0xFF6BD5D9), Color(0xFFC6ADE4), Color(0xFFA9DAC6)];
+const _colors = [Color(0xFF65BDD2), Color(0xFFC589CA), Color(0xFF75CCA8)];
 const _seeds = [
   832838199,
   2379623510,
@@ -76,8 +76,8 @@ void main() {
         xDirections.add(shift.dx > 0);
         yDirections.add(shift.dy > 0);
         speeds.add(shift.distance / 0.016);
-        expect(shift.distance, lessThan(0.04));
-        expect(_angleDistance(current.angle, next.angle), lessThan(0.0001));
+        expect(shift.distance, lessThan(0.1));
+        expect(_angleDistance(current.angle, next.angle), lessThan(0.00033));
       }
       expect(xDirections, hasLength(2));
       expect(yDirections, hasLength(2));
@@ -88,8 +88,8 @@ void main() {
         longTime + const Duration(milliseconds: 16),
         size,
       );
-      expect((before.translation - after.translation).distance, lessThan(0.04));
-      expect(_angleDistance(before.angle, after.angle), lessThan(0.0001));
+      expect((before.translation - after.translation).distance, lessThan(0.1));
+      expect(_angleDistance(before.angle, after.angle), lessThan(0.00033));
       expect(
         AuroraMotion(seed + 1).at(Duration.zero, size),
         isNot(motion.at(Duration.zero, size)),
@@ -97,12 +97,12 @@ void main() {
     }
   });
 
-  test('motion stays slow in logical pixels and degrees per second', () async {
+  test('motion is visible within five seconds and remains bounded', () async {
     final metrics = <String, Object>{};
     const interval = Duration(milliseconds: 100);
     for (final (size, translationLimit) in [
-      (const Size(390, 844), 1.21),
-      (const Size(720, 720), 2.24),
+      (const Size(390, 844), 6.05),
+      (const Size(720, 720), 11.16),
     ]) {
       var maxTranslation = 0.0;
       var maxRotation = 0.0;
@@ -125,18 +125,32 @@ void main() {
           );
           expect(
             rotation,
-            lessThanOrEqualTo(0.234),
+            lessThanOrEqualTo(1.166),
             reason: 'seed=$seed size=$size second=$second degrees/s',
           );
         }
+        for (final second in [0, 15, 30, 60]) {
+          final current = motion.at(Duration(seconds: second), size);
+          final next = motion.at(Duration(seconds: second + 5), size);
+          expect(
+            (next.translation - current.translation).distance,
+            greaterThan(3 * size.shortestSide / 390),
+            reason: 'seed=$seed second=$second must visibly drift in five seconds',
+          );
+          expect(
+            _angleDistance(next.angle, current.angle) * 180 / math.pi,
+            greaterThan(0.5),
+            reason: 'seed=$seed second=$second must visibly rotate in five seconds',
+          );
+        }
       }
-      expect(maxTranslation, greaterThan(0));
-      expect(maxRotation, greaterThan(0));
+      expect(maxTranslation, greaterThan(translationLimit * 0.6));
+      expect(maxRotation, greaterThan(0.8));
       metrics['${size.width.toInt()}x${size.height.toInt()}'] = {
         'maxTranslationDpPerSecond': maxTranslation,
         'maxRotationDegreesPerSecond': maxRotation,
         'translationLimitDpPerSecond': translationLimit,
-        'rotationLimitDegreesPerSecond': 0.234,
+        'rotationLimitDegreesPerSecond': 1.166,
       };
     }
     final directory = Platform.environment['XCLASH_SCREENSHOT_DIR'];
@@ -260,17 +274,23 @@ void main() {
   testWidgets('ten seeds render covered square-motion frames in both themes', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     final key = GlobalKey();
     final metrics = <String, Object>{};
     for (final brightness in Brightness.values) {
       for (final seed in _seeds) {
         Uint8List? previous;
-        for (final seconds in [0, 60, 180]) {
+        Uint8List? first;
+        for (final seconds in [0, 3, 5]) {
           await tester.pumpWidget(
             _scene(
               key,
               seed: seed,
               brightness: brightness,
+              size: const Size(390, 844),
               time: Duration(seconds: seconds),
             ),
           );
@@ -301,6 +321,15 @@ void main() {
           } else {
             expect(maximumValue, lessThan(0.51));
           }
+          final difference = first == null ? 0.0 : _pixelDifference(first, pixels);
+          if (first != null) {
+            expect(
+              difference,
+              greaterThan(seconds == 3 ? 0.25 : 0.5),
+              reason: '$name must visibly change within $seconds seconds',
+            );
+          }
+          first ??= pixels;
           if (previous != null) expect(pixels, isNot(previous));
           previous = pixels;
           metrics[name] = {
@@ -308,6 +337,7 @@ void main() {
             'seconds': seconds,
             'minimumLuminance': minimumLuminance,
             'maximumValue': maximumValue,
+            'meanRgbDifferenceFromZero': difference,
           };
           expect(tester.binding.hasScheduledFrame, isFalse);
           expect(tester.takeException(), isNull);
@@ -328,6 +358,18 @@ void main() {
 
 double _angleDistance(double a, double b) =>
     math.atan2(math.sin(a - b), math.cos(a - b)).abs();
+
+double _pixelDifference(Uint8List first, Uint8List next) {
+  var difference = 0;
+  var count = 0;
+  for (var at = 0; at < first.length; at += 64) {
+    for (var channel = 0; channel < 3; channel++) {
+      difference += (first[at + channel] - next[at + channel]).abs();
+      count++;
+    }
+  }
+  return difference / count;
+}
 
 CustomPainter? _painter(WidgetTester tester) => tester
     .widget<CustomPaint>(

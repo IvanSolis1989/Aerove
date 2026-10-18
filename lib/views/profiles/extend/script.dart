@@ -81,7 +81,7 @@ class _ScriptOption extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecorationListItem(
       isSelected: isSelected,
-      title: Text(label),
+      title: GlassText(label),
       trailing: isSelected ? const SelectionCheck() : null,
       onPressed: onSelected,
     );

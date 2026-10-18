@@ -55,6 +55,10 @@ class LiquidGlassHost extends StatelessWidget {
   static LiquidGlassCapture? debugLastCapture;
 
   @visibleForTesting
+  static ({int generation, int masks, int maskPixels, int texturePixels})?
+      debugLastInkCapture;
+
+  @visibleForTesting
   static bool? debugCarryBandsOverride;
 
   @override
@@ -300,6 +304,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
   /// A pane over one painted before it in the same root sits a level above
   /// it, and reads a capture with that one drawn as glass.
   void _capture() {
+    this._captureInk();
     _pass++;
     final found = <_Behind>[];
     _gather(this, Matrix4.identity(), this, Matrix4.identity(), [], found);
@@ -870,6 +875,8 @@ class _Replay {
               Paint()..colorFilter = colorFilter,
               colorFilter,
             ),
+            LiquidGlassInkLayer(:final filter?) =>
+              (Paint()..imageFilter = filter, filter),
             ImageFilterLayer(:final imageFilter?)
                 when !entry.ancestors.contains(layer) =>
               (Paint()..imageFilter = imageFilter, imageFilter),

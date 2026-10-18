@@ -1,3 +1,4 @@
+import 'package:fl_clash/ui/foreground_ink.dart';
 import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/glyph.dart';
 import 'package:fl_clash/ui/icons/glyph_painter.dart';
@@ -17,7 +18,11 @@ class GlyphIcon extends StatelessWidget {
     final color = this.color ?? iconTheme.color!;
     final opacity = iconTheme.opacity ?? 1;
     final side = size ?? iconTheme.size ?? Glyph.size;
-    final icon = SizedBox.square(
+    final resolved = GlassForeground.iconColorOf(context, color, opacity);
+    final icon = GlassInk(
+      source: resolved,
+      role: GlassInkRole.icon,
+      child: SizedBox.square(
       dimension: side,
       child: Center(
         child: CustomPaint(
@@ -25,9 +30,10 @@ class GlyphIcon extends StatelessWidget {
           painter: GlyphPainter(
             glyph: glyph,
             fill: fill ?? iconTheme.fill ?? 0,
-            color: GlassForeground.iconColorOf(context, color, opacity),
+            color: resolved,
           ),
         ),
+      ),
       ),
     );
     if (glyph.matchTextDirection &&

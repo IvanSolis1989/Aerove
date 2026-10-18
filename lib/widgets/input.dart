@@ -2,7 +2,6 @@ import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/common.dart';
 import 'package:fl_clash/providers/providers.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/ui.dart';
 import 'package:material_ui/material_ui.dart';
@@ -185,7 +184,7 @@ class _EntryDialogState<T> extends State<EntryDialog<T>> {
       actions: [
         TextButton(
           onPressed: _canSubmit ? _submit : null,
-          child: Text(appLocalizations.confirm),
+          child: GlassText(appLocalizations.confirm),
         ),
       ],
       child: _isBatch

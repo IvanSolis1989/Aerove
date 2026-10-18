@@ -1,5 +1,7 @@
 import 'dart:math' as math;
 
+import 'package:fl_clash/ui/foreground_ink.dart';
+
 import 'package:fl_clash/ui/context.dart';
 import 'package:fl_clash/ui/focus.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
@@ -70,7 +72,7 @@ class InfoHeader extends StatelessWidget {
                 Flexible(
                   flex: 1,
                   child: TooltipText(
-                    text: Text(
+                    text: GlassText(
                       info.label,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,

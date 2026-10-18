@@ -386,7 +386,7 @@ class _AccessViewState extends ConsumerState<AccessView>
         backgroundColor: backgroundColor,
         dividerColor: Colors.transparent,
         leading: GlyphIcon(AppGlyphs.info, color: context.colorScheme.outline),
-        content: Text(
+        content: GlassText(
           appLocalizations.accessControlDisabledDesc,
           style: TextStyle(color: context.colorScheme.onSurfaceVariant),
         ),
@@ -411,7 +411,7 @@ class _AccessViewState extends ConsumerState<AccessView>
     return MaterialBanner(
       backgroundColor: backgroundColor,
       dividerColor: Colors.transparent,
-      content: Text(describe),
+      content: GlassText(describe),
       actions: [
         Card.filled(
           color: context.colorScheme.primary,
@@ -422,9 +422,9 @@ class _AccessViewState extends ConsumerState<AccessView>
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(appLocalizations.selected, style: textStyle),
+                GlassText(appLocalizations.selected, style: textStyle),
                 const SizedBox(width: 4),
-                Flexible(child: Text('$count', style: textStyle)),
+                Flexible(child: GlassText('$count', style: textStyle)),
               ],
             ),
           ),
@@ -549,12 +549,12 @@ class PackageListItem extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListItem.checkbox(
       leading: PackageIcon(packageName: package.packageName, size: 48),
-      title: Text(
+      title: GlassText(
         package.label,
         style: const TextStyle(overflow: TextOverflow.ellipsis),
         maxLines: 1,
       ),
-      subtitle: Text(
+      subtitle: GlassText(
         package.packageName,
         style: const TextStyle(overflow: TextOverflow.ellipsis),
         maxLines: 1,

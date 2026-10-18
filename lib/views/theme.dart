@@ -351,7 +351,7 @@ class _PrimaryColorItem extends ConsumerWidget {
               generateSection(
                 items: [
                   ListItem<ColorStyle>.options(
-                    title: Text(appLocalizations.colorStyle),
+                    title: GlassText(appLocalizations.colorStyle),
                     options: ColorStyle.values,
                     value: themeColors.colorStyle,
                     textBuilder: (style) => style.label,
@@ -880,13 +880,13 @@ class _SidebarBlurItem extends ConsumerWidget {
     return ListItem.toggle(
       leading: const GlyphIcon(AppGlyphs.blur),
       horizontalTitleGap: 12,
-      title: Text(
+      title: GlassText(
         appLocalizations.sidebarBlur,
         style: AppTextStyle.subheadline
             .of(context, emphasized: true)
             .copyWith(color: context.colorScheme.onSurfaceVariant),
       ),
-      subtitle: Text(appLocalizations.sidebarBlurDesc),
+      subtitle: GlassText(appLocalizations.sidebarBlurDesc),
       value: sidebarBlur,
       onChanged: (value) {
         ref
@@ -912,14 +912,14 @@ class _FontFamilyItem extends ConsumerWidget {
       child: Row(
         spacing: 12,
         children: [
-          Text(
+          GlassText(
             'Aa',
             style: AppTextStyle.headline
                 .of(context)
                 .copyWith(fontFamily: fontFamily),
           ),
           Expanded(
-            child: Text(
+            child: GlassText(
               fontFamily ?? appLocalizations.defaultText,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -1069,11 +1069,11 @@ class _TextScaleFactorItemState extends ConsumerState<_TextScaleFactorItem> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 spacing: 4,
                                 children: [
-                                  Text(
+                                  GlassText(
                                     'Aa',
                                     style: AppTextStyle.title3.of(context),
                                   ),
-                                  Text(
+                                  GlassText(
                                     appLocalizations.textScalePreview,
                                     style: AppTextStyle.subheadline
                                         .of(context)
@@ -1098,7 +1098,7 @@ class _TextScaleFactorItemState extends ConsumerState<_TextScaleFactorItem> {
                             ),
                             shape: AppShape.full,
                           ),
-                          child: Text(
+                          child: GlassText(
                             percent,
                             style: AppTextStyle.subheadline
                                 .of(context, emphasized: true)
@@ -1118,7 +1118,7 @@ class _TextScaleFactorItemState extends ConsumerState<_TextScaleFactorItem> {
                         spacing: 12,
                         children: [
                           ExcludeSemantics(
-                            child: Text(
+                            child: GlassText(
                               'A',
                               style: AppTextStyle.footnote
                                   .of(context)
@@ -1147,7 +1147,7 @@ class _TextScaleFactorItemState extends ConsumerState<_TextScaleFactorItem> {
                             ),
                           ),
                           ExcludeSemantics(
-                            child: Text(
+                            child: GlassText(
                               'A',
                               style: AppTextStyle.title2
                                   .of(context)

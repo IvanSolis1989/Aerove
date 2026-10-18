@@ -1,6 +1,6 @@
+import 'package:fl_clash/ui/foreground_ink.dart';
 import 'package:fl_clash/ui/color.dart';
 import 'package:fl_clash/ui/context.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/measure.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
@@ -32,14 +32,14 @@ class CommonChip extends StatelessWidget {
         spacing: 4,
         children: [
           Flexible(
-            child: Text(
+            child: GlassText(
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: AppTextStyle.caption1
                   .of(context, emphasized: true)
                   .copyWith(
-                    color: GlassForeground.colorOf(context, foregroundColor),
+                    color: foregroundColor,
                   ),
             ),
           ),
@@ -92,12 +92,12 @@ class TonalChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final style = AppTextStyle.caption1
         .of(context, emphasized: true)
-        .copyWith(color: GlassForeground.colorOf(context, foregroundColor));
+        .copyWith(color: foregroundColor);
     final content = Padding(
       padding: _padding,
       child: _CapCentered(
         fontSize: style.fontSize!,
-        child: Text(
+        child: GlassText(
           label,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
@@ -105,14 +105,24 @@ class TonalChip extends StatelessWidget {
         ),
       ),
     );
-    return Material(
-      color: LiquidGlassScope.surfaceColorOf(context, color),
+    final glass = onPressed != null && LiquidGlassScope.of(context);
+    final material = Material(
+      color: glass ? Colors.transparent : LiquidGlassScope.surfaceColorOf(context, color),
       shape: AppShape.sm,
       clipBehavior: Clip.antiAlias,
       child: onPressed == null
           ? content
           : InkWell(onTap: onPressed, child: content),
     );
+    return glass
+        ? LiquidGlass(
+            style: LiquidGlassStyle.regular(context.colorScheme).copyWith(
+              tint: LiquidGlassScope.surfaceColorOf(context, color, opacity: 0.12),
+            ),
+            clipper: const ShapeBorderClipper(shape: AppShape.sm),
+            child: material,
+          )
+        : material;
   }
 }
 
@@ -200,7 +210,7 @@ class _RenderCapCentered extends RenderShiftedBox {
 double chipLabelWidth(BuildContext context, String label) =>
     MeasureScope.of(context)
         .computeTextSize(
-          Text(
+          GlassText(
             label,
             style: AppTextStyle.caption1.of(context, emphasized: true),
           ),
@@ -225,7 +235,7 @@ class MetaChip extends StatelessWidget {
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-        child: Text(
+        child: GlassText(
           label,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,

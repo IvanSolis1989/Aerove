@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:fl_clash/ui/foreground_ink.dart';
+
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/ui/list.dart';
@@ -113,7 +115,7 @@ abstract class _ConfigItem<T> extends ConsumerWidget {
 
   Widget? buildSubtitle(AppLocalizations appLocalizations) {
     final subtitle = this.subtitle;
-    return subtitle == null ? null : Text(subtitle(appLocalizations));
+    return subtitle == null ? null : GlassText(subtitle(appLocalizations));
   }
 }
 
@@ -135,7 +137,7 @@ class ConfigToggleItem extends _ConfigItem<bool> {
   ) {
     return ListItem.toggle(
       leading: leading,
-      title: Text(title(appLocalizations)),
+      title: GlassText(title(appLocalizations)),
       value: value,
       onChanged: (value) => onChanged(ref, value),
     );
@@ -166,7 +168,7 @@ class ConfigOptionsItem<T> extends _ConfigItem<T> {
   ) {
     return ListItem<T>.options(
       leading: leading,
-      title: Text(title(appLocalizations)),
+      title: GlassText(title(appLocalizations)),
       subtitle: buildSubtitle(appLocalizations),
       options: options,
       value: value,
@@ -214,8 +216,8 @@ class ConfigTextItem extends _ConfigItem<String> {
     final validator = this.validator;
     return ListItem.input(
       leading: leading,
-      title: Text(label),
-      subtitle: value.isEmpty ? null : Text(value),
+      title: GlassText(label),
+      subtitle: value.isEmpty ? null : GlassText(value),
       dialogTitle: label,
       value: value,
       maxLength: maxLength,
@@ -264,10 +266,10 @@ class ConfigListEditItem extends _ConfigItem<List<String>> {
     final itemValidator = this.itemValidator;
     return ListItem.open(
       leading: leading,
-      title: Text(label),
+      title: GlassText(label),
       subtitle:
           buildSubtitle(appLocalizations) ??
-          Text(
+          GlassText(
             value.isEmpty
                 ? appLocalizations.none
                 : appLocalizations.itemsCount(value.length),
@@ -279,7 +281,7 @@ class ConfigListEditItem extends _ConfigItem<List<String>> {
         itemValidator: itemValidator == null
             ? null
             : (item) => itemValidator(item, appLocalizations),
-        titleBuilder: (item) => Text(item),
+        titleBuilder: (item) => GlassText(item),
       ),
       onChanged: (items) {
         final next = List<String>.from(items as List);

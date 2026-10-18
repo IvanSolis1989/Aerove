@@ -78,7 +78,7 @@ class TrackerInfoItem extends ConsumerWidget {
   }
 
   Widget _buildHeader(BuildContext context) {
-    final network = Text(
+    final network = GlassText(
       trackerInfo.metadata.network.toUpperCase(),
       style: AppTextStyle.caption1
           .of(context, emphasized: true)
@@ -100,7 +100,7 @@ class TrackerInfoItem extends ConsumerWidget {
         mainAxisSize: MainAxisSize.min,
         spacing: 4,
         children: [
-          Text.rich(
+          GlassText.rich(
             TextSpan(
               children: [
                 arrow(AppGlyphs.arrowUp),
@@ -118,7 +118,7 @@ class TrackerInfoItem extends ConsumerWidget {
         ],
       ),
       children: [
-        Text(trackerInfo.start.getLastUpdateTimeDesc(context, compact: true)),
+        GlassText(trackerInfo.start.getLastUpdateTimeDesc(context, compact: true)),
         network,
       ],
     );
@@ -138,7 +138,7 @@ class _TrackerInfoBody extends StatelessWidget {
 
   Widget _buildTitle(RecordTextStyles styles) {
     final metadata = trackerInfo.metadata;
-    final title = Text.rich(
+    final title = GlassText.rich(
       TextSpan(
         children: [
           TextSpan(
@@ -189,7 +189,7 @@ class _TrackerInfoBody extends StatelessWidget {
           runSpacing: 4,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            if (rule.isNotEmpty) Text(rule, style: styles.secondary),
+            if (rule.isNotEmpty) GlassText(rule, style: styles.secondary),
             for (final (index, chain) in trackerInfo.chains.reversed.indexed)
               Row(
                 mainAxisSize: MainAxisSize.min,
@@ -208,7 +208,7 @@ class _TrackerInfoBody extends StatelessWidget {
               ),
           ],
         ),
-        if (source.isNotEmpty) Text(source, style: styles.secondary),
+        if (source.isNotEmpty) GlassText(source, style: styles.secondary),
       ],
     );
   }

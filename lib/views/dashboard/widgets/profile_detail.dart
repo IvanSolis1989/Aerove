@@ -221,7 +221,7 @@ class _ProfileDetailSheetState extends ConsumerState<ProfileDetailSheet>
                         if (profile.type != ProfileType.custom)
                           _InfoRow(
                             label: appLocalizations.extendMode,
-                            value: Text(
+                            value: GlassText(
                               _extendLabel(context, profile.extendType),
                             ),
                           ),
@@ -311,14 +311,14 @@ class _StatTile extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         spacing: 2,
         children: [
-          Text(
+          GlassText(
             value ?? '0',
             maxLines: 1,
             style: AppTextStyle.title2
                 .of(context, emphasized: true)
                 .copyWith(color: colorScheme.onSurface),
           ),
-          Text(
+          GlassText(
             label,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
@@ -341,7 +341,7 @@ class _InfoRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListItem(
-      title: Text(label),
+      title: GlassText(label),
       trailing: DefaultTextStyle.merge(
         style: AppTextStyle.subheadline
             .of(context)

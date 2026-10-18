@@ -8,6 +8,7 @@ import 'package:flutter/rendering.dart';
 import 'package:material_ui/material_ui.dart';
 
 part 'liquid_glass_capture.dart';
+part 'liquid_glass_ink.dart';
 
 const _shaderAsset = 'shaders/liquid_glass.frag';
 const _glowIn = Duration(milliseconds: 120);

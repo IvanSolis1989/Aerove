@@ -66,7 +66,7 @@ class OutboundModeCard extends ConsumerWidget {
                             size: 18,
                             color: foreground,
                           ),
-                          Text(
+                          GlassText(
                             item.label,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -120,7 +120,7 @@ class OutboundModeBar extends ConsumerWidget {
             ),
             ConstrainedBox(
               constraints: BoxConstraints(maxWidth: constraints.maxWidth / 4),
-              child: Text(
+              child: GlassText(
                 appLocalizations.outboundMode,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -152,7 +152,7 @@ class OutboundModeBar extends ConsumerWidget {
                               color: foreground,
                             ),
                             Flexible(
-                              child: Text(
+                              child: GlassText(
                                 item.label,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,

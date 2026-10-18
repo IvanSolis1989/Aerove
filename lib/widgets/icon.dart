@@ -4,7 +4,6 @@ import 'package:emoji_regex/emoji_regex.dart';
 import 'package:fl_clash/common/cache.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/plugins/app.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/ui.dart';
 import 'package:flutter/foundation.dart';
@@ -188,7 +187,7 @@ class GroupMonogram extends StatelessWidget {
               ).copyWith(
                 color: iconTheme.color == null
                     ? null
-                    : GlassForeground.colorOf(context, iconTheme.color!),
+                    : iconTheme.color!,
               ),
         ),
       ),

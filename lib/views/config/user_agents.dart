@@ -227,7 +227,7 @@ class _UserAgentItem extends StatelessWidget {
         dimension: 24,
         child: isSelected ? const Center(child: SelectionCheck()) : null,
       ),
-      title: Text(label, maxLines: 2, overflow: TextOverflow.ellipsis),
+      title: GlassText(label, maxLines: 2, overflow: TextOverflow.ellipsis),
       trailing: trailing,
       onPressed: onSelected,
     );

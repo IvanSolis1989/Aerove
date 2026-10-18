@@ -159,7 +159,7 @@ class _Banner extends StatelessWidget {
         children: [
           GlyphIcon(glyph, size: 20.ap(context), color: foregroundColor),
           Expanded(
-            child: Text(
+            child: GlassText(
               message,
               style: AppTextStyle.subheadline
                   .of(context)

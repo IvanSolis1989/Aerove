@@ -2,7 +2,6 @@ import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
 import 'package:fl_clash/views/dashboard/style.dart';
@@ -111,7 +110,7 @@ class _GroupDelay extends ConsumerWidget {
     }
     final colorScheme = context.colorScheme;
     final color = colorScheme.delayColor(delay > 0 ? delay : -1);
-    return Text(
+    return GlassText(
       delay > 0
           ? '$delay ms'
           : delayFailureText(delay, context.appLocalizations),
@@ -122,7 +121,7 @@ class _GroupDelay extends ConsumerWidget {
           .copyWith(
             color: color == null
                 ? null
-                : GlassForeground.colorOf(context, color),
+                : color,
           ),
     );
   }
@@ -219,13 +218,13 @@ class _GroupsEmpty extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 6),
-          Text(
+          GlassText(
             title,
             textAlign: TextAlign.center,
             style: AppTextStyle.subheadline.of(context, emphasized: true),
           ),
           if (subtitle != null)
-            Text(
+            GlassText(
               subtitle,
               textAlign: TextAlign.center,
               style: AppTextStyle.footnote
@@ -352,7 +351,7 @@ class _GroupsFigure extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final count = Text.rich(
+    final count = GlassText.rich(
       TextSpan(
         children: [
           TextSpan(
@@ -429,7 +428,7 @@ class _IconStack extends StatelessWidget {
                   ),
                 ),
                 child: Center(
-                  child: Text(
+                  child: GlassText(
                     '+$rest',
                     style: AppTextStyle.caption1
                         .of(context, emphasized: true)
@@ -621,14 +620,14 @@ class _GroupsEmptySummary extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
+        GlassText(
           title,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: DashboardText.rowTitle(context),
         ),
         if (subtitle != null)
-          Text(
+          GlassText(
             subtitle,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,

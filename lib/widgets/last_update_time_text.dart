@@ -1,3 +1,4 @@
+import 'package:fl_clash/ui/foreground_ink.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -18,12 +19,12 @@ class LastUpdateTimeText extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (lastUpdateDate == null) {
-      return Text('', style: style);
+      return GlassText('', style: style);
     }
     return TickBuilder(
       duration: const Duration(minutes: 1),
       builder: (context, _) {
-        return Text(
+        return GlassText(
           lastUpdateDate!.getLastUpdateTimeDesc(context, compact: compact),
           style: style,
         );

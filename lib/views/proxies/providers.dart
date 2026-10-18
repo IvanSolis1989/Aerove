@@ -220,7 +220,7 @@ class _ProviderItemState extends ConsumerState<ProviderItem> {
                   onPressed: () {
                     Navigator.of(context).pop();
                   },
-                  child: Text(context.appLocalizations.confirm),
+                  child: GlassText(context.appLocalizations.confirm),
                 ),
               ],
               child: SubscriptionInfoDetailView(
@@ -316,7 +316,7 @@ class _ExternalProviderItem extends StatelessWidget {
         title: provider.name,
         expire: provider.subscriptionInfo?.expireDate,
       ),
-      subtitle: Text(switch (provider.type) {
+      subtitle: GlassText(switch (provider.type) {
         'Proxy' => appLocalizations.proxiesCount(count, count.compact),
         _ => appLocalizations.rulesCount(count, count.compact),
       }),

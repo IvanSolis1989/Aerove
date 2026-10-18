@@ -174,6 +174,27 @@ void main() {
             await tester.pumpAndSettle();
             final exit = find.widgetWithText(OutlinedButton, 'Exit');
             final agree = find.widgetWithText(FilledButton, 'Agree');
+            final intro = find.ancestor(
+              of: find.text(tester.element(exit).appLocalizations.disclaimerDesc),
+              matching: find.byType(CardGroup),
+            );
+            expect(intro, findsOneWidget);
+            expect(tester.widget<CardGroup>(intro).shape, AppShape.xl);
+            expect(
+              find.descendant(of: intro, matching: find.byType(LiquidGlass)),
+              findsOneWidget,
+            );
+            final introFill = tester.widget<DecoratedBox>(
+              find.descendant(
+                of: intro,
+                matching: find.byWidgetPredicate((widget) =>
+                    widget is DecoratedBox &&
+                    widget.decoration is ShapeDecoration &&
+                    (widget.decoration as ShapeDecoration).shape == AppShape.xl),
+              ),
+            );
+            expect((introFill.decoration as ShapeDecoration).color, Colors.transparent);
+
             for (final button in [exit, agree]) {
               expect(
                 find.descendant(of: button, matching: find.byType(LiquidGlass)),

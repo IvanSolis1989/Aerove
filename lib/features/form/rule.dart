@@ -1,6 +1,5 @@
 library;
 
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/clash_config.dart';
@@ -145,7 +144,7 @@ class RuleItem extends StatelessWidget {
                       if (rule.realTarget != null)
                         Flexible(
                           child: TooltipText(
-                            text: Text(
+                            text: GlassText(
                               hasMatch &&
                                       rule.realTarget!.toUpperCase() ==
                                           RuleAction.MATCH.value
@@ -159,10 +158,7 @@ class RuleItem extends StatelessWidget {
                                   .copyWith(
                                     color: checkResult.color == null
                                         ? null
-                                        : GlassForeground.colorOf(
-                                            context,
-                                            checkResult.color!,
-                                          ),
+                                        : checkResult.color!,
                                   ),
                             ),
                           ),
@@ -196,7 +192,7 @@ class _RuleItemLabel extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.center,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
+        GlassText(
           rule.ruleAction.name,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
@@ -205,7 +201,7 @@ class _RuleItemLabel extends StatelessWidget {
         if (content.isNotEmpty)
           Flexible(
             child: TooltipText(
-              text: Text(
+              text: GlassText(
                 content,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -236,7 +232,7 @@ class RuleStatusItem extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecorationListItem(
       title: TooltipText(
-        text: Text(
+        text: GlassText(
           rule.rawValue,
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
@@ -365,7 +361,7 @@ class _RuleFormState extends State<RuleForm> {
           title: appLocalizations.basicInfo,
           items: [
             ListItem<RuleAction>.options(
-              title: Text(appLocalizations.proxyType),
+              title: GlassText(appLocalizations.proxyType),
               options: RuleAction.addedRuleActions,
               value: _ruleAction,
               textBuilder: (action) => action.value,
@@ -392,7 +388,7 @@ class _RuleFormState extends State<RuleForm> {
               ),
             ),
             ListItem<String>.options(
-              title: Text(appLocalizations.splitStrategy),
+              title: GlassText(appLocalizations.splitStrategy),
               options: [
                 if (!targets.contains(_ruleTarget)) _ruleTarget,
                 ...targets,

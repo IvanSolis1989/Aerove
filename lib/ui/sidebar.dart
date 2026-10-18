@@ -1,6 +1,8 @@
 import 'dart:math' as math;
 import 'dart:ui' show lerpDouble;
 
+import 'package:fl_clash/ui/foreground_ink.dart';
+
 import 'package:fl_clash/ui/context.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/l10n.dart';
@@ -294,7 +296,7 @@ class _SidebarPane extends StatelessWidget {
             _fitsOneLine(context, label, labelStyle, labelWidth)
         ? ''
         : label;
-    return SizedBox(
+    final pane = SizedBox(
       width: lerpDouble(compactWidth, _expandedWidth, progress),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -363,6 +365,13 @@ class _SidebarPane extends StatelessWidget {
         ],
       ),
     );
+    return LiquidGlassScope.of(context)
+        ? LiquidGlass(
+            style: LiquidGlassStyle.regular(context.colorScheme),
+            clipper: const ShapeBorderClipper(shape: AppShape.none),
+            child: pane,
+          )
+        : pane;
   }
 }
 
@@ -390,19 +399,9 @@ class _SidebarButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: sideInset,
-        vertical: _itemGap / 2,
-      ),
-      child: Semantics(
-        container: true,
-        button: true,
-        selected: selected,
-        child: FocusRing(
-          shape: _itemShape,
-          child: Material(
-            color: selected == true ? colors.selectedFill : Colors.transparent,
+    final glass = LiquidGlassScope.of(context);
+    final button = Material(
+            color: glass ? Colors.transparent : selected == true ? colors.selectedFill : Colors.transparent,
             shape: _itemShape,
             child: InkWell(
               onTap: onTap,
@@ -419,7 +418,25 @@ class _SidebarButton extends StatelessWidget {
                 ),
               ),
             ),
-          ),
+          );
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: sideInset,
+        vertical: _itemGap / 2,
+      ),
+      child: Semantics(
+        container: true,
+        button: true,
+        selected: selected,
+        child: FocusRing(
+          shape: _itemShape,
+          child: glass && selected == true
+              ? LiquidGlass(
+                  style: LiquidGlassStyle.regular(context.colorScheme).copyWith(tint: colors.selectedFill),
+                  clipper: ShapeBorderClipper(shape: _itemShape),
+                  child: button,
+                )
+              : button,
         ),
       ),
     );
@@ -479,7 +496,7 @@ class _DestinationRow extends StatelessWidget {
               child: Opacity(
                 opacity: labelOpacity,
                 alwaysIncludeSemantics: true,
-                child: Text(
+                child: GlassText(
                   destination.label,
                   maxLines: 1,
                   softWrap: false,

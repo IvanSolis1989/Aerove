@@ -3,7 +3,6 @@ import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:material_ui/material_ui.dart';
@@ -112,7 +111,7 @@ class ProxyCard extends ConsumerWidget {
                 Flexible(
                   flex: 1,
                   child: TooltipText(
-                    text: Text(proxy.type, maxLines: 1, style: typeStyle),
+                    text: GlassText(proxy.type, maxLines: 1, style: typeStyle),
                   ),
                 ),
                 delayText,
@@ -333,7 +332,7 @@ class _DelayTextState extends ConsumerState<_DelayText> {
                     onTap: _handleTestCurrentDelay,
                     child: _withFocusRing(
                       context,
-                      Text(
+                      GlassText(
                         delay > 0
                             ? '$delay ms'
                             : delayFailureText(delay, context.appLocalizations),
@@ -344,10 +343,7 @@ class _DelayTextState extends ConsumerState<_DelayText> {
                               overflow: TextOverflow.ellipsis,
                               color: delayColor == null
                                   ? null
-                                  : GlassForeground.colorOf(
-                                      context,
-                                      delayColor,
-                                    ),
+                                  : delayColor,
                             ),
                       ),
                     ),

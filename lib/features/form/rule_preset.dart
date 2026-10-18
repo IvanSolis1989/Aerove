@@ -1,7 +1,6 @@
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/clash_config.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:material_ui/material_ui.dart';
@@ -107,7 +106,7 @@ class _RulePresetSheetState extends State<RulePresetSheet> {
             position: ItemPosition.get(index, presets.length),
             child: DecorationListItem(
               leading: GlyphIcon(preset.glyph),
-              title: Text(preset.label(appLocalizations)),
+              title: GlassText(preset.label(appLocalizations)),
               subtitle: _PresetSubtitle(preset),
               isSelected: isSelected,
               trailing: isSelected ? const SelectionCheck() : null,
@@ -131,7 +130,7 @@ class _PresetSubtitle extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         for (final raw in preset.rawRules)
-          Text(
+          GlassText(
             raw,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
@@ -139,10 +138,7 @@ class _PresetSubtitle extends StatelessWidget {
                 .of(context)
                 .toJetBrainsMono
                 .copyWith(
-                  color: GlassForeground.colorOf(
-                    context,
-                    context.colorScheme.tertiary,
-                  ),
+                  color: context.colorScheme.tertiary,
                 ),
           ),
       ],

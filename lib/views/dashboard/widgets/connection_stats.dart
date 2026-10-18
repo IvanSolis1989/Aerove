@@ -77,7 +77,7 @@ class _Count extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
+    return GlassText(
       dashboardCount(count),
       maxLines: 1,
       style: DashboardText.figure(
@@ -114,7 +114,7 @@ class _Stat extends StatelessWidget {
                 spacing: 2,
                 children: [
                   count,
-                  Text(
+                  GlassText(
                     feed.page.label,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,

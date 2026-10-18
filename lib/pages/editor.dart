@@ -1004,11 +1004,11 @@ class FindPanel extends StatelessWidget implements PreferredSizeWidget {
       children: [
         FilledButton(
           onPressed: hasMatches ? controller.replace : null,
-          child: Text(appLocalizations.replace),
+          child: GlassText(appLocalizations.replace),
         ),
         FilledButton(
           onPressed: hasMatches ? controller.replaceAll : null,
-          child: Text(appLocalizations.replaceAll),
+          child: GlassText(appLocalizations.replaceAll),
         ),
       ],
     );
@@ -1093,7 +1093,7 @@ class FindPanel extends StatelessWidget implements PreferredSizeWidget {
           if (result != null)
             Padding(
               padding: const EdgeInsetsDirectional.only(end: 4),
-              child: Text(
+              child: GlassText(
                 result,
                 style: AppTextStyle.subheadline
                     .of(context)

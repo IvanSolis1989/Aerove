@@ -117,7 +117,12 @@ void main() {
   ) async {
     const selected = [Color(0xFF6BD5D9), Color(0xFFC6ADE4), Color(0xFFA9DAC6)];
     const saturated = [Color(0xFFFF0000), Color(0xFF00FF00), Color(0xFF0000FF)];
-    const palettes = {'soft': selected, 'saturated': saturated};
+    const defaults = [Color(0xFF65BDD2), Color(0xFFC589CA), Color(0xFF75CCA8)];
+    const palettes = {
+      'soft': selected,
+      'saturated': saturated,
+      'default': defaults,
+    };
     const regressionSeeds = [12, 271828, 314159];
     const masterSeed = 20261017;
     final random = math.Random(masterSeed);
@@ -144,7 +149,7 @@ void main() {
       'dartVersion': Platform.version,
       'regressionSeeds': regressionSeeds,
       'randomSeeds': randomSeeds,
-      'expectedImageCount': seeds.length * 6 + randomSeeds.length * 2,
+      'expectedImageCount': seeds.length * 6 + randomSeeds.length * 4,
       'imageWidth': 300,
       'imageHeight': 600,
       'meshColumns': 65,
@@ -152,6 +157,8 @@ void main() {
       'sharedSourceSaturationCeiling': 0.60,
       'sourceSofteningBrightnessDependent': false,
       'lightFinalSaturationMultiplier': 1.08,
+      'lightSourceChromaBudget': 30,
+      'lightPaletteMixWeight': 0.72,
       'pixelBaseline': {
         'githubActionsRun': _baselineRun,
         'source': 'xclash-previews artifact, 300 by 600 opaque RGBA images',
@@ -181,9 +188,12 @@ void main() {
         'neutralSaturationThreshold': 0.07,
         'darkMaximumLuminanceExclusive': 0.165,
         'lightMinimumLuminanceExclusive': 0.73,
-        'lightMaximumSampledHctChromaInclusive': 20,
+        'lightMaximumSampledHctChromaInclusive': 33,
       },
       'visualReview': {
+        'retiredLightMaximumHctChroma': 20,
+        'lightChromaGateChangeReason':
+            'the user explicitly rejected the gray-white light wallpaper; permit a visibly richer pastel field while retaining the luminance floor and unchanged dark pixels',
         'darkSourcePolicy':
             'both modes first apply the shared artistic source saturation ceiling 0.60; dark retains that source hue and saturation and only attenuates value',
         'retiredDarkMaximumHctChroma': 24,
@@ -224,6 +234,8 @@ void main() {
                     'aurora-${brightness.name}-$count-$seed.png',
                 for (final brightness in Brightness.values)
                   'aurora-saturated-${brightness.name}-3-$seed.png',
+                for (final brightness in Brightness.values)
+                  'aurora-default-${brightness.name}-3-$seed.png',
               ],
             },
         ],
@@ -253,6 +265,19 @@ void main() {
               'brightness': brightness.name,
               'colorCount': 3,
               'selectedColors': saturated
+                  .map((color) => color.toARGB32())
+                  .toList(),
+            },
+        for (final brightness in Brightness.values)
+          for (final seed in randomSeeds)
+            {
+              'file': 'aurora-default-${brightness.name}-3-$seed.png',
+              'seed': seed,
+              'sample': 'random',
+              'palette': 'default',
+              'brightness': brightness.name,
+              'colorCount': 3,
+              'selectedColors': defaults
                   .map((color) => color.toARGB32())
                   .toList(),
             },
@@ -300,7 +325,7 @@ void main() {
                     as RenderRepaintBoundary;
             final prefix = paletteCase.key == 'soft'
                 ? 'aurora'
-                : 'aurora-saturated';
+                : 'aurora-${paletteCase.key}';
             final name = '$prefix-${brightness.name}-$count-$seed';
             final bytes = (await tester.runAsync(() async {
               final image = await boundary.toImage();
@@ -379,10 +404,12 @@ void main() {
             final meanLuminance = totalLuminance / samples;
             final pixelDigest = sha256.convert(bytes).toString();
             final meanSaturation = totalSaturation / samples;
-            if (brightness == Brightness.dark) {
-              darkPixelHashes.add('$name:$pixelDigest');
-            } else {
-              lightMeanSaturations.add(meanSaturation);
+            if (paletteCase.key != 'default') {
+              if (brightness == Brightness.dark) {
+                darkPixelHashes.add('$name:$pixelDigest');
+              } else {
+                lightMeanSaturations.add(meanSaturation);
+              }
             }
             final verticalVariation = _verticalVariation(bytes, 300, 600);
             final varyingRows = _varyingRows(bytes, 300, 600);
@@ -395,8 +422,8 @@ void main() {
             final adjacentStep = _p95AdjacentRgbStep(bytes, 300, 600);
             final failedChecks = <String>[
               if (!opaque) 'opaque alpha must equal 255',
-              if (brightness == Brightness.light && maxChroma > 20)
-                'light sampled HCT chroma must remain at or below 20',
+              if (brightness == Brightness.light && maxChroma > 33)
+                'light sampled HCT chroma must remain at or below 33',
               if (seedDifference != null && seedDifference <= 3)
                 'consecutive seed mean RGB difference must exceed 3',
               if (verticalVariation <= 3)
@@ -496,8 +523,8 @@ void main() {
     if (darkDigest != _baselineDarkPixelDigest) {
       failures.add('dark RGBA pixels must match baseline run $_baselineRun');
     }
-    if (saturationRatio <= 1.06 || saturationRatio > 1.09) {
-      failures.add('light mean saturation must increase by 6 to 9 percent');
+    if (saturationRatio < 1.4 || saturationRatio > 2.5) {
+      failures.add('light mean saturation must increase by 40 to 150 percent');
     }
     manifest['brightnessComparison'] = {
       'darkPixelDigest': darkDigest,
@@ -513,7 +540,7 @@ void main() {
         '${output.path}/aurora-review-manifest.json',
       ).writeAsString(const JsonEncoder.withIndent('  ').convert(manifest)),
     );
-    expect(metrics, hasLength(98));
+    expect(metrics, hasLength(118));
     expect(darkPixelHashes, hasLength(49));
     expect(lightMeanSaturations, hasLength(49));
     expect(failures, isEmpty, reason: failures.join('\n'));

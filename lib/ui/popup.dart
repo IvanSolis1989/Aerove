@@ -3,9 +3,10 @@ import 'dart:math' as math;
 import 'dart:ui' as ui show Image;
 import 'dart:ui' show ImageFilter, lerpDouble;
 
+import 'package:fl_clash/ui/foreground_ink.dart';
+
 import 'package:fl_clash/ui/color.dart';
 import 'package:fl_clash/ui/context.dart';
-import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/metrics.dart';
 import 'package:fl_clash/ui/motion.dart';
@@ -1406,7 +1407,7 @@ class PopupValueText extends StatelessWidget {
             ?current,
           ],
         ),
-        child: Text(
+        child: GlassText(
           text,
           key: ValueKey(text),
           maxLines: 1,
@@ -2068,10 +2069,7 @@ class _CommonPopupMenuState extends State<CommonPopupMenu>
                   style: AppTextStyle.subheadline
                       .of(context)
                       .copyWith(
-                        color: GlassForeground.colorOf(
-                          context,
-                          foregroundColor,
-                        ),
+                        color: foregroundColor,
                       ),
                 ),
               ),

@@ -190,11 +190,7 @@ class _BlockConnectionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: context.appLocalizations.blockConnection,
-      child: Semantics(
-        button: true,
-        child: InkWell(
+    final button = InkWell(
           onTap: onPressed,
           customBorder: AppShape.circle,
           child: SizedBox.square(
@@ -207,7 +203,18 @@ class _BlockConnectionButton extends StatelessWidget {
               ),
             ),
           ),
-        ),
+        );
+    return Tooltip(
+      message: context.appLocalizations.blockConnection,
+      child: Semantics(
+        button: true,
+        child: LiquidGlassScope.of(context)
+            ? LiquidGlass(
+                style: LiquidGlassStyle.regular(context.colorScheme),
+                clipper: const ShapeBorderClipper(shape: AppShape.circle),
+                child: button,
+              )
+            : button,
       ),
     );
   }

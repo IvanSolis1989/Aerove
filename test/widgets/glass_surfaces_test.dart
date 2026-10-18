@@ -97,7 +97,7 @@ void main() {
           tester.element(find.text('Scoped action')),
         ).style.color!;
         final source = enabled ? scheme.onSurface : scheme.onPrimary;
-        expect(foreground.a, enabled ? 0.64 : source.a);
+        expect(foreground.a, enabled ? 1.0 : source.a);
         expect(foreground.withValues(alpha: source.a), source);
         final segmentFills = tester
             .widgetList<DecoratedBox>(

@@ -153,7 +153,7 @@ class _CoreStatusButtonState extends ConsumerState<CoreStatusButton> {
                     ),
                   },
                 ),
-                label: Text(switch (coreStatus) {
+                label: GlassText(switch (coreStatus) {
                   CoreStatus.connecting => appLocalizations.connecting,
                   CoreStatus.connected => appLocalizations.connected,
                   CoreStatus.disconnected => appLocalizations.disconnected,

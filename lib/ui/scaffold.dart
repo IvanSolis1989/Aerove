@@ -1,5 +1,7 @@
 import 'dart:math' as math;
 
+import 'package:fl_clash/ui/foreground_ink.dart';
+
 import 'package:fl_clash/common/input_limits.dart';
 import 'package:fl_clash/common/iterable.dart';
 import 'package:fl_clash/ui/context.dart';
@@ -456,7 +458,7 @@ class CommonScaffoldState extends State<CommonScaffold> {
           )
         : widget.titleWidget ??
               (widget.titleMenuItems.isEmpty
-                  ? Text(widget.title!)
+                  ? GlassText(widget.title!)
                   : CommonPopupBox(
                       placement: PopupPlacement.overAnchorStart,
                       targetBuilder: (open) => _TitleMenuButton(
@@ -593,13 +595,13 @@ class CommonScaffoldState extends State<CommonScaffold> {
         actions: [
           TextButton(
             onPressed: _closeSheet,
-            child: Text(UiLocalizations.of(context).cancel),
+            child: GlassText(UiLocalizations.of(context).cancel),
           ),
           TextButton(
             onPressed: confirmation.isLoading ? null : confirmation.onPressed,
             child: confirmation.isLoading
                 ? CommonCircleLoading(size: TonalButtonSize.bar.icon)
-                : Text(confirmation.tooltip!),
+                : GlassText(confirmation.tooltip!),
           ),
         ],
       ),
@@ -1320,7 +1322,7 @@ class _TitleMenuButton extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         spacing: compact ? 2 : 4,
         children: [
-          Flexible(child: Text(title)),
+          Flexible(child: GlassText(title)),
           GlyphIcon(
             AppGlyphs.chevronDown,
             size: compact ? 16 : 20,

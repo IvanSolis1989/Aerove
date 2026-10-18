@@ -15,22 +15,22 @@ class CustomResourcesView extends StatelessWidget {
     final appLocalizations = context.appLocalizations;
     final items = [
       ListItem.open(
-        title: Text(appLocalizations.proxies),
+        title: GlassText(appLocalizations.proxies),
         leading: const GlyphIcon(AppGlyphs.proxies),
         widget: const CustomProxiesView(),
       ),
       ListItem.open(
-        title: Text(appLocalizations.ruleProviders),
+        title: GlassText(appLocalizations.ruleProviders),
         leading: const GlyphIcon(AppGlyphs.resources),
         widget: const ClashProvidersView(),
       ),
       ListItem.open(
-        title: Text(appLocalizations.filters),
+        title: GlassText(appLocalizations.filters),
         leading: const GlyphIcon(AppGlyphs.filter),
         widget: const FiltersView(),
       ),
       ListItem.open(
-        title: Text(appLocalizations.iconSets),
+        title: GlassText(appLocalizations.iconSets),
         leading: const GlyphIcon(AppGlyphs.photos),
         widget: const IconSetsView(),
       ),

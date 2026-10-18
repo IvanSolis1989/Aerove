@@ -171,7 +171,7 @@ class _IconSetsViewState extends ConsumerState<IconSetsView> {
               title: iconSet.name,
               chip: iconSet.icons.length.compact,
             ),
-            subtitle: Text(
+            subtitle: GlassText(
               iconSet.isRemote
                   ? appLocalizations.remote
                   : appLocalizations.local,

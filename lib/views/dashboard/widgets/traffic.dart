@@ -54,7 +54,7 @@ class _Figure extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text.rich(
+    return GlassText.rich(
       TextSpan(
         children: [
           TextSpan(
@@ -149,13 +149,13 @@ class SpeedCard extends ConsumerWidget {
                         size: 18,
                         color: direction.glyphColorOf(context),
                       ),
-                      Text(
+                      GlassText(
                         direction.labelOf(context),
                         maxLines: 1,
                         style: DashboardText.cardTitle(context),
                       ),
                       Expanded(
-                        child: Text(
+                        child: GlassText(
                           appLocalizations.trafficPeak(
                             '${dashboardTraffic(peak)}/s',
                           ),
@@ -178,7 +178,7 @@ class SpeedCard extends ConsumerWidget {
                   unitStyle: AppTextStyle.subheadline,
                 ),
                 const SizedBox(height: 2),
-                Text(
+                GlassText(
                   appLocalizations.trafficTotal(dashboardTraffic(total)),
                   maxLines: 1,
                   style: DashboardText.label(context),
@@ -305,7 +305,7 @@ class _SpeedTile extends StatelessWidget {
                         children: [
                           GlyphIcon(direction.glyph, size: 16, color: color),
                           Flexible(
-                            child: Text(
+                            child: GlassText(
                               direction.labelOf(context),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
@@ -325,7 +325,7 @@ class _SpeedTile extends StatelessWidget {
                         style: AppTextStyle.title1,
                         unitStyle: AppTextStyle.footnote,
                       ),
-                      Text(
+                      GlassText(
                         context.appLocalizations.trafficTotal(
                           dashboardTraffic(total),
                         ),

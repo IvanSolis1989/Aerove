@@ -297,8 +297,10 @@ class _RecordTableHeader<T> extends StatelessWidget {
     );
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: _recordTableMargin),
-      child: Material(
-        color: context.raisedSurfaceLevel.colorOf(colorScheme),
+      child: CardGroup(
+        shape: AppShape.all(AppCorner.fit(height)),
+        child: Material(
+        color: LiquidGlassScope.of(context) ? Colors.transparent : context.raisedSurfaceLevel.colorOf(colorScheme),
         shape: AppShape.all(AppCorner.fit(height)),
         clipBehavior: Clip.antiAlias,
         child: TableColumnResizer(
@@ -328,15 +330,17 @@ class _RecordTableHeader<T> extends StatelessWidget {
           ),
         ),
       ),
+      ),
     );
   }
 }
+
 
 /// The width a fixed column takes to show [label] whole in its header.
 double recordHeaderWidth(BuildContext context, String label) =>
     MeasureScope.of(context)
         .computeTextSize(
-          Text(
+          GlassText(
             label,
             style: AppTextStyle.caption1.of(context, emphasized: true),
           ),
@@ -380,7 +384,7 @@ class RecordHeaderCell extends StatelessWidget {
         spacing: 2,
         children: [
           Flexible(
-            child: Text(
+            child: GlassText(
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -427,7 +431,9 @@ class RecordTableRow extends StatelessWidget {
     final style = AppTextStyle.subheadline.of(context);
     final shape = AppShape.all(AppCorner.fit(table.rowHeight));
     final level = striped ? context.raisedSurfaceLevel : context.surfaceLevel;
-    final fill = striped ? level.colorOf(colorScheme) : null;
+    final fill = striped
+        ? LiquidGlassScope.surfaceColorOf(context, level.colorOf(colorScheme), opacity: 0.12)
+        : null;
     Widget row = Material(
       type: MaterialType.transparency,
       child: InkWell(
@@ -459,7 +465,7 @@ class RecordTableRow extends StatelessWidget {
     }
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: _recordTableMargin),
-      child: SurfaceScope(level: level, child: row),
+      child: CardGroup(shape: shape, child: SurfaceScope(level: level, child: row)),
     );
   }
 }
@@ -472,7 +478,7 @@ class RecordCellText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
+    return GlassText(
       text.isEmpty ? '—' : text,
       style: muted
           ? TextStyle(color: context.colorScheme.onSurfaceVariant)
