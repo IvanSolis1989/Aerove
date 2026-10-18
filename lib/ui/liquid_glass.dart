@@ -1502,7 +1502,7 @@ class _LiquidGlassLayer extends Layer {
             covered,
             strip,
           ).getBounds().isEmpty;
-      _featherBands.add((rect: bounds, surfaces: simple ? 3 : 5));
+      _featherBands.add((rect: bounds, surfaces: simple ? 4 : 6));
       canvas
         ..save()
         ..clipPath(strip, doAntiAlias: false)
@@ -1516,8 +1516,10 @@ class _LiquidGlassLayer extends Layer {
       }
       canvas
         ..restore()
-        ..saveLayer(bounds, Paint()..blendMode = BlendMode.plus);
+        ..saveLayer(bounds, Paint()..blendMode = BlendMode.plus)
+        ..saveLayer(bounds, Paint());
       paintLive(canvas);
+      canvas.restore();
       if (simple) {
         group.single.mask(canvas);
       } else {

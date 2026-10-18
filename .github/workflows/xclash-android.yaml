@@ -103,6 +103,22 @@ jobs:
           trap 'cp "$RUNNER_TEMP/ink-pubspec.yaml" pubspec.yaml' EXIT
           sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
           flutter test --enable-impeller --reporter expanded test/widgets/glass_foreground_test.dart test/widgets/target_icon_test.dart test/widgets/selection_mark_test.dart test/widgets/loading_ink_test.dart test/widgets/core_status_button_test.dart
+      - name: Verify feather blend pixels
+        env:
+          XCLASH_REQUIRE_IMPELLER: 'true'
+          XCLASH_SCREENSHOT_DIR: ${{ runner.temp }}/xclash-previews/feather
+        run: |
+          cp pubspec.yaml "$RUNNER_TEMP/feather-pubspec.yaml"
+          trap 'cp "$RUNNER_TEMP/feather-pubspec.yaml" pubspec.yaml' EXIT
+          sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
+          flutter test --enable-impeller --reporter expanded test/widgets/header_blur_occlusion_test.dart
+      - name: Upload feather blend evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xclash-feather
+          path: ${{ runner.temp }}/xclash-previews/feather
+          if-no-files-found: ignore
       - name: Ink performance and transition probes
         if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
         env:
@@ -130,7 +146,6 @@ jobs:
             test/widgets/source_blur_cache_test.dart \
             test/widgets/sheet_occlusion_test.dart \
             test/widgets/popup_occlusion_test.dart \
-            test/widgets/header_blur_occlusion_test.dart \
             test/widgets/home_first_frame_glass_test.dart \
             test/widgets/liquid_glass_host_test.dart \
             test/widgets/glass_page_handover_test.dart \
