@@ -24,6 +24,8 @@ import '../helpers/test_profiles.dart';
 const _url = 'https://example.com/generate_204';
 const _name = 'Ágj a\u0301j\u0301 🇮🇩 Long fallback proxy';
 const _font = 'SharedBoundsLatin';
+const _protocols = ['URLTest', 'Vless', 'AnyTLS', 'Mieru', 'Hysteria', 'Hysteria2'];
+const _latencies = [23, 99, 130, 999, 1234, 9800];
 bool _hasCjk = false;
 
 InlineSpan _colored(InlineSpan value, Color color) {
@@ -63,6 +65,12 @@ Future<List<Map<String, Object?>>> _glyphRows(
   final paragraphs = tester.renderObjectList<RenderParagraph>(
     find.descendant(of: find.byKey(capture), matching: find.byType(RichText)),
   ).toList();
+  final cards = {
+    for (final element in find.descendant(
+      of: find.byKey(capture), matching: find.byType(RichText),
+    ).evaluate())
+      element.findRenderObject(): element.findAncestorWidgetOfExactType<ProxyCard>(),
+  };
   final painted = await _shot(tester, boundary);
   final originals = [for (final paragraph in paragraphs) paragraph.text];
   final masks = <({ByteData bytes, Rect region})>[];
@@ -92,7 +100,8 @@ Future<List<Map<String, Object?>>> _glyphRows(
     image.dispose();
     final clips = <String>[];
     RenderObject child = paragraph;
-    while (child.parent case final parent?) {
+    while (child.parent != null) {
+      final parent = child.parent!;
       final clip = parent.describeApproximatePaintClip(child);
       if (clip != null) {
         clips.add('${parent.runtimeType}:${MatrixUtils.transformRect(
@@ -107,6 +116,10 @@ Future<List<Map<String, Object?>>> _glyphRows(
       'text': paragraph.text.toPlainText(),
       'bounds': (origin & paragraph.size).toString(),
       'ellipsis': painter.didExceedMaxLines,
+      'layoutWidth': paragraph.size.width,
+      'intrinsicWidth': painter.maxIntrinsicWidth,
+      'proxyCard': cards[paragraph]?.type.name,
+      'proxyProtocol': cards[paragraph]?.proxy.type,
       'clips': clips,
     });
     painter.dispose();
@@ -309,6 +322,113 @@ void main() {
           for (final row in rows) {
             expect(row['inkRows'] as int, greaterThan(0), reason: '$name $row');
             expect(row['missingRows'], isEmpty, reason: '$name $row');
+          }
+          expect(tester.takeException(), isNull);
+          await tester.pumpWidget(const SizedBox.shrink());
+        }, skip: quality != null && !ui.ImageFilter.isShaderFilterSupported);
+      }
+    }
+  }
+
+  for (final brightness in Brightness.values) {
+    for (final scale in [0.8, 1.0, 1.4]) {
+      for (final quality in [null, ...LiquidGlassQuality.values]) {
+        final name = 'protocol-${brightness.name}-$scale-${quality?.name ?? 'none'}';
+        testWidgets('three-column protocol and latency glyph geometry $name', (
+          tester,
+        ) async {
+          tester.view.physicalSize = const Size(406, 1050);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+          final container = ProviderContainer(overrides: [
+            profilesProvider.overrideWith(TestProfiles.new),
+            delayDataSourceProvider.overrideWithBuild((_, _) => {
+              _url: {for (final (index, protocol) in _protocols.indexed)
+                '$protocol $_name': _latencies[index]},
+            }),
+          ]);
+          addTearDown(container.dispose);
+          globalState.container = container;
+          container.read(viewSizeProvider.notifier).value = const Size(406, 1050);
+          final capture = GlobalKey();
+          final scheme = ColorScheme.fromSeed(seedColor: Colors.teal,
+            brightness: brightness);
+          await tester.pumpWidget(UncontrolledProviderScope(
+            container: container,
+            child: MaterialApp(
+              theme: ThemeData(colorScheme: scheme, fontFamily: _font)
+                  .withAppTypography.withAppShapes.withAppSurfaces,
+              themeAnimationStyle: AnimationStyle.noAnimation,
+              localizationsDelegates: const [
+                AppLocalizations.delegate, AppUiLocalizations.delegate,
+                ...GlobalMaterialLocalizations.delegates,
+              ],
+              supportedLocales: AppLocalizations.delegate.supportedLocales,
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(scale)),
+                child: Builder(builder: (context) {
+                  final measure = Measure.of(context, scale);
+                  globalState.measure = measure;
+                  return MeasureScope(measure: measure, child: AppViewScope(
+                    child: RepaintBoundary(key: capture,
+                      child: LiquidGlassScope(enabled: quality != null,
+                        quality: quality ?? LiquidGlassQuality.standard,
+                        child: LiquidGlassHost(enabled: quality != null,
+                          child: Stack(fit: StackFit.expand, children: [
+                            Positioned.fill(child: LiquidGlassColorField(
+                              child: LiquidGlassColorSource(child: ColoredBox(
+                                color: brightness == Brightness.dark
+                                    ? const Color(0xFF16353F) : const Color(0xFFBDE5EC),
+                              )),
+                            )),
+                            child!,
+                          ]),
+                        ),
+                      ),
+                    ),
+                  ));
+                }),
+              ),
+              home: Material(type: MaterialType.transparency,
+                child: Padding(padding: const EdgeInsets.all(12),
+                  child: Builder(builder: (context) => Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    spacing: 8,
+                    children: [
+                      for (final type in ProxyCardType.values)
+                        for (var row = 0; row < 2; row++)
+                          Row(crossAxisAlignment: CrossAxisAlignment.start,
+                            spacing: 8, children: [
+                              for (var column = 0; column < 3; column++)
+                                SizedBox(width: [110.0, 120.0, 130.0][column],
+                                  height: getItemHeight(type),
+                                  child: ProxyCard(groupName: 'group', testUrl: _url,
+                                    proxy: Proxy(name: '${_protocols[row * 3 + column]} $_name',
+                                      type: _protocols[row * 3 + column]),
+                                    groupType: GroupType.Selector, type: type),
+                                ),
+                            ],
+                          ),
+                    ],
+                  )),
+                ),
+              ),
+            ),
+          ));
+          await tester.pumpAndSettle();
+          final rows = await _glyphRows(tester, capture, name);
+          final protocols = rows.where((row) => _protocols.contains(row['text']));
+          final delays = rows.where((row) => RegExp(r'^\d+ ms$')
+              .hasMatch(row['text']! as String));
+          expect(protocols, hasLength(18));
+          expect(delays, hasLength(18));
+          for (final row in [...protocols, ...delays]) {
+            expect(row['inkRows'] as int, greaterThan(0), reason: '$name $row');
+            expect(row['missingRows'], isEmpty,
+              reason: 'Vertical glyph loss is distinct from recorded horizontal ellipsis: $name $row');
+          }
+          for (final row in delays) {
+            expect(row['ellipsis'], isFalse, reason: '$name $row');
           }
           expect(tester.takeException(), isNull);
           await tester.pumpWidget(const SizedBox.shrink());

@@ -977,6 +977,7 @@ class LiquidGlassPane {
   final _layer = LayerHandle<_LiquidGlassLayer>();
   final _rimLayer = LayerHandle<_LiquidGlassDecorationLayer>();
   Path? _profiled;
+  LiquidGlassOutline? _outlined;
   List<double> _profile = _flatProfile;
 
   /// A pane moving within [hold] keeps one capture (.agents/architecture.md).
@@ -1003,6 +1004,7 @@ class LiquidGlassPane {
           bottomRight: radius.bottomRight.clamp(maximum: limit),
         );
         _profiled = null;
+        _outlined = null;
         if (hold == null) {
           _paintShadows(context.canvas, rect, corners, shadows);
         }
@@ -1018,8 +1020,10 @@ class LiquidGlassPane {
         }
         pane
           ..corners = BorderRadius.zero
-          ..outline = path.shift(rect.topLeft)
+          ..outline = identical(shape, _outlined) && pane.rect == rect
+              ? pane.outline : path.shift(rect.topLeft)
           ..profile = _profile;
+        _outlined = shape;
     }
     pane
       ..program = _GlassProgram.request(onReady)
@@ -1170,6 +1174,7 @@ class _LiquidGlassLayer extends Layer {
   Rect _capturedRect = Rect.zero;
   ui.FragmentShader? _captureShader;
   bool _showingFrozen = false;
+  final _featherBands = <({Rect rect, int surfaces})>[];
   ui.Image? _frozenImage;
   ui.Picture? _frozenPicture;
   (
@@ -1230,6 +1235,7 @@ class _LiquidGlassLayer extends Layer {
 
   void _captureFrozen(int pass) {
     _capturedPass = pass;
+    _featherBands.clear();
     if (_showingFrozen) return;
     final recorder = ui.PictureRecorder();
     Canvas(recorder).drawPicture(_frozenPicture!);
@@ -1342,6 +1348,8 @@ class _LiquidGlassLayer extends Layer {
     LiquidGlassStyle style, {
     Path? visible,
     List<Object?> coverageKey = const [],
+    List<_GlassFeather> feathers = const [],
+    Path? covered,
   }) {
     _capturedPass = pass;
     _showingFrozen = false;
@@ -1374,33 +1382,113 @@ class _LiquidGlassLayer extends Layer {
             listEquals(coverage, coverageKey)) {
       return;
     }
+    final shader = program == null ? null : (_captureShader ??= program.fragmentShader());
+    if (shader != null) {
+      shader.setImageSampler(0, atlas, filterQuality: FilterQuality.low);
+      for (final (index, value) in uniforms.indexed) { shader.setFloat(index, value); }
+    }
+    void paintLive(Canvas canvas) {
+      if (shader == null) {
+        _frostFrom(canvas, atlas, mapping, blendMode, style);
+      } else {
+        final paint = Paint()..shader = shader..blendMode = blendMode;
+        if (outline case final path?) {
+          canvas.drawPath(path, paint);
+        } else {
+          canvas.drawRSuperellipse(corners.toRSuperellipse(rect), paint);
+        }
+      }
+    }
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
-    if (visible != null) {
-      if (_frozenPicture case final frozen?) canvas.drawPicture(frozen);
-      canvas.clipPath(visible);
-    }
-    if (program == null) {
-      _frostFrom(canvas, atlas, mapping, blendMode, style);
+    _featherBands.clear();
+    if (visible != null && feathers.isNotEmpty && _frozenPicture != null) {
+      _paintFeathered(canvas, covered ?? Path(), feathers, paintLive);
     } else {
-      final shader = _captureShader ??= program.fragmentShader();
-      shader.setImageSampler(0, atlas, filterQuality: FilterQuality.low);
-      for (final (index, value) in uniforms.indexed) {
-        shader.setFloat(index, value);
+      if (visible != null) {
+        if (_frozenPicture case final frozen?) canvas.drawPicture(frozen);
+        canvas.clipPath(visible);
       }
-      final paint = Paint()
-        ..shader = shader
-        ..blendMode = blendMode;
-      if (outline case final outline?) {
-        canvas.drawPath(outline, paint);
-      } else {
-        canvas.drawRSuperellipse(corners.toRSuperellipse(rect), paint);
-      }
+      paintLive(canvas);
     }
     _captured?.dispose();
     _captured = recorder.endRecording();
     _capturedRect = rect;
     _captureKey = (atlas, outline, blendMode, program, uniforms, coverageKey);
+  }
+
+  void _paintFeathered(Canvas canvas, Path covered,
+      List<_GlassFeather> feathers, void Function(Canvas) paintLive) {
+    final groups = <List<_GlassFeather>>[];
+    for (final feather in feathers) {
+      var bounds = feather.path.getBounds().intersect(rect);
+      if (bounds.isEmpty) continue;
+      final group = [feather];
+      for (var index = 0; index < groups.length;) {
+        final other = groups[index].map((mask) => mask.path.getBounds())
+            .reduce((a, b) => a.expandToInclude(b)).intersect(rect);
+        if (bounds.overlaps(other)) {
+          group.addAll(groups.removeAt(index));
+          bounds = bounds.expandToInclude(other);
+          index = 0;
+        } else {
+          index++;
+        }
+      }
+      groups.add(group);
+    }
+    var strips = Path();
+    for (final group in groups) {
+      for (final feather in group) {
+        strips = Path.combine(PathOperation.union, strips, feather.path);
+      }
+    }
+    strips = Path.combine(PathOperation.intersect, strips, Path()..addRect(rect));
+    final outside = Path.combine(PathOperation.difference, Path()..addRect(rect), strips);
+    final liveRegion = Path.combine(PathOperation.difference, Path()..addRect(rect), covered);
+    canvas..save()..clipPath(outside, doAntiAlias: false)
+      ..save()..clipPath(covered, doAntiAlias: false)..drawPicture(_frozenPicture!)
+      ..restore()..clipPath(liveRegion, doAntiAlias: false);
+    paintLive(canvas);
+    canvas.restore();
+    for (final group in groups) {
+      var strip = Path();
+      for (final feather in group) {
+        strip = Path.combine(PathOperation.union, strip, feather.path);
+      }
+      strip = Path.combine(PathOperation.intersect, strip, Path()..addRect(rect));
+      final bounds = strip.getBounds();
+      final simple = group.length == 1 &&
+          Path.combine(PathOperation.intersect, covered, strip).getBounds().isEmpty;
+      _featherBands.add((rect: bounds, surfaces: simple ? 3 : 5));
+      canvas..save()..clipPath(strip, doAntiAlias: false)..saveLayer(bounds, Paint())
+        ..saveLayer(bounds, Paint())..drawPicture(_frozenPicture!);
+      if (simple) {
+        group.single.mask(canvas, inverse: true);
+      } else {
+        _maskFeather(canvas, bounds, covered, group, BlendMode.dstOut);
+      }
+      canvas..restore()..saveLayer(bounds, Paint()..blendMode = BlendMode.plus)
+        ..save()..clipPath(liveRegion, doAntiAlias: false);
+      paintLive(canvas);
+      canvas.restore();
+      if (simple) {
+        group.single.mask(canvas);
+      } else {
+        _maskFeather(canvas, bounds, covered, group, BlendMode.dstIn);
+      }
+      canvas..restore()..restore()..restore();
+    }
+  }
+
+  void _maskFeather(Canvas canvas, Rect bounds, Path covered,
+      List<_GlassFeather> feathers, BlendMode mode) {
+    canvas..saveLayer(bounds, Paint()..blendMode = mode)
+      ..drawRect(bounds, Paint()..color = Colors.white);
+    for (final feather in feathers) { feather.mask(canvas); }
+    canvas..drawPath(covered, Paint()..color = Colors.white
+        ..blendMode = BlendMode.dstOut..isAntiAlias = false)
+      ..restore();
   }
 
   /// Frosts the pane, without bending it, from the part of [atlas] behind it,
@@ -1453,6 +1541,7 @@ class _LiquidGlassLayer extends Layer {
 
   void _dropCaptured() {
     _showingFrozen = false;
+    _featherBands.clear();
     _captured?.dispose();
     _captured = null;
     _capturedRect = Rect.zero;

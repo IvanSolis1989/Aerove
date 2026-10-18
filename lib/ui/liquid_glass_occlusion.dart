@@ -5,14 +5,16 @@ class LiquidGlassOcclusion extends SingleChildRenderObjectWidget {
   const LiquidGlassOcclusion({
     super.key,
     required this.shape,
+    this.bottomFeather = 0,
     required super.child,
   });
 
   final ShapeBorder shape;
+  final double bottomFeather;
 
   @override
   RenderObject createRenderObject(BuildContext context) =>
-      _GlassOcclusionBox(shape, Directionality.of(context));
+      _GlassOcclusionBox(shape, Directionality.of(context), bottomFeather);
 
   @override
   void updateRenderObject(
@@ -21,16 +23,18 @@ class LiquidGlassOcclusion extends SingleChildRenderObjectWidget {
   ) {
     render
       ..shape = shape
+      ..bottomFeather = bottomFeather
       ..textDirection = Directionality.of(context)
       ..markNeedsPaint();
   }
 }
 
 class _GlassOcclusionBox extends RenderProxyBox {
-  _GlassOcclusionBox(this.shape, this.textDirection);
+  _GlassOcclusionBox(this.shape, this.textDirection, this.bottomFeather);
 
   ShapeBorder shape;
   TextDirection textDirection;
+  double bottomFeather;
   final _layer = LayerHandle<_LiquidGlassOcclusionLayer>();
 
   @override
@@ -39,7 +43,7 @@ class _GlassOcclusionBox extends RenderProxyBox {
   @override
   void paint(PaintingContext context, Offset offset) {
     final layer = _layer.layer ??= _LiquidGlassOcclusionLayer();
-    layer.configure(shape, textDirection, Offset.zero & size);
+    layer.configure(shape, textDirection, Offset.zero & size, bottomFeather);
     layer.offset = offset;
     context.pushLayer(layer, super.paint, Offset.zero);
   }
@@ -73,11 +77,11 @@ class LiquidGlassOcclusionPane {
 }
 
 class _LiquidGlassOcclusionLayer extends OffsetLayer {
-  (ShapeBorder, TextDirection, Rect)? geometry;
+  (ShapeBorder, TextDirection, Rect, double)? geometry;
   Path path = Path();
 
-  void configure(ShapeBorder shape, TextDirection direction, Rect rect) {
-    final key = (shape, direction, rect);
+  void configure(ShapeBorder shape, TextDirection direction, Rect rect, [double feather = 0]) {
+    final key = (shape, direction, rect, math.max(0.0, feather));
     if (geometry == key) return;
     geometry = key;
     path = shape.getOuterPath(rect, textDirection: direction);
@@ -93,4 +97,34 @@ class _GlassCoverage {
   final int before;
   late final Path path = layer.path.transform(toHost.storage);
   late final Rect bounds = path.getBounds();
+  late final _GlassFeather? feather = (layer.geometry?.$4 ?? 0) == 0 ? null
+      : _GlassFeather(layer.geometry!.$3, layer.geometry!.$4, toHost);
+}
+
+class _GlassFeather {
+  _GlassFeather(Rect rect, double extent, this.transform)
+      : band = Rect.fromLTWH(rect.left, rect.bottom, rect.width, extent);
+
+  final Rect band;
+  final Matrix4 transform;
+  late final Path path = (Path()..addRect(band)).transform(transform.storage);
+
+  static final _live = List<Color>.generate(17, (index) {
+    final t = index / 16;
+    return Colors.white.withValues(alpha: t * t * (3 - 2 * t));
+  }, growable: false);
+  static final _frozen = _live.reversed.toList(growable: false);
+
+  void mask(Canvas canvas, {bool inverse = false}) {
+    canvas
+      ..save()
+      ..transform(transform.storage)
+      ..clipRect(band, doAntiAlias: false)
+      ..drawRect(band, Paint()
+        ..blendMode = BlendMode.dstIn
+        ..shader = LinearGradient(begin: Alignment.topCenter,
+          end: Alignment.bottomCenter, colors: inverse ? _frozen : _live)
+          .createShader(band))
+      ..restore();
+  }
 }

@@ -19,10 +19,7 @@ class HeaderBlur extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (fadeHeight <= 0) return const SizedBox.shrink();
-    // The fading foot stays live so its transparent end cannot expose a cache seam.
-    final coveredHeight = LiquidGlassScope.of(context) &&
-            !MediaQuery.highContrastOf(context)
-        ? fullStrengthHeight.clamp(0.0, fadeHeight) : 0.0;
+    final glass = LiquidGlassScope.of(context) && !MediaQuery.highContrastOf(context);
     return Align(
       alignment: Alignment.topCenter,
       child: SizedBox(
@@ -32,14 +29,15 @@ class HeaderBlur extends StatelessWidget {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              if (coveredHeight > 0)
+              if (glass)
                 Positioned(
                   top: 0,
                   left: 0,
                   right: 0,
-                  height: coveredHeight,
+                  height: fadeHeight,
                   child: const LiquidGlassOcclusion(
                     shape: AppShape.none,
+                    bottomFeather: 12,
                     child: SizedBox.expand(),
                   ),
                 ),

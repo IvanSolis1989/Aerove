@@ -72,6 +72,9 @@ class LiquidGlassHost extends StatelessWidget {
   static LiquidGlassInkCapture? debugLastInkCapture;
 
   @visibleForTesting
+  static ({int panes, int stripPixels, int surfacePixels})? debugLastFeatherCapture;
+
+  @visibleForTesting
   static bool? debugCarryBandsOverride;
 
   @override
@@ -454,6 +457,23 @@ class _LiquidGlassHostLayer extends ContainerLayer {
       _atlases.removeLast().image.dispose();
     }
     assert(() {
+      var stripPixels = 0;
+      var surfacePixels = 0;
+      var featheredPanes = 0;
+      for (final entry in placed) {
+        if (entry.pane._featherBands.isEmpty) continue;
+        featheredPanes++;
+        for (final band in entry.pane._featherBands) {
+          final hostRect = MatrixUtils.transformRect(entry.toHost, band.rect).intersect(bounds);
+          if (hostRect.isEmpty) continue;
+          final pixels = (hostRect.width * devicePixelRatio).ceil() *
+              (hostRect.height * devicePixelRatio).ceil();
+          stripPixels += pixels;
+          surfacePixels += pixels * band.surfaces;
+        }
+      }
+      LiquidGlassHost.debugLastFeatherCapture = (
+        panes: featheredPanes, stripPixels: stripPixels, surfacePixels: surfacePixels);
       LiquidGlassHost.debugLastCapture = (
         snapshots: snapshots,
         keptBands: keptBands,
@@ -520,7 +540,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
           if (container is _ColorFieldLayer) _field = (container, transform);
           if (container is _LiquidGlassOcclusionLayer &&
               !chain.any(
-                (layer) => layer is OpacityLayer && (layer.alpha ?? 255) < 255,
+                (layer) => layer is OpacityLayer && layer.alpha != 255,
               )) {
             coverage.add(_GlassCoverage(container, transform, found.length));
           }
@@ -542,26 +562,33 @@ class _LiquidGlassHostLayer extends ContainerLayer {
   void _occlude(_Behind entry, int index, List<_GlassCoverage> coverage) {
     Path? visible;
     for (final cover in coverage) {
-      if (index >= cover.before ||
-          entry.ancestors.contains(cover.layer) ||
-          !entry.visibleBounds.overlaps(cover.bounds)) {
+      final feather = cover.feather;
+      if (index >= cover.before || entry.ancestors.contains(cover.layer) ||
+          (!entry.visibleBounds.overlaps(cover.bounds) &&
+            !(feather?.path.getBounds().overlaps(entry.visibleBounds) ?? false))) {
         continue;
       }
-      visible ??=
-          (entry.pane.outline ??
-                  (Path()..addRSuperellipse(
-                    entry.pane.corners.toRSuperellipse(entry.pane.rect),
-                  )))
-              .transform(entry.toHost.storage);
-      final overlap = Path.combine(
-        PathOperation.intersect,
-        visible,
-        cover.path,
-      );
-      if (overlap.getBounds().isEmpty) continue;
-      visible = Path.combine(PathOperation.difference, visible, cover.path);
+      visible ??= (entry.pane.outline ??
+          (Path()..addRSuperellipse(entry.pane.corners.toRSuperellipse(entry.pane.rect))))
+          .transform(entry.toHost.storage);
+      final overlap = Path.combine(PathOperation.intersect, visible, cover.path);
+      final inBand = feather == null ? null
+          : Path.combine(PathOperation.intersect, visible, feather.path);
+      if (overlap.getBounds().isEmpty && (inBand?.getBounds().isEmpty ?? true)) continue;
+      if (!overlap.getBounds().isEmpty) {
+        visible = Path.combine(PathOperation.difference, visible, cover.path);
+        entry.covered = Path.combine(PathOperation.union, entry.covered ?? Path(), cover.path);
+      }
+      if (inBand != null && !inBand.getBounds().isEmpty) {
+        final inverse = Matrix4.tryInvert(entry.toHost);
+        if (inverse != null) {
+          entry.feathers.add(_GlassFeather(cover.layer.geometry!.$3,
+            cover.layer.geometry!.$4, inverse..multiply(cover.toHost)));
+        }
+      }
       entry.visible = visible;
-      entry.coverageKey.addAll([cover.layer.path, ...cover.toHost.storage]);
+      entry.coverageKey.addAll([cover.layer.path, cover.layer.geometry!.$4,
+        ...cover.toHost.storage]);
       if (visible.getBounds().isEmpty) break;
     }
     if (entry.visible != null) entry.coverageKey.addAll(entry.toHost.storage);
@@ -919,6 +946,8 @@ class _LiquidGlassHostLayer extends ContainerLayer {
       entry.style,
       visible: entry.visible?.transform(Matrix4.inverted(entry.toHost).storage),
       coverageKey: entry.coverageKey,
+      feathers: entry.feathers,
+      covered: entry.covered?.transform(Matrix4.inverted(entry.toHost).storage),
     );
     if (entry.freezeAfterCapture && pane._freezeCaptured()) {
       if (entry.coveredVisible!.getBounds().isEmpty) pane._captureFrozen(_pass);
@@ -1016,6 +1045,8 @@ class _Behind {
   Rect? flatCaptureBounds;
   bool freezeAfterCapture = false;
   Path? coveredVisible;
+  Path? covered;
+  final feathers = <_GlassFeather>[];
   Rect get visibleBounds => visible?.getBounds() ?? device;
   final coverageKey = <Object?>[];
 
