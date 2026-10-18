@@ -252,13 +252,16 @@ void main() {
                 '$prefix-$phase-$progress',
               );
               final actualCapture = _captureState();
-              final probeTheme = quality != null && entry.key == 'Theme' &&
+              final probeTheme =
+                  quality != null &&
+                  entry.key == 'Theme' &&
                   (phase == 'held-drag' ||
                       (phase == 'push' && progress == 0.75) ||
                       (phase == 'pop' && progress == 0.1));
               final actualThemeAtlas = probeTheme
                   ? await _themeAtlasProbe(
-                      tester, '$prefix-$phase-$progress-actual-atlas',
+                      tester,
+                      '$prefix-$phase-$progress-actual-atlas',
                       held: phase == 'held-drag',
                     )
                   : null;
@@ -274,7 +277,8 @@ void main() {
               final oracleCapture = _captureState();
               final oracleThemeAtlas = probeTheme
                   ? await _themeAtlasProbe(
-                      tester, '$prefix-$phase-$progress-rgb-control-atlas',
+                      tester,
+                      '$prefix-$phase-$progress-rgb-control-atlas',
                       held: phase == 'held-drag',
                     )
                   : null;
@@ -621,9 +625,9 @@ Future<Map<String, Object?>> _themeAtlasProbe(
   );
   expect(label, findsOneWidget);
   final labelRect = tester.getRect(label);
-  final matches = LiquidGlassHost.debugLastCapture!.panes.where(
-    (pane) => pane.wallpaper && pane.pane.contains(labelRect.center),
-  ).toList();
+  final matches = LiquidGlassHost.debugLastCapture!.panes
+      .where((pane) => pane.wallpaper && pane.pane.contains(labelRect.center))
+      .toList();
   expect(matches, hasLength(1));
   final pane = matches.single;
   final atlas = pane.atlas.clone();
@@ -646,11 +650,14 @@ Future<Map<String, Object?>> _themeAtlasProbe(
     }
   });
   List<double> rect(Rect value) => [
-    value.left, value.top, value.right, value.bottom,
+    value.left,
+    value.top,
+    value.right,
+    value.bottom,
   ];
   Map<String, Object?> sample(Offset host) {
-    final texture = pane.place.topLeft +
-        (host - pane.slot.topLeft) * pane.scale;
+    final texture =
+        pane.place.topLeft + (host - pane.slot.topLeft) * pane.scale;
     final x = texture.dx.floor();
     final y = texture.dy.floor();
     return {
@@ -662,8 +669,11 @@ Future<Map<String, Object?>> _themeAtlasProbe(
           for (var dx = -1; dx <= 1; dx++)
             {
               'xy': [x + dx, y + dy],
-              'rgba': x + dx >= 0 && x + dx < width &&
-                      y + dy >= 0 && y + dy < height
+              'rgba':
+                  x + dx >= 0 &&
+                      x + dx < width &&
+                      y + dy >= 0 &&
+                      y + dy < height
                   ? bytes.sublist(
                       ((y + dy) * width + x + dx) * 4,
                       ((y + dy) * width + x + dx) * 4 + 4,
@@ -673,6 +683,7 @@ Future<Map<String, Object?>> _themeAtlasProbe(
       ],
     };
   }
+
   return {
     'png': '$name.png',
     'selection': 'wallpaper pane containing Theme Standard label center',
