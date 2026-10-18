@@ -1474,15 +1474,6 @@ class _LiquidGlassLayer extends Layer {
       Path()..addRect(rect),
       covered,
     );
-    assert(() {
-      LiquidGlassHost.debugFeatherPaintProbe?.call(
-        paintLive,
-        rect,
-        outside,
-        liveRegion,
-      );
-      return true;
-    }());
     canvas
       ..save()
       ..clipPath(outside, doAntiAlias: false)

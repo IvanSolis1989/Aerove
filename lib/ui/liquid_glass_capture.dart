@@ -88,10 +88,6 @@ class LiquidGlassHost extends StatelessWidget {
   static SourceBlurCapture? debugLastSourceBlurCapture;
 
   @visibleForTesting
-  static void Function(void Function(Canvas), Rect, Path, Path)?
-  debugFeatherPaintProbe;
-
-  @visibleForTesting
   static int get debugLiveSourceBlurPixels => _liveSourceBlurPixels;
 
   @override

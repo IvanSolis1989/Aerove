@@ -79,15 +79,6 @@ void main() {
         tester.view.physicalSize = const Size(320, 240);
         tester.view.devicePixelRatio = 1;
         addTearDown(tester.view.reset);
-        final probeImages = <String, ui.Image>{};
-        final probePixels = <String, List<int>>{};
-        addTearDown(() {
-          LiquidGlassHost.debugFeatherPaintProbe = null;
-          for (final image in probeImages.values) {
-            image.dispose();
-          }
-          probeImages.clear();
-        });
         Future<void> render(
           Color color,
           int cover, {
@@ -188,88 +179,8 @@ void main() {
         await render(Colors.green, 1);
         final frozen = await _shot(tester, 'oracle-frozen-$quality');
         expect(LiquidGlassHost.debugLastFeatherCapture!.stripPixels, 0);
-        assert(() {
-          LiquidGlassHost.debugFeatherPaintProbe =
-              (paint, rect, outside, region) {
-                for (final mode in [
-                  'unclipped',
-                  'outside',
-                  'region',
-                  'combined',
-                  'merged',
-                  'rect',
-                ]) {
-                  final recorder = ui.PictureRecorder();
-                  final canvas = Canvas(recorder)
-                    ..drawColor(Colors.green, BlendMode.src);
-                  canvas.save();
-                  if (mode == 'outside' || mode == 'combined') {
-                    canvas.clipPath(outside, doAntiAlias: false);
-                  }
-                  if (mode == 'region' || mode == 'combined') {
-                    canvas.clipPath(region, doAntiAlias: false);
-                  }
-                  if (mode == 'merged') {
-                    canvas.clipPath(
-                      Path.combine(PathOperation.intersect, outside, region),
-                      doAntiAlias: false,
-                    );
-                  }
-                  if (mode == 'rect') {
-                    canvas.clipRect(
-                      Rect.fromLTRB(rect.left, 125, rect.right, rect.bottom),
-                      doAntiAlias: false,
-                    );
-                  }
-                  paint(canvas);
-                  canvas.restore();
-                  final picture = recorder.endRecording();
-                  probeImages[mode]?.dispose();
-                  probeImages[mode] = picture.toImageSync(320, 240);
-                  picture.dispose();
-                }
-              };
-          return true;
-        }());
-        late final List<int> mixed;
-        try {
-          await render(Colors.green, 2);
-          mixed = await _shot(tester, 'oracle-mixed-$quality');
-        } finally {
-          LiquidGlassHost.debugFeatherPaintProbe = null;
-        }
-        expect(
-          probeImages.keys,
-          containsAll([
-            'unclipped',
-            'outside',
-            'region',
-            'combined',
-            'merged',
-            'rect',
-          ]),
-        );
-        await tester.runAsync(() async {
-          for (final entry in probeImages.entries) {
-            final image = entry.value;
-            probePixels[entry.key] = (await image.toByteData(
-              format: ui.ImageByteFormat.rawRgba,
-            ))!.buffer.asUint8List().toList();
-            final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
-            if (output != null) {
-              final png = (await image.toByteData(
-                format: ui.ImageByteFormat.png,
-              ))!;
-              File(
-                '$output/header-body-${entry.key}-$quality.png',
-              ).writeAsBytesSync(png.buffer.asUint8List());
-            }
-          }
-        });
-        for (final image in probeImages.values) {
-          image.dispose();
-        }
-        probeImages.clear();
+        await render(Colors.green, 2);
+        final mixed = await _shot(tester, 'oracle-mixed-$quality');
         final cost = LiquidGlassHost.debugLastFeatherCapture!;
         expect(cost.panes, 1);
         expect(cost.stripPixels, 120 * 15);
@@ -390,29 +301,6 @@ void main() {
           }
         });
         if (output != null) {
-          final lowerDeltas = <String, Object?>{};
-          for (final entry in probePixels.entries) {
-            var maximum = 0;
-            var changed = 0;
-            for (var y = 125; y < 180; y++) {
-              for (var x = 40; x < 160; x++) {
-                final index = (y * 320 + x) * 4;
-                var delta = 0;
-                for (var channel = 0; channel < 4; channel++) {
-                  final difference =
-                      (entry.value[index + channel] - live[index + channel])
-                          .abs();
-                  if (difference > delta) delta = difference;
-                }
-                if (delta > maximum) maximum = delta;
-                if (delta > 2) changed++;
-              }
-            }
-            lowerDeltas[entry.key] = {
-              'maximum': maximum,
-              'pixelsOver2': changed,
-            };
-          }
           File(
             '$output/header-aa-endpoints-${quality.name}.json',
           ).writeAsStringSync(
@@ -422,17 +310,12 @@ void main() {
               'nativeStrip': _pixel(nativeStrip, 159, 122),
               'frozen': _pixel(frozen, 159, 122),
               'mixed': _pixel(mixed, 159, 122),
-              'lowerDeltasVsDirect': lowerDeltas,
               'belowEdge': {
                 'position': [43, 140],
                 'direct': _pixel(live, 43, 140),
                 'resolved': _pixel(resolved, 43, 140),
                 'nativeBelow': _pixel(nativeBelow, 43, 140),
                 'mixed': _pixel(mixed, 43, 140),
-                'sameBody': {
-                  for (final entry in probePixels.entries)
-                    entry.key: _pixel(entry.value, 43, 140),
-                },
               },
               'otherEdge': {
                 'position': [40, 121],
@@ -478,8 +361,8 @@ void main() {
           }
         }
         expect(changedPixels, greaterThan(500));
-        for (final row in [100, 140]) {
-          final expected = row < 110 ? frozen : live;
+        for (final row in [100, ...List.generate(55, (index) => 125 + index)]) {
+          final expected = row < 110 ? frozen : nativeBelow;
           for (var x = 0; x < 320; x++) {
             final index = (row * 320 + x) * 4;
             for (var channel = 0; channel < 4; channel++) {
