@@ -1,352 +1,40 @@
-name: XClash Android
+name: README UI previews
 
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - 'README*.md'
-      - AGENTS.md
-      - CLAUDE.md
-      - CHANGELOG.md
-      - 'docs/**'
-      - 'snapshots/**'
-      - '.agents/**/*.md'
   workflow_dispatch:
-    inputs:
-      prepare_sources:
-        description: Allow regenerated sources and formatting in the exported patch
-        type: boolean
-        default: false
-      build_apk:
-        description: Build the Android arm64 APK after verification
-        type: boolean
-        default: true
-      publish_release:
-        description: Publish the verified APK to XClash Releases
-        type: boolean
-        default: true
 
 permissions:
   contents: read
 
-concurrency:
-  group: xclash-android-${{ github.ref }}
-  cancel-in-progress: false
-
-env:
-  FLUTTER_VERSION: '3.47.6'
-
 jobs:
-  verify:
+  render:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Check fork download links
-        env:
-          REPOSITORY: ${{ github.repository }}
-        run: python3 tool/sync_fork_readme.py --repository "$REPOSITORY" --check
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
+          flutter-version: '3.47.6'
           cache: true
-      - name: Install dependencies
-        run: flutter pub get
-      - name: Test repository commit hooks
-        run: bash tool/hooks/test.sh
-      - name: Test upstream version selection
-        run: python3 -m unittest tool.test_xclash_version -v
-      - name: Generate and format sources
-        run: |
-          cp pubspec.yaml "$RUNNER_TEMP/xclash-pubspec.yaml"
-          trap 'cp "$RUNNER_TEMP/xclash-pubspec.yaml" pubspec.yaml' EXIT
-          sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
-          dart run intl_utils:generate
-          dart run build_runner build --delete-conflicting-outputs
-          dart format lib test
-          cp "$RUNNER_TEMP/xclash-pubspec.yaml" pubspec.yaml
-          git add -- lib test
-          git diff --cached --binary -- lib test > "$RUNNER_TEMP/xclash-generated.patch"
-          git write-tree > "$RUNNER_TEMP/xclash-verified-tree.txt"
-          git restore --staged -- lib test
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: xclash-generated
-          path: |
-            ${{ runner.temp }}/xclash-generated.patch
-            ${{ runner.temp }}/xclash-verified-tree.txt
-      - name: Require committed generated sources
-        if: ${{ !inputs.prepare_sources }}
-        run: test "$(cat "$RUNNER_TEMP/xclash-verified-tree.txt")" = "$(git rev-parse 'HEAD^{tree}')"
-      - name: Analyze
-        run: flutter analyze --no-fatal-infos
-      - name: Install preview font
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y fonts-noto-cjk
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: plugins/rust_api/rust
-          cache-directories: .dart_tool/hooks_runner
-      - name: UI and configuration regressions
-        env:
-          XCLASH_SCREENSHOT_DIR: ${{ runner.temp }}/xclash-previews
-        run: |
-          cp pubspec.yaml "$RUNNER_TEMP/xclash-test-pubspec.yaml"
-          trap 'cp "$RUNNER_TEMP/xclash-test-pubspec.yaml" pubspec.yaml' EXIT
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-          path = Path('pubspec.yaml')
-          text, count = re.subn(
-              r'(?m)^(    setup:\s*\n      build_assets: )true(\s*)$',
-              r'\g<1>false\2', path.read_text())
-          if count != 1:
-              raise SystemExit('Expected exactly one enabled setup native hook')
-          path.write_text(text)
-          PY
-          test_status=0
-          XCLASH_REQUIRE_IMPELLER=true \
-            XCLASH_SCREENSHOT_DIR="$RUNNER_TEMP/xclash-previews/impeller" \
-            flutter test --enable-impeller --reporter expanded \
-              test/widgets/header_blur_test.dart test/widgets/glass_scroll_test.dart \
-              test/widgets/liquid_glass_host_test.dart test/widgets/glass_foreground_test.dart \
-              test/widgets/sliver_glass_group_test.dart test/widgets/header_title_test.dart \
-              test/widgets/aurora_motion_test.dart test/widgets/glass_button_test.dart \
-              test/widgets/open_container_test.dart test/widgets/route_motion_hold_test.dart || test_status=1
-          flutter test --reporter expanded \
-            test/application_theme_test.dart \
-            test/features/glass_feature_surfaces_test.dart \
-            test/pages/editor_load_test.dart test/pages/scan_test.dart \
-            test/models/config_test.dart test/models/dns_override_test.dart test/providers/config_test.dart \
-            test/manager/theme_manager_test.dart \
-            test/common/preferences_test.dart test/common/dialog_test.dart test/common/tray_menu_test.dart \
-            test/common/request_test.dart \
-            test/common/xclash_defaults_test.dart test/common/task_dns_override_test.dart \
-            test/common/aurora_test.dart \
-            test/common/task_test.dart test/common/migration_test.dart \
-            test/providers/profiles_action_test.dart test/providers/backup_action_test.dart \
-            test/providers/action_test.dart \
-            test/views/aurora_settings_test.dart test/views/theme_test.dart \
-            test/views/dns_view_test.dart test/views/scripts_source_test.dart \
-            test/views/proxies_list_test.dart test/views/dashboard/ \
-            test/views/script_content_test.dart test/pages/home_test.dart \
-            test/widgets/ test/l10n/ test/lint/ || test_status=1
-          exit "$test_status"
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: xclash-previews
-          path: ${{ runner.temp }}/xclash-previews
-          if-no-files-found: ignore
-
-  apk:
-    if: ${{ github.event_name == 'push' || inputs.build_apk }}
-    needs: verify
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    outputs:
-      tag: ${{ steps.version.outputs.tag }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 0
-      - uses: actions/download-artifact@v4
-        with:
-          name: xclash-generated
-          path: ${{ runner.temp }}/xclash-generated
-      - name: Apply verified generated sources
-        run: |
-          patch="$RUNNER_TEMP/xclash-generated/xclash-generated.patch"
-          if test -s "$patch"; then git apply "$patch"; fi
-          git add -- lib test
-          test "$(git write-tree)" = "$(cat "$RUNNER_TEMP/xclash-generated/xclash-verified-tree.txt")"
-          git restore --staged -- lib test
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - name: Verify recorded upstream release against official refs
-        run: |
-          git fetch --no-tags --recurse-submodules=no https://github.com/chen08209/FlClash.git \
-            '+refs/heads/*:refs/remotes/upstream/*' \
-            '+refs/tags/v*:refs/upstream-tags/v*'
-      - name: Restore persistent Android test signing key
-        env:
-          KEYSTORE_BASE64: ${{ secrets.XCLASH_ANDROID_DEBUG_KEYSTORE }}
-        run: |
-          test -n "$KEYSTORE_BASE64" || { echo '::error::Configure XCLASH_ANDROID_DEBUG_KEYSTORE before building.'; exit 1; }
-          install -d -m 700 "$HOME/.android"
-          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/debug.keystore"
-          chmod 600 "$HOME/.android/debug.keystore"
-          keytool -list -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey
-      - name: Set version for this Android build
-        id: version
-        run: |
-          python3 tool/xclash_version.py release-plan \
-            --metadata tool/upstream-version.json \
-            --pubspec pubspec.yaml \
-            --head "$GITHUB_SHA" \
-            --run-number "$GITHUB_RUN_NUMBER" \
-            > "$RUNNER_TEMP/xclash-version.json"
-          plan="$RUNNER_TEMP/xclash-version.json"
-          printf 'name=%s\nnumber=%s\ntag=%s\napp_env=%s\n' \
-            "$(jq -er .name "$plan")" \
-            "$(jq -er .number "$plan")" \
-            "$(jq -er .tag "$plan")" \
-            "$(jq -er .app_env "$plan")" >> "$GITHUB_OUTPUT"
-          printf 'upstream_repository=%s\nupstream_source_commit=%s\n' \
-            "$(jq -er .upstream_repository "$plan")" \
-            "$(jq -er .upstream_source_commit "$plan")" >> "$GITHUB_OUTPUT"
-          printf 'upstream_tag=%s\nupstream_tag_commit=%s\nupstream_pubspec_version=%s\n' \
-            "$(jq -er .upstream_tag "$plan")" \
-            "$(jq -er .upstream_tag_commit "$plan")" \
-            "$(jq -er .upstream_pubspec_version "$plan")" >> "$GITHUB_OUTPUT"
-          printf 'upstream_pubspec_source_commit=%s\n' \
-            "$(jq -er .upstream_pubspec_source_commit "$plan")" >> "$GITHUB_OUTPUT"
-          printf 'upstream_source_branches=%s\n' \
-            "$(jq -cer .upstream_source_branches "$plan")" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.27.1'
-          cache-dependency-path: core/go.sum
-      - uses: nttld/setup-ndk@v1
-        id: ndk
-        with:
-          ndk-version: r28c
-          link-to-sdk: true
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: plugins/rust_api/rust
-      - name: Build Android arm64
-        env:
-          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
-          VERSION_NAME: ${{ steps.version.outputs.name }}
-          VERSION_NUMBER: ${{ steps.version.outputs.number }}
-          APP_ENV: ${{ steps.version.outputs.app_env }}
-          UPSTREAM_REPOSITORY: ${{ steps.version.outputs.upstream_repository }}
-          UPSTREAM_SOURCE_COMMIT: ${{ steps.version.outputs.upstream_source_commit }}
-          UPSTREAM_TAG: ${{ steps.version.outputs.upstream_tag }}
-          UPSTREAM_TAG_COMMIT: ${{ steps.version.outputs.upstream_tag_commit }}
-          UPSTREAM_PUBSPEC_VERSION: ${{ steps.version.outputs.upstream_pubspec_version }}
-          UPSTREAM_PUBSPEC_SOURCE_COMMIT: ${{ steps.version.outputs.upstream_pubspec_source_commit }}
-          UPSTREAM_SOURCE_BRANCHES: ${{ steps.version.outputs.upstream_source_branches }}
+      - name: Install dependencies and preview font
         run: |
           flutter pub get
-          flutter build apk --release --target-platform android-arm64 \
-            --build-name "$VERSION_NAME" --build-number "$VERSION_NUMBER" \
-            --dart-define=APP_ENV="$APP_ENV"
-          mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-release.apk dist/XClash-android-arm64.apk
-          build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
-          "$build_tools/apksigner" verify --print-certs dist/XClash-android-arm64.apk
-          "$build_tools/aapt" dump badging dist/XClash-android-arm64.apk > "$RUNNER_TEMP/apk-badging.txt"
-          grep -F "package: name='com.follow.clash.dev' versionCode='$VERSION_NUMBER' versionName='$VERSION_NAME'" "$RUNNER_TEMP/apk-badging.txt"
-          jq -n --arg source "$GITHUB_SHA" --arg version "$VERSION_NAME+$VERSION_NUMBER" \
-            --arg app_env "$APP_ENV" \
-            --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            --arg upstream_repository "$UPSTREAM_REPOSITORY" \
-            --arg upstream_source_commit "$UPSTREAM_SOURCE_COMMIT" \
-            --arg upstream_tag "$UPSTREAM_TAG" \
-            --arg upstream_tag_commit "$UPSTREAM_TAG_COMMIT" \
-            --arg upstream_pubspec_version "$UPSTREAM_PUBSPEC_VERSION" \
-            --arg upstream_pubspec_source_commit "$UPSTREAM_PUBSPEC_SOURCE_COMMIT" \
-            --argjson upstream_source_branches "$UPSTREAM_SOURCE_BRANCHES" \
-            '{source: $source, version: $version, appEnv: $app_env, workflow: $run, signing: "persistent Android test key", applicationId: "com.follow.clash.dev", upstream: {repository: $upstream_repository, sourceCommit: $upstream_source_commit, tag: $upstream_tag, tagCommit: $upstream_tag_commit, sourceBranches: $upstream_source_branches, pubspecVersion: $upstream_pubspec_version, pubspecSourceCommit: $upstream_pubspec_source_commit}}' \
-            > dist/BUILD_INFO.json
-          (cd dist && sha256sum XClash-android-arm64.apk BUILD_INFO.json > SHA256SUMS)
-      - name: Android model and service regressions
-        working-directory: android
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-noto-cjk
+      - name: Render final application UI offline
         env:
-          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          XCLASH_SCREENSHOT_DIR: ${{ runner.temp }}/readme-previews
         run: |
-          ./gradlew :common:testDebugUnitTest :service:testDebugUnitTest :app:testDebugUnitTest \
-            -Ptarget-platform=android-arm64 \
-            -x :app:compileFlutterBuildDebug -x :app:copyFlutterAssetsDebug
+          git diff --exit-code c7860fa2d506cdc2a20773d0e89f37841dea9b64 -- lib assets android plugins
+          sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
+          dart format test/readme_showcase_test.dart
+          flutter test --enable-impeller --dart-define=SAFE_MODE=true --reporter expanded test/readme_showcase_test.dart
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: XClash-android-arm64
-          path: dist/
-
-  release:
-    if: >-
-      github.repository == 'IvanSolis1989/XClash' && github.ref == 'refs/heads/main' &&
-      !inputs.prepare_sources && (github.event_name == 'push' || inputs.publish_release)
-    needs: apk
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/download-artifact@v4
-        with:
-          name: XClash-android-arm64
-          path: dist
-      - name: Publish verified APK to Releases
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.apk.outputs.tag }}
-        run: |
-          set -euo pipefail
-          check_main_inputs() {
-            git fetch --no-tags --recurse-submodules=no origin main
-            main=$(git rev-parse FETCH_HEAD)
-            if ! git merge-base --is-ancestor "$GITHUB_SHA" "$main"; then
-              echo '::error::The build source is no longer an ancestor of main; publication stopped.'
-              return 1
-            fi
-            git diff --no-renames --name-only -z "$GITHUB_SHA" "$main" > "$RUNNER_TEMP/release-main-paths"
-            while IFS= read -r -d '' path; do
-              case "$path" in
-                docs/*|snapshots/*|.agents/*.md) continue ;;
-                README*.md|AGENTS.md|CLAUDE.md|CHANGELOG.md)
-                  if [[ "$path" != */* ]]; then continue; fi ;;
-              esac
-              printf '::error::main changed an APK input (%q); this build will not replace latest.\n' "$path"
-              return 1
-            done < "$RUNNER_TEMP/release-main-paths"
-          }
-          (cd dist && sha256sum --check SHA256SUMS)
-          test "$(jq -r .source dist/BUILD_INFO.json)" = "$GITHUB_SHA"
-          check_main_inputs
-          existing=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,targetCommitish 2>/dev/null || true)
-          if test -n "$existing"; then
-            test "$(jq -r .targetCommitish <<< "$existing")" = "$GITHUB_SHA"
-            if test "$(jq -r .isDraft <<< "$existing")" = false; then
-              echo 'This release is already published; its assets were preserved.' >> "$GITHUB_STEP_SUMMARY"
-              exit 0
-            fi
-          fi
-          {
-            printf '# XClash Android\n\n'
-            printf '适用于 Android ARM64，内置随机流体渐变底图与液态玻璃主题。\n\n'
-            printf '版本：`%s`\n\n' "$(jq -r .version dist/BUILD_INFO.json)"
-            printf '源码：`%s`\n\n构建记录：%s/%s/actions/runs/%s\n\n' "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
-            printf '使用固定测试签名，包名为 `com.follow.clash.dev`。目标设备上的玻璃效果仍需安装后验收。\n\n'
-            printf '下载后可用 `SHA256SUMS` 核对文件完整性；上游版本、源码和构建信息见 `BUILD_INFO.json`。\n'
-          } > "$RUNNER_TEMP/xclash-release.md"
-          if test -z "$existing"; then
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-              --title "XClash $TAG · 安卓版" --draft --notes-file "$RUNNER_TEMP/xclash-release.md"
-          fi
-          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" \
-            dist/XClash-android-arm64.apk dist/SHA256SUMS dist/BUILD_INFO.json --clobber
-          check_main_inputs
-          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false --latest
-          printf 'Published APK: https://github.com/%s/releases/tag/%s\n' "$GITHUB_REPOSITORY" "$TAG" >> "$GITHUB_STEP_SUMMARY"
+          name: readme-previews
+          path: ${{ runner.temp }}/readme-previews
+          if-no-files-found: warn
