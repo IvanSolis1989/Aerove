@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -59,6 +60,12 @@ void main() {
     final font = FontLoader('ForegroundPreview')
       ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'));
     await font.load();
+    final emoji = FontLoader('InkEmoji')
+      ..addFont(rootBundle.load('assets/fonts/Twemoji.Mozilla.ttf'));
+    await emoji.load();
+    if (ui.ImageFilter.isShaderFilterSupported) {
+      await GlassInk.prepare().timeout(const Duration(seconds: 30));
+    }
   });
   test('ink layer supports OffsetLayer invalidation', () {
     final layer = LiquidGlassInkLayer();
@@ -531,14 +538,34 @@ void main() {
     tester.view.physicalSize = const Size(400, 260);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    final asset = (await rootBundle.load(
+    final stages = <String>[];
+    Future<T?> realAsync<T>(String stage, Future<T> Function() action) async {
+      void record(String state) {
+        stages.add('$stage:$state');
+        final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+        if (output != null) {
+          Directory(output).createSync(recursive: true);
+          File('$output/foreground-protected-lifecycle.json')
+              .writeAsStringSync(jsonEncode(stages));
+        }
+      }
+
+      record('start');
+      final result = await tester.runAsync(() => action().timeout(
+        const Duration(seconds: 30),
+        onTimeout: () => throw TimeoutException('protected ink $stage'),
+      ));
+      record('done');
+      return result;
+    }
+
+    final asset = (await realAsync('asset', () => rootBundle.load(
       'assets/images/icon.png',
-    )).buffer.asUint8List();
-    final emoji = FontLoader('InkEmoji')
-      ..addFont(rootBundle.load('assets/fonts/Twemoji.Mozilla.ttf'));
-    await tester.runAsync(emoji.load);
-    if (ui.ImageFilter.isShaderFilterSupported)
-      await tester.runAsync(GlassInk.prepare);
+    )))!.buffer.asUint8List();
+    final imageProvider = MemoryImage(asset);
+    await tester.pumpWidget(const SizedBox.shrink());
+    final imageContext = tester.element(find.byType(SizedBox));
+    await realAsync('precache', () => precacheImage(imageProvider, imageContext));
     for (final brightness in Brightness.values) {
       final source = brightness == Brightness.dark
           ? Colors.white
@@ -611,8 +638,8 @@ void main() {
                   Positioned(
                     left: 220,
                     top: 10,
-                    child: Image.memory(
-                      asset,
+                    child: Image(
+                      image: imageProvider,
                       key: const ValueKey('protectedImage'),
                       width: 48,
                       height: 48,
@@ -646,12 +673,6 @@ void main() {
             ),
           ),
         );
-        await tester.runAsync(
-          () => precacheImage(
-            MemoryImage(asset),
-            tester.element(find.byType(Image)),
-          ),
-        );
         await tester.pumpAndSettle();
         final boundary =
             capture.currentContext!.findRenderObject()!
@@ -666,7 +687,7 @@ void main() {
           ])
             name: tester.getRect(find.byKey(ValueKey(name))).shift(-origin),
         };
-        return (await tester.runAsync(() async {
+        return (await realAsync('readback-$brightness-$enabled-$highContrast', () async {
           final image = await boundary.toImage();
           try {
             final data = (await image.toByteData(
@@ -1064,8 +1085,9 @@ void main() {
         ]) {
           final point = points[name]!;
           if (_pixel(before.bytes, before.width, point) !=
-              _pixel(after.bytes, after.width, point))
+              _pixel(after.bytes, after.width, point)) {
             moved++;
+          }
         }
         expect(moved, greaterThanOrEqualTo(2));
         final generation = LiquidGlassHost.debugLastInkCapture!.generation;

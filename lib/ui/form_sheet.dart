@@ -2,11 +2,11 @@ import 'dart:async';
 
 import 'package:fl_clash/ui/dialog.dart';
 import 'package:fl_clash/ui/inherited.dart';
-import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/sheet.dart';
 import 'package:fl_clash/ui/sheet_navigator.dart';
 import 'package:fl_clash/ui/shape.dart';
 import 'package:fl_clash/ui/surface.dart';
+import 'package:fl_clash/ui/sheet_surface.dart';
 import 'package:material_ui/material_ui.dart';
 
 const double _width = 440;
@@ -103,14 +103,10 @@ class _FormSheet extends StatelessWidget {
               ),
               child: SizedBox(
                 width: double.infinity,
-                child: Material(
-                  color: LiquidGlassScope.surfaceColorOf(
-                    context,
-                    backgroundColor ??
-                        SurfaceLevel.page.colorOf(theme.colorScheme),
-                  ),
+                child: SheetSurface(
+                  color: backgroundColor ??
+                      SurfaceLevel.page.colorOf(theme.colorScheme),
                   shape: theme.dialogTheme.shape ?? AppShape.xxl,
-                  clipBehavior: Clip.antiAlias,
                   child: MediaQuery.removeViewInsets(
                     context: context,
                     removeBottom: true,

@@ -2,6 +2,8 @@ import 'dart:math' as math;
 
 import 'package:fl_clash/ui/color.dart';
 import 'package:fl_clash/ui/context.dart';
+import 'package:fl_clash/ui/foreground_ink.dart';
+import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -46,14 +48,20 @@ class _CommonCircleLoadingState extends State<CommonCircleLoading>
   @override
   Widget build(BuildContext context) {
     final side = widget.size ?? IconTheme.of(context).size ?? Glyph.size;
+    final colors = context.colorScheme;
+    final color = widget.color ??
+        (GlassForeground.colorsInk(context, colors.onSurface)
+            ? colors.onSurface
+            : colors.primary);
     return Semantics(
       label: widget.semanticLabel,
-      child: RepaintBoundary(
-        child: CustomPaint(
-          size: Size.square(side),
-          painter: _CometRingPainter(
-            turns: _turns,
-            color: widget.color ?? context.colorScheme.primary,
+      child: GlassInk(
+        source: color,
+        role: GlassInkRole.icon,
+        child: RepaintBoundary(
+          child: CustomPaint(
+            size: Size.square(side),
+            painter: _CometRingPainter(turns: _turns, color: color),
           ),
         ),
       ),

@@ -17,7 +17,7 @@ class AuroraMotion {
     _phases = [for (var i = 0; i < 7; i++) next() * 2 * math.pi];
     _periods = [
       for (final (base, range) in [
-        (2400, 1800),
+        (1200, 900),
         (480, 240),
         (780, 360),
         (250, 180),

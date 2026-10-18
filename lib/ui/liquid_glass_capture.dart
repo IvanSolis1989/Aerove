@@ -110,6 +110,7 @@ class _RenderLiquidGlassFade extends RenderProxyBox {
   _RenderLiquidGlassFade(this._opacity);
 
   final _layer = LayerHandle<_LiquidGlassFadeLayer>();
+  var _visible = true;
 
   Animation<double> _opacity;
   set opacity(Animation<double> value) {
@@ -117,10 +118,19 @@ class _RenderLiquidGlassFade extends RenderProxyBox {
       return;
     }
     if (attached) {
-      _opacity.removeListener(markNeedsPaint);
-      value.addListener(markNeedsPaint);
+      _opacity.removeListener(_update);
+      value.addListener(_update);
     }
     _opacity = value;
+    _update();
+  }
+
+  void _update() {
+    final visible = _alpha != 0;
+    if (visible != _visible) {
+      _visible = visible;
+      markNeedsSemanticsUpdate();
+    }
     markNeedsPaint();
   }
 
@@ -133,12 +143,13 @@ class _RenderLiquidGlassFade extends RenderProxyBox {
   @override
   void attach(PipelineOwner owner) {
     super.attach(owner);
-    _opacity.addListener(markNeedsPaint);
+    _opacity.addListener(_update);
+    _update();
   }
 
   @override
   void detach() {
-    _opacity.removeListener(markNeedsPaint);
+    _opacity.removeListener(_update);
     super.detach();
   }
 
@@ -164,7 +175,7 @@ class _RenderLiquidGlassFade extends RenderProxyBox {
 
   @override
   void visitChildrenForSemantics(RenderObjectVisitor visitor) {
-    if (_alpha != 0) {
+    if (_visible) {
       super.visitChildrenForSemantics(visitor);
     }
   }

@@ -101,7 +101,7 @@ jobs:
           cp pubspec.yaml "$RUNNER_TEMP/ink-pubspec.yaml"
           trap 'cp "$RUNNER_TEMP/ink-pubspec.yaml" pubspec.yaml' EXIT
           sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
-          flutter test --enable-impeller --reporter expanded --name 'ink follows local background and motion|ink keeps emoji' test/widgets/glass_foreground_test.dart
+          flutter test --enable-impeller --reporter expanded test/widgets/glass_foreground_test.dart test/widgets/target_icon_test.dart test/widgets/selection_mark_test.dart test/widgets/loading_ink_test.dart
       - name: UI and configuration regressions
         env:
           XCLASH_SCREENSHOT_DIR: ${{ runner.temp }}/xclash-previews
@@ -125,9 +125,9 @@ jobs:
             flutter test --enable-impeller --reporter expanded \
               test/widgets/header_blur_test.dart test/widgets/glass_scroll_test.dart \
               test/widgets/liquid_glass_host_test.dart test/widgets/glass_foreground_test.dart \
-              test/widgets/sliver_glass_group_test.dart test/widgets/header_title_test.dart \
+              test/widgets/sliver_glass_group_test.dart test/widgets/header_title_test.dart test/widgets/sheet_surface_render_test.dart \
               test/widgets/aurora_motion_test.dart test/widgets/glass_button_test.dart \
-              test/widgets/record_glass_routes_test.dart test/widgets/sidebar_glass_test.dart \
+              test/widgets/record_glass_routes_test.dart test/widgets/sidebar_glass_test.dart test/widgets/target_icon_test.dart \
               test/widgets/settings_route_transition_test.dart \
               test/widgets/open_container_test.dart test/widgets/route_motion_hold_test.dart || test_status=1
           flutter test --reporter expanded \
@@ -156,7 +156,7 @@ jobs:
           cp pubspec.yaml "$RUNNER_TEMP/readme-pubspec.yaml"
           trap 'cp "$RUNNER_TEMP/readme-pubspec.yaml" pubspec.yaml' EXIT
           sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
-          curl --fail --location --retry 2 https://raw.githubusercontent.com/IvanSolis1989/XClash/467b2fe55a6b3ce231ad770f748c9143a81bf666/test/readme_showcase_test.dart -o test/readme_showcase_test.dart
+          curl --fail --location --retry 2 https://raw.githubusercontent.com/IvanSolis1989/XClash/78dc6f243017d8c1dd205881a075a11b98c7c9e4/test/readme_showcase_test.dart -o test/readme_showcase_test.dart
           dart format test/readme_showcase_test.dart
           flutter test --enable-impeller --dart-define=SAFE_MODE=true --reporter expanded test/readme_showcase_test.dart
       - uses: actions/upload-artifact@v4

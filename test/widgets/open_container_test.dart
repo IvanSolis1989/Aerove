@@ -2,12 +2,44 @@ import 'package:fl_clash/ui/open_container.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/surface.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/semantics.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _viewSize = Size(800, 600);
 
 void main() {
+  testWidgets('glass fade updates semantics when visibility crosses zero', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    addTearDown(semantics.dispose);
+    final opacity = AnimationController(vsync: tester,
+      duration: const Duration(milliseconds: 300));
+    addTearDown(opacity.dispose);
+    await tester.pumpWidget(MaterialApp(home: LiquidGlassFade(
+      opacity: opacity,
+      child: const Semantics(container: true, label: 'Fading settings',
+        child: SizedBox(width: 100, height: 100)),
+    )));
+    for (final value in [0.0, 0.001, 0.003, 0.1, 0.5, 1.0, 0.5, 0.001, 0.0, 0.5, 0.0]) {
+      opacity.value = value;
+      await tester.pump();
+      bool includesSettings(SemanticsNode node) {
+        if (node.getSemanticsData().label == 'Fading settings') return true;
+        var found = false;
+        node.visitChildren((child) {
+          found = includesSettings(child);
+          return !found;
+        });
+        return found;
+      }
+      final root = tester.binding.pipelineOwner.semanticsOwner!.rootSemanticsNode!;
+      expect(includesSettings(root), Color.getAlphaFromOpacity(value) != 0);
+      expect(tester.takeException(), isNull);
+    }
+  });
+
   for (final quality in LiquidGlassQuality.values) {
     testWidgets('glass $quality keeps its route and transition transparent', (
       tester,

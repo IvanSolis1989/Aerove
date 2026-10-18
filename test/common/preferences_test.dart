@@ -62,11 +62,11 @@ void main() {
       expect(restored.excludeSSIDs, ['home']);
     });
 
-    test('fresh store uses system gradient standard and round-trips', () async {
+    test('fresh store uses system gradient ultra and round-trips', () async {
       final config = Config.realFromJson(await preferences.getConfigMap());
       expect(config.themeProps.themeMode, ThemeMode.system);
       expect(config.themeProps.auroraEnabled, true);
-      expect(config.themeProps.liquidGlass, LiquidGlassMode.standard);
+      expect(config.themeProps.liquidGlass, LiquidGlassMode.ultra);
       expect(config.themeProps.pureBlack, false);
       expect(await preferences.saveConfig(config), true);
       expect(await preferences.getConfig(), config);

@@ -77,7 +77,7 @@ void main() {
         yDirections.add(shift.dy > 0);
         speeds.add(shift.distance / 0.016);
         expect(shift.distance, lessThan(0.1));
-        expect(_angleDistance(current.angle, next.angle), lessThan(0.00033));
+        expect(_angleDistance(current.angle, next.angle), lessThan(0.000536));
       }
       expect(xDirections, hasLength(2));
       expect(yDirections, hasLength(2));
@@ -89,7 +89,7 @@ void main() {
         size,
       );
       expect((before.translation - after.translation).distance, lessThan(0.1));
-      expect(_angleDistance(before.angle, after.angle), lessThan(0.00033));
+      expect(_angleDistance(before.angle, after.angle), lessThan(0.000536));
       expect(
         AuroraMotion(seed + 1).at(Duration.zero, size),
         isNot(motion.at(Duration.zero, size)),
@@ -125,7 +125,7 @@ void main() {
           );
           expect(
             rotation,
-            lessThanOrEqualTo(1.166),
+            inInclusiveRange(0.44, 1.916),
             reason: 'seed=$seed size=$size second=$second degrees/s',
           );
         }
@@ -140,19 +140,20 @@ void main() {
           );
           expect(
             _angleDistance(next.angle, current.angle) * 180 / math.pi,
-            greaterThan(0.5),
+            greaterThan(2.2),
             reason:
                 'seed=$seed second=$second must visibly rotate in five seconds',
           );
         }
       }
       expect(maxTranslation, greaterThan(translationLimit * 0.6));
-      expect(maxRotation, greaterThan(0.8));
+      expect(maxRotation, greaterThan(1.4));
       metrics['${size.width.toInt()}x${size.height.toInt()}'] = {
         'maxTranslationDpPerSecond': maxTranslation,
         'maxRotationDegreesPerSecond': maxRotation,
         'translationLimitDpPerSecond': translationLimit,
-        'rotationLimitDegreesPerSecond': 1.166,
+        'rotationMinimumDegreesPerSecond': 0.44,
+        'rotationLimitDegreesPerSecond': 1.916,
       };
     }
     final directory = Platform.environment['XCLASH_SCREENSHOT_DIR'];
@@ -282,6 +283,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     final key = GlobalKey();
     final metrics = <String, Object>{};
+    final failures = <String>[];
     for (final brightness in Brightness.values) {
       for (final seed in _seeds) {
         Uint8List? previous;
@@ -327,11 +329,13 @@ void main() {
               ? 0.0
               : _pixelDifference(first, pixels);
           if (first != null) {
-            expect(
-              difference,
-              greaterThan(seconds == 3 ? 0.25 : 0.5),
-              reason: '$name must visibly change within $seconds seconds',
-            );
+            final minimumDifference = seconds == 3 ? 0.25 : 0.5;
+            if (difference <= minimumDifference) {
+              failures.add(
+                '$name mean RGB difference $difference must exceed '
+                '$minimumDifference within $seconds seconds',
+              );
+            }
           }
           first ??= pixels;
           if (previous != null) expect(pixels, isNot(previous));
@@ -355,8 +359,18 @@ void main() {
           '$directory/aurora-motion-metrics.json',
         ).writeAsString(const JsonEncoder.withIndent('  ').convert(metrics)),
       );
+      await tester.runAsync(
+        () => File('$directory/aurora-motion-validation.json').writeAsString(
+          const JsonEncoder.withIndent('  ').convert({
+            'renderedFrames': metrics.length,
+            'minimumMeanRgbDifference': {'3': 0.25, '5': 0.5},
+            'failedChecks': failures,
+          }),
+        ),
+      );
     }
     expect(metrics, hasLength(60));
+    expect(failures, isEmpty, reason: failures.join('\n'));
   });
 }
 

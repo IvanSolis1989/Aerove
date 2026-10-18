@@ -1,9 +1,12 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:material_ui/material_ui.dart';
@@ -36,7 +39,7 @@ void main() {
     }
   });
 
-  testWidgets('group monogram caps its explicit foreground only in glass', (
+  testWidgets('group monogram keeps its explicit foreground in glass', (
     tester,
   ) async {
     for (final glass in [false, true]) {
@@ -52,6 +55,151 @@ void main() {
       );
       final text = tester.widget<Text>(find.text('🤖'));
       expect(text.style!.color, Colors.red);
+    }
+  });
+
+  testWidgets('real group emoji and custom images keep None pixels in Ultra', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(360, 120);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final font = FontLoader('Twemoji')
+      ..addFont(rootBundle.load('assets/fonts/Twemoji.Mozilla.ttf'));
+    await tester.runAsync(font.load);
+    if (ui.ImageFilter.isShaderFilterSupported) {
+      await tester.runAsync(GlassInk.prepare);
+    }
+    final svg = base64Encode(
+      utf8.encode(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" '
+        'viewBox="0 0 64 64"><rect width="64" height="64" fill="#ff3000" '
+        'fill-opacity="0.5"/><circle cx="48" cy="48" r="12" '
+        'fill="#00ee80"/></svg>',
+      ),
+    );
+    final png = base64Encode(
+      (await tester.runAsync(() => _squarePng(64)))!,
+    );
+    final boundaryKey = GlobalKey();
+
+    Future<Uint8List> render(bool glass) async {
+      await tester.pumpWidget(
+        TestApp(
+          child: RepaintBoundary(
+            key: boundaryKey,
+            child: LiquidGlassScope(
+              enabled: glass,
+              quality: LiquidGlassQuality.ultra,
+              child: LiquidGlassHost(
+                enabled: glass,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    const Positioned.fill(
+                      child: LiquidGlassColorField(
+                        child: ColoredBox(color: Color(0xFF3A7EBC)),
+                      ),
+                    ),
+                    for (final (index, icon) in <Widget>[
+                      const GroupMonogram('全球 🌐 节点'),
+                      const CommonTargetIcon(
+                        src: '',
+                        fallback: GroupMonogram('AI 🤖 服务'),
+                      ),
+                      CommonTargetIcon(
+                        src: 'data:image/svg+xml;base64,$svg',
+                        fallback: const GroupMonogram('SVG 🤖 服务'),
+                      ),
+                      CommonTargetIcon(
+                        src: 'data:image/png;base64,$png',
+                        fallback: const GroupMonogram('PNG 🤖 服务'),
+                      ),
+                    ].indexed)
+                      Positioned(
+                        left: 16.0 + index * 80,
+                        top: 24,
+                        width: 64,
+                        height: 64,
+                        child: IconTheme(
+                          data: const IconThemeData(
+                            size: 64,
+                            color: Colors.black,
+                          ),
+                          child: icon,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.runAsync(() async {
+        for (final element in find.byType(Image).evaluate()) {
+          await precacheImage((element.widget as Image).image, element);
+        }
+      });
+      await tester.pumpAndSettle();
+      expect(find.byType(SvgPicture), findsOneWidget);
+      expect(find.byType(Image), findsOneWidget);
+      expect(find.byType(GroupMonogram), findsNWidgets(2));
+      final boundary = tester.renderObject<RenderRepaintBoundary>(
+        find.byKey(boundaryKey),
+      );
+      return (await tester.runAsync(() async {
+        final image = await boundary.toImage();
+        try {
+          final rgba = (await image.toByteData(
+            format: ui.ImageByteFormat.rawRgba,
+          ))!;
+          final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+          if (output != null) {
+            final directory = Directory(output)..createSync(recursive: true);
+            final bytes = (await image.toByteData(
+              format: ui.ImageByteFormat.png,
+            ))!;
+            File('${directory.path}/target-icons-${glass ? 'ultra' : 'none'}.png')
+                .writeAsBytesSync(bytes.buffer.asUint8List());
+          }
+          return rgba.buffer.asUint8List();
+        } finally {
+          image.dispose();
+        }
+      }))!;
+    }
+
+    try {
+      final none = await render(false);
+      final blended = Color.alphaBlend(
+        const Color.fromRGBO(255, 48, 0, 0.5),
+        const Color(0xFF3A7EBC),
+      );
+      final svgPixel = (40 * 360 + 192) * 4;
+      for (final (channel, value) in [blended.r, blended.g, blended.b].indexed) {
+        expect(none[svgPixel + channel], closeTo(value * 255, 1));
+      }
+      final ultra = await render(true);
+      for (var icon = 0; icon < 4; icon++) {
+        var different = 0;
+        var painted = 0;
+        for (var y = 24; y < 88; y++) {
+          for (var x = 16 + icon * 80; x < 80 + icon * 80; x++) {
+            final offset = (y * 360 + x) * 4;
+            if (none[offset] != 0x3A || none[offset + 1] != 0x7E ||
+                none[offset + 2] != 0xBC) painted++;
+            for (var channel = 0; channel < 4; channel++) {
+              if (none[offset + channel] != ultra[offset + channel]) different++;
+            }
+          }
+        }
+        expect(painted, greaterThan(20), reason: 'icon $icon must really paint');
+        expect(different, 0, reason: 'icon $icon must preserve RGBA');
+      }
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(Duration.zero);
     }
   });
 

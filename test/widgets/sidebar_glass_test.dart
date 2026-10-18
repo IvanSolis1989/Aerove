@@ -121,12 +121,13 @@ void main() {
             );
             await tester.pumpAndSettle();
             final sidebar = find.byType(NavigationSidebar);
+            final labels = UiLocalizations.of(tester.element(sidebar));
             expect(
               tester.getSize(sidebar).width,
               layout == 'expanded' ? 220 : 48,
             );
             if (layout == 'overlay') {
-              await tester.tap(find.byTooltip('Show more'));
+              await tester.tap(find.byTooltip(labels.showMore));
               await tester.pumpAndSettle();
             }
             final pane = layout == 'overlay'
@@ -209,7 +210,7 @@ void main() {
             if (layout != 'overlay') {
               await tester.tap(
                 find.byTooltip(
-                  layout == 'expanded' ? 'Show less' : 'Show more',
+                  layout == 'expanded' ? labels.showLess : labels.showMore,
                 ),
               );
               await tester.pumpAndSettle();

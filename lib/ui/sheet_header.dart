@@ -118,7 +118,9 @@ class FloatingHeader extends StatelessWidget {
             child: LayoutBuilder(
               builder: (_, constraints) => blur
                   ? HeaderBlur(
-                      fadeHeight: (constraints.maxHeight - overhang) / 2,
+                      fadeHeight: constraints.maxHeight,
+                      fullStrengthHeight:
+                          (constraints.maxHeight - overhang) * 0.35,
                     )
                   : DecoratedBox(
                       decoration: BoxDecoration(

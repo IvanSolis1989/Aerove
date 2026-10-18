@@ -96,9 +96,14 @@ void main() {
                 Theme.of(tester.element(sheetMaterial)).colorScheme,
               );
         expect(material.color, isNotNull);
-        expect(material.color!.a, enabled ? lessThanOrEqualTo(0.24) : 1.0);
+        expect(material.color!.a, enabled ? 0 : 1.0);
+        final surfaceColor = enabled
+            ? tester.widget<LiquidGlass>(find.descendant(
+                of: sheetMaterial, matching: find.byType(LiquidGlass)).first).style.tint
+            : material.color!;
+        expect(surfaceColor.a, enabled ? lessThanOrEqualTo(0.24) : 1.0);
         expect(
-          material.color!.toARGB32() & 0xFFFFFF,
+          surfaceColor.toARGB32() & 0xFFFFFF,
           baseColor.toARGB32() & 0xFFFFFF,
         );
         final sheetScaffold = find.descendant(
@@ -185,7 +190,13 @@ void main() {
           matching: find.byType(Material),
         ),
       );
-      expect(material.color!.a, enabled ? 0.24 : 1);
+      expect(material.color!.a, enabled ? 0 : 1);
+      if (enabled) {
+        final pane = tester.widget<LiquidGlass>(find.descendant(
+          of: find.byType(PagedSheet), matching: find.byType(LiquidGlass)).first);
+        expect(pane.style.blur, 16);
+        expect(pane.style.tint.a, 0.24);
+      }
       expect(material.clipBehavior, Clip.antiAlias);
       final bounds = tester.getRect(find.byType(PagedSheet));
       originalBounds ??= bounds;

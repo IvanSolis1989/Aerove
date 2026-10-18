@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:fl_clash/ui/context.dart';
-import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/scroll_behavior.dart';
 import 'package:fl_clash/ui/shape.dart';
 import 'package:fl_clash/ui/surface.dart';
@@ -16,6 +15,7 @@ import 'package:material_ui/material_ui.dart';
 import 'inherited.dart';
 import 'sheet.dart';
 import 'sheet_navigator.dart';
+import 'sheet_surface.dart';
 
 /// Receives the sheet's own scroll controller, or null where the sheet has no
 /// detents to drag between and the content keeps its own controller.
@@ -782,10 +782,7 @@ class _SnapSheetState extends State<_SnapSheet>
   @override
   Widget build(BuildContext context) {
     final route = widget.route;
-    final sheetColor = LiquidGlassScope.surfaceColorOf(
-      context,
-      SurfaceLevel.page.colorOf(context.colorScheme),
-    );
+    final sheetColor = SurfaceLevel.page.colorOf(context.colorScheme);
     final theme = Theme.of(context);
     Widget content = route.builder(context, _scrollController);
     if (route.fitsContent) {
@@ -803,26 +800,24 @@ class _SnapSheetState extends State<_SnapSheet>
         onVerticalDragEnd: (details) =>
             _model.dragEnd(-(details.primaryVelocity ?? 0)),
         onVerticalDragCancel: () => _model.dragEnd(0),
-        child: ClipRSuperellipse(
-          borderRadius: AppRadius.top(AppCorner.xxl),
-          child: Theme(
-            data: theme.copyWith(scaffoldBackgroundColor: sheetColor),
-            child: Material(
-              color: sheetColor,
-              child: _SheetContent(
-                model: _model,
-                child: _WithoutKeyboard(
-                  child: SheetProvider(
-                    type: SheetType.bottomSheet,
-                    child: SheetOverhangScope(
-                      overhang: _model.lift,
-                      fitsContent: route.fitsContent,
-                      child: SheetDismissScope(
-                        handler: route._dismissHandler,
-                        child: SheetScrollScope(
-                          createController: _createScrollController,
-                          child: content,
-                        ),
+        child: Theme(
+          data: theme.copyWith(scaffoldBackgroundColor: sheetColor),
+          child: SheetSurface(
+            color: sheetColor,
+            shape: AppShape.top(AppCorner.xxl),
+            child: _SheetContent(
+              model: _model,
+              child: _WithoutKeyboard(
+                child: SheetProvider(
+                  type: SheetType.bottomSheet,
+                  child: SheetOverhangScope(
+                    overhang: _model.lift,
+                    fitsContent: route.fitsContent,
+                    child: SheetDismissScope(
+                      handler: route._dismissHandler,
+                      child: SheetScrollScope(
+                        createController: _createScrollController,
+                        child: content,
                       ),
                     ),
                   ),

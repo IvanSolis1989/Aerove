@@ -130,7 +130,32 @@ void main() {
     }
   });
 
-  testWidgets('native blur fades to exact transparency at the bar midpoint', (
+  testWidgets('blur coverage follows the complete header and its overhang', (
+    tester,
+  ) async {
+    for (final height in [72.0, 104.0, 128.0]) {
+      for (final overhang in [0.0, 16.0]) {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Center(
+              child: FloatingHeader(
+                backgroundColor: const Color(0x20204080),
+                blur: true,
+                overhang: overhang,
+                child: SizedBox(width: 224, height: height),
+              ),
+            ),
+          ),
+        );
+        final blur = tester.widget<HeaderBlur>(find.byType(HeaderBlur));
+        expect(blur.fadeHeight, height + overhang);
+        expect(blur.fullStrengthHeight, height * 0.35);
+        expect(tester.getSize(find.byType(FloatingHeader)).height, height);
+      }
+    }
+  });
+
+  testWidgets('native blur holds over the title and fades through the bar foot', (
     tester,
   ) async {
     for (final dpr in [1.0, 3.0]) {
@@ -159,22 +184,25 @@ void main() {
           var changedTop = 0;
           var bottomMismatches = 0;
           final rowError = List<int>.filled(probe.width, 0);
+          final rowAlpha = List<double?>.filled(probe.width, null);
           for (var y = 0; y < probe.width; y++) {
             final localY = (y + 0.5) / dpr - offset.dy;
-            final t = (localY / 64).clamp(0.0, 1.0);
+            final t = ((localY - 44.8) / 115.2).clamp(0.0, 1.0);
             final alpha = localY < 0 ? 0.0 : 1 - t * t * (3 - 2 * t);
+            var covariance = 0.0;
+            var contrast = 0.0;
             for (var x = 0; x < probe.width; x++) {
               final localX = (x + 0.5) / dpr - offset.dx;
               final inside = localX >= 0 && localX < 224;
               for (var c = 0; c < 4; c++) {
                 final i = (y * probe.width + x) * 4 + c;
-                if (inside && localY >= 0 && localY < 64) {
+                if (inside && localY >= 0 && localY < 160) {
                   expected[i] =
                       (baseline[i] * (1 - alpha) + gaussian[i] * alpha).round();
                 }
                 final delta = (actual[i] - expected[i]).abs();
                 error[i] = c == 3 ? 255 : math.min(255, delta * 16);
-                if (localY >= 64 && actual[i] != baseline[i]) {
+                if (localY >= 160 && actual[i] != baseline[i]) {
                   bottomMismatches++;
                 }
                 if (inside &&
@@ -184,12 +212,37 @@ void main() {
                   changedTop++;
                 }
                 // Fractional clip coverage is separate from the alpha oracle.
-                if (localX >= 1 && localX < 223 && localY >= 1 && localY < 64) {
+                if (localX >= 1 && localX < 223 && localY >= 1 && localY < 160) {
                   maxError = math.max(maxError, delta);
                   rowError[y] = math.max(rowError[y], delta);
+                  if (c < 3) {
+                    final blurred = gaussian[i] - baseline[i];
+                    covariance += (actual[i] - baseline[i]) * blurred;
+                    contrast += blurred * blurred;
+                  }
                 }
               }
             }
+            if (contrast > 1000) rowAlpha[y] = covariance / contrast;
+          }
+          final sampledAlpha = <double>[];
+          for (final localY in [16.0, 40.0, 64.0, 96.0, 128.0, 152.0]) {
+            final row = ((localY + offset.dy) * dpr).floor();
+            final measured = rowAlpha[row];
+            expect(measured, isNotNull);
+            final center = (row + 0.5) / dpr - offset.dy;
+            final t = ((center - 44.8) / 115.2).clamp(0.0, 1.0);
+            final expectedAlpha = 1 - t * t * (3 - 2 * t);
+            final actualAlpha = measured!;
+            expect(actualAlpha, closeTo(expectedAlpha, 0.03));
+            sampledAlpha.add(actualAlpha);
+          }
+          expect(sampledAlpha[2], greaterThan(0.9));
+          expect(sampledAlpha[3], inInclusiveRange(0.54, 0.61));
+          expect(sampledAlpha[4], inInclusiveRange(0.16, 0.23));
+          expect(sampledAlpha[5], lessThan(0.03));
+          for (var index = 2; index < sampledAlpha.length; index++) {
+            expect(sampledAlpha[index], lessThan(sampledAlpha[index - 1]));
           }
           // Two 8-bit blend roundings plus smoothstep's 16-segment error:
           // max |f''| * (1/16)^2 / 8 * 255 < 1 channel unit.
@@ -215,6 +268,10 @@ void main() {
               'quantizationBound': quantizationBound,
               'maxError': maxError,
               'rowError': rowError,
+              'rowAlpha': rowAlpha,
+              'sampledAlpha': sampledAlpha,
+              'fullStrengthHeight': 44.8,
+              'fadeEndHeight': 160,
               'bottomMismatches': bottomMismatches,
             },
           );
@@ -222,7 +279,7 @@ void main() {
           expect(
             bottomMismatches,
             0,
-            reason: 'The entire lower half and overhang must equal baseline.',
+            reason: 'Below the extended bar foot must equal baseline exactly.',
           );
           expect(
             maxError,
@@ -280,7 +337,7 @@ void main() {
           } else if (delta != 0) {
             alphaMismatches++;
           }
-          if (i ~/ (probe.width * 4) >= 88 && delta != 0) {
+          if (i ~/ (probe.width * 4) >= 184 && delta != 0) {
             bottomMismatches++;
           }
         }
@@ -444,7 +501,7 @@ class _Probe {
                             children: [
                               if (layer == _Layer.gaussian)
                                 SizedBox(
-                                  height: 64,
+                                  height: 160,
                                   child: ClipRect(
                                     child: BackdropFilter(
                                       filter: ui.ImageFilter.blur(

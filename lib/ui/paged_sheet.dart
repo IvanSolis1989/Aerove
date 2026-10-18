@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:fl_clash/ui/deferred_push.dart';
 import 'package:fl_clash/ui/drag_back.dart';
 import 'package:fl_clash/ui/inherited.dart';
-import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/navigator_resizable.dart';
 import 'package:fl_clash/ui/page_transition.dart';
 import 'package:fl_clash/ui/pop_scope.dart';
@@ -11,12 +10,8 @@ import 'package:fl_clash/ui/shape.dart';
 import 'package:fl_clash/ui/sheet.dart';
 import 'package:fl_clash/ui/sheet_navigator.dart';
 import 'package:fl_clash/ui/surface.dart';
+import 'package:fl_clash/ui/sheet_surface.dart';
 import 'package:material_ui/material_ui.dart';
-
-Color _sheetColorOf(BuildContext context) => LiquidGlassScope.surfaceColorOf(
-  context,
-  SurfaceLevel.page.colorOf(ColorScheme.of(context)),
-);
 
 class PagedSheetRoute<T> extends PageRoute<T>
     with
@@ -89,13 +84,12 @@ class PagedSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final type = SheetProvider.of(context)?.type;
-    return Material(
+    return SheetSurface(
       animationDuration: Duration.zero,
-      color: _sheetColorOf(context),
+      color: SurfaceLevel.page.colorOf(ColorScheme.of(context)),
       shape: type == SheetType.bottomSheet
           ? AppShape.top(AppCorner.xxl)
           : AppShape.none,
-      clipBehavior: Clip.antiAlias,
       child: NavigatorResizable(child: child),
     );
   }

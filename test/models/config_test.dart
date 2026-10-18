@@ -696,7 +696,7 @@ void main() {
       expect(props.themeMode, ThemeMode.system);
       expect(props.pureBlack, false);
       expect(props.auroraEnabled, true);
-      expect(props.liquidGlass, LiquidGlassMode.standard);
+      expect(props.liquidGlass, LiquidGlassMode.ultra);
       expect(props.auroraColors, [0xFF65BDD2, 0xFFC589CA, 0xFF75CCA8]);
       expect(props.auroraSeed, 271828);
       expect(props.textScale.scale, 1.0);
@@ -706,7 +706,7 @@ void main() {
       final result = ThemeProps.safeFromJson(null);
       expect(result.themeMode, ThemeMode.system);
       expect(result.auroraEnabled, true);
-      expect(result.liquidGlass, LiquidGlassMode.standard);
+      expect(result.liquidGlass, LiquidGlassMode.ultra);
     });
 
     test('missing mode follows system and saved explicit modes are kept', () {
@@ -737,7 +737,7 @@ void main() {
     });
 
     test(
-      'fresh and partial JSON use standard without changing saved modes',
+      'fresh and partial JSON use ultra without changing saved modes',
       () {
         for (final json in <Map<String, Object?>>[
           {},
@@ -745,7 +745,7 @@ void main() {
         ]) {
           final props = ThemeProps.fromJson(json);
           expect(props.auroraEnabled, true);
-          expect(props.liquidGlass, LiquidGlassMode.standard);
+          expect(props.liquidGlass, LiquidGlassMode.ultra);
           final restored = roundTrip(props.toJson, ThemeProps.fromJson);
           expect(restored, props);
         }
@@ -859,7 +859,7 @@ void main() {
       LiquidGlassMode modeOf(Object? value) =>
           ThemeProps.fromJson({'liquidGlass': value}).liquidGlass;
 
-      expect(modeOf(null), LiquidGlassMode.standard);
+      expect(modeOf(null), LiquidGlassMode.ultra);
       expect(modeOf(true), LiquidGlassMode.standard);
       expect(modeOf(false), LiquidGlassMode.none);
       for (final mode in LiquidGlassMode.values) {
