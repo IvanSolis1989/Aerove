@@ -136,7 +136,9 @@ void main() {
         );
         await tester.pumpAndSettle();
         expect(find.bySemanticsLabel(RegExp('75%')), findsWidgets);
-        final profileItem = find.byKey(const ValueKey('liquidProfileSelection'));
+        final profileItem = find.byKey(
+          const ValueKey('liquidProfileSelection'),
+        );
         expect(profileItem, findsOneWidget);
         final card = tester.getRect(
           find.descendant(of: profileItem, matching: find.byType(FilledButton)),

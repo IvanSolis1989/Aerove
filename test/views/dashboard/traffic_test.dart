@@ -222,7 +222,10 @@ void main() {
                   final candidate = Offset(x + .5, y + .5);
                   if (_matches(_pixel(control, candidate), colors.onSurface)) {
                     final background = fields[candidate.dx < 240 ? 0 : 1];
-                    final contrast = _contrast(_pixel(actual, candidate), background);
+                    final contrast = _contrast(
+                      _pixel(actual, candidate),
+                      background,
+                    );
                     if (contrast >= 4.5) {
                       readableInteriors++;
                     }
@@ -234,8 +237,11 @@ void main() {
                 }
               }
             }
-            expect(readableInteriors, greaterThanOrEqualTo(3),
-                reason: '$role $i readable opaque glyph interiors');
+            expect(
+              readableInteriors,
+              greaterThanOrEqualTo(3),
+              reason: '$role $i readable opaque glyph interiors',
+            );
             expect(point, isNotNull, reason: '$role $i opaque glyph interior');
             points['$role-$i'] = point!;
           }
