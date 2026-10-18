@@ -805,6 +805,7 @@ class _SnapSheetState extends State<_SnapSheet>
           child: SheetSurface(
             color: sheetColor,
             shape: AppShape.top(AppCorner.xxl),
+            occludesGlass: true,
             child: _SheetContent(
               model: _model,
               child: _WithoutKeyboard(

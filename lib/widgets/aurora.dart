@@ -9,6 +9,7 @@ import 'package:fl_clash/ui/surface.dart';
 import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
@@ -136,6 +137,7 @@ class AuroraAppSurface extends ConsumerWidget {
           : LiquidGlassQuality.standard,
       child: LiquidGlassHost(
         enabled: glassEnabled,
+        wallpaperOnly: true,
         child: AuroraAppearance(
           enabled: enabled,
           child: Theme(
@@ -204,13 +206,13 @@ class SeededAuroraWallpaper extends StatefulWidget {
 
 class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
-  static const _paintInterval = Duration(microseconds: 33333);
+  static const _framesPerSecond = 24;
 
   late _AuroraPainter _painter;
   late final Ticker _ticker;
   late final ValueNotifier<({bool square, Duration elapsed})> _frame;
   Duration _runBase = Duration.zero;
-  Duration _lastPublishedTick = Duration.zero;
+  int _lastPublishedFrame = 0;
   bool _foreground = true;
 
   bool get _square => widget.motion || widget.motionTime != null;
@@ -227,8 +229,12 @@ class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper>
       elapsed: widget.motionTime ?? Duration.zero,
     ));
     _ticker = createTicker((elapsed) {
-      if (elapsed - _lastPublishedTick < _paintInterval) return;
-      _lastPublishedTick = elapsed;
+      final frame =
+          elapsed.inMicroseconds *
+          _framesPerSecond ~/
+          Duration.microsecondsPerSecond;
+      if (frame <= _lastPublishedFrame) return;
+      _lastPublishedFrame = frame;
       _frame.value = (square: true, elapsed: _runBase + elapsed);
     });
     WidgetsBinding.instance.addObserver(this);
@@ -256,7 +262,7 @@ class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper>
         !(MediaQuery.maybeOf(context)?.disableAnimations ?? false);
     if (running && !_ticker.isActive) {
       _runBase = _frame.value.elapsed;
-      _lastPublishedTick = Duration.zero;
+      _lastPublishedFrame = 0;
       _ticker.start();
     } else if (!running && _ticker.isActive) {
       _ticker.stop();
@@ -268,7 +274,6 @@ class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper>
       colors: normalizeAuroraColors(widget.colors),
       seed: widget.seed,
       brightness: widget.brightness,
-      frame: _frame,
     );
   }
 
@@ -307,11 +312,173 @@ class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper>
   @override
   Widget build(BuildContext context) {
     return RepaintBoundary(
-      child: CustomPaint(
-        painter: _painter,
-        isComplex: true,
-        willChange: widget.motion && widget.motionTime == null,
+      child: _AuroraMotionTransform(
+        seed: widget.seed,
+        frame: _frame,
+        child: LiquidGlassColorSource(
+          child: CustomPaint(painter: _painter, isComplex: true),
+        ),
       ),
+    );
+  }
+}
+
+class _AuroraMotionTransform extends SingleChildRenderObjectWidget {
+  const _AuroraMotionTransform({
+    required this.seed,
+    required this.frame,
+    required super.child,
+  });
+
+  final int seed;
+  final ValueListenable<({bool square, Duration elapsed})> frame;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderAuroraMotion(seed, frame);
+
+  @override
+  void updateRenderObject(BuildContext context, _RenderAuroraMotion renderObject) {
+    renderObject
+      ..seed = seed
+      ..frame = frame;
+  }
+}
+
+class _RenderAuroraMotion extends RenderProxyBox {
+  _RenderAuroraMotion(
+    int seed,
+    ValueListenable<({bool square, Duration elapsed})> frame,
+  )
+    : _seed = seed,
+      _motion = AuroraMotion(seed),
+      _frame = frame,
+      _square = frame.value.square;
+
+  final _clip = LayerHandle<ClipRectLayer>();
+  final _transform = LayerHandle<TransformLayer>();
+  AuroraMotion _motion;
+  int _seed;
+  bool _square;
+
+  set seed(int value) {
+    if (_seed == value) return;
+    _seed = value;
+    _motion = AuroraMotion(value);
+    markNeedsPaint();
+  }
+
+  ValueListenable<({bool square, Duration elapsed})> _frame;
+  set frame(ValueListenable<({bool square, Duration elapsed})> value) {
+    if (identical(_frame, value)) return;
+    if (attached) _frame.removeListener(_onFrame);
+    _frame = value;
+    if (attached) _frame.addListener(_onFrame);
+    _onFrame();
+  }
+
+  void _onFrame() {
+    if (_square != _frame.value.square) {
+      _square = _frame.value.square;
+      markNeedsLayout();
+    } else {
+      markNeedsPaint();
+    }
+  }
+
+  @override
+  bool get alwaysNeedsCompositing => true;
+
+  @override
+  void attach(PipelineOwner owner) {
+    super.attach(owner);
+    _frame.addListener(_onFrame);
+  }
+
+  @override
+  void detach() {
+    _frame.removeListener(_onFrame);
+    super.detach();
+  }
+
+  @override
+  void dispose() {
+    _clip.layer = null;
+    _transform.layer = null;
+    super.dispose();
+  }
+
+  @override
+  Size computeDryLayout(BoxConstraints constraints) =>
+      constraints.biggest.isFinite ? constraints.biggest : constraints.smallest;
+
+  @override
+  void performLayout() {
+    size = computeDryLayout(constraints);
+    child?.layout(
+      BoxConstraints.tight(_square ? Size.square(size.longestSide) : size),
+      parentUsesSize: true,
+    );
+  }
+
+  Matrix4 get _matrix {
+    if (!_square || size.isEmpty) return Matrix4.identity();
+    final pose = _motion.at(_frame.value.elapsed, size);
+    final side = size.longestSide;
+    final scale = pose.side / side;
+    return Matrix4.translationValues(
+        size.width / 2 + pose.translation.dx,
+        size.height / 2 + pose.translation.dy,
+        0,
+      )
+      ..rotateZ(pose.angle)
+      ..scaleByDouble(scale, scale, 1, 1)
+      ..translateByDouble(-side / 2, -side / 2, 0, 1);
+  }
+
+  @override
+  void applyPaintTransform(RenderBox child, Matrix4 transform) {
+    transform.multiply(_matrix);
+  }
+
+  @override
+  Rect? describeApproximatePaintClip(RenderObject child) =>
+      _square ? Offset.zero & size : null;
+
+  @override
+  bool hitTestChildren(BoxHitTestResult result, {required Offset position}) {
+    final child = this.child;
+    if (child == null) return false;
+    return result.addWithPaintTransform(
+      transform: _matrix,
+      position: position,
+      hitTest: (result, position) => child.hitTest(result, position: position),
+    );
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    if (child == null || size.isEmpty) return;
+    if (!_square) {
+      _clip.layer = null;
+      _transform.layer = null;
+      super.paint(context, offset);
+      return;
+    }
+    _clip.layer = context.pushClipRect(
+      needsCompositing,
+      offset,
+      Offset.zero & size,
+      (context, offset) {
+        _transform.layer = context.pushTransform(
+          needsCompositing,
+          offset,
+          _matrix,
+          super.paint,
+          oldLayer: _transform.layer,
+        );
+      },
+      oldLayer: _clip.layer,
     );
   }
 }
@@ -321,9 +488,7 @@ class _AuroraPainter extends CustomPainter {
     required this.colors,
     required this.seed,
     required this.brightness,
-    required this.frame,
-  }) : _motion = AuroraMotion(seed),
-       super(repaint: frame) {
+  }) {
     final mesh = generateAuroraMesh(
       seed,
       colors: colors,
@@ -340,8 +505,6 @@ class _AuroraPainter extends CustomPainter {
   final List<Color> colors;
   final int seed;
   final Brightness brightness;
-  final ValueListenable<({bool square, Duration elapsed})> frame;
-  final AuroraMotion _motion;
   late final Vertices _vertices;
   final _paint = Paint()..isAntiAlias = false;
 
@@ -351,20 +514,7 @@ class _AuroraPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (size.isEmpty) return;
     canvas.save();
-    if (frame.value.square) {
-      final pose = _motion.at(frame.value.elapsed, size);
-      canvas
-        ..clipRect(Offset.zero & size)
-        ..translate(
-          size.width / 2 + pose.translation.dx,
-          size.height / 2 + pose.translation.dy,
-        )
-        ..rotate(pose.angle)
-        ..scale(pose.side, pose.side)
-        ..translate(-0.5, -0.5);
-    } else {
-      canvas.scale(size.width, size.height);
-    }
+    canvas.scale(size.width, size.height);
     canvas.drawVertices(_vertices, BlendMode.dst, _paint);
     canvas.restore();
   }

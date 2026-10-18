@@ -153,6 +153,10 @@ class _InkBox extends SingleChildRenderObjectWidget {
 
   @override
   void updateRenderObject(BuildContext context, covariant _InkRender render) {
+    if (render.role == role && render.source == source &&
+        render.outset == outset && render.dark == dark) {
+      return;
+    }
     render
       ..role = role
       ..source = source

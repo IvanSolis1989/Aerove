@@ -7,12 +7,14 @@ class SheetSurface extends StatelessWidget {
     required this.color,
     required this.shape,
     this.animationDuration = const Duration(milliseconds: 200),
+    this.occludesGlass = false,
     required this.child,
   });
 
   final Color color;
   final ShapeBorder shape;
   final Duration animationDuration;
+  final bool occludesGlass;
   final Widget child;
 
   @override
@@ -46,7 +48,7 @@ class SheetSurface extends StatelessWidget {
             ],
           )
         : child;
-    return Material(
+    final surface = Material(
       animationDuration: animationDuration,
       color: glass ? Colors.transparent : color,
       shape: shape,
@@ -60,6 +62,9 @@ class SheetSurface extends StatelessWidget {
             )
           : content,
     );
+    return glass && !enclosed && occludesGlass
+        ? LiquidGlassOcclusion(shape: shape, child: surface)
+        : surface;
   }
 }
 

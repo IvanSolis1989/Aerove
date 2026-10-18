@@ -6,6 +6,7 @@ import 'dart:ui' as ui;
 
 import 'package:fl_clash/common/aurora.dart';
 import 'package:fl_clash/common/aurora_motion.dart';
+import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/widgets/aurora.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -81,7 +82,7 @@ void main() {
     await tester.runAsync(() => _export('aurora-transform-pixels.json', metrics));
   });
 
-  testWidgets('motion records its picture cadence without rebuilding content', (
+  testWidgets('motion retains its static picture without rebuilding content', (
     tester,
   ) async {
     final key = GlobalKey();
@@ -111,7 +112,7 @@ void main() {
     expect(changed, isNot(original));
     expect(builds, originalBuilds);
     expect(initialPictures, greaterThan(0));
-    expect(pictures.length - initialPictures, inInclusiveRange(0, 30));
+    expect(pictures.length - initialPictures, 0);
     await tester.runAsync(
       () => _export('aurora-transform-picture-cadence.json', {
         'initialPictures': initialPictures,
@@ -129,6 +130,58 @@ void main() {
       expect(await _pixels(tester, key, null), paused);
       expect(_pictures(tester), heldPictures);
       expect(tester.binding.hasScheduledFrame, isFalse);
+    }
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    expect(tester.binding.hasScheduledFrame, isFalse);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the square source survives poses and replaces changed content', (
+    tester,
+  ) async {
+    final key = GlobalKey();
+    Future<void> pump({
+      Size size = const Size(180, 300),
+      int seed = 832838199,
+      Brightness brightness = Brightness.light,
+      List<Color> colors = _palette,
+      Duration time = Duration.zero,
+    }) => tester.pumpWidget(
+      _scene(
+        key,
+        size: size,
+        child: SeededAuroraWallpaper(
+          colors: colors,
+          seed: seed,
+          brightness: brightness,
+          motionTime: time,
+        ),
+      ),
+    );
+
+    await pump();
+    expect(
+      tester.getSize(find.byType(LiquidGlassColorSource)),
+      const Size.square(300),
+    );
+    final original = _pictures(tester);
+    await pump(time: const Duration(seconds: 5));
+    expect(_pictures(tester), original);
+    await pump(size: const Size(300, 180));
+    expect(_pictures(tester), original);
+    var previous = await _pixels(tester, key, null);
+    for (final (seed, brightness, colors) in [
+      (624302977, Brightness.light, _palette),
+      (624302977, Brightness.dark, _palette),
+      (624302977, Brightness.dark, _palette.reversed.toList()),
+    ]) {
+      final oldPictures = _pictures(tester);
+      await pump(seed: seed, brightness: brightness, colors: colors);
+      final pixels = await _pixels(tester, key, null);
+      expect(pixels, isNot(previous));
+      expect(_pictures(tester), isNot(oldPictures));
+      previous = pixels;
     }
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
@@ -156,7 +209,7 @@ List<ui.Picture> _pictures(WidgetTester tester) {
     }
   }
 
-  visit(boundary.debugLayer! as ContainerLayer);
+  visit(boundary.debugLayer!);
   return pictures;
 }
 

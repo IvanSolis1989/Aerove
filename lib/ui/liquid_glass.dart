@@ -9,6 +9,7 @@ import 'package:material_ui/material_ui.dart';
 
 part 'liquid_glass_capture.dart';
 part 'liquid_glass_ink.dart';
+part 'liquid_glass_occlusion.dart';
 
 const _shaderAsset = 'shaders/liquid_glass.frag';
 const _glowIn = Duration(milliseconds: 120);
@@ -620,6 +621,7 @@ class LiquidGlass extends StatelessWidget {
     this.shadows = const [],
     this.pressed = false,
     this.glow,
+    this.contentBackdrop = false,
     this.child,
   });
 
@@ -636,6 +638,8 @@ class LiquidGlass extends StatelessWidget {
 
   /// Lights the pane in place of the glow [pressed] lights at its center.
   final LiquidGlassGlow? glow;
+  /// Reads UI beneath this pane in a wallpaper-only host, for small dock lenses.
+  final bool contentBackdrop;
 
   final Widget? child;
 
@@ -676,6 +680,7 @@ class LiquidGlass extends StatelessWidget {
         press: 0,
         fading: false,
         glow: glow,
+        contentBackdrop: contentBackdrop,
         child: child,
       );
     }
@@ -690,6 +695,7 @@ class LiquidGlass extends StatelessWidget {
         press: press,
         fading: !pressed,
         glow: null,
+        contentBackdrop: contentBackdrop,
         child: child,
       ),
       child: child,
@@ -705,6 +711,7 @@ class _LiquidGlassPane extends SingleChildRenderObjectWidget {
     required this.press,
     required this.fading,
     required this.glow,
+    required this.contentBackdrop,
     super.child,
   });
 
@@ -714,6 +721,7 @@ class _LiquidGlassPane extends SingleChildRenderObjectWidget {
   final double press;
   final bool fading;
   final LiquidGlassGlow? glow;
+  final bool contentBackdrop;
 
   @override
   _RenderLiquidGlass createRenderObject(BuildContext context) {
@@ -724,6 +732,7 @@ class _LiquidGlassPane extends SingleChildRenderObjectWidget {
       press: press,
       fading: fading,
       glow: glow,
+      contentBackdrop: contentBackdrop,
     );
   }
 
@@ -738,7 +747,8 @@ class _LiquidGlassPane extends SingleChildRenderObjectWidget {
       ..shadows = shadows
       ..press = press
       ..fading = fading
-      ..glow = glow;
+      ..glow = glow
+      ..contentBackdrop = contentBackdrop;
   }
 }
 
@@ -750,14 +760,22 @@ class _RenderLiquidGlass extends RenderProxyBox {
     required double press,
     required bool fading,
     required LiquidGlassGlow? glow,
+    required bool contentBackdrop,
   }) : _style = style,
        _clipper = clipper,
        _shadows = shadows,
        _press = press,
        _fading = fading,
-       _glow = glow;
+       _glow = glow,
+       _contentBackdrop = contentBackdrop;
 
   late final _pane = LiquidGlassPane(markNeedsPaint);
+  bool _contentBackdrop;
+  set contentBackdrop(bool value) {
+    if (_contentBackdrop == value) return;
+    _contentBackdrop = value;
+    markNeedsPaint();
+  }
 
   LiquidGlassStyle _style;
   set style(LiquidGlassStyle value) {
@@ -890,6 +908,7 @@ class _RenderLiquidGlass extends RenderProxyBox {
         shape: _currentShape,
         style: _style,
         shadows: _shadows,
+        contentBackdrop: _contentBackdrop,
         glow:
             _glow ??
             LiquidGlassGlow(
@@ -965,6 +984,7 @@ class LiquidGlassPane {
     LiquidGlassGlow glow = LiquidGlassGlow.none,
     Rect? hold,
     LiquidGlassRim? rim,
+    bool contentBackdrop = false,
   }) {
     final pane = _layer.layer ??= _LiquidGlassLayer();
     assert(rim == null || shape is LiquidGlassCorners);
@@ -1002,7 +1022,8 @@ class LiquidGlassPane {
       ..style = style
       ..glow = glow
       ..hold = hold
-      ..rim = rim;
+      ..rim = rim
+      ..contentBackdrop = contentBackdrop;
     context.addLayer(pane);
     if (hold != null) {
       _paintShadows(context.canvas, rect, pane.corners, shadows);
@@ -1111,6 +1132,7 @@ class _LiquidGlassLayer extends Layer {
   LiquidGlassGlow glow = LiquidGlassGlow.none;
   Rect? hold;
   LiquidGlassRim? rim;
+  bool contentBackdrop = false;
   _Placement? _held;
 
   ui.Picture? _frost;
@@ -1119,7 +1141,8 @@ class _LiquidGlassLayer extends Layer {
   int _capturedPass = -1;
   ui.Picture? _captured;
   ui.FragmentShader? _captureShader;
-  (ui.Image, Path?, BlendMode, ui.FragmentProgram?, List<double>)? _captureKey;
+  (ui.Image, Path?, BlendMode, ui.FragmentProgram?, List<double>, List<Object?>)?
+  _captureKey;
 
   @override
   bool get alwaysNeedsAddToScene => true;
@@ -1210,8 +1233,10 @@ class _LiquidGlassLayer extends Layer {
     ui.Image atlas,
     List<double> mapping,
     BlendMode blendMode,
-    LiquidGlassStyle style,
-  ) {
+    LiquidGlassStyle style, {
+    Path? visible,
+    List<Object?> coverageKey = const [],
+  }) {
     _capturedPass = pass;
     final program = this.program;
     final uniforms = <double>[
@@ -1225,17 +1250,26 @@ class _LiquidGlassLayer extends Layer {
       ..._look(style),
     ];
     if (_captureKey
-        case (final image, final path, final mode, final shaded, final values)?
+        case (
+          final image,
+          final path,
+          final mode,
+          final shaded,
+          final values,
+          final coverage,
+        )?
         when _captured != null &&
             identical(image, atlas) &&
             identical(path, outline) &&
             mode == blendMode &&
             identical(shaded, program) &&
-            listEquals(values, uniforms)) {
+            listEquals(values, uniforms) &&
+            listEquals(coverage, coverageKey)) {
       return;
     }
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
+    if (visible != null) canvas.clipPath(visible);
     if (program == null) {
       _frostFrom(canvas, atlas, mapping, blendMode, style);
     } else {
@@ -1255,7 +1289,7 @@ class _LiquidGlassLayer extends Layer {
     }
     _captured?.dispose();
     _captured = recorder.endRecording();
-    _captureKey = (atlas, outline, blendMode, program, uniforms);
+    _captureKey = (atlas, outline, blendMode, program, uniforms, coverageKey);
   }
 
   /// Frosts the pane, without bending it, from the part of [atlas] behind it,

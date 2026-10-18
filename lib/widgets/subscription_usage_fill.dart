@@ -276,10 +276,10 @@ class _UsageFillRender extends RenderBox {
       _pane.clear();
       return;
     }
-    final level = size.width * settings.share;
     final color = settings.color;
     if (!settings.glass) {
       _pane.clear();
+      final level = size.width * settings.share;
       context.canvas.drawRect(
         Rect.fromLTWH(
           settings.rtl ? offset.dx + size.width - level : offset.dx,
@@ -291,13 +291,19 @@ class _UsageFillRender extends RenderBox {
       );
       return;
     }
+    final inset = math.min(5.0, size.shortestSide / 4);
+    final cavity = (offset & size).deflate(inset);
+    final cavityOutline = AppShape.all(
+      math.max(0.0, AppCorner.xl - inset),
+    ).getOuterPath(Offset.zero & cavity.size);
+    final level = cavity.width * settings.share;
     final phase =
         settings.time.value.inMicroseconds / Duration.microsecondsPerSecond;
     final depth = settings.share >= 1
         ? 0.0
-        : math.min(4.0, math.min(level, size.width - level) / 3);
+        : math.min(4.0, math.min(level, cavity.width - level) / 3);
     final sway = math.sin(phase * 1.3) * depth * 0.22;
-    final width = math.min(size.width, level + depth + sway);
+    final width = math.min(cavity.width, level + depth + sway);
     final edge = level + depth * 0.65 + sway;
     final center = level - depth * (0.8 + 0.16 * math.sin(phase * 1.9));
     double x(double value) => settings.rtl ? width - value : value;
@@ -305,21 +311,30 @@ class _UsageFillRender extends RenderBox {
       ..moveTo(x(edge), 0)
       ..cubicTo(
         x(center),
-        size.height * 0.22,
+        cavity.height * 0.22,
         x(center + sway),
-        size.height * 0.78,
+        cavity.height * 0.78,
         x(edge),
-        size.height,
+        cavity.height,
       );
     final path = Path.from(water)
-      ..lineTo(x(0), size.height)
+      ..lineTo(x(0), cavity.height)
       ..lineTo(x(0), 0)
       ..close();
-    final origin = offset + Offset(settings.rtl ? size.width - width : 0, 0);
+    final origin =
+        cavity.topLeft +
+        Offset(settings.rtl ? cavity.width - width : 0, 0);
+    final liquid = Path.combine(
+      PathOperation.intersect,
+      path,
+      cavityOutline.shift(
+        Offset(settings.rtl ? width - cavity.width : 0, 0),
+      ),
+    );
     _pane.paint(
       context,
-      origin & Size(width, size.height),
-      shape: LiquidGlassOutline(path),
+      origin & Size(width, cavity.height),
+      shape: LiquidGlassOutline(liquid),
       style: LiquidGlassStyle(
         tint: color.withValues(alpha: settings.dark ? 0.18 : 0.12),
         blur: 2,
@@ -330,6 +345,9 @@ class _UsageFillRender extends RenderBox {
       ),
     );
     if (depth > 0) {
+      context.canvas
+        ..save()
+        ..clipPath(cavityOutline.shift(cavity.topLeft));
       context.canvas.drawPath(
         water.shift(origin),
         Paint()
@@ -337,6 +355,7 @@ class _UsageFillRender extends RenderBox {
           ..strokeWidth = 1
           ..color = Colors.white.withValues(alpha: settings.dark ? 0.32 : 0.58),
       );
+      context.canvas.restore();
     }
   }
 }

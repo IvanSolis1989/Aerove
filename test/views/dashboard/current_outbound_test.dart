@@ -170,6 +170,41 @@ void main() {
   setUpAll(() => registerFallbackValue(const OutboundIpParams(timeout: 0)));
 
   group('the exit address', () {
+    for (final density in DashboardDensity.values) {
+      testWidgets('a larger flag fits the existing ${density.name} badge', (
+        tester,
+      ) async {
+        await tester.pumpWidget(
+          _app(
+            (_, _) async => _residential,
+            countryCode: 'JP',
+            density: density,
+          ),
+        );
+        await tester.pump();
+        final flag = find.byWidgetPredicate(
+          (widget) => widget is EmojiText && widget.text == '🇯🇵',
+        );
+        expect(flag, findsOneWidget);
+        final emoji = tester.widget<EmojiText>(flag);
+        expect(
+          emoji.style!.fontSize! / AppTextStyle.title2.size,
+          inInclusiveRange(1.25, 1.35),
+        );
+        final badge = find.descendant(
+          of: _clover(),
+          matching: find.byType(ShapeBadge),
+        );
+        final badgeSize = tester.getSize(badge);
+        expect(badgeSize.width, density == DashboardDensity.compact ? 40 : 48);
+        expect(tester.getSize(flag).width, lessThanOrEqualTo(badgeSize.width));
+        expect(tester.getSize(flag).height, lessThanOrEqualTo(badgeSize.height));
+        expect(find.byTooltip('Retry'), findsOneWidget);
+        expect(tester.widget<InkResponse>(_clover()).onTap, isNotNull);
+        expect(tester.takeException(), isNull);
+      });
+    }
+
     testWidgets('normalizes the exit country to an untinted flag', (
       tester,
     ) async {

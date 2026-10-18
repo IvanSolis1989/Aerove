@@ -46,6 +46,7 @@ class _FixtureState extends State<_Fixture> {
           quality: LiquidGlassQuality.ultra,
           child: LiquidGlassHost(
             enabled: widget.glass,
+            wallpaperOnly: true,
             child: Stack(
               fit: StackFit.expand,
               children: [
@@ -60,6 +61,14 @@ class _FixtureState extends State<_Fixture> {
                     ),
                   ),
                 ),
+                if (widget.glass)
+                  const Positioned(
+                    left: 16,
+                    top: 16,
+                    width: 40,
+                    height: 40,
+                    child: LiquidGlass(style: LiquidGlassStyle(blur: 2)),
+                  ),
                 Align(
                   alignment: Alignment.bottomCenter,
                   child: NavigationDock(
@@ -111,7 +120,7 @@ List<LiquidGlassInkLayer> _glyphLayers(WidgetTester tester) {
     }
   }
 
-  visit(tester.binding.renderViews.first.debugLayer! as ContainerLayer);
+  visit(tester.binding.renderViews.first.debugLayer!);
   return layers;
 }
 
@@ -130,6 +139,10 @@ Future<int> _checkPartialGlyphs(
   _FixtureState state,
   int frame,
 ) async {
+  final panes = LiquidGlassHost.debugLastCapture!.panes;
+  expect(panes.any((pane) => pane.level == 0), isTrue);
+  expect(panes.any((pane) => pane.level == 1), isTrue);
+  expect(panes.every((pane) => pane.level <= 1), isTrue);
   final lens = tester.getRect(find.descendant(
     of: find.byType(FloatingNavigationBar),
     matching: find.byType(PositionedDirectional),
@@ -183,6 +196,8 @@ void main() {
   });
 
   testWidgets('glass resting glyph copies have independent ink layers', (tester) async {
+    final semantics = tester.ensureSemantics();
+    addTearDown(semantics.dispose);
     final key = GlobalKey<_FixtureState>();
     await _pump(tester, key);
     final layers = _glyphLayers(tester);
@@ -190,7 +205,12 @@ void main() {
     expect(layers.toSet(), hasLength(4));
     for (var index = 0; index < _glyphs.length; index++) {
       expect(_glyph(index), findsNWidgets(2));
+      expect(find.bySemanticsLabel(_labels[index]), findsOneWidget);
     }
+    Actions.invoke(tester.element(_glyph(2).first), const ActivateIntent());
+    await tester.pumpAndSettle();
+    expect(key.currentState!.selected, 2);
+    expect(_glyphLayers(tester).toSet(), hasLength(4));
     expect(tester.takeException(), isNull);
   }, skip: !ui.ImageFilter.isShaderFilterSupported);
 

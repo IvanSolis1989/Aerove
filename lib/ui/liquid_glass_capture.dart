@@ -25,6 +25,10 @@ const _noHaze = <double>[0, 0, 1, 1, 0, 0, 0, 0];
 typedef LiquidGlassCapture = ({
   int snapshots,
   int keptBands,
+  int occludedPanes,
+  int clippedPanes,
+  int replayedPanes,
+  int atlasPixels,
   List<
     ({
       Rect pane,
@@ -32,6 +36,7 @@ typedef LiquidGlassCapture = ({
       Rect place,
       double scale,
       int level,
+      bool wallpaper,
       ui.Image atlas,
     })
   >
@@ -45,18 +50,20 @@ class LiquidGlassHost extends StatelessWidget {
   const LiquidGlassHost({
     super.key,
     required this.enabled,
+    this.wallpaperOnly = false,
     required this.child,
   });
 
   final bool enabled;
+  /// Samples the shared color field, except panes opting into content.
+  final bool wallpaperOnly;
   final Widget child;
 
   @visibleForTesting
   static LiquidGlassCapture? debugLastCapture;
 
   @visibleForTesting
-  static ({int generation, int masks, int maskPixels, int texturePixels})?
-  debugLastInkCapture;
+  static LiquidGlassInkCapture? debugLastInkCapture;
 
   @visibleForTesting
   static bool? debugCarryBandsOverride;
@@ -65,6 +72,7 @@ class LiquidGlassHost extends StatelessWidget {
   Widget build(BuildContext context) {
     return _LiquidGlassHostBox(
       enabled: enabled,
+      wallpaperOnly: wallpaperOnly,
       devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
       quality: LiquidGlassScope.qualityOf(context),
       child: child,
@@ -188,12 +196,14 @@ class _LiquidGlassHostBox extends SingleChildRenderObjectWidget {
     required this.enabled,
     required this.devicePixelRatio,
     required this.quality,
+    required this.wallpaperOnly,
     super.child,
   });
 
   final bool enabled;
   final double devicePixelRatio;
   final LiquidGlassQuality quality;
+  final bool wallpaperOnly;
 
   @override
   _RenderLiquidGlassHost createRenderObject(BuildContext context) {
@@ -201,6 +211,7 @@ class _LiquidGlassHostBox extends SingleChildRenderObjectWidget {
       enabled: enabled,
       devicePixelRatio: devicePixelRatio,
       quality: quality,
+      wallpaperOnly: wallpaperOnly,
     );
   }
 
@@ -212,7 +223,8 @@ class _LiquidGlassHostBox extends SingleChildRenderObjectWidget {
     renderObject
       ..enabled = enabled
       ..devicePixelRatio = devicePixelRatio
-      ..quality = quality;
+      ..quality = quality
+      ..wallpaperOnly = wallpaperOnly;
   }
 }
 
@@ -221,13 +233,21 @@ class _RenderLiquidGlassHost extends RenderProxyBox {
     required bool enabled,
     required double devicePixelRatio,
     required LiquidGlassQuality quality,
+    required bool wallpaperOnly,
   }) : _enabled = enabled,
        _devicePixelRatio = devicePixelRatio,
-       _quality = quality;
+       _quality = quality,
+       _wallpaperOnly = wallpaperOnly;
 
   final _layer = LayerHandle<_LiquidGlassHostLayer>();
 
   bool _enabled;
+  bool _wallpaperOnly;
+  set wallpaperOnly(bool value) {
+    if (_wallpaperOnly == value) return;
+    _wallpaperOnly = value;
+    markNeedsPaint();
+  }
   set enabled(bool value) {
     if (value == _enabled) {
       return;
@@ -269,6 +289,7 @@ class _RenderLiquidGlassHost extends RenderProxyBox {
     layer
       ..devicePixelRatio = _devicePixelRatio
       ..quality = _quality
+      ..wallpaperOnly = _wallpaperOnly
       ..bounds = offset & size;
     context.pushLayer(layer, super.paint, offset);
   }
@@ -294,8 +315,11 @@ class _LiquidGlassHostLayer extends ContainerLayer {
   double devicePixelRatio = 1;
   LiquidGlassQuality quality = LiquidGlassQuality.ultra;
   Rect bounds = Rect.zero;
+  bool wallpaperOnly = false;
+  (_ColorFieldLayer, Matrix4)? _field;
 
   final _atlases = <({ui.Image image, List<_Band> bands})>[];
+  int _replayedPanes = 0;
 
   @override
   void addToScene(ui.SceneBuilder builder) {
@@ -317,10 +341,24 @@ class _LiquidGlassHostLayer extends ContainerLayer {
   void _capture() {
     this._captureInk();
     _pass++;
+    _replayedPanes = 0;
     final found = <_Behind>[];
-    _gather(this, Matrix4.identity(), this, Matrix4.identity(), [], found);
+    final coverage = <_GlassCoverage>[];
+    _field = null;
+    _gather(this, Matrix4.identity(), this, Matrix4.identity(), [], found, coverage);
+    final viewport = wallpaperOnly ? _field : null;
+    final source = viewport == null ? null : viewport.$1.source(viewport.$2);
+    final snapshot = source?.$1 ?? viewport?.$1;
+    final image = snapshot?.capture();
+    final _Wallpaper? wallpaper = image == null ? null : (
+      image: image,
+      size: snapshot!.size,
+      toHost: source?.$2 ?? viewport!.$2,
+    );
     final placed = <_Behind>[];
-    for (final entry in found) {
+    for (final (index, entry) in found.indexed) {
+      if (!entry.pane.contentBackdrop) entry.wallpaper = wallpaper;
+      _occlude(entry, index, coverage);
       if (_place(entry)) {
         placed.add(entry);
         if (entry.style.haze > 0) {
@@ -334,11 +372,17 @@ class _LiquidGlassHostLayer extends ContainerLayer {
       }
     }
     var levels = 0;
+    final contentLevel = placed.any((entry) => entry.wallpaper != null) ? 1 : 0;
     for (final (index, entry) in placed.indexed) {
+      if (wallpaper != null) {
+        entry.level = entry.wallpaper == null ? contentLevel : 0;
+        levels = math.max(levels, entry.level + 1);
+        continue;
+      }
       for (final before in placed.take(index)) {
         if ((identical(entry.root, this) ||
                 before.ancestors.contains(entry.root)) &&
-            before.device.overlaps(entry.reach)) {
+            before.visibleBounds.overlaps(entry.reach)) {
           entry.level = math.max(entry.level, before.level + 1);
         }
       }
@@ -370,6 +414,15 @@ class _LiquidGlassHostLayer extends ContainerLayer {
       LiquidGlassHost.debugLastCapture = (
         snapshots: snapshots,
         keptBands: keptBands,
+        occludedPanes: found.where(
+          (entry) => entry.visible != null && entry.visibleBounds.isEmpty,
+        ).length,
+        clippedPanes: placed.where((entry) => entry.visible != null).length,
+        replayedPanes: _replayedPanes,
+        atlasPixels: _atlases.fold(
+          0,
+          (sum, atlas) => sum + atlas.image.width * atlas.image.height,
+        ),
         panes: [
           for (final entry in placed)
             (
@@ -378,6 +431,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
               place: entry.place,
               scale: entry.texelsPerDp,
               level: entry.level,
+              wallpaper: entry.wallpaper != null,
               atlas: entry.atlas!,
             ),
         ],
@@ -393,6 +447,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     Matrix4 rootToHost,
     List<ContainerLayer> chain,
     List<_Behind> found,
+    List<_GlassCoverage> coverage,
   ) {
     chain.add(layer);
     for (Layer? child = layer.firstChild; child != null;) {
@@ -413,18 +468,47 @@ class _LiquidGlassHostLayer extends ContainerLayer {
           );
         case final ContainerLayer container:
           final offscreen = _drawsOffscreen(container);
+          final transform = _within(container, toHost);
+          if (container is _ColorFieldLayer) _field = (container, transform);
+          if (container is _LiquidGlassOcclusionLayer) {
+            coverage.add(_GlassCoverage(container, transform, found.length));
+          }
           _gather(
             container,
-            _within(container, toHost),
+            transform,
             offscreen ? container : root,
             offscreen ? toHost : rootToHost,
             chain,
             found,
+            coverage,
           );
       }
       child = child.nextSibling;
     }
     chain.removeLast();
+  }
+
+  void _occlude(_Behind entry, int index, List<_GlassCoverage> coverage) {
+    Path? visible;
+    for (final cover in coverage) {
+      if (index >= cover.before ||
+          entry.ancestors.contains(cover.layer) ||
+          !entry.visibleBounds.overlaps(cover.bounds)) {
+        continue;
+      }
+      visible ??= (entry.pane.outline ??
+              (Path()..addRSuperellipse(
+                entry.pane.corners.toRSuperellipse(entry.pane.rect),
+              )))
+          .transform(entry.toHost.storage);
+      final overlap = Path.combine(PathOperation.intersect, visible, cover.path);
+      if (overlap.getBounds().isEmpty) continue;
+      visible = Path.combine(PathOperation.difference, visible, cover.path);
+      entry.visible = visible;
+      entry.coverageKey.addAll([cover.layer.path, ...cover.toHost.storage]);
+      if (visible.getBounds().isEmpty) break;
+    }
+    if (entry.visible != null) entry.coverageKey.addAll(entry.toHost.storage);
   }
 
   /// Snaps the slot to the capture's pixels, so that content holding still
@@ -438,12 +522,12 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     final blur = hazed ? style.hazeBlur : style.blur;
     final storage = entry.toHost.storage;
     final stretch = math.max(storage[0].abs(), storage[5].abs());
-    final device = entry.device;
+    final device = entry.visibleBounds;
     if (stretch == 0 || device.isEmpty || !device.overlaps(bounds)) {
       pane._held = null;
       return false;
     }
-    final hold = hazed ? null : pane.hold;
+    final hold = hazed || entry.visible != null ? null : pane.hold;
     final sweep = hold == null
         ? device
         : device.expandToInclude(MatrixUtils.transformRect(entry.toHost, hold));
@@ -550,9 +634,24 @@ class _LiquidGlassHostLayer extends ContainerLayer {
           ..clipRect(place)
           ..translate(place.left, place.top)
           ..scale(entry.texelsPerDp)
-          ..translate(-entry.slot.left, -entry.slot.top)
-          ..transform(entry.rootToHost.storage);
-        _Replay(canvas, drawn, entry).run();
+          ..translate(-entry.slot.left, -entry.slot.top);
+        if (entry.wallpaper case final wallpaper?) {
+          drawn.addAll([
+            wallpaper.image, wallpaper.size, ...wallpaper.toHost.storage,
+          ]);
+          canvas
+            ..transform(wallpaper.toHost.storage)
+            ..drawImageRect(
+              wallpaper.image,
+              Rect.fromLTWH(0, 0, wallpaper.image.width.toDouble(), wallpaper.image.height.toDouble()),
+              Offset.zero & wallpaper.size,
+              Paint()..filterQuality = FilterQuality.low,
+            );
+        } else {
+          canvas.transform(entry.rootToHost.storage);
+          final replay = _Replay(canvas, drawn, entry)..run();
+          _replayedPanes += replay.panes;
+        }
         canvas.restore();
       }
       bands.add((rect: rect, sigma: sigma, drawn: drawn));
@@ -660,6 +759,8 @@ class _LiquidGlassHostLayer extends ContainerLayer {
       ],
       identical(entry.root, this) ? BlendMode.srcOver : BlendMode.src,
       entry.style,
+      visible: entry.visible?.transform(Matrix4.inverted(entry.toHost).storage),
+      coverageKey: entry.coverageKey,
     );
   }
 
@@ -698,6 +799,7 @@ typedef _Placement = ({
 });
 
 typedef _Band = ({Rect rect, double sigma, List<Object?> drawn});
+typedef _Wallpaper = ({ui.Image image, Size size, Matrix4 toHost});
 
 bool _encloses(Rect outer, Rect inner) =>
     outer.left <= inner.left &&
@@ -722,7 +824,9 @@ class _Behind {
       root = owner.root,
       rootToHost = owner.rootToHost,
       ancestors = owner.ancestors,
-      hazed = true;
+      hazed = true,
+      visible = owner.visible,
+      wallpaper = owner.wallpaper;
 
   final _LiquidGlassLayer pane;
   final LiquidGlassStyle style;
@@ -738,6 +842,10 @@ class _Behind {
   final bool hazed;
 
   late final Rect device = MatrixUtils.transformRect(toHost, pane.rect);
+  Path? visible;
+  _Wallpaper? wallpaper;
+  Rect get visibleBounds => visible?.getBounds() ?? device;
+  final coverageKey = <Object?>[];
 
   /// Where a pane painted before this one would show in what it reads.
   Rect reach = Rect.zero;
@@ -806,6 +914,7 @@ class _Replay {
   final List<Object?> drawn;
   final _Behind entry;
   final List<Matrix4> _toHost;
+  int panes = 0;
 
   // A layer's effects are applied only once something under it draws.
   final _entered = <(ContainerLayer, Matrix4?, bool)>[];
@@ -829,6 +938,7 @@ class _Replay {
         case final _LiquidGlassLayer pane
             when pane._capturedPass == _LiquidGlassHostLayer._pass:
           if (pane._captured case final picture? when _shows(pane.rect)) {
+            panes++;
             _draw(picture);
           }
         case final PictureLayer recorded:

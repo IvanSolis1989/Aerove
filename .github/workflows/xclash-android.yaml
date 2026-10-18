@@ -106,7 +106,14 @@ jobs:
           flutter test --enable-impeller --reporter expanded \
             test/widgets/ink_motion_baseline_test.dart \
             test/widgets/navigation_dock_ink_test.dart \
-            test/widgets/aurora_transform_test.dart
+            test/widgets/aurora_transform_test.dart \
+            test/widgets/aurora_motion_test.dart \
+            test/widgets/glass_ink_cache_test.dart \
+            test/widgets/glass_wallpaper_sampling_test.dart \
+            test/widgets/sheet_occlusion_test.dart \
+            test/widgets/subscription_usage_fill_test.dart \
+            test/views/dashboard/current_outbound_test.dart \
+            test/widgets/glass_foreground_test.dart test/widgets/target_icon_test.dart
       - uses: actions/upload-artifact@v4
         if: always()
         with:

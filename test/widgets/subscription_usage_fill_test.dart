@@ -39,6 +39,20 @@ double _contrast(Color a, Color b) {
       : (second + 0.05) / (first + 0.05);
 }
 
+void _expectDryRim(Uint8List actual, Uint8List empty) {
+  for (var y = 28; y < 132; y++) {
+    for (var x = 20; x < 380; x++) {
+      if (x < 25 || x >= 375 || y < 33 || y >= 127) {
+        expect(
+          _pixel(actual, x, y),
+          _pixel(empty, x, y),
+          reason: 'The glass tube wall at ($x, $y) must remain dry',
+        );
+      }
+    }
+  }
+}
+
 Future<Uint8List> _snapshot(
   WidgetTester tester,
   String name, {
@@ -77,6 +91,7 @@ Future<void> _pump(
   bool text = false,
   bool reduced = false,
   TextDirection direction = TextDirection.ltr,
+  Size cardSize = const Size(360, 104),
 }) async {
   final colors = ColorScheme.fromSeed(
     seedColor: Colors.blue,
@@ -122,8 +137,8 @@ Future<void> _pump(
                     Positioned(
                       left: 20,
                       top: 28,
-                      width: 360,
-                      height: 104,
+                      width: cardSize.width,
+                      height: cardSize.height,
                       child: SubscriptionUsageFill(
                         info: info,
                         motionTime: time,
@@ -201,12 +216,19 @@ void main() {
           await _pump(tester, brightness: brightness, mode: mode);
           final filled = await _snapshot(tester, '$name-16');
           var changed = 0;
-          for (var x = 20; x < 380; x++) {
+          final glass = mode != LiquidGlassMode.none;
+          final cavityLeft = glass ? 25 : 20;
+          final cavityRight = glass ? 375 : 380;
+          for (var x = cavityLeft; x < cavityRight; x++) {
             if (_distance(_pixel(empty, x, 108), _pixel(filled, x, 108)) >
                 0.025)
               changed++;
           }
-          expect(changed / 360, inInclusiveRange(0.13, 0.18));
+          expect(
+            changed / (cavityRight - cavityLeft),
+            inInclusiveRange(0.13, 0.18),
+          );
+          if (glass) _expectDryRim(filled, empty);
           expect(_pixel(filled, 21, 29), _pixel(empty, 21, 29));
           expect(_pixel(filled, 350, 108), _pixel(empty, 350, 108));
           int edgeAt(int y) {
@@ -270,11 +292,39 @@ void main() {
             info: const SubscriptionInfo(download: 100, total: 100),
           );
           final full = await _snapshot(tester, '$name-full');
+          if (glass) {
+            _expectDryRim(full, empty);
+            for (final point in const [
+              Offset(30, 80), Offset(370, 80),
+              Offset(200, 38), Offset(200, 122),
+            ]) {
+              expect(
+                _distance(
+                  _pixel(full, point.dx.toInt(), point.dy.toInt()),
+                  _pixel(empty, point.dx.toInt(), point.dy.toInt()),
+                ),
+                greaterThan(0.025),
+              );
+            }
+          }
           expect(_pixel(full, 21, 29), _pixel(empty, 21, 29));
           expect(
             _distance(_pixel(full, 350, 108), _pixel(empty, 350, 108)),
             greaterThan(0.025),
           );
+          if (glass) {
+            await _pump(
+              tester, brightness: brightness, mode: mode,
+              direction: TextDirection.rtl,
+            );
+            final rtl = await _snapshot(tester, '$name-rtl');
+            _expectDryRim(rtl, empty);
+            expect(
+              _distance(_pixel(rtl, 350, 80), _pixel(empty, 350, 80)),
+              greaterThan(0.025),
+            );
+            expect(_pixel(rtl, 40, 80), _pixel(empty, 40, 80));
+          }
         } finally {
           await tester.pumpWidget(const SizedBox.shrink());
           await tester.pump(Duration.zero);
@@ -282,6 +332,42 @@ void main() {
       });
     }
   }
+
+  testWidgets('tiny glass cavities stay finite and inside their tube', (tester) async {
+    tester.view.physicalSize = const Size(400, 160);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    try {
+      for (final size in const [Size(1, 1), Size(4, 3), Size(10, 8)]) {
+        await _pump(
+          tester, brightness: Brightness.dark, mode: LiquidGlassMode.ultra,
+          cardSize: size, info: const SubscriptionInfo(total: 100),
+        );
+        final empty = await _snapshot(tester, 'tiny-${size.width}-empty');
+        await _pump(
+          tester, brightness: Brightness.dark, mode: LiquidGlassMode.ultra,
+          cardSize: size, info: const SubscriptionInfo(download: 100, total: 100),
+        );
+        final full = await _snapshot(tester, 'tiny-${size.width}-full');
+        for (var y = 27; y < 29 + size.height.ceil(); y++) {
+          for (var x = 19; x < 21 + size.width.ceil(); x++) {
+            if (x < 20 || y < 28 || x >= 20 + size.width || y >= 28 + size.height) {
+              expect(_pixel(full, x, y), _pixel(empty, x, y));
+            }
+          }
+        }
+        expect(tester.takeException(), isNull);
+        for (final capture in LiquidGlassHost.debugLastCapture!.panes) {
+          expect(capture.pane.isFinite, isTrue);
+          expect(capture.pane.width, greaterThan(0));
+          expect(capture.pane.height, greaterThan(0));
+        }
+      }
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(Duration.zero);
+    }
+  });
 
   testWidgets(
     'invalid totals do not invent progress, and overruns retain their percentage',

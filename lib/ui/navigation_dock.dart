@@ -265,6 +265,7 @@ class _DockSurface extends StatelessWidget {
       return ValueListenableBuilder(
         valueListenable: glow,
         builder: (_, glow, child) => LiquidGlass(
+          contentBackdrop: true,
           style: style,
           shadows: shadows,
           glow: glow,
@@ -786,7 +787,6 @@ class _FloatingNavigationBarState extends State<FloatingNavigationBar>
   late final Listenable _motion = Listenable.merge([_lens, _lift, _jelly]);
   late final Listenable _hoverMotion = Listenable.merge([_hover, _hoverShow]);
   final List<_Spring> _parallax = [];
-  bool _lifted = false;
   int? _pointer;
   int? _pressedIndex;
   double _pressX = 0;
@@ -811,9 +811,7 @@ class _FloatingNavigationBarState extends State<FloatingNavigationBar>
     _lens
       ..addListener(_wobble)
       ..addListener(_dropLift);
-    _lift
-      ..addListener(_dropLift)
-      ..addListener(_noteLift);
+    _lift.addListener(_dropLift);
     _glow.addListener(_shine);
     _glowSpread.addListener(_shine);
     _hoverAt.addListener(_leanContent);
@@ -893,13 +891,6 @@ class _FloatingNavigationBarState extends State<FloatingNavigationBar>
       if (target != parallax.target) {
         parallax.springTo(target, _hoverSpring);
       }
-    }
-  }
-
-  void _noteLift() {
-    final lifted = _lift.value > 0;
-    if (lifted != _lifted) {
-      setState(() => _lifted = lifted);
     }
   }
 
@@ -1226,8 +1217,7 @@ class _FloatingNavigationBarState extends State<FloatingNavigationBar>
                         ],
                       ),
                     );
-                    final lensed =
-                        glass && _lifted && widget.destinations.isNotEmpty;
+                    final split = glass && widget.destinations.isNotEmpty;
                     return Stack(
                       clipBehavior: Clip.none,
                       children: [
@@ -1258,8 +1248,8 @@ class _FloatingNavigationBarState extends State<FloatingNavigationBar>
                             builder: (_, _) =>
                                 _GlassLens(rect: lensRect(), lift: _lift.value),
                           ),
-                        items(lensed ? _LensPart.outside : _LensPart.both),
-                        if (lensed)
+                        items(split ? _LensPart.outside : _LensPart.both),
+                        if (split)
                           AnimatedBuilder(
                             animation: _motion,
                             builder: (_, child) => _LensContent(
@@ -1384,6 +1374,7 @@ class _GlassLens extends StatelessWidget {
       height: rect.height,
       child: IgnorePointer(
         child: LiquidGlass(
+          contentBackdrop: true,
           style: LiquidGlassStyle.lens(colorScheme).scale(strength),
           shadows: _lensShadows(colorScheme, lift),
         ),
@@ -1439,23 +1430,27 @@ class _LensContent extends StatelessWidget {
         child: ExcludeSemantics(
           child: ClipPath(
             clipper: clipper,
-            clipBehavior: Clip.antiAliasWithSaveLayer,
+            clipBehavior: lift > 0
+                ? Clip.antiAliasWithSaveLayer
+                : Clip.antiAlias,
             child: Stack(
               clipBehavior: Clip.none,
               children: [
                 Positioned.fill(child: child),
-                Positioned.directional(
-                  textDirection: textDirection,
-                  start: rect.left,
-                  top: rect.top,
-                  width: rect.width,
-                  height: rect.height,
-                  child: LiquidGlass(
-                    style: LiquidGlassStyle.lensContent(
-                      context.colorScheme,
-                    ).scale(lift),
+                if (lift > 0)
+                  Positioned.directional(
+                    textDirection: textDirection,
+                    start: rect.left,
+                    top: rect.top,
+                    width: rect.width,
+                    height: rect.height,
+                    child: LiquidGlass(
+                      contentBackdrop: true,
+                      style: LiquidGlassStyle.lensContent(
+                        context.colorScheme,
+                      ).scale(lift),
+                    ),
                   ),
-                ),
               ],
             ),
           ),

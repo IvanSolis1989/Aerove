@@ -566,7 +566,7 @@ class _CountryBadgeState extends State<_CountryBadge>
                         child: EmojiText(
                           flag,
                           maxLines: 1,
-                          style: AppTextStyle.title2.of(context),
+                          style: AppTextStyle.title1.of(context),
                         ),
                       ),
                     ),
