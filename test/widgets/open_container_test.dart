@@ -23,10 +23,10 @@ void main() {
       MaterialApp(
         home: LiquidGlassFade(
           opacity: opacity,
-          child: const Semantics(
+          child: Semantics(
             container: true,
             label: 'Fading settings',
-            child: SizedBox(width: 100, height: 100),
+            child: const SizedBox(width: 100, height: 100),
           ),
         ),
       ),
