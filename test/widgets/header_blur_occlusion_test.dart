@@ -59,6 +59,51 @@ List<int> _pixel(List<int> bytes, int x, int y) {
   return bytes.sublist(index, index + 4);
 }
 
+Future<Map<String, Object?>> _captureInput(
+  WidgetTester tester,
+  String tag,
+) async {
+  final pane = LiquidGlassHost.debugLastCapture!.panes.single;
+  final atlas = pane.atlas.clone();
+  final input = <String, Object?>{
+    'slot': [pane.slot.left, pane.slot.top, pane.slot.right, pane.slot.bottom],
+    'place': [pane.place.left, pane.place.top, pane.place.right, pane.place.bottom],
+    'scale': pane.scale,
+    'size': [atlas.width, atlas.height],
+    'uniforms': List.of(LiquidGlassHost.debugLastPaneUniforms!),
+    'ctm': List.of(LiquidGlassHost.debugLastPaneTransform!),
+    'context': Map.of(LiquidGlassHost.debugLastPaneContext!),
+  };
+  await tester.runAsync(() async {
+    try {
+      final rgba = (await atlas.toByteData(format: ui.ImageByteFormat.rawRgba))!
+          .buffer.asUint8List();
+      final samples = <String, Object?>{};
+      for (final point in [const Offset(159.5, 122.5), const Offset(40.5, 121.5)]) {
+        final pixel = pane.place.topLeft + (point - pane.slot.topLeft) * pane.scale;
+        final x = pixel.dx.floor();
+        final y = pixel.dy.floor();
+        final index = (y * atlas.width + x) * 4;
+        samples['${point.dx},${point.dy}'] = {
+          'atlasPoint': [pixel.dx, pixel.dy],
+          'rgba': rgba.sublist(index, index + 4),
+        };
+      }
+      input['samples'] = samples;
+      final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+      if (output != null) {
+        final png = (await atlas.toByteData(format: ui.ImageByteFormat.png))!;
+        File('$output/header-input-$tag.png')
+            .writeAsBytesSync(png.buffer.asUint8List());
+        File('$output/header-input-$tag.json').writeAsStringSync(jsonEncode(input));
+      }
+    } finally {
+      atlas.dispose();
+    }
+  });
+  return input;
+}
+
 void main() {
   setUpAll(() async {
     if (Platform.environment['XCLASH_REQUIRE_IMPELLER'] == 'true') {
@@ -79,6 +124,7 @@ void main() {
         tester.view.physicalSize = const Size(320, 240);
         tester.view.devicePixelRatio = 1;
         addTearDown(tester.view.reset);
+        addTearDown(() => LiquidGlassHost.debugFeatherMaskOneOverride = false);
         Future<void> render(
           Color color,
           int cover, {
@@ -181,20 +227,31 @@ void main() {
         expect(LiquidGlassHost.debugLastFeatherCapture!.stripPixels, 0);
         await render(Colors.green, 2);
         final mixed = await _shot(tester, 'oracle-mixed-$quality');
+        final mixedInput = await _captureInput(tester, 'mixed-$quality');
         final cost = LiquidGlassHost.debugLastFeatherCapture!;
         expect(cost.panes, 1);
         expect(cost.stripPixels, 120 * 15);
-        expect(cost.surfacePixels, 120 * 15 * 4);
+        expect(cost.surfacePixels, 120 * 15 * 3);
+        LiquidGlassHost.debugFeatherMaskOneOverride = true;
+        await render(Colors.green, 2);
+        final maskOne = await _shot(tester, 'oracle-mask-one-$quality');
+        final maskOneInput = await _captureInput(tester, 'mask-one-$quality');
+        expect(maskOneInput, mixedInput);
+        LiquidGlassHost.debugFeatherMaskOneOverride = false;
+        await render(Colors.green, 2);
+        expect(await _shot(tester, 'oracle-mixed-repeat-$quality'), mixed);
         await render(Colors.green, 4);
         final crossed = await _shot(tester, 'oracle-crossed-$quality');
         expect(
           LiquidGlassHost.debugLastFeatherCapture!.surfacePixels,
-          120 * 15 * 6,
+          120 * 15 * 5,
         );
         await render(Colors.green, 0);
         final live = await _shot(tester, 'oracle-live-$quality');
+        await _captureInput(tester, 'live-$quality');
         await render(Colors.green, 0, isolated: true);
         await _shot(tester, 'oracle-isolated-live-$quality');
+        await _captureInput(tester, 'isolated-live-$quality');
         final resolved = List<int>.of(live);
         final control = tester.renderObject<RenderRepaintBoundary>(
           find.byKey(const ValueKey('resolved-live-pane')),
@@ -237,12 +294,14 @@ void main() {
               'resolved': _pixel(resolved, 159, 122),
               'frozen': _pixel(frozen, 159, 122),
               'mixed': _pixel(mixed, 159, 122),
+              'maskOne': _pixel(maskOne, 159, 122),
               'otherEdge': {
                 'position': [40, 121],
                 'direct': _pixel(live, 40, 121),
                 'resolved': _pixel(resolved, 40, 121),
                 'frozen': _pixel(frozen, 40, 121),
                 'mixed': _pixel(mixed, 40, 121),
+                'maskOne': _pixel(maskOne, 40, 121),
               },
             }),
           );
@@ -454,7 +513,7 @@ void main() {
         expect(LiquidGlassHost.debugLastFeatherCapture!.stripPixels, 320 * 12);
         expect(
           LiquidGlassHost.debugLastFeatherCapture!.surfacePixels,
-          320 * 12 * 4,
+          320 * 12 * 3,
         );
         final stable = await _shot(tester, 'stable-$quality');
         expect(stable, moving);

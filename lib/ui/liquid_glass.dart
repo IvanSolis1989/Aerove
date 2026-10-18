@@ -1367,6 +1367,10 @@ class _LiquidGlassLayer extends Layer {
       ...mapping,
       ..._look(style),
     ];
+    assert(() {
+      LiquidGlassHost.debugLastPaneUniforms = List.of(uniforms);
+      return true;
+    }());
     if (_captureKey
         case (
               final image,
@@ -1502,7 +1506,7 @@ class _LiquidGlassLayer extends Layer {
             covered,
             strip,
           ).getBounds().isEmpty;
-      _featherBands.add((rect: bounds, surfaces: simple ? 4 : 6));
+      _featherBands.add((rect: bounds, surfaces: simple ? 3 : 5));
       canvas
         ..save()
         ..clipPath(strip, doAntiAlias: false)
@@ -1516,10 +1520,8 @@ class _LiquidGlassLayer extends Layer {
       }
       canvas
         ..restore()
-        ..saveLayer(bounds, Paint()..blendMode = BlendMode.plus)
-        ..saveLayer(bounds, Paint());
+        ..saveLayer(bounds, Paint()..blendMode = BlendMode.plus);
       paintLive(canvas);
-      canvas.restore();
       if (simple) {
         group.single.mask(canvas);
       } else {

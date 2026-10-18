@@ -88,6 +88,18 @@ class LiquidGlassHost extends StatelessWidget {
   static SourceBlurCapture? debugLastSourceBlurCapture;
 
   @visibleForTesting
+  static bool debugFeatherMaskOneOverride = false;
+
+  @visibleForTesting
+  static List<double>? debugLastPaneUniforms;
+
+  @visibleForTesting
+  static List<double>? debugLastPaneTransform;
+
+  @visibleForTesting
+  static Map<String, Object?>? debugLastPaneContext;
+
+  @visibleForTesting
   static int get debugLiveSourceBlurPixels => _liveSourceBlurPixels;
 
   @override
@@ -982,6 +994,30 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     final pane = entry.pane;
     final storage = entry.toHost.storage;
     final haze = entry.haze;
+    final blendMode = entry.wallpaper != null || identical(entry.root, this)
+        ? BlendMode.srcOver
+        : BlendMode.src;
+    final coverageKey = [...entry.coverageKey];
+    assert(() {
+      coverageKey.add(LiquidGlassHost.debugFeatherMaskOneOverride);
+      LiquidGlassHost.debugLastPaneTransform = List.of(entry.toHost.storage);
+      LiquidGlassHost.debugLastPaneContext = {
+        'blendMode': blendMode.name,
+        'rootType': entry.root.runtimeType.toString(),
+        'hostRoot': identical(entry.root, this),
+        'wallpaper': entry.wallpaper != null,
+        'rootToHost': List.of(entry.rootToHost.storage),
+        'heldFrost': entry.heldFrost,
+        'blurSigma': entry.blurSigma,
+        'style': pane._look(entry.style),
+        'blur': entry.style.blur,
+        'haze': entry.style.haze,
+        'hazeBlur': entry.style.hazeBlur,
+        'rimBlur': entry.style.rimBlur,
+        'refraction': entry.style.refraction,
+      };
+      return true;
+    }());
     pane._captureFrom(
       _pass,
       atlas,
@@ -992,12 +1028,10 @@ class _LiquidGlassHostLayer extends ContainerLayer {
         ...haze == null ? _noHaze : _sampling(haze),
         if (haze == null) 0 else entry.style.haze,
       ],
-      entry.wallpaper != null || identical(entry.root, this)
-          ? BlendMode.srcOver
-          : BlendMode.src,
+      blendMode,
       entry.style,
       visible: entry.visible?.transform(Matrix4.inverted(entry.toHost).storage),
-      coverageKey: entry.coverageKey,
+      coverageKey: coverageKey,
       feathers: entry.feathers,
       covered: entry.covered?.transform(Matrix4.inverted(entry.toHost).storage),
     );
