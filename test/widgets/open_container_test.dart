@@ -18,48 +18,48 @@ void main() {
       duration: const Duration(milliseconds: 300),
     );
     try {
-    await tester.pumpWidget(
-      MaterialApp(
-        home: LiquidGlassFade(
-          opacity: opacity,
-          child: Semantics(
-            container: true,
-            label: 'Fading settings',
-            child: const SizedBox(width: 100, height: 100),
+      await tester.pumpWidget(
+        MaterialApp(
+          home: LiquidGlassFade(
+            opacity: opacity,
+            child: Semantics(
+              container: true,
+              label: 'Fading settings',
+              child: const SizedBox(width: 100, height: 100),
+            ),
           ),
         ),
-      ),
-    );
-    for (final value in [
-      0.0,
-      0.001,
-      0.003,
-      0.1,
-      0.5,
-      1.0,
-      0.5,
-      0.001,
-      0.0,
-      0.5,
-      0.0,
-    ]) {
-      opacity.value = value;
-      await tester.pump();
-      bool includesSettings(SemanticsNode node) {
-        if (node.getSemanticsData().label == 'Fading settings') return true;
-        var found = false;
-        node.visitChildren((child) {
-          found = includesSettings(child);
-          return !found;
-        });
-        return found;
-      }
+      );
+      for (final value in [
+        0.0,
+        0.001,
+        0.003,
+        0.1,
+        0.5,
+        1.0,
+        0.5,
+        0.001,
+        0.0,
+        0.5,
+        0.0,
+      ]) {
+        opacity.value = value;
+        await tester.pump();
+        bool includesSettings(SemanticsNode node) {
+          if (node.getSemanticsData().label == 'Fading settings') return true;
+          var found = false;
+          node.visitChildren((child) {
+            found = includesSettings(child);
+            return !found;
+          });
+          return found;
+        }
 
-      final root =
-          tester.binding.pipelineOwner.semanticsOwner!.rootSemanticsNode!;
-      expect(includesSettings(root), Color.getAlphaFromOpacity(value) != 0);
-      expect(tester.takeException(), isNull);
-    }
+        final root =
+            tester.binding.pipelineOwner.semanticsOwner!.rootSemanticsNode!;
+        expect(includesSettings(root), Color.getAlphaFromOpacity(value) != 0);
+        expect(tester.takeException(), isNull);
+      }
     } finally {
       try {
         await tester.pumpWidget(const SizedBox.shrink());
