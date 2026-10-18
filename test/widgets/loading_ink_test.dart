@@ -191,8 +191,8 @@ void main() {
         for (final state in [colors.error, Colors.green, Colors.orange]) {
           await mount(color: state);
           expect(
-            _pixel(await frame('state-${state.toARGB32()}'), point),
-            state,
+            _pixel(await frame('state-${state.toARGB32()}'), point).toARGB32(),
+            state.toARGB32(),
           );
         }
         await mount();
