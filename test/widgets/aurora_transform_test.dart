@@ -156,7 +156,7 @@ List<ui.Picture> _pictures(WidgetTester tester) {
     }
   }
 
-  visit(boundary.debugLayer! as ContainerLayer);
+  visit(boundary.debugLayer!);
   return pictures;
 }
 

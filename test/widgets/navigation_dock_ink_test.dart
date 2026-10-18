@@ -111,7 +111,7 @@ List<LiquidGlassInkLayer> _glyphLayers(WidgetTester tester) {
     }
   }
 
-  visit(tester.binding.renderViews.first.debugLayer! as ContainerLayer);
+  visit(tester.binding.renderViews.first.debugLayer!);
   return layers;
 }
 
