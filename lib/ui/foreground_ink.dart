@@ -186,7 +186,8 @@ class _InkRender extends RenderProxyBox {
       ..alpha = source.a
       ..contrast = role == GlassInkRole.icon ? 3.2 : 4.7
       ..dark = dark
-      ..program = _InkProgram.request(markNeedsPaint);
+      ..program = _InkProgram.request(markNeedsPaint)
+      ..markNeedsAddToScene();
     context.pushLayer(
       layer,
       (context, offset) => super.paint(context, offset + inset),

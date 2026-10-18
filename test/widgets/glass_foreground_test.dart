@@ -60,6 +60,16 @@ void main() {
       ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'));
     await font.load();
   });
+  test('ink layer supports OffsetLayer invalidation', () {
+    final layer = LiquidGlassInkLayer();
+    expect(() {
+      layer.offset = const Offset(24, 32);
+      layer.markNeedsAddToScene();
+    }, returnsNormally);
+    expect(layer.offset, const Offset(24, 32));
+    layer.dispose();
+  });
+
   testWidgets('foreground toggling keeps its subtree mounted', (tester) async {
     var mounts = 0;
     for (final enabled in [false, true, false]) {

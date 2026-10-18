@@ -62,18 +62,18 @@ void main() {
       expect(restored.excludeSSIDs, ['home']);
     });
 
-    test('fresh store uses system gradient ultra and round-trips', () async {
+    test('fresh store uses system gradient standard and round-trips', () async {
       final config = Config.realFromJson(await preferences.getConfigMap());
       expect(config.themeProps.themeMode, ThemeMode.system);
       expect(config.themeProps.auroraEnabled, true);
-      expect(config.themeProps.liquidGlass, LiquidGlassMode.ultra);
+      expect(config.themeProps.liquidGlass, LiquidGlassMode.standard);
       expect(config.themeProps.pureBlack, false);
       expect(await preferences.saveConfig(config), true);
       expect(await preferences.getConfig(), config);
     });
 
     test('stored ordinary theme choices survive loading and saving', () async {
-      for (final mode in [LiquidGlassMode.none, LiquidGlassMode.standard]) {
+      for (final mode in LiquidGlassMode.values) {
         for (final themeMode in ThemeMode.values) {
           await store.setString(
             configKey,

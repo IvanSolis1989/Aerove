@@ -156,7 +156,7 @@ jobs:
           cp pubspec.yaml "$RUNNER_TEMP/readme-pubspec.yaml"
           trap 'cp "$RUNNER_TEMP/readme-pubspec.yaml" pubspec.yaml' EXIT
           sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
-          curl --fail --location --retry 2 https://raw.githubusercontent.com/IvanSolis1989/XClash/3f8a11e61d1399ba1097b2296b90ee6083f4d073/test/readme_showcase_test.dart -o test/readme_showcase_test.dart
+          curl --fail --location --retry 2 https://raw.githubusercontent.com/IvanSolis1989/XClash/467b2fe55a6b3ce231ad770f748c9143a81bf666/test/readme_showcase_test.dart -o test/readme_showcase_test.dart
           dart format test/readme_showcase_test.dart
           flutter test --enable-impeller --dart-define=SAFE_MODE=true --reporter expanded test/readme_showcase_test.dart
       - uses: actions/upload-artifact@v4

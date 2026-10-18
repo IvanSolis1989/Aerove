@@ -86,8 +86,15 @@ class LiquidGlassInkLayer extends OffsetLayer {
   Size _fieldSize = Size.zero;
   Matrix4 _mapping = Matrix4.identity();
 
-  @override
-  bool get alwaysNeedsAddToScene => true;
+  void _publishField(ui.Image? field, Size fieldSize, Matrix4 mapping) {
+    final previous = _filter;
+    _field = field;
+    _fieldSize = fieldSize;
+    _mapping = mapping;
+    if (!identical(previous, filter)) {
+      markNeedsAddToScene();
+    }
+  }
 
   ui.ImageFilter? get filter {
     final field = _field;
@@ -135,7 +142,11 @@ class LiquidGlassInkLayer extends OffsetLayer {
       super.addToScene(builder);
       return;
     }
-    builder.pushOffset(offset.dx, offset.dy);
+    engineLayer = builder.pushOffset(
+      offset.dx,
+      offset.dy,
+      oldLayer: engineLayer as ui.OffsetEngineLayer?,
+    );
     builder.pushClipRect(Offset.zero & size);
     builder.pushImageFilter(effect);
     addChildrenToScene(builder);
@@ -173,12 +184,11 @@ extension _InkCapture on _LiquidGlassHostLayer {
     final image = inks.isEmpty ? null : source?.$1.capture();
     final inverse = source == null ? null : Matrix4.tryInvert(source.$2);
     for (final (ink, matrix) in inks) {
-      ink._field = image;
-      if (source != null && inverse != null) {
-        ink
-          .._fieldSize = source.$1.size
-          .._mapping = (inverse.clone()..multiply(matrix));
-      }
+      ink._publishField(
+        inverse == null ? null : image,
+        source?.$1.size ?? Size.zero,
+        inverse == null ? Matrix4.identity() : (inverse.clone()..multiply(matrix)),
+      );
     }
     assert(() {
       LiquidGlassHost.debugLastInkCapture = (
