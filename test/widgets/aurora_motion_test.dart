@@ -25,30 +25,38 @@ const _seeds = [
 ];
 
 void main() {
-  test('motion preserves phase and advances the previous field 1.5 times faster', () {
-    final motion = AuroraMotion(832838199);
-    for (final (time, angle, x, y) in [
-      (Duration.zero, 4.739799584346775, -3.5765689743074005, -18.430129919413606),
-      (
-        const Duration(seconds: 2),
-        4.821105173932716,
-        3.870231449716876,
-        -13.506492279045206,
-      ),
-      (
-        const Duration(seconds: 5),
-        4.938434929924863,
-        15.658694973112853,
-        -4.772230509060998,
-      ),
-    ]) {
-      final pose = motion.at(time, const Size(390, 844));
-      expect(pose.angle, closeTo(angle, 1e-10));
-      expect(pose.translation.dx, closeTo(x, 1e-10));
-      expect(pose.translation.dy, closeTo(y, 1e-10));
-      expect(pose.side, closeTo(1065.5201878294001, 1e-9));
-    }
-  });
+  test(
+    'motion preserves phase and advances the previous field 1.5 times faster',
+    () {
+      final motion = AuroraMotion(832838199);
+      for (final (time, angle, x, y) in [
+        (
+          Duration.zero,
+          4.739799584346775,
+          -3.5765689743074005,
+          -18.430129919413606,
+        ),
+        (
+          const Duration(seconds: 2),
+          4.821105173932716,
+          3.870231449716876,
+          -13.506492279045206,
+        ),
+        (
+          const Duration(seconds: 5),
+          4.938434929924863,
+          15.658694973112853,
+          -4.772230509060998,
+        ),
+      ]) {
+        final pose = motion.at(time, const Size(390, 844));
+        expect(pose.angle, closeTo(angle, 1e-10));
+        expect(pose.translation.dx, closeTo(x, 1e-10));
+        expect(pose.translation.dy, closeTo(y, 1e-10));
+        expect(pose.side, closeTo(1065.5201878294001, 1e-9));
+      }
+    },
+  );
 
   test('square overscan covers every viewport corner throughout motion', () {
     for (final size in [
@@ -113,7 +121,10 @@ void main() {
         longTime + const Duration(milliseconds: 16),
         size,
       );
-      expect((before.translation - after.translation).distance, lessThan(0.146));
+      expect(
+        (before.translation - after.translation).distance,
+        lessThan(0.146),
+      );
       expect(_angleDistance(before.angle, after.angle), lessThan(0.001118));
       expect(
         AuroraMotion(seed + 1).at(Duration.zero, size),

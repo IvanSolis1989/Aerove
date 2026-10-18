@@ -9,58 +9,114 @@ import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/ui/foreground_ink.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/shape.dart';
+import 'package:fl_clash/ui/typography.dart';
 import 'package:fl_clash/widgets/aurora.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
 void main() {
   setUpAll(() async {
+    final font = FontLoader('GeometryLatin')
+      ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'));
+    await font.load();
     if (ui.ImageFilter.isShaderFilterSupported) await GlassInk.prepare();
   });
 
-  testWidgets('covered ink freezes its appearance instead of removing text', (tester) async {
+  testWidgets('covered ink freezes its appearance instead of removing text', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(360, 240);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     final capture = GlobalKey();
-    Future<void> render({bool cover = false, bool partial = false,
-        bool freeze = true, double opacity = 1, Color color = const Color(0xFF16353F)}) async {
+    Future<void> render({
+      bool cover = false,
+      bool partial = false,
+      bool freeze = true,
+      double opacity = 1,
+      Color color = const Color(0xFF16353F),
+    }) async {
       const overlay = ColoredBox(color: Color(0x4038283D));
-      await tester.pumpWidget(MaterialApp(
-        theme: ThemeData(brightness: Brightness.dark, fontFamily: 'Ahem'),
-        themeAnimationStyle: AnimationStyle.noAnimation,
-        home: RepaintBoundary(key: capture, child: LiquidGlassScope(enabled: true,
-          child: LiquidGlassHost(child: Stack(fit: StackFit.expand, children: [
-            Positioned.fill(child: LiquidGlassColorField(
-              child: LiquidGlassColorSource(child: ColoredBox(color: color)))),
-            const Positioned(left: 24, top: 64, width: 120,
-              child: GlassText('HHHH', inkRole: GlassInkRole.body,
-                style: TextStyle(fontSize: 28, color: Colors.white))),
-            if (cover) Positioned(left: 0, top: 0, width: partial ? 60 : 360, height: 240,
-              child: Opacity(opacity: opacity,
-                child: freeze
-                  ? const LiquidGlassOcclusion(shape: AppShape.none, child: overlay)
-                  : overlay)),
-          ])))),
-      ));
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(brightness: Brightness.dark, fontFamily: 'Ahem'),
+          themeAnimationStyle: AnimationStyle.noAnimation,
+          home: RepaintBoundary(
+            key: capture,
+            child: LiquidGlassScope(
+              enabled: true,
+              child: LiquidGlassHost(
+                enabled: true,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Positioned.fill(
+                      child: LiquidGlassColorField(
+                        child: LiquidGlassColorSource(
+                          child: ColoredBox(color: color),
+                        ),
+                      ),
+                    ),
+                    const Positioned(
+                      left: 24,
+                      top: 64,
+                      width: 120,
+                      child: GlassText(
+                        'HHHH',
+                        inkRole: GlassInkRole.body,
+                        style: TextStyle(fontSize: 28, color: Colors.white),
+                      ),
+                    ),
+                    if (cover)
+                      Positioned(
+                        left: 0,
+                        top: 0,
+                        width: partial ? 60 : 360,
+                        height: 240,
+                        child: Opacity(
+                          opacity: opacity,
+                          child: freeze
+                              ? const LiquidGlassOcclusion(
+                                  shape: AppShape.none,
+                                  child: overlay,
+                                )
+                              : overlay,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
       await tester.pump();
       await tester.pump();
     }
+
     List<LiquidGlassInkLayer> layers() {
       final result = <LiquidGlassInkLayer>[];
       void visit(ContainerLayer parent) {
-        for (Layer? layer = parent.firstChild; layer != null; layer = layer.nextSibling) {
+        for (
+          Layer? layer = parent.firstChild;
+          layer != null;
+          layer = layer.nextSibling
+        ) {
           if (layer is LiquidGlassInkLayer) result.add(layer);
           if (layer is ContainerLayer) visit(layer);
         }
       }
+
       visit(tester.binding.renderViews.first.debugLayer!);
       return result;
     }
+
     Future<List<int>> snapshot(String name) async {
-      final boundary = capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+      final boundary =
+          capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
       return (await tester.runAsync(() async {
         final image = await boundary.toImage();
         try {
@@ -68,13 +124,19 @@ void main() {
           if (output != null) {
             Directory(output).createSync(recursive: true);
             final png = await image.toByteData(format: ui.ImageByteFormat.png);
-            File('$output/ink-occlusion-$name.png').writeAsBytesSync(png!.buffer.asUint8List());
+            File(
+              '$output/ink-occlusion-$name.png',
+            ).writeAsBytesSync(png!.buffer.asUint8List());
           }
-          return (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!
-              .buffer.asUint8List().toList();
-        } finally { image.dispose(); }
+          return (await image.toByteData(
+            format: ui.ImageByteFormat.rawRgba,
+          ))!.buffer.asUint8List().toList();
+        } finally {
+          image.dispose();
+        }
       }))!;
     }
+
     await render(cover: true, freeze: false);
     final expected = await snapshot('reference');
     expect(LiquidGlassHost.debugLastInkCapture!.masks, 1);
@@ -89,11 +151,17 @@ void main() {
     for (var y = 64; y < 98; y++) {
       for (var x = 26; x < 130; x++) {
         final index = (y * 360 + x) * 4;
-        final brightness = expected[index] + expected[index + 1] + expected[index + 2];
-        if (brightness > brightest) { brightest = brightness; point = index; }
+        final brightness =
+            expected[index] + expected[index + 1] + expected[index + 2];
+        if (brightness > brightest) {
+          brightest = brightness;
+          point = index;
+        }
         for (var channel = 0; channel < 3; channel++) {
-          maximumError = math.max(maximumError,
-            (expected[index + channel] - frozen[index + channel]).abs());
+          maximumError = math.max(
+            maximumError,
+            (expected[index + channel] - frozen[index + channel]).abs(),
+          );
         }
       }
     }
@@ -102,7 +170,10 @@ void main() {
     await render(cover: true, color: const Color(0xFF38283D));
     final changed = LiquidGlassHost.debugLastInkCapture!;
     final whileCovered = await snapshot('field-changed');
-    expect(whileCovered.sublist(point, point + 3), frozen.sublist(point, point + 3));
+    expect(
+      whileCovered.sublist(point, point + 3),
+      frozen.sublist(point, point + 3),
+    );
     expect(whileCovered.sublist(0, 3), isNot(frozen.sublist(0, 3)));
     expect(changed.sourceCaptures, hidden.sourceCaptures);
     expect(changed.filterUpdates, hidden.filterUpdates);
@@ -114,22 +185,43 @@ void main() {
     await render(color: const Color(0xFF38283D));
     final revealed = await snapshot('revealed');
     expect(layers().single.inkFrozen, isFalse);
-    expect(revealed.sublist(point, point + 3), isNot(frozen.sublist(point, point + 3)));
-    expect(LiquidGlassHost.debugLastInkCapture!.filterUpdates,
-      greaterThan(hidden.filterUpdates));
+    expect(
+      revealed.sublist(point, point + 3),
+      isNot(frozen.sublist(point, point + 3)),
+    );
+    expect(
+      LiquidGlassHost.debugLastInkCapture!.filterUpdates,
+      greaterThan(hidden.filterUpdates),
+    );
     await tester.pumpWidget(const SizedBox());
     await render(cover: true);
     final firstCovered = await snapshot('first-frame-covered');
     for (var channel = 0; channel < 3; channel++) {
-      expect(firstCovered[point + channel], closeTo(expected[point + channel], 2));
+      expect(
+        firstCovered[point + channel],
+        closeTo(expected[point + channel], 2),
+      );
     }
     expect(tester.takeException(), isNull);
   }, skip: !ui.ImageFilter.isShaderFilterSupported);
 
   for (final brightness in Brightness.values) {
+    for (final direction in TextDirection.values) {
+      for (final scale in [1.0, 2.0]) {
+        testWidgets('real text paint envelope $brightness $direction $scale',
+          (tester) => _realTextEnvelope(tester, brightness, direction, scale),
+          skip: !ui.ImageFilter.isShaderFilterSupported,
+        );
+      }
+    }
+  }
+
+  for (final brightness in Brightness.values) {
     for (final dpr in [1.0, 2.0, 3.0]) {
       for (final direction in TextDirection.values) {
-        testWidgets('ink local geometry $brightness $dpr $direction', (tester) async {
+        testWidgets('ink local geometry $brightness $dpr $direction', (
+          tester,
+        ) async {
           tester.view.physicalSize = Size(360 * dpr, 240 * dpr);
           tester.view.devicePixelRatio = dpr;
           addTearDown(tester.view.reset);
@@ -138,64 +230,134 @@ void main() {
           final background = brightness == Brightness.light
               ? const [Color(0xFFBDE5EC), Color(0xFFF0C9E9), Color(0xFFC1E9CE)]
               : const [Color(0xFF16353F), Color(0xFF38283D), Color(0xFF173A29)];
-          Future<List<int>> render(double width, {bool overflow = false,
-              bool enabled = true, double shift = 0, bool shadow = false,
-              bool clipped = false, bool hidden = false}) async {
-            final theme = ThemeData(colorScheme: colors,
-              platform: TargetPlatform.android, fontFamily: 'Ahem');
-            Widget label = GlassText('HHHH', inkRole: GlassInkRole.body,
-              softWrap: false, overflow: overflow ? TextOverflow.visible : TextOverflow.clip,
+          Future<List<int>> render(
+            double width, {
+            bool overflow = false,
+            bool enabled = true,
+            double shift = 0,
+            bool shadow = false,
+            bool clipped = false,
+            bool hidden = false,
+          }) async {
+            final theme = ThemeData(
+              colorScheme: colors,
+              platform: TargetPlatform.android,
+              fontFamily: 'Ahem',
+            );
+            Widget label = GlassText(
+              'HHHH',
+              inkRole: GlassInkRole.body,
+              softWrap: false,
+              overflow: overflow ? TextOverflow.visible : TextOverflow.clip,
               textAlign: TextAlign.left,
-              style: TextStyle(fontSize: 28, fontFamily: 'Ahem', color: colors.onSurface,
-                shadows: shadow ? const [Shadow(color: Colors.red,
-                  offset: Offset(0, 6), blurRadius: 2)] : null));
+              style: TextStyle(
+                fontSize: 28,
+                fontFamily: 'Ahem',
+                color: colors.onSurface,
+                shadows: shadow
+                    ? const [
+                        Shadow(
+                          color: Colors.red,
+                          offset: Offset(0, 6),
+                          blurRadius: 2,
+                        ),
+                      ]
+                    : null,
+              ),
+            );
             label = LiquidGlassScope(enabled: enabled, child: label);
             if (clipped) label = ClipRect(child: label);
             if (hidden) label = const SizedBox(height: 40);
-            await tester.pumpWidget(ProviderScope(
-              overrides: [themeSettingProvider.overrideWithBuild((_, _) =>
-                ThemeProps(auroraEnabled: true, liquidGlass: LiquidGlassMode.standard))],
-              child: MaterialApp(theme: theme, darkTheme: theme,
-                themeMode: brightness == Brightness.dark ? ThemeMode.dark : ThemeMode.light,
-                themeAnimationStyle: AnimationStyle.noAnimation,
-                builder: (context, child) => RepaintBoundary(key: key,
-                  child: AuroraAppSurface(motion: false, child: child!)),
-                home: Directionality(textDirection: direction,
-                  child: Stack(fit: StackFit.expand, children: [
-                    Positioned.fill(child: LiquidGlassColorField(
-                      child: DecoratedBox(decoration: BoxDecoration(
-                        gradient: LinearGradient(begin: Alignment(-1 + shift, 0),
-                          colors: background)))),
+            await tester.pumpWidget(
+              ProviderScope(
+                overrides: [
+                  themeSettingProvider.overrideWithBuild(
+                    (_, _) => ThemeProps(
+                      auroraEnabled: true,
+                      liquidGlass: LiquidGlassMode.standard,
                     ),
-                    Positioned(left: 24, top: 64, width: width,
-                      child: label),
-                  ])),
+                  ),
+                ],
+                child: MaterialApp(
+                  theme: theme,
+                  darkTheme: theme,
+                  themeMode: brightness == Brightness.dark
+                      ? ThemeMode.dark
+                      : ThemeMode.light,
+                  themeAnimationStyle: AnimationStyle.noAnimation,
+                  builder: (context, child) => RepaintBoundary(
+                    key: key,
+                    child: AuroraAppSurface(motion: false, child: child!),
+                  ),
+                  home: Directionality(
+                    textDirection: direction,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Positioned.fill(
+                          child: LiquidGlassColorField(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment(-1 + shift, 0),
+                                  colors: background,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          left: 24,
+                          top: 64,
+                          width: width,
+                          child: label,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
-            ));
+            );
             await tester.pump();
             await tester.pump();
-            final boundary = key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+            final boundary =
+                key.currentContext!.findRenderObject()!
+                    as RenderRepaintBoundary;
             return (await tester.runAsync(() async {
               final image = await boundary.toImage(pixelRatio: dpr);
               try {
-                final bytes = (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!
-                    .buffer.asUint8List();
+                final bytes = (await image.toByteData(
+                  format: ui.ImageByteFormat.rawRgba,
+                ))!.buffer.asUint8List();
                 final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
-                if (output != null && width == 300 && !shadow && !hidden && !clipped && shift == 0) {
+                if (output != null &&
+                    width == 300 &&
+                    !shadow &&
+                    !hidden &&
+                    !clipped &&
+                    shift == 0) {
                   Directory(output).createSync(recursive: true);
-                  final png = await image.toByteData(format: ui.ImageByteFormat.png);
-                  File('$output/ink-geometry-${brightness.name}-$dpr-${direction.name}.png')
-                      .writeAsBytesSync(png!.buffer.asUint8List());
+                  final png = await image.toByteData(
+                    format: ui.ImageByteFormat.png,
+                  );
+                  File(
+                    '$output/ink-geometry-${brightness.name}-$dpr-${direction.name}.png',
+                  ).writeAsBytesSync(png!.buffer.asUint8List());
                 }
                 return bytes.toList();
-              } finally { image.dispose(); }
+              } finally {
+                image.dispose();
+              }
             }))!;
           }
 
           Color pixel(List<int> data, int x, int y) {
-            final i = ((y * dpr).floor() * (360 * dpr).round() + (x * dpr).floor()) * 4;
+            final i =
+                ((y * dpr).floor() * (360 * dpr).round() + (x * dpr).floor()) *
+                4;
             return Color.fromARGB(255, data[i], data[i + 1], data[i + 2]);
           }
+
           final plain = await render(300, enabled: false);
           final tight = await render(120);
           final expanded = await render(300);
@@ -217,7 +379,8 @@ void main() {
               final control = pixel(plain, x, y);
               if ((control.r - colors.onSurface.r).abs() > 0.01 ||
                   (control.g - colors.onSurface.g).abs() > 0.01 ||
-                  (control.b - colors.onSurface.b).abs() > 0.01) continue;
+                  (control.b - colors.onSurface.b).abs() > 0.01)
+                continue;
               opaquePoints++;
               if (x > 44) {
                 expect(pixel(clipped, x, y), pixel(empty, x, y));
@@ -230,18 +393,33 @@ void main() {
               final under = pixel(empty, x, y);
               final first = a.computeLuminance();
               final second = under.computeLuminance();
-              minimumContrast = math.min(minimumContrast,
-                (math.max(first, second) + 0.05) / (math.min(first, second) + 0.05));
+              minimumContrast = math.min(
+                minimumContrast,
+                (math.max(first, second) + 0.05) /
+                    (math.min(first, second) + 0.05),
+              );
               for (final pair in [(a, b), (a, c)]) {
-                maxError = math.max(maxError, [
-                  (pair.$1.r - pair.$2.r).abs(), (pair.$1.g - pair.$2.g).abs(),
-                  (pair.$1.b - pair.$2.b).abs()].reduce(math.max).multiply255());
+                maxError = math.max(
+                  maxError,
+                  [
+                    (pair.$1.r - pair.$2.r).abs(),
+                    (pair.$1.g - pair.$2.g).abs(),
+                    (pair.$1.b - pair.$2.b).abs(),
+                  ].reduce(math.max).multiply255(),
+                );
               }
               if (a != control) changed++;
               if (a != n) moving++;
-              if (samples.length < 4) samples.add({'point': [x, y],
-                'source': control.toARGB32(), 'under': under.toARGB32(), 'tight': a.toARGB32(),
-                'expanded': b.toARGB32(), 'overflow': c.toARGB32(), 'motion': n.toARGB32()});
+              if (samples.length < 4)
+                samples.add({
+                  'point': [x, y],
+                  'source': control.toARGB32(),
+                  'under': under.toARGB32(),
+                  'tight': a.toARGB32(),
+                  'expanded': b.toARGB32(),
+                  'overflow': c.toARGB32(),
+                  'motion': n.toARGB32(),
+                });
             }
           }
           for (var y = 95; y < 115; y++) {
@@ -251,11 +429,21 @@ void main() {
             }
           }
           final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
-          if (output != null) File('$output/ink-geometry-${brightness.name}-$dpr-${direction.name}.json')
-              .writeAsStringSync(jsonEncode({'maxError': maxError, 'opaquePoints': opaquePoints,
-                'coloredPoints': changed, 'movingPoints': moving, 'shadowPixels': shadowPixels,
-                'clippedPixels': clippedPixels, 'minimumContrast': minimumContrast,
-                'samples': samples}));
+          if (output != null)
+            File(
+              '$output/ink-geometry-${brightness.name}-$dpr-${direction.name}.json',
+            ).writeAsStringSync(
+              jsonEncode({
+                'maxError': maxError,
+                'opaquePoints': opaquePoints,
+                'coloredPoints': changed,
+                'movingPoints': moving,
+                'shadowPixels': shadowPixels,
+                'clippedPixels': clippedPixels,
+                'minimumContrast': minimumContrast,
+                'samples': samples,
+              }),
+            );
           expect(opaquePoints, greaterThan(100));
           expect(maxError, lessThanOrEqualTo(3));
           expect(changed, greaterThan(100));
@@ -272,4 +460,142 @@ void main() {
 
 extension on double {
   int multiply255() => (this * 255).round();
+}
+
+Future<void> _realTextEnvelope(
+  WidgetTester tester,
+  Brightness brightness,
+  TextDirection direction,
+  double scale,
+) async {
+  tester.view.physicalSize = const Size(520, 520);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  final capture = GlobalKey();
+  final scheme = auroraColorScheme(brightness);
+  final background = brightness == Brightness.light
+      ? const Color(0xFFBDE5EC) : const Color(0xFF16353F);
+  Future<List<int>> render({bool enabled = false, bool empty = false}) async {
+    await tester.pumpWidget(MaterialApp(
+      theme: ThemeData(colorScheme: scheme, fontFamily: 'GeometryLatin')
+          .withAppTypography,
+      themeAnimationStyle: AnimationStyle.noAnimation,
+      home: RepaintBoundary(key: capture,
+        child: LiquidGlassScope(enabled: enabled,
+          child: LiquidGlassHost(enabled: enabled,
+            child: Directionality(textDirection: direction,
+              child: Stack(fit: StackFit.expand, children: [
+                Positioned.fill(child: LiquidGlassColorField(
+                  child: ColoredBox(color: background))),
+                if (!empty) Positioned(left: 24, top: 24, width: 190,
+                  child: Builder(builder: (context) {
+                    Widget label(String text, {bool organization = false, bool rich = false}) {
+                      final style = (organization ? AppTextStyle.subheadline : AppTextStyle.footnote)
+                          .of(context, emphasized: true)
+                          .copyWith(color: scheme.onSurface,
+                            fontFamily: 'AbsentGeometryFont',
+                            fontFamilyFallback: const ['GeometryLatin']);
+                      final span = TextSpan(style: style, children: [
+                        const TextSpan(text: 'Google '),
+                        TextSpan(text: 'Ágj Άλφα a\u0301j\u0301',
+                          style: style.copyWith(fontStyle: FontStyle.italic)),
+                      ]);
+                      final Widget textWidget;
+                      if (rich) {
+                        textWidget = enabled
+                            ? GlassText.rich(span, style: style,
+                                inkRole: GlassInkRole.body, maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textScaler: TextScaler.linear(scale))
+                            : Text.rich(span, style: style, maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textScaler: TextScaler.linear(scale));
+                      } else {
+                        textWidget = enabled
+                            ? GlassText(text, style: style,
+                                inkRole: GlassInkRole.body, maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textScaler: TextScaler.linear(scale))
+                            : Text(text, style: style, maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textScaler: TextScaler.linear(scale));
+                      }
+                      return Padding(padding: const EdgeInsets.only(bottom: 8),
+                        child: textWidget);
+                    }
+                    return Column(crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min, children: [
+                        label('PT.TELKOMINDONESIA INTERNATIONAL', organization: true),
+                        for (final name in ['Google', 'GitHub', 'YouTube', 'ChatGPT']) label(name),
+                        label('Ágj ÅÉ y\u0301a\u0301j\u0301', organization: true),
+                        label('', rich: true),
+                      ]);
+                  })),
+              ]),
+            ),
+          ),
+        ),
+      ),
+    ));
+    await tester.pump();
+    await tester.pump();
+    final boundary = capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+    return (await tester.runAsync(() async {
+      final image = await boundary.toImage();
+      try {
+        final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+        if (output != null && !empty) {
+          Directory(output).createSync(recursive: true);
+          final png = await image.toByteData(format: ui.ImageByteFormat.png);
+          File('$output/ink-real-envelope-${brightness.name}-${direction.name}-$scale-$enabled.png')
+              .writeAsBytesSync(png!.buffer.asUint8List());
+        }
+        return (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!
+            .buffer.asUint8List().toList();
+      } finally { image.dispose(); }
+    }))!;
+  }
+  final empty = await render(empty: true);
+  final ordinary = await render();
+  final ink = await render(enabled: true);
+  var supported = 0;
+  var missing = 0;
+  var opaque = 0;
+  var colored = 0;
+  var minimumContrast = double.infinity;
+  final missingPoints = <List<int>>[];
+  for (var index = 0; index < ordinary.length; index += 4) {
+    final original = Color.fromARGB(255, ordinary[index], ordinary[index + 1], ordinary[index + 2]);
+    final actual = Color.fromARGB(255, ink[index], ink[index + 1], ink[index + 2]);
+    final under = Color.fromARGB(255, empty[index], empty[index + 1], empty[index + 2]);
+    double distance(Color a, Color b) => math.max((a.r - b.r).abs(),
+      math.max((a.g - b.g).abs(), (a.b - b.b).abs()));
+    if (distance(original, under) > 0.18) {
+      supported++;
+      if (distance(actual, under) < 0.05) {
+        missing++;
+        if (missingPoints.length < 8) missingPoints.add([(index ~/ 4) % 520, index ~/ (4 * 520)]);
+      }
+    }
+    if (distance(original, scheme.onSurface) <= 1 / 255) {
+      opaque++;
+      final a = actual.computeLuminance();
+      final b = under.computeLuminance();
+      minimumContrast = math.min(minimumContrast,
+        (math.max(a, b) + 0.05) / (math.min(a, b) + 0.05));
+      if (HSVColor.fromColor(actual).saturation >
+          HSVColor.fromColor(original).saturation + 0.10) colored++;
+    }
+  }
+  final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+  if (output != null) File('$output/ink-real-envelope-${brightness.name}-${direction.name}-$scale.json')
+      .writeAsStringSync(jsonEncode({'supported': supported, 'missing': missing,
+        'missingPoints': missingPoints, 'opaque': opaque, 'colored': colored,
+        'minimumContrast': minimumContrast}));
+  expect(supported, greaterThan(100));
+  expect(missing, 0, reason: 'Ink must retain every strongly painted original glyph pixel');
+  expect(opaque, greaterThan(50));
+  expect(colored, greaterThan(25));
+  expect(minimumContrast, greaterThanOrEqualTo(4.5));
+  expect(tester.takeException(), isNull);
 }

@@ -40,24 +40,33 @@ void main() {
       ),
       theme,
     );
-    expect(rotateAuroraForMonth(changed, DateTime(2026, 11, 30)), same(changed));
+    expect(
+      rotateAuroraForMonth(changed, DateTime(2026, 11, 30)),
+      same(changed),
+    );
     expect(rotateAuroraForMonth(changed, DateTime(2026, 10)), same(changed));
   });
 
-  test('missed months catch up once and disabled wallpaper waits for enable', () {
-    const disabled = ThemeProps(
-      auroraEnabled: false,
-      auroraRotationMonth: 202610,
-    );
-    final now = DateTime(2027, 3, 12);
-    expect(rotateAuroraForMonth(disabled, now), same(disabled));
-    expect(shuffleAuroraWallpaper(disabled, now: now), same(disabled));
-    final enabled = disabled.copyWith(auroraEnabled: true);
-    final changed = rotateAuroraForMonth(enabled, now, random: Random(9));
-    expect(changed, shuffleAuroraWallpaper(enabled, now: now, random: Random(9)));
-    expect(changed.auroraRotationMonth, 202703);
-    expect(rotateAuroraForMonth(changed, now), same(changed));
-  });
+  test(
+    'missed months catch up once and disabled wallpaper waits for enable',
+    () {
+      const disabled = ThemeProps(
+        auroraEnabled: false,
+        auroraRotationMonth: 202610,
+      );
+      final now = DateTime(2027, 3, 12);
+      expect(rotateAuroraForMonth(disabled, now), same(disabled));
+      expect(shuffleAuroraWallpaper(disabled, now: now), same(disabled));
+      final enabled = disabled.copyWith(auroraEnabled: true);
+      final changed = rotateAuroraForMonth(enabled, now, random: Random(9));
+      expect(
+        changed,
+        shuffleAuroraWallpaper(enabled, now: now, random: Random(9)),
+      );
+      expect(changed.auroraRotationMonth, 202703);
+      expect(rotateAuroraForMonth(changed, now), same(changed));
+    },
+  );
 
   test('manual shuffle remains repeatable and satisfies this month', () {
     const theme = ThemeProps(auroraRotationMonth: 202610);
@@ -80,7 +89,10 @@ void main() {
     expect(await preferences.saveConfig(Config(themeProps: changed)), isTrue);
     final restored = (await preferences.getConfig())!.themeProps;
     expect(restored, changed);
-    expect(rotateAuroraForMonth(restored, DateTime(2026, 10, 31)), same(restored));
+    expect(
+      rotateAuroraForMonth(restored, DateTime(2026, 10, 31)),
+      same(restored),
+    );
   });
 
   testWidgets('foreground checks exactly at local month boundaries', (

@@ -92,9 +92,10 @@ Future<void> _pump(
   bool reduced = false,
   TextDirection direction = TextDirection.ltr,
   Size cardSize = const Size(360, 104),
+  Color seedColor = Colors.blue,
 }) async {
   final colors = ColorScheme.fromSeed(
-    seedColor: Colors.blue,
+    seedColor: seedColor,
     brightness: brightness,
   );
   await tester.pumpWidget(
@@ -188,6 +189,61 @@ Future<void> _pump(
 }
 
 void main() {
+  test('the meniscus has flat center, smooth contacts and conserved fill', () {
+    const size = Size(350, 94);
+    for (final share in [0.001, 0.16, 0.5, 1.0]) {
+      for (final time in [Duration.zero, const Duration(seconds: 3)]) {
+        for (final rtl in [false, true]) {
+          final surface = subscriptionUsageMeniscus(
+            size: size, share: share, time: time, rtl: rtl,
+          );
+          final metric = surface.path.computeMetrics().single;
+          final points = <ui.Tangent>[];
+          for (var i = 0; i <= 2000; i++) {
+            points.add(metric.getTangentForOffset(metric.length * i / 2000)!);
+          }
+          final first = points.first;
+          final last = points.last;
+          expect(first.position.dy, closeTo(0, 0.001));
+          expect(last.position.dy, closeTo(size.height, 0.001));
+          if (share < 1) {
+            expect(first.vector.dy.abs(), lessThan(0.001));
+            expect(last.vector.dy.abs(), lessThan(0.001));
+          }
+          var area = 0.0;
+          var centerTurn = 0.0;
+          var edgeTurn = 0.0;
+          for (var i = 0; i < points.length; i++) {
+            final point = points[i].position;
+            final actualX = rtl ? size.width - surface.width + point.dx : point.dx;
+            expect(actualX, inInclusiveRange(0, size.width));
+            expect(point.dy, inInclusiveRange(0, size.height));
+            if (i == 0) continue;
+            final previous = points[i - 1];
+            final turn = (points[i].vector - previous.vector).distance;
+            if ((point.dy / size.height - 0.22).abs() < 0.005 ||
+                (point.dy / size.height - 0.78).abs() < 0.005) {
+              expect(points[i].vector.dx.abs(), lessThan(0.01));
+            }
+            if (point.dy > size.height * 0.3 && point.dy < size.height * 0.7) {
+              centerTurn += turn;
+              expect(points[i].vector.dx.abs(), lessThan(0.001));
+            } else if (point.dy < size.height * 0.22 || point.dy > size.height * 0.78) {
+              edgeTurn += turn;
+            }
+            double filledX(Offset position) => rtl
+                ? surface.width - position.dx
+                : position.dx;
+            area += (filledX(point) + filledX(previous.position)) *
+                (point.dy - previous.position.dy) / 2;
+          }
+          if (share < 1) expect(centerTurn, lessThan(edgeTurn));
+          expect(area / (size.width * size.height), closeTo(share, 0.0001));
+        }
+      }
+    }
+  });
+
   setUpAll(() async {
     final font = FontLoader('UsagePreview')
       ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'));
@@ -241,7 +297,7 @@ void main() {
           }
 
           expect(
-            edgeAt(44),
+            edgeAt(36),
             mode == LiquidGlassMode.none ? edgeAt(80) : greaterThan(edgeAt(80)),
           );
           if (mode != LiquidGlassMode.none) {
@@ -289,14 +345,44 @@ void main() {
             tester,
             brightness: brightness,
             mode: mode,
+            info: const SubscriptionInfo(download: 50, total: 100),
+          );
+          final half = await _snapshot(tester, '$name-50');
+          var halfChanged = 0;
+          for (var x = cavityLeft; x < cavityRight; x++) {
+            if (_distance(_pixel(empty, x, 80), _pixel(half, x, 80)) > 0.025) {
+              halfChanged++;
+            }
+          }
+          expect(
+            halfChanged / (cavityRight - cavityLeft),
+            inInclusiveRange(0.47, 0.52),
+          );
+          if (glass) {
+            _expectDryRim(half, empty);
+            await _pump(
+              tester,
+              brightness: brightness,
+              mode: mode,
+              seedColor: Colors.red,
+            );
+            final otherTheme = await _snapshot(tester, '$name-fixed-water-color');
+            expect(otherTheme, orderedEquals(filled));
+          }
+          await _pump(
+            tester,
+            brightness: brightness,
+            mode: mode,
             info: const SubscriptionInfo(download: 100, total: 100),
           );
           final full = await _snapshot(tester, '$name-full');
           if (glass) {
             _expectDryRim(full, empty);
             for (final point in const [
-              Offset(30, 80), Offset(370, 80),
-              Offset(200, 38), Offset(200, 122),
+              Offset(30, 80),
+              Offset(370, 80),
+              Offset(200, 38),
+              Offset(200, 122),
             ]) {
               expect(
                 _distance(
@@ -314,7 +400,9 @@ void main() {
           );
           if (glass) {
             await _pump(
-              tester, brightness: brightness, mode: mode,
+              tester,
+              brightness: brightness,
+              mode: mode,
               direction: TextDirection.rtl,
             );
             final rtl = await _snapshot(tester, '$name-rtl');
@@ -333,25 +421,36 @@ void main() {
     }
   }
 
-  testWidgets('tiny glass cavities stay finite and inside their tube', (tester) async {
+  testWidgets('tiny glass cavities stay finite and inside their tube', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(400, 160);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     try {
       for (final size in const [Size(1, 1), Size(4, 3), Size(10, 8)]) {
         await _pump(
-          tester, brightness: Brightness.dark, mode: LiquidGlassMode.ultra,
-          cardSize: size, info: const SubscriptionInfo(total: 100),
+          tester,
+          brightness: Brightness.dark,
+          mode: LiquidGlassMode.ultra,
+          cardSize: size,
+          info: const SubscriptionInfo(total: 100),
         );
         final empty = await _snapshot(tester, 'tiny-${size.width}-empty');
         await _pump(
-          tester, brightness: Brightness.dark, mode: LiquidGlassMode.ultra,
-          cardSize: size, info: const SubscriptionInfo(download: 100, total: 100),
+          tester,
+          brightness: Brightness.dark,
+          mode: LiquidGlassMode.ultra,
+          cardSize: size,
+          info: const SubscriptionInfo(download: 100, total: 100),
         );
         final full = await _snapshot(tester, 'tiny-${size.width}-full');
         for (var y = 27; y < 29 + size.height.ceil(); y++) {
           for (var x = 19; x < 21 + size.width.ceil(); x++) {
-            if (x < 20 || y < 28 || x >= 20 + size.width || y >= 28 + size.height) {
+            if (x < 20 ||
+                y < 28 ||
+                x >= 20 + size.width ||
+                y >= 28 + size.height) {
               expect(_pixel(full, x, y), _pixel(empty, x, y));
             }
           }

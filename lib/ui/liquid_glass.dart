@@ -638,6 +638,7 @@ class LiquidGlass extends StatelessWidget {
 
   /// Lights the pane in place of the glow [pressed] lights at its center.
   final LiquidGlassGlow? glow;
+
   /// Reads UI beneath this pane in a wallpaper-only host, for small dock lenses.
   final bool contentBackdrop;
 
@@ -1168,8 +1169,17 @@ class _LiquidGlassLayer extends Layer {
   bool _showingFrozen = false;
   ui.Image? _frozenImage;
   ui.Picture? _frozenPicture;
-  (Rect, BorderRadius, Path?, List<double>, LiquidGlassStyle, LiquidGlassRim?,
-    ui.FragmentProgram?, LiquidGlassGlow)? _frozenKey;
+  (
+    Rect,
+    BorderRadius,
+    Path?,
+    List<double>,
+    LiquidGlassStyle,
+    LiquidGlassRim?,
+    ui.FragmentProgram?,
+    LiquidGlassGlow,
+  )?
+  _frozenKey;
 
   bool _freezeCaptured() {
     final key = (rect, corners, outline, profile, style, rim, program, glow);
@@ -1177,7 +1187,10 @@ class _LiquidGlassLayer extends Layer {
     if (_frozenPicture != null) _thawCaptured();
     final captured = _captured;
     if (captured == null || rect.isEmpty || _capturedRect != rect) return false;
-    final scale = math.min(_coveredPixelsPerDp, _maxCoveredSide / rect.longestSide);
+    final scale = math.min(
+      _coveredPixelsPerDp,
+      _maxCoveredSide / rect.longestSide,
+    );
     final recorder = ui.PictureRecorder();
     Canvas(recorder)
       ..scale(scale)
@@ -1223,7 +1236,14 @@ class _LiquidGlassLayer extends Layer {
     _showingFrozen = true;
   }
 
-  (ui.Image, Path?, BlendMode, ui.FragmentProgram?, List<double>, List<Object?>)?
+  (
+    ui.Image,
+    Path?,
+    BlendMode,
+    ui.FragmentProgram?,
+    List<double>,
+    List<Object?>,
+  )?
   _captureKey;
 
   @override
@@ -1335,13 +1355,13 @@ class _LiquidGlassLayer extends Layer {
     ];
     if (_captureKey
         case (
-          final image,
-          final path,
-          final mode,
-          final shaded,
-          final values,
-          final coverage,
-        )?
+              final image,
+              final path,
+              final mode,
+              final shaded,
+              final values,
+              final coverage,
+            )?
         when _captured != null &&
             identical(image, atlas) &&
             identical(path, outline) &&

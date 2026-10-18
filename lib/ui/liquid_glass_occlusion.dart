@@ -11,10 +11,8 @@ class LiquidGlassOcclusion extends SingleChildRenderObjectWidget {
   final ShapeBorder shape;
 
   @override
-  RenderObject createRenderObject(BuildContext context) => _GlassOcclusionBox(
-    shape,
-    Directionality.of(context),
-  );
+  RenderObject createRenderObject(BuildContext context) =>
+      _GlassOcclusionBox(shape, Directionality.of(context));
 
   @override
   void updateRenderObject(

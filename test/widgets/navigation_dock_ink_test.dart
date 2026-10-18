@@ -68,7 +68,10 @@ class _FixtureState extends State<_Fixture> {
                     width: 40,
                     height: 40,
                     child: LiquidGlass(
-                      style: LiquidGlassStyle(tint: Colors.transparent, blur: 2),
+                      style: LiquidGlassStyle(
+                        tint: Colors.transparent,
+                        blur: 2,
+                      ),
                     ),
                   ),
                 Align(
@@ -99,11 +102,15 @@ Finder _glyph(int index) => find.byWidgetPredicate(
 );
 
 Future<Uint8List> _pixels(WidgetTester tester) async {
-  final boundary = tester.renderObject<RenderRepaintBoundary>(find.byKey(_scene));
+  final boundary = tester.renderObject<RenderRepaintBoundary>(
+    find.byKey(_scene),
+  );
   return (await tester.runAsync(() async {
     final image = await boundary.toImage();
     try {
-      final bytes = (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!;
+      final bytes = (await image.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
+      ))!;
       return Uint8List.fromList(bytes.buffer.asUint8List());
     } finally {
       image.dispose();
@@ -114,7 +121,11 @@ Future<Uint8List> _pixels(WidgetTester tester) async {
 List<LiquidGlassInkLayer> _glyphLayers(WidgetTester tester) {
   final layers = <LiquidGlassInkLayer>[];
   void visit(ContainerLayer parent) {
-    for (Layer? layer = parent.firstChild; layer != null; layer = layer.nextSibling) {
+    for (
+      Layer? layer = parent.firstChild;
+      layer != null;
+      layer = layer.nextSibling
+    ) {
       if (layer is LiquidGlassInkLayer && layer.size == const Size(28, 28)) {
         layers.add(layer);
       }
@@ -126,7 +137,9 @@ List<LiquidGlassInkLayer> _glyphLayers(WidgetTester tester) {
   return layers;
 }
 
-Future<void> _pump(WidgetTester tester, GlobalKey<_FixtureState> key, {
+Future<void> _pump(
+  WidgetTester tester,
+  GlobalKey<_FixtureState> key, {
   bool glass = true,
 }) async {
   tester.view.physicalSize = const Size(400, 220);
@@ -145,10 +158,12 @@ Future<int> _checkPartialGlyphs(
   expect(panes.any((pane) => pane.level == 0), isTrue);
   expect(panes.any((pane) => pane.level == 1), isTrue);
   expect(panes.every((pane) => pane.level <= 1), isTrue);
-  final lens = tester.getRect(find.descendant(
-    of: find.byType(FloatingNavigationBar),
-    matching: find.byType(PositionedDirectional),
-  ));
+  final lens = tester.getRect(
+    find.descendant(
+      of: find.byType(FloatingNavigationBar),
+      matching: find.byType(PositionedDirectional),
+    ),
+  );
   final regions = <Rect>[];
   for (var index = 0; index < _glyphs.length; index++) {
     final rect = tester.getRect(_glyph(index).first).deflate(6);
@@ -171,7 +186,8 @@ Future<int> _checkPartialGlyphs(
       for (var x = rect.left.ceil(); x < rect.right.floor(); x++) {
         final point = Offset(x + 0.5, y + 0.5);
         if ((point.dx - lens.left).abs() < 2 ||
-            (point.dx - lens.right).abs() < 2) continue;
+            (point.dx - lens.right).abs() < 2)
+          continue;
         final offset = (y * 400 + x) * 4;
         var delta = 0;
         for (var channel = 0; channel < 3; channel++) {
@@ -186,8 +202,16 @@ Future<int> _checkPartialGlyphs(
         }
       }
     }
-    expect(inside, greaterThan(2), reason: 'inside glyph missing at frame $frame');
-    expect(outside, greaterThan(2), reason: 'outside glyph missing at frame $frame');
+    expect(
+      inside,
+      greaterThan(2),
+      reason: 'inside glyph missing at frame $frame',
+    );
+    expect(
+      outside,
+      greaterThan(2),
+      reason: 'outside glyph missing at frame $frame',
+    );
   }
   return regions.length;
 }
@@ -197,7 +221,9 @@ void main() {
     if (ui.ImageFilter.isShaderFilterSupported) await GlassInk.prepare();
   });
 
-  testWidgets('glass resting glyph copies have independent ink layers', (tester) async {
+  testWidgets('glass resting glyph copies have independent ink layers', (
+    tester,
+  ) async {
     final semantics = tester.ensureSemantics();
     addTearDown(semantics.dispose);
     final key = GlobalKey<_FixtureState>();
@@ -217,28 +243,42 @@ void main() {
   }, skip: !ui.ImageFilter.isShaderFilterSupported);
 
   for (final pointer in [false, true]) {
-    testWidgets('Ultra glyph pixels survive ${pointer ? 'tap lift and settle' : 'external selection travel'}', (tester) async {
-      final key = GlobalKey<_FixtureState>();
-      await _pump(tester, key);
-      var checked = 0;
-      final target = tester.getCenter(_glyph(1).first);
-      final gesture = pointer ? await tester.startGesture(target) : null;
-      if (!pointer) key.currentState!.select(2);
-      for (var frame = 0; frame < 96; frame++) {
-        if (frame == 4 && gesture != null) await gesture.up();
-        await tester.pump(const Duration(milliseconds: 8));
-        checked += await _checkPartialGlyphs(tester, key.currentState!, frame);
-      }
-      expect(checked, greaterThan(0), reason: 'lens must cross actual glyph pixels');
-      await tester.pumpAndSettle();
-      expect(key.currentState!.selected, pointer ? 1 : 2);
-      expect(_glyphLayers(tester).toSet(), hasLength(4));
-      expect(tester.takeException(), isNull);
-      await tester.pumpWidget(const SizedBox.shrink());
-    }, skip: !ui.ImageFilter.isShaderFilterSupported);
+    testWidgets(
+      'Ultra glyph pixels survive ${pointer ? 'tap lift and settle' : 'external selection travel'}',
+      (tester) async {
+        final key = GlobalKey<_FixtureState>();
+        await _pump(tester, key);
+        var checked = 0;
+        final target = tester.getCenter(_glyph(1).first);
+        final gesture = pointer ? await tester.startGesture(target) : null;
+        if (!pointer) key.currentState!.select(2);
+        for (var frame = 0; frame < 96; frame++) {
+          if (frame == 4 && gesture != null) await gesture.up();
+          await tester.pump(const Duration(milliseconds: 8));
+          checked += await _checkPartialGlyphs(
+            tester,
+            key.currentState!,
+            frame,
+          );
+        }
+        expect(
+          checked,
+          greaterThan(0),
+          reason: 'lens must cross actual glyph pixels',
+        );
+        await tester.pumpAndSettle();
+        expect(key.currentState!.selected, pointer ? 1 : 2);
+        expect(_glyphLayers(tester).toSet(), hasLength(4));
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+      skip: !ui.ImageFilter.isShaderFilterSupported,
+    );
   }
 
-  testWidgets('None keeps one semantic destination and keyboard activation', (tester) async {
+  testWidgets('None keeps one semantic destination and keyboard activation', (
+    tester,
+  ) async {
     final semantics = tester.ensureSemantics();
     try {
       final key = GlobalKey<_FixtureState>();

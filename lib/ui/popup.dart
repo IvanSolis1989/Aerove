@@ -918,8 +918,15 @@ class _RenderPopupMorph extends RenderProxyBox {
         paintContent(context, offset);
         return;
       }
-      context.pushClipPath(needsCompositing, offset, bounds, clip, paintContent);
+      context.pushClipPath(
+        needsCompositing,
+        offset,
+        bounds,
+        clip,
+        paintContent,
+      );
     }
+
     if (_glass == null) {
       _occlusion.clear();
       paintSurface(context, offset);
@@ -2709,6 +2716,7 @@ class _RenderPopupMenuCard extends RenderProxyBox {
         oldLayer: _clip.layer,
       );
     }
+
     if (_glass == null || _bare) {
       _occlusion.clear();
       paintSurface(context, offset);

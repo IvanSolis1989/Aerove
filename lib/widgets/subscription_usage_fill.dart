@@ -15,6 +15,38 @@ double? _shareOf(SubscriptionInfo? info) {
   return (info.upload + info.download) / info.total;
 }
 
+({Path path, double width, double depth}) subscriptionUsageMeniscus({
+  required Size size,
+  required double share,
+  required Duration time,
+  bool rtl = false,
+}) {
+  final level = size.width * share;
+  final phase = time.inMicroseconds / Duration.microsecondsPerSecond;
+  final depth = share >= 1
+      ? 0.0
+      : math.min(4.0, math.min(level, size.width - level) / 3) *
+          (1 + math.sin(phase * 1.3) * 0.05);
+  final contact = level + depth;
+  final shoulder = level + depth * 0.55;
+  // The cubic integral balances both contact bends against the flat center.
+  final plane = level - depth * (0.0955 / 0.864);
+  final width = math.min(size.width, contact + (depth > 0 ? 0.5 : 0));
+  double x(double value) => rtl ? width - value : value;
+  return (
+    path: Path()
+      ..moveTo(x(contact), 0)
+      ..cubicTo(x(shoulder), 0, x(plane), size.height * 0.08,
+          x(plane), size.height * 0.22)
+      ..cubicTo(x(plane), size.height * 0.36, x(plane), size.height * 0.64,
+          x(plane), size.height * 0.78)
+      ..cubicTo(x(plane), size.height * 0.92, x(shoulder), size.height,
+          x(contact), size.height),
+    width: width,
+    depth: depth,
+  );
+}
+
 class SubscriptionUsageFill extends StatefulWidget {
   const SubscriptionUsageFill({
     super.key,
@@ -287,7 +319,7 @@ class _UsageFillRender extends RenderBox {
           level,
           size.height,
         ),
-        Paint()..color = color.withValues(alpha: settings.dark ? 0.22 : 0.14),
+        Paint()..color = color.withValues(alpha: settings.dark ? 0.25 : 0.17),
       );
       return;
     }
@@ -296,55 +328,40 @@ class _UsageFillRender extends RenderBox {
     final cavityOutline = AppShape.all(
       math.max(0.0, AppCorner.xl - inset),
     ).getOuterPath(Offset.zero & cavity.size);
-    final level = cavity.width * settings.share;
-    final phase =
-        settings.time.value.inMicroseconds / Duration.microsecondsPerSecond;
-    final depth = settings.share >= 1
-        ? 0.0
-        : math.min(4.0, math.min(level, cavity.width - level) / 3);
-    final sway = math.sin(phase * 1.3) * depth * 0.22;
-    final width = math.min(cavity.width, level + depth + sway);
-    final edge = level + depth * 0.65 + sway;
-    final center = level - depth * (0.8 + 0.16 * math.sin(phase * 1.9));
+    final surface = subscriptionUsageMeniscus(
+      size: cavity.size,
+      share: settings.share,
+      time: settings.time.value,
+      rtl: settings.rtl,
+    );
+    final width = surface.width;
     double x(double value) => settings.rtl ? width - value : value;
-    final water = Path()
-      ..moveTo(x(edge), 0)
-      ..cubicTo(
-        x(center),
-        cavity.height * 0.22,
-        x(center + sway),
-        cavity.height * 0.78,
-        x(edge),
-        cavity.height,
-      );
+    final water = surface.path;
     final path = Path.from(water)
       ..lineTo(x(0), cavity.height)
       ..lineTo(x(0), 0)
       ..close();
     final origin =
-        cavity.topLeft +
-        Offset(settings.rtl ? cavity.width - width : 0, 0);
+        cavity.topLeft + Offset(settings.rtl ? cavity.width - width : 0, 0);
     final liquid = Path.combine(
       PathOperation.intersect,
       path,
-      cavityOutline.shift(
-        Offset(settings.rtl ? width - cavity.width : 0, 0),
-      ),
+      cavityOutline.shift(Offset(settings.rtl ? width - cavity.width : 0, 0)),
     );
     _pane.paint(
       context,
       origin & Size(width, cavity.height),
       shape: LiquidGlassOutline(liquid),
       style: LiquidGlassStyle(
-        tint: color.withValues(alpha: settings.dark ? 0.18 : 0.12),
-        blur: 2,
-        refraction: 12,
-        bevel: 8,
-        rim: 0.12,
-        rimWidth: 1,
+        tint: const Color(0xFFA9DFFF).withValues(alpha: settings.dark ? 0.10 : 0.12),
+        blur: 0.7,
+        refraction: 3,
+        bevel: 2.5,
+        rim: 0.04,
+        rimWidth: 0.6,
       ),
     );
-    if (depth > 0) {
+    if (surface.depth > 0) {
       context.canvas
         ..save()
         ..clipPath(cavityOutline.shift(cavity.topLeft));
@@ -352,8 +369,8 @@ class _UsageFillRender extends RenderBox {
         water.shift(origin),
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 1
-          ..color = Colors.white.withValues(alpha: settings.dark ? 0.32 : 0.58),
+          ..strokeWidth = 0.65
+          ..color = Colors.white.withValues(alpha: settings.dark ? 0.16 : 0.20),
       );
       context.canvas.restore();
     }

@@ -73,9 +73,9 @@ void main() {
             overrides: [
               profilesProvider.overrideWith(() => TestProfiles([_profile])),
               setupActionProvider.overrideWith(_IdleSetupAction.new),
-              clashConfigProvider(_profile.id).overrideWith(
-                (_) async => const ClashConfig(),
-              ),
+              clashConfigProvider(
+                _profile.id,
+              ).overrideWith((_) async => const ClashConfig()),
               profileRulesProvider.overrideWith2((_) => _EmptyRules()),
               themeSettingProvider.overrideWithValue(
                 ThemeProps(
@@ -122,9 +122,7 @@ void main() {
             platform: TargetPlatform.android,
             fontFamily: 'HandoverProbe',
             pageTransitionsTheme: const PageTransitionsTheme(
-              builders: {
-                TargetPlatform.android: commonSharedXPageTransitions,
-              },
+              builders: {TargetPlatform.android: commonSharedXPageTransitions},
             ),
           );
           try {
@@ -150,10 +148,8 @@ void main() {
                   ),
                   home: ValueListenableBuilder<bool>(
                     valueListenable: homeVisible,
-                    builder: (_, visible, child) => Opacity(
-                      opacity: visible ? 1 : 0,
-                      child: child,
-                    ),
+                    builder: (_, visible, child) =>
+                        Opacity(opacity: visible ? 1 : 0, child: child),
                     child: const HomePage(),
                   ),
                 ),
@@ -346,7 +342,8 @@ void main() {
             expect(
               frames.where((frame) => frame['referenceNoise'] != 0).toList(),
               isEmpty,
-              reason: 'The independent reference must be stable at a frozen animation clock.',
+              reason:
+                  'The independent reference must be stable at a frozen animation clock.',
             );
             expect(frames.last['residualBytes'], greaterThan(0));
             expect(frames.first['outsideResidualBytes'], greaterThan(0));
@@ -356,12 +353,16 @@ void main() {
             );
             if (quality != null) {
               expect(
-                frames.where((frame) =>
-                  frame['phase'] != 'restored' &&
-                  frame['residualBytes'] != 0,
-                ).toList(),
+                frames
+                    .where(
+                      (frame) =>
+                          frame['phase'] != 'restored' &&
+                          frame['residualBytes'] != 0,
+                    )
+                    .toList(),
                 isEmpty,
-                reason: 'The destination interior must sample only wallpaper; the exposed opener may keep its animation.',
+                reason:
+                    'The destination interior must sample only wallpaper; the exposed opener may keep its animation.',
               );
             }
           } finally {
@@ -400,10 +401,7 @@ Future<({Finder opener, Rect? closed})> _open(
   );
   await tester.pumpAndSettle();
   final closed = tester.getRect(
-    find.ancestor(
-      of: opener,
-      matching: find.byType(OpenContainer<dynamic>),
-    ),
+    find.ancestor(of: opener, matching: find.byType(OpenContainer<dynamic>)),
   );
   await tester.tap(opener);
   await tester.pump();
@@ -416,13 +414,14 @@ Future<Uint8List> _pixels(
   GlobalKey capture,
   String? name,
 ) async {
-  final boundary = capture.currentContext!.findRenderObject()!
-      as RenderRepaintBoundary;
+  final boundary =
+      capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
   late Uint8List bytes;
   await tester.runAsync(() async {
     final image = boundary.toImageSync();
-    bytes = (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!
-        .buffer.asUint8List();
+    bytes = (await image.toByteData(
+      format: ui.ImageByteFormat.rawRgba,
+    ))!.buffer.asUint8List();
     final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
     if (output != null && name != null) {
       await Directory(output).create(recursive: true);

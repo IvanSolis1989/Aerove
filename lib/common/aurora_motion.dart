@@ -35,10 +35,7 @@ class AuroraMotion {
   AuroraMotionPose at(Duration elapsed, Size viewport) {
     final motionMicroseconds = elapsed.inMicroseconds * 3 ~/ 2;
     double phase(int index) =>
-        2 *
-            math.pi *
-            (motionMicroseconds % _periods[index]) /
-            _periods[index] +
+        2 * math.pi * (motionMicroseconds % _periods[index]) / _periods[index] +
         _phases[index];
     final reach = viewport.shortestSide * 0.12;
     return (

@@ -65,8 +65,10 @@ class GlassText extends Text {
   Widget build(BuildContext context) {
     final original = super.build(context);
     final resolved = DefaultTextStyle.of(context).style.merge(style);
-    if (resolved.foreground != null || resolved.background != null ||
-        resolved.backgroundColor != null) return original;
+    if (resolved.foreground != null ||
+        resolved.background != null ||
+        resolved.backgroundColor != null)
+      return original;
     final text = data ?? textSpan?.toPlainText() ?? '';
     final color = resolved.color ?? Theme.of(context).colorScheme.onSurface;
     if (_emojiPattern.hasMatch(text) || !_plainSpan(textSpan, color)) {
@@ -96,7 +98,12 @@ class GlassText extends Text {
     final fill = hasShadows
         ? _text(resolved.copyWith(shadows: const [])).build(context)
         : original;
-    final ink = GlassInk(source: color, role: role, outset: outset, child: fill);
+    final ink = GlassInk(
+      source: color,
+      role: role,
+      outset: outset,
+      child: fill,
+    );
     if (!hasShadows) return ink;
     return Stack(
       clipBehavior: Clip.none,
@@ -152,8 +159,10 @@ class GlassText extends Text {
 
   bool _plainSpan(InlineSpan? span, Color source) {
     if (span == null) return true;
-    if (span is! TextSpan || span.style?.foreground != null ||
-        span.style?.background != null || span.style?.backgroundColor != null) {
+    if (span is! TextSpan ||
+        span.style?.foreground != null ||
+        span.style?.background != null ||
+        span.style?.backgroundColor != null) {
       return false;
     }
     final color = span.style?.color;
@@ -213,8 +222,10 @@ class _InkBox extends SingleChildRenderObjectWidget {
 
   @override
   void updateRenderObject(BuildContext context, covariant _InkRender render) {
-    if (render.role == role && render.source == source &&
-        render.outset == outset && render.dark == dark) {
+    if (render.role == role &&
+        render.source == source &&
+        render.outset == outset &&
+        render.dark == dark) {
       return;
     }
     render
@@ -247,19 +258,33 @@ class _InkRender extends RenderProxyBox {
     void visit(RenderObject object) {
       if (object is RenderParagraph) {
         final transform = object.getTransformTo(this);
+        final paragraphBounds = MatrixUtils.transformRect(
+          transform,
+          object.paintBounds,
+        );
+        textBounds =
+            textBounds?.expandToInclude(paragraphBounds) ?? paragraphBounds;
         if (object.text.style?.fontStyle == FontStyle.italic) {
-          overhang = math.max(overhang, (object.text.style?.fontSize ?? 17) * 0.25);
+          overhang = math.max(
+            overhang,
+            (object.text.style?.fontSize ?? 17) * 0.25,
+          );
         }
-        for (final box in object.getBoxesForSelection(TextSelection(
-          baseOffset: 0,
-          extentOffset: object.text.toPlainText(includeSemanticsLabels: false).length,
-        ))) {
+        for (final box in object.getBoxesForSelection(
+          TextSelection(
+            baseOffset: 0,
+            extentOffset: object.text
+                .toPlainText(includeSemanticsLabels: false)
+                .length,
+          ),
+        )) {
           final bounds = MatrixUtils.transformRect(transform, box.toRect());
           textBounds = textBounds?.expandToInclude(bounds) ?? bounds;
         }
       }
       object.visitChildren(visit);
     }
+
     if (child case final child?) visit(child);
     _contentBounds = textBounds?.inflate(overhang) ?? (Offset.zero & size);
   }

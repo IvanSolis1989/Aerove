@@ -16,12 +16,14 @@ Color _pixel(List<int> bytes, Offset point) {
 }
 
 Future<List<int>> _snapshot(WidgetTester tester, GlobalKey key) async {
-  final boundary = key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+  final boundary =
+      key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
   return (await tester.runAsync(() async {
     final image = await boundary.toImage();
     try {
-      return (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!
-          .buffer.asUint8List();
+      return (await image.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
+      ))!.buffer.asUint8List();
     } finally {
       image.dispose();
     }
@@ -59,48 +61,82 @@ Widget _scene({
           ),
   );
   final background = crossfade
-      ? Stack(fit: StackFit.expand, children: [
-          mesh(palette),
-          Opacity(opacity: 0.5, child: mesh(palette + 1)),
-        ])
+      ? Stack(
+          fit: StackFit.expand,
+          children: [
+            mesh(palette),
+            Opacity(opacity: 0.5, child: mesh(palette + 1)),
+          ],
+        )
       : mesh(palette, key: sourceKey);
   return MaterialApp(
     theme: ThemeData(brightness: brightness, fontFamily: 'Ahem'),
     themeAnimationStyle: AnimationStyle.noAnimation,
-    home: RepaintBoundary(key: capture,
-      child: LiquidGlassScope(enabled: enabled,
-        child: LiquidGlassHost(enabled: enabled,
-          child: Stack(fit: StackFit.expand, children: [
-            Positioned.fill(child: LiquidGlassColorField(
-              child: OverflowBox(maxWidth: side, maxHeight: side,
-                child: ValueListenableBuilder<Matrix4>(
-                  valueListenable: pose,
-                  child: SizedBox.square(dimension: side, child: background),
-                  builder: (context, matrix, child) => Transform(
-                    alignment: Alignment.center,
-                    transform: matrix,
-                    child: child,
+    home: RepaintBoundary(
+      key: capture,
+      child: LiquidGlassScope(
+        enabled: enabled,
+        child: LiquidGlassHost(
+          enabled: enabled,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Positioned.fill(
+                child: LiquidGlassColorField(
+                  child: OverflowBox(
+                    maxWidth: side,
+                    maxHeight: side,
+                    child: ValueListenableBuilder<Matrix4>(
+                      valueListenable: pose,
+                      child: SizedBox.square(
+                        dimension: side,
+                        child: background,
+                      ),
+                      builder: (context, matrix, child) => Transform(
+                        alignment: Alignment.center,
+                        transform: matrix,
+                        child: child,
+                      ),
+                    ),
                   ),
                 ),
               ),
-            )),
-            Positioned.fill(child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Wrap(spacing: 4, runSpacing: 4, children: [
-                for (var i = 0; i < 40; i++) SizedBox(
-                  width: 56, height: 32,
-                  child: i.isEven
-                      ? GlassText('H$i', inkRole: GlassInkRole.body,
-                          style: TextStyle(fontSize: 20,
-                            color: brightness == Brightness.dark
-                                ? Colors.white : Colors.black))
-                      : GlyphIcon(AppGlyphs.dashboard, size: 24,
-                          color: brightness == Brightness.dark
-                              ? Colors.white : Colors.black),
+              Positioned.fill(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Wrap(
+                    spacing: 4,
+                    runSpacing: 4,
+                    children: [
+                      for (var i = 0; i < 40; i++)
+                        SizedBox(
+                          width: 56,
+                          height: 32,
+                          child: i.isEven
+                              ? GlassText(
+                                  'H$i',
+                                  inkRole: GlassInkRole.body,
+                                  style: TextStyle(
+                                    fontSize: 20,
+                                    color: brightness == Brightness.dark
+                                        ? Colors.white
+                                        : Colors.black,
+                                  ),
+                                )
+                              : GlyphIcon(
+                                  AppGlyphs.dashboard,
+                                  size: 24,
+                                  color: brightness == Brightness.dark
+                                      ? Colors.white
+                                      : Colors.black,
+                                ),
+                        ),
+                    ],
+                  ),
                 ),
-              ]),
-            )),
-          ]),
+              ),
+            ],
+          ),
         ),
       ),
     ),
@@ -126,12 +162,20 @@ void main() {
       final pose = ValueNotifier(Matrix4.identity());
       addTearDown(pose.dispose);
       final key = GlobalKey();
-      await tester.pumpWidget(_scene(capture: key, pose: pose,
-        brightness: brightness, enabled: false));
+      await tester.pumpWidget(
+        _scene(
+          capture: key,
+          pose: pose,
+          brightness: brightness,
+          enabled: false,
+        ),
+      );
       await tester.pumpAndSettle();
       final none = await _snapshot(tester, key);
       Offset? point;
-      final sourceColor = brightness == Brightness.dark ? Colors.white : Colors.black;
+      final sourceColor = brightness == Brightness.dark
+          ? Colors.white
+          : Colors.black;
       for (var y = 14; y < 38 && point == null; y++) {
         for (var x = 14; x < 40; x++) {
           final candidate = Offset(x + 0.5, y + 0.5);
@@ -143,8 +187,9 @@ void main() {
         }
       }
       expect(point, isNotNull);
-      await tester.pumpWidget(_scene(capture: key, pose: pose,
-        brightness: brightness));
+      await tester.pumpWidget(
+        _scene(capture: key, pose: pose, brightness: brightness),
+      );
       await tester.pumpAndSettle();
       final first = LiquidGlassHost.debugLastInkCapture!;
       expect(first.masks, 40);
@@ -179,8 +224,9 @@ void main() {
       expect(stable.filterUpdates, after.filterUpdates);
       expect(await _snapshot(tester, key), moved);
 
-      await tester.pumpWidget(_scene(capture: key, pose: pose,
-        brightness: brightness, source: false));
+      await tester.pumpWidget(
+        _scene(capture: key, pose: pose, brightness: brightness, source: false),
+      );
       await tester.pumpAndSettle();
       final fallback = await _snapshot(tester, key);
       var maximumError = 0;
@@ -191,62 +237,86 @@ void main() {
         squaredError += error * error;
       }
       final rms = math.sqrt(squaredError / fallback.length);
-      _record('${brightness.name}-reference', {'maxError': maximumError, 'rms': rms});
+      _record('${brightness.name}-reference', {
+        'maxError': maximumError,
+        'rms': rms,
+      });
       expect(maximumError, lessThanOrEqualTo(6));
       expect(rms, lessThanOrEqualTo(1.5));
       final beforeFallbackMotion = LiquidGlassHost.debugLastInkCapture!;
       pose.value = Matrix4.identity()..translateByDouble(72, 12, 0, 1);
       await tester.pump();
-      expect(LiquidGlassHost.debugLastInkCapture!.fallbackCaptures,
-          greaterThan(beforeFallbackMotion.fallbackCaptures));
+      expect(
+        LiquidGlassHost.debugLastInkCapture!.fallbackCaptures,
+        greaterThan(beforeFallbackMotion.fallbackCaptures),
+      );
       expect(tester.takeException(), isNull);
     }, skip: !ui.ImageFilter.isShaderFilterSupported);
   }
 
-  testWidgets('source changes recapture and crossfade falls back without stale ink', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(360, 480);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-    final pose = ValueNotifier(Matrix4.identity());
-    addTearDown(pose.dispose);
-    final key = GlobalKey();
-    Future<List<int>> render({int palette = 0, int seed = 0,
-      Brightness brightness = Brightness.dark, double side = 800,
-      bool crossfade = false, Key? sourceKey}) async {
-      await tester.pumpWidget(_scene(capture: key, pose: pose,
-        palette: palette, seed: seed, brightness: brightness, side: side,
-        crossfade: crossfade, sourceKey: sourceKey));
-      await tester.pumpAndSettle();
-      return _snapshot(tester, key);
-    }
-    var pixels = await render();
-    var stats = LiquidGlassHost.debugLastInkCapture!;
-    for (final change in [
-      () => render(palette: 1),
-      () => render(seed: 2),
-      () => render(brightness: Brightness.light),
-      () => render(side: 900),
-      () => render(sourceKey: const ValueKey('replacement')),
-    ]) {
-      final next = await change();
-      final nextStats = LiquidGlassHost.debugLastInkCapture!;
-      expect(nextStats.sourceCaptures, greaterThan(stats.sourceCaptures));
-      expect(nextStats.generation, greaterThan(stats.generation));
-      expect(next, isNot(pixels));
-      pixels = next;
-      stats = nextStats;
-    }
-    final crossfade = await render(crossfade: true);
-    final blended = LiquidGlassHost.debugLastInkCapture!;
-    expect(blended.fallbackCaptures, greaterThan(stats.fallbackCaptures));
-    expect(crossfade, isNot(pixels));
-    await render();
-    expect(LiquidGlassHost.debugLastInkCapture!.sourceCaptures,
-        greaterThan(blended.sourceCaptures));
-    expect(tester.takeException(), isNull);
-  }, skip: !ui.ImageFilter.isShaderFilterSupported);
+  testWidgets(
+    'source changes recapture and crossfade falls back without stale ink',
+    (tester) async {
+      tester.view.physicalSize = const Size(360, 480);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final pose = ValueNotifier(Matrix4.identity());
+      addTearDown(pose.dispose);
+      final key = GlobalKey();
+      Future<List<int>> render({
+        int palette = 0,
+        int seed = 0,
+        Brightness brightness = Brightness.dark,
+        double side = 800,
+        bool crossfade = false,
+        Key? sourceKey,
+      }) async {
+        await tester.pumpWidget(
+          _scene(
+            capture: key,
+            pose: pose,
+            palette: palette,
+            seed: seed,
+            brightness: brightness,
+            side: side,
+            crossfade: crossfade,
+            sourceKey: sourceKey,
+          ),
+        );
+        await tester.pumpAndSettle();
+        return _snapshot(tester, key);
+      }
+
+      var pixels = await render();
+      var stats = LiquidGlassHost.debugLastInkCapture!;
+      for (final change in [
+        () => render(palette: 1),
+        () => render(seed: 2),
+        () => render(brightness: Brightness.light),
+        () => render(side: 900),
+        () => render(sourceKey: const ValueKey('replacement')),
+      ]) {
+        final next = await change();
+        final nextStats = LiquidGlassHost.debugLastInkCapture!;
+        expect(nextStats.sourceCaptures, greaterThan(stats.sourceCaptures));
+        expect(nextStats.generation, greaterThan(stats.generation));
+        expect(next, isNot(pixels));
+        pixels = next;
+        stats = nextStats;
+      }
+      final crossfade = await render(crossfade: true);
+      final blended = LiquidGlassHost.debugLastInkCapture!;
+      expect(blended.fallbackCaptures, greaterThan(stats.fallbackCaptures));
+      expect(crossfade, isNot(pixels));
+      await render();
+      expect(
+        LiquidGlassHost.debugLastInkCapture!.sourceCaptures,
+        greaterThan(blended.sourceCaptures),
+      );
+      expect(tester.takeException(), isNull);
+    },
+    skip: !ui.ImageFilter.isShaderFilterSupported,
+  );
 }
 
 class _Mesh extends CustomPainter {
@@ -259,19 +329,38 @@ class _Mesh extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final dark = brightness == Brightness.dark;
     final colors = dark
-        ? [const Color(0xFF17404A), const Color(0xFF492049), const Color(0xFF234B3F)]
-        : [const Color(0xFFC0E6EC), const Color(0xFFE9CEE8), const Color(0xFFC6E8D4)];
+        ? [
+            const Color(0xFF17404A),
+            const Color(0xFF492049),
+            const Color(0xFF234B3F),
+          ]
+        : [
+            const Color(0xFFC0E6EC),
+            const Color(0xFFE9CEE8),
+            const Color(0xFFC6E8D4),
+          ];
     final shift = (palette + seed) % colors.length;
-    final vertices = ui.Vertices(ui.VertexMode.triangles,
-      [Offset.zero, Offset(size.width, 0), Offset(0, size.height),
-        Offset(size.width, 0), Offset(size.width, size.height), Offset(0, size.height)],
-      colors: [for (final i in [0, 1, 2, 1, 0, 2]) colors[(i + shift) % colors.length]],
+    final vertices = ui.Vertices(
+      ui.VertexMode.triangles,
+      [
+        Offset.zero,
+        Offset(size.width, 0),
+        Offset(0, size.height),
+        Offset(size.width, 0),
+        Offset(size.width, size.height),
+        Offset(0, size.height),
+      ],
+      colors: [
+        for (final i in [0, 1, 2, 1, 0, 2]) colors[(i + shift) % colors.length],
+      ],
     );
     canvas.drawVertices(vertices, BlendMode.dst, Paint());
     vertices.dispose();
   }
 
   @override
-  bool shouldRepaint(_Mesh oldDelegate) => oldDelegate.palette != palette ||
-      oldDelegate.seed != seed || oldDelegate.brightness != brightness;
+  bool shouldRepaint(_Mesh oldDelegate) =>
+      oldDelegate.palette != palette ||
+      oldDelegate.seed != seed ||
+      oldDelegate.brightness != brightness;
 }

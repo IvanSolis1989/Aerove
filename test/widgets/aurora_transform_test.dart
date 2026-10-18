@@ -79,7 +79,9 @@ void main() {
         }
       }
     }
-    await tester.runAsync(() => _export('aurora-transform-pixels.json', metrics));
+    await tester.runAsync(
+      () => _export('aurora-transform-pixels.json', metrics),
+    );
   });
 
   testWidgets('motion retains its static picture without rebuilding content', (
@@ -199,9 +201,11 @@ List<ui.Picture> _pictures(WidgetTester tester) {
   );
   final pictures = <ui.Picture>[];
   void visit(ContainerLayer parent) {
-    for (Layer? layer = parent.firstChild;
-        layer != null;
-        layer = layer.nextSibling) {
+    for (
+      Layer? layer = parent.firstChild;
+      layer != null;
+      layer = layer.nextSibling
+    ) {
       if (layer is PictureLayer && layer.picture != null) {
         pictures.add(layer.picture!);
       }
@@ -267,9 +271,9 @@ Future<void> _export(String name, Map<String, Object> data) async {
   final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
   if (output == null) return;
   await Directory(output).create(recursive: true);
-  await File('$output/$name').writeAsString(
-    const JsonEncoder.withIndent('  ').convert(data),
-  );
+  await File(
+    '$output/$name',
+  ).writeAsString(const JsonEncoder.withIndent('  ').convert(data));
 }
 
 class _CanvasReference extends StatefulWidget {
@@ -288,10 +292,8 @@ class _CanvasReferenceState extends State<_CanvasReference> {
   );
 
   @override
-  Widget build(BuildContext context) => CustomPaint(
-    painter: _painter,
-    child: const SizedBox.expand(),
-  );
+  Widget build(BuildContext context) =>
+      CustomPaint(painter: _painter, child: const SizedBox.expand());
 
   @override
   void dispose() {

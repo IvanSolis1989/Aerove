@@ -111,6 +111,7 @@ jobs:
             test/widgets/aurora_lifecycle_test.dart \
             test/widgets/glass_ink_cache_test.dart \
             test/widgets/glass_ink_geometry_test.dart \
+            test/widgets/dashboard_text_bounds_test.dart \
             test/widgets/glass_wallpaper_sampling_test.dart \
             test/widgets/sheet_occlusion_test.dart \
             test/widgets/popup_occlusion_test.dart \

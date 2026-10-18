@@ -18,7 +18,9 @@ void main() {
     ) async {
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       addTearDown(() {
-        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
       });
       if (ui.ImageFilter.isShaderFilterSupported) {
         await tester.runAsync(GlassInk.prepare);
@@ -76,7 +78,9 @@ void main() {
         expect(state.mounted, isTrue);
         expect(container.read(themeSettingProvider).auroraSeed, seed);
 
-        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 100));
         expect(state.ticks, greaterThan(ticks));
@@ -113,12 +117,10 @@ class _ProbeState extends State<_Probe> with SingleTickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
-    _animation = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 1),
-    )
-      ..addListener(() => ticks++)
-      ..repeat();
+    _animation =
+        AnimationController(vsync: this, duration: const Duration(seconds: 1))
+          ..addListener(() => ticks++)
+          ..repeat();
   }
 
   @override

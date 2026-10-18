@@ -341,9 +341,7 @@ class DnsQueryItem extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         spacing: 4,
         children: [
-          GlassText.rich(
-            TextSpan(text: dnsQuery.domain, style: styles.title),
-          ),
+          GlassText.rich(TextSpan(text: dnsQuery.domain, style: styles.title)),
           if (summary.isNotEmpty)
             GlassText(
               summary,

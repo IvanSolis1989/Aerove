@@ -372,6 +372,7 @@ _ThemeProps _$ThemePropsFromJson(Map<String, dynamic> json) => _ThemeProps(
       ? const [0xFF65BDD2, 0xFFC589CA, 0xFF75CCA8]
       : _auroraColorsFromJson(json['auroraColors']),
   auroraSeed: (json['auroraSeed'] as num?)?.toInt() ?? 271828,
+  auroraRotationMonth: (json['auroraRotationMonth'] as num?)?.toInt() ?? 0,
   textScale: json['textScale'] == null
       ? const TextScale()
       : TextScale.fromJson(json['textScale'] as Map<String, dynamic>),
@@ -390,6 +391,7 @@ Map<String, dynamic> _$ThemePropsToJson(_ThemeProps instance) =>
       'auroraEnabled': instance.auroraEnabled,
       'auroraColors': instance.auroraColors,
       'auroraSeed': instance.auroraSeed,
+      'auroraRotationMonth': instance.auroraRotationMonth,
       'textScale': instance.textScale,
       'systemFontFamily': instance.fontFamily,
     };

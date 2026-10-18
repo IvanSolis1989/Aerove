@@ -373,7 +373,10 @@ class _AuroraMotionTransform extends SingleChildRenderObjectWidget {
       _RenderAuroraMotion(seed, frame);
 
   @override
-  void updateRenderObject(BuildContext context, _RenderAuroraMotion renderObject) {
+  void updateRenderObject(
+    BuildContext context,
+    _RenderAuroraMotion renderObject,
+  ) {
     renderObject
       ..seed = seed
       ..frame = frame;
@@ -384,8 +387,7 @@ class _RenderAuroraMotion extends RenderProxyBox {
   _RenderAuroraMotion(
     int seed,
     ValueListenable<({bool square, Duration elapsed})> frame,
-  )
-    : _seed = seed,
+  ) : _seed = seed,
       _motion = AuroraMotion(seed),
       _frame = frame,
       _square = frame.value.square;

@@ -198,7 +198,10 @@ void main() {
         final badgeSize = tester.getSize(badge);
         expect(badgeSize.width, density == DashboardDensity.compact ? 40 : 48);
         expect(tester.getSize(flag).width, lessThanOrEqualTo(badgeSize.width));
-        expect(tester.getSize(flag).height, lessThanOrEqualTo(badgeSize.height));
+        expect(
+          tester.getSize(flag).height,
+          lessThanOrEqualTo(badgeSize.height),
+        );
         expect(find.byTooltip('Retry'), findsOneWidget);
         expect(tester.widget<InkResponse>(_clover()).onTap, isNotNull);
         expect(tester.takeException(), isNull);

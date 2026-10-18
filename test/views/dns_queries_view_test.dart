@@ -144,7 +144,8 @@ void main() {
         final titleStyles = <TextStyle>[];
         for (final host in ['dns.test', 'recent.test', 'live.test']) {
           final title = find.byWidgetPredicate(
-            (widget) => widget is GlassText &&
+            (widget) =>
+                widget is GlassText &&
                 widget.textSpan?.toPlainText().startsWith(host) == true,
           );
           expect(title, findsOneWidget);

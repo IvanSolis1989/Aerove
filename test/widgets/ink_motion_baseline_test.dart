@@ -65,10 +65,15 @@ void main() {
       await frame(Duration(milliseconds: index * 34));
     }
     final after = LiquidGlassHost.debugLastInkCapture!;
-    debugPrint('INK_MOTION_CAPTURE_GENERATIONS '
-        '${before.generation} -> ${after.generation}');
-    expect(after.generation, before.generation,
-        reason: 'A fixed wallpaper mesh only changes its sampling transform.');
+    debugPrint(
+      'INK_MOTION_CAPTURE_GENERATIONS '
+      '${before.generation} -> ${after.generation}',
+    );
+    expect(
+      after.generation,
+      before.generation,
+      reason: 'A fixed wallpaper mesh only changes its sampling transform.',
+    );
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
   });

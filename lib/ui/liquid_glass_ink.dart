@@ -51,8 +51,9 @@ class LiquidGlassColorSource extends SingleChildRenderObjectWidget {
 
 class _ColorSourceBox extends RenderRepaintBoundary {
   @override
-  _ColorSourceLayer updateCompositedLayer({required covariant _ColorSourceLayer? oldLayer}) =>
-      (oldLayer ?? _ColorSourceLayer())..size = size;
+  _ColorSourceLayer updateCompositedLayer({
+    required covariant _ColorSourceLayer? oldLayer,
+  }) => (oldLayer ?? _ColorSourceLayer())..size = size;
 }
 
 abstract class _ColorSnapshotLayer extends OffsetLayer {
@@ -82,7 +83,11 @@ abstract class _ColorSnapshotLayer extends OffsetLayer {
               key.add(colorFilter);
             case ImageFilterLayer(:final imageFilter):
               key.add(imageFilter);
-            case ShaderMaskLayer(:final shader, :final maskRect, :final blendMode):
+            case ShaderMaskLayer(
+              :final shader,
+              :final maskRect,
+              :final blendMode,
+            ):
               key.addAll([shader, maskRect, blendMode]);
           }
           visit(child);
@@ -90,6 +95,7 @@ abstract class _ColorSnapshotLayer extends OffsetLayer {
         child = child.nextSibling;
       }
     }
+
     visit(this);
     if (_image != null && listEquals(key, _key)) return _image;
     final scale = math.min(1.0, 1024 / size.longestSide);
@@ -128,9 +134,12 @@ class _ColorFieldLayer extends _ColorSnapshotLayer {
           candidate = (child, _within(child, matrix));
         } else if (child is ContainerLayer) {
           if (child is OpacityLayer && child.alpha != 255 ||
-              child is ColorFilterLayer || child is ImageFilterLayer ||
-              child is ShaderMaskLayer || child is BackdropFilterLayer ||
-              child is ClipPathLayer || child is ClipRSuperellipseLayer ||
+              child is ColorFilterLayer ||
+              child is ImageFilterLayer ||
+              child is ShaderMaskLayer ||
+              child is BackdropFilterLayer ||
+              child is ClipPathLayer ||
+              child is ClipRSuperellipseLayer ||
               child is FollowerLayer) {
             valid = false;
           }
@@ -148,14 +157,18 @@ class _ColorFieldLayer extends _ColorSnapshotLayer {
         child = child.nextSibling;
       }
     }
+
     visit(this, Matrix4.identity());
     final selected = candidate;
     if (!valid || selected == null) return null;
     final matrix = selected.$2;
     final storage = matrix.storage;
     final inverse = Matrix4.tryInvert(matrix);
-    if (inverse == null || storage[3] != 0 || storage[7] != 0 ||
-        storage[11] != 0 || storage[15] != 1 ||
+    if (inverse == null ||
+        storage[3] != 0 ||
+        storage[7] != 0 ||
+        storage[11] != 0 ||
+        storage[15] != 1 ||
         !_contains(Offset.zero & selected.$1.size, inverse, size)) {
       return null;
     }
@@ -163,11 +176,17 @@ class _ColorFieldLayer extends _ColorSnapshotLayer {
   }
 
   bool _contains(Rect bounds, Matrix4 inverse, Size viewport) {
-    for (final corner in [Offset.zero, Offset(viewport.width, 0),
-      Offset(0, viewport.height), Offset(viewport.width, viewport.height)]) {
+    for (final corner in [
+      Offset.zero,
+      Offset(viewport.width, 0),
+      Offset(0, viewport.height),
+      Offset(viewport.width, viewport.height),
+    ]) {
       final point = MatrixUtils.transformPoint(inverse, corner);
-      if (point.dx < bounds.left - 0.001 || point.dx > bounds.right + 0.001 ||
-          point.dy < bounds.top - 0.001 || point.dy > bounds.bottom + 0.001) {
+      if (point.dx < bounds.left - 0.001 ||
+          point.dx > bounds.right + 0.001 ||
+          point.dy < bounds.top - 0.001 ||
+          point.dy > bounds.bottom + 0.001) {
         return false;
       }
     }
@@ -228,9 +247,13 @@ class LiquidGlassInkLayer extends OffsetLayer {
     required bool dark,
     required ui.FragmentProgram? program,
   }) {
-    final changed = this.size != size || this.strength != strength ||
-        this.source != source || this.contrast != contrast ||
-        this.dark != dark || !identical(this.program, program);
+    final changed =
+        this.size != size ||
+        this.strength != strength ||
+        this.source != source ||
+        this.contrast != contrast ||
+        this.dark != dark ||
+        !identical(this.program, program);
     this.offset = offset;
     if (!changed) return;
     _thaw();
@@ -253,7 +276,9 @@ class LiquidGlassInkLayer extends OffsetLayer {
 
   bool _publishField(ui.Image? field, Size fieldSize, Matrix4 mapping) {
     if (inkFrozen) return false;
-    if (!_filterDirty && identical(_field, field) && _fieldSize == fieldSize &&
+    if (!_filterDirty &&
+        identical(_field, field) &&
+        _fieldSize == fieldSize &&
         listEquals(_mapping.storage, mapping.storage)) {
       return false;
     }
@@ -264,7 +289,8 @@ class LiquidGlassInkLayer extends OffsetLayer {
     _mapping = mapping;
     _filterDirty = true;
     inkShader;
-    final changed = !identical(previousUniforms, _uniforms) ||
+    final changed =
+        !identical(previousUniforms, _uniforms) ||
         !identical(previousField, _filteredField);
     if (changed) {
       markNeedsAddToScene();
@@ -398,8 +424,10 @@ class LiquidGlassBackdropLayer extends OffsetLayer {
   }
 
   void _publishField(ui.Image? image, Size fieldSize, Matrix4 mapping) {
-    if (identical(image, _field) && fieldSize == _fieldSize &&
-        listEquals(mapping.storage, _mapping.storage)) return;
+    if (identical(image, _field) &&
+        fieldSize == _fieldSize &&
+        listEquals(mapping.storage, _mapping.storage))
+      return;
     _field = image;
     _fieldSize = fieldSize;
     _mapping = mapping;
@@ -411,9 +439,12 @@ class LiquidGlassBackdropLayer extends OffsetLayer {
       final canvas = Canvas(recorder)
         ..clipRect(Offset.zero & size)
         ..transform(inverse.storage);
-      canvas.drawImageRect(image,
+      canvas.drawImageRect(
+        image,
         Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
-        Offset.zero & fieldSize, Paint()..filterQuality = FilterQuality.low);
+        Offset.zero & fieldSize,
+        Paint()..filterQuality = FilterQuality.low,
+      );
       backdropPicture = recorder.endRecording();
     }
     markNeedsAddToScene();
@@ -421,8 +452,11 @@ class LiquidGlassBackdropLayer extends OffsetLayer {
 
   @override
   void addToScene(ui.SceneBuilder builder) {
-    engineLayer = builder.pushOffset(offset.dx, offset.dy,
-      oldLayer: engineLayer as ui.OffsetEngineLayer?);
+    engineLayer = builder.pushOffset(
+      offset.dx,
+      offset.dy,
+      oldLayer: engineLayer as ui.OffsetEngineLayer?,
+    );
     final picture = backdropPicture;
     if (picture != null) builder.addPicture(Offset.zero, picture);
     builder.pop();
@@ -445,7 +479,8 @@ extension _InkCapture on _LiquidGlassHostLayer {
       for (Layer? child = layer.firstChild; child != null;) {
         if (child is ContainerLayer) {
           final next = _within(child, matrix);
-          final solid = opaque && (child is! OpacityLayer || child.alpha == 255);
+          final solid =
+              opaque && (child is! OpacityLayer || child.alpha == 255);
           if (child is _LiquidGlassOcclusionLayer && solid) {
             covers.add(_GlassCoverage(child, next, inks.length));
           }
@@ -469,13 +504,21 @@ extension _InkCapture on _LiquidGlassHostLayer {
       for (final cover in covers) {
         if (index >= cover.before || !bounds.overlaps(cover.bounds)) continue;
         if (cover.layer.geometry?.$1 is RoundedSuperellipseBorder &&
-            [bounds.topLeft, bounds.topRight, bounds.bottomLeft, bounds.bottomRight]
-                .every(cover.path.contains)) {
+            [
+              bounds.topLeft,
+              bounds.topRight,
+              bounds.bottomLeft,
+              bounds.bottomRight,
+            ].every(cover.path.contains)) {
           hidden = true;
           break;
         }
         remaining ??= (Path()..addRect(ink.maskRect)).transform(matrix.storage);
-        remaining = Path.combine(PathOperation.difference, remaining, cover.path);
+        remaining = Path.combine(
+          PathOperation.difference,
+          remaining,
+          cover.path,
+        );
         if (remaining.getBounds().isEmpty) {
           hidden = true;
           break;
@@ -493,22 +536,30 @@ extension _InkCapture on _LiquidGlassHostLayer {
     final snapshot = selected?.$1 ?? viewport?.$1;
     final toHost = selected?.$2 ?? viewport?.$2;
     final before = snapshot?._image;
-    final image = updating.isEmpty && backdrops.isEmpty ? null : snapshot?.capture();
+    final image = updating.isEmpty && backdrops.isEmpty
+        ? null
+        : snapshot?.capture();
     if (image != null) {
       viewport?.$1.select(image);
     }
     final inverse = toHost == null ? null : Matrix4.tryInvert(toHost);
     for (final (backdrop, matrix) in backdrops) {
-      backdrop._publishField(inverse == null ? null : image,
+      backdrop._publishField(
+        inverse == null ? null : image,
         snapshot?.size ?? Size.zero,
-        inverse == null ? Matrix4.identity() : (inverse.clone()..multiply(matrix)));
+        inverse == null
+            ? Matrix4.identity()
+            : (inverse.clone()..multiply(matrix)),
+      );
     }
     var updates = 0;
     for (final (ink, matrix) in updating) {
       if (ink._publishField(
         inverse == null ? null : image,
         snapshot?.size ?? Size.zero,
-        inverse == null ? Matrix4.identity() : (inverse.clone()..multiply(matrix)),
+        inverse == null
+            ? Matrix4.identity()
+            : (inverse.clone()..multiply(matrix)),
       )) {
         updates++;
       }
