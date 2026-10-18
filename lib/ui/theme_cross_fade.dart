@@ -42,9 +42,14 @@ class _ThemeCrossFadeState extends State<ThemeCrossFade>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) return;
     _controller.stop();
-    if (_snapshot != null) setState(_drop);
+    if (state == AppLifecycleState.resumed || _snapshot != null) {
+      setState(() {
+        _drop();
+        // Resume may build theme changes queued while frames were suspended.
+        _theme = null;
+      });
+    }
   }
 
   @override
@@ -124,6 +129,7 @@ class _ThemeCrossFadeState extends State<ThemeCrossFade>
 
   @override
   Widget build(BuildContext context) {
+    _theme ??= Theme.of(context);
     return _ThemeCrossFadeLayer(
       key: _fadeKey,
       snapshot: _snapshot,

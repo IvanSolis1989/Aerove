@@ -113,19 +113,22 @@ void main() {
         theme = rotateAuroraForMonth(theme, date, random: Random(1));
       },
     );
-    addTearDown(rotation.dispose);
-    rotation.setActive(true);
-    expect(checks, 1);
-    expect(delays, [const Duration(seconds: 1)]);
-    final seed = theme.auroraSeed;
-    now = DateTime(2027);
-    await tester.pump(const Duration(seconds: 1));
-    expect(checks, 2);
-    expect(theme.auroraSeed, isNot(seed));
-    expect(theme.auroraRotationMonth, 202701);
-    expect(delays.last, const Duration(days: 31));
-    await tester.pump(const Duration(hours: 1));
-    expect(checks, 2);
+    try {
+      rotation.setActive(true);
+      expect(checks, 1);
+      expect(delays, [const Duration(seconds: 1)]);
+      final seed = theme.auroraSeed;
+      now = DateTime(2027);
+      await tester.pump(const Duration(seconds: 1));
+      expect(checks, 2);
+      expect(theme.auroraSeed, isNot(seed));
+      expect(theme.auroraRotationMonth, 202701);
+      expect(delays.last, const Duration(days: 31));
+      await tester.pump(const Duration(hours: 1));
+      expect(checks, 2);
+    } finally {
+      rotation.dispose();
+    }
   });
 
   testWidgets('background cancels its timer and resume catches up once', (

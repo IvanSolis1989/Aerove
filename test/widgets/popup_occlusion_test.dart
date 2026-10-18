@@ -274,7 +274,13 @@ void main() {
         }
         expect(glyphPixels, greaterThan(100));
         final control = (160 * 360 + 210) * 4;
-        expect(actual.sublist(control, control + 4), [255, 255, 0, 255]);
+        const controlColor = Colors.yellow;
+        expect(actual.sublist(control, control + 4), [
+          (controlColor.r * 255).round(),
+          (controlColor.g * 255).round(),
+          (controlColor.b * 255).round(),
+          (controlColor.a * 255).round(),
+        ]);
         final own = (50 * 360 + 290) * 4;
         expect(actual.sublist(own, own + 4), [156, 39, 176, 255]);
         final capture = LiquidGlassHost.debugLastCapture!;
@@ -598,11 +604,12 @@ void main() {
               format: ui.ImageByteFormat.rawRgba,
             ))!;
             final index = (190 * image.width + 190) * 4;
+            const color = Colors.yellow;
             expect(rgba.buffer.asUint8List().sublist(index, index + 4), [
-              255,
-              255,
-              0,
-              255,
+              (color.r * 255).round(),
+              (color.g * 255).round(),
+              (color.b * 255).round(),
+              (color.a * 255).round(),
             ]);
             final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
             if (output != null) {

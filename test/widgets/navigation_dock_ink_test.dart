@@ -186,8 +186,9 @@ Future<int> _checkPartialGlyphs(
       for (var x = rect.left.ceil(); x < rect.right.floor(); x++) {
         final point = Offset(x + 0.5, y + 0.5);
         if ((point.dx - lens.left).abs() < 2 ||
-            (point.dx - lens.right).abs() < 2)
+            (point.dx - lens.right).abs() < 2) {
           continue;
+        }
         final offset = (y * 400 + x) * 4;
         var delta = 0;
         for (var channel = 0; channel < 3; channel++) {
@@ -225,21 +226,25 @@ void main() {
     tester,
   ) async {
     final semantics = tester.ensureSemantics();
-    addTearDown(semantics.dispose);
-    final key = GlobalKey<_FixtureState>();
-    await _pump(tester, key);
-    final layers = _glyphLayers(tester);
-    expect(layers, hasLength(4));
-    expect(layers.toSet(), hasLength(4));
-    for (var index = 0; index < _glyphs.length; index++) {
-      expect(_glyph(index), findsNWidgets(2));
-      expect(find.bySemanticsLabel(_labels[index]), findsOneWidget);
+    try {
+      final key = GlobalKey<_FixtureState>();
+      await _pump(tester, key);
+      final layers = _glyphLayers(tester);
+      expect(layers, hasLength(4));
+      expect(layers.toSet(), hasLength(4));
+      for (var index = 0; index < _glyphs.length; index++) {
+        expect(_glyph(index), findsNWidgets(2));
+        expect(find.bySemanticsLabel(_labels[index]), findsOneWidget);
+      }
+      Actions.invoke(tester.element(_glyph(2).first), const ActivateIntent());
+      await tester.pumpAndSettle();
+      expect(key.currentState!.selected, 2);
+      expect(_glyphLayers(tester).toSet(), hasLength(4));
+      expect(tester.takeException(), isNull);
+    } finally {
+      semantics.dispose();
+      await tester.pumpWidget(const SizedBox.shrink());
     }
-    Actions.invoke(tester.element(_glyph(2).first), const ActivateIntent());
-    await tester.pumpAndSettle();
-    expect(key.currentState!.selected, 2);
-    expect(_glyphLayers(tester).toSet(), hasLength(4));
-    expect(tester.takeException(), isNull);
   }, skip: !ui.ImageFilter.isShaderFilterSupported);
 
   for (final pointer in [false, true]) {
@@ -294,8 +299,8 @@ void main() {
       expect(_glyphLayers(tester), isEmpty);
       expect(tester.takeException(), isNull);
     } finally {
-      await tester.pumpWidget(const SizedBox.shrink());
       semantics.dispose();
+      await tester.pumpWidget(const SizedBox.shrink());
     }
   });
 }

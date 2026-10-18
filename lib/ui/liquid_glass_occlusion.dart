@@ -80,7 +80,12 @@ class _LiquidGlassOcclusionLayer extends OffsetLayer {
   (ShapeBorder, TextDirection, Rect, double)? geometry;
   Path path = Path();
 
-  void configure(ShapeBorder shape, TextDirection direction, Rect rect, [double feather = 0]) {
+  void configure(
+    ShapeBorder shape,
+    TextDirection direction,
+    Rect rect, [
+    double feather = 0,
+  ]) {
     final key = (shape, direction, rect, math.max(0.0, feather));
     if (geometry == key) return;
     geometry = key;
@@ -97,13 +102,14 @@ class _GlassCoverage {
   final int before;
   late final Path path = layer.path.transform(toHost.storage);
   late final Rect bounds = path.getBounds();
-  late final _GlassFeather? feather = (layer.geometry?.$4 ?? 0) == 0 ? null
+  late final _GlassFeather? feather = (layer.geometry?.$4 ?? 0) == 0
+      ? null
       : _GlassFeather(layer.geometry!.$3, layer.geometry!.$4, toHost);
 }
 
 class _GlassFeather {
   _GlassFeather(Rect rect, double extent, this.transform)
-      : band = Rect.fromLTWH(rect.left, rect.bottom, rect.width, extent);
+    : band = Rect.fromLTWH(rect.left, rect.bottom, rect.width, extent);
 
   final Rect band;
   final Matrix4 transform;
@@ -120,11 +126,16 @@ class _GlassFeather {
       ..save()
       ..transform(transform.storage)
       ..clipRect(band, doAntiAlias: false)
-      ..drawRect(band, Paint()
-        ..blendMode = BlendMode.dstIn
-        ..shader = LinearGradient(begin: Alignment.topCenter,
-          end: Alignment.bottomCenter, colors: inverse ? _frozen : _live)
-          .createShader(band))
+      ..drawRect(
+        band,
+        Paint()
+          ..blendMode = BlendMode.dstIn
+          ..shader = LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: inverse ? _frozen : _live,
+          ).createShader(band),
+      )
       ..restore();
   }
 }

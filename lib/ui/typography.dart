@@ -97,7 +97,9 @@ TextTheme _neutralTextColors(
 ) {
   TextStyle? remap(TextStyle? style) {
     final color = style?.color;
-    if (style == null || color == null || style.foreground != null) return style;
+    if (style == null || color == null || style.foreground != null) {
+      return style;
+    }
     bool sameRgb(Color other) =>
         color.r == other.r && color.g == other.g && color.b == other.b;
     final replacement = sameRgb(previous.onSurface)

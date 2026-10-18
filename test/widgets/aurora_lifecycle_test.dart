@@ -6,7 +6,6 @@ import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/ui/foreground_ink.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/widgets/aurora.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -42,7 +41,12 @@ void main() {
           container: container,
           child: MaterialApp(
             theme: ThemeData(platform: TargetPlatform.android),
-            home: AuroraAppSurface(child: _Probe(key: key)),
+            home: AuroraAppSurface(
+              child: Material(
+                type: MaterialType.transparency,
+                child: _Probe(key: key),
+              ),
+            ),
           ),
         ),
       );
@@ -51,6 +55,12 @@ void main() {
       final state = key.currentState!;
       expect(state.ticks, greaterThan(0));
       expect(state.paints, greaterThan(0));
+      if (mode != LiquidGlassMode.none) {
+        expect(find.byType(GlassInk), findsOneWidget);
+        if (ui.ImageFilter.isShaderFilterSupported) {
+          expect(LiquidGlassHost.debugLastInkCapture!.masks, greaterThan(0));
+        }
+      }
       final seed = container.read(themeSettingProvider).auroraSeed;
 
       for (final lifecycle in [
@@ -134,10 +144,10 @@ class _ProbeState extends State<_Probe> with SingleTickerProviderStateMixin {
     builds++;
     return CustomPaint(
       painter: _PaintProbe(_animation, () => paints++),
-      child: Center(
+      child: const Center(
         child: LiquidGlass(
-          style: const LiquidGlassStyle(tint: Colors.transparent, blur: 0),
-          child: const SizedBox(
+          style: LiquidGlassStyle(tint: Colors.transparent, blur: 0),
+          child: SizedBox(
             width: 180,
             height: 80,
             child: Center(child: GlassText('Proxy stays mounted')),

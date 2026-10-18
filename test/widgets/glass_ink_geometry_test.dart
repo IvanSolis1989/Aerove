@@ -273,7 +273,7 @@ void main() {
               ProviderScope(
                 overrides: [
                   themeSettingProvider.overrideWithBuild(
-                    (_, _) => ThemeProps(
+                    (_, _) => const ThemeProps(
                       auroraEnabled: true,
                       liquidGlass: LiquidGlassMode.standard,
                     ),
@@ -380,8 +380,9 @@ void main() {
               final control = pixel(plain, x, y);
               if ((control.r - colors.onSurface.r).abs() > 0.01 ||
                   (control.g - colors.onSurface.g).abs() > 0.01 ||
-                  (control.b - colors.onSurface.b).abs() > 0.01)
+                  (control.b - colors.onSurface.b).abs() > 0.01) {
                 continue;
+              }
               opaquePoints++;
               if (x > 44) {
                 expect(pixel(clipped, x, y), pixel(empty, x, y));
@@ -411,7 +412,7 @@ void main() {
               }
               if (a != control) changed++;
               if (a != n) moving++;
-              if (samples.length < 4)
+              if (samples.length < 4) {
                 samples.add({
                   'point': [x, y],
                   'source': control.toARGB32(),
@@ -421,6 +422,7 @@ void main() {
                   'overflow': c.toARGB32(),
                   'motion': n.toARGB32(),
                 });
+              }
             }
           }
           for (var y = 95; y < 115; y++) {
@@ -430,7 +432,7 @@ void main() {
             }
           }
           final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
-          if (output != null)
+          if (output != null) {
             File(
               '$output/ink-geometry-${brightness.name}-$dpr-${direction.name}.json',
             ).writeAsStringSync(
@@ -445,6 +447,7 @@ void main() {
                 'samples': samples,
               }),
             );
+          }
           expect(opaquePoints, greaterThan(100));
           expect(maxError, lessThanOrEqualTo(3));
           expect(changed, greaterThan(100));
@@ -672,8 +675,9 @@ Future<void> _realTextEnvelope(
       supported++;
       if (distance(actual, under) < 0.05) {
         missing++;
-        if (missingPoints.length < 8)
+        if (missingPoints.length < 8) {
           missingPoints.add([(index ~/ 4) % 520, index ~/ (4 * 520)]);
+        }
       }
     }
     if (distance(original, scheme.onSurface) <= 1 / 255) {
@@ -685,12 +689,13 @@ Future<void> _realTextEnvelope(
         (math.max(a, b) + 0.05) / (math.min(a, b) + 0.05),
       );
       if (HSVColor.fromColor(actual).saturation >
-          HSVColor.fromColor(original).saturation + 0.10)
+          HSVColor.fromColor(original).saturation + 0.10) {
         colored++;
+      }
     }
   }
   final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
-  if (output != null)
+  if (output != null) {
     File(
       '$output/ink-real-envelope-${brightness.name}-${direction.name}-$scale.json',
     ).writeAsStringSync(
@@ -703,6 +708,7 @@ Future<void> _realTextEnvelope(
         'minimumContrast': minimumContrast,
       }),
     );
+  }
   expect(supported, greaterThan(100));
   expect(
     missing,

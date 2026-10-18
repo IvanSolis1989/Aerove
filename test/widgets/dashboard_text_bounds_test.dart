@@ -255,6 +255,7 @@ void main() {
     await tester.pumpWidget(
       TestApp(
         theme: ThemeData(fontFamily: 'DashboardBounds'),
+        homeBuilder: (child) => Scaffold(body: child),
         child: RepaintBoundary(
           key: capture,
           child: const ColoredBox(
@@ -298,8 +299,6 @@ void main() {
         for (final width in [320.0, 430.0, 1100.0]) {
           final name = '${brightness.name}-${mode.name}-$scale-$width';
           testWidgets('dashboard glyph rows survive $name', (tester) async {
-            debugDefaultTargetPlatformOverride = TargetPlatform.android;
-            addTearDown(() => debugDefaultTargetPlatformOverride = null);
             tester.view.physicalSize = Size(width, 1000);
             tester.view.devicePixelRatio = 1;
             addTearDown(tester.view.reset);
@@ -391,11 +390,14 @@ void main() {
               [for (final target in _targets) target.label],
             ]) {
               expect(_paragraphs(labels.first), findsOneWidget);
-              await tester.ensureVisible(_paragraphs(labels.first));
+              await tester.ensureVisible(_paragraphs(labels.first), alignment: 0.3);
               await tester.pumpAndSettle();
               final paragraphs = [
                 for (final label in labels)
                   tester.renderObject<RenderParagraph>(_paragraphs(label)),
+                if (labels.first != _organization)
+                  for (var i = 0; i < _targets.length; i++)
+                    tester.renderObject<RenderParagraph>(_paragraphs('42 ms').at(i)),
               ];
               final rows = await _measure(
                 tester,
@@ -407,11 +409,14 @@ void main() {
               for (final row in rows) {
                 expect(row['inkRows'], isNotEmpty, reason: '$row');
                 expect(row['missingRows'], isEmpty, reason: '$row');
+                if (labels.first != _organization) {
+                  expect(row['ellipsis'], isFalse, reason: '$row');
+                }
               }
               expect(tester.takeException(), isNull);
             }
             await tester.pumpWidget(const SizedBox.shrink());
-          });
+          }, variant: TargetPlatformVariant.only(TargetPlatform.android));
         }
       }
     }

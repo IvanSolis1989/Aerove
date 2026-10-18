@@ -72,7 +72,8 @@ class LiquidGlassHost extends StatelessWidget {
   static LiquidGlassInkCapture? debugLastInkCapture;
 
   @visibleForTesting
-  static ({int panes, int stripPixels, int surfacePixels})? debugLastFeatherCapture;
+  static ({int panes, int stripPixels, int surfacePixels})?
+  debugLastFeatherCapture;
 
   @visibleForTesting
   static bool? debugCarryBandsOverride;
@@ -480,16 +481,23 @@ class _LiquidGlassHostLayer extends ContainerLayer {
         if (entry.pane._featherBands.isEmpty) continue;
         featheredPanes++;
         for (final band in entry.pane._featherBands) {
-          final hostRect = MatrixUtils.transformRect(entry.toHost, band.rect).intersect(bounds);
+          final hostRect = MatrixUtils.transformRect(
+            entry.toHost,
+            band.rect,
+          ).intersect(bounds);
           if (hostRect.isEmpty) continue;
-          final pixels = (hostRect.width * devicePixelRatio).ceil() *
+          final pixels =
+              (hostRect.width * devicePixelRatio).ceil() *
               (hostRect.height * devicePixelRatio).ceil();
           stripPixels += pixels;
           surfacePixels += pixels * band.surfaces;
         }
       }
       LiquidGlassHost.debugLastFeatherCapture = (
-        panes: featheredPanes, stripPixels: stripPixels, surfacePixels: surfacePixels);
+        panes: featheredPanes,
+        stripPixels: stripPixels,
+        surfacePixels: surfacePixels,
+      );
       LiquidGlassHost.debugLastCapture = (
         snapshots: snapshots,
         keptBands: keptBands,
@@ -579,32 +587,55 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     Path? visible;
     for (final cover in coverage) {
       final feather = cover.feather;
-      if (index >= cover.before || entry.ancestors.contains(cover.layer) ||
+      if (index >= cover.before ||
+          entry.ancestors.contains(cover.layer) ||
           (!entry.visibleBounds.overlaps(cover.bounds) &&
-            !(feather?.path.getBounds().overlaps(entry.visibleBounds) ?? false))) {
+              !(feather?.path.getBounds().overlaps(entry.visibleBounds) ??
+                  false))) {
         continue;
       }
-      visible ??= (entry.pane.outline ??
-          (Path()..addRSuperellipse(entry.pane.corners.toRSuperellipse(entry.pane.rect))))
-          .transform(entry.toHost.storage);
-      final overlap = Path.combine(PathOperation.intersect, visible, cover.path);
-      final inBand = feather == null ? null
+      visible ??=
+          (entry.pane.outline ??
+                  (Path()..addRSuperellipse(
+                    entry.pane.corners.toRSuperellipse(entry.pane.rect),
+                  )))
+              .transform(entry.toHost.storage);
+      final overlap = Path.combine(
+        PathOperation.intersect,
+        visible,
+        cover.path,
+      );
+      final inBand = feather == null
+          ? null
           : Path.combine(PathOperation.intersect, visible, feather.path);
-      if (overlap.getBounds().isEmpty && (inBand?.getBounds().isEmpty ?? true)) continue;
+      if (overlap.getBounds().isEmpty && (inBand?.getBounds().isEmpty ?? true))
+        continue;
       if (!overlap.getBounds().isEmpty) {
         visible = Path.combine(PathOperation.difference, visible, cover.path);
-        entry.covered = Path.combine(PathOperation.union, entry.covered ?? Path(), cover.path);
+        entry.covered = Path.combine(
+          PathOperation.union,
+          entry.covered ?? Path(),
+          cover.path,
+        );
       }
       if (inBand != null && !inBand.getBounds().isEmpty) {
         final inverse = Matrix4.tryInvert(entry.toHost);
         if (inverse != null) {
-          entry.feathers.add(_GlassFeather(cover.layer.geometry!.$3,
-            cover.layer.geometry!.$4, inverse..multiply(cover.toHost)));
+          entry.feathers.add(
+            _GlassFeather(
+              cover.layer.geometry!.$3,
+              cover.layer.geometry!.$4,
+              inverse..multiply(cover.toHost),
+            ),
+          );
         }
       }
       entry.visible = visible;
-      entry.coverageKey.addAll([cover.layer.path, cover.layer.geometry!.$4,
-        ...cover.toHost.storage]);
+      entry.coverageKey.addAll([
+        cover.layer.path,
+        cover.layer.geometry!.$4,
+        ...cover.toHost.storage,
+      ]);
       if (visible.getBounds().isEmpty) break;
     }
     if (entry.visible != null) entry.coverageKey.addAll(entry.toHost.storage);
@@ -781,9 +812,12 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     final classes = <Object, List<_Behind>>{};
     for (final entry in members) {
       (classes[entry.sourceBlur != null && entry.blurSigma > 0
-              ? _sourceBlurredBand : entry.blurSigma == 0 ? entry : entry.blurSigma] ??= []).add(
-        entry,
-      );
+                  ? _sourceBlurredBand
+                  : entry.blurSigma == 0
+                  ? entry
+                  : entry.blurSigma] ??=
+              [])
+          .add(entry);
     }
     double step(double extent) => (extent / _atlasStep).ceil() * _atlasStep;
     final bands = <_Band>[];
@@ -798,7 +832,9 @@ class _LiquidGlassHostLayer extends ContainerLayer {
         width = math.max(width, entry.texels.width);
       }
       final rect = Rect.fromLTWH(0, top, step(width), step(bottom));
-      final sigma = entries.first.sourceBlur == null ? entries.first.blurSigma : 0.0;
+      final sigma = entries.first.sourceBlur == null
+          ? entries.first.blurSigma
+          : 0.0;
       final drawn = <Object?>[sigma, rect.size];
       final recorder = ui.PictureRecorder();
       final canvas = Canvas(recorder);
@@ -816,11 +852,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
           ..translate(-entry.slot.left, -entry.slot.top);
         if (entry.wallpaper case final wallpaper?) {
           final image = entry.sourceBlur ?? wallpaper.image;
-          drawn.addAll([
-            image,
-            wallpaper.size,
-            ...wallpaper.toHost.storage,
-          ]);
+          drawn.addAll([image, wallpaper.size, ...wallpaper.toHost.storage]);
           canvas
             ..save()
             ..transform(wallpaper.toHost.storage)
@@ -1009,7 +1041,12 @@ typedef _Placement = ({
 typedef _Band = ({Rect rect, double sigma, List<Object?> drawn});
 typedef _FlatSnapshot = ({ui.Image image, Rect bounds, List<Object?> key});
 
-typedef _Wallpaper = ({ui.Image image, Size size, Matrix4 toHost, bool staticSource});
+typedef _Wallpaper = ({
+  ui.Image image,
+  Size size,
+  Matrix4 toHost,
+  bool staticSource,
+});
 
 bool _encloses(Rect outer, Rect inner) =>
     outer.left <= inner.left &&

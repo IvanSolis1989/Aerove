@@ -55,26 +55,29 @@ void main() {
           final container = ProviderContainer(
             overrides: [
               navigationItemsStateProvider.overrideWithValue(
-                NavigationItemsState(value: [
-                  for (final (label, glyph, _) in _tabs)
-                    NavigationItem(
-                      glyph: glyph,
-                      label: label,
-                      builder: (_) => _ProbePage(label),
-                    ),
-                ]),
+                NavigationItemsState(
+                  value: [
+                    for (final (label, glyph, _) in _tabs)
+                      NavigationItem(
+                        glyph: glyph,
+                        label: label,
+                        builder: (_) => _ProbePage(label),
+                      ),
+                  ],
+                ),
               ),
             ],
           );
           globalState.container = container;
           container.read(viewSizeProvider.notifier).value = _size;
-          container.read(appSettingProvider.notifier).update(
-            (state) => state.copyWith(tabAnimation: animation),
-          );
+          container
+              .read(appSettingProvider.notifier)
+              .update((state) => state.copyWith(tabAnimation: animation));
           final capture = GlobalKey();
           final frames = <Map<String, Object?>>[];
           final failures = <String>[];
-          final name = 'home-first-${animation.name}-${quality?.name ?? 'none'}-$wallpaperOnly';
+          final name =
+              'home-first-${animation.name}-${quality?.name ?? 'none'}-$wallpaperOnly';
           try {
             LiquidGlassHost.debugLastCapture = null;
             await tester.pumpWidget(
@@ -123,7 +126,11 @@ void main() {
               ),
             );
 
-            Future<void> sample(PageLabel label, String phase, int elapsed) async {
+            Future<void> sample(
+              PageLabel label,
+              String phase,
+              int elapsed,
+            ) async {
               final page = find.byKey(ValueKey('page-${label.name}'));
               final pane = find.byKey(ValueKey('pane-${label.name}'));
               final built = page.evaluate().isNotEmpty;
@@ -131,7 +138,10 @@ void main() {
               final rect = built ? tester.getRect(pane) : Rect.zero;
               final visible = rect.intersect(Offset.zero & _size);
               final fades = built
-                  ? find.ancestor(of: page, matching: find.byType(LiquidGlassFade))
+                  ? find.ancestor(
+                      of: page,
+                      matching: find.byType(LiquidGlassFade),
+                    )
                   : find.byKey(const ValueKey('absent'));
               final ordinaryOpacity = built
                   ? find.ancestor(of: page, matching: find.byType(Opacity))
@@ -142,10 +152,18 @@ void main() {
                   ? tester.widget<Opacity>(ordinaryOpacity.first).opacity
                   : 1.0;
               final state = LiquidGlassHost.debugLastCapture;
-              final panes = state?.panes.where(
-                (entry) => (entry.pane.topLeft - rect.topLeft).distance < 0.01 &&
-                    (entry.pane.bottomRight - rect.bottomRight).distance < 0.01,
-              ).toList() ?? [];
+              final panes =
+                  state?.panes
+                      .where(
+                        (entry) =>
+                            (entry.pane.topLeft - rect.topLeft).distance <
+                                0.01 &&
+                            (entry.pane.bottomRight - rect.bottomRight)
+                                    .distance <
+                                0.01,
+                      )
+                      .toList() ??
+                  [];
               final header = built
                   ? find.descendant(of: page, matching: find.byType(HeaderBlur))
                   : find.byKey(const ValueKey('absent-header'));
@@ -153,13 +171,20 @@ void main() {
               if (panes.isNotEmpty && visible.width > 2 && visible.height > 2) {
                 final entry = panes.single;
                 final point = visible.deflate(1).center;
-                final texel = entry.place.topLeft +
+                final texel =
+                    entry.place.topLeft +
                     (point - entry.slot.topLeft) * entry.scale;
                 final bytes = (await tester.runAsync(entry.atlas.toByteData))!;
-                final index = (texel.dy.floor() * entry.atlas.width + texel.dx.floor()) * 4;
+                final index =
+                    (texel.dy.floor() * entry.atlas.width + texel.dx.floor()) *
+                    4;
                 atlasAlpha = bytes.getUint8(index + 3);
               }
-              final image = await _snapshot(tester, capture, '$name-${label.name}-$phase-$elapsed');
+              final image = await _snapshot(
+                tester,
+                capture,
+                '$name-${label.name}-$phase-$elapsed',
+              );
               final headerCrop = Rect.fromLTWH(
                 pageRect.left + 2,
                 pageRect.top + 4,
@@ -187,26 +212,44 @@ void main() {
                 'replayedPanes': state?.replayedPanes,
                 'sampleAlpha': atlasAlpha,
                 'headerBlurWidgets': header.evaluate().length,
-                'shaderBackendSupported': ui.ImageFilter.isShaderFilterSupported,
+                'shaderBackendSupported':
+                    ui.ImageFilter.isShaderFilterSupported,
                 'shaderReady': LiquidGlass.debugShaderReady,
-                'headerCrop': [headerCrop.left, headerCrop.top, headerCrop.right, headerCrop.bottom],
+                'headerCrop': [
+                  headerCrop.left,
+                  headerCrop.top,
+                  headerCrop.right,
+                  headerCrop.bottom,
+                ],
                 'headerVariance': headerVariance,
                 'unblurredStripeVariance': rawHeaderVariance,
               });
-              if (quality != null && built && alpha > 1 / 255 &&
-                  visible.width > 2 && visible.height > 2) {
+              if (quality != null &&
+                  built &&
+                  alpha > 1 / 255 &&
+                  visible.width > 2 &&
+                  visible.height > 2) {
                 if (panes.length != 1) {
-                  failures.add('$label $phase $elapsed: visible pane has ${panes.length} captures.');
+                  failures.add(
+                    '$label $phase $elapsed: visible pane has ${panes.length} captures.',
+                  );
                 }
                 if (atlasAlpha == 0) {
-                  failures.add('$label $phase $elapsed: backdrop sample is transparent.');
+                  failures.add(
+                    '$label $phase $elapsed: backdrop sample is transparent.',
+                  );
                 }
                 if (header.evaluate().length != 1) {
-                  failures.add('$label $phase $elapsed: floating header blur is absent.');
+                  failures.add(
+                    '$label $phase $elapsed: floating header blur is absent.',
+                  );
                 }
-                if (headerVariance != null && rawHeaderVariance != null &&
+                if (headerVariance != null &&
+                    rawHeaderVariance != null &&
                     headerVariance >= rawHeaderVariance) {
-                  failures.add('$label $phase $elapsed: header stripe variance $headerVariance did not fall below unblurred $rawHeaderVariance.');
+                  failures.add(
+                    '$label $phase $elapsed: header stripe variance $headerVariance did not fall below unblurred $rawHeaderVariance.',
+                  );
                 }
               }
               if (quality == null) expect(header, findsNothing);
@@ -215,19 +258,32 @@ void main() {
 
             await sample(PageLabel.dashboard, 'initial-cold-candidate', 0);
             for (final phase in ['arrival', 'warm-repeat']) {
-              if (phase == 'warm-repeat' && quality != null && ui.ImageFilter.isShaderFilterSupported) {
+              if (phase == 'warm-repeat' &&
+                  quality != null &&
+                  ui.ImageFilter.isShaderFilterSupported) {
                 await tester.runAsync(() async {
-                  await ui.FragmentProgram.fromAsset('shaders/liquid_glass.frag');
+                  await ui.FragmentProgram.fromAsset(
+                    'shaders/liquid_glass.frag',
+                  );
                 });
                 await tester.pump();
-                expect(LiquidGlass.debugShaderReady, isTrue,
-                  reason: 'A warm repeat requires the actual shared program to be ready.');
+                expect(
+                  LiquidGlass.debugShaderReady,
+                  isTrue,
+                  reason:
+                      'A warm repeat requires the actual shared program to be ready.',
+                );
               }
-              for (final (label, _, caption) in [..._tabs.skip(1), _tabs.first]) {
-                await tester.tap(find.descendant(
-                  of: find.byType(NavigationDock),
-                  matching: find.text(caption),
-                ));
+              for (final (label, _, caption) in [
+                ..._tabs.skip(1),
+                _tabs.first,
+              ]) {
+                await tester.tap(
+                  find.descendant(
+                    of: find.byType(NavigationDock),
+                    matching: find.text(caption),
+                  ),
+                );
                 await tester.pump();
                 var previous = 0;
                 for (final elapsed in _times) {
@@ -244,10 +300,9 @@ void main() {
             if (output != null) {
               await tester.runAsync(() async {
                 await File('$output/$name.json').writeAsString(
-                  const JsonEncoder.withIndent('  ').convert({
-                    'frames': frames,
-                    'failures': failures,
-                  }),
+                  const JsonEncoder.withIndent(
+                    '  ',
+                  ).convert({'frames': frames, 'failures': failures}),
                 );
               });
             }
@@ -273,24 +328,28 @@ class _ProbePage extends StatelessWidget {
     key: ValueKey('page-${label.name}'),
     title: 'P${label.index + 1}',
     backgroundColor: Colors.transparent,
-    body: Stack(children: [
-      Positioned(
-        left: 24,
-        top: 170,
-        width: 280,
-        height: 150,
-        child: SizedBox(
-          key: ValueKey('pane-${label.name}'),
-          child: LiquidGlassScope.of(context)
-              ? LiquidGlass(
-                  style: LiquidGlassStyle.regular(Theme.of(context).colorScheme),
-                  clipper: const ShapeBorderClipper(shape: AppShape.xl),
-                  child: const SizedBox.expand(),
-                )
-              : const ColoredBox(color: Color(0xFF909090)),
+    body: Stack(
+      children: [
+        Positioned(
+          left: 24,
+          top: 170,
+          width: 280,
+          height: 150,
+          child: SizedBox(
+            key: ValueKey('pane-${label.name}'),
+            child: LiquidGlassScope.of(context)
+                ? LiquidGlass(
+                    style: LiquidGlassStyle.regular(
+                      Theme.of(context).colorScheme,
+                    ),
+                    clipper: const ShapeBorderClipper(shape: AppShape.xl),
+                    child: const SizedBox.expand(),
+                  )
+                : const ColoredBox(color: Color(0xFF909090)),
+          ),
         ),
-      ),
-    ]),
+      ],
+    ),
   );
 }
 
@@ -299,20 +358,33 @@ class _Checker extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     for (var x = 0.0; x < size.width; x += 8) {
-      canvas.drawRect(Rect.fromLTWH(x, 0, 8, size.height), Paint()
-        ..color = (x ~/ 8).isEven ? const Color(0xFF37678C) : const Color(0xFFD1B47F));
+      canvas.drawRect(
+        Rect.fromLTWH(x, 0, 8, size.height),
+        Paint()
+          ..color = (x ~/ 8).isEven
+              ? const Color(0xFF37678C)
+              : const Color(0xFFD1B47F),
+      );
     }
   }
+
   @override
   bool shouldRepaint(_Checker oldDelegate) => false;
 }
 
-Future<Uint8List> _snapshot(WidgetTester tester, GlobalKey key, String name) async {
+Future<Uint8List> _snapshot(
+  WidgetTester tester,
+  GlobalKey key,
+  String name,
+) async {
   late Uint8List bytes;
-  final boundary = key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+  final boundary =
+      key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
   await tester.runAsync(() async {
     final image = boundary.toImageSync();
-    bytes = (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!.buffer.asUint8List();
+    bytes = (await image.toByteData(
+      format: ui.ImageByteFormat.rawRgba,
+    ))!.buffer.asUint8List();
     final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
     if (output != null) {
       await Directory(output).create(recursive: true);
@@ -331,9 +403,11 @@ double _variance(Uint8List bytes, Rect rect) {
   for (var y = rect.top.toInt(); y < rect.bottom; y++) {
     for (var x = rect.left.toInt(); x < rect.right; x++) {
       final index = (y * _size.width.toInt() + x) * 4;
-      final value = (bytes[index] * 0.2126 +
-          bytes[index + 1] * 0.7152 +
-          bytes[index + 2] * 0.0722).roundToDouble();
+      final value =
+          (bytes[index] * 0.2126 +
+                  bytes[index + 1] * 0.7152 +
+                  bytes[index + 2] * 0.0722)
+              .roundToDouble();
       sum += value;
       square += value * value;
       count++;
@@ -350,8 +424,11 @@ double _stripeVariance(Rect rect) {
     final color = (x ~/ 8).isEven
         ? const Color(0xFF37678C)
         : const Color(0xFFD1B47F);
-    final value = (color.r * 255 * 0.2126 +
-        color.g * 255 * 0.7152 + color.b * 255 * 0.0722).roundToDouble();
+    final value =
+        (color.r * 255 * 0.2126 +
+                color.g * 255 * 0.7152 +
+                color.b * 255 * 0.0722)
+            .roundToDouble();
     sum += value;
     square += value * value;
     count++;

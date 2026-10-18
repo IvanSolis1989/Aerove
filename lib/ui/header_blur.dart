@@ -19,7 +19,8 @@ class HeaderBlur extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (fadeHeight <= 0) return const SizedBox.shrink();
-    final glass = LiquidGlassScope.of(context) && !MediaQuery.highContrastOf(context);
+    final glass =
+        LiquidGlassScope.of(context) && !MediaQuery.highContrastOf(context);
     return Align(
       alignment: Alignment.topCenter,
       child: SizedBox(

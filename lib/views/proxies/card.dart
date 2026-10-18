@@ -87,37 +87,24 @@ class ProxyCard extends ConsumerWidget {
     final typeStyle = AppTextStyle.footnote
         .of(context)
         .copyWith(
-          overflow: TextOverflow.ellipsis,
           color: context.colorScheme.onSurface.opacity80,
         );
-    final details = isLoose
-        ? Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SizedBox(
-                height: measure.textHeight(AppTextStyle.footnote),
-                child: _ProxyDesc(proxy: proxy, style: typeStyle),
-              ),
-              const SizedBox(height: 6),
-              delayText,
-            ],
-          )
-        : SizedBox(
-            height: measure.textHeight(AppTextStyle.footnote),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Flexible(
-                  flex: 1,
-                  child: TooltipText(
-                    text: GlassText(proxy.type, maxLines: 1, style: typeStyle),
-                  ),
-                ),
-                delayText,
-              ],
-            ),
-          );
+    final details = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          height: measure.textHeight(AppTextStyle.footnote) * 2,
+          child: isLoose
+              ? _ProxyDesc(proxy: proxy, style: typeStyle)
+              : GlassText(proxy.type, maxLines: 2, style: typeStyle),
+        ),
+        const SizedBox(height: 6),
+        Align(
+          alignment: isLoose ? Alignment.centerLeft : Alignment.centerRight,
+          child: delayText,
+        ),
+      ],
+    );
     return Consumer(
       builder: (context, ref, _) {
         final inUse = ref.watch(
@@ -190,7 +177,7 @@ class _ProxyDesc extends ConsumerWidget {
         : proxy.name;
     return EmojiText(
       nodeName == proxy.name ? proxy.type : '${proxy.type}($nodeName)',
-      maxLines: 1,
+      maxLines: 2,
       overflow: TextOverflow.ellipsis,
       style: style,
     );

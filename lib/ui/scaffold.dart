@@ -476,6 +476,9 @@ class CommonScaffoldState extends State<CommonScaffold> {
     IconButtonData? primaryAction,
     VoidCallback? backAction,
     _SheetForm form,
+    double availableWidth,
+    TextStyle titleStyle,
+    bool hasLeading,
   ) {
     if (_sorting) {
       return genActions([
@@ -509,6 +512,26 @@ class CommonScaffoldState extends State<CommonScaffold> {
     final widgets = _isSearch
         ? const <Widget>[]
         : widget.actions ?? const <Widget>[];
+    final titleMeasure = TextPainter(
+      text: TextSpan(
+        text: widget.title?.isNotEmpty == true
+            ? '${String.fromCharCode(widget.title!.runes.first)}…'
+            : '…',
+        style: titleStyle,
+      ),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+    )..layout();
+    final compact = _isCompactBar(context, ViewScope.isMobileOf(context));
+    final actionWidth = (availableWidth -
+        (hasLeading ? appBarLeadingWidth(compact) : 0) -
+        titleMeasure.width -
+        (hasLeading ? appBarActionInset(compact) : 32) -
+        appBarActionInset(compact)).clamp(0.0, double.infinity).toDouble();
+    titleMeasure.dispose();
+    const actionExtent = 48 + _barButtonGap;
+    final maxButtons = ((actionWidth + _barButtonGap) / actionExtent)
+        .floor().clamp(1, _maxBarButtons).toInt();
     final selection = widget.selectionActions;
     final selectionGroup = selection.take(_maxGroupedActions);
     final selectionSingles = selection.skip(_maxGroupedActions);
@@ -519,11 +542,13 @@ class CommonScaffoldState extends State<CommonScaffold> {
     final atFoot = pop?.atFoot == true;
     final fold = _isSearch
         ? _foldBarActions(
+            maxButtons: maxButtons,
             hasLead: true,
             icons: widget.searchActions,
             widgetCount: selectionCount,
           )
         : _foldBarActions(
+            maxButtons: maxButtons,
             hasLead: lead != null,
             primary: pairedPrimary == null ? primaryAction : null,
             foldPrimary: widget.foldPrimaryAction,
@@ -544,6 +569,11 @@ class CommonScaffoldState extends State<CommonScaffold> {
             menuItems: widget.menuItems,
           );
     final shown = [?lead, ...fold.shown];
+    final otherActions = shown.length + selection.length +
+        (fold.overflow.isEmpty ? 0 : 1) + (popAsSuffix ? 1 : 0);
+    final actionWidgetWidth = widgets.isEmpty ? 0.0 :
+        ((actionWidth - otherActions * actionExtent) / widgets.length -
+            _barButtonGap).clamp(48.0, double.infinity).toDouble();
     final grouped = shown.length > 1 ? shown.take(_maxGroupedActions) : null;
     return genActions([
       if (grouped != null)
@@ -568,7 +598,11 @@ class CommonScaffoldState extends State<CommonScaffold> {
           enabled: !data.isLoading && data.onPressed != null,
           child: AppBarActionButton(data: data),
         ),
-      for (final action in widgets) ElasticPress(child: action),
+      for (final action in widgets)
+        ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: actionWidgetWidth),
+          child: ElasticPress(child: action),
+        ),
       if (fold.overflow.isNotEmpty)
         ElasticPress(child: _OverflowMenuButton(items: fold.overflow)),
       if (pairedPrimary != null)
@@ -663,7 +697,7 @@ class CommonScaffoldState extends State<CommonScaffold> {
         children: [
           ValueListenableBuilder<AppBarState>(
             valueListenable: _appBarState,
-            builder: (_, state, _) {
+            builder: (_, state, _) => LayoutBuilder(builder: (context, constraints) {
               final leading = _buildLeading(backAction, pop: form.pop);
               final appBar = _buildAppBarWrap(
                 AppBar(
@@ -720,6 +754,9 @@ class CommonScaffoldState extends State<CommonScaffold> {
                       widget.primaryAction,
                       backAction,
                       form,
+                      constraints.maxWidth,
+                      titleStyle,
+                      leading != null,
                     ))
                       FadeTransition(opacity: uncovered, child: action),
                   ],
@@ -730,7 +767,7 @@ class CommonScaffoldState extends State<CommonScaffold> {
                   : _buildFloatingHeader(
                       _WindowControlsClearance(child: appBar),
                     );
-            },
+            }),
           ),
           ValueListenableBuilder(
             valueListenable: _loadingNotifier,
@@ -1039,6 +1076,7 @@ const _maxGroupedActions = 2;
 
 ({List<IconButtonData> shown, List<CommonPopupMenuItem> overflow})
 _foldBarActions({
+  int maxButtons = _maxBarButtons,
   required bool hasLead,
   IconButtonData? primary,
   bool foldPrimary = false,
@@ -1050,10 +1088,10 @@ _foldBarActions({
   final foldable = [?primary, ...icons];
   final fixed =
       (hasLead ? 1 : 0) + widgetCount + (confirmation == null ? 0 : 1);
-  if (fixed + foldable.length + (menuItems.isEmpty ? 0 : 1) <= _maxBarButtons) {
+  if (fixed + foldable.length + (menuItems.isEmpty ? 0 : 1) <= maxButtons) {
     return (shown: [...foldable, ?confirmation], overflow: menuItems);
   }
-  final slots = _maxBarButtons - 1 - fixed;
+  final slots = maxButtons - 1 - fixed;
   final kept = (foldPrimary ? [...icons, ?primary] : foldable)
       .take(slots < 0 ? 0 : slots)
       .toList();

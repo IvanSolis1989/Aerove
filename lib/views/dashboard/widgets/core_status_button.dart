@@ -101,23 +101,62 @@ class _CoreStatusButtonState extends ConsumerState<CoreStatusButton> {
       CoreStatus.connected => colorScheme.successContainer,
       CoreStatus.disconnected => colorScheme.errorContainer,
     };
-    return Tooltip(
+    final statusLabel = switch (coreStatus) {
+      CoreStatus.connecting => appLocalizations.connecting,
+      CoreStatus.connected => appLocalizations.connected,
+      CoreStatus.disconnected => appLocalizations.disconnected,
+    };
+    return LayoutBuilder(builder: (context, constraints) {
+      final text = TextPainter(
+        text: TextSpan(
+          text: statusLabel,
+          style: Theme.of(context).filledButtonTheme.style?.textStyle?.resolve({}) ??
+              Theme.of(context).textTheme.labelLarge,
+        ),
+        textDirection: Directionality.of(context),
+        textScaler: MediaQuery.textScalerOf(context),
+      )..layout();
+      final padding = Theme.of(context).filledButtonTheme.style?.padding?.resolve({})
+          ?.resolve(Directionality.of(context)) ??
+          const EdgeInsetsDirectional.only(start: 16, end: 24)
+              .resolve(Directionality.of(context));
+      final minimum = text.width +
+          globalState.measure.textHeight(AppTextStyle.subheadline) + 8 + padding.horizontal;
+      final compact = constraints.hasBoundedWidth && constraints.maxWidth < minimum;
+      text.dispose();
+      return Tooltip(
       message: appLocalizations.coreStatus,
       child: FadeScaleBox(
         alignment: Alignment.centerRight,
-        child: coreStatus == CoreStatus.connected
-            ? IconButton.filled(
+        child: compact || coreStatus == CoreStatus.connected
+            ? Semantics(
+              label: statusLabel,
+              child: IconButton.filled(
                 style: ElasticPress.buttonStyle
                     .merge(tinted(statusColor))
                     .merge(
                       IconButton.styleFrom(
-                        backgroundColor: context.colorScheme.successContainer,
-                        foregroundColor: context.colorScheme.onSuccessContainer,
+                        backgroundColor: statusColor,
+                        foregroundColor: switch (coreStatus) {
+                          CoreStatus.connecting => null,
+                          CoreStatus.connected => colorScheme.onSuccessContainer,
+                          CoreStatus.disconnected => colorScheme.onErrorContainer,
+                        },
                       ),
                     ),
                 onPressed: _handleConnection,
-                icon: const GlyphIcon(AppGlyphs.check, fill: 1),
+                icon: coreStatus == CoreStatus.connecting
+                    ? SizedBox.square(
+                        dimension: TonalButtonSize.bar.icon,
+                        child: CommonCircleLoading(color: colorScheme.onPrimary),
+                      )
+                    : GlyphIcon(
+                        coreStatus == CoreStatus.connected
+                            ? AppGlyphs.check : AppGlyphs.refresh,
+                        fill: 1,
+                      ),
               )
+            )
             : FilledButton.icon(
                 key: ValueKey(coreStatus),
                 onPressed: _handleConnection,
@@ -156,13 +195,10 @@ class _CoreStatusButtonState extends ConsumerState<CoreStatusButton> {
                     ),
                   },
                 ),
-                label: GlassText(switch (coreStatus) {
-                  CoreStatus.connecting => appLocalizations.connecting,
-                  CoreStatus.connected => appLocalizations.connected,
-                  CoreStatus.disconnected => appLocalizations.disconnected,
-                }),
+                label: GlassText(statusLabel),
               ),
       ),
     );
+    });
   }
 }

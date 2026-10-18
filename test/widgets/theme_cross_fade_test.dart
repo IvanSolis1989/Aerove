@@ -181,7 +181,11 @@ void main() {
         expect(captures, 1);
         expect(tester.hasRunningAnimations, isFalse);
         expect(tester.binding.hasScheduledFrame, isFalse);
-        expect(await pixel(tester), isColor(_green));
+        expect(
+          await pixel(tester),
+          isColor(lifecycle == AppLifecycleState.inactive ? _green : _blue),
+          reason: 'Suspended framework rendering retains its last frame.',
+        );
         expect(tester.state(find.byType(ThemeCrossFade)), same(mountedState));
 
         tester.binding.handleAppLifecycleStateChanged(
