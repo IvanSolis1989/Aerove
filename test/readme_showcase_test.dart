@@ -48,8 +48,9 @@ void main() {
 
   for (final brightness in Brightness.values) {
     testWidgets('actual HomePage README ${brightness.name}', (tester) async {
+      final previousPlatform = debugDefaultTargetPlatformOverride;
       debugDefaultTargetPlatformOverride = TargetPlatform.android;
-      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      try {
       tester.view.physicalSize = const Size(430, 932);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
@@ -72,14 +73,12 @@ void main() {
             DashboardWidget.networkSpeed,
             DashboardWidget.outboundMode,
             DashboardWidget.profiles,
-            DashboardWidget.proxyGroups,
           ],
         )),
         themeSettingProvider.overrideWithBuild((_, _) => ThemeProps(
           themeMode: brightness == Brightness.light ? ThemeMode.light : ThemeMode.dark,
           auroraEnabled: true,
           auroraSeed: 271828,
-          auroraColors: const [0xFF9AAFC5, 0xFFC4BDD3],
           liquidGlass: LiquidGlassMode.ultra,
           pureBlack: false,
           fontFamily: 'ReadmeShowcase',
@@ -159,6 +158,9 @@ void main() {
       });
       expect(networkAttempts, 0);
       expect(tester.takeException(), isNull);
+      } finally {
+        debugDefaultTargetPlatformOverride = previousPlatform;
+      }
     });
   }
 }
