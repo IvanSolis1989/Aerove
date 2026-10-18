@@ -44,6 +44,7 @@ void main() {
     final font = FontLoader('ReadmeShowcase');
     font.addFont(Future.value(ByteData.sublistView(await File(fontPath).readAsBytes())));
     await font.load();
+    await GlassInk.prepare();
   });
 
   for (final brightness in Brightness.values) {
