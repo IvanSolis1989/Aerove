@@ -34,15 +34,15 @@ Widget _themeOnly(Widget child) => ThemeManager(child: child);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  final fontPath = Platform.environment['XCLASH_SHOWCASE_FONT'] ??
+      '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc';
   setUpAll(() async {
     expect(ui.ImageFilter.isShaderFilterSupported, isTrue,
         reason: 'README previews require --enable-impeller, never Skia fallback.');
-    final path = Platform.environment['XCLASH_SHOWCASE_FONT'] ??
-        '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc';
-    expect(File(path).existsSync(), isTrue,
+    expect(File(fontPath).existsSync(), isTrue,
         reason: 'Install fonts-noto-cjk; do not silently render Ahem.');
     final font = FontLoader('ReadmeShowcase');
-    font.addFont(Future.value(ByteData.sublistView(await File(path).readAsBytes())));
+    font.addFont(Future.value(ByteData.sublistView(await File(fontPath).readAsBytes())));
     await font.load();
   });
 
@@ -140,7 +140,7 @@ void main() {
               'logicalSize': [430, 932],
               'exportScale': 2,
               'locale': 'zh_CN',
-              'font': path,
+              'font': fontPath,
               'seed': 271828,
               'quality': 'ultra',
               'data': 'Offline empty profile/connection state; no synthetic connected status',
