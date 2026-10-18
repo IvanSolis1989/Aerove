@@ -131,7 +131,10 @@ void main() {
               layout == 'expanded' ? 220 : 48,
             );
             if (layout == 'overlay') {
-              expect(tester.widget<NavigationSidebar>(sidebar).onToggle, isNull);
+              expect(
+                tester.widget<NavigationSidebar>(sidebar).onToggle,
+                isNull,
+              );
               await tester.tap(find.byTooltip(labels.showMore));
               await tester.pumpAndSettle();
             }

@@ -272,8 +272,10 @@ Future<Uint8List> _checkCorners(
 ) async {
   final image = await _picture(tester, key, name);
   final rect = tester.getRect(find.byType(SheetSurface).first);
-  final path = tester.widget<SheetSurface>(find.byType(SheetSurface).first)
-      .shape.getOuterPath(rect);
+  final path = tester
+      .widget<SheetSurface>(find.byType(SheetSurface).first)
+      .shape
+      .getOuterPath(rect);
   final barrier = tester
       .widget<AnimatedModalBarrier>(find.byType(AnimatedModalBarrier).last)
       .color
@@ -283,8 +285,12 @@ Future<Uint8List> _checkCorners(
   for (final x in [1, 388]) {
     for (final dx in [-1.0, 0.0, 1.0]) {
       for (final dy in [-1.0, 0.0, 1.0]) {
-        expect(path.contains(Offset(x + 0.5 + dx, y + 0.5 + dy)), isFalse,
-          reason: 'Cutout probes need a full pixel of clearance from the superellipse.');
+        expect(
+          path.contains(Offset(x + 0.5 + dx, y + 0.5 + dy)),
+          isFalse,
+          reason:
+              'Cutout probes need a full pixel of clearance from the superellipse.',
+        );
       }
     }
     final at = (y * 390 + x) * 4;
@@ -341,10 +347,11 @@ Future<void> _checkTitle(
   ];
   final rect = tester.getRect(title).shift(-tester.getTopLeft(find.byKey(key)));
   final recorder = ui.PictureRecorder();
-  final canvas = Canvas(recorder)..drawColor(
-    ink.computeLuminance() < 0.5 ? Colors.white : Colors.black,
-    BlendMode.src,
-  );
+  final canvas = Canvas(recorder)
+    ..drawColor(
+      ink.computeLuminance() < 0.5 ? Colors.white : Colors.black,
+      BlendMode.src,
+    );
   final painter = TextPainter(
     textDirection: TextDirection.ltr,
     textScaler: MediaQuery.textScalerOf(element),
@@ -367,11 +374,15 @@ Future<void> _checkTitle(
         final png = (await mask.toByteData(format: ui.ImageByteFormat.png))!;
         final brightness = Theme.of(element).brightness.name;
         final quality = LiquidGlassScope.qualityOf(element).name;
-        await File('$output/modal-$brightness-$quality-title-reference.png')
-            .writeAsBytes(png.buffer.asUint8List(png.offsetInBytes, png.lengthInBytes));
+        await File(
+          '$output/modal-$brightness-$quality-title-reference.png',
+        ).writeAsBytes(
+          png.buffer.asUint8List(png.offsetInBytes, png.lengthInBytes),
+        );
       }
-      return Uint8List.fromList(pixels.buffer.asUint8List(
-        pixels.offsetInBytes, pixels.lengthInBytes));
+      return Uint8List.fromList(
+        pixels.buffer.asUint8List(pixels.offsetInBytes, pixels.lengthInBytes),
+      );
     } finally {
       mask.dispose();
       picture.dispose();
@@ -379,13 +390,19 @@ Future<void> _checkTitle(
   }))!;
   var sharp = 0;
   for (var i = 0; i < reference.length; i += 4) {
-    if (reference[i] != channels[0] || reference[i + 1] != channels[1] ||
-        reference[i + 2] != channels[2]) continue;
+    if (reference[i] != channels[0] ||
+        reference[i + 1] != channels[1] ||
+        reference[i + 2] != channels[2])
+      continue;
     sharp++;
     for (var channel = 0; channel < 3; channel++) {
-      expect(actual[i + channel], closeTo(channels[channel], 1),
-        reason: 'Opaque title core at (${i ~/ 4 % 390}, ${i ~/ (390 * 4)}) '
-            'must match its independent ink-polarity glyph reference.');
+      expect(
+        actual[i + channel],
+        closeTo(channels[channel], 1),
+        reason:
+            'Opaque title core at (${i ~/ 4 % 390}, ${i ~/ (390 * 4)}) '
+            'must match its independent ink-polarity glyph reference.',
+      );
     }
   }
   expect(sharp, greaterThan(0));
