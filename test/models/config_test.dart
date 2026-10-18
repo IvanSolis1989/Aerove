@@ -736,18 +736,21 @@ void main() {
       expect(roundTrip(props.toJson, ThemeProps.fromJson).auroraColors, saved);
     });
 
-    test('fresh and partial JSON use standard without changing saved modes', () {
-      for (final json in <Map<String, Object?>>[
-        {},
-        {'themeMode': 'light'},
-      ]) {
-        final props = ThemeProps.fromJson(json);
-        expect(props.auroraEnabled, true);
-        expect(props.liquidGlass, LiquidGlassMode.standard);
-        final restored = roundTrip(props.toJson, ThemeProps.fromJson);
-        expect(restored, props);
-      }
-    });
+    test(
+      'fresh and partial JSON use standard without changing saved modes',
+      () {
+        for (final json in <Map<String, Object?>>[
+          {},
+          {'themeMode': 'light'},
+        ]) {
+          final props = ThemeProps.fromJson(json);
+          expect(props.auroraEnabled, true);
+          expect(props.liquidGlass, LiquidGlassMode.standard);
+          final restored = roundTrip(props.toJson, ThemeProps.fromJson);
+          expect(restored, props);
+        }
+      },
+    );
 
     test('saved ordinary themes keep every explicit glass and theme mode', () {
       for (final glass in LiquidGlassMode.values) {

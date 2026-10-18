@@ -187,7 +187,9 @@ extension _InkCapture on _LiquidGlassHostLayer {
       ink._publishField(
         inverse == null ? null : image,
         source?.$1.size ?? Size.zero,
-        inverse == null ? Matrix4.identity() : (inverse.clone()..multiply(matrix)),
+        inverse == null
+            ? Matrix4.identity()
+            : (inverse.clone()..multiply(matrix)),
       );
     }
     assert(() {
