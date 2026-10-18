@@ -1,18 +1,18 @@
 <!-- xclash-owned-readme -->
-<!-- xclash-repository: IvanSolis1989/XClash -->
+<!-- xclash-repository: IvanSolis1989/Aerove -->
 
-# XClash
+# Aerove
 
 **简体中文** · [English](README_en.md)
 
-XClash 基于 FlClash，主要优化安卓版 UI 与图标。
+Aerove 基于 FlClash，主要优化安卓版 UI 与图标。
 感谢 [chen08209/FlClash](https://github.com/chen08209/FlClash) 提供项目基础。
 
-[![下载最新版](https://img.shields.io/github/v/release/IvanSolis1989/XClash?style=flat-square)](https://github.com/IvanSolis1989/XClash/releases/latest)
+[![下载最新版](https://img.shields.io/github/v/release/IvanSolis1989/Aerove?style=flat-square)](https://github.com/IvanSolis1989/Aerove/releases/latest)
 
 ## 下载与安装
 
-**[直接下载 Android APK](https://github.com/IvanSolis1989/XClash/releases/latest/download/XClash-android-arm64.apk)** · [全部版本](https://github.com/IvanSolis1989/XClash/releases)
+**[直接下载 Android APK](https://github.com/IvanSolis1989/Aerove/releases/latest/download/XClash-android-arm64.apk)** · [全部版本](https://github.com/IvanSolis1989/Aerove/releases)
 
 支持 **Android 7.0 及以上、ARM64（arm64-v8a）**。下载 APK 后允许安装该来源的应用，按系统提示安装。
 更新前可在应用内备份配置。早期测试包签名不同，若提示签名冲突，请备份后卸载旧包再安装。
@@ -28,6 +28,8 @@ XClash 基于 FlClash，主要优化安卓版 UI 与图标。
 删除脚本后不会自动补回。[查看脚本来源](https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/main/FlClash/FlClash%28mihomo%29.js)。
 
 ## 主题设置
+
+首次安装默认开启随机渐变底图与极致液态玻璃，深浅色跟随系统。用户可随时切回普通模式。
 
 进入 **工具 → 主题 → 主题色彩**，二选一：
 
@@ -93,18 +95,18 @@ https://sub-store-cloudflare.<你的子域>.workers.dev/?token=<管理Token>
 
 添加订阅源（Source），填入自己的订阅链接并保存；再进入默认的 `Daily` 组合订阅（Collection），确认已包含需要的订阅源。
 
-### 4. 导入 XClash
+### 4. 导入 Aerove
 
-在组合订阅卡片复制 **Mihomo / Clash Meta** 格式的下载链接，在 XClash 配置页面添加该链接。
-下载链接使用下载 Token；管理 Token 只用于管理页面。确认 XClash 能更新并显示节点，即完成接入。
-导入后保留 XClash 内置的 Smart-Config-Kit 脚本与 DNS 默认设置，分流脚本在 XClash 内执行。
+在组合订阅卡片复制 **Mihomo / Clash Meta** 格式的下载链接，在 Aerove 配置页面添加该链接。
+下载链接使用下载 Token；管理 Token 只用于管理页面。确认 Aerove 能更新并显示节点，即完成接入。
+导入后保留 Aerove 内置的 Smart-Config-Kit 脚本与 DNS 默认设置，分流脚本在 Aerove 内执行。
 两个 Token 和完整订阅链接都应私下保存。
 
 部署问题可对照该项目的 [快速开始](https://github.com/realchendahuang/sub-store-cloudflare/blob/main/docs/quick-start.md)。
 
 ## 问题反馈
 
-请在 [Issues](https://github.com/IvanSolis1989/XClash/issues) 提供应用版本、Android 版本和复现步骤。
+请在 [Issues](https://github.com/IvanSolis1989/Aerove/issues) 提供应用版本、Android 版本和复现步骤。
 主题问题请附上深浅色模式、配色和截图；提交日志前移除订阅链接及节点凭据。
 
 [GPL-3.0](LICENSE)

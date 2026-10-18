@@ -1,15 +1,15 @@
 <!-- xclash-owned-readme -->
-<!-- xclash-repository: IvanSolis1989/XClash -->
+<!-- xclash-repository: IvanSolis1989/Aerove -->
 
-# XClash
+# Aerove
 
 [简体中文](README.md) · **English**
 
-[![Latest release](https://img.shields.io/github/v/release/IvanSolis1989/XClash?style=flat-square)](https://github.com/IvanSolis1989/XClash/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/IvanSolis1989/Aerove?style=flat-square)](https://github.com/IvanSolis1989/Aerove/releases/latest)
 
 ## Download and installation
 
-**[Download Android APK](https://github.com/IvanSolis1989/XClash/releases/latest/download/XClash-android-arm64.apk)** · [All releases](https://github.com/IvanSolis1989/XClash/releases)
+**[Download Android APK](https://github.com/IvanSolis1989/Aerove/releases/latest/download/XClash-android-arm64.apk)** · [All releases](https://github.com/IvanSolis1989/Aerove/releases)
 
 Requires **Android 7.0 or newer and ARM64 (arm64-v8a)**. Allow installation from your download source and install the APK.
 Back up your configuration before upgrading. If an early test build has a conflicting signing key, back up, uninstall it, then install the new APK.
@@ -94,11 +94,11 @@ https://sub-store-cloudflare.<YOUR_SUBDOMAIN>.workers.dev/?token=<ADMIN_TOKEN>
 
 Create a Source using your subscription URL. Open the default `Daily` Collection and check that it includes the intended sources.
 
-### 4. Import into XClash
+### 4. Import into Aerove
 
-Copy the **Mihomo / Clash Meta** download link from the Collection card and add it on XClash's configuration page.
+Copy the **Mihomo / Clash Meta** download link from the Collection card and add it on Aerove's configuration page.
 Download links use the download token; the admin token is only for management. Update the profile and check that nodes appear.
-Keep XClash's bundled Smart-Config-Kit script and default DNS settings; the routing script runs inside XClash.
+Keep Aerove's bundled Smart-Config-Kit script and default DNS settings; the routing script runs inside Aerove.
 Keep both tokens and full subscription URLs private.
 
 For deployment help, see the project's [quick start](https://github.com/realchendahuang/sub-store-cloudflare/blob/main/docs/quick-start.md).
@@ -108,12 +108,12 @@ For deployment help, see the project's [quick start](https://github.com/realchen
 This repository **checks upstream once per hour**, selecting the highest version tag reachable from any branch, including prereleases.
 **With no new version, it exits without committing, rebuilding or publishing an APK.** A new version is built and published only after validation,
 using the upstream version plus `-X`, such as `0.9.1-pre.4-X`.
-GitHub schedules may be delayed; [Releases](https://github.com/IvanSolis1989/XClash/releases/latest) shows the available download.
+GitHub schedules may be delayed; [Releases](https://github.com/IvanSolis1989/Aerove/releases/latest) shows the available download.
 README and other documentation-only changes do not start APK builds or cancel active builds.
 
 ## Report a problem
 
-Open an [Issue](https://github.com/IvanSolis1989/XClash/issues) with your app version, Android version and reproduction steps.
+Open an [Issue](https://github.com/IvanSolis1989/Aerove/issues) with your app version, Android version and reproduction steps.
 For theme problems, include brightness mode, palette and a screenshot. Remove subscription URLs and node credentials from logs.
 
 [GPL-3.0](LICENSE)
