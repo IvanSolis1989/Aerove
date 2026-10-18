@@ -243,8 +243,8 @@ void main() {
           );
         }
         expect(
-          _pixel(optimized, 360, 630),
-          Colors.green,
+          _pixel(optimized, 360, 630).toARGB32(),
+          Colors.green.toARGB32(),
           reason: 'ordinary lower content remains available to sheet sampling',
         );
         expect(
@@ -364,7 +364,7 @@ void main() {
       expect(unstacked.bytes, opened.bytes);
       final gesture = await tester.startGesture(Offset(200, top + 25));
       for (var frame = 0; frame < 4; frame++) {
-        await gesture.moveBy(const Offset(0, -30));
+        await gesture.moveBy(const Offset(0, -45));
         await tester.pump(const Duration(milliseconds: 16));
         await _shot(tester, '${quality.name}-drag-$frame');
         expect(

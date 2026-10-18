@@ -1177,7 +1177,7 @@ class _LiquidGlassLayer extends Layer {
   Rect _capturedRect = Rect.zero;
   ui.FragmentShader? _captureShader;
   bool _showingFrozen = false;
-  final _featherBands = <({Rect rect, int surfaces})>[];
+  final _featherBands = <({Rect rect, Rect surface, int surfaces})>[];
   ui.Image? _frozenImage;
   ui.Picture? _frozenPicture;
   (
@@ -1413,7 +1413,7 @@ class _LiquidGlassLayer extends Layer {
     final canvas = Canvas(recorder);
     _featherBands.clear();
     if (visible != null && feathers.isNotEmpty && _frozenPicture != null) {
-      _paintFeathered(canvas, covered ?? Path(), feathers, paintLive);
+      _paintFeathered(canvas, covered ?? Path(), feathers, paintLive, mapping[8]);
     } else {
       if (visible != null) {
         if (_frozenPicture case final frozen?) canvas.drawPicture(frozen);
@@ -1432,6 +1432,7 @@ class _LiquidGlassLayer extends Layer {
     Path covered,
     List<_GlassFeather> feathers,
     void Function(Canvas) paintLive,
+    double pixel,
   ) {
     final groups = <List<_GlassFeather>>[];
     for (final feather in feathers) {
@@ -1495,6 +1496,8 @@ class _LiquidGlassLayer extends Layer {
         Path()..addRect(rect),
       );
       final bounds = strip.getBounds();
+      // Resolve curved edges inside the strip target, away from its scissor.
+      final surface = bounds.inflate(pixel);
       final simple =
           group.length == 1 &&
           Path.combine(
@@ -1502,32 +1505,38 @@ class _LiquidGlassLayer extends Layer {
             covered,
             strip,
           ).getBounds().isEmpty;
-      _featherBands.add((rect: bounds, surfaces: simple ? 3 : 5));
+      _featherBands.add((rect: bounds, surface: surface, surfaces: simple ? 3 : 5));
       canvas
         ..save()
-        ..clipPath(strip, doAntiAlias: false)
-        ..saveLayer(bounds, Paint())
-        ..saveLayer(bounds, Paint())
+        ..saveLayer(surface, Paint())
+        ..saveLayer(surface, Paint())
         ..drawPicture(_frozenPicture!);
       if (simple) {
         group.single.mask(canvas, inverse: true);
       } else {
-        _maskFeather(canvas, bounds, covered, group, BlendMode.dstOut);
+        _maskFeather(canvas, surface, covered, group, BlendMode.dstOut);
       }
       canvas
         ..restore()
-        ..saveLayer(bounds, Paint()..blendMode = BlendMode.plus)
+        ..saveLayer(surface, Paint()..blendMode = BlendMode.plus)
         ..save()
-        ..clipPath(liveRegion, doAntiAlias: false);
+        ..clipPath(
+          Path.combine(PathOperation.difference, Path()..addRect(surface), covered),
+          doAntiAlias: false,
+        );
       paintLive(canvas);
       canvas.restore();
       if (simple) {
         group.single.mask(canvas);
       } else {
-        _maskFeather(canvas, bounds, covered, group, BlendMode.dstIn);
+        _maskFeather(canvas, surface, covered, group, BlendMode.dstIn);
       }
       canvas
         ..restore()
+        ..drawPath(
+          Path.combine(PathOperation.difference, Path()..addRect(surface), strip),
+          Paint()..blendMode = BlendMode.clear..isAntiAlias = false,
+        )
         ..restore()
         ..restore();
     }

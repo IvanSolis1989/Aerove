@@ -91,8 +91,8 @@ class _ProcessedInkCache {
   static final _resident = <_ProcessedInkImage>{};
   static Duration? get _frame =>
       SchedulerBinding.instance.schedulerPhase == SchedulerPhase.idle
-          ? null
-          : SchedulerBinding.instance.currentFrameTimeStamp;
+      ? null
+      : SchedulerBinding.instance.currentFrameTimeStamp;
   final _entries = <(bool, double, ui.FragmentProgram), _ProcessedInkImage>{};
   final _images = <_ProcessedInkImage>{};
   ui.Image? _source;
@@ -143,13 +143,16 @@ class _ProcessedInkCache {
       return null;
     }
     if (_resident.length >= 2) {
-      final unused = _resident.where((entry) =>
-        entry.references == 0 && entry.lastFrame != frame).firstOrNull;
+      final unused = _resident
+          .where((entry) => entry.references == 0 && entry.lastFrame != frame)
+          .firstOrNull;
       if (unused == null) {
         bypasses++;
         return null;
       }
-      unused.owner._entries.removeWhere((key, entry) => identical(entry, unused));
+      unused.owner._entries.removeWhere(
+        (key, entry) => identical(entry, unused),
+      );
       unused.retired = true;
       unused.owner._disposeImage(unused);
     }
@@ -160,9 +163,22 @@ class _ProcessedInkCache {
     final height = math.max(1, (source.height * scale).floor());
     final shader = program.fragmentShader();
     final values = <double>[
-      _size.width, _size.height, 0, 0,
-      _size.width / width, 0, 0, _size.height / height,
-      1, ink.dark ? 1 : 0, ink.contrast, 1, 0, 0, 0, 1,
+      _size.width,
+      _size.height,
+      0,
+      0,
+      _size.width / width,
+      0,
+      0,
+      _size.height / height,
+      1,
+      ink.dark ? 1 : 0,
+      ink.contrast,
+      1,
+      0,
+      0,
+      0,
+      1,
     ];
     for (final (index, value) in values.indexed) {
       shader.setFloat(index, value);
@@ -170,8 +186,10 @@ class _ProcessedInkCache {
     shader.setImageSampler(0, source, filterQuality: FilterQuality.low);
     shader.setImageSampler(1, source, filterQuality: FilterQuality.low);
     final recorder = ui.PictureRecorder();
-    Canvas(recorder).drawRect(Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
-      Paint()..shader = shader);
+    Canvas(recorder).drawRect(
+      Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+      Paint()..shader = shader,
+    );
     final picture = recorder.endRecording();
     final ui.Image image;
     try {
@@ -207,10 +225,17 @@ class _ProcessedInkCache {
   }
 
   LiquidGlassInkProcessing get metrics => (
-    hits: hits, misses: misses, builds: builds, bypasses: bypasses,
+    hits: hits,
+    misses: misses,
+    builds: builds,
+    bypasses: bypasses,
     entries: _resident.length,
-    pixels: _resident.fold(0, (sum, entry) => sum + entry.image.width * entry.image.height),
-    sourceChanges: sourceChanges, buildCpuMicros: buildCpuMicros,
+    pixels: _resident.fold(
+      0,
+      (sum, entry) => sum + entry.image.width * entry.image.height,
+    ),
+    sourceChanges: sourceChanges,
+    buildCpuMicros: buildCpuMicros,
     stableFrames: stableFrames,
   );
 
@@ -381,8 +406,10 @@ class LiquidGlassInkLayer extends OffsetLayer {
   @visibleForTesting
   static LiquidGlassInkProcessing? debugLastProcessing;
   @visibleForTesting
-  static int get debugProcessedImageCount => _ProcessedInkCache._resident.length;
-  static bool get _processedEnabled => debugProcessedFieldOverride ??
+  static int get debugProcessedImageCount =>
+      _ProcessedInkCache._resident.length;
+  static bool get _processedEnabled =>
+      debugProcessedFieldOverride ??
       const bool.fromEnvironment('AEROVE_PROCESSED_INK_FIELDS');
   Size size = Size.zero;
   double strength = 1;
@@ -455,13 +482,18 @@ class LiquidGlassInkLayer extends OffsetLayer {
     markNeedsAddToScene();
   }
 
-  bool _publishField(ui.Image? field, Size fieldSize, Matrix4 mapping,
-      _ProcessedInkImage? processed) {
+  bool _publishField(
+    ui.Image? field,
+    Size fieldSize,
+    Matrix4 mapping,
+    _ProcessedInkImage? processed,
+  ) {
     if (inkFrozen) return false;
     if (!_filterDirty &&
         identical(_field, field) &&
         _fieldSize == fieldSize &&
-        listEquals(_mapping.storage, mapping.storage) && identical(_processed, processed)) {
+        listEquals(_mapping.storage, mapping.storage) &&
+        identical(_processed, processed)) {
       return false;
     }
     final previousProcessed = _processed;
@@ -521,7 +553,8 @@ class LiquidGlassInkLayer extends OffsetLayer {
       _processed == null ? 0.0 : 2.0,
     ];
     final processed = _processed?.image ?? field;
-    if (identical(field, _filteredField) && identical(processed, _sampledProcessed) &&
+    if (identical(field, _filteredField) &&
+        identical(processed, _sampledProcessed) &&
         listEquals(values, _uniforms)) {
       return _effect;
     }
@@ -739,7 +772,8 @@ extension _InkCapture on _LiquidGlassHostLayer {
       viewport?.$1.select(image);
     }
     final processing = LiquidGlassInkLayer._processedEnabled && image != null
-        ? snapshot?._processedInk : null;
+        ? snapshot?._processedInk
+        : null;
     if (processing != null) processing.observe(image!, snapshot!.size);
     final inverse = toHost == null ? null : Matrix4.tryInvert(toHost);
     for (final (backdrop, matrix) in backdrops) {
@@ -752,12 +786,14 @@ extension _InkCapture on _LiquidGlassHostLayer {
       );
     }
     var updates = 0;
-    final variants = <(bool, double, ui.FragmentProgram), _ProcessedInkImage?>{};
+    final variants =
+        <(bool, double, ui.FragmentProgram), _ProcessedInkImage?>{};
     _ProcessedInkImage? prepared(LiquidGlassInkLayer ink) {
       final key = ink._processingKey;
       if (processing == null || key == null) return null;
       return variants.putIfAbsent(key, () => processing.resolve(ink));
     }
+
     for (final (ink, matrix) in updating) {
       if (ink._publishField(
         inverse == null ? null : image,

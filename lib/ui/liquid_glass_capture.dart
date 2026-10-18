@@ -490,7 +490,9 @@ class _LiquidGlassHostLayer extends ContainerLayer {
               (hostRect.width * devicePixelRatio).ceil() *
               (hostRect.height * devicePixelRatio).ceil();
           stripPixels += pixels;
-          surfacePixels += pixels * band.surfaces;
+          final surface = MatrixUtils.transformRect(entry.toHost, band.surface).intersect(bounds);
+          surfacePixels += (surface.width * devicePixelRatio).ceil() *
+              (surface.height * devicePixelRatio).ceil() * band.surfaces;
         }
       }
       LiquidGlassHost.debugLastFeatherCapture = (

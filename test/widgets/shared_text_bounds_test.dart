@@ -210,10 +210,17 @@ void main() {
           ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf')))
         .load();
     final latinProbe = TextPainter(
-      text: const TextSpan(text: 'Hg', style: TextStyle(fontFamily: _font, fontSize: 20)),
+      text: const TextSpan(
+        text: 'Hg',
+        style: TextStyle(fontFamily: _font, fontSize: 20),
+      ),
       textDirection: TextDirection.ltr,
     )..layout();
-    expect(latinProbe.width, closeTo(24, 0.1), reason: 'The real font must replace Ahem');
+    expect(
+      latinProbe.width,
+      closeTo(24, 0.1),
+      reason: 'The real font must replace Ahem',
+    );
     latinProbe.dispose();
     await (FontLoader(
       'Twemoji',
@@ -489,109 +496,118 @@ void main() {
           Future<List<Map<String, Object?>>> render(
             LiquidGlassQuality? activeQuality,
           ) async {
-          await tester.pumpWidget(
-            UncontrolledProviderScope(
-              container: container,
-              child: MaterialApp(
-                theme: ThemeData(
-                  colorScheme: scheme,
-                  fontFamily: _font,
-                ).withAppTypography.withAppShapes.withAppSurfaces,
-                themeAnimationStyle: AnimationStyle.noAnimation,
-                localizationsDelegates: const [
-                  AppLocalizations.delegate,
-                  AppUiLocalizations.delegate,
-                  ...GlobalMaterialLocalizations.delegates,
-                ],
-                supportedLocales: AppLocalizations.delegate.supportedLocales,
-                builder: (context, child) => MediaQuery(
-                  data: MediaQuery.of(
-                    context,
-                  ).copyWith(textScaler: TextScaler.linear(scale)),
-                  child: Builder(
-                    builder: (context) {
-                      final measure = Measure.of(context, scale);
-                      globalState.measure = measure;
-                      return MeasureScope(
-                        measure: measure,
-                        child: AppViewScope(
-                          child: RepaintBoundary(
-                            key: capture,
-                            child: LiquidGlassScope(
-                              enabled: activeQuality != null,
-                              quality: activeQuality ?? LiquidGlassQuality.standard,
-                              child: LiquidGlassHost(
+            await tester.pumpWidget(
+              UncontrolledProviderScope(
+                container: container,
+                child: MaterialApp(
+                  theme: ThemeData(
+                    colorScheme: scheme,
+                    fontFamily: _font,
+                  ).withAppTypography.withAppShapes.withAppSurfaces,
+                  themeAnimationStyle: AnimationStyle.noAnimation,
+                  localizationsDelegates: const [
+                    AppLocalizations.delegate,
+                    AppUiLocalizations.delegate,
+                    ...GlobalMaterialLocalizations.delegates,
+                  ],
+                  supportedLocales: AppLocalizations.delegate.supportedLocales,
+                  builder: (context, child) => MediaQuery(
+                    data: MediaQuery.of(
+                      context,
+                    ).copyWith(textScaler: TextScaler.linear(scale)),
+                    child: Builder(
+                      builder: (context) {
+                        final measure = Measure.of(context, scale);
+                        globalState.measure = measure;
+                        return MeasureScope(
+                          measure: measure,
+                          child: AppViewScope(
+                            child: RepaintBoundary(
+                              key: capture,
+                              child: LiquidGlassScope(
                                 enabled: activeQuality != null,
-                                child: Stack(
-                                  fit: StackFit.expand,
-                                  children: [
-                                    Positioned.fill(
-                                      child: LiquidGlassColorField(
-                                        child: LiquidGlassColorSource(
-                                          child: ColoredBox(
-                                            color: brightness == Brightness.dark
-                                                ? const Color(0xFF16353F)
-                                                : const Color(0xFFBDE5EC),
+                                quality:
+                                    activeQuality ??
+                                    LiquidGlassQuality.standard,
+                                child: LiquidGlassHost(
+                                  enabled: activeQuality != null,
+                                  child: Stack(
+                                    fit: StackFit.expand,
+                                    children: [
+                                      Positioned.fill(
+                                        child: LiquidGlassColorField(
+                                          child: LiquidGlassColorSource(
+                                            child: ColoredBox(
+                                              color:
+                                                  brightness == Brightness.dark
+                                                  ? const Color(0xFF16353F)
+                                                  : const Color(0xFFBDE5EC),
+                                            ),
                                           ),
                                         ),
                                       ),
-                                    ),
-                                    child!,
-                                  ],
+                                      child!,
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   ),
-                ),
-                home: Material(
-                  type: MaterialType.transparency,
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Builder(
-                      builder: (context) => Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        spacing: 8,
-                        children: [
-                          for (final type in ProxyCardType.values)
-                            for (var row = 0; row < 2; row++)
-                              Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                spacing: 8,
-                                children: [
-                                  for (var column = 0; column < 3; column++)
-                                    SizedBox(
-                                      width: [110.0, 120.0, 130.0][column],
-                                      height: getItemHeight(type),
-                                      child: ProxyCard(
-                                        groupName: 'group',
-                                        testUrl: _url,
-                                        proxy: Proxy(
-                                          name:
-                                              '${_protocols[row * 3 + column]} $_name',
-                                          type: _protocols[row * 3 + column],
+                  home: Material(
+                    type: MaterialType.transparency,
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Builder(
+                        builder: (context) => Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          spacing: 8,
+                          children: [
+                            for (final type in ProxyCardType.values)
+                              for (var row = 0; row < 2; row++)
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  spacing: 8,
+                                  children: [
+                                    for (var column = 0; column < 3; column++)
+                                      SizedBox(
+                                        width: [110.0, 120.0, 130.0][column],
+                                        height: getItemHeight(type),
+                                        child: ProxyCard(
+                                          groupName: 'group',
+                                          testUrl: _url,
+                                          proxy: Proxy(
+                                            name:
+                                                '${_protocols[row * 3 + column]} $_name',
+                                            type: _protocols[row * 3 + column],
+                                          ),
+                                          groupType: GroupType.Selector,
+                                          type: type,
                                         ),
-                                        groupType: GroupType.Selector,
-                                        type: type,
                                       ),
-                                    ),
-                                ],
-                              ),
-                        ],
+                                  ],
+                                ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
-            ),
-          );
-          await tester.pumpAndSettle();
-          return _glyphRows(tester, capture,
-            activeQuality == null && quality != null ? '$name-reference-none' : name);
+            );
+            await tester.pumpAndSettle();
+            return _glyphRows(
+              tester,
+              capture,
+              activeQuality == null && quality != null
+                  ? '$name-reference-none'
+                  : name,
+            );
           }
+
           final reference = await render(null);
           final rows = quality == null ? reference : await render(quality);
           expect(rows.length, reference.length);
@@ -614,14 +630,26 @@ void main() {
           }
           for (final (index, row) in rows.indexed) {
             final original = reference[index];
-            expect(original['inkRows'] as int, greaterThan(0), reason: '$name $original');
+            expect(
+              original['inkRows'] as int,
+              greaterThan(0),
+              reason: '$name $original',
+            );
             expect(original['missingRows'], isEmpty, reason: '$name $original');
             for (final field in ['text', 'bounds', 'layoutWidth', 'ellipsis']) {
-              expect(row[field], original[field],
-                reason: 'Glass must preserve the original layout and horizontal ellipsis: $name $row');
+              expect(
+                row[field],
+                original[field],
+                reason:
+                    'Glass must preserve the original layout and horizontal ellipsis: $name $row',
+              );
             }
-            expect(row['missingRows'], isEmpty,
-              reason: 'Glass must preserve the glyph support of the original layout: $name $row');
+            expect(
+              row['missingRows'],
+              isEmpty,
+              reason:
+                  'Glass must preserve the glyph support of the original layout: $name $row',
+            );
           }
           expect(tester.takeException(), isNull);
           await tester.pumpWidget(const SizedBox.shrink());

@@ -106,6 +106,7 @@ class GlassText extends Text {
     );
     if (!hasShadows) return ink;
     return Stack(
+      fit: StackFit.passthrough,
       clipBehavior: Clip.none,
       children: [
         ExcludeSemantics(
@@ -299,8 +300,11 @@ class _InkRender extends RenderProxyBox {
     final layer = _layer.layer ??= LiquidGlassInkLayer();
     final bounds = _inkBounds;
     layer.configure(
-      offset: offset + bounds.topLeft,
-      size: bounds.size,
+      offset: offset,
+      size: Size(
+        math.max(size.width, bounds.right),
+        math.max(size.height, bounds.bottom),
+      ),
       strength: role.strength,
       source: source,
       contrast: role == GlassInkRole.icon ? 3.2 : 4.7,
@@ -309,9 +313,9 @@ class _InkRender extends RenderProxyBox {
     );
     context.pushLayer(
       layer,
-      (context, offset) => super.paint(context, offset - bounds.topLeft),
+      super.paint,
       Offset.zero,
-      childPaintBounds: Offset.zero & bounds.size,
+      childPaintBounds: bounds,
     );
   }
 

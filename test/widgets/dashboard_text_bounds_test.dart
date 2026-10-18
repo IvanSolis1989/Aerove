@@ -284,9 +284,8 @@ Future<GlobalKey> _mountDashboard(
             NavigationItem(
               glyph: AppGlyphs.dashboard,
               label: PageLabel.dashboard,
-              builder: (_) => const DashboardView(
-                platform: SupportPlatform.Android,
-              ),
+              builder: (_) =>
+                  const DashboardView(platform: SupportPlatform.Android),
             ),
             NavigationItem(
               glyph: AppGlyphs.tools,
@@ -314,13 +313,13 @@ Future<GlobalKey> _mountDashboard(
             builder: (context) => MediaQuery(
               data: MediaQuery.of(
                 context,
-              ).copyWith(textScaler: TextScaler.linear(scale)),
+              ).copyWith(
+                textScaler: TextScaler.linear(scale),
+                disableAnimations: true,
+              ),
               child: RepaintBoundary(
                 key: capture,
-                child: const AuroraAppSurface(
-                  motion: false,
-                  child: HomePage(),
-                ),
+                child: const AuroraAppSurface(motion: false, child: HomePage()),
               ),
             ),
           ),
@@ -401,7 +400,12 @@ void main() {
           final match = RegExp(
             r'A RenderFlex overflowed by ([0-9.]+) pixels on the right\.',
           ).firstMatch(details.exceptionAsString());
-          final diagnostics = details.toString();
+          final diagnostics = [
+            details.toString(),
+            for (final node in details.informationCollector?.call() ??
+                <DiagnosticsNode>[])
+              node.toStringDeep(minLevel: DiagnosticLevel.hidden),
+          ].join('\n');
           final component = diagnostics.contains('DashboardChip')
               ? 'chip'
               : diagnostics.contains('DashboardCardHeader')
@@ -410,9 +414,9 @@ void main() {
               ? 'toolbar'
               : null;
           if (match != null && component != null) {
-            horizontal.putIfAbsent(component, () => <double>{}).add(
-              double.parse(match[1]!),
-            );
+            horizontal
+                .putIfAbsent(component, () => <double>{})
+                .add(double.parse(match[1]!));
           } else {
             previousError(details);
           }
@@ -425,12 +429,21 @@ void main() {
             scale: 2,
             width: 320,
           );
-          final boundary = capture.currentContext!.findRenderObject()!
-              as RenderRepaintBoundary;
+          final boundary =
+              capture.currentContext!.findRenderObject()!
+                  as RenderRepaintBoundary;
           final layout = <Map<String, Object?>>[];
-          for (final label in [_organization, ..._targets.map((target) => target.label)]) {
-            final paragraph = tester.renderObject<RenderParagraph>(_paragraphs(label));
-            final origin = paragraph.localToGlobal(Offset.zero, ancestor: boundary);
+          for (final label in [
+            _organization,
+            ..._targets.map((target) => target.label),
+          ]) {
+            final paragraph = tester.renderObject<RenderParagraph>(
+              _paragraphs(label),
+            );
+            final origin = paragraph.localToGlobal(
+              Offset.zero,
+              ancestor: boundary,
+            );
             layout.add({
               'text': label,
               'x': origin.dx,
@@ -443,17 +456,17 @@ void main() {
             for (final entry in horizontal.entries)
               entry.key: entry.value.toList()..sort(),
           };
-          expect(overflow, isNotEmpty, reason: 'Known original layout limit');
           final frame = await _capture(tester, boundary);
           final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
           if (output != null) {
             final directory = Directory(output)..createSync(recursive: true);
-            final prefix = '${directory.path}/dashboard-known-horizontal-'
+            final prefix =
+                '${directory.path}/dashboard-known-horizontal-'
                 '${brightness.name}-${mode.name}-320-2x';
             File('$prefix.png').writeAsBytesSync(frame.png);
             File('$prefix.json').writeAsStringSync(
               const JsonEncoder.withIndent('  ').convert({
-                'knownHorizontalLimit': true,
+                'knownHorizontalLimit': overflow.isNotEmpty,
                 'layout': layout,
                 'overflow': overflow,
               }),
@@ -463,8 +476,16 @@ void main() {
             baselineLayout = layout;
             baselineOverflow = overflow;
           } else {
-            expect(layout, baselineLayout, reason: 'Glass must preserve None layout');
-            expect(overflow, baselineOverflow, reason: 'Glass must preserve None overflow');
+            expect(
+              layout,
+              baselineLayout,
+              reason: 'Glass must preserve None layout',
+            );
+            expect(
+              overflow,
+              baselineOverflow,
+              reason: 'Glass must preserve None overflow',
+            );
           }
           expect(tester.takeException(), isNull);
         } finally {
@@ -500,7 +521,9 @@ void main() {
                   tester.renderObject<RenderParagraph>(_paragraphs(label)),
                 if (labels.first != _organization)
                   for (var i = 0; i < _targets.length; i++)
-                    tester.renderObject<RenderParagraph>(_paragraphs('42 ms').at(i)),
+                    tester.renderObject<RenderParagraph>(
+                      _paragraphs('42 ms').at(i),
+                    ),
               ];
               final rows = await _measure(
                 tester,

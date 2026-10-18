@@ -173,6 +173,9 @@ void main() {
             final duration = route.transitionDuration;
 
             Future<void> sample(String phase, double progress) async {
+              final isolated = quality != null && phase != 'restored'
+                  ? _expectBackdropIsolation(route)
+                  : false;
               final full = Offset.zero & _size;
               var covered = phase == 'restored'
                   ? full
@@ -244,6 +247,7 @@ void main() {
                 'phase': phase,
                 'progress': progress,
                 'animation': route.animation?.value,
+                'transientBackdropIsolation': isolated,
                 'referenceNoise': noise,
                 'residualBytes': residual,
                 'outsideResidualBytes': outsideResidual,
@@ -271,6 +275,7 @@ void main() {
               previous = progress;
             }
             await tester.pumpAndSettle();
+            if (quality != null) expect(_expectBackdropIsolation(route), isFalse);
             final drag = await tester.startGesture(const Offset(18, 600));
             await drag.moveBy(const Offset(30, 0));
             await drag.moveBy(const Offset(100, 0));
@@ -283,6 +288,7 @@ void main() {
             await tester.pumpAndSettle();
             expect(route.animation!.value, 1);
             expect(route.navigator!.userGestureInProgress, isFalse);
+            if (quality != null) expect(_expectBackdropIsolation(route), isFalse);
 
             route.navigator!.pop();
             await tester.pump();
@@ -298,11 +304,8 @@ void main() {
             await tester.pumpAndSettle();
             expect(find.byType(entry.value), findsNothing);
             expect(tester.element(find.byType(HomePage)), same(originalHome));
-            final dockLabel = find.descendant(
-              of: find.byType(NavigationDock),
-              matching: find.text(
-                page == PageLabel.profiles ? 'Profiles' : 'Tools',
-              ),
+            final dockLabel = _dockTarget(
+              page == PageLabel.profiles ? 'Profiles' : 'Tools',
             );
             expect(dockLabel.hitTestable(), findsOneWidget);
             expect(opener.hitTestable(), findsOneWidget);
@@ -313,6 +316,14 @@ void main() {
             await _open(tester, entry.key);
             await tester.pumpAndSettle();
             expect(find.byType(entry.value), findsOneWidget);
+            if (quality != null) {
+              expect(
+                _expectBackdropIsolation(
+                  ModalRoute.of(tester.element(find.byType(entry.value)))!,
+                ),
+                isFalse,
+              );
+            }
             final commit = await tester.startGesture(const Offset(18, 600));
             await commit.moveBy(const Offset(30, 0));
             await commit.moveBy(const Offset(280, 0));
@@ -445,6 +456,29 @@ int _maxDelta(Uint8List a, Uint8List b) {
 class _IdleSetupAction extends SetupAction {
   @override
   void autoApplyProfile() {}
+}
+
+Finder _dockTarget(String label) => find.descendant(
+  of: find.byType(NavigationDock),
+  matching: find.byWidgetPredicate((widget) => widget is Semantics &&
+      widget.properties.label == label && widget.properties.button == true &&
+      widget.properties.onTap != null),
+);
+
+bool _expectBackdropIsolation(ModalRoute<dynamic> route) {
+  final backdrop = find.byType(LiquidGlassBackdrop);
+  expect(backdrop, findsWidgets);
+  final transient = route.animation!.isAnimating ||
+      route.secondaryAnimation!.isAnimating ||
+      route.navigator!.userGestureInProgress;
+  final clips = backdrop.evaluate().map(
+    (element) => element.findAncestorWidgetOfExactType<ClipRect>(),
+  ).toSet();
+  expect(clips, hasLength(1));
+  expect(clips.single, isNotNull);
+  expect(clips.single!.clipBehavior,
+      transient ? Clip.antiAliasWithSaveLayer : Clip.hardEdge);
+  return transient;
 }
 
 class _EmptyRules extends ProfileRules {

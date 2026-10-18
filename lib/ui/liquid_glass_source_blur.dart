@@ -218,6 +218,10 @@ extension _SourceBlurCapture on _LiquidGlassHostLayer {
           cache.fallback('flatUI');
           continue;
         }
+        if (entry.style.haze > 0 || entry.style.rimBlur > 0) {
+          cache.fallback('optics');
+          continue;
+        }
         if (!cache.stable) {
           cache.fallback('volatile');
           continue;

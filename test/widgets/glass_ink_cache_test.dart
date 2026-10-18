@@ -15,12 +15,18 @@ Color _pixel(List<int> bytes, Offset point) {
   return Color.fromARGB(255, bytes[index], bytes[index + 1], bytes[index + 2]);
 }
 
-Future<List<int>> _snapshot(WidgetTester tester, GlobalKey key) async {
+Future<List<int>> _snapshot(WidgetTester tester, GlobalKey key, {String? name}) async {
   final boundary =
       key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
   return (await tester.runAsync(() async {
     final image = await boundary.toImage();
     try {
+      final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+      if (output != null && name != null) {
+        Directory(output).createSync(recursive: true);
+        final png = await image.toByteData(format: ui.ImageByteFormat.png);
+        File('$output/ink-cache-$name.png').writeAsBytesSync(png!.buffer.asUint8List());
+      }
       return (await image.toByteData(
         format: ui.ImageByteFormat.rawRgba,
       ))!.buffer.asUint8List();
@@ -201,7 +207,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 16));
       }
       final after = LiquidGlassHost.debugLastInkCapture!;
-      final moved = await _snapshot(tester, key);
+      final moved = await _snapshot(tester, key, name: '${brightness.name}-source');
       _record(brightness.name, {
         'masks': after.masks,
         'sourceCaptureDelta': after.sourceCaptures - first.sourceCaptures,
@@ -228,18 +234,25 @@ void main() {
         _scene(capture: key, pose: pose, brightness: brightness, source: false),
       );
       await tester.pumpAndSettle();
-      final fallback = await _snapshot(tester, key);
+      final fallback = await _snapshot(tester, key, name: '${brightness.name}-viewport');
       var maximumError = 0;
       var squaredError = 0.0;
+      var worstIndex = 0;
       for (var i = 0; i < fallback.length; i++) {
         final error = (fallback[i] - moved[i]).abs();
-        maximumError = math.max(maximumError, error);
+        if (error > maximumError) {
+          maximumError = error;
+          worstIndex = i;
+        }
         squaredError += error * error;
       }
       final rms = math.sqrt(squaredError / fallback.length);
       _record('${brightness.name}-reference', {
         'maxError': maximumError,
         'rms': rms,
+        'point': [(worstIndex ~/ 4) % 360, worstIndex ~/ (360 * 4)],
+        'sourceRgba': moved.sublist(worstIndex - worstIndex % 4, worstIndex - worstIndex % 4 + 4),
+        'viewportRgba': fallback.sublist(worstIndex - worstIndex % 4, worstIndex - worstIndex % 4 + 4),
       });
       expect(maximumError, lessThanOrEqualTo(6));
       expect(rms, lessThanOrEqualTo(1.5));

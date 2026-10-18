@@ -173,12 +173,12 @@ void main() {
         final cost = LiquidGlassHost.debugLastFeatherCapture!;
         expect(cost.panes, 1);
         expect(cost.stripPixels, 120 * 15);
-        expect(cost.surfacePixels, 120 * 15 * 3);
+        expect(cost.surfacePixels, 122 * 17 * 3);
         await render(Colors.green, 4);
         final crossed = await _shot(tester, 'oracle-crossed-$quality');
         expect(
           LiquidGlassHost.debugLastFeatherCapture!.surfacePixels,
-          120 * 15 * 5,
+          122 * 17 * 5,
         );
         await render(Colors.green, 0);
         final live = await _shot(tester, 'oracle-live-$quality');
@@ -389,7 +389,7 @@ void main() {
         expect(LiquidGlassHost.debugLastFeatherCapture!.stripPixels, 320 * 12);
         expect(
           LiquidGlassHost.debugLastFeatherCapture!.surfacePixels,
-          320 * 12 * 3,
+          320 * 14 * 3,
         );
         final stable = await _shot(tester, 'stable-$quality');
         expect(stable, moving);

@@ -115,7 +115,7 @@ Widget _app({
                   top: 200,
                   width: 80,
                   height: 80,
-                  child: ColoredBox(color: Colors.yellow),
+                  child: ColoredBox(color: Color(0xFFFFFF00)),
                 ),
               for (var index = 0; index < blurs.length; index++)
                 Positioned.fromRect(
@@ -331,15 +331,21 @@ void main() {
     LiquidGlassHost.debugSourceBlurBudgetOverride = null;
   });
 
-  testWidgets('idle readback reuses cache without advancing source stability', (tester) async {
+  testWidgets('idle readback reuses cache without advancing source stability', (
+    tester,
+  ) async {
     tester.view.physicalSize = _size;
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    await tester.pumpWidget(_app(quality: LiquidGlassQuality.ultra,
-      aurora: false, blurs: const [12]));
+    await tester.pumpWidget(
+      _app(quality: LiquidGlassQuality.ultra, aurora: false, blurs: const [12]),
+    );
     if (ui.ImageFilter.isShaderFilterSupported) {
-      await tester.runAsync(() => ui.FragmentProgram.fromAsset('shaders/liquid_glass.frag')
-        .timeout(const Duration(seconds: 30)));
+      await tester.runAsync(
+        () => ui.FragmentProgram.fromAsset(
+          'shaders/liquid_glass.frag',
+        ).timeout(const Duration(seconds: 30)),
+      );
       await tester.pump();
     }
     await _shot(tester);
@@ -469,7 +475,7 @@ void main() {
   );
 
   testWidgets(
-    'scale and haze keep softness and one blur while sigma zero borrows source',
+    'haze and rim blur retain exact atlas pixels while sigma zero borrows source',
     (tester) async {
       tester.view.physicalSize = _size * 2;
       tester.view.devicePixelRatio = 2;
@@ -502,9 +508,11 @@ void main() {
           _oracle(baseline, actual, [
             const Rect.fromLTWH(98, 158, 264, 144),
           ], 2);
+          expect(actual.bytes, baseline.bytes);
         }
       }
-      expect(LiquidGlassHost.debugLastSourceBlurCapture!.sourceBlurBuilds, 4);
+      expect(LiquidGlassHost.debugLastSourceBlurCapture!.sourceBlurBuilds, 0);
+      expect(LiquidGlassHost.debugLastSourceBlurCapture!.reasons['optics'], greaterThan(0));
       await _pump(
         tester,
         _app(
@@ -515,7 +523,7 @@ void main() {
         true,
       );
       final clear = LiquidGlassHost.debugLastSourceBlurCapture!;
-      expect(clear.sourceBlurBuilds, 4);
+      expect(clear.sourceBlurBuilds, 0);
       expect(clear.zeroSigma, greaterThan(0));
       await _unmount(tester);
     },

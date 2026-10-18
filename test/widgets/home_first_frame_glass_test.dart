@@ -131,6 +131,9 @@ void main() {
               String phase,
               int elapsed,
             ) async {
+              final sharedShaderReadyBeforeReadback = LiquidGlass.debugShaderReady;
+              final shaderBackendSupportedBeforeReadback =
+                  ui.ImageFilter.isShaderFilterSupported;
               final page = find.byKey(ValueKey('page-${label.name}'));
               final pane = find.byKey(ValueKey('pane-${label.name}'));
               final built = page.evaluate().isNotEmpty;
@@ -195,12 +198,49 @@ void main() {
                   ? _variance(image, headerCrop)
                   : null;
               final rawHeaderVariance = headerCrop.width >= 16
-                  ? _stripeVariance(headerCrop)
+                  ? _stripeVariance(headerCrop, pageRect.left)
                   : null;
+              double? controlHeaderVariance;
+              double? repeatHeaderVariance;
+              int? referencePixelNoise;
+              int? controlPixelDelta;
+              final headerVisible = built && alpha > 1 / 255 &&
+                  pageRect.intersect(Offset.zero & _size).width > 0;
+              final filterFinder = find.descendant(
+                of: header,
+                matching: find.byType(BackdropFilter),
+              );
+              if (quality != null && headerVisible && headerCrop.width >= 16 &&
+                  filterFinder.evaluate().length == 1) {
+                final filter = tester.renderObject<RenderBackdropFilter>(filterFinder);
+                final original = filter.filter;
+                final identity = ui.ImageFilter.blur(sigmaX: 0, sigmaY: 0);
+                late Uint8List control;
+                try {
+                  filter.filter = identity;
+                  await tester.pump();
+                  expect(identical(filter.filter, identity), isTrue);
+                  expect(tester.getRect(page), pageRect);
+                  control = await _snapshot(
+                    tester, capture, '$name-${label.name}-$phase-$elapsed-header-control',
+                  );
+                } finally {
+                  filter.filter = original;
+                  await tester.pump();
+                  expect(tester.getRect(page), pageRect);
+                }
+                final repeat = await _snapshot(
+                  tester, capture, '$name-${label.name}-$phase-$elapsed-header-repeat',
+                );
+                controlHeaderVariance = _variance(control, headerCrop);
+                repeatHeaderVariance = _variance(repeat, headerCrop);
+                referencePixelNoise = _maxDelta(image, repeat, headerCrop);
+                controlPixelDelta = _maxDelta(image, control, headerCrop);
+              }
               frames.add({
                 'page': label.name,
                 'phase': phase,
-                'elapsedMs': elapsed,
+                'virtualFrameElapsedMs': elapsed,
                 'built': built,
                 'opacity': alpha,
                 'paneRect': [rect.left, rect.top, rect.right, rect.bottom],
@@ -212,9 +252,9 @@ void main() {
                 'replayedPanes': state?.replayedPanes,
                 'sampleAlpha': atlasAlpha,
                 'headerBlurWidgets': header.evaluate().length,
-                'shaderBackendSupported':
-                    ui.ImageFilter.isShaderFilterSupported,
-                'shaderReady': LiquidGlass.debugShaderReady,
+                'shaderBackendSupportedBeforeReadback':
+                    shaderBackendSupportedBeforeReadback,
+                'sharedShaderReadyBeforeReadback': sharedShaderReadyBeforeReadback,
                 'headerCrop': [
                   headerCrop.left,
                   headerCrop.top,
@@ -223,6 +263,12 @@ void main() {
                 ],
                 'headerVariance': headerVariance,
                 'unblurredStripeVariance': rawHeaderVariance,
+                'incomingHeaderVisible': headerVisible,
+                'headerPixelControlResolvable': headerCrop.width >= 16,
+                'incomingIdentityBlurVariance': controlHeaderVariance,
+                'incomingBlurRepeatVariance': repeatHeaderVariance,
+                'headerReferencePixelNoise': referencePixelNoise,
+                'headerControlPixelDelta': controlPixelDelta,
               });
               if (quality != null &&
                   built &&
@@ -239,6 +285,8 @@ void main() {
                     '$label $phase $elapsed: backdrop sample is transparent.',
                   );
                 }
+              }
+              if (quality != null && headerVisible) {
                 if (header.evaluate().length != 1) {
                   failures.add(
                     '$label $phase $elapsed: floating header blur is absent.',
@@ -251,12 +299,24 @@ void main() {
                     '$label $phase $elapsed: header stripe variance $headerVariance did not fall below unblurred $rawHeaderVariance.',
                   );
                 }
+                if (headerCrop.width >= 16 && (controlHeaderVariance == null ||
+                    repeatHeaderVariance == null || referencePixelNoise == null ||
+                    controlPixelDelta == null)) {
+                  failures.add('$label $phase $elapsed: incoming header control was not captured.');
+                } else if (controlHeaderVariance != null &&
+                    repeatHeaderVariance != null && headerVariance != null) {
+                  final varianceNoise = (headerVariance - repeatHeaderVariance).abs();
+                  if (controlHeaderVariance - headerVariance <= varianceNoise ||
+                      controlPixelDelta! <= referencePixelNoise!) {
+                    failures.add('$label $phase $elapsed: incoming blur did not reduce its own sharp stripes beyond repeated-frame noise.');
+                  }
+                }
               }
               if (quality == null) expect(header, findsNothing);
               expect(tester.takeException(), isNull);
             }
 
-            await sample(PageLabel.dashboard, 'initial-cold-candidate', 0);
+            await sample(PageLabel.dashboard, 'initial-shared-cache-state', 0);
             for (final phase in ['arrival', 'warm-repeat']) {
               if (phase == 'warm-repeat' &&
                   quality != null &&
@@ -278,12 +338,9 @@ void main() {
                 ..._tabs.skip(1),
                 _tabs.first,
               ]) {
-                await tester.tap(
-                  find.descendant(
-                    of: find.byType(NavigationDock),
-                    matching: find.text(caption),
-                  ),
-                );
+                final target = _dockTarget(caption);
+                expect(target, findsOneWidget);
+                await tester.tap(target);
                 await tester.pump();
                 var previous = 0;
                 for (final elapsed in _times) {
@@ -302,7 +359,16 @@ void main() {
                 await File('$output/$name.json').writeAsString(
                   const JsonEncoder.withIndent(
                     '  ',
-                  ).convert({'frames': frames, 'failures': failures}),
+                  ).convert({
+                    'timingEvidence': {
+                      'frameClock': 'Flutter test virtual animation clock',
+                      'asyncReadbackAndFileIoBetweenFrames': true,
+                      'coldShaderWallClockLatencyMeasured': false,
+                      'shaderReadySemantics': 'Shared program cache state at sample entry, before asynchronous readback; not per-pane program usage in the already-painted frame.',
+                    },
+                    'frames': frames,
+                    'failures': failures,
+                  }),
                 );
               });
             }
@@ -330,6 +396,13 @@ class _ProbePage extends StatelessWidget {
     backgroundColor: Colors.transparent,
     body: Stack(
       children: [
+        const Positioned(
+          left: 0,
+          right: 0,
+          top: 0,
+          height: 72,
+          child: CustomPaint(painter: _HeaderStripes()),
+        ),
         Positioned(
           left: 24,
           top: 170,
@@ -352,6 +425,13 @@ class _ProbePage extends StatelessWidget {
     ),
   );
 }
+
+Finder _dockTarget(String label) => find.descendant(
+  of: find.byType(NavigationDock),
+  matching: find.byWidgetPredicate((widget) => widget is Semantics &&
+      widget.properties.label == label && widget.properties.button == true &&
+      widget.properties.onTap != null),
+);
 
 class _Checker extends CustomPainter {
   const _Checker();
@@ -416,22 +496,46 @@ double _variance(Uint8List bytes, Rect rect) {
   return square / count - (sum / count) * (sum / count);
 }
 
-double _stripeVariance(Rect rect) {
+double _stripeVariance(Rect rect, double pageLeft) {
   var sum = 0.0;
   var square = 0.0;
   var count = 0;
   for (var x = rect.left.toInt(); x < rect.right; x++) {
-    final color = (x ~/ 8).isEven
-        ? const Color(0xFF37678C)
-        : const Color(0xFFD1B47F);
-    final value =
-        (color.r * 255 * 0.2126 +
-                color.g * 255 * 0.7152 +
-                color.b * 255 * 0.0722)
-            .roundToDouble();
+    final value = ((x + 0.5 - pageLeft) ~/ 8).isEven ? 0.0 : 255.0;
     sum += value;
     square += value * value;
     count++;
   }
   return square / count - (sum / count) * (sum / count);
+}
+
+class _HeaderStripes extends CustomPainter {
+  const _HeaderStripes();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (var x = 0.0; x < size.width; x += 8) {
+      canvas.drawRect(
+        Rect.fromLTWH(x, 0, 8, size.height),
+        Paint()..color = (x ~/ 8).isEven ? Colors.black : Colors.white,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_HeaderStripes oldDelegate) => false;
+}
+
+int _maxDelta(Uint8List a, Uint8List b, Rect rect) {
+  var maximum = 0;
+  for (var y = rect.top.toInt(); y < rect.bottom; y++) {
+    for (var x = rect.left.toInt(); x < rect.right; x++) {
+      final index = (y * _size.width.toInt() + x) * 4;
+      for (var channel = 0; channel < 4; channel++) {
+        final delta = (a[index + channel] - b[index + channel]).abs();
+        if (delta > maximum) maximum = delta;
+      }
+    }
+  }
+  return maximum;
 }

@@ -15,7 +15,6 @@ import 'package:fl_clash/ui/ui.dart';
 import 'package:fl_clash/views/about.dart';
 import 'package:fl_clash/views/dashboard/style.dart';
 import 'package:fl_clash/widgets/aurora.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -71,8 +70,6 @@ void main() {
   for (final seed in [0xFF007AFF, 0xFF28A745, 0xFFE91E63]) {
     for (final brightness in Brightness.values) {
       testWidgets('production text colors $seed $brightness', (tester) async {
-        debugDefaultTargetPlatformOverride = TargetPlatform.android;
-        addTearDown(() => debugDefaultTargetPlatformOverride = null);
         tester.view.physicalSize = const Size(430, 900);
         tester.view.devicePixelRatio = 1;
         addTearDown(tester.view.reset);
@@ -390,7 +387,7 @@ void main() {
             );
         expect(icon.color, isNull);
         expect(tester.takeException(), isNull);
-      });
+      }, variant: TargetPlatformVariant.only(TargetPlatform.android));
     }
   }
 }

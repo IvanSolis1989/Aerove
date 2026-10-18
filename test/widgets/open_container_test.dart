@@ -1,8 +1,12 @@
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
 import 'package:fl_clash/ui/open_container.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/surface.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/semantics.dart';
+import 'package:flutter/rendering.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -74,11 +78,13 @@ void main() {
     testWidgets('glass $quality keeps its route and transition transparent', (
       tester,
     ) async {
+      final capture = GlobalKey();
       await tester.pumpWidget(
         LiquidGlassScope(
           enabled: true,
           quality: quality,
           child: MaterialApp(
+            builder: (_, child) => RepaintBoundary(key: capture, child: child),
             home: Scaffold(
               backgroundColor: Colors.transparent,
               body: Center(
@@ -105,6 +111,7 @@ void main() {
           ),
         ),
       );
+      final closedRect = tester.getRect(find.byType(OpenContainer<void>));
       await tester.tap(find.text('Open glass'));
       await tester.pump();
       await tester.pump();
@@ -119,7 +126,18 @@ void main() {
       await tester.tap(find.text('Close glass'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 150));
-      expect(navigator, paints..path(color: Colors.red));
+      expect(route.animation!.value, closeTo(0.5, 0.00001));
+      final closing = Rect.lerp(
+        closedRect,
+        Offset.zero & _viewSize,
+        Curves.fastOutSlowIn.flipped.transform(route.animation!.value),
+      )!;
+      await _expectSolid(
+        tester,
+        capture,
+        closing.topLeft + Offset(closing.width * 0.2, closing.height * 0.2),
+        Colors.red,
+      );
       await tester.pumpAndSettle();
       expect(find.text('Open glass'), findsOneWidget);
       expect(tester.takeException(), isNull);
@@ -431,4 +449,34 @@ void main() {
     await tester.tap(find.text('Page'));
     expect(taps, 1);
   });
+}
+
+Future<void> _expectSolid(
+  WidgetTester tester,
+  GlobalKey capture,
+  Offset point,
+  Color color,
+) async {
+  final boundary = capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+  late ByteData bytes;
+  late int width;
+  await tester.runAsync(() async {
+    final image = boundary.toImageSync();
+    width = image.width;
+    bytes = (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!;
+    image.dispose();
+  });
+  final expected = color.toARGB32();
+  for (var y = point.dy.floor(); y < point.dy.floor() + 4; y++) {
+    for (var x = point.dx.floor(); x < point.dx.floor() + 4; x++) {
+      final index = (y * width + x) * 4;
+      expect([
+        bytes.getUint8(index), bytes.getUint8(index + 1),
+        bytes.getUint8(index + 2), bytes.getUint8(index + 3),
+      ], [
+        (expected >> 16) & 255, (expected >> 8) & 255,
+        expected & 255, (expected >> 24) & 255,
+      ]);
+    }
+  }
 }

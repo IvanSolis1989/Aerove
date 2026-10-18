@@ -332,7 +332,7 @@ class _OpenContainerRoute<T> extends ModalRoute<T>
     return ListenableBuilder(
       listenable: _closedChanges,
       builder: (BuildContext context, Widget? open) {
-        return _ContainerTransition(
+        final transition = _ContainerTransition(
           route: this,
           closedColor: closedColor ?? (glass ? Colors.transparent : surface),
           openColor: glass ? Colors.transparent : surface,
@@ -359,6 +359,21 @@ class _OpenContainerRoute<T> extends ModalRoute<T>
               : null,
           open: open!,
         );
+        return glass
+            ? ListenableBuilder(
+                listenable: Listenable.merge([
+                  animation,
+                  navigator!.userGestureInProgressNotifier,
+                ]),
+                builder: (_, child) => ClipRect(
+                  clipBehavior: animation.isAnimating || isDragBackActive
+                      ? Clip.antiAliasWithSaveLayer
+                      : Clip.hardEdge,
+                  child: child,
+                ),
+                child: transition,
+              )
+            : transition;
       },
       child: open,
     );

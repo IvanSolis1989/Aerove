@@ -1,6 +1,7 @@
 import 'package:fl_clash/ui/drag_back.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/surface.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -63,6 +64,8 @@ mixin SharedXPageRouteMixin<T> on PageRoute<T>, DragBackRouteMixin<T> {
           overSettledPage: _overSettledPage,
           uncoveredByGesture: navigator!.userGestureInProgress,
           wallpaperBackdrop: glass && usesWallpaperBackdrop,
+          backdropAnimation: animation,
+          backdropGesture: navigator!.userGestureInProgressNotifier,
           child: ColoredBox(
             color: backdropOf(surface, dragging: dragging),
             child: child,
@@ -86,6 +89,8 @@ class SharedXPageTransition extends StatelessWidget {
     required this.overSettledPage,
     this.uncoveredByGesture = false,
     this.wallpaperBackdrop = false,
+    this.backdropAnimation,
+    this.backdropGesture,
     required this.child,
   });
 
@@ -110,6 +115,8 @@ class SharedXPageTransition extends StatelessWidget {
   /// of showing only near the end of the drag.
   final bool uncoveredByGesture;
   final bool wallpaperBackdrop;
+  final Animation<double>? backdropAnimation;
+  final ValueListenable<bool>? backdropGesture;
   final Widget child;
 
   static final _slideCurve = CurveTween(curve: Curves.easeInOutCubicEmphasized);
@@ -161,6 +168,24 @@ class SharedXPageTransition extends StatelessWidget {
         )
       : child;
 
+  Widget _isolateBackdrop(Widget child) => wallpaperBackdrop
+      ? AnimatedBuilder(
+          animation: Listenable.merge([
+            backdropAnimation ?? animation,
+            secondaryAnimation,
+            ?backdropGesture,
+          ]),
+          builder: (_, child) => ClipRect(
+            clipBehavior: (backdropAnimation ?? animation).isAnimating ||
+                    secondaryAnimation.isAnimating || backdropGesture?.value == true
+                ? Clip.antiAliasWithSaveLayer
+                : Clip.hardEdge,
+            child: child,
+          ),
+          child: child,
+        )
+      : child;
+
   @override
   Widget build(BuildContext context) {
     final enterSlide = _slide(slide, Offset.zero);
@@ -194,7 +219,7 @@ class SharedXPageTransition extends StatelessWidget {
       ),
       child: child,
     );
-    return DualTransitionBuilder(
+    return _isolateBackdrop(DualTransitionBuilder(
       animation: animation,
       forwardBuilder: (_, animation, child) => _overPageBelow(
         animation,
@@ -233,7 +258,7 @@ class SharedXPageTransition extends StatelessWidget {
         color: secondaryAnimation.isAnimating ? color : Colors.transparent,
         child: covered,
       ),
-    );
+    ));
   }
 }
 
