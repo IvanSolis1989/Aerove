@@ -406,9 +406,15 @@ class _FadeTabPage extends StatelessWidget {
       builder: (_, child) {
         final offset = _delta;
         final delta = enabled ? offset : 0.0;
+        final opacity = 1 - delta.abs();
         return FractionalTranslation(
           translation: Offset(-delta, 0),
-          child: Opacity(opacity: 1 - delta.abs(), child: child),
+          child: LiquidGlassScope.of(context)
+              ? LiquidGlassFade(
+                  opacity: AlwaysStoppedAnimation(opacity),
+                  child: child,
+                )
+              : Opacity(opacity: opacity, child: child),
         );
       },
       child: child,

@@ -109,12 +109,16 @@ jobs:
             test/widgets/aurora_transform_test.dart \
             test/widgets/aurora_motion_test.dart \
             test/widgets/aurora_lifecycle_test.dart \
+            test/widgets/aurora_text_colors_test.dart \
             test/widgets/glass_ink_cache_test.dart \
             test/widgets/glass_ink_geometry_test.dart \
             test/widgets/dashboard_text_bounds_test.dart \
+            test/widgets/shared_text_bounds_test.dart \
             test/widgets/glass_wallpaper_sampling_test.dart \
             test/widgets/sheet_occlusion_test.dart \
             test/widgets/popup_occlusion_test.dart \
+            test/widgets/header_blur_occlusion_test.dart \
+            test/widgets/home_first_frame_glass_test.dart \
             test/widgets/liquid_glass_host_test.dart \
             test/widgets/glass_page_handover_test.dart \
             test/widgets/settings_route_transition_test.dart \

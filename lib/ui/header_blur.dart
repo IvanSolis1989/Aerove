@@ -1,5 +1,7 @@
 import 'dart:ui' as ui;
 
+import 'package:fl_clash/ui/liquid_glass.dart';
+import 'package:fl_clash/ui/shape.dart';
 import 'package:material_ui/material_ui.dart';
 
 class HeaderBlur extends StatelessWidget {
@@ -17,25 +19,45 @@ class HeaderBlur extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (fadeHeight <= 0) return const SizedBox.shrink();
+    // The fading foot stays live so its transparent end cannot expose a cache seam.
+    final coveredHeight = LiquidGlassScope.of(context) &&
+            !MediaQuery.highContrastOf(context)
+        ? fullStrengthHeight.clamp(0.0, fadeHeight) : 0.0;
     return Align(
       alignment: Alignment.topCenter,
       child: SizedBox(
         width: double.infinity,
         height: fadeHeight,
         child: ClipRect(
-          child: BackdropFilter(
-            filter: ui.ImageFilter.blur(
-              sigmaX: _sigma,
-              sigmaY: _sigma,
-              tileMode: TileMode.clamp,
-            ),
-            blendMode: BlendMode.srcOver,
-            child: CustomPaint(
-              painter: _HeaderBlurMask(
-                (fullStrengthHeight / fadeHeight).clamp(0.0, 1.0),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (coveredHeight > 0)
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  height: coveredHeight,
+                  child: const LiquidGlassOcclusion(
+                    shape: AppShape.none,
+                    child: SizedBox.expand(),
+                  ),
+                ),
+              BackdropFilter(
+                filter: ui.ImageFilter.blur(
+                  sigmaX: _sigma,
+                  sigmaY: _sigma,
+                  tileMode: TileMode.clamp,
+                ),
+                blendMode: BlendMode.srcOver,
+                child: CustomPaint(
+                  painter: _HeaderBlurMask(
+                    (fullStrengthHeight / fadeHeight).clamp(0.0, 1.0),
+                  ),
+                  child: const SizedBox.expand(),
+                ),
               ),
-              child: const SizedBox.expand(),
-            ),
+            ],
           ),
         ),
       ),

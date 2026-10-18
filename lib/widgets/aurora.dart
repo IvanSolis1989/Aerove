@@ -4,6 +4,7 @@ import 'package:fl_clash/common/aurora.dart';
 import 'package:fl_clash/common/aurora_motion.dart';
 import 'package:fl_clash/ui/aurora.dart';
 import 'package:fl_clash/ui/shape.dart';
+import 'package:fl_clash/ui/typography.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/surface.dart';
 import 'package:fl_clash/providers/config.dart';
@@ -80,6 +81,7 @@ class _AuroraAppSurfaceState extends ConsumerState<AuroraAppSurface>
         theme.platform == TargetPlatform.android && settings.enabled && !opaque;
     final glassColors = auroraColorScheme(theme.brightness);
     final glassTheme = theme
+        .withNeutralTextColors(glassColors)
         .copyWith(
           colorScheme: glassColors,
           extensions: [

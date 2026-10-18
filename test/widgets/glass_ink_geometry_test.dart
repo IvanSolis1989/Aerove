@@ -208,7 +208,8 @@ void main() {
   for (final brightness in Brightness.values) {
     for (final direction in TextDirection.values) {
       for (final scale in [1.0, 2.0]) {
-        testWidgets('real text paint envelope $brightness $direction $scale',
+        testWidgets(
+          'real text paint envelope $brightness $direction $scale',
           (tester) => _realTextEnvelope(tester, brightness, direction, scale),
           skip: !ui.ImageFilter.isShaderFilterSupported,
         );
@@ -474,72 +475,147 @@ Future<void> _realTextEnvelope(
   final capture = GlobalKey();
   final scheme = auroraColorScheme(brightness);
   final background = brightness == Brightness.light
-      ? const Color(0xFFBDE5EC) : const Color(0xFF16353F);
+      ? const Color(0xFFBDE5EC)
+      : const Color(0xFF16353F);
   Future<List<int>> render({bool enabled = false, bool empty = false}) async {
-    await tester.pumpWidget(MaterialApp(
-      theme: ThemeData(colorScheme: scheme, fontFamily: 'GeometryLatin')
-          .withAppTypography,
-      themeAnimationStyle: AnimationStyle.noAnimation,
-      home: RepaintBoundary(key: capture,
-        child: LiquidGlassScope(enabled: enabled,
-          child: LiquidGlassHost(enabled: enabled,
-            child: Directionality(textDirection: direction,
-              child: Stack(fit: StackFit.expand, children: [
-                Positioned.fill(child: LiquidGlassColorField(
-                  child: ColoredBox(color: background))),
-                if (!empty) Positioned(left: 24, top: 24, width: 190,
-                  child: Builder(builder: (context) {
-                    Widget label(String text, {bool organization = false, bool rich = false}) {
-                      final style = (organization ? AppTextStyle.subheadline : AppTextStyle.footnote)
-                          .of(context, emphasized: true)
-                          .copyWith(color: scheme.onSurface,
-                            fontFamily: 'AbsentGeometryFont',
-                            fontFamilyFallback: const ['GeometryLatin']);
-                      final span = TextSpan(style: style, children: [
-                        const TextSpan(text: 'Google '),
-                        TextSpan(text: 'Ágj Άλφα a\u0301j\u0301',
-                          style: style.copyWith(fontStyle: FontStyle.italic)),
-                      ]);
-                      final Widget textWidget;
-                      if (rich) {
-                        textWidget = enabled
-                            ? GlassText.rich(span, style: style,
-                                inkRole: GlassInkRole.body, maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                textScaler: TextScaler.linear(scale))
-                            : Text.rich(span, style: style, maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                textScaler: TextScaler.linear(scale));
-                      } else {
-                        textWidget = enabled
-                            ? GlassText(text, style: style,
-                                inkRole: GlassInkRole.body, maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                textScaler: TextScaler.linear(scale))
-                            : Text(text, style: style, maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                textScaler: TextScaler.linear(scale));
-                      }
-                      return Padding(padding: const EdgeInsets.only(bottom: 8),
-                        child: textWidget);
-                    }
-                    return Column(crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min, children: [
-                        label('PT.TELKOMINDONESIA INTERNATIONAL', organization: true),
-                        for (final name in ['Google', 'GitHub', 'YouTube', 'ChatGPT']) label(name),
-                        label('Ágj ÅÉ y\u0301a\u0301j\u0301', organization: true),
-                        label('', rich: true),
-                      ]);
-                  })),
-              ]),
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(
+          colorScheme: scheme,
+          fontFamily: 'GeometryLatin',
+        ).withAppTypography,
+        themeAnimationStyle: AnimationStyle.noAnimation,
+        home: RepaintBoundary(
+          key: capture,
+          child: LiquidGlassScope(
+            enabled: enabled,
+            child: LiquidGlassHost(
+              enabled: enabled,
+              child: Directionality(
+                textDirection: direction,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Positioned.fill(
+                      child: LiquidGlassColorField(
+                        child: ColoredBox(color: background),
+                      ),
+                    ),
+                    if (!empty)
+                      Positioned(
+                        left: 24,
+                        top: 24,
+                        width: 190,
+                        child: Builder(
+                          builder: (context) {
+                            Widget label(
+                              String text, {
+                              bool organization = false,
+                              bool rich = false,
+                            }) {
+                              final style =
+                                  (organization
+                                          ? AppTextStyle.subheadline
+                                          : AppTextStyle.footnote)
+                                      .of(context, emphasized: true)
+                                      .copyWith(
+                                        color: scheme.onSurface,
+                                        fontFamily: 'AbsentGeometryFont',
+                                        fontFamilyFallback: const [
+                                          'GeometryLatin',
+                                        ],
+                                      );
+                              final span = TextSpan(
+                                style: style,
+                                children: [
+                                  const TextSpan(text: 'Google '),
+                                  TextSpan(
+                                    text: 'Ágj Άλφα a\u0301j\u0301',
+                                    style: style.copyWith(
+                                      fontStyle: FontStyle.italic,
+                                    ),
+                                  ),
+                                ],
+                              );
+                              final Widget textWidget;
+                              if (rich) {
+                                textWidget = enabled
+                                    ? GlassText.rich(
+                                        span,
+                                        style: style,
+                                        inkRole: GlassInkRole.body,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        textScaler: TextScaler.linear(scale),
+                                      )
+                                    : Text.rich(
+                                        span,
+                                        style: style,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        textScaler: TextScaler.linear(scale),
+                                      );
+                              } else {
+                                textWidget = enabled
+                                    ? GlassText(
+                                        text,
+                                        style: style,
+                                        inkRole: GlassInkRole.body,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        textScaler: TextScaler.linear(scale),
+                                      )
+                                    : Text(
+                                        text,
+                                        style: style,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        textScaler: TextScaler.linear(scale),
+                                      );
+                              }
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: textWidget,
+                              );
+                            }
+
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                label(
+                                  'PT.TELKOMINDONESIA INTERNATIONAL',
+                                  organization: true,
+                                ),
+                                for (final name in [
+                                  'Google',
+                                  'GitHub',
+                                  'YouTube',
+                                  'ChatGPT',
+                                ])
+                                  label(name),
+                                label(
+                                  'Ágj ÅÉ y\u0301a\u0301j\u0301',
+                                  organization: true,
+                                ),
+                                label('', rich: true),
+                              ],
+                            );
+                          },
+                        ),
+                      ),
+                  ],
+                ),
+              ),
             ),
           ),
         ),
       ),
-    ));
+    );
     await tester.pump();
     await tester.pump();
-    final boundary = capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+    final boundary =
+        capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
     return (await tester.runAsync(() async {
       final image = await boundary.toImage();
       try {
@@ -547,14 +623,19 @@ Future<void> _realTextEnvelope(
         if (output != null && !empty) {
           Directory(output).createSync(recursive: true);
           final png = await image.toByteData(format: ui.ImageByteFormat.png);
-          File('$output/ink-real-envelope-${brightness.name}-${direction.name}-$scale-$enabled.png')
-              .writeAsBytesSync(png!.buffer.asUint8List());
+          File(
+            '$output/ink-real-envelope-${brightness.name}-${direction.name}-$scale-$enabled.png',
+          ).writeAsBytesSync(png!.buffer.asUint8List());
         }
-        return (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!
-            .buffer.asUint8List().toList();
-      } finally { image.dispose(); }
+        return (await image.toByteData(
+          format: ui.ImageByteFormat.rawRgba,
+        ))!.buffer.asUint8List().toList();
+      } finally {
+        image.dispose();
+      }
     }))!;
   }
+
   final empty = await render(empty: true);
   final ordinary = await render();
   final ink = await render(enabled: true);
@@ -565,35 +646,69 @@ Future<void> _realTextEnvelope(
   var minimumContrast = double.infinity;
   final missingPoints = <List<int>>[];
   for (var index = 0; index < ordinary.length; index += 4) {
-    final original = Color.fromARGB(255, ordinary[index], ordinary[index + 1], ordinary[index + 2]);
-    final actual = Color.fromARGB(255, ink[index], ink[index + 1], ink[index + 2]);
-    final under = Color.fromARGB(255, empty[index], empty[index + 1], empty[index + 2]);
-    double distance(Color a, Color b) => math.max((a.r - b.r).abs(),
-      math.max((a.g - b.g).abs(), (a.b - b.b).abs()));
+    final original = Color.fromARGB(
+      255,
+      ordinary[index],
+      ordinary[index + 1],
+      ordinary[index + 2],
+    );
+    final actual = Color.fromARGB(
+      255,
+      ink[index],
+      ink[index + 1],
+      ink[index + 2],
+    );
+    final under = Color.fromARGB(
+      255,
+      empty[index],
+      empty[index + 1],
+      empty[index + 2],
+    );
+    double distance(Color a, Color b) => math.max(
+      (a.r - b.r).abs(),
+      math.max((a.g - b.g).abs(), (a.b - b.b).abs()),
+    );
     if (distance(original, under) > 0.18) {
       supported++;
       if (distance(actual, under) < 0.05) {
         missing++;
-        if (missingPoints.length < 8) missingPoints.add([(index ~/ 4) % 520, index ~/ (4 * 520)]);
+        if (missingPoints.length < 8)
+          missingPoints.add([(index ~/ 4) % 520, index ~/ (4 * 520)]);
       }
     }
     if (distance(original, scheme.onSurface) <= 1 / 255) {
       opaque++;
       final a = actual.computeLuminance();
       final b = under.computeLuminance();
-      minimumContrast = math.min(minimumContrast,
-        (math.max(a, b) + 0.05) / (math.min(a, b) + 0.05));
+      minimumContrast = math.min(
+        minimumContrast,
+        (math.max(a, b) + 0.05) / (math.min(a, b) + 0.05),
+      );
       if (HSVColor.fromColor(actual).saturation >
-          HSVColor.fromColor(original).saturation + 0.10) colored++;
+          HSVColor.fromColor(original).saturation + 0.10)
+        colored++;
     }
   }
   final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
-  if (output != null) File('$output/ink-real-envelope-${brightness.name}-${direction.name}-$scale.json')
-      .writeAsStringSync(jsonEncode({'supported': supported, 'missing': missing,
-        'missingPoints': missingPoints, 'opaque': opaque, 'colored': colored,
-        'minimumContrast': minimumContrast}));
+  if (output != null)
+    File(
+      '$output/ink-real-envelope-${brightness.name}-${direction.name}-$scale.json',
+    ).writeAsStringSync(
+      jsonEncode({
+        'supported': supported,
+        'missing': missing,
+        'missingPoints': missingPoints,
+        'opaque': opaque,
+        'colored': colored,
+        'minimumContrast': minimumContrast,
+      }),
+    );
   expect(supported, greaterThan(100));
-  expect(missing, 0, reason: 'Ink must retain every strongly painted original glyph pixel');
+  expect(
+    missing,
+    0,
+    reason: 'Ink must retain every strongly painted original glyph pixel',
+  );
   expect(opaque, greaterThan(50));
   expect(colored, greaterThan(25));
   expect(minimumContrast, greaterThanOrEqualTo(4.5));

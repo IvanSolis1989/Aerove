@@ -614,6 +614,9 @@ class LiquidGlassGlow {
 /// under it would show through. Without Impeller's shader filters it frosts
 /// but does not bend.
 class LiquidGlass extends StatelessWidget {
+  @visibleForTesting
+  static bool get debugShaderReady => _GlassProgram._program != null;
+
   const LiquidGlass({
     super.key,
     required this.style,

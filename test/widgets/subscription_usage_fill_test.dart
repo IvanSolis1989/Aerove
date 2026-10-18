@@ -195,7 +195,10 @@ void main() {
       for (final time in [Duration.zero, const Duration(seconds: 3)]) {
         for (final rtl in [false, true]) {
           final surface = subscriptionUsageMeniscus(
-            size: size, share: share, time: time, rtl: rtl,
+            size: size,
+            share: share,
+            time: time,
+            rtl: rtl,
           );
           final metric = surface.path.computeMetrics().single;
           final points = <ui.Tangent>[];
@@ -215,7 +218,9 @@ void main() {
           var edgeTurn = 0.0;
           for (var i = 0; i < points.length; i++) {
             final point = points[i].position;
-            final actualX = rtl ? size.width - surface.width + point.dx : point.dx;
+            final actualX = rtl
+                ? size.width - surface.width + point.dx
+                : point.dx;
             expect(actualX, inInclusiveRange(0, size.width));
             expect(point.dy, inInclusiveRange(0, size.height));
             if (i == 0) continue;
@@ -228,14 +233,16 @@ void main() {
             if (point.dy > size.height * 0.3 && point.dy < size.height * 0.7) {
               centerTurn += turn;
               expect(points[i].vector.dx.abs(), lessThan(0.001));
-            } else if (point.dy < size.height * 0.22 || point.dy > size.height * 0.78) {
+            } else if (point.dy < size.height * 0.22 ||
+                point.dy > size.height * 0.78) {
               edgeTurn += turn;
             }
-            double filledX(Offset position) => rtl
-                ? surface.width - position.dx
-                : position.dx;
-            area += (filledX(point) + filledX(previous.position)) *
-                (point.dy - previous.position.dy) / 2;
+            double filledX(Offset position) =>
+                rtl ? surface.width - position.dx : position.dx;
+            area +=
+                (filledX(point) + filledX(previous.position)) *
+                (point.dy - previous.position.dy) /
+                2;
           }
           if (share < 1) expect(centerTurn, lessThan(edgeTurn));
           expect(area / (size.width * size.height), closeTo(share, 0.0001));
@@ -366,7 +373,10 @@ void main() {
               mode: mode,
               seedColor: Colors.red,
             );
-            final otherTheme = await _snapshot(tester, '$name-fixed-water-color');
+            final otherTheme = await _snapshot(
+              tester,
+              '$name-fixed-water-color',
+            );
             expect(otherTheme, orderedEquals(filled));
           }
           await _pump(

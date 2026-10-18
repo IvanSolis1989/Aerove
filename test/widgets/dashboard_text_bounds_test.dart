@@ -90,8 +90,9 @@ Future<({ByteData rgba, Uint8List png, int width, int height})> _capture(
   try {
     return (
       rgba: (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!,
-      png: (await image.toByteData(format: ui.ImageByteFormat.png))!
-          .buffer.asUint8List(),
+      png: (await image.toByteData(
+        format: ui.ImageByteFormat.png,
+      ))!.buffer.asUint8List(),
       width: image.width,
       height: image.height,
     );
@@ -158,12 +159,12 @@ Future<List<Map<String, Object?>>> _measure(
   Uint8List? maskPng;
   final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
   try {
-    expected = (await tester.runAsync(
-      () => mask.toByteData(format: ui.ImageByteFormat.rawRgba),
+    expected = (await tester.runAsync<ByteData>(
+      () async => (await mask.toByteData(format: ui.ImageByteFormat.rawRgba))!,
     ))!;
     if (output != null) {
-      maskPng = (await tester.runAsync(
-        () => mask.toByteData(format: ui.ImageByteFormat.png),
+      maskPng = (await tester.runAsync<ByteData>(
+        () async => (await mask.toByteData(format: ui.ImageByteFormat.png))!,
       ))!.buffer.asUint8List();
     }
   } finally {
@@ -198,8 +199,10 @@ Future<List<Map<String, Object?>>> _measure(
         ink++;
         var difference = 0;
         for (var channel = 0; channel < 3; channel++) {
-          difference += (painted.rgba.getUint8(offset + channel) -
-                  blank.rgba.getUint8(offset + channel)).abs();
+          difference +=
+              (painted.rgba.getUint8(offset + channel) -
+                      blank.rgba.getUint8(offset + channel))
+                  .abs();
         }
         if (difference >= 3) visible++;
       }
@@ -217,14 +220,18 @@ Future<List<Map<String, Object?>>> _measure(
   }
   if (output != null) {
     final directory = Directory(output)..createSync(recursive: true);
-    File('${directory.path}/dashboard-bounds-$name.png')
-        .writeAsBytesSync(painted.png);
-    File('${directory.path}/dashboard-bounds-$name-background.png')
-        .writeAsBytesSync(blank.png);
-    File('${directory.path}/dashboard-bounds-$name-mask.png')
-        .writeAsBytesSync(maskPng!);
-    File('${directory.path}/dashboard-bounds-$name.json')
-        .writeAsStringSync(const JsonEncoder.withIndent('  ').convert(geometry));
+    File(
+      '${directory.path}/dashboard-bounds-$name.png',
+    ).writeAsBytesSync(painted.png);
+    File(
+      '${directory.path}/dashboard-bounds-$name-background.png',
+    ).writeAsBytesSync(blank.png);
+    File(
+      '${directory.path}/dashboard-bounds-$name-mask.png',
+    ).writeAsBytesSync(maskPng!);
+    File(
+      '${directory.path}/dashboard-bounds-$name.json',
+    ).writeAsStringSync(const JsonEncoder.withIndent('  ').convert(geometry));
   }
   return geometry;
 }
@@ -245,29 +252,34 @@ void main() {
     tester,
   ) async {
     final capture = GlobalKey();
-    await tester.pumpWidget(TestApp(
-      theme: ThemeData(fontFamily: 'DashboardBounds'),
-      child: RepaintBoundary(
-        key: capture,
-        child: const ColoredBox(
-          color: Colors.white,
-          child: Align(
-            alignment: Alignment.topLeft,
-            child: SizedBox(
-              width: 200,
-              height: 12,
-              child: ClipRect(
-                child: OverflowBox(
-                  alignment: Alignment.topLeft,
-                  maxHeight: 80,
-                  child: Text('Google gjy', style: TextStyle(color: Colors.black)),
+    await tester.pumpWidget(
+      TestApp(
+        theme: ThemeData(fontFamily: 'DashboardBounds'),
+        child: RepaintBoundary(
+          key: capture,
+          child: const ColoredBox(
+            color: Colors.white,
+            child: Align(
+              alignment: Alignment.topLeft,
+              child: SizedBox(
+                width: 200,
+                height: 12,
+                child: ClipRect(
+                  child: OverflowBox(
+                    alignment: Alignment.topLeft,
+                    maxHeight: 80,
+                    child: Text(
+                      'Google gjy',
+                      style: TextStyle(color: Colors.black),
+                    ),
+                  ),
                 ),
               ),
             ),
           ),
         ),
       ),
-    ));
+    );
     await tester.pumpAndSettle();
     final rows = await _measure(
       tester,
@@ -291,65 +303,88 @@ void main() {
             tester.view.physicalSize = Size(width, 1000);
             tester.view.devicePixelRatio = 1;
             addTearDown(tester.view.reset);
-            final container = ProviderContainer(overrides: [
-              profilesProvider.overrideWithValue(const [
-                Profile(id: 1, autoUpdateDuration: Duration.zero),
-              ]),
-              suspendProvider.overrideWithValue(false),
-              outboundIpProbeProvider.overrideWith(_Ips.new),
-              serviceStatusProvider.overrideWith(_Services.new),
-              enabledServiceTargetsProvider.overrideWithValue(_targets),
-              ipQualityProvider.overrideWith((_, _) async => const IpQuality(
-                ip: _ip,
-                source: IpQualitySource.ipLocate,
-                type: IpType.residential,
-                organization: _organization,
-              )),
-              themeSettingProvider.overrideWithBuild((_, _) => ThemeProps(
-                fontFamily: 'DashboardBounds',
-                auroraEnabled: mode != LiquidGlassMode.none,
-                liquidGlass: mode,
-              )),
-              dashboardStateProvider.overrideWithValue(const DashboardState(
-                dashboardWidgets: [
-                  DashboardWidget.currentOutbound,
-                  DashboardWidget.serviceStatus,
-                ],
-              )),
-              navigationItemsStateProvider.overrideWithValue(NavigationItemsState(
-                value: [
-                  NavigationItem(
-                    glyph: AppGlyphs.dashboard,
-                    label: PageLabel.dashboard,
-                    builder: (_) => const DashboardView(platform: SupportPlatform.android),
+            final container = ProviderContainer(
+              overrides: [
+                profilesProvider.overrideWithValue(const [
+                  Profile(id: 1, autoUpdateDuration: Duration.zero),
+                ]),
+                suspendProvider.overrideWithValue(false),
+                outboundIpProbeProvider.overrideWith(_Ips.new),
+                serviceStatusProvider.overrideWith(_Services.new),
+                enabledServiceTargetsProvider.overrideWithValue(_targets),
+                ipQualityProvider.overrideWith(
+                  (_, _) async => const IpQuality(
+                    ip: _ip,
+                    source: IpQualitySource.ipLocate,
+                    type: IpType.residential,
+                    organization: _organization,
                   ),
-                  NavigationItem(
-                    glyph: AppGlyphs.tools,
-                    label: PageLabel.tools,
-                    builder: (_) => const SizedBox.shrink(),
+                ),
+                themeSettingProvider.overrideWithBuild(
+                  (_, _) => ThemeProps(
+                    fontFamily: 'DashboardBounds',
+                    auroraEnabled: mode != LiquidGlassMode.none,
+                    liquidGlass: mode,
                   ),
-                ],
-              )),
-            ]);
+                ),
+                dashboardStateProvider.overrideWithValue(
+                  const DashboardState(
+                    dashboardWidgets: [
+                      DashboardWidget.currentOutbound,
+                      DashboardWidget.serviceStatus,
+                    ],
+                  ),
+                ),
+                navigationItemsStateProvider.overrideWithValue(
+                  NavigationItemsState(
+                    value: [
+                      NavigationItem(
+                        glyph: AppGlyphs.dashboard,
+                        label: PageLabel.dashboard,
+                        builder: (_) => const DashboardView(
+                          platform: SupportPlatform.Android,
+                        ),
+                      ),
+                      NavigationItem(
+                        glyph: AppGlyphs.tools,
+                        label: PageLabel.tools,
+                        builder: (_) => const SizedBox.shrink(),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            );
             globalState.container = container;
             addTearDown(container.dispose);
             container.read(viewSizeProvider.notifier).value = Size(width, 1000);
             final capture = GlobalKey();
-            await tester.pumpWidget(UncontrolledProviderScope(
-              container: container,
-              child: Consumer(builder: (_, ref, _) => TestApp(
-                includeNavigatorKey: false,
-                locale: const Locale('en'),
-                theme: watchAppTheme(ref, brightness),
-                child: Builder(builder: (context) => MediaQuery(
-                  data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(scale)),
-                  child: RepaintBoundary(
-                    key: capture,
-                    child: const AuroraAppSurface(motion: false, child: HomePage()),
+            await tester.pumpWidget(
+              UncontrolledProviderScope(
+                container: container,
+                child: Consumer(
+                  builder: (_, ref, _) => TestApp(
+                    includeNavigatorKey: false,
+                    locale: const Locale('en'),
+                    theme: watchAppTheme(ref, brightness),
+                    child: Builder(
+                      builder: (context) => MediaQuery(
+                        data: MediaQuery.of(
+                          context,
+                        ).copyWith(textScaler: TextScaler.linear(scale)),
+                        child: RepaintBoundary(
+                          key: capture,
+                          child: const AuroraAppSurface(
+                            motion: false,
+                            child: HomePage(),
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
-                )),
-              )),
-            ));
+                ),
+              ),
+            );
             await tester.pumpAndSettle();
             for (final labels in [
               [_organization],
@@ -364,7 +399,8 @@ void main() {
               ];
               final rows = await _measure(
                 tester,
-                capture.currentContext!.findRenderObject()! as RenderRepaintBoundary,
+                capture.currentContext!.findRenderObject()!
+                    as RenderRepaintBoundary,
                 paragraphs,
                 '$name-${labels.first == _organization ? 'organization' : 'services'}',
               );

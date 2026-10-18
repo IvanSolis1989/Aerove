@@ -1,0 +1,319 @@
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
+import 'package:fl_clash/enum/enum.dart';
+import 'package:fl_clash/l10n/l10n.dart';
+import 'package:fl_clash/manager/theme_manager.dart';
+import 'package:fl_clash/models/models.dart';
+import 'package:fl_clash/providers/providers.dart';
+import 'package:fl_clash/state.dart';
+import 'package:fl_clash/ui/ui.dart';
+import 'package:fl_clash/views/proxies/card.dart';
+import 'package:fl_clash/views/proxies/common.dart';
+import 'package:fl_clash/widgets/widgets.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
+
+import '../helpers/test_profiles.dart';
+
+const _url = 'https://example.com/generate_204';
+const _name = 'Ágj a\u0301j\u0301 🇮🇩 Long fallback proxy';
+const _font = 'SharedBoundsLatin';
+bool _hasCjk = false;
+
+InlineSpan _colored(InlineSpan value, Color color) {
+  final span = value as TextSpan;
+  return TextSpan(
+    text: span.text,
+    style: span.style?.copyWith(color: color, shadows: const []),
+    children: span.children?.map((child) => _colored(child, color)).toList(),
+  );
+}
+
+Future<({ByteData bytes, int width, int height, Uint8List png})> _shot(
+  WidgetTester tester,
+  RenderRepaintBoundary boundary,
+) async => (await tester.runAsync(() async {
+  final image = await boundary.toImage();
+  try {
+    return (
+      bytes: (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!,
+      width: image.width,
+      height: image.height,
+      png: (await image.toByteData(format: ui.ImageByteFormat.png))!
+          .buffer.asUint8List(),
+    );
+  } finally {
+    image.dispose();
+  }
+}))!;
+
+Future<List<Map<String, Object?>>> _glyphRows(
+  WidgetTester tester,
+  GlobalKey capture,
+  String name,
+) async {
+  final boundary = capture.currentContext!.findRenderObject()!
+      as RenderRepaintBoundary;
+  final paragraphs = tester.renderObjectList<RenderParagraph>(
+    find.descendant(of: find.byKey(capture), matching: find.byType(RichText)),
+  ).toList();
+  final painted = await _shot(tester, boundary);
+  final originals = [for (final paragraph in paragraphs) paragraph.text];
+  final masks = <({ByteData bytes, Rect region})>[];
+  final results = <Map<String, Object?>>[];
+  for (final paragraph in paragraphs) {
+    final painter = TextPainter(
+      text: _colored(paragraph.text, Colors.white),
+      textAlign: paragraph.textAlign,
+      textDirection: paragraph.textDirection,
+      textScaler: paragraph.textScaler,
+      maxLines: paragraph.maxLines,
+      ellipsis: paragraph.overflow == TextOverflow.ellipsis ? '\u2026' : null,
+      locale: paragraph.locale,
+      strutStyle: paragraph.strutStyle,
+      textWidthBasis: paragraph.textWidthBasis,
+      textHeightBehavior: paragraph.textHeightBehavior,
+    )..layout(minWidth: paragraph.size.width, maxWidth: paragraph.size.width);
+    final origin = paragraph.localToGlobal(Offset.zero, ancestor: boundary);
+    final recorder = ui.PictureRecorder();
+    painter.paint(Canvas(recorder), origin);
+    final picture = recorder.endRecording();
+    final image = picture.toImageSync(painted.width, painted.height);
+    picture.dispose();
+    final data = (await tester.runAsync(
+      () => image.toByteData(format: ui.ImageByteFormat.rawRgba),
+    ))!;
+    image.dispose();
+    final clips = <String>[];
+    RenderObject child = paragraph;
+    while (child.parent case final parent?) {
+      final clip = parent.describeApproximatePaintClip(child);
+      if (clip != null) {
+        clips.add('${parent.runtimeType}:${MatrixUtils.transformRect(
+          parent.getTransformTo(boundary), clip,
+        )}');
+      }
+      if (parent == boundary) break;
+      child = parent;
+    }
+    masks.add((bytes: data, region: (origin & paragraph.size).inflate(8)));
+    results.add({
+      'text': paragraph.text.toPlainText(),
+      'bounds': (origin & paragraph.size).toString(),
+      'ellipsis': painter.didExceedMaxLines,
+      'clips': clips,
+    });
+    painter.dispose();
+  }
+  late ({ByteData bytes, int width, int height, Uint8List png}) blank;
+  try {
+    for (var i = 0; i < paragraphs.length; i++) {
+      paragraphs[i].text = _colored(originals[i], Colors.transparent);
+    }
+    await tester.pump();
+    blank = await _shot(tester, boundary);
+  } finally {
+    for (var i = 0; i < paragraphs.length; i++) {
+      paragraphs[i].text = originals[i];
+    }
+    await tester.pump();
+  }
+  for (var i = 0; i < masks.length; i++) {
+    final mask = masks[i];
+    final area = mask.region.intersect(Rect.fromLTWH(
+      0, 0, painted.width.toDouble(), painted.height.toDouble(),
+    ));
+    final missing = <int>[];
+    var supported = 0;
+    for (var y = area.top.ceil(); y < area.bottom.floor(); y++) {
+      var expected = 0;
+      var visible = 0;
+      for (var x = area.left.ceil(); x < area.right.floor(); x++) {
+        final offset = (y * painted.width + x) * 4;
+        if (mask.bytes.getUint8(offset + 3) < 180) continue;
+        expected++;
+        var difference = 0;
+        for (var channel = 0; channel < 3; channel++) {
+          difference += (painted.bytes.getUint8(offset + channel) -
+              blank.bytes.getUint8(offset + channel)).abs();
+        }
+        if (difference >= 3) visible++;
+      }
+      if (expected >= 3) {
+        supported++;
+        if (visible < expected * 0.6) missing.add(y);
+      }
+    }
+    results[i].addAll({'inkRows': supported, 'missingRows': missing});
+  }
+  final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+  if (output != null) {
+    Directory(output).createSync(recursive: true);
+    File('$output/shared-text-$name.png').writeAsBytesSync(painted.png);
+    File('$output/shared-text-$name-background.png').writeAsBytesSync(blank.png);
+    File('$output/shared-text-$name.json').writeAsStringSync(jsonEncode({
+      'cjkFontLoaded': _hasCjk, 'paragraphs': results,
+    }));
+  }
+  return results;
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUpAll(() async {
+    await (FontLoader(_font)
+      ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'))).load();
+    await (FontLoader('Twemoji')
+      ..addFont(rootBundle.load('assets/fonts/Twemoji.Mozilla.ttf'))).load();
+    final cjk = File('/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc');
+    if (cjk.existsSync()) {
+      await (FontLoader('SharedBoundsCjk')
+        ..addFont(Future.value(ByteData.sublistView(cjk.readAsBytesSync())))).load();
+      _hasCjk = true;
+    }
+    if (Platform.environment['XCLASH_REQUIRE_IMPELLER'] == 'true') {
+      expect(ui.ImageFilter.isShaderFilterSupported, isTrue);
+      expect(_hasCjk, isTrue, reason: 'CI real-font coverage requires Noto CJK');
+    }
+    if (ui.ImageFilter.isShaderFilterSupported) await GlassInk.prepare();
+  });
+
+  testWidgets('shared detector catches a clipped real glyph positive control', (
+    tester,
+  ) async {
+    final key = GlobalKey();
+    await tester.pumpWidget(MaterialApp(
+      theme: ThemeData(fontFamily: _font),
+      home: RepaintBoundary(key: key, child: ColoredBox(
+        color: Colors.black,
+        child: Align(alignment: Alignment.topLeft, child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: ClipRect(child: SizedBox(height: 8, width: 180,
+            child: OverflowBox(alignment: Alignment.topLeft,
+              minHeight: 50, maxHeight: 50,
+              child: const Text('Ágj Ágj', style: TextStyle(
+                fontSize: 32, color: Colors.white,
+              ))),
+          )),
+        )),
+      )),
+    ));
+    final rows = await _glyphRows(tester, key, 'positive-control');
+    expect(rows.single['inkRows'] as int, greaterThan(8));
+    expect(rows.single['missingRows'] as List<int>, isNotEmpty);
+    expect(rows.single['clips'].toString(), contains('RenderClipRect'));
+  });
+
+  for (final brightness in Brightness.values) {
+    for (final scale in [0.8, 1.0, 1.4]) {
+      for (final quality in [null, ...LiquidGlassQuality.values]) {
+        final name = '${brightness.name}-$scale-${quality?.name ?? 'none'}';
+        testWidgets('shared and actual proxy glyph rows survive $name', (
+          tester,
+        ) async {
+          tester.view.physicalSize = const Size(360, 1800);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+          final container = ProviderContainer(overrides: [
+            profilesProvider.overrideWith(TestProfiles.new),
+            delayDataSourceProvider.overrideWithBuild(
+              (_, _) => {_url: {_name: 123}},
+            ),
+          ]);
+          addTearDown(container.dispose);
+          globalState.container = container;
+          container.read(viewSizeProvider.notifier).value = const Size(360, 1800);
+          final key = GlobalKey();
+          final scheme = ColorScheme.fromSeed(
+            seedColor: Colors.teal, brightness: brightness,
+          );
+          await tester.pumpWidget(UncontrolledProviderScope(
+            container: container,
+            child: MaterialApp(
+              theme: ThemeData(colorScheme: scheme,
+                fontFamily: 'AbsentSharedFont',
+                fontFamilyFallback: [_font, if (_hasCjk) 'SharedBoundsCjk'],
+              ).withAppTypography.withAppShapes.withAppSurfaces,
+              themeAnimationStyle: AnimationStyle.noAnimation,
+              localizationsDelegates: const [
+                AppLocalizations.delegate, AppUiLocalizations.delegate,
+                ...GlobalMaterialLocalizations.delegates,
+              ],
+              supportedLocales: AppLocalizations.delegate.supportedLocales,
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(scale)),
+                child: Builder(builder: (context) {
+                  final measure = Measure.of(context, scale);
+                  globalState.measure = measure;
+                  return MeasureScope(measure: measure, child: AppViewScope(
+                    child: RepaintBoundary(key: key,
+                      child: LiquidGlassScope(enabled: quality != null,
+                        quality: quality ?? LiquidGlassQuality.standard,
+                        child: LiquidGlassHost(enabled: quality != null,
+                          child: Stack(fit: StackFit.expand, children: [
+                            Positioned.fill(child: LiquidGlassColorField(
+                              child: LiquidGlassColorSource(child: ColoredBox(
+                                color: brightness == Brightness.dark
+                                    ? const Color(0xFF16353F) : const Color(0xFFBDE5EC),
+                              )),
+                            )),
+                            child!,
+                          ]),
+                        ),
+                      ),
+                    ),
+                  ));
+                }),
+              ),
+              home: Material(type: MaterialType.transparency,
+                child: Padding(padding: const EdgeInsets.all(16),
+                  child: Builder(builder: (context) => Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    spacing: 12,
+                    children: [
+                      ChipTitle(title: 'Ágj a\u0301j\u0301 ${_hasCjk ? '中文' : 'Fallback'}',
+                        chip: 'Ágj', style: AppTextStyle.headline.of(context)),
+                      Align(alignment: Alignment.centerLeft, child: TonalChip(
+                        label: 'Ágj a\u0301j\u0301 ${_hasCjk ? '中文' : 'Fallback'}',
+                        color: scheme.surfaceContainer, foregroundColor: scheme.onSurface,
+                      )),
+                      DetailRow.text(title: 'Destination GeoIP',
+                        value: 'Ágj ${_hasCjk ? '中文' : 'Fallback'} 203.0.113.15'),
+                      GlassText.rich(TextSpan(children: [
+                        const TextSpan(text: 'Long rich Ágj '),
+                        TextSpan(text: 'a\u0301j\u0301 ${_hasCjk ? '中文' : 'Fallback'}',
+                          style: const TextStyle(fontStyle: FontStyle.italic)),
+                      ]), maxLines: 2, overflow: TextOverflow.ellipsis,
+                        style: AppTextStyle.subheadline.of(context)),
+                      for (final type in ProxyCardType.values)
+                        SizedBox(height: getItemHeight(type),
+                          child: ProxyCard(groupName: 'group', testUrl: _url,
+                            proxy: const Proxy(name: _name, type: 'Shadowsocks'),
+                            groupType: GroupType.Selector, type: type),
+                        ),
+                    ],
+                  )),
+                ),
+              ),
+            ),
+          ));
+          await tester.pumpAndSettle();
+          final rows = await _glyphRows(tester, key, name);
+          expect(rows.length, greaterThanOrEqualTo(12));
+          for (final row in rows) {
+            expect(row['inkRows'] as int, greaterThan(0), reason: '$name $row');
+            expect(row['missingRows'], isEmpty, reason: '$name $row');
+          }
+          expect(tester.takeException(), isNull);
+          await tester.pumpWidget(const SizedBox.shrink());
+        }, skip: quality != null && !ui.ImageFilter.isShaderFilterSupported);
+      }
+    }
+  }
+}

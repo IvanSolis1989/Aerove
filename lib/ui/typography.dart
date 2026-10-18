@@ -79,9 +79,53 @@ enum AppTextStyle {
 }
 
 extension AppTypographyThemeExt on ThemeData {
+  ThemeData withNeutralTextColors(ColorScheme colors) => copyWith(
+    textTheme: _neutralTextColors(textTheme, colorScheme, colors),
+    primaryTextTheme: _neutralTextColors(primaryTextTheme, colorScheme, colors),
+  );
+
   ThemeData get withAppTypography => copyWith(
     textTheme: _onAppScale(textTheme),
     primaryTextTheme: _onAppScale(primaryTextTheme),
+  );
+}
+
+TextTheme _neutralTextColors(
+  TextTheme theme,
+  ColorScheme previous,
+  ColorScheme next,
+) {
+  TextStyle? remap(TextStyle? style) {
+    final color = style?.color;
+    if (style == null || color == null || style.foreground != null) return style;
+    bool sameRgb(Color other) =>
+        color.r == other.r && color.g == other.g && color.b == other.b;
+    final replacement = sameRgb(previous.onSurface)
+        ? next.onSurface
+        : sameRgb(previous.onSurfaceVariant)
+        ? next.onSurfaceVariant
+        : null;
+    return replacement == null
+        ? style
+        : style.copyWith(color: replacement.withValues(alpha: color.a));
+  }
+
+  return theme.copyWith(
+    displayLarge: remap(theme.displayLarge),
+    displayMedium: remap(theme.displayMedium),
+    displaySmall: remap(theme.displaySmall),
+    headlineLarge: remap(theme.headlineLarge),
+    headlineMedium: remap(theme.headlineMedium),
+    headlineSmall: remap(theme.headlineSmall),
+    titleLarge: remap(theme.titleLarge),
+    titleMedium: remap(theme.titleMedium),
+    titleSmall: remap(theme.titleSmall),
+    bodyLarge: remap(theme.bodyLarge),
+    bodyMedium: remap(theme.bodyMedium),
+    bodySmall: remap(theme.bodySmall),
+    labelLarge: remap(theme.labelLarge),
+    labelMedium: remap(theme.labelMedium),
+    labelSmall: remap(theme.labelSmall),
   );
 }
 

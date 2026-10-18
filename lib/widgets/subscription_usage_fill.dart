@@ -26,7 +26,7 @@ double? _shareOf(SubscriptionInfo? info) {
   final depth = share >= 1
       ? 0.0
       : math.min(4.0, math.min(level, size.width - level) / 3) *
-          (1 + math.sin(phase * 1.3) * 0.05);
+            (1 + math.sin(phase * 1.3) * 0.05);
   final contact = level + depth;
   final shoulder = level + depth * 0.55;
   // The cubic integral balances both contact bends against the flat center.
@@ -36,12 +36,30 @@ double? _shareOf(SubscriptionInfo? info) {
   return (
     path: Path()
       ..moveTo(x(contact), 0)
-      ..cubicTo(x(shoulder), 0, x(plane), size.height * 0.08,
-          x(plane), size.height * 0.22)
-      ..cubicTo(x(plane), size.height * 0.36, x(plane), size.height * 0.64,
-          x(plane), size.height * 0.78)
-      ..cubicTo(x(plane), size.height * 0.92, x(shoulder), size.height,
-          x(contact), size.height),
+      ..cubicTo(
+        x(shoulder),
+        0,
+        x(plane),
+        size.height * 0.08,
+        x(plane),
+        size.height * 0.22,
+      )
+      ..cubicTo(
+        x(plane),
+        size.height * 0.36,
+        x(plane),
+        size.height * 0.64,
+        x(plane),
+        size.height * 0.78,
+      )
+      ..cubicTo(
+        x(plane),
+        size.height * 0.92,
+        x(shoulder),
+        size.height,
+        x(contact),
+        size.height,
+      ),
     width: width,
     depth: depth,
   );
@@ -353,7 +371,9 @@ class _UsageFillRender extends RenderBox {
       origin & Size(width, cavity.height),
       shape: LiquidGlassOutline(liquid),
       style: LiquidGlassStyle(
-        tint: const Color(0xFFA9DFFF).withValues(alpha: settings.dark ? 0.10 : 0.12),
+        tint: const Color(
+          0xFFA9DFFF,
+        ).withValues(alpha: settings.dark ? 0.10 : 0.12),
         blur: 0.7,
         refraction: 3,
         bevel: 2.5,
