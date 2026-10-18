@@ -30,7 +30,7 @@ public static class XClashIconExport {
         using (var original = new Bitmap(source))
         using (var canvas = new Bitmap(workingSize, workingSize, PixelFormat.Format32bppArgb)) {
             using (var graphics = Graphics.FromImage(canvas)) {
-                graphics.Clear(mask == "none" ? Color.Transparent : Color.FromArgb(245, 248, 255));
+                graphics.Clear(mask == "none" ? Color.Transparent : Color.FromArgb(250, 250, 252));
                 graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
                 graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
                 float length = workingSize * scale;
@@ -144,7 +144,7 @@ $adaptive = @'
 $background = @'
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#F5F8FF</color>
+    <color name="ic_launcher_background">#FAFAFC</color>
 </resources>
 '@
 $xmlOutputs = @{
