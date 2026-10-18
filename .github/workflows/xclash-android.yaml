@@ -138,6 +138,16 @@ jobs:
             test/views/script_content_test.dart test/pages/home_test.dart \
             test/widgets/ test/l10n/ test/lint/ || test_status=1
           exit "$test_status"
+      - name: Render README application previews
+        env:
+          XCLASH_SCREENSHOT_DIR: ${{ runner.temp }}/xclash-previews/readme
+        run: |
+          cp pubspec.yaml "$RUNNER_TEMP/readme-pubspec.yaml"
+          trap 'cp "$RUNNER_TEMP/readme-pubspec.yaml" pubspec.yaml' EXIT
+          sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
+          curl --fail --location --retry 2 https://raw.githubusercontent.com/IvanSolis1989/XClash/3e67a99ee77cd3ad1bfe703252af1f17dba738ac/test/readme_showcase_test.dart -o test/readme_showcase_test.dart
+          dart format test/readme_showcase_test.dart
+          flutter test --enable-impeller --dart-define=SAFE_MODE=true --reporter expanded test/readme_showcase_test.dart
       - uses: actions/upload-artifact@v4
         if: always()
         with:
