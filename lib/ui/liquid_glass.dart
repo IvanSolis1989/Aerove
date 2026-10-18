@@ -5,11 +5,13 @@ import 'package:fl_clash/ui/context.dart';
 import 'package:fl_clash/ui/shape.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:material_ui/material_ui.dart';
 
 part 'liquid_glass_capture.dart';
 part 'liquid_glass_ink.dart';
 part 'liquid_glass_occlusion.dart';
+part 'liquid_glass_source_blur.dart';
 
 const _shaderAsset = 'shaders/liquid_glass.frag';
 const _glowIn = Duration(milliseconds: 120);

@@ -115,6 +115,7 @@ jobs:
             test/widgets/dashboard_text_bounds_test.dart \
             test/widgets/shared_text_bounds_test.dart \
             test/widgets/glass_wallpaper_sampling_test.dart \
+            test/widgets/source_blur_cache_test.dart \
             test/widgets/sheet_occlusion_test.dart \
             test/widgets/popup_occlusion_test.dart \
             test/widgets/header_blur_occlusion_test.dart \

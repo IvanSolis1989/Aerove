@@ -77,6 +77,18 @@ class LiquidGlassHost extends StatelessWidget {
   @visibleForTesting
   static bool? debugCarryBandsOverride;
 
+  @visibleForTesting
+  static bool? debugSourceBlurEnabledOverride;
+
+  @visibleForTesting
+  static int? debugSourceBlurBudgetOverride;
+
+  @visibleForTesting
+  static SourceBlurCapture? debugLastSourceBlurCapture;
+
+  @visibleForTesting
+  static int get debugLiveSourceBlurPixels => _liveSourceBlurPixels;
+
   @override
   Widget build(BuildContext context) {
     return _LiquidGlassHostBox(
@@ -331,6 +343,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
   final _atlases = <({ui.Image image, List<_Band> bands})>[];
   int _replayedPanes = 0;
   final _flatSnapshots = <_LiquidGlassOcclusionLayer, _FlatSnapshot>{};
+  final _sourceBlur = _SourceBlurCache();
 
   @override
   void addToScene(ui.SceneBuilder builder) {
@@ -348,6 +361,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
       cached.image.dispose();
     }
     _flatSnapshots.clear();
+    _sourceBlur.dispose();
     super.dispose();
   }
 
@@ -379,6 +393,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
             image: image,
             size: snapshot!.size,
             toHost: source?.$2 ?? viewport!.$2,
+            staticSource: source != null,
           );
     final placed = <_Behind>[];
     for (final (index, entry) in found.indexed) {
@@ -417,6 +432,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
       }
     }
     _prepareFlatSnapshots(placed);
+    _prepareSourceBlur(placed, wallpaper);
     var levels = 0;
     final contentLevel = placed.any((entry) => entry.wallpaper != null) ? 1 : 0;
     for (final (index, entry) in placed.indexed) {
@@ -764,7 +780,8 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     // one that does not blur lies alone, so it is kept or drawn on its own.
     final classes = <Object, List<_Behind>>{};
     for (final entry in members) {
-      (classes[entry.blurSigma == 0 ? entry : entry.blurSigma] ??= []).add(
+      (classes[entry.sourceBlur != null && entry.blurSigma > 0
+              ? _sourceBlurredBand : entry.blurSigma == 0 ? entry : entry.blurSigma] ??= []).add(
         entry,
       );
     }
@@ -781,7 +798,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
         width = math.max(width, entry.texels.width);
       }
       final rect = Rect.fromLTWH(0, top, step(width), step(bottom));
-      final sigma = entries.first.blurSigma;
+      final sigma = entries.first.sourceBlur == null ? entries.first.blurSigma : 0.0;
       final drawn = <Object?>[sigma, rect.size];
       final recorder = ui.PictureRecorder();
       final canvas = Canvas(recorder);
@@ -798,8 +815,9 @@ class _LiquidGlassHostLayer extends ContainerLayer {
           ..scale(entry.texelsPerDp)
           ..translate(-entry.slot.left, -entry.slot.top);
         if (entry.wallpaper case final wallpaper?) {
+          final image = entry.sourceBlur ?? wallpaper.image;
           drawn.addAll([
-            wallpaper.image,
+            image,
             wallpaper.size,
             ...wallpaper.toHost.storage,
           ]);
@@ -807,12 +825,12 @@ class _LiquidGlassHostLayer extends ContainerLayer {
             ..save()
             ..transform(wallpaper.toHost.storage)
             ..drawImageRect(
-              wallpaper.image,
+              image,
               Rect.fromLTWH(
                 0,
                 0,
-                wallpaper.image.width.toDouble(),
-                wallpaper.image.height.toDouble(),
+                image.width.toDouble(),
+                image.height.toDouble(),
               ),
               Offset.zero & wallpaper.size,
               Paint()..filterQuality = FilterQuality.low,
@@ -991,7 +1009,7 @@ typedef _Placement = ({
 typedef _Band = ({Rect rect, double sigma, List<Object?> drawn});
 typedef _FlatSnapshot = ({ui.Image image, Rect bounds, List<Object?> key});
 
-typedef _Wallpaper = ({ui.Image image, Size size, Matrix4 toHost});
+typedef _Wallpaper = ({ui.Image image, Size size, Matrix4 toHost, bool staticSource});
 
 bool _encloses(Rect outer, Rect inner) =>
     outer.left <= inner.left &&
@@ -1038,6 +1056,7 @@ class _Behind {
   late final Rect device = MatrixUtils.transformRect(toHost, pane.rect);
   Path? visible;
   _Wallpaper? wallpaper;
+  ui.Image? sourceBlur;
   _LiquidGlassOcclusionLayer? flatBoundary;
   bool get flatContent => flatBoundary != null;
   _FlatSnapshot? flatSnapshot;
