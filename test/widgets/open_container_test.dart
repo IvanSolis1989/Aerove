@@ -13,12 +13,11 @@ void main() {
     tester,
   ) async {
     final semantics = tester.ensureSemantics();
-    addTearDown(semantics.dispose);
     final opacity = AnimationController(
       vsync: tester,
       duration: const Duration(milliseconds: 300),
     );
-    addTearDown(opacity.dispose);
+    try {
     await tester.pumpWidget(
       MaterialApp(
         home: LiquidGlassFade(
@@ -60,6 +59,14 @@ void main() {
           tester.binding.pipelineOwner.semanticsOwner!.rootSemanticsNode!;
       expect(includesSettings(root), Color.getAlphaFromOpacity(value) != 0);
       expect(tester.takeException(), isNull);
+    }
+    } finally {
+      try {
+        await tester.pumpWidget(const SizedBox.shrink());
+      } finally {
+        opacity.dispose();
+        semantics.dispose();
+      }
     }
   });
 

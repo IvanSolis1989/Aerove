@@ -11,9 +11,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
 void main() {
-  setUpAll(() {
+  setUpAll(() async {
     if (Platform.environment['XCLASH_REQUIRE_IMPELLER'] == 'true') {
       expect(ui.ImageFilter.isShaderFilterSupported, isTrue);
+    }
+    if (ui.ImageFilter.isShaderFilterSupported) {
+      await GlassInk.prepare().timeout(const Duration(seconds: 30));
     }
   });
 
@@ -21,47 +24,53 @@ void main() {
     'busy action uses icon ink and preserves fallback and state colors',
     (tester) async {
       final semantics = tester.ensureSemantics();
-      addTearDown(semantics.dispose);
-      final colors = ColorScheme.fromSeed(seedColor: Colors.blue);
-      for (final enabled in [false, true]) {
-        for (final highContrast in [false, true]) {
-          for (final explicit in [
-            null,
-            colors.error,
-            Colors.green,
-            Colors.orange,
-          ]) {
-            await tester.pumpWidget(
-              MaterialApp(
-                theme: ThemeData(colorScheme: colors),
-                home: MediaQuery(
-                  data: MediaQueryData(highContrast: highContrast),
-                  child: LiquidGlassScope(
-                    enabled: enabled,
-                    child: Center(
-                      child: CommonCircleLoading(
-                        color: explicit,
-                        semanticLabel: 'Updating',
+      try {
+        final colors = ColorScheme.fromSeed(seedColor: Colors.blue);
+        for (final enabled in [false, true]) {
+          for (final highContrast in [false, true]) {
+            for (final explicit in [
+              null,
+              colors.error,
+              Colors.green,
+              Colors.orange,
+            ]) {
+              await tester.pumpWidget(
+                MaterialApp(
+                  theme: ThemeData(colorScheme: colors),
+                  home: MediaQuery(
+                    data: MediaQueryData(highContrast: highContrast),
+                    child: LiquidGlassScope(
+                      enabled: enabled,
+                      child: Center(
+                        child: CommonCircleLoading(
+                          color: explicit,
+                          semanticLabel: 'Updating',
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-            );
-            final ink = tester.widget<GlassInk>(find.byType(GlassInk));
-            expect(ink.role, GlassInkRole.icon);
-            expect(
-              ink.source,
-              explicit ??
-                  (enabled && !highContrast
-                      ? colors.onSurface
-                      : colors.primary),
-            );
-            expect(find.bySemanticsLabel('Updating'), findsOneWidget);
+              );
+              final ink = tester.widget<GlassInk>(find.byType(GlassInk));
+              expect(ink.role, GlassInkRole.icon);
+              expect(
+                ink.source,
+                explicit ??
+                    (enabled && !highContrast
+                        ? colors.onSurface
+                        : colors.primary),
+              );
+              expect(find.bySemanticsLabel('Updating'), findsOneWidget);
+            }
           }
         }
+      } finally {
+        try {
+          await tester.pumpWidget(const SizedBox.shrink());
+        } finally {
+          semantics.dispose();
+        }
       }
-      await tester.pumpWidget(const SizedBox.shrink());
     },
   );
 
