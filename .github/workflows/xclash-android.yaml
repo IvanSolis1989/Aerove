@@ -104,6 +104,7 @@ jobs:
           sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
           flutter test --enable-impeller --reporter expanded test/widgets/glass_foreground_test.dart test/widgets/target_icon_test.dart test/widgets/selection_mark_test.dart test/widgets/loading_ink_test.dart test/widgets/core_status_button_test.dart
       - name: Verify feather blend pixels
+        id: feather
         env:
           XCLASH_REQUIRE_IMPELLER: 'true'
           XCLASH_SCREENSHOT_DIR: ${{ runner.temp }}/xclash-previews/feather
@@ -112,6 +113,7 @@ jobs:
           trap 'cp "$RUNNER_TEMP/feather-pubspec.yaml" pubspec.yaml' EXIT
           sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
           flutter test --enable-impeller --reporter expanded test/widgets/header_blur_occlusion_test.dart
+          XCLASH_REQUIRE_IMPELLER=false XCLASH_SCREENSHOT_DIR="$XCLASH_SCREENSHOT_DIR/software" flutter test --reporter expanded test/widgets/header_blur_occlusion_test.dart
       - name: Upload feather blend evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -120,7 +122,7 @@ jobs:
           path: ${{ runner.temp }}/xclash-previews/feather
           if-no-files-found: ignore
       - name: Ink performance and transition probes
-        if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.analyze.outcome == 'success' && steps.feather.outcome == 'success' }}
         env:
           XCLASH_REQUIRE_IMPELLER: 'true'
           XCLASH_SCREENSHOT_DIR: ${{ runner.temp }}/xclash-previews/performance
@@ -175,7 +177,7 @@ jobs:
           path: ${{ runner.temp }}/xclash-previews/performance
           if-no-files-found: ignore
       - name: UI and configuration regressions
-        if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.analyze.outcome == 'success' && steps.feather.outcome == 'success' }}
         env:
           XCLASH_SCREENSHOT_DIR: ${{ runner.temp }}/xclash-previews
         run: |
