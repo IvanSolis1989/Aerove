@@ -151,7 +151,7 @@ void main() {
       'meshRows': 97,
       'sharedSourceSaturationCeiling': 0.60,
       'sourceSofteningBrightnessDependent': false,
-      'lightFinalSaturationMultiplier': 1.10,
+      'lightFinalSaturationMultiplier': 1.08,
       'pixelBaseline': {
         'githubActionsRun': _baselineRun,
         'source': 'xclash-previews artifact, 300 by 600 opaque RGBA images',
@@ -496,8 +496,8 @@ void main() {
     if (darkDigest != _baselineDarkPixelDigest) {
       failures.add('dark RGBA pixels must match baseline run $_baselineRun');
     }
-    if (saturationRatio <= 1.06 || saturationRatio > 1.11) {
-      failures.add('light mean saturation must increase by 6 to 11 percent');
+    if (saturationRatio <= 1.06 || saturationRatio > 1.09) {
+      failures.add('light mean saturation must increase by 6 to 9 percent');
     }
     manifest['brightnessComparison'] = {
       'darkPixelDigest': darkDigest,

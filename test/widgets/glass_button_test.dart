@@ -39,7 +39,9 @@ void main() {
                 ),
               ).withAppShapes.withAppSurfaces,
               builder: (context, child) => MediaQuery(
-                data: MediaQuery.of(context).copyWith(highContrast: highContrast),
+                data: MediaQuery.of(
+                  context,
+                ).copyWith(highContrast: highContrast),
                 child: AuroraAppSurface(motion: false, child: child!),
               ),
               home: Scaffold(
@@ -48,7 +50,10 @@ void main() {
                     OutlinedButton(onPressed: () {}, child: const Text('Exit')),
                     FilledButton(onPressed: () {}, child: const Text('Agree')),
                     TextButton(onPressed: () {}, child: const Text('Text')),
-                    ElevatedButton(onPressed: () {}, child: const Text('Raised')),
+                    ElevatedButton(
+                      onPressed: () {},
+                      child: const Text('Raised'),
+                    ),
                     IconButton(
                       key: const ValueKey('icon-action'),
                       onPressed: () {},
@@ -85,14 +90,19 @@ void main() {
         expect(color.withValues(alpha: 1), error);
         expect(color.a, 1);
         expect(
-          DefaultTextStyle.of(tester.element(find.text('Disabled'))).style.color,
+          DefaultTextStyle.of(
+            tester.element(find.text('Disabled')),
+          ).style.color,
           disabled,
         );
         final style = OutlinedButtonTheme.of(context).style!;
         expect(style.padding!.resolve({}), const EdgeInsets.all(18));
         if (enabled) {
           expect(style.side!.resolve({}), BorderSide.none);
-          expect(style.side!.resolve({WidgetState.focused})!.width, greaterThan(0));
+          expect(
+            style.side!.resolve({WidgetState.focused})!.width,
+            greaterThan(0),
+          );
           final pane = tester.widget<LiquidGlass>(
             find.descendant(
               of: find.widgetWithText(OutlinedButton, 'Exit'),
@@ -107,7 +117,10 @@ void main() {
               matching: find.byType(Material),
             ),
           );
-          expect((material.shape! as OutlinedBorder).side.width, greaterThan(0));
+          expect(
+            (material.shape! as OutlinedBorder).side.width,
+            greaterThan(0),
+          );
         }
         expect(tester.takeException(), isNull);
       }

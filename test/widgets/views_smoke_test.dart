@@ -147,45 +147,64 @@ void main() {
           );
           addTearDown(container.dispose);
           globalState.container = container;
-          container.read(viewSizeProvider.notifier).update(
-            (_) => const Size(390, 800),
-          );
+          container
+              .read(viewSizeProvider.notifier)
+              .update((_) => const Size(390, 800));
           final key = GlobalKey();
           final theme = ThemeData(
             brightness: brightness,
             platform: TargetPlatform.android,
           );
-          await tester.pumpWidget(UncontrolledProviderScope(
-            container: container,
-            child: RepaintBoundary(key: key, child: Stack(
-              fit: StackFit.expand,
-              children: [
-                const CustomPaint(painter: _RouteWallpaper()),
-                LiquidGlassScope(
-                  enabled: quality != null,
-                  quality: quality ?? LiquidGlassQuality.standard,
-                  child: TestApp(
-                    includeNavigatorKey: false,
-                    theme: theme,
-                    child: const ToolsView(),
+          await tester.pumpWidget(
+            UncontrolledProviderScope(
+              container: container,
+              child: RepaintBoundary(
+                key: key,
+                child: Directionality(
+                  textDirection: TextDirection.ltr,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      const CustomPaint(painter: _RouteWallpaper()),
+                      LiquidGlassScope(
+                        enabled: quality != null,
+                        quality: quality ?? LiquidGlassQuality.standard,
+                        child: TestApp(
+                          includeNavigatorKey: false,
+                          theme: theme,
+                          child: const ToolsView(),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ],
-            )),
-          ));
+              ),
+            ),
+          );
           await tester.pumpAndSettle();
-          final prefix = 'settings-${brightness.name}-${quality?.name ?? 'none'}-$label';
+          final prefix =
+              'settings-${brightness.name}-${quality?.name ?? 'none'}-$label';
           final before = await _routePixels(tester, key, '$prefix-before');
           final target = find.text(label);
-          await tester.scrollUntilVisible(target, 300,
-            scrollable: find.byType(Scrollable).first);
-          expect(find.ancestor(of: target, matching: find.byType(OpenContainer<dynamic>)),
-            findsOneWidget);
+          await tester.scrollUntilVisible(
+            target,
+            300,
+            scrollable: find.byType(Scrollable).first,
+          );
+          expect(
+            find.ancestor(
+              of: target,
+              matching: find.byType(OpenContainer<dynamic>),
+            ),
+            findsOneWidget,
+          );
           await tester.tap(target);
           await tester.pumpAndSettle();
           expect(find.byType(toolDestinations[label]!), findsOneWidget);
           final after = await _routePixels(tester, key, '$prefix-open');
-          final pageContext = tester.element(find.byType(toolDestinations[label]!));
+          final pageContext = tester.element(
+            find.byType(toolDestinations[label]!),
+          );
           expect(LiquidGlassScope.of(pageContext), quality != null);
           if (quality != null) {
             expect(find.byType(LiquidGlass), findsWidgets);
@@ -194,13 +213,19 @@ void main() {
           for (var y = 200; y < 700; y++) {
             final at = (y * 390 + 2) * 4;
             if (quality != null) {
-              expect(after.sublist(at, at + 4), before.sublist(at, at + 4),
-                reason: 'Settled page must retain the external wallpaper at y=$y.');
+              expect(
+                after.sublist(at, at + 4),
+                before.sublist(at, at + 4),
+                reason:
+                    'Settled page must retain the external wallpaper at y=$y.',
+              );
             } else {
               final color = theme.canvasColor;
               expect(after.sublist(at, at + 4), [
-                (color.r * 255).round(), (color.g * 255).round(),
-                (color.b * 255).round(), 255,
+                (color.r * 255).round(),
+                (color.g * 255).round(),
+                (color.b * 255).round(),
+                255,
               ]);
             }
           }
@@ -614,14 +639,14 @@ class _TestProxyGroups extends ProxyGroups {
   void order(int oldIndex, int newIndex) {}
 }
 
-
 Future<Uint8List> _routePixels(
   WidgetTester tester,
   GlobalKey key,
   String name,
 ) async {
   expect(tester.takeException(), isNull);
-  final boundary = key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+  final boundary =
+      key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
   expect(boundary.size, const Size(390, 800));
   return (await tester.runAsync(() async {
     final image = await boundary.toImage();
@@ -637,9 +662,9 @@ Future<Uint8List> _routePixels(
           png.buffer.asUint8List(png.offsetInBytes, png.lengthInBytes),
         );
       }
-      return Uint8List.fromList(data.buffer.asUint8List(
-        data.offsetInBytes, data.lengthInBytes,
-      ));
+      return Uint8List.fromList(
+        data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+      );
     } finally {
       image.dispose();
     }
@@ -652,9 +677,13 @@ class _RouteWallpaper extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     for (var y = 0.0; y < size.height; y += 20) {
-      canvas.drawRect(Rect.fromLTWH(0, y, size.width, 20),
-        Paint()..color = (y ~/ 20).isEven
-            ? const Color(0xFF4679B2) : const Color(0xFFB5824A));
+      canvas.drawRect(
+        Rect.fromLTWH(0, y, size.width, 20),
+        Paint()
+          ..color = (y ~/ 20).isEven
+              ? const Color(0xFF4679B2)
+              : const Color(0xFFB5824A),
+      );
     }
   }
 

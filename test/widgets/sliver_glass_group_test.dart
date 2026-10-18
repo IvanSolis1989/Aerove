@@ -24,14 +24,16 @@ Future<({Uint8List bytes, int width})> _snapshot(
   return (await tester.runAsync(() async {
     final image = await boundary.toImage();
     try {
-      final rgba = (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!;
+      final rgba = (await image.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
+      ))!;
       final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
       if (output != null) {
         final directory = Directory(output)..createSync(recursive: true);
         final png = (await image.toByteData(format: ui.ImageByteFormat.png))!;
-        File('${directory.path}/sliver-glass-$name.png').writeAsBytesSync(
-          png.buffer.asUint8List(),
-        );
+        File(
+          '${directory.path}/sliver-glass-$name.png',
+        ).writeAsBytesSync(png.buffer.asUint8List());
       }
       return (bytes: rgba.buffer.asUint8List(), width: image.width);
     } finally {
@@ -90,7 +92,9 @@ Future<void> _pump(
                           const PinnedHeaderSliver(
                             child: SizedBox(key: _headerKey, height: 80),
                           ),
-                          SliverToBoxAdapter(child: SizedBox(height: bodyHeight)),
+                          SliverToBoxAdapter(
+                            child: SizedBox(height: bodyHeight),
+                          ),
                         ],
                       ),
                     ),

@@ -12,25 +12,37 @@ void main() {
     testWidgets('glass $quality keeps its route and transition transparent', (
       tester,
     ) async {
-      await tester.pumpWidget(LiquidGlassScope(
-        enabled: true,
-        quality: quality,
-        child: MaterialApp(home: Scaffold(
-          backgroundColor: Colors.transparent,
-          body: Center(child: SizedBox(width: 160, height: 80,
-            child: OpenContainer<void>(
-              closedColor: Colors.red,
-              closedShape: const RoundedSuperellipseBorder(
-                borderRadius: BorderRadius.all(Radius.circular(24)),
+      await tester.pumpWidget(
+        LiquidGlassScope(
+          enabled: true,
+          quality: quality,
+          child: MaterialApp(
+            home: Scaffold(
+              backgroundColor: Colors.transparent,
+              body: Center(
+                child: SizedBox(
+                  width: 160,
+                  height: 80,
+                  child: OpenContainer<void>(
+                    closedColor: Colors.red,
+                    closedShape: const RoundedSuperellipseBorder(
+                      borderRadius: BorderRadius.all(Radius.circular(24)),
+                    ),
+                    closedBuilder: (_, open) => TextButton(
+                      onPressed: open,
+                      child: const Text('Open glass'),
+                    ),
+                    openBuilder: (_, close) => TextButton(
+                      onPressed: close,
+                      child: const Text('Close glass'),
+                    ),
+                  ),
+                ),
               ),
-              closedBuilder: (_, open) => TextButton(
-                onPressed: open, child: const Text('Open glass')),
-              openBuilder: (_, close) => TextButton(
-                onPressed: close, child: const Text('Close glass')),
             ),
-          )),
-        )),
-      ));
+          ),
+        ),
+      );
       await tester.tap(find.text('Open glass'));
       await tester.pump();
       await tester.pump();

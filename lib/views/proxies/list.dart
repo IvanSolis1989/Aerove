@@ -708,7 +708,11 @@ class ListHeader extends ConsumerWidget {
     );
     final shape = AppShape.vertical(
       top: radius,
-      bottom: hasGlassEnvelope ? 0 : unfolded ? radius * floating : radius,
+      bottom: hasGlassEnvelope
+          ? 0
+          : unfolded
+          ? radius * floating
+          : radius,
     );
     return DecoratedBox(
       decoration: ShapeDecoration(

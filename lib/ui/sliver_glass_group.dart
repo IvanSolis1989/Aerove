@@ -23,9 +23,9 @@ class SliverGlassGroup extends SingleChildRenderObjectWidget {
   @override
   void updateRenderObject(
     BuildContext context,
-    covariant _RenderSliverGlassGroup renderObject,
+    covariant RenderObject renderObject,
   ) {
-    renderObject.update(
+    (renderObject as _RenderSliverGlassGroup).update(
       shape.borderRadius.resolve(Directionality.of(context)),
       style,
     );

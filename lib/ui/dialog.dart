@@ -661,11 +661,11 @@ class _AlertAction extends StatelessWidget {
                   ? LiquidGlass.buttonStyle(
                       (_) => glassDefault
                           ? LiquidGlassStyle.tinted(
-                            colorScheme,
-                            colorScheme.primary,
-                          ).copyWith(
-                            tint: colorScheme.primary.withValues(alpha: 0.2),
-                          )
+                              colorScheme,
+                              colorScheme.primary,
+                            ).copyWith(
+                              tint: colorScheme.primary.withValues(alpha: 0.2),
+                            )
                           : LiquidGlassStyle.regular(colorScheme),
                     ).backgroundBuilder
                   : null,

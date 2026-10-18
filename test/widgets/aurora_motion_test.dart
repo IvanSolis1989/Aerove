@@ -12,8 +12,16 @@ import 'package:material_ui/material_ui.dart';
 
 const _colors = [Color(0xFF6BD5D9), Color(0xFFC6ADE4), Color(0xFFA9DAC6)];
 const _seeds = [
-  832838199, 2379623510, 624302977, 2671861087, 3374210312,
-  1374901759, 3079535385, 3413751917, 3209466732, 3919277682,
+  832838199,
+  2379623510,
+  624302977,
+  2671861087,
+  3374210312,
+  1374901759,
+  3079535385,
+  3413751917,
+  3209466732,
+  3919277682,
 ];
 
 void main() {
@@ -37,10 +45,14 @@ void main() {
             Offset(size.width, size.height),
           ]) {
             final point = corner - size.center(Offset.zero) - pose.translation;
-            expect((point.dx * cosine + point.dy * sine).abs(),
-                lessThan(pose.side / 2));
-            expect((-point.dx * sine + point.dy * cosine).abs(),
-                lessThan(pose.side / 2));
+            expect(
+              (point.dx * cosine + point.dy * sine).abs(),
+              lessThan(pose.side / 2),
+            );
+            expect(
+              (-point.dx * sine + point.dy * cosine).abs(),
+              lessThan(pose.side / 2),
+            );
           }
         }
       }
@@ -72,63 +84,71 @@ void main() {
       expect(speeds.reduce(math.max), greaterThan(speeds.reduce(math.min) * 2));
       final longTime = const Duration(days: 100000);
       final before = motion.at(longTime, size);
-      final after = motion.at(longTime + const Duration(milliseconds: 16), size);
+      final after = motion.at(
+        longTime + const Duration(milliseconds: 16),
+        size,
+      );
       expect((before.translation - after.translation).distance, lessThan(0.04));
       expect(_angleDistance(before.angle, after.angle), lessThan(0.0001));
-      expect(AuroraMotion(seed + 1).at(Duration.zero, size),
-          isNot(motion.at(Duration.zero, size)));
+      expect(
+        AuroraMotion(seed + 1).at(Duration.zero, size),
+        isNot(motion.at(Duration.zero, size)),
+      );
     }
   });
 
-  testWidgets('motion only repaints and reuses its mesh across time and resize', (
-    tester,
-  ) async {
-    final key = GlobalKey();
-    var builds = 0;
-    await tester.pumpWidget(_scene(key, foregroundBuild: () => builds++));
-    await tester.pump();
-    final first = await _pixels(tester, key);
-    final painter = _painter(tester);
-    final originalBuilds = builds;
-    await tester.pump(const Duration(seconds: 90));
-    expect(await _pixels(tester, key), isNot(first));
-    expect(_painter(tester), same(painter));
-    expect(builds, originalBuilds);
-    await tester.pumpWidget(_scene(key, size: const Size(300, 180)));
-    expect(_painter(tester), same(painter));
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump();
-    expect(tester.binding.hasScheduledFrame, isFalse);
-    expect(tester.takeException(), isNull);
-  });
+  testWidgets(
+    'motion only repaints and reuses its mesh across time and resize',
+    (tester) async {
+      final key = GlobalKey();
+      var builds = 0;
+      await tester.pumpWidget(_scene(key, foregroundBuild: () => builds++));
+      await tester.pump();
+      final first = await _pixels(tester, key);
+      final painter = _painter(tester);
+      final originalBuilds = builds;
+      await tester.pump(const Duration(seconds: 90));
+      expect(await _pixels(tester, key), isNot(first));
+      expect(_painter(tester), same(painter));
+      expect(builds, originalBuilds);
+      await tester.pumpWidget(_scene(key, size: const Size(300, 180)));
+      expect(_painter(tester), same(painter));
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
-  testWidgets('high refresh pumps repaint the background at most thirty times', (
-    tester,
-  ) async {
-    final key = GlobalKey();
-    var builds = 0;
-    await tester.pumpWidget(_scene(key, foregroundBuild: () => builds++));
-    await tester.pump();
-    final boundary = tester.renderObject<RenderRepaintBoundary>(
-      find.descendant(
-        of: find.byType(SeededAuroraWallpaper),
-        matching: find.byType(RepaintBoundary),
-      ),
-    );
-    boundary.debugResetMetrics();
-    final originalBuilds = builds;
-    for (var frame = 0; frame < 125; frame++) {
-      await tester.pump(const Duration(milliseconds: 8));
-    }
-    final paints =
-        boundary.debugSymmetricPaintCount + boundary.debugAsymmetricPaintCount;
-    expect(paints, inInclusiveRange(20, 30));
-    expect(builds, originalBuilds);
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump();
-    expect(tester.binding.hasScheduledFrame, isFalse);
-    expect(tester.takeException(), isNull);
-  });
+  testWidgets(
+    'high refresh pumps repaint the background at most thirty times',
+    (tester) async {
+      final key = GlobalKey();
+      var builds = 0;
+      await tester.pumpWidget(_scene(key, foregroundBuild: () => builds++));
+      await tester.pump();
+      final boundary = tester.renderObject<RenderRepaintBoundary>(
+        find.descendant(
+          of: find.byType(SeededAuroraWallpaper),
+          matching: find.byType(RepaintBoundary),
+        ),
+      );
+      boundary.debugResetMetrics();
+      final originalBuilds = builds;
+      for (var frame = 0; frame < 125; frame++) {
+        await tester.pump(const Duration(milliseconds: 8));
+      }
+      final paints =
+          boundary.debugSymmetricPaintCount +
+          boundary.debugAsymmetricPaintCount;
+      expect(paints, inInclusiveRange(20, 30));
+      expect(builds, originalBuilds);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('reduced motion, ticker mode, and background pause active time', (
     tester,
@@ -195,12 +215,14 @@ void main() {
       for (final seed in _seeds) {
         Uint8List? previous;
         for (final seconds in [0, 60, 180]) {
-          await tester.pumpWidget(_scene(
-            key,
-            seed: seed,
-            brightness: brightness,
-            time: Duration(seconds: seconds),
-          ));
+          await tester.pumpWidget(
+            _scene(
+              key,
+              seed: seed,
+              brightness: brightness,
+              time: Duration(seconds: seconds),
+            ),
+          );
           final name = 'aurora-motion-${brightness.name}-$seed-$seconds';
           final pixels = await _pixels(tester, key, name: name);
           var minimumLuminance = 1.0;
@@ -209,10 +231,19 @@ void main() {
             expect(pixels[at + 3], 255);
             if (at % 64 != 0) continue;
             final color = Color.fromARGB(
-              255, pixels[at], pixels[at + 1], pixels[at + 2],
+              255,
+              pixels[at],
+              pixels[at + 1],
+              pixels[at + 2],
             );
-            minimumLuminance = math.min(minimumLuminance, color.computeLuminance());
-            maximumValue = math.max(maximumValue, HSVColor.fromColor(color).value);
+            minimumLuminance = math.min(
+              minimumLuminance,
+              color.computeLuminance(),
+            );
+            maximumValue = math.max(
+              maximumValue,
+              HSVColor.fromColor(color).value,
+            );
           }
           if (brightness == Brightness.light) {
             expect(minimumLuminance, greaterThan(0.73));
@@ -234,8 +265,11 @@ void main() {
     }
     final directory = Platform.environment['XCLASH_SCREENSHOT_DIR'];
     if (directory != null) {
-      await tester.runAsync(() => File('$directory/aurora-motion-metrics.json')
-          .writeAsString(const JsonEncoder.withIndent('  ').convert(metrics)));
+      await tester.runAsync(
+        () => File(
+          '$directory/aurora-motion-metrics.json',
+        ).writeAsString(const JsonEncoder.withIndent('  ').convert(metrics)),
+      );
     }
     expect(metrics, hasLength(60));
   });
@@ -244,12 +278,14 @@ void main() {
 double _angleDistance(double a, double b) =>
     math.atan2(math.sin(a - b), math.cos(a - b)).abs();
 
-CustomPainter? _painter(WidgetTester tester) => tester.widget<CustomPaint>(
-  find.descendant(
-    of: find.byType(SeededAuroraWallpaper),
-    matching: find.byType(CustomPaint),
-  ),
-).painter;
+CustomPainter? _painter(WidgetTester tester) => tester
+    .widget<CustomPaint>(
+      find.descendant(
+        of: find.byType(SeededAuroraWallpaper),
+        matching: find.byType(CustomPaint),
+      ),
+    )
+    .painter;
 
 Widget _scene(
   GlobalKey key, {
@@ -282,10 +318,12 @@ Widget _scene(
                 ),
               ),
             ),
-            Builder(builder: (_) {
-              foregroundBuild?.call();
-              return const SizedBox.shrink();
-            }),
+            Builder(
+              builder: (_) {
+                foregroundBuild?.call();
+                return const SizedBox.shrink();
+              },
+            ),
           ],
         ),
       ),
@@ -298,7 +336,8 @@ Future<Uint8List> _pixels(
   GlobalKey key, {
   String? name,
 }) async {
-  final boundary = key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+  final boundary =
+      key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
   return (await tester.runAsync(() async {
     final image = await boundary.toImage();
     try {

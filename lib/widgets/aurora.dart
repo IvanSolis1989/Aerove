@@ -68,17 +68,19 @@ class AuroraAppSurface extends ConsumerWidget {
       (_) => LiquidGlassStyle.regular(surfaceColors),
     );
     ButtonStyle neutralGlass(ButtonStyle? original, {bool outlined = false}) {
-      final style = glassPane.merge(original).copyWith(
-        backgroundBuilder: (context, states, child) => LiquidGlass(
-          style: LiquidGlassStyle.regular(surfaceColors),
-          clipper: ShapeBorderClipper(
-            shape: original?.shape?.resolve(states) ?? AppShape.full,
-            textDirection: Directionality.of(context),
-          ),
-          pressed: states.contains(WidgetState.pressed),
-          child: child,
-        ),
-      );
+      final style = glassPane
+          .merge(original)
+          .copyWith(
+            backgroundBuilder: (context, states, child) => LiquidGlass(
+              style: LiquidGlassStyle.regular(surfaceColors),
+              clipper: ShapeBorderClipper(
+                shape: original?.shape?.resolve(states) ?? AppShape.full,
+                textDirection: Directionality.of(context),
+              ),
+              pressed: states.contains(WidgetState.pressed),
+              child: child,
+            ),
+          );
       if (!outlined) return style;
       return style.copyWith(
         side: WidgetStateProperty.resolveWith((states) {
@@ -89,6 +91,7 @@ class AuroraAppSurface extends ConsumerWidget {
         }),
       );
     }
+
     final glassButtons =
         LiquidGlass.buttonStyle(
           (_) => LiquidGlassStyle.regular(surfaceColors),
@@ -249,10 +252,11 @@ class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper>
   }
 
   void _syncTicker() {
-    final running = widget.motion &&
+    final running =
+        widget.motion &&
         widget.motionTime == null &&
         _foreground &&
-        TickerMode.of(context) &&
+        TickerMode.valuesOf(context).enabled &&
         !(MediaQuery.maybeOf(context)?.disableAnimations ?? false);
     if (running && !_ticker.isActive) {
       _runBase = _frame.value.elapsed;
@@ -286,8 +290,11 @@ class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper>
     }
     _frame.value = (
       square: _square,
-      elapsed: widget.motionTime ??
-          (widget.seed == oldWidget.seed ? _frame.value.elapsed : Duration.zero),
+      elapsed:
+          widget.motionTime ??
+          (widget.seed == oldWidget.seed
+              ? _frame.value.elapsed
+              : Duration.zero),
     );
     _syncTicker();
   }
@@ -319,7 +326,8 @@ class _AuroraPainter extends CustomPainter {
     required this.seed,
     required this.brightness,
     required this.frame,
-  }) : _motion = AuroraMotion(seed), super(repaint: frame) {
+  }) : _motion = AuroraMotion(seed),
+       super(repaint: frame) {
     final mesh = generateAuroraMesh(
       seed,
       colors: colors,

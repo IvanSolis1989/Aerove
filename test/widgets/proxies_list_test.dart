@@ -555,16 +555,22 @@ void main() {
       final lastInHost = last.shift(-host.localToGlobal(Offset.zero));
       final envelope = glassGroupRect(tester, 'G0');
       final first = tester.getRect(
-        find.byWidgetPredicate(
-          (widget) => widget is ProxyCard && widget.groupName == 'G0',
-        ).first,
+        find
+            .byWidgetPredicate(
+              (widget) => widget is ProxyCard && widget.groupName == 'G0',
+            )
+            .first,
       );
-      final inset = first.left - host.localToGlobal(Offset.zero).dx - header.left;
+      final inset =
+          first.left - host.localToGlobal(Offset.zero).dx - header.left;
       expect(envelope.top, header.top);
       expect(envelope.bottom, moreOrLessEquals(lastInHost.bottom + inset));
       expect(envelope.height, greaterThan(header.height));
       final glassGroup = tester.widget<SliverGlassGroup>(
-        find.ancestor(of: headerOf('G0'), matching: find.byType(SliverGlassGroup)),
+        find.ancestor(
+          of: headerOf('G0'),
+          matching: find.byType(SliverGlassGroup),
+        ),
       );
       expect(
         glassGroup.shape.borderRadius,
@@ -575,83 +581,102 @@ void main() {
     }
   });
 
-  testWidgets('glass group tails follow content while the header stays pinned', (
-    tester,
-  ) async {
-    await pumpList(
-      tester,
-      glass: true,
-      groups: [_group('G0', 40), _group('G1', 0)],
-    );
-    try {
-      final before = glassGroupRect(tester, 'G0');
-      final position = tester.state<ScrollableState>(scrollable()).position;
-      position.jumpTo(200);
-      await tester.pumpAndSettle();
-      final pinned = glassGroupRect(tester, 'G0');
-      expect(pinned.top, before.top);
-      expect(pinned.top, headerInHost(tester, 'G0').top);
-      expect(pinned.bottom, moreOrLessEquals(before.bottom - 200));
-      expect(pinned.bottom, greaterThan(700));
-
-      final lastCard = find.byWidgetPredicate(
-        (widget) => widget is ProxyCard && widget.proxy.name == 'G0-39',
+  testWidgets(
+    'glass group tails follow content while the header stays pinned',
+    (tester) async {
+      await pumpList(
+        tester,
+        glass: true,
+        groups: [_group('G0', 40), _group('G1', 0)],
       );
-      await tester.scrollUntilVisible(lastCard, 200, scrollable: scrollable());
-      await tester.pumpAndSettle();
-      position.jumpTo(position.maxScrollExtent);
-      await tester.pumpAndSettle();
-      final last = tester.getRect(lastCard);
-      final header = tester.getRect(headerOf('G0'));
-      final host = tester.renderObject<RenderBox>(find.byType(LiquidGlassHost));
-      final first = tester.getRect(
-        find.byWidgetPredicate(
-          (widget) => widget is ProxyCard && widget.groupName == 'G0',
-        ).first,
-      );
-      final expectedTail = last.bottom + first.left - header.left -
-          host.localToGlobal(Offset.zero).dy;
-      expect(glassGroupRect(tester, 'G0').bottom, moreOrLessEquals(expectedTail));
-      expect(glassGroupRect(tester, 'G0').top, headerInHost(tester, 'G0').top);
-    } finally {
-      await unmountList(tester);
-    }
-  });
+      try {
+        final before = glassGroupRect(tester, 'G0');
+        final position = tester.state<ScrollableState>(scrollable()).position;
+        position.jumpTo(200);
+        await tester.pumpAndSettle();
+        final pinned = glassGroupRect(tester, 'G0');
+        expect(pinned.top, before.top);
+        expect(pinned.top, headerInHost(tester, 'G0').top);
+        expect(pinned.bottom, moreOrLessEquals(before.bottom - 200));
+        expect(pinned.bottom, greaterThan(700));
 
-  testWidgets('glass envelopes follow unfolding frames and keep empty groups whole', (
-    tester,
-  ) async {
-    await pumpList(
-      tester,
-      glass: true,
-      groups: [_group('G0', 4), _group('Empty', 0)],
-      unfoldSet: {'Empty'},
-    );
-    try {
-      expect(glassGroupRect(tester, 'Empty'), headerInHost(tester, 'Empty'));
-      final folded = glassGroupRect(tester, 'G0');
-      await tester.tap(find.text('G0'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 120));
-      final opening = glassGroupRect(tester, 'G0');
-      expect(opening.top, headerInHost(tester, 'G0').top);
-      expect(opening.height, greaterThan(folded.height));
-      await tester.pumpAndSettle();
-      final unfolded = glassGroupRect(tester, 'G0');
-      expect(unfolded.height, greaterThan(opening.height));
-      await tester.tap(find.text('G0'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 120));
-      final closing = glassGroupRect(tester, 'G0');
-      expect(closing.height, greaterThan(folded.height));
-      expect(closing.height, lessThan(unfolded.height));
-      await tester.pumpAndSettle();
-      expect(glassGroupRect(tester, 'G0'), folded);
-      expect(glassGroupRect(tester, 'Empty'), headerInHost(tester, 'Empty'));
-    } finally {
-      await unmountList(tester);
-    }
-  });
+        final lastCard = find.byWidgetPredicate(
+          (widget) => widget is ProxyCard && widget.proxy.name == 'G0-39',
+        );
+        await tester.scrollUntilVisible(
+          lastCard,
+          200,
+          scrollable: scrollable(),
+        );
+        await tester.pumpAndSettle();
+        position.jumpTo(position.maxScrollExtent);
+        await tester.pumpAndSettle();
+        final last = tester.getRect(lastCard);
+        final header = tester.getRect(headerOf('G0'));
+        final host = tester.renderObject<RenderBox>(
+          find.byType(LiquidGlassHost),
+        );
+        final first = tester.getRect(
+          find
+              .byWidgetPredicate(
+                (widget) => widget is ProxyCard && widget.groupName == 'G0',
+              )
+              .first,
+        );
+        final expectedTail =
+            last.bottom +
+            first.left -
+            header.left -
+            host.localToGlobal(Offset.zero).dy;
+        expect(
+          glassGroupRect(tester, 'G0').bottom,
+          moreOrLessEquals(expectedTail),
+        );
+        expect(
+          glassGroupRect(tester, 'G0').top,
+          headerInHost(tester, 'G0').top,
+        );
+      } finally {
+        await unmountList(tester);
+      }
+    },
+  );
+
+  testWidgets(
+    'glass envelopes follow unfolding frames and keep empty groups whole',
+    (tester) async {
+      await pumpList(
+        tester,
+        glass: true,
+        groups: [_group('G0', 4), _group('Empty', 0)],
+        unfoldSet: {'Empty'},
+      );
+      try {
+        expect(glassGroupRect(tester, 'Empty'), headerInHost(tester, 'Empty'));
+        final folded = glassGroupRect(tester, 'G0');
+        await tester.tap(find.text('G0'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 120));
+        final opening = glassGroupRect(tester, 'G0');
+        expect(opening.top, headerInHost(tester, 'G0').top);
+        expect(opening.height, greaterThan(folded.height));
+        await tester.pumpAndSettle();
+        final unfolded = glassGroupRect(tester, 'G0');
+        expect(unfolded.height, greaterThan(opening.height));
+        await tester.tap(find.text('G0'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 120));
+        final closing = glassGroupRect(tester, 'G0');
+        expect(closing.height, greaterThan(folded.height));
+        expect(closing.height, lessThan(unfolded.height));
+        await tester.pumpAndSettle();
+        expect(glassGroupRect(tester, 'G0'), folded);
+        expect(glassGroupRect(tester, 'Empty'), headerInHost(tester, 'Empty'));
+      } finally {
+        await unmountList(tester);
+      }
+    },
+  );
 
   testWidgets('the last row sits as far from the bottom of its group card as '
       'from its sides', (tester) async {

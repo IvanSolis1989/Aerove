@@ -148,12 +148,21 @@ void main() {
           TestApp(
             includeNavigatorKey: false,
             theme: transformed,
+            darkTheme: transformed,
+            themeMode: brightness == Brightness.dark
+                ? ThemeMode.dark
+                : ThemeMode.light,
             child: LiquidGlassScope(
               enabled: true,
               child: GlyphIcon(AppGlyphs.tools, color: color),
             ),
           ),
         );
+        await tester.pumpAndSettle();
+        final context = tester.element(find.byType(GlyphIcon));
+        expect(Theme.of(context).brightness, brightness);
+        expect(Theme.of(context).colorScheme.error, colors.error);
+        expect(GlassForeground.colorOf(context, color), color);
         final paint = tester.widget<CustomPaint>(
           find.descendant(
             of: find.byType(GlyphIcon),
@@ -849,8 +858,9 @@ void main() {
         expect(tester.takeException(), isNull);
         final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
         if (output != null) {
-          final boundary = capture.currentContext!.findRenderObject()!
-              as RenderRepaintBoundary;
+          final boundary =
+              capture.currentContext!.findRenderObject()!
+                  as RenderRepaintBoundary;
           await tester.runAsync(() async {
             final image = await boundary.toImage();
             try {
@@ -870,5 +880,4 @@ void main() {
       });
     }
   }
-
 }

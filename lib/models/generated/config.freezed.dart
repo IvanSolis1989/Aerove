@@ -2926,7 +2926,7 @@ return $default(_that.primaryColor,_that.primaryColors,_that.themeMode,_that.col
 @JsonSerializable()
 
 class _ThemeProps implements ThemeProps {
-  const _ThemeProps({this.primaryColor,  List<int> primaryColors = defaultPrimaryColors, this.themeMode = ThemeMode.system, @JsonKey(readValue: _readColorStyle) this.colorStyle = ColorStyle.vivid, this.pureBlack = false, this.sidebarBlur = true, @JsonKey(readValue: _readLiquidGlass) this.liquidGlass = LiquidGlassMode.none, this.auroraEnabled = true, @JsonKey(fromJson: _auroraColorsFromJson)  List<int> auroraColors = const [0xFF9AAFC5, 0xFFC4BDD3], this.auroraSeed = 271828, this.textScale = const TextScale(), @JsonKey(name: 'systemFontFamily') this.fontFamily}): _primaryColors = primaryColors,_auroraColors = auroraColors;
+  const _ThemeProps({this.primaryColor,  List<int> primaryColors = defaultPrimaryColors, this.themeMode = ThemeMode.system, @JsonKey(readValue: _readColorStyle) this.colorStyle = ColorStyle.vivid, this.pureBlack = false, this.sidebarBlur = true, @JsonKey(readValue: _readLiquidGlass) this.liquidGlass = LiquidGlassMode.ultra, this.auroraEnabled = true, @JsonKey(fromJson: _auroraColorsFromJson)  List<int> auroraColors = const [0xFF9AAFC5, 0xFFC4BDD3], this.auroraSeed = 271828, this.textScale = const TextScale(), @JsonKey(name: 'systemFontFamily') this.fontFamily}): _primaryColors = primaryColors,_auroraColors = auroraColors;
   factory _ThemeProps.fromJson(Map<String, dynamic> json) => _$ThemePropsFromJson(json);
 
 @override final  int? primaryColor;

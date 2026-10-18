@@ -642,7 +642,8 @@ class CommonScaffoldState extends State<CommonScaffold> {
     final titleStyle = compactTitle
         ? AppTextStyle.headline.of(context)
         : AppTextStyle.pageTitle.of(context);
-    final titleShadow = !isCompact &&
+    final titleShadow =
+        !isCompact &&
         LiquidGlassScope.of(context) &&
         !MediaQuery.highContrastOf(context);
     final titleEndInset = appBarActionInset(

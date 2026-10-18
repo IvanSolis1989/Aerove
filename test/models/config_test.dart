@@ -730,7 +730,10 @@ void main() {
     });
 
     test('fresh and partial JSON use ultra without changing saved modes', () {
-      for (final json in <Map<String, Object?>>[{}, {'themeMode': 'light'}]) {
+      for (final json in <Map<String, Object?>>[
+        {},
+        {'themeMode': 'light'},
+      ]) {
         final props = ThemeProps.fromJson(json);
         expect(props.auroraEnabled, true);
         expect(props.liquidGlass, LiquidGlassMode.ultra);

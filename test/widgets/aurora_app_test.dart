@@ -159,7 +159,8 @@ void main() {
               platform: TargetPlatform.android,
               brightness: Brightness.dark,
             ),
-            builder: (context, child) => AuroraAppSurface(motion: false, child: child!),
+            builder: (context, child) =>
+                AuroraAppSurface(motion: false, child: child!),
             home: const Scaffold(body: SizedBox(key: probeKey)),
           ),
         ),
@@ -199,7 +200,13 @@ void main() {
   testWidgets(
     'disabled, high contrast, pure black and desktop keep opaque surfaces',
     (tester) async {
-      await pumpSurface(tester, props: const ThemeProps(auroraEnabled: false));
+      await pumpSurface(
+        tester,
+        props: const ThemeProps(
+          auroraEnabled: false,
+          liquidGlass: LiquidGlassMode.none,
+        ),
+      );
       expect(find.byType(SeededAuroraWallpaper), findsNothing);
       await pumpSurface(tester, highContrast: true);
       expect(find.byType(SeededAuroraWallpaper), findsNothing);
@@ -209,7 +216,11 @@ void main() {
         props: const ThemeProps(pureBlack: true),
       );
       expect(find.byType(SeededAuroraWallpaper), findsNothing);
-      await pumpSurface(tester, platform: TargetPlatform.windows);
+      await pumpSurface(
+        tester,
+        platform: TargetPlatform.windows,
+        props: const ThemeProps(liquidGlass: LiquidGlassMode.none),
+      );
       expect(find.byType(SeededAuroraWallpaper), findsNothing);
       final context = tester.element(find.byType(CommonCard));
       expect(AuroraAppearance.surfaceColorOf(context, Colors.red), Colors.red);
@@ -248,7 +259,10 @@ void main() {
       final container = ProviderContainer(
         overrides: [
           themeSettingProvider.overrideWithBuild(
-            (_, _) => ThemeProps(auroraEnabled: enabled),
+            (_, _) => ThemeProps(
+              auroraEnabled: enabled,
+              liquidGlass: enabled ? LiquidGlassMode.ultra : LiquidGlassMode.none,
+            ),
           ),
         ],
       );
@@ -262,7 +276,8 @@ void main() {
               platform: TargetPlatform.android,
               scaffoldBackgroundColor: Colors.teal,
             ),
-            homeBuilder: (child) => AuroraAppSurface(motion: false, child: child),
+            homeBuilder: (child) =>
+                AuroraAppSurface(motion: false, child: child),
             child: CommonScaffold(
               title: 'Page',
               backgroundColor: fill,

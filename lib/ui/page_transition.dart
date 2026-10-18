@@ -356,7 +356,12 @@ class _RenderPageFade extends RenderProxyBox {
       return;
     }
     if (_color.a == 0) {
-      LiquidGlassFade.push(context, offset, (opacity * 255).round(), super.paint);
+      LiquidGlassFade.push(
+        context,
+        offset,
+        (opacity * 255).round(),
+        super.paint,
+      );
       return;
     }
     if (_opaque) {

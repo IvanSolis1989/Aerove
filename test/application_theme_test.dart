@@ -67,12 +67,11 @@ void main() {
           (_, _) => const AppSettingProps(locale: 'en'),
         ),
         themeSettingProvider.overrideWithBuild(
-          (_, _) =>
-              const ThemeProps(
-                themeMode: ThemeMode.dark,
-                auroraEnabled: false,
-                liquidGlass: LiquidGlassMode.none,
-              ),
+          (_, _) => const ThemeProps(
+            themeMode: ThemeMode.dark,
+            auroraEnabled: false,
+            liquidGlass: LiquidGlassMode.none,
+          ),
         ),
       ],
     );

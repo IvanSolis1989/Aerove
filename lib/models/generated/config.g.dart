@@ -366,7 +366,7 @@ _ThemeProps _$ThemePropsFromJson(Map<String, dynamic> json) => _ThemeProps(
         _$LiquidGlassModeEnumMap,
         _readLiquidGlass(json, 'liquidGlass'),
       ) ??
-      LiquidGlassMode.none,
+      LiquidGlassMode.ultra,
   auroraEnabled: json['auroraEnabled'] as bool? ?? true,
   auroraColors: json['auroraColors'] == null
       ? const [0xFF9AAFC5, 0xFFC4BDD3]
