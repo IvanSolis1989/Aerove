@@ -96,29 +96,34 @@ Future<ProviderContainer> pumpProfiles(
 }
 
 void main() {
-  testWidgets('the liquid background preserves profile selection and usage semantics', (tester) async {
-    final profile = urlProfile('liquid profile');
-    final container = await pumpProfiles(tester, profiles: [profile]);
-    final semantics = tester.ensureSemantics();
-    int? selected;
-    try {
-      await tester.pumpWidget(
-        UncontrolledProviderScope(
-          container: container,
-          child: TestApp(
-            child: MediaQuery(
-              data: MediaQueryData.fromView(tester.view).copyWith(disableAnimations: true),
-              child: LiquidGlassScope(
-                enabled: true,
-                child: LiquidGlassHost(
+  testWidgets(
+    'the liquid background preserves profile selection and usage semantics',
+    (tester) async {
+      final profile = urlProfile('liquid profile');
+      final container = await pumpProfiles(tester, profiles: [profile]);
+      final semantics = tester.ensureSemantics();
+      int? selected;
+      try {
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: container,
+            child: TestApp(
+              child: MediaQuery(
+                data: MediaQueryData.fromView(
+                  tester.view,
+                ).copyWith(disableAnimations: true),
+                child: LiquidGlassScope(
                   enabled: true,
-                  child: Center(
-                    child: SizedBox(
-                      width: 360,
-                      child: ProfileItem(
-                        profile: profile,
-                        groupValue: null,
-                        onChanged: (id) => selected = id,
+                  child: LiquidGlassHost(
+                    enabled: true,
+                    child: Center(
+                      child: SizedBox(
+                        width: 360,
+                        child: ProfileItem(
+                          profile: profile,
+                          groupValue: null,
+                          onChanged: (id) => selected = id,
+                        ),
                       ),
                     ),
                   ),
@@ -126,21 +131,24 @@ void main() {
               ),
             ),
           ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(find.bySemanticsLabel(RegExp('75%')), findsWidgets);
-      final card = tester.getRect(find.byType(ProfileItem));
-      await tester.tapAt(Offset(card.left + 12, card.center.dy));
-      await tester.pump();
-      expect(selected, profile.id);
-      expect(container.read(profilesProvider).single.subscriptionInfo, profile.subscriptionInfo);
-    } finally {
-      semantics.dispose();
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pump(Duration.zero);
-    }
-  });
+        );
+        await tester.pumpAndSettle();
+        expect(find.bySemanticsLabel(RegExp('75%')), findsWidgets);
+        final card = tester.getRect(find.byType(ProfileItem));
+        await tester.tapAt(Offset(card.left + 12, card.center.dy));
+        await tester.pump();
+        expect(selected, profile.id);
+        expect(
+          container.read(profilesProvider).single.subscriptionInfo,
+          profile.subscriptionInfo,
+        );
+      } finally {
+        semantics.dispose();
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump(Duration.zero);
+      }
+    },
+  );
 
   testWidgets('a focused profile card opens its menu', (tester) async {
     final profiles = [
@@ -198,9 +206,13 @@ void main() {
     final container = await pumpProfiles(tester, profiles: [url, file]);
 
     expect(find.byTooltip(currentAppLocalizations.edit), findsNothing);
-    expect(find.text('3KB / 4KB · 75% ${currentAppLocalizations.usedShort}'), findsOneWidget);
     expect(
-      tester.widgetList<SubscriptionUsageFill>(find.byType(SubscriptionUsageFill))
+      find.text('3KB / 4KB · 75% ${currentAppLocalizations.usedShort}'),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widgetList<SubscriptionUsageFill>(find.byType(SubscriptionUsageFill))
           .where((fill) => fill.info == url.subscriptionInfo),
       hasLength(1),
     );

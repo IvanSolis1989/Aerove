@@ -170,7 +170,9 @@ void main() {
   setUpAll(() => registerFallbackValue(const OutboundIpParams(timeout: 0)));
 
   group('the exit address', () {
-    testWidgets('normalizes the exit country to an untinted flag', (tester) async {
+    testWidgets('normalizes the exit country to an untinted flag', (
+      tester,
+    ) async {
       final semantics = tester.ensureSemantics();
       try {
         await tester.pumpWidget(
@@ -196,13 +198,18 @@ void main() {
     });
 
     for (final country in ['', ' ', 'USA', '??', 'XX', 'ZZ']) {
-      testWidgets('keeps the country placeholder for "$country"', (tester) async {
+      testWidgets('keeps the country placeholder for "$country"', (
+        tester,
+      ) async {
         await tester.pumpWidget(
           _app((_, _) async => _residential, countryCode: country),
         );
         await tester.pump();
         expect(
-          find.descendant(of: _clover(), matching: find.byGlyph(AppGlyphs.proxies)),
+          find.descendant(
+            of: _clover(),
+            matching: find.byGlyph(AppGlyphs.proxies),
+          ),
           findsOneWidget,
         );
         expect(

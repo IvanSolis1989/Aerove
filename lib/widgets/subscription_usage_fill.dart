@@ -127,7 +127,8 @@ class _SubscriptionUsageFillState extends State<SubscriptionUsageFill>
   @override
   void didUpdateWidget(SubscriptionUsageFill oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.motionTime != oldWidget.motionTime && widget.motionTime != null) {
+    if (widget.motionTime != oldWidget.motionTime &&
+        widget.motionTime != null) {
       _time.value = widget.motionTime!;
     }
     _syncTicker();
@@ -168,7 +169,8 @@ class _SubscriptionUsageFillState extends State<SubscriptionUsageFill>
               child: _UsageFillBackground(
                 share: widget.info!.usage!,
                 color: color,
-                glass: LiquidGlassScope.of(context) &&
+                glass:
+                    LiquidGlassScope.of(context) &&
                     !MediaQuery.highContrastOf(context),
                 dark: colors.brightness == Brightness.dark,
                 rtl: Directionality.of(context) == TextDirection.rtl,
@@ -287,8 +289,8 @@ class _UsageFillRender extends RenderBox {
       );
       return;
     }
-    final phase = settings.time.value.inMicroseconds /
-        Duration.microsecondsPerSecond;
+    final phase =
+        settings.time.value.inMicroseconds / Duration.microsecondsPerSecond;
     final depth = settings.share >= 1
         ? 0.0
         : math.min(4.0, math.min(level, size.width - level) / 3);

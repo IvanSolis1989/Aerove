@@ -82,14 +82,17 @@ class _LineChartState extends State<LineChart> {
       child: SizedBox.expand(
         child: ink == null
             ? paint()
-            : Stack(fit: StackFit.expand, children: [
-                paint(stroke: false),
-                GlassInk(
-                  source: ink,
-                  role: GlassInkRole.icon,
-                  child: paint(fill: false, color: ink),
-                ),
-              ]),
+            : Stack(
+                fit: StackFit.expand,
+                children: [
+                  paint(stroke: false),
+                  GlassInk(
+                    source: ink,
+                    role: GlassInkRole.icon,
+                    child: paint(fill: false, color: ink),
+                  ),
+                ],
+              ),
       ),
     );
   }

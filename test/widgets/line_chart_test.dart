@@ -70,34 +70,42 @@ void main() {
   testWidgets('opt-in ink separates the stroke from the original area fill', (
     tester,
   ) async {
-    await tester.pumpWidget(MaterialApp(
-      home: const LiquidGlassScope(
-        enabled: false,
-        child: SizedBox(
-          width: 290,
-          height: 100,
-          child: LineChart(
-            values: [1, 2, 3],
-            revision: 3,
-            capacity: 30,
-            minScale: 1,
-            color: _color,
-            strokeInk: Colors.black,
-            baselineRatio: 1,
+    await tester.pumpWidget(
+      MaterialApp(
+        home: const LiquidGlassScope(
+          enabled: false,
+          child: SizedBox(
+            width: 290,
+            height: 100,
+            child: LineChart(
+              values: [1, 2, 3],
+              revision: 3,
+              capacity: 30,
+              minScale: 1,
+              color: _color,
+              strokeInk: Colors.black,
+              baselineRatio: 1,
+            ),
           ),
         ),
       ),
-    ));
+    );
     expect(_canvas, findsNWidgets(2));
     final fill = tester.renderObject(_canvas.at(0));
     final stroke = tester.renderObject(_canvas.at(1));
     expect(fill, paintsExactlyCountTimes(#drawPath, 1));
     expect(stroke, paintsExactlyCountTimes(#drawPath, 1));
-    expect(fill, paints..path(
-      color: _color.withValues(alpha: 0.14),
-      style: PaintingStyle.fill,
-    ));
-    expect(stroke, paints..path(color: Colors.black, style: PaintingStyle.stroke));
+    expect(
+      fill,
+      paints..path(
+        color: _color.withValues(alpha: 0.14),
+        style: PaintingStyle.fill,
+      ),
+    );
+    expect(
+      stroke,
+      paints..path(color: Colors.black, style: PaintingStyle.stroke),
+    );
   });
 
   testWidgets('a spike stays below the top', (tester) async {

@@ -20,7 +20,12 @@ const _info = SubscriptionInfo(download: 16, total: 100);
 
 Color _pixel(Uint8List bytes, int x, int y) {
   final offset = (y * 400 + x) * 4;
-  return Color.fromARGB(bytes[offset + 3], bytes[offset], bytes[offset + 1], bytes[offset + 2]);
+  return Color.fromARGB(
+    bytes[offset + 3],
+    bytes[offset],
+    bytes[offset + 1],
+    bytes[offset + 2],
+  );
 }
 
 double _distance(Color a, Color b) =>
@@ -29,7 +34,9 @@ double _distance(Color a, Color b) =>
 double _contrast(Color a, Color b) {
   final first = a.computeLuminance();
   final second = b.computeLuminance();
-  return first > second ? (first + 0.05) / (second + 0.05) : (second + 0.05) / (first + 0.05);
+  return first > second
+      ? (first + 0.05) / (second + 0.05)
+      : (second + 0.05) / (first + 0.05);
 }
 
 Future<Uint8List> _snapshot(
@@ -37,16 +44,22 @@ Future<Uint8List> _snapshot(
   String name, {
   Key boundaryKey = _scene,
 }) async {
-  final boundary = tester.renderObject<RenderRepaintBoundary>(find.byKey(boundaryKey));
+  final boundary = tester.renderObject<RenderRepaintBoundary>(
+    find.byKey(boundaryKey),
+  );
   return (await tester.runAsync(() async {
     final image = await boundary.toImage();
     try {
-      final rgba = (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!;
+      final rgba = (await image.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
+      ))!;
       final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
       if (output != null) {
         final directory = Directory(output)..createSync(recursive: true);
         final png = (await image.toByteData(format: ui.ImageByteFormat.png))!;
-        File('${directory.path}/subscription-usage-$name.png').writeAsBytesSync(png.buffer.asUint8List());
+        File(
+          '${directory.path}/subscription-usage-$name.png',
+        ).writeAsBytesSync(png.buffer.asUint8List());
       }
       return rgba.buffer.asUint8List();
     } finally {
@@ -65,19 +78,26 @@ Future<void> _pump(
   bool reduced = false,
   TextDirection direction = TextDirection.ltr,
 }) async {
-  final colors = ColorScheme.fromSeed(seedColor: Colors.blue, brightness: brightness);
+  final colors = ColorScheme.fromSeed(
+    seedColor: Colors.blue,
+    brightness: brightness,
+  );
   await tester.pumpWidget(
     TestApp(
       theme: ThemeData(colorScheme: colors, fontFamily: 'UsagePreview'),
       child: Directionality(
         textDirection: direction,
         child: MediaQuery(
-          data: MediaQueryData.fromView(tester.view).copyWith(disableAnimations: reduced),
+          data: MediaQueryData.fromView(
+            tester.view,
+          ).copyWith(disableAnimations: reduced),
           child: RepaintBoundary(
             key: _scene,
             child: LiquidGlassScope(
               enabled: mode != LiquidGlassMode.none,
-              quality: mode == LiquidGlassMode.ultra ? LiquidGlassQuality.ultra : LiquidGlassQuality.standard,
+              quality: mode == LiquidGlassMode.ultra
+                  ? LiquidGlassQuality.ultra
+                  : LiquidGlassQuality.standard,
               child: LiquidGlassHost(
                 enabled: mode != LiquidGlassMode.none,
                 child: Stack(
@@ -90,7 +110,10 @@ Future<void> _pump(
                             gradient: LinearGradient(
                               colors: brightness == Brightness.light
                                   ? const [Color(0xFFEABEA7), Color(0xFF9DCDDF)]
-                                  : const [Color(0xFF11252D), Color(0xFF493026)],
+                                  : const [
+                                      Color(0xFF11252D),
+                                      Color(0xFF493026),
+                                    ],
                             ),
                           ),
                         ),
@@ -109,17 +132,27 @@ Future<void> _pump(
                               ? Padding(
                                   padding: const EdgeInsets.all(16),
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
-                                      Builder(builder: (context) => GlassText(
-                                        'Scientific', key: _label,
-                                        style: AppTextStyle.headline.of(context),
-                                      )),
+                                      Builder(
+                                        builder: (context) => GlassText(
+                                          'Scientific',
+                                          key: _label,
+                                          style: AppTextStyle.headline.of(
+                                            context,
+                                          ),
+                                        ),
+                                      ),
                                       const SizedBox(height: 6),
-                                      Builder(builder: (context) => GlassText(
-                                        '1.3 TB / 8 TB · ${SubscriptionUsageFill.percentageOf(context, info)} ${context.appLocalizations.usedShort}',
-                                        style: AppTextStyle.footnote.of(context),
-                                      )),
+                                      Builder(
+                                        builder: (context) => GlassText(
+                                          '1.3 TB / 8 TB · ${SubscriptionUsageFill.percentageOf(context, info)} ${context.appLocalizations.usedShort}',
+                                          style: AppTextStyle.footnote.of(
+                                            context,
+                                          ),
+                                        ),
+                                      ),
                                     ],
                                   ),
                                 )
@@ -158,13 +191,20 @@ void main() {
         addTearDown(tester.view.reset);
         final name = '${brightness.name}-${mode.name}';
         try {
-          await _pump(tester, brightness: brightness, mode: mode, info: const SubscriptionInfo(total: 100));
+          await _pump(
+            tester,
+            brightness: brightness,
+            mode: mode,
+            info: const SubscriptionInfo(total: 100),
+          );
           final empty = await _snapshot(tester, '$name-empty');
           await _pump(tester, brightness: brightness, mode: mode);
           final filled = await _snapshot(tester, '$name-16');
           var changed = 0;
           for (var x = 20; x < 380; x++) {
-            if (_distance(_pixel(empty, x, 108), _pixel(filled, x, 108)) > 0.025) changed++;
+            if (_distance(_pixel(empty, x, 108), _pixel(filled, x, 108)) >
+                0.025)
+              changed++;
           }
           expect(changed / 360, inInclusiveRange(0.13, 0.18));
           expect(_pixel(filled, 21, 29), _pixel(empty, 21, 29));
@@ -172,24 +212,38 @@ void main() {
           int edgeAt(int y) {
             var edge = 20;
             for (var x = 20; x < 110; x++) {
-              if (_distance(_pixel(empty, x, y), _pixel(filled, x, y)) > 0.025) edge = x;
+              if (_distance(_pixel(empty, x, y), _pixel(filled, x, y)) > 0.025)
+                edge = x;
             }
             return edge;
           }
-          expect(edgeAt(44), mode == LiquidGlassMode.none ? edgeAt(80) : greaterThan(edgeAt(80)));
+
+          expect(
+            edgeAt(44),
+            mode == LiquidGlassMode.none ? edgeAt(80) : greaterThan(edgeAt(80)),
+          );
           if (mode != LiquidGlassMode.none) {
             expect(LiquidGlassHost.debugLastCapture!.panes, isNotEmpty);
           }
 
-          await _pump(tester, brightness: brightness, mode: mode, time: const Duration(seconds: 3));
+          await _pump(
+            tester,
+            brightness: brightness,
+            mode: mode,
+            time: const Duration(seconds: 3),
+          );
           final moved = await _snapshot(tester, '$name-moving');
           var edgeChanges = 0;
           for (var y = 32; y < 128; y++) {
             for (var x = 70; x < 88; x++) {
-              if (_distance(_pixel(filled, x, y), _pixel(moved, x, y)) > 0.01) edgeChanges++;
+              if (_distance(_pixel(filled, x, y), _pixel(moved, x, y)) > 0.01)
+                edgeChanges++;
             }
           }
-          expect(edgeChanges, mode == LiquidGlassMode.none ? 0 : greaterThan(0));
+          expect(
+            edgeChanges,
+            mode == LiquidGlassMode.none ? 0 : greaterThan(0),
+          );
 
           await _pump(tester, brightness: brightness, mode: mode, text: true);
           final readable = await _snapshot(tester, '$name-readable');
@@ -199,16 +253,28 @@ void main() {
             for (var x = bounds.left.ceil(); x < bounds.right.floor(); x++) {
               final ink = _pixel(readable, x, y);
               final behind = _pixel(filled, x, y);
-              if (_distance(ink, behind) > 0.3) contrasts.add(_contrast(ink, behind));
+              if (_distance(ink, behind) > 0.3)
+                contrasts.add(_contrast(ink, behind));
             }
           }
           contrasts.sort();
           expect(contrasts.length, greaterThan(20));
-          expect(contrasts[(contrasts.length * 0.9).floor()], greaterThanOrEqualTo(4.5));
-          await _pump(tester, brightness: brightness, mode: mode, info: const SubscriptionInfo(download: 100, total: 100));
+          expect(
+            contrasts[(contrasts.length * 0.9).floor()],
+            greaterThanOrEqualTo(4.5),
+          );
+          await _pump(
+            tester,
+            brightness: brightness,
+            mode: mode,
+            info: const SubscriptionInfo(download: 100, total: 100),
+          );
           final full = await _snapshot(tester, '$name-full');
           expect(_pixel(full, 21, 29), _pixel(empty, 21, 29));
-          expect(_distance(_pixel(full, 350, 108), _pixel(empty, 350, 108)), greaterThan(0.025));
+          expect(
+            _distance(_pixel(full, 350, 108), _pixel(empty, 350, 108)),
+            greaterThan(0.025),
+          );
         } finally {
           await tester.pumpWidget(const SizedBox.shrink());
           await tester.pump(Duration.zero);
@@ -217,50 +283,120 @@ void main() {
     }
   }
 
-  testWidgets('invalid totals do not invent progress, and overruns retain their percentage', (tester) async {
-    tester.view.physicalSize = const Size(400, 160);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-    try {
-      for (final info in <SubscriptionInfo?>[
-        null,
-        const SubscriptionInfo(download: 16),
-        const SubscriptionInfo(download: 16, total: -1),
-        const SubscriptionInfo(upload: -1, total: 100),
-      ]) {
-        await _pump(tester, brightness: Brightness.light, mode: LiquidGlassMode.ultra, info: info);
-        expect(SubscriptionUsageFill.percentageOf(tester.element(find.byType(SubscriptionUsageFill)), info), isNull);
-        expect(LiquidGlassHost.debugLastCapture?.panes ?? [], isEmpty);
+  testWidgets(
+    'invalid totals do not invent progress, and overruns retain their percentage',
+    (tester) async {
+      tester.view.physicalSize = const Size(400, 160);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      try {
+        for (final info in <SubscriptionInfo?>[
+          null,
+          const SubscriptionInfo(download: 16),
+          const SubscriptionInfo(download: 16, total: -1),
+          const SubscriptionInfo(upload: -1, total: 100),
+        ]) {
+          await _pump(
+            tester,
+            brightness: Brightness.light,
+            mode: LiquidGlassMode.ultra,
+            info: info,
+          );
+          expect(
+            SubscriptionUsageFill.percentageOf(
+              tester.element(find.byType(SubscriptionUsageFill)),
+              info,
+            ),
+            isNull,
+          );
+          expect(LiquidGlassHost.debugLastCapture?.panes ?? [], isEmpty);
+        }
+        await _pump(
+          tester,
+          brightness: Brightness.light,
+          mode: LiquidGlassMode.none,
+          info: const SubscriptionInfo(total: 100),
+        );
+        final empty = await _snapshot(tester, 'zero');
+        expect(
+          SubscriptionUsageFill.percentageOf(
+            tester.element(find.byType(SubscriptionUsageFill)),
+            const SubscriptionInfo(total: 100),
+          ),
+          '0%',
+        );
+        await _pump(
+          tester,
+          brightness: Brightness.light,
+          mode: LiquidGlassMode.none,
+          info: const SubscriptionInfo(download: 100, total: 100),
+        );
+        final full = await _snapshot(tester, 'full');
+        expect(
+          SubscriptionUsageFill.percentageOf(
+            tester.element(find.byType(SubscriptionUsageFill)),
+            const SubscriptionInfo(download: 100, total: 100),
+          ),
+          '100%',
+        );
+        expect(_pixel(full, 21, 29), _pixel(empty, 21, 29));
+        expect(
+          _distance(_pixel(full, 40, 80), _pixel(empty, 40, 80)),
+          greaterThan(0.02),
+        );
+        expect(
+          _distance(_pixel(full, 350, 80), _pixel(empty, 350, 80)),
+          greaterThan(0.02),
+        );
+        await _pump(
+          tester,
+          brightness: Brightness.light,
+          mode: LiquidGlassMode.none,
+          info: const SubscriptionInfo(download: 125, total: 100),
+        );
+        expect(
+          SubscriptionUsageFill.percentageOf(
+            tester.element(find.byType(SubscriptionUsageFill)),
+            const SubscriptionInfo(download: 125, total: 100),
+          ),
+          '125%',
+        );
+        final overrun = await _snapshot(tester, 'overrun');
+        expect(
+          _distance(_pixel(overrun, 350, 80), _pixel(empty, 350, 80)),
+          greaterThan(0.02),
+        );
+        await _pump(
+          tester,
+          brightness: Brightness.light,
+          mode: LiquidGlassMode.none,
+          direction: TextDirection.rtl,
+        );
+        final rtl = await _snapshot(tester, 'rtl');
+        expect(
+          _distance(_pixel(rtl, 350, 80), _pixel(empty, 350, 80)),
+          greaterThan(0.02),
+        );
+        expect(_pixel(rtl, 40, 80), _pixel(empty, 40, 80));
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump(Duration.zero);
       }
-      await _pump(tester, brightness: Brightness.light, mode: LiquidGlassMode.none, info: const SubscriptionInfo(total: 100));
-      final empty = await _snapshot(tester, 'zero');
-      expect(SubscriptionUsageFill.percentageOf(tester.element(find.byType(SubscriptionUsageFill)), const SubscriptionInfo(total: 100)), '0%');
-      await _pump(tester, brightness: Brightness.light, mode: LiquidGlassMode.none, info: const SubscriptionInfo(download: 100, total: 100));
-      final full = await _snapshot(tester, 'full');
-      expect(SubscriptionUsageFill.percentageOf(tester.element(find.byType(SubscriptionUsageFill)), const SubscriptionInfo(download: 100, total: 100)), '100%');
-      expect(_pixel(full, 21, 29), _pixel(empty, 21, 29));
-      expect(_distance(_pixel(full, 40, 80), _pixel(empty, 40, 80)), greaterThan(0.02));
-      expect(_distance(_pixel(full, 350, 80), _pixel(empty, 350, 80)), greaterThan(0.02));
-      await _pump(tester, brightness: Brightness.light, mode: LiquidGlassMode.none, info: const SubscriptionInfo(download: 125, total: 100));
-      expect(SubscriptionUsageFill.percentageOf(tester.element(find.byType(SubscriptionUsageFill)), const SubscriptionInfo(download: 125, total: 100)), '125%');
-      final overrun = await _snapshot(tester, 'overrun');
-      expect(_distance(_pixel(overrun, 350, 80), _pixel(empty, 350, 80)), greaterThan(0.02));
-      await _pump(tester, brightness: Brightness.light, mode: LiquidGlassMode.none, direction: TextDirection.rtl);
-      final rtl = await _snapshot(tester, 'rtl');
-      expect(_distance(_pixel(rtl, 350, 80), _pixel(empty, 350, 80)), greaterThan(0.02));
-      expect(_pixel(rtl, 40, 80), _pixel(empty, 40, 80));
-    } finally {
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pump(Duration.zero);
-    }
-  });
+    },
+  );
 
   testWidgets('reduced motion stops scheduling frames', (tester) async {
     tester.view.physicalSize = const Size(400, 160);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     try {
-      await _pump(tester, brightness: Brightness.light, mode: LiquidGlassMode.ultra, time: null, reduced: true);
+      await _pump(
+        tester,
+        brightness: Brightness.light,
+        mode: LiquidGlassMode.ultra,
+        time: null,
+        reduced: true,
+      );
       await tester.pump();
       final still = await _snapshot(tester, 'reduced');
       await tester.pump(const Duration(seconds: 3));
@@ -272,70 +408,76 @@ void main() {
     }
   });
 
-  testWidgets('cached grid repaint boundaries stop and resume their liquid clock', (tester) async {
-    tester.view.physicalSize = const Size(400, 160);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-    final controller = ScrollController();
-    try {
-      await tester.pumpWidget(
-        TestApp(
-          child: LiquidGlassScope(
-            enabled: true,
-            child: LiquidGlassHost(
+  testWidgets(
+    'cached grid repaint boundaries stop and resume their liquid clock',
+    (tester) async {
+      tester.view.physicalSize = const Size(400, 160);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final controller = ScrollController();
+      try {
+        await tester.pumpWidget(
+          TestApp(
+            child: LiquidGlassScope(
               enabled: true,
-              child: GridView.builder(
-                controller: controller,
-                cacheExtent: 1000,
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 1,
-                  mainAxisExtent: 104,
+              child: LiquidGlassHost(
+                enabled: true,
+                child: GridView.builder(
+                  controller: controller,
+                  cacheExtent: 1000,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 1,
+                    mainAxisExtent: 104,
+                  ),
+                  itemCount: 12,
+                  itemBuilder: (_, index) => index == 0
+                      ? const RepaintBoundary(
+                          key: ValueKey('cachedLiquidCard'),
+                          child: SubscriptionUsageFill(
+                            info: _info,
+                            child: SizedBox.expand(),
+                          ),
+                        )
+                      : const SizedBox.shrink(),
                 ),
-                itemCount: 12,
-                itemBuilder: (_, index) => index == 0
-                    ? const RepaintBoundary(
-                        key: ValueKey('cachedLiquidCard'),
-                        child: SubscriptionUsageFill(
-                          info: _info,
-                          child: SizedBox.expand(),
-                        ),
-                      )
-                    : const SizedBox.shrink(),
               ),
             ),
           ),
-        ),
-      );
-      await tester.pump(const Duration(milliseconds: 100));
-      expect(tester.binding.hasScheduledFrame, isTrue);
-      final cachedState = tester.state(find.byType(SubscriptionUsageFill));
-      controller.jumpTo(300);
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump();
-      expect(find.byType(SubscriptionUsageFill), findsOneWidget);
-      expect(find.byKey(const ValueKey('cachedLiquidCard')), findsOneWidget);
-      expect(tester.binding.hasScheduledFrame, isFalse);
-      controller.jumpTo(0);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
-      expect(tester.binding.hasScheduledFrame, isTrue);
-      expect(tester.state(find.byType(SubscriptionUsageFill)), same(cachedState));
-      final resumed = await _snapshot(
-        tester,
-        'grid-resumed',
-        boundaryKey: const ValueKey('cachedLiquidCard'),
-      );
-      await tester.pump(const Duration(seconds: 3));
-      final moved = await _snapshot(
-        tester,
-        'grid-resumed-later',
-        boundaryKey: const ValueKey('cachedLiquidCard'),
-      );
-      expect(moved, isNot(orderedEquals(resumed)));
-    } finally {
-      await tester.pumpWidget(const SizedBox.shrink());
-      controller.dispose();
-      await tester.pump(Duration.zero);
-    }
-  });
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(tester.binding.hasScheduledFrame, isTrue);
+        final cachedState = tester.state(find.byType(SubscriptionUsageFill));
+        controller.jumpTo(300);
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump();
+        expect(find.byType(SubscriptionUsageFill), findsOneWidget);
+        expect(find.byKey(const ValueKey('cachedLiquidCard')), findsOneWidget);
+        expect(tester.binding.hasScheduledFrame, isFalse);
+        controller.jumpTo(0);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(tester.binding.hasScheduledFrame, isTrue);
+        expect(
+          tester.state(find.byType(SubscriptionUsageFill)),
+          same(cachedState),
+        );
+        final resumed = await _snapshot(
+          tester,
+          'grid-resumed',
+          boundaryKey: const ValueKey('cachedLiquidCard'),
+        );
+        await tester.pump(const Duration(seconds: 3));
+        final moved = await _snapshot(
+          tester,
+          'grid-resumed-later',
+          boundaryKey: const ValueKey('cachedLiquidCard'),
+        );
+        expect(moved, isNot(orderedEquals(resumed)));
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        controller.dispose();
+        await tester.pump(Duration.zero);
+      }
+    },
+  );
 }

@@ -1100,7 +1100,8 @@ void main() {
             }
             expect(hueGap, lessThan(20), reason: name);
             if (!name.startsWith('title')) {
-              final reducedDarkDock = brightness == Brightness.dark && name == 'dock';
+              final reducedDarkDock =
+                  brightness == Brightness.dark && name == 'dock';
               final minimumBoost = reducedDarkDock ? 0.0 : 0.10;
               expect(
                 hsv.saturation,
