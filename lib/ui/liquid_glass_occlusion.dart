@@ -122,11 +122,6 @@ class _GlassFeather {
   static final _frozen = _live.reversed.toList(growable: false);
 
   void mask(Canvas canvas, {bool inverse = false}) {
-    var opaque = false;
-    assert(() {
-      opaque = LiquidGlassHost.debugFeatherMaskOneOverride;
-      return true;
-    }());
     canvas
       ..save()
       ..transform(transform.storage)
@@ -138,14 +133,7 @@ class _GlassFeather {
           ..shader = LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: opaque
-                ? List.filled(
-                    _live.length,
-                    inverse ? Colors.transparent : Colors.white,
-                  )
-                : inverse
-                ? _frozen
-                : _live,
+            colors: inverse ? _frozen : _live,
           ).createShader(band),
       )
       ..restore();

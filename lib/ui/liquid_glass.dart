@@ -1367,10 +1367,6 @@ class _LiquidGlassLayer extends Layer {
       ...mapping,
       ..._look(style),
     ];
-    assert(() {
-      LiquidGlassHost.debugLastPaneUniforms = List.of(uniforms);
-      return true;
-    }());
     if (_captureKey
         case (
               final image,
