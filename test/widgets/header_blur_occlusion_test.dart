@@ -67,7 +67,12 @@ Future<Map<String, Object?>> _captureInput(
   final atlas = pane.atlas.clone();
   final input = <String, Object?>{
     'slot': [pane.slot.left, pane.slot.top, pane.slot.right, pane.slot.bottom],
-    'place': [pane.place.left, pane.place.top, pane.place.right, pane.place.bottom],
+    'place': [
+      pane.place.left,
+      pane.place.top,
+      pane.place.right,
+      pane.place.bottom,
+    ],
     'scale': pane.scale,
     'size': [atlas.width, atlas.height],
     'uniforms': List.of(LiquidGlassHost.debugLastPaneUniforms!),
@@ -76,11 +81,16 @@ Future<Map<String, Object?>> _captureInput(
   };
   await tester.runAsync(() async {
     try {
-      final rgba = (await atlas.toByteData(format: ui.ImageByteFormat.rawRgba))!
-          .buffer.asUint8List();
+      final rgba = (await atlas.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
+      ))!.buffer.asUint8List();
       final samples = <String, Object?>{};
-      for (final point in [const Offset(159.5, 122.5), const Offset(40.5, 121.5)]) {
-        final pixel = pane.place.topLeft + (point - pane.slot.topLeft) * pane.scale;
+      for (final point in [
+        const Offset(159.5, 122.5),
+        const Offset(40.5, 121.5),
+      ]) {
+        final pixel =
+            pane.place.topLeft + (point - pane.slot.topLeft) * pane.scale;
         final x = pixel.dx.floor();
         final y = pixel.dy.floor();
         final index = (y * atlas.width + x) * 4;
@@ -93,9 +103,12 @@ Future<Map<String, Object?>> _captureInput(
       final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
       if (output != null) {
         final png = (await atlas.toByteData(format: ui.ImageByteFormat.png))!;
-        File('$output/header-input-$tag.png')
-            .writeAsBytesSync(png.buffer.asUint8List());
-        File('$output/header-input-$tag.json').writeAsStringSync(jsonEncode(input));
+        File(
+          '$output/header-input-$tag.png',
+        ).writeAsBytesSync(png.buffer.asUint8List());
+        File(
+          '$output/header-input-$tag.json',
+        ).writeAsStringSync(jsonEncode(input));
       }
     } finally {
       atlas.dispose();
