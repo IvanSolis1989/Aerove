@@ -1,4 +1,3 @@
-import 'package:fl_clash/ui/foreground_ink.dart';
 part of 'input.dart';
 
 /// Public for `MapEditView`, whose entries are entered in a form.
