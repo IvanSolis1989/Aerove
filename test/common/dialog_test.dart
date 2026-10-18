@@ -135,104 +135,112 @@ void main() {
               ),
             ],
           );
-          addTearDown(container.dispose);
-          globalState.container = container;
-          container
-              .read(viewSizeProvider.notifier)
-              .update((_) => const Size(1000, 800));
-          final captureKey = GlobalKey();
-          await tester.pumpWidget(
-            UncontrolledProviderScope(
-              container: container,
-              child: MaterialApp(
-                navigatorKey: globalState.navigatorKey,
-                theme:
-                    ThemeData(
-                      platform: TargetPlatform.android,
-                      scaffoldBackgroundColor: backdrop,
-                    ).withAppShapes.withAppSurfaces.copyWith(
-                      scaffoldBackgroundColor: backdrop,
-                    ),
-                localizationsDelegates: const [
-                  AppLocalizations.delegate,
-                  AppUiLocalizations.delegate,
-                  ...GlobalMaterialLocalizations.delegates,
-                ],
-                supportedLocales: AppLocalizations.delegate.supportedLocales,
-                builder: (context, child) => wrapAppScopes(
-                  context,
-                  RepaintBoundary(
-                    key: captureKey,
-                    child: AuroraAppSurface(motion: false, child: child!),
-                  ),
-                ),
-                home: const Scaffold(body: SizedBox.shrink()),
-              ),
-            ),
-          );
-          final consent = requestDisclaimerConsent();
-          await tester.pumpAndSettle();
-          final exit = find.widgetWithText(OutlinedButton, 'Exit');
-          final agree = find.widgetWithText(FilledButton, 'Agree');
-          for (final button in [exit, agree]) {
-            expect(
-              find.descendant(of: button, matching: find.byType(LiquidGlass)),
-              findsOneWidget,
-            );
-          }
-          expect(find.byType(LiquidGlassHost), findsOneWidget);
-          final exitRect = tester.getRect(exit);
-          final boundary = tester.renderObject<RenderRepaintBoundary>(
-            find.byKey(captureKey),
-          );
-          final image = boundary.toImageSync();
           try {
-            final bytes = (await tester.runAsync(
-              () => image.toByteData(format: ui.ImageByteFormat.rawRgba),
-            ))!;
-            samples.add([
-              for (final point in [
-                Offset(exitRect.center.dx, exitRect.top + 8),
-                Offset(exitRect.left - 24, exitRect.center.dy),
-              ])
-                Color.fromARGB(
-                  255,
-                  bytes.getUint8(
-                    (point.dy.floor() * image.width + point.dx.floor()) * 4,
+            globalState.container = container;
+            container
+                .read(viewSizeProvider.notifier)
+                .update((_) => const Size(1000, 800));
+            final captureKey = GlobalKey();
+            await tester.pumpWidget(
+              UncontrolledProviderScope(
+                container: container,
+                child: MaterialApp(
+                  navigatorKey: globalState.navigatorKey,
+                  theme:
+                      ThemeData(
+                        platform: TargetPlatform.android,
+                        scaffoldBackgroundColor: backdrop,
+                      ).withAppShapes.withAppSurfaces.copyWith(
+                        scaffoldBackgroundColor: backdrop,
+                      ),
+                  localizationsDelegates: const [
+                    AppLocalizations.delegate,
+                    AppUiLocalizations.delegate,
+                    ...GlobalMaterialLocalizations.delegates,
+                  ],
+                  supportedLocales: AppLocalizations.delegate.supportedLocales,
+                  builder: (context, child) => wrapAppScopes(
+                    context,
+                    RepaintBoundary(
+                      key: captureKey,
+                      child: AuroraAppSurface(motion: false, child: child!),
+                    ),
                   ),
-                  bytes.getUint8(
-                    (point.dy.floor() * image.width + point.dx.floor()) * 4 + 1,
-                  ),
-                  bytes.getUint8(
-                    (point.dy.floor() * image.width + point.dx.floor()) * 4 + 2,
-                  ),
+                  home: const Scaffold(body: SizedBox.shrink()),
                 ),
-            ]);
+              ),
+            );
+            final consent = requestDisclaimerConsent();
+            await tester.pumpAndSettle();
+            final exit = find.widgetWithText(OutlinedButton, 'Exit');
+            final agree = find.widgetWithText(FilledButton, 'Agree');
+            for (final button in [exit, agree]) {
+              expect(
+                find.descendant(of: button, matching: find.byType(LiquidGlass)),
+                findsOneWidget,
+              );
+            }
+            expect(find.byType(LiquidGlassHost), findsOneWidget);
+            final exitRect = tester.getRect(exit);
+            final boundary = tester.renderObject<RenderRepaintBoundary>(
+              find.byKey(captureKey),
+            );
+            final image = boundary.toImageSync();
+            try {
+              final bytes = (await tester.runAsync(
+                () => image.toByteData(format: ui.ImageByteFormat.rawRgba),
+              ))!;
+              samples.add([
+                for (final point in [
+                  Offset(exitRect.center.dx, exitRect.top + 8),
+                  Offset(exitRect.left - 24, exitRect.center.dy),
+                ])
+                  Color.fromARGB(
+                    255,
+                    bytes.getUint8(
+                      (point.dy.floor() * image.width + point.dx.floor()) * 4,
+                    ),
+                    bytes.getUint8(
+                      (point.dy.floor() * image.width + point.dx.floor()) * 4 + 1,
+                    ),
+                    bytes.getUint8(
+                      (point.dy.floor() * image.width + point.dx.floor()) * 4 + 2,
+                    ),
+                  ),
+              ]);
+            } finally {
+              image.dispose();
+            }
+            if (samples.length == 1) {
+              await tester.tap(exit);
+              await tester.pumpAndSettle();
+              expect(await consent, isFalse);
+            } else {
+              await tester.tap(agree);
+              await tester.pumpAndSettle();
+              final cancel = find.widgetWithText(TextButton, 'Cancel');
+              expect(
+                find.descendant(of: cancel, matching: find.byType(LiquidGlass)),
+                findsOneWidget,
+              );
+              await tester.enterText(
+                find.byType(TextField),
+                _noServiceStatement(tester),
+              );
+              await tester.pump();
+              await tester.tap(find.text('Confirm'));
+              await tester.pumpAndSettle();
+              expect(await consent, isTrue);
+            }
+            expect(tester.takeException(), isNull);
           } finally {
-            image.dispose();
+            try {
+              await tester.pumpWidget(const SizedBox.shrink());
+              await tester.pump(Duration.zero);
+            } finally {
+              container.dispose();
+            }
           }
-          if (samples.length == 1) {
-            await tester.tap(exit);
-            await tester.pumpAndSettle();
-            expect(await consent, isFalse);
-          } else {
-            await tester.tap(agree);
-            await tester.pumpAndSettle();
-            final cancel = find.widgetWithText(TextButton, 'Cancel');
-            expect(
-              find.descendant(of: cancel, matching: find.byType(LiquidGlass)),
-              findsOneWidget,
-            );
-            await tester.enterText(
-              find.byType(TextField),
-              _noServiceStatement(tester),
-            );
-            await tester.pump();
-            await tester.tap(find.text('Confirm'));
-            await tester.pumpAndSettle();
-            expect(await consent, isTrue);
-          }
-          expect(tester.takeException(), isNull);
         }
         for (var point = 0; point < 2; point++) {
           expect(

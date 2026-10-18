@@ -69,7 +69,10 @@ void main() {
     tester,
   ) async {
     final key = GlobalKey();
+    final coverage = AnimationController(vsync: tester, value: 0.9);
+    addTearDown(coverage.dispose);
     for (final alpha in [0.1, 0.3, 0.5]) {
+      coverage.value = 1 - alpha;
       await tester.pumpWidget(
         MaterialApp(
           home: Center(
@@ -84,7 +87,7 @@ void main() {
                     ),
                     SharedXPageTransition(
                       animation: kAlwaysCompleteAnimation,
-                      secondaryAnimation: AlwaysStoppedAnimation(1 - alpha),
+                      secondaryAnimation: coverage,
                       color: Colors.transparent,
                       slide: Offset.zero,
                       overSettledPage: true,
@@ -122,7 +125,10 @@ void main() {
     tester,
   ) async {
     final key = GlobalKey();
+    final arrival = AnimationController(vsync: tester, value: 0.1);
+    addTearDown(arrival.dispose);
     for (final progress in [0.1, 0.3, 0.5]) {
+      arrival.value = progress;
       await tester.pumpWidget(
         MaterialApp(
           home: Center(
@@ -136,7 +142,7 @@ void main() {
                       child: ColoredBox(color: Color(0xFF0000FF)),
                     ),
                     SharedXPageTransition(
-                      animation: AlwaysStoppedAnimation(progress),
+                      animation: arrival,
                       secondaryAnimation: kAlwaysDismissedAnimation,
                       color: Colors.transparent,
                       slide: Offset.zero,

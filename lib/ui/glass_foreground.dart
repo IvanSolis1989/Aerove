@@ -4,18 +4,29 @@ import 'package:fl_clash/ui/typography.dart';
 import 'package:material_ui/material_ui.dart';
 
 abstract final class GlassForeground {
-  static const opacity = 0.86;
+  static const opacity = 0.64;
+  static const iconOpacity = 0.50;
+  static const titleOpacity = 0.94;
+  static const sectionOpacity = 0.86;
+  static const smallOpacity = 0.72;
 
-  static Color cap(Color color) =>
-      color.a > opacity ? color.withValues(alpha: opacity) : color;
+  static Color cap(Color color, {double limit = opacity}) =>
+      color.a > limit ? color.withValues(alpha: limit) : color;
 
   static bool _sameRgb(Color a, Color b) =>
       a.r == b.r && a.g == b.g && a.b == b.b;
 
-  static Color _capFor(Color color, ColorScheme colors) =>
-      _sameRgb(color, colors.error) || _sameRgb(color, colors.onErrorContainer)
-      ? color
-      : cap(color);
+  static Color _capFor(
+    Color color,
+    ColorScheme colors, {
+    double limit = opacity,
+  }) {
+    if (_sameRgb(color, colors.error) ||
+        _sameRgb(color, colors.onErrorContainer)) {
+      return color;
+    }
+    return cap(color, limit: limit);
+  }
 
   static Color colorOf(BuildContext context, Color color) =>
       LiquidGlassScope.of(context) &&
@@ -31,25 +42,40 @@ abstract final class GlassForeground {
     if (enabled && opacity < 1) {
       // The theme cap must not dim an existing disabled opacity a second time.
       final sources = Theme.of(context).extension<_ForegroundSources>();
-      for (final source in sources?.colors ?? const <Color>[]) {
-        if (source.a > GlassForeground.opacity && cap(source) == color) {
+      final values = sources?.colors ?? const <Color>[];
+      for (var i = 0; i < values.length; i++) {
+        // The final two sources are the original icon themes.
+        final index = color.a == iconOpacity
+            ? (i + values.length - 2) % values.length
+            : i;
+        final source = values[index];
+        if (source.a > iconOpacity &&
+            (cap(source) == color ||
+                cap(source, limit: iconOpacity) == color)) {
           original = source;
           break;
         }
       }
     }
     final result = original.withValues(alpha: original.a * opacity);
-    return enabled ? _capFor(result, Theme.of(context).colorScheme) : result;
+    return enabled
+        ? _capFor(result, Theme.of(context).colorScheme, limit: iconOpacity)
+        : result;
   }
 
-  static TextStyle textStyle(TextStyle style) =>
-      style.color == null ? style : style.copyWith(color: cap(style.color!));
+  static TextStyle textStyle(TextStyle style, {double limit = opacity}) {
+    final color = style.color;
+    return color == null || color.a <= limit
+        ? style
+        : style.copyWith(color: color.withValues(alpha: limit));
+  }
 
   static ButtonStyle _button(
     ButtonStyle? style,
     Color? fallback,
-    ColorScheme colors,
-  ) {
+    ColorScheme colors, {
+    bool icon = false,
+  }) {
     final base = style ?? const ButtonStyle();
     return base.copyWith(
       foregroundColor: base.foregroundColor == null && fallback == null
@@ -58,7 +84,13 @@ abstract final class GlassForeground {
               final color = base.foregroundColor?.resolve(states);
               if (states.contains(WidgetState.disabled)) return color;
               final resolved = color ?? fallback;
-              return resolved == null ? null : _capFor(resolved, colors);
+              return resolved == null
+                  ? null
+                  : _capFor(
+                      resolved,
+                      colors,
+                      limit: icon ? iconOpacity : opacity,
+                    );
             }),
       iconColor: base.iconColor == null
           ? null
@@ -67,7 +99,7 @@ abstract final class GlassForeground {
               if (color == null || states.contains(WidgetState.disabled)) {
                 return color;
               }
-              return _capFor(color, colors);
+              return _capFor(color, colors, limit: iconOpacity);
             }),
     );
   }
@@ -123,10 +155,18 @@ abstract final class GlassForeground {
                 extension,
           ],
           iconTheme: theme.iconTheme.copyWith(
-            color: cap(theme.iconTheme.color ?? colors.onSurface),
+            color: _capFor(
+              theme.iconTheme.color ?? colors.onSurface,
+              colors,
+              limit: iconOpacity,
+            ),
           ),
           primaryIconTheme: theme.primaryIconTheme.copyWith(
-            color: cap(theme.primaryIconTheme.color ?? colors.onPrimary),
+            color: _capFor(
+              theme.primaryIconTheme.color ?? colors.onPrimary,
+              colors,
+              limit: iconOpacity,
+            ),
           ),
           textButtonTheme: TextButtonThemeData(
             style: _button(theme.textButtonTheme.style, colors.primary, colors),
@@ -153,6 +193,7 @@ abstract final class GlassForeground {
               theme.iconButtonTheme.style,
               colors.onSurfaceVariant,
               colors,
+              icon: true,
             ),
           ),
           floatingActionButtonTheme: theme.floatingActionButtonTheme.copyWith(
@@ -167,10 +208,18 @@ abstract final class GlassForeground {
             ),
             titleTextStyle: theme.appBarTheme.titleTextStyle == null
                 ? null
-                : textStyle(theme.appBarTheme.titleTextStyle!),
+                : textStyle(
+                    theme.appBarTheme.titleTextStyle!,
+                    limit: titleOpacity,
+                  ),
           ),
         )
-        .withForegroundAlphaCap(opacity);
+        .withForegroundAlphaCap(
+          opacity,
+          titleOpacity: titleOpacity,
+          sectionOpacity: sectionOpacity,
+          smallOpacity: smallOpacity,
+        );
   }
 }
 

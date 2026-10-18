@@ -5,6 +5,9 @@
 
 **简体中文** · [English](README_en.md)
 
+XClash 基于 FlClash，主要优化安卓版 UI 与图标。
+感谢 [chen08209/FlClash](https://github.com/chen08209/FlClash) 提供项目基础。
+
 [![下载最新版](https://img.shields.io/github/v/release/IvanSolis1989/XClash?style=flat-square)](https://github.com/IvanSolis1989/XClash/releases/latest)
 
 ## 下载与安装
@@ -22,11 +25,7 @@
 3. 在 **进阶配置 → 脚本** 查看脚本正文和来源链接。这里可以修改、复制或打开链接，也可以手动更新脚本。
 
 新建的普通订阅及本地配置默认关联内置脚本；已有配置与备份恢复的数据保留原来的选择。
-删除脚本后不会自动补回。脚本来源：
-
-```text
-https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/main/FlClash/FlClash%28mihomo%29.js
-```
+删除脚本后不会自动补回。[查看脚本来源](https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/main/FlClash/FlClash%28mihomo%29.js)。
 
 ## 主题设置
 
@@ -102,14 +101,6 @@ https://sub-store-cloudflare.<你的子域>.workers.dev/?token=<管理Token>
 两个 Token 和完整订阅链接都应私下保存。
 
 部署问题可对照该项目的 [快速开始](https://github.com/realchendahuang/sub-store-cloudflare/blob/main/docs/quick-start.md)。
-
-## 版本更新
-
-本仓库**每小时自动检查一次上游更新**，选取所有分支可达的最高版本标签，包含预发布。
-**没有新版本时直接结束，不提交代码、不重新构建或发布 APK。** 检测到新版本并通过验证后才构建发布，
-版本号为“上游版本号 + `-X`”，例如 `0.9.1-pre.4-X`。
-GitHub 定时任务可能延迟；实际可下载版本以 [Releases](https://github.com/IvanSolis1989/XClash/releases/latest) 为准。
-只修改 README 等文档不会触发 APK 构建，也不会取消正在进行的构建。
 
 ## 问题反馈
 

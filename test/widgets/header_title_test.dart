@@ -1,7 +1,10 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:fl_clash/ui/liquid_glass.dart';
+import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/scaffold.dart';
 import 'package:fl_clash/ui/view_scope.dart';
 import 'package:flutter/rendering.dart';
@@ -36,21 +39,20 @@ void main() {
             final bar = tester.widget<AppBar>(find.byType(AppBar));
             final shadows = bar.titleTextStyle!.shadows;
             if (enabled && !highContrast) {
-              expect(shadows, hasLength(1));
-              final shadow = shadows!.single;
+              expect(shadows, hasLength(2));
+              final shadow = shadows!.first;
               expect(
                 shadow.color,
                 brightness == Brightness.light
-                    ? const Color(0x73FFFFFF)
-                    : const Color(0x66000000),
+                    ? const Color(0xE6FFFFFF)
+                    : const Color(0xD9000000),
               );
-              expect(shadow.blurRadius, brightness == Brightness.light ? 3 : 2);
-              expect(
-                shadow.offset,
-                brightness == Brightness.light
-                    ? Offset.zero
-                    : const Offset(0, 1),
-              );
+              expect(shadow.blurRadius, 2);
+              expect(shadow.offset, Offset.zero);
+              expect(shadows.last.blurRadius, 5);
+              expect(shadows.last.offset, Offset.zero);
+              expect(shadows.last.color, brightness == Brightness.light
+                  ? const Color(0x99FFFFFF) : const Color(0x8C000000));
             } else {
               expect(shadows, isNull);
             }
@@ -68,6 +70,14 @@ void main() {
       testWidgets(
         'real title halo is local over $brightness content at $scroll',
         (tester) async {
+          final background = await _titleScene(tester,
+            brightness: brightness, hideTitle: true, scroll: scroll,
+            name: 'title-${brightness.name}-$scroll-background');
+          final flat = scroll == 0 ? background : await _titleScene(tester,
+            brightness: brightness, hideTitle: true);
+          final glyphs = await _titleScene(tester,
+            brightness: brightness, glyphMask: true,
+            name: 'title-${brightness.name}-$scroll-glyph-mask');
           final baseline = await _titleScene(
             tester,
             brightness: brightness,
@@ -90,6 +100,22 @@ void main() {
           final effect = title.inflate(12);
           var changed = 0;
           var outside = 0;
+          var ringSamples = 0;
+          var overlapSamples = 0;
+          var beforeContrast = 0.0;
+          var afterContrast = 0.0;
+          var overlapBefore = 0.0;
+          var overlapAfter = 0.0;
+          var foregroundSum = 0.0;
+          var foregroundSamples = 0;
+          for (var at = 0; at < glyphs.length; at += 4) {
+            if (glyphs[at] == 255) {
+              foregroundSum += _luminance(actual, at);
+              foregroundSamples++;
+            }
+          }
+          expect(foregroundSamples, greaterThan(0));
+          final foreground = foregroundSum / foregroundSamples;
           for (var y = 0; y < 600; y++) {
             for (var x = 0; x < 390; x++) {
               final at = (y * 390 + x) * 4;
@@ -97,12 +123,46 @@ void main() {
               for (var c = 0; c < 4; c++) {
                 different |= actual[at + c] != baseline[at + c];
               }
+              if (effect.contains(Offset(x + 0.5, y + 0.5)) &&
+                  glyphs[at] == 0 && _nearGlyph(glyphs, x, y)) {
+                final before = _contrast(foreground, _luminance(baseline, at));
+                final after = _contrast(foreground, _luminance(actual, at));
+                ringSamples++;
+                beforeContrast += before;
+                afterContrast += after;
+                if (_contrast(_luminance(background, at), _luminance(flat, at)) > 1.1) {
+                  overlapSamples++;
+                  overlapBefore += before;
+                  overlapAfter += after;
+                }
+              }
               if (!different) continue;
               changed++;
               if (!effect.contains(Offset(x + 0.5, y + 0.5))) outside++;
             }
           }
           expect(changed, greaterThan(0));
+          expect(ringSamples, greaterThan(0));
+          expect(afterContrast, greaterThan(beforeContrast));
+          final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+          if (output != null) {
+            await tester.runAsync(() => File('$output/title-${brightness.name}-$scroll-contrast.json')
+                .writeAsString(jsonEncode({
+                  'ringSamples': ringSamples,
+                  'meanRingContrastBefore': beforeContrast / ringSamples,
+                  'meanRingContrastAfter': afterContrast / ringSamples,
+                  'overlapSamples': overlapSamples,
+                  'meanOverlapContrastBefore': overlapSamples == 0 ? null : overlapBefore / overlapSamples,
+                  'meanOverlapContrastAfter': overlapSamples == 0 ? null : overlapAfter / overlapSamples,
+                  'overlapContrastRatio': overlapSamples == 0 ? null : overlapAfter / overlapBefore,
+                  'outsideChangedPixels': outside,
+                })));
+          }
+          if (scroll > 0) {
+            expect(overlapSamples, greaterThan(0));
+            expect(overlapAfter / overlapBefore, greaterThanOrEqualTo(1.25),
+              reason: 'Overlapping body text requires at least 25% stronger glyph-edge contrast.');
+          }
           expect(
             outside,
             0,
@@ -122,6 +182,8 @@ Future<Uint8List> _titleScene(
   bool enabled = true,
   bool highContrast = false,
   bool shadow = true,
+  bool glyphMask = false,
+  bool hideTitle = false,
   double scroll = 0,
   String? name,
 }) async {
@@ -131,15 +193,19 @@ Future<Uint8List> _titleScene(
   addTearDown(tester.view.resetDevicePixelRatio);
   final controller = ScrollController();
   addTearDown(controller.dispose);
+  final baseTheme = ThemeData(
+    brightness: brightness,
+    platform: TargetPlatform.android,
+    fontFamily: 'PageTitleProbe',
+  );
+  final theme = enabled && !highContrast
+      ? GlassForeground.theme(baseTheme)
+      : baseTheme;
   await tester.pumpWidget(const SizedBox.shrink());
   await tester.pumpWidget(
     TestApp(
       includeNavigatorKey: false,
-      theme: ThemeData(
-        brightness: brightness,
-        platform: TargetPlatform.android,
-        fontFamily: 'PageTitleProbe',
-      ),
+      theme: theme,
       homeBuilder: (child) => MediaQuery(
         data: MediaQueryData(
           size: const Size(390, 600),
@@ -153,7 +219,7 @@ Future<Uint8List> _titleScene(
             child: RepaintBoundary(
               key: const ValueKey('title-capture'),
               child: ColoredBox(
-                color: brightness == Brightness.light
+                color: glyphMask ? Colors.black : brightness == Brightness.light
                     ? const Color(0xFFC1B69C)
                     : const Color(0xFF304757),
                 child: child,
@@ -163,15 +229,18 @@ Future<Uint8List> _titleScene(
         ),
       ),
       child: CommonScaffold(
-        title: shadow ? 'Page heading' : null,
-        titleWidget: shadow
+        title: shadow && !glyphMask && !hideTitle ? 'Page heading' : null,
+        titleWidget: glyphMask || hideTitle
+            ? Text('Page heading', style: TextStyle(shadows: const [],
+                color: glyphMask ? Colors.white : Colors.transparent))
+            : shadow
             ? null
             : const Text('Page heading', style: TextStyle(shadows: [])),
         body: DefaultTextStyle(
           style: TextStyle(
             fontFamily: 'PageTitleProbe',
             fontSize: 15,
-            color: brightness == Brightness.light ? Colors.black : Colors.white,
+            color: glyphMask ? Colors.black : theme.textTheme.bodyLarge!.color,
           ),
           child: ListView.builder(
             controller: controller,
@@ -214,3 +283,27 @@ Future<Uint8List> _titleScene(
     }
   }))!;
 }
+
+bool _nearGlyph(Uint8List mask, int x, int y) {
+  for (var dy = -2; dy <= 2; dy++) {
+    for (var dx = -2; dx <= 2; dx++) {
+      final nx = x + dx;
+      final ny = y + dy;
+      if (nx >= 0 && nx < 390 && ny >= 0 && ny < 600 &&
+          mask[(ny * 390 + nx) * 4] > 0) return true;
+    }
+  }
+  return false;
+}
+
+double _luminance(Uint8List pixels, int at) {
+  double linear(int value) {
+    final channel = value / 255;
+    return channel <= 0.04045 ? channel / 12.92
+        : math.pow((channel + 0.055) / 1.055, 2.4).toDouble();
+  }
+  return 0.2126 * linear(pixels[at]) + 0.7152 * linear(pixels[at + 1]) +
+      0.0722 * linear(pixels[at + 2]);
+}
+
+double _contrast(double a, double b) => (math.max(a, b) + 0.05) / (math.min(a, b) + 0.05);

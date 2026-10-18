@@ -97,6 +97,57 @@ void main() {
     }
   });
 
+  test('motion stays slow in logical pixels and degrees per second', () async {
+    final metrics = <String, Object>{};
+    const interval = Duration(milliseconds: 100);
+    for (final (size, translationLimit) in [
+      (const Size(390, 844), 1.21),
+      (const Size(720, 720), 2.24),
+    ]) {
+      var maxTranslation = 0.0;
+      var maxRotation = 0.0;
+      for (final seed in _seeds) {
+        final motion = AuroraMotion(seed);
+        for (var second = 0; second <= 7200; second += 3) {
+          final time = Duration(seconds: second);
+          final current = motion.at(time, size);
+          final next = motion.at(time + interval, size);
+          final translation =
+              (next.translation - current.translation).distance / 0.1;
+          final rotation =
+              _angleDistance(next.angle, current.angle) * 180 / math.pi / 0.1;
+          maxTranslation = math.max(maxTranslation, translation);
+          maxRotation = math.max(maxRotation, rotation);
+          expect(
+            translation,
+            lessThanOrEqualTo(translationLimit),
+            reason: 'seed=$seed size=$size second=$second dp/s',
+          );
+          expect(
+            rotation,
+            lessThanOrEqualTo(0.234),
+            reason: 'seed=$seed size=$size second=$second degrees/s',
+          );
+        }
+      }
+      expect(maxTranslation, greaterThan(0));
+      expect(maxRotation, greaterThan(0));
+      metrics['${size.width.toInt()}x${size.height.toInt()}'] = {
+        'maxTranslationDpPerSecond': maxTranslation,
+        'maxRotationDegreesPerSecond': maxRotation,
+        'translationLimitDpPerSecond': translationLimit,
+        'rotationLimitDegreesPerSecond': 0.234,
+      };
+    }
+    final directory = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+    if (directory != null && directory.isNotEmpty) {
+      await Directory(directory).create(recursive: true);
+      await File('$directory/aurora-motion-speed-metrics.json').writeAsString(
+        const JsonEncoder.withIndent('  ').convert(metrics),
+      );
+    }
+  });
+
   testWidgets(
     'motion only repaints and reuses its mesh across time and resize',
     (tester) async {

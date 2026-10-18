@@ -84,9 +84,26 @@ extension AppTypographyThemeExt on ThemeData {
     primaryTextTheme: _onAppScale(primaryTextTheme),
   );
 
-  ThemeData withForegroundAlphaCap(double opacity) => copyWith(
-    textTheme: _capForegroundAlpha(textTheme, opacity),
-    primaryTextTheme: _capForegroundAlpha(primaryTextTheme, opacity),
+  ThemeData withForegroundAlphaCap(
+    double opacity, {
+    double? titleOpacity,
+    double? sectionOpacity,
+    double? smallOpacity,
+  }) => copyWith(
+    textTheme: _capForegroundAlpha(
+      textTheme,
+      opacity,
+      titleOpacity ?? opacity,
+      sectionOpacity ?? opacity,
+      smallOpacity ?? opacity,
+    ),
+    primaryTextTheme: _capForegroundAlpha(
+      primaryTextTheme,
+      opacity,
+      titleOpacity ?? opacity,
+      sectionOpacity ?? opacity,
+      smallOpacity ?? opacity,
+    ),
   );
 }
 
@@ -108,29 +125,35 @@ TextTheme _onAppScale(TextTheme theme) => theme.copyWith(
   labelSmall: AppTextStyle.caption2._on(theme.labelSmall, emphasized: true),
 );
 
-TextTheme _capForegroundAlpha(TextTheme theme, double opacity) {
-  TextStyle? apply(TextStyle? style) {
+TextTheme _capForegroundAlpha(
+  TextTheme theme,
+  double opacity,
+  double titleOpacity,
+  double sectionOpacity,
+  double smallOpacity,
+) {
+  TextStyle? apply(TextStyle? style, double limit) {
     if (style == null) return null;
     final color = style.color;
-    if (color == null || color.a <= opacity) return style;
-    return style.copyWith(color: color.withValues(alpha: opacity));
+    if (color == null || color.a <= limit) return style;
+    return style.copyWith(color: color.withValues(alpha: limit));
   }
 
   return theme.copyWith(
-    displayLarge: apply(theme.displayLarge),
-    displayMedium: apply(theme.displayMedium),
-    displaySmall: apply(theme.displaySmall),
-    headlineLarge: apply(theme.headlineLarge),
-    headlineMedium: apply(theme.headlineMedium),
-    headlineSmall: apply(theme.headlineSmall),
-    titleLarge: apply(theme.titleLarge),
-    titleMedium: apply(theme.titleMedium),
-    titleSmall: apply(theme.titleSmall),
-    bodyLarge: apply(theme.bodyLarge),
-    bodyMedium: apply(theme.bodyMedium),
-    bodySmall: apply(theme.bodySmall),
-    labelLarge: apply(theme.labelLarge),
-    labelMedium: apply(theme.labelMedium),
-    labelSmall: apply(theme.labelSmall),
+    displayLarge: apply(theme.displayLarge, titleOpacity),
+    displayMedium: apply(theme.displayMedium, titleOpacity),
+    displaySmall: apply(theme.displaySmall, titleOpacity),
+    headlineLarge: apply(theme.headlineLarge, titleOpacity),
+    headlineMedium: apply(theme.headlineMedium, titleOpacity),
+    headlineSmall: apply(theme.headlineSmall, titleOpacity),
+    titleLarge: apply(theme.titleLarge, sectionOpacity),
+    titleMedium: apply(theme.titleMedium, sectionOpacity),
+    titleSmall: apply(theme.titleSmall, sectionOpacity),
+    bodyLarge: apply(theme.bodyLarge, opacity),
+    bodyMedium: apply(theme.bodyMedium, opacity),
+    bodySmall: apply(theme.bodySmall, smallOpacity),
+    labelLarge: apply(theme.labelLarge, opacity),
+    labelMedium: apply(theme.labelMedium, smallOpacity),
+    labelSmall: apply(theme.labelSmall, smallOpacity),
   );
 }

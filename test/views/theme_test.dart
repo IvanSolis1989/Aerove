@@ -556,12 +556,14 @@ void main() {
     testWidgets('is off until a tier is chosen, and switches back', (
       tester,
     ) async {
-      container.read(themeSettingProvider.notifier).update(
-        (state) => state.copyWith(
-          auroraEnabled: false,
-          liquidGlass: LiquidGlassMode.none,
-        ),
-      );
+      container
+          .read(themeSettingProvider.notifier)
+          .update(
+            (state) => state.copyWith(
+              auroraEnabled: false,
+              liquidGlass: LiquidGlassMode.none,
+            ),
+          );
       await pumpThemeView(tester);
       final group = find.ancestor(
         of: find.text('Liquid Glass').first,

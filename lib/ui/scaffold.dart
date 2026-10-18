@@ -679,13 +679,21 @@ class CommonScaffoldState extends State<CommonScaffold> {
                           shadows: [
                             context.colorScheme.brightness == Brightness.light
                                 ? const Shadow(
-                                    color: Color(0x73FFFFFF),
-                                    blurRadius: 3,
+                                    color: Color(0xE6FFFFFF),
+                                    blurRadius: 2,
                                   )
                                 : const Shadow(
-                                    color: Color(0x66000000),
+                                    color: Color(0xD9000000),
                                     blurRadius: 2,
-                                    offset: Offset(0, 1),
+                                  ),
+                            context.colorScheme.brightness == Brightness.light
+                                ? const Shadow(
+                                    color: Color(0x99FFFFFF),
+                                    blurRadius: 5,
+                                  )
+                                : const Shadow(
+                                    color: Color(0x8C000000),
+                                    blurRadius: 5,
                                   ),
                           ],
                         )

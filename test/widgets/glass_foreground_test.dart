@@ -129,7 +129,7 @@ void main() {
       }),
       disabled,
     );
-    expect(theme.textButtonTheme.style!.foregroundColor!.resolve({})!.a, 0.86);
+    expect(theme.textButtonTheme.style!.foregroundColor!.resolve({})!.a, 0.64);
   });
 
   testWidgets('error foreground roles preserve their RGB and alpha', (
@@ -144,6 +144,10 @@ void main() {
       expect(transformed.colorScheme.onErrorContainer, colors.onErrorContainer);
       expect(transformed.colorScheme.primary, colors.primary);
       for (final color in [colors.error, colors.onErrorContainer]) {
+        final inherited = GlassForeground.theme(
+          original.copyWith(iconTheme: IconThemeData(color: color)),
+        );
+        expect(inherited.iconTheme.color, color);
         await tester.pumpWidget(
           TestApp(
             includeNavigatorKey: false,
@@ -174,11 +178,98 @@ void main() {
     }
   });
 
+  testWidgets('actual app typography caps roles without lifting low alpha', (
+    tester,
+  ) async {
+    for (final brightness in Brightness.values) {
+      for (final sourceAlpha in [1.0, 0.47, 0.38]) {
+        final colors = auroraColorScheme(brightness);
+        final source = colors.onSurface.withValues(alpha: sourceAlpha);
+        final base = ThemeData(colorScheme: colors);
+        final input = base.copyWith(
+          textTheme: base.textTheme.apply(
+            bodyColor: source,
+            displayColor: source,
+          ),
+          iconTheme: IconThemeData(color: source),
+        ).withAppTypography;
+        final roles = [
+          (AppTextStyle.pageTitle, 0.94),
+          (AppTextStyle.headline, 0.86),
+          (AppTextStyle.body, 0.64),
+          (AppTextStyle.footnote, 0.72),
+          (AppTextStyle.caption1, 0.72),
+        ];
+        await tester.pumpWidget(
+          ProviderScope(
+            key: UniqueKey(),
+            overrides: [
+              themeSettingProvider.overrideWithBuild(
+                (_, _) => const ThemeProps(
+                  auroraEnabled: false,
+                  liquidGlass: LiquidGlassMode.ultra,
+                ),
+              ),
+            ],
+            child: MaterialApp(
+              theme: input,
+              darkTheme: input,
+              themeMode: brightness == Brightness.dark
+                  ? ThemeMode.dark
+                  : ThemeMode.light,
+              builder: (_, child) =>
+                  AuroraAppSurface(motion: false, child: child!),
+              home: Scaffold(
+                body: Builder(
+                  builder: (context) => Column(
+                    children: [
+                      for (final (role, _) in roles)
+                        Text(role.name, style: role.of(context)),
+                      const GlyphIcon(AppGlyphs.tools),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        for (final (role, limit) in roles) {
+          final rich = tester.widget<RichText>(
+            find.descendant(
+              of: find.text(role.name),
+              matching: find.byType(RichText),
+            ),
+          );
+          final actual = rich.text.style!.color!;
+          expect(actual.a, math.min(sourceAlpha, limit));
+          expect(_channels(actual), _channels(source));
+        }
+        final paint = tester.widget<CustomPaint>(
+          find.descendant(
+            of: find.byType(GlyphIcon),
+            matching: find.byType(CustomPaint),
+          ),
+        );
+        expect(
+          (paint.painter! as GlyphPainter).color.a,
+          math.min(sourceAlpha, 0.50),
+        );
+      }
+    }
+  });
+
   testWidgets('inherited IconTheme opacity preserves the original semantics', (
     tester,
   ) async {
     for (final brightness in Brightness.values) {
-      final base = ThemeData(colorScheme: auroraColorScheme(brightness));
+      final colors = auroraColorScheme(brightness);
+      final base = ThemeData(
+        colorScheme: colors,
+        iconTheme: IconThemeData(
+          color: colors.onSurface.withValues(alpha: 0.87),
+        ),
+      );
       for (final useScheme in [false, true]) {
         for (final opacity in [0.54, 0.38]) {
           Future<Color> render(bool glass) async {
@@ -216,7 +307,10 @@ void main() {
           final original = await render(false);
           final capped = await render(true);
           expect(original.a, lessThanOrEqualTo(opacity));
-          expect(capped, original);
+          expect(
+            capped,
+            original.withValues(alpha: math.min(original.a, 0.50)),
+          );
         }
       }
     }
@@ -383,7 +477,7 @@ void main() {
               'actualBrightness': actualTheme.brightness.name,
               'platformBrightness': platformBrightness.name,
               'expectedForeground': rgba(
-                colors.onSurface.withValues(alpha: 0.86),
+                colors.onSurface.withValues(alpha: 0.64),
               ),
               'actualOnSurface': rgba(actualTheme.colorScheme.onSurface),
               'actualOnPrimary': rgba(actualTheme.colorScheme.onPrimary),
@@ -406,7 +500,7 @@ void main() {
         expect(settings.liquidGlass, mode);
         expect(actualTheme.brightness, brightness);
         expect(LiquidGlassScope.of(context), isTrue);
-        expect(foreground, colors.onSurface.withValues(alpha: 0.86));
+        expect(foreground, colors.onSurface.withValues(alpha: 0.64));
         expect(style.backgroundColor!.resolve({}), Colors.transparent);
         expect(style.padding!.resolve({}), const EdgeInsets.all(20));
         final boundary =
@@ -466,7 +560,7 @@ void main() {
 
   for (final brightness in Brightness.values) {
     for (final quality in LiquidGlassQuality.values) {
-      testWidgets('text glyph and dock reveal fourteen percent on '
+      testWidgets('text and icon background fractions on '
           '${brightness.name} ${quality.name}', (tester) async {
         tester.view.physicalSize = const Size(400, 240);
         tester.view.devicePixelRatio = 1;
@@ -709,10 +803,24 @@ void main() {
             final result = _channels(painted);
             final source = _channels(foreground);
             final background = _channels(behind);
+            final isIcon = name == 'glyph' || name == 'dockGlyph';
+            final alpha = isIcon ? 0.50 : 0.64;
+            final fraction = isIcon ? 0.50 : 0.36;
             final predicted = List.generate(
               3,
-              (i) => (source[i] * 0.86 + background[i] * 0.14) * 255,
+              (i) => (source[i] * alpha + background[i] * fraction) * 255,
             );
+            var strongest = 0;
+            for (var i = 1; i < 3; i++) {
+              if ((background[i] - source[i]).abs() >
+                  (background[strongest] - source[strongest]).abs()) {
+                strongest = i;
+              }
+            }
+            final separation = background[strongest] - source[strongest];
+            expect(separation.abs(), greaterThan(0.4));
+            final response =
+                (result[strongest] - source[strongest]) / separation;
             (diagnostics['samples'] as List<Map<String, Object?>>).add({
               'role': name,
               'backdrop': backdrop.toARGB32(),
@@ -721,18 +829,25 @@ void main() {
               'under': [for (final value in background) value * 255],
               'actual': [for (final value in result) value * 255],
               'expected': predicted,
-              'previousExpected': List.generate(
+              'initialSixPercentExpected': List.generate(
                 3,
                 (i) => (source[i] * 0.94 + background[i] * 0.06) * 255,
+              ),
+              'backgroundFraction': fraction,
+              'measuredBackgroundFraction': response,
+              'previousFourteenPercentExpected': List.generate(
+                3,
+                (i) => (source[i] * 0.86 + background[i] * 0.14) * 255,
               ),
               'error': List.generate(3, (i) => result[i] * 255 - predicted[i]),
               'contrast': _contrast(painted, behind),
             });
             saveDiagnostics();
+            expect(response, closeTo(isIcon ? 0.50 : 0.36, 0.02));
             for (var i = 0; i < 3; i++) {
               expect(
                 result[i] * 255,
-                closeTo((source[i] * 0.86 + background[i] * 0.14) * 255, 2),
+                closeTo(predicted[i], 2),
               );
             }
             expect(
@@ -753,7 +868,7 @@ void main() {
       testWidgets('real font foreground comparison $brightness $mode', (
         tester,
       ) async {
-        tester.view.physicalSize = const Size(430, 500);
+        tester.view.physicalSize = const Size(430, 700);
         tester.view.devicePixelRatio = 1;
         addTearDown(tester.view.reset);
         final capture = GlobalKey();
@@ -793,13 +908,13 @@ void main() {
                   child: Builder(
                     builder: (context) {
                       final style = AppTextStyle.caption1.of(context);
-                      final legacy = colors.onSurface.withValues(alpha: 0.94);
+                      final legacy = colors.onSurface.withValues(alpha: 0.86);
                       return Padding(
                         padding: const EdgeInsets.all(24),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text('Previous 94% reference', style: style),
+                            Text('Previous 86% reference', style: style),
                             const SizedBox(height: 12),
                             RichText(
                               text: TextSpan(
@@ -817,9 +932,20 @@ void main() {
                               ),
                             ),
                             const SizedBox(height: 28),
-                            Text('Current 86% actual', style: style),
+                            Text(
+                              'Page title 94%',
+                              style: AppTextStyle.pageTitle.of(context),
+                            ),
+                            Text(
+                              'Section title 86%',
+                              style: AppTextStyle.headline.of(context),
+                            ),
+                            Text(
+                              'Body text 64%',
+                              style: AppTextStyle.body.of(context),
+                            ),
                             const SizedBox(height: 12),
-                            Text('Readable small labels 123', style: style),
+                            Text('Caption 72%: labels 123', style: style),
                             const SizedBox(height: 12),
                             const GlyphIcon(
                               AppGlyphs.dashboard,
@@ -852,8 +978,8 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        final label = tester.element(find.text('Current 86% actual'));
-        expect(Theme.of(label).colorScheme.onSurface.a, 0.86);
+        final label = tester.element(find.text('Page title 94%'));
+        expect(Theme.of(label).colorScheme.onSurface.a, 0.64);
         expect(LiquidGlassScope.of(label), isTrue);
         expect(tester.takeException(), isNull);
         final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
