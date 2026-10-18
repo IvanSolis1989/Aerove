@@ -108,6 +108,7 @@ void main() {
           UncontrolledProviderScope(
             container: container,
             child: TestApp(
+              includeNavigatorKey: false,
               child: MediaQuery(
                 data: MediaQueryData.fromView(
                   tester.view,
@@ -120,6 +121,7 @@ void main() {
                       child: SizedBox(
                         width: 360,
                         child: ProfileItem(
+                          key: const ValueKey('liquidProfileSelection'),
                           profile: profile,
                           groupValue: null,
                           onChanged: (id) => selected = id,
@@ -134,8 +136,12 @@ void main() {
         );
         await tester.pumpAndSettle();
         expect(find.bySemanticsLabel(RegExp('75%')), findsWidgets);
-        final card = tester.getRect(find.byType(ProfileItem));
-        await tester.tapAt(Offset(card.left + 12, card.center.dy));
+        final profileItem = find.byKey(const ValueKey('liquidProfileSelection'));
+        expect(profileItem, findsOneWidget);
+        final card = tester.getRect(
+          find.descendant(of: profileItem, matching: find.byType(FilledButton)),
+        );
+        await tester.tapAt(Offset(card.left + 24, card.center.dy));
         await tester.pump();
         expect(selected, profile.id);
         expect(

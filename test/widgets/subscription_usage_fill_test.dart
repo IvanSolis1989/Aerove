@@ -450,8 +450,16 @@ void main() {
         controller.jumpTo(300);
         await tester.pump(const Duration(milliseconds: 100));
         await tester.pump();
-        expect(find.byType(SubscriptionUsageFill), findsOneWidget);
-        expect(find.byKey(const ValueKey('cachedLiquidCard')), findsOneWidget);
+        final cachedFill = find.byType(
+          SubscriptionUsageFill,
+          skipOffstage: false,
+        );
+        expect(cachedFill, findsOneWidget);
+        expect(tester.state(cachedFill), same(cachedState));
+        expect(
+          find.byKey(const ValueKey('cachedLiquidCard'), skipOffstage: false),
+          findsOneWidget,
+        );
         expect(tester.binding.hasScheduledFrame, isFalse);
         controller.jumpTo(0);
         await tester.pump();

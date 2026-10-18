@@ -187,6 +187,7 @@ void main() {
           expect(chart.values.every((value) => value > 0), isTrue);
         }
         final control = await render('neutral-control', ink: false);
+        final actual = await render('actual');
         final points = <String, Offset>{};
         final figures = find.byWidgetPredicate(
           (widget) =>
@@ -210,24 +211,31 @@ void main() {
               TextSelection(baseOffset: start, extentOffset: end),
             );
             Offset? point;
+            var interiorContrast = -1.0;
+            var readableInteriors = 0;
             for (final box in boxes) {
               final rect = box.toRect().shift(
                 paragraph.localToGlobal(Offset.zero) - origin,
               );
-              for (
-                var y = rect.top.ceil();
-                y < rect.bottom && point == null;
-                y++
-              ) {
+              for (var y = rect.top.ceil(); y < rect.bottom; y++) {
                 for (var x = rect.left.ceil(); x < rect.right; x++) {
                   final candidate = Offset(x + .5, y + .5);
                   if (_matches(_pixel(control, candidate), colors.onSurface)) {
-                    point = candidate;
-                    break;
+                    final background = fields[candidate.dx < 240 ? 0 : 1];
+                    final contrast = _contrast(_pixel(actual, candidate), background);
+                    if (contrast >= 4.5) {
+                      readableInteriors++;
+                    }
+                    if (contrast > interiorContrast) {
+                      interiorContrast = contrast;
+                      point = candidate;
+                    }
                   }
                 }
               }
             }
+            expect(readableInteriors, greaterThanOrEqualTo(3),
+                reason: '$role $i readable opaque glyph interiors');
             expect(point, isNotNull, reason: '$role $i opaque glyph interior');
             points['$role-$i'] = point!;
           }
@@ -235,7 +243,7 @@ void main() {
               .getRect(find.byType(LineChart).at(i))
               .shift(-origin);
           final curve = Offset(
-            rect.center.dx.floor() + .5,
+            (rect.left + rect.width * 0.75).floor() + .5,
             rect.top.floor() + 2.5,
           );
           expect(
@@ -246,7 +254,6 @@ void main() {
           points['curve-$i'] = curve;
           points['fill-$i'] = rect.center;
         }
-        final actual = await render('actual');
         final moved = await render('moved', moved: true);
         final samples = <Map<String, Object?>>[];
         for (final entry in points.entries) {
@@ -280,6 +287,12 @@ void main() {
               _contrast(after, background),
               greaterThanOrEqualTo(entry.key.startsWith('curve') ? 3 : 4.5),
               reason: entry.key,
+            );
+            final movedBackground = fields[entry.value.dx < 240 ? 1 : 0];
+            expect(
+              _contrast(_pixel(moved, entry.value), movedBackground),
+              greaterThanOrEqualTo(entry.key.startsWith('curve') ? 3 : 4.5),
+              reason: '${entry.key} after field motion',
             );
           }
         }
