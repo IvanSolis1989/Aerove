@@ -63,8 +63,15 @@ void main() {
   test('ink layer supports OffsetLayer invalidation', () {
     final layer = LiquidGlassInkLayer();
     expect(() {
-      layer.offset = const Offset(24, 32);
-      layer.markNeedsAddToScene();
+      layer.configure(
+        offset: const Offset(24, 32),
+        size: const Size(40, 40),
+        strength: 1,
+        source: Colors.black,
+        contrast: 4.7,
+        dark: false,
+        program: null,
+      );
     }, returnsNormally);
     expect(layer.offset, const Offset(24, 32));
     layer.dispose();

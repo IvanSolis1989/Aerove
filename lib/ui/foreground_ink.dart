@@ -178,16 +178,15 @@ class _InkRender extends RenderProxyBox {
     final layer = _layer.layer ??= LiquidGlassInkLayer();
     final inset = Offset(outset, outset);
     final bounds = Size(size.width + outset * 2, size.height + outset * 2);
-    layer
-      ..offset = offset - inset
-      ..size = bounds
-      ..strength = role.strength
-      ..source = source
-      ..alpha = source.a
-      ..contrast = role == GlassInkRole.icon ? 3.2 : 4.7
-      ..dark = dark
-      ..program = _InkProgram.request(markNeedsPaint)
-      ..markNeedsAddToScene();
+    layer.configure(
+      offset: offset - inset,
+      size: bounds,
+      strength: role.strength,
+      source: source,
+      contrast: role == GlassInkRole.icon ? 3.2 : 4.7,
+      dark: dark,
+      program: _InkProgram.request(markNeedsPaint),
+    );
     context.pushLayer(
       layer,
       (context, offset) => super.paint(context, offset + inset),

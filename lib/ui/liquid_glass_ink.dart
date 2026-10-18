@@ -86,6 +86,26 @@ class LiquidGlassInkLayer extends OffsetLayer {
   Size _fieldSize = Size.zero;
   Matrix4 _mapping = Matrix4.identity();
 
+  void configure({
+    required Offset offset,
+    required Size size,
+    required double strength,
+    required Color source,
+    required double contrast,
+    required bool dark,
+    required ui.FragmentProgram? program,
+  }) {
+    this.offset = offset;
+    this.size = size;
+    this.strength = strength;
+    this.source = source;
+    alpha = source.a;
+    this.contrast = contrast;
+    this.dark = dark;
+    this.program = program;
+    markNeedsAddToScene();
+  }
+
   void _publishField(ui.Image? field, Size fieldSize, Matrix4 mapping) {
     final previous = _filter;
     _field = field;
