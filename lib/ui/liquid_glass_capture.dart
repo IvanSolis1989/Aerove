@@ -32,6 +32,7 @@ typedef LiquidGlassCapture = ({
   int replayedPanes,
   int atlasPixels,
   int coveredRecordings,
+  int skippedPanes,
   List<
     ({
       Rect pane,
@@ -71,6 +72,9 @@ class LiquidGlassHost extends StatelessWidget {
 
   @visibleForTesting
   static LiquidGlassInkCapture? debugLastInkCapture;
+
+  @visibleForTesting
+  static bool debugDisableVisibilityCulling = false;
 
   @visibleForTesting
   static ({int panes, int stripPixels, int surfacePixels})?
@@ -414,6 +418,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
   final _flatSnapshots = <_LiquidGlassOcclusionLayer, _FlatSnapshot>{};
   final _sourceBlur = _SourceBlurCache();
   bool _trimBeforeCapture = false;
+  int _skippedPanes = 0;
 
   void _trimCaches({
     required bool all,
@@ -505,6 +510,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     this._captureInk();
     _pass++;
     _replayedPanes = 0;
+    _skippedPanes = 0;
     final found = <_Behind>[];
     final coverage = <_GlassCoverage>[];
     _field = null;
@@ -516,11 +522,12 @@ class _LiquidGlassHostLayer extends ContainerLayer {
       [],
       found,
       coverage,
+      _GlassVisibility(bounds, 1 / devicePixelRatio),
     );
     final viewport = wallpaperOnly ? _field : null;
     final source = viewport == null ? null : viewport.$1.source(viewport.$2);
     final snapshot = source?.$1 ?? viewport?.$1;
-    final image = snapshot?.capture();
+    final image = found.isEmpty ? null : snapshot?.capture();
     final _Wallpaper? wallpaper = image == null
         ? null
         : (
@@ -648,6 +655,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
         surfacePixels: surfacePixels,
       );
       LiquidGlassHost.debugLastCapture = (
+        skippedPanes: _skippedPanes,
         snapshots: snapshots,
         keptBands: keptBands,
         occludedPanes: found
@@ -690,11 +698,20 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     List<ContainerLayer> chain,
     List<_Behind> found,
     List<_GlassCoverage> coverage,
+    _GlassVisibility visibility,
   ) {
     chain.add(layer);
     for (Layer? child = layer.firstChild; child != null;) {
       switch (child) {
         case final _LiquidGlassLayer pane:
+          if (!visibility.shows(pane.rect, toHost)) {
+            _skippedPanes++;
+            if (pane._captured != null || pane._captureShader != null) {
+              pane._trimCapture(preserveFrozen: true);
+            }
+            pane._capturedPass = _pass;
+            break;
+          }
           final boundary = chain
               .whereType<_LiquidGlassOcclusionLayer>()
               .lastOrNull;
@@ -735,6 +752,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
             chain,
             found,
             coverage,
+            visibility.through(container, transform),
           );
       }
       child = child.nextSibling;

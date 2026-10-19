@@ -39,6 +39,8 @@ typedef LiquidGlassInkCapture = ({
   int fallbackCaptures,
   int filterUpdates,
   int frozenMasks,
+  int skippedMasks,
+  int skippedBackdrops,
 });
 
 /// An opaque, self-contained background whose ancestors may move independently.
@@ -211,6 +213,7 @@ final _inkCounters = Expando<_InkCounters>();
 
 class LiquidGlassInkLayer extends OffsetLayer {
   Size size = Size.zero;
+  Rect paintBounds = Rect.zero;
   double strength = 1;
   double alpha = 1;
   Color source = Colors.black;
@@ -239,17 +242,32 @@ class LiquidGlassInkLayer extends OffsetLayer {
     if (program != null) inkFrozen = true;
   }
 
+  void _skipField() {
+    if (inkFrozen || _field == null && _effect == null) return;
+    _shader?.dispose();
+    _shader = null;
+    _effect = null;
+    _filteredField = null;
+    _field = null;
+    _uniforms = const [];
+    _filterDirty = true;
+    markNeedsAddToScene();
+  }
+
   void configure({
     required Offset offset,
     required Size size,
+    Rect? paintBounds,
     required double strength,
     required Color source,
     required double contrast,
     required bool dark,
     required ui.FragmentProgram? program,
   }) {
+    final bounds = paintBounds ?? (Offset.zero & size);
     final changed =
         this.size != size ||
+        this.paintBounds != bounds ||
         this.strength != strength ||
         this.source != source ||
         this.contrast != contrast ||
@@ -263,6 +281,7 @@ class LiquidGlassInkLayer extends OffsetLayer {
       _coveragePicture = null;
     }
     this.size = size;
+    this.paintBounds = bounds;
     this.strength = strength;
     this.source = source;
     alpha = source.a;
@@ -497,32 +516,46 @@ class LiquidGlassBackdropLayer extends OffsetLayer {
 extension _InkCapture on _LiquidGlassHostLayer {
   void _captureInk() {
     (_ColorFieldLayer, Matrix4)? field;
-    final inks = <(LiquidGlassInkLayer, Matrix4)>[];
-    final backdrops = <(LiquidGlassBackdropLayer, Matrix4)>[];
+    final inks = <(LiquidGlassInkLayer, Matrix4, bool)>[];
+    final backdrops = <(LiquidGlassBackdropLayer, Matrix4, bool)>[];
     final covers = <_GlassCoverage>[];
-    void visit(ContainerLayer layer, Matrix4 matrix, bool opaque) {
+    void visit(
+      ContainerLayer layer,
+      Matrix4 matrix,
+      bool opaque,
+      _GlassVisibility visibility,
+    ) {
       for (Layer? child = layer.firstChild; child != null;) {
         if (child is ContainerLayer) {
           final next = _within(child, matrix);
+          final visible = visibility.through(child, next);
           final solid =
               opaque && (child is! OpacityLayer || child.alpha == 255);
           if (child is _LiquidGlassOcclusionLayer && solid) {
             covers.add(_GlassCoverage(child, next, inks.length));
           }
           if (child is _ColorFieldLayer) field = (child, next);
-          if (child is LiquidGlassInkLayer) inks.add((child, next));
-          if (child is LiquidGlassBackdropLayer) backdrops.add((child, next));
-          visit(child, next, solid);
+          if (child is LiquidGlassInkLayer) {
+            inks.add((child, next, visible.shows(child.paintBounds, next)));
+          }
+          if (child is LiquidGlassBackdropLayer) {
+            backdrops.add((child, next, visible.shows(Offset.zero & child.size, next)));
+          }
+          visit(child, next, solid, visible);
         }
         child = child.nextSibling;
       }
     }
 
-    visit(this, Matrix4.identity(), true);
+    visit(this, Matrix4.identity(), true, _GlassVisibility(bounds, 1 / devicePixelRatio));
     final updating = <(LiquidGlassInkLayer, Matrix4)>[];
     final covered = <LiquidGlassInkLayer>{};
     for (final (index, entry) in inks.indexed) {
-      final (ink, matrix) = entry;
+      final (ink, matrix, visible) = entry;
+      if (!visible) {
+        ink._skipField();
+        continue;
+      }
       Path? remaining;
       final bounds = MatrixUtils.transformRect(matrix, ink.maskRect);
       var hidden = false;
@@ -554,21 +587,25 @@ extension _InkCapture on _LiquidGlassHostLayer {
       } else {
         ink._thaw();
       }
-      if (!ink.inkFrozen) updating.add(entry);
+      if (!ink.inkFrozen) updating.add((ink, matrix));
     }
     final viewport = field;
     final selected = viewport == null ? null : viewport.$1.source(viewport.$2);
     final snapshot = selected?.$1 ?? viewport?.$1;
     final toHost = selected?.$2 ?? viewport?.$2;
     final before = snapshot?._image;
-    final image = updating.isEmpty && backdrops.isEmpty
+    final image = updating.isEmpty && !backdrops.any((entry) => entry.$3)
         ? null
         : snapshot?.capture();
     if (image != null) {
       viewport?.$1.select(image);
     }
     final inverse = toHost == null ? null : Matrix4.tryInvert(toHost);
-    for (final (backdrop, matrix) in backdrops) {
+    for (final (backdrop, matrix, visible) in backdrops) {
+      if (!visible) {
+        backdrop._publishField(null, Size.zero, backdrop._mapping);
+        continue;
+      }
       backdrop._publishField(
         inverse == null ? null : image,
         snapshot?.size ?? Size.zero,
@@ -603,6 +640,8 @@ extension _InkCapture on _LiquidGlassHostLayer {
       }
       counters.filterUpdates += updates;
       LiquidGlassHost.debugLastInkCapture = (
+        skippedMasks: inks.where((entry) => !entry.$3).length,
+        skippedBackdrops: backdrops.where((entry) => !entry.$3).length,
         generation: viewport?.$1.generation ?? 0,
         masks: inks.length,
         maskPixels: inks.fold(

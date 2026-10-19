@@ -12,6 +12,7 @@ part 'liquid_glass_capture.dart';
 part 'liquid_glass_ink.dart';
 part 'liquid_glass_occlusion.dart';
 part 'liquid_glass_source_blur.dart';
+part 'liquid_glass_visibility.dart';
 
 const _shaderAsset = 'shaders/liquid_glass.frag';
 const _glowIn = Duration(milliseconds: 120);

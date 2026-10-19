@@ -339,6 +339,7 @@ class _InkRender extends RenderProxyBox {
     final bounds = _inkBounds;
     layer.configure(
       offset: offset,
+      paintBounds: bounds,
       size: Size(
         math.max(size.width, bounds.right),
         math.max(size.height, bounds.bottom),

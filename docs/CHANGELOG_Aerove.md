@@ -22,6 +22,10 @@
 
 - 撤回新增的组内独立滚动和边界交接，恢复优化前的原有列表滚动逻辑。
 
+### 玻璃资源管理
+
+- 跳过完全离屏或被祖先视口完全裁掉的玻璃与文字层采样，释放其当前绘制引用；部分可见与弹窗冻结内容沿用原路径，返回可见区域后恢复更新。
+
 ## 0.9.1-X+2026101815 — 已发布
 
 发布于 **2026-10-20**：[Release](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.9.1-X%2B2026101815)。发布源码为 [`e9a5495`](https://github.com/IvanSolis1989/Aerove/commit/e9a5495b434127b2959046a7a3f04d488e2de4ab)，对应 [构建记录](https://github.com/IvanSolis1989/Aerove/actions/runs/39290575906)。本版本包含以下每日换图、玻璃界面、代理滚动与品牌资源调整。
