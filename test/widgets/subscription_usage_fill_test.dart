@@ -70,14 +70,8 @@ void _expectFallbackFill(
   final behind = _meanPixel(empty, 45, 80, scale: scale);
   final actual = _meanPixel(filled, 45, 80, scale: scale);
   final opacity = brightness == Brightness.dark ? 0.25 : 0.17;
-  final expected = Color.alphaBlend(
-    color.withValues(alpha: opacity),
-    behind,
-  );
-  expect(
-    _distance(actual, expected),
-    lessThan(0.04),
-  );
+  final expected = Color.alphaBlend(color.withValues(alpha: opacity), behind);
+  expect(_distance(actual, expected), lessThan(0.04));
 }
 
 void _expectDryRim(Uint8List actual, Uint8List empty, {int scale = 1}) {
@@ -452,7 +446,8 @@ void main() {
           await tester.pump(Duration.zero);
         }
       },
-      skip: mode != LiquidGlassMode.none &&
+      skip:
+          mode != LiquidGlassMode.none &&
           !ui.ImageFilter.isShaderFilterSupported,
     );
   }
@@ -582,12 +577,7 @@ void main() {
               0.20,
             ),
           ]) {
-            await _pump(
-              tester,
-              brightness: brightness,
-              mode: mode,
-              info: info,
-            );
+            await _pump(tester, brightness: brightness, mode: mode, info: info);
             final semanticFill = await _snapshot(tester, '$name-$label');
             final delta = _distance(
               _pixel(semanticFill, 40, 80),
@@ -669,40 +659,37 @@ void main() {
 
   for (final brightness in Brightness.values) {
     for (final mode in [LiquidGlassMode.standard, LiquidGlassMode.ultra]) {
-      testWidgets(
-        'high contrast keeps the translucent quota fallback '
-        '(${brightness.name}, ${mode.name})',
-        (tester) async {
-          tester.view.physicalSize = const Size(400, 160);
-          tester.view.devicePixelRatio = 1;
-          addTearDown(tester.view.reset);
-          try {
-            await _pump(
-              tester,
-              brightness: brightness,
-              mode: mode,
-              highContrast: true,
-            );
-            final highContrast = await _snapshot(
-              tester,
-              'high-contrast-${brightness.name}-${mode.name}',
-            );
-            await _pump(
-              tester,
-              brightness: brightness,
-              mode: LiquidGlassMode.none,
-            );
-            final fallback = await _snapshot(
-              tester,
-              'fallback-${brightness.name}-${mode.name}',
-            );
-            expect(highContrast, orderedEquals(fallback));
-          } finally {
-            await tester.pumpWidget(const SizedBox.shrink());
-            await tester.pump(Duration.zero);
-          }
-        },
-      );
+      testWidgets('high contrast keeps the translucent quota fallback '
+          '(${brightness.name}, ${mode.name})', (tester) async {
+        tester.view.physicalSize = const Size(400, 160);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        try {
+          await _pump(
+            tester,
+            brightness: brightness,
+            mode: mode,
+            highContrast: true,
+          );
+          final highContrast = await _snapshot(
+            tester,
+            'high-contrast-${brightness.name}-${mode.name}',
+          );
+          await _pump(
+            tester,
+            brightness: brightness,
+            mode: LiquidGlassMode.none,
+          );
+          final fallback = await _snapshot(
+            tester,
+            'fallback-${brightness.name}-${mode.name}',
+          );
+          expect(highContrast, orderedEquals(fallback));
+        } finally {
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump(Duration.zero);
+        }
+      });
     }
   }
 

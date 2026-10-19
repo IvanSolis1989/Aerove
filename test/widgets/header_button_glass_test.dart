@@ -118,7 +118,9 @@ Future<void> _shot(WidgetTester tester, String name) async {
         File('$output/header-buttons-$_backend-$name.json').writeAsStringSync(
           jsonEncode({
             'backendRequested': _backend,
-            'brightness': Theme.of(tester.element(find.byTooltip('Action A'))).brightness.name,
+            'brightness': Theme.of(
+              tester.element(find.byTooltip('Action A')),
+            ).brightness.name,
             'shaderSupported': ui.ImageFilter.isShaderFilterSupported,
             'shaderReady': LiquidGlass.debugShaderReady,
             'buttonAtlasVariance': variance,
@@ -268,7 +270,13 @@ void main() {
           var backs = 0;
           try {
             await tester.pumpWidget(
-              _app(controller, () => taps++, () => backs++, sheet: sheet, brightness: brightness),
+              _app(
+                controller,
+                () => taps++,
+                () => backs++,
+                sheet: sheet,
+                brightness: brightness,
+              ),
             );
             await tester.pumpAndSettle();
             expect(_headerPanes, findsNothing);
@@ -342,7 +350,9 @@ void main() {
             expect(_headerPanes, findsNothing);
             expect(tester.getRect(button), rect);
             await _shot(tester, '$prefix-restored');
-            final pop = sheet ? find.byTooltip('Close') : find.byType(BackButton);
+            final pop = sheet
+                ? find.byTooltip('Close')
+                : find.byType(BackButton);
             await tester.tap(pop);
             expect(backs, 1);
             expect(tester.takeException(), isNull);

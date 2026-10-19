@@ -66,7 +66,8 @@ void main() {
                   theme: watchAppTheme(ref, brightness),
                   darkTheme: watchAppTheme(ref, brightness),
                   themeMode: brightness == Brightness.light
-                      ? ThemeMode.light : ThemeMode.dark,
+                      ? ThemeMode.light
+                      : ThemeMode.dark,
                   homeBuilder: (child) => RepaintBoundary(
                     key: capture,
                     child: AuroraAppSurface(motion: false, child: child),
@@ -76,7 +77,9 @@ void main() {
               ),
             ),
           );
-          final state = tester.state<StatusManagerState>(find.byType(StatusManager));
+          final state = tester.state<StatusManagerState>(
+            find.byType(StatusManager),
+          );
           state.message(
             _message,
             level: MessageLevel.warning,
@@ -89,9 +92,11 @@ void main() {
           await tester.pump(const Duration(milliseconds: 450));
           if (ui.ImageFilter.isShaderFilterSupported) {
             await tester.runAsync(GlassInk.prepare);
-            await tester.runAsync(() => ui.FragmentProgram.fromAsset(
-              'shaders/liquid_glass.frag',
-            ).timeout(const Duration(seconds: 30)));
+            await tester.runAsync(
+              () => ui.FragmentProgram.fromAsset(
+                'shaders/liquid_glass.frag',
+              ).timeout(const Duration(seconds: 30)),
+            );
             await tester.pump();
             expect(LiquidGlass.debugShaderReady, isTrue);
           }
@@ -99,86 +104,137 @@ void main() {
           expect(Theme.of(context).brightness, brightness);
           expect(Theme.of(context).platform, TargetPlatform.android);
           expect(AuroraAppearance.enabledOf(context), isTrue);
-          final settings = ProviderScope.containerOf(context).read(themeSettingProvider);
+          final settings = ProviderScope.containerOf(
+            context,
+          ).read(themeSettingProvider);
           const defaults = ThemeProps();
           expect(settings.auroraColors, defaults.auroraColors);
           expect(settings.auroraSeed, defaults.auroraSeed);
-          expect(tester.widget<GlassText>(find.text(_message)).inkRole, GlassInkRole.body);
+          expect(
+            tester.widget<GlassText>(find.text(_message)).inkRole,
+            GlassInkRole.body,
+          );
           expect(find.byType(LiquidGlassHost), findsOneWidget);
-          final boundary = capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+          final boundary =
+              capture.currentContext!.findRenderObject()!
+                  as RenderRepaintBoundary;
           final name = 'status-aurora-${brightness.name}-${mode.name}';
           final results = <Map<String, Object?>>[];
           for (final (role, finder) in [
             ('body', find.text(_message)),
             ('action', find.text('Restart')),
           ]) {
-            final rich = find.descendant(of: finder, matching: find.byType(RichText));
+            final rich = find.descendant(
+              of: finder,
+              matching: find.byType(RichText),
+            );
             final paragraph = tester.renderObject<RenderParagraph>(rich);
             final original = paragraph.text;
-            final painter = TextPainter(
-              text: _recolor(original, Colors.white),
-              textAlign: paragraph.textAlign,
-              textDirection: paragraph.textDirection,
-              textScaler: paragraph.textScaler,
-              maxLines: paragraph.maxLines,
-              locale: paragraph.locale,
-              strutStyle: paragraph.strutStyle,
-              textWidthBasis: paragraph.textWidthBasis,
-              textHeightBehavior: paragraph.textHeightBehavior,
-            )..layout(minWidth: paragraph.size.width, maxWidth: paragraph.size.width);
+            final painter =
+                TextPainter(
+                  text: _recolor(original, Colors.white),
+                  textAlign: paragraph.textAlign,
+                  textDirection: paragraph.textDirection,
+                  textScaler: paragraph.textScaler,
+                  maxLines: paragraph.maxLines,
+                  locale: paragraph.locale,
+                  strutStyle: paragraph.strutStyle,
+                  textWidthBasis: paragraph.textWidthBasis,
+                  textHeightBehavior: paragraph.textHeightBehavior,
+                )..layout(
+                  minWidth: paragraph.size.width,
+                  maxWidth: paragraph.size.width,
+                );
             try {
-              results.add(await _roleContrast(
-                tester, boundary, paragraph, '$name-$role', 4.5,
-                (canvas) => painter.paint(canvas, Offset.zero),
-                (visible) => paragraph.text = visible
-                    ? original : _recolor(original, Colors.transparent),
-              ));
+              results.add(
+                await _roleContrast(
+                  tester,
+                  boundary,
+                  paragraph,
+                  '$name-$role',
+                  4.5,
+                  (canvas) => painter.paint(canvas, Offset.zero),
+                  (visible) => paragraph.text = visible
+                      ? original
+                      : _recolor(original, Colors.transparent),
+                ),
+              );
             } finally {
               painter.dispose();
             }
           }
           final glyph = find.byGlyph(AppGlyphs.warning);
-          expect(tester.widget<GlyphIcon>(glyph).color, MessageLevel.warning.iconColor(context));
+          expect(
+            tester.widget<GlyphIcon>(glyph).color,
+            MessageLevel.warning.iconColor(context),
+          );
           final paint = tester.renderObject<RenderCustomPaint>(
             find.descendant(of: glyph, matching: find.byType(CustomPaint)),
           );
           final original = paint.painter! as GlyphPainter;
-          results.add(await _roleContrast(
-            tester, boundary, paint, '$name-warning', 3,
-            (canvas) => GlyphPainter(glyph: original.glyph,
-              fill: original.fill, color: Colors.white).paint(canvas, paint.size),
-            (visible) => paint.painter = visible ? original : GlyphPainter(
-              glyph: original.glyph, fill: original.fill, color: Colors.transparent),
-          ));
+          results.add(
+            await _roleContrast(
+              tester,
+              boundary,
+              paint,
+              '$name-warning',
+              3,
+              (canvas) => GlyphPainter(
+                glyph: original.glyph,
+                fill: original.fill,
+                color: Colors.white,
+              ).paint(canvas, paint.size),
+              (visible) => paint.painter = visible
+                  ? original
+                  : GlyphPainter(
+                      glyph: original.glyph,
+                      fill: original.fill,
+                      color: Colors.transparent,
+                    ),
+            ),
+          );
           final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
           if (output != null && output.isNotEmpty) {
-            File('$output/$name.json').writeAsStringSync(jsonEncode({
-              'brightness': brightness.name, 'mode': mode.name,
-              'shaderSupported': ui.ImageFilter.isShaderFilterSupported,
-              'shaderReady': LiquidGlass.debugShaderReady,
-              'palette': settings.auroraColors, 'seed': settings.auroraSeed,
-              'source': 'watchAppTheme and AuroraAppSurface production defaults',
-              'warningSourceARGB': original.color.toARGB32(),
-              'dpr': 3, 'roles': results,
-            }));
+            File('$output/$name.json').writeAsStringSync(
+              jsonEncode({
+                'brightness': brightness.name,
+                'mode': mode.name,
+                'shaderSupported': ui.ImageFilter.isShaderFilterSupported,
+                'shaderReady': LiquidGlass.debugShaderReady,
+                'palette': settings.auroraColors,
+                'seed': settings.auroraSeed,
+                'source':
+                    'watchAppTheme and AuroraAppSurface production defaults',
+                'warningSourceARGB': original.color.toARGB32(),
+                'dpr': 3,
+                'roles': results,
+              }),
+            );
           }
           if (output != null && output.isNotEmpty) {
             final image = boundary.toImageSync(pixelRatio: 3);
             try {
-              final png = (await tester.runAsync(() => image.toByteData(
-                format: ui.ImageByteFormat.png,
-              )))!;
-              File('$output/$name-scene.png').writeAsBytesSync(png.buffer.asUint8List());
+              final png = (await tester.runAsync(
+                () => image.toByteData(format: ui.ImageByteFormat.png),
+              ))!;
+              File(
+                '$output/$name-scene.png',
+              ).writeAsBytesSync(png.buffer.asUint8List());
             } finally {
               image.dispose();
             }
           }
           for (final result in results) {
-            expect(result['solidAlpha255Pixels'], greaterThan(0),
-                reason: '${result['role']} real glyph solid support');
-            expect(result['minimumContrast'],
-                greaterThanOrEqualTo(result['requiredContrast']! as num),
-                reason: '${result['role']}');
+            expect(
+              result['solidAlpha255Pixels'],
+              greaterThan(0),
+              reason: '${result['role']} real glyph solid support',
+            );
+            expect(
+              result['minimumContrast'],
+              greaterThanOrEqualTo(result['requiredContrast']! as num),
+              reason: '${result['role']}',
+            );
           }
           await tester.tap(find.text('Restart'));
           await tester.pumpAndSettle();
@@ -575,20 +631,28 @@ InlineSpan _recolor(InlineSpan span, Color color) {
   final text = span as TextSpan;
   return TextSpan(
     text: text.text,
-    style: (text.style ?? const TextStyle()).copyWith(color: color, shadows: const []),
+    style: (text.style ?? const TextStyle()).copyWith(
+      color: color,
+      shadows: const [],
+    ),
     children: text.children?.map((child) => _recolor(child, color)).toList(),
   );
 }
 
-Future<({List<int> bytes, List<int> png, int width, int height})> _contrastImage(
-  WidgetTester tester, ui.Image image,
-) async {
+Future<({List<int> bytes, List<int> png, int width, int height})>
+_contrastImage(WidgetTester tester, ui.Image image) async {
   try {
     return (await tester.runAsync(() async {
-      final rgba = (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!;
+      final rgba = (await image.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
+      ))!;
       final png = (await image.toByteData(format: ui.ImageByteFormat.png))!;
-      return (bytes: rgba.buffer.asUint8List().toList(),
-        png: png.buffer.asUint8List().toList(), width: image.width, height: image.height);
+      return (
+        bytes: rgba.buffer.asUint8List().toList(),
+        png: png.buffer.asUint8List().toList(),
+        width: image.width,
+        height: image.height,
+      );
     }))!;
   } finally {
     image.dispose();
@@ -596,21 +660,36 @@ Future<({List<int> bytes, List<int> png, int width, int height})> _contrastImage
 }
 
 Future<Map<String, Object?>> _roleContrast(
-  WidgetTester tester, RenderRepaintBoundary boundary, RenderBox foreground,
-  String name, double requiredContrast, void Function(Canvas) paintMask,
+  WidgetTester tester,
+  RenderRepaintBoundary boundary,
+  RenderBox foreground,
+  String name,
+  double requiredContrast,
+  void Function(Canvas) paintMask,
   void Function(bool) setVisible,
 ) async {
   final transform = foreground.getTransformTo(boundary);
-  final bounds = MatrixUtils.transformRect(transform, Offset.zero & foreground.size).inflate(2);
+  final bounds = MatrixUtils.transformRect(
+    transform,
+    Offset.zero & foreground.size,
+  ).inflate(2);
   final size = foreground.size;
   final layer = boundary.debugLayer! as OffsetLayer;
-  final actual = await _contrastImage(tester, layer.toImageSync(bounds, pixelRatio: 3));
+  final actual = await _contrastImage(
+    tester,
+    layer.toImageSync(bounds, pixelRatio: 3),
+  );
   final recorder = ui.PictureRecorder();
-  final canvas = Canvas(recorder)..scale(3)..translate(-bounds.left, -bounds.top)
+  final canvas = Canvas(recorder)
+    ..scale(3)
+    ..translate(-bounds.left, -bounds.top)
     ..transform(transform.storage);
   paintMask(canvas);
   final picture = recorder.endRecording();
-  final mask = await _contrastImage(tester, picture.toImageSync(actual.width, actual.height));
+  final mask = await _contrastImage(
+    tester,
+    picture.toImageSync(actual.width, actual.height),
+  );
   picture.dispose();
   late final ({List<int> bytes, List<int> png, int width, int height}) blank;
   try {
@@ -618,7 +697,10 @@ Future<Map<String, Object?>> _roleContrast(
     await tester.pump();
     expect(foreground.size, size);
     expect(foreground.getTransformTo(boundary).storage, transform.storage);
-    blank = await _contrastImage(tester, layer.toImageSync(bounds, pixelRatio: 3));
+    blank = await _contrastImage(
+      tester,
+      layer.toImageSync(bounds, pixelRatio: 3),
+    );
   } finally {
     setVisible(true);
     await tester.pump();
@@ -630,7 +712,8 @@ Future<Map<String, Object?>> _roleContrast(
   for (var at = 0; at < mask.bytes.length; at += 4) {
     if (mask.bytes[at + 3] != 255) continue;
     count++;
-    Color color(List<int> bytes) => Color.fromARGB(255, bytes[at], bytes[at+1], bytes[at+2]);
+    Color color(List<int> bytes) =>
+        Color.fromARGB(255, bytes[at], bytes[at + 1], bytes[at + 2]);
     final fg = color(actual.bytes);
     final bg = color(blank.bytes);
     final a = fg.computeLuminance();
@@ -638,19 +721,29 @@ Future<Map<String, Object?>> _roleContrast(
     final ratio = (math.max(a, b) + .05) / (math.min(a, b) + .05);
     if (ratio < minimum) {
       minimum = ratio;
-      weakest = {'point': [(at ~/ 4) % mask.width, (at ~/ 4) ~/ mask.width],
-        'foreground': fg.toARGB32(), 'underlay': bg.toARGB32(), 'contrast': ratio};
+      weakest = {
+        'point': [(at ~/ 4) % mask.width, (at ~/ 4) ~/ mask.width],
+        'foreground': fg.toARGB32(),
+        'underlay': bg.toARGB32(),
+        'contrast': ratio,
+      };
     }
-    if (ratio < requiredContrast && failures.length < 32) failures.add({
-      'point': [(at ~/ 4) % mask.width, (at ~/ 4) ~/ mask.width],
-      'foreground': fg.toARGB32(), 'underlay': bg.toARGB32(), 'contrast': ratio,
-    });
+    if (ratio < requiredContrast && failures.length < 32)
+      failures.add({
+        'point': [(at ~/ 4) % mask.width, (at ~/ 4) ~/ mask.width],
+        'foreground': fg.toARGB32(),
+        'underlay': bg.toARGB32(),
+        'contrast': ratio,
+      });
   }
   final result = <String, Object?>{
-    'role': name, 'requiredContrast': requiredContrast,
-    'solidAlpha255Pixels': count, 'minimumContrast': count == 0 ? null : minimum,
+    'role': name,
+    'requiredContrast': requiredContrast,
+    'solidAlpha255Pixels': count,
+    'minimumContrast': count == 0 ? null : minimum,
     'weakest': weakest,
-    'geometry': bounds.toString(), 'mask': 'independent native white glyph, DPR3',
+    'geometry': bounds.toString(),
+    'mask': 'independent native white glyph, DPR3',
     'failures': failures,
   };
   final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
