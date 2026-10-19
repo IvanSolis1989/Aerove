@@ -204,7 +204,7 @@ void main() {
     tester,
   ) async {
     var reads = 0;
-    final source = StreamController<Uint8List>();
+    final source = StreamController<Uint8List>(sync: true);
     readRemoteIcon = (_) {
       reads++;
       return source.stream;
@@ -241,6 +241,9 @@ void main() {
     final fresh = svg('blue');
     source.add(fresh);
     await tester.pump();
+    expect(reads, 1);
+    expect(shownBytes(), hasLength(2));
+    expect(shownBytes().map(utf8.decode), everyElement(utf8.decode(fresh)));
     expect(shownBytes(), everyElement(same(fresh)));
     final closed = source.close();
     await tester.pump();
