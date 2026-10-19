@@ -481,19 +481,43 @@ void main() {
           final position = tester.state<ScrollableState>(scrollable()).position;
           final initialExtent = position.maxScrollExtent;
           final action = container.read(proxiesActionProvider.notifier);
-          action.updateCurrentUnfoldSet({'G2'});
-          await tester.pump();
+          final controllers = <AnimationController>[];
+          void captureController(ObjectEvent event) {
+            if (event is ObjectCreated &&
+                event.object is AnimationController &&
+                StackTrace.current.toString().contains(
+                  '_GroupSliverState.initState',
+                )) {
+              controllers.add(event.object as AnimationController);
+            }
+          }
+
+          FlutterMemoryAllocations.instance.addListener(captureController);
+          try {
+            action.updateCurrentUnfoldSet({'G2'});
+            await tester.pump();
+          } finally {
+            FlutterMemoryAllocations.instance.removeListener(captureController);
+          }
           expect(skeletons, findsOneWidget);
-          SizeTransition transition() => tester.widget<SizeTransition>(
-            find.descendant(
-              of: skeletons,
-              matching: find.byType(SizeTransition),
-              skipOffstage: false,
-            ),
+          expect(controllers, hasLength(1));
+          final controller = controllers.single;
+          expect(
+            controller.value,
+            0,
+            reason: 'new group starts at zero; status ${controller.status}',
           );
-          expect(transition().sizeFactor.value, 0);
+          expect(controller.status, AnimationStatus.forward);
           await tester.pump(const Duration(milliseconds: 70));
-          expect(transition().sizeFactor.value, inExclusiveRange(0, 1));
+          expect(controller.value, inExclusiveRange(0, 1));
+          final entries = find.descendant(
+            of: skeletons,
+            matching: find.byType(UnfoldEntryTransition),
+            skipOffstage: false,
+          );
+          expect(entries, findsWidgets);
+          final entry = tester.widget<UnfoldEntryTransition>(entries.first);
+          expect((entry.animation as CurvedAnimation).parent, same(controller));
           action.updateCurrentUnfoldSet({});
           await tester.pump();
           await tester.pump(const Duration(milliseconds: 20));
@@ -501,6 +525,8 @@ void main() {
           action.updateCurrentUnfoldSet({'G2'});
           await tester.pumpAndSettle();
           expect(skeletons, findsOneWidget);
+          expect(controller.value, 1);
+          expect(controller.status, AnimationStatus.completed);
           expect(find.byType(UnfoldEntryTransition), findsNothing);
           expect(runs, findsNWidgets(initialRuns + 1));
           expect(find.byType(ProxyCard), findsWidgets);
