@@ -13,7 +13,7 @@ The baseline is the FlClash `v0.9.1` revision recorded by this fork. Material Yo
 
 ### A flowing wallpaper you can personalize
 
-- Generate a gradient wallpaper from 1–3 colors and tap **New wallpaper** to change its composition. The palette and composition persist. A pending update changes automatic rotation to a daily local 05:00 boundary, applying it silently in the background without interrupting browsing.
+- Generate a gradient wallpaper from 1–3 colors and tap **New wallpaper** to change its composition. The palette and composition persist. Automatic rotation becomes due at 05:00 local time each day and applies silently in the background without interrupting browsing.
 - Aurora wallpaper and Ultra Glass are the defaults. Switching to an ordinary theme color restores the regular palette; glass strength can be adjusted separately. Brightness can follow the system or be selected manually, while high-contrast and pure-black dark modes keep opaque surfaces.
 - Glass extends across dashboards, proxy groups, cards, buttons, selectors, fields, navigation, menus, popups, the editor, and forms. Text, icons, and interaction feedback coordinate with the background while status messages retain distinct colors.
 - Fonts come from those available on your device; Aerove does not bundle MiSans. Devices without full glass support use a simpler frosted appearance.
@@ -88,7 +88,7 @@ Open **Tools → Theme → Theme colors** and choose one mode:
 
 Switching back restores the ordinary palette and makes None selectable again. A manually selected glass quality is saved.
 The gradient palette and current composition persist across restarts.
-**Pending automatic rotation policy:** rotation becomes due at 05:00 in your phone's local time each day and is applied only while the app is truly in the background. If you are using the app then, it waits until you leave it. If the app was not running at 05:00, it catches up on the first move to the background after that day's first launch. Launching, resuming, and brief inactivity during screenshots do not change the wallpaper on screen. The app is not woken just to rotate it. **New wallpaper** still applies immediately and counts for the current daily cycle. See the [changelog (Chinese)](docs/CHANGELOG_Aerove.md) for released versus pending behavior.
+**Automatic rotation policy:** rotation becomes due at 05:00 in your phone's local time each day and is applied only while the app is truly in the background. If you are using the app then, it waits until you leave it. If the app was not running at 05:00, it catches up on the first move to the background after that day's first launch. Launching, resuming, and brief inactivity during screenshots do not change the wallpaper on screen. The app is not woken just to rotate it. **New wallpaper** still applies immediately and counts for the current daily cycle. See the [changelog (Chinese)](docs/CHANGELOG_Aerove.md) for version history.
 Brightness defaults to **system**, with explicit light and dark options at the top. High-contrast and dark pure-black modes use opaque surfaces.
 
 ## Default DNS
