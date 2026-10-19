@@ -293,6 +293,179 @@ Future<Map<String, Object?>> _measure(
   return result;
 }
 
+Widget _app(
+  ProviderContainer container,
+  Brightness brightness,
+  GlobalKey capture,
+  Widget home, {
+  double phase = 0,
+}) => UncontrolledProviderScope(
+  container: container,
+  child: Consumer(
+    builder: (context, ref, _) {
+      final theme = watchAppTheme(ref, brightness);
+      return MaterialApp(
+        theme: theme,
+        darkTheme: theme,
+        themeMode: brightness == Brightness.light
+            ? ThemeMode.light
+            : ThemeMode.dark,
+        themeAnimationStyle: AnimationStyle.noAnimation,
+        locale: const Locale('zh', 'CN'),
+        localizationsDelegates: const [
+          AppLocalizations.delegate,
+          AppUiLocalizations.delegate,
+          ...GlobalMaterialLocalizations.delegates,
+        ],
+        supportedLocales: AppLocalizations.delegate.supportedLocales,
+        builder: (context, child) => wrapAppScopes(
+          context,
+          RepaintBoundary(
+            key: capture,
+            child: Transform.translate(
+              offset: Offset(0, phase / 9),
+              child: AuroraAppSurface(motion: false, child: child!),
+            ),
+          ),
+        ),
+        home: home,
+      );
+    },
+  ),
+);
+
+class _CoverageBounds extends CustomPainter {
+  const _CoverageBounds();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()
+        ..color = Colors.transparent
+        ..blendMode = BlendMode.src,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_CoverageBounds oldDelegate) => false;
+}
+
+Future<List<Map<String, Object?>>> _controls(
+  WidgetTester tester,
+  ProviderContainer container,
+  RenderRepaintBoundary boundary,
+  RenderParagraph paragraph,
+  int phase,
+) async {
+  final origin = paragraph.localToGlobal(Offset.zero, ancestor: boundary);
+  final size = paragraph.size;
+  final transform = paragraph.getTransformTo(boundary).storage.toList();
+  final source = paragraph.text.style!.color!;
+  final text = RichText(
+    text: paragraph.text,
+    textAlign: paragraph.textAlign,
+    textDirection: paragraph.textDirection,
+    softWrap: paragraph.softWrap,
+    overflow: paragraph.overflow,
+    textScaler: paragraph.textScaler,
+    maxLines: paragraph.maxLines,
+    locale: paragraph.locale,
+    strutStyle: paragraph.strutStyle,
+    textWidthBasis: paragraph.textWidthBasis,
+    textHeightBehavior: paragraph.textHeightBehavior,
+  );
+  final results = <Map<String, Object?>>[];
+  for (final kind in [
+    'bare',
+    'stock-mask',
+    'runtime-ink',
+    'stock-mask-bounded',
+    'runtime-ink-bounded',
+  ]) {
+    final content = kind.endsWith('-bounded')
+        ? CustomPaint(painter: const _CoverageBounds(), child: text)
+        : text;
+    final Widget child = switch (kind) {
+      'stock-mask' || 'stock-mask-bounded' => ShaderMask(
+        shaderCallback: (bounds) => LinearGradient(
+          colors: [source, source],
+        ).createShader(bounds),
+        blendMode: BlendMode.srcATop,
+        child: content,
+      ),
+      'runtime-ink' || 'runtime-ink-bounded' => GlassInk(
+        source: source,
+        role: GlassInkRole.title,
+        child: content,
+      ),
+      _ => text,
+    };
+    final capture = GlobalKey();
+    await tester.pumpWidget(
+      _app(
+        container,
+        Brightness.light,
+        capture,
+        SizedBox.expand(
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Positioned(
+                left: origin.dx,
+                top: origin.dy,
+                width: size.width,
+                height: size.height,
+                child: child,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final finder = find.byWidgetPredicate(
+      (widget) =>
+          widget is RichText && widget.text.toPlainText() == displayAppName,
+    );
+    expect(finder, findsOneWidget);
+    final control = tester.renderObject<RenderParagraph>(finder);
+    final controlBoundary =
+        capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+    final controlOrigin = control.localToGlobal(
+      Offset.zero,
+      ancestor: controlBoundary,
+    );
+    expect(control.size, size);
+    expect(controlOrigin.dx, closeTo(origin.dx, 1e-6));
+    expect(controlOrigin.dy, closeTo(origin.dy, 1e-6));
+    final result = await _measure(
+      tester,
+      controlBoundary,
+      control,
+      'control-light-$kind-phase$phase',
+      Brightness.light,
+    );
+    results.add(result);
+    final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+    if (output != null) {
+      final metadata = File(
+        '$output/about-control-$kind-phase$phase-source.json',
+      );
+      metadata.writeAsStringSync(jsonEncode({
+        'source': 'actual AboutView resolved RenderParagraph',
+        'transform': transform,
+        'controlTransform': control
+            .getTransformTo(controlBoundary)
+            .storage
+            .toList(),
+        'size': size.toString(),
+      }));
+    }
+  }
+  return results;
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(() async {
@@ -322,6 +495,7 @@ void main() {
       tester.view.devicePixelRatio = _dpr;
       addTearDown(tester.view.reset);
       final results = <Map<String, Object?>>[];
+      final controls = <Map<String, Object?>>[];
       final settings = [
         for (final brightness in [Brightness.light, Brightness.dark])
           for (final mode in LiquidGlassMode.values)
@@ -344,43 +518,12 @@ void main() {
           for (var phase = 0; phase < 3; phase++) {
             final capture = GlobalKey();
             await tester.pumpWidget(
-              UncontrolledProviderScope(
-                container: container,
-                child: Consumer(
-                  builder: (context, ref, _) {
-                    final theme = watchAppTheme(ref, brightness);
-                    return MaterialApp(
-                      theme: theme,
-                      darkTheme: theme,
-                      themeMode: brightness == Brightness.light
-                          ? ThemeMode.light
-                          : ThemeMode.dark,
-                      themeAnimationStyle: AnimationStyle.noAnimation,
-                      locale: const Locale('zh', 'CN'),
-                      localizationsDelegates: const [
-                        AppLocalizations.delegate,
-                        AppUiLocalizations.delegate,
-                        ...GlobalMaterialLocalizations.delegates,
-                      ],
-                      supportedLocales:
-                          AppLocalizations.delegate.supportedLocales,
-                      builder: (context, child) => wrapAppScopes(
-                        context,
-                        RepaintBoundary(
-                          key: capture,
-                          child: Transform.translate(
-                            offset: Offset(0, phase / 9),
-                            child: AuroraAppSurface(
-                              motion: false,
-                              child: child!,
-                            ),
-                          ),
-                        ),
-                      ),
-                      home: const AboutView(),
-                    );
-                  },
-                ),
+              _app(
+                container,
+                brightness,
+                capture,
+                const AboutView(),
+                phase: phase.toDouble(),
               ),
             );
             await tester.pumpAndSettle();
@@ -406,11 +549,31 @@ void main() {
                 brightness,
               ),
             );
+            if (brightness == Brightness.light &&
+                mode == LiquidGlassMode.standard) {
+              controls.addAll(
+                await _controls(
+                  tester,
+                  container,
+                  capture.currentContext!.findRenderObject()!
+                      as RenderRepaintBoundary,
+                  paragraph,
+                  phase,
+                ),
+              );
+            }
           }
         } finally {
           await tester.pumpWidget(const SizedBox.shrink());
           container.dispose();
         }
+      }
+      expect(controls, hasLength(15));
+      for (final control in controls) {
+        expect(control['supportAlpha8'], greaterThan(100));
+        expect(control['fontFamily'], _font);
+        expect(control['fontSize'], 22);
+        expect(control['fontWeight'], FontWeight.w700.value);
       }
       for (final result in results) {
         expect(
