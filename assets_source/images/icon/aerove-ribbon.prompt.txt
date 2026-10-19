@@ -1,0 +1,5 @@
+Aerove's selected identity is the second-row, third-column concept: a silver flowing folded ribbon forming a soft arch on a charcoal app tile. No lettering or tagline.
+
+aerove-icon-tile.png is the approved full tile, generated with the built-in imagegen tool. aerove-ribbon.png is its separate transparent foreground, also generated with imagegen: preserve the silver ribbon silhouette, folded loop, neutral metal shading and edge highlights; remove only the tile and background; use true alpha with no added shape or glow.
+
+tool/generate_xclash_icon.ps1 exports the Android and in-app assets. The transparent foreground uses a centered 72dp content area within the 108dp adaptive canvas, preserving the 66dp safe circle. The adaptive background is #0E1115. glyph.svg and status_1.svg through status_3.svg provide the matching small-scale notification and tray silhouette; status_4.svg retains the safe-mode bug indicator.

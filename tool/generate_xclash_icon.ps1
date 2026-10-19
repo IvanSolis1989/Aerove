@@ -25,12 +25,12 @@ public sealed class XClashIconMetrics {
 
 public static class XClashIconExport {
     public static void Export(string source, string destination, int size, float scale, string mask) {
-        int samples = size <= 320 ? 4 : 1;
+        int samples = size <= 320 ? 4 : 2;
         int workingSize = size * samples;
         using (var original = new Bitmap(source))
         using (var canvas = new Bitmap(workingSize, workingSize, PixelFormat.Format32bppArgb)) {
             using (var graphics = Graphics.FromImage(canvas)) {
-                graphics.Clear(mask == "none" ? Color.Transparent : Color.FromArgb(250, 250, 252));
+                graphics.Clear(mask == "none" ? Color.Transparent : Color.FromArgb(14, 17, 21));
                 graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
                 graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
                 float length = workingSize * scale;
@@ -86,36 +86,38 @@ public static class XClashIconExport {
 '@
 }
 
-$source = Join-Path $RepositoryRoot 'assets_source/images/icon/xclash-liquid-glass.png'
+$source = Join-Path $RepositoryRoot 'assets_source/images/icon/aerove-ribbon.png'
+$tileSource = Join-Path $RepositoryRoot 'assets_source/images/icon/aerove-icon-tile.png'
 $resources = Join-Path $RepositoryRoot 'android/app/src/main/res'
 $metrics = [XClashIconExport]::Inspect($source)
 if ($metrics.Width -ne $metrics.Height -or $metrics.Transparent -eq 0) {
     throw 'The artist original must be square with transparency.'
 }
-$safeRadius = $metrics.VisibleRadius * 76 / $metrics.Width
+$safeRadius = $metrics.VisibleRadius * 72 / $metrics.Width
 if ($safeRadius -gt 33) {
-    throw "The 16dp inset exceeds the adaptive 66dp safe zone: radius $safeRadius dp."
+    throw "The 18dp inset exceeds the adaptive 66dp safe zone: radius $safeRadius dp."
 }
 
 $outputs = [System.Collections.Generic.List[object]]::new()
-function Export-Icon([string]$Path, [int]$Size, [single]$Scale, [string]$Mask) {
+function Export-Icon([string]$Path, [int]$Size, [single]$Scale, [string]$Mask, [string]$Artist = $source) {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
-    [XClashIconExport]::Export($source, $Path, $Size, $Scale, $Mask)
+    [XClashIconExport]::Export($Artist, $Path, $Size, $Scale, $Mask)
     $outputs.Add([pscustomobject]@{ Path = $Path; Size = $Size })
 }
 
-Export-Icon (Join-Path $RepositoryRoot 'assets/images/icon.png') 1024 1 'none'
+Export-Icon (Join-Path $RepositoryRoot 'assets/images/icon.png') 1024 1 'superellipse' $tileSource
 Export-Icon (Join-Path $resources 'drawable-nodpi/xclash_liquid_glass.png') 1024 1 'none'
 $densities = [ordered]@{ mdpi = 48; hdpi = 72; xhdpi = 96; xxhdpi = 144; xxxhdpi = 192 }
 foreach ($density in $densities.Keys) {
     foreach ($qualifier in @("mipmap-$density", "mipmap-television-$density")) {
         $directory = Join-Path $resources $qualifier
-        Export-Icon (Join-Path $directory 'ic_launcher.png') $densities[$density] 0.84 'superellipse'
+        $size = if ($qualifier -like 'mipmap-television-*') { [int]($densities[$density] * 5 / 3) } else { $densities[$density] }
+        Export-Icon (Join-Path $directory 'ic_launcher.png') $size 1 'superellipse' $tileSource
         $old = Join-Path $directory 'ic_launcher.webp'
         if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old }
     }
     $directory = Join-Path $resources "mipmap-$density"
-    Export-Icon (Join-Path $directory 'ic_launcher_round.png') $densities[$density] 0.84 'circle'
+    Export-Icon (Join-Path $directory 'ic_launcher_round.png') $densities[$density] 1 'circle' $tileSource
     $old = Join-Path $directory 'ic_launcher_round.webp'
     if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old }
 }
@@ -123,10 +125,10 @@ foreach ($density in $densities.Keys) {
 $foreground = @'
 <?xml version="1.0" encoding="utf-8"?>
 <inset xmlns:android="http://schemas.android.com/apk/res/android"
-    android:insetLeft="14.814815%"
-    android:insetTop="14.814815%"
-    android:insetRight="14.814815%"
-    android:insetBottom="14.814815%">
+    android:insetLeft="16.666667%"
+    android:insetTop="16.666667%"
+    android:insetRight="16.666667%"
+    android:insetBottom="16.666667%">
     <bitmap
         android:src="@drawable/xclash_liquid_glass"
         android:gravity="fill"
@@ -144,7 +146,7 @@ $adaptive = @'
 $background = @'
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#FAFAFC</color>
+    <color name="ic_launcher_background">#0E1115</color>
 </resources>
 '@
 $xmlOutputs = @{
@@ -152,14 +154,14 @@ $xmlOutputs = @{
     'drawable/ic_launcher_foreground_tv.xml' = $foreground
     'mipmap-anydpi-v26/ic_launcher.xml' = $adaptive
     'mipmap-anydpi-v26/ic_launcher_round.xml' = $adaptive
-    'mipmap-television-anydpi-v26/ic_launcher.xml' = $adaptive
+    'mipmap-television-anydpi-v26/ic_launcher.xml' = $adaptive.Replace('@drawable/ic_launcher_foreground"', '@drawable/ic_launcher_foreground_tv"')
     'values/ic_launcher_background.xml' = $background
 }
 foreach ($relative in $xmlOutputs.Keys) {
     [System.IO.File]::WriteAllText((Join-Path $resources $relative), $xmlOutputs[$relative] + "`n")
 }
 if (-not (Test-Path -LiteralPath (Join-Path $resources 'drawable/ic_launcher_monochrome.xml'))) {
-    throw 'The preserved original monochrome vector is missing.'
+    throw 'The monochrome vector is missing.'
 }
 foreach ($relative in $xmlOutputs.Keys) {
     $document = [xml](Get-Content -Raw -LiteralPath (Join-Path $resources $relative))
@@ -180,13 +182,13 @@ foreach ($variant in @('values-v27', 'values-night-v27')) {
 }
 
 if ($PreviewDirectory) {
-    Export-Icon (Join-Path $PreviewDirectory 'adaptive-circle.png') 320 (76.0 / 72) 'circle'
-    Export-Icon (Join-Path $PreviewDirectory 'adaptive-superellipse.png') 320 (76.0 / 72) 'superellipse'
-    Export-Icon (Join-Path $PreviewDirectory 'legacy-48.png') 48 0.84 'superellipse'
+    Export-Icon (Join-Path $PreviewDirectory 'adaptive-circle.png') 320 1 'circle'
+    Export-Icon (Join-Path $PreviewDirectory 'adaptive-superellipse.png') 320 1 'superellipse'
+    Export-Icon (Join-Path $PreviewDirectory 'legacy-48.png') 48 1 'superellipse' $tileSource
 }
 
 Write-Output "Artist: $($metrics.Width)x$($metrics.Height); adaptive radius at alpha>=16: $safeRadius dp / 33 dp"
-Write-Output "All original alpha retained; alpha>0 radius: $($metrics.Radius * 76 / $metrics.Width) dp"
+Write-Output "All original alpha retained; alpha>0 radius: $($metrics.Radius * 72 / $metrics.Width) dp"
 foreach ($entry in $outputs) {
     $actual = [XClashIconExport]::Inspect($entry.Path)
     if ($actual.Width -ne $entry.Size -or $actual.Height -ne $entry.Size -or

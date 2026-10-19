@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <inset xmlns:android="http://schemas.android.com/apk/res/android"
-    android:insetLeft="14.814815%"
-    android:insetTop="14.814815%"
-    android:insetRight="14.814815%"
-    android:insetBottom="14.814815%">
+    android:insetLeft="16.666667%"
+    android:insetTop="16.666667%"
+    android:insetRight="16.666667%"
+    android:insetBottom="16.666667%">
     <bitmap
         android:src="@drawable/xclash_liquid_glass"
         android:gravity="fill"
