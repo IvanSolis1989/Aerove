@@ -34,6 +34,9 @@ void main() {
     final font = FontLoader('StatusGlassProbe')
       ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'));
     await font.load();
+    if (ui.ImageFilter.isShaderFilterSupported) {
+      await GlassInk.prepare().timeout(const Duration(seconds: 30));
+    }
   });
 
   for (final brightness in Brightness.values) {
@@ -48,200 +51,202 @@ void main() {
           addTearDown(tester.view.reset);
           final capture = GlobalKey();
           var calls = 0;
-          await tester.pumpWidget(
-            ProviderScope(
-              overrides: [
-                isMobileViewProvider.overrideWithValue(true),
-                viewSizeProvider.overrideWithBuild((_, _) => size),
-                themeSettingProvider.overrideWithBuild(
-                  (_, _) => ThemeProps(
-                    liquidGlass: mode,
-                    fontFamily: 'StatusGlassProbe',
+          try {
+            await tester.pumpWidget(
+              ProviderScope(
+                overrides: [
+                  isMobileViewProvider.overrideWithValue(true),
+                  viewSizeProvider.overrideWithBuild((_, _) => size),
+                  themeSettingProvider.overrideWithBuild(
+                    (_, _) => ThemeProps(
+                      liquidGlass: mode,
+                      fontFamily: 'StatusGlassProbe',
+                    ),
                   ),
-                ),
-              ],
-              child: Consumer(
-                builder: (_, ref, _) => TestApp(
-                  includeNavigatorKey: false,
-                  theme: watchAppTheme(ref, brightness),
-                  darkTheme: watchAppTheme(ref, brightness),
-                  themeMode: brightness == Brightness.light
-                      ? ThemeMode.light
-                      : ThemeMode.dark,
-                  homeBuilder: (child) => RepaintBoundary(
-                    key: capture,
-                    child: AuroraAppSurface(motion: false, child: child),
+                ],
+                child: Consumer(
+                  builder: (_, ref, _) => TestApp(
+                    includeNavigatorKey: false,
+                    theme: watchAppTheme(ref, brightness),
+                    darkTheme: watchAppTheme(ref, brightness),
+                    themeMode: brightness == Brightness.light
+                        ? ThemeMode.light
+                        : ThemeMode.dark,
+                    homeBuilder: (child) => RepaintBoundary(
+                      key: capture,
+                      child: AuroraAppSurface(motion: false, child: child),
+                    ),
+                    child: const StatusManager(child: SizedBox.expand()),
                   ),
-                  child: const StatusManager(child: SizedBox.expand()),
                 ),
               ),
-            ),
-          );
-          final state = tester.state<StatusManagerState>(
-            find.byType(StatusManager),
-          );
-          state.message(
-            _message,
-            level: MessageLevel.warning,
-            actionState: MessageActionState(
-              actionText: 'Restart',
-              action: () => calls++,
-            ),
-          );
-          await tester.pump();
-          await tester.pump(const Duration(milliseconds: 450));
-          if (ui.ImageFilter.isShaderFilterSupported) {
-            await tester.runAsync(GlassInk.prepare);
-            await tester.runAsync(
-              () => ui.FragmentProgram.fromAsset(
-                'shaders/liquid_glass.frag',
-              ).timeout(const Duration(seconds: 30)),
+            );
+            final state = tester.state<StatusManagerState>(
+              find.byType(StatusManager),
+            );
+            state.message(
+              _message,
+              level: MessageLevel.warning,
+              actionState: MessageActionState(
+                actionText: 'Restart',
+                action: () => calls++,
+              ),
             );
             await tester.pump();
-            expect(LiquidGlass.debugShaderReady, isTrue);
-          }
-          final context = tester.element(find.text(_message));
-          expect(Theme.of(context).brightness, brightness);
-          expect(Theme.of(context).platform, TargetPlatform.android);
-          expect(AuroraAppearance.enabledOf(context), isTrue);
-          final settings = ProviderScope.containerOf(
-            context,
-          ).read(themeSettingProvider);
-          const defaults = ThemeProps();
-          expect(settings.auroraColors, defaults.auroraColors);
-          expect(settings.auroraSeed, defaults.auroraSeed);
-          expect(
-            tester.widget<GlassText>(find.text(_message)).inkRole,
-            GlassInkRole.body,
-          );
-          expect(find.byType(LiquidGlassHost), findsOneWidget);
-          final boundary =
-              capture.currentContext!.findRenderObject()!
-                  as RenderRepaintBoundary;
-          final name = 'status-aurora-${brightness.name}-${mode.name}';
-          final results = <Map<String, Object?>>[];
-          for (final (role, finder) in [
-            ('body', find.text(_message)),
-            ('action', find.text('Restart')),
-          ]) {
-            final rich = find.descendant(
-              of: finder,
-              matching: find.byType(RichText),
-            );
-            final paragraph = tester.renderObject<RenderParagraph>(rich);
-            final original = paragraph.text;
-            final painter =
-                TextPainter(
-                  text: _recolor(original, Colors.white),
-                  textAlign: paragraph.textAlign,
-                  textDirection: paragraph.textDirection,
-                  textScaler: paragraph.textScaler,
-                  maxLines: paragraph.maxLines,
-                  locale: paragraph.locale,
-                  strutStyle: paragraph.strutStyle,
-                  textWidthBasis: paragraph.textWidthBasis,
-                  textHeightBehavior: paragraph.textHeightBehavior,
-                )..layout(
-                  minWidth: paragraph.size.width,
-                  maxWidth: paragraph.size.width,
-                );
-            try {
-              results.add(
-                await _roleContrast(
-                  tester,
-                  boundary,
-                  paragraph,
-                  '$name-$role',
-                  4.5,
-                  (canvas) => painter.paint(canvas, Offset.zero),
-                  (visible) => paragraph.text = visible
-                      ? original
-                      : _recolor(original, Colors.transparent),
-                ),
+            await tester.pump(const Duration(milliseconds: 450));
+            if (ui.ImageFilter.isShaderFilterSupported) {
+              await tester.runAsync(
+                () => ui.FragmentProgram.fromAsset(
+                  'shaders/liquid_glass.frag',
+                ).timeout(const Duration(seconds: 30)),
               );
-            } finally {
-              painter.dispose();
+              await tester.pump();
+              expect(LiquidGlass.debugShaderReady, isTrue);
             }
-          }
-          final glyph = find.byGlyph(AppGlyphs.warning);
-          expect(
-            tester.widget<GlyphIcon>(glyph).color,
-            MessageLevel.warning.iconColor(context),
-          );
-          final paint = tester.renderObject<RenderCustomPaint>(
-            find.descendant(of: glyph, matching: find.byType(CustomPaint)),
-          );
-          final original = paint.painter! as GlyphPainter;
-          results.add(
-            await _roleContrast(
-              tester,
-              boundary,
-              paint,
-              '$name-warning',
-              3,
-              (canvas) => GlyphPainter(
-                glyph: original.glyph,
-                fill: original.fill,
-                color: Colors.white,
-              ).paint(canvas, paint.size),
-              (visible) => paint.painter = visible
-                  ? original
-                  : GlyphPainter(
-                      glyph: original.glyph,
-                      fill: original.fill,
-                      color: Colors.transparent,
-                    ),
-            ),
-          );
-          final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
-          if (output != null && output.isNotEmpty) {
-            File('$output/$name.json').writeAsStringSync(
-              jsonEncode({
-                'brightness': brightness.name,
-                'mode': mode.name,
-                'shaderSupported': ui.ImageFilter.isShaderFilterSupported,
-                'shaderReady': LiquidGlass.debugShaderReady,
-                'palette': settings.auroraColors,
-                'seed': settings.auroraSeed,
-                'source':
-                    'watchAppTheme and AuroraAppSurface production defaults',
-                'warningSourceARGB': original.color.toARGB32(),
-                'dpr': 3,
-                'roles': results,
-              }),
+            final context = tester.element(find.text(_message));
+            expect(Theme.of(context).brightness, brightness);
+            expect(Theme.of(context).platform, TargetPlatform.android);
+            expect(AuroraAppearance.enabledOf(context), isTrue);
+            final settings = ProviderScope.containerOf(
+              context,
+            ).read(themeSettingProvider);
+            const defaults = ThemeProps();
+            expect(settings.auroraColors, defaults.auroraColors);
+            expect(settings.auroraSeed, defaults.auroraSeed);
+            expect(
+              tester.widget<GlassText>(find.text(_message)).inkRole,
+              GlassInkRole.body,
             );
-          }
-          if (output != null && output.isNotEmpty) {
-            final image = boundary.toImageSync(pixelRatio: 3);
-            try {
-              final png = (await tester.runAsync(
-                () => image.toByteData(format: ui.ImageByteFormat.png),
-              ))!;
-              File(
-                '$output/$name-scene.png',
-              ).writeAsBytesSync(png.buffer.asUint8List());
-            } finally {
-              image.dispose();
+            expect(find.byType(LiquidGlassHost), findsOneWidget);
+            final boundary =
+                capture.currentContext!.findRenderObject()!
+                    as RenderRepaintBoundary;
+            final name = 'status-aurora-${brightness.name}-${mode.name}';
+            final results = <Map<String, Object?>>[];
+            for (final (role, finder) in [
+              ('body', find.text(_message)),
+              ('action', find.text('Restart')),
+            ]) {
+              final rich = find.descendant(
+                of: finder,
+                matching: find.byType(RichText),
+              );
+              final paragraph = tester.renderObject<RenderParagraph>(rich);
+              final original = paragraph.text;
+              final painter =
+                  TextPainter(
+                    text: _recolor(original, Colors.white),
+                    textAlign: paragraph.textAlign,
+                    textDirection: paragraph.textDirection,
+                    textScaler: paragraph.textScaler,
+                    maxLines: paragraph.maxLines,
+                    locale: paragraph.locale,
+                    strutStyle: paragraph.strutStyle,
+                    textWidthBasis: paragraph.textWidthBasis,
+                    textHeightBehavior: paragraph.textHeightBehavior,
+                  )..layout(
+                    minWidth: paragraph.size.width,
+                    maxWidth: paragraph.size.width,
+                  );
+              try {
+                results.add(
+                  await _roleContrast(
+                    tester,
+                    boundary,
+                    paragraph,
+                    '$name-$role',
+                    4.5,
+                    (canvas) => painter.paint(canvas, Offset.zero),
+                    (visible) => paragraph.text = visible
+                        ? original
+                        : _recolor(original, Colors.transparent),
+                  ),
+                );
+              } finally {
+                painter.dispose();
+              }
             }
-          }
-          for (final result in results) {
+            final glyph = find.byGlyph(AppGlyphs.warning);
             expect(
-              result['solidAlpha255Pixels'],
-              greaterThan(0),
-              reason: '${result['role']} real glyph solid support',
+              tester.widget<GlyphIcon>(glyph).color,
+              MessageLevel.warning.iconColor(context),
             );
-            expect(
-              result['minimumContrast'],
-              greaterThanOrEqualTo(result['requiredContrast']! as num),
-              reason: '${result['role']}',
+            final paint = tester.renderObject<RenderCustomPaint>(
+              find.descendant(of: glyph, matching: find.byType(CustomPaint)),
             );
+            final original = paint.painter! as GlyphPainter;
+            results.add(
+              await _roleContrast(
+                tester,
+                boundary,
+                paint,
+                '$name-warning',
+                3,
+                (canvas) => GlyphPainter(
+                  glyph: original.glyph,
+                  fill: original.fill,
+                  color: Colors.white,
+                ).paint(canvas, paint.size),
+                (visible) => paint.painter = visible
+                    ? original
+                    : GlyphPainter(
+                        glyph: original.glyph,
+                        fill: original.fill,
+                        color: Colors.transparent,
+                      ),
+              ),
+            );
+            final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+            if (output != null && output.isNotEmpty) {
+              File('$output/$name.json').writeAsStringSync(
+                jsonEncode({
+                  'brightness': brightness.name,
+                  'mode': mode.name,
+                  'shaderSupported': ui.ImageFilter.isShaderFilterSupported,
+                  'shaderReady': LiquidGlass.debugShaderReady,
+                  'palette': settings.auroraColors,
+                  'seed': settings.auroraSeed,
+                  'source':
+                      'watchAppTheme and AuroraAppSurface production defaults',
+                  'warningSourceARGB': original.color.toARGB32(),
+                  'dpr': 3,
+                  'roles': results,
+                }),
+              );
+            }
+            if (output != null && output.isNotEmpty) {
+              final image = boundary.toImageSync(pixelRatio: 3);
+              try {
+                final png = (await tester.runAsync(
+                  () => image.toByteData(format: ui.ImageByteFormat.png),
+                ))!;
+                File(
+                  '$output/$name-scene.png',
+                ).writeAsBytesSync(png.buffer.asUint8List());
+              } finally {
+                image.dispose();
+              }
+            }
+            for (final result in results) {
+              expect(
+                result['solidAlpha255Pixels'],
+                greaterThan(0),
+                reason: '${result['role']} real glyph solid support',
+              );
+              expect(
+                result['minimumContrast'],
+                greaterThanOrEqualTo(result['requiredContrast']! as num),
+                reason: '${result['role']}',
+              );
+            }
+            await tester.tap(find.text('Restart'));
+            await tester.pumpAndSettle();
+            expect(calls, 1);
+            expect(find.text(_message), findsNothing);
+          } finally {
+            await tester.pumpWidget(const SizedBox.shrink());
+            await tester.pump();
           }
-          await tester.tap(find.text('Restart'));
-          await tester.pumpAndSettle();
-          expect(calls, 1);
-          expect(find.text(_message), findsNothing);
-          await tester.pumpWidget(const SizedBox.shrink());
-          await tester.pump();
           expect(tester.takeException(), isNull);
         },
       );
