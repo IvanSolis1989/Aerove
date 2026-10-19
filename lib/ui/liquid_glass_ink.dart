@@ -539,7 +539,11 @@ extension _InkCapture on _LiquidGlassHostLayer {
             inks.add((child, next, visible.shows(child.paintBounds, next)));
           }
           if (child is LiquidGlassBackdropLayer) {
-            backdrops.add((child, next, visible.shows(Offset.zero & child.size, next)));
+            backdrops.add((
+              child,
+              next,
+              visible.shows(Offset.zero & child.size, next),
+            ));
           }
           visit(child, next, solid, visible);
         }
@@ -547,7 +551,12 @@ extension _InkCapture on _LiquidGlassHostLayer {
       }
     }
 
-    visit(this, Matrix4.identity(), true, _GlassVisibility(bounds, 1 / devicePixelRatio));
+    visit(
+      this,
+      Matrix4.identity(),
+      true,
+      _GlassVisibility(bounds, 1 / devicePixelRatio),
+    );
     final updating = <(LiquidGlassInkLayer, Matrix4)>[];
     final covered = <LiquidGlassInkLayer>{};
     for (final (index, entry) in inks.indexed) {
