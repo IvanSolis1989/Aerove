@@ -4,7 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 Map<String, dynamic> _asset(String name, {String? url}) => {
   'name': name,
   'browser_download_url':
-      url ?? 'https://github.com/IvanSolis1989/Aerove/releases/download/v1/$name',
+      url ??
+      'https://github.com/IvanSolis1989/Aerove/releases/download/v1/$name',
 };
 
 void main() {
@@ -42,9 +43,12 @@ void main() {
   test('does not guess an asset when API fallback only carries a tag', () {
     expect(selectAndroidUpdateAsset({'tag_name': 'v1'}, ['arm64-v8a']), isNull);
     expect(
-      selectAndroidUpdateAsset({
-        'assets': [_asset('Aerove-android-arm64.apk')],
-      }, ['x86_64']),
+      selectAndroidUpdateAsset(
+        {
+          'assets': [_asset('Aerove-android-arm64.apk')],
+        },
+        ['x86_64'],
+      ),
       isNull,
     );
   });
@@ -52,10 +56,13 @@ void main() {
   test('preserves the published URL including its encoded build tag', () {
     const url =
         'https://github.com/IvanSolis1989/Aerove/releases/download/v0.9.1-X%2B2026101794/Aerove-android-arm64.apk';
-    final selected = selectAndroidUpdateAsset({
-      'tag_name': 'v0.9.1-X+2026101794',
-      'assets': [_asset('Aerove-android-arm64.apk', url: url)],
-    }, ['arm64-v8a']);
+    final selected = selectAndroidUpdateAsset(
+      {
+        'tag_name': 'v0.9.1-X+2026101794',
+        'assets': [_asset('Aerove-android-arm64.apk', url: url)],
+      },
+      ['arm64-v8a'],
+    );
     expect(selected?.url.toString(), url);
   });
 
@@ -67,9 +74,12 @@ void main() {
       'https://github.com/IvanSolis1989/Aerove/releases/download/v1/other.apk',
     ]) {
       expect(
-        selectAndroidUpdateAsset({
-          'assets': [_asset('Aerove-android-arm64.apk', url: url)],
-        }, ['arm64-v8a']),
+        selectAndroidUpdateAsset(
+          {
+            'assets': [_asset('Aerove-android-arm64.apk', url: url)],
+          },
+          ['arm64-v8a'],
+        ),
         isNull,
       );
     }

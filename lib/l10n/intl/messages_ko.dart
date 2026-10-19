@@ -1544,6 +1544,15 @@ class MessageLookup extends MessageLookupByLibrary {
     "unnamed": MessageLookupByLibrary.simpleMessage("이름 없음"),
     "unpinWindow": MessageLookupByLibrary.simpleMessage("창 고정 해제"),
     "update": MessageLookupByLibrary.simpleMessage("업데이트"),
+    "updateAssetUnavailable": MessageLookupByLibrary.simpleMessage(
+      "이 기기에 맞는 설치 패키지가 없습니다. 릴리스 파일이 게시된 후 다시 시도하세요.",
+    ),
+    "updateDownloadFailed": MessageLookupByLibrary.simpleMessage(
+      "시스템 다운로드를 시작하지 못했습니다. 다시 시도하세요.",
+    ),
+    "updateDownloadStarted": MessageLookupByLibrary.simpleMessage(
+      "시스템 다운로드 관리자에 추가했습니다. 다운로드에서 진행 상황이나 오류를 확인하세요.",
+    ),
     "upload": MessageLookupByLibrary.simpleMessage("업로드"),
     "uploadBandwidth": MessageLookupByLibrary.simpleMessage("업로드 대역폭"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),

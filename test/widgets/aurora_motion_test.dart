@@ -25,38 +25,35 @@ const _seeds = [
 ];
 
 void main() {
-  test(
-    'motion preserves phase at 2.25 times the original tempo',
-    () {
-      final motion = AuroraMotion(832838199);
-      for (final (time, angle, x, y) in [
-        (
-          Duration.zero,
-          4.739799584346775,
-          -3.5765689743074005,
-          -18.430129919413606,
-        ),
-        (
-          const Duration(seconds: 2),
-          4.860840862640008,
-          7.7716651819280065,
-          -10.753262087413878,
-        ),
-        (
-          const Duration(seconds: 5),
-          5.031947763559606,
-          25.100219194938262,
-          3.3405496007086675,
-        ),
-      ]) {
-        final pose = motion.at(time, const Size(390, 844));
-        expect(pose.angle, closeTo(angle, 1e-10));
-        expect(pose.translation.dx, closeTo(x, 1e-10));
-        expect(pose.translation.dy, closeTo(y, 1e-10));
-        expect(pose.side, closeTo(1065.5201878294001, 1e-9));
-      }
-    },
-  );
+  test('motion preserves phase at 2.25 times the original tempo', () {
+    final motion = AuroraMotion(832838199);
+    for (final (time, angle, x, y) in [
+      (
+        Duration.zero,
+        4.739799584346775,
+        -3.5765689743074005,
+        -18.430129919413606,
+      ),
+      (
+        const Duration(seconds: 2),
+        4.860840862640008,
+        7.7716651819280065,
+        -10.753262087413878,
+      ),
+      (
+        const Duration(seconds: 5),
+        5.031947763559606,
+        25.100219194938262,
+        3.3405496007086675,
+      ),
+    ]) {
+      final pose = motion.at(time, const Size(390, 844));
+      expect(pose.angle, closeTo(angle, 1e-10));
+      expect(pose.translation.dx, closeTo(x, 1e-10));
+      expect(pose.translation.dy, closeTo(y, 1e-10));
+      expect(pose.side, closeTo(1065.5201878294001, 1e-9));
+    }
+  });
 
   test('square overscan covers every viewport corner throughout motion', () {
     for (final size in [

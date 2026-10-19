@@ -442,11 +442,14 @@ Future<List<Map<String, Object?>>> _controls(
     final errorOutput = Platform.environment['XCLASH_SCREENSHOT_DIR'];
     if (mountError != null && errorOutput != null) {
       Directory(errorOutput).createSync(recursive: true);
-      File('$errorOutput/about-control-$kind-phase$phase-layout-error.json')
-          .writeAsStringSync(jsonEncode({
-            'error': mountError.toString(),
-            'stack': mountError is Error ? '${mountError.stackTrace}' : null,
-          }));
+      File(
+        '$errorOutput/about-control-$kind-phase$phase-layout-error.json',
+      ).writeAsStringSync(
+        jsonEncode({
+          'error': mountError.toString(),
+          'stack': mountError is Error ? '${mountError.stackTrace}' : null,
+        }),
+      );
     }
     expect(mountError, isNull, reason: '$kind phase$phase mount');
     final finder = find.byWidgetPredicate(

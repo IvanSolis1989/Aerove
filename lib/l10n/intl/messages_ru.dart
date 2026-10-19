@@ -1920,6 +1920,15 @@ class MessageLookup extends MessageLookupByLibrary {
     "unnamed": MessageLookupByLibrary.simpleMessage("Без названия"),
     "unpinWindow": MessageLookupByLibrary.simpleMessage("Открепить окно"),
     "update": MessageLookupByLibrary.simpleMessage("Обновить"),
+    "updateAssetUnavailable": MessageLookupByLibrary.simpleMessage(
+      "Совместимый установочный пакет для этого устройства отсутствует. Повторите попытку после публикации файлов выпуска.",
+    ),
+    "updateDownloadFailed": MessageLookupByLibrary.simpleMessage(
+      "Не удалось начать системную загрузку. Повторите попытку.",
+    ),
+    "updateDownloadStarted": MessageLookupByLibrary.simpleMessage(
+      "Загрузка передана системному менеджеру. Ход загрузки и ошибки доступны в разделе загрузок.",
+    ),
     "upload": MessageLookupByLibrary.simpleMessage("Отдача"),
     "uploadBandwidth": MessageLookupByLibrary.simpleMessage("Скорость отдачи"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),

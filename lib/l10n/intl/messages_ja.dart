@@ -1569,6 +1569,15 @@ class MessageLookup extends MessageLookupByLibrary {
     "unnamed": MessageLookupByLibrary.simpleMessage("名称未設定"),
     "unpinWindow": MessageLookupByLibrary.simpleMessage("固定を解除"),
     "update": MessageLookupByLibrary.simpleMessage("更新"),
+    "updateAssetUnavailable": MessageLookupByLibrary.simpleMessage(
+      "この端末に対応するインストールパッケージがありません。公開後に再試行してください。",
+    ),
+    "updateDownloadFailed": MessageLookupByLibrary.simpleMessage(
+      "システムのダウンロードを開始できませんでした。再試行してください。",
+    ),
+    "updateDownloadStarted": MessageLookupByLibrary.simpleMessage(
+      "システムのダウンロードに追加しました。進行状況やエラーはダウンロード管理で確認してください。",
+    ),
     "upload": MessageLookupByLibrary.simpleMessage("アップロード"),
     "uploadBandwidth": MessageLookupByLibrary.simpleMessage("アップロード帯域幅"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),

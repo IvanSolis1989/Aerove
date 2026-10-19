@@ -163,35 +163,36 @@ void main() {
     expect(container.read(appSettingProvider).autoCheckUpdate, isTrue);
   });
 
-  testWidgets('duplicate checks share one dialog and cancellation permits retry', (
-    tester,
-  ) async {
-    final container = await pumpApp(tester);
-    final action = container.read(commonActionProvider.notifier);
-    final shown = action.checkUpdateResultHandle(
-      data: release(_bulletsOnly),
-      isUser: true,
-    );
-    await tester.pumpAndSettle();
-    await action.checkUpdateResultHandle(
-      data: release(_bulletsOnly),
-      isUser: true,
-    );
-    await tester.pumpAndSettle();
-    expect(find.textContaining('v0.8.96'), findsOneWidget);
-    await tapCancel(tester);
-    await shown;
-    expect(container.read(appSettingProvider).autoCheckUpdate, isTrue);
+  testWidgets(
+    'duplicate checks share one dialog and cancellation permits retry',
+    (tester) async {
+      final container = await pumpApp(tester);
+      final action = container.read(commonActionProvider.notifier);
+      final shown = action.checkUpdateResultHandle(
+        data: release(_bulletsOnly),
+        isUser: true,
+      );
+      await tester.pumpAndSettle();
+      await action.checkUpdateResultHandle(
+        data: release(_bulletsOnly),
+        isUser: true,
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('v0.8.96'), findsOneWidget);
+      await tapCancel(tester);
+      await shown;
+      expect(container.read(appSettingProvider).autoCheckUpdate, isTrue);
 
-    final retry = action.checkUpdateResultHandle(
-      data: release(_bulletsOnly),
-      isUser: true,
-    );
-    await tester.pumpAndSettle();
-    expect(find.textContaining('v0.8.96'), findsOneWidget);
-    await tapCancel(tester);
-    await retry;
-  });
+      final retry = action.checkUpdateResultHandle(
+        data: release(_bulletsOnly),
+        isUser: true,
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('v0.8.96'), findsOneWidget);
+      await tapCancel(tester);
+      await retry;
+    },
+  );
 
   testWidgets('download launch failure is reported and the action can retry', (
     tester,

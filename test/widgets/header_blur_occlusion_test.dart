@@ -341,7 +341,8 @@ void main() {
           expect(
             _pixel(coveredOverlap, 240, y)[channel],
             closeTo(_pixel(plainReference, 240, y)[channel], 2),
-            reason: 'header-only pixels must match the same blurred native tint',
+            reason:
+                'header-only pixels must match the same blurred native tint',
           );
         }
       }
@@ -1239,46 +1240,40 @@ void main() {
     );
   }
 
-  testWidgets(
-    'none, high contrast and an empty core bypass coverage',
-    (tester) async {
-      for (final enabled in [false, true]) {
-        for (final highContrast in [false, true]) {
-          for (final core in [-12.0, 0.0, 48.0, 144.0]) {
-            await tester.pumpWidget(
-              MaterialApp(
-                home: MediaQuery(
-                  data: MediaQueryData(highContrast: highContrast),
-                  child: LiquidGlassScope(
-                    enabled: enabled,
-                    child: HeaderBlur(
-                      fadeHeight: 120,
-                      fullStrengthHeight: core,
-                    ),
-                  ),
+  testWidgets('none, high contrast and an empty core bypass coverage', (
+    tester,
+  ) async {
+    for (final enabled in [false, true]) {
+      for (final highContrast in [false, true]) {
+        for (final core in [-12.0, 0.0, 48.0, 144.0]) {
+          await tester.pumpWidget(
+            MaterialApp(
+              home: MediaQuery(
+                data: MediaQueryData(highContrast: highContrast),
+                child: LiquidGlassScope(
+                  enabled: enabled,
+                  child: HeaderBlur(fadeHeight: 120, fullStrengthHeight: core),
                 ),
               ),
-            );
+            ),
+          );
+          expect(
+            find.byType(LiquidGlassOcclusion),
+            enabled && !highContrast && core > 0
+                ? findsOneWidget
+                : findsNothing,
+          );
+          if (enabled && !highContrast && core > 0) {
             expect(
-              find.byType(LiquidGlassOcclusion),
-              enabled && !highContrast && core > 0
-                  ? findsOneWidget
-                  : findsNothing,
+              tester.getSize(find.byType(LiquidGlassOcclusion)).height,
+              core.clamp(0.0, 120.0),
             );
-            if (enabled && !highContrast && core > 0) {
-              expect(
-                tester.getSize(find.byType(LiquidGlassOcclusion)).height,
-                core.clamp(0.0, 120.0),
-              );
-            }
-            expect(find.byType(BackdropFilter), findsOneWidget);
           }
+          expect(find.byType(BackdropFilter), findsOneWidget);
         }
       }
-      await tester.pumpWidget(
-        const MaterialApp(home: HeaderBlur(fadeHeight: 0)),
-      );
-      expect(find.byType(BackdropFilter), findsNothing);
-    },
-  );
+    }
+    await tester.pumpWidget(const MaterialApp(home: HeaderBlur(fadeHeight: 0)));
+    expect(find.byType(BackdropFilter), findsNothing);
+  });
 }

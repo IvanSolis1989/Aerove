@@ -1971,6 +1971,15 @@ class MessageLookup extends MessageLookupByLibrary {
       "Désépingler la fenêtre",
     ),
     "update": MessageLookupByLibrary.simpleMessage("Mettre à jour"),
+    "updateAssetUnavailable": MessageLookupByLibrary.simpleMessage(
+      "Aucun paquet compatible avec cet appareil n’est disponible. Réessayez après la publication des fichiers.",
+    ),
+    "updateDownloadFailed": MessageLookupByLibrary.simpleMessage(
+      "Impossible de lancer le téléchargement système. Veuillez réessayer.",
+    ),
+    "updateDownloadStarted": MessageLookupByLibrary.simpleMessage(
+      "Téléchargement ajouté au gestionnaire système. Consultez Téléchargements pour suivre la progression ou les erreurs.",
+    ),
     "upload": MessageLookupByLibrary.simpleMessage("Envoi"),
     "uploadBandwidth": MessageLookupByLibrary.simpleMessage(
       "Bande passante d’envoi",

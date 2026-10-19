@@ -37,110 +37,111 @@ void main() {
       await ui.FragmentProgram.fromAsset('shaders/liquid_glass.frag');
     }
   });
-  testWidgets('sheet scroll leaves its wallpaper free of an extra header mask', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(320, 320);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-    final controller = ScrollController();
-    final key = GlobalKey();
-    Future<Uint8List> shot(String name) async {
-      final boundary =
-          key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
-      return (await tester.runAsync(() async {
-        final image = await boundary.toImage();
-        try {
-          final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
-          if (output != null) {
-            Directory(output).createSync(recursive: true);
-            final png = (await image.toByteData(
-              format: ui.ImageByteFormat.png,
-            ))!;
-            File(
-              '$output/$name.png',
-            ).writeAsBytesSync(png.buffer.asUint8List());
+  testWidgets(
+    'sheet scroll leaves its wallpaper free of an extra header mask',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 320);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final controller = ScrollController();
+      final key = GlobalKey();
+      Future<Uint8List> shot(String name) async {
+        final boundary =
+            key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+        return (await tester.runAsync(() async {
+          final image = await boundary.toImage();
+          try {
+            final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+            if (output != null) {
+              Directory(output).createSync(recursive: true);
+              final png = (await image.toByteData(
+                format: ui.ImageByteFormat.png,
+              ))!;
+              File(
+                '$output/$name.png',
+              ).writeAsBytesSync(png.buffer.asUint8List());
+            }
+            return (await image.toByteData(
+              format: ui.ImageByteFormat.rawRgba,
+            ))!.buffer.asUint8List();
+          } finally {
+            image.dispose();
           }
-          return (await image.toByteData(
-            format: ui.ImageByteFormat.rawRgba,
-          ))!.buffer.asUint8List();
-        } finally {
-          image.dispose();
-        }
-      }))!;
-    }
+        }))!;
+      }
 
-    try {
-      await tester.pumpWidget(
-        MaterialApp(
-          home: RepaintBoundary(
-            key: key,
-            child: LiquidGlassScope(
-              enabled: true,
-              child: LiquidGlassHost(
+      try {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: RepaintBoundary(
+              key: key,
+              child: LiquidGlassScope(
                 enabled: true,
-                wallpaperOnly: true,
-                child: Stack(
-                  children: [
-                    const Positioned.fill(
-                      child: LiquidGlassColorField(
-                        child: LiquidGlassColorSource(
-                          child: CustomPaint(
-                            painter: _Wallpaper(Brightness.light),
+                child: LiquidGlassHost(
+                  enabled: true,
+                  wallpaperOnly: true,
+                  child: Stack(
+                    children: [
+                      const Positioned.fill(
+                        child: LiquidGlassColorField(
+                          child: LiquidGlassColorSource(
+                            child: CustomPaint(
+                              painter: _Wallpaper(Brightness.light),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                    Positioned(
-                      left: 24,
-                      top: 72,
-                      width: 272,
-                      height: 224,
-                      child: FloatingHeaderBody(
-                        backgroundColor: Colors.white,
-                        header: const SizedBox(height: 64),
-                        body: SingleChildScrollView(
-                          controller: controller,
-                          child: const SizedBox(height: 1000),
+                      Positioned(
+                        left: 24,
+                        top: 72,
+                        width: 272,
+                        height: 224,
+                        child: FloatingHeaderBody(
+                          backgroundColor: Colors.white,
+                          header: const SizedBox(height: 64),
+                          body: SingleChildScrollView(
+                            controller: controller,
+                            child: const SizedBox(height: 1000),
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
           ),
-        ),
-      );
-      await tester.pump();
-      expect(find.byType(HeaderBlur), findsNothing);
-      final initial = await shot('sheet-header-opening');
-      void expectHeaderUnchanged(Uint8List actual) {
-        for (var y = 72; y < 136; y++) {
-          final start = (y * 320 + 24) * 4;
-          final end = (y * 320 + 280) * 4;
-          expect(actual.sublist(start, end), initial.sublist(start, end));
+        );
+        await tester.pump();
+        expect(find.byType(HeaderBlur), findsNothing);
+        final initial = await shot('sheet-header-opening');
+        void expectHeaderUnchanged(Uint8List actual) {
+          for (var y = 72; y < 136; y++) {
+            final start = (y * 320 + 24) * 4;
+            final end = (y * 320 + 280) * 4;
+            expect(actual.sublist(start, end), initial.sublist(start, end));
+          }
         }
-      }
 
-      controller.jumpTo(64);
-      await tester.pump();
-      expect(find.byType(HeaderBlur), findsNothing);
-      expect(find.byType(BackdropFilter), findsNothing);
-      expect(find.byType(LiquidGlass), findsNothing);
-      expectHeaderUnchanged(await shot('sheet-header-scrolled'));
-      controller.jumpTo(0);
-      await tester.pump();
-      await tester.pump();
-      expect(find.byType(HeaderBlur), findsNothing);
-      expectHeaderUnchanged(await shot('sheet-header-top-restored'));
-      expect(tester.takeException(), isNull);
-    } finally {
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pump();
-      controller.dispose();
-    }
-  });
+        controller.jumpTo(64);
+        await tester.pump();
+        expect(find.byType(HeaderBlur), findsNothing);
+        expect(find.byType(BackdropFilter), findsNothing);
+        expect(find.byType(LiquidGlass), findsNothing);
+        expectHeaderUnchanged(await shot('sheet-header-scrolled'));
+        controller.jumpTo(0);
+        await tester.pump();
+        await tester.pump();
+        expect(find.byType(HeaderBlur), findsNothing);
+        expectHeaderUnchanged(await shot('sheet-header-top-restored'));
+        expect(tester.takeException(), isNull);
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+        controller.dispose();
+      }
+    },
+  );
   testWidgets('sheet header adds no mask with None or high contrast', (
     tester,
   ) async {

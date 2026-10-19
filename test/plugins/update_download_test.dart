@@ -55,13 +55,16 @@ void main() {
     expect(await App().downloadUpdate(url, 'a.apk'), 7);
   });
 
-  test('does not report an invalid or missing download ID as success', () async {
-    for (final id in [null, -1, 0]) {
-      messenger.setMockMethodCallHandler(channel, (_) async => id);
-      await expectLater(
-        App().downloadUpdate(Uri.parse('https://github.com/a.apk'), 'a.apk'),
-        throwsStateError,
-      );
-    }
-  });
+  test(
+    'does not report an invalid or missing download ID as success',
+    () async {
+      for (final id in [null, -1, 0]) {
+        messenger.setMockMethodCallHandler(channel, (_) async => id);
+        await expectLater(
+          App().downloadUpdate(Uri.parse('https://github.com/a.apk'), 'a.apk'),
+          throwsStateError,
+        );
+      }
+    },
+  );
 }

@@ -52,36 +52,36 @@ void main() {
     expect(reads, 3);
   });
 
-  test('large overlapping prewarms bound candidates and active reads', () async {
-    var active = 0;
-    var peak = 0;
-    final reads = <String, int>{};
-    readRemoteIcon = (url) async* {
-      reads.update(url, (value) => value + 1, ifAbsent: () => 1);
-      active++;
-      if (active > peak) peak = active;
-      try {
-        await Future<void>.delayed(Duration.zero);
-        yield Uint8List.fromList([3]);
-      } finally {
-        active--;
-      }
-    };
-    final urls = List.generate(
-      1000,
-      (index) => 'https://example.com/loading/large/$index.svg',
-    );
-    await Future.wait([
-      precacheTargetIcons(urls),
-      precacheTargetIcons(urls),
-    ]);
-    expect(reads.length, 32);
-    expect(reads.values, everyElement(1));
-    expect(peak, lessThanOrEqualTo(maxConcurrentIconLoads));
-    expect(active, 0);
-    await precacheTargetIcons(urls);
-    expect(reads.length, 32);
-  });
+  test(
+    'large overlapping prewarms bound candidates and active reads',
+    () async {
+      var active = 0;
+      var peak = 0;
+      final reads = <String, int>{};
+      readRemoteIcon = (url) async* {
+        reads.update(url, (value) => value + 1, ifAbsent: () => 1);
+        active++;
+        if (active > peak) peak = active;
+        try {
+          await Future<void>.delayed(Duration.zero);
+          yield Uint8List.fromList([3]);
+        } finally {
+          active--;
+        }
+      };
+      final urls = List.generate(
+        1000,
+        (index) => 'https://example.com/loading/large/$index.svg',
+      );
+      await Future.wait([precacheTargetIcons(urls), precacheTargetIcons(urls)]);
+      expect(reads.length, 32);
+      expect(reads.values, everyElement(1));
+      expect(peak, lessThanOrEqualTo(maxConcurrentIconLoads));
+      expect(active, 0);
+      await precacheTargetIcons(urls);
+      expect(reads.length, 32);
+    },
+  );
 
   testWidgets('visible icons join a prewarm and cached mounts avoid IO', (
     tester,
@@ -94,9 +94,7 @@ void main() {
     };
     const url = 'https://example.com/loading/visible.svg';
     final warming = precacheTargetIcons([url]);
-    await tester.pumpWidget(
-      const TestApp(child: CommonTargetIcon(src: url)),
-    );
+    await tester.pumpWidget(const TestApp(child: CommonTargetIcon(src: url)));
     await tester.pump();
     expect(reads, 1);
     source.add(
@@ -111,70 +109,69 @@ void main() {
     await tester.pump();
     await tester.runAsync(() => Future.wait([warming, closed]));
     await tester.pumpWidget(const SizedBox());
-    await tester.pumpWidget(
-      const TestApp(child: CommonTargetIcon(src: url)),
-    );
+    await tester.pumpWidget(const TestApp(child: CommonTargetIcon(src: url)));
     await tester.pump();
     expect(reads, 1);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('departed consumers discard queued reads before new visible work', (
-    tester,
-  ) async {
-    final reads = <String>[];
-    final cancellations = <String, Completer<void>>{};
-    var active = 0;
-    var peak = 0;
-    readRemoteIcon = (url) {
-      reads.add(url);
-      active++;
-      if (active > peak) peak = active;
-      final cancelled = cancellations[url] = Completer<void>();
-      return StreamController<Uint8List>(
-        onCancel: () async {
-          await cancelled.future;
-          active--;
-        },
-      ).stream;
-    };
-    final held = List.generate(
-      maxConcurrentIconLoads,
-      (index) => 'https://example.com/loading/held/$index.svg',
-    );
-    final leaving = List.generate(
-      1000,
-      (index) => 'https://example.com/loading/leaving/$index.svg',
-    );
-    await tester.pumpWidget(_icons(held));
-    await tester.pump();
-    expect(active, maxConcurrentIconLoads);
-    await tester.pumpWidget(_icons([...held, ...leaving]));
-    await tester.pump();
-    expect(debugIconReads.pending, 1000);
+  testWidgets(
+    'departed consumers discard queued reads before new visible work',
+    (tester) async {
+      final reads = <String>[];
+      final cancellations = <String, Completer<void>>{};
+      var active = 0;
+      var peak = 0;
+      readRemoteIcon = (url) {
+        reads.add(url);
+        active++;
+        if (active > peak) peak = active;
+        final cancelled = cancellations[url] = Completer<void>();
+        return StreamController<Uint8List>(
+          onCancel: () async {
+            await cancelled.future;
+            active--;
+          },
+        ).stream;
+      };
+      final held = List.generate(
+        maxConcurrentIconLoads,
+        (index) => 'https://example.com/loading/held/$index.svg',
+      );
+      final leaving = List.generate(
+        1000,
+        (index) => 'https://example.com/loading/leaving/$index.svg',
+      );
+      await tester.pumpWidget(_icons(held));
+      await tester.pump();
+      expect(active, maxConcurrentIconLoads);
+      await tester.pumpWidget(_icons([...held, ...leaving]));
+      await tester.pump();
+      expect(debugIconReads.pending, 1000);
 
-    const visible = 'https://example.com/loading/next-visible.svg';
-    await tester.pumpWidget(_icons([visible]));
-    await tester.pump();
-    expect(debugIconReads, (active: 8, pending: 1, sources: 1));
-    expect(reads, held);
-    expect(active, maxConcurrentIconLoads);
+      const visible = 'https://example.com/loading/next-visible.svg';
+      await tester.pumpWidget(_icons([visible]));
+      await tester.pump();
+      expect(debugIconReads, (active: 8, pending: 1, sources: 1));
+      expect(reads, held);
+      expect(active, maxConcurrentIconLoads);
 
-    cancellations[held.first]!.complete();
-    await tester.pump();
-    expect(reads, [...held, visible]);
-    expect(debugIconReads.pending, 0);
-    expect(active, maxConcurrentIconLoads);
-    expect(peak, maxConcurrentIconLoads);
-    for (final url in held.skip(1)) {
-      cancellations[url]!.complete();
-    }
-    await tester.pumpWidget(const SizedBox());
-    cancellations[visible]!.complete();
-    await tester.pump();
-    expect(debugIconReads, (active: 0, pending: 0, sources: 0));
-    expect(active, 0);
-  });
+      cancellations[held.first]!.complete();
+      await tester.pump();
+      expect(reads, [...held, visible]);
+      expect(debugIconReads.pending, 0);
+      expect(active, maxConcurrentIconLoads);
+      expect(peak, maxConcurrentIconLoads);
+      for (final url in held.skip(1)) {
+        cancellations[url]!.complete();
+      }
+      await tester.pumpWidget(const SizedBox());
+      cancellations[visible]!.complete();
+      await tester.pump();
+      expect(debugIconReads, (active: 0, pending: 0, sources: 0));
+      expect(active, 0);
+    },
+  );
 
   testWidgets('one departing consumer does not cancel a shared read', (
     tester,
@@ -256,8 +253,7 @@ void main() {
 Widget _icons(Iterable<String> urls) => TestApp(
   child: Stack(
     children: [
-      for (final url in urls)
-        CommonTargetIcon(key: ValueKey(url), src: url),
+      for (final url in urls) CommonTargetIcon(key: ValueKey(url), src: url),
     ],
   ),
 );

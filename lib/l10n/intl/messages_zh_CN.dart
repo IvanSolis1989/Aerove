@@ -1420,6 +1420,15 @@ class MessageLookup extends MessageLookupByLibrary {
     "unnamed": MessageLookupByLibrary.simpleMessage("未命名"),
     "unpinWindow": MessageLookupByLibrary.simpleMessage("取消置顶"),
     "update": MessageLookupByLibrary.simpleMessage("更新"),
+    "updateAssetUnavailable": MessageLookupByLibrary.simpleMessage(
+      "暂无适配此设备的安装包，请在发布文件上传后重试。",
+    ),
+    "updateDownloadFailed": MessageLookupByLibrary.simpleMessage(
+      "无法启动系统下载，请重试。",
+    ),
+    "updateDownloadStarted": MessageLookupByLibrary.simpleMessage(
+      "已交给系统下载器，请在下载管理中查看进度或失败原因。",
+    ),
     "upload": MessageLookupByLibrary.simpleMessage("上传"),
     "uploadBandwidth": MessageLookupByLibrary.simpleMessage("上行带宽"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),

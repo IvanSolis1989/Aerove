@@ -1966,6 +1966,15 @@ class MessageLookup extends MessageLookupByLibrary {
     "unnamed": MessageLookupByLibrary.simpleMessage("Sin nombre"),
     "unpinWindow": MessageLookupByLibrary.simpleMessage("Desfijar ventana"),
     "update": MessageLookupByLibrary.simpleMessage("Actualizar"),
+    "updateAssetUnavailable": MessageLookupByLibrary.simpleMessage(
+      "No hay un paquete de instalación compatible con este dispositivo. Inténtalo después de que se publiquen los archivos.",
+    ),
+    "updateDownloadFailed": MessageLookupByLibrary.simpleMessage(
+      "No se pudo iniciar la descarga del sistema. Inténtalo de nuevo.",
+    ),
+    "updateDownloadStarted": MessageLookupByLibrary.simpleMessage(
+      "Descarga añadida al gestor del sistema. Consulta Descargas para ver el progreso o los errores.",
+    ),
     "upload": MessageLookupByLibrary.simpleMessage("Subida"),
     "uploadBandwidth": MessageLookupByLibrary.simpleMessage(
       "Ancho de banda de subida",

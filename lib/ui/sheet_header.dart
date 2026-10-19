@@ -174,10 +174,7 @@ class FloatingHeaderBody extends StatelessWidget {
             left: 0,
             right: 0,
             child: SheetOverhangLift(
-              child: Material(
-                type: MaterialType.transparency,
-                child: footer,
-              ),
+              child: Material(type: MaterialType.transparency, child: footer),
             ),
           ),
       ],

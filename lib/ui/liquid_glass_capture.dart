@@ -100,7 +100,8 @@ class LiquidGlassHost extends StatelessWidget {
     int retainedAtlasPixels,
     int retainedFlatPixels,
     int retainedFrozenPixels,
-  })? debugLastCacheTrim;
+  })?
+  debugLastCacheTrim;
 
   @override
   Widget build(BuildContext context) {
@@ -262,7 +263,8 @@ class _LiquidGlassHostBox extends SingleChildRenderObjectWidget {
   }
 }
 
-class _RenderLiquidGlassHost extends RenderProxyBox with WidgetsBindingObserver {
+class _RenderLiquidGlassHost extends RenderProxyBox
+    with WidgetsBindingObserver {
   _RenderLiquidGlassHost({
     required bool enabled,
     required double devicePixelRatio,
@@ -330,14 +332,16 @@ class _RenderLiquidGlassHost extends RenderProxyBox with WidgetsBindingObserver 
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.hidden || state == AppLifecycleState.paused) {
+    if (state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused) {
       _suspended = true;
       final layer = _layer.layer;
       if (layer != null) {
         layer.suspended = true;
         layer._trimCaches(all: true, reason: state.name);
       }
-    } else if (state == AppLifecycleState.resumed || state == AppLifecycleState.inactive) {
+    } else if (state == AppLifecycleState.resumed ||
+        state == AppLifecycleState.inactive) {
       _suspended = false;
       _layer.layer?.suspended = false;
       markNeedsPaint();
@@ -347,8 +351,13 @@ class _RenderLiquidGlassHost extends RenderProxyBox with WidgetsBindingObserver 
   @override
   void didHaveMemoryPressure() {
     final state = WidgetsBinding.instance.lifecycleState;
-    final hidden = state == AppLifecycleState.hidden || state == AppLifecycleState.paused;
-    _layer.layer?._trimCaches(all: hidden, preserveModal: !hidden, reason: 'pressure');
+    final hidden =
+        state == AppLifecycleState.hidden || state == AppLifecycleState.paused;
+    _layer.layer?._trimCaches(
+      all: hidden,
+      preserveModal: !hidden,
+      reason: 'pressure',
+    );
     if (!hidden) markNeedsPaint();
   }
 
@@ -397,6 +406,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     _suspended = value;
     markNeedsAddToScene();
   }
+
   (_ColorFieldLayer, Matrix4)? _field;
 
   final _atlases = <({ui.Image image, List<_Band> bands})>[];
@@ -405,7 +415,11 @@ class _LiquidGlassHostLayer extends ContainerLayer {
   final _sourceBlur = _SourceBlurCache();
   bool _trimBeforeCapture = false;
 
-  void _trimCaches({required bool all, bool preserveModal = false, required String reason}) {
+  void _trimCaches({
+    required bool all,
+    bool preserveModal = false,
+    required String reason,
+  }) {
     final atlasPixels = _atlases.fold<int>(
       0,
       (pixels, atlas) => pixels + atlas.image.width * atlas.image.height,
@@ -417,7 +431,11 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     final blurPixels = _sourceBlur.pixels;
     var frozenPixels = 0;
     void visit(ContainerLayer layer) {
-      for (Layer? child = layer.firstChild; child != null; child = child.nextSibling) {
+      for (
+        Layer? child = layer.firstChild;
+        child != null;
+        child = child.nextSibling
+      ) {
         if (child is _LiquidGlassLayer) {
           if (all) child._trimCapture(preserveFrozen: preserveModal);
           final frozen = child._frozenImage;
@@ -426,6 +444,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
         if (child is ContainerLayer) visit(child);
       }
     }
+
     visit(this);
     if (all) {
       for (final atlas in _atlases) {

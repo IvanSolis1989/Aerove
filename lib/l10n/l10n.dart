@@ -1165,6 +1165,36 @@ class AppLocalizations {
     return Intl.message('Download', name: 'goDownload', desc: '', args: []);
   }
 
+  /// `No compatible installation package is available for this device. Try again after the release assets are published.`
+  String get updateAssetUnavailable {
+    return Intl.message(
+      'No compatible installation package is available for this device. Try again after the release assets are published.',
+      name: 'updateAssetUnavailable',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Could not start the system download. Please try again.`
+  String get updateDownloadFailed {
+    return Intl.message(
+      'Could not start the system download. Please try again.',
+      name: 'updateDownloadFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Download added to the system download manager. Check Downloads for progress or failures.`
+  String get updateDownloadStarted {
+    return Intl.message(
+      'Download added to the system download manager. Check Downloads for progress or failures.',
+      name: 'updateDownloadStarted',
+      desc: '',
+      args: [],
+    );
+  }
+
   /// `Unknown`
   String get unknown {
     return Intl.message('Unknown', name: 'unknown', desc: '', args: []);
