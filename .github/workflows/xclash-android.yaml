@@ -189,6 +189,7 @@ jobs:
           trap 'cp "$RUNNER_TEMP/reported-pubspec.yaml" pubspec.yaml' EXIT
           sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
           tests=(test/widgets/aurora_activity_test.dart test/widgets/aurora_motion_test.dart test/widgets/aurora_lifecycle_test.dart test/widgets/theme_cross_fade_test.dart test/widgets/subscription_usage_fill_test.dart test/widgets/dashboard_text_bounds_test.dart test/widgets/proxies_scroll_work_test.dart test/widgets/proxies_list_test.dart test/widgets/list_header_focus_test.dart test/widgets/sheet_occlusion_test.dart test/widgets/sheet_surface_render_test.dart test/widgets/glass_sheet_surfaces_test.dart test/widgets/sheet_barrier_test.dart test/views/dashboard/foreground_test.dart test/views/dashboard/traffic_test.dart test/views/aurora_settings_test.dart)
+          tests+=(test/views/about_text_bounds_test.dart)
           flutter test --enable-impeller --reporter expanded "${tests[@]}"
           XCLASH_REQUIRE_IMPELLER=false XCLASH_SCREENSHOT_DIR="$XCLASH_SCREENSHOT_DIR/software" flutter test --reporter expanded "${tests[@]}"
       - name: Upload reported regression evidence
@@ -223,6 +224,7 @@ jobs:
             test/widgets/glass_ink_cache_test.dart \
             test/widgets/glass_ink_geometry_test.dart \
             test/widgets/dashboard_text_bounds_test.dart \
+            test/views/about_text_bounds_test.dart \
             test/widgets/shared_text_bounds_test.dart \
             test/widgets/glass_wallpaper_sampling_test.dart \
             test/widgets/source_blur_cache_test.dart \
