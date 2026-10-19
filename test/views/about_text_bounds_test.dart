@@ -388,9 +388,8 @@ Future<List<Map<String, Object?>>> _controls(
         : text;
     final Widget child = switch (kind) {
       'stock-mask' || 'stock-mask-bounded' => ShaderMask(
-        shaderCallback: (bounds) => LinearGradient(
-          colors: [source, source],
-        ).createShader(bounds),
+        shaderCallback: (bounds) =>
+            LinearGradient(colors: [source, source]).createShader(bounds),
         blendMode: BlendMode.srcATop,
         child: content,
       ),
@@ -452,15 +451,17 @@ Future<List<Map<String, Object?>>> _controls(
       final metadata = File(
         '$output/about-control-$kind-phase$phase-source.json',
       );
-      metadata.writeAsStringSync(jsonEncode({
-        'source': 'actual AboutView resolved RenderParagraph',
-        'transform': transform,
-        'controlTransform': control
-            .getTransformTo(controlBoundary)
-            .storage
-            .toList(),
-        'size': size.toString(),
-      }));
+      metadata.writeAsStringSync(
+        jsonEncode({
+          'source': 'actual AboutView resolved RenderParagraph',
+          'transform': transform,
+          'controlTransform': control
+              .getTransformTo(controlBoundary)
+              .storage
+              .toList(),
+          'size': size.toString(),
+        }),
+      );
     }
   }
   return results;
