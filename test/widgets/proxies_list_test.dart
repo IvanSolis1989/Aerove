@@ -20,7 +20,6 @@ import 'package:material_ui/material_ui.dart';
 
 import '../helpers/test_app.dart';
 import '../helpers/test_profiles.dart';
-import '../helpers/scrollbar.dart';
 
 class _RecordingProxiesAction extends ProxiesAction {
   static final List<String> tested = [];
@@ -219,19 +218,40 @@ void main() {
                     )
                   : null,
             );
-            final viewport = find
-                .byType(tab ? GridView : CustomScrollView)
-                .first;
-            final scrollable = find
-                .descendant(of: viewport, matching: find.byType(Scrollable))
-                .first;
+            final scrollable = tab
+                ? find.descendant(
+                    of: find.byType(GridView).first,
+                    matching: find.byType(Scrollable),
+                  ).first
+                : groupScroll('G0');
+            final viewport = tab
+                ? find.byType(GridView).first
+                : find.ancestor(
+                    of: scrollable,
+                    matching: find.byType(CustomScrollView),
+                  ).first;
+            final bar = find.ancestor(
+              of: scrollable,
+              matching: find.byType(CommonScrollBar),
+            ).first;
+            final paint = find.descendant(
+              of: bar,
+              matching: find.byWidgetPredicate(
+                (widget) =>
+                    widget is CustomPaint &&
+                    widget.foregroundPainter is ScrollbarPainter,
+              ),
+            ).first;
+            ScrollbarPainter painter() =>
+                tester.widget<CustomPaint>(paint).foregroundPainter!
+                    as ScrollbarPainter;
             final position = tester.state<ScrollableState>(scrollable).position;
             double opacity() =>
-                scrollbarPainter(tester).fadeoutOpacityAnimation.value;
+                painter().fadeoutOpacityAnimation.value;
             expect(position.maxScrollExtent, greaterThan(100));
             expect(
               tester
-                  .widget<CommonScrollBar>(find.byType(CommonScrollBar).first)
+                  .widget<CommonScrollBar>(bar)
                   .thumbVisibility,
               isFalse,
             );
@@ -253,9 +273,31 @@ void main() {
             await tester.pump();
             await tester.pump(const Duration(milliseconds: 300));
             expect(opacity(), 1);
-            final thumb = await revealScrollbarThumb(
-              tester,
-              scrollable: scrollable,
+            final pixels = position.pixels;
+            position.jumpTo(pixels > 0 ? pixels - 1 : pixels + 1);
+            position.jumpTo(pixels);
+            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 300));
+            final box = tester.renderObject<RenderBox>(paint);
+            final x = box.size.width - 5;
+            double? thumbTop;
+            double? thumbBottom;
+            for (var y = 0.0; y < box.size.height; y++) {
+              if (painter().hitTestOnlyThumbInteractive(
+                Offset(x, y),
+                PointerDeviceKind.mouse,
+              )) {
+                thumbTop ??= y;
+                thumbBottom = y;
+              }
+            }
+            expect(
+              thumbTop,
+              isNotNull,
+              reason: 'no visible group scrollbar thumb',
+            );
+            final thumb = box.localToGlobal(
+              Offset(x, (thumbTop! + thumbBottom!) / 2),
             );
             if (Theme.of(tester.element(viewport)).platform ==
                 TargetPlatform.macOS) {
@@ -266,7 +308,7 @@ void main() {
               await mouse.moveTo(thumb);
               await tester.pump();
               await tester.pump(const Duration(milliseconds: 150));
-              expect(scrollbarPainter(tester).thickness, 10);
+              expect(painter().thickness, 10);
               await mouse.removePointer();
               await tester.pump(const Duration(milliseconds: 150));
             }

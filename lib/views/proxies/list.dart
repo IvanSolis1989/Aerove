@@ -759,17 +759,23 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
                   sliver: SliverToBoxAdapter(
                     child: SizedBox(
                       height: bodyExtent,
-                      child: CustomScrollView(
-                        key: PageStorageKey(('proxy-group', groupName)),
-                        controller: _scrollController,
-                        primary: false,
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        slivers: [
-                          _rows!,
-                          const SliverToBoxAdapter(
-                            child: SizedBox(height: _lastRowGrowth),
+                      child: FloatingBarScope(
+                        inset: 0,
+                        child: CommonScrollBar(
+                          controller: _scrollController,
+                          child: CustomScrollView(
+                            key: PageStorageKey(('proxy-group', groupName)),
+                            controller: _scrollController,
+                            primary: false,
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            slivers: [
+                              _rows!,
+                              const SliverToBoxAdapter(
+                                child: SizedBox(height: _lastRowGrowth),
+                              ),
+                            ],
                           ),
-                        ],
+                        ),
                       ),
                     ),
                   ),

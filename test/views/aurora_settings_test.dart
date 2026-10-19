@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:fl_clash/common/app_localizations.dart';
+import 'package:fl_clash/common/aurora_rotation.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/app.dart';
@@ -233,7 +234,7 @@ void main() {
     expect(readTheme().auroraSeed, isNot(original.auroraSeed));
     expect(readTheme().auroraColors, original.auroraColors);
     final now = DateTime.now();
-    expect(readTheme().auroraRotationMonth, now.year * 100 + now.month);
+    expect(readTheme().auroraRotationDay, auroraRotationDayOf(now));
     final seed = readTheme().auroraSeed;
     await tester.pumpAndSettle();
     expect(readTheme().auroraSeed, seed);

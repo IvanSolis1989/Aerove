@@ -3,8 +3,11 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:fl_clash/ui/foreground_ink.dart';
+import 'package:fl_clash/ui/inherited.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/scaffold.dart';
+import 'package:fl_clash/ui/sheet.dart';
 import 'package:fl_clash/ui/view_scope.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -27,7 +30,7 @@ void main() {
     for (final enabled in [false, true]) {
       for (final highContrast in [false, true]) {
         testWidgets(
-          'page title shadow $brightness glass=$enabled contrast=$highContrast',
+          'page title has no shadow or stroke $brightness glass=$enabled contrast=$highContrast',
           (tester) async {
             await _titleScene(
               tester,
@@ -36,29 +39,8 @@ void main() {
               highContrast: highContrast,
             );
             final bar = tester.widget<AppBar>(find.byType(AppBar));
-            final shadows = bar.titleTextStyle!.shadows;
-            if (enabled && !highContrast) {
-              expect(shadows, hasLength(2));
-              final shadow = shadows!.first;
-              expect(
-                shadow.color,
-                brightness == Brightness.light
-                    ? const Color(0xE6FFFFFF)
-                    : const Color(0xD9000000),
-              );
-              expect(shadow.blurRadius, 2);
-              expect(shadow.offset, Offset.zero);
-              expect(shadows.last.blurRadius, 5);
-              expect(shadows.last.offset, Offset.zero);
-              expect(
-                shadows.last.color,
-                brightness == Brightness.light
-                    ? const Color(0x99FFFFFF)
-                    : const Color(0x8C000000),
-              );
-            } else {
-              expect(shadows, isNull);
-            }
+            expect(bar.titleTextStyle!.shadows, isNull);
+            expect(bar.titleTextStyle!.foreground?.style, isNot(PaintingStyle.stroke));
             final bodyStyle = DefaultTextStyle.of(
               tester.element(find.text('Body text 0')),
             ).style;
@@ -69,8 +51,41 @@ void main() {
       }
     }
 
+    testWidgets('all header title paths have no added effects $brightness', (tester) async {
+      for (final role in ['main', 'secondary', 'sheet', 'custom']) {
+        await tester.pumpWidget(TestApp(
+          includeNavigatorKey: false,
+          theme: ThemeData(brightness: brightness, platform: TargetPlatform.android),
+          child: ViewScope(
+            size: const Size(390, 600),
+            isMobile: true,
+            child: LiquidGlassScope(
+              enabled: true,
+              child: SheetProvider(
+                type: role == 'sheet' ? SheetType.bottomSheet : SheetType.page,
+                child: CommonScaffold(
+                  title: role == 'custom' ? null : 'Heading $role',
+                  titleWidget: role == 'custom' ? const GlassText('Heading custom') : null,
+                  backAction: role == 'secondary' ? () {} : null,
+                  body: const SizedBox(height: 240),
+                ),
+              ),
+            ),
+          ),
+        ));
+        await tester.pumpAndSettle();
+        final text = tester.element(find.text('Heading $role'));
+        final style = DefaultTextStyle.of(text).style;
+        expect(style.shadows, anyOf(isNull, isEmpty), reason: role);
+        expect(style.foreground?.style, isNot(PaintingStyle.stroke), reason: role);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      }
+    });
+
     for (final scroll in [0.0, 128.0]) {
-      testWidgets('real title halo is local over $brightness content at $scroll', (
+      testWidgets('real title has no halo over $brightness content at $scroll', (
         tester,
       ) async {
         final background = await _titleScene(
@@ -96,7 +111,7 @@ void main() {
         final baseline = await _titleScene(
           tester,
           brightness: brightness,
-          shadow: false,
+          defaultTitle: false,
           scroll: scroll,
           name: 'title-${brightness.name}-$scroll-reference',
         );
@@ -104,7 +119,7 @@ void main() {
           tester,
           brightness: brightness,
           scroll: scroll,
-          name: 'title-${brightness.name}-$scroll-shadow',
+          name: 'title-${brightness.name}-$scroll-actual',
         );
         final boundary = tester.getRect(
           find.byKey(const ValueKey('title-capture')),
@@ -158,9 +173,9 @@ void main() {
             if (!effect.contains(Offset(x + 0.5, y + 0.5))) outside++;
           }
         }
-        expect(changed, greaterThan(0));
+        expect(changed, 0);
         expect(ringSamples, greaterThan(0));
-        expect(afterContrast, greaterThan(beforeContrast));
+        expect(afterContrast, beforeContrast);
         final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
         if (output != null) {
           await tester.runAsync(
@@ -189,16 +204,15 @@ void main() {
           expect(overlapSamples, greaterThan(0));
           expect(
             overlapAfter / overlapBefore,
-            greaterThanOrEqualTo(1.25),
-            reason:
-                'Overlapping body text requires at least 25% stronger glyph-edge contrast.',
+            1,
+            reason: 'Titles retain their glyph contrast without an added halo.',
           );
         }
         expect(
           outside,
           0,
           reason:
-              'Title shadows must not add a strip, scrim or body text effect.',
+              'Titles must not add a strip, scrim or body text effect.',
         );
         expect(tester.takeException(), isNull);
       });
@@ -211,7 +225,7 @@ Future<Uint8List> _titleScene(
   required Brightness brightness,
   bool enabled = true,
   bool highContrast = false,
-  bool shadow = true,
+  bool defaultTitle = true,
   bool glyphMask = false,
   bool hideTitle = false,
   double scroll = 0,
@@ -259,7 +273,7 @@ Future<Uint8List> _titleScene(
         ),
       ),
       child: CommonScaffold(
-        title: shadow && !glyphMask && !hideTitle ? 'Page heading' : null,
+        title: defaultTitle && !glyphMask && !hideTitle ? 'Page heading' : null,
         titleWidget: glyphMask || hideTitle
             ? Text(
                 'Page heading',
@@ -268,9 +282,9 @@ Future<Uint8List> _titleScene(
                   color: glyphMask ? Colors.white : Colors.transparent,
                 ),
               )
-            : shadow
+            : defaultTitle
             ? null
-            : const Text('Page heading', style: TextStyle(shadows: [])),
+            : const GlassText('Page heading', style: TextStyle(shadows: [])),
         body: DefaultTextStyle(
           style: TextStyle(
             fontFamily: 'PageTitleProbe',

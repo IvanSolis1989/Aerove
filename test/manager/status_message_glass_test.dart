@@ -57,41 +57,44 @@ void main() {
           final glass = enabled && !highContrast;
           try {
             await tester.pumpWidget(
-              RepaintBoundary(
-                key: captureKey,
-                child: LiquidGlassScope(
-                  enabled: enabled,
-                  quality: quality,
-                  child: LiquidGlassHost(
-                    enabled: glass,
-                    wallpaperOnly: true,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        Positioned.fill(
-                          child: LiquidGlassColorField(
-                            child: LiquidGlassColorSource(
-                              child: ValueListenableBuilder<Color>(
-                                valueListenable: source,
-                                builder: (_, color, _) =>
-                                    ColoredBox(color: color),
+              Directionality(
+                textDirection: TextDirection.ltr,
+                child: RepaintBoundary(
+                  key: captureKey,
+                  child: LiquidGlassScope(
+                    enabled: enabled,
+                    quality: quality,
+                    child: LiquidGlassHost(
+                      enabled: glass,
+                      wallpaperOnly: true,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          Positioned.fill(
+                            child: LiquidGlassColorField(
+                              child: LiquidGlassColorSource(
+                                child: ValueListenableBuilder<Color>(
+                                  valueListenable: source,
+                                  builder: (_, color, _) =>
+                                      ColoredBox(color: color),
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                        TestApp(
-                          includeNavigatorKey: false,
-                          wrapInProviderScope: true,
-                          overrides: [
-                            isMobileViewProvider.overrideWithValue(true),
-                          ],
-                          theme: ThemeData(
-                            brightness: brightness,
-                            fontFamily: 'StatusGlassProbe',
+                          TestApp(
+                            includeNavigatorKey: false,
+                            wrapInProviderScope: true,
+                            overrides: [
+                              isMobileViewProvider.overrideWithValue(true),
+                            ],
+                            theme: ThemeData(
+                              brightness: brightness,
+                              fontFamily: 'StatusGlassProbe',
+                            ),
+                            child: const StatusManager(child: SizedBox.expand()),
                           ),
-                          child: const StatusManager(child: SizedBox.expand()),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),

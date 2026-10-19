@@ -2,8 +2,15 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:fl_clash/models/models.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleState;
 
-int _monthOf(DateTime date) => date.year * 100 + date.month;
+int auroraRotationDayOf(DateTime now) {
+  final local = now.toLocal();
+  final day = local.hour < 5
+      ? DateTime(local.year, local.month, local.day - 1)
+      : local;
+  return day.year * 10000 + day.month * 100 + day.day;
+}
 
 ThemeProps shuffleAuroraWallpaper(
   ThemeProps theme, {
@@ -11,32 +18,29 @@ ThemeProps shuffleAuroraWallpaper(
   Random? random,
 }) {
   if (!theme.auroraEnabled) return theme;
-  final month = _monthOf(now ?? DateTime.now());
+  final day = auroraRotationDayOf(now ?? DateTime.now());
   return theme.copyWith(
     auroraSeed:
         (theme.auroraSeed + 1 + (random ?? Random()).nextInt(0x3ffffffe)) %
         0x7fffffff,
-    auroraRotationMonth: max(theme.auroraRotationMonth, month),
+    auroraRotationDay: max(theme.auroraRotationDay, day),
   );
 }
 
-ThemeProps rotateAuroraForMonth(
+ThemeProps rotateAuroraForDay(
   ThemeProps theme,
   DateTime now, {
   Random? random,
 }) {
-  final month = _monthOf(now);
-  if (theme.auroraRotationMonth == 0) {
-    return theme.copyWith(auroraRotationMonth: month);
-  }
-  if (!theme.auroraEnabled || month <= theme.auroraRotationMonth) {
+  if (!theme.auroraEnabled ||
+      auroraRotationDayOf(now) <= theme.auroraRotationDay) {
     return theme;
   }
   return shuffleAuroraWallpaper(theme, now: now, random: random);
 }
 
-class AuroraMonthlyRotation {
-  AuroraMonthlyRotation({
+class AuroraDailyRotation {
+  AuroraDailyRotation({
     required this.onCheck,
     DateTime Function()? now,
     Timer Function(Duration, void Function())? schedule,
@@ -47,32 +51,58 @@ class AuroraMonthlyRotation {
   final DateTime Function() _now;
   final Timer Function(Duration, void Function()) _schedule;
   Timer? _timer;
-  bool _active = false;
+  bool _background = false;
+  bool _backgroundReady = false;
+  bool _detached = false;
   bool _disposed = false;
 
-  void setActive(bool active) {
+  void initialize(AppLifecycleState? state) {
     if (_disposed) return;
-    _active = active;
-    if (active) {
-      check();
-    } else {
-      _timer?.cancel();
-      _timer = null;
+    _setLifecycle(state);
+    _backgroundReady = false;
+    check();
+  }
+
+  void _setLifecycle(AppLifecycleState? state) {
+    _background =
+        state == AppLifecycleState.hidden || state == AppLifecycleState.paused;
+    _detached = state == AppLifecycleState.detached;
+  }
+
+  void setLifecycle(AppLifecycleState? state) {
+    if (_disposed) return;
+    final previousBackground = _background;
+    _setLifecycle(state);
+    if (!_background) {
+      _backgroundReady = false;
+    } else if (!previousBackground) {
+      _backgroundReady = true;
     }
+    check();
+  }
+
+  void _onTimer() {
+    if (_background) _backgroundReady = true;
+    check();
   }
 
   void check() {
-    if (!_active || _disposed) return;
-    final now = _now();
-    onCheck(now);
+    if (_disposed) return;
     _timer?.cancel();
-    final nextMonth = DateTime(now.year, now.month + 1);
-    _timer = _schedule(nextMonth.difference(now), check);
+    _timer = null;
+    if (_detached) return;
+    final now = _now().toLocal();
+    if (_background && _backgroundReady) onCheck(now);
+    final today = DateTime(now.year, now.month, now.day, 5);
+    final next = now.isBefore(today)
+        ? today
+        : DateTime(now.year, now.month, now.day + 1, 5);
+    _timer = _schedule(next.difference(now), _onTimer);
   }
 
   void dispose() {
     _disposed = true;
-    _active = false;
+    _background = false;
     _timer?.cancel();
     _timer = null;
   }

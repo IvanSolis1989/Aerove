@@ -700,10 +700,6 @@ class CommonScaffoldState extends State<CommonScaffold> {
     final titleStyle = compactTitle
         ? AppTextStyle.headline.of(context)
         : AppTextStyle.pageTitle.of(context);
-    final titleShadow =
-        !isCompact &&
-        LiquidGlassScope.of(context) &&
-        !MediaQuery.highContrastOf(context);
     final titleEndInset = appBarActionInset(
       _isCompactBar(context, isMobileView),
     );
@@ -730,32 +726,7 @@ class CommonScaffoldState extends State<CommonScaffold> {
                       isCompact || !_isSearch || LiquidGlassScope.of(context),
                   toolbarHeight: isCompact ? sheetToolbarHeight : null,
                   centerTitle: isCompact,
-                  titleTextStyle: _isSearch
-                      ? null
-                      : titleShadow
-                      ? titleStyle.copyWith(
-                          shadows: [
-                            context.colorScheme.brightness == Brightness.light
-                                ? const Shadow(
-                                    color: Color(0xE6FFFFFF),
-                                    blurRadius: 2,
-                                  )
-                                : const Shadow(
-                                    color: Color(0xD9000000),
-                                    blurRadius: 2,
-                                  ),
-                            context.colorScheme.brightness == Brightness.light
-                                ? const Shadow(
-                                    color: Color(0x99FFFFFF),
-                                    blurRadius: 5,
-                                  )
-                                : const Shadow(
-                                    color: Color(0x8C000000),
-                                    blurRadius: 5,
-                                  ),
-                          ],
-                        )
-                      : titleStyle,
+                  titleTextStyle: _isSearch ? null : titleStyle,
                   leading: leading,
                   // The leading slot already trails its button by a margin.
                   titleSpacing: leading == null ? null : 0,

@@ -248,89 +248,92 @@ void main() {
             fontFamily: 'SheetSearchProbe',
           );
           await tester.pumpWidget(
-            RepaintBoundary(
-              key: captureKey,
-              child: LiquidGlassScope(
-                enabled: true,
-                quality: quality,
-                child: LiquidGlassHost(
+            Directionality(
+              textDirection: TextDirection.ltr,
+              child: RepaintBoundary(
+                key: captureKey,
+                child: LiquidGlassScope(
                   enabled: true,
-                  wallpaperOnly: true,
-                  child: Stack(
-                    children: [
-                      const Positioned.fill(
-                        child: LiquidGlassColorField(
-                          child: LiquidGlassColorSource(
-                            child: ColoredBox(color: Color(0xFF88BBAA)),
+                  quality: quality,
+                  child: LiquidGlassHost(
+                    enabled: true,
+                    wallpaperOnly: true,
+                    child: Stack(
+                      children: [
+                        const Positioned.fill(
+                          child: LiquidGlassColorField(
+                            child: LiquidGlassColorSource(
+                              child: ColoredBox(color: Color(0xFF88BBAA)),
+                            ),
                           ),
                         ),
-                      ),
-                      TestApp(
-                        includeNavigatorKey: false,
-                        overrides: [
-                          viewSizeProvider.overrideWithBuild((_, _) => size),
-                        ],
-                        theme: theme.copyWith(
-                          inputDecorationTheme: theme.inputDecorationTheme
-                              .copyWith(
-                                enabledBorder: inheritedBorder,
-                                disabledBorder: inheritedBorder,
-                                errorBorder: inheritedBorder,
-                                focusedErrorBorder: inheritedBorder,
-                              ),
-                        ),
-                        child: Scaffold(
-                          backgroundColor: Colors.transparent,
-                          body: Stack(
-                            children: [
-                              const Positioned(
-                                left: 20,
-                                right: 20,
-                                bottom: 34,
-                                child: Text('HOME DOCK  HOME DOCK  HOME DOCK'),
-                              ),
-                              Builder(
-                                builder: (context) => TextButton(
-                                  onPressed: () => Navigator.of(context).push<void>(
-                                    SnapSheetRoute<void>(
-                                      barrierLabel: 'Close sheet',
-                                      detents: const [0.7, 1],
-                                      builder: (_, controller) =>
-                                          CommonScaffold(
-                                            title: 'title',
-                                            searchState: AppBarSearchState(
-                                              onSearch: queries.add,
-                                            ),
-                                            body: Builder(
-                                              builder: (bodyContext) =>
-                                                  ListView.builder(
-                                                    controller: controller,
-                                                    padding: EdgeInsets.only(
-                                                      top: sheetAppBarHeight,
-                                                      bottom:
-                                                          BottomInsetScope.of(
-                                                            bodyContext,
+                        TestApp(
+                          includeNavigatorKey: false,
+                          overrides: [
+                            viewSizeProvider.overrideWithBuild((_, _) => size),
+                          ],
+                          theme: theme.copyWith(
+                            inputDecorationTheme: theme.inputDecorationTheme
+                                .copyWith(
+                                  enabledBorder: inheritedBorder,
+                                  disabledBorder: inheritedBorder,
+                                  errorBorder: inheritedBorder,
+                                  focusedErrorBorder: inheritedBorder,
+                                ),
+                          ),
+                          child: Scaffold(
+                            backgroundColor: Colors.transparent,
+                            body: Stack(
+                              children: [
+                                const Positioned(
+                                  left: 20,
+                                  right: 20,
+                                  bottom: 34,
+                                  child: Text('HOME DOCK  HOME DOCK  HOME DOCK'),
+                                ),
+                                Builder(
+                                  builder: (context) => TextButton(
+                                    onPressed: () => Navigator.of(context).push<void>(
+                                      SnapSheetRoute<void>(
+                                        barrierLabel: 'Close sheet',
+                                        detents: const [0.7, 1],
+                                        builder: (_, controller) =>
+                                            CommonScaffold(
+                                              title: 'title',
+                                              searchState: AppBarSearchState(
+                                                onSearch: queries.add,
+                                              ),
+                                              body: Builder(
+                                                builder: (bodyContext) =>
+                                                    ListView.builder(
+                                                      controller: controller,
+                                                      padding: EdgeInsets.only(
+                                                        top: sheetAppBarHeight,
+                                                        bottom:
+                                                            BottomInsetScope.of(
+                                                              bodyContext,
+                                                            ),
+                                                      ),
+                                                      itemCount: 60,
+                                                      itemExtent: 40,
+                                                      itemBuilder: (_, index) =>
+                                                          Text(
+                                                            'Sheet row $index',
                                                           ),
                                                     ),
-                                                    itemCount: 60,
-                                                    itemExtent: 40,
-                                                    itemBuilder: (_, index) =>
-                                                        Text(
-                                                          'Sheet row $index',
-                                                        ),
-                                                  ),
+                                              ),
                                             ),
-                                          ),
+                                      ),
                                     ),
+                                    child: const Text('open'),
                                   ),
-                                  child: const Text('open'),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),

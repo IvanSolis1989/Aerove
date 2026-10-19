@@ -24,22 +24,28 @@ class AppStateManager extends ConsumerStatefulWidget {
 
 class _AppStateManagerState extends ConsumerState<AppStateManager>
     with WidgetsBindingObserver {
-  late final AuroraMonthlyRotation _auroraRotation;
+  late final AuroraDailyRotation _auroraRotation;
 
   @override
   void initState() {
     super.initState();
-    _auroraRotation = AuroraMonthlyRotation(
-      onCheck: (now) => ref
-          .read(themeSettingProvider.notifier)
-          .update((theme) => rotateAuroraForMonth(theme, now)),
+    _auroraRotation = AuroraDailyRotation(
+      onCheck: (now) {
+        final previous = ref.read(themeSettingProvider);
+        ref
+            .read(themeSettingProvider.notifier)
+            .update((theme) => rotateAuroraForDay(theme, now));
+        if (ref.read(themeSettingProvider) != previous) {
+          unawaited(ref.read(storeActionProvider.notifier).savePreferencesNow());
+        }
+      },
     );
     WidgetsBinding.instance.addObserver(this);
     // A desktop build started to the tray mounts while hidden, and a paused
     // render never runs a post-frame callback.
     scheduleMicrotask(() {
       if (mounted) {
-        _updateVisible(WidgetsBinding.instance.lifecycleState);
+        _updateVisible(WidgetsBinding.instance.lifecycleState, initialize: true);
       }
     });
     ref.listenManual(configProvider, (prev, next) {
@@ -82,7 +88,7 @@ class _AppStateManagerState extends ConsumerState<AppStateManager>
     super.dispose();
   }
 
-  void _updateVisible(AppLifecycleState? state) {
+  void _updateVisible(AppLifecycleState? state, {bool initialize = false}) {
     ref.read(appVisibleProvider.notifier).value = switch (state) {
       null || AppLifecycleState.resumed => true,
       AppLifecycleState.inactive ||
@@ -90,7 +96,11 @@ class _AppStateManagerState extends ConsumerState<AppStateManager>
       AppLifecycleState.paused ||
       AppLifecycleState.detached => false,
     };
-    _auroraRotation.setActive(ref.read(appVisibleProvider));
+    if (initialize) {
+      _auroraRotation.initialize(state);
+    } else {
+      _auroraRotation.setLifecycle(state);
+    }
   }
 
   @override

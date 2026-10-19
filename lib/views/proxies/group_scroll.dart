@@ -1,18 +1,29 @@
 import 'dart:math';
 
 import 'package:fl_clash/ui/scroll_behavior.dart';
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 
-class ProxyGroupScrollController extends ScrollController {
+class ProxyGroupScrollController extends ScrollController
+    with SheetScrollController {
   ProxyGroupScrollController({required this.outer, required this.anchor});
 
   final ScrollController outer;
   final double Function() anchor;
   double _lastPixels = 0;
 
-  double get contentOffset => hasClients ? offset : _lastPixels;
+  double get contentOffset =>
+      hasClients && position.hasPixels ? offset : _lastPixels;
+
+  @override
+  ValueListenable<bool> get sheetOpen {
+    final controller = outer;
+    return controller is SheetScrollController
+        ? controller.sheetOpen
+        : const AlwaysStoppedAnimation(true);
+  }
 
   @override
   void detach(ScrollPosition position) {
@@ -104,7 +115,10 @@ class _GroupScrollPosition extends ScrollPositionWithSingleContext {
   }
 
   double _consume(double delta) {
-    if (!outer.hasClients || !outer.position.hasContentDimensions) {
+    if (!hasPixels || !hasContentDimensions) return delta;
+    if (!outer.hasClients ||
+        !outer.position.hasPixels ||
+        !outer.position.hasContentDimensions) {
       return _moveInner(delta);
     }
     final position = outer.position;
@@ -182,12 +196,19 @@ class _GroupScrollPosition extends ScrollPositionWithSingleContext {
 
   @override
   double setPixels(double newPixels) {
+    if (!hasPixels || !hasContentDimensions) {
+      goIdle();
+      return hasPixels ? newPixels - pixels : 0;
+    }
     if (activity is BallisticScrollActivity && _ballisticPixels != null) {
       // The simulation advances a combined distance, not the inner offset.
       final delta = newPixels - _ballisticPixels!;
       _ballisticPixels = newPixels;
       final remaining = _consume(delta);
       if (outer.hasClients &&
+          outer.position.hasPixels &&
+          outer.position.hasContentDimensions &&
+          outer.position.hasViewportDimension &&
           ((delta > 0 && pixels >= maxScrollExtent) ||
               (delta < 0 && pixels <= minScrollExtent))) {
         final velocity = activity!.velocity;
@@ -205,7 +226,14 @@ class _GroupScrollPosition extends ScrollPositionWithSingleContext {
   @override
   void goBallistic(double velocity) {
     _ballisticPixels = null;
-    if (!outer.hasClients || !hasContentDimensions) {
+    if (!hasPixels || !hasContentDimensions || !hasViewportDimension) {
+      goIdle();
+      return;
+    }
+    if (!outer.hasClients ||
+        !outer.position.hasPixels ||
+        !outer.position.hasContentDimensions ||
+        !outer.position.hasViewportDimension) {
       super.goBallistic(velocity);
       return;
     }

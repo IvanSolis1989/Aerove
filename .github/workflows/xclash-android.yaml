@@ -196,6 +196,7 @@ jobs:
           tests+=(test/android_tv_launcher_icon_test.dart test/android_branding_assets_test.dart test/widgets/scrollbar_inset_test.dart test/lint/dead_file_test.dart)
           tests+=(test/pages/tablet_sidebar_bounds_test.dart test/widgets/sidebar_test.dart test/widgets/sidebar_glass_test.dart)
           tests+=(test/widgets/header_button_glass_test.dart test/widgets/sheet_search_test.dart test/manager/status_message_glass_test.dart test/manager/status_manager_test.dart test/widgets/skeleton_test.dart)
+          tests+=(test/common/aurora_rotation_test.dart test/manager/aurora_rotation_test.dart test/providers/store_action_test.dart test/views/aurora_settings_test.dart)
           tests+=(test/widgets/glass_cache_lifecycle_test.dart test/common/task_test.dart test/widgets/icon_loading_test.dart test/views/icon_sets_view_test.dart test/common/update_download_test.dart test/plugins/update_download_test.dart test/widgets/update_dialog_test.dart)
           reported_status=0
           flutter test --enable-impeller --reporter expanded "${tests[@]}" || reported_status=1

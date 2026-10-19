@@ -478,7 +478,7 @@ abstract class ThemeProps with _$ThemeProps {
     @Default([0xFF65BDD2, 0xFFC589CA, 0xFF75CCA8])
     List<int> auroraColors,
     @Default(271828) int auroraSeed,
-    @Default(0) int auroraRotationMonth,
+    @Default(0) int auroraRotationDay,
     @Default(TextScale()) TextScale textScale,
     // `fontFamily` held the names of a removed enum, which old configs may
     // still carry.

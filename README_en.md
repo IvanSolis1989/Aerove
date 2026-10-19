@@ -5,56 +5,43 @@
 
 [简体中文](README.md) · **English**
 
-Aerove is an independent fork of [FlClash](https://github.com/chen08209/FlClash). Thanks to the upstream authors and contributors for the foundation. FlClash already includes Material You styling, glass levels, proxy groups, and connection records; Aerove extends the wallpaper and interface and changes some Android defaults and release behavior. Appearance may vary by device.
+Aerove is an independent fork of [FlClash](https://github.com/chen08209/FlClash). Thanks to the upstream authors and contributors for the foundation. It retains FlClash's proxy capabilities and improves personalization, long-list browsing, initial setup, and Android updates.
 
-## What changes in Aerove
+## What Aerove adds to FlClash
 
-### Themes and text
+The baseline is the FlClash `v0.9.1` revision recorded by this fork. Material You, glass levels, continuous corners, proxy groups, and connection monitoring already come from upstream; the following describes Aerove's extensions and optimizations. See the [Aerove changelog (Chinese)](docs/CHANGELOG_Aerove.md) for version-specific fixes, pending changes, and release scope.
 
-- Choose 1–3 colors for the gradient wallpaper and tap **New wallpaper** to change its composition. Your palette and current wallpaper are saved. The wallpaper changes on the first day of each month while the app is open; if it is closed then, it changes the next time you open the app.
-- Fresh installs start with the aurora wallpaper and Ultra Glass. Switching to an ordinary theme color restores the regular palette; glass quality can be changed separately. High-contrast and pure-black dark modes use opaque surfaces.
-- Light/dark mode can follow the system or be selected manually. Font choices come from fonts installed on the device; Aerove does not include MiSans.
-- Text and UI icons on light glass have clearer, more vivid colors with a restrained luminous feel, while remaining distinct from the light background.
-- Dashboards, proxy groups, cards, buttons, selectors, fields, navigation bars, menus, popups, the editor, and forms use coordinated background, text, icon, status, and touch-feedback colors. Devices without full glass support show a simpler frosted appearance.
-- When several glass panels show the same background, the effect looks consistent across them and avoids repeating the same background work for each panel.
-- The About page title is fully visible without being clipped vertically.
-- App rows and dots in the memory card also follow the wallpaper colors, while Core keeps its distinct color.
-- Loading information reserves transparent space instead of showing solid placeholder blocks, preserving the layout in light and dark modes.
+### A flowing wallpaper you can personalize
 
-### Sheets, scrolling, and wallpaper motion
+- Generate a gradient wallpaper from 1–3 colors and tap **New wallpaper** to change its composition. The palette and composition persist. A pending update changes automatic rotation to a daily local 05:00 boundary, applying it silently in the background without interrupting browsing.
+- Aurora wallpaper and Ultra Glass are the defaults. Switching to an ordinary theme color restores the regular palette; glass strength can be adjusted separately. Brightness can follow the system or be selected manually, while high-contrast and pure-black dark modes keep opaque surfaces.
+- Glass extends across dashboards, proxy groups, cards, buttons, selectors, fields, navigation, menus, popups, the editor, and forms. Text, icons, and interaction feedback coordinate with the background while status messages retain distinct colors.
+- Fonts come from those available on your device; Aerove does not bundle MiSans. Devices without full glass support use a simpler frosted appearance.
 
-- Bottom, snap, side, and form sheets no longer add a separate gradient blur overlay at the top. Their titles, drag handles, standalone glass buttons, and glass sheet surfaces remain. The page is not dimmed; tapping outside still closes a sheet, and taps do not reach controls below it.
-- The main page still has gradient glass at the top. Fully covered areas pause the live effects beneath them, while blurred text, icons, and interface remain visible through the glass and its translucent transition. Glass edges blend more smoothly, reducing sudden color patches while scrolling.
-- Header buttons show only their icons at the top of the page. Clear glass backgrounds fade in as content scrolls beneath the header and fade out on returning to the top, while tap targets stay the same size.
-- Search fields at the bottom of snap sheets reduce refracted ghosts of the underlying interface and no longer add a heavy black focus outline. Search and list controls stay accessible above the keyboard.
-- In-app notices, including VPN configuration changes, use clear glass while preserving their message colors and actions. High-contrast and no-glass modes retain opaque surfaces.
-- Wallpaper light and shadow movement is more noticeable. If taking a screenshot briefly makes the app inactive, the current image stays on screen to avoid a black flash during the screenshot. When the app goes to the background, wallpaper motion pauses; returning to the foreground first shows the saved image, then resumes the animation.
-- The wallpaper background updates 30 times per second while idle and 15 times per second during scrolling or interaction; this changes background updates only and does not limit page scrolling.
-- Scrolling down narrows the bottom dock; icons stay the same size while labels fade out. Scrolling up, returning to the top, or changing pages restores the full dock.
-- Tablet sidebar backgrounds extend continuously to the top edge in portrait, landscape, expanded, compact, and drawer layouts, while controls stay clear of the system status bar.
-- The proxy-list scrollbar hides when scrolling stops and shows a position hint while dragging.
+### Easier continuous browsing
 
-### Proxies, records, and subscription usage
+- Scrolling down compacts the floating bottom dock, keeping icons the same size while labels fade to leave more room for content. Scrolling up, returning to the top, or changing pages restores it.
+- With many proxy groups collapsed, only nearby titles are prepared. Entries appear when expanded, with expand/collapse animations retained, reducing waits in long lists. Scrollbars stay out of the way and show a position hint while dragging.
+- Group icons avoid repeating emoji from group names, and the active exit can show a country or region flag. The dashboard centers on the active outbound; connection, request, and DNS records use consistent text hierarchy and themed presentation.
+- When valid quota data is available, a translucent fill and percentage show subscription usage. Warning colors change near or above the limit; the fill is hidden without valid quota data.
 
-- Proxy-group edges align with pinned headers, reducing jagged edges and abrupt color patches while scrolling. Group-name emoji do not repeat beside the group icon; the active exit can show a country/region flag.
-- Once an expanded group header is pinned, scrolling first moves that group's entries. At either end, scrolling passes to the outer list so browsing entries does not move the other groups.
-- When many groups stay collapsed, only titles near the screen are prepared, reducing waits while scrolling long lists. Group entries appear when expanded, and expand/collapse animations remain. Groups share node information, only a few likely icons load in advance, and off-screen items do not wait in a loading queue. If the system reclaims memory, the glass effect restores automatically when you return to the app.
-- Connection details use consistent title, value, unit, and secondary-text levels for endpoints, rules, proxy chains, and traffic. The dashboard centers on the active outbound. DNS, request, and connection records retain their upstream data and appear with Aerove's colors and styling.
-- When valid quota data is available, subscription usage shows a translucent light-blue fill, percentage, and inset curved edge. Warning colors change near or above the limit. The fill is hidden when quota data is unavailable.
+### Dynamic effects with less repeated work
 
-### Scripts and Android defaults
+- Glass panels share background processing for a consistent view of the same wallpaper. Covered areas pause unnecessary effects instead of repeatedly drawing what cannot be seen.
+- Wallpaper updates adapt to interaction and app visibility, pausing in the background. Returning to the app retains the current image before motion resumes.
+- Only a few likely icons load in advance, and groups share node information. Rebuildable graphics caches can be reclaimed and restored when the app returns to the foreground. These changes reduce repeated work without promising a particular memory reduction, frame rate, or battery saving.
 
-- Smart-Config-Kit `v6.0.20-flclash.21` is included in the app, passes an integrity check, and can be viewed offline. The Scripts page shows its source and lets you view, edit, copy, or open it, and update it manually; trying again while an update is in progress will not start another one. Source: [Smart-Config-Kit](https://github.com/IvanSolis1989/Smart-Config-Kit).
-- Newly imported ordinary subscriptions, local files, and linked profiles use the script by default. Existing and restored profiles, existing script choices, and custom profiles keep their selections. Deleting the script does not reinstall it.
-- A fresh Android install does not append system DNS. The VPN option starts enabled; system proxy, app bypass, VPN/core IPv6, and app access control start disabled; DNS hijacking starts enabled. Core defaults use rule mode with unified delay and TCP concurrent enabled. Keep-alive defaults are 30 seconds idle and 15 seconds interval. You still start the proxy connection yourself.
-- DNS bootstrap uses the four encrypted addresses listed below; business DNS, domain routing, and fallback come from the bundled script. **Reset** restores these defaults. Existing DNS is migrated only if it still matches the upstream default and has no explicit override; custom DNS is preserved.
+### A bundled script for easier setup
 
-### Aerove identity, platforms, and releases
+- An integrity-checked Smart-Config-Kit script is available offline. New ordinary subscriptions, local files, and linked profiles use it by default. Existing and restored profiles, selected scripts, and custom profiles keep their choices; deleting the script does not reinstall it.
+- The Scripts page shows its source and supports viewing, editing, copying or opening the source URL, and manual updates. Trying again during an update does not start another one. Script and subscription updates are managed separately.
+- Initial Android setup provides separate VPN, system proxy, IPv6, and DNS defaults to reduce manual setup. DNS bootstrap uses only the four encrypted addresses below; the script maintains business resolvers, routing, and fallback. Custom DNS is preserved; unchanged upstream defaults without explicit override selections are migrated.
 
-- Aerove has a new silver flowing-ribbon mark on a dark background, shared by the app icon and About page. Notifications and desktop trays use the same ribbon silhouette. Android includes regular, round, TV, and monochrome icons. Notifications show the Aerove name; the store icon, TV banner, fallback icon, and website marks also use the new identity. The system does not force the app into dark mode. Desktop window titles and startup entry points also use Aerove branding.
-- Updates and extends the Spanish, French, and Korean translations. On Android, check for updates on the About page; after an update is found, confirm to download the device-appropriate APK through the system download manager. Failed downloads can be retried. Packages support ARM64 devices running Android 7.0 or newer; desktop features vary by operating system.
-- Aerove follows reachable official FlClash stable or `-pre.N` version tags. When the upstream sync check finds no new upstream version, it makes no sync commit; updates to Aerove code can still trigger a build. Upstream changes are validated and merged normally; before release, the build is checked against the current `main`. APK versions append `-X` to the upstream version; the current stable version is `0.9.1-X`. Releases include `BUILD_INFO.json` and `SHA256SUMS`.
-- APKs use Aerove's fixed test signing key and application ID `com.follow.clash.dev`; they are not official FlClash-signed or Google Play packages. Back up your configuration before upgrading. An early test build with a signing conflict may need to be uninstalled first.
+### Aerove identity and Android updates
+
+- A silver flowing-ribbon mark identifies Aerove across the app, notifications, and desktop tray. Desktop window titles and startup entries use Aerove's name, with additional Spanish, French, and Korean text.
+- When the Android About page finds an update, confirm to download the device-appropriate APK through the system download manager; failed downloads can be retried. Packages currently target ARM64 devices running Android 7.0 or newer; desktop features vary by operating system.
+- Official upstream stable and `-pre.N` tags are validated before synchronization while preserving Aerove's changes. Releases include source information and checksums to help identify your download. See the download section and changelog for versions and signing details.
 
 Before first use, read and accept the in-app disclaimer: the software is for non-commercial and lawful use, does not provide nodes, subscriptions, or network access, and third-party content remains the user's and its provider's responsibility. The software is provided as is, without a guarantee of error-free operation or fitness for a particular purpose. Refer to the full in-app disclaimer.
 
@@ -75,6 +62,7 @@ Light and dark views with the same palette, rendered from the actual application
 Requires **Android 7.0 or newer and ARM64 (arm64-v8a)**. Allow installation from your download source and install the APK.
 Back up your configuration before upgrading. If an early test build has a conflicting signing key, back up, uninstall it, then install the new APK.
 Release assets include `SHA256SUMS` and `BUILD_INFO.json` for checking the file and its source revision.
+APKs use Aerove's fixed test signing key and application ID `com.follow.clash.dev`; they differ from official FlClash-signed and Google Play packages.
 
 ## Subscriptions and scripts
 
@@ -99,7 +87,8 @@ Open **Tools → Theme → Theme colors** and choose one mode:
 - **Random gradient wallpaper:** select **1–3 colors**, then use **New wallpaper** to change the composition. Liquid Glass switches to Ultra; only None is disabled. Standard and Ultra remain selectable.
 
 Switching back restores the ordinary palette and makes None selectable again. A manually selected glass quality is saved.
-The gradient palette and current composition persist across restarts. The wallpaper changes on the first day of each month while the app is open; if it is closed then, it changes the next time you open the app.
+The gradient palette and current composition persist across restarts.
+**Pending automatic rotation policy:** rotation becomes due at 05:00 in your phone's local time each day and is applied only while the app is truly in the background. If you are using the app then, it waits until you leave it. If the app was not running at 05:00, it catches up on the first move to the background after that day's first launch. Launching, resuming, and brief inactivity during screenshots do not change the wallpaper on screen. The app is not woken just to rotate it. **New wallpaper** still applies immediately and counts for the current daily cycle. See the [changelog (Chinese)](docs/CHANGELOG_Aerove.md) for released versus pending behavior.
 Brightness defaults to **system**, with explicit light and dark options at the top. High-contrast and dark pure-black modes use opaque surfaces.
 
 ## Default DNS
@@ -116,6 +105,7 @@ default-nameserver:
 
 Business resolvers, domain policies and fallback come from the script. Reset returns to these defaults.
 VPN HTTP proxy, VPN/core IPv6 and application bypass default to off; DNS hijacking defaults to on.
+On initial Android setup, VPN starts enabled and app access control disabled. Rule mode, unified delay, and TCP concurrent are enabled; keep-alive idle/interval are 30/15 seconds. You still start the connection yourself.
 See [network defaults](docs/network-defaults.md) for the values.
 
 ## Deploy SubStore on Cloudflare
@@ -168,11 +158,7 @@ For deployment help, see the project's [quick start](https://github.com/realchen
 
 ## Updates
 
-This repository **checks the official upstream hourly**, selecting only a valid stable or `-pre.N` tag reachable from an upstream branch.
-**When no new upstream version is available, the upstream sync check makes no sync commit; updates to Aerove code can still trigger a build.** After validating a new source, the workflow merges it normally,
-then verifies and publishes through the Android workflow. Before publication it checks that the build source still applies to the current `main`, preventing an older package from replacing a newer version. APK versions append `-X` to the upstream version: the current stable upstream `0.9.1` becomes `0.9.1-X`, while prerelease numbers remain, such as `0.9.1-pre.4-X`. Releases use this repository's fixed Android test signing key and include `BUILD_INFO.json` and `SHA256SUMS`.
-GitHub schedules may be delayed; [Releases](https://github.com/IvanSolis1989/Aerove/releases/latest) shows the available download.
-README and other documentation-only changes do not start APK builds or cancel active builds.
+This repository checks official upstream release tags hourly and validates changes before synchronization; scheduled runs may be delayed. Aerove display versions append `-X` to the upstream version. See the [Aerove changelog (Chinese)](docs/CHANGELOG_Aerove.md) for full release numbers and fixes, and [Releases](https://github.com/IvanSolis1989/Aerove/releases/latest) for the available download. Maintenance and build rules are documented in the [upstream sync guide (Chinese)](docs/upstream-sync.md).
 
 ## Report a problem
 
