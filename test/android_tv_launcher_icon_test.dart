@@ -62,12 +62,13 @@ void main() {
     final insets = [
       for (final side in ['Left', 'Top', 'Right', 'Bottom'])
         double.parse(
-          _androidAttribute(
-            foreground,
-            'inset',
-            'inset$side',
-          ).replaceAll('%', ''),
-        ) / 100,
+              _androidAttribute(
+                foreground,
+                'inset',
+                'inset$side',
+              ).replaceAll('%', ''),
+            ) /
+            100,
     ];
     final bitmap = _androidAttribute(foreground, 'bitmap', 'src');
     expect(bitmap, startsWith('@drawable/'));
