@@ -1,6 +1,11 @@
+import 'dart:io';
+import 'dart:ui' as ui;
+
 import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/ui.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -8,6 +13,12 @@ import '../helpers/glyph_finders.dart';
 import '../helpers/test_app.dart';
 
 void main() {
+  setUpAll(() async {
+    final font = FontLoader('SheetSearchProbe')
+      ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'));
+    await font.load();
+  });
+
   late List<String> queries;
 
   setUp(() => queries = []);
@@ -192,6 +203,214 @@ void main() {
     );
   });
 
+  testWidgets('high contrast search retains its opaque focus treatment', (
+    tester,
+  ) async {
+    tester.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(highContrast: true);
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    await openModalSheet(tester, glass: true);
+    final field = tester.element(find.byType(TextField));
+    final theme = InputDecorationTheme.of(field);
+    expect(theme.filled, isTrue);
+    expect(theme.fillColor!.a, 1);
+    expect(theme.focusedBorder!.borderSide.width, 2);
+    expect(
+      find.ancestor(
+        of: find.byType(SearchField),
+        matching: find.byType(LiquidGlass),
+      ),
+      findsNothing,
+    );
+  });
+
+  for (final brightness in Brightness.values) {
+    for (final quality in LiquidGlassQuality.values) {
+      testWidgets('snap search has one frosted outline across focus and IME $brightness $quality', (
+        tester,
+      ) async {
+        const size = Size(400, 900);
+        tester.view.physicalSize = size;
+        tester.view.devicePixelRatio = 1;
+        tester.view.padding = const FakeViewPadding(bottom: 34);
+        tester.view.viewPadding = const FakeViewPadding(bottom: 34);
+        addTearDown(tester.view.reset);
+        final captureKey = GlobalKey();
+        final scheme = ColorScheme.fromSeed(
+          seedColor: Colors.blue,
+          brightness: brightness,
+        ).copyWith(primary: Colors.black);
+        final inheritedBorder = AppShape.input.copyWith(
+          borderSide: const BorderSide(color: Colors.black, width: 4),
+        );
+        final theme = ThemeData(colorScheme: scheme, fontFamily: 'SheetSearchProbe');
+        await tester.pumpWidget(
+          RepaintBoundary(
+            key: captureKey,
+            child: LiquidGlassScope(
+              enabled: true,
+              quality: quality,
+              child: LiquidGlassHost(
+                enabled: true,
+                wallpaperOnly: true,
+                child: Stack(
+                  children: [
+                    const Positioned.fill(
+                      child: LiquidGlassColorField(
+                        child: LiquidGlassColorSource(
+                          child: ColoredBox(color: Color(0xFF88BBAA)),
+                        ),
+                      ),
+                    ),
+                    TestApp(
+                      includeNavigatorKey: false,
+                      overrides: [viewSizeProvider.overrideWithBuild((_, _) => size)],
+                      theme: theme.copyWith(
+                        inputDecorationTheme: theme.inputDecorationTheme.copyWith(
+                          enabledBorder: inheritedBorder,
+                          disabledBorder: inheritedBorder,
+                          errorBorder: inheritedBorder,
+                          focusedErrorBorder: inheritedBorder,
+                        ),
+                      ),
+                      child: Scaffold(
+                        backgroundColor: Colors.transparent,
+                        body: Stack(
+                          children: [
+                            const Positioned(
+                              left: 20,
+                              right: 20,
+                              bottom: 34,
+                              child: Text('HOME DOCK  HOME DOCK  HOME DOCK'),
+                            ),
+                            Builder(
+                              builder: (context) => TextButton(
+                                onPressed: () => Navigator.of(context).push<void>(
+                                  SnapSheetRoute<void>(
+                                    barrierLabel: 'Close sheet',
+                                    detents: const [0.7, 1],
+                                    builder: (_, controller) => CommonScaffold(
+                                      title: 'title',
+                                      searchState: AppBarSearchState(onSearch: queries.add),
+                                      body: Builder(
+                                        builder: (bodyContext) => ListView.builder(
+                                          controller: controller,
+                                          padding: EdgeInsets.only(
+                                            top: sheetAppBarHeight,
+                                            bottom: BottomInsetScope.of(bodyContext),
+                                          ),
+                                          itemCount: 60,
+                                          itemExtent: 40,
+                                          itemBuilder: (_, index) => Text('Sheet row $index'),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                child: const Text('open'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.tap(find.text('open'));
+        await tester.pumpAndSettle();
+        if (Platform.environment['XCLASH_REQUIRE_IMPELLER'] == 'true') {
+          expect(ui.ImageFilter.isShaderFilterSupported, isTrue);
+        }
+        if (ui.ImageFilter.isShaderFilterSupported) {
+          await tester.runAsync(() => ui.FragmentProgram.fromAsset(
+            'shaders/liquid_glass.frag',
+          ).timeout(const Duration(seconds: 30)));
+          await tester.pump();
+          expect(LiquidGlass.debugShaderReady, isTrue);
+        }
+        final search = find.byType(SearchField);
+        final panes = find.ancestor(of: search, matching: find.byType(LiquidGlass));
+        expect(panes, findsOneWidget);
+        final pane = tester.widget<LiquidGlass>(panes);
+        expect(pane.contentBackdrop, isFalse);
+        expect(pane.style.blur, 16);
+        expect(pane.style.haze, 0);
+        expect(pane.style.refraction, 0);
+        expect(pane.style.bevel, 0);
+        expect(pane.style.rim, 0);
+        expect(pane.style.hairline, 0);
+        expect(pane.style.tint.a, lessThanOrEqualTo(0.24));
+        final decoration = InputDecorationTheme.of(tester.element(find.byType(TextField)));
+        for (final border in [
+          decoration.border,
+          decoration.enabledBorder,
+          decoration.disabledBorder,
+          decoration.errorBorder,
+          decoration.focusedBorder,
+          decoration.focusedErrorBorder,
+        ]) {
+          expect(border, isA<AppInputBorder>());
+          expect(border!.borderSide, BorderSide.none);
+          expect((border as AppInputBorder).borderRadius, AppRadius.full);
+        }
+        final name = 'sheet-search-${brightness.name}-${quality.name}';
+        final bounds = tester.getRect(search);
+        expect(bounds.bottom, size.height - 34 - BottomInsetScope.dockedSearchMargin);
+        final before = await _searchFrame(tester, captureKey, '$name-unfocused');
+        final repeat = await _searchFrame(tester, captureKey, '$name-repeat');
+        await tester.tap(find.byType(TextField));
+        await tester.pumpAndSettle();
+        expect(tester.widget<TextField>(find.byType(TextField)).focusNode!.hasFocus, isTrue);
+        expect(tester.getRect(search), bounds);
+        final focused = await _searchFrame(tester, captureKey, '$name-focused');
+        final noise = _edgeDelta(before, repeat, bounds);
+        final focusDelta = _edgeDelta(before, focused, bounds);
+        expect(focusDelta, lessThanOrEqualTo(noise));
+
+        await tester.enterText(find.byType(TextField), 'wiki');
+        await tester.pumpAndSettle();
+        expect(queries.last, 'wiki');
+        await tester.tap(find.byTooltip(UiLocalizations.of(tester.element(search)).clearSearch));
+        await tester.pumpAndSettle();
+        expect(queries.last, '');
+        expect(tester.widget<TextField>(find.byType(TextField)).controller!.text, isEmpty);
+        for (final inset in [100.0, 200.0, 300.0]) {
+          tester.view.viewInsets = FakeViewPadding(bottom: inset);
+          await tester.pump();
+          await tester.pumpAndSettle();
+          expect(tester.getRect(search).bottom, lessThanOrEqualTo(size.height - inset));
+          expect(tester.getSize(search).height, BottomInsetScope.dockedSearchHeight);
+          expect(find.text('title'), findsOneWidget);
+          expect(find.byType(SheetDragHandle), findsOneWidget);
+        }
+        final shaderReadyAfterIme = LiquidGlass.debugShaderReady;
+        await _searchFrame(tester, captureKey, '$name-ime');
+        final scrolling = tester.state<ScrollableState>(find.byType(Scrollable).first).position;
+        scrolling.jumpTo(scrolling.maxScrollExtent);
+        await tester.pumpAndSettle();
+        expect(find.text('Sheet row 59'), findsOneWidget);
+        expect(tester.getRect(find.text('Sheet row 59')).bottom, lessThanOrEqualTo(tester.getRect(search).top));
+        final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+        if (output != null && output.isNotEmpty) {
+          await tester.runAsync(() async {
+            File('$output/$name.json').writeAsStringSync(
+              '{"shaderSupported":${ui.ImageFilter.isShaderFilterSupported},'
+              '"shaderReadyAfterIme":$shaderReadyAfterIme,'
+              '"focusEdgeDelta":$focusDelta,"repeatEdgeNoise":$noise}',
+            );
+          });
+        }
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump(const Duration(seconds: 2));
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
+
   testWidgets('a docked field is a pill that strokes only while focused', (
     tester,
   ) async {
@@ -319,4 +538,47 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(seconds: 2));
   });
+}
+
+Future<({List<int> rgba, int width})> _searchFrame(
+  WidgetTester tester,
+  GlobalKey key,
+  String name,
+) async {
+  final boundary = key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+  final image = boundary.toImageSync();
+  try {
+    return (await tester.runAsync(() async {
+      final bytes = (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!;
+      final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+      if (output != null && output.isNotEmpty) {
+        Directory(output).createSync(recursive: true);
+        final png = (await image.toByteData(format: ui.ImageByteFormat.png))!;
+        File('$output/$name.png').writeAsBytesSync(png.buffer.asUint8List());
+      }
+      return (rgba: bytes.buffer.asUint8List().toList(), width: image.width);
+    }))!;
+  } finally {
+    image.dispose();
+  }
+}
+
+int _edgeDelta(
+  ({List<int> rgba, int width}) a,
+  ({List<int> rgba, int width}) b,
+  Rect bounds,
+) {
+  var maxDelta = 0;
+  for (final y in [bounds.top.ceil() + 1, bounds.bottom.floor() - 2]) {
+    for (var x = (bounds.left + bounds.height).ceil();
+        x < bounds.right - bounds.height;
+        x++) {
+      for (var channel = 0; channel < 4; channel++) {
+        final index = (y * a.width + x) * 4 + channel;
+        final delta = (a.rgba[index] - b.rgba[index]).abs();
+        if (delta > maxDelta) maxDelta = delta;
+      }
+    }
+  }
+  return maxDelta;
 }

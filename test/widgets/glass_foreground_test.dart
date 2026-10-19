@@ -790,6 +790,14 @@ void main() {
         final backdrops = brightness == Brightness.dark
             ? const [Color(0xFF173940), Color(0xFF3B203B)]
             : const [Color(0xFFBDE5EC), Color(0xFFEAD0E8)];
+        const lightBaseline = {
+          'bodyLeft': Color(0xFF12606E),
+          'bodyRight': Color(0xFF80387A),
+          'glyphLeft': Color(0xFF198598),
+          'glyphRight': Color(0xFFB34EAB),
+          'titleLeft': Color(0xFF061F24),
+          'titleRight': Color(0xFF2A1228),
+        };
         final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
         final samples = <Map<String, Object?>>[];
         Future<({List<int> bytes, int width, Map<String, Rect> bounds})> render(
@@ -1036,6 +1044,52 @@ void main() {
             final painted = _pixel(actual.bytes, actual.width, point);
             final hsv = HSVColor.fromColor(painted);
             final base = HSVColor.fromColor(background);
+            final referenceName = swapped
+                ? switch (name) {
+                    'bodyLeft' => 'bodyRight',
+                    'bodyRight' => 'bodyLeft',
+                    'glyphLeft' => 'glyphRight',
+                    'glyphRight' => 'glyphLeft',
+                    'titleLeft' => 'titleRight',
+                    'titleRight' => 'titleLeft',
+                    _ => name,
+                  }
+                : name;
+            final lightReference = brightness == Brightness.light
+                ? lightBaseline[referenceName]
+                : null;
+            final lightReferenceHsv = lightReference == null
+                ? null
+                : HSVColor.fromColor(lightReference);
+            final minimumValueDelta = name.startsWith('title')
+                ? 0.08
+                : name.startsWith('glyph')
+                ? 0.008
+                : 0.01;
+            final maximumValueDelta = name.startsWith('title')
+                ? 0.30
+                : name.startsWith('glyph')
+                ? 0.08
+                : 0.12;
+            Map<String, Object?>? lightComparison;
+            if (lightReference != null && lightReferenceHsv != null) {
+              lightComparison = {
+                'referenceRun': '39186315897',
+                'referenceRole': referenceName,
+                'reference': _channels(lightReference),
+                'actual': _channels(painted),
+                'valueDelta': hsv.value - lightReferenceHsv.value,
+                'valueDeltaRange': [minimumValueDelta, maximumValueDelta],
+                'saturationDelta':
+                    hsv.saturation - lightReferenceHsv.saturation,
+                'saturationDeltaRange': [0.005, 0.16],
+                'chromaDelta':
+                    hsv.value * hsv.saturation -
+                    lightReferenceHsv.value * lightReferenceHsv.saturation,
+                'relativeLuminance': painted.computeLuminance(),
+                'referenceRelativeLuminance': lightReference.computeLuminance(),
+              };
+            }
             HSVColor? previousHsv;
             final previousSamples = brightness == Brightness.dark
                 ? const {
@@ -1072,6 +1126,8 @@ void main() {
               'saturation': hsv.saturation,
               'underSaturation': base.saturation,
               'contrast': _contrast(painted, background),
+              if (lightComparison != null)
+                'publishedLightComparison': lightComparison,
             });
             if (output != null) {
               File(
@@ -1098,6 +1154,18 @@ void main() {
                 );
               }
             }
+            if (lightReferenceHsv != null) {
+              expect(
+                hsv.value - lightReferenceHsv.value,
+                inInclusiveRange(minimumValueDelta, maximumValueDelta),
+                reason: '$name bounded light brightness boost',
+              );
+              expect(
+                hsv.saturation - lightReferenceHsv.saturation,
+                inInclusiveRange(0.005, 0.16),
+                reason: '$name bounded light color purity boost',
+              );
+            }
             expect(hueGap, lessThan(20), reason: name);
             if (!name.startsWith('title')) {
               final reducedDarkDock =
@@ -1119,6 +1187,17 @@ void main() {
             measured[name] = painted;
           }
           frames.add(measured);
+        }
+        if (brightness == Brightness.light) {
+          for (final frame in frames) {
+            for (final side in ['Left', 'Right']) {
+              expect(
+                HSVColor.fromColor(frame['title$side']!).value,
+                lessThan(HSVColor.fromColor(frame['body$side']!).value * 0.9),
+                reason: 'light titles retain their darker role hierarchy',
+              );
+            }
+          }
         }
         for (final name in points.keys) {
           expect(

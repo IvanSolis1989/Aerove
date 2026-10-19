@@ -19,6 +19,7 @@ import 'package:fl_clash/ui/view_scope.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/scheduler.dart';
 
 import 'button.dart';
 import 'chip.dart';
@@ -108,7 +109,27 @@ class CommonScaffoldState extends State<CommonScaffold> {
   final ValueNotifier<List<String>> _keywordsNotifier = ValueNotifier([]);
   final _textController = TextEditingController();
   final _searchFocusNode = FocusNode();
+  final _headerGlassProgress = ValueNotifier(0.0);
+  double _pendingHeaderGlassProgress = 0;
+  bool _headerGlassUpdateScheduled = false;
   var _sorting = false;
+
+  void _updateHeaderGlass(ScrollMetrics metrics, BuildContext? source) {
+    if (metrics.axis != Axis.vertical ||
+        source?.getInheritedWidgetOfExactType<PageActivityScope>()?.isActive == false ||
+        source?.findAncestorStateOfType<CommonScaffoldState>() != this) return;
+    _pendingHeaderGlassProgress = (metrics.extentBefore / 24).clamp(0.0, 1.0);
+    if (_headerGlassUpdateScheduled || _headerGlassProgress.value == _pendingHeaderGlassProgress) return;
+    if (SchedulerBinding.instance.schedulerPhase != SchedulerPhase.persistentCallbacks) {
+      _headerGlassProgress.value = _pendingHeaderGlassProgress;
+      return;
+    }
+    _headerGlassUpdateScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _headerGlassUpdateScheduled = false;
+      if (mounted) _headerGlassProgress.value = _pendingHeaderGlassProgress;
+    });
+  }
 
   bool get _isSearch {
     return _appBarState.value.searchState?.query != null;
@@ -284,6 +305,7 @@ class CommonScaffoldState extends State<CommonScaffold> {
     _searchFocusNode.dispose();
     _loadingNotifier.dispose();
     _keywordsNotifier.dispose();
+    _headerGlassProgress.dispose();
     super.dispose();
   }
 
@@ -304,8 +326,15 @@ class CommonScaffoldState extends State<CommonScaffold> {
 
   Widget _buildDockedSearch(AppBarSearchState searchState) {
     final colorScheme = context.colorScheme;
-    final glass = LiquidGlassScope.of(context);
+    final glass =
+        LiquidGlassScope.of(context) && !MediaQuery.highContrastOf(context);
     final pill = AppShape.input.copyWith(borderRadius: AppRadius.full);
+    final border = pill.copyWith(borderSide: BorderSide.none);
+    final focusedBorder = glass
+        ? border
+        : pill.copyWith(
+            borderSide: BorderSide(color: colorScheme.primary, width: 2),
+          );
     final fieldPadding =
         (BottomInsetScope.dockedSearchHeight -
             MeasureScope.of(context).textHeight(AppTextStyle.body)) /
@@ -314,10 +343,17 @@ class CommonScaffoldState extends State<CommonScaffold> {
       data: InputDecorationTheme.of(context).copyWith(
         filled: !glass,
         fillColor: SurfaceLevel.floatingOf(colorScheme).colorOf(colorScheme),
-        border: pill.copyWith(borderSide: BorderSide.none),
-        focusedBorder: pill.copyWith(
-          borderSide: BorderSide(color: colorScheme.primary, width: 2),
-        ),
+        hoverColor: Colors.transparent,
+        border: border,
+        enabledBorder: border,
+        disabledBorder: border,
+        errorBorder: border,
+        focusedBorder: focusedBorder,
+        focusedErrorBorder: glass
+            ? border
+            : pill.copyWith(
+                borderSide: BorderSide(color: colorScheme.error, width: 2),
+              ),
         contentPadding: EdgeInsets.symmetric(
           horizontal: 12,
           vertical: fieldPadding,
@@ -342,7 +378,16 @@ class CommonScaffoldState extends State<CommonScaffold> {
         right: false,
         child: glass
             ? LiquidGlass(
-                style: LiquidGlassStyle.pill(colorScheme),
+                style: LiquidGlassStyle(
+                  tint: LiquidGlassScope.surfaceColorOf(
+                    context,
+                    SurfaceLevel.floatingOf(colorScheme).colorOf(colorScheme),
+                  ),
+                  blur: 16,
+                  refraction: 0,
+                  bevel: 0,
+                  rim: 0,
+                ),
                 shadows: dockGlassShadows(colorScheme),
                 child: field,
               )
@@ -609,10 +654,13 @@ class CommonScaffoldState extends State<CommonScaffold> {
   }
 
   Widget _buildAppBarWrap(Widget child) {
-    final appBar = TonalButtonTheme(
+    Widget appBar = TonalButtonTheme(
       glass: LiquidGlassScope.of(context),
       child: _isSearch ? _buildSearchingAppBarTheme(child) : child,
     );
+    if (LiquidGlassScope.of(context) && !MediaQuery.highContrastOf(context)) {
+      appBar = HeaderButtonGlassScope(progress: _headerGlassProgress, child: appBar);
+    }
     if (_isSearch || _sorting) {
       return BackLayerScope(onBack: _handleExitAppBarLayer, child: appBar);
     }
@@ -764,7 +812,23 @@ class CommonScaffoldState extends State<CommonScaffold> {
     // The page's bar floats over its body, which leaves the bar's height at
     // its top through MediaQuery padding, as extendBodyBehindAppBar does.
     final barFloats = !isCompact;
-    final sortableBody = SortModeScope(sorting: _sorting, child: widget.body);
+    final sortableBody = NotificationListener<ScrollNotification>(
+      onNotification: (notification) {
+        if (notification.depth == 0) {
+          _updateHeaderGlass(notification.metrics, notification.context);
+        }
+        return false;
+      },
+      child: NotificationListener<ScrollMetricsNotification>(
+        onNotification: (notification) {
+          if (notification.depth == 0) {
+            _updateHeaderGlass(notification.metrics, notification.context);
+          }
+          return false;
+        },
+        child: SortModeScope(sorting: _sorting, child: widget.body),
+      ),
+    );
     final body = SafeArea(
       top: !barFloats,
       child: ValueListenableBuilder(
@@ -1106,15 +1170,18 @@ class AppBarActionButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
+    final headerGlass = HeaderButtonGlassScope.of(context) != null;
     return IconButton(
       tooltip: data.tooltip,
       isSelected: data.isSelected,
       style: data.isSelected == true
           ? IconButton.styleFrom(
-              backgroundColor: TonalButtonTheme.glassOf(context)
+              backgroundColor: headerGlass
+                  ? Colors.transparent
+                  : TonalButtonTheme.glassOf(context)
                   ? null
                   : colorScheme.primary,
-              foregroundColor: colorScheme.onPrimary,
+              foregroundColor: headerGlass ? colorScheme.primary : colorScheme.onPrimary,
             )
           : null,
       onPressed: data.isLoading ? null : data.onPressed,

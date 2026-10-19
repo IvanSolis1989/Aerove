@@ -13,8 +13,9 @@ import '../helpers/test_app.dart';
 import '../helpers/test_profiles.dart';
 
 void main() {
-  testWidgets('the list scrolls its rows under the bar, pinning the header '
-      'at its foot', (tester) async {
+  testWidgets('the pinned list group scrolls its rows without moving the page', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(500, 1000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -69,18 +70,11 @@ void main() {
     await tester.pump();
 
     expect(tester.getRect(find.byType(ListHeader)).top, barBottom + 8);
-    expect(
-      find
-          .byType(ProxyCard)
-          .evaluate()
-          .map((element) => tester.getRect(find.byWidget(element.widget))),
-      contains(
-        predicate<Rect>(
-          (rect) => rect.top < barBottom && rect.bottom > 0,
-          'a card under the bar',
-        ),
-      ),
-    );
+    final outer = tester.state<ScrollableState>(find.byType(Scrollable).first);
+    final inner = tester.state<ScrollableState>(find.byType(Scrollable).last);
+    expect(outer.position.pixels, 0);
+    expect(inner.position.pixels, greaterThan(0));
+    expect(find.byType(ProxyCard).evaluate().length, lessThan(160));
     expect(tester.takeException(), isNull);
   });
 
@@ -140,7 +134,7 @@ void main() {
     final position = tester
         .state<ScrollableState>(find.byType(Scrollable).first)
         .position;
-    position.jumpTo(position.maxScrollExtent - 1000);
+    position.jumpTo(position.maxScrollExtent - 1);
     await tester.pump();
 
     final barBottom = tester.getRect(find.byType(AppBar)).bottom;

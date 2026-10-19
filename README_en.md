@@ -14,23 +14,30 @@ Aerove is an independent fork of [FlClash](https://github.com/chen08209/FlClash)
 - Choose 1–3 colors for the gradient wallpaper and tap **New wallpaper** to change its composition. Your palette and current wallpaper are saved. The wallpaper changes on the first day of each month while the app is open; if it is closed then, it changes the next time you open the app.
 - Fresh installs start with the aurora wallpaper and Ultra Glass. Switching to an ordinary theme color restores the regular palette; glass quality can be changed separately. High-contrast and pure-black dark modes use opaque surfaces.
 - Light/dark mode can follow the system or be selected manually. Font choices come from fonts installed on the device; Aerove does not include MiSans.
+- Text and UI icons on light glass have clearer, more vivid colors with a restrained luminous feel, while remaining distinct from the light background.
 - Dashboards, proxy groups, cards, buttons, selectors, fields, navigation bars, menus, popups, the editor, and forms use coordinated background, text, icon, status, and touch-feedback colors. Devices without full glass support show a simpler frosted appearance.
 - When several glass panels show the same background, the effect looks consistent across them and avoids repeating the same background work for each panel.
 - The About page title is fully visible without being clipped vertically.
 - App rows and dots in the memory card also follow the wallpaper colors, while Core keeps its distinct color.
+- Loading information reserves transparent space instead of showing solid placeholder blocks, preserving the layout in light and dark modes.
 
 ### Sheets, scrolling, and wallpaper motion
 
 - Bottom, snap, side, and form sheets no longer add a separate gradient blur overlay at the top. Their titles, drag handles, standalone glass buttons, and glass sheet surfaces remain. The page is not dimmed; tapping outside still closes a sheet, and taps do not reach controls below it.
 - The main page still has gradient glass at the top. Fully covered areas pause the live effects beneath them, while blurred text, icons, and interface remain visible through the glass and its translucent transition. Glass edges blend more smoothly, reducing sudden color patches while scrolling.
+- Header buttons show only their icons at the top of the page. Clear glass backgrounds fade in as content scrolls beneath the header and fade out on returning to the top, while tap targets stay the same size.
+- Search fields at the bottom of snap sheets reduce refracted ghosts of the underlying interface and no longer add a heavy black focus outline. Search and list controls stay accessible above the keyboard.
+- In-app notices, including VPN configuration changes, use clear glass while preserving their message colors and actions. High-contrast and no-glass modes retain opaque surfaces.
 - Wallpaper light and shadow movement is more noticeable. If taking a screenshot briefly makes the app inactive, the current image stays on screen to avoid a black flash during the screenshot. When the app goes to the background, wallpaper motion pauses; returning to the foreground first shows the saved image, then resumes the animation.
 - The wallpaper background updates 30 times per second while idle and 15 times per second during scrolling or interaction; this changes background updates only and does not limit page scrolling.
 - Scrolling down narrows the bottom dock; icons stay the same size while labels fade out. Scrolling up, returning to the top, or changing pages restores the full dock.
+- Tablet sidebar backgrounds extend continuously to the top edge in portrait, landscape, expanded, compact, and drawer layouts, while controls stay clear of the system status bar.
 - The proxy-list scrollbar hides when scrolling stops and shows a position hint while dragging.
 
 ### Proxies, records, and subscription usage
 
 - Proxy-group edges align with pinned headers, reducing jagged edges and abrupt color patches while scrolling. Group-name emoji do not repeat beside the group icon; the active exit can show a country/region flag.
+- Once an expanded group header is pinned, scrolling first moves that group's entries. At either end, scrolling passes to the outer list so browsing entries does not move the other groups.
 - When many groups stay collapsed, only titles near the screen are prepared, reducing waits while scrolling long lists. Group entries appear when expanded, and expand/collapse animations remain. Groups share node information, only a few likely icons load in advance, and off-screen items do not wait in a loading queue. If the system reclaims memory, the glass effect restores automatically when you return to the app.
 - Connection details use consistent title, value, unit, and secondary-text levels for endpoints, rules, proxy chains, and traffic. The dashboard centers on the active outbound. DNS, request, and connection records retain their upstream data and appear with Aerove's colors and styling.
 - When valid quota data is available, subscription usage shows a translucent light-blue fill, percentage, and inset curved edge. Warning colors change near or above the limit. The fill is hidden when quota data is unavailable.
@@ -44,7 +51,7 @@ Aerove is an independent fork of [FlClash](https://github.com/chen08209/FlClash)
 
 ### Aerove identity, platforms, and releases
 
-- Aerove has a new silver flowing-ribbon mark on a dark background, shared by the app icon and About page. Notifications and desktop trays use the same ribbon silhouette. Android includes regular, round, TV, and monochrome icons. Notifications show the Aerove name, and the system does not force the app into dark mode. Desktop window titles and startup entry points also use Aerove branding.
+- Aerove has a new silver flowing-ribbon mark on a dark background, shared by the app icon and About page. Notifications and desktop trays use the same ribbon silhouette. Android includes regular, round, TV, and monochrome icons. Notifications show the Aerove name; the store icon, TV banner, fallback icon, and website marks also use the new identity. The system does not force the app into dark mode. Desktop window titles and startup entry points also use Aerove branding.
 - Updates and extends the Spanish, French, and Korean translations. On Android, check for updates on the About page; after an update is found, confirm to download the device-appropriate APK through the system download manager. Failed downloads can be retried. Packages support ARM64 devices running Android 7.0 or newer; desktop features vary by operating system.
 - Aerove follows reachable official FlClash stable or `-pre.N` version tags. When the upstream sync check finds no new upstream version, it makes no sync commit; updates to Aerove code can still trigger a build. Upstream changes are validated and merged normally; before release, the build is checked against the current `main`. APK versions append `-X` to the upstream version; the current stable version is `0.9.1-X`. Releases include `BUILD_INFO.json` and `SHA256SUMS`.
 - APKs use Aerove's fixed test signing key and application ID `com.follow.clash.dev`; they are not official FlClash-signed or Google Play packages. Back up your configuration before upgrading. An early test build with a signing conflict may need to be uninstalled first.

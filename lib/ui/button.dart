@@ -5,12 +5,60 @@ import 'package:fl_clash/ui/metrics.dart';
 import 'package:fl_clash/ui/shape.dart';
 import 'package:fl_clash/ui/surface.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'card.dart';
 import 'aurora.dart';
 import 'liquid_glass.dart';
 import 'navigation_dock.dart';
+
+class HeaderButtonGlassScope extends InheritedWidget {
+  const HeaderButtonGlassScope({super.key, required this.progress, required super.child});
+
+  final ValueListenable<double> progress;
+
+  static HeaderButtonGlassScope? of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<HeaderButtonGlassScope>();
+
+  @override
+  bool updateShouldNotify(HeaderButtonGlassScope oldWidget) => progress != oldWidget.progress;
+}
+
+Widget _buttonGlassSurface(
+  BuildContext context, {
+  required LiquidGlassStyle style,
+  bool pressed = false,
+  required Widget child,
+}) {
+  final header = HeaderButtonGlassScope.of(context);
+  if (header == null) return LiquidGlass(style: style, pressed: pressed, child: child);
+  return Stack(
+    fit: StackFit.passthrough,
+    clipBehavior: Clip.none,
+    children: [
+      Positioned.fill(
+        child: IgnorePointer(
+          child: ValueListenableBuilder<double>(
+            valueListenable: header.progress,
+            builder: (context, progress, _) => TweenAnimationBuilder<double>(
+              tween: Tween(end: progress),
+              duration: context.motionDuration(kThemeAnimationDuration),
+              curve: Curves.easeOut,
+              builder: (_, opacity, _) => opacity <= 0
+                  ? const SizedBox.expand()
+                  : LiquidGlassFade(
+                      opacity: AlwaysStoppedAnimation(opacity),
+                      child: LiquidGlass(style: style.copyWith(blur: 0), pressed: pressed),
+                    ),
+            ),
+          ),
+        ),
+      ),
+      child,
+    ],
+  );
+}
 
 class MoreActionButton extends StatelessWidget {
   final VoidCallback? onPressed;
@@ -109,10 +157,11 @@ class _TonalButtonGroupState extends State<TonalButtonGroup> {
               onPointerCancel: _handlePointerEnd,
               child: ValueListenableBuilder(
                 valueListenable: _pointer,
-                builder: (_, pointer, child) => LiquidGlass(
+                builder: (context, pointer, child) => _buttonGlassSurface(
+                  context,
                   style: LiquidGlassStyle.regular(colorScheme),
                   pressed: pointer != null,
-                  child: child,
+                  child: child!,
                 ),
                 child: buttons,
               ),
@@ -162,7 +211,8 @@ class TonalButton extends StatelessWidget {
     return ElasticPress(
       enabled: onPressed != null,
       child: TonalButtonTheme.glassOf(context) || LiquidGlassScope.of(context)
-          ? LiquidGlass(
+          ? _buttonGlassSurface(
+              context,
               style: LiquidGlassStyle.regular(context.colorScheme),
               child: button,
             )
@@ -221,8 +271,14 @@ class TonalButtonTheme extends StatelessWidget {
       final tintedGlass = AuroraAppearance.enabledOf(context)
           ? regularGlass
           : LiquidGlassStyle.tinted(colorScheme, colorScheme.primary);
-      return LiquidGlass.buttonStyle(
-        (states) => tinted(states) ? tintedGlass : regularGlass,
+      return ButtonStyle(
+        backgroundColor: const WidgetStatePropertyAll(Colors.transparent),
+        backgroundBuilder: (context, states, child) => _buttonGlassSurface(
+          context,
+          style: tinted(states) ? tintedGlass : regularGlass,
+          pressed: states.contains(WidgetState.pressed),
+          child: child ?? const SizedBox.shrink(),
+        ),
       );
     }
 

@@ -1,10 +1,9 @@
 globalThis.FlClashField = (() => {
   'use strict';
 
+  const RIBBON = new Path2D('M28,171 C12,162 20,149 43,137 C76,120 91,79 121,61 C150,42 173,52 193,80 C207,100 221,127 222,148 C225,170 213,184 195,186 C170,190 150,169 133,153 C124,145 117,141 110,138 L126,128 C141,134 153,146 168,158 C182,170 197,177 207,166 C220,151 209,129 191,120 C171,109 149,118 126,132 C91,153 57,181 32,174 C30,173 29,172 28,171 Z');
   const COS = Math.cos(Math.PI / 6);
   const SIN = 0.5;
-  // Bar thickness and bar step of the logo glyph, in lane pitches. Odd lanes sit half a step along, which is what
-  // stacks a two-step bar, a one-step bar and a dot into the logo.
   const THICKNESS = 0.75;
   const STEP = 1.125;
   const PALETTE = [0, 0, 0, 1, 1, 2, 3, 4, 5];
@@ -237,9 +236,7 @@ globalThis.FlClashField = (() => {
       if (!best) return [];
       const { lane, cell, shift } = best;
       return [
-        { lane, a: cell, b: cell + 2, keep: 2, logo: 1 },
-        { lane: lane + 1, a: cell + shift, b: cell + shift + 1, keep: 1, logo: 2 },
-        { lane: lane + 2, a: cell + 1, b: cell + 1, keep: 0, logo: 3 },
+        { lane: lane + 1, a: cell + shift, b: cell + shift + 1, keep: 1, logo: 1 },
       ];
     }
 
@@ -276,7 +273,18 @@ globalThis.FlClashField = (() => {
         if (capsule.w < 0.02) continue;
         const [x1, y1] = point(capsule.lane, capsule.a);
         const [x2, y2] = point(capsule.lane, capsule.b);
-        ctx.strokeStyle = capsule.logo ? logoColors[capsule.logo - 1] : colors[capsule.color];
+        if (capsule.logo) {
+          ctx.save();
+          ctx.translate((x1 + x2) / 2, (y1 + y2) / 2);
+          const scale = pitch * 3 * capsule.w / 240;
+          ctx.scale(scale, scale);
+          ctx.translate(-120, -120);
+          ctx.fillStyle = logoColors[0];
+          ctx.fill(RIBBON);
+          ctx.restore();
+          continue;
+        }
+        ctx.strokeStyle = colors[capsule.color];
         ctx.lineWidth = pitch * THICKNESS * capsule.w;
         ctx.beginPath();
         ctx.moveTo(x1, y1);

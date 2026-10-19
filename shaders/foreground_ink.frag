@@ -33,6 +33,11 @@ vec3 vivid(vec3 c) {
   float saturation = min(mix(0.97, 0.92, uDark),
       span / max(hi, 0.001) * mix(3.1, 2.70, uDark) + mix(0.22, 0.175, uDark));
   float peak = mix(0.97, 0.95, uDark);
+  if (uDark < 0.5) {
+    hue = pow(hue, vec3(1.20));
+    saturation = min(0.98, span / max(hi, 0.001) * 3.3 + 0.24);
+    peak = 0.985;
+  }
   return mix(vec3(peak), hue * peak, saturation);
 }
 vec3 readable(vec3 ink, vec3 background, float backgroundLuminance, float alpha) {
@@ -54,7 +59,13 @@ void main() {
   vec2 position = uOrigin + uAxisX * local.x + uAxisY * local.y;
   vec3 background = texture(uField, clamp(position / uFieldSize, 0.0, 1.0)).rgb;
   float backgroundLuminance = luminance(background);
-  vec3 colored = readable(vivid(background), background, backgroundLuminance, 1.0);
-  vec3 ink = readable(mix(uSource, colored, uStrength), background, backgroundLuminance, uAlpha);
+  vec3 colored = vivid(background);
+  float strength = uStrength;
+  if (uDark < 0.5) {
+    strength = mix(strength, 1.0, 0.14);
+  } else {
+    colored = readable(colored, background, backgroundLuminance, 1.0);
+  }
+  vec3 ink = readable(mix(uSource, colored, strength), background, backgroundLuminance, uAlpha);
   fragColor = vec4(ink, 1.0);
 }

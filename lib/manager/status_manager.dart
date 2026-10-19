@@ -407,6 +407,12 @@ class _MessageTransitionState extends State<_MessageTransition>
 
   @override
   Widget build(BuildContext context) {
+    final content = IgnorePointer(
+      ignoring: !widget.visible,
+      child: widget.child,
+    );
+    final glass =
+        LiquidGlassScope.of(context) && !MediaQuery.highContrastOf(context);
     return AnimatedBuilder(
       animation: _controller,
       builder: (_, child) {
@@ -426,10 +432,9 @@ class _MessageTransitionState extends State<_MessageTransition>
           ),
         );
       },
-      child: FadeTransition(
-        opacity: _opacity,
-        child: IgnorePointer(ignoring: !widget.visible, child: widget.child),
-      ),
+      child: glass
+          ? LiquidGlassFade(opacity: _opacity, child: content)
+          : FadeTransition(opacity: _opacity, child: content),
     );
   }
 }
@@ -517,6 +522,31 @@ class _MessageCardState extends State<_MessageCard>
   Widget build(BuildContext context) {
     final message = widget.message;
     final colorScheme = context.colorScheme;
+    final glass =
+        LiquidGlassScope.of(context) && !MediaQuery.highContrastOf(context);
+    final surface = Material(
+      color: glass ? Colors.transparent : message.level.containerColor(context),
+      surfaceTintColor: Colors.transparent,
+      shadowColor: colorScheme.shadow.withValues(alpha: 0.6),
+      elevation: glass ? 0 : 3,
+      shape: AppShape.lg,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(
+          minHeight: _messageMinHeight,
+          maxWidth: _messageMaxWidth,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: SurfaceScope(
+            level: SurfaceLevel.floatingOf(colorScheme),
+            child: _MessageContent(
+              message: message,
+              onDismiss: widget.onDismiss,
+            ),
+          ),
+        ),
+      ),
+    );
     return Padding(
       padding: const EdgeInsets.only(left: 8, right: 8, top: 2, bottom: 8),
       child: AnimatedBuilder(
@@ -524,9 +554,15 @@ class _MessageCardState extends State<_MessageCard>
         builder: (_, child) {
           final offset = _drag.value;
           final progress = _width > 0 ? offset.abs() / _width : 0.0;
+          final opacity = 1.0 - progress.clamp(0.0, 1.0);
           return Transform.translate(
             offset: Offset(offset, 0),
-            child: Opacity(opacity: 1 - progress.clamp(0.0, 1.0), child: child),
+            child: glass
+                ? LiquidGlassFade(
+                    opacity: AlwaysStoppedAnimation<double>(opacity),
+                    child: child,
+                  )
+                : Opacity(opacity: opacity, child: child),
           );
         },
         child: GestureDetector(
@@ -538,32 +574,20 @@ class _MessageCardState extends State<_MessageCard>
           onHorizontalDragCancel: () {
             _release(0);
           },
-          child: Material(
-            color: message.level.containerColor(context),
-            surfaceTintColor: Colors.transparent,
-            shadowColor: colorScheme.shadow.withValues(alpha: 0.6),
-            elevation: 3,
-            shape: AppShape.lg,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(
-                minHeight: _messageMinHeight,
-                maxWidth: _messageMaxWidth,
-              ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 10,
-                ),
-                child: SurfaceScope(
-                  level: SurfaceLevel.floatingOf(colorScheme),
-                  child: _MessageContent(
-                    message: message,
-                    onDismiss: widget.onDismiss,
+          child: glass
+              ? LiquidGlass(
+                  style: LiquidGlassStyle.regular(colorScheme).copyWith(
+                    tint: message.level == MessageLevel.error
+                        ? message.level
+                              .containerColor(context)
+                              .withValues(alpha: 0.16)
+                        : Colors.transparent,
                   ),
-                ),
-              ),
-            ),
-          ),
+                  clipper: const ShapeBorderClipper(shape: AppShape.lg),
+                  shadows: dockGlassShadows(colorScheme),
+                  child: surface,
+                )
+              : surface,
         ),
       ),
     );

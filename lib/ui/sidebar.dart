@@ -127,37 +127,34 @@ class _NavigationSidebarState extends State<NavigationSidebar>
           overlayWidth: info.overlaySize.width,
           progress: _overlayProgress,
           onDismiss: _closeOverlay,
-          builder: (progress) => Padding(
-            padding: safePadding,
-            child: _SidebarPane(
-              progress: progress,
-              windowControls: widget.windowControls,
-              expanded: true,
-              destinations: widget.destinations,
-              selectedIndex: widget.selectedIndex,
-              onSelected: (index) {
-                widget.onSelected(index);
-                _closeOverlay();
-              },
-              onToggle: _closeOverlay,
-            ),
+          builder: (progress) => _SidebarPane(
+            progress: progress,
+            safePadding: safePadding,
+            windowControls: widget.windowControls,
+            expanded: true,
+            destinations: widget.destinations,
+            selectedIndex: widget.selectedIndex,
+            onSelected: (index) {
+              widget.onSelected(index);
+              _closeOverlay();
+            },
+            onToggle: _closeOverlay,
           ),
         );
       },
-      child: SafeArea(
-        child: TweenAnimationBuilder<double>(
-          tween: Tween(end: widget.expanded ? 1.0 : 0.0),
-          duration: _expandDuration,
-          curve: Easing.standard,
-          builder: (context, progress, _) => _SidebarPane(
-            progress: progress,
-            windowControls: widget.windowControls,
-            expanded: widget.expanded,
-            destinations: widget.destinations,
-            selectedIndex: widget.selectedIndex,
-            onSelected: widget.onSelected,
-            onToggle: _handleToggle,
-          ),
+      child: TweenAnimationBuilder<double>(
+        tween: Tween(end: widget.expanded ? 1.0 : 0.0),
+        duration: _expandDuration,
+        curve: Easing.standard,
+        builder: (context, progress, _) => _SidebarPane(
+          progress: progress,
+          safePadding: safePadding,
+          windowControls: widget.windowControls,
+          expanded: widget.expanded,
+          destinations: widget.destinations,
+          selectedIndex: widget.selectedIndex,
+          onSelected: widget.onSelected,
+          onToggle: _handleToggle,
         ),
       ),
     );
@@ -258,6 +255,7 @@ class _SidebarColors {
 class _SidebarPane extends StatelessWidget {
   const _SidebarPane({
     required this.progress,
+    required this.safePadding,
     required this.windowControls,
     required this.expanded,
     required this.destinations,
@@ -267,6 +265,7 @@ class _SidebarPane extends StatelessWidget {
   });
 
   final double progress;
+  final EdgeInsets safePadding;
   final Size windowControls;
   final bool expanded;
   final List<SidebarDestination> destinations;
@@ -365,13 +364,14 @@ class _SidebarPane extends StatelessWidget {
         ],
       ),
     );
+    final safePane = Padding(padding: safePadding, child: pane);
     return LiquidGlassScope.of(context)
         ? LiquidGlass(
             style: LiquidGlassStyle.regular(context.colorScheme),
             clipper: const ShapeBorderClipper(shape: AppShape.none),
-            child: pane,
+            child: safePane,
           )
-        : pane;
+        : safePane;
   }
 }
 

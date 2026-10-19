@@ -13,6 +13,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'card.dart';
 import 'common.dart';
+import 'group_scroll.dart';
 
 const _pinnedHeaderGap = 8.0;
 const _headerInset = 10.0;
@@ -38,6 +39,9 @@ class _ProxiesListViewState extends ConsumerState<ProxiesListView> {
   final _closingGroups = <String>{};
   final _openingGroups = <String>{};
   final _headerKeys = <String, GlobalKey>{};
+  final _groupStates = <String, _GroupSliverState>{};
+  Object? _offsetsKey;
+  Map<String, double> _offsets = {};
 
   GlobalKey _headerKeyOf(String name) =>
       _headerKeys.putIfAbsent(name, GlobalKey.new);
@@ -89,28 +93,58 @@ class _ProxiesListViewState extends ConsumerState<ProxiesListView> {
         .updateCurrentUnfoldSet(tempUnfoldSet);
   }
 
-  GroupOffsets _getGroupOffsets() {
+  Map<String, double> _getGroupOffsets() {
     final state = ref.read(proxiesListStateProvider);
-    final offsets = <double>[];
     final rowExtent = getRowExtent(state.proxyCardType);
+    final viewportExtent = _controller.position.viewportDimension;
+    final inset =
+        context.appBarInset +
+        _pinnedHeaderGap +
+        listHeaderHeight +
+        16 +
+        BottomInsetScope.of(context);
+    final key = (
+      state,
+      _columns,
+      _groupColumns,
+      _gap,
+      rowExtent,
+      viewportExtent,
+      inset,
+    );
+    if (_offsetsKey == key) return _offsets;
+    final offsets = <String, double>{};
     final columnOffsets = List.filled(_groupColumns, 0.0);
     for (final (index, group) in state.groups.indexed) {
       final column = index % _groupColumns;
-      offsets.add(columnOffsets[column]);
+      offsets[group.name] = columnOffsets[column];
       columnOffsets[column] += listHeaderHeight + _gap;
       if (state.currentUnfoldSet.contains(group.name)) {
         final rowCount = (group.all.length + _columns - 1) ~/ _columns;
-        columnOffsets[column] += _rowsExtent(rowCount, rowExtent);
+        columnOffsets[column] += min(
+          _rowsExtent(rowCount, rowExtent),
+          max(viewportExtent - inset, 0),
+        );
       }
     }
-    return GroupOffsets(state.groups, offsets);
+    _offsetsKey = key;
+    return _offsets = offsets;
   }
 
   double _getGroupOffset(String groupName) {
     if (!_controller.hasClients || _controller.position.maxScrollExtent == 0) {
       return 0;
     }
-    return _getGroupOffsets().offsetOf(groupName);
+    return _getGroupOffsets()[groupName] ?? 0;
+  }
+
+  void _registerGroup(_GroupSliverState state, bool active) {
+    final name = state.widget.group.name;
+    if (active) {
+      _groupStates[name] = state;
+    } else if (identical(_groupStates[name], state)) {
+      _groupStates.remove(name);
+    }
   }
 
   void _scrollToMakeVisibleWithPadding({
@@ -168,7 +202,7 @@ class _ProxiesListViewState extends ConsumerState<ProxiesListView> {
     );
   }
 
-  void _scrollToGroupSelected(String groupName) {
+  Future<void> _scrollToGroupSelected(String groupName) async {
     final cardType = ref.read(proxiesListStateProvider).proxyCardType;
     final proxies = ref
         .read(proxiesListStateProvider)
@@ -187,7 +221,17 @@ class _ProxiesListViewState extends ConsumerState<ProxiesListView> {
     if (rowOffset == null) {
       return;
     }
-    animateScrollTo(_controller, _getGroupOffset(groupName) + rowOffset);
+    final position = _controller.position;
+    await _controller.animateTo(
+      _getGroupOffset(groupName).clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      ),
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOutCubic,
+    );
+    await WidgetsBinding.instance.endOfFrame;
+    if (mounted) _groupStates[groupName]?.scrollToRow(rowOffset);
   }
 
   @override
@@ -253,6 +297,15 @@ class _ProxiesListViewState extends ConsumerState<ProxiesListView> {
                 animateOnMount: _openingGroups.contains(group.name),
                 onSettled: _handleSettled,
                 headerKey: _headerKeyOf(group.name),
+                outerController: _controller,
+                groupOffset: () => _getGroupOffset(group.name),
+                viewportInset:
+                    context.appBarInset +
+                    _pinnedHeaderGap +
+                    listHeaderHeight +
+                    16 +
+                    BottomInsetScope.of(context),
+                onMount: _registerGroup,
               );
               List<Widget> buildColumn(int column) {
                 final slivers = <Widget>[];
@@ -430,6 +483,10 @@ class _GroupSliver extends ConsumerStatefulWidget {
     required this.animateOnMount,
     required this.onSettled,
     required this.headerKey,
+    required this.outerController,
+    required this.groupOffset,
+    required this.viewportInset,
+    required this.onMount,
   });
 
   final Group group;
@@ -441,6 +498,10 @@ class _GroupSliver extends ConsumerStatefulWidget {
   final bool animateOnMount;
   final void Function(String groupName, bool expanded) onSettled;
   final GlobalKey headerKey;
+  final ScrollController outerController;
+  final double Function() groupOffset;
+  final double viewportInset;
+  final void Function(_GroupSliverState state, bool active) onMount;
 
   @override
   ConsumerState<_GroupSliver> createState() => _GroupSliverState();
@@ -450,6 +511,10 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
     with SingleTickerProviderStateMixin {
   Widget? _rows;
   double _rowExtent = 0;
+  late final _scrollController = ProxyGroupScrollController(
+    outer: widget.outerController,
+    anchor: () => widget.groupOffset(),
+  );
   late final _controller = AnimationController(
     vsync: this,
     value:
@@ -463,6 +528,7 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
   @override
   void initState() {
     super.initState();
+    widget.onMount(this, true);
     _controller.addStatusListener((status) {
       setState(() {});
       if (status == AnimationStatus.dismissed) {
@@ -503,9 +569,15 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
 
   @override
   void dispose() {
+    widget.onMount(this, false);
+    _scrollController.dispose();
     _unfold.dispose();
     _controller.dispose();
     super.dispose();
+  }
+
+  void scrollToRow(double offset) {
+    animateScrollTo(_scrollController, offset);
   }
 
   void _handleUnfold(bool isExpand) {
@@ -561,12 +633,18 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
   }
 
   Widget _buildRows(double extent) {
-    final rows = widget.group.all.chunks(widget.columns).toList();
+    final count = (widget.group.all.length + widget.columns - 1) ~/ widget.columns;
     return SliverFixedExtentList(
       itemExtent: extent,
       delegate: SliverChildBuilderDelegate(
-        (context, index) => _buildRow(context, rows[index]),
-        childCount: rows.length,
+        (context, index) => _buildRow(
+          context,
+          widget.group.all.sublist(
+            index * widget.columns,
+            min((index + 1) * widget.columns, widget.group.all.length),
+          ),
+        ),
+        childCount: count,
         addAutomaticKeepAlives: false,
       ),
     );
@@ -574,13 +652,18 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
 
   /// The card reaches up behind the header's rounded bottom corners, so the
   /// two read as one while the rows unfold or fold.
-  Widget _buildUnfoldingRows(double extent, ShapeDecoration decoration) {
-    final rows = widget.group.all.chunks(widget.columns).toList();
+  Widget _buildUnfoldingRows(
+    double extent,
+    double bodyExtent,
+    ShapeDecoration decoration,
+  ) {
+    final rowCount =
+        (widget.group.all.length + widget.columns - 1) ~/ widget.columns;
     final visible = min(
-      rows.length.toDouble(),
-      MediaQuery.sizeOf(context).height / extent,
+      rowCount.toDouble(),
+      max(bodyExtent / extent, 1.0),
     );
-    final count = min(rows.length, visible.floor() + 1);
+    final count = min(rowCount, visible.floor() + 1);
     return Stack(
       clipBehavior: Clip.none,
       children: [
@@ -594,20 +677,37 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
         SizeTransition(
           sizeFactor: _unfold,
           alignment: Alignment.topCenter,
-          child: Column(
-            children: [
-              for (var index = 0; index < count; index++)
-                UnfoldEntryTransition(
-                  animation: _unfold,
-                  index: index,
-                  visibleCount: visible,
-                  child: SizedBox(
-                    height: extent,
-                    child: _buildRow(context, rows[index]),
-                  ),
+          child: SizedBox(
+            height: bodyExtent,
+            child: CustomScrollView(
+              primary: false,
+              physics: const NeverScrollableScrollPhysics(),
+              slivers: [
+                SliverList.list(
+                  children: [
+                    for (var index = 0; index < count; index++)
+                      UnfoldEntryTransition(
+                        animation: _unfold,
+                        index: index,
+                        visibleCount: visible,
+                        child: SizedBox(
+                          height: extent,
+                          child: _buildRow(
+                            context,
+                            widget.group.all.sublist(
+                              index * widget.columns,
+                              min(
+                                (index + 1) * widget.columns,
+                                widget.group.all.length,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
-              if (count == rows.length) const SizedBox(height: _lastRowGrowth),
-            ],
+              ],
+            ),
           ),
         ),
       ],
@@ -634,26 +734,53 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
           bottom: AppCorner.xl.ap(context),
         ),
       );
-      if (!unfolded) {
-        _rows = null;
-        rows = SliverToBoxAdapter(
-          child: _buildUnfoldingRows(extent, decoration),
-        );
-      } else {
-        if (_rows == null || _rowExtent != extent) {
-          _rows = _buildRows(extent);
-          _rowExtent = extent;
-        }
-        rows = DecoratedSliver(
-          decoration: decoration,
-          sliver: SliverMainAxisGroup(
-            slivers: [
-              _rows!,
-              const SliverToBoxAdapter(child: SizedBox(height: _lastRowGrowth)),
-            ],
-          ),
-        );
+      if (!unfolded) _rows = null;
+      if (unfolded && (_rows == null || _rowExtent != extent)) {
+        _rows = _buildRows(extent);
+        _rowExtent = extent;
       }
+      rows = SliverLayoutBuilder(
+        builder: (context, constraints) {
+          final count =
+              (widget.group.all.length + widget.columns - 1) ~/ widget.columns;
+          final bodyExtent = min(
+            _rowsExtent(count, extent),
+            max(constraints.viewportMainAxisExtent - widget.viewportInset, 0.0),
+          );
+          final beyondCache =
+              constraints.remainingCacheExtent <= 0 ||
+              constraints.scrollOffset + constraints.cacheOrigin >= bodyExtent;
+          final interacting = _scrollController.hasClients &&
+              _scrollController.position.isScrollingNotifier.value;
+          if (beyondCache && !interacting) {
+            return SliverToBoxAdapter(child: SizedBox(height: bodyExtent));
+          }
+          return unfolded
+              ? DecoratedSliver(
+                  decoration: decoration,
+                  sliver: SliverToBoxAdapter(
+                    child: SizedBox(
+                      height: bodyExtent,
+                      child: CustomScrollView(
+                        key: PageStorageKey(('proxy-group', groupName)),
+                        controller: _scrollController,
+                        primary: false,
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        slivers: [
+                          _rows!,
+                          const SliverToBoxAdapter(
+                            child: SizedBox(height: _lastRowGrowth),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                )
+              : SliverToBoxAdapter(
+                  child: _buildUnfoldingRows(extent, bodyExtent, decoration),
+                );
+        },
+      );
     } else {
       _rows = null;
     }
@@ -699,27 +826,31 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
   ) {
     final columns = widget.columns;
     final rowCount = (widget.group.all.length + columns - 1) ~/ columns;
-    final rowsExtent = isExpand ? _rowsExtent(rowCount, _rowExtent) : 0.0;
-    final groupExtent =
-        listHeaderHeight +
-        (_controller.isDismissed
-            ? 0.0
-            : _rowsExtent(rowCount, getRowExtent(widget.cardType)));
     (double, double, double, Color, bool)? headerState;
     Widget? header;
     return SliverLayoutBuilder(
-      builder: (context, constraints) {
+      builder: (context, constraints) => ListenableBuilder(
+        listenable: _scrollController,
+        builder: (context, _) {
+        final rowsExtent = min(
+          _rowsExtent(rowCount, getRowExtent(widget.cardType)),
+          max(constraints.viewportMainAxisExtent - widget.viewportInset, 0.0),
+        );
+        final groupExtent = listHeaderHeight +
+            (_controller.isDismissed ? 0.0 : rowsExtent);
         final beyondCache =
             constraints.remainingCacheExtent <= 0 ||
             constraints.scrollOffset + constraints.cacheOrigin >= groupExtent;
+        final outerUnder = constraints.scrollOffset + constraints.overlap;
         final under = isExpand
-            ? constraints.scrollOffset + constraints.overlap
+            ? outerUnder +
+                _scrollController.contentOffset
             : 0.0;
         final state = beyondCache
             ? null
             : (
                 (under / _liftDistance).clamp(0.0, 1.0),
-                (min(under, rowsExtent - under) / _liftDistance).clamp(
+                (min(under, rowsExtent - outerUnder) / _liftDistance).clamp(
                   0.0,
                   1.0,
                 ),
@@ -755,7 +886,8 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
             ),
           ),
         );
-      },
+        },
+      ),
     );
   }
 }

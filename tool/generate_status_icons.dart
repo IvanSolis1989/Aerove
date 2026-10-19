@@ -16,6 +16,7 @@ const trayBaseSize = 18;
 const trayScales = [1, 2, 3, 4];
 const appIconSource = 'assets/images/icon.png';
 const appIconOutput = 'windows/runner/resources/app_icon.ico';
+const appAssetIconOutput = 'assets/images/icon.ico';
 
 Future<void> main() async {
   final rsvgConvert = await _findExecutable('rsvg-convert');
@@ -63,6 +64,8 @@ Future<void> main() async {
     }
     final appIcon = await renderer.wrapRaster(File(appIconSource));
     await _writeIco(renderer, appIcon, File(appIconOutput));
+    await File(appIconOutput).copy(appAssetIconOutput);
+    stdout.writeln('Generated $appAssetIconOutput');
   } finally {
     if (tempDir.existsSync()) {
       await tempDir.delete(recursive: true);

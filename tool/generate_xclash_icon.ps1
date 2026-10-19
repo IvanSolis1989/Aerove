@@ -60,6 +60,22 @@ public static class XClashIconExport {
         }
     }
 
+    public static void ExportBanner(string source, string destination) {
+        using (var original = new Bitmap(source))
+        using (var output = new Bitmap(320, 180, PixelFormat.Format32bppArgb))
+        using (var graphics = Graphics.FromImage(output))
+        using (var font = new Font("Segoe UI", 34, FontStyle.Regular, GraphicsUnit.Pixel))
+        using (var brush = new SolidBrush(Color.FromArgb(242, 244, 248))) {
+            graphics.Clear(Color.FromArgb(14, 17, 21));
+            graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+            graphics.DrawImage(original, new Rectangle(12, 18, 144, 144));
+            graphics.DrawString("Aerove", font, brush, new PointF(169, 65));
+            output.Save(destination, ImageFormat.Png);
+        }
+    }
+
     public static XClashIconMetrics Inspect(string path) {
         using (var image = new Bitmap(path)) {
             var result = new XClashIconMetrics {
@@ -106,6 +122,9 @@ function Export-Icon([string]$Path, [int]$Size, [single]$Scale, [string]$Mask, [
 }
 
 Export-Icon (Join-Path $RepositoryRoot 'assets/images/icon.png') 1024 1 'superellipse' $tileSource
+Export-Icon (Join-Path $RepositoryRoot 'android/app/src/main/ic_launcher-playstore.png') 512 1 'superellipse' $tileSource
+$banner = Join-Path $resources 'mipmap-xhdpi/ic_banner.png'
+[XClashIconExport]::ExportBanner((Join-Path $RepositoryRoot 'assets/images/icon.png'), $banner)
 Export-Icon (Join-Path $resources 'drawable-nodpi/xclash_liquid_glass.png') 1024 1 'none'
 $densities = [ordered]@{ mdpi = 48; hdpi = 72; xhdpi = 96; xxhdpi = 144; xxxhdpi = 192 }
 foreach ($density in $densities.Keys) {
@@ -179,6 +198,11 @@ foreach ($variant in @('values-v27', 'values-night-v27')) {
     if ($icon.'#text' -ne '@drawable/ic_launcher_foreground') {
         throw "Unexpected splash icon in $variant"
     }
+}
+
+$bannerMetrics = [XClashIconExport]::Inspect($banner)
+if ($bannerMetrics.Width -ne 320 -or $bannerMetrics.Height -ne 180) {
+    throw "Invalid TV banner dimensions: $banner"
 }
 
 if ($PreviewDirectory) {
