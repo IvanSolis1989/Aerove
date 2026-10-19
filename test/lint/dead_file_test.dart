@@ -58,9 +58,9 @@ class Container {
 }
 ''';
     expect(
-      _declaration.allMatches(source).map(
-        (match) => match.group(1) ?? match.group(2) ?? match.group(3)!,
-      ),
+      _declaration
+          .allMatches(source)
+          .map((match) => match.group(1) ?? match.group(2) ?? match.group(3)!),
       ['UpdateAsset', 'selectAndroidUpdateAsset', 'loadAssets', 'Container'],
     );
   });
