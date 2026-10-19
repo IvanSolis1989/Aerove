@@ -23,6 +23,7 @@ class HeaderBlur extends StatelessWidget {
     if (fadeHeight <= 0) return const SizedBox.shrink();
     final glass =
         LiquidGlassScope.of(context) && !MediaQuery.highContrastOf(context);
+    final coveredHeight = fullStrengthHeight.clamp(0.0, fadeHeight);
     return Align(
       alignment: Alignment.topCenter,
       child: SizedBox(
@@ -32,12 +33,12 @@ class HeaderBlur extends StatelessWidget {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              if (glass && !liquidGlass)
+              if (glass && !liquidGlass && coveredHeight > 0)
                 Positioned(
                   top: 0,
                   left: 0,
                   right: 0,
-                  height: fadeHeight,
+                  height: coveredHeight,
                   child: const LiquidGlassOcclusion(
                     shape: AppShape.none,
                     bottomFeather: 12,

@@ -78,6 +78,97 @@ void main() {
   });
 
   for (final quality in LiquidGlassQuality.values) {
+    testWidgets(
+      'phone and tablet preserve glass throughout the header fade $quality',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        for (final width in [390.0, 834.0]) {
+          tester.view.physicalSize = Size(width, 400);
+          for (final shape in [AppShape.lg, AppShape.xl]) {
+            for (final top in [136.0, 96.0, 64.0, 28.0]) {
+              final rect = Rect.fromLTWH(16, top, width - 32, 160);
+              await tester.pumpWidget(
+                MaterialApp(
+                  home: RepaintBoundary(
+                    key: _scene,
+                    child: LiquidGlassScope(
+                      enabled: true,
+                      quality: quality,
+                      child: LiquidGlassHost(
+                        enabled: true,
+                        wallpaperOnly: true,
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            LiquidGlassColorField(
+                              child: SeededAuroraWallpaper(
+                                colors: const [
+                                  Color(0xFF32C59A),
+                                  Color(0xFF3648C7),
+                                  Color(0xFFD33479),
+                                ],
+                                seed: 271828,
+                                brightness: Brightness.light,
+                                motionTime: Duration.zero,
+                              ),
+                            ),
+                            Positioned.fromRect(
+                              rect: rect,
+                              child: LiquidGlass(
+                                style: _style,
+                                clipper: ShapeBorderClipper(shape: shape),
+                              ),
+                            ),
+                            const Positioned.fill(
+                              child: HeaderBlur(
+                                fadeHeight: 144,
+                                fullStrengthHeight: 44.8,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+              await tester.pump();
+              await tester.pump();
+              await _shot(
+                tester,
+                'fade-$quality-$width-${shape == AppShape.lg ? 'card' : 'group'}-$top',
+              );
+              final capture = LiquidGlassHost.debugLastCapture!;
+              expect(capture.occludedPanes, 0);
+              expect(capture.panes.single.pane, rect);
+              expect(capture.clippedPanes, top < 44.8 ? 1 : 0);
+              if (top >= 56.8) {
+                expect(
+                  capture.panes.single.slot.contains(
+                    Offset(width / 2, top + 0.5),
+                  ),
+                  isTrue,
+                  reason: 'the first glass edge must remain in the live atlas',
+                );
+              }
+              expect(
+                LiquidGlassHost.debugLastFeatherCapture!.panes,
+                top < 56.8 ? 1 : 0,
+              );
+              expect(
+                tester.getRect(find.byType(LiquidGlassOcclusion)),
+                Rect.fromLTWH(0, 0, width, 44.8),
+              );
+              expect(tester.takeException(), isNull);
+            }
+          }
+        }
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      },
+    );
+
     testWidgets('modal freeze takes priority over header plain $quality', (
       tester,
     ) async {
@@ -125,7 +216,7 @@ void main() {
                         const Positioned.fill(
                           child: HeaderBlur(
                             fadeHeight: 120,
-                            fullStrengthHeight: 48,
+                            fullStrengthHeight: 120,
                           ),
                         ),
                     ],
@@ -316,7 +407,7 @@ void main() {
                           const Positioned.fill(
                             child: HeaderBlur(
                               fadeHeight: 120,
-                              fullStrengthHeight: 48,
+                              fullStrengthHeight: 120,
                             ),
                           ),
                       ],
@@ -954,7 +1045,7 @@ void main() {
     );
 
     testWidgets(
-      'header keeps the full fade plain and feathers only below it $quality',
+      'header keeps only its opaque core plain and feathers into the fade $quality',
       (tester) async {
         tester.view.physicalSize = const Size(320, 240);
         tester.view.devicePixelRatio = 1;
@@ -1046,7 +1137,7 @@ void main() {
         final initial = await _shot(tester, 'initial-$quality');
         expect(
           tester.getRect(find.byType(LiquidGlassOcclusion)),
-          const Rect.fromLTWH(0, 0, 320, 120),
+          const Rect.fromLTWH(0, 0, 320, 48),
         );
         expect(
           tester.getSize(find.byType(BackdropFilter)),
@@ -1136,11 +1227,11 @@ void main() {
   }
 
   testWidgets(
-    'none and high contrast bypass coverage while core zero covers the fade',
+    'none, high contrast and an empty core bypass coverage',
     (tester) async {
       for (final enabled in [false, true]) {
         for (final highContrast in [false, true]) {
-          for (final core in [0.0, 48.0]) {
+          for (final core in [-12.0, 0.0, 48.0, 144.0]) {
             await tester.pumpWidget(
               MaterialApp(
                 home: MediaQuery(
@@ -1157,8 +1248,16 @@ void main() {
             );
             expect(
               find.byType(LiquidGlassOcclusion),
-              enabled && !highContrast ? findsOneWidget : findsNothing,
+              enabled && !highContrast && core > 0
+                  ? findsOneWidget
+                  : findsNothing,
             );
+            if (enabled && !highContrast && core > 0) {
+              expect(
+                tester.getSize(find.byType(LiquidGlassOcclusion)).height,
+                core.clamp(0.0, 120.0),
+              );
+            }
             expect(find.byType(BackdropFilter), findsOneWidget);
           }
         }

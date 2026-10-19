@@ -37,7 +37,7 @@ void main() {
       await ui.FragmentProgram.fromAsset('shaders/liquid_glass.frag');
     }
   });
-  testWidgets('sheet optical header appears only over scrolled content', (
+  testWidgets('sheet scroll leaves its wallpaper free of an extra header mask', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(320, 320);
@@ -115,53 +115,25 @@ void main() {
       await tester.pump();
       expect(find.byType(HeaderBlur), findsNothing);
       final initial = await shot('sheet-header-opening');
-      controller.jumpTo(64);
-      await tester.pump();
-      if (ui.ImageFilter.isShaderFilterSupported) {
-        await tester.runAsync(() async {
-          await ui.FragmentProgram.fromAsset(
-            'shaders/liquid_glass.frag',
-          ).timeout(const Duration(seconds: 30));
-        });
-      }
-      await tester.pump();
-      if (ui.ImageFilter.isShaderFilterSupported) {
-        expect(LiquidGlass.debugShaderReady, isTrue);
-      }
-      expect(find.byType(HeaderBlur), findsOneWidget);
-      final header = find.byType(HeaderBlur);
-      final pane = find.descendant(
-        of: header,
-        matching: find.byType(LiquidGlass),
-      );
-      expect(pane, findsOneWidget);
-      expect(
-        find.descendant(of: header, matching: find.byType(BackdropFilter)),
-        findsNothing,
-      );
-      expect(tester.getRect(pane), const Rect.fromLTWH(24, 72, 272, 64));
-      final optical = await shot('sheet-header-scrolled');
-      var changed = 0;
-      var outside = 0;
-      for (var y = 0; y < 320; y++) {
-        for (var x = 0; x < 320; x++) {
-          final inside = x >= 24 && x < 296 && y >= 72 && y < 136;
-          for (var channel = 0; channel < 4; channel++) {
-            final index = (y * 320 + x) * 4 + channel;
-            final delta = (initial[index] - optical[index]).abs();
-            if (inside && delta > 2) changed++;
-            if (!inside) outside = math.max(outside, delta);
-          }
+      void expectHeaderUnchanged(Uint8List actual) {
+        for (var y = 72; y < 136; y++) {
+          final start = (y * 320 + 24) * 4;
+          final end = (y * 320 + 280) * 4;
+          expect(actual.sublist(start, end), initial.sublist(start, end));
         }
       }
-      if (ui.ImageFilter.isShaderFilterSupported)
-        expect(changed, greaterThan(100));
-      expect(outside, 0);
+
+      controller.jumpTo(64);
+      await tester.pump();
+      expect(find.byType(HeaderBlur), findsNothing);
+      expect(find.byType(BackdropFilter), findsNothing);
+      expect(find.byType(LiquidGlass), findsNothing);
+      expectHeaderUnchanged(await shot('sheet-header-scrolled'));
       controller.jumpTo(0);
       await tester.pump();
       await tester.pump();
       expect(find.byType(HeaderBlur), findsNothing);
-      expect(await shot('sheet-header-top-restored'), initial);
+      expectHeaderUnchanged(await shot('sheet-header-top-restored'));
       expect(tester.takeException(), isNull);
     } finally {
       await tester.pumpWidget(const SizedBox.shrink());
@@ -169,7 +141,7 @@ void main() {
       controller.dispose();
     }
   });
-  testWidgets('sheet header keeps None and high contrast native fallbacks', (
+  testWidgets('sheet header adds no mask with None or high contrast', (
     tester,
   ) async {
     for (final enabled in [false, true]) {
@@ -189,97 +161,17 @@ void main() {
         ),
       );
       await tester.pump();
-      expect(find.byType(HeaderBlur), enabled ? findsOneWidget : findsNothing);
-      expect(
-        find.byType(BackdropFilter),
-        enabled ? findsOneWidget : findsNothing,
-      );
+      expect(find.byType(HeaderBlur), findsNothing);
+      expect(find.byType(BackdropFilter), findsNothing);
       expect(find.byType(LiquidGlass), findsNothing);
-      expect(
-        tester
-            .widget<FloatingHeader>(find.byType(FloatingHeader))
-            .showBackground,
-        isTrue,
-      );
+      expect(find.byType(FloatingHeaderBody), findsOneWidget);
+      expect(find.byType(FloatingHeader), findsNothing);
     }
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
   });
-  testWidgets('header coalesces scroll changes dispatched during layout', (
-    tester,
-  ) async {
-    final offsets = ValueNotifier<List<double>>([80, 0, 80]);
-    var headerBuilds = 0;
-    try {
-      await tester.pumpWidget(
-        MaterialApp(
-          home: LiquidGlassScope(
-            enabled: true,
-            child: FloatingHeaderBody(
-              backgroundColor: Colors.black,
-              header: Builder(
-                builder: (_) {
-                  headerBuilds++;
-                  return const SizedBox(height: 64);
-                },
-              ),
-              body: ValueListenableBuilder<List<double>>(
-                valueListenable: offsets,
-                builder: (_, values, _) => LayoutBuilder(
-                  builder: (context, constraints) {
-                    for (final offset in values) {
-                      ScrollStartNotification(
-                        metrics: FixedScrollMetrics(
-                          minScrollExtent: 0,
-                          maxScrollExtent: 1000,
-                          pixels: offset,
-                          viewportDimension: constraints.maxHeight,
-                          axisDirection: AxisDirection.down,
-                          devicePixelRatio: 1,
-                        ),
-                        context: context,
-                      ).dispatch(context);
-                    }
-                    return const SizedBox.expand();
-                  },
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-      await tester.pump();
-      expect(tester.takeException(), isNull);
-      expect(
-        tester
-            .widget<FloatingHeader>(find.byType(FloatingHeader))
-            .showBackground,
-        isTrue,
-      );
-      final settledBuilds = headerBuilds;
-      offsets.value = [120, 160, 200];
-      await tester.pump();
-      await tester.pump();
-      expect(headerBuilds, settledBuilds);
-      expect(tester.takeException(), isNull);
-      offsets.value = [0, 80, 0];
-      await tester.pump();
-      await tester.pump();
-      expect(
-        tester
-            .widget<FloatingHeader>(find.byType(FloatingHeader))
-            .showBackground,
-        isFalse,
-      );
-      expect(tester.takeException(), isNull);
-    } finally {
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pump();
-      offsets.dispose();
-    }
-  });
   testWidgets(
-    'real snap header restores scroll and survives viewport relayout',
+    'real snap sheet keeps its controls without a top mask across scroll and relayout',
     (tester) async {
       tester.view.physicalSize = const Size(390, 800);
       tester.view.devicePixelRatio = 1;
@@ -306,7 +198,20 @@ void main() {
               sheetController = controller!;
               return FloatingHeaderBody(
                 backgroundColor: Colors.white,
-                header: const SizedBox(height: 64),
+                header: SheetToolBar(
+                  appBar: SizedBox(
+                    height: 44,
+                    child: Row(
+                      children: [
+                        const Expanded(child: Text('Sheet title')),
+                        TextButton(
+                          onPressed: () => navigator.currentState!.pop(),
+                          child: const Text('Close sheet'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
                 body: ListView.builder(
                   controller: controller,
                   itemCount: 40,
@@ -320,29 +225,39 @@ void main() {
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
         expect(sheetController.offset, greaterThan(0));
-        expect(
-          tester
-              .widget<FloatingHeader>(find.byType(FloatingHeader))
-              .showBackground,
-          isTrue,
-        );
+        expect(find.byType(HeaderBlur), findsNothing);
+        expect(find.byType(BackdropFilter), findsNothing);
+        expect(find.byType(FloatingHeader), findsNothing);
+        expect(find.text('Sheet title'), findsOneWidget);
+        expect(find.text('Close sheet'), findsOneWidget);
+        expect(find.byType(SheetDragHandle), findsOneWidget);
         tester.view.physicalSize = const Size(390, 620);
         await tester.pump();
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
+        expect(find.byType(HeaderBlur), findsNothing);
+        expect(find.byType(BackdropFilter), findsNothing);
+        expect(find.byType(SheetDragHandle), findsOneWidget);
+        final titleBounds = tester.getRect(find.text('Sheet title'));
+        final closeBounds = tester.getRect(find.text('Close sheet'));
         await tester.drag(find.byType(ListView), const Offset(0, -1000));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
+        expect(find.byType(HeaderBlur), findsNothing);
+        expect(find.byType(BackdropFilter), findsNothing);
+        expect(tester.getRect(find.text('Sheet title')), titleBounds);
+        expect(tester.getRect(find.text('Close sheet')), closeBounds);
         sheetController.jumpTo(0);
         await tester.pump();
         await tester.pump();
-        expect(
-          tester
-              .widget<FloatingHeader>(find.byType(FloatingHeader))
-              .showBackground,
-          isFalse,
-        );
-        navigator.currentState!.pop();
+        expect(find.byType(HeaderBlur), findsNothing);
+        expect(find.byType(BackdropFilter), findsNothing);
+        expect(find.text('Row 0'), findsOneWidget);
+        expect(find.text('Sheet title'), findsOneWidget);
+        expect(find.byType(SheetDragHandle), findsOneWidget);
+        expect(tester.getRect(find.text('Sheet title')), titleBounds);
+        expect(tester.getRect(find.text('Close sheet')), closeBounds);
+        await tester.tap(find.text('Close sheet'));
         await tester.pumpAndSettle();
         await closed;
         expect(find.byType(FloatingHeaderBody), findsNothing);
@@ -483,15 +398,8 @@ void main() {
       ),
     );
     expect(find.byType(HeaderBlur), findsNothing);
-    final scrim = tester.widget<DecoratedBox>(
-      find.descendant(
-        of: find.byType(FloatingHeader),
-        matching: find.byType(DecoratedBox),
-      ),
-    );
-    final gradient = (scrim.decoration as BoxDecoration).gradient!;
-    expect(gradient.colors.first, Colors.black.withValues(alpha: 0.9));
-    expect(gradient.colors.last.a, 0);
+    expect(find.byType(BackdropFilter), findsNothing);
+    expect(find.byType(FloatingHeader), findsNothing);
   });
 
   testWidgets('glass search enters and exits without an opaque app bar', (
