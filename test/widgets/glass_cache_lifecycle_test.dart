@@ -95,6 +95,11 @@ Future<Uint8List> _shot(WidgetTester tester, String name) async {
   final boundary = tester.renderObject<RenderRepaintBoundary>(
     find.byKey(_scene),
   );
+  if (boundary.debugNeedsPaint) {
+    tester.binding.scheduleForcedFrame();
+    await tester.pump();
+  }
+  expect(boundary.debugNeedsPaint, isFalse);
   return (await tester.runAsync(() async {
     final image = await boundary.toImage();
     try {

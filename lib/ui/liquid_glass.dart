@@ -1790,7 +1790,6 @@ class _LiquidGlassLayer extends Layer {
     _captureShader = null;
     _held = null;
     _capturedPass = -1;
-    markNeedsAddToScene();
   }
 
   void _dropCaptured() {

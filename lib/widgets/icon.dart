@@ -289,6 +289,7 @@ set readRemoteIcon(Stream<Uint8List> Function(String src)? value) {
 class _IconRead {
   _IconRead(this.src) {
     controller = StreamController.broadcast(
+      sync: true,
       onListen: () {
         if (_closed || _active || pending.contains(this)) return;
         pending.add(this);

@@ -57,6 +57,15 @@ double _contrast(Color a, Color b) {
 Future<MemorySnapshot> _memory() async =>
     const MemorySnapshot(app: 32 << 20, coreTotal: 96 << 20);
 
+Finder _memoryAppInks() => find.descendant(
+  of: find.byType(MemoryInfo),
+  matching: find.byWidgetPredicate(
+    (widget) =>
+        widget is GlassInk &&
+        (widget.child is ColoredBox || widget.child is DecoratedBox),
+  ),
+);
+
 void main() {
   setUpAll(() async {
     final font = FontLoader('DashboardForeground')
@@ -281,10 +290,7 @@ void main() {
           contrast: 3.0,
         ));
         final actual = await render('actual');
-        final appInks = find.descendant(
-          of: find.byType(MemoryInfo),
-          matching: find.byType(GlassInk),
-        );
+        final appInks = _memoryAppInks();
         expect(appInks, findsNWidgets(2));
         final appInkBounds = tester
             .widgetList<GlassInk>(appInks)
@@ -371,10 +377,7 @@ void main() {
         }
         final none = await render('none', glass: false);
         expect(
-          find.descendant(
-            of: find.byType(MemoryInfo),
-            matching: find.byType(GlassInk),
-          ),
+          _memoryAppInks(),
           findsNothing,
         );
         final noneControl = await render(
@@ -396,10 +399,7 @@ void main() {
             quality == LiquidGlassQuality.standard) {
           await render('high-contrast', highContrast: true);
           expect(
-            find.descendant(
-              of: find.byType(MemoryInfo),
-              matching: find.byType(GlassInk),
-            ),
+            _memoryAppInks(),
             findsNothing,
           );
         }
