@@ -23,7 +23,7 @@ The upstream already provides Material You colors, Liquid Glass levels, continuo
 ### Themes and pages
 
 - Adds a seeded aurora gradient wallpaper that composes 1–3 selected colors. Users can regenerate the composition; the palette and current composition persist, and the app checks for monthly rotation while active. Fresh installs use this wallpaper and Ultra Glass; ordinary theme colors and glass quality remain separately adjustable. High-contrast and pure-black dark modes keep opaque surfaces.
-- Redesigns the theme-color picker and provides system/manual brightness and font selection. Available fonts depend on the device; Aerove does not bundle MiSans.
+- Redesigns the theme-color picker and provides system/manual brightness and font selection. Available fonts depend on the device; Aerove does not bundle MiSans. The MiSans reproduction fixture is used only for CI font regression tests; it is not an app runtime resource and is not packaged in the APK.
 - Extends glass foregrounds, text, icons, and interaction feedback across dashboards, proxy groups, cards, buttons, selectors, inputs, navigation, menus, popups, the editor, and form sheets. The glass levels, Material You foundation, and continuous corners already exist upstream; Aerove changes their coverage and composition.
 - Clips proxy-group glass boundaries and pinned headers to their visible shapes; avoids showing an emoji twice beside a group icon. The active exit shows a country/region flag emoji.
 - Uses consistent title, value, unit, and secondary-text hierarchy and colors in connection details and tables. This adjustment does not solve narrow-screen clipping by shrinking or reflowing text.
@@ -43,6 +43,7 @@ The upstream already provides Material You colors, Liquid Glass levels, continuo
 ### Navigation, proxies, and dashboard
 
 - The floating bottom dock narrows while scrolling down and expands when scrolling up, returning to the top, or changing pages. Icons keep their size while labels fade out.
+- Consecutive collapsed proxy groups use a fixed-extent sliver list. Headers are created on demand within the visible/cache range, and collapsed proxy nodes are not built or painted. Expanded rows and expand/collapse transitions continue through the group sliver layout, so scrolling does not traverse and create node skeletons for every collapsed group.
 - Proxy lists no longer keep a scrollbar visible at all times; it fades after scrolling and shows a position/rate hint while dragging long lists. Other scroll regions also use themed scrollbars.
 - Aerove retains upstream proxy-group cards/tabs, connection/request/DNS tables, and connection monitoring. It changes their glass backgrounds, icon/text presentation, exit information, and the dashboard layout around the active outbound; it adds no proxy protocol or core monitoring data.
 - Subscription cards add a liquid fill with an inset, curved meniscus clipped to the card outline. It appears only when the subscription supplies valid total and usage values; near-limit and over-limit use different warning colors. Without valid quota data, the fill is hidden.
