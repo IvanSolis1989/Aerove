@@ -383,22 +383,11 @@ class _IconRead {
 }
 
 Stream<Uint8List> _loadRemoteIcon(String src) {
-  return Stream.multi((controller) {
-    final cached = _remoteIcons[src];
-    final pending = _iconReads[src];
-    if (cached != null) controller.addSync(cached);
-    if (cached != null && pending == null) {
-      controller.closeSync();
-      return;
-    }
-    final read = pending ?? (_iconReads[src] = _IconRead(src));
-    final subscription = read.controller.stream.listen(
-      controller.addSync,
-      onError: controller.addErrorSync,
-      onDone: controller.closeSync,
-    );
-    controller.onCancel = subscription.cancel;
-  });
+  final pending = _iconReads[src];
+  final cached = _remoteIcons[src];
+  if (cached != null && pending == null) return Stream.value(cached);
+  final read = pending ?? (_iconReads[src] = _IconRead(src));
+  return read.controller.stream;
 }
 
 Future<void> _decodeAhead(Uint8List bytes) {
