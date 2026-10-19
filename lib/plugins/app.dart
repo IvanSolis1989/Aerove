@@ -44,6 +44,22 @@ class App {
     return methodChannel.invokeMethod<bool>('moveTaskToBack');
   }
 
+  Future<List<String>> getSupportedAbis() async {
+    return await methodChannel.invokeListMethod<String>('getSupportedAbis') ??
+        const [];
+  }
+
+  Future<int> downloadUpdate(Uri url, String fileName) async {
+    final id = await methodChannel.invokeMethod<int>('downloadUpdate', {
+      'url': url.toString(),
+      'fileName': fileName,
+    });
+    if (id == null || id <= 0) {
+      throw StateError('DownloadManager did not return a download ID');
+    }
+    return id;
+  }
+
   Future<List<Package>> getPackages() async {
     final packagesString = await methodChannel.invokeMethod<String>(
       'getPackages',

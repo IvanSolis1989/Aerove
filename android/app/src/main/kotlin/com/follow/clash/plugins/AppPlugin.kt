@@ -80,6 +80,8 @@ class AppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
 
     private val gson = Gson()
 
+    private val updateDownloader by lazy { UpdateDownloader(GlobalState.application) }
+
     private val packageResolver by lazy {
         PackageResolver(
             GlobalState.application.packageManager,
@@ -201,6 +203,15 @@ class AppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
 
             "getLastExitInfo" -> reply(result) {
                 GlobalState.lastExitInfo()
+            }
+
+            "getSupportedAbis" -> result.success(Build.SUPPORTED_ABIS.toList())
+
+            "downloadUpdate" -> reply(result) {
+                updateDownloader.enqueue(
+                    requireNotNull(call.argument<String>("url")),
+                    requireNotNull(call.argument<String>("fileName")),
+                )
             }
 
             else -> {

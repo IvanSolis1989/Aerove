@@ -4,6 +4,7 @@ import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/state.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -32,7 +33,11 @@ Map<String, dynamic> release(String? body) => <String, dynamic>{
   'body': body,
 };
 
-Future<ProviderContainer> pumpApp(WidgetTester tester, {Locale? locale}) async {
+Future<ProviderContainer> pumpApp(
+  WidgetTester tester, {
+  Locale? locale,
+  bool withStatusManager = false,
+}) async {
   final container = ProviderContainer();
   addTearDown(container.dispose);
   globalState.container = container;
@@ -48,6 +53,7 @@ Future<ProviderContainer> pumpApp(WidgetTester tester, {Locale? locale}) async {
       container: container,
       child: TestApp(
         locale: locale,
+        withStatusManager: withStatusManager,
         child: const Scaffold(body: SizedBox.shrink()),
       ),
     ),
@@ -155,5 +161,68 @@ void main() {
     await tapCancel(tester);
     await shown;
     expect(container.read(appSettingProvider).autoCheckUpdate, isTrue);
+  });
+
+  testWidgets('duplicate checks share one dialog and cancellation permits retry', (
+    tester,
+  ) async {
+    final container = await pumpApp(tester);
+    final action = container.read(commonActionProvider.notifier);
+    final shown = action.checkUpdateResultHandle(
+      data: release(_bulletsOnly),
+      isUser: true,
+    );
+    await tester.pumpAndSettle();
+    await action.checkUpdateResultHandle(
+      data: release(_bulletsOnly),
+      isUser: true,
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('v0.8.96'), findsOneWidget);
+    await tapCancel(tester);
+    await shown;
+    expect(container.read(appSettingProvider).autoCheckUpdate, isTrue);
+
+    final retry = action.checkUpdateResultHandle(
+      data: release(_bulletsOnly),
+      isUser: true,
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('v0.8.96'), findsOneWidget);
+    await tapCancel(tester);
+    await retry;
+  });
+
+  testWidgets('download launch failure is reported and the action can retry', (
+    tester,
+  ) async {
+    const channel = MethodChannel('plugins.flutter.io/url_launcher');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (_) async => false);
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    final container = await pumpApp(tester, withStatusManager: true);
+    final action = container.read(commonActionProvider.notifier);
+    final shown = action.checkUpdateResultHandle(
+      data: release(_bulletsOnly),
+      isUser: true,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Download'));
+    await tester.pumpAndSettle();
+    await shown;
+    expect(
+      find.text('Could not start the system download. Please try again.'),
+      findsOneWidget,
+    );
+
+    final retry = action.checkUpdateResultHandle(
+      data: release(_bulletsOnly),
+      isUser: true,
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('v0.8.96'), findsOneWidget);
+    await tapCancel(tester);
+    await retry;
   });
 }

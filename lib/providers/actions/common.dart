@@ -4,6 +4,7 @@ part of '../action.dart';
 class CommonAction extends _$CommonAction {
   CoreController get _core => ref.read(coreHandlerProvider);
   bool _isUpdatingTraffic = false;
+  bool _isHandlingUpdate = false;
 
   @override
   void build() {}
@@ -137,36 +138,79 @@ class CommonAction extends _$CommonAction {
     Map<String, dynamic>? data,
     bool isUser = false,
   }) async {
-    if (data != null) {
-      final context = globalState.navigatorKey.currentContext!;
-      final res = await dialogs.showMessage(
-        title: currentAppLocalizations.discoverNewVersion,
-        message: _releaseSpan(
-          context,
-          data['tag_name'] as String,
-          data['body'] as String?,
-        ),
-        confirmText: currentAppLocalizations.goDownload,
-        cancelText: isUser ? null : currentAppLocalizations.noLongerRemind,
-      );
-      if (res == true) {
+    if (_isHandlingUpdate) return;
+    _isHandlingUpdate = true;
+    try {
+      if (data != null) {
+        final context = globalState.navigatorKey.currentContext;
+        if (context == null || !context.mounted) return;
+        final res = await dialogs.showMessage(
+          title: currentAppLocalizations.discoverNewVersion,
+          message: _releaseSpan(
+            context,
+            data['tag_name'] as String,
+            data['body'] as String?,
+          ),
+          confirmText: currentAppLocalizations.goDownload,
+          cancelText: isUser ? null : currentAppLocalizations.noLongerRemind,
+        );
+        if (!ref.mounted) return;
+        if (res == true) {
+          await globalState.safeRun(() async {
+            try {
+              final androidApp = app;
+              if (androidApp != null) {
+                final asset = selectAndroidUpdateAsset(
+                  data,
+                  await androidApp.getSupportedAbis(),
+                );
+                if (asset == null) {
+                  throw MessageException(
+                    currentAppLocalizations.updateAssetUnavailable,
+                  );
+                }
+                await androidApp.downloadUpdate(asset.url, asset.name);
+                dialogs.showNotifier(
+                  currentAppLocalizations.updateDownloadStarted,
+                );
+              } else {
+                final opened = await launchUrl(
+                  Uri.parse('https://github.com/$repository/releases/latest'),
+                  mode: LaunchMode.externalApplication,
+                );
+                if (!opened) {
+                  throw MessageException(
+                    currentAppLocalizations.updateDownloadFailed,
+                  );
+                }
+              }
+            } on MessageException {
+              rethrow;
+            } catch (error) {
+              commonPrint.log(
+                'Update download failed: ${compactError(error)}',
+                logLevel: LogLevel.warning,
+              );
+              throw MessageException(
+                currentAppLocalizations.updateDownloadFailed,
+              );
+            }
+          });
+        } else if (!isUser && res == false) {
+          ref
+              .read(appSettingProvider.notifier)
+              .update((state) => state.copyWith(autoCheckUpdate: false));
+        }
+      } else if (isUser) {
         unawaited(
-          launchUrl(
-            Uri.parse('https://github.com/$repository/releases/latest'),
+          dialogs.showMessage(
+            title: currentAppLocalizations.checkUpdate,
+            message: TextSpan(text: currentAppLocalizations.checkUpdateError),
           ),
         );
-      } else if (!isUser && res == false) {
-        ref
-            .read(appSettingProvider.notifier)
-            .update((state) => state.copyWith(autoCheckUpdate: false));
       }
-    } else if (isUser) {
-      unawaited(
-        dialogs.showMessage(
-          title: currentAppLocalizations.checkUpdate,
-          message: TextSpan(text: currentAppLocalizations.checkUpdateError),
-        ),
-      );
+    } finally {
+      _isHandlingUpdate = false;
     }
   }
 }
