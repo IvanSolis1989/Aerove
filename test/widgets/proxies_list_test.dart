@@ -20,6 +20,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../helpers/test_app.dart';
 import '../helpers/test_profiles.dart';
+import '../helpers/scrollbar.dart';
 
 class _RecordingProxiesAction extends ProxiesAction {
   static final List<String> tested = [];
@@ -142,20 +143,6 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  Finder groupScroll(String groupName) => find.descendant(
-    of: find.ancestor(
-      of: find.byWidgetPredicate(
-        (widget) => widget is ListHeader && widget.group.name == groupName,
-        skipOffstage: false,
-      ),
-      matching: find.byWidgetPredicate(
-        (widget) => widget.runtimeType.toString() == '_GroupSliver',
-      ),
-    ),
-    matching: find.byType(Scrollable),
-    skipOffstage: false,
-  );
-
   ShapeDecoration surfaceOf(WidgetTester tester, String groupName) =>
       tester
               .widget<DecoratedBox>(
@@ -218,46 +205,20 @@ void main() {
                     )
                   : null,
             );
-            final scrollable = tab
-                ? find
-                      .descendant(
-                        of: find.byType(GridView).first,
-                        matching: find.byType(Scrollable),
-                      )
-                      .first
-                : groupScroll('G0');
-            final viewport = tab
-                ? find.byType(GridView).first
-                : find
-                      .ancestor(
-                        of: scrollable,
-                        matching: find.byType(CustomScrollView),
-                      )
-                      .first;
-            final bar = find
-                .ancestor(
-                  of: scrollable,
-                  matching: find.byType(CommonScrollBar),
-                )
+            final viewport = find
+                .byType(tab ? GridView : CustomScrollView)
                 .first;
-            final paint = find
-                .descendant(
-                  of: bar,
-                  matching: find.byWidgetPredicate(
-                    (widget) =>
-                        widget is CustomPaint &&
-                        widget.foregroundPainter is ScrollbarPainter,
-                  ),
-                )
+            final scrollable = find
+                .descendant(of: viewport, matching: find.byType(Scrollable))
                 .first;
-            ScrollbarPainter painter() =>
-                tester.widget<CustomPaint>(paint).foregroundPainter!
-                    as ScrollbarPainter;
             final position = tester.state<ScrollableState>(scrollable).position;
-            double opacity() => painter().fadeoutOpacityAnimation.value;
+            double opacity() =>
+                scrollbarPainter(tester).fadeoutOpacityAnimation.value;
             expect(position.maxScrollExtent, greaterThan(100));
             expect(
-              tester.widget<CommonScrollBar>(bar).thumbVisibility,
+              tester
+                  .widget<CommonScrollBar>(find.byType(CommonScrollBar).first)
+                  .thumbVisibility,
               isFalse,
             );
             await tester.pump(const Duration(seconds: 2));
@@ -278,31 +239,9 @@ void main() {
             await tester.pump();
             await tester.pump(const Duration(milliseconds: 300));
             expect(opacity(), 1);
-            final pixels = position.pixels;
-            position.jumpTo(pixels > 0 ? pixels - 1 : pixels + 1);
-            position.jumpTo(pixels);
-            await tester.pump();
-            await tester.pump(const Duration(milliseconds: 300));
-            final box = tester.renderObject<RenderBox>(paint);
-            final x = box.size.width - 5;
-            double? thumbTop;
-            double? thumbBottom;
-            for (var y = 0.0; y < box.size.height; y++) {
-              if (painter().hitTestOnlyThumbInteractive(
-                Offset(x, y),
-                PointerDeviceKind.mouse,
-              )) {
-                thumbTop ??= y;
-                thumbBottom = y;
-              }
-            }
-            expect(
-              thumbTop,
-              isNotNull,
-              reason: 'no visible group scrollbar thumb',
-            );
-            final thumb = box.localToGlobal(
-              Offset(x, (thumbTop! + thumbBottom!) / 2),
+            final thumb = await revealScrollbarThumb(
+              tester,
+              scrollable: scrollable,
             );
             if (Theme.of(tester.element(viewport)).platform ==
                 TargetPlatform.macOS) {
@@ -313,7 +252,7 @@ void main() {
               await mouse.moveTo(thumb);
               await tester.pump();
               await tester.pump(const Duration(milliseconds: 150));
-              expect(painter().thickness, 10);
+              expect(scrollbarPainter(tester).thickness, 10);
               await mouse.removePointer();
               await tester.pump(const Duration(milliseconds: 150));
             }
@@ -489,156 +428,18 @@ void main() {
   testWidgets('scroll to selected lands the row under the pinned header', (
     tester,
   ) async {
-    await pumpList(tester, selectedMap: {'G1': 'G1-10'});
+    await pumpList(tester, selectedMap: {'G1': 'G1-25'});
     await revealHeaderOf(tester, 'G1');
 
     await tester.tap(actionOf('G1', 'Scroll to selected'));
     await tester.pumpAndSettle();
 
     final header = tester.getRect(headerOf('G1'));
-    final card = tester.getRect(find.byKey(const ValueKey('G1.G1-10')).first);
+    final card = tester.getRect(find.byKey(const ValueKey('G1.G1-25')).first);
     expect(card.top, header.bottom);
   });
 
-  for (final viewMode in [ViewMode.mobile, ViewMode.desktop]) {
-    testWidgets(
-      'a pinned ${viewMode.name} group consumes drags before the page',
-      (tester) async {
-        await pumpList(
-          tester,
-          viewMode: viewMode,
-          groups: [
-            _group('G0', 0),
-            _group('G1', 0),
-            _group('G2', 120),
-            _group('G3', 120),
-            for (var i = 4; i < 10; i++) _group('G$i', 0),
-          ],
-          unfoldSet: {'G2', 'G3'},
-        );
-        final outer = tester.state<ScrollableState>(scrollable()).position;
-        final inner = tester.state<ScrollableState>(groupScroll('G2')).position;
-        final pinnedTop = tester.getRect(headerOf('G0')).top;
-        final anchor = tester.getRect(headerOf('G2')).top - pinnedTop;
-        Offset bodyPoint() {
-          final header = tester.getRect(headerOf('G2'));
-          return Offset(header.center.dx, header.bottom + 36);
-        }
-
-        final gesture = await tester.startGesture(bodyPoint());
-        await gesture.moveBy(const Offset(0, -24));
-        await tester.pump();
-        await gesture.moveBy(const Offset(0, -20));
-        await tester.pump();
-        expect(outer.pixels, greaterThan(0));
-        expect(outer.pixels, lessThan(anchor));
-        expect(inner.pixels, 0);
-        await gesture.moveBy(Offset(0, -anchor - 80));
-        await tester.pump();
-        expect(outer.pixels, closeTo(anchor, 0.01));
-        expect(inner.pixels, greaterThan(0));
-        final before = inner.pixels;
-        await gesture.moveBy(const Offset(0, -70));
-        await tester.pump();
-        expect(outer.pixels, closeTo(anchor, 0.01));
-        expect(inner.pixels, greaterThan(before));
-        expect(tester.getRect(headerOf('G2')).top, closeTo(pinnedTop, 0.01));
-        if (viewMode == ViewMode.desktop) {
-          final other = tester
-              .state<ScrollableState>(groupScroll('G3'))
-              .position;
-          expect(other.pixels, 0);
-        }
-        await gesture.cancel();
-        await tester.pumpAndSettle();
-        final beforeWheel = inner.pixels;
-        await tester.sendEventToBinding(
-          PointerScrollEvent(
-            position: bodyPoint(),
-            scrollDelta: const Offset(0, 80),
-          ),
-        );
-        await tester.pumpAndSettle();
-        expect(inner.pixels, greaterThan(beforeWheel));
-        expect(outer.pixels, closeTo(anchor, 0.01));
-
-        inner.jumpTo(inner.maxScrollExtent - 30);
-        await tester.pump();
-        final tail = await tester.startGesture(bodyPoint());
-        await tail.moveBy(const Offset(0, -24));
-        await tester.pump();
-        await tail.moveBy(const Offset(0, -100));
-        await tester.pump();
-        expect(inner.pixels, inner.maxScrollExtent);
-        expect(outer.pixels, greaterThan(anchor));
-        await tail.cancel();
-        await tester.pumpAndSettle();
-
-        final reverse = await tester.startGesture(bodyPoint());
-        await reverse.moveBy(const Offset(0, 24));
-        await tester.pump();
-        await reverse.moveBy(const Offset(0, 130));
-        await tester.pump();
-        expect(outer.pixels, closeTo(anchor, 0.01));
-        expect(inner.pixels, lessThan(inner.maxScrollExtent));
-        await reverse.cancel();
-        await tester.pumpAndSettle();
-
-        inner.jumpTo(20);
-        await tester.pump();
-        final head = await tester.startGesture(bodyPoint());
-        await head.moveBy(const Offset(0, 24));
-        await tester.pump();
-        await head.moveBy(const Offset(0, 100));
-        await tester.pump();
-        expect(inner.pixels, 0);
-        expect(outer.pixels, lessThan(anchor));
-        await head.cancel();
-        await tester.pumpAndSettle();
-        outer.jumpTo(anchor);
-        await tester.pump();
-        final tailPosition = tester
-            .state<ScrollableState>(groupScroll('G2'))
-            .position;
-        tailPosition.jumpTo(tailPosition.maxScrollExtent - 10);
-        await tester.pump();
-        await tester.fling(groupScroll('G2'), const Offset(0, -200), 1000);
-        await tester.pumpAndSettle();
-        expect(outer.pixels, greaterThan(anchor));
-        expect(tester.takeException(), isNull);
-        await unmountList(tester);
-      },
-    );
-  }
-
-  testWidgets('a short expanded group hands its drag to the page', (
-    tester,
-  ) async {
-    await pumpList(
-      tester,
-      groups: [_group('G0', 2), _group('G1', 120)],
-      unfoldSet: {'G0', 'G1'},
-    );
-    final outer = tester.state<ScrollableState>(scrollable()).position;
-    final inner = tester.state<ScrollableState>(groupScroll('G0')).position;
-    expect(inner.maxScrollExtent, 0);
-    final header = tester.getRect(headerOf('G0'));
-    final gesture = await tester.startGesture(
-      Offset(header.center.dx, header.bottom + 30),
-    );
-    await gesture.moveBy(const Offset(0, -24));
-    await tester.pump();
-    await gesture.moveBy(const Offset(0, -100));
-    await tester.pump();
-    expect(inner.pixels, 0);
-    expect(outer.pixels, greaterThan(0));
-    await gesture.cancel();
-    await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull);
-    await unmountList(tester);
-  });
-
-  testWidgets('a group drag grows its sheet before scrolling nodes', (
+  testWidgets('the native proxy viewport grows its sheet before scrolling rows', (
     tester,
   ) async {
     await pumpList(
@@ -664,7 +465,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('open proxies'));
     await tester.pumpAndSettle();
-    final inner = tester.state<ScrollableState>(groupScroll('G0')).position;
+    expect(find.byType(CustomScrollView), findsOneWidget);
+    final position = tester.state<ScrollableState>(scrollable()).position;
     final before = tester.getRect(headerOf('G0'));
     final gesture = await tester.startGesture(
       Offset(before.center.dx, before.bottom + 30),
@@ -674,7 +476,7 @@ void main() {
     await gesture.moveBy(const Offset(0, -80));
     await tester.pump();
     expect(tester.getRect(headerOf('G0')).top, lessThan(before.top));
-    expect(inner.pixels, 0);
+    expect(position.pixels, 0);
     await gesture.cancel();
     await tester.pumpAndSettle();
     tester.state<NavigatorState>(find.byType(Navigator).first).pop();
@@ -683,42 +485,7 @@ void main() {
     await unmountList(tester);
   });
 
-  testWidgets('a group caches its offset offscreen and resets it when folded', (
-    tester,
-  ) async {
-    await pumpList(
-      tester,
-      groups: [for (var i = 0; i < 3; i++) _group('G$i', 120)],
-    );
-    final outer = tester.state<ScrollableState>(scrollable()).position;
-    var inner = tester.state<ScrollableState>(groupScroll('G0')).position;
-    inner.jumpTo(400);
-    await tester.pump();
-    outer.jumpTo(outer.maxScrollExtent);
-    await tester.pump();
-    expect(
-      find.byWidgetPredicate(
-        (widget) => widget is ProxyCard && widget.groupName == 'G0',
-        skipOffstage: false,
-      ),
-      findsNothing,
-    );
-    outer.jumpTo(0);
-    await tester.pump();
-    inner = tester.state<ScrollableState>(groupScroll('G0')).position;
-    expect(inner.pixels, 400);
-    final action = container.read(proxiesActionProvider.notifier);
-    action.updateCurrentUnfoldSet({'G1', 'G2'});
-    await tester.pumpAndSettle();
-    action.updateCurrentUnfoldSet({'G0', 'G1', 'G2'});
-    await tester.pumpAndSettle();
-    inner = tester.state<ScrollableState>(groupScroll('G0')).position;
-    expect(inner.pixels, 0);
-    expect(tester.takeException(), isNull);
-    await unmountList(tester);
-  });
-
-  testWidgets('group wheel scrolling preserves sheet detents and settling', (
+  testWidgets('the native proxy viewport preserves sheet wheel detents and settling', (
     tester,
   ) async {
     await pumpList(
@@ -744,7 +511,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('open proxies'));
     await tester.pumpAndSettle();
-    final outer = tester.state<ScrollableState>(scrollable()).position;
+    expect(find.byType(CustomScrollView), findsOneWidget);
+    final position = tester.state<ScrollableState>(scrollable()).position;
     final pointer = TestPointer(11, PointerDeviceKind.mouse);
     Future<void> wheel(Offset delta, int milliseconds) async {
       final header = tester.getRect(headerOf('G0'));
@@ -756,40 +524,39 @@ void main() {
       );
     }
 
-    ScrollPosition inner() =>
-        tester.state<ScrollableState>(groupScroll('G0')).position;
     final collapsedTop = tester.getRect(headerOf('G0')).top;
     await wheel(const Offset(0, 60), 0);
     await tester.pump(const Duration(milliseconds: 30));
-    expect(inner().pixels, 0);
+    expect(position.pixels, 0);
     await wheel(const Offset(60, 0), 30);
     await tester.pumpAndSettle();
     final expandedTop = tester.getRect(headerOf('G0')).top;
     expect(expandedTop, lessThan(collapsedTop));
-    expect(inner().pixels, 0);
-    expect(outer.pixels, 0);
+    expect(position.pixels, 0);
 
     await wheel(const Offset(0, 60), 1000);
     await tester.pumpAndSettle();
-    expect(inner().pixels, 60);
-    expect(outer.pixels, 0);
+    expect(position.pixels, 60);
     await wheel(const Offset(0, -60), 2000);
     await tester.pumpAndSettle();
-    expect(inner().pixels, 0);
+    expect(position.pixels, 0);
     expect(tester.getRect(headerOf('G0')).top, closeTo(expandedTop, 1));
 
     await wheel(const Offset(0, 20), 3000);
     await tester.pumpAndSettle();
-    expect(inner().pixels, 20);
+    expect(position.pixels, 20);
     await wheel(const Offset(0, -100), 4000);
+    await tester.pumpAndSettle();
+    expect(position.pixels, 0);
+    expect(tester.getRect(headerOf('G0')).top, closeTo(expandedTop, 1));
+    await wheel(const Offset(0, -60), 5000);
     await tester.pump(const Duration(milliseconds: 30));
-    expect(inner().pixels, 0);
-    await wheel(const Offset(0, 60), 4030);
-    await wheel(const Offset(60, 0), 4040);
+    expect(position.pixels, 0);
+    await wheel(const Offset(0, 60), 5030);
+    await wheel(const Offset(60, 0), 5040);
     await tester.pumpAndSettle();
     expect(tester.getRect(headerOf('G0')).top, closeTo(collapsedTop, 1));
-    expect(inner().pixels, 0);
-    expect(outer.pixels, 0);
+    expect(position.pixels, 0);
     tester.state<NavigatorState>(find.byType(Navigator).first).pop();
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
@@ -937,7 +704,7 @@ void main() {
         for (var i = 3; i < 13; i++) _group('G$i', 0),
       ],
       unfoldSet: {},
-      selectedMap: {'G2': 'G2-15'},
+      selectedMap: {'G2': 'G2-45'},
     );
     await tester.tap(actionOf('G2', 'Expand'));
     await tester.pumpAndSettle();
@@ -946,7 +713,7 @@ void main() {
     final position = tester.state<ScrollableState>(scrollable()).position;
     expect(position.pixels, lessThan(position.maxScrollExtent));
     expect(
-      tester.getRect(find.byKey(const ValueKey('G2.G2-15')).first).top,
+      tester.getRect(find.byKey(const ValueKey('G2.G2-45')).first).top,
       tester.getRect(headerOf('G2')).bottom,
     );
     expect(tester.takeException(), isNull);
@@ -1140,15 +907,13 @@ void main() {
     await tester.tap(find.text('G0'));
     await tester.pumpAndSettle();
     final before = tester.getRect(header);
-    final beforeEnvelope = glassGroupRect(tester, 'G0');
-    final position = tester.state<ScrollableState>(groupScroll('G0')).position;
+    final position = tester.state<ScrollableState>(scrollable()).position;
     position.jumpTo(200);
     await tester.pumpAndSettle();
     final after = tester.getRect(header);
     expect(after.top, before.top);
     expect(glassGroupRect(tester, 'G0').top, headerInHost(tester, 'G0').top);
-    expect(glassGroupRect(tester, 'G0').bottom, beforeEnvelope.bottom);
-    expect(glassGroupRect(tester, 'G0').bottom, lessThanOrEqualTo(700));
+    expect(glassGroupRect(tester, 'G0').bottom, greaterThan(700));
     expect(
       tester.layers.whereType<ClipRectLayer>().map((layer) => layer.clipRect),
       contains(
@@ -1204,7 +969,7 @@ void main() {
   });
 
   testWidgets(
-    'glass group tails stay fixed while the pinned group scrolls internally',
+    'glass group tails follow content while the header stays pinned',
     (tester) async {
       await pumpList(
         tester,
@@ -1213,16 +978,14 @@ void main() {
       );
       try {
         final before = glassGroupRect(tester, 'G0');
-        final position = tester
-            .state<ScrollableState>(groupScroll('G0'))
-            .position;
+        final position = tester.state<ScrollableState>(scrollable()).position;
         position.jumpTo(200);
         await tester.pumpAndSettle();
         final pinned = glassGroupRect(tester, 'G0');
         expect(pinned.top, before.top);
         expect(pinned.top, headerInHost(tester, 'G0').top);
-        expect(pinned.bottom, moreOrLessEquals(before.bottom));
-        expect(pinned.bottom, lessThanOrEqualTo(700));
+        expect(pinned.bottom, moreOrLessEquals(before.bottom - 200));
+        expect(pinned.bottom, greaterThan(700));
 
         final lastCard = find.byWidgetPredicate(
           (widget) => widget is ProxyCard && widget.proxy.name == 'G0-39',
@@ -1230,7 +993,7 @@ void main() {
         await tester.scrollUntilVisible(
           lastCard,
           200,
-          scrollable: groupScroll('G0'),
+          scrollable: scrollable(),
         );
         await tester.pumpAndSettle();
         position.jumpTo(position.maxScrollExtent);
@@ -1308,13 +1071,7 @@ void main() {
     final lastCard = find.byWidgetPredicate(
       (widget) => widget is ProxyCard && widget.proxy.name == 'G0-39',
     );
-    await tester.scrollUntilVisible(
-      lastCard,
-      200,
-      scrollable: groupScroll('G0'),
-    );
-    final position = tester.state<ScrollableState>(groupScroll('G0')).position;
-    position.jumpTo(position.maxScrollExtent);
+    await tester.scrollUntilVisible(lastCard, 200, scrollable: scrollable());
     await tester.pumpAndSettle();
 
     final header = tester.getRect(headerOf('G0'));
