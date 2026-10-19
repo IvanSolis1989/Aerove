@@ -488,6 +488,7 @@ void main() {
             find.descendant(
               of: skeletons,
               matching: find.byType(SizeTransition),
+              skipOffstage: false,
             ),
           );
           expect(transition().sizeFactor.value, 0);
@@ -546,7 +547,12 @@ void main() {
   ) async {
     await pumpList(
       tester,
-      groups: [_group('G0', 4), _group('G1', 4), _group('G2', 60)],
+      groups: [
+        _group('G0', 4),
+        _group('G1', 4),
+        _group('G2', 60),
+        for (var i = 3; i < 13; i++) _group('G$i', 0),
+      ],
       unfoldSet: {},
       selectedMap: {'G2': 'G2-45'},
     );
@@ -554,6 +560,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(actionOf('G2', 'Scroll to selected'));
     await tester.pumpAndSettle();
+    final position = tester.state<ScrollableState>(scrollable()).position;
+    expect(position.pixels, lessThan(position.maxScrollExtent));
     expect(
       tester.getRect(find.byKey(const ValueKey('G2.G2-45')).first).top,
       tester.getRect(headerOf('G2')).bottom,

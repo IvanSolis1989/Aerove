@@ -53,6 +53,7 @@ void main() {
         try {
           final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
           if (output != null) {
+            Directory(output).createSync(recursive: true);
             final png = (await image.toByteData(
               format: ui.ImageByteFormat.png,
             ))!;
@@ -409,6 +410,7 @@ void main() {
         try {
           final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
           if (output != null) {
+            Directory(output).createSync(recursive: true);
             final png = (await image.toByteData(
               format: ui.ImageByteFormat.png,
             ))!;

@@ -4,6 +4,8 @@ import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
+import 'package:fl_clash/ui/ui.dart'
+    show LiquidGlassHost, LiquidGlassScope, RemoteFocusAdapter;
 import 'package:fl_clash/views/proxies/list.dart';
 import 'package:fl_clash/views/proxies/proxies.dart';
 import 'package:material_ui/material_ui.dart';
@@ -20,6 +22,7 @@ void main() {
     Size size = const Size(1400, 1000),
     int proxyCount = 12,
     bool expanded = true,
+    bool glass = false,
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
@@ -70,7 +73,18 @@ void main() {
           ],
           supportedLocales: AppLocalizations.delegate.supportedLocales,
           builder: (context, child) {
-            return wrapAppScopes(context, child!);
+            return wrapAppScopes(
+              context,
+              glass
+                  ? RemoteFocusAdapter(
+                      enabled: true,
+                      child: LiquidGlassScope(
+                        enabled: true,
+                        child: LiquidGlassHost(enabled: true, child: child!),
+                      ),
+                    )
+                  : child!,
+            );
           },
           home: const ProxiesView(),
         ),
@@ -178,16 +192,72 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
     await tester.pump();
     expect(focusedHeaderActionIndex(), 0);
+    final expandFocus = FocusManager.instance.primaryFocus;
 
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
     expect(focusedHeaderActionIndex(), 2);
+    expect(FocusManager.instance.primaryFocus, same(expandFocus));
 
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
     expect(focusedHeaderActionIndex(), 0);
+    expect(FocusManager.instance.primaryFocus, same(expandFocus));
+    await tester.pumpAndSettle();
+    expect(focusedHeaderActionIndex(), 0);
+    expect(FocusManager.instance.primaryFocus, same(expandFocus));
 
     await tester.pump(const Duration(seconds: 1));
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+  });
+
+  testWidgets('a glass header keeps its keyboard focus ring across folding', (
+    tester,
+  ) async {
+    await pumpListLayout(tester, expanded: false, glass: true);
+    for (var i = 0; i < 10 && !focusInHeaderCard(); i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+    }
+    expect(focusInHeaderCard(), isTrue);
+    final cardFocus = FocusManager.instance.primaryFocus;
+    void expectRing() {
+      final card = tester.widget<FilledButton>(
+        find.descendant(
+          of: find.byType(ListHeader),
+          matching: find.byType(FilledButton),
+        ),
+      );
+      final side = card.style!.side!.resolve({WidgetState.focused})!;
+      expect(side.width, 2);
+      expect(
+        side.color,
+        Theme.of(tester.element(find.byType(ListHeader))).colorScheme.primary,
+      );
+    }
+
+    expectRing();
+    for (var i = 0; i < 2; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(focusInHeaderCard(), isTrue);
+      expect(FocusManager.instance.primaryFocus, same(cardFocus));
+      expectRing();
+    }
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump();
+    expect(focusedHeaderActionIndex(), 0);
+    final actionFocus = FocusManager.instance.primaryFocus;
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(focusedHeaderActionIndex(), 2);
+    expect(FocusManager.instance.primaryFocus, same(actionFocus));
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(focusedHeaderActionIndex(), 0);
+    expect(FocusManager.instance.primaryFocus, same(actionFocus));
+    expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     await tester.pump();
   });

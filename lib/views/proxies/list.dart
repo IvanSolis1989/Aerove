@@ -37,6 +37,10 @@ class _ProxiesListViewState extends ConsumerState<ProxiesListView> {
   double _gap = 0;
   final _closingGroups = <String>{};
   final _openingGroups = <String>{};
+  final _headerKeys = <String, GlobalKey>{};
+
+  GlobalKey _headerKeyOf(String name) =>
+      _headerKeys.putIfAbsent(name, GlobalKey.new);
 
   @override
   void initState() {
@@ -198,6 +202,7 @@ class _ProxiesListViewState extends ConsumerState<ProxiesListView> {
         final groupNames = groups.map((group) => group.name).toSet();
         _closingGroups.removeWhere((name) => !groupNames.contains(name));
         _openingGroups.removeWhere((name) => !groupNames.contains(name));
+        _headerKeys.removeWhere((name, _) => !groupNames.contains(name));
         final cardType = ref.watch(
           proxiesListStateProvider.select((state) => state.proxyCardType),
         );
@@ -247,6 +252,7 @@ class _ProxiesListViewState extends ConsumerState<ProxiesListView> {
                 onScrollToSelected: _scrollToGroupSelected,
                 animateOnMount: _openingGroups.contains(group.name),
                 onSettled: _handleSettled,
+                headerKey: _headerKeyOf(group.name),
               );
               List<Widget> buildColumn(int column) {
                 final slivers = <Widget>[];
@@ -260,6 +266,7 @@ class _ProxiesListViewState extends ConsumerState<ProxiesListView> {
                       gap: gap,
                       onChange: _handleChange,
                       onScrollToSelected: _scrollToGroupSelected,
+                      headerKeyOf: _headerKeyOf,
                     ),
                   );
                   folded = <Group>[];
@@ -351,12 +358,14 @@ class _CollapsedGroupRun extends StatelessWidget {
     required this.gap,
     required this.onChange,
     required this.onScrollToSelected,
+    required this.headerKeyOf,
   });
 
   final List<Group> groups;
   final double gap;
   final void Function(String groupName) onChange;
   final void Function(String groupName) onScrollToSelected;
+  final GlobalKey Function(String groupName) headerKeyOf;
 
   @override
   Widget build(BuildContext context) {
@@ -367,17 +376,20 @@ class _CollapsedGroupRun extends StatelessWidget {
       delegate: SliverChildBuilderDelegate(
         (context, index) {
           final group = groups[index];
-          Widget header = SizedBox(
-            height: headerHeight,
-            child: ListHeader(
-              key: ValueKey(group.name),
-              group: group,
-              onChange: onChange,
-              onScrollToSelected: onScrollToSelected,
-              isExpand: false,
-              unfolded: false,
-              hasGlassEnvelope: glass,
-              enterAnimated: false,
+          Widget header = KeyedSubtree(
+            key: headerKeyOf(group.name),
+            child: SizedBox(
+              height: headerHeight,
+              child: ListHeader(
+                key: ValueKey(group.name),
+                group: group,
+                onChange: onChange,
+                onScrollToSelected: onScrollToSelected,
+                isExpand: false,
+                unfolded: false,
+                hasGlassEnvelope: glass,
+                enterAnimated: false,
+              ),
             ),
           );
           if (glass) {
@@ -417,6 +429,7 @@ class _GroupSliver extends ConsumerStatefulWidget {
     required this.onScrollToSelected,
     required this.animateOnMount,
     required this.onSettled,
+    required this.headerKey,
   });
 
   final Group group;
@@ -427,6 +440,7 @@ class _GroupSliver extends ConsumerStatefulWidget {
   final void Function(String groupName) onScrollToSelected;
   final bool animateOnMount;
   final void Function(String groupName, bool expanded) onSettled;
+  final GlobalKey headerKey;
 
   @override
   ConsumerState<_GroupSliver> createState() => _GroupSliverState();
@@ -646,19 +660,22 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
     if (rows != null && LiquidGlassScope.of(context)) {
       rows = _HeaderClippedRows(sliver: rows);
     }
-    Widget buildHeader({double floating = 0, double lift = 0}) => SizedBox(
-      height: listHeaderHeight,
-      child: ListHeader(
-        enterAnimated: false,
-        floating: floating,
-        lift: lift,
-        onScrollToSelected: widget.onScrollToSelected,
-        key: ValueKey(groupName),
-        isExpand: isExpand,
-        unfolded: unfolded,
-        hasGlassEnvelope: glass,
-        group: widget.group,
-        onChange: widget.onChange,
+    Widget buildHeader({double floating = 0, double lift = 0}) => KeyedSubtree(
+      key: widget.headerKey,
+      child: SizedBox(
+        height: listHeaderHeight,
+        child: ListHeader(
+          enterAnimated: false,
+          floating: floating,
+          lift: lift,
+          onScrollToSelected: widget.onScrollToSelected,
+          key: ValueKey(groupName),
+          isExpand: isExpand,
+          unfolded: unfolded,
+          hasGlassEnvelope: glass,
+          group: widget.group,
+          onChange: widget.onChange,
+        ),
       ),
     );
     final slivers = [_buildPinnedHeader(isExpand, buildHeader), ?rows];

@@ -1,6 +1,7 @@
 import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/ui/dialog.dart';
 import 'package:fl_clash/ui/form_sheet.dart';
+import 'package:fl_clash/ui/header_blur.dart';
 import 'package:fl_clash/ui/inherited.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/paged_sheet.dart';
@@ -67,17 +68,17 @@ void main() {
         );
         await tester.tap(find.text('open'));
         await tester.pumpAndSettle();
-        final route = ModalRoute.of(tester.element(find.byKey(_probe)));
+        final route = ModalRoute.of(tester.element(find.byKey(_probe)))!;
         if (kind == 'side') {
           expect(route, isA<ModalSideSheetRoute<void>>());
           expect(
-            (route! as ModalSideSheetRoute<void>).backgroundColor,
+            (route as ModalSideSheetRoute<void>).backgroundColor,
             props.backgroundColor,
           );
         } else if (kind == 'form') {
           expect(route, isA<FormSheetRoute<void>>());
           expect(
-            (route! as FormSheetRoute<void>).backgroundColor,
+            (route as FormSheetRoute<void>).backgroundColor,
             props.backgroundColor,
           );
         }
@@ -133,10 +134,16 @@ void main() {
         final surfaceBounds = tester.getRect(sheetMaterial);
         originalSurfaceBounds ??= surfaceBounds;
         expect(surfaceBounds, originalSurfaceBounds);
-        final barrier = tester.widget<AnimatedModalBarrier>(
-          find.byType(AnimatedModalBarrier).last,
+        expect(route.barrierColor?.a ?? 0, 0);
+        expect(route.barrierDismissible, isTrue);
+        final barriers = find.byWidgetPredicate(
+          (widget) =>
+              widget is ModalBarrier &&
+              widget.semanticsLabel == route.barrierLabel &&
+              widget.dismissible,
         );
-        expect(barrier.color.value!.a, greaterThan(0));
+        expect(barriers, findsOneWidget);
+        expect(tester.widget<ModalBarrier>(barriers).color?.a ?? 0, 0);
         await tester.tapAt(const Offset(4, 4));
         await tester.pumpAndSettle();
         expect(find.byKey(_probe), findsNothing);
@@ -150,6 +157,92 @@ void main() {
         expect(tester.takeException(), isNull);
       }
     });
+
+    if (kind != 'side') {
+      for (final quality in LiquidGlassQuality.values) {
+        testWidgets('$kind optical header appears only after scroll $quality', (
+          tester,
+        ) async {
+          tester.view.physicalSize = size;
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          await tester.pumpWidget(
+            LiquidGlassScope(
+              enabled: true,
+              quality: quality,
+              child: TestApp(
+                includeNavigatorKey: false,
+                overrides: [viewSizeProvider.overrideWithBuild((_, _) => size)],
+                child: Scaffold(
+                  body: Builder(
+                    builder: (context) => TextButton(
+                      onPressed: () => show<void>(
+                        context: context,
+                        builder: (_) => CommonScaffold(
+                          title: 'Sheet',
+                          body: ListView(
+                            children: [
+                              for (var row = 0; row < 40; row++)
+                                SizedBox(
+                                  height: 48,
+                                  child: Text('Sheet row $row'),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      child: const Text('open'),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.tap(find.text('open'));
+          await tester.pumpAndSettle();
+          expect(find.byType(HeaderBlur), findsNothing);
+          final scrolling = find.descendant(
+            of: find.byType(CommonScaffold),
+            matching: find.byType(Scrollable),
+          );
+          expect(scrolling, findsOneWidget);
+          final position = tester.state<ScrollableState>(scrolling).position;
+          expect(position.maxScrollExtent, greaterThan(160));
+          position.jumpTo(160);
+          await tester.pumpAndSettle();
+          expect(position.extentBefore, greaterThan(0));
+          final header = find.byType(HeaderBlur);
+          expect(header, findsOneWidget);
+          expect(tester.widget<HeaderBlur>(header).liquidGlass, isTrue);
+          expect(
+            find.descendant(of: header, matching: find.byType(BackdropFilter)),
+            findsNothing,
+          );
+          final panes = find.descendant(
+            of: header,
+            matching: find.byType(LiquidGlass),
+          );
+          expect(panes, findsOneWidget);
+          final style = tester.widget<LiquidGlass>(panes).style;
+          expect(style.blur, 12);
+          expect(style.refraction, 12);
+          final mask = find.descendant(
+            of: header,
+            matching: find.byType(ShaderMask),
+          );
+          expect(mask, findsOneWidget);
+          expect(tester.widget<ShaderMask>(mask).blendMode, BlendMode.dstIn);
+          position.jumpTo(0);
+          await tester.pumpAndSettle();
+          expect(find.byType(HeaderBlur), findsNothing);
+          Navigator.of(tester.element(find.byType(CommonScaffold))).pop();
+          await tester.pumpAndSettle();
+          expect(find.byType(CommonScaffold), findsNothing);
+          expect(tester.takeException(), isNull);
+        });
+      }
+    }
   }
 
   testWidgets('nested pages keep a translucent base in both glass qualities', (
