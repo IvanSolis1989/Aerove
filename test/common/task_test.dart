@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
@@ -129,6 +130,123 @@ void main() {
     await buildGroups(state);
 
     expect(proxies['Selector']['all'], ['Beta']);
+  });
+
+  test('groups share immutable proxies across repeated names', () async {
+    final proxies = <String, dynamic>{
+      'First': {
+        'name': 'First',
+        'type': 'Selector',
+        'now': 'Future',
+        'hidden': true,
+        'testUrl': 'https://example.com/test',
+        'icon': 'first.svg',
+        'all': ['Future', 'Second', 'Future', 'missing'],
+      },
+      'Second': {
+        'name': 'Second',
+        'type': 'Fallback',
+        'now': 'Future',
+        'all': ['Future'],
+      },
+      'Empty': {'name': 'Empty', 'type': 'Selector'},
+      'Future': {'name': 'Future', 'type': 'FutureProtocol', 'now': 'remote'},
+    };
+    final groups = await toGroupsTask(
+      ComputeGroupsState(
+        proxiesData: ProxiesData(
+          all: const ['First', 'Second', 'Empty', 'Future', 'missing'],
+          proxies: proxies,
+        ),
+        sortType: ProxiesSortType.none,
+        delayMap: const {},
+        selectedMap: const {},
+        defaultTestUrl: '',
+      ),
+    );
+    final expected = [
+      for (final name in ['First', 'Second', 'Empty'])
+        Group.fromJson({
+          ...proxies[name] as Map<String, dynamic>,
+          'all': [
+            for (final member in (proxies[name]['all'] as List? ?? []))
+              if (proxies[member] != null) proxies[member],
+          ],
+        }),
+    ];
+
+    expect(groups, expected);
+    expect(groups.first.all.map((proxy) => proxy.name), [
+      'Future',
+      'Second',
+      'Future',
+    ]);
+    expect(groups.first.all.first, same(groups.first.all.last));
+    expect(groups.first.all.first, same(groups[1].all.single));
+    expect(groups.first.all[1].now, 'Future');
+    expect(() => groups.first.all.clear(), throwsUnsupportedError);
+  });
+
+  test('large shared memberships retain one proxy per unique member', () async {
+    const proxyCount = 1000;
+    const groupCount = 100;
+    final members = [for (var i = 0; i < proxyCount; i++) 'Proxy $i'];
+    final groups = await toGroupsTask(
+      ComputeGroupsState(
+        proxiesData: ProxiesData(
+          all: [for (var i = 0; i < groupCount; i++) 'Group $i'],
+          proxies: {
+            for (final name in members) name: {'name': name, 'type': 'Direct'},
+            for (var i = 0; i < groupCount; i++)
+              'Group $i': {
+                'name': 'Group $i',
+                'type': 'Selector',
+                'all': members,
+              },
+          },
+        ),
+        sortType: ProxiesSortType.name,
+        delayMap: const {},
+        selectedMap: const {},
+        defaultTestUrl: '',
+      ),
+    );
+    final retained = HashSet<Proxy>.identity();
+    var memberships = 0;
+    for (final group in groups) {
+      retained.addAll(group.all);
+      memberships += group.all.length;
+    }
+
+    expect(memberships, proxyCount * groupCount);
+    expect(retained, hasLength(proxyCount));
+    expect(groups.first.all, orderedEquals(groups.last.all));
+    expect(groups.first.all.first, same(groups.last.all.first));
+  });
+
+  test('group proxy sharing does not retain values across refreshes', () async {
+    final proxies = <String, dynamic>{
+      'Selector': {
+        'name': 'Selector',
+        'type': 'Selector',
+        'all': ['Beta'],
+      },
+      'Beta': {'name': 'Beta', 'type': 'Direct', 'now': 'before'},
+    };
+    final state = ComputeGroupsState(
+      proxiesData: ProxiesData(all: const ['Selector'], proxies: proxies),
+      sortType: ProxiesSortType.none,
+      delayMap: const {},
+      selectedMap: const {},
+      defaultTestUrl: '',
+    );
+    final before = await buildGroups(state);
+    proxies['Beta']['now'] = 'after';
+    final after = await buildGroups(state);
+
+    expect(before.single.all.single.now, 'before');
+    expect(after.single.all.single.now, 'after');
+    expect(after.single.all.single, isNot(same(before.single.all.single)));
   });
 
   test('toGroupsTask returns empty data without proxies', () async {

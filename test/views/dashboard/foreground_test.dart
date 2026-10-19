@@ -103,6 +103,7 @@ void main() {
           bool ink = true,
           bool glass = true,
           bool moved = false,
+          bool highContrast = false,
         }) async {
           await tester.pumpWidget(
             UncontrolledProviderScope(
@@ -145,7 +146,16 @@ void main() {
                                 children: [
                                   const ProfilesCard(),
                                   const ProxyGroupsSummaryCard(),
-                                  const MemoryInfo(memoryReader: _memory),
+                                  Builder(
+                                    builder: (context) => MediaQuery(
+                                      data: MediaQuery.of(
+                                        context,
+                                      ).copyWith(highContrast: highContrast),
+                                      child: const MemoryInfo(
+                                        memoryReader: _memory,
+                                      ),
+                                    ),
+                                  ),
                                   const DashboardDensityScope(
                                     density: DashboardDensity.standard,
                                     scale: 1,
@@ -271,7 +281,30 @@ void main() {
           contrast: 3.0,
         ));
         final actual = await render('actual');
+        final appInks = find.descendant(
+          of: find.byType(MemoryInfo),
+          matching: find.byType(GlassInk),
+        );
+        expect(appInks, findsNWidgets(2));
+        final appInkBounds = tester
+            .widgetList<GlassInk>(appInks)
+            .map((ink) => tester.getRect(find.byWidget(ink)))
+            .toList();
         final moved = await render('moved', moved: true);
+        for (final bounds in appInkBounds) {
+          final x = (bounds.center.dx * _dpr).floor();
+          final y = (bounds.center.dy * _dpr).floor();
+          expect(
+            _distance(_pixel(actual, x, y), _pixel(plain, x, y)),
+            greaterThan(0.01),
+            reason: 'the app memory fill follows the glass body ink',
+          );
+          expect(
+            _distance(_pixel(actual, x, y), _pixel(moved, x, y)),
+            greaterThan(0.01),
+            reason: 'the app memory fill follows the changing glass field',
+          );
+        }
         final reports = <Map<String, Object?>>[];
         final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
         for (final paragraph in paragraphs) {
@@ -337,6 +370,13 @@ void main() {
           );
         }
         final none = await render('none', glass: false);
+        expect(
+          find.descendant(
+            of: find.byType(MemoryInfo),
+            matching: find.byType(GlassInk),
+          ),
+          findsNothing,
+        );
         final noneControl = await render(
           'none-control',
           glass: false,
@@ -352,6 +392,17 @@ void main() {
         expect(noneDifference, 0);
         expect(find.byType(GlassInk), findsWidgets);
         expect(LiquidGlassHost.debugLastInkCapture!.masks, 0);
+        if (brightness == Brightness.light &&
+            quality == LiquidGlassQuality.standard) {
+          await render('high-contrast', highContrast: true);
+          expect(
+            find.descendant(
+              of: find.byType(MemoryInfo),
+              matching: find.byType(GlassInk),
+            ),
+            findsNothing,
+          );
+        }
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox.shrink());
         await tester.pump();

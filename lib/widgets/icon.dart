@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:emoji_regex/emoji_regex.dart';
-import 'package:fl_clash/common/cache.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/plugins/app.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
@@ -16,6 +15,7 @@ const _maxCachedIconBytes = 16 << 20;
 // The precache and the widget must resolve equal providers to share one
 // ImageCache entry; 192 physical pixels cover a 48 dp icon box at 4x.
 const _iconDecodeExtent = 192;
+const _precacheIconLimit = 32;
 
 ImageProvider _iconImage(Uint8List bytes) {
   return ResizeImage(
@@ -228,25 +228,175 @@ final _cacheManager = CacheManager(
 );
 
 Stream<Uint8List> _readCachedIcon(String src) {
-  return _cacheManager
-      .getFileStreamV2(src)
-      .asyncMap((data) => data.file.readAsBytes());
+  late final StreamController<Uint8List> controller;
+  late final Future<void> reading;
+  var cancelled = false;
+  Future<void> read() async {
+    try {
+      FileInfo? cached;
+      try {
+        cached = await _cacheManager.getFileFromCache(src);
+      } catch (error) {
+        commonPrint.log('Failed to read cached icon $src: $error');
+      }
+      if (cancelled) return;
+      if (cached != null) {
+        final bytes = await cached.file.readAsBytes();
+        if (!cancelled) controller.add(bytes);
+      }
+      if (cancelled) return;
+      if (cached == null || cached.validTill.isBefore(DateTime.now())) {
+        final downloaded = await _cacheManager.downloadFile(src);
+        if (cancelled) return;
+        final bytes = await downloaded.file.readAsBytes();
+        if (!cancelled) controller.add(bytes);
+      }
+    } catch (error, stack) {
+      if (!cancelled) controller.addError(error, stack);
+    } finally {
+      unawaited(controller.close());
+    }
+  }
+
+  controller = StreamController(
+    onListen: () => reading = read(),
+    onCancel: () {
+      cancelled = true;
+      // File reads and cache-manager downloads retain their slot until settled.
+      return reading;
+    },
+  );
+  return controller.stream;
 }
 
 var _readRemoteIcon = _readCachedIcon;
+final _iconReads = <String, _IconRead>{};
+final _iconPrecachePool = TaskPool(maxConcurrentIconLoads);
+final _iconPrecaches = <String, Future<void>>{};
 
 @visibleForTesting
 set readRemoteIcon(Stream<Uint8List> Function(String src)? value) {
   _readRemoteIcon = value ?? _readCachedIcon;
 }
 
+@visibleForTesting
+({int active, int pending, int sources}) get debugIconReads => (
+  active: _IconRead.active,
+  pending: _IconRead.pending.length,
+  sources: _iconReads.length,
+);
+
+class _IconRead {
+  _IconRead(this.src) {
+    controller = StreamController.broadcast(
+      onListen: () {
+        if (_closed || _active || pending.contains(this)) return;
+        pending.add(this);
+        _drain();
+      },
+      onCancel: () => _finish(cancel: true),
+    );
+  }
+
+  static final pending = <_IconRead>{};
+  static int active = 0;
+  static bool _draining = false;
+
+  final String src;
+  late final StreamController<Uint8List> controller;
+  StreamSubscription<Uint8List>? _subscription;
+  bool _active = false;
+  bool _closed = false;
+
+  static void _drain() {
+    if (_draining) return;
+    _draining = true;
+    try {
+      while (active < maxConcurrentIconLoads && pending.isNotEmpty) {
+        final read = pending.first;
+        pending.remove(read);
+        read._start();
+      }
+    } finally {
+      _draining = false;
+    }
+  }
+
+  void _start() {
+    if (_closed) return;
+    _active = true;
+    active++;
+    try {
+      _subscription = _readRemoteIcon(src).listen(
+        (bytes) {
+          if (_closed) return;
+          final current = _remoteIcons[src];
+          final next = current != null && listEquals(current, bytes)
+              ? current
+              : bytes;
+          _remoteIcons[src] = next;
+          controller.add(next);
+        },
+        onError: (Object error, StackTrace stack) {
+          if (!_closed) controller.addError(error, stack);
+        },
+        onDone: _finish,
+      );
+    } catch (error, stack) {
+      controller.addError(error, stack);
+      _finish();
+    }
+  }
+
+  void _finish({bool cancel = false}) {
+    if (_closed) return;
+    _closed = true;
+    pending.remove(this);
+    if (identical(_iconReads[src], this)) _iconReads.remove(src);
+    final subscription = _subscription;
+    _subscription = null;
+    if (cancel && subscription != null) {
+      unawaited(_cancel(subscription));
+    } else {
+      _release();
+    }
+    unawaited(controller.close());
+  }
+
+  Future<void> _cancel(StreamSubscription<Uint8List> subscription) async {
+    try {
+      await subscription.cancel();
+    } catch (error) {
+      commonPrint.log('Failed to cancel icon read $src: $error');
+    } finally {
+      _release();
+    }
+  }
+
+  void _release() {
+    if (!_active) return;
+    _active = false;
+    active--;
+    _drain();
+  }
+}
+
 Stream<Uint8List> _loadRemoteIcon(String src) {
-  return _readRemoteIcon(src).map((bytes) {
-    final current = _remoteIcons[src];
-    final next = current != null && listEquals(current, bytes)
-        ? current
-        : bytes;
-    return _remoteIcons[src] = next;
+  return Stream.multi((controller) {
+    final cached = _remoteIcons[src];
+    final pending = _iconReads[src];
+    if (cached != null) controller.addSync(cached);
+    if (cached != null && pending == null) {
+      controller.closeSync();
+      return;
+    }
+    final read = pending ?? (_iconReads[src] = _IconRead(src));
+    final subscription = read.controller.stream.listen(
+      controller.addSync,
+      onError: controller.addErrorSync,
+      onDone: controller.closeSync,
+    );
+    controller.onCancel = subscription.cancel;
   });
 }
 
@@ -270,22 +420,24 @@ Future<void> _decodeAhead(Uint8List bytes) {
 Future<void> precacheTargetIcons(Iterable<String> srcs) async {
   final pending = srcs
       .toSet()
-      .where(
-        (src) =>
-            src.isNotEmpty &&
-            !src.contains('base64,') &&
-            !_remoteIcons.contains(src),
-      )
-      .map((src) async {
-        try {
-          await for (final bytes in _loadRemoteIcon(src)) {
-            if (!src.isSvg) {
-              await _decodeAhead(bytes);
+      .where((src) => src.isNotEmpty && !src.contains('base64,'))
+      .take(_precacheIconLimit)
+      .where((src) => !_remoteIcons.contains(src))
+      .map((src) {
+        return _iconPrecaches[src] ??= _iconPrecachePool.run(() async {
+          try {
+            if (_remoteIcons.contains(src)) return;
+            await for (final bytes in _loadRemoteIcon(src)) {
+              if (!src.isSvg) {
+                await _decodeAhead(bytes);
+              }
             }
+          } catch (error) {
+            commonPrint.log('Failed to precache icon $src: $error');
+          } finally {
+            _iconPrecaches.remove(src);
           }
-        } catch (error) {
-          commonPrint.log('Failed to precache icon $src: $error');
-        }
+        });
       });
   await Future.wait(pending);
 }

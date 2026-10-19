@@ -91,6 +91,17 @@ class LiquidGlassHost extends StatelessWidget {
   @visibleForTesting
   static int get debugLiveSourceBlurPixels => _liveSourceBlurPixels;
 
+  @visibleForTesting
+  static ({
+    String reason,
+    int releasedAtlasPixels,
+    int releasedFlatPixels,
+    int releasedSourceBlurPixels,
+    int retainedAtlasPixels,
+    int retainedFlatPixels,
+    int retainedFrozenPixels,
+  })? debugLastCacheTrim;
+
   @override
   Widget build(BuildContext context) {
     return _LiquidGlassHostBox(
@@ -251,7 +262,7 @@ class _LiquidGlassHostBox extends SingleChildRenderObjectWidget {
   }
 }
 
-class _RenderLiquidGlassHost extends RenderProxyBox {
+class _RenderLiquidGlassHost extends RenderProxyBox with WidgetsBindingObserver {
   _RenderLiquidGlassHost({
     required bool enabled,
     required double devicePixelRatio,
@@ -265,6 +276,7 @@ class _RenderLiquidGlassHost extends RenderProxyBox {
   final _layer = LayerHandle<_LiquidGlassHostLayer>();
 
   bool _enabled;
+  bool _suspended = false;
   bool _wallpaperOnly;
   set wallpaperOnly(bool value) {
     if (_wallpaperOnly == value) return;
@@ -303,6 +315,44 @@ class _RenderLiquidGlassHost extends RenderProxyBox {
   bool get alwaysNeedsCompositing => _enabled;
 
   @override
+  void attach(PipelineOwner owner) {
+    super.attach(owner);
+    WidgetsBinding.instance.addObserver(this);
+    final state = WidgetsBinding.instance.lifecycleState;
+    if (state != null) didChangeAppLifecycleState(state);
+  }
+
+  @override
+  void detach() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.detach();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.hidden || state == AppLifecycleState.paused) {
+      _suspended = true;
+      final layer = _layer.layer;
+      if (layer != null) {
+        layer.suspended = true;
+        layer._trimCaches(all: true, reason: state.name);
+      }
+    } else if (state == AppLifecycleState.resumed || state == AppLifecycleState.inactive) {
+      _suspended = false;
+      _layer.layer?.suspended = false;
+      markNeedsPaint();
+    }
+  }
+
+  @override
+  void didHaveMemoryPressure() {
+    final state = WidgetsBinding.instance.lifecycleState;
+    final hidden = state == AppLifecycleState.hidden || state == AppLifecycleState.paused;
+    _layer.layer?._trimCaches(all: hidden, preserveModal: !hidden, reason: 'pressure');
+    if (!hidden) markNeedsPaint();
+  }
+
+  @override
   void paint(PaintingContext context, Offset offset) {
     if (!_enabled) {
       _release();
@@ -314,6 +364,7 @@ class _RenderLiquidGlassHost extends RenderProxyBox {
       ..devicePixelRatio = _devicePixelRatio
       ..quality = _quality
       ..wallpaperOnly = _wallpaperOnly
+      ..suspended = _suspended
       ..bounds = offset & size;
     context.pushLayer(layer, super.paint, offset);
   }
@@ -340,16 +391,75 @@ class _LiquidGlassHostLayer extends ContainerLayer {
   LiquidGlassQuality quality = LiquidGlassQuality.ultra;
   Rect bounds = Rect.zero;
   bool wallpaperOnly = false;
+  bool _suspended = false;
+  set suspended(bool value) {
+    if (_suspended == value) return;
+    _suspended = value;
+    markNeedsAddToScene();
+  }
   (_ColorFieldLayer, Matrix4)? _field;
 
   final _atlases = <({ui.Image image, List<_Band> bands})>[];
   int _replayedPanes = 0;
   final _flatSnapshots = <_LiquidGlassOcclusionLayer, _FlatSnapshot>{};
   final _sourceBlur = _SourceBlurCache();
+  bool _trimBeforeCapture = false;
+
+  void _trimCaches({required bool all, bool preserveModal = false, required String reason}) {
+    final atlasPixels = _atlases.fold<int>(
+      0,
+      (pixels, atlas) => pixels + atlas.image.width * atlas.image.height,
+    );
+    final flatPixels = _flatSnapshots.values.fold<int>(
+      0,
+      (pixels, cached) => pixels + cached.image.width * cached.image.height,
+    );
+    final blurPixels = _sourceBlur.pixels;
+    var frozenPixels = 0;
+    void visit(ContainerLayer layer) {
+      for (Layer? child = layer.firstChild; child != null; child = child.nextSibling) {
+        if (child is _LiquidGlassLayer) {
+          if (all) child._trimCapture(preserveFrozen: preserveModal);
+          final frozen = child._frozenImage;
+          if (frozen != null) frozenPixels += frozen.width * frozen.height;
+        }
+        if (child is ContainerLayer) visit(child);
+      }
+    }
+    visit(this);
+    if (all) {
+      for (final atlas in _atlases) {
+        atlas.image.dispose();
+      }
+      _atlases.clear();
+    }
+    if (!preserveModal) {
+      for (final cached in _flatSnapshots.values) {
+        cached.image.dispose();
+      }
+      _flatSnapshots.clear();
+    }
+    _sourceBlur.dispose();
+    _trimBeforeCapture = !all;
+    markNeedsAddToScene();
+    assert(() {
+      LiquidGlassHost.debugLastCacheTrim = (
+        reason: reason,
+        releasedAtlasPixels: all ? atlasPixels : 0,
+        releasedFlatPixels: preserveModal ? 0 : flatPixels,
+        releasedSourceBlurPixels: blurPixels,
+        retainedAtlasPixels: all ? 0 : atlasPixels,
+        retainedFlatPixels: preserveModal ? flatPixels : 0,
+        retainedFrozenPixels: frozenPixels,
+      );
+      if (all) LiquidGlassHost.debugLastCapture = null;
+      return true;
+    }());
+  }
 
   @override
   void addToScene(ui.SceneBuilder builder) {
-    _capture();
+    if (!_suspended) _capture();
     super.addToScene(builder);
   }
 
@@ -370,6 +480,9 @@ class _LiquidGlassHostLayer extends ContainerLayer {
   /// A pane over one painted before it in the same root sits a level above
   /// it, and reads a capture with that one drawn as glass.
   void _capture() {
+    if (_trimBeforeCapture) {
+      _trimCaches(all: true, preserveModal: true, reason: 'pressure-frame');
+    }
     this._captureInk();
     _pass++;
     _replayedPanes = 0;

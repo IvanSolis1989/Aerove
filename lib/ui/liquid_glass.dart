@@ -1783,6 +1783,16 @@ class _LiquidGlassLayer extends Layer {
     _dropCaptured();
   }
 
+  void _trimCapture({bool preserveFrozen = false}) {
+    if (!preserveFrozen) _thawCaptured();
+    _dropCaptured();
+    _captureShader?.dispose();
+    _captureShader = null;
+    _held = null;
+    _capturedPass = -1;
+    markNeedsAddToScene();
+  }
+
   void _dropCaptured() {
     _coveredKey = null;
     _plainKey = null;

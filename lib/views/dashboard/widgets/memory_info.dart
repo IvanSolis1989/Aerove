@@ -8,7 +8,9 @@ import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/providers/core.dart';
+import 'package:fl_clash/ui/foreground_ink.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
+import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
 import 'package:fl_clash/views/dashboard/style.dart';
 import 'package:fl_clash/widgets/widgets.dart';
@@ -212,11 +214,13 @@ class _MemorySummary extends StatelessWidget {
         label: appLocalizations.app,
         bytes: memory.app,
         color: colorScheme.primary,
+        appInk: true,
       ),
       (
         label: appLocalizations.core,
         bytes: memory.coreTotal,
         color: DashboardColors.of(context).series2,
+        appInk: false,
       ),
     ];
     return Column(
@@ -250,7 +254,8 @@ class _MemorySummary extends StatelessWidget {
         if (mobile) const SizedBox(height: 14) else const Spacer(),
         _MemoryBar(
           segments: [
-            for (final part in parts) (bytes: part.bytes, color: part.color),
+            for (final part in parts)
+              (bytes: part.bytes, color: part.color, appInk: part.appInk),
           ],
         ),
         SizedBox(height: compact ? 8 : 10),
@@ -263,13 +268,25 @@ class _MemorySummary extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 spacing: 6,
                 children: [
-                  DecoratedBox(
-                    decoration: ShapeDecoration(
+                  if (part.appInk)
+                    _MemoryAppInk(
                       color: part.color,
-                      shape: AppShape.circle,
+                      child: DecoratedBox(
+                        decoration: ShapeDecoration(
+                          color: part.color,
+                          shape: AppShape.circle,
+                        ),
+                        child: const SizedBox.square(dimension: 8),
+                      ),
+                    )
+                  else
+                    DecoratedBox(
+                      decoration: ShapeDecoration(
+                        color: part.color,
+                        shape: AppShape.circle,
+                      ),
+                      child: const SizedBox.square(dimension: 8),
                     ),
-                    child: const SizedBox.square(dimension: 8),
-                  ),
                   GlassText(part.label, style: DashboardText.label(context)),
                   GlassText(
                     '${part.bytes.traffic.value} ${part.bytes.traffic.unit}',
@@ -553,10 +570,11 @@ class _MemoryOverview extends StatelessWidget {
           const SizedBox(height: 16),
           _MemoryBar(
             segments: [
-              (bytes: snapshot.app, color: colorScheme.primary),
+              (bytes: snapshot.app, color: colorScheme.primary, appInk: true),
               (
                 bytes: snapshot.coreTotal,
                 color: DashboardColors.of(context).series2,
+                appInk: false,
               ),
             ],
           ),
@@ -580,7 +598,7 @@ class _MemoryBar extends StatelessWidget {
 
   static const _gap = 2.0;
 
-  final List<({int bytes, Color color})> segments;
+  final List<({int bytes, Color color, bool appInk})> segments;
 
   @override
   Widget build(BuildContext context) {
@@ -624,13 +642,34 @@ class _MemoryBar extends StatelessWidget {
                         flex: (percent * 100).round(),
                         child: child!,
                       ),
-                      child: ColoredBox(color: segment.color),
+                      child: segment.appInk
+                          ? _MemoryAppInk(
+                              color: segment.color,
+                              child: ColoredBox(color: segment.color),
+                            )
+                          : ColoredBox(color: segment.color),
                     ),
                   ],
                 ],
               ),
       ),
     );
+  }
+}
+
+class _MemoryAppInk extends StatelessWidget {
+  const _MemoryAppInk({required this.color, required this.child});
+
+  final Color color;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!LiquidGlassScope.of(context) ||
+        MediaQuery.maybeHighContrastOf(context) == true) {
+      return child;
+    }
+    return GlassInk(source: color, role: GlassInkRole.body, child: child);
   }
 }
 
