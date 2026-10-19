@@ -67,6 +67,8 @@ class LiquidGlassHost extends StatelessWidget {
   @visibleForTesting
   static LiquidGlassCapture? debugLastCapture;
   @visibleForTesting
+  static List<({Rect pane, double blur})> debugLastBodyCapture = const [];
+  @visibleForTesting
   static ({int snapshots, int kept, int pixels, int groups})?
   debugLastFlatCapture;
 
@@ -657,6 +659,11 @@ class _LiquidGlassHostLayer extends ContainerLayer {
         stripPixels: stripPixels,
         surfacePixels: surfacePixels,
       );
+      LiquidGlassHost.debugLastBodyCapture = [
+        for (final entry in placed)
+          if (entry.pane._simpleBlur)
+            (pane: entry.device, blur: entry.style.blur),
+      ];
       LiquidGlassHost.debugLastCapture = (
         skippedPanes: _skippedPanes,
         snapshots: snapshots,
@@ -707,6 +714,10 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     for (Layer? child = layer.firstChild; child != null;) {
       switch (child) {
         case final _LiquidGlassLayer pane:
+          pane._setSimpleBlur(
+            quality == LiquidGlassQuality.standard &&
+                chain.any((layer) => layer is _GlassBodyLayer),
+          );
           if (!visibility.shows(pane.rect, toHost)) {
             _skippedPanes++;
             if (pane._captured != null || pane._captureShader != null) {
@@ -721,10 +732,12 @@ class _LiquidGlassHostLayer extends ContainerLayer {
           found.add(
             _Behind(
                 pane,
-                switch (quality) {
-                  LiquidGlassQuality.standard => pane.style._standard,
-                  LiquidGlassQuality.ultra => pane.style,
-                },
+                pane._simpleBlur
+                    ? pane.style._bodyBlur
+                    : switch (quality) {
+                        LiquidGlassQuality.standard => pane.style._standard,
+                        LiquidGlassQuality.ultra => pane.style,
+                      },
                 toHost,
                 root,
                 rootToHost,

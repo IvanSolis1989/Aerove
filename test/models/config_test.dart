@@ -18,6 +18,78 @@ T roundTrip<T>(
 }
 
 void main() {
+  group('Settings defaults', () {
+    for (final entry in {
+      'constructor': const Config(themeProps: defaultThemeProps),
+      'fresh installation': Config.realFromJson(null),
+      'missing fields': Config.fromJson({}),
+      'missing nested fields': Config.fromJson({
+        'appSettingProps': <String, Object?>{},
+        'vpnProps': <String, Object?>{},
+        'networkProps': <String, Object?>{},
+        'patchClashConfig': <String, Object?>{},
+      }),
+    }.entries) {
+      test('${entry.key} matches the selected settings', () {
+        final config = entry.value;
+        final app = config.appSettingProps;
+        final patch = config.patchClashConfig;
+        final vpn = config.vpnProps;
+
+        expect(app.autoRun, false);
+        expect(app.minimizeOnExit, true);
+        expect(app.hidden, false);
+        expect(app.showNotificationStopAction, true);
+        expect(app.userAgents, defaultUserAgents);
+        expect(app.checkCertificate, true);
+        expect(app.autoCheckUpdate, true);
+        expect(app.testUrl, 'https://www.gstatic.com/generate_204');
+        expect(app.closeConnections, true);
+        expect(app.onlyStatisticsProxy, true);
+        expect(app.openLogs, false);
+        expect(patch.mixedPort, 7890);
+        expect(patch.allowLan, false);
+        expect(patch.externalController, ExternalControllerStatus.close);
+        expect(config.networkProps.authentication.enable, false);
+        expect(patch.unifiedDelay, true);
+        expect(patch.tcpConcurrent, true);
+        expect(patch.findProcessMode, FindProcessMode.always);
+        expect(patch.ipv6, true);
+        expect(patch.hosts, isEmpty);
+        expect(config.networkProps.appendSystemDns, false);
+        expect(patch.geodataLoader, GeodataLoader.memconservative);
+        expect(patch.logLevel, LogLevel.error);
+        expect(vpn.enable, true);
+        expect(vpn.systemProxy, true);
+        expect(vpn.allowBypass, true);
+        expect(vpn.ipv6, true);
+        expect(vpn.dnsHijacking, false);
+        expect(config.networkProps.bypassDomain, defaultBypassDomain);
+      });
+    }
+
+    test('saved choices take precedence over changed defaults', () {
+      final config = Config.fromJson({
+        'appSettingProps': {'onlyStatisticsProxy': false},
+        'vpnProps': {
+          'systemProxy': false,
+          'ipv6': false,
+          'allowBypass': false,
+          'dnsHijacking': true,
+        },
+        'patchClashConfig': {'ipv6': false, 'find-process-mode': 'off'},
+      });
+
+      expect(config.appSettingProps.onlyStatisticsProxy, false);
+      expect(config.vpnProps.systemProxy, false);
+      expect(config.vpnProps.ipv6, false);
+      expect(config.vpnProps.allowBypass, false);
+      expect(config.vpnProps.dnsHijacking, true);
+      expect(config.patchClashConfig.ipv6, false);
+      expect(config.patchClashConfig.findProcessMode, FindProcessMode.off);
+    });
+  });
+
   group('GeoResource JSON', () {
     test('exposes mihomo raw config keys', () {
       expect(GeoResource.MMDB.configKey, 'mmdb');
@@ -123,7 +195,7 @@ void main() {
         () => props.toJson(),
         AppSettingProps.fromJson,
       );
-      expect(restored.onlyStatisticsProxy, false);
+      expect(restored.onlyStatisticsProxy, true);
       expect(restored.autoLaunch, false);
       expect(restored.silentLaunch, false);
       expect(restored.autoRun, false);
@@ -255,7 +327,7 @@ void main() {
     test('custom values survive round-trip', () {
       const props = AppSettingProps(
         locale: 'zh_CN',
-        onlyStatisticsProxy: true,
+        onlyStatisticsProxy: false,
         autoLaunch: true,
         closeConnections: false,
         testUrl: 'https://custom.test',
@@ -267,7 +339,7 @@ void main() {
         AppSettingProps.fromJson,
       );
       expect(restored.locale, 'zh_CN');
-      expect(restored.onlyStatisticsProxy, true);
+      expect(restored.onlyStatisticsProxy, false);
       expect(restored.autoLaunch, true);
       expect(restored.closeConnections, false);
       expect(restored.testUrl, 'https://custom.test');
@@ -331,7 +403,7 @@ void main() {
     test('safeFromJson returns default on null', () {
       final result = AppSettingProps.safeFromJson(null);
       expect(result, isA<AppSettingProps>());
-      expect(result.onlyStatisticsProxy, false);
+      expect(result.onlyStatisticsProxy, true);
     });
 
     test('safeFromJson returns default on invalid JSON', () {
@@ -381,7 +453,7 @@ void main() {
       const props = VpnProps();
       expect(props.enable, true);
       expect(props.systemProxy, true);
-      expect(props.ipv6, false);
+      expect(props.ipv6, true);
       expect(props.allowBypass, true);
       expect(props.dnsHijacking, false);
       expect(props.accessControlProps.enable, false);
@@ -400,13 +472,13 @@ void main() {
       const props = VpnProps(
         enable: false,
         systemProxy: false,
-        ipv6: true,
+        ipv6: false,
         accessControlProps: accessControl,
       );
       final restored = roundTrip(() => props.toJson(), VpnProps.fromJson);
       expect(restored.enable, false);
       expect(restored.systemProxy, false);
-      expect(restored.ipv6, true);
+      expect(restored.ipv6, false);
     });
   });
 
@@ -556,10 +628,10 @@ void main() {
         tun: const Tun(enable: true, stack: TunStack.gvisor, mtu: 1500),
         mixedPort: 8899,
         allowLan: true,
-        findProcessMode: FindProcessMode.always,
+        findProcessMode: FindProcessMode.off,
         mode: Mode.global,
         logLevel: LogLevel.debug,
-        ipv6: true,
+        ipv6: false,
         tcpConcurrent: false,
         externalController: ExternalControllerStatus.open,
         secret: 'secret',
@@ -1052,7 +1124,7 @@ void main() {
       expect(config.currentProfileId, isNull);
       expect(config.appSettingProps.locale, isNull);
       expect(config.appSettingProps.acceptedDisclaimerVersion, 3);
-      expect(config.vpnProps.ipv6, false);
+      expect(config.vpnProps.ipv6, true);
       expect(config.vpnProps.accessControlProps.enable, true);
       expect(
         config.vpnProps.accessControlProps.mode,
@@ -1070,7 +1142,7 @@ void main() {
 
     test('realFromJson handles null', () {
       final result = Config.realFromJson(null);
-      expect(result.appSettingProps.onlyStatisticsProxy, false);
+      expect(result.appSettingProps.onlyStatisticsProxy, true);
     });
 
     test('a fresh config ships valid, distinct default hotkeys', () {

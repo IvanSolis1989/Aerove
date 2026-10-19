@@ -92,7 +92,7 @@ void main() {
       await defaults.prepare(isAndroid: true);
       final config = await defaults.initialize(initial);
 
-      expect(config.vpnProps.dnsHijacking, true);
+      expect(config.vpnProps.dnsHijacking, false);
       expect(owned.getString(configKey), isNotNull);
       expect(replacement.getString(configKey), isNull);
       final script = (await db.scriptsDao.query().get()).single;
@@ -135,21 +135,26 @@ void main() {
         xclashDefaultScriptSha256,
       );
       expect(savedConfig!.vpnProps.enable, true);
-      expect(savedConfig!.vpnProps.systemProxy, false);
-      expect(savedConfig!.vpnProps.ipv6, false);
-      expect(savedConfig!.vpnProps.dnsHijacking, true);
-      expect(savedConfig!.vpnProps.allowBypass, false);
+      expect(savedConfig!.vpnProps.systemProxy, true);
+      expect(savedConfig!.vpnProps.ipv6, true);
+      expect(savedConfig!.vpnProps.dnsHijacking, false);
+      expect(savedConfig!.vpnProps.allowBypass, true);
       expect(savedConfig!.vpnProps.accessControlProps.enable, false);
       expect(savedConfig!.networkProps.appendSystemDns, false);
       expect(savedConfig!.patchClashConfig.dnsOverrideKeys, {
         DnsOverrideKey.defaultNameserver,
       });
-      expect(savedConfig!.patchClashConfig.ipv6, false);
+      expect(savedConfig!.patchClashConfig.ipv6, true);
       expect(savedConfig!.patchClashConfig.mode, Mode.rule);
       expect(savedConfig!.patchClashConfig.keepAliveIdle, 30);
       expect(savedConfig!.patchClashConfig.keepAliveInterval, 15);
       expect(savedConfig!.patchClashConfig.tcpConcurrent, true);
       expect(savedConfig!.patchClashConfig.unifiedDelay, true);
+      expect(
+        savedConfig!.patchClashConfig.findProcessMode,
+        FindProcessMode.always,
+      );
+      expect(savedConfig!.appSettingProps.onlyStatisticsProxy, true);
       expect(savedConfig!.patchClashConfig.tun, initial.patchClashConfig.tun);
       expect(savedConfig!.patchClashConfig.dns, xclashDefaultDns);
       expect(
@@ -157,6 +162,10 @@ void main() {
         initial.networkProps.bypassPrivateRoute,
       );
       expect(savedConfig!.themeProps, initial.themeProps);
+      expect(
+        Config.fromJson(jsonDecode(storage.getString(configKey)!)),
+        savedConfig,
+      );
     },
   );
 
@@ -166,8 +175,10 @@ void main() {
       await install();
       await scriptFile().writeAsString('user-updated-script');
       final user = initial.copyWith.vpnProps(
-        systemProxy: true,
-        dnsHijacking: false,
+        systemProxy: false,
+        ipv6: false,
+        dnsHijacking: true,
+        allowBypass: false,
       );
       savedConfig = null;
       final restarted = service();
@@ -204,9 +215,10 @@ void main() {
       networkProps: initial.networkProps.copyWith(appendSystemDns: true),
       vpnProps: initial.vpnProps.copyWith(
         enable: false,
-        systemProxy: true,
-        dnsHijacking: false,
-        allowBypass: true,
+        systemProxy: false,
+        ipv6: false,
+        dnsHijacking: true,
+        allowBypass: false,
       ),
       patchClashConfig: initial.patchClashConfig.copyWith(
         mode: Mode.global,
@@ -323,7 +335,7 @@ void main() {
 
     await install();
     expect(await db.scriptsDao.query().get(), hasLength(1));
-    expect(savedConfig!.vpnProps.dnsHijacking, true);
+    expect(savedConfig!.vpnProps.dnsHijacking, false);
   });
 
   test(
@@ -337,7 +349,7 @@ void main() {
 
       await install();
       expect((await db.scriptsDao.query().get()).single.id, 123);
-      expect(savedConfig!.vpnProps.dnsHijacking, true);
+      expect(savedConfig!.vpnProps.dnsHijacking, false);
     },
   );
 

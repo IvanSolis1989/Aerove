@@ -222,17 +222,17 @@ class XClashDefaults {
     networkProps: config.networkProps.copyWith(appendSystemDns: false),
     vpnProps: config.vpnProps.copyWith(
       enable: true,
-      systemProxy: false,
-      ipv6: false,
-      dnsHijacking: true,
-      allowBypass: false,
+      systemProxy: true,
+      ipv6: true,
+      dnsHijacking: false,
+      allowBypass: true,
       accessControlProps: config.vpnProps.accessControlProps.copyWith(
         enable: false,
       ),
     ),
     patchClashConfig: config.patchClashConfig.copyWith(
       mode: Mode.rule,
-      ipv6: false,
+      ipv6: true,
       dns: xclashDefaultDns,
       dnsOverrideKeys: const {DnsOverrideKey.defaultNameserver},
       unifiedDelay: true,

@@ -225,7 +225,7 @@ abstract class AppSettingProps with _$AppSettingProps {
     @Default(defaultDashboardWidgets)
     @JsonKey(fromJson: dashboardWidgetsFromJson)
     List<DashboardWidget> dashboardWidgets,
-    @Default(false) bool onlyStatisticsProxy,
+    @Default(true) bool onlyStatisticsProxy,
     @Default(true) bool showNotificationStopAction,
     @Default(false) bool autoLaunch,
     @Default(false) bool silentLaunch,
@@ -333,7 +333,7 @@ abstract class VpnProps with _$VpnProps {
   const factory VpnProps({
     @Default(true) bool enable,
     @Default(true) bool systemProxy,
-    @Default(false) bool ipv6,
+    @Default(true) bool ipv6,
     @Default(true) bool allowBypass,
     @Default(false) bool dnsHijacking,
     @Default(defaultAccessControlProps) AccessControlProps accessControlProps,

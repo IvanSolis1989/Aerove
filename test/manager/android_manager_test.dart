@@ -108,7 +108,7 @@ void main() {
     final restored = SharedState.fromJson(
       json.decode(raw!) as Map<String, Object?>,
     );
-    expect(restored.onlyStatisticsProxy, isFalse);
+    expect(restored.onlyStatisticsProxy, isTrue);
     expect(tester.takeException(), null);
 
     await tester.pumpWidget(const SizedBox.shrink());

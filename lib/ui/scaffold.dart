@@ -808,74 +808,76 @@ class CommonScaffoldState extends State<CommonScaffold> {
         child: SortModeScope(sorting: _sorting, child: widget.body),
       ),
     );
-    final body = SafeArea(
-      top: !barFloats,
-      child: ValueListenableBuilder(
-        valueListenable: _keywordsNotifier,
-        builder: (context, keywords, _) {
-          if (widget.onKeywordsUpdate != null) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              widget.onKeywordsUpdate!(keywords);
-            });
-          }
-          final hasKeywords = keywords.isNotEmpty;
-          final barInset = MediaQuery.paddingOf(context).top;
-          final overlap = barFloats
-              ? barInset
-              : isCompact
-              ? sheetAppBarHeight
-              : 0.0;
-          final content = Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: hugsContent ? MainAxisSize.min : MainAxisSize.max,
-            children: [
-              if (hasKeywords) ...[
-                SizedBox(height: barInset),
-                Padding(
-                  padding: EdgeInsets.only(
-                    left: 16,
-                    right: 16,
-                    top: isCompact ? sheetAppBarHeight : 16,
-                    bottom: 16,
+    final body = LiquidGlassBody(
+      child: SafeArea(
+        top: !barFloats,
+        child: ValueListenableBuilder(
+          valueListenable: _keywordsNotifier,
+          builder: (context, keywords, _) {
+            if (widget.onKeywordsUpdate != null) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                widget.onKeywordsUpdate!(keywords);
+              });
+            }
+            final hasKeywords = keywords.isNotEmpty;
+            final barInset = MediaQuery.paddingOf(context).top;
+            final overlap = barFloats
+                ? barInset
+                : isCompact
+                ? sheetAppBarHeight
+                : 0.0;
+            final content = Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: hugsContent ? MainAxisSize.min : MainAxisSize.max,
+              children: [
+                if (hasKeywords) ...[
+                  SizedBox(height: barInset),
+                  Padding(
+                    padding: EdgeInsets.only(
+                      left: 16,
+                      right: 16,
+                      top: isCompact ? sheetAppBarHeight : 16,
+                      bottom: 16,
+                    ),
+                    child: Wrap(
+                      runSpacing: 8,
+                      spacing: 8,
+                      children: [
+                        for (final keyword in keywords)
+                          CommonChip(
+                            label: keyword,
+                            onDeleted: () {
+                              _deleteKeyword(keyword);
+                            },
+                          ),
+                      ],
+                    ),
                   ),
-                  child: Wrap(
-                    runSpacing: 8,
-                    spacing: 8,
-                    children: [
-                      for (final keyword in keywords)
-                        CommonChip(
-                          label: keyword,
-                          onDeleted: () {
-                            _deleteKeyword(keyword);
-                          },
-                        ),
-                    ],
-                  ),
+                ],
+                Flexible(
+                  fit: hugsContent ? FlexFit.loose : FlexFit.tight,
+                  child: hasKeywords
+                      ? MediaQuery.removePadding(
+                          context: context,
+                          removeTop: true,
+                          child: FloatingBarScope(inset: 0, child: sortableBody),
+                        )
+                      : sortableBody,
                 ),
               ],
-              Flexible(
-                fit: hugsContent ? FlexFit.loose : FlexFit.tight,
-                child: hasKeywords
-                    ? MediaQuery.removePadding(
-                        context: context,
-                        removeTop: true,
-                        child: FloatingBarScope(inset: 0, child: sortableBody),
-                      )
-                    : sortableBody,
-              ),
-            ],
-          );
-          final scoped = FloatingBarScope(
-            inset: overlap,
-            child: overlap > 0
-                ? _FocusClearOfBar(inset: overlap, child: content)
-                : content,
-          );
-          if (keywords.isEmpty) {
-            return scoped;
-          }
-          return TopInsetScope(inset: 0, child: scoped);
-        },
+            );
+            final scoped = FloatingBarScope(
+              inset: overlap,
+              child: overlap > 0
+                  ? _FocusClearOfBar(inset: overlap, child: content)
+                  : content,
+            );
+            if (keywords.isEmpty) {
+              return scoped;
+            }
+            return TopInsetScope(inset: 0, child: scoped);
+          },
+        ),
       ),
     );
     final appBar = _buildAppBar(backAction, form);

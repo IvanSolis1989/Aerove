@@ -1,21 +1,31 @@
 <!-- xclash-owned-readme -->
 <!-- xclash-repository: IvanSolis1989/Aerove -->
 
-# Aerove
+# AEROVE
 
 [简体中文](README.md) · **English**
 
-Aerove is an independent fork of [FlClash](https://github.com/chen08209/FlClash). Thanks to the upstream authors and contributors for the foundation. It retains FlClash's proxy capabilities and improves personalization, long-list browsing, initial setup, and Android updates.
+AEROVE is an independent fork of [FlClash](https://github.com/chen08209/FlClash). Thanks to the upstream authors and contributors for the foundation. It retains FlClash's proxy capabilities, bringing a lighter feel to personalization, long-list browsing, initial setup, and Android updates.
 
-## What Aerove adds to FlClash
+## The name and the silver ribbon
+
+**AEROVE** combines **Air + Rove**, evoking lightness and roaming through invisible networks. The suggested brand pronunciation is **AIR-rohv**, **/ˈeə.rəʊv/**: two syllables, stress on the first, with a silent final **e**. This is a creative pronunciation choice, not an established dictionary standard.
+
+The logo is a silver folded ribbon on charcoal. Its sweeping curve and shaded fold suggest a soft path left by the wind, echoing movement and roaming in an abstract form. [Naming and icon design process](https://chatgpt.com/share/6ad6973c-7f5c-83ec-99f7-e00594f8490b).
+
+## What AEROVE adds to FlClash
 
 The baseline is the FlClash `v0.9.1` revision recorded by this fork. Material You, glass levels, continuous corners, proxy groups, and connection monitoring already come from upstream; the following describes Aerove's extensions and optimizations. See the [Aerove changelog (Chinese)](docs/CHANGELOG_Aerove.md) for version-specific fixes, pending changes, and release scope.
 
-### A flowing wallpaper you can personalize
+### Drifting aurora, light held in glass
+
+Soft fields of color unfold and mingle behind the page, like an aurora seen through a veil of mist. Cards float above them, their edges catching a little light while text and icons take their colors from the backdrop. Scrolling reveals these layers in motion, giving an everyday connection screen a quiet, dreamlike atmosphere.
+
+Choose between two treatments of light: **Standard** gives page-body surfaces a soft blur without refraction; **Ultra** retains body-glass refraction and richer optical layering. In both modes, header buttons and the bottom dock keep transparent refraction, revealing sharp content beneath, while header text has its own blurred backdrop. The result varies with the device and graphics backend.
 
 - Generate a gradient wallpaper from 1–3 colors and tap **New wallpaper** to change its composition. The palette and composition persist. Automatic rotation becomes due at 05:00 local time each day and applies silently in the background without interrupting browsing.
 - Aurora wallpaper and Ultra Glass are the defaults. Switching to an ordinary theme color restores the regular palette; glass strength can be adjusted separately. Brightness can follow the system or be selected manually, while high-contrast and pure-black dark modes keep opaque surfaces.
-- Glass extends across dashboards, proxy groups, cards, buttons, selectors, fields, navigation, menus, popups, the editor, and forms. Text, icons, and interaction feedback coordinate with the background while status messages retain distinct colors.
+- Glass extends across dashboards, proxy groups, cards, buttons, selectors, fields, navigation, menus, popups, the editor, and forms. Text, icons, and interaction feedback coordinate with the background while status messages retain distinct colors. Switches, sliders, and segmented selectors use the corresponding glass and background coloring for their tracks, thumbs, and internal icons, preserving drag, keyboard, and state feedback. No-glass and high-contrast modes keep their existing fallbacks.
 - Fonts come from those available on your device; Aerove does not bundle MiSans. Devices without full glass support use a simpler frosted appearance.
 
 ### Easier continuous browsing
@@ -27,7 +37,7 @@ The baseline is the FlClash `v0.9.1` revision recorded by this fork. Material Yo
 
 ### Dynamic effects with less repeated work
 
-- Glass panels share background processing for a consistent view of the same wallpaper. Covered areas pause unnecessary effects instead of repeatedly drawing what cannot be seen.
+- Glass panels share background processing for a consistent view of the same wallpaper, and covered areas pause unnecessary effects. Glass and text fully outside the screen or fully clipped by the viewport skip extra sampling until visible again, reducing repeated work for content you cannot see.
 - Wallpaper updates adapt to interaction and app visibility, pausing in the background. Returning to the app retains the current image before motion resumes.
 - Only a few likely icons load in advance, and groups share node information. Rebuildable graphics caches can be reclaimed and restored when the app returns to the foreground. These changes reduce repeated work without promising a particular memory reduction, frame rate, or battery saving.
 
@@ -39,8 +49,8 @@ The baseline is the FlClash `v0.9.1` revision recorded by this fork. Material Yo
 
 ### Aerove identity and Android updates
 
-- A silver flowing-ribbon mark identifies Aerove across the app, notifications, and desktop tray. Desktop window titles and startup entries use Aerove's name, with additional Spanish, French, and Korean text.
-- When the Android About page finds an update, confirm to download the device-appropriate APK through the system download manager; failed downloads can be retried. Packages currently target ARM64 devices running Android 7.0 or newer; desktop features vary by operating system.
+- The silver ribbon and `AEROVE` display name carry through the app, notifications, desktop tray, windows, and startup entries, with additional Spanish, French, and Korean text.
+- When the Android About page finds an update, read that target version's changelog or release notes before confirming the device-appropriate APK download. Long notes are scrollable, and the system download manager handles downloads with retry after failure. Packages currently target ARM64 devices running Android 7.0 or newer; desktop features vary by operating system.
 - Official upstream stable and `-pre.N` tags are validated before synchronization while preserving Aerove's changes. Releases include source information and checksums to help identify your download. See the download section and changelog for versions and signing details.
 
 Before first use, read and accept the in-app disclaimer: the software is for non-commercial and lawful use, does not provide nodes, subscriptions, or network access, and third-party content remains the user's and its provider's responsibility. The software is provided as is, without a guarantee of error-free operation or fitness for a particular purpose. Refer to the full in-app disclaimer.

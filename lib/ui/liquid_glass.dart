@@ -13,6 +13,7 @@ part 'liquid_glass_ink.dart';
 part 'liquid_glass_occlusion.dart';
 part 'liquid_glass_source_blur.dart';
 part 'liquid_glass_visibility.dart';
+part 'liquid_glass_body.dart';
 
 const _shaderAsset = 'shaders/liquid_glass.frag';
 const _glowIn = Duration(milliseconds: 120);
@@ -380,6 +381,14 @@ class LiquidGlassStyle {
   );
 
   double get _hairlineSide => hairlineSide ?? hairline;
+
+  LiquidGlassStyle get _bodyBlur => LiquidGlassStyle(
+    tint: tint,
+    blur: math.max(2.5, haze > 0 ? hazeBlur : blur),
+    refraction: 0,
+    bevel: 0,
+    rim: 0,
+  );
 
   /// The standard tier's: no colors parted, and a haze for the whole frost.
   LiquidGlassStyle get _standard {
@@ -1168,6 +1177,14 @@ class _LiquidGlassLayer extends Layer {
   Rect? hold;
   LiquidGlassRim? rim;
   bool contentBackdrop = false;
+  bool _simpleBlur = false;
+
+  void _setSimpleBlur(bool value) {
+    if (_simpleBlur == value) return;
+    _trimCapture();
+    _simpleBlur = value;
+  }
+
   _Placement? _held;
 
   ui.Picture? _frost;
@@ -1194,11 +1211,22 @@ class _LiquidGlassLayer extends Layer {
     LiquidGlassRim?,
     ui.FragmentProgram?,
     LiquidGlassGlow,
+    bool,
   )?
   _frozenKey;
 
   bool _freezeCaptured() {
-    final key = (rect, corners, outline, profile, style, rim, program, glow);
+    final key = (
+      rect,
+      corners,
+      outline,
+      profile,
+      style,
+      rim,
+      program,
+      glow,
+      _simpleBlur,
+    );
     if (_frozenPicture != null && _frozenKey == key) return true;
     if (_frozenPicture != null) _thawCaptured();
     final captured = _freezeBody;
@@ -1501,7 +1529,7 @@ class _LiquidGlassLayer extends Layer {
     if (plain != null && covered != null) {
       plain = Path.combine(PathOperation.difference, plain, covered);
     }
-    final program = this.program;
+    final program = _simpleBlur ? null : this.program;
     final uniforms = <double>[
       atlas.width.toDouble(),
       atlas.height.toDouble(),
@@ -1510,7 +1538,9 @@ class _LiquidGlassLayer extends Layer {
       1,
       1,
       ...mapping,
-      ..._look(style),
+      ..._simpleBlur
+          ? [style.tint.r, style.tint.g, style.tint.b, style.tint.a]
+          : _look(style),
     ];
     if (_captureKey
         case (
@@ -1751,9 +1781,9 @@ class _LiquidGlassLayer extends Layer {
         canvas.clipRSuperellipse(corners.toRSuperellipse(rect));
       }
     }
-    final saturate = ColorFilter.matrix(
-      _optics(style.saturation, style.brightness),
-    );
+    final saturate = _simpleBlur
+        ? null
+        : ColorFilter.matrix(_optics(style.saturation, style.brightness));
     void drawSlot(int from, Paint paint) => canvas.drawImageRect(
       atlas,
       Rect.fromLTWH(
@@ -1772,7 +1802,11 @@ class _LiquidGlassLayer extends Layer {
     if (haze > 0) {
       drawSlot(_hazeSample, Paint()..color = Color.fromRGBO(0, 0, 0, haze));
     }
-    _drawFrost(canvas, rectangularFill: !clipShape);
+    if (_simpleBlur) {
+      canvas.drawRect(rect, Paint()..color = style.tint);
+    } else {
+      _drawFrost(canvas, rectangularFill: !clipShape);
+    }
     canvas.restore();
   }
 

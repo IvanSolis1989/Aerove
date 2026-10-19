@@ -20,7 +20,7 @@ void main() {
   group('AppSetting provider', () {
     test('default value is defaultAppSettingProps', () {
       final value = container.read(appSettingProvider);
-      expect(value.onlyStatisticsProxy, false);
+      expect(value.onlyStatisticsProxy, true);
       expect(value.autoLaunch, false);
       expect(value.closeConnections, true);
       expect(value.tabAnimation, TabAnimation.slide);
@@ -188,7 +188,7 @@ void main() {
   group('configProvider (composite)', () {
     test('composes all sub-providers with defaults', () {
       final config = container.read(configProvider);
-      expect(config.appSettingProps.onlyStatisticsProxy, false);
+      expect(config.appSettingProps.onlyStatisticsProxy, true);
       expect(config.windowProps.width, 0);
       expect(config.vpnProps.enable, true);
       expect(config.networkProps.systemProxy, true);
@@ -249,7 +249,7 @@ void main() {
       expect(overrideContainer.read(excludeSSIDsProvider), config.excludeSSIDs);
       expect(
         overrideContainer.read(appSettingProvider).onlyStatisticsProxy,
-        false,
+        true,
       );
     });
   });
