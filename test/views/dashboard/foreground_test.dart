@@ -376,10 +376,7 @@ void main() {
           );
         }
         final none = await render('none', glass: false);
-        expect(
-          _memoryAppInks(),
-          findsNothing,
-        );
+        expect(_memoryAppInks(), findsNothing);
         final noneControl = await render(
           'none-control',
           glass: false,
@@ -398,10 +395,7 @@ void main() {
         if (brightness == Brightness.light &&
             quality == LiquidGlassQuality.standard) {
           await render('high-contrast', highContrast: true);
-          expect(
-            _memoryAppInks(),
-            findsNothing,
-          );
+          expect(_memoryAppInks(), findsNothing);
         }
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox.shrink());
