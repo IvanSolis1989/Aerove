@@ -4,13 +4,14 @@ import 'package:test/test.dart';
 
 const _entryPoints = ['lib/main.dart'];
 
-/// Types, and the top level names a file publishes alongside them — the
+/// Types, functions, and the top level names a file publishes alongside them — the
 /// `final appPath = AppPath()` singleton pattern is how most of `lib/common`
 /// is actually consumed.
 final _declaration = RegExp(
   r'^(?:abstract |sealed |final |base |mixin )*'
   r'(?:(?:class|enum|mixin)\s+([A-Za-z]\w*)'
-  r'|(?:final|const)\s+(?:[\w<>,\s\[\]?]+\s+)?([a-z]\w*)\s*=)',
+  r'|(?:final|const)\s+(?:[\w<>,\s\[\]?]+\s+)?([a-z]\w*)\s*='
+  r'|[A-Za-z]\w*(?:<[^;{}=]*>)?\??\s+([a-z]\w*)\s*\()',
   multiLine: true,
 );
 
@@ -44,6 +45,26 @@ bool _isBarrel(String source) {
 }
 
 void main() {
+  test('public functions count as consumers of their file API', () {
+    const source = '''
+class UpdateAsset {}
+UpdateAsset? selectAndroidUpdateAsset(
+  Map<String, dynamic> release,
+) => null;
+Future<List<UpdateAsset>> loadAssets() async => [];
+void _privateHelper() {}
+class Container {
+  UpdateAsset? selectInsideClass() => null;
+}
+''';
+    expect(
+      _declaration.allMatches(source).map(
+        (match) => match.group(1) ?? match.group(2) ?? match.group(3)!,
+      ),
+      ['UpdateAsset', 'selectAndroidUpdateAsset', 'loadAssets', 'Container'],
+    );
+  });
+
   test('every file under lib declares something used outside itself', () {
     // Generated code counts as a consumer but never as a declarer: a riverpod
     // notifier is reached through the provider its annotation generates.
@@ -72,7 +93,7 @@ void main() {
       // this way.
       final names = _declaration
           .allMatches(source)
-          .map((match) => match.group(1) ?? match.group(2)!)
+          .map((match) => match.group(1) ?? match.group(2) ?? match.group(3)!)
           .toSet();
       if (names.isEmpty) continue;
 

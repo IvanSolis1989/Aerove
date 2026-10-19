@@ -1,3 +1,4 @@
+import 'package:fl_clash/ui/header_blur.dart';
 import 'package:fl_clash/ui/ui.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
@@ -187,27 +188,81 @@ void main() {
     },
   );
 
-  testWidgets('a sheet header lets what scrolls under it read through', (
-    tester,
-  ) async {
-    await tester.pumpWidget(_sheet(_list()));
-    await tester.pumpAndSettle();
-
-    final cover = tester.widget<DecoratedBox>(
-      find
-          .descendant(
-            of: find.ancestor(
-              of: find.byType(SheetToolBar),
-              matching: find.byType(FloatingHeader),
+  testWidgets(
+    'a snap sheet keeps its controls and scroll overlap without a top mask',
+    variant: _everyPlatform,
+    (tester) async {
+      late ScrollController controller;
+      await tester.pumpWidget(
+        LiquidGlassScope(
+          enabled: true,
+          child: TestApp(
+            includeNavigatorKey: false,
+            wrapInProviderScope: true,
+            child: Scaffold(
+              body: Builder(
+                builder: (context) => TextButton(
+                  onPressed: () => Navigator.of(context).push<void>(
+                    SnapSheetRoute<void>(
+                      barrierLabel: 'Close sheet',
+                      detents: const [1],
+                      builder: (_, scrollController) {
+                        controller = scrollController!;
+                        return CommonScaffold(
+                          title: 'title',
+                          body: _list(controller: controller),
+                        );
+                      },
+                    ),
+                  ),
+                  child: const Text('open sheet'),
+                ),
+              ),
             ),
-            matching: find.byType(DecoratedBox),
-          )
-          .first,
-    );
-    final gradient = (cover.decoration as BoxDecoration).gradient;
-    expect(gradient, isA<LinearGradient>());
-    expect(gradient!.colors.map((color) => color.a), everyElement(lessThan(1)));
-  });
+          ),
+        ),
+      );
+      await tester.tap(find.text('open sheet'));
+      await tester.pumpAndSettle();
+
+      final toolbar = tester.getRect(find.byType(SheetToolBar));
+      final title = tester.getRect(find.text('title'));
+      final context = tester.element(find.byType(CommonScaffold));
+      final close = find.byTooltip(UiLocalizations.of(context).close);
+      expect(close, findsOneWidget);
+      final closeBounds = tester.getRect(close);
+      final firstRow = tester.getRect(find.text('0'));
+      final overlapOffset =
+          tester.getRect(find.text('2')).top - toolbar.center.dy;
+      expect(overlapOffset, greaterThan(0));
+
+      for (final offset in [0.0, overlapOffset, 0.0]) {
+        controller.jumpTo(offset);
+        await tester.pumpAndSettle();
+        expect(controller.offset, offset);
+        expect(find.byType(HeaderBlur), findsNothing);
+        expect(find.byType(BackdropFilter), findsNothing);
+        expect(find.byType(FloatingHeader), findsNothing);
+        expect(find.byType(SheetDragHandle), findsOneWidget);
+        expect(tester.getRect(find.byType(SheetToolBar)), toolbar);
+        expect(tester.getRect(find.text('title')), title);
+        expect(tester.getRect(close), closeBounds);
+        if (offset > 0) {
+          final row = tester.getRect(find.text('2'));
+          expect(row.top, moreOrLessEquals(toolbar.center.dy));
+          expect(row.overlaps(toolbar), isTrue);
+        } else {
+          expect(tester.getRect(find.text('0')), firstRow);
+        }
+      }
+      await tester.tap(close);
+      await tester.pumpAndSettle();
+      expect(find.byType(CommonScaffold), findsNothing);
+      expect(find.byType(SheetDragHandle), findsNothing);
+      expect(find.text('open sheet'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   for (final type in [null, SheetType.page, SheetType.sideSheet]) {
     testWidgets(
