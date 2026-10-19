@@ -439,129 +439,134 @@ void main() {
     expect(card.top, header.bottom);
   });
 
-  testWidgets('the native proxy viewport grows its sheet before scrolling rows', (
-    tester,
-  ) async {
-    await pumpList(
-      tester,
-      groups: [_group('G0', 120)],
-      unfoldSet: {'G0'},
-      view: Builder(
-        builder: (context) => TextButton(
-          onPressed: () {
-            showSheet<void>(
-              context: context,
-              builder: (_) => const CommonScaffold(
-                title: 'proxies',
-                body: ProxiesListView(),
-              ),
-            );
-          },
-          child: const Text('open proxies'),
+  testWidgets(
+    'the native proxy viewport grows its sheet before scrolling rows',
+    (tester) async {
+      await pumpList(
+        tester,
+        groups: [_group('G0', 120)],
+        unfoldSet: {'G0'},
+        view: Builder(
+          builder: (context) => TextButton(
+            onPressed: () {
+              showSheet<void>(
+                context: context,
+                builder: (_) => const CommonScaffold(
+                  title: 'proxies',
+                  body: ProxiesListView(),
+                ),
+              );
+            },
+            child: const Text('open proxies'),
+          ),
         ),
-      ),
-    );
-    tester.view.physicalSize = const Size(390, 700);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('open proxies'));
-    await tester.pumpAndSettle();
-    expect(find.byType(CustomScrollView), findsOneWidget);
-    final position = tester.state<ScrollableState>(scrollable()).position;
-    final before = tester.getRect(headerOf('G0'));
-    final gesture = await tester.startGesture(
-      Offset(before.center.dx, before.bottom + 30),
-    );
-    await gesture.moveBy(const Offset(0, -24));
-    await tester.pump();
-    await gesture.moveBy(const Offset(0, -80));
-    await tester.pump();
-    expect(tester.getRect(headerOf('G0')).top, lessThan(before.top));
-    expect(position.pixels, 0);
-    await gesture.cancel();
-    await tester.pumpAndSettle();
-    tester.state<NavigatorState>(find.byType(Navigator).first).pop();
-    await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull);
-    await unmountList(tester);
-  });
+      );
+      tester.view.physicalSize = const Size(390, 700);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('open proxies'));
+      await tester.pumpAndSettle();
+      expect(find.byType(CustomScrollView), findsOneWidget);
+      final position = tester.state<ScrollableState>(scrollable()).position;
+      final before = tester.getRect(headerOf('G0'));
+      final gesture = await tester.startGesture(
+        Offset(before.center.dx, before.bottom + 30),
+      );
+      await gesture.moveBy(const Offset(0, -24));
+      await tester.pump();
+      await gesture.moveBy(const Offset(0, -80));
+      await tester.pump();
+      expect(tester.getRect(headerOf('G0')).top, lessThan(before.top));
+      expect(position.pixels, 0);
+      await gesture.cancel();
+      await tester.pumpAndSettle();
+      tester.state<NavigatorState>(find.byType(Navigator).first).pop();
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      await unmountList(tester);
+    },
+  );
 
-  testWidgets('the native proxy viewport preserves sheet wheel detents and settling', (
-    tester,
-  ) async {
-    await pumpList(
-      tester,
-      groups: [_group('G0', 120)],
-      unfoldSet: {'G0'},
-      view: Builder(
-        builder: (context) => TextButton(
-          onPressed: () {
-            showSheet<void>(
-              context: context,
-              builder: (_) => const CommonScaffold(
-                title: 'proxies',
-                body: ProxiesListView(),
-              ),
-            );
-          },
-          child: const Text('open proxies'),
+  testWidgets(
+    'the native proxy viewport preserves sheet wheel detents and settling',
+    (tester) async {
+      await pumpList(
+        tester,
+        groups: [_group('G0', 120)],
+        unfoldSet: {'G0'},
+        view: Builder(
+          builder: (context) => TextButton(
+            onPressed: () {
+              showSheet<void>(
+                context: context,
+                builder: (_) => const CommonScaffold(
+                  title: 'proxies',
+                  body: ProxiesListView(),
+                ),
+              );
+            },
+            child: const Text('open proxies'),
+          ),
         ),
-      ),
-    );
-    tester.view.physicalSize = const Size(390, 700);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('open proxies'));
-    await tester.pumpAndSettle();
-    expect(find.byType(CustomScrollView), findsOneWidget);
-    final position = tester.state<ScrollableState>(scrollable()).position;
-    final pointer = TestPointer(11, PointerDeviceKind.mouse);
-    Future<void> wheel(Offset delta, int milliseconds) async {
-      final header = tester.getRect(headerOf('G0'));
-      await tester.sendEventToBinding(
-        pointer.hover(Offset(header.center.dx, header.bottom + 30)),
       );
-      await tester.sendEventToBinding(
-        pointer.scroll(delta, timeStamp: Duration(milliseconds: milliseconds)),
-      );
-    }
+      tester.view.physicalSize = const Size(390, 700);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('open proxies'));
+      await tester.pumpAndSettle();
+      expect(find.byType(CustomScrollView), findsOneWidget);
+      final position = tester.state<ScrollableState>(scrollable()).position;
+      final pointer = TestPointer(11, PointerDeviceKind.mouse);
+      Future<void> wheel(Offset delta, int milliseconds) async {
+        final header = tester.getRect(headerOf('G0'));
+        await tester.sendEventToBinding(
+          pointer.hover(Offset(header.center.dx, header.bottom + 30)),
+        );
+        await tester.sendEventToBinding(
+          pointer.scroll(
+            delta,
+            timeStamp: Duration(milliseconds: milliseconds),
+          ),
+        );
+      }
 
-    final collapsedTop = tester.getRect(headerOf('G0')).top;
-    await wheel(const Offset(0, 60), 0);
-    await tester.pump(const Duration(milliseconds: 30));
-    expect(position.pixels, 0);
-    await wheel(const Offset(60, 0), 30);
-    await tester.pumpAndSettle();
-    final expandedTop = tester.getRect(headerOf('G0')).top;
-    expect(expandedTop, lessThan(collapsedTop));
-    expect(position.pixels, 0);
+      final collapsedTop = tester.getRect(headerOf('G0')).top;
+      await wheel(const Offset(0, 60), 0);
+      await tester.pump(const Duration(milliseconds: 30));
+      expect(position.pixels, 0);
+      await wheel(const Offset(60, 0), 30);
+      await tester.pumpAndSettle();
+      final expandedTop = tester.getRect(headerOf('G0')).top;
+      expect(expandedTop, lessThan(collapsedTop));
+      expect(position.pixels, 0);
 
-    await wheel(const Offset(0, 60), 1000);
-    await tester.pumpAndSettle();
-    expect(position.pixels, 60);
-    await wheel(const Offset(0, -60), 2000);
-    await tester.pumpAndSettle();
-    expect(position.pixels, 0);
-    expect(tester.getRect(headerOf('G0')).top, closeTo(expandedTop, 1));
+      await wheel(const Offset(0, 60), 1000);
+      await tester.pumpAndSettle();
+      expect(position.pixels, 60);
+      await wheel(const Offset(0, -60), 2000);
+      await tester.pumpAndSettle();
+      expect(position.pixels, 0);
+      expect(tester.getRect(headerOf('G0')).top, closeTo(expandedTop, 1));
 
-    await wheel(const Offset(0, 20), 3000);
-    await tester.pumpAndSettle();
-    expect(position.pixels, 20);
-    await wheel(const Offset(0, -100), 4000);
-    await tester.pumpAndSettle();
-    expect(position.pixels, 0);
-    expect(tester.getRect(headerOf('G0')).top, closeTo(expandedTop, 1));
-    await wheel(const Offset(0, -60), 5000);
-    await tester.pump(const Duration(milliseconds: 30));
-    expect(position.pixels, 0);
-    await wheel(const Offset(0, 60), 5030);
-    await wheel(const Offset(60, 0), 5040);
-    await tester.pumpAndSettle();
-    expect(tester.getRect(headerOf('G0')).top, closeTo(collapsedTop, 1));
-    expect(position.pixels, 0);
-    tester.state<NavigatorState>(find.byType(Navigator).first).pop();
-    await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull);
-    await unmountList(tester);
-  });
+      await wheel(const Offset(0, 20), 3000);
+      await tester.pumpAndSettle();
+      expect(position.pixels, 20);
+      await wheel(const Offset(0, -100), 4000);
+      await tester.pumpAndSettle();
+      expect(position.pixels, 0);
+      expect(tester.getRect(headerOf('G0')).top, closeTo(expandedTop, 1));
+      await wheel(const Offset(0, -60), 5000);
+      await tester.pump(const Duration(milliseconds: 30));
+      expect(position.pixels, 0);
+      await wheel(const Offset(0, 60), 5030);
+      await wheel(const Offset(60, 0), 5040);
+      await tester.pumpAndSettle();
+      expect(tester.getRect(headerOf('G0')).top, closeTo(collapsedTop, 1));
+      expect(position.pixels, 0);
+      tester.state<NavigatorState>(find.byType(Navigator).first).pop();
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      await unmountList(tester);
+    },
+  );
 
   testWidgets('folding a group leaves the cards of the others as they were', (
     tester,

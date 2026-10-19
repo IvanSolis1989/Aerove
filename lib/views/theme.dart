@@ -1139,7 +1139,8 @@ class _TextScaleFactorItemState extends ConsumerState<_TextScaleFactorItem> {
                                   value: scale,
                                   label: percent,
                                   onChanged: textScale.enable
-                                      ? (value) => setState(() => _draft = value)
+                                      ? (value) =>
+                                            setState(() => _draft = value)
                                       : null,
                                   onChangeEnd: (value) => _update(
                                     (state) => state.copyWith(scale: value),

@@ -29,8 +29,7 @@ class _Stripes extends CustomPainter {
     for (var x = 0.0; x < size.width; x += 8) {
       canvas.drawRect(
         Rect.fromLTWH(x, 0, 8, size.height),
-        Paint()
-          ..color = (x ~/ 8).isEven ? first : second,
+        Paint()..color = (x ~/ 8).isEven ? first : second,
       );
     }
   }
@@ -286,33 +285,44 @@ void main() {
         final controller = ScrollController();
         Future<List<int>> capture(String phase) async {
           final button = tester.getRect(find.byTooltip('Action A'));
-          final panes = LiquidGlassHost.debugLastCapture!.panes
-              .where((pane) => pane.pane.contains(button.center))
-              .toList()
-            ..sort((a, b) => (a.pane.width * a.pane.height)
-                .compareTo(b.pane.width * b.pane.height));
+          final panes =
+              LiquidGlassHost.debugLastCapture!.panes
+                  .where((pane) => pane.pane.contains(button.center))
+                  .toList()
+                ..sort(
+                  (a, b) => (a.pane.width * a.pane.height).compareTo(
+                    b.pane.width * b.pane.height,
+                  ),
+                );
           expect(panes, isNotEmpty);
           final pane = panes.first;
           expect(pane.wallpaper, isFalse);
           expect(pane.scale, 1);
           final atlas = pane.atlas.clone();
-          final scene = tester.renderObject<RenderRepaintBoundary>(
-            find.byKey(_scene),
-          ).toImageSync();
+          final scene = tester
+              .renderObject<RenderRepaintBoundary>(find.byKey(_scene))
+              .toImageSync();
           return (await tester.runAsync(() async {
             try {
               final data = (await atlas.toByteData(
                 format: ui.ImageByteFormat.rawRgba,
               ))!;
               final samples = <int>[];
-              for (var y = button.top.ceil() + 8;
-                  y < button.bottom.floor() - 8; y++) {
-                for (var x = button.left.ceil() + 8;
-                    x < button.right.floor() - 8; x++) {
-                  final ax = (pane.place.left +
-                      (x - pane.slot.left) * pane.scale).floor();
-                  final ay = (pane.place.top +
-                      (y - pane.slot.top) * pane.scale).floor();
+              for (
+                var y = button.top.ceil() + 8;
+                y < button.bottom.floor() - 8;
+                y++
+              ) {
+                for (
+                  var x = button.left.ceil() + 8;
+                  x < button.right.floor() - 8;
+                  x++
+                ) {
+                  final ax =
+                      (pane.place.left + (x - pane.slot.left) * pane.scale)
+                          .floor();
+                  final ay = (pane.place.top + (y - pane.slot.top) * pane.scale)
+                      .floor();
                   final index = (ay * atlas.width + ax) * 4;
                   samples.addAll([
                     for (var channel = 0; channel < 4; channel++)
@@ -323,26 +333,30 @@ void main() {
               final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
               if (output != null) {
                 Directory(output).createSync(recursive: true);
-                final prefix = '$output/header-content-$_backend-'
+                final prefix =
+                    '$output/header-content-$_backend-'
                     '${brightness.name}-${quality.name}-$phase';
                 for (final item in [(scene, ''), (atlas, '-atlas')]) {
                   final png = (await item.$1.toByteData(
                     format: ui.ImageByteFormat.png,
                   ))!;
-                  File('$prefix${item.$2}.png')
-                      .writeAsBytesSync(png.buffer.asUint8List());
+                  File(
+                    '$prefix${item.$2}.png',
+                  ).writeAsBytesSync(png.buffer.asUint8List());
                 }
-                File('$prefix.json').writeAsStringSync(jsonEncode({
-                  'shaderSupported': ui.ImageFilter.isShaderFilterSupported,
-                  'shaderReady': LiquidGlass.debugShaderReady,
-                  'wallpaper': pane.wallpaper,
-                  'level': pane.level,
-                  'scale': pane.scale,
-                  'pane': pane.pane.toString(),
-                  'slot': pane.slot.toString(),
-                  'place': pane.place.toString(),
-                  'bodySamples': samples,
-                }));
+                File('$prefix.json').writeAsStringSync(
+                  jsonEncode({
+                    'shaderSupported': ui.ImageFilter.isShaderFilterSupported,
+                    'shaderReady': LiquidGlass.debugShaderReady,
+                    'wallpaper': pane.wallpaper,
+                    'level': pane.level,
+                    'scale': pane.scale,
+                    'pane': pane.pane.toString(),
+                    'slot': pane.slot.toString(),
+                    'place': pane.place.toString(),
+                    'bodySamples': samples,
+                  }),
+                );
               }
               return samples;
             } finally {
@@ -353,26 +367,30 @@ void main() {
         }
 
         try {
-          await tester.pumpWidget(_app(
-            controller, () {}, () {},
-            brightness: brightness,
-            quality: quality,
-            body: CustomPaint(
-              painter: const _Stripes(
-                first: Color(0xFF20B050),
-                second: Color(0xFFD030A0),
-              ),
-              child: ListView.builder(
-                controller: controller,
-                itemCount: 40,
-                itemExtent: 64,
-                itemBuilder: (_, index) => Align(
-                  alignment: Alignment.bottomLeft,
-                  child: GlassText('Body card $index'),
+          await tester.pumpWidget(
+            _app(
+              controller,
+              () {},
+              () {},
+              brightness: brightness,
+              quality: quality,
+              body: CustomPaint(
+                painter: const _Stripes(
+                  first: Color(0xFF20B050),
+                  second: Color(0xFFD030A0),
+                ),
+                child: ListView.builder(
+                  controller: controller,
+                  itemCount: 40,
+                  itemExtent: 64,
+                  itemBuilder: (_, index) => Align(
+                    alignment: Alignment.bottomLeft,
+                    child: GlassText('Body card $index'),
+                  ),
                 ),
               ),
             ),
-          ));
+          );
           await tester.pumpAndSettle();
           expect(_headerPanes, findsNothing);
           controller.jumpTo(80);
@@ -397,8 +415,11 @@ void main() {
               filter.filter = ui.ImageFilter.blur(sigmaX: 0, sigmaY: 0);
               await tester.pump();
               final clear = await capture('blur-off');
-              expect(actual, clear,
-                  reason: 'button source excludes the native header blur');
+              expect(
+                actual,
+                clear,
+                reason: 'button source excludes the native header blur',
+              );
               final pixels = <List<int>>[
                 for (var i = 0; i < actual.length; i += 4)
                   actual.sublist(i, i + 4),
@@ -429,6 +450,27 @@ void main() {
         final progress = ValueNotifier(1.0);
         final scheme = ThemeData(brightness: brightness).colorScheme;
         final lens = LiquidGlassStyle.lens(scheme);
+        final unbentLens = LiquidGlassStyle(
+          tint: lens.tint,
+          contrast: lens.contrast,
+          blur: lens.blur,
+          haze: lens.haze,
+          hazeBlur: lens.hazeBlur,
+          refraction: 0,
+          bevel: lens.bevel,
+          saturation: lens.saturation,
+          brightness: lens.brightness,
+          rim: lens.rim,
+          rimWidth: lens.rimWidth,
+          rimTail: lens.rimTail,
+          rimFocus: lens.rimFocus,
+          rimAdded: lens.rimAdded,
+          endShade: lens.endShade,
+          dispersion: lens.dispersion,
+          rimBlur: lens.rimBlur,
+          hairline: lens.hairline,
+          hairlineSide: lens.hairlineSide,
+        );
         Future<List<int>> render(String variant) async {
           await tester.pumpWidget(
             TestApp(
@@ -460,7 +502,7 @@ void main() {
                               : LiquidGlass(
                                   contentBackdrop: true,
                                   style: variant == 'unbent'
-                                      ? lens.copyWith(refraction: 0)
+                                      ? unbentLens
                                       : lens,
                                   child: const SizedBox.square(dimension: 44),
                                 ),
@@ -503,9 +545,10 @@ void main() {
                 final png = (await image.toByteData(
                   format: ui.ImageByteFormat.png,
                 ))!;
-                File('$output/header-optics-$_backend-${brightness.name}-'
-                    '${quality.name}-$variant.png')
-                    .writeAsBytesSync(png.buffer.asUint8List());
+                File(
+                  '$output/header-optics-$_backend-${brightness.name}-'
+                  '${quality.name}-$variant.png',
+                ).writeAsBytesSync(png.buffer.asUint8List());
               }
               return bytes;
             } finally {
@@ -538,19 +581,23 @@ void main() {
           final refraction = delta(actual, unbent);
           final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
           if (output != null) {
-            File('$output/header-optics-$_backend-${brightness.name}-'
-                '${quality.name}.json').writeAsStringSync(jsonEncode({
-              'shaderSupported': ui.ImageFilter.isShaderFilterSupported,
-              'shaderReady': LiquidGlass.debugShaderReady,
-              'repeatNoise': noise,
-              'dockLensResidual': residual,
-              'refractionDelta': refraction,
-              'blur': lens.blur,
-              'haze': lens.haze,
-              'refraction': lens.refraction,
-              'bevel': lens.bevel,
-              'dispersion': lens.dispersion,
-            }));
+            File(
+              '$output/header-optics-$_backend-${brightness.name}-'
+              '${quality.name}.json',
+            ).writeAsStringSync(
+              jsonEncode({
+                'shaderSupported': ui.ImageFilter.isShaderFilterSupported,
+                'shaderReady': LiquidGlass.debugShaderReady,
+                'repeatNoise': noise,
+                'dockLensResidual': residual,
+                'refractionDelta': refraction,
+                'blur': lens.blur,
+                'haze': lens.haze,
+                'refraction': lens.refraction,
+                'bevel': lens.bevel,
+                'dispersion': lens.dispersion,
+              }),
+            );
           }
           expect(noise, 0);
           expect(residual, 0);

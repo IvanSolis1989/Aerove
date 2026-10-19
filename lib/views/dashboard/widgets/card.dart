@@ -732,33 +732,35 @@ class DashboardSwitch extends StatelessWidget {
           child: OverflowBox(
             maxWidth: double.infinity,
             maxHeight: double.infinity,
-            child: GlassSwitch(child: Switch(
-              value: value,
-              onChanged: onChanged,
-              padding: EdgeInsets.zero,
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              thumbIcon: _thumbIcon,
-              overlayColor: const WidgetStateMapper<Color?>({
-                WidgetState.pressed: Colors.transparent,
-              }),
-              trackOutlineColor: const WidgetStatePropertyAll(
-                Colors.transparent,
-              ),
-              trackOutlineWidth: const WidgetStatePropertyAll(0),
-              trackColor: WidgetStateProperty.resolveWith(
-                (states) => LiquidGlassScope.surfaceColorOf(
-                  context,
-                  states.contains(WidgetState.selected)
-                      ? colorScheme.primary
-                      : colors.track,
+            child: GlassSwitch(
+              child: Switch(
+                value: value,
+                onChanged: onChanged,
+                padding: EdgeInsets.zero,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                thumbIcon: _thumbIcon,
+                overlayColor: const WidgetStateMapper<Color?>({
+                  WidgetState.pressed: Colors.transparent,
+                }),
+                trackOutlineColor: const WidgetStatePropertyAll(
+                  Colors.transparent,
+                ),
+                trackOutlineWidth: const WidgetStatePropertyAll(0),
+                trackColor: WidgetStateProperty.resolveWith(
+                  (states) => LiquidGlassScope.surfaceColorOf(
+                    context,
+                    states.contains(WidgetState.selected)
+                        ? colorScheme.primary
+                        : colors.track,
+                  ),
+                ),
+                thumbColor: WidgetStateProperty.resolveWith(
+                  (states) => states.contains(WidgetState.selected)
+                      ? colorScheme.onPrimary
+                      : colors.thumb,
                 ),
               ),
-              thumbColor: WidgetStateProperty.resolveWith(
-                (states) => states.contains(WidgetState.selected)
-                    ? colorScheme.onPrimary
-                    : colors.thumb,
-              ),
-            )),
+            ),
           ),
         ),
       ),

@@ -48,7 +48,11 @@ class _GlassSwitchState extends State<GlassSwitch> {
     }
     final delta = event.position.dx - _start;
     final direction = Directionality.of(context) == TextDirection.rtl ? -1 : 1;
-    setState(() => _drag = ((widget.child.value ? 1.0 : 0.0) + delta * direction / _travel).clamp(0.0, 1.0));
+    setState(
+      () => _drag =
+          ((widget.child.value ? 1.0 : 0.0) + delta * direction / _travel)
+              .clamp(0.0, 1.0),
+    );
   }
 
   void _end(PointerEvent event) {
@@ -84,7 +88,8 @@ class _GlassSwitchState extends State<GlassSwitch> {
       if (_hovered) WidgetState.hovered,
       if (_pointer != null) WidgetState.pressed,
     };
-    final tint = widget.child.trackColor?.resolve(states) ??
+    final tint =
+        widget.child.trackColor?.resolve(states) ??
         (value ? colors.primary : colors.onSurface);
     final trackStyle = LiquidGlassStyle.regular(colors).copyWith(
       blur: 0,
@@ -94,22 +99,36 @@ class _GlassSwitchState extends State<GlassSwitch> {
     final side = _focused && _enabled
         ? focusRingSide(colors)
         : outline != null && outline.a > 0
-        ? BorderSide(color: outline, width: widget.child.trackOutlineWidth?.resolve(states) ?? 1)
+        ? BorderSide(
+            color: outline,
+            width: widget.child.trackOutlineWidth?.resolve(states) ?? 1,
+          )
         : BorderSide.none;
     final customIcon = widget.child.thumbIcon?.resolve(states);
-    final iconColor = customIcon?.color ?? colors.onSurface.withValues(alpha: _enabled ? 1 : 0.38);
+    final iconColor =
+        customIcon?.color ??
+        colors.onSurface.withValues(alpha: _enabled ? 1 : 0.38);
     final mark = customIcon == null
-        ? GlyphIcon(value ? AppGlyphs.check : AppGlyphs.close, size: 14, color: iconColor)
+        ? GlyphIcon(
+            value ? AppGlyphs.check : AppGlyphs.close,
+            size: 14,
+            color: iconColor,
+          )
         : customIcon.icon == null
         ? const SizedBox.shrink()
         : GlassInk(
             source: iconColor,
             role: GlassInkRole.icon,
-            child: IconTheme.merge(data: IconThemeData(color: iconColor), child: customIcon),
+            child: IconTheme.merge(
+              data: IconThemeData(color: iconColor),
+              child: customIcon,
+            ),
           );
     final thumbColor = widget.child.thumbColor?.resolve(states);
-    final thumbTint = thumbColor != null && HSVColor.fromColor(thumbColor).saturation >= 0.20
-        ? thumbColor : colors.surface;
+    final thumbTint =
+        thumbColor != null && HSVColor.fromColor(thumbColor).saturation >= 0.20
+        ? thumbColor
+        : colors.surface;
     final thumbStyle = LiquidGlassStyle.regular(colors).copyWith(
       blur: 0,
       tint: thumbTint.withValues(alpha: _enabled ? 0.08 : 0.03),
@@ -135,31 +154,42 @@ class _GlassSwitchState extends State<GlassSwitch> {
                     child: Padding(
                       padding: widget.child.padding ?? EdgeInsets.zero,
                       child: Center(
-                      child: SizedBox(
-                        width: _trackWidth,
-                        height: _trackHeight,
-                        child: DecoratedBox(
-                          position: DecorationPosition.foreground,
-                          decoration: ShapeDecoration(
-                            shape: AppShape.full.copyWith(side: side),
-                          ),
-                          child: LiquidGlass(
-                            style: trackStyle,
-                            pressed: _enabled && (_pointer != null || _hovered),
-                            child: Padding(
-                              padding: const EdgeInsets.all(_inset),
-                              child: TweenAnimationBuilder<double>(
-                                tween: Tween(end: _drag ?? (value ? 1.0 : 0.0)),
-                                duration: _pointer != null ? Duration.zero : context.motionDuration(kThemeAnimationDuration),
-                                curve: Curves.easeOut,
-                                builder: (_, position, _) => Align(
-                                  alignment: AlignmentDirectional(position * 2 - 1, 0),
-                                  child: SizedBox.square(
-                                    dimension: _thumbExtent,
-                                    child: LiquidGlass(
-                                      style: thumbStyle,
-                                      pressed: _enabled && _pointer != null,
-                                      child: Center(child: mark),
+                        child: SizedBox(
+                          width: _trackWidth,
+                          height: _trackHeight,
+                          child: DecoratedBox(
+                            position: DecorationPosition.foreground,
+                            decoration: ShapeDecoration(
+                              shape: AppShape.full.copyWith(side: side),
+                            ),
+                            child: LiquidGlass(
+                              style: trackStyle,
+                              pressed:
+                                  _enabled && (_pointer != null || _hovered),
+                              child: Padding(
+                                padding: const EdgeInsets.all(_inset),
+                                child: TweenAnimationBuilder<double>(
+                                  tween: Tween(
+                                    end: _drag ?? (value ? 1.0 : 0.0),
+                                  ),
+                                  duration: _pointer != null
+                                      ? Duration.zero
+                                      : context.motionDuration(
+                                          kThemeAnimationDuration,
+                                        ),
+                                  curve: Curves.easeOut,
+                                  builder: (_, position, _) => Align(
+                                    alignment: AlignmentDirectional(
+                                      position * 2 - 1,
+                                      0,
+                                    ),
+                                    child: SizedBox.square(
+                                      dimension: _thumbExtent,
+                                      child: LiquidGlass(
+                                        style: thumbStyle,
+                                        pressed: _enabled && _pointer != null,
+                                        child: Center(child: mark),
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -169,12 +199,15 @@ class _GlassSwitchState extends State<GlassSwitch> {
                         ),
                       ),
                     ),
-                    ),
                   ),
                 ),
               ),
               // Native input and semantics stay authoritative; its opaque paint is replaced above.
-              Opacity(opacity: 0, alwaysIncludeSemantics: true, child: widget.child),
+              Opacity(
+                opacity: 0,
+                alwaysIncludeSemantics: true,
+                child: widget.child,
+              ),
             ],
           ),
         ),

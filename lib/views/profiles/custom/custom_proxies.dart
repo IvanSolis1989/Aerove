@@ -1054,7 +1054,9 @@ class _EditCustomProxyViewState extends ConsumerState<_EditCustomProxyView> {
       title: title,
       leading: leading,
       onPressed: () => onChanged(!value),
-      trailing: GlassSwitch(child: Switch(value: value, onChanged: onChanged)),
+      trailing: GlassSwitch(
+        child: Switch(value: value, onChanged: onChanged),
+      ),
     );
   }
 

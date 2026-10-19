@@ -57,9 +57,13 @@ void main() {
                                 width: 280,
                                 child: StatefulBuilder(
                                   builder: (_, update) => SegmentedControl<int>(
-                                    segments: const [(0, 'System'), (1, 'Custom')],
+                                    segments: const [
+                                      (0, 'System'),
+                                      (1, 'Custom'),
+                                    ],
                                     value: selected,
-                                    onChanged: (next) => update(() => selected = next),
+                                    onChanged: (next) =>
+                                        update(() => selected = next),
                                   ),
                                 ),
                               ),
@@ -73,7 +77,10 @@ void main() {
               ),
             );
             await tester.pumpAndSettle();
-            expect(tester.getSize(find.byType(SegmentedControl<int>)).height, 44);
+            expect(
+              tester.getSize(find.byType(SegmentedControl<int>)).height,
+              44,
+            );
             final boundary = tester.renderObject<RenderRepaintBoundary>(
               find.byKey(capture),
             );
@@ -94,7 +101,9 @@ void main() {
                 final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
                 if (output != null) {
                   Directory(output).createSync(recursive: true);
-                  final png = (await image.toByteData(format: ui.ImageByteFormat.png))!;
+                  final png = (await image.toByteData(
+                    format: ui.ImageByteFormat.png,
+                  ))!;
                   File(
                     '$output/segments-${brightness.name}-${quality.name}-${direction.name}-${background.toARGB32()}.png',
                   ).writeAsBytesSync(png.buffer.asUint8List());
@@ -109,7 +118,10 @@ void main() {
             expect(tester.takeException(), isNull);
           }
           for (var pane = 0; pane < 2; pane++) {
-            expect((samples[0][pane] - samples[1][pane]).abs(), greaterThan(30));
+            expect(
+              (samples[0][pane] - samples[1][pane]).abs(),
+              greaterThan(30),
+            );
           }
         }
       });

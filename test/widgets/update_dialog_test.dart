@@ -145,7 +145,9 @@ void main() {
       'groups': [
         {
           'type': 'fix',
-          'entries': [{'id': 'old', 'text': 'Wrong previous version notes'}],
+          'entries': [
+            {'id': 'old', 'text': 'Wrong previous version notes'},
+          ],
         },
       ],
     });
@@ -159,59 +161,73 @@ void main() {
     await shown;
   });
 
-  testWidgets('missing or mismatched notes are explicit and keep download available', (
-    tester,
-  ) async {
-    final container = await pumpApp(tester);
-    for (final body in [
-      null,
-      '# Aerove Android\n版本和签名模板',
-      _bodyWith(_payload.replaceAll('0.8.96', '0.8.95')),
-    ]) {
+  testWidgets(
+    'missing or mismatched notes are explicit and keep download available',
+    (tester) async {
+      final container = await pumpApp(tester);
+      for (final body in [
+        null,
+        '# Aerove Android\n版本和签名模板',
+        _bodyWith(_payload.replaceAll('0.8.96', '0.8.95')),
+      ]) {
+        final shown = container
+            .read(commonActionProvider.notifier)
+            .checkUpdateResultHandle(data: release(body), isUser: true);
+        await tester.pumpAndSettle();
+        expect(
+          find.textContaining(
+            'Release notes for this version are not available yet.',
+          ),
+          findsOneWidget,
+        );
+        expect(find.text('Download'), findsOneWidget);
+        expect(find.textContaining('Re-import backups'), findsNothing);
+        await tapCancel(tester);
+        await shown;
+      }
+    },
+  );
+
+  testWidgets(
+    'long target notes scroll while confirmation actions stay visible',
+    (tester) async {
+      tester.view.physicalSize = const Size(400, 600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final container = await pumpApp(tester);
+      final lines = List.generate(
+        100,
+        (index) => '- Target change $index',
+      ).join('\n');
       final shown = container
           .read(commonActionProvider.notifier)
-          .checkUpdateResultHandle(data: release(body), isUser: true);
+          .checkUpdateResultHandle(
+            data: release('### Changes\n\n$lines'),
+            isUser: true,
+          );
       await tester.pumpAndSettle();
-      expect(
-        find.textContaining('Release notes for this version are not available yet.'),
-        findsOneWidget,
+      final scrollView = find
+          .descendant(
+            of: find.byType(CommonDialog),
+            matching: find.byType(SingleChildScrollView),
+          )
+          .first;
+      final scrollable = tester.state<ScrollableState>(
+        find
+            .descendant(of: scrollView, matching: find.byType(Scrollable))
+            .first,
       );
-      expect(find.text('Download'), findsOneWidget);
-      expect(find.textContaining('Re-import backups'), findsNothing);
+      expect(scrollable.position.maxScrollExtent, greaterThan(0));
+      await tester.drag(scrollView, const Offset(0, -250));
+      await tester.pumpAndSettle();
+      expect(scrollable.position.pixels, greaterThan(0));
+      expect(find.text('Download').hitTestable(), findsOneWidget);
+      expect(tester.takeException(), isNull);
       await tapCancel(tester);
       await shown;
-    }
-  });
-
-  testWidgets('long target notes scroll while confirmation actions stay visible', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(400, 600);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    final container = await pumpApp(tester);
-    final lines = List.generate(100, (index) => '- Target change $index').join('\n');
-    final shown = container
-        .read(commonActionProvider.notifier)
-        .checkUpdateResultHandle(data: release('### Changes\n\n$lines'), isUser: true);
-    await tester.pumpAndSettle();
-    final scrollView = find.descendant(
-      of: find.byType(CommonDialog),
-      matching: find.byType(SingleChildScrollView),
-    ).first;
-    final scrollable = tester.state<ScrollableState>(
-      find.descendant(of: scrollView, matching: find.byType(Scrollable)).first,
-    );
-    expect(scrollable.position.maxScrollExtent, greaterThan(0));
-    await tester.drag(scrollView, const Offset(0, -250));
-    await tester.pumpAndSettle();
-    expect(scrollable.position.pixels, greaterThan(0));
-    expect(find.text('Download').hitTestable(), findsOneWidget);
-    expect(tester.takeException(), isNull);
-    await tapCancel(tester);
-    await shown;
-  });
+    },
+  );
 
   testWidgets('stops reminding when an automatic check is dismissed', (
     tester,

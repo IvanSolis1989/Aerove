@@ -437,10 +437,12 @@ class ListItem<T> extends StatelessWidget {
               : () {
                   toggleAction.onChanged!(!toggleAction.value);
                 },
-          trailing: GlassSwitch(child: Switch(
-            value: toggleAction.value,
-            onChanged: toggleAction.onChanged,
-          )),
+          trailing: GlassSwitch(
+            child: Switch(
+              value: toggleAction.value,
+              onChanged: toggleAction.onChanged,
+            ),
+          ),
         );
       case _DefaultAction():
         return _buildListTile(context, position: position, onTap: onTap);

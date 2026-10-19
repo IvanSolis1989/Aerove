@@ -35,34 +35,36 @@ void main() {
       expect(entry.text, 'Override scripts');
     });
 
-    test('selects the exact target tag instead of the first payload version', () {
-      final payload = jsonDecode(_payload) as Map<String, dynamic>;
-      final versions = payload['versions'] as List<dynamic>;
-      versions.insert(0, {
-        'version': '0.8.95',
-        'tag': 'v0.8.95',
-        'groups': [],
-      });
-      expect(
-        parseReleaseChangelog(_body(jsonEncode(payload)), tagName: 'v0.8.96')
-            ?.version,
-        '0.8.96',
-      );
-      expect(
-        parseReleaseChangelog(_body(jsonEncode(payload)), tagName: 'v0.8.97'),
-        isNull,
-      );
-    });
+    test(
+      'selects the exact target tag instead of the first payload version',
+      () {
+        final payload = jsonDecode(_payload) as Map<String, dynamic>;
+        final versions = payload['versions'] as List<dynamic>;
+        versions.insert(0, {
+          'version': '0.8.95',
+          'tag': 'v0.8.95',
+          'groups': [],
+        });
+        expect(
+          parseReleaseChangelog(
+            _body(jsonEncode(payload)),
+            tagName: 'v0.8.96',
+          )?.version,
+          '0.8.96',
+        );
+        expect(
+          parseReleaseChangelog(_body(jsonEncode(payload)), tagName: 'v0.8.97'),
+          isNull,
+        );
+      },
+    );
 
     test('does not confuse different builds of the same upstream version', () {
       const payload =
           '{"schemaVersion":2,"versions":[{"version":"0.9.1-X+2026101815",'
           '"tag":"v0.9.1-X+2026101815","groups":[]}]}';
       expect(
-        parseReleaseChangelog(
-          _body(payload),
-          tagName: 'v0.9.1-X+2026102001',
-        ),
+        parseReleaseChangelog(_body(payload), tagName: 'v0.9.1-X+2026102001'),
         isNull,
       );
       expect(
@@ -146,18 +148,21 @@ void main() {
   });
 
   group('releaseNotesText', () {
-    test('preserves paragraphs and headings inside the release notes scope', () {
-      expect(
-        releaseNotesText(
-          '# Aerove v1\n<!-- flclash:changelog:begin -->\n'
-          '<!-- aerove:changelog:tag v1 -->\n'
-          '### 修复\n\n这是真实更新说明。\n- 可滚动查看\n'
-          '<!-- flclash:changelog:end -->\n签名与下载信息',
-          tagName: 'v1',
-        ),
-        '### 修复\n\n这是真实更新说明。\n- 可滚动查看',
-      );
-    });
+    test(
+      'preserves paragraphs and headings inside the release notes scope',
+      () {
+        expect(
+          releaseNotesText(
+            '# Aerove v1\n<!-- flclash:changelog:begin -->\n'
+            '<!-- aerove:changelog:tag v1 -->\n'
+            '### 修复\n\n这是真实更新说明。\n- 可滚动查看\n'
+            '<!-- flclash:changelog:end -->\n签名与下载信息',
+            tagName: 'v1',
+          ),
+          '### 修复\n\n这是真实更新说明。\n- 可滚动查看',
+        );
+      },
+    );
 
     test('rejects mismatched bound notes and the legacy release template', () {
       expect(
@@ -169,7 +174,10 @@ void main() {
         ),
         isEmpty,
       );
-      expect(releaseNotesText('# Aerove Android\n\n适用于 Android ARM64。'), isEmpty);
+      expect(
+        releaseNotesText('# Aerove Android\n\n适用于 Android ARM64。'),
+        isEmpty,
+      );
       expect(releaseNotesText(null), isEmpty);
       expect(releaseNotesText(_body(_payload)), isEmpty);
     });

@@ -27,7 +27,7 @@ class MessageLookup extends MessageLookupByLibrary {
   static String m2(detail) => "データを消去できませんでした：${detail}";
 
   static String m3(code) =>
-      "Windows が FlClashCore.exe の実行を拒否しました（エラー ${code}）。スマート アプリ コントロールや AppLocker などのアプリ制御ポリシーは未署名のプログラムをブロックします。ポリシーで Aerove を許可するか、ポリシーを無効にしてから再試行してください。";
+      "Windows が FlClashCore.exe の実行を拒否しました（エラー ${code}）。スマート アプリ コントロールや AppLocker などのアプリ制御ポリシーは未署名のプログラムをブロックします。ポリシーで AEROVE を許可するか、ポリシーを無効にしてから再試行してください。";
 
   static String m4(name) =>
       "アプリの起動が2回連続で完了しませんでした。クラッシュループを断ち切るため、プロファイル ${name} の選択を解除し、今回の自動セットアップをスキップしました。いつでも選択し直せます。";
@@ -439,7 +439,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "core": MessageLookupByLibrary.simpleMessage("コア"),
     "coreBlockedByPolicyTip": m3,
     "coreBlockedBySmartAppControlTip": MessageLookupByLibrary.simpleMessage(
-      "Windows のスマート アプリ コントロールが、署名されていない FlClashCore.exe をブロックしました。Windows セキュリティ → アプリとブラウザーの制御 → スマート アプリ コントロールの設定で「オフ」を選び、Aerove を再起動してください。一度オフにすると、Windows を再インストールしない限り再度オンにはできません。",
+      "Windows のスマート アプリ コントロールが、署名されていない FlClashCore.exe をブロックしました。Windows セキュリティ → アプリとブラウザーの制御 → スマート アプリ コントロールの設定で「オフ」を選び、AEROVE を再起動してください。一度オフにすると、Windows を再インストールしない限り再度オンにはできません。",
     ),
     "coreStatus": MessageLookupByLibrary.simpleMessage("コアの状態"),
     "country": MessageLookupByLibrary.simpleMessage("地域"),
@@ -547,7 +547,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "disclaimerChangesTitle": MessageLookupByLibrary.simpleMessage("本声明の変更"),
     "disclaimerDesc": MessageLookupByLibrary.simpleMessage(
-      "Aerove（以下「本ソフトウェア」）をご利用になる前に、本声明の内容をよくお読みになり、十分にご理解ください。「同意する」をタップすると、以下のすべての条項を読み、理解し、承諾したものとみなされます。同意いただけない場合は「終了」をタップし、本ソフトウェアの使用を中止してください。",
+      "AEROVE（以下「本ソフトウェア」）をご利用になる前に、本声明の内容をよくお読みになり、十分にご理解ください。「同意する」をタップすると、以下のすべての条項を読み、理解し、承諾したものとみなされます。同意いただけない場合は「終了」をタップし、本ソフトウェアの使用を中止してください。",
     ),
     "disclaimerLiabilityContent": MessageLookupByLibrary.simpleMessage(
       "適用法で認められる最大限の範囲において、開発者およびすべての貢献者は、本ソフトウェアの使用または使用不能に起因する直接的、間接的、偶発的、特別、懲罰的または結果的な損害（データの消失、機器の損傷、ネットワーク障害、業務の中断、逸失利益、およびそれに起因する法的紛争を含むがこれらに限らない）について、その可能性を知らされていた場合であっても、一切責任を負いません。",
@@ -738,7 +738,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "hashByInUser": MessageLookupByLibrary.simpleMessage("インバウンドユーザーでハッシュ"),
     "healthCheck": MessageLookupByLibrary.simpleMessage("ヘルスチェック"),
     "helperCorruptTip": MessageLookupByLibrary.simpleMessage(
-      "Helper サービスが利用できないため、TUN モードを有効にできません。Aerove を再インストールしてください。",
+      "Helper サービスが利用できないため、TUN モードを有効にできません。AEROVE を再インストールしてください。",
     ),
     "hex": MessageLookupByLibrary.simpleMessage("16進数"),
     "hideFromList": MessageLookupByLibrary.simpleMessage("リストから隠す"),
@@ -804,7 +804,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "init": MessageLookupByLibrary.simpleMessage("初期化"),
     "initFailed": MessageLookupByLibrary.simpleMessage("起動に失敗しました"),
     "initFailedTip": MessageLookupByLibrary.simpleMessage(
-      "Aerove の起動中にエラーが発生したため、続行できません。詳細をコピーして問題を報告できます。繰り返し発生する場合は、データを消去すると起動できるようになることがあります。",
+      "AEROVE の起動中にエラーが発生したため、続行できません。詳細をコピーして問題を報告できます。繰り返し発生する場合は、データを消去すると起動できるようになることがあります。",
     ),
     "initiator": MessageLookupByLibrary.simpleMessage("発信元"),
     "initiatorShort": MessageLookupByLibrary.simpleMessage("発信元"),
@@ -1577,6 +1577,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "updateDownloadStarted": MessageLookupByLibrary.simpleMessage(
       "システムのダウンロードに追加しました。進行状況やエラーはダウンロード管理で確認してください。",
+    ),
+    "updateNotesUnavailable": MessageLookupByLibrary.simpleMessage(
+      "このバージョンの更新履歴を取得できませんでした。更新のダウンロードは可能です。",
     ),
     "upload": MessageLookupByLibrary.simpleMessage("アップロード"),
     "uploadBandwidth": MessageLookupByLibrary.simpleMessage("アップロード帯域幅"),

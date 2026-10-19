@@ -28,7 +28,7 @@ class MessageLookup extends MessageLookupByLibrary {
   static String m2(detail) => "Не удалось очистить данные: ${detail}";
 
   static String m3(code) =>
-      "Windows отказалась запускать FlClashCore.exe (ошибка ${code}). Политики контроля приложений, такие как Smart App Control или AppLocker, блокируют неподписанные программы; разрешите Aerove в этой политике или отключите её и повторите попытку.";
+      "Windows отказалась запускать FlClashCore.exe (ошибка ${code}). Политики контроля приложений, такие как Smart App Control или AppLocker, блокируют неподписанные программы; разрешите AEROVE в этой политике или отключите её и повторите попытку.";
 
   static String m4(name) =>
       "Приложение два раза подряд не смогло завершить запуск. Чтобы разорвать цикл, профиль ${name} снят с выбора, а автоматическая настройка пропущена. Вы можете выбрать его снова в любой момент.";
@@ -539,7 +539,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "core": MessageLookupByLibrary.simpleMessage("Ядро"),
     "coreBlockedByPolicyTip": m3,
     "coreBlockedBySmartAppControlTip": MessageLookupByLibrary.simpleMessage(
-      "Smart App Control в Windows заблокировал неподписанный FlClashCore.exe. Откройте Безопасность Windows → Управление приложениями и браузером → Параметры Smart App Control, выберите «Выкл.» и снова запустите Aerove. Повторно включить Smart App Control без переустановки Windows нельзя.",
+      "Smart App Control в Windows заблокировал неподписанный FlClashCore.exe. Откройте Безопасность Windows → Управление приложениями и браузером → Параметры Smart App Control, выберите «Выкл.» и снова запустите AEROVE. Повторно включить Smart App Control без переустановки Windows нельзя.",
     ),
     "coreStatus": MessageLookupByLibrary.simpleMessage("Статус ядра"),
     "country": MessageLookupByLibrary.simpleMessage("Регион"),
@@ -671,7 +671,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "Изменения заявления",
     ),
     "disclaimerDesc": MessageLookupByLibrary.simpleMessage(
-      "Перед использованием Aerove (далее — «Программа») внимательно прочитайте это заявление и убедитесь, что понимаете его полностью. Нажимая «Согласен», вы подтверждаете, что прочитали, поняли и принимаете все приведённые ниже условия. Если вы не согласны, нажмите «Выход» и прекратите использование Программы.",
+      "Перед использованием AEROVE (далее — «Программа») внимательно прочитайте это заявление и убедитесь, что понимаете его полностью. Нажимая «Согласен», вы подтверждаете, что прочитали, поняли и принимаете все приведённые ниже условия. Если вы не согласны, нажмите «Выход» и прекратите использование Программы.",
     ),
     "disclaimerLiabilityContent": MessageLookupByLibrary.simpleMessage(
       "В максимальной степени, допустимой применимым законодательством, ни разработчики, ни участники проекта не несут ответственности за любой прямой, косвенный, случайный, особый, штрафной или последующий ущерб, возникший в результате использования или невозможности использования Программы, включая, помимо прочего, потерю данных, повреждение устройства, сбои сети, прерывание деятельности, упущенную выгоду или связанные с этим правовые споры, даже если они были предупреждены о возможности такого ущерба.",
@@ -912,7 +912,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "healthCheck": MessageLookupByLibrary.simpleMessage("Проверка состояния"),
     "helperCorruptTip": MessageLookupByLibrary.simpleMessage(
-      "Служба Helper недоступна, поэтому TUN-режим включить нельзя. Переустановите Aerove.",
+      "Служба Helper недоступна, поэтому TUN-режим включить нельзя. Переустановите AEROVE.",
     ),
     "hex": MessageLookupByLibrary.simpleMessage("Hex"),
     "hideFromList": MessageLookupByLibrary.simpleMessage("Скрыть из списка"),
@@ -982,7 +982,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "init": MessageLookupByLibrary.simpleMessage("Инициализация"),
     "initFailed": MessageLookupByLibrary.simpleMessage("Не удалось запустить"),
     "initFailedTip": MessageLookupByLibrary.simpleMessage(
-      "При запуске Aerove произошла ошибка, и работа не может быть продолжена. Скопируйте подробности, чтобы сообщить о проблеме. Если ошибка повторяется, очистка данных обычно позволяет снова запустить приложение.",
+      "При запуске AEROVE произошла ошибка, и работа не может быть продолжена. Скопируйте подробности, чтобы сообщить о проблеме. Если ошибка повторяется, очистка данных обычно позволяет снова запустить приложение.",
     ),
     "initiator": MessageLookupByLibrary.simpleMessage("Инициатор"),
     "initiatorShort": MessageLookupByLibrary.simpleMessage("Источник"),
@@ -1928,6 +1928,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "updateDownloadStarted": MessageLookupByLibrary.simpleMessage(
       "Загрузка передана системному менеджеру. Ход загрузки и ошибки доступны в разделе загрузок.",
+    ),
+    "updateNotesUnavailable": MessageLookupByLibrary.simpleMessage(
+      "Примечания к этой версии пока недоступны. Обновление по-прежнему можно скачать.",
     ),
     "upload": MessageLookupByLibrary.simpleMessage("Отдача"),
     "uploadBandwidth": MessageLookupByLibrary.simpleMessage("Скорость отдачи"),

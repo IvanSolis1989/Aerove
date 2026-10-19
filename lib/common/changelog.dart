@@ -63,14 +63,14 @@ ChangelogVersion? parseReleaseChangelog(String? body, {String? tagName}) {
 
 String releaseNotesText(String? body, {String? tagName}) {
   if (body == null || body.contains(releaseChangelogJsonMarker)) return '';
-  final boundTag = RegExp(r'<!-- aerove:changelog:tag ([^\s]+) -->')
-      .firstMatch(body)
-      ?.group(1);
+  final boundTag = RegExp(
+    r'<!-- aerove:changelog:tag ([^\s]+) -->',
+  ).firstMatch(body)?.group(1);
   if (boundTag != null && tagName != null && boundTag != tagName) return '';
   if (body.contains(releaseNotesBeginMarker)) {
-    return scopeReleaseNotes(body)
-        .replaceAll(RegExp(r'<!--[\s\S]*?-->'), '')
-        .trim();
+    return scopeReleaseNotes(
+      body,
+    ).replaceAll(RegExp(r'<!--[\s\S]*?-->'), '').trim();
   }
   if (body.trimLeft().startsWith('# Aerove Android')) return '';
   return body.replaceAll(RegExp(r'<!--[\s\S]*?-->'), '').trim();
@@ -78,15 +78,17 @@ String releaseNotesText(String? body, {String? tagName}) {
 
 String? aeroveNotesForTag(String markdown, String tagName) {
   final version = tagName.replaceFirst(RegExp(r'^v'), '');
-  final headings = RegExp(r'^##[ \t]+(.+)$', multiLine: true)
-      .allMatches(markdown)
-      .toList();
+  final headings = RegExp(
+    r'^##[ \t]+(.+)$',
+    multiLine: true,
+  ).allMatches(markdown).toList();
   String? result;
   var matched = false;
   for (final (index, heading) in headings.indexed) {
     final title = heading.group(1)!.trim();
-    if (!RegExp('^v?${RegExp.escape(version)}(?:[ \\t]+—.*)?\$')
-        .hasMatch(title)) {
+    if (!RegExp(
+      '^v?${RegExp.escape(version)}(?:[ \\t]+—.*)?\$',
+    ).hasMatch(title)) {
       continue;
     }
     if (matched) return null;

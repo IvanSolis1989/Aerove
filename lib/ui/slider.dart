@@ -48,7 +48,9 @@ class _GlassSliderState extends State<GlassSlider> {
     final enabled =
         widget.child.onChanged != null && widget.child.min < widget.child.max;
     final trackColor = enabled
-        ? widget.child.inactiveColor ?? theme.inactiveTrackColor ?? colors.onSurface
+        ? widget.child.inactiveColor ??
+              theme.inactiveTrackColor ??
+              colors.onSurface
         : theme.disabledInactiveTrackColor ?? colors.onSurface;
     final activeColor = enabled
         ? widget.child.activeColor ?? theme.activeTrackColor ?? colors.primary
@@ -108,7 +110,8 @@ class _SliderCompositing extends SingleChildRenderObjectWidget {
   const _SliderCompositing({required super.child});
 
   @override
-  RenderObject createRenderObject(BuildContext context) => _SliderCompositingBox();
+  RenderObject createRenderObject(BuildContext context) =>
+      _SliderCompositingBox();
 }
 
 class _SliderCompositingBox extends RenderProxyBox {
@@ -214,7 +217,9 @@ class _GlassTrackShape extends SliderTrackShape {
     final x = thumbCenter.dx.clamp(rect.left, rect.right);
     final secondaryX = secondaryOffset?.dx.clamp(rect.left, rect.right);
     if (secondaryX != null &&
-        (textDirection == TextDirection.ltr ? secondaryX > x : secondaryX < x)) {
+        (textDirection == TextDirection.ltr
+            ? secondaryX > x
+            : secondaryX < x)) {
       secondary.paint(
         context,
         Rect.fromLTRB(
