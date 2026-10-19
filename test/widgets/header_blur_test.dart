@@ -11,6 +11,7 @@ import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/models.dart';
 import 'package:fl_clash/ui/scaffold.dart';
 import 'package:fl_clash/ui/sheet_header.dart';
+import 'package:fl_clash/ui/snap_sheet.dart';
 import 'package:fl_clash/ui/view_scope.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -202,6 +203,133 @@ void main() {
     }
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
+  });
+  testWidgets('header coalesces scroll changes dispatched during layout', (
+    tester,
+  ) async {
+    final offsets = ValueNotifier<List<double>>([80, 0, 80]);
+    var headerBuilds = 0;
+    try {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: LiquidGlassScope(
+            enabled: true,
+            child: FloatingHeaderBody(
+              backgroundColor: Colors.black,
+              header: Builder(
+                builder: (_) {
+                  headerBuilds++;
+                  return const SizedBox(height: 64);
+                },
+              ),
+              body: ValueListenableBuilder<List<double>>(
+                valueListenable: offsets,
+                builder: (_, values, _) => LayoutBuilder(
+                  builder: (context, constraints) {
+                    for (final offset in values) {
+                      ScrollStartNotification(
+                        metrics: FixedScrollMetrics(
+                          minScrollExtent: 0,
+                          maxScrollExtent: 1000,
+                          pixels: offset,
+                          viewportDimension: constraints.maxHeight,
+                          axisDirection: AxisDirection.down,
+                          devicePixelRatio: 1,
+                        ),
+                        context: context,
+                      ).dispatch(context);
+                    }
+                    return const SizedBox.expand();
+                  },
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      expect(tester.widget<FloatingHeader>(find.byType(FloatingHeader)).showBackground, isTrue);
+      final settledBuilds = headerBuilds;
+      offsets.value = [120, 160, 200];
+      await tester.pump();
+      await tester.pump();
+      expect(headerBuilds, settledBuilds);
+      expect(tester.takeException(), isNull);
+      offsets.value = [0, 80, 0];
+      await tester.pump();
+      await tester.pump();
+      expect(tester.widget<FloatingHeader>(find.byType(FloatingHeader)).showBackground, isFalse);
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      offsets.dispose();
+    }
+  });
+  testWidgets('real snap header restores scroll and survives viewport relayout', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final navigator = GlobalKey<NavigatorState>();
+    late ScrollController sheetController;
+    try {
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorKey: navigator,
+          theme: ThemeData(platform: TargetPlatform.android),
+          builder: (_, child) => LiquidGlassScope(
+            enabled: true,
+            child: LiquidGlassHost(enabled: true, child: child!),
+          ),
+          home: const SizedBox.expand(),
+        ),
+      );
+      final closed = navigator.currentState!.push<void>(
+        SnapSheetRoute<void>(
+          barrierLabel: 'Close',
+          initialScrollOffset: 80,
+          builder: (_, controller) {
+            sheetController = controller!;
+            return FloatingHeaderBody(
+              backgroundColor: Colors.white,
+              header: const SizedBox(height: 64),
+              body: ListView.builder(
+                controller: controller,
+                itemCount: 40,
+                itemExtent: 64,
+                itemBuilder: (_, index) => Text('Row $index'),
+              ),
+            );
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(sheetController.offset, greaterThan(0));
+      expect(tester.widget<FloatingHeader>(find.byType(FloatingHeader)).showBackground, isTrue);
+      tester.view.physicalSize = const Size(390, 620);
+      await tester.pump();
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      await tester.drag(find.byType(ListView), const Offset(0, -1000));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      sheetController.jumpTo(0);
+      await tester.pump();
+      await tester.pump();
+      expect(tester.widget<FloatingHeader>(find.byType(FloatingHeader)).showBackground, isFalse);
+      navigator.currentState!.pop();
+      await tester.pumpAndSettle();
+      await closed;
+      expect(find.byType(FloatingHeaderBody), findsNothing);
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    }
   });
   testWidgets('optical header samples lower text once without lower glass', (
     tester,

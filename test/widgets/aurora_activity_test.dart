@@ -197,8 +197,11 @@ void main() {
             ),
           ),
         );
+        late Duration start;
+        tester.binding.addPostFrameCallback((timestamp) {
+          start = timestamp;
+        });
         await tester.pump();
-        final start = tester.binding.currentFrameTimeStamp;
         final originalBuilds = builds;
         final source = tester.renderObject<RenderBox>(
           find.byType(LiquidGlassColorSource),
@@ -211,16 +214,22 @@ void main() {
         );
         Future<int> countPaints() async {
           boundary.debugResetMetrics();
+          late Duration end;
           final interval = Duration(
             microseconds: (Duration.microsecondsPerSecond / refreshRate)
                 .round(),
           );
           for (var frame = 0; frame < refreshRate; frame++) {
+            if (frame == refreshRate - 1) {
+              tester.binding.addPostFrameCallback((timestamp) {
+                end = timestamp;
+              });
+            }
             await tester.pump(interval);
           }
           final actual = source.getTransformTo(null).storage;
           final expected = AuroraMotion(271828).at(
-            tester.binding.currentFrameTimeStamp - start,
+            end - start,
             const Size(180, 300),
           );
           final angle = math.atan2(actual[1], actual[0]);

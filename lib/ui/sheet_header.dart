@@ -5,6 +5,7 @@ import 'package:fl_clash/ui/shape.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart';
 
 import 'header_blur.dart';
 import 'inherited.dart';
@@ -164,12 +165,23 @@ class FloatingHeaderBody extends StatefulWidget {
 
 class _FloatingHeaderBodyState extends State<FloatingHeaderBody> {
   bool _scrolledUnder = false;
+  bool _pendingScrolledUnder = false;
+  bool _scrollUpdateScheduled = false;
 
   void _updateScroll(ScrollMetrics metrics) {
     if (metrics.axis != Axis.vertical) return;
-    final scrolledUnder = metrics.extentBefore > 0;
-    if (_scrolledUnder == scrolledUnder) return;
-    setState(() => _scrolledUnder = scrolledUnder);
+    _pendingScrolledUnder = metrics.extentBefore > 0;
+    if (_scrollUpdateScheduled || _scrolledUnder == _pendingScrolledUnder) return;
+    if (SchedulerBinding.instance.schedulerPhase != SchedulerPhase.persistentCallbacks) {
+      setState(() => _scrolledUnder = _pendingScrolledUnder);
+      return;
+    }
+    _scrollUpdateScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollUpdateScheduled = false;
+      if (!mounted || _scrolledUnder == _pendingScrolledUnder) return;
+      setState(() => _scrolledUnder = _pendingScrolledUnder);
+    });
   }
 
   @override
@@ -185,11 +197,7 @@ class _FloatingHeaderBodyState extends State<FloatingHeaderBody> {
           },
           child: NotificationListener<ScrollMetricsNotification>(
             onNotification: (notification) {
-              if (notification.depth == 0) {
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (mounted) _updateScroll(notification.metrics);
-                });
-              }
+              if (notification.depth == 0) _updateScroll(notification.metrics);
               return false;
             },
             child: ScrollConfiguration(

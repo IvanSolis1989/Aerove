@@ -559,9 +559,19 @@ void main() {
             const TextSelection(baseOffset: 7, extentOffset: 8),
           )
           .single;
-      final baseline = paragraph.getDistanceToBaseline(
-        TextBaseline.alphabetic,
-      )!;
+      final metrics = TextPainter(
+        text: paragraph.text,
+        textAlign: paragraph.textAlign,
+        textDirection: paragraph.textDirection,
+        textScaler: paragraph.textScaler,
+        maxLines: paragraph.maxLines,
+        locale: paragraph.locale,
+        strutStyle: paragraph.strutStyle,
+        textWidthBasis: paragraph.textWidthBasis,
+        textHeightBehavior: paragraph.textHeightBehavior,
+      )..layout(minWidth: paragraph.size.width, maxWidth: paragraph.size.width);
+      final baseline = metrics.computeLineMetrics().single.baseline;
+      metrics.dispose();
       Rect? selected;
       for (
         var y = baseline.ceil();
