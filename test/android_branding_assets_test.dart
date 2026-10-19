@@ -76,9 +76,7 @@ void main() {
     };
     for (final MapEntry(key: density, value: size) in sizes.entries) {
       for (final name in ['ic_launcher', 'ic_launcher_round']) {
-        final file = File(
-          'android/app/src/main/res/mipmap-$density/$name.png',
-        );
+        final file = File('android/app/src/main/res/mipmap-$density/$name.png');
         final codec = await ui.instantiateImageCodec(await file.readAsBytes());
         final frame = await codec.getNextFrame();
         expect((frame.image.width, frame.image.height), (size, size));

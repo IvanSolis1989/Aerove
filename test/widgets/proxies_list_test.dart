@@ -152,7 +152,6 @@ void main() {
       matching: find.byWidgetPredicate(
         (widget) => widget.runtimeType.toString() == '_GroupSliver',
       ),
-      skipOffstage: false,
     ),
     matching: find.byType(Scrollable),
     skipOffstage: false,
@@ -455,109 +454,114 @@ void main() {
   });
 
   for (final viewMode in [ViewMode.mobile, ViewMode.desktop]) {
-    testWidgets('a pinned ${viewMode.name} group consumes drags before the page', (
-      tester,
-    ) async {
-      await pumpList(
-        tester,
-        viewMode: viewMode,
-        groups: [
-          _group('G0', 0),
-          _group('G1', 0),
-          _group('G2', 120),
-          _group('G3', 120),
-          for (var i = 4; i < 10; i++) _group('G$i', 0),
-        ],
-        unfoldSet: {'G2', 'G3'},
-      );
-      final outer = tester.state<ScrollableState>(scrollable()).position;
-      final inner = tester.state<ScrollableState>(groupScroll('G2')).position;
-      final pinnedTop = tester.getRect(headerOf('G0')).top;
-      final anchor = tester.getRect(headerOf('G2')).top - pinnedTop;
-      Offset bodyPoint() {
-        final header = tester.getRect(headerOf('G2'));
-        return Offset(header.center.dx, header.bottom + 36);
-      }
+    testWidgets(
+      'a pinned ${viewMode.name} group consumes drags before the page',
+      (tester) async {
+        await pumpList(
+          tester,
+          viewMode: viewMode,
+          groups: [
+            _group('G0', 0),
+            _group('G1', 0),
+            _group('G2', 120),
+            _group('G3', 120),
+            for (var i = 4; i < 10; i++) _group('G$i', 0),
+          ],
+          unfoldSet: {'G2', 'G3'},
+        );
+        final outer = tester.state<ScrollableState>(scrollable()).position;
+        final inner = tester.state<ScrollableState>(groupScroll('G2')).position;
+        final pinnedTop = tester.getRect(headerOf('G0')).top;
+        final anchor = tester.getRect(headerOf('G2')).top - pinnedTop;
+        Offset bodyPoint() {
+          final header = tester.getRect(headerOf('G2'));
+          return Offset(header.center.dx, header.bottom + 36);
+        }
 
-      final gesture = await tester.startGesture(bodyPoint());
-      await gesture.moveBy(const Offset(0, -24));
-      await tester.pump();
-      await gesture.moveBy(const Offset(0, -20));
-      await tester.pump();
-      expect(outer.pixels, greaterThan(0));
-      expect(outer.pixels, lessThan(anchor));
-      expect(inner.pixels, 0);
-      await gesture.moveBy(Offset(0, -anchor - 80));
-      await tester.pump();
-      expect(outer.pixels, closeTo(anchor, 0.01));
-      expect(inner.pixels, greaterThan(0));
-      final before = inner.pixels;
-      await gesture.moveBy(const Offset(0, -70));
-      await tester.pump();
-      expect(outer.pixels, closeTo(anchor, 0.01));
-      expect(inner.pixels, greaterThan(before));
-      expect(tester.getRect(headerOf('G2')).top, closeTo(pinnedTop, 0.01));
-      if (viewMode == ViewMode.desktop) {
-        final other = tester.state<ScrollableState>(groupScroll('G3')).position;
-        expect(other.pixels, 0);
-      }
-      await gesture.cancel();
-      await tester.pumpAndSettle();
-      final beforeWheel = inner.pixels;
-      await tester.sendEventToBinding(
-        PointerScrollEvent(
-          position: bodyPoint(),
-          scrollDelta: const Offset(0, 80),
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(inner.pixels, greaterThan(beforeWheel));
-      expect(outer.pixels, closeTo(anchor, 0.01));
+        final gesture = await tester.startGesture(bodyPoint());
+        await gesture.moveBy(const Offset(0, -24));
+        await tester.pump();
+        await gesture.moveBy(const Offset(0, -20));
+        await tester.pump();
+        expect(outer.pixels, greaterThan(0));
+        expect(outer.pixels, lessThan(anchor));
+        expect(inner.pixels, 0);
+        await gesture.moveBy(Offset(0, -anchor - 80));
+        await tester.pump();
+        expect(outer.pixels, closeTo(anchor, 0.01));
+        expect(inner.pixels, greaterThan(0));
+        final before = inner.pixels;
+        await gesture.moveBy(const Offset(0, -70));
+        await tester.pump();
+        expect(outer.pixels, closeTo(anchor, 0.01));
+        expect(inner.pixels, greaterThan(before));
+        expect(tester.getRect(headerOf('G2')).top, closeTo(pinnedTop, 0.01));
+        if (viewMode == ViewMode.desktop) {
+          final other = tester
+              .state<ScrollableState>(groupScroll('G3'))
+              .position;
+          expect(other.pixels, 0);
+        }
+        await gesture.cancel();
+        await tester.pumpAndSettle();
+        final beforeWheel = inner.pixels;
+        await tester.sendEventToBinding(
+          PointerScrollEvent(
+            position: bodyPoint(),
+            scrollDelta: const Offset(0, 80),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(inner.pixels, greaterThan(beforeWheel));
+        expect(outer.pixels, closeTo(anchor, 0.01));
 
-      inner.jumpTo(inner.maxScrollExtent - 30);
-      await tester.pump();
-      final tail = await tester.startGesture(bodyPoint());
-      await tail.moveBy(const Offset(0, -24));
-      await tester.pump();
-      await tail.moveBy(const Offset(0, -100));
-      await tester.pump();
-      expect(inner.pixels, inner.maxScrollExtent);
-      expect(outer.pixels, greaterThan(anchor));
-      await tail.cancel();
-      await tester.pumpAndSettle();
+        inner.jumpTo(inner.maxScrollExtent - 30);
+        await tester.pump();
+        final tail = await tester.startGesture(bodyPoint());
+        await tail.moveBy(const Offset(0, -24));
+        await tester.pump();
+        await tail.moveBy(const Offset(0, -100));
+        await tester.pump();
+        expect(inner.pixels, inner.maxScrollExtent);
+        expect(outer.pixels, greaterThan(anchor));
+        await tail.cancel();
+        await tester.pumpAndSettle();
 
-      final reverse = await tester.startGesture(bodyPoint());
-      await reverse.moveBy(const Offset(0, 24));
-      await tester.pump();
-      await reverse.moveBy(const Offset(0, 130));
-      await tester.pump();
-      expect(outer.pixels, closeTo(anchor, 0.01));
-      expect(inner.pixels, lessThan(inner.maxScrollExtent));
-      await reverse.cancel();
-      await tester.pumpAndSettle();
+        final reverse = await tester.startGesture(bodyPoint());
+        await reverse.moveBy(const Offset(0, 24));
+        await tester.pump();
+        await reverse.moveBy(const Offset(0, 130));
+        await tester.pump();
+        expect(outer.pixels, closeTo(anchor, 0.01));
+        expect(inner.pixels, lessThan(inner.maxScrollExtent));
+        await reverse.cancel();
+        await tester.pumpAndSettle();
 
-      inner.jumpTo(20);
-      await tester.pump();
-      final head = await tester.startGesture(bodyPoint());
-      await head.moveBy(const Offset(0, 24));
-      await tester.pump();
-      await head.moveBy(const Offset(0, 100));
-      await tester.pump();
-      expect(inner.pixels, 0);
-      expect(outer.pixels, lessThan(anchor));
-      await head.cancel();
-      await tester.pumpAndSettle();
-      outer.jumpTo(anchor);
-      await tester.pump();
-      final tailPosition = tester.state<ScrollableState>(groupScroll('G2')).position;
-      tailPosition.jumpTo(tailPosition.maxScrollExtent - 10);
-      await tester.pump();
-      await tester.fling(groupScroll('G2'), const Offset(0, -200), 1000);
-      await tester.pumpAndSettle();
-      expect(outer.pixels, greaterThan(anchor));
-      expect(tester.takeException(), isNull);
-      await unmountList(tester);
-    });
+        inner.jumpTo(20);
+        await tester.pump();
+        final head = await tester.startGesture(bodyPoint());
+        await head.moveBy(const Offset(0, 24));
+        await tester.pump();
+        await head.moveBy(const Offset(0, 100));
+        await tester.pump();
+        expect(inner.pixels, 0);
+        expect(outer.pixels, lessThan(anchor));
+        await head.cancel();
+        await tester.pumpAndSettle();
+        outer.jumpTo(anchor);
+        await tester.pump();
+        final tailPosition = tester
+            .state<ScrollableState>(groupScroll('G2'))
+            .position;
+        tailPosition.jumpTo(tailPosition.maxScrollExtent - 10);
+        await tester.pump();
+        await tester.fling(groupScroll('G2'), const Offset(0, -200), 1000);
+        await tester.pumpAndSettle();
+        expect(outer.pixels, greaterThan(anchor));
+        expect(tester.takeException(), isNull);
+        await unmountList(tester);
+      },
+    );
   }
 
   testWidgets('a short expanded group hands its drag to the page', (
@@ -1162,7 +1166,9 @@ void main() {
       );
       try {
         final before = glassGroupRect(tester, 'G0');
-        final position = tester.state<ScrollableState>(groupScroll('G0')).position;
+        final position = tester
+            .state<ScrollableState>(groupScroll('G0'))
+            .position;
         position.jumpTo(200);
         await tester.pumpAndSettle();
         final pinned = glassGroupRect(tester, 'G0');
@@ -1255,7 +1261,11 @@ void main() {
     final lastCard = find.byWidgetPredicate(
       (widget) => widget is ProxyCard && widget.proxy.name == 'G0-39',
     );
-    await tester.scrollUntilVisible(lastCard, 200, scrollable: groupScroll('G0'));
+    await tester.scrollUntilVisible(
+      lastCard,
+      200,
+      scrollable: groupScroll('G0'),
+    );
     final position = tester.state<ScrollableState>(groupScroll('G0')).position;
     position.jumpTo(position.maxScrollExtent);
     await tester.pumpAndSettle();

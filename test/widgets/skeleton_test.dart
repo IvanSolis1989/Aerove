@@ -128,7 +128,10 @@ void main() {
                                               width: 208,
                                               style: style,
                                             ),
-                                            SkeletonPill(width: 160, height: 24),
+                                            SkeletonPill(
+                                              width: 160,
+                                              height: 24,
+                                            ),
                                           ],
                                         ),
                                       ),
@@ -162,12 +165,14 @@ void main() {
                 final pill = find.byType(SkeletonPill).last;
                 expect(tester.getSize(pill), const Size(160, 24));
                 expect(
-                  tester.widgetList<ExcludeSemantics>(
-                    find.descendant(
-                      of: find.byType(SkeletonText),
-                      matching: find.byType(ExcludeSemantics),
-                    ),
-                  ).every((widget) => widget.excluding),
+                  tester
+                      .widgetList<ExcludeSemantics>(
+                        find.descendant(
+                          of: find.byType(SkeletonText),
+                          matching: find.byType(ExcludeSemantics),
+                        ),
+                      )
+                      .every((widget) => widget.excluding),
                   isTrue,
                 );
                 expect(tester.hasRunningAnimations, isFalse);

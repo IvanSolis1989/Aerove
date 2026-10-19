@@ -70,7 +70,8 @@ void main() {
                         AppSettingProps(sidebarExpanded: layout == 'expanded'),
                   ),
                   themeSettingProvider.overrideWithBuild(
-                    (_, _) => ThemeProps(auroraEnabled: false, liquidGlass: mode),
+                    (_, _) =>
+                        ThemeProps(auroraEnabled: false, liquidGlass: mode),
                   ),
                 ],
               );
@@ -98,13 +99,19 @@ void main() {
                       builder: (context, child) => MediaQuery(
                         data: MediaQuery.of(context).copyWith(
                           padding: const EdgeInsets.only(top: 48, bottom: 24),
-                          viewPadding: const EdgeInsets.only(top: 48, bottom: 24),
+                          viewPadding: const EdgeInsets.only(
+                            top: 48,
+                            bottom: 24,
+                          ),
                         ),
                         child: wrapAppScopes(
                           context,
                           RepaintBoundary(
                             key: captureKey,
-                            child: AuroraAppSurface(motion: false, child: child!),
+                            child: AuroraAppSurface(
+                              motion: false,
+                              child: child!,
+                            ),
                           ),
                         ),
                       ),
@@ -127,11 +134,15 @@ void main() {
                 expect(contentRect.left, sidebarRect.right);
                 expect(contentRect.top, 0);
                 expect(
-                  tester.getTopLeft(
-                    find.byTooltip(
-                      layout == 'expanded' ? labels.showLess : labels.showMore,
-                    ),
-                  ).dy,
+                  tester
+                      .getTopLeft(
+                        find.byTooltip(
+                          layout == 'expanded'
+                              ? labels.showLess
+                              : labels.showMore,
+                        ),
+                      )
+                      .dy,
                   greaterThanOrEqualTo(48),
                 );
                 if (layout == 'overlay') {
@@ -142,7 +153,9 @@ void main() {
                     greaterThanOrEqualTo(48),
                   );
                   expect(
-                    tester.getRect(find.byKey(const ValueKey('tablet-content'))),
+                    tester.getRect(
+                      find.byKey(const ValueKey('tablet-content')),
+                    ),
                     contentRect,
                   );
                 }
@@ -187,7 +200,8 @@ void main() {
                             'safe-area padding must not create a horizontal seam',
                       );
                     }
-                    final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+                    final output =
+                        Platform.environment['XCLASH_SCREENSHOT_DIR'];
                     if (output != null) {
                       Directory(output).createSync(recursive: true);
                       final png = (await image.toByteData(

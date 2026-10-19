@@ -41,10 +41,9 @@ class _GroupScrollPosition extends ScrollPositionWithSingleContext {
     required super.context,
     super.oldPosition,
     super.initialPixels,
-    super.keepScrollOffset = false,
     required this.outer,
     required this.anchor,
-  });
+  }) : super(keepScrollOffset: false);
 
   final ScrollController outer;
   final double Function() anchor;
@@ -98,7 +97,7 @@ class _GroupScrollPosition extends ScrollPositionWithSingleContext {
         );
         return delta - amount;
       } else if (consumed != 0) {
-        position.jumpTo(target);
+        position.jumpTo(target.toDouble());
       }
     }
     return delta - (position.pixels - before);
@@ -144,9 +143,7 @@ class _GroupScrollPosition extends ScrollPositionWithSingleContext {
     updateUserScrollDirection(
       delta > 0 ? ScrollDirection.forward : ScrollDirection.reverse,
     );
-    final remaining = _consume(
-      -physics.applyPhysicsToUserOffset(this, delta),
-    );
+    final remaining = _consume(-physics.applyPhysicsToUserOffset(this, delta));
     if (remaining != 0) didOverscrollBy(remaining);
   }
 

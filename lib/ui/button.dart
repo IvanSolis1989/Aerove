@@ -14,7 +14,11 @@ import 'liquid_glass.dart';
 import 'navigation_dock.dart';
 
 class HeaderButtonGlassScope extends InheritedWidget {
-  const HeaderButtonGlassScope({super.key, required this.progress, required super.child});
+  const HeaderButtonGlassScope({
+    super.key,
+    required this.progress,
+    required super.child,
+  });
 
   final ValueListenable<double> progress;
 
@@ -22,7 +26,8 @@ class HeaderButtonGlassScope extends InheritedWidget {
       context.dependOnInheritedWidgetOfExactType<HeaderButtonGlassScope>();
 
   @override
-  bool updateShouldNotify(HeaderButtonGlassScope oldWidget) => progress != oldWidget.progress;
+  bool updateShouldNotify(HeaderButtonGlassScope oldWidget) =>
+      progress != oldWidget.progress;
 }
 
 Widget _buttonGlassSurface(
@@ -32,7 +37,8 @@ Widget _buttonGlassSurface(
   required Widget child,
 }) {
   final header = HeaderButtonGlassScope.of(context);
-  if (header == null) return LiquidGlass(style: style, pressed: pressed, child: child);
+  if (header == null)
+    return LiquidGlass(style: style, pressed: pressed, child: child);
   return Stack(
     fit: StackFit.passthrough,
     clipBehavior: Clip.none,
@@ -49,7 +55,10 @@ Widget _buttonGlassSurface(
                   ? const SizedBox.expand()
                   : LiquidGlassFade(
                       opacity: AlwaysStoppedAnimation(opacity),
-                      child: LiquidGlass(style: style.copyWith(blur: 0), pressed: pressed),
+                      child: LiquidGlass(
+                        style: style.copyWith(blur: 0),
+                        pressed: pressed,
+                      ),
                     ),
             ),
           ),

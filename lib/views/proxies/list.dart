@@ -223,10 +223,9 @@ class _ProxiesListViewState extends ConsumerState<ProxiesListView> {
     }
     final position = _controller.position;
     await _controller.animateTo(
-      _getGroupOffset(groupName).clamp(
-        position.minScrollExtent,
-        position.maxScrollExtent,
-      ),
+      _getGroupOffset(
+        groupName,
+      ).clamp(position.minScrollExtent, position.maxScrollExtent),
       duration: const Duration(milliseconds: 300),
       curve: Curves.easeOutCubic,
     );
@@ -633,7 +632,8 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
   }
 
   Widget _buildRows(double extent) {
-    final count = (widget.group.all.length + widget.columns - 1) ~/ widget.columns;
+    final count =
+        (widget.group.all.length + widget.columns - 1) ~/ widget.columns;
     return SliverFixedExtentList(
       itemExtent: extent,
       delegate: SliverChildBuilderDelegate(
@@ -659,10 +659,7 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
   ) {
     final rowCount =
         (widget.group.all.length + widget.columns - 1) ~/ widget.columns;
-    final visible = min(
-      rowCount.toDouble(),
-      max(bodyExtent / extent, 1.0),
-    );
+    final visible = min(rowCount.toDouble(), max(bodyExtent / extent, 1.0));
     final count = min(rowCount, visible.floor() + 1);
     return Stack(
       clipBehavior: Clip.none,
@@ -750,7 +747,8 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
           final beyondCache =
               constraints.remainingCacheExtent <= 0 ||
               constraints.scrollOffset + constraints.cacheOrigin >= bodyExtent;
-          final interacting = _scrollController.hasClients &&
+          final interacting =
+              _scrollController.hasClients &&
               _scrollController.position.isScrollingNotifier.value;
           if (beyondCache && !interacting) {
             return SliverToBoxAdapter(child: SizedBox(height: bodyExtent));
@@ -832,60 +830,59 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
       builder: (context, constraints) => ListenableBuilder(
         listenable: _scrollController,
         builder: (context, _) {
-        final rowsExtent = min(
-          _rowsExtent(rowCount, getRowExtent(widget.cardType)),
-          max(constraints.viewportMainAxisExtent - widget.viewportInset, 0.0),
-        );
-        final groupExtent = listHeaderHeight +
-            (_controller.isDismissed ? 0.0 : rowsExtent);
-        final beyondCache =
-            constraints.remainingCacheExtent <= 0 ||
-            constraints.scrollOffset + constraints.cacheOrigin >= groupExtent;
-        final outerUnder = constraints.scrollOffset + constraints.overlap;
-        final under = isExpand
-            ? outerUnder +
-                _scrollController.contentOffset
-            : 0.0;
-        final state = beyondCache
-            ? null
-            : (
-                (under / _liftDistance).clamp(0.0, 1.0),
-                (min(under, rowsExtent - outerUnder) / _liftDistance).clamp(
-                  0.0,
-                  1.0,
-                ),
-                isExpand ? constraints.overlap : 0.0,
-                context.surfaceLevel.colorOf(context.colorScheme),
-                LiquidGlassScope.of(context),
-              );
-        if (header != null && state == headerState) {
-          return header!;
-        }
-        headerState = state;
-        if (state == null) {
-          return header = PinnedHeaderSliver(
-            child: SizedBox(height: listHeaderHeight),
+          final rowsExtent = min(
+            _rowsExtent(rowCount, getRowExtent(widget.cardType)),
+            max(constraints.viewportMainAxisExtent - widget.viewportInset, 0.0),
           );
-        }
-        final (floating, lift, cover, pageColor, aurora) = state;
-        return header = PinnedHeaderSliver(
-          child: RepaintBoundary(
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                if (!aurora)
-                  Positioned(
-                    top: -cover,
-                    left: 0,
-                    right: 0,
-                    height: cover + listHeaderHeight / 2,
-                    child: ColoredBox(color: pageColor),
+          final groupExtent =
+              listHeaderHeight + (_controller.isDismissed ? 0.0 : rowsExtent);
+          final beyondCache =
+              constraints.remainingCacheExtent <= 0 ||
+              constraints.scrollOffset + constraints.cacheOrigin >= groupExtent;
+          final outerUnder = constraints.scrollOffset + constraints.overlap;
+          final under = isExpand
+              ? outerUnder + _scrollController.contentOffset
+              : 0.0;
+          final state = beyondCache
+              ? null
+              : (
+                  (under / _liftDistance).clamp(0.0, 1.0),
+                  (min(under, rowsExtent - outerUnder) / _liftDistance).clamp(
+                    0.0,
+                    1.0,
                   ),
-                buildHeader(floating: floating, lift: lift),
-              ],
+                  isExpand ? constraints.overlap : 0.0,
+                  context.surfaceLevel.colorOf(context.colorScheme),
+                  LiquidGlassScope.of(context),
+                );
+          if (header != null && state == headerState) {
+            return header!;
+          }
+          headerState = state;
+          if (state == null) {
+            return header = PinnedHeaderSliver(
+              child: SizedBox(height: listHeaderHeight),
+            );
+          }
+          final (floating, lift, cover, pageColor, aurora) = state;
+          return header = PinnedHeaderSliver(
+            child: RepaintBoundary(
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  if (!aurora)
+                    Positioned(
+                      top: -cover,
+                      left: 0,
+                      right: 0,
+                      height: cover + listHeaderHeight / 2,
+                      child: ColoredBox(color: pageColor),
+                    ),
+                  buildHeader(floating: floating, lift: lift),
+                ],
+              ),
             ),
-          ),
-        );
+          );
         },
       ),
     );

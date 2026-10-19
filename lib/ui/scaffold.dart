@@ -116,11 +116,16 @@ class CommonScaffoldState extends State<CommonScaffold> {
 
   void _updateHeaderGlass(ScrollMetrics metrics, BuildContext? source) {
     if (metrics.axis != Axis.vertical ||
-        source?.getInheritedWidgetOfExactType<PageActivityScope>()?.isActive == false ||
-        source?.findAncestorStateOfType<CommonScaffoldState>() != this) return;
+        source?.getInheritedWidgetOfExactType<PageActivityScope>()?.isActive ==
+            false ||
+        source?.findAncestorStateOfType<CommonScaffoldState>() != this)
+      return;
     _pendingHeaderGlassProgress = (metrics.extentBefore / 24).clamp(0.0, 1.0);
-    if (_headerGlassUpdateScheduled || _headerGlassProgress.value == _pendingHeaderGlassProgress) return;
-    if (SchedulerBinding.instance.schedulerPhase != SchedulerPhase.persistentCallbacks) {
+    if (_headerGlassUpdateScheduled ||
+        _headerGlassProgress.value == _pendingHeaderGlassProgress)
+      return;
+    if (SchedulerBinding.instance.schedulerPhase !=
+        SchedulerPhase.persistentCallbacks) {
       _headerGlassProgress.value = _pendingHeaderGlassProgress;
       return;
     }
@@ -659,7 +664,10 @@ class CommonScaffoldState extends State<CommonScaffold> {
       child: _isSearch ? _buildSearchingAppBarTheme(child) : child,
     );
     if (LiquidGlassScope.of(context) && !MediaQuery.highContrastOf(context)) {
-      appBar = HeaderButtonGlassScope(progress: _headerGlassProgress, child: appBar);
+      appBar = HeaderButtonGlassScope(
+        progress: _headerGlassProgress,
+        child: appBar,
+      );
     }
     if (_isSearch || _sorting) {
       return BackLayerScope(onBack: _handleExitAppBarLayer, child: appBar);
@@ -1181,7 +1189,9 @@ class AppBarActionButton extends StatelessWidget {
                   : TonalButtonTheme.glassOf(context)
                   ? null
                   : colorScheme.primary,
-              foregroundColor: headerGlass ? colorScheme.primary : colorScheme.onPrimary,
+              foregroundColor: headerGlass
+                  ? colorScheme.primary
+                  : colorScheme.onPrimary,
             )
           : null,
       onPressed: data.isLoading ? null : data.onPressed,
