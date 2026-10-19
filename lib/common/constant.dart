@@ -10,7 +10,7 @@ import 'package:fl_clash/models/models.dart';
 import 'package:material_ui/material_ui.dart';
 
 const appName = 'FlClash';
-const displayAppName = 'Aerove';
+const displayAppName = 'AEROVE';
 const appHelperService = 'FlClashHelperService';
 const coreManifestName = 'manifest.json';
 const browserUa =

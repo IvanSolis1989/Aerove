@@ -320,7 +320,7 @@ class _EditProfileViewState extends ConsumerState<EditProfileView> {
             FormRow(
               title: appLocalizations.autoUpdate,
               onPressed: () => _setAutoUpdate(!_autoUpdate),
-              trailing: Switch(value: _autoUpdate, onChanged: _setAutoUpdate),
+              trailing: GlassSwitch(child: Switch(value: _autoUpdate, onChanged: _setAutoUpdate)),
             ),
             if (_autoUpdate)
               _AutoUpdateIntervalField(

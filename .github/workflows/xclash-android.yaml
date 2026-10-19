@@ -57,8 +57,8 @@ jobs:
         run: flutter pub get
       - name: Test repository commit hooks
         run: bash tool/hooks/test.sh
-      - name: Test upstream version selection
-        run: python3 -m unittest tool.test_xclash_version -v
+      - name: Test upstream version selection and release notes
+        run: python3 -m unittest tool.test_xclash_version tool.test_aerove_release_notes -v
       - name: Generate and format sources
         run: |
           cp pubspec.yaml "$RUNNER_TEMP/xclash-pubspec.yaml"
@@ -159,7 +159,7 @@ jobs:
           cp pubspec.yaml "$RUNNER_TEMP/ink-pubspec.yaml"
           trap 'cp "$RUNNER_TEMP/ink-pubspec.yaml" pubspec.yaml' EXIT
           sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
-          flutter test --enable-impeller --reporter expanded test/widgets/glass_foreground_test.dart test/widgets/glass_ink_cache_test.dart test/widgets/target_icon_test.dart test/widgets/selection_mark_test.dart test/widgets/loading_ink_test.dart test/widgets/core_status_button_test.dart test/lint/sheet_scroll_controller_test.dart test/widgets/appbar_actions_test.dart
+          flutter test --enable-impeller --reporter expanded test/widgets/glass_foreground_test.dart test/widgets/glass_ink_cache_test.dart test/widgets/target_icon_test.dart test/widgets/selection_mark_test.dart test/widgets/loading_ink_test.dart test/widgets/core_status_button_test.dart test/lint/sheet_scroll_controller_test.dart test/widgets/appbar_actions_test.dart test/widgets/switch_glass_test.dart test/widgets/slider_glass_test.dart test/widgets/segmented_control_glass_test.dart test/widgets/palette_glass_test.dart test/widgets/header_button_glass_test.dart test/common/changelog_test.dart test/common/request_test.dart test/widgets/update_dialog_test.dart test/l10n/app_localizations_test.dart test/tool/packaging_config_test.dart
       - name: Verify feather blend pixels
         id: feather
         if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
@@ -196,6 +196,7 @@ jobs:
           tests+=(test/android_tv_launcher_icon_test.dart test/android_branding_assets_test.dart test/widgets/scrollbar_inset_test.dart test/lint/dead_file_test.dart)
           tests+=(test/pages/tablet_sidebar_bounds_test.dart test/widgets/sidebar_test.dart test/widgets/sidebar_glass_test.dart)
           tests+=(test/widgets/header_button_glass_test.dart test/widgets/sheet_search_test.dart test/manager/status_message_glass_test.dart test/manager/status_manager_test.dart test/widgets/skeleton_test.dart)
+          tests+=(test/widgets/switch_glass_test.dart test/widgets/slider_glass_test.dart test/widgets/segmented_control_glass_test.dart test/widgets/palette_glass_test.dart test/widgets/palette_test.dart test/views/theme_test.dart test/common/changelog_test.dart test/l10n/app_localizations_test.dart test/tool/packaging_config_test.dart)
           tests+=(test/common/aurora_rotation_test.dart test/manager/aurora_rotation_test.dart test/providers/store_action_test.dart test/views/aurora_settings_test.dart)
           tests+=(test/widgets/glass_cache_lifecycle_test.dart test/common/task_test.dart test/widgets/icon_loading_test.dart test/views/icon_sets_view_test.dart test/common/update_download_test.dart test/plugins/update_download_test.dart test/widgets/update_dialog_test.dart)
           reported_status=0
@@ -517,20 +518,19 @@ jobs:
               exit 0
             fi
           fi
-          {
-            printf '# Aerove Android\n\n'
-            printf '适用于 Android ARM64，内置随机流体渐变底图与液态玻璃主题。\n\n'
-            printf '版本：`%s`\n\n' "$(jq -r .version dist/BUILD_INFO.json)"
-            printf '源码：`%s`\n\n构建记录：%s/%s/actions/runs/%s\n\n' "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
-            printf '使用固定测试签名，包名为 `com.follow.clash.dev`。目标设备上的玻璃效果仍需安装后验收。\n\n'
-            printf '下载后可用 `SHA256SUMS` 核对文件完整性；上游版本、源码和构建信息见 `BUILD_INFO.json`。\n'
-          } > "$RUNNER_TEMP/xclash-release.md"
+          python3 -m unittest tool.test_aerove_release_notes -v
+          previous_tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName 2>/dev/null || true)
+          python3 tool/aerove_release_notes.py \
+            --tag "$TAG" --source "$GITHUB_SHA" --previous-tag "$previous_tag" \
+            --build-info dist/BUILD_INFO.json \
+            --output "$RUNNER_TEMP/xclash-release.md"
           if test -z "$existing"; then
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-              --title "Aerove $TAG · 安卓版" --draft --notes-file "$RUNNER_TEMP/xclash-release.md"
+              --title "AEROVE $TAG · 安卓版" --draft --notes-file "$RUNNER_TEMP/xclash-release.md"
           fi
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" \
             dist/Aerove-android-arm64.apk dist/SHA256SUMS dist/BUILD_INFO.json --clobber
           check_main_inputs
-          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false --latest
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --notes-file "$RUNNER_TEMP/xclash-release.md" --draft=false --prerelease=false --latest
           printf 'Published APK: https://github.com/%s/releases/tag/%s\n' "$GITHUB_REPOSITORY" "$TAG" >> "$GITHUB_STEP_SUMMARY"

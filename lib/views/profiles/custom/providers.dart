@@ -458,7 +458,7 @@ class _ProxyProviderOptionsViewState
       title: option.label(context.appLocalizations),
       leading: leading,
       onPressed: () => onChanged(!value),
-      trailing: Switch(value: value, onChanged: onChanged),
+      trailing: GlassSwitch(child: Switch(value: value, onChanged: onChanged)),
     );
   }
 

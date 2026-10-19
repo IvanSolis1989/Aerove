@@ -65,7 +65,7 @@ class _HideIpItem extends ConsumerWidget {
     return DecorationListItem(
       title: GlassText(context.appLocalizations.hideIp),
       onPressed: () => update(!hideIp),
-      trailing: Switch(value: hideIp, onChanged: update),
+      trailing: GlassSwitch(child: Switch(value: hideIp, onChanged: update)),
     );
   }
 }

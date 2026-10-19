@@ -1130,18 +1130,20 @@ class _TextScaleFactorItemState extends ConsumerState<_TextScaleFactorItem> {
                           Expanded(
                             child: SliderTheme(
                               data: SliderDefaultsM3(context),
-                              child: Slider(
-                                padding: EdgeInsets.zero,
-                                min: minTextScale,
-                                max: maxTextScale,
-                                divisions: divisions,
-                                value: scale,
-                                label: percent,
-                                onChanged: textScale.enable
-                                    ? (value) => setState(() => _draft = value)
-                                    : null,
-                                onChangeEnd: (value) => _update(
-                                  (state) => state.copyWith(scale: value),
+                              child: GlassSlider(
+                                child: Slider(
+                                  padding: EdgeInsets.zero,
+                                  min: minTextScale,
+                                  max: maxTextScale,
+                                  divisions: divisions,
+                                  value: scale,
+                                  label: percent,
+                                  onChanged: textScale.enable
+                                      ? (value) => setState(() => _draft = value)
+                                      : null,
+                                  onChangeEnd: (value) => _update(
+                                    (state) => state.copyWith(scale: value),
+                                  ),
                                 ),
                               ),
                             ),

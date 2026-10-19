@@ -920,7 +920,7 @@ class _ServiceManageItem extends StatelessWidget {
             subtitle: shown
                 ? GlassText(context.appLocalizations.serviceShownOnDashboard)
                 : null,
-            trailing: Switch(value: enabled, onChanged: onChanged),
+            trailing: GlassSwitch(child: Switch(value: enabled, onChanged: onChanged)),
           ),
         ),
       ),

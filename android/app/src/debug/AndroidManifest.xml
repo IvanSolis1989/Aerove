@@ -3,11 +3,11 @@
     <application
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
-        android:label="Aerove Debug"
+        android:label="AEROVE Debug"
         tools:replace="android:label">
         <service
             android:name=".TileService"
-            android:label="Aerove Debug"
+            android:label="AEROVE Debug"
             tools:replace="android:label" />
     </application>
 </manifest>

@@ -257,14 +257,52 @@ class _SpectrumState extends State<_Spectrum> {
 
   @override
   Widget build(BuildContext context) {
+    final glass =
+        LiquidGlassScope.of(context) && !MediaQuery.highContrastOf(context);
+    final position = _positionOf(widget.color);
     return AspectRatio(
       aspectRatio: 6 / 5,
       child: _PickArea(
         onPicked: _handlePicked,
-        child: CustomPaint(
-          painter: _SpectrumPainter(
-            color: widget.color,
-            position: _positionOf(widget.color),
+        child: LayoutBuilder(
+          builder: (context, constraints) => Stack(
+            fit: StackFit.expand,
+            clipBehavior: Clip.none,
+            children: [
+              CustomPaint(
+                painter: _SpectrumPainter(
+                  color: widget.color,
+                  position: position,
+                  showThumb: !glass,
+                ),
+              ),
+              if (glass)
+                Positioned(
+                  left: position.dx * constraints.maxWidth - _thumbRadius,
+                  top: position.dy * constraints.maxHeight - _thumbRadius,
+                  child: IgnorePointer(
+                    child: SizedBox.square(
+                      dimension: _thumbRadius * 2,
+                      child: LiquidGlass(
+                        style: LiquidGlassStyle.regular(context.colorScheme),
+                        contentBackdrop: true,
+                        clipper: const ShapeBorderClipper(shape: AppShape.full),
+                        child: Center(
+                          child: SizedBox.square(
+                            dimension: (_thumbRadius - _thumbRingWidth) * 2,
+                            child: DecoratedBox(
+                              decoration: ShapeDecoration(
+                                color: widget.color,
+                                shape: AppShape.full,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       ),
@@ -273,7 +311,11 @@ class _SpectrumState extends State<_Spectrum> {
 }
 
 class _SpectrumPainter extends CustomPainter {
-  const _SpectrumPainter({required this.color, required this.position});
+  const _SpectrumPainter({
+    required this.color,
+    required this.position,
+    required this.showThumb,
+  });
 
   static final _hues = [
     for (var hue = 0; hue <= 360; hue += 60)
@@ -282,6 +324,7 @@ class _SpectrumPainter extends CustomPainter {
 
   final Color color;
   final Offset position;
+  final bool showThumb;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -311,17 +354,21 @@ class _SpectrumPainter extends CustomPainter {
           stops: [0, 0.5, 0.5, 1],
         ).createShader(rect),
     );
-    _paintColorThumb(
-      canvas,
-      Offset(position.dx * size.width, position.dy * size.height),
-      _thumbRadius,
-      color,
-    );
+    if (showThumb) {
+      _paintColorThumb(
+        canvas,
+        Offset(position.dx * size.width, position.dy * size.height),
+        _thumbRadius,
+        color,
+      );
+    }
   }
 
   @override
   bool shouldRepaint(_SpectrumPainter oldDelegate) =>
-      oldDelegate.color != color || oldDelegate.position != position;
+      oldDelegate.color != color ||
+      oldDelegate.position != position ||
+      oldDelegate.showThumb != showThumb;
 }
 
 /// Claims the pointer on contact, so a drag that starts on the pad picks
@@ -522,12 +569,15 @@ class _GradientSlider extends StatelessWidget {
         thumbShape: _ColorThumbShape(color: thumbColor),
         overlayShape: SliderComponentShape.noOverlay,
       ),
-      child: Slider(
-        padding: EdgeInsets.zero,
-        value: value,
-        min: 0,
-        max: max,
-        onChanged: onChanged,
+      child: GlassSlider(
+        colorPreview: thumbColor,
+        child: Slider(
+          padding: EdgeInsets.zero,
+          value: value,
+          min: 0,
+          max: max,
+          onChanged: onChanged,
+        ),
       ),
     );
   }
@@ -588,7 +638,16 @@ class _GradientTrackShape extends SliderTrackShape {
     final canvas = context.canvas;
     canvas.drawRSuperellipse(
       shape,
-      Paint()..shader = LinearGradient(colors: colors).createShader(valueRect),
+      Paint()
+        ..shader = LinearGradient(
+          begin: textDirection == TextDirection.rtl
+              ? Alignment.centerRight
+              : Alignment.centerLeft,
+          end: textDirection == TextDirection.rtl
+              ? Alignment.centerLeft
+              : Alignment.centerRight,
+          colors: colors,
+        ).createShader(valueRect),
     );
     canvas.drawRSuperellipse(
       shape,

@@ -732,7 +732,7 @@ class DashboardSwitch extends StatelessWidget {
           child: OverflowBox(
             maxWidth: double.infinity,
             maxHeight: double.infinity,
-            child: Switch(
+            child: GlassSwitch(child: Switch(
               value: value,
               onChanged: onChanged,
               padding: EdgeInsets.zero,
@@ -758,7 +758,7 @@ class DashboardSwitch extends StatelessWidget {
                     ? colorScheme.onPrimary
                     : colors.thumb,
               ),
-            ),
+            )),
           ),
         ),
       ),

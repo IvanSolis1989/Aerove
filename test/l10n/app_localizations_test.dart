@@ -13,9 +13,9 @@ void main() {
       expect(appLocalizations.settings, isNotEmpty);
       expect(appLocalizations.secondsCount(30), contains('30'));
       expect(appLocalizations.geoUpdated('geoip'), contains('geoip'));
-      expect(appLocalizations.disclaimerDesc, contains('Aerove'));
-      expect(appLocalizations.initFailedTip, contains('Aerove'));
-      expect(appLocalizations.helperCorruptTip, contains('Aerove'));
+      expect(appLocalizations.disclaimerDesc, contains('AEROVE'));
+      expect(appLocalizations.initFailedTip, contains('AEROVE'));
+      expect(appLocalizations.helperCorruptTip, contains('AEROVE'));
       expect(
         appLocalizations.coreBlockedByPolicyTip(225),
         contains('FlClashCore.exe'),

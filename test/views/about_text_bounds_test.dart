@@ -502,7 +502,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(() async {
     globalState.packageInfo = PackageInfo(
-      appName: 'Aerove',
+      appName: 'AEROVE',
       packageName: 'com.follow.clash',
       version: 'test',
       buildNumber: '1',
@@ -564,6 +564,13 @@ void main() {
                   widget.text.toPlainText() == displayAppName,
             );
             expect(title, findsOneWidget);
+            expect(displayAppName, 'AEROVE');
+            expect(find.text('June2'), findsNothing);
+            expect(find.text('Arue'), findsNothing);
+            expect(
+              find.text(AppLocalizations.current.otherContributors),
+              findsNothing,
+            );
             expect(Theme.of(tester.element(title)).brightness, brightness);
             final paragraph = tester.renderObject<RenderParagraph>(title);
             expect(paragraph.text.style?.fontFamily, _font);

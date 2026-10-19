@@ -24,16 +24,17 @@ class SegmentedControl<T> extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
+    final glass =
+        LiquidGlassScope.of(context) && !MediaQuery.highContrastOf(context);
     final count = segments.length;
     final index = segments.indexWhere((segment) => segment.$1 == value);
-    return Container(
+    final body = Container(
       height: _height,
       padding: const EdgeInsets.all(_inset),
       decoration: ShapeDecoration(
-        color: LiquidGlassScope.surfaceColorOf(
-          context,
-          context.raisedSurfaceLevel.colorOf(colorScheme),
-        ),
+        color: glass
+            ? Colors.transparent
+            : context.raisedSurfaceLevel.colorOf(colorScheme),
         shape: AppShape.full,
       ),
       child: Stack(
@@ -49,15 +50,21 @@ class SegmentedControl<T> extends StatelessWidget {
               child: FractionallySizedBox(
                 widthFactor: 1 / count,
                 heightFactor: 1,
-                child: DecoratedBox(
-                  decoration: ShapeDecoration(
-                    color: LiquidGlassScope.surfaceColorOf(
-                      context,
-                      colorScheme.primary,
-                    ),
-                    shape: AppShape.full,
-                  ),
-                ),
+                child: glass
+                    ? LiquidGlass(
+                        style: LiquidGlassStyle.tinted(
+                          colorScheme,
+                          colorScheme.primary,
+                        ),
+                        clipper: const ShapeBorderClipper(shape: AppShape.full),
+                        child: const SizedBox.expand(),
+                      )
+                    : DecoratedBox(
+                        decoration: ShapeDecoration(
+                          color: colorScheme.primary,
+                          shape: AppShape.full,
+                        ),
+                      ),
               ),
             ),
           Row(
@@ -93,7 +100,7 @@ class SegmentedControl<T> extends StatelessWidget {
                                   .of(context, emphasized: option == value)
                                   .copyWith(
                                     color: option == value
-                                        ? LiquidGlassScope.of(context)
+                                        ? glass
                                               ? colorScheme.onSurface
                                               : colorScheme.onPrimary
                                         : colorScheme.onSurfaceVariant,
@@ -115,5 +122,12 @@ class SegmentedControl<T> extends StatelessWidget {
         ],
       ),
     );
+    return glass
+        ? LiquidGlass(
+            style: LiquidGlassStyle.regular(colorScheme),
+            clipper: const ShapeBorderClipper(shape: AppShape.full),
+            child: body,
+          )
+        : body;
   }
 }

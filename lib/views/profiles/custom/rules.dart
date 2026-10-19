@@ -476,7 +476,7 @@ class _AddOrEditRuleViewState extends ConsumerState<_AddOrEditRuleView> {
     // The core turns no-resolve on with src, so the switch cannot disagree.
     return _buildItem(
       title: appLocalizations.noResolveHostname,
-      trailing: Switch(
+      trailing: GlassSwitch(child: Switch(
         value: noResolve || src,
         onChanged: src
             ? null
@@ -485,7 +485,7 @@ class _AddOrEditRuleViewState extends ConsumerState<_AddOrEditRuleView> {
                     .read(ruleProvider.notifier)
                     .update((state) => state.copyWith(noResolve: value));
               },
-      ),
+      )),
     );
   }
 
@@ -493,14 +493,14 @@ class _AddOrEditRuleViewState extends ConsumerState<_AddOrEditRuleView> {
     final appLocalizations = context.appLocalizations;
     return _buildItem(
       title: appLocalizations.matchSourceIp,
-      trailing: Switch(
+      trailing: GlassSwitch(child: Switch(
         value: src,
         onChanged: (value) {
           ref
               .read(ruleProvider.notifier)
               .update((state) => state.copyWith(src: value));
         },
-      ),
+      )),
     );
   }
 

@@ -56,7 +56,8 @@ Widget _buttonGlassSurface(
                   : LiquidGlassFade(
                       opacity: AlwaysStoppedAnimation(opacity),
                       child: LiquidGlass(
-                        style: style.copyWith(blur: 0),
+                        contentBackdrop: true,
+                        style: LiquidGlassStyle.lens(context.colorScheme),
                         pressed: pressed,
                       ),
                     ),

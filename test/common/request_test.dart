@@ -139,6 +139,65 @@ void main() {
   });
 
   group('checkForUpdate', () {
+    test('loads legacy notes for the exact tag while preserving APK assets', () async {
+      globalState.packageInfo = PackageInfo(
+        appName: 'Aerove',
+        packageName: 'com.follow.clash',
+        version: '0.9.1-X',
+        buildNumber: '2026101804',
+      );
+      const tag = 'v0.9.1-X+2026101815';
+      final assets = [
+        {'name': 'Aerove-android-arm64.apk', 'browser_download_url': 'https://github.com/a.apk'},
+      ];
+      final request = Request()
+        ..dio.httpClientAdapter = _HostAdapter({
+          'api.github.com': () => ResponseBody.fromString(
+            jsonEncode({'tag_name': tag, 'body': '# Aerove Android\n模板', 'assets': assets}),
+            200,
+            headers: {Headers.contentTypeHeader: [Headers.jsonContentType]},
+          ),
+          'raw.githubusercontent.com': () => ResponseBody.fromString(
+            '## 待发布\n- 下一版\n'
+            '## 0.9.1-X+2026101815 — 已发布\n- 本次真正的修复\n'
+            '## 0.9.1-X+2026101804 — 已发布\n- 上一版\n',
+            200,
+          ),
+        });
+      addTearDown(() => request.dio.close(force: true));
+      final result = await request.checkForUpdate();
+      expect(result?['tag_name'], tag);
+      expect(result?['assets'], assets);
+      expect(result?['body'], contains('本次真正的修复'));
+      expect(result?['body'], isNot(contains('上一版')));
+      expect(result?['body'], isNot(contains('下一版')));
+    });
+
+    test('notes failure keeps the target release and does not use other versions', () async {
+      globalState.packageInfo = PackageInfo(
+        appName: 'Aerove',
+        packageName: 'com.follow.clash',
+        version: '0.9.1-X',
+        buildNumber: '2026101804',
+      );
+      final release = {'tag_name': 'v0.9.1-X+2026101815', 'body': '# Aerove Android\n模板'};
+      for (final response in [
+        ResponseBody.fromString('## 0.9.1-X+2026101804 — 已发布\n- 旧记录', 200),
+        ResponseBody.fromString('', 503),
+      ]) {
+        final request = Request()
+          ..dio.httpClientAdapter = _HostAdapter({
+            'api.github.com': () => ResponseBody.fromString(
+              jsonEncode(release), 200,
+              headers: {Headers.contentTypeHeader: [Headers.jsonContentType]},
+            ),
+            'raw.githubusercontent.com': () => response,
+          });
+        addTearDown(() => request.dio.close(force: true));
+        expect(await request.checkForUpdate(), release);
+      }
+    });
+
     for (final (description, installedVersion, tag, hasUpdate) in [
       (
         'same version and build is current',

@@ -4,6 +4,19 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yaml/yaml.dart';
 
 void main() {
+  test('Linux packages use the requested app display name', () {
+    for (final format in ['deb', 'rpm', 'appimage']) {
+      final config =
+          loadYaml(
+                File(
+                  'linux/packaging/$format/make_config.yaml',
+                ).readAsStringSync(),
+              )
+              as YamlMap;
+      expect(config['display_name'], 'AEROVE', reason: format);
+    }
+  });
+
   group('Linux packaging teardown', () {
     for (final format in ['deb', 'rpm']) {
       test('$format removes the Helper unit only on a real uninstall', () {

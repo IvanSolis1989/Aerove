@@ -14,10 +14,10 @@ void main() {
   test(
     'exported files use the display brand while internal identity stays stable',
     () {
-      expect(displayAppName, 'Aerove');
+      expect(displayAppName, 'AEROVE');
       expect(appName, 'FlClash');
-      expect(getBackupFileName(), startsWith('Aerove_backup_'));
-      expect(logFileName, startsWith('Aerove_'));
+      expect(getBackupFileName(), startsWith('AEROVE_backup_'));
+      expect(logFileName, startsWith('AEROVE_'));
     },
   );
 

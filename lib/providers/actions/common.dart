@@ -91,18 +91,28 @@ class CommonAction extends _$CommonAction {
   }
 
   TextSpan _releaseSpan(BuildContext context, String tagName, String? body) {
-    final version = parseReleaseChangelog(body);
+    final version = parseReleaseChangelog(body, tagName: tagName);
+    final notes = releaseNotesText(body, tagName: tagName);
     return TextSpan(
       text: '$tagName \n',
       style: AppTextStyle.title2.of(context),
-      children: version == null
+      children: version == null || version.isEmpty
           ? [
               TextSpan(text: '\n', style: AppTextStyle.subheadline.of(context)),
-              for (final submit in parseReleaseBody(body))
+              if (notes.isEmpty)
                 TextSpan(
-                  text: '- $submit \n',
+                  text: currentAppLocalizations.updateNotesUnavailable,
                   style: AppTextStyle.subheadline.of(context),
-                ),
+                )
+              else
+                for (final line in notes.split('\n'))
+                  TextSpan(
+                    text: '${line.replaceFirst(RegExp(r'^#{1,6}\s+'), '')}\n',
+                    style: AppTextStyle.subheadline.of(
+                      context,
+                      emphasized: line.startsWith('#'),
+                    ),
+                  ),
             ]
           : _changelogSpans(context, version),
     );

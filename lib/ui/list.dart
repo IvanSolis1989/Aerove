@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:fl_clash/ui/switch.dart';
 import 'package:fl_clash/ui/foreground_ink.dart';
 
 import 'package:collection/collection.dart';
@@ -436,10 +437,10 @@ class ListItem<T> extends StatelessWidget {
               : () {
                   toggleAction.onChanged!(!toggleAction.value);
                 },
-          trailing: Switch(
+          trailing: GlassSwitch(child: Switch(
             value: toggleAction.value,
             onChanged: toggleAction.onChanged,
-          ),
+          )),
         );
       case _DefaultAction():
         return _buildListTile(context, position: position, onTap: onTap);

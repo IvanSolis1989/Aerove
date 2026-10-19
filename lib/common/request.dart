@@ -7,6 +7,7 @@ import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
+import 'package:fl_clash/models/changelog.dart';
 import 'package:fl_clash/state.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 
@@ -93,7 +94,47 @@ class Request {
     final buildNumber = int.tryParse(packageInfo.buildNumber) ?? 0;
     final version = '${packageInfo.version}+$buildNumber';
     final hasUpdate = compareVersions(remoteVersion, version) > 0;
-    return hasUpdate ? release : null;
+    return hasUpdate ? await _withReleaseNotes(release) : null;
+  }
+
+  Future<Map<String, dynamic>> _withReleaseNotes(
+    Map<String, dynamic> release,
+  ) async {
+    final tag = release['tag_name'] as String;
+    final body = release['body'] as String?;
+    if (parseReleaseChangelog(body, tagName: tag)?.isEmpty == false ||
+        releaseNotesText(body, tagName: tag).isNotEmpty) {
+      return release;
+    }
+    try {
+      final cancelToken = CancelToken();
+      final response = await dio
+          .get<String>(
+            'https://raw.githubusercontent.com/$repository/refs/heads/main/docs/CHANGELOG_Aerove.md',
+            options: Options(responseType: ResponseType.plain),
+            cancelToken: cancelToken,
+          )
+          .timeout(
+            const Duration(seconds: 10),
+            onTimeout: () {
+              cancelToken.cancel();
+              throw TimeoutException('Release notes request timed out');
+            },
+          );
+      final notes = aeroveNotesForTag(response.data ?? '', tag);
+      if (notes != null) {
+        return {
+          ...release,
+          'body': '$releaseNotesBeginMarker\n$notes\n$releaseNotesEndMarker',
+        };
+      }
+    } catch (error) {
+      commonPrint.log(
+        'Release notes for $tag unavailable: ${compactError(error)}',
+        logLevel: LogLevel.warning,
+      );
+    }
+    return release;
   }
 
   /// The release page redirect still answers once the hourly API quota is spent.
