@@ -130,10 +130,8 @@ void main() {
                 ),
                 ValueListenableBuilder<double>(
                   valueListenable: contrast,
-                  builder: (_, value, child) => GlassInkTextContrast(
-                    contrast: value,
-                    child: child!,
-                  ),
+                  builder: (_, value, child) =>
+                      GlassInkTextContrast(contrast: value, child: child!),
                   child: const Row(
                     children: [
                       GlassInk(

@@ -183,7 +183,9 @@ class GlassInkTextContrast extends InheritedWidget {
 
   static double of(BuildContext context) => math.max(
     4.7,
-    context.dependOnInheritedWidgetOfExactType<GlassInkTextContrast>()?.contrast ??
+    context
+            .dependOnInheritedWidgetOfExactType<GlassInkTextContrast>()
+            ?.contrast ??
         4.7,
   );
 
@@ -219,7 +221,9 @@ class GlassInk extends StatelessWidget {
       source: source,
       outset: outset,
       dark: Theme.of(context).brightness == Brightness.dark,
-      contrast: role == GlassInkRole.icon ? 3.2 : GlassInkTextContrast.of(context),
+      contrast: role == GlassInkRole.icon
+          ? 3.2
+          : GlassInkTextContrast.of(context),
       child: child,
     );
   }
