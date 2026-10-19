@@ -176,43 +176,94 @@ void main() {
     expect(bar.right - tester.getRect(group).right, appBarActionInset(false));
   });
 
-  testWidgets('on glass a group is one pane, and a lone button its own', (
+  testWidgets('on glass a scrolled group is one pane, and lone buttons their own', (
     tester,
   ) async {
-    await _pumpBar(
-      tester,
-      view: _desktop,
-      platform: TargetPlatform.android,
-      child: const LiquidGlassScope(
-        enabled: true,
-        child: CommonScaffold(
-          title: 'Title',
-          iconActions: [
-            IconButtonData(glyph: AppGlyphs.sync, onPressed: _noop),
-            IconButtonData(glyph: AppGlyphs.sort, onPressed: _noop),
-          ],
-          body: SizedBox(),
+    final controller = ScrollController();
+    final taps = <String>[];
+    try {
+      await _pumpBar(
+        tester,
+        view: _desktop,
+        platform: TargetPlatform.android,
+        child: LiquidGlassScope(
+          enabled: true,
+          child: CommonScaffold(
+            title: 'Title',
+            backAction: () => taps.add('Back'),
+            iconActions: [
+              IconButtonData(
+                glyph: AppGlyphs.sync,
+                tooltip: 'Sync',
+                onPressed: () => taps.add('Sync'),
+              ),
+              IconButtonData(
+                glyph: AppGlyphs.sort,
+                tooltip: 'Sort',
+                onPressed: () => taps.add('Sort'),
+              ),
+            ],
+            actions: [
+              IconButton(
+                tooltip: 'Solo',
+                onPressed: () => taps.add('Solo'),
+                icon: const GlyphIcon(AppGlyphs.openExternal),
+              ),
+            ],
+            body: ListView(
+              controller: controller,
+              children: const [SizedBox(height: 2000)],
+            ),
+          ),
         ),
-      ),
-    );
-
-    for (final button in [
-      find.byType(TonalButtonGroup),
-      find.byType(BackButton),
-    ]) {
-      expect(
-        find.descendant(of: button, matching: find.byType(LiquidGlass)),
-        findsOneWidget,
       );
+      final group = find.byType(TonalButtonGroup);
+      final solo = find.widgetWithGlyph(IconButton, AppGlyphs.openExternal);
+      final back = find.byType(BackButton);
+      expect(group, findsOneWidget);
+      expect(find.byTooltip('Sync'), findsOneWidget);
+      expect(find.byTooltip('Sort'), findsOneWidget);
+      expect(find.byTooltip('Solo'), findsOneWidget);
+      expect(find.descendant(of: group, matching: find.byType(IconButton)), findsNWidgets(2));
+      final controls = [group, solo, back];
+      final rects = [for (final control in controls) tester.getRect(control)];
+      for (final control in controls) {
+        expect(find.descendant(of: control, matching: find.byType(LiquidGlass)), findsNothing);
+      }
+      controller.jumpTo(80);
+      await tester.pumpAndSettle();
+      for (var index = 0; index < controls.length; index++) {
+        expect(find.descendant(of: controls[index], matching: find.byType(LiquidGlass)), findsOneWidget);
+        expect(tester.getRect(controls[index]), rects[index]);
+      }
+      for (final glyph in [AppGlyphs.sync, AppGlyphs.sort]) {
+        expect(find.descendant(
+          of: find.widgetWithGlyph(IconButton, glyph),
+          matching: find.byType(LiquidGlass),
+        ), findsNothing);
+      }
+      await tester.tap(find.byTooltip('Sync'));
+      await tester.tap(find.byTooltip('Sort'));
+      await tester.tap(find.byTooltip('Solo'));
+      await tester.pumpAndSettle();
+      expect(taps, ['Sync', 'Sort', 'Solo']);
+      controller.jumpTo(0);
+      await tester.pumpAndSettle();
+      for (var index = 0; index < controls.length; index++) {
+        expect(find.descendant(of: controls[index], matching: find.byType(LiquidGlass)), findsNothing);
+        expect(tester.getRect(controls[index]), rects[index]);
+      }
+      final gesture = await tester.startGesture(tester.getCenter(back));
+      await tester.pumpAndSettle();
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(taps, ['Sync', 'Sort', 'Solo', 'Back']);
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      controller.dispose();
     }
-
-    final gesture = await tester.startGesture(
-      tester.getCenter(find.byType(BackButton)),
-    );
-    await tester.pumpAndSettle();
-    await gesture.up();
-    await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull);
   });
 
   testWidgets('raw action widgets press on their own, one gap apart', (
