@@ -99,10 +99,7 @@ List<Map<String, Object?>> _ancestors(
   return result;
 }
 
-List<Map<String, Object?>> _inkLayers(
-  ContainerLayer root,
-  Rect title,
-) {
+List<Map<String, Object?>> _inkLayers(ContainerLayer root, Rect title) {
   final result = <Map<String, Object?>>[];
   void visit(ContainerLayer layer, Matrix4 transform) {
     for (Layer? child = layer.firstChild; child != null;) {
@@ -279,10 +276,7 @@ Future<Map<String, Object?>> _measure(
     },
     'glyphs': glyphs,
     'ancestors': _ancestors(paragraph, boundary),
-    'inkLayers': _inkLayers(
-      boundary.debugLayer!,
-      origin & paragraph.size,
-    ),
+    'inkLayers': _inkLayers(boundary.debugLayer!, origin & paragraph.size),
   };
   painter.dispose();
   final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
@@ -292,9 +286,9 @@ Future<Map<String, Object?>> _measure(
     File('$base.png').writeAsBytesSync(actual.png);
     File('$base-background.png').writeAsBytesSync(blank.png);
     File('$base-mask.png').writeAsBytesSync(mask.png);
-    File('$base.json').writeAsStringSync(
-      const JsonEncoder.withIndent('  ').convert(result),
-    );
+    File(
+      '$base.json',
+    ).writeAsStringSync(const JsonEncoder.withIndent('  ').convert(result));
   }
   return result;
 }
