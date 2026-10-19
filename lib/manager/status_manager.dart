@@ -605,36 +605,41 @@ class _MessageContent extends StatelessWidget {
     final actionState = message.actionState;
     final level = message.level;
     final glyph = level.glyph;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (glyph != null) ...[
-          GlyphIcon(glyph, size: 20, color: level.iconColor(context)),
-          const SizedBox(width: 12),
-        ],
-        Flexible(
-          child: GlassText(
-            message.text,
-            inkRole: GlassInkRole.body,
-            maxLines: 3,
-            style: AppTextStyle.subheadline
-                .of(context, emphasized: true)
-                .copyWith(color: level.contentColor(context)),
-            overflow: TextOverflow.ellipsis,
+    return GlassInkTextContrast(
+      contrast: Theme.of(context).brightness == Brightness.light
+          ? 5.0
+          : GlassInkTextContrast.of(context),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (glyph != null) ...[
+            GlyphIcon(glyph, size: 20, color: level.iconColor(context)),
+            const SizedBox(width: 12),
+          ],
+          Flexible(
+            child: GlassText(
+              message.text,
+              inkRole: GlassInkRole.body,
+              maxLines: 3,
+              style: AppTextStyle.subheadline
+                  .of(context, emphasized: true)
+                  .copyWith(color: level.contentColor(context)),
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
-        ),
-        if (actionState != null) ...[
-          const SizedBox(width: 16),
-          TonalButton(
-            size: TonalButtonSize.compact,
-            label: actionState.actionText,
-            onPressed: () {
-              onDismiss(message.id);
-              actionState.action();
-            },
-          ),
+          if (actionState != null) ...[
+            const SizedBox(width: 16),
+            TonalButton(
+              size: TonalButtonSize.compact,
+              label: actionState.actionText,
+              onPressed: () {
+                onDismiss(message.id);
+                actionState.action();
+              },
+            ),
+          ],
         ],
-      ],
+      ),
     );
   }
 }

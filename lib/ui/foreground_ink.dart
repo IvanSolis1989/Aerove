@@ -172,6 +172,26 @@ class GlassText extends Text {
   }
 }
 
+class GlassInkTextContrast extends InheritedWidget {
+  const GlassInkTextContrast({
+    super.key,
+    this.contrast = 4.7,
+    required super.child,
+  }) : assert(contrast >= 1 && contrast <= 21);
+
+  final double contrast;
+
+  static double of(BuildContext context) => math.max(
+    4.7,
+    context.dependOnInheritedWidgetOfExactType<GlassInkTextContrast>()?.contrast ??
+        4.7,
+  );
+
+  @override
+  bool updateShouldNotify(GlassInkTextContrast oldWidget) =>
+      contrast != oldWidget.contrast;
+}
+
 class GlassInk extends StatelessWidget {
   const GlassInk({
     super.key,
@@ -199,6 +219,7 @@ class GlassInk extends StatelessWidget {
       source: source,
       outset: outset,
       dark: Theme.of(context).brightness == Brightness.dark,
+      contrast: role == GlassInkRole.icon ? 3.2 : GlassInkTextContrast.of(context),
       child: child,
     );
   }
@@ -210,23 +231,26 @@ class _InkBox extends SingleChildRenderObjectWidget {
     required this.source,
     required this.outset,
     required this.dark,
+    required this.contrast,
     required super.child,
   });
   final GlassInkRole role;
   final Color source;
   final double outset;
   final bool dark;
+  final double contrast;
 
   @override
   RenderObject createRenderObject(BuildContext context) =>
-      _InkRender(role, source, outset, dark);
+      _InkRender(role, source, outset, dark, contrast);
 
   @override
   void updateRenderObject(BuildContext context, covariant _InkRender render) {
     if (render.role == role &&
         render.source == source &&
         render.outset == outset &&
-        render.dark == dark) {
+        render.dark == dark &&
+        render.contrast == contrast) {
       return;
     }
     render
@@ -234,16 +258,18 @@ class _InkBox extends SingleChildRenderObjectWidget {
       ..source = source
       ..outset = outset
       ..dark = dark
+      ..contrast = contrast
       ..markNeedsPaint();
   }
 }
 
 class _InkRender extends RenderProxyBox {
-  _InkRender(this.role, this.source, this.outset, this.dark);
+  _InkRender(this.role, this.source, this.outset, this.dark, this.contrast);
   GlassInkRole role;
   Color source;
   double outset;
   bool dark;
+  double contrast;
   final _layer = LayerHandle<LiquidGlassInkLayer>();
 
   @override
@@ -315,7 +341,7 @@ class _InkRender extends RenderProxyBox {
       ),
       strength: role.strength,
       source: source,
-      contrast: role == GlassInkRole.icon ? 3.2 : 4.7,
+      contrast: contrast,
       dark: dark,
       program: _InkProgram.request(markNeedsPaint),
     );

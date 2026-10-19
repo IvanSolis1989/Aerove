@@ -100,6 +100,77 @@ void main() {
     }
   });
 
+  test('text contrast scopes reject invalid ratios', () {
+    for (final contrast in [0.0, 22.0, double.nan, double.infinity]) {
+      expect(
+        () => GlassInkTextContrast(
+          contrast: contrast,
+          child: const SizedBox.shrink(),
+        ),
+        throwsAssertionError,
+      );
+    }
+  });
+
+  testWidgets(
+    'local text contrast repaints without changing default text or icons',
+    (tester) async {
+      final contrast = ValueNotifier(5.0);
+      addTearDown(contrast.dispose);
+      await tester.pumpWidget(
+        TestApp(
+          child: LiquidGlassScope(
+            enabled: true,
+            child: Row(
+              children: [
+                const GlassInk(
+                  source: Colors.black,
+                  role: GlassInkRole.body,
+                  child: SizedBox(width: 20, height: 20),
+                ),
+                ValueListenableBuilder<double>(
+                  valueListenable: contrast,
+                  builder: (_, value, child) => GlassInkTextContrast(
+                    contrast: value,
+                    child: child!,
+                  ),
+                  child: const Row(
+                    children: [
+                      GlassInk(
+                        source: Colors.black,
+                        role: GlassInkRole.body,
+                        child: SizedBox(width: 20, height: 20),
+                      ),
+                      GlassInk(
+                        source: Colors.black,
+                        role: GlassInkRole.icon,
+                        child: SizedBox(width: 20, height: 20),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final layers = tester.layers.whereType<LiquidGlassInkLayer>().toList();
+      expect(layers.map((layer) => layer.contrast), [4.7, 5.0, 3.2]);
+      for (final (requested, expected) in [(5.3, 5.3), (3.0, 4.7)]) {
+        contrast.value = requested;
+        await tester.pump();
+        expect(
+          tester.layers.whereType<LiquidGlassInkLayer>(),
+          orderedEquals(layers),
+        );
+        expect(layers.map((layer) => layer.contrast), [4.7, expected, 3.2]);
+      }
+      expect(tester.takeException(), isNull);
+    },
+    skip: !ui.ImageFilter.isShaderFilterSupported,
+  );
+
   testWidgets('explicit glyph disabled alpha stays unchanged', (tester) async {
     const disabled = Color.fromRGBO(255, 0, 0, 0.38);
     await tester.pumpWidget(

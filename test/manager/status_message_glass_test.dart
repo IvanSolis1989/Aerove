@@ -118,6 +118,12 @@ void main() {
               GlassInkRole.body,
             );
             expect(find.byType(LiquidGlassHost), findsOneWidget);
+            final textInkTarget = brightness == Brightness.light ? 5.0 : 4.7;
+            expect(GlassInkTextContrast.of(context), textInkTarget);
+            expect(
+              GlassInkTextContrast.of(tester.element(find.text('Restart'))),
+              textInkTarget,
+            );
             final boundary =
                 capture.currentContext!.findRenderObject()!
                     as RenderRepaintBoundary;
@@ -209,6 +215,11 @@ void main() {
                   'source':
                       'watchAppTheme and AuroraAppSurface production defaults',
                   'warningSourceARGB': original.color.toARGB32(),
+                  'textInkTarget': textInkTarget,
+                  'neutralIconInkTarget': 3.2,
+                  'textMarginBasis':
+                      'CI39258146093: approximately 96% final glyph coverage; '
+                      '5.0 targets the observed light notification corner loss',
                   'dpr': 3,
                   'roles': results,
                 }),
