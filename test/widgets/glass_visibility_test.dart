@@ -6,6 +6,7 @@ import 'dart:ui' as ui;
 import 'package:fl_clash/ui/foreground_ink.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/shape.dart';
+import 'package:fl_clash/ui/typography.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -44,7 +45,10 @@ Widget _scene({
 }) => MaterialApp(
   builder: (context, child) => MediaQuery(
     data: MediaQuery.of(context).copyWith(highContrast: highContrast),
-    child: child!,
+    child: DefaultTextStyle(
+      style: AppTextStyle.body.of(context),
+      child: child!,
+    ),
   ),
   home: RepaintBoundary(
     key: _sceneKey,
@@ -335,6 +339,7 @@ void main() {
     final frozen = await _pixels(tester);
     final frozenState = _inkState(tester);
     final masks = LiquidGlassHost.debugLastInkCapture!.frozenMasks;
+    expect(masks, ui.ImageFilter.isShaderFilterSupported ? 1 : 0);
     expect(LiquidGlassHost.debugLastCapture!.occludedPanes, 1);
     await _render(tester, _scene(modal: true, phase: 1));
     final moved = await _pixels(tester);
@@ -359,6 +364,7 @@ void main() {
     expect(LiquidGlassHost.debugLastInkCapture!.frozenMasks, masks);
     await _render(tester, _scene(phase: 1));
     expect(LiquidGlassHost.debugLastCapture!.occludedPanes, 0);
+    expect(LiquidGlassHost.debugLastInkCapture!.frozenMasks, 0);
     expect(await _pixels(tester), isNot(frozen));
     await tester.pumpWidget(const SizedBox.shrink());
   });
@@ -414,6 +420,7 @@ void main() {
     addTearDown(tester.view.reset);
     const cover = Rect.fromLTWH(150, 0, 160, 120);
     const visible = Offset(0, 8);
+    final frozenMasks = ui.ImageFilter.isShaderFilterSupported ? 1 : 0;
     await _render(tester, _scene(nestedOffset: visible));
     await _render(
       tester,
@@ -422,16 +429,20 @@ void main() {
     final frozen = await _pixels(tester);
     final frozenState = _inkState(tester);
     expect(LiquidGlassHost.debugLastCapture!.occludedPanes, 1);
+    expect(LiquidGlassHost.debugLastInkCapture!.frozenMasks, frozenMasks);
     await _render(tester, _scene(modal: true, modalRect: cover));
     expect(LiquidGlassHost.debugLastCapture!.skippedPanes, 1);
+    expect(LiquidGlassHost.debugLastInkCapture!.frozenMasks, frozenMasks);
     await _render(tester, _scene(modal: true, modalRect: cover, phase: 1));
     expect(LiquidGlassHost.debugLastCapture!.skippedPanes, 1);
+    expect(LiquidGlassHost.debugLastInkCapture!.frozenMasks, frozenMasks);
     await _render(
       tester,
       _scene(nestedOffset: visible, modal: true, modalRect: cover, phase: 1),
     );
     final returned = await _pixels(tester);
     expect(LiquidGlassHost.debugLastCapture!.occludedPanes, 1);
+    expect(LiquidGlassHost.debugLastInkCapture!.frozenMasks, frozenMasks);
     var maximum = 0;
     var worst = 0;
     for (var y = 32; y < 80; y++) {

@@ -141,8 +141,6 @@ void main() {
       var ends = 0;
       final focus = FocusNode();
       addTearDown(focus.dispose);
-      final semantics = tester.ensureSemantics();
-      addTearDown(semantics.dispose);
       Future<void> render({
         bool enabled = true,
         bool glass = true,
@@ -189,16 +187,21 @@ void main() {
         await tester.pumpAndSettle();
       }
 
-      await render(glass: false);
-      final native = _sliderSemantics(tester);
-      expect(native, hasLength(1));
-      expect(native.single.value, '30 percent');
-      await render();
-      final glass = _sliderSemantics(tester);
-      expect(glass, hasLength(1));
-      expect(glass.single.value, native.single.value);
-      expect(glass.single.hasAction(ui.SemanticsAction.increase), isTrue);
-      expect(glass.single.hasAction(ui.SemanticsAction.decrease), isTrue);
+      final semantics = tester.ensureSemantics();
+      try {
+        await render(glass: false);
+        final native = _sliderSemantics(tester);
+        expect(native, hasLength(1));
+        expect(native.single.value, '30 percent');
+        await render();
+        final glass = _sliderSemantics(tester);
+        expect(glass, hasLength(1));
+        expect(glass.single.value, native.single.value);
+        expect(glass.single.hasAction(ui.SemanticsAction.increase), isTrue);
+        expect(glass.single.hasAction(ui.SemanticsAction.decrease), isTrue);
+      } finally {
+        semantics.dispose();
+      }
       await tester.drag(find.byType(Slider), const Offset(90, 0));
       await tester.pumpAndSettle();
       expect(value, greaterThan(0.3));

@@ -483,7 +483,10 @@ class _LiquidGlassHostLayer extends ContainerLayer {
 
   @override
   void addToScene(ui.SceneBuilder builder) {
-    if (!_suspended) _capture();
+    if (!_suspended) {
+      _capture();
+      updateSubtreeNeedsAddToScene();
+    }
     super.addToScene(builder);
   }
 
