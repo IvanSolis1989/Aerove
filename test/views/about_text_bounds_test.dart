@@ -438,7 +438,17 @@ Future<List<Map<String, Object?>>> _controls(
       ),
     );
     await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull, reason: '$kind phase$phase mount');
+    final mountError = tester.takeException();
+    final errorOutput = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+    if (mountError != null && errorOutput != null) {
+      Directory(errorOutput).createSync(recursive: true);
+      File('$errorOutput/about-control-$kind-phase$phase-layout-error.json')
+          .writeAsStringSync(jsonEncode({
+            'error': mountError.toString(),
+            'stack': mountError is Error ? '${mountError.stackTrace}' : null,
+          }));
+    }
+    expect(mountError, isNull, reason: '$kind phase$phase mount');
     final finder = find.byWidgetPredicate(
       (widget) =>
           widget is RichText && widget.text.toPlainText() == displayAppName,
@@ -514,7 +524,6 @@ void main() {
       tester.view.devicePixelRatio = _dpr;
       addTearDown(tester.view.reset);
       final results = <Map<String, Object?>>[];
-      final controls = <Map<String, Object?>>[];
       final settings = [
         for (final brightness in [Brightness.light, Brightness.dark])
           for (final mode in LiquidGlassMode.values)
@@ -568,31 +577,11 @@ void main() {
                 brightness,
               ),
             );
-            if (brightness == Brightness.light &&
-                mode == LiquidGlassMode.standard) {
-              controls.addAll(
-                await _controls(
-                  tester,
-                  container,
-                  capture.currentContext!.findRenderObject()!
-                      as RenderRepaintBoundary,
-                  paragraph,
-                  phase,
-                ),
-              );
-            }
           }
         } finally {
           await tester.pumpWidget(const SizedBox.shrink());
           container.dispose();
         }
-      }
-      expect(controls, hasLength(15));
-      for (final control in controls) {
-        expect(control['supportAlpha8'], greaterThan(100));
-        expect(control['fontFamily'], _font);
-        expect(control['fontSize'], 22);
-        expect(control['fontWeight'], FontWeight.w700.value);
       }
       for (final result in results) {
         expect(
@@ -622,6 +611,72 @@ void main() {
         }
       }
       expect(tester.takeException(), isNull);
+    },
+    skip: _fontPath == null,
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
+  testWidgets(
+    'MiSans About native mask and bounded coverage controls at DPR3',
+    (tester) async {
+      tester.view.physicalSize = const Size(390 * _dpr, 800 * _dpr);
+      tester.view.devicePixelRatio = _dpr;
+      addTearDown(tester.view.reset);
+      final container = ProviderContainer(
+        overrides: [
+          themeSettingProvider.overrideWithBuild(
+            (_, _) => const ThemeProps(
+              fontFamily: _font,
+              auroraEnabled: true,
+              liquidGlass: LiquidGlassMode.standard,
+            ),
+          ),
+        ],
+      );
+      globalState.container = container;
+      final controls = <Map<String, Object?>>[];
+      try {
+        for (var phase = 0; phase < 3; phase++) {
+          final capture = GlobalKey();
+          await tester.pumpWidget(
+            _app(
+              container,
+              Brightness.light,
+              capture,
+              const AboutView(),
+              phase: phase.toDouble(),
+            ),
+          );
+          await tester.pumpAndSettle();
+          final title = find.byWidgetPredicate(
+            (widget) =>
+                widget is RichText &&
+                widget.text.toPlainText() == displayAppName,
+          );
+          expect(title, findsOneWidget);
+          controls.addAll(
+            await _controls(
+              tester,
+              container,
+              capture.currentContext!.findRenderObject()!
+                  as RenderRepaintBoundary,
+              tester.renderObject<RenderParagraph>(title),
+              phase,
+            ),
+          );
+        }
+        expect(controls, hasLength(15));
+        for (final control in controls) {
+          expect(control['supportAlpha8'], greaterThan(100));
+          expect(control['fontFamily'], _font);
+          expect(control['fontSize'], 22);
+          expect(control['fontWeight'], FontWeight.w700.value);
+        }
+        expect(tester.takeException(), isNull);
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        container.dispose();
+      }
     },
     skip: _fontPath == null,
     variant: TargetPlatformVariant.only(TargetPlatform.android),

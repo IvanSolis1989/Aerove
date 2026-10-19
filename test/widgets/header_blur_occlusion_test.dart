@@ -181,6 +181,7 @@ void main() {
         double height = 200,
         bool modalFeather = false,
         double modalBottom = 124,
+        bool nativePlain = false,
       }) async {
         await tester.pumpWidget(
           MaterialApp(
@@ -200,7 +201,15 @@ void main() {
                           child: ColoredBox(color: color),
                         ),
                       ),
-                      _pane(Rect.fromLTWH(0, 0, 320, height)),
+                      nativePlain
+                          ? Positioned(
+                              left: 0,
+                              top: 0,
+                              width: 320,
+                              height: height,
+                              child: ColoredBox(color: _style.tint),
+                            )
+                          : _pane(Rect.fromLTWH(0, 0, 320, height)),
                       Positioned(
                         left: 0,
                         top: 0,
@@ -230,11 +239,11 @@ void main() {
         await tester.pump();
         return _shot(
           tester,
-          'modal-header-$quality-${color.toARGB32().toRadixString(16)}-$header-$height-$modalFeather-$modalBottom',
+          'modal-header-$quality-${color.toARGB32().toRadixString(16)}-$header-$height-$modalFeather-$modalBottom-$nativePlain',
         );
       }
 
-      final frozen = await render(Colors.blue, false);
+      final frozen = await render(Colors.blue, true);
       final mixed = await render(Colors.green, true);
       for (var channel = 0; channel < 4; channel++) {
         expect(
@@ -319,18 +328,22 @@ void main() {
       );
       expect(LiquidGlassHost.debugLastCapture!.panes, isEmpty);
       expect(_pixel(coveredOverlap, 120, 104)[2], greaterThan(80));
-      final redTinted = Color.alphaBlend(_style.tint, Colors.red).toARGB32();
-      final redExpected = [
-        (redTinted >> 16) & 255,
-        (redTinted >> 8) & 255,
-        redTinted & 255,
-        255,
-      ];
-      for (var channel = 0; channel < 4; channel++) {
-        expect(
-          _pixel(coveredOverlap, 240, 104)[channel],
-          closeTo(redExpected[channel], 2),
-        );
+      final plainReference = await render(
+        Colors.red,
+        true,
+        height: 110,
+        modalFeather: true,
+        modalBottom: 100,
+        nativePlain: true,
+      );
+      for (final y in [40, 96, 100, 104, 109, 116, 119]) {
+        for (var channel = 0; channel < 4; channel++) {
+          expect(
+            _pixel(coveredOverlap, 240, y)[channel],
+            closeTo(_pixel(plainReference, 240, y)[channel], 2),
+            reason: 'header-only pixels must match the same blurred native tint',
+          );
+        }
       }
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();

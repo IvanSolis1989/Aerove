@@ -250,10 +250,15 @@ class _InkRender extends RenderProxyBox {
   bool get alwaysNeedsCompositing => true;
 
   Rect _contentBounds = Rect.zero;
+  bool _boundsNeedUpdate = true;
 
   @override
   void performLayout() {
     super.performLayout();
+    _boundsNeedUpdate = true;
+  }
+
+  void _updateContentBounds() {
     Rect? textBounds;
     var overhang = 2.0;
     void visit(RenderObject object) {
@@ -288,15 +293,18 @@ class _InkRender extends RenderProxyBox {
 
     if (child case final child?) visit(child);
     _contentBounds = textBounds?.inflate(overhang) ?? (Offset.zero & size);
+    _boundsNeedUpdate = false;
   }
 
-  Rect get _inkBounds => _contentBounds.inflate(outset);
+  Rect get _inkBounds =>
+      _contentBounds.expandToInclude(Offset.zero & size).inflate(outset);
 
   @override
   Rect get paintBounds => hasSize ? _inkBounds : Rect.zero;
 
   @override
   void paint(PaintingContext context, Offset offset) {
+    if (_boundsNeedUpdate) _updateContentBounds();
     final layer = _layer.layer ??= LiquidGlassInkLayer();
     final bounds = _inkBounds;
     layer.configure(
