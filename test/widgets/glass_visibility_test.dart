@@ -341,7 +341,10 @@ void main() {
     _record('freeze-source', {
       'beforeInk': frozenState,
       'afterInk': _inkState(tester),
-      'beforeBody': frozen.sublist((30 * 320 + 30) * 4, (30 * 320 + 30) * 4 + 4),
+      'beforeBody': frozen.sublist(
+        (30 * 320 + 30) * 4,
+        (30 * 320 + 30) * 4 + 4,
+      ),
       'afterBody': moved.sublist((30 * 320 + 30) * 4, (30 * 320 + 30) * 4 + 4),
     });
     for (var y = 24; y < 72; y++) {
@@ -450,8 +453,14 @@ void main() {
       'maximum': maximum,
       'x': worst ~/ 4 % 320,
       'y': worst ~/ 4 ~/ 320,
-      'beforeBody': frozen.sublist((40 * 320 + 170) * 4, (40 * 320 + 170) * 4 + 4),
-      'afterBody': returned.sublist((40 * 320 + 170) * 4, (40 * 320 + 170) * 4 + 4),
+      'beforeBody': frozen.sublist(
+        (40 * 320 + 170) * 4,
+        (40 * 320 + 170) * 4 + 4,
+      ),
+      'afterBody': returned.sublist(
+        (40 * 320 + 170) * 4,
+        (40 * 320 + 170) * 4 + 4,
+      ),
     });
     expect(
       maximum,
