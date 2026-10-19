@@ -92,9 +92,11 @@ void main() {
     expect(offenders, isEmpty, reason: offenders.join('\n'));
   });
 
-  test('primary opt-outs require a noninteractive view or a sheet coordinator', () {
-    const path = 'lib/views/proxies/list.dart';
-    const source = """
+  test(
+    'primary opt-outs require a noninteractive view or a sheet coordinator',
+    () {
+      const path = 'lib/views/proxies/list.dart';
+      const source = """
 import 'group_scroll.dart';
 _controller = sheetScrollController(context);
 _GroupSliver(outerController: _controller,);
@@ -108,40 +110,52 @@ CustomScrollView(
   primary: false,
 );
 """;
-    bool allowed(String candidate, {String candidatePath = path}) =>
+      bool allowed(String candidate, {String candidatePath = path}) =>
+          _allowsPrimaryOptOut(
+            candidatePath,
+            candidate,
+            _primaryOptOut.firstMatch(candidate)!,
+          );
+      expect(allowed(source), isTrue);
+      expect(allowed(source, candidatePath: 'lib/other.dart'), isFalse);
+      for (final fragment in [
+        "import 'group_scroll.dart';",
+        '_controller = sheetScrollController(context);',
+        'outerController: _controller,',
+        'ProxyGroupScrollController',
+        'outer: widget.outerController,',
+      ]) {
+        expect(allowed(source.replaceFirst(fragment, 'unverified')), isFalse);
+      }
+      expect(
+        allowed(source.replaceFirst('controller: _scrollController,', '')),
+        isFalse,
+      );
+      const unrelated = 'ListView(controller: other, primary: false)';
+      final combined = '$source\n$unrelated';
+      expect(
         _allowsPrimaryOptOut(
-          candidatePath,
-          candidate,
-          _primaryOptOut.firstMatch(candidate)!,
-        );
-    expect(allowed(source), isTrue);
-    expect(allowed(source, candidatePath: 'lib/other.dart'), isFalse);
-    for (final fragment in [
-      "import 'group_scroll.dart';",
-      '_controller = sheetScrollController(context);',
-      'outerController: _controller,',
-      'ProxyGroupScrollController',
-      'outer: widget.outerController,',
-    ]) {
-      expect(allowed(source.replaceFirst(fragment, 'unverified')), isFalse);
-    }
-    expect(
-      allowed(source.replaceFirst('controller: _scrollController,', '')),
-      isFalse,
-    );
-    const unrelated = 'ListView(controller: other, primary: false)';
-    final combined = '$source\n$unrelated';
-    expect(
-      _allowsPrimaryOptOut(path, combined, _primaryOptOut.allMatches(combined).last),
-      isFalse,
-    );
-    expect(
-      allowed('CustomScrollView(primary: false, '
-          'physics: const NeverScrollableScrollPhysics(),)'),
-      isTrue,
-    );
-    expect(allowed('CustomScrollView(primary: false,)'), isFalse);
-    expect(allowed('ListView(primary: false, '
-        'physics: const NeverScrollableScrollPhysics(),)'), isFalse);
-  });
+          path,
+          combined,
+          _primaryOptOut.allMatches(combined).last,
+        ),
+        isFalse,
+      );
+      expect(
+        allowed(
+          'CustomScrollView(primary: false, '
+          'physics: const NeverScrollableScrollPhysics(),)',
+        ),
+        isTrue,
+      );
+      expect(allowed('CustomScrollView(primary: false,)'), isFalse);
+      expect(
+        allowed(
+          'ListView(primary: false, '
+          'physics: const NeverScrollableScrollPhysics(),)',
+        ),
+        isFalse,
+      );
+    },
+  );
 }
