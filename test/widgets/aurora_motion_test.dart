@@ -26,7 +26,7 @@ const _seeds = [
 
 void main() {
   test(
-    'motion preserves phase and advances the previous field 1.5 times faster',
+    'motion preserves phase at 2.25 times the original tempo',
     () {
       final motion = AuroraMotion(832838199);
       for (final (time, angle, x, y) in [
@@ -38,15 +38,15 @@ void main() {
         ),
         (
           const Duration(seconds: 2),
-          4.821105173932716,
-          3.870231449716876,
-          -13.506492279045206,
+          4.860840862640008,
+          7.7716651819280065,
+          -10.753262087413878,
         ),
         (
           const Duration(seconds: 5),
-          4.938434929924863,
-          15.658694973112853,
-          -4.772230509060998,
+          5.031947763559606,
+          25.100219194938262,
+          3.3405496007086675,
         ),
       ]) {
         final pose = motion.at(time, const Size(390, 844));
@@ -109,8 +109,8 @@ void main() {
         xDirections.add(shift.dx > 0);
         yDirections.add(shift.dy > 0);
         speeds.add(shift.distance / 0.016);
-        expect(shift.distance, lessThan(0.146));
-        expect(_angleDistance(current.angle, next.angle), lessThan(0.001118));
+        expect(shift.distance, lessThan(0.219));
+        expect(_angleDistance(current.angle, next.angle), lessThan(0.001677));
       }
       expect(xDirections, hasLength(2));
       expect(yDirections, hasLength(2));
@@ -123,9 +123,9 @@ void main() {
       );
       expect(
         (before.translation - after.translation).distance,
-        lessThan(0.146),
+        lessThan(0.219),
       );
-      expect(_angleDistance(before.angle, after.angle), lessThan(0.001118));
+      expect(_angleDistance(before.angle, after.angle), lessThan(0.001677));
       expect(
         AuroraMotion(seed + 1).at(Duration.zero, size),
         isNot(motion.at(Duration.zero, size)),
@@ -137,8 +137,8 @@ void main() {
     final metrics = <String, Object>{};
     const interval = Duration(milliseconds: 100);
     for (final (size, translationLimit) in [
-      (const Size(390, 844), 9.07),
-      (const Size(720, 720), 16.74),
+      (const Size(390, 844), 13.605),
+      (const Size(720, 720), 25.11),
     ]) {
       var maxTranslation = 0.0;
       var maxRotation = 0.0;
@@ -161,37 +161,48 @@ void main() {
           );
           expect(
             rotation,
-            inInclusiveRange(1.305, 4.0),
+            inInclusiveRange(1.9575, 6.0),
             reason: 'seed=$seed size=$size second=$second degrees/s',
           );
         }
         for (final second in [0, 15, 30, 60]) {
           final current = motion.at(Duration(seconds: second), size);
           final next = motion.at(Duration(seconds: second + 5), size);
+          var maximumDrift = 0.0;
+          for (var step = 1; step <= 50; step++) {
+            final sample = motion.at(
+              Duration(milliseconds: second * 1000 + step * 100),
+              size,
+            );
+            maximumDrift = math.max(
+              maximumDrift,
+              (sample.translation - current.translation).distance,
+            );
+          }
           expect(
-            (next.translation - current.translation).distance,
+            maximumDrift,
             greaterThan(4.5 * size.shortestSide / 390),
             reason:
                 'seed=$seed second=$second must visibly drift in five seconds',
           );
           expect(
             _angleDistance(next.angle, current.angle) * 180 / math.pi,
-            greaterThan(6.52),
+            greaterThan(9.78),
             reason:
                 'seed=$seed second=$second must visibly rotate in five seconds',
           );
         }
       }
       expect(maxTranslation, greaterThan(translationLimit * 0.6));
-      expect(maxRotation, greaterThan(3.15));
+      expect(maxRotation, greaterThan(4.725));
       metrics['${size.width.toInt()}x${size.height.toInt()}'] = {
         'maxTranslationDpPerSecond': maxTranslation,
         'maxRotationDegreesPerSecond': maxRotation,
         'translationLimitDpPerSecond': translationLimit,
-        'rotationMinimumDegreesPerSecond': 1.305,
-        'rotationLimitDegreesPerSecond': 4.0,
-        'baseRotationPeriodSeconds': [160 / 1.5, 280 / 1.5],
-        'motionSpeedMultiplier': 1.5,
+        'rotationMinimumDegreesPerSecond': 1.9575,
+        'rotationLimitDegreesPerSecond': 6.0,
+        'baseRotationPeriodSeconds': [160 / 2.25, 280 / 2.25],
+        'motionSpeedMultiplier': 2.25,
       };
     }
     final directory = Platform.environment['XCLASH_SCREENSHOT_DIR'];

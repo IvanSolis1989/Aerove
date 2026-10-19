@@ -33,7 +33,7 @@ class AuroraMotion {
   late final List<int> _periods;
 
   AuroraMotionPose at(Duration elapsed, Size viewport) {
-    final motionMicroseconds = elapsed.inMicroseconds * 3 ~/ 2;
+    final motionMicroseconds = elapsed.inMicroseconds * 9 ~/ 4;
     double phase(int index) =>
         2 * math.pi * (motionMicroseconds % _periods[index]) / _periods[index] +
         _phases[index];
