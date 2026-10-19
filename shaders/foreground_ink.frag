@@ -41,15 +41,17 @@ vec3 vivid(vec3 c) {
   return mix(vec3(peak), hue * peak, saturation);
 }
 vec3 readable(vec3 ink, vec3 background, float backgroundLuminance, float alpha) {
+  // Leave room for 8-bit rounding of light text and its sampled backdrop.
+  float target = uContrast + (uDark < 0.5 && uContrast >= 4.7 ? 0.10 : 0.0);
   float blackContrast = (backgroundLuminance + 0.05) / 0.05;
   float whiteContrast = 1.05 / (backgroundLuminance + 0.05);
   vec3 pole = blackContrast > whiteContrast ? vec3(0) : vec3(1);
   float low = 0.0, high = 1.0;
-  if (contrastOn(mix(background, ink, alpha), backgroundLuminance) >= uContrast) return ink;
+  if (contrastOn(mix(background, ink, alpha), backgroundLuminance) >= target) return ink;
   for (int i = 0; i < 8; i++) {
     float mid = (low + high) * 0.5;
     vec3 testInk = mix(ink, pole, mid);
-    if (contrastOn(mix(background, testInk, alpha), backgroundLuminance) >= uContrast) high = mid;
+    if (contrastOn(mix(background, testInk, alpha), backgroundLuminance) >= target) high = mid;
     else low = mid;
   }
   return mix(ink, pole, high);

@@ -184,8 +184,9 @@ List<int> _referenceBodyInk(List<double> rgba, Brightness brightness) {
   final background = [for (var i = 0; i < 3; i++) rgba[i] / 255];
   final high = background.reduce(math.max), low = background.reduce(math.min);
   final dark = brightness == Brightness.dark;
+  final target = dark ? 4.7 : 4.8;
   List<double> readable(List<double> rgb) {
-    if (_contrast(rgb, background) >= 4.7) return rgb;
+    if (_contrast(rgb, background) >= target) return rgb;
     final light = _luminance(background);
     final pole = (light + 0.05) / 0.05 > 1.05 / (light + 0.05) ? 0.0 : 1.0;
     var from = 0.0, to = 1.0;
@@ -194,7 +195,7 @@ List<int> _referenceBodyInk(List<double> rgba, Brightness brightness) {
       final candidate = [
         for (final value in rgb) value + (pole - value) * amount,
       ];
-      if (_contrast(candidate, background) >= 4.7) {
+      if (_contrast(candidate, background) >= target) {
         to = amount;
       } else {
         from = amount;
