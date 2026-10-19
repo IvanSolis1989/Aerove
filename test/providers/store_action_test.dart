@@ -96,22 +96,25 @@ void main() {
   Profile profile(int id) =>
       Profile(id: id, label: 'p$id', autoUpdateDuration: Duration.zero);
 
-  test('immediate save writes seed/day together and cancels pending save', () async {
-    final container = buildContainer();
-    final hold = container.listen(configProvider, (_, _) {});
-    addTearDown(hold.close);
-    final action = container.read(storeActionProvider.notifier);
-    action.savePreferencesDebounce();
-    const saved = ThemeProps(auroraSeed: 314159, auroraRotationDay: 20261019);
-    container.read(themeSettingProvider.notifier).update((_) => saved);
-    await action.savePreferencesNow();
-    expect((await preferences.getConfig())!.themeProps, saved);
-    container.read(themeSettingProvider.notifier).update(
-      (theme) => theme.copyWith(auroraSeed: 999),
-    );
-    await Future<void>.delayed(const Duration(milliseconds: 700));
-    expect((await preferences.getConfig())!.themeProps, saved);
-  });
+  test(
+    'immediate save writes seed/day together and cancels pending save',
+    () async {
+      final container = buildContainer();
+      final hold = container.listen(configProvider, (_, _) {});
+      addTearDown(hold.close);
+      final action = container.read(storeActionProvider.notifier);
+      action.savePreferencesDebounce();
+      const saved = ThemeProps(auroraSeed: 314159, auroraRotationDay: 20261019);
+      container.read(themeSettingProvider.notifier).update((_) => saved);
+      await action.savePreferencesNow();
+      expect((await preferences.getConfig())!.themeProps, saved);
+      container
+          .read(themeSettingProvider.notifier)
+          .update((theme) => theme.copyWith(auroraSeed: 999));
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      expect((await preferences.getConfig())!.themeProps, saved);
+    },
+  );
 
   group('StoreAction.handleClear', () {
     test('clears the core effect of every profile still in state', () async {

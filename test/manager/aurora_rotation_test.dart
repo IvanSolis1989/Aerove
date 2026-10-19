@@ -58,15 +58,21 @@ void main() {
         expect(find.byType(AppStateManager), findsOneWidget);
         expect(container.read(themeSettingProvider), initial);
         expect(store.saves, isEmpty);
-        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
         await tester.pump();
         expect(container.read(themeSettingProvider), initial);
         expect(store.saves, isEmpty);
-        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
         await tester.pump();
         expect(container.read(themeSettingProvider), initial);
         expect(store.saves, isEmpty);
-        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
         tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
         await tester.pump();
         final changed = container.read(themeSettingProvider);
@@ -77,14 +83,20 @@ void main() {
         tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
         await tester.pump();
         tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
-        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
         await tester.pump();
         expect(container.read(themeSettingProvider), changed);
         expect(store.saves, [changed]);
         expect(tester.takeException(), isNull);
       } finally {
-        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
         await tester.pumpWidget(const SizedBox.shrink());
         container.dispose();
       }

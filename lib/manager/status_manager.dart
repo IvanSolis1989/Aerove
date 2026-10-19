@@ -613,8 +613,9 @@ class _MessageContent extends StatelessWidget {
           const SizedBox(width: 12),
         ],
         Flexible(
-          child: Text(
+          child: GlassText(
             message.text,
+            inkRole: GlassInkRole.body,
             maxLines: 3,
             style: AppTextStyle.subheadline
                 .of(context, emphasized: true)

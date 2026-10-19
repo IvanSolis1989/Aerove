@@ -163,19 +163,31 @@ void main() {
             final sheet = tester.widget<SheetSurface>(surfaces.first);
             final rect = tester.getRect(surfaces.first);
             final bases = find
-                .descendant(of: surfaces.first, matching: find.byType(LiquidGlass))
+                .descendant(
+                  of: surfaces.first,
+                  matching: find.byType(LiquidGlass),
+                )
                 .evaluate()
-                .where((element) => identical(
-                  element.findAncestorWidgetOfExactType<SheetSurface>(), sheet,
-                ))
-                .where((element) => tester.getRect(find.byWidget(element.widget)) == rect)
+                .where(
+                  (element) => identical(
+                    element.findAncestorWidgetOfExactType<SheetSurface>(),
+                    sheet,
+                  ),
+                )
+                .where(
+                  (element) =>
+                      tester.getRect(find.byWidget(element.widget)) == rect,
+                )
                 .map((element) => element.widget as LiquidGlass)
                 .toList();
             expect(bases, hasLength(1));
             expect(bases.single.style.blur, 16);
             expect(bases.single.style.refraction, 0);
             expect(bases.single.clipper, isA<ShapeBorderClipper>());
-            expect((bases.single.clipper! as ShapeBorderClipper).shape, sheet.shape);
+            expect(
+              (bases.single.clipper! as ShapeBorderClipper).shape,
+              sheet.shape,
+            );
             final after = await _checkCorners(
               tester,
               capture,

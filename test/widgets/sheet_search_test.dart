@@ -289,7 +289,9 @@ void main() {
                                   left: 20,
                                   right: 20,
                                   bottom: 34,
-                                  child: Text('HOME DOCK  HOME DOCK  HOME DOCK'),
+                                  child: Text(
+                                    'HOME DOCK  HOME DOCK  HOME DOCK',
+                                  ),
                                 ),
                                 Builder(
                                   builder: (context) => TextButton(

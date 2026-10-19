@@ -219,40 +219,45 @@ void main() {
                   : null,
             );
             final scrollable = tab
-                ? find.descendant(
-                    of: find.byType(GridView).first,
-                    matching: find.byType(Scrollable),
-                  ).first
+                ? find
+                      .descendant(
+                        of: find.byType(GridView).first,
+                        matching: find.byType(Scrollable),
+                      )
+                      .first
                 : groupScroll('G0');
             final viewport = tab
                 ? find.byType(GridView).first
-                : find.ancestor(
-                    of: scrollable,
-                    matching: find.byType(CustomScrollView),
-                  ).first;
-            final bar = find.ancestor(
-              of: scrollable,
-              matching: find.byType(CommonScrollBar),
-            ).first;
-            final paint = find.descendant(
-              of: bar,
-              matching: find.byWidgetPredicate(
-                (widget) =>
-                    widget is CustomPaint &&
-                    widget.foregroundPainter is ScrollbarPainter,
-              ),
-            ).first;
+                : find
+                      .ancestor(
+                        of: scrollable,
+                        matching: find.byType(CustomScrollView),
+                      )
+                      .first;
+            final bar = find
+                .ancestor(
+                  of: scrollable,
+                  matching: find.byType(CommonScrollBar),
+                )
+                .first;
+            final paint = find
+                .descendant(
+                  of: bar,
+                  matching: find.byWidgetPredicate(
+                    (widget) =>
+                        widget is CustomPaint &&
+                        widget.foregroundPainter is ScrollbarPainter,
+                  ),
+                )
+                .first;
             ScrollbarPainter painter() =>
                 tester.widget<CustomPaint>(paint).foregroundPainter!
                     as ScrollbarPainter;
             final position = tester.state<ScrollableState>(scrollable).position;
-            double opacity() =>
-                painter().fadeoutOpacityAnimation.value;
+            double opacity() => painter().fadeoutOpacityAnimation.value;
             expect(position.maxScrollExtent, greaterThan(100));
             expect(
-              tester
-                  .widget<CommonScrollBar>(bar)
-                  .thumbVisibility,
+              tester.widget<CommonScrollBar>(bar).thumbVisibility,
               isFalse,
             );
             await tester.pump(const Duration(seconds: 2));

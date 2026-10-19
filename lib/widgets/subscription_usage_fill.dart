@@ -371,9 +371,13 @@ class _UsageFillRender extends RenderBox {
       origin & Size(width, cavity.height),
       shape: LiquidGlassOutline(liquid),
       style: LiquidGlassStyle(
-        tint: const Color(
-          0xFFA9DFFF,
-        ).withValues(alpha: settings.dark ? 0.10 : 0.24),
+        tint: color.withValues(
+          alpha: settings.share > 1
+              ? 0.20
+              : settings.share >= 0.9
+              ? 0.16
+              : 0.07,
+        ),
         blur: 0.7,
         refraction: 3,
         bevel: 2.5,

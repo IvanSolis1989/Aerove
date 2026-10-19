@@ -60,6 +60,26 @@ double _contrast(Color a, Color b) {
       : (second + 0.05) / (first + 0.05);
 }
 
+void _expectFallbackFill(
+  Uint8List filled,
+  Uint8List empty, {
+  required Color color,
+  required Brightness brightness,
+  int scale = 1,
+}) {
+  final behind = _meanPixel(empty, 45, 80, scale: scale);
+  final actual = _meanPixel(filled, 45, 80, scale: scale);
+  final opacity = brightness == Brightness.dark ? 0.25 : 0.17;
+  final expected = Color.alphaBlend(
+    color.withValues(alpha: opacity),
+    behind,
+  );
+  expect(
+    _distance(actual, expected),
+    lessThan(0.04),
+  );
+}
+
 void _expectDryRim(Uint8List actual, Uint8List empty, {int scale = 1}) {
   for (var y = 28; y < 132; y++) {
     for (var x = 20; x < 380; x++) {
@@ -116,6 +136,7 @@ Future<void> _pump(
   Size cardSize = const Size(360, 104),
   Color seedColor = Colors.blue,
   List<Color>? backdrop,
+  bool highContrast = false,
 }) async {
   final colors = ColorScheme.fromSeed(
     seedColor: seedColor,
@@ -129,7 +150,7 @@ Future<void> _pump(
         child: MediaQuery(
           data: MediaQueryData.fromView(
             tester.view,
-          ).copyWith(disableAnimations: reduced),
+          ).copyWith(disableAnimations: reduced, highContrast: highContrast),
           child: RepaintBoundary(
             key: _scene,
             child: LiquidGlassScope(
@@ -288,87 +309,157 @@ void main() {
 
   setUp(() => LiquidGlassHost.debugLastCapture = null);
 
-  for (final mode in [LiquidGlassMode.standard, LiquidGlassMode.ultra]) {
-    testWidgets('light pastel water remains visible and transparent at DPR 3 '
-        '(${mode.name})', (tester) async {
-      tester.view.physicalSize = const Size(1200, 480);
-      tester.view.devicePixelRatio = 3;
-      addTearDown(tester.view.reset);
-      const backdrop = [Color(0xFFD9EADF), Color(0xFFEFE6EC)];
-      try {
-        await _pump(
-          tester,
-          brightness: Brightness.light,
-          mode: mode,
-          backdrop: backdrop,
-          info: const SubscriptionInfo(total: 100),
-        );
-        final empty = await _snapshot(
-          tester,
-          'light-pastel-${mode.name}-3x-empty',
-          pixelRatio: 3,
-        );
-        await _pump(
-          tester,
-          brightness: Brightness.light,
-          mode: mode,
-          backdrop: backdrop,
-        );
-        final filled = await _snapshot(
-          tester,
-          'light-pastel-${mode.name}-3x-16',
-          pixelRatio: 3,
-        );
-        expect(filled.length, 1200 * 480 * 4);
-        // A 3dp patch keeps backdrop dithering from deciding a hue channel.
-        final behind = _meanPixel(empty, 45, 80, scale: 3);
-        final water = _meanPixel(filled, 45, 80, scale: 3);
-        expect(_distance(water, behind), inExclusiveRange(0.065, 0.18));
-        expect(water.b - behind.b, greaterThan(0.02));
-        _expectDryRim(filled, empty, scale: 3);
-        expect(
-          _pixel(filled, 200, 80, scale: 3),
-          _pixel(empty, 200, 80, scale: 3),
-        );
-        await _pump(
-          tester,
-          brightness: Brightness.light,
-          mode: mode,
-          backdrop: backdrop,
-          text: true,
-        );
-        final readable = await _snapshot(
-          tester,
-          'light-pastel-${mode.name}-3x-readable',
-          pixelRatio: 3,
-        );
-        final bounds = tester.getRect(find.byKey(_label));
-        final contrasts = <double>[];
-        for (var y = bounds.top.ceil(); y < bounds.bottom.floor(); y++) {
-          for (var x = bounds.left.ceil(); x < bounds.right.floor(); x++) {
-            final ink = _pixel(readable, x, y, scale: 3);
-            final background = _pixel(filled, x, y, scale: 3);
-            if (_distance(ink, background) > 0.3) {
-              contrasts.add(_contrast(ink, background));
+  for (final (brightness, mode) in [
+    for (final brightness in Brightness.values)
+      for (final mode in LiquidGlassMode.values) (brightness, mode),
+  ]) {
+    testWidgets(
+      '${brightness.name} fill stays restrained and follows its backdrop '
+      '(${mode.name})',
+      (tester) async {
+        tester.view.physicalSize = const Size(1200, 480);
+        tester.view.devicePixelRatio = 3;
+        addTearDown(tester.view.reset);
+        final backdrop = brightness == Brightness.light
+            ? const [Color(0xFFD9EADF), Color(0xFFEFE6EC)]
+            : const [Color(0xFF1C3142), Color(0xFF493426)];
+        final changedBackdrop = brightness == Brightness.light
+            ? const [Color(0xFFB8D8A8), Color(0xFFD4B8D2)]
+            : const [Color(0xFF315840), Color(0xFF50345A)];
+        try {
+          await _pump(
+            tester,
+            brightness: brightness,
+            mode: mode,
+            backdrop: backdrop,
+            info: const SubscriptionInfo(total: 100),
+          );
+          final empty = await _snapshot(
+            tester,
+            '${brightness.name}-${mode.name}-3x-empty',
+            pixelRatio: 3,
+          );
+          await _pump(
+            tester,
+            brightness: brightness,
+            mode: mode,
+            backdrop: backdrop,
+          );
+          final filled = await _snapshot(
+            tester,
+            '${brightness.name}-${mode.name}-3x-16',
+            pixelRatio: 3,
+          );
+          expect(filled.length, 1200 * 480 * 4);
+          // A 3dp patch averages backdrop dithering for a stable fill sample.
+          final behind = _meanPixel(empty, 45, 80, scale: 3);
+          final fill = _meanPixel(filled, 45, 80, scale: 3);
+          if (mode == LiquidGlassMode.none) {
+            final scheme = Theme.of(
+              tester.element(find.byType(SubscriptionUsageFill)),
+            ).colorScheme;
+            _expectFallbackFill(
+              filled,
+              empty,
+              color: scheme.primary,
+              brightness: brightness,
+              scale: 3,
+            );
+          } else {
+            expect(_distance(fill, behind), inExclusiveRange(0.015, 0.15));
+          }
+          if (mode != LiquidGlassMode.none) {
+            _expectDryRim(filled, empty, scale: 3);
+          }
+          expect(
+            _pixel(filled, 200, 80, scale: 3),
+            _pixel(empty, 200, 80, scale: 3),
+          );
+          await _pump(
+            tester,
+            brightness: brightness,
+            mode: mode,
+            backdrop: backdrop,
+            text: true,
+          );
+          final readable = await _snapshot(
+            tester,
+            '${brightness.name}-${mode.name}-3x-readable',
+            pixelRatio: 3,
+          );
+          final bounds = tester.getRect(find.byKey(_label));
+          final contrasts = <double>[];
+          for (var y = bounds.top.ceil(); y < bounds.bottom.floor(); y++) {
+            for (var x = bounds.left.ceil(); x < bounds.right.floor(); x++) {
+              final ink = _pixel(readable, x, y, scale: 3);
+              final background = _pixel(filled, x, y, scale: 3);
+              if (_distance(ink, background) > 0.3) {
+                contrasts.add(_contrast(ink, background));
+              }
             }
           }
+          contrasts.sort();
+          expect(contrasts.length, greaterThan(20));
+          expect(
+            contrasts[(contrasts.length * 0.9).floor()],
+            greaterThanOrEqualTo(4.5),
+          );
+          await _pump(
+            tester,
+            brightness: brightness,
+            mode: mode,
+            backdrop: changedBackdrop,
+            info: const SubscriptionInfo(total: 100),
+          );
+          final changedEmpty = await _snapshot(
+            tester,
+            '${brightness.name}-${mode.name}-3x-changed-empty',
+            pixelRatio: 3,
+          );
+          await _pump(
+            tester,
+            brightness: brightness,
+            mode: mode,
+            backdrop: changedBackdrop,
+          );
+          final changedFill = await _snapshot(
+            tester,
+            '${brightness.name}-${mode.name}-3x-changed-fill',
+            pixelRatio: 3,
+          );
+          final changedBehind = _meanPixel(changedEmpty, 45, 80, scale: 3);
+          final changedFillPixel = _meanPixel(changedFill, 45, 80, scale: 3);
+          if (mode == LiquidGlassMode.none) {
+            final scheme = Theme.of(
+              tester.element(find.byType(SubscriptionUsageFill)),
+            ).colorScheme;
+            _expectFallbackFill(
+              changedFill,
+              changedEmpty,
+              color: scheme.primary,
+              brightness: brightness,
+              scale: 3,
+            );
+          } else {
+            expect(
+              _distance(changedFillPixel, changedBehind),
+              inExclusiveRange(0.015, 0.15),
+            );
+          }
+          expect(_distance(changedFillPixel, fill), greaterThan(0.04));
+        } finally {
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump(Duration.zero);
         }
-        contrasts.sort();
-        expect(contrasts.length, greaterThan(20));
-        expect(
-          contrasts[(contrasts.length * 0.9).floor()],
-          greaterThanOrEqualTo(4.5),
-        );
-      } finally {
-        await tester.pumpWidget(const SizedBox.shrink());
-        await tester.pump(Duration.zero);
-      }
-    });
+      },
+      skip: mode != LiquidGlassMode.none &&
+          !ui.ImageFilter.isShaderFilterSupported,
+    );
   }
 
   for (final brightness in Brightness.values) {
     for (final mode in LiquidGlassMode.values) {
-      testWidgets('16 percent fills the whole card with a real water edge '
+      testWidgets('16 percent fills the quota meniscus '
           '(${brightness.name}, ${mode.name})', (tester) async {
         tester.view.physicalSize = const Size(400, 160);
         tester.view.devicePixelRatio = 1;
@@ -384,6 +475,9 @@ void main() {
           final empty = await _snapshot(tester, '$name-empty');
           await _pump(tester, brightness: brightness, mode: mode);
           final filled = await _snapshot(tester, '$name-16');
+          final colors = Theme.of(
+            tester.element(find.byType(SubscriptionUsageFill)),
+          ).colorScheme;
           var changed = 0;
           final glass = mode != LiquidGlassMode.none;
           final cavityLeft = glass ? 25 : 20;
@@ -473,17 +567,53 @@ void main() {
           );
           if (glass) {
             _expectDryRim(half, empty);
+          }
+          for (final (info, label, color, glassAlpha) in [
+            (
+              const SubscriptionInfo(download: 95, total: 100),
+              'warning',
+              colors.warning,
+              0.16,
+            ),
+            (
+              const SubscriptionInfo(download: 125, total: 100),
+              'overrun',
+              colors.error,
+              0.20,
+            ),
+          ]) {
             await _pump(
               tester,
               brightness: brightness,
               mode: mode,
-              seedColor: Colors.red,
+              info: info,
             );
-            final otherTheme = await _snapshot(
-              tester,
-              '$name-fixed-water-color',
+            final semanticFill = await _snapshot(tester, '$name-$label');
+            final delta = _distance(
+              _pixel(semanticFill, 40, 80),
+              _pixel(filled, 40, 80),
             );
-            expect(otherTheme, orderedEquals(filled));
+            expect(
+              delta,
+              greaterThan(0.025),
+              reason: '$label keeps its status tint',
+            );
+            final opacity = mode == LiquidGlassMode.none
+                ? brightness == Brightness.dark
+                      ? 0.25
+                      : 0.17
+                : glassAlpha;
+            expect(
+              _distance(
+                _pixel(semanticFill, 40, 80),
+                Color.alphaBlend(
+                  color.withValues(alpha: opacity),
+                  _pixel(empty, 40, 80),
+                ),
+              ),
+              lessThan(0.12),
+              reason: '$label uses its semantic color',
+            );
           }
           await _pump(
             tester,
@@ -534,6 +664,45 @@ void main() {
           await tester.pump(Duration.zero);
         }
       });
+    }
+  }
+
+  for (final brightness in Brightness.values) {
+    for (final mode in [LiquidGlassMode.standard, LiquidGlassMode.ultra]) {
+      testWidgets(
+        'high contrast keeps the translucent quota fallback '
+        '(${brightness.name}, ${mode.name})',
+        (tester) async {
+          tester.view.physicalSize = const Size(400, 160);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+          try {
+            await _pump(
+              tester,
+              brightness: brightness,
+              mode: mode,
+              highContrast: true,
+            );
+            final highContrast = await _snapshot(
+              tester,
+              'high-contrast-${brightness.name}-${mode.name}',
+            );
+            await _pump(
+              tester,
+              brightness: brightness,
+              mode: LiquidGlassMode.none,
+            );
+            final fallback = await _snapshot(
+              tester,
+              'fallback-${brightness.name}-${mode.name}',
+            );
+            expect(highContrast, orderedEquals(fallback));
+          } finally {
+            await tester.pumpWidget(const SizedBox.shrink());
+            await tester.pump(Duration.zero);
+          }
+        },
+      );
     }
   }
 

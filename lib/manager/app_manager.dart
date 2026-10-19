@@ -36,7 +36,9 @@ class _AppStateManagerState extends ConsumerState<AppStateManager>
             .read(themeSettingProvider.notifier)
             .update((theme) => rotateAuroraForDay(theme, now));
         if (ref.read(themeSettingProvider) != previous) {
-          unawaited(ref.read(storeActionProvider.notifier).savePreferencesNow());
+          unawaited(
+            ref.read(storeActionProvider.notifier).savePreferencesNow(),
+          );
         }
       },
     );
@@ -45,7 +47,10 @@ class _AppStateManagerState extends ConsumerState<AppStateManager>
     // render never runs a post-frame callback.
     scheduleMicrotask(() {
       if (mounted) {
-        _updateVisible(WidgetsBinding.instance.lifecycleState, initialize: true);
+        _updateVisible(
+          WidgetsBinding.instance.lifecycleState,
+          initialize: true,
+        );
       }
     });
     ref.listenManual(configProvider, (prev, next) {

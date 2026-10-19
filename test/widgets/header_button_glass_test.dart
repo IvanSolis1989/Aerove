@@ -12,6 +12,10 @@ import '../helpers/test_app.dart';
 
 const _scene = ValueKey('header-button-scene');
 
+String get _backend => Platform.environment['XCLASH_REQUIRE_IMPELLER'] == 'true'
+    ? 'impeller'
+    : 'default';
+
 class _Stripes extends CustomPainter {
   const _Stripes();
   @override
@@ -103,16 +107,18 @@ Future<void> _shot(WidgetTester tester, String name) async {
         Directory(output).createSync(recursive: true);
         final png = (await image.toByteData(format: ui.ImageByteFormat.png))!;
         File(
-          '$output/header-buttons-$name.png',
+          '$output/header-buttons-$_backend-$name.png',
         ).writeAsBytesSync(png.buffer.asUint8List());
         if (atlas != null) {
           final png = (await atlas.toByteData(format: ui.ImageByteFormat.png))!;
           File(
-            '$output/header-buttons-$name-atlas.png',
+            '$output/header-buttons-$_backend-$name-atlas.png',
           ).writeAsBytesSync(png.buffer.asUint8List());
         }
-        File('$output/header-buttons-$name.json').writeAsStringSync(
+        File('$output/header-buttons-$_backend-$name.json').writeAsStringSync(
           jsonEncode({
+            'backendRequested': _backend,
+            'brightness': Theme.of(tester.element(find.byTooltip('Action A'))).brightness.name,
             'shaderSupported': ui.ImageFilter.isShaderFilterSupported,
             'shaderReady': LiquidGlass.debugShaderReady,
             'buttonAtlasVariance': variance,
@@ -149,6 +155,7 @@ Widget _app(
   ScrollController controller,
   VoidCallback action,
   VoidCallback back, {
+  Brightness brightness = Brightness.light,
   bool glass = true,
   bool contrast = false,
   bool sheet = false,
@@ -157,7 +164,7 @@ Widget _app(
   bool search = false,
   Widget? body,
 }) => TestApp(
-  theme: ThemeData(platform: TargetPlatform.android),
+  theme: ThemeData(brightness: brightness, platform: TargetPlatform.android),
   child: MediaQuery(
     data: MediaQueryData(
       highContrast: contrast,
@@ -183,46 +190,49 @@ Widget _app(
                       child: CustomPaint(painter: _Stripes()),
                     ),
                   ),
-                  SheetProvider(
-                    type: sheet ? SheetType.bottomSheet : SheetType.page,
-                    onClose: back,
-                    child: CommonScaffold(
-                      title: 'Header',
-                      searchState: search
-                          ? AppBarSearchState(onSearch: (_) {})
-                          : null,
-                      backgroundColor: Colors.transparent,
-                      backAction: back,
-                      selectionActions: [
-                        IconButtonData(
-                          glyph: AppGlyphs.check,
-                          tooltip: 'Action A',
-                          onPressed: action,
-                          isSelected: true,
-                        ),
-                        IconButtonData(
-                          glyph: AppGlyphs.sync,
-                          tooltip: 'Action B',
-                          onPressed: action,
-                        ),
-                      ],
-                      iconActions: [
-                        for (var index = 0; index < 4; index++)
+                  Material(
+                    color: Colors.transparent,
+                    child: SheetProvider(
+                      type: sheet ? SheetType.bottomSheet : SheetType.page,
+                      onClose: back,
+                      child: CommonScaffold(
+                        title: 'Header',
+                        searchState: search
+                            ? AppBarSearchState(onSearch: (_) {})
+                            : null,
+                        backgroundColor: Colors.transparent,
+                        backAction: back,
+                        selectionActions: [
                           IconButtonData(
-                            glyph: AppGlyphs.openExternal,
-                            tooltip: 'Extra $index',
+                            glyph: AppGlyphs.check,
+                            tooltip: 'Action A',
+                            onPressed: action,
+                            isSelected: true,
+                          ),
+                          IconButtonData(
+                            glyph: AppGlyphs.sync,
+                            tooltip: 'Action B',
                             onPressed: action,
                           ),
-                      ],
-                      body:
-                          body ??
-                          ListView.builder(
-                            controller: controller,
-                            itemCount: 40,
-                            itemExtent: 64,
-                            itemBuilder: (_, index) =>
-                                GlassText('Context row $index'),
-                          ),
+                        ],
+                        iconActions: [
+                          for (var index = 0; index < 4; index++)
+                            IconButtonData(
+                              glyph: AppGlyphs.openExternal,
+                              tooltip: 'Extra $index',
+                              onPressed: action,
+                            ),
+                        ],
+                        body:
+                            body ??
+                            ListView.builder(
+                              controller: controller,
+                              itemCount: 40,
+                              itemExtent: 64,
+                              itemBuilder: (_, index) =>
+                                  GlassText('Context row $index'),
+                            ),
+                      ),
                     ),
                   ),
                 ],
@@ -245,96 +255,105 @@ void main() {
       await GlassInk.prepare();
     }
   });
-  for (final sheet in [false, true]) {
-    testWidgets(
-      'header backgrounds fade without moving controls sheet=$sheet',
-      (tester) async {
-        tester.view.physicalSize = const Size(390, 800);
-        tester.view.devicePixelRatio = 1;
-        addTearDown(tester.view.reset);
-        final controller = ScrollController();
-        var taps = 0;
-        var backs = 0;
-        try {
-          await tester.pumpWidget(
-            _app(controller, () => taps++, () => backs++, sheet: sheet),
-          );
-          await tester.pumpAndSettle();
-          expect(_headerPanes, findsNothing);
-          final button = find.byTooltip('Action A');
-          final rect = tester.getRect(button);
-          expect(rect.size, const Size.square(44));
-          final selected = tester.widget<IconButton>(
-            find.ancestor(of: button, matching: find.byType(IconButton)),
-          );
-          expect(
-            selected.style!.foregroundColor!.resolve({WidgetState.selected}),
-            Theme.of(tester.element(button)).colorScheme.primary,
-          );
-          await tester.longPress(button);
-          await tester.pump();
-          expect(find.text('Action A'), findsOneWidget);
-          await tester.pump(const Duration(seconds: 2));
-          await tester.tap(button);
-          expect(taps, 1);
-          await _shot(tester, '$sheet-top');
-          await tester.drag(find.byType(ListView), const Offset(0, -80));
-          await tester.pump();
-          await tester.pump(const Duration(milliseconds: 80));
-          expect(_headerPanes, findsWidgets);
-          final fades = tester.widgetList<LiquidGlassFade>(
-            find.descendant(
-              of: find.byType(HeaderButtonGlassScope),
-              matching: find.byType(LiquidGlassFade),
-            ),
-          );
-          expect(
-            fades.any(
-              (fade) => fade.opacity.value > 0 && fade.opacity.value < 1,
-            ),
-            isTrue,
-          );
-          expect(tester.getRect(button), rect);
-          await _shot(tester, '$sheet-revealing');
-          if (ui.ImageFilter.isShaderFilterSupported) {
-            await tester.runAsync(
-              () => ui.FragmentProgram.fromAsset('shaders/liquid_glass.frag'),
+  for (final brightness in Brightness.values) {
+    for (final sheet in [false, true]) {
+      testWidgets(
+        'header backgrounds fade without moving controls $brightness sheet=$sheet',
+        (tester) async {
+          tester.view.physicalSize = const Size(390, 800);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+          final controller = ScrollController();
+          var taps = 0;
+          var backs = 0;
+          try {
+            await tester.pumpWidget(
+              _app(controller, () => taps++, () => backs++, sheet: sheet, brightness: brightness),
             );
+            await tester.pumpAndSettle();
+            expect(_headerPanes, findsNothing);
+            final bodyContext = tester.element(find.text('Context row 0'));
+            final bodyStyle = DefaultTextStyle.of(bodyContext).style;
+            final materialBody = Theme.of(bodyContext).textTheme.bodyMedium!;
+            expect(bodyStyle.fontSize, materialBody.fontSize);
+            expect(bodyStyle.color, materialBody.color);
+            expect(bodyStyle.decoration, isNot(TextDecoration.underline));
+            final prefix = '${brightness.name}-${sheet ? 'sheet' : 'page'}';
+            final button = find.byTooltip('Action A');
+            final rect = tester.getRect(button);
+            expect(rect.size, const Size.square(44));
+            final selected = tester.widget<IconButton>(
+              find.ancestor(of: button, matching: find.byType(IconButton)),
+            );
+            expect(
+              selected.style!.foregroundColor!.resolve({WidgetState.selected}),
+              Theme.of(tester.element(button)).colorScheme.primary,
+            );
+            await tester.longPress(button);
+            await tester.pump();
+            expect(find.text('Action A'), findsOneWidget);
+            await tester.pump(const Duration(seconds: 2));
+            await tester.tap(button);
+            expect(taps, 1);
+            await _shot(tester, '$prefix-top');
+            await tester.drag(find.byType(ListView), const Offset(0, -80));
+            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 80));
+            expect(_headerPanes, findsWidgets);
+            final fades = tester.widgetList<LiquidGlassFade>(
+              find.descendant(
+                of: find.byType(HeaderButtonGlassScope),
+                matching: find.byType(LiquidGlassFade),
+              ),
+            );
+            expect(
+              fades.any(
+                (fade) => fade.opacity.value > 0 && fade.opacity.value < 1,
+              ),
+              isTrue,
+            );
+            expect(tester.getRect(button), rect);
+            await _shot(tester, '$prefix-revealing');
+            if (ui.ImageFilter.isShaderFilterSupported) {
+              await tester.runAsync(
+                () => ui.FragmentProgram.fromAsset('shaders/liquid_glass.frag'),
+              );
+            }
+            await tester.pumpAndSettle();
+            if (ui.ImageFilter.isShaderFilterSupported) {
+              expect(LiquidGlass.debugShaderReady, isTrue);
+            }
+            expect(find.byType(TonalButtonGroup), findsWidgets);
+            await tester.tap(find.byTooltip('Action B'));
+            expect(taps, 2);
+            expect(tester.getRect(button), rect);
+            await _shot(tester, '$prefix-under');
+            await tester.tap(find.byTooltip('More'));
+            await tester.pumpAndSettle();
+            expect(find.text('Extra 3'), findsOneWidget);
+            await tester.tap(find.text('Extra 3'));
+            await tester.pumpAndSettle();
+            expect(taps, 3);
+            controller.jumpTo(0);
+            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 80));
+            expect(_headerPanes, findsWidgets);
+            await tester.pumpAndSettle();
+            expect(_headerPanes, findsNothing);
+            expect(tester.getRect(button), rect);
+            await _shot(tester, '$prefix-restored');
+            final pop = sheet ? find.byTooltip('Close') : find.byType(BackButton);
+            await tester.tap(pop);
+            expect(backs, 1);
+            expect(tester.takeException(), isNull);
+          } finally {
+            await tester.pumpWidget(const SizedBox.shrink());
+            await tester.pump();
+            controller.dispose();
           }
-          await tester.pumpAndSettle();
-          if (ui.ImageFilter.isShaderFilterSupported) {
-            expect(LiquidGlass.debugShaderReady, isTrue);
-          }
-          expect(find.byType(TonalButtonGroup), findsWidgets);
-          await tester.tap(find.byTooltip('Action B'));
-          expect(taps, 2);
-          expect(tester.getRect(button), rect);
-          await _shot(tester, '$sheet-under');
-          await tester.tap(find.byTooltip('More'));
-          await tester.pumpAndSettle();
-          expect(find.text('Extra 3'), findsOneWidget);
-          await tester.tap(find.text('Extra 3'));
-          await tester.pumpAndSettle();
-          expect(taps, 3);
-          controller.jumpTo(0);
-          await tester.pump();
-          await tester.pump(const Duration(milliseconds: 80));
-          expect(_headerPanes, findsWidgets);
-          await tester.pumpAndSettle();
-          expect(_headerPanes, findsNothing);
-          expect(tester.getRect(button), rect);
-          await _shot(tester, '$sheet-restored');
-          final pop = sheet ? find.byTooltip('Close') : find.byType(BackButton);
-          await tester.tap(pop);
-          expect(backs, 1);
-          expect(tester.takeException(), isNull);
-        } finally {
-          await tester.pumpWidget(const SizedBox.shrink());
-          await tester.pump();
-          controller.dispose();
-        }
-      },
-    );
+        },
+      );
+    }
   }
 
   testWidgets('reduced motion reveals the background without a transition', (
