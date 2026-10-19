@@ -111,13 +111,17 @@ Widget _scene({
                   Positioned.fromRect(
                     rect: _headerRect,
                     child: LiquidGlass(
-                      style: LiquidGlassStyle.regular(Theme.of(context).colorScheme),
+                      style: LiquidGlassStyle.regular(
+                        Theme.of(context).colorScheme,
+                      ),
                     ),
                   ),
                   Positioned.fromRect(
                     rect: _dockRect,
                     child: LiquidGlass(
-                      style: LiquidGlassStyle.lens(Theme.of(context).colorScheme),
+                      style: LiquidGlassStyle.lens(
+                        Theme.of(context).colorScheme,
+                      ),
                     ),
                   ),
                   if (frozen)
@@ -179,12 +183,15 @@ Future<Uint8List> _render(WidgetTester tester, Widget scene) async {
     tester.renderObject(find.byType(LiquidGlassHost)).markNeedsPaint();
     await tester.pump(const Duration(milliseconds: 16));
   }
-  final boundary = tester.renderObject<RenderRepaintBoundary>(find.byKey(_capture));
+  final boundary = tester.renderObject<RenderRepaintBoundary>(
+    find.byKey(_capture),
+  );
   return (await tester.runAsync(() async {
     final image = await boundary.toImage();
     try {
-      return (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!
-          .buffer.asUint8List();
+      return (await image.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
+      ))!.buffer.asUint8List();
     } finally {
       image.dispose();
     }
@@ -212,73 +219,172 @@ void main() {
 
   for (final dark in [false, true]) {
     for (final direct in [false, true]) {
-      testWidgets('Standard body matches native blur dark=$dark direct=$direct', (tester) async {
-        tester.view.physicalSize = const Size(320, 224);
-        tester.view.devicePixelRatio = 1;
-        addTearDown(tester.view.reset);
-        final expected = await _render(tester, _scene(native: true, dark: dark));
-        final actual = await _render(tester, _scene(direct: direct, dark: dark));
-        expect(_difference(actual, expected, _bodyRect.deflate(2)), lessThanOrEqualTo(2));
-        expect(LiquidGlassHost.debugLastBodyCapture, hasLength(1));
-        expect(LiquidGlassHost.debugLastBodyCapture.single.blur, 2.5);
-        final flat = await _render(tester, _scene(native: true, dark: dark, enabled: false));
-        expect(_difference(actual, flat, _bodyRect.deflate(8)), greaterThan(8));
-        final outside = await _render(tester, _scene(body: false, direct: direct, dark: dark));
-        expect(_difference(actual, outside, _headerRect.deflate(2)), lessThanOrEqualTo(2));
-        expect(_difference(actual, outside, _dockRect.deflate(2)), lessThanOrEqualTo(2));
-        final ultra = await _render(tester, _scene(direct: direct, dark: dark, quality: LiquidGlassQuality.ultra));
-        expect(LiquidGlassHost.debugLastBodyCapture, isEmpty);
-        final unmarkedUltra = await _render(tester, _scene(body: false, direct: direct, dark: dark, quality: LiquidGlassQuality.ultra));
-        expect(_difference(ultra, unmarkedUltra, _bodyRect), 0);
-        if (ui.ImageFilter.isShaderFilterSupported) {
-          expect(_difference(ultra, actual, _bodyRect.deflate(2)), greaterThan(8));
-        }
-        final restored = await _render(tester, _scene(direct: direct, dark: dark));
-        expect(_difference(restored, actual, _bodyRect), 0);
-        for (final highContrast in [false, true]) {
-          final fallback = await _render(tester, _scene(direct: direct, dark: dark, enabled: highContrast, highContrast: highContrast));
-          final unmarked = await _render(tester, _scene(body: false, direct: direct, dark: dark, enabled: highContrast, highContrast: highContrast));
-          expect(_difference(fallback, unmarked, _bodyRect), 0);
-        }
-        await tester.pumpWidget(const SizedBox.shrink());
-        expect(tester.takeException(), isNull);
-      });
+      testWidgets(
+        'Standard body matches native blur dark=$dark direct=$direct',
+        (tester) async {
+          tester.view.physicalSize = const Size(320, 224);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+          final expected = await _render(
+            tester,
+            _scene(native: true, dark: dark),
+          );
+          final actual = await _render(
+            tester,
+            _scene(direct: direct, dark: dark),
+          );
+          expect(
+            _difference(actual, expected, _bodyRect.deflate(2)),
+            lessThanOrEqualTo(2),
+          );
+          expect(LiquidGlassHost.debugLastBodyCapture, hasLength(1));
+          expect(LiquidGlassHost.debugLastBodyCapture.single.blur, 2.5);
+          final flat = await _render(
+            tester,
+            _scene(native: true, dark: dark, enabled: false),
+          );
+          expect(
+            _difference(actual, flat, _bodyRect.deflate(8)),
+            greaterThan(8),
+          );
+          final outside = await _render(
+            tester,
+            _scene(body: false, direct: direct, dark: dark),
+          );
+          expect(
+            _difference(actual, outside, _headerRect.deflate(2)),
+            lessThanOrEqualTo(2),
+          );
+          expect(
+            _difference(actual, outside, _dockRect.deflate(2)),
+            lessThanOrEqualTo(2),
+          );
+          final ultra = await _render(
+            tester,
+            _scene(
+              direct: direct,
+              dark: dark,
+              quality: LiquidGlassQuality.ultra,
+            ),
+          );
+          expect(LiquidGlassHost.debugLastBodyCapture, isEmpty);
+          final unmarkedUltra = await _render(
+            tester,
+            _scene(
+              body: false,
+              direct: direct,
+              dark: dark,
+              quality: LiquidGlassQuality.ultra,
+            ),
+          );
+          expect(_difference(ultra, unmarkedUltra, _bodyRect), 0);
+          if (ui.ImageFilter.isShaderFilterSupported) {
+            expect(
+              _difference(ultra, actual, _bodyRect.deflate(2)),
+              greaterThan(8),
+            );
+          }
+          final restored = await _render(
+            tester,
+            _scene(direct: direct, dark: dark),
+          );
+          expect(_difference(restored, actual, _bodyRect), 0);
+          for (final highContrast in [false, true]) {
+            final fallback = await _render(
+              tester,
+              _scene(
+                direct: direct,
+                dark: dark,
+                enabled: highContrast,
+                highContrast: highContrast,
+              ),
+            );
+            final unmarked = await _render(
+              tester,
+              _scene(
+                body: false,
+                direct: direct,
+                dark: dark,
+                enabled: highContrast,
+                highContrast: highContrast,
+              ),
+            );
+            expect(_difference(fallback, unmarked, _bodyRect), 0);
+          }
+          await tester.pumpWidget(const SizedBox.shrink());
+          expect(tester.takeException(), isNull);
+        },
+      );
     }
   }
 
-  testWidgets('Standard body freeze retains the same blur and thaws on dismissal', (tester) async {
-    tester.view.physicalSize = const Size(320, 224);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-    final live = await _render(tester, _scene());
-    final frozen = await _render(tester, _scene(frozen: true));
-    final changed = await _render(tester, _scene(frozen: true, phase: 1));
-    expect(_difference(frozen, changed, _bodyRect.deflate(4)), 0);
-    final thawed = await _render(tester, _scene(phase: 1));
-    final expected = await _render(tester, _scene(native: true, phase: 1));
-    expect(_difference(thawed, expected, _bodyRect.deflate(2)), lessThanOrEqualTo(2));
-    expect(_difference(thawed, live, _bodyRect.deflate(8)), greaterThan(8));
-    await tester.pumpWidget(const SizedBox.shrink());
-    expect(tester.takeException(), isNull);
-  });
+  testWidgets(
+    'Standard body freeze retains the same blur and thaws on dismissal',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 224);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final live = await _render(tester, _scene());
+      final frozen = await _render(tester, _scene(frozen: true));
+      final changed = await _render(tester, _scene(frozen: true, phase: 1));
+      expect(_difference(frozen, changed, _bodyRect.deflate(4)), 0);
+      final thawed = await _render(tester, _scene(phase: 1));
+      final expected = await _render(tester, _scene(native: true, phase: 1));
+      expect(
+        _difference(thawed, expected, _bodyRect.deflate(2)),
+        lessThanOrEqualTo(2),
+      );
+      expect(_difference(thawed, live, _bodyRect.deflate(8)), greaterThan(8));
+      await tester.pumpWidget(const SizedBox.shrink());
+      expect(tester.takeException(), isNull);
+    },
+  );
 
-  testWidgets('CommonScaffold marks content and keyword chips but excludes its header', (tester) async {
-    const bodyKey = ValueKey('marked-scaffold-body');
-    await tester.pumpWidget(const TestApp(
-      child: ViewScope(
-        size: Size(800, 600),
-        isMobile: false,
-        child: CommonScaffold(title: 'Body', body: SizedBox(key: bodyKey)),
-      ),
-    ));
-    expect(find.ancestor(of: find.byKey(bodyKey), matching: find.byType(LiquidGlassBody)), findsOneWidget);
-    tester.state<CommonScaffoldState>(find.byType(CommonScaffold)).addKeyword('central keyword');
-    await tester.pump();
-    expect(find.byType(CommonChip), findsOneWidget);
-    expect(find.ancestor(of: find.byType(CommonChip), matching: find.byType(LiquidGlassBody)), findsOneWidget);
-    expect(find.ancestor(of: find.text('Body'), matching: find.byType(LiquidGlassBody)), findsNothing);
-    expect(find.byType(LiquidGlassHost), findsNothing);
-    await tester.pumpWidget(const SizedBox.shrink());
-    expect(tester.takeException(), isNull);
-  });
+  testWidgets(
+    'CommonScaffold marks content and keyword chips but excludes its header',
+    (tester) async {
+      const bodyKey = ValueKey('marked-scaffold-body');
+      await tester.pumpWidget(
+        const TestApp(
+          child: ViewScope(
+            size: Size(800, 600),
+            isMobile: false,
+            child: CommonScaffold(
+              title: 'Body',
+              body: SizedBox(key: bodyKey),
+            ),
+          ),
+        ),
+      );
+      expect(
+        find.ancestor(
+          of: find.byKey(bodyKey),
+          matching: find.byType(LiquidGlassBody),
+        ),
+        findsOneWidget,
+      );
+      tester
+          .state<CommonScaffoldState>(find.byType(CommonScaffold))
+          .addKeyword('central keyword');
+      await tester.pump();
+      expect(find.byType(CommonChip), findsOneWidget);
+      expect(
+        find.ancestor(
+          of: find.byType(CommonChip),
+          matching: find.byType(LiquidGlassBody),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.ancestor(
+          of: find.text('Body'),
+          matching: find.byType(LiquidGlassBody),
+        ),
+        findsNothing,
+      );
+      expect(find.byType(LiquidGlassHost), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

@@ -145,12 +145,16 @@ void main() {
           find.byType(DashboardGlass),
         );
         final outerPane = find.byWidgetPredicate(
-          (widget) => widget is LiquidGlass && identical(widget.child, cardGlass.child),
+          (widget) =>
+              widget is LiquidGlass && identical(widget.child, cardGlass.child),
         );
         expect(outerPane, findsOneWidget);
         final pane = tester.widget<LiquidGlass>(outerPane);
         expect(pane.style.tint, Colors.transparent);
-        expect(tester.getRect(outerPane), tester.getRect(find.byType(DashboardCard)));
+        expect(
+          tester.getRect(outerPane),
+          tester.getRect(find.byType(DashboardCard)),
+        );
         expect((pane.clipper! as ShapeBorderClipper).shape, cardGlass.shape);
         expect(
           find.ancestor(of: toggle, matching: find.byType(GlassSwitch)),
@@ -158,7 +162,10 @@ void main() {
         );
         for (final control in find.byType(GlassSwitch).evaluate()) {
           expect(
-            find.descendant(of: find.byWidget(control.widget), matching: find.byType(LiquidGlass)),
+            find.descendant(
+              of: find.byWidget(control.widget),
+              matching: find.byType(LiquidGlass),
+            ),
             findsNWidgets(2),
           );
         }

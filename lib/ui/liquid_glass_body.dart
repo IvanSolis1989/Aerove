@@ -16,11 +16,7 @@ class _GlassBodyBox extends RenderProxyBox {
 
   @override
   void paint(PaintingContext context, Offset offset) {
-    context.pushLayer(
-      _layer.layer ??= _GlassBodyLayer(),
-      super.paint,
-      offset,
-    );
+    context.pushLayer(_layer.layer ??= _GlassBodyLayer(), super.paint, offset);
   }
 
   @override

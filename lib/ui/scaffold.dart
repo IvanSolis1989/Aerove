@@ -860,7 +860,10 @@ class CommonScaffoldState extends State<CommonScaffold> {
                       ? MediaQuery.removePadding(
                           context: context,
                           removeTop: true,
-                          child: FloatingBarScope(inset: 0, child: sortableBody),
+                          child: FloatingBarScope(
+                            inset: 0,
+                            child: sortableBody,
+                          ),
                         )
                       : sortableBody,
                 ),

@@ -21,7 +21,7 @@ _AppSettingProps _$AppSettingPropsFromJson(
   dashboardWidgets: json['dashboardWidgets'] == null
       ? defaultDashboardWidgets
       : dashboardWidgetsFromJson(json['dashboardWidgets'] as List?),
-  onlyStatisticsProxy: json['onlyStatisticsProxy'] as bool? ?? false,
+  onlyStatisticsProxy: json['onlyStatisticsProxy'] as bool? ?? true,
   showNotificationStopAction:
       json['showNotificationStopAction'] as bool? ?? true,
   autoLaunch: json['autoLaunch'] as bool? ?? false,
@@ -217,7 +217,7 @@ Map<String, dynamic> _$WindowPropsToJson(_WindowProps instance) =>
 _VpnProps _$VpnPropsFromJson(Map<String, dynamic> json) => _VpnProps(
   enable: json['enable'] as bool? ?? true,
   systemProxy: json['systemProxy'] as bool? ?? true,
-  ipv6: json['ipv6'] as bool? ?? false,
+  ipv6: json['ipv6'] as bool? ?? true,
   allowBypass: json['allowBypass'] as bool? ?? true,
   dnsHijacking: json['dnsHijacking'] as bool? ?? false,
   accessControlProps: json['accessControlProps'] == null
