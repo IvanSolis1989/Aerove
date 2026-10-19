@@ -39,12 +39,15 @@ class _WorkCounter {
   final paints = <String, int>{};
   final paintedNodes = <String>{};
   final groupRenderIds = <String>{};
+  final collapsedRenderIds = <String>{};
+  final collapsedLayouts = <String, int>{};
   int nodePaintCalls = 0;
 
   void clear() {
     builds.clear();
     layouts.clear();
     groupLayouts.clear();
+    collapsedLayouts.clear();
     paints.clear();
     paintedNodes.clear();
     nodePaintCalls = 0;
@@ -63,6 +66,9 @@ class _WorkCounter {
     final id = '$type#${match.group(2)}';
     if (groupRenderIds.contains(id)) {
       groupLayouts.update(id, (count) => count + 1, ifAbsent: () => 1);
+    }
+    if (collapsedRenderIds.contains(id)) {
+      collapsedLayouts.update(id, (count) => count + 1, ifAbsent: () => 1);
     }
   }
 
@@ -90,6 +96,11 @@ class _WorkCounter {
       (a, b) => a + b,
     ),
     'groupRootsActuallyLaidOut': groupLayouts.length,
+    'collapsedRunActualLayoutCalls': collapsedLayouts.values.fold<int>(
+      0,
+      (a, b) => a + b,
+    ),
+    'collapsedRunRootsActuallyLaidOut': collapsedLayouts.length,
     'renderPaintCallsByType': Map.of(paints),
     'nodeRenderPaintCalls': nodePaintCalls,
     'distinctNodesPainted': paintedNodes.length,
@@ -137,6 +148,13 @@ Map<String, Object?> _snapshot(WidgetTester tester) {
         .length,
     'mountedHeaderContents': find
         .byType(ListHeader, skipOffstage: false)
+        .evaluate()
+        .length,
+    'mountedCollapsedRuns': find
+        .byWidgetPredicate(
+          (widget) => widget.runtimeType.toString() == '_CollapsedGroupRun',
+          skipOffstage: false,
+        )
         .evaluate()
         .length,
     'retainedPaneLayers': paneLayers,
@@ -268,6 +286,18 @@ void main() {
             final id = _renderIdentity(element.findRenderObject()!);
             if (id != null) work.groupRenderIds.add(id);
           }
+          final collapsedRuns = find.byWidgetPredicate(
+            (widget) => widget.runtimeType.toString() == '_CollapsedGroupRun',
+            skipOffstage: false,
+          );
+          for (final element in collapsedRuns.evaluate()) {
+            final render = element.findRenderObject()!;
+            expect(render, isA<RenderSliverFixedExtentList>());
+            final id = _renderIdentity(render);
+            expect(id, isNotNull);
+            work.collapsedRenderIds.add(id!);
+          }
+          expect(work.collapsedRenderIds.length, scenario.grid ? 0 : 1);
           debugPrintLayouts = true;
           debugPrint = (message, {wrapWidth}) {
             if (message?.startsWith('Laying out ') == true) {
@@ -303,8 +333,18 @@ void main() {
               expect(snapshot['mountedCardsIncludingOffstage'], 0);
               expect(work.nodePaintCalls, 0);
               expect(work.builds['ProxyCard'] ?? 0, 0);
-              expect(snapshot['mountedGroupSkeletons'], scenario.groups);
-              expect(work.groupLayouts, isNotEmpty);
+              expect(snapshot['mountedGroupSkeletons'], 0);
+              expect(snapshot['mountedCollapsedRuns'], 1);
+              expect(
+                snapshot['mountedHeaderContents'] as int,
+                inInclusiveRange(1, 30),
+              );
+              expect(work.groupLayouts, isEmpty);
+              expect(work.collapsedLayouts.length, 1);
+              expect(
+                work.collapsedLayouts.values.single,
+                inInclusiveRange(1, 3),
+              );
             } else {
               expect(
                 snapshot['mountedCardsIncludingOffstage'] as int,

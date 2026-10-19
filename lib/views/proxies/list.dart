@@ -35,11 +35,37 @@ class _ProxiesListViewState extends ConsumerState<ProxiesListView> {
   int _columns = 1;
   int _groupColumns = 1;
   double _gap = 0;
+  final _closingGroups = <String>{};
+  final _openingGroups = <String>{};
 
   @override
   void initState() {
     super.initState();
     _controller = sheetScrollController(context);
+    ref.listenManual(unfoldSetProvider, (previous, next) {
+      if (previous == null) return;
+      setState(() {
+        _openingGroups.addAll(
+          next.difference(previous).difference(_closingGroups),
+        );
+        _closingGroups
+          ..addAll(previous.difference(next))
+          ..removeAll(next);
+      });
+    });
+  }
+
+  void _handleSettled(String groupName, bool expanded) {
+    if (expanded) {
+      _openingGroups.remove(groupName);
+      return;
+    }
+    if (!mounted || ref.read(unfoldSetProvider).contains(groupName)) return;
+    if (!_closingGroups.contains(groupName)) return;
+    setState(() {
+      _closingGroups.remove(groupName);
+      _openingGroups.remove(groupName);
+    });
   }
 
   @override
@@ -168,6 +194,10 @@ class _ProxiesListViewState extends ConsumerState<ProxiesListView> {
         final groups = ref.watch(
           proxiesListStateProvider.select((state) => state.groups),
         );
+        final unfolded = ref.watch(unfoldSetProvider);
+        final groupNames = groups.map((group) => group.name).toSet();
+        _closingGroups.removeWhere((name) => !groupNames.contains(name));
+        _openingGroups.removeWhere((name) => !groupNames.contains(name));
         final cardType = ref.watch(
           proxiesListStateProvider.select((state) => state.proxyCardType),
         );
@@ -215,7 +245,43 @@ class _ProxiesListViewState extends ConsumerState<ProxiesListView> {
                 gap: gap,
                 onChange: _handleChange,
                 onScrollToSelected: _scrollToGroupSelected,
+                animateOnMount: _openingGroups.contains(group.name),
+                onSettled: _handleSettled,
               );
+              List<Widget> buildColumn(int column) {
+                final slivers = <Widget>[];
+                var folded = <Group>[];
+                void flushFolded() {
+                  if (folded.isEmpty) return;
+                  slivers.add(
+                    _CollapsedGroupRun(
+                      key: ValueKey(('collapsed', folded.first.name)),
+                      groups: folded,
+                      gap: gap,
+                      onChange: _handleChange,
+                      onScrollToSelected: _scrollToGroupSelected,
+                    ),
+                  );
+                  folded = <Group>[];
+                }
+
+                for (
+                  var index = column;
+                  index < groups.length;
+                  index += groupColumns
+                ) {
+                  final group = groups[index];
+                  if (unfolded.contains(group.name) ||
+                      _closingGroups.contains(group.name)) {
+                    flushFolded();
+                    slivers.add(buildGroup(group));
+                  } else {
+                    folded.add(group);
+                  }
+                }
+                flushFolded();
+                return slivers;
+              }
               final barInset = context.appBarInset;
               return CommonScrollBar(
                 controller: _controller,
@@ -232,7 +298,7 @@ class _ProxiesListViewState extends ConsumerState<ProxiesListView> {
                       ),
                       sliver: groupColumns == 1
                           ? SliverMainAxisGroup(
-                              slivers: groups.map(buildGroup).toList(),
+                              slivers: buildColumn(0),
                             )
                           : SliverCrossAxisGroup(
                               slivers: [
@@ -249,14 +315,7 @@ class _ProxiesListViewState extends ConsumerState<ProxiesListView> {
                                   SliverCrossAxisExpanded(
                                     flex: 1,
                                     sliver: SliverMainAxisGroup(
-                                      slivers: [
-                                        for (
-                                          var index = column;
-                                          index < groups.length;
-                                          index += groupColumns
-                                        )
-                                          buildGroup(groups[index]),
-                                      ],
+                                      slivers: buildColumn(column),
                                     ),
                                   ),
                                 ],
@@ -286,6 +345,65 @@ class _GroupSliverKey extends ValueKey<String> {
   const _GroupSliverKey(super.value);
 }
 
+class _CollapsedGroupRun extends StatelessWidget {
+  const _CollapsedGroupRun({
+    super.key,
+    required this.groups,
+    required this.gap,
+    required this.onChange,
+    required this.onScrollToSelected,
+  });
+
+  final List<Group> groups;
+  final double gap;
+  final void Function(String groupName) onChange;
+  final void Function(String groupName) onScrollToSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final glass = LiquidGlassScope.of(context);
+    final headerHeight = listHeaderHeight;
+    return SliverFixedExtentList(
+      itemExtent: headerHeight + gap,
+      delegate: SliverChildBuilderDelegate(
+        (context, index) {
+          final group = groups[index];
+          Widget header = SizedBox(
+            height: headerHeight,
+            child: ListHeader(
+              key: ValueKey(group.name),
+              group: group,
+              onChange: onChange,
+              onScrollToSelected: onScrollToSelected,
+              isExpand: false,
+              unfolded: false,
+              hasGlassEnvelope: glass,
+              enterAnimated: false,
+            ),
+          );
+          if (glass) {
+            header = LiquidGlass(
+              style: LiquidGlassStyle.regular(context.colorScheme),
+              clipper: ShapeBorderClipper(
+                shape: AppShape.all(AppCorner.xl.ap(context)),
+                textDirection: Directionality.of(context),
+              ),
+              child: header,
+            );
+          }
+          return Padding(
+            key: ValueKey(group.name),
+            padding: EdgeInsets.only(bottom: gap),
+            child: header,
+          );
+        },
+        childCount: groups.length,
+        addAutomaticKeepAlives: false,
+      ),
+    );
+  }
+}
+
 /// Watches only its own group's fold state, so folding one group leaves the
 /// cards of every other group untouched, and keeps its rows sliver while the
 /// inputs that shape it are equal.
@@ -298,6 +416,8 @@ class _GroupSliver extends ConsumerStatefulWidget {
     required this.gap,
     required this.onChange,
     required this.onScrollToSelected,
+    required this.animateOnMount,
+    required this.onSettled,
   });
 
   final Group group;
@@ -306,6 +426,8 @@ class _GroupSliver extends ConsumerStatefulWidget {
   final double gap;
   final void Function(String groupName) onChange;
   final void Function(String groupName) onScrollToSelected;
+  final bool animateOnMount;
+  final void Function(String groupName, bool expanded) onSettled;
 
   @override
   ConsumerState<_GroupSliver> createState() => _GroupSliverState();
@@ -317,18 +439,52 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
   double _rowExtent = 0;
   late final _controller = AnimationController(
     vsync: this,
-    value: ref.read(unfoldSetProvider).contains(widget.group.name) ? 1 : 0,
+    value: !widget.animateOnMount &&
+            ref.read(unfoldSetProvider).contains(widget.group.name)
+        ? 1
+        : 0,
   );
   late final _unfold = UnfoldEntryTransition.curveOf(_controller);
 
   @override
   void initState() {
     super.initState();
-    _controller.addStatusListener((_) => setState(() {}));
+    _controller.addStatusListener((status) {
+      setState(() {});
+      if (status == AnimationStatus.dismissed) {
+        _notifyFolded();
+      } else if (status == AnimationStatus.completed) {
+        widget.onSettled(widget.group.name, true);
+      }
+    });
     ref.listenManual(
       unfoldSetProvider.select((state) => state.contains(widget.group.name)),
       (_, isExpand) => _handleUnfold(isExpand),
     );
+    if (_controller.isDismissed &&
+        !ref.read(unfoldSetProvider).contains(widget.group.name)) {
+      _notifyFolded();
+    }
+  }
+
+  void _notifyFolded() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted &&
+          _controller.isDismissed &&
+          !ref.read(unfoldSetProvider).contains(widget.group.name)) {
+        widget.onSettled(widget.group.name, false);
+      }
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (widget.animateOnMount &&
+        _controller.isDismissed &&
+        ref.read(unfoldSetProvider).contains(widget.group.name)) {
+      _handleUnfold(true);
+    }
   }
 
   @override

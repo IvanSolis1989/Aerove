@@ -228,10 +228,9 @@ void main() {
             await tester.pump(interval);
           }
           final actual = source.getTransformTo(null).storage;
-          final expected = AuroraMotion(271828).at(
-            end - start,
-            const Size(180, 300),
-          );
+          final expected = AuroraMotion(
+            271828,
+          ).at(end - start, const Size(180, 300));
           final angle = math.atan2(actual[1], actual[0]);
           final difference = math.atan2(
             math.sin(angle - expected.angle),

@@ -7,6 +7,7 @@ import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/sheet_surface.dart';
+import 'package:fl_clash/ui/snap_sheet.dart';
 import 'package:fl_clash/ui/shape.dart';
 import 'package:fl_clash/views/dashboard/widgets/connection_stats.dart';
 import 'package:fl_clash/views/dns_queries.dart';
@@ -277,7 +278,18 @@ Future<Uint8List> _checkCorners(
       .shape
       .getOuterPath(rect);
   expect(find.byType(AnimatedModalBarrier), findsNothing);
-  final barrier = tester.widget<ModalBarrier>(find.byType(ModalBarrier).last);
+  final route = ModalRoute.of(
+    tester.element(find.byType(SheetSurface).first),
+  )!;
+  expect(route, isA<SnapSheetRoute<dynamic>>());
+  expect(route.barrierDismissible, isTrue);
+  expect(route.barrierColor?.a ?? 0, 0);
+  final barrierFinder = find.byWidgetPredicate((widget) =>
+    widget is ModalBarrier && widget.semanticsLabel == route.barrierLabel &&
+        widget.onDismiss != null,
+  );
+  expect(barrierFinder, findsOneWidget);
+  final barrier = tester.widget<ModalBarrier>(barrierFinder);
   expect(barrier.dismissible, isTrue);
   expect(barrier.color?.a ?? 0, 0);
   final y = rect.top.ceil() + 1;

@@ -171,8 +171,10 @@ class _FloatingHeaderBodyState extends State<FloatingHeaderBody> {
   void _updateScroll(ScrollMetrics metrics) {
     if (metrics.axis != Axis.vertical) return;
     _pendingScrolledUnder = metrics.extentBefore > 0;
-    if (_scrollUpdateScheduled || _scrolledUnder == _pendingScrolledUnder) return;
-    if (SchedulerBinding.instance.schedulerPhase != SchedulerPhase.persistentCallbacks) {
+    if (_scrollUpdateScheduled || _scrolledUnder == _pendingScrolledUnder)
+      return;
+    if (SchedulerBinding.instance.schedulerPhase !=
+        SchedulerPhase.persistentCallbacks) {
       setState(() => _scrolledUnder = _pendingScrolledUnder);
       return;
     }

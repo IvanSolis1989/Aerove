@@ -455,6 +455,135 @@ void main() {
     expect(tester.widget(card), same(before));
   });
 
+  for (final viewMode in [ViewMode.mobile, ViewMode.desktop]) {
+    for (final glass in [false, true]) {
+      testWidgets(
+        'collapsed runs preserve ${viewMode.name} geometry and reverse '
+        'an external unfold with glass $glass',
+        (tester) async {
+          await pumpList(
+            tester,
+            groups: [for (var i = 0; i < 8; i++) _group('G$i', 4)],
+            unfoldSet: {},
+            viewMode: viewMode,
+            glass: glass,
+          );
+          final skeletons = find.byWidgetPredicate(
+            (widget) => widget.runtimeType.toString() == '_GroupSliver',
+          );
+          final runs = find.byWidgetPredicate(
+            (widget) => widget.runtimeType.toString() == '_CollapsedGroupRun',
+          );
+          final initialRuns = viewMode == ViewMode.mobile ? 1 : 2;
+          expect(skeletons, findsNothing);
+          expect(runs, findsNWidgets(initialRuns));
+          final before = tester.getRect(headerOf('G3'));
+          final position = tester.state<ScrollableState>(scrollable()).position;
+          final initialExtent = position.maxScrollExtent;
+          final action = container.read(proxiesActionProvider.notifier);
+          action.updateCurrentUnfoldSet({'G2'});
+          await tester.pump();
+          expect(skeletons, findsOneWidget);
+          SizeTransition transition() => tester.widget<SizeTransition>(
+            find.descendant(of: skeletons, matching: find.byType(SizeTransition)),
+          );
+          expect(transition().sizeFactor.value, 0);
+          await tester.pump(const Duration(milliseconds: 70));
+          expect(transition().sizeFactor.value, inExclusiveRange(0, 1));
+          action.updateCurrentUnfoldSet({});
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 20));
+          expect(skeletons, findsOneWidget);
+          action.updateCurrentUnfoldSet({'G2'});
+          await tester.pumpAndSettle();
+          expect(skeletons, findsOneWidget);
+          expect(find.byType(UnfoldEntryTransition), findsNothing);
+          expect(runs, findsNWidgets(initialRuns + 1));
+          expect(find.byType(ProxyCard), findsWidgets);
+          if (glass) {
+            expect(glassGroupRect(tester, 'G0'), headerInHost(tester, 'G0'));
+          }
+          action.updateCurrentUnfoldSet({});
+          await tester.pumpAndSettle();
+          expect(skeletons, findsNothing);
+          expect(runs, findsNWidgets(initialRuns));
+          expect(find.byType(ProxyCard), findsNothing);
+          expect(tester.getRect(headerOf('G3')), before);
+          expect(position.maxScrollExtent, initialExtent);
+          expect(tester.takeException(), isNull);
+          await unmountList(tester);
+        },
+      );
+    }
+  }
+
+  testWidgets('splitting a collapsed run preserves another expanded group', (
+    tester,
+  ) async {
+    await pumpList(
+      tester,
+      groups: [for (var i = 0; i < 5; i++) _group('G$i', 2)],
+      unfoldSet: {'G0'},
+    );
+    final card = find.byKey(const ValueKey('G0.G0-0')).first;
+    final before = tester.widget(card);
+    final action = container.read(proxiesActionProvider.notifier);
+    action.updateCurrentUnfoldSet({'G0', 'G2'});
+    await tester.pumpAndSettle();
+    expect(tester.widget(card), same(before));
+    action.updateCurrentUnfoldSet({'G0'});
+    await tester.pumpAndSettle();
+    expect(tester.widget(card), same(before));
+    expect(tester.takeException(), isNull);
+    await unmountList(tester);
+  });
+
+  testWidgets('a newly opened group locates its selection after a folded run', (
+    tester,
+  ) async {
+    await pumpList(
+      tester,
+      groups: [
+        _group('G0', 4),
+        _group('G1', 4),
+        _group('G2', 60),
+      ],
+      unfoldSet: {},
+      selectedMap: {'G2': 'G2-45'},
+    );
+    await tester.tap(actionOf('G2', 'Expand'));
+    await tester.pumpAndSettle();
+    await tester.tap(actionOf('G2', 'Scroll to selected'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getRect(find.byKey(const ValueKey('G2.G2-45')).first).top,
+      tester.getRect(headerOf('G2')).bottom,
+    );
+    expect(tester.takeException(), isNull);
+    await unmountList(tester);
+  });
+
+  testWidgets('external fold changes before mounting leave no group skeleton', (
+    tester,
+  ) async {
+    await pumpList(tester, unfoldSet: {});
+    final action = container.read(proxiesActionProvider.notifier);
+    action.updateCurrentUnfoldSet({'G0'});
+    expect(container.read(unfoldSetProvider), {'G0'});
+    action.updateCurrentUnfoldSet({});
+    expect(container.read(unfoldSetProvider), isEmpty);
+    await tester.pumpAndSettle();
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget.runtimeType.toString() == '_GroupSliver',
+      ),
+      findsNothing,
+    );
+    expect(find.byType(ProxyCard), findsNothing);
+    expect(tester.takeException(), isNull);
+    await unmountList(tester);
+  });
+
   testWidgets('a group unfolds its rows from under its header and folds them '
       'back', (tester) async {
     await pumpList(tester);
@@ -525,7 +654,7 @@ void main() {
     expect(surfaceOf(tester, 'G0').shadows, isNull);
   });
 
-  testWidgets('a folded pinned header takes the page color of a new theme', (
+  testWidgets('a folded header takes the surface color of a new theme', (
     tester,
   ) async {
     final brightness = ValueNotifier(Brightness.light);
@@ -535,16 +664,12 @@ void main() {
     brightness.value = Brightness.dark;
     await tester.pumpAndSettle();
 
-    final header = find.ancestor(
-      of: headerOf('G0'),
-      matching: find.byType(PinnedHeaderSliver),
-    );
-    final context = tester.element(header);
-    final cover = tester.widget<ColoredBox>(
-      find.descendant(of: header, matching: find.byType(ColoredBox)).first,
-    );
+    final context = tester.element(headerOf('G0'));
     expect(context.colorScheme.brightness, Brightness.dark);
-    expect(cover.color, context.surfaceLevel.colorOf(context.colorScheme));
+    expect(
+      surfaceOf(tester, 'G0').color,
+      context.raisedSurfaceLevel.colorOf(context.colorScheme),
+    );
   });
 
   testWidgets('glass without wallpaper also removes opaque proxy masks', (
