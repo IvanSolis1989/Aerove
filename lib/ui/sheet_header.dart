@@ -5,11 +5,10 @@ import 'package:fl_clash/ui/shape.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter/scheduler.dart';
 
 import 'header_blur.dart';
 import 'inherited.dart';
-import 'liquid_glass.dart';
+import 'sheet.dart';
 
 class SheetDragHandle extends StatelessWidget {
   const SheetDragHandle({super.key});
@@ -111,6 +110,8 @@ class FloatingHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final sheet = SheetProvider.of(context)?.type;
+    if (sheet != null && sheet != SheetType.page) return child;
     return Stack(
       clipBehavior: Clip.none,
       children: [
@@ -143,9 +144,8 @@ class FloatingHeader extends StatelessWidget {
   }
 }
 
-/// Floats [header] over [body], fading it out so content reads through it
-/// as it scrolls past; [footer] sits on its own surface.
-class FloatingHeaderBody extends StatefulWidget {
+/// Floats [header] over [body]; [footer] sits on its own surface.
+class FloatingHeaderBody extends StatelessWidget {
   const FloatingHeaderBody({
     super.key,
     required this.backgroundColor,
@@ -160,67 +160,15 @@ class FloatingHeaderBody extends StatefulWidget {
   final Widget? footer;
 
   @override
-  State<FloatingHeaderBody> createState() => _FloatingHeaderBodyState();
-}
-
-class _FloatingHeaderBodyState extends State<FloatingHeaderBody> {
-  bool _scrolledUnder = false;
-  bool _pendingScrolledUnder = false;
-  bool _scrollUpdateScheduled = false;
-
-  void _updateScroll(ScrollMetrics metrics) {
-    if (metrics.axis != Axis.vertical) return;
-    _pendingScrolledUnder = metrics.extentBefore > 0;
-    if (_scrollUpdateScheduled || _scrolledUnder == _pendingScrolledUnder)
-      return;
-    if (SchedulerBinding.instance.schedulerPhase !=
-        SchedulerPhase.persistentCallbacks) {
-      setState(() => _scrolledUnder = _pendingScrolledUnder);
-      return;
-    }
-    _scrollUpdateScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _scrollUpdateScheduled = false;
-      if (!mounted || _scrolledUnder == _pendingScrolledUnder) return;
-      setState(() => _scrolledUnder = _pendingScrolledUnder);
-    });
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final enabled = LiquidGlassScope.of(context);
-    final glass = enabled && !MediaQuery.highContrastOf(context);
     return Stack(
       children: [
-        NotificationListener<ScrollNotification>(
-          onNotification: (notification) {
-            if (notification.depth == 0) _updateScroll(notification.metrics);
-            return false;
-          },
-          child: NotificationListener<ScrollMetricsNotification>(
-            onNotification: (notification) {
-              if (notification.depth == 0) _updateScroll(notification.metrics);
-              return false;
-            },
-            child: ScrollConfiguration(
-              behavior: const ShowBarScrollBehavior(),
-              child: widget.body,
-            ),
-          ),
+        ScrollConfiguration(
+          behavior: const ShowBarScrollBehavior(),
+          child: body,
         ),
-        Positioned(
-          top: 0,
-          left: 0,
-          right: 0,
-          child: FloatingHeader(
-            backgroundColor: widget.backgroundColor,
-            blur: enabled,
-            liquidGlass: glass,
-            showBackground: !glass || _scrolledUnder,
-            child: widget.header,
-          ),
-        ),
-        if (widget.footer != null)
+        Positioned(top: 0, left: 0, right: 0, child: header),
+        if (footer != null)
           Positioned(
             bottom: 0,
             left: 0,
@@ -228,7 +176,7 @@ class _FloatingHeaderBodyState extends State<FloatingHeaderBody> {
             child: SheetOverhangLift(
               child: Material(
                 type: MaterialType.transparency,
-                child: widget.footer,
+                child: footer,
               ),
             ),
           ),

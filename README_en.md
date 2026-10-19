@@ -19,8 +19,8 @@ Aerove is an independent fork of [FlClash](https://github.com/chen08209/FlClash)
 
 ### Sheets, scrolling, and wallpaper motion
 
-- Bottom, snap, side, and form sheets open without dimming the page. Tapping outside still closes a sheet, and the open sheet prevents taps from reaching controls below it.
-- A glass header stays clear until content scrolls underneath; then one gradient glass layer appears and the text below remains visible. Covered areas pause their live light effects but still show a soft, blurred view of the text, icons, and interface. The glass boundary blends more smoothly and reduces sudden color patches while scrolling.
+- Bottom, snap, side, and form sheets no longer add a separate gradient blur overlay at the top. Their titles, drag handles, standalone glass buttons, and glass sheet surfaces remain. The page is not dimmed; tapping outside still closes a sheet, and taps do not reach controls below it.
+- The main page still has gradient glass at the top. Fully covered areas pause the live effects beneath them, while blurred text, icons, and interface remain visible through the glass and its translucent transition. Glass edges blend more smoothly, reducing sudden color patches while scrolling.
 - If taking a screenshot briefly makes the app inactive, the current image stays on screen to avoid a black flash during the screenshot. When the app goes to the background, wallpaper motion pauses; returning to the foreground first shows the saved image, then resumes the animation.
 - The wallpaper background updates 30 times per second while idle and 15 times per second during scrolling or interaction; this changes background updates only and does not limit page scrolling.
 - Scrolling down narrows the bottom dock; icons stay the same size while labels fade out. Scrolling up, returning to the top, or changing pages restores the full dock.
