@@ -485,7 +485,10 @@ void main() {
           await tester.pump();
           expect(skeletons, findsOneWidget);
           SizeTransition transition() => tester.widget<SizeTransition>(
-            find.descendant(of: skeletons, matching: find.byType(SizeTransition)),
+            find.descendant(
+              of: skeletons,
+              matching: find.byType(SizeTransition),
+            ),
           );
           expect(transition().sizeFactor.value, 0);
           await tester.pump(const Duration(milliseconds: 70));
@@ -543,11 +546,7 @@ void main() {
   ) async {
     await pumpList(
       tester,
-      groups: [
-        _group('G0', 4),
-        _group('G1', 4),
-        _group('G2', 60),
-      ],
+      groups: [_group('G0', 4), _group('G1', 4), _group('G2', 60)],
       unfoldSet: {},
       selectedMap: {'G2': 'G2-45'},
     );

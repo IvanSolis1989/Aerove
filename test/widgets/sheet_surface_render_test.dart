@@ -278,14 +278,14 @@ Future<Uint8List> _checkCorners(
       .shape
       .getOuterPath(rect);
   expect(find.byType(AnimatedModalBarrier), findsNothing);
-  final route = ModalRoute.of(
-    tester.element(find.byType(SheetSurface).first),
-  )!;
+  final route = ModalRoute.of(tester.element(find.byType(SheetSurface).first))!;
   expect(route, isA<SnapSheetRoute<dynamic>>());
   expect(route.barrierDismissible, isTrue);
   expect(route.barrierColor?.a ?? 0, 0);
-  final barrierFinder = find.byWidgetPredicate((widget) =>
-    widget is ModalBarrier && widget.semanticsLabel == route.barrierLabel &&
+  final barrierFinder = find.byWidgetPredicate(
+    (widget) =>
+        widget is ModalBarrier &&
+        widget.semanticsLabel == route.barrierLabel &&
         widget.onDismiss != null,
   );
   expect(barrierFinder, findsOneWidget);

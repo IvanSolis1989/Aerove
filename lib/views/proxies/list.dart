@@ -282,6 +282,7 @@ class _ProxiesListViewState extends ConsumerState<ProxiesListView> {
                 flushFolded();
                 return slivers;
               }
+
               final barInset = context.appBarInset;
               return CommonScrollBar(
                 controller: _controller,
@@ -297,9 +298,7 @@ class _ProxiesListViewState extends ConsumerState<ProxiesListView> {
                         horizontal: _groupInset,
                       ),
                       sliver: groupColumns == 1
-                          ? SliverMainAxisGroup(
-                              slivers: buildColumn(0),
-                            )
+                          ? SliverMainAxisGroup(slivers: buildColumn(0))
                           : SliverCrossAxisGroup(
                               slivers: [
                                 for (
@@ -439,7 +438,8 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
   double _rowExtent = 0;
   late final _controller = AnimationController(
     vsync: this,
-    value: !widget.animateOnMount &&
+    value:
+        !widget.animateOnMount &&
             ref.read(unfoldSetProvider).contains(widget.group.name)
         ? 1
         : 0,
