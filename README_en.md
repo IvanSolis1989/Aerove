@@ -16,12 +16,14 @@ Aerove is an independent fork of [FlClash](https://github.com/chen08209/FlClash)
 - Light/dark mode can follow the system or be selected manually. Font choices come from fonts installed on the device; Aerove does not include MiSans.
 - Dashboards, proxy groups, cards, buttons, selectors, fields, navigation bars, menus, popups, the editor, and forms use coordinated background, text, icon, status, and touch-feedback colors. Devices without full glass support show a simpler frosted appearance.
 - When several glass panels show the same background, the effect looks consistent across them and avoids repeating the same background work for each panel.
+- The About page title is fully visible without being clipped vertically.
+- App rows and dots in the memory card also follow the wallpaper colors, while Core keeps its distinct color.
 
 ### Sheets, scrolling, and wallpaper motion
 
 - Bottom, snap, side, and form sheets no longer add a separate gradient blur overlay at the top. Their titles, drag handles, standalone glass buttons, and glass sheet surfaces remain. The page is not dimmed; tapping outside still closes a sheet, and taps do not reach controls below it.
 - The main page still has gradient glass at the top. Fully covered areas pause the live effects beneath them, while blurred text, icons, and interface remain visible through the glass and its translucent transition. Glass edges blend more smoothly, reducing sudden color patches while scrolling.
-- If taking a screenshot briefly makes the app inactive, the current image stays on screen to avoid a black flash during the screenshot. When the app goes to the background, wallpaper motion pauses; returning to the foreground first shows the saved image, then resumes the animation.
+- Wallpaper light and shadow movement is more noticeable. If taking a screenshot briefly makes the app inactive, the current image stays on screen to avoid a black flash during the screenshot. When the app goes to the background, wallpaper motion pauses; returning to the foreground first shows the saved image, then resumes the animation.
 - The wallpaper background updates 30 times per second while idle and 15 times per second during scrolling or interaction; this changes background updates only and does not limit page scrolling.
 - Scrolling down narrows the bottom dock; icons stay the same size while labels fade out. Scrolling up, returning to the top, or changing pages restores the full dock.
 - The proxy-list scrollbar hides when scrolling stops and shows a position hint while dragging.
@@ -29,7 +31,7 @@ Aerove is an independent fork of [FlClash](https://github.com/chen08209/FlClash)
 ### Proxies, records, and subscription usage
 
 - Proxy-group edges align with pinned headers, reducing jagged edges and abrupt color patches while scrolling. Group-name emoji do not repeat beside the group icon; the active exit can show a country/region flag.
-- When many groups stay collapsed, only titles near the screen are prepared, reducing waits while scrolling long lists. Group entries appear when expanded, and expand/collapse animations remain.
+- When many groups stay collapsed, only titles near the screen are prepared, reducing waits while scrolling long lists. Group entries appear when expanded, and expand/collapse animations remain. Groups share node information, only a few likely icons load in advance, and off-screen items do not wait in a loading queue. If the system reclaims memory, the glass effect restores automatically when you return to the app.
 - Connection details use consistent title, value, unit, and secondary-text levels for endpoints, rules, proxy chains, and traffic. The dashboard centers on the active outbound. DNS, request, and connection records retain their upstream data and appear with Aerove's colors and styling.
 - When valid quota data is available, subscription usage shows a translucent light-blue fill, percentage, and inset curved edge. Warning colors change near or above the limit. The fill is hidden when quota data is unavailable.
 
@@ -43,7 +45,7 @@ Aerove is an independent fork of [FlClash](https://github.com/chen08209/FlClash)
 ### Aerove identity, platforms, and releases
 
 - Android uses Aerove regular, round, TV, and monochrome icons. Notifications show the Aerove name, and the system does not force the app into dark mode. Desktop window titles, tray menus, and startup entry points also use Aerove branding.
-- Updates and extends the Spanish, French, and Korean translations. Android packages support ARM64 devices running Android 7.0 or newer; desktop features vary by operating system.
+- Updates and extends the Spanish, French, and Korean translations. On Android, check for updates on the About page; after an update is found, confirm to download the device-appropriate APK through the system download manager. Failed downloads can be retried. Packages support ARM64 devices running Android 7.0 or newer; desktop features vary by operating system.
 - Aerove follows reachable official FlClash stable or `-pre.N` version tags. When the upstream sync check finds no new upstream version, it makes no sync commit; updates to Aerove code can still trigger a build. Upstream changes are validated and merged normally; before release, the build is checked against the current `main`. APK versions append `-X` to the upstream version; the current stable version is `0.9.1-X`. Releases include `BUILD_INFO.json` and `SHA256SUMS`.
 - APKs use Aerove's fixed test signing key and application ID `com.follow.clash.dev`; they are not official FlClash-signed or Google Play packages. Back up your configuration before upgrading. An early test build with a signing conflict may need to be uninstalled first.
 
