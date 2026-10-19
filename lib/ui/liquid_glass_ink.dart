@@ -218,6 +218,7 @@ class LiquidGlassInkLayer extends OffsetLayer {
   bool dark = false;
   ui.FragmentProgram? program;
   ui.FragmentShader? _shader;
+  ui.Picture? _coveragePicture;
   ui.Shader? _effect;
   ui.Image? _filteredField;
   List<double> _uniforms = const [];
@@ -257,6 +258,10 @@ class LiquidGlassInkLayer extends OffsetLayer {
     this.offset = offset;
     if (!changed) return;
     _thaw();
+    if (this.size != size) {
+      _coveragePicture?.dispose();
+      _coveragePicture = null;
+    }
     this.size = size;
     this.strength = strength;
     this.source = source;
@@ -303,6 +308,20 @@ class LiquidGlassInkLayer extends OffsetLayer {
       _field == null ? null : (_field!, _fieldSize, _mapping.clone());
 
   Rect get maskRect => Offset.zero & size;
+
+  ui.Picture? get coveragePicture {
+    if (inkShader == null) return null;
+    if (_coveragePicture case final picture?) return picture;
+    final recorder = ui.PictureRecorder();
+    // Hinted glyph bounds can be tighter than their rasterized pixels.
+    Canvas(recorder).drawRect(
+      maskRect,
+      Paint()
+        ..color = Colors.transparent
+        ..blendMode = BlendMode.src,
+    );
+    return _coveragePicture = recorder.endRecording();
+  }
 
   ui.Shader? get inkShader {
     if (!_filterDirty) return _effect;
@@ -366,6 +385,7 @@ class LiquidGlassInkLayer extends OffsetLayer {
       oldLayer: engineLayer as ui.OffsetEngineLayer?,
     );
     builder.pushShaderMask(effect, maskRect, BlendMode.srcATop);
+    builder.addPicture(Offset.zero, coveragePicture!);
     addChildrenToScene(builder);
     builder
       ..pop()
@@ -375,6 +395,7 @@ class LiquidGlassInkLayer extends OffsetLayer {
   @override
   void dispose() {
     _shader?.dispose();
+    _coveragePicture?.dispose();
     super.dispose();
   }
 }

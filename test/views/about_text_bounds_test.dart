@@ -362,7 +362,7 @@ Future<List<Map<String, Object?>>> _controls(
   final size = paragraph.size;
   final transform = paragraph.getTransformTo(boundary).storage.toList();
   final source = paragraph.text.style!.color!;
-  final text = RichText(
+  final template = RichText(
     text: paragraph.text,
     textAlign: paragraph.textAlign,
     textDirection: paragraph.textDirection,
@@ -383,6 +383,21 @@ Future<List<Map<String, Object?>>> _controls(
     'stock-mask-bounded',
     'runtime-ink-bounded',
   ]) {
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    final text = RichText(
+      text: template.text,
+      textAlign: template.textAlign,
+      textDirection: template.textDirection,
+      softWrap: template.softWrap,
+      overflow: template.overflow,
+      textScaler: template.textScaler,
+      maxLines: template.maxLines,
+      locale: template.locale,
+      strutStyle: template.strutStyle,
+      textWidthBasis: template.textWidthBasis,
+      textHeightBehavior: template.textHeightBehavior,
+    );
     final content = kind.endsWith('-bounded')
         ? CustomPaint(painter: const _CoverageBounds(), child: text)
         : text;
@@ -423,6 +438,7 @@ Future<List<Map<String, Object?>>> _controls(
       ),
     );
     await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull, reason: '$kind phase$phase mount');
     final finder = find.byWidgetPredicate(
       (widget) =>
           widget is RichText && widget.text.toPlainText() == displayAppName,
@@ -463,6 +479,8 @@ Future<List<Map<String, Object?>>> _controls(
         }),
       );
     }
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
   }
   return results;
 }

@@ -1370,6 +1370,10 @@ class _Replay {
         ..add(layer.runtimeType)
         ..add(key);
       saves++;
+      if (layer case LiquidGlassInkLayer(:final coveragePicture?)) {
+        canvas.drawPicture(coveragePicture);
+        drawn.add(coveragePicture);
+      }
     }
     if (_clip(layer)) {
       saves++;
