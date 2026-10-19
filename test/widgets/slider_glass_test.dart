@@ -5,6 +5,7 @@ import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/slider.dart';
 import 'package:fl_clash/ui/theme.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -55,15 +56,18 @@ void main() {
                                 ),
                               ),
                               Center(
-                                child: SizedBox(
-                                  width: 280,
-                                  child: Builder(
-                                    builder: (context) => SliderTheme(
-                                      data: SliderDefaultsM3(context),
-                                      child: GlassSlider(
-                                        child: Slider(
-                                          value: 0.35,
-                                          onChanged: enabled ? (_) {} : null,
+                                child: Material(
+                                  type: MaterialType.transparency,
+                                  child: SizedBox(
+                                    width: 280,
+                                    child: Builder(
+                                      builder: (context) => SliderTheme(
+                                        data: SliderDefaultsM3(context),
+                                        child: GlassSlider(
+                                          child: Slider(
+                                            value: 0.35,
+                                            onChanged: enabled ? (_) {} : null,
+                                          ),
                                         ),
                                       ),
                                     ),
@@ -79,6 +83,7 @@ void main() {
                 ),
               );
               await tester.pumpAndSettle();
+              expect(tester.takeException(), isNull);
               final boundary = tester.renderObject<RenderRepaintBoundary>(
                 find.byKey(capture),
               );
@@ -184,11 +189,16 @@ void main() {
         await tester.pumpAndSettle();
       }
 
+      await render(glass: false);
+      final native = _sliderSemantics(tester);
+      expect(native, hasLength(1));
+      expect(native.single.value, '30 percent');
       await render();
-      expect(
-        tester.getSemantics(find.byType(Slider)).getSemanticsData().value,
-        '30 percent',
-      );
+      final glass = _sliderSemantics(tester);
+      expect(glass, hasLength(1));
+      expect(glass.single.value, native.single.value);
+      expect(glass.single.hasAction(ui.SemanticsAction.increase), isTrue);
+      expect(glass.single.hasAction(ui.SemanticsAction.decrease), isTrue);
       await tester.drag(find.byType(Slider), const Offset(90, 0));
       await tester.pumpAndSettle();
       expect(value, greaterThan(0.3));
@@ -438,6 +448,21 @@ void main() {
       }
     },
   );
+}
+
+List<SemanticsData> _sliderSemantics(WidgetTester tester) {
+  final result = <SemanticsData>[];
+  void visit(SemanticsNode node) {
+    final data = node.getSemanticsData();
+    if (data.hasFlag(ui.SemanticsFlag.isSlider)) result.add(data);
+    node.visitChildren((child) {
+      visit(child);
+      return true;
+    });
+  }
+
+  visit(tester.binding.pipelineOwner.semanticsOwner!.rootSemanticsNode!);
+  return result;
 }
 
 class _SliderGeometry {

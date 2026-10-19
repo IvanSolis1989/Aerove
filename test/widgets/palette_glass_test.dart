@@ -49,9 +49,12 @@ void main() {
                             ),
                           ),
                           Center(
-                            child: SizedBox(
-                              width: 360,
-                              child: Palette(controller: color),
+                            child: Material(
+                              type: MaterialType.transparency,
+                              child: SizedBox(
+                                width: 360,
+                                child: Palette(controller: color),
+                              ),
                             ),
                           ),
                         ],
@@ -95,6 +98,8 @@ void main() {
           });
           await tester.tap(find.text('Sliders'));
           await tester.pumpAndSettle();
+          expect(tester.takeException(), isNull);
+          expect(find.byType(Slider), findsNWidgets(3));
           expect(find.byType(GlassSlider), findsNWidgets(3));
           expect(LiquidGlassHost.debugLastCapture!.panes, hasLength(8));
           final before = color.value;

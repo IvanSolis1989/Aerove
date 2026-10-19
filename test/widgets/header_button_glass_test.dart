@@ -424,9 +424,9 @@ void main() {
                 for (var i = 0; i < actual.length; i += 4)
                   actual.sublist(i, i + 4),
               ];
-              expect(pixels, contains([32, 176, 80, 255]));
-              expect(pixels, contains([208, 48, 160, 255]));
-              expect(pixels, isNot(contains([48, 80, 176, 255])));
+              expect(pixels, contains(equals([32, 176, 80, 255])));
+              expect(pixels, contains(equals([208, 48, 160, 255])));
+              expect(pixels, isNot(contains(equals([48, 80, 176, 255]))));
             } finally {
               filter.filter = original;
               await tester.pump();

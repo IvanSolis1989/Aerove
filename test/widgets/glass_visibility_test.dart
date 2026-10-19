@@ -201,6 +201,17 @@ void _record(String name, Map<String, Object?> data) {
   ).writeAsStringSync(jsonEncode(data));
 }
 
+List<Map<String, Object?>> _inkState(WidgetTester tester) => [
+  for (final layer in tester.layers.whereType<LiquidGlassInkLayer>())
+    {
+      'offset': layer.offset.toString(),
+      'paintBounds': layer.paintBounds.toString(),
+      'size': layer.size.toString(),
+      'frozen': layer.inkFrozen,
+      'field': identityHashCode(layer.debugField?.$1),
+    },
+];
+
 void main() {
   setUpAll(() async {
     if (Platform.environment['XCLASH_REQUIRE_IMPELLER'] == 'true') {
@@ -322,10 +333,17 @@ void main() {
     addTearDown(tester.view.reset);
     await _render(tester, _scene(modal: true));
     final frozen = await _pixels(tester);
+    final frozenState = _inkState(tester);
     final masks = LiquidGlassHost.debugLastInkCapture!.frozenMasks;
     expect(LiquidGlassHost.debugLastCapture!.occludedPanes, 1);
     await _render(tester, _scene(modal: true, phase: 1));
     final moved = await _pixels(tester);
+    _record('freeze-source', {
+      'beforeInk': frozenState,
+      'afterInk': _inkState(tester),
+      'beforeBody': frozen.sublist((30 * 320 + 30) * 4, (30 * 320 + 30) * 4 + 4),
+      'afterBody': moved.sublist((30 * 320 + 30) * 4, (30 * 320 + 30) * 4 + 4),
+    });
     for (var y = 24; y < 72; y++) {
       for (var x = 24; x < 136; x++) {
         final index = (y * 320 + x) * 4;
@@ -399,6 +417,7 @@ void main() {
       _scene(nestedOffset: visible, modal: true, modalRect: cover),
     );
     final frozen = await _pixels(tester);
+    final frozenState = _inkState(tester);
     expect(LiquidGlassHost.debugLastCapture!.occludedPanes, 1);
     await _render(tester, _scene(modal: true, modalRect: cover));
     expect(LiquidGlassHost.debugLastCapture!.skippedPanes, 1);
@@ -411,16 +430,29 @@ void main() {
     final returned = await _pixels(tester);
     expect(LiquidGlassHost.debugLastCapture!.occludedPanes, 1);
     var maximum = 0;
+    var worst = 0;
     for (var y = 32; y < 80; y++) {
       for (var x = 164; x < 256; x++) {
         final index = (y * 320 + x) * 4;
         for (var channel = 0; channel < 4; channel++) {
           final delta = (returned[index + channel] - frozen[index + channel])
               .abs();
-          if (delta > maximum) maximum = delta;
+          if (delta > maximum) {
+            maximum = delta;
+            worst = index + channel;
+          }
         }
       }
     }
+    _record('frozen-reentry-before-assert', {
+      'beforeInk': frozenState,
+      'afterInk': _inkState(tester),
+      'maximum': maximum,
+      'x': worst ~/ 4 % 320,
+      'y': worst ~/ 4 ~/ 320,
+      'beforeBody': frozen.sublist((40 * 320 + 170) * 4, (40 * 320 + 170) * 4 + 4),
+      'afterBody': returned.sublist((40 * 320 + 170) * 4, (40 * 320 + 170) * 4 + 4),
+    });
     expect(
       maximum,
       lessThanOrEqualTo(2),

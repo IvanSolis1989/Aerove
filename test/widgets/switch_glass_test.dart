@@ -203,7 +203,8 @@ void main() {
             isTrue,
           );
           focus.requestFocus();
-          await tester.pump();
+          await tester.pumpAndSettle();
+          expect(focus.hasPrimaryFocus, isTrue);
           final decoration =
               tester
                       .widget<DecoratedBox>(
@@ -217,6 +218,10 @@ void main() {
                       .decoration
                   as ShapeDecoration;
           expect((decoration.shape as OutlinedBorder).side.width, 2);
+          expect(
+            (decoration.shape as OutlinedBorder).side.color,
+            Theme.of(tester.element(find.byType(Switch))).colorScheme.primary,
+          );
           await tester.sendKeyEvent(LogicalKeyboardKey.space);
           await tester.pumpAndSettle();
           expect(changes.last, isFalse);

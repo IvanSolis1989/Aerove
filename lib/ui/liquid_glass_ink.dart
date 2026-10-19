@@ -267,13 +267,13 @@ class LiquidGlassInkLayer extends OffsetLayer {
     final bounds = paintBounds ?? (Offset.zero & size);
     final changed =
         this.size != size ||
-        this.paintBounds != bounds ||
         this.strength != strength ||
         this.source != source ||
         this.contrast != contrast ||
         this.dark != dark ||
         !identical(this.program, program);
     this.offset = offset;
+    this.paintBounds = bounds;
     if (!changed) return;
     _thaw();
     if (this.size != size) {
@@ -281,7 +281,6 @@ class LiquidGlassInkLayer extends OffsetLayer {
       _coveragePicture = null;
     }
     this.size = size;
-    this.paintBounds = bounds;
     this.strength = strength;
     this.source = source;
     alpha = source.a;
