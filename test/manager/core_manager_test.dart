@@ -589,6 +589,29 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets('a dialer loop reported while hidden is shown once on return', (
+    tester,
+  ) async {
+    final coreInterface = _coreInterface();
+    final container = await _pumpCoreManager(tester, coreInterface);
+    container.read(appVisibleProvider.notifier).value = false;
+    for (var i = 0; i < 3; i++) {
+      coreEventManager.sendEvent(
+        const CoreEvent(type: CoreEventType.dialerLoop, data: 'Front'),
+      );
+      await tester.pump();
+      expect(find.textContaining('Front'), findsNothing);
+      await tester.pump(const Duration(seconds: 4));
+    }
+
+    container.read(appVisibleProvider.notifier).value = true;
+    await tester.pump();
+
+    expect(find.textContaining('Front'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('hiding cancels pending delay refresh and resumes groups once', (
     tester,
   ) async {
