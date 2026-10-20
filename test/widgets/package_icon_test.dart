@@ -29,20 +29,14 @@ void main() {
     await icons.delete(recursive: true);
   });
 
-  testWidgets('a package icon decodes at its display size, never above its '
-      'source size', (tester) async {
-    await tester.runAsync(() async {
-      for (final (name, extent) in [('large', 512), ('small', 128)]) {
-        await File(
-          '${icons.path}/$name.png',
-        ).writeAsBytes(await _squarePng(extent));
-      }
-    });
+  testWidgets('a package icon decodes at its display size, never above the '
+      '128 px the platform exports', (tester) async {
+    final iconPath = '${icons.path}/app.png';
+    await tester.runAsync(
+      () async => File(iconPath).writeAsBytes(await _squarePng(128)),
+    );
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(
-          channel,
-          (call) async => '${icons.path}/${call.arguments['packageName']}.png',
-        );
+        .setMockMethodCallHandler(channel, (_) async => iconPath);
 
     await tester.pumpWidget(
       const MediaQuery(
@@ -52,8 +46,8 @@ void main() {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              PackageIcon(packageName: 'large', size: 48),
-              PackageIcon(packageName: 'small', size: 48),
+              PackageIcon(packageName: 'app', size: 24),
+              PackageIcon(packageName: 'app', size: 48),
             ],
           ),
         ),
@@ -73,7 +67,7 @@ void main() {
       await tester.pump();
     }
 
-    expect(widths(), [144, 128]);
+    expect(widths(), [72, 128]);
   });
 }
 
