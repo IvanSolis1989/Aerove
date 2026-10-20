@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:fake_async/fake_async.dart';
 import 'package:fl_clash/common/ip_quality.dart';
 import 'package:fl_clash/common/request.dart';
 import 'package:fl_clash/enum/enum.dart';
@@ -89,27 +90,33 @@ void main() {
 
   final provider = ipQualityProvider(_ip);
 
-  testWidgets('hiding cancels the active wave and stops hedged requests', (
-    tester,
-  ) async {
-    final adapter = _PendingAdapter();
-    final container = build(adapter);
-    container.listen(provider, (_, _) {});
-    await tester.pump();
-    expect(adapter.requests, 3);
+  test('hiding cancels the active wave and stops hedged requests', () {
+    fakeAsync((clock) {
+      final adapter = _PendingAdapter();
+      request.dio.httpClientAdapter = adapter;
+      final container = ProviderContainer();
+      try {
+        container.listen(provider, (_, _) {});
+        clock.elapse(Duration.zero);
+        expect(adapter.requests, 3);
 
-    container.read(appVisibleProvider.notifier).value = false;
-    await tester.pump();
-    await tester.pump(const Duration(seconds: 4));
-    expect(adapter.requests, 3);
-    expect(adapter.cancellations, 3);
+        container.read(appVisibleProvider.notifier).value = false;
+        clock.elapse(Duration.zero);
+        clock.elapse(const Duration(seconds: 4));
+        expect(adapter.requests, 3);
+        expect(adapter.cancellations, 3);
 
-    container.read(appVisibleProvider.notifier).value = true;
-    await tester.pump();
-    expect(adapter.requests, 6);
-    container.read(appVisibleProvider.notifier).value = false;
-    await tester.pump();
-    expect(adapter.cancellations, 6);
+        container.read(appVisibleProvider.notifier).value = true;
+        clock.elapse(Duration.zero);
+        expect(adapter.requests, 6);
+        container.read(appVisibleProvider.notifier).value = false;
+        clock.elapse(Duration.zero);
+        expect(adapter.cancellations, 6);
+      } finally {
+        container.dispose();
+        clock.elapse(const Duration(seconds: 9));
+      }
+    });
   });
 
   test(

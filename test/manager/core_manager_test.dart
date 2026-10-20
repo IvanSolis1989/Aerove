@@ -381,25 +381,32 @@ void main() {
       coreInterface,
       overrides: [proxiesActionProvider.overrideWith(() => action)],
     );
-    container.read(coreStatusProvider.notifier).value = CoreStatus.connected;
-    await tester.pump();
-    coreEventManager.sendEvent(
-      const CoreEvent(type: CoreEventType.loaded, data: 'remote'),
-    );
-    await tester.pump();
-    expect(reads, 1);
-    container.read(appVisibleProvider.notifier).value = false;
-    container.read(appVisibleProvider.notifier).value = true;
-    await tester.pump();
-    first.complete(null);
-    await tester.pump();
+    try {
+      container.read(coreStatusProvider.notifier).value = CoreStatus.connected;
+      await tester.pump(const Duration(milliseconds: 1));
+      coreEventManager.sendEvent(
+        const CoreEvent(type: CoreEventType.loaded, data: 'remote'),
+      );
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(reads, 1);
+      container.read(appVisibleProvider.notifier).value = false;
+      container.read(appVisibleProvider.notifier).value = true;
+      await tester.pump(const Duration(milliseconds: 1));
+      first.complete(null);
+      for (var attempt = 0; attempt < 20 && action.groupReads == 0; attempt++) {
+        await tester.pump(const Duration(milliseconds: 1));
+      }
 
-    expect(reads, 2);
-    expect(action.groupReads, 1);
-    await tester.pump(const Duration(seconds: 30));
-    expect(reads, 2);
-    expect(action.groupReads, 1);
-    await tester.pumpWidget(const SizedBox.shrink());
+      expect(reads, 2);
+      expect(action.groupReads, 1);
+      await tester.pump(const Duration(seconds: 30));
+      expect(reads, 2);
+      expect(action.groupReads, 1);
+    } finally {
+      if (!first.isCompleted) first.complete(null);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(milliseconds: 1));
+    }
   });
 
   testWidgets('hidden UI events leave histories and delay results untouched', (

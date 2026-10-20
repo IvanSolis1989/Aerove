@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:fake_async/fake_async.dart';
 import 'package:fl_clash/common/ip_quality.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
@@ -92,27 +93,45 @@ class _Adapter implements HttpClientAdapter {
 }
 
 void main() {
-  testWidgets('cancelling a lookup settles it without launching later waves', (
-    tester,
-  ) async {
-    final adapter = _Adapter({
-      for (final host in _hosts.values)
-        host: _ok({'ip': _ip, 'type': 'isp'}, const Duration(seconds: 20)),
-    });
-    final dio = Dio()..httpClientAdapter = adapter;
-    addTearDown(dio.close);
-    final token = CancelToken();
-    final result = lookupIpQuality(dio, _ip, cancelToken: token);
-    final cancelled = expectLater(result, throwsA(isA<DioException>()));
-    await tester.pump();
-    expect(adapter.requested, hasLength(3));
+  test('cancelling a lookup settles it without launching later waves', () {
+    fakeAsync((clock) {
+      final adapter = _Adapter({
+        for (final host in _hosts.values)
+          host: _ok({'ip': _ip, 'type': 'isp'}, const Duration(seconds: 20)),
+      });
+      final dio = Dio()..httpClientAdapter = adapter;
+      final token = CancelToken();
+      bool settled = false;
+      Object? failure;
+      final result = lookupIpQuality(dio, _ip, cancelToken: token);
+      unawaited(
+        result.then<void>(
+          (_) {
+            settled = true;
+          },
+          onError: (Object error) {
+            settled = true;
+            failure = error;
+          },
+        ),
+      );
+      try {
+        clock.elapse(Duration.zero);
+        expect(adapter.requested, hasLength(3));
 
-    token.cancel('hidden');
-    await tester.pump();
-    await cancelled;
-    await tester.pump(const Duration(seconds: 4));
-    expect(adapter.requested, hasLength(3));
-    expect(adapter.cancelled, hasLength(3));
+        token.cancel('hidden');
+        clock.elapse(Duration.zero);
+        expect(settled, isTrue);
+        expect(failure, isA<DioException>());
+        clock.elapse(const Duration(seconds: 4));
+        expect(adapter.requested, hasLength(3));
+        expect(adapter.cancelled, hasLength(3));
+      } finally {
+        token.cancel('cleanup');
+        clock.elapse(const Duration(seconds: 20));
+        dio.close(force: true);
+      }
+    });
   });
 
   final samples = <IpQualitySource, (Object, IpQuality)>{

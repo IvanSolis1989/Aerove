@@ -17,6 +17,10 @@ on:
         description: Allow regenerated sources and formatting in the exported patch
         type: boolean
         default: false
+      verification_recheck:
+        description: Recheck test fixes only; ignored when building or publishing an APK
+        type: boolean
+        default: false
       build_apk:
         description: Build the Android arm64 APK after verification
         type: boolean
@@ -174,7 +178,7 @@ jobs:
           flutter test --enable-impeller --reporter expanded test/widgets/glass_foreground_test.dart test/widgets/glass_ink_cache_test.dart test/widgets/glass_ink_quality_test.dart test/widgets/glass_visibility_test.dart test/widgets/glass_body_blur_test.dart test/widgets/target_icon_test.dart test/widgets/selection_mark_test.dart test/widgets/loading_ink_test.dart test/widgets/core_status_button_test.dart test/lint/sheet_scroll_controller_test.dart test/widgets/appbar_actions_test.dart test/widgets/switch_glass_test.dart test/widgets/slider_glass_test.dart test/widgets/segmented_control_glass_test.dart test/widgets/palette_glass_test.dart test/widgets/header_button_glass_test.dart test/manager/status_message_glass_test.dart test/common/changelog_test.dart test/common/request_test.dart test/widgets/update_dialog_test.dart test/l10n/app_localizations_test.dart test/tool/packaging_config_test.dart test/common/protocol_test.dart test/views/dashboard/network_takeover_test.dart test/models/config_test.dart test/providers/config_test.dart test/common/xclash_defaults_test.dart test/manager/android_manager_test.dart test/views/network_config_test.dart test/models/dns_override_test.dart test/common/cidr_test.dart test/common/task_dns_override_test.dart test/common/task_tun_override_test.dart test/providers/state_derived_test.dart test/providers/custom_import_test.dart test/views/dns_view_test.dart test/views/disclaimer_view_test.dart test/common/dialog_test.dart test/widgets/aurora_app_test.dart test/views/theme_test.dart test/views/aurora_settings_test.dart test/providers/action_test.dart test/widgets/aurora_activity_test.dart test/widgets/aurora_lifecycle_test.dart test/manager/core_manager_test.dart test/providers/proxies_action_test.dart test/providers/common_action_test.dart test/providers/ip_quality_test.dart test/common/ip_quality_test.dart test/application_test.dart test/providers/profiles_action_test.dart test/providers/resources_action_test.dart test/providers/system_action_test.dart test/providers/icon_sets_action_test.dart test/providers/clash_providers_action_test.dart test/models/profile_save_test.dart test/providers/updating_action_test.dart test/core/protocol_contract_test.dart
       - name: Verify feather blend pixels
         id: feather
-        if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.analyze.outcome == 'success' && !(github.event_name == 'workflow_dispatch' && inputs.verification_recheck && !inputs.build_apk && !inputs.publish_release) }}
         env:
           XCLASH_REQUIRE_IMPELLER: 'true'
           XCLASH_SCREENSHOT_DIR: ${{ runner.temp }}/xclash-previews/feather
@@ -195,7 +199,7 @@ jobs:
           if-no-files-found: ignore
       - name: Verify reported UI regressions
         id: reported
-        if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.analyze.outcome == 'success' && !(github.event_name == 'workflow_dispatch' && inputs.verification_recheck && !inputs.build_apk && !inputs.publish_release) }}
         env:
           XCLASH_REQUIRE_IMPELLER: 'true'
           XCLASH_SCREENSHOT_DIR: ${{ runner.temp }}/xclash-previews/reported
@@ -288,7 +292,7 @@ jobs:
           path: ${{ runner.temp }}/xclash-previews/performance
           if-no-files-found: ignore
       - name: UI and configuration regressions
-        if: ${{ !cancelled() && steps.analyze.outcome == 'success' && steps.feather.outcome == 'success' && steps.reported.outcome == 'success' && steps.performance.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.analyze.outcome == 'success' && ((github.event_name == 'workflow_dispatch' && inputs.verification_recheck && !inputs.build_apk && !inputs.publish_release) || (steps.feather.outcome == 'success' && steps.reported.outcome == 'success' && steps.performance.outcome == 'success')) }}
         env:
           XCLASH_SCREENSHOT_DIR: ${{ runner.temp }}/xclash-previews
         run: |
