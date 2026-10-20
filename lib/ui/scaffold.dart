@@ -110,30 +110,82 @@ class CommonScaffoldState extends State<CommonScaffold> {
   final _textController = TextEditingController();
   final _searchFocusNode = FocusNode();
   final _headerGlassProgress = ValueNotifier(0.0);
-  double _pendingHeaderGlassProgress = 0;
+  final _pendingHeaderScrolls = <BuildContext, ScrollMetrics>{};
   bool _headerGlassUpdateScheduled = false;
+  BuildContext? _barScroll;
   var _sorting = false;
 
   void _updateHeaderGlass(ScrollMetrics metrics, BuildContext? source) {
     if (metrics.axis != Axis.vertical ||
-        source?.getInheritedWidgetOfExactType<PageActivityScope>()?.isActive ==
+        source == null ||
+        source.getInheritedWidgetOfExactType<PageActivityScope>()?.isActive ==
             false ||
-        source?.findAncestorStateOfType<CommonScaffoldState>() != this)
-      return;
-    _pendingHeaderGlassProgress = (metrics.extentBefore / 24).clamp(0.0, 1.0);
-    if (_headerGlassUpdateScheduled ||
-        _headerGlassProgress.value == _pendingHeaderGlassProgress)
+        !_isHeaderScroll(source))
       return;
     if (SchedulerBinding.instance.schedulerPhase !=
         SchedulerPhase.persistentCallbacks) {
-      _headerGlassProgress.value = _pendingHeaderGlassProgress;
+      _applyHeaderGlass(metrics, source);
       return;
     }
+    // Where the scroll view sits can only be read once layout is done.
+    _pendingHeaderScrolls
+      ..remove(source)
+      ..[source] = metrics;
+    if (_headerGlassUpdateScheduled) return;
     _headerGlassUpdateScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _headerGlassUpdateScheduled = false;
-      if (mounted) _headerGlassProgress.value = _pendingHeaderGlassProgress;
+      final pending = Map.of(_pendingHeaderScrolls);
+      _pendingHeaderScrolls.clear();
+      for (final MapEntry(key: source, value: metrics) in pending.entries) {
+        if (mounted && source.mounted) _applyHeaderGlass(metrics, source);
+      }
     });
+  }
+
+  void _applyHeaderGlass(ScrollMetrics metrics, BuildContext source) {
+    final underBar = _contentUnderBar(metrics, source);
+    if (underBar == null && !identical(source, _barScroll)) return;
+    _barScroll = source;
+    _headerGlassProgress.value = ((underBar ?? 0) / 24).clamp(0.0, 1.0);
+  }
+
+  /// Horizontal scroll views around [source], as a TabBarView, do not count.
+  bool _isHeaderScroll(BuildContext source) {
+    var verticals = 0;
+    var isHeaderScroll = false;
+    source.visitAncestorElements((element) {
+      if (element.widget case Scrollable(axis: Axis.vertical)) {
+        return ++verticals < 2;
+      }
+      if (element case StatefulElement(:final CommonScaffoldState state)) {
+        isHeaderScroll = identical(state, this);
+        return false;
+      }
+      return true;
+    });
+    return isHeaderScroll;
+  }
+
+  /// Null where [source] starts below the bar, as a completion popup does.
+  double? _contentUnderBar(ScrollMetrics metrics, BuildContext source) {
+    final scope = source
+        .getElementForInheritedWidgetOfExactType<FloatingBarScope>();
+    final inset = (scope?.widget as FloatingBarScope?)?.inset ?? 0;
+    if (inset <= 0) return 0;
+    final bar = scope!.findRenderObject();
+    final viewport = source.findRenderObject();
+    if (bar is RenderBox &&
+        viewport is RenderBox &&
+        bar.hasSize &&
+        viewport.hasSize &&
+        viewport.localToGlobal(Offset.zero).dy >
+            bar.localToGlobal(Offset.zero).dy + inset - 1) {
+      return null;
+    }
+    return axisDirectionIsReversed(metrics.axisDirection)
+        ? metrics.extentAfter
+        : metrics.extentBefore;
   }
 
   bool get _isSearch {
@@ -795,16 +847,12 @@ class CommonScaffoldState extends State<CommonScaffold> {
     final barFloats = !isCompact;
     final sortableBody = NotificationListener<ScrollNotification>(
       onNotification: (notification) {
-        if (notification.depth == 0) {
-          _updateHeaderGlass(notification.metrics, notification.context);
-        }
+        _updateHeaderGlass(notification.metrics, notification.context);
         return false;
       },
       child: NotificationListener<ScrollMetricsNotification>(
         onNotification: (notification) {
-          if (notification.depth == 0) {
-            _updateHeaderGlass(notification.metrics, notification.context);
-          }
+          _updateHeaderGlass(notification.metrics, notification.context);
           return false;
         },
         child: SortModeScope(sorting: _sorting, child: widget.body),

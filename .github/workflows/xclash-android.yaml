@@ -211,7 +211,7 @@ jobs:
           tests+=(test/views/about_text_bounds_test.dart)
           tests+=(test/android_tv_launcher_icon_test.dart test/android_branding_assets_test.dart test/widgets/scrollbar_inset_test.dart test/lint/dead_file_test.dart)
           tests+=(test/pages/tablet_sidebar_bounds_test.dart test/widgets/sidebar_test.dart test/widgets/sidebar_glass_test.dart)
-          tests+=(test/widgets/header_button_glass_test.dart test/widgets/sheet_search_test.dart test/manager/status_message_glass_test.dart test/manager/status_manager_test.dart test/widgets/skeleton_test.dart)
+          tests+=(test/widgets/header_button_glass_test.dart test/widgets/header_frame_pages_test.dart test/lint/header_bar_test.dart test/widgets/sheet_search_test.dart test/manager/status_message_glass_test.dart test/manager/status_manager_test.dart test/widgets/skeleton_test.dart)
           tests+=(test/widgets/switch_glass_test.dart test/widgets/slider_glass_test.dart test/widgets/segmented_control_glass_test.dart test/widgets/palette_glass_test.dart test/widgets/palette_test.dart test/views/theme_test.dart test/common/changelog_test.dart test/l10n/app_localizations_test.dart test/tool/packaging_config_test.dart)
           tests+=(test/widgets/glass_visibility_test.dart)
           tests+=(test/common/aurora_rotation_test.dart test/manager/aurora_rotation_test.dart test/providers/store_action_test.dart test/views/aurora_settings_test.dart)

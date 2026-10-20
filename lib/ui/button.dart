@@ -354,7 +354,7 @@ class TonalButtonTheme extends StatelessWidget {
           style: filledFeedback.merge(
             FilledButton.styleFrom(
               backgroundColor: grouped ? fill : null,
-              foregroundColor: grouped || effectiveGlass ? foreground : null,
+              foregroundColor: grouped || paned ? foreground : null,
               disabledBackgroundColor: grouped ? fill : null,
               disabledForegroundColor: grouped ? disabledForeground : null,
               minimumSize: Size.square(size.button),

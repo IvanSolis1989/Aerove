@@ -185,6 +185,7 @@ Widget _app(
   LiquidGlassQuality quality = LiquidGlassQuality.ultra,
   Widget? body,
   Widget? backdrop,
+  List<Widget>? actions,
 }) => TestApp(
   theme: ThemeData(brightness: brightness, platform: TargetPlatform.android),
   child: MediaQuery(
@@ -226,6 +227,7 @@ Widget _app(
                             : null,
                         backgroundColor: glass ? Colors.transparent : null,
                         backAction: back,
+                        actions: actions,
                         selectionActions: [
                           IconButtonData(
                             glyph: AppGlyphs.check,
@@ -927,6 +929,206 @@ void main() {
       controller.dispose();
     }
   });
+
+  for (final brightness in Brightness.values) {
+    testWidgets('a filled bar action reads on the bare plain header '
+        '${brightness.name}', (tester) async {
+      final controller = ScrollController();
+      try {
+        await tester.pumpWidget(
+          _app(
+            controller,
+            () {},
+            () {},
+            glass: false,
+            brightness: brightness,
+            actions: [
+              FilledButton(onPressed: () {}, child: const Text('Import')),
+            ],
+          ),
+        );
+        await tester.pumpAndSettle();
+        final label = tester.renderObject<RenderParagraph>(find.text('Import'));
+        final colorScheme = Theme.of(
+          tester.element(find.text('Import')),
+        ).colorScheme;
+        expect(label.text.style?.color, colorScheme.onSurface);
+        expect(tester.takeException(), isNull);
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+        controller.dispose();
+      }
+    });
+  }
+
+  testWidgets('a list held below the bar never frames its buttons', (
+    tester,
+  ) async {
+    final controller = ScrollController();
+    try {
+      await tester.pumpWidget(
+        _app(
+          controller,
+          () {},
+          () {},
+          body: AppBarClearance(
+            child: ListView.builder(
+              controller: controller,
+              itemCount: 40,
+              itemExtent: 64,
+              itemBuilder: (_, index) => GlassText('Context row $index'),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.drag(find.byType(ListView), const Offset(0, -200));
+      await tester.pumpAndSettle();
+      expect(controller.offset, greaterThan(24));
+      expect(_headerPanes, findsNothing);
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      controller.dispose();
+    }
+  });
+
+  testWidgets('a list starting below the bar leaves the frame to the body', (
+    tester,
+  ) async {
+    final body = ScrollController();
+    final popup = ScrollController();
+    final panel = ValueNotifier(false);
+    double progress() => tester
+        .widget<HeaderButtonGlassScope>(find.byType(HeaderButtonGlassScope))
+        .progress
+        .value;
+    try {
+      await tester.pumpWidget(
+        _app(
+          body,
+          () {},
+          () {},
+          body: Stack(
+            children: [
+              ValueListenableBuilder<bool>(
+                valueListenable: panel,
+                builder: (_, open, list) => Column(
+                  children: [
+                    if (open) const SizedBox(height: 200),
+                    Expanded(child: list!),
+                  ],
+                ),
+                child: ListView.builder(
+                  controller: body,
+                  itemCount: 40,
+                  itemExtent: 64,
+                  itemBuilder: (_, index) => GlassText('Context row $index'),
+                ),
+              ),
+              Positioned(
+                top: 300,
+                left: 40,
+                width: 200,
+                height: 160,
+                child: ListView.builder(
+                  controller: popup,
+                  itemCount: 20,
+                  itemExtent: 40,
+                  itemBuilder: (_, index) => GlassText('Popup row $index'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      body.jumpTo(200);
+      await tester.pumpAndSettle();
+      expect(progress(), 1);
+      popup.jumpTo(80);
+      await tester.pumpAndSettle();
+      popup.jumpTo(0);
+      await tester.pumpAndSettle();
+      expect(progress(), 1);
+      body.jumpTo(0);
+      await tester.pumpAndSettle();
+      popup.jumpTo(80);
+      await tester.pumpAndSettle();
+      expect(progress(), 0);
+      body.jumpTo(200);
+      await tester.pumpAndSettle();
+      expect(progress(), 1);
+      panel.value = true;
+      await tester.pumpAndSettle();
+      expect(progress(), 0);
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      body.dispose();
+      popup.dispose();
+      panel.dispose();
+    }
+  });
+
+  for (final shape in ['reversed', 'tabbed']) {
+    testWidgets('a $shape body frames the header only over content', (
+      tester,
+    ) async {
+      final reversed = shape == 'reversed';
+      final controller = ScrollController();
+      double progress() => tester
+          .widget<HeaderButtonGlassScope>(find.byType(HeaderButtonGlassScope))
+          .progress
+          .value;
+      final list = ListView.builder(
+        controller: controller,
+        reverse: reversed,
+        shrinkWrap: reversed,
+        itemCount: 40,
+        itemExtent: 64,
+        itemBuilder: (_, index) => GlassText('Context row $index'),
+      );
+      try {
+        await tester.pumpWidget(
+          _app(
+            controller,
+            () {},
+            () {},
+            body: reversed
+                ? Align(alignment: Alignment.topCenter, child: list)
+                : DefaultTabController(
+                    length: 2,
+                    child: TabBarView(children: [list, const SizedBox()]),
+                  ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        if (reversed) {
+          controller.jumpTo(controller.position.maxScrollExtent);
+          await tester.pumpAndSettle();
+        }
+        expect(progress(), 0);
+        expect(_headerPanes, findsNothing);
+        await tester.drag(find.byType(ListView), const Offset(0, -200));
+        await tester.pumpAndSettle();
+        expect(progress(), 1);
+        expect(_headerPanes, findsWidgets);
+        await tester.drag(find.byType(ListView), const Offset(0, 400));
+        await tester.pumpAndSettle();
+        expect(progress(), 0);
+        expect(_headerPanes, findsNothing);
+        expect(tester.takeException(), isNull);
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+        controller.dispose();
+      }
+    });
+  }
 
   testWidgets(
     'nested vertical viewports cannot change the outer header background',
