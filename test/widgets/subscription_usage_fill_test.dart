@@ -90,6 +90,23 @@ void _expectDryRim(Uint8List actual, Uint8List empty, {int scale = 1}) {
   }
 }
 
+Future<int> _framesOverASecond(WidgetTester tester) async {
+  var frames = 0;
+  var counting = true;
+  void count(Duration _) {
+    if (!counting) return;
+    frames++;
+    tester.binding.addPostFrameCallback(count);
+  }
+
+  tester.binding.addPostFrameCallback(count);
+  for (var step = 0; step < 60; step++) {
+    await tester.pump(const Duration(milliseconds: 16));
+  }
+  counting = false;
+  return frames;
+}
+
 Future<Uint8List> _snapshot(
   WidgetTester tester,
   String name, {
@@ -504,9 +521,11 @@ void main() {
             edgeAt(36),
             mode == LiquidGlassMode.none ? edgeAt(80) : greaterThan(edgeAt(80)),
           );
-          if (mode != LiquidGlassMode.none) {
-            expect(LiquidGlassHost.debugLastCapture!.panes, isNotEmpty);
-          }
+          expect(
+            LiquidGlassHost.debugLastCapture?.panes ?? const [],
+            isEmpty,
+            reason: 'the liquid tints the card instead of adding a glass pane',
+          );
 
           await _pump(
             tester,
@@ -570,7 +589,7 @@ void main() {
               const SubscriptionInfo(download: 92, total: 100),
               'warning',
               colors.warning,
-              0.16,
+              brightness == Brightness.dark ? 0.18 : 0.16,
             ),
           ]) {
             await _pump(tester, brightness: brightness, mode: mode, info: info);
@@ -735,7 +754,8 @@ void main() {
           }
         }
         expect(tester.takeException(), isNull);
-        for (final capture in LiquidGlassHost.debugLastCapture!.panes) {
+        for (final capture
+            in LiquidGlassHost.debugLastCapture?.panes ?? const []) {
           expect(capture.pane.isFinite, isTrue);
           expect(capture.pane.width, greaterThan(0));
           expect(capture.pane.height, greaterThan(0));
@@ -903,7 +923,7 @@ void main() {
           ),
         );
         await tester.pump(const Duration(milliseconds: 100));
-        expect(tester.binding.hasScheduledFrame, isTrue);
+        expect(await _framesOverASecond(tester), inInclusiveRange(10, 20));
         final cachedState = tester.state(find.byType(SubscriptionUsageFill));
         controller.jumpTo(300);
         await tester.pump(const Duration(milliseconds: 100));
@@ -918,11 +938,11 @@ void main() {
           find.byKey(const ValueKey('cachedLiquidCard'), skipOffstage: false),
           findsOneWidget,
         );
-        expect(tester.binding.hasScheduledFrame, isFalse);
+        expect(await _framesOverASecond(tester), 0);
         controller.jumpTo(0);
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 100));
-        expect(tester.binding.hasScheduledFrame, isTrue);
+        expect(await _framesOverASecond(tester), inInclusiveRange(10, 20));
         expect(
           tester.state(find.byType(SubscriptionUsageFill)),
           same(cachedState),

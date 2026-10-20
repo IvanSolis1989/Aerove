@@ -1,10 +1,10 @@
 import 'dart:math' as math;
 
 import 'package:fl_clash/models/models.dart';
+import 'package:fl_clash/ui/frame_pacer.dart';
 import 'package:fl_clash/ui/ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:intl/intl.dart' show NumberFormat;
 import 'package:material_ui/material_ui.dart';
 
@@ -91,16 +91,13 @@ class SubscriptionUsageFill extends StatefulWidget {
 }
 
 class _SubscriptionUsageFillState extends State<SubscriptionUsageFill>
-    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
-  static const _interval = Duration(microseconds: 33333);
-
-  late final Ticker _ticker;
+    with WidgetsBindingObserver {
+  late final _pacer = FramePacer(_advance, framesPerSecond: 15);
   late final ValueNotifier<Duration> _time;
   _UsageFillRender? _render;
   ScrollPosition? _position;
   bool _visibilityCheckScheduled = false;
   Duration _base = Duration.zero;
-  Duration _lastTick = Duration.zero;
   bool _foreground = true;
 
   @override
@@ -111,16 +108,15 @@ class _SubscriptionUsageFillState extends State<SubscriptionUsageFill>
       _ => false,
     };
     _time = ValueNotifier(widget.motionTime ?? Duration.zero);
-    _ticker = createTicker((elapsed) {
-      if (_render?.visible != true) {
-        _ticker.stop();
-        return;
-      }
-      if (elapsed - _lastTick < _interval) return;
-      _lastTick = elapsed;
-      _time.value = _base + elapsed;
-    });
     WidgetsBinding.instance.addObserver(this);
+  }
+
+  void _advance(Duration elapsed) {
+    if (_render?.visible != true) {
+      _pacer.stop();
+      return;
+    }
+    _time.value = _base + elapsed;
   }
 
   bool get _moving {
@@ -139,12 +135,11 @@ class _SubscriptionUsageFillState extends State<SubscriptionUsageFill>
 
   void _syncTicker() {
     final moving = mounted && _moving && _render?.visible == true;
-    if (moving && !_ticker.isActive) {
+    if (moving && !_pacer.isActive) {
       _base = _time.value;
-      _lastTick = Duration.zero;
-      _ticker.start();
-    } else if (!moving && _ticker.isActive) {
-      _ticker.stop();
+      _pacer.start();
+    } else if (!moving && _pacer.isActive) {
+      _pacer.stop();
     }
   }
 
@@ -194,7 +189,7 @@ class _SubscriptionUsageFillState extends State<SubscriptionUsageFill>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _position?.removeListener(_scrollChanged);
-    _ticker.dispose();
+    _pacer.dispose();
     _time.dispose();
     super.dispose();
   }
@@ -263,16 +258,20 @@ class _UsageFillBackground extends LeafRenderObjectWidget {
       render.update(this);
 }
 
+/// The liquid tints the card's own frost rather than glazing it again.
+double _liquidAlphaOf(_UsageFillBackground settings) => settings.used >= 0.9
+    ? (settings.dark ? 0.18 : 0.16)
+    : (settings.dark ? 0.075 : 0.08);
+
 class _UsageFillRender extends RenderBox {
   _UsageFillRender(this.settings);
 
   _UsageFillBackground settings;
-  late final _pane = LiquidGlassPane(markNeedsPaint);
 
   bool get visible {
     if (!attached || !hasSize || size.isEmpty) return false;
     final viewport = RenderAbstractViewport.maybeOf(this);
-    if (viewport case RenderBox viewportBox) {
+    if (viewport case final RenderBox viewportBox) {
       return MatrixUtils.transformRect(
         getTransformTo(viewportBox),
         paintBounds,
@@ -295,9 +294,6 @@ class _UsageFillRender extends RenderBox {
   bool get sizedByParent => true;
 
   @override
-  bool get alwaysNeedsCompositing => settings.glass;
-
-  @override
   Size computeDryLayout(BoxConstraints constraints) => constraints.biggest;
 
   @override
@@ -313,21 +309,11 @@ class _UsageFillRender extends RenderBox {
   }
 
   @override
-  void dispose() {
-    _pane.dispose();
-    super.dispose();
-  }
-
-  @override
   void paint(PaintingContext context, Offset offset) {
     settings.onPaint(this);
-    if (settings.level <= 0 || size.isEmpty) {
-      _pane.clear();
-      return;
-    }
+    if (settings.level <= 0 || size.isEmpty) return;
     final color = settings.color;
     if (!settings.glass) {
-      _pane.clear();
       final level = size.width * settings.level;
       context.canvas.drawRect(
         Rect.fromLTWH(
@@ -365,18 +351,9 @@ class _UsageFillRender extends RenderBox {
       path,
       cavityOutline.shift(Offset(settings.rtl ? width - cavity.width : 0, 0)),
     );
-    _pane.paint(
-      context,
-      origin & Size(width, cavity.height),
-      shape: LiquidGlassOutline(liquid),
-      style: LiquidGlassStyle(
-        tint: color.withValues(alpha: settings.used >= 0.9 ? 0.16 : 0.07),
-        blur: 0.7,
-        refraction: 3,
-        bevel: 2.5,
-        rim: 0.04,
-        rimWidth: 0.6,
-      ),
+    context.canvas.drawPath(
+      liquid.shift(origin),
+      Paint()..color = color.withValues(alpha: _liquidAlphaOf(settings)),
     );
     if (surface.depth > 0) {
       context.canvas
