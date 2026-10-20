@@ -395,6 +395,10 @@ class _IpChips extends StatelessWidget {
   }
 }
 
+// The flag spans this much of the badge, so the bubble's widest wobble and
+// rebound reach at most 95% of it.
+const _flagCover = 0.92;
+
 class _CountryBadge extends StatefulWidget {
   const _CountryBadge({
     required this.countryCode,
@@ -435,6 +439,17 @@ class _CountryBadgeState extends State<_CountryBadge> {
       foreground.withValues(alpha: enabled && _hovered ? 0.08 : 0),
       DashboardColors.of(context).tone2,
     );
+    final finish = OutboundFinish.of(context);
+    final glass = finish != OutboundFinish.solid;
+    final highContrast = MediaQuery.highContrastOf(context);
+    final shadow = highContrast || finish == OutboundFinish.clear
+        ? Colors.transparent
+        : colorScheme.shadow.withValues(
+            alpha: finish == OutboundFinish.solid ? 0.22 : 0.14,
+          );
+    final rim = Colors.white.withValues(
+      alpha: colorScheme.brightness == Brightness.dark ? 0.32 : 0.6,
+    );
     return Tooltip(
       message: tooltip,
       child: Semantics(
@@ -453,28 +468,48 @@ class _CountryBadgeState extends State<_CountryBadge> {
                 !context.disableAnimations &&
                 !MediaQuery.highContrastOf(context),
             child: OutboundBubble(
-              size: size,
               checking: widget.checking,
-              well: well,
-              tint: widget.active
-                  ? colorScheme.primary
-                  : colorScheme.onSurfaceVariant,
-              finish: OutboundFinish.of(context),
-              ring: _focused ? focusRingSide(colorScheme) : null,
+              builder: (_, time, wobble, child) => SizedBox.square(
+                dimension: size,
+                child: CustomPaint(
+                  painter: OutboundDropletPainter(
+                    time: time,
+                    wobble: wobble,
+                    color: hasFlag ? null : well,
+                    shadow: shadow,
+                    highlight: false,
+                  ),
+                  foregroundPainter: OutboundDropletPainter(
+                    time: time,
+                    wobble: wobble,
+                    color: Colors.transparent,
+                    highlight: !highContrast,
+                    rim: glass ? rim : null,
+                    ring: _focused ? focusRingSide(colorScheme) : null,
+                  ),
+                  child: hasFlag
+                      ? ClipPath(
+                          clipper: OutboundDropletClipper(
+                            time: time,
+                            wobble: wobble,
+                          ),
+                          child: child,
+                        )
+                      : child,
+                ),
+              ),
               child: !hasFlag
-                  ? GlyphIcon(
-                      AppGlyphs.proxies,
-                      size: size * 0.42,
-                      color: foreground,
+                  ? Center(
+                      child: GlyphIcon(
+                        AppGlyphs.proxies,
+                        size: size * 0.42,
+                        color: foreground,
+                      ),
                     )
                   : Semantics(
                       label: code,
                       child: ExcludeSemantics(
-                        child: EmojiText(
-                          flag,
-                          maxLines: 1,
-                          style: AppTextStyle.title1.of(context),
-                        ),
+                        child: EmojiCover(flag, size: size * _flagCover),
                       ),
                     ),
             ),

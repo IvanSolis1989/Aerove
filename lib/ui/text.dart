@@ -130,3 +130,36 @@ class EmojiText extends StatelessWidget {
     );
   }
 }
+
+/// One emoji, such as a flag, scaled so its picture covers a [size] square.
+class EmojiCover extends StatelessWidget {
+  const EmojiCover(this.emoji, {super.key, required this.size});
+
+  static const _twemojiFlagHeightPerFontSize = 0.84;
+  static const _twemojiFlagRisePerFontSize = 0.055;
+
+  final String emoji;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final fontSize = size / _twemojiFlagHeightPerFontSize;
+    return SizedBox.square(
+      dimension: size,
+      child: OverflowBox(
+        maxWidth: double.infinity,
+        maxHeight: double.infinity,
+        child: Transform.translate(
+          offset: Offset(0, fontSize * _twemojiFlagRisePerFontSize),
+          child: MediaQuery.withNoTextScaling(
+            child: EmojiText(
+              emoji,
+              maxLines: 1,
+              style: TextStyle(fontSize: fontSize, height: 1),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

@@ -155,11 +155,9 @@ class OutboundDropletPainter extends CustomPainter {
     required this.color,
     this.shadow = Colors.transparent,
     this.ring,
+    this.rim,
     this.highlight = true,
   });
-
-  static const _shadowOffset = Offset(0, 6);
-  static const _shadowBlur = MaskFilter.blur(BlurStyle.normal, 7);
 
   final double phase;
   final double fullness;
@@ -172,11 +170,13 @@ class OutboundDropletPainter extends CustomPainter {
   final Color? color;
   final Color shadow;
   final BorderSide? ring;
+  final Color? rim;
   final bool highlight;
 
   @override
   void paint(Canvas canvas, Size size) {
     if (size.isEmpty) return;
+    final extent = size.shortestSide;
     final path = _dropletPath(
       size,
       phase: phase,
@@ -199,10 +199,10 @@ class OutboundDropletPainter extends CustomPainter {
       }
       canvas
         ..drawPath(
-          path.shift(_shadowOffset),
+          path.shift(Offset(0, extent * 0.058)),
           Paint()
             ..color = shadow
-            ..maskFilter = _shadowBlur,
+            ..maskFilter = MaskFilter.blur(BlurStyle.normal, extent * 0.067),
         )
         ..restore();
     }
@@ -237,6 +237,15 @@ class OutboundDropletPainter extends CustomPainter {
         }
       }
     }
+    if (rim case final rim?) {
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = rim
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = math.max(1.0, extent * 0.025),
+      );
+    }
     if (ring case final ring?) {
       final unit = _dropletPath(
         const Size.square(1),
@@ -264,6 +273,7 @@ class OutboundDropletPainter extends CustomPainter {
       oldDelegate.color != color ||
       oldDelegate.shadow != shadow ||
       oldDelegate.ring != ring ||
+      oldDelegate.rim != rim ||
       oldDelegate.highlight != highlight;
 
   @override
@@ -275,26 +285,25 @@ final _bubbleSettle = SpringCurve(
   seconds: 0.7,
 );
 
-/// A bubble around [child] that writhes while [checking], then settles.
+/// A bubble that writhes while [checking], then settles; [builder] draws it
+/// from the drift [time] and the skin's [wobble], negative past rest.
 class OutboundBubble extends StatefulWidget {
   const OutboundBubble({
     super.key,
-    required this.size,
     required this.checking,
-    required this.well,
-    required this.tint,
-    required this.finish,
-    this.ring,
-    required this.child,
+    required this.builder,
+    this.child,
   });
 
-  final double size;
   final bool checking;
-  final Color well;
-  final Color tint;
-  final OutboundFinish finish;
-  final BorderSide? ring;
-  final Widget child;
+  final Widget Function(
+    BuildContext context,
+    double time,
+    double wobble,
+    Widget? child,
+  )
+  builder;
+  final Widget? child;
 
   @override
   State<OutboundBubble> createState() => _OutboundBubbleState();
@@ -351,142 +360,14 @@ class _OutboundBubbleState extends State<OutboundBubble>
   @override
   Widget build(BuildContext context) => OutboundDrift(
     moving: widget.checking,
-    builder: (_, phase, child) => AnimatedBuilder(
+    builder: (_, time, child) => AnimatedBuilder(
       animation: _rest,
-      builder: (_, child) => CustomPaint(
-        painter: OutboundBubblePainter(
-          phase: phase,
-          calm: _rest.value,
-          well: widget.well,
-          tint: widget.tint,
-          finish: widget.finish,
-          ring: widget.ring,
-        ),
-        child: child,
-      ),
+      builder: (context, child) =>
+          widget.builder(context, time, 1 - _rest.value, child),
       child: child,
     ),
-    child: SizedBox.square(
-      dimension: widget.size,
-      child: Center(child: widget.child),
-    ),
+    child: widget.child,
   );
-}
-
-class OutboundBubblePainter extends CustomPainter {
-  const OutboundBubblePainter({
-    required this.phase,
-    required this.calm,
-    required this.well,
-    required this.tint,
-    required this.finish,
-    this.ring,
-  });
-
-  static const _sheen = RadialGradient(
-    center: Alignment(-0.35, -0.4),
-    radius: 0.75,
-    colors: [Color(0x80FFFFFF), Color(0x00FFFFFF)],
-  );
-  static const _film = SweepGradient(
-    colors: [
-      Color(0x66FFB3D9),
-      Color(0x6699E6FF),
-      Color(0x66FFF0A0),
-      Color(0x66C9A8FF),
-      Color(0x66FFB3D9),
-    ],
-  );
-
-  final double phase;
-
-  /// 0 while the skin writhes and 1 at rest; the settle overshoots past 1.
-  final double calm;
-  final Color well;
-  final Color tint;
-  final OutboundFinish finish;
-  final BorderSide? ring;
-
-  static Path outline(
-    Size size, {
-    required double phase,
-    required double calm,
-  }) => _dropletPath(size, time: phase, wobble: 1 - calm);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (size.isEmpty) return;
-    final bounds = Offset.zero & size;
-    final path = outline(size, phase: phase, calm: calm);
-    canvas.drawPath(path, _fill(well));
-    switch (finish) {
-      case OutboundFinish.solid:
-        canvas
-          ..drawPath(path, _fill(tint.withValues(alpha: 0.3)))
-          ..drawPath(path, Paint()..shader = _sheen.createShader(bounds));
-      case OutboundFinish.frost:
-        canvas
-          ..drawPath(path, _fill(tint.withValues(alpha: 0.16)))
-          ..drawPath(path, Paint()..shader = _sheen.createShader(bounds))
-          ..drawPath(path, _stroke(const Color(0x59FFFFFF), 0.8));
-      case OutboundFinish.clear:
-        final rim = math.max(0.8, size.shortestSide * 0.03);
-        canvas
-          ..drawPath(path, _fill(tint.withValues(alpha: 0.05)))
-          ..drawPath(
-            path,
-            _stroke(Colors.white, rim)..shader = _film.createShader(bounds),
-          )
-          ..drawPath(path, _stroke(const Color(0x8CFFFFFF), rim * 0.5));
-    }
-    final edges = path.computeMetrics().iterator;
-    if (edges.moveNext()) {
-      final edge = edges.current;
-      canvas.drawPath(
-        edge.extractPath(edge.length * 0.56, edge.length * 0.7),
-        _stroke(const Color(0xB3FFFFFF), 1.2)..strokeCap = StrokeCap.round,
-      );
-    }
-    if (finish == OutboundFinish.clear) {
-      canvas.drawOval(
-        Rect.fromCenter(
-          center: Offset(size.width * 0.33, size.height * 0.3),
-          width: size.width * 0.12,
-          height: size.height * 0.08,
-        ),
-        _fill(const Color(0xD9FFFFFF)),
-      );
-    }
-    if (ring case final ring?) {
-      final unit = outline(const Size.square(1), phase: phase, calm: calm);
-      canvas
-        ..save()
-        ..scale(size.width, size.height);
-      strokeUnitShape(canvas, unit, size.width, ring);
-      canvas.restore();
-    }
-  }
-
-  @override
-  bool shouldRepaint(OutboundBubblePainter oldDelegate) =>
-      oldDelegate.phase != phase ||
-      oldDelegate.calm != calm ||
-      oldDelegate.well != well ||
-      oldDelegate.tint != tint ||
-      oldDelegate.finish != finish ||
-      oldDelegate.ring != ring;
-
-  @override
-  bool shouldRebuildSemantics(OutboundBubblePainter oldDelegate) => false;
-}
-
-Paint _fill(Color color) => Paint()..color = color;
-
-Paint _stroke(Color color, double width) {
-  return Paint()
-    ..color = color
-    ..style = PaintingStyle.stroke
-    ..strokeWidth = width;
 }
 
 class OutboundDrift extends ConsumerStatefulWidget {
@@ -743,43 +624,96 @@ class OutboundRibbonPainter extends CustomPainter {
     required this.visible,
   });
 
+  /// Each gauze strand as (height, sweep, wave number, wave rate, thickness,
+  /// twist number, twist rate, opacity, offset); their own rates and
+  /// directions keep the layers sliding past one another.
+  static const _strands = [
+    (0.58, 0.15, 5.2, 1.0, 0.12, 3.1, 0.8, 1.0, 0.0),
+    (0.46, 0.11, 6.6, -0.75, 0.075, 4.4, -1.1, 0.7, 2.1),
+    (0.7, 0.09, 4.3, 1.35, 0.06, 2.6, 1.4, 0.55, 4.3),
+  ];
+  static const _samples = 36;
+
   final double phase;
   final bool dark;
   final bool visible;
 
+  static List<(Offset, Offset)> _edges(
+    (double, double, double, double, double, double, double, double, double)
+    strand,
+    double phase,
+  ) {
+    final (height, sweep, wave, rate, thickness, twist, turn, _, offset) =
+        strand;
+    final run = rate * phase;
+    final edges = <(Offset, Offset)>[];
+    for (var index = 0; index <= _samples; index++) {
+      final x = -0.08 + 1.16 * index / _samples;
+      final center =
+          height -
+          0.22 * (x - 0.5) +
+          sweep * math.sin(wave * x - run + offset) +
+          0.35 * sweep * math.sin(1.9 * wave * x + 0.6 * run + 2 * offset);
+      final fold = math.cos(twist * x - turn * phase + offset).abs();
+      final half = thickness * (0.18 + 0.82 * fold);
+      edges.add((Offset(x, center - half), Offset(x, center + half)));
+    }
+    return edges;
+  }
+
+  static void _through(Path path, List<Offset> points) {
+    for (var index = 1; index < points.length - 1; index++) {
+      final mid = Offset.lerp(points[index], points[index + 1], 0.5)!;
+      path.quadraticBezierTo(
+        points[index].dx,
+        points[index].dy,
+        mid.dx,
+        mid.dy,
+      );
+    }
+    path.lineTo(points.last.dx, points.last.dy);
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
     if (!visible || size.isEmpty) return;
-    final drift = math.sin(phase) * 0.035;
-    final fold = math.cos(phase * 0.7) * 0.035;
     canvas
       ..save()
       ..scale(size.width, size.height);
-    for (var layer = 0; layer < 3; layer++) {
-      final shift = (layer - 1) * 0.055;
-      final path = Path()
-        ..moveTo(-0.1, 0.82 + shift + drift)
-        ..cubicTo(0.17, 1.03, 0.31, 0.17 + fold, 0.61, 0.24 + shift)
-        ..cubicTo(0.84, 0.29 - drift, 0.9, 0.95, 1.1, 0.47 + shift)
-        ..cubicTo(0.87, 1.2 + fold, 0.78, 0.55, 0.58, 0.49 + shift)
-        ..cubicTo(0.36, 0.36 - drift, 0.15, 1.2, -0.1, 0.88 + shift)
-        ..close();
-      final opacity = layer == 1 ? 1.0 : 0.45;
+    final bright = dark ? 0.12 : 0.26;
+    final shade = dark ? 0.08 : 0.13;
+    for (final strand in _strands) {
+      final opacity = strand.$8;
+      final edges = _edges(strand, phase);
+      final upper = [for (final (top, _) in edges) top];
+      final lower = [for (final (_, bottom) in edges) bottom].reversed.toList();
+      final band = Path()..moveTo(upper.first.dx, upper.first.dy);
+      _through(band, upper);
+      band.lineTo(lower.first.dx, lower.first.dy);
+      _through(band, lower);
+      band.close();
       canvas.drawPath(
-        path,
+        band,
         Paint()
           ..shader = LinearGradient(
-            begin: const Alignment(-0.7, -1),
-            end: const Alignment(0.7, 1),
             colors: [
               const Color(0xFFD8E4EF).withValues(alpha: 0.02 * opacity),
-              Colors.white.withValues(alpha: (dark ? 0.11 : 0.22) * opacity),
-              const Color(0xFF73859B).withValues(alpha: 0.07 * opacity),
-              Colors.white.withValues(alpha: (dark ? 0.08 : 0.17) * opacity),
-              const Color(0xFF73859B).withValues(alpha: 0.015 * opacity),
+              Colors.white.withValues(alpha: bright * opacity),
+              const Color(0xFF73859B).withValues(alpha: shade * opacity),
+              Colors.white.withValues(alpha: 0.8 * bright * opacity),
+              const Color(0xFF73859B).withValues(alpha: 0.02 * opacity),
             ],
-            stops: const [0, 0.28, 0.48, 0.66, 1],
+            stops: const [0, 0.27, 0.5, 0.72, 1],
           ).createShader(const Rect.fromLTWH(0, 0, 1, 1)),
+      );
+      final sheen = Path()..moveTo(upper.first.dx, upper.first.dy);
+      _through(sheen, upper);
+      canvas.drawPath(
+        sheen,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2 / size.height
+          ..color = Colors.white.withValues(alpha: 1.6 * bright * opacity),
       );
     }
     canvas.restore();

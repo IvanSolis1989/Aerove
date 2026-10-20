@@ -172,8 +172,18 @@ T _painterIn<T extends CustomPainter>(WidgetTester tester, Finder scope) {
   return paint.painter! as T;
 }
 
-OutboundBubblePainter _bubbles(WidgetTester tester) =>
-    _painterIn<OutboundBubblePainter>(tester, _bubble());
+CustomPaint _badge(WidgetTester tester) => tester.widget<CustomPaint>(
+  find.descendant(
+    of: _bubble(),
+    matching: find.byWidgetPredicate(
+      (widget) =>
+          widget is CustomPaint && widget.painter is OutboundDropletPainter,
+    ),
+  ),
+);
+
+OutboundDropletPainter _bubbles(WidgetTester tester) =>
+    _badge(tester).painter! as OutboundDropletPainter;
 
 DashboardChip _chip(WidgetTester tester, String label) =>
     tester.widget<DashboardChip>(
@@ -201,7 +211,7 @@ void main() {
 
   group('the exit address', () {
     for (final density in DashboardDensity.values) {
-      testWidgets('a larger flag fits the existing ${density.name} badge', (
+      testWidgets('the flag fills the ${density.name} badge bubble', (
         tester,
       ) async {
         await tester.pumpWidget(
@@ -216,21 +226,29 @@ void main() {
           (widget) => widget is EmojiText && widget.text == '🇯🇵',
         );
         expect(flag, findsOneWidget);
-        final emoji = tester.widget<EmojiText>(flag);
-        expect(
-          emoji.style!.fontSize! / AppTextStyle.title2.size,
-          inInclusiveRange(1.25, 1.35),
+        final cover = find.descendant(
+          of: _bubble(),
+          matching: find.byType(EmojiCover),
         );
+        expect(find.descendant(of: cover, matching: flag), findsOneWidget);
         final badge = find.descendant(
           of: _bubble(),
           matching: find.byType(OutboundBubble),
         );
         final badgeSize = tester.getSize(badge);
         expect(badgeSize.width, density == DashboardDensity.compact ? 40 : 48);
-        expect(tester.getSize(flag).width, lessThanOrEqualTo(badgeSize.width));
+        expect(tester.getSize(cover), badgeSize);
+        expect(tester.getSize(flag).width, greaterThan(badgeSize.width));
         expect(
-          tester.getSize(flag).height,
-          lessThanOrEqualTo(badgeSize.height),
+          find.ancestor(
+            of: cover,
+            matching: find.byWidgetPredicate(
+              (widget) =>
+                  widget is ClipPath &&
+                  widget.clipper is OutboundDropletClipper,
+            ),
+          ),
+          findsOneWidget,
         );
         expect(find.byTooltip('Retry'), findsOneWidget);
         expect(tester.widget<InkResponse>(_bubble()).onTap, isNotNull);
@@ -366,9 +384,9 @@ void main() {
       expect(find.byType(SkeletonText), findsOneWidget);
       expect(tester.widget<InkResponse>(_bubble()).onTap, isNull);
       final checking = _bubbles(tester);
-      expect(checking.calm, 0);
+      expect(checking.wobble, 1);
       await tester.pump(const Duration(milliseconds: 300));
-      expect(_bubbles(tester).phase, greaterThan(checking.phase));
+      expect(_bubbles(tester).time, greaterThan(checking.time));
 
       quality.complete(_residential);
       await tester.pumpAndSettle();
@@ -377,21 +395,18 @@ void main() {
       expect(find.text('Residential'), findsOneWidget);
       expect(tester.binding.hasScheduledFrame, isFalse);
       final settled = _bubbles(tester);
-      expect(settled.calm, 1);
+      expect(settled.wobble, 0);
       expect(
-        OutboundBubblePainter.outline(
-          const Size.square(48),
-          phase: settled.phase,
-          calm: settled.calm,
-        ).getBounds(),
-        OutboundBubblePainter.outline(
-          const Size.square(48),
-          phase: 0,
-          calm: 1,
-        ).getBounds(),
+        OutboundDropletClipper(
+          time: settled.time,
+          wobble: settled.wobble,
+        ).getClip(const Size.square(48)).getBounds(),
+        const OutboundDropletClipper()
+            .getClip(const Size.square(48))
+            .getBounds(),
       );
       await tester.pump(const Duration(seconds: 1));
-      expect(_bubbles(tester).phase, settled.phase);
+      expect(_bubbles(tester).time, settled.time);
       expect(tester.widget<InkResponse>(_bubble()).onTap, isNotNull);
     });
 
@@ -825,7 +840,13 @@ void main() {
           highContrast: highContrast,
         );
         await tester.pumpAndSettle();
-        expect(_bubbles(tester).finish, finish);
+        final gloss =
+            _badge(tester).foregroundPainter! as OutboundDropletPainter;
+        expect(gloss.rim == null, finish == OutboundFinish.solid);
+        expect(
+          _bubbles(tester).shadow.a > 0,
+          finish != OutboundFinish.clear && !highContrast,
+        );
         final start = droplet(tester);
         expect(start.color == null, finish != OutboundFinish.solid);
         expect(start.shadow.a > 0, finish != OutboundFinish.clear);
