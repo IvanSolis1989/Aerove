@@ -427,6 +427,10 @@ class _OutboundDriftState extends ConsumerState<OutboundDrift>
   bool _foreground = true;
   bool _checkScheduled = false;
 
+  /// Measured only once layout is done: mid build, a card the dashboard
+  /// editor has just moved has no place in its list yet.
+  bool _visible = false;
+
   @override
   void initState() {
     super.initState();
@@ -437,7 +441,7 @@ class _OutboundDriftState extends ConsumerState<OutboundDrift>
     WidgetsBinding.instance.addObserver(this);
   }
 
-  bool get _visible => _render?.visible == true;
+  void _measure() => _visible = _render?.visible == true;
 
   void _runClock(bool run) {
     if (run == (_joined != null)) return;
@@ -452,6 +456,7 @@ class _OutboundDriftState extends ConsumerState<OutboundDrift>
 
   void _advance(Duration now) {
     final joined = _joined;
+    _measure();
     if (joined == null || !_visible) {
       _runClock(false);
       return;
@@ -463,6 +468,7 @@ class _OutboundDriftState extends ConsumerState<OutboundDrift>
 
   void _painted(_OutboundVisibilityRender render) {
     _render = render;
+    _measure();
     _sync();
   }
 
@@ -486,7 +492,9 @@ class _OutboundDriftState extends ConsumerState<OutboundDrift>
     _checkScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkScheduled = false;
-      if (mounted) _sync();
+      if (!mounted) return;
+      _measure();
+      _sync();
     });
   }
 

@@ -139,6 +139,30 @@ void main() {
     await teardown(tester);
   });
 
+  testWidgets('editing while the proxy runs keeps every card in its place', (
+    tester,
+  ) async {
+    seed(const [
+      DashboardWidget.currentOutbound,
+      DashboardWidget.networkSpeed,
+      DashboardWidget.memoryInfo,
+    ]);
+    container.read(runTimeProvider.notifier).value = 1;
+    await pumpDashboard(tester);
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, -200));
+    await tester.pump();
+    await edit(tester);
+
+    expect(find.byType(ErrorWidget), findsNothing);
+    expect(positionOf(tester).maxScrollExtent, lessThan(1400));
+    expect(
+      top(tester, find.byType(CurrentOutboundCard)),
+      lessThan(top(tester, find.byType(NetworkSpeedCard))),
+    );
+
+    await teardown(tester);
+  });
+
   testWidgets('a removed card saves at once, goes out before its room closes '
       'and can come back', (tester) async {
     seed(const [

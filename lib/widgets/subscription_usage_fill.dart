@@ -97,6 +97,10 @@ class _SubscriptionUsageFillState extends State<SubscriptionUsageFill>
   _UsageFillRender? _render;
   ScrollPosition? _position;
   bool _visibilityCheckScheduled = false;
+
+  /// Measured only once layout is done: mid build, a row just moved into a
+  /// list has no place in it yet.
+  bool _visible = false;
   Duration _base = Duration.zero;
   bool _foreground = true;
 
@@ -111,8 +115,11 @@ class _SubscriptionUsageFillState extends State<SubscriptionUsageFill>
     WidgetsBinding.instance.addObserver(this);
   }
 
+  void _measure() => _visible = _render?.visible == true;
+
   void _advance(Duration elapsed) {
-    if (_render?.visible != true) {
+    _measure();
+    if (!_visible) {
       _pacer.stop();
       return;
     }
@@ -134,7 +141,7 @@ class _SubscriptionUsageFillState extends State<SubscriptionUsageFill>
   }
 
   void _syncTicker() {
-    final moving = mounted && _moving && _render?.visible == true;
+    final moving = mounted && _moving && _visible;
     if (moving && !_pacer.isActive) {
       _base = _time.value;
       _pacer.start();
@@ -145,6 +152,7 @@ class _SubscriptionUsageFillState extends State<SubscriptionUsageFill>
 
   void _painted(_UsageFillRender render) {
     _render = render;
+    _measure();
     _syncTicker();
   }
 
@@ -153,7 +161,9 @@ class _SubscriptionUsageFillState extends State<SubscriptionUsageFill>
     _visibilityCheckScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _visibilityCheckScheduled = false;
-      if (mounted) _syncTicker();
+      if (!mounted) return;
+      _measure();
+      _syncTicker();
     });
   }
 
