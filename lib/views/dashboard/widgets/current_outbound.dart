@@ -621,7 +621,11 @@ class _RunTimeValue extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return _CellText(getTimeText(ref.watch(runTimeProvider)));
+    final runTime = ref.watch(runTimeProvider);
+    return InteractionPaced(
+      revision: runTime,
+      builder: (_) => _CellText(getTimeText(runTime)),
+    );
   }
 }
 

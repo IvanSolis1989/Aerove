@@ -153,8 +153,10 @@ class _MemoryInfoState extends ConsumerState<MemoryInfo>
     final mobile = !density.isDesktop;
     final summary = ValueListenableBuilder(
       valueListenable: _memoryStateNotifier,
-      builder: (_, memory, _) =>
-          _MemorySummary(memory: memory, density: density),
+      builder: (_, memory, _) => InteractionPaced(
+        revision: memory,
+        builder: (_) => _MemorySummary(memory: memory, density: density),
+      ),
     );
     return DashboardCard(
       semanticLabel: appLocalizations.memoryInfo,

@@ -3,6 +3,7 @@ export 'chip_title.dart';
 export 'config_item.dart';
 export 'icon.dart';
 export 'input.dart';
+export 'interaction_paced.dart';
 export 'last_update_time_text.dart';
 export 'palette.dart';
 export 'record.dart';

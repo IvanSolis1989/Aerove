@@ -105,6 +105,13 @@ class _GroupDelay extends ConsumerWidget {
     final delay = ref.watch(
       delayProvider(proxyName: group.name, testUrl: group.testUrl),
     );
+    return InteractionPaced(
+      revision: delay,
+      builder: (context) => _delayText(context, delay),
+    );
+  }
+
+  Widget _delayText(BuildContext context, int? delay) {
     if (delay == null) {
       return const SizedBox.shrink();
     }
@@ -161,12 +168,14 @@ class _TimeoutChip extends ConsumerWidget {
         timedOut++;
       }
     }
-    if (timedOut == 0) {
-      return const SizedBox.shrink();
-    }
-    return DashboardChip(
-      label: context.appLocalizations.groupTimeoutCount(timedOut),
-      tone: DashboardChipTone.warn,
+    return InteractionPaced(
+      revision: timedOut,
+      builder: (context) => timedOut == 0
+          ? const SizedBox.shrink()
+          : DashboardChip(
+              label: context.appLocalizations.groupTimeoutCount(timedOut),
+              tone: DashboardChipTone.warn,
+            ),
     );
   }
 }

@@ -115,15 +115,22 @@ class SpeedCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final traffics = ref.watch(trafficsProvider);
+    final total = ref.watch(
+      totalTrafficProvider.select((state) => direction.of(state)),
+    );
+    return InteractionPaced(
+      revision: (traffics, total),
+      builder: (context) => _card(context, traffics, total),
+    );
+  }
+
+  Widget _card(BuildContext context, FixedList<Traffic> traffics, num total) {
     final density = DashboardDensityScope.of(context);
     final compact = density.isCompact;
     final scale = DashboardDensityScope.scaleOf(context);
     final padding = dashboardCardPadding(density);
     final appLocalizations = context.appLocalizations;
-    final traffics = ref.watch(trafficsProvider);
-    final total = ref.watch(
-      totalTrafficProvider.select((state) => direction.of(state)),
-    );
     final current = direction.of(traffics.list.safeLast(const Traffic()));
     final peak = traffics.list.fold<num>(
       0,
@@ -211,6 +218,17 @@ class NetworkSpeedCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final traffics = ref.watch(trafficsProvider);
     final total = ref.watch(totalTrafficProvider);
+    return InteractionPaced(
+      revision: (traffics, total),
+      builder: (context) => _card(context, traffics, total),
+    );
+  }
+
+  Widget _card(
+    BuildContext context,
+    FixedList<Traffic> traffics,
+    Traffic total,
+  ) {
     final latest = traffics.list.safeLast(const Traffic());
     return DashboardCard(
       semanticLabel: context.appLocalizations.networkSpeed,

@@ -195,9 +195,6 @@ class _ServiceStatusCardState extends ConsumerState<ServiceStatusCard>
 
   @override
   Widget build(BuildContext context) {
-    final density = DashboardDensityScope.of(context);
-    final mobile = !density.isDesktop;
-    final appLocalizations = context.appLocalizations;
     final shown = ref
         .watch(enabledServiceTargetsProvider)
         .take(_shownServiceCount)
@@ -212,6 +209,22 @@ class _ServiceStatusCardState extends ConsumerState<ServiceStatusCard>
           shownPhase(state.entryOf(target)),
         ),
     ];
+    final loading = shown.any(state.isLoading);
+    return InteractionPaced(
+      revision: Object.hashAll([for (final service in services) service.check]),
+      builder: (context) => _card(context, shown, services, loading: loading),
+    );
+  }
+
+  Widget _card(
+    BuildContext context,
+    List<ServiceTarget> shown,
+    List<_ServiceView> services, {
+    required bool loading,
+  }) {
+    final density = DashboardDensityScope.of(context);
+    final mobile = !density.isDesktop;
+    final appLocalizations = context.appLocalizations;
     final problems = services.where((service) => service.abnormal).length;
     final verdict = problems > 0
         ? DashboardChip(
@@ -257,7 +270,7 @@ class _ServiceStatusCardState extends ConsumerState<ServiceStatusCard>
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       _CheckAllButton(
-                        loading: shown.any(state.isLoading),
+                        loading: loading,
                         onPressed: () => _services.refresh(shown),
                       ),
                       DashboardIconButton(

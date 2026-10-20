@@ -1200,6 +1200,13 @@ seen. There are three levels of gating:
   for one every vsync even when its callback skips the update, and each of those frames rasterizes the whole scene
   again, glass and ink included. Pacers running together count from one shared grid, so the drift's frames land on
   the wallpaper's instead of between them: idle, both at 15 fps, the dashboard draws 15 frames a second, not up to 30.
+- One interaction signal paces both motion and data: `AuroraMotionActivity.interactionOf` is true while a pointer is
+  down or a page drags, flings or wheel-scrolls, and for 350 ms after. It is tracked whenever the app is in front and
+  its tickers run, the wallpaper off included. The wallpaper (when on) and the dashboard's drift drop from 15 to 10 fps
+  with it, and the dashboard cards wrap their figures in `InteractionPaced` (`lib/widgets/interaction_paced.dart`),
+  which builds every other new value while it holds and the latest the moment it ends. Pacing lives where a card
+  shows a value, never in the provider or poll that produces it, so history pages, totals and other readers keep
+  every update.
 
 A provider's own `ref.listen` delivers nothing while no one listens to that provider. That is the usual state of an
 action notifier, which is only ever read. A derived provider it listens to is never recomputed, and even a `ref.read`

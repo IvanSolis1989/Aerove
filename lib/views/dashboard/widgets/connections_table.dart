@@ -210,7 +210,10 @@ class _ThrottledCountState extends ConsumerState<ThrottledCount> {
   }
 
   @override
-  Widget build(BuildContext context) => widget.builder(context, _count);
+  Widget build(BuildContext context) => InteractionPaced(
+    revision: _count,
+    builder: (context) => widget.builder(context, _count),
+  );
 }
 
 class ConnectionsTableCard extends ConsumerStatefulWidget {
@@ -336,7 +339,10 @@ class _ConnectionsTableCardState extends ConsumerState<ConnectionsTableCard>
                         DashboardFeed.connections,
                         ValueListenableBuilder(
                           valueListenable: connectionCount,
-                          builder: (context, count, _) => _TabCount(count),
+                          builder: (context, count, _) => InteractionPaced(
+                            revision: count,
+                            builder: (_) => _TabCount(count),
+                          ),
                         ),
                       ),
                       segment(
@@ -356,52 +362,59 @@ class _ConnectionsTableCardState extends ConsumerState<ConnectionsTableCard>
                     ],
                   ),
                 ),
-                end: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  spacing: 8,
-                  children: [
-                    if (_feed == DashboardFeed.connections &&
-                        connections.isNotEmpty &&
-                        constraints.maxWidth >= _midTableWidth) ...[
-                      DashboardChip(
-                        label: 'TCP $tcpCount',
-                        tone: DashboardChipTone.idle,
-                      ),
-                      DashboardChip(
-                        label: 'UDP $udpCount',
-                        tone: DashboardChipTone.idle,
-                      ),
+                end: InteractionPaced(
+                  revision: (tcpCount, udpCount),
+                  builder: (_) => Row(
+                    mainAxisSize: MainAxisSize.min,
+                    spacing: 8,
+                    children: [
+                      if (_feed == DashboardFeed.connections &&
+                          connections.isNotEmpty &&
+                          constraints.maxWidth >= _midTableWidth) ...[
+                        DashboardChip(
+                          label: 'TCP $tcpCount',
+                          tone: DashboardChipTone.idle,
+                        ),
+                        DashboardChip(
+                          label: 'UDP $udpCount',
+                          tone: DashboardChipTone.idle,
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
             ),
           ),
           const SizedBox(height: _tableGap),
           Expanded(
-            child: switch (_feed) {
-              DashboardFeed.connections => _Table<TrackerInfo>(
-                key: const ValueKey(DashboardFeed.connections),
-                tableId: 'dashboard.connections',
-                items: connections,
-                rowHeight: rowHeight,
-                columnsOf: (width) => _connectionColumns(context, width),
-              ),
-              DashboardFeed.requests => _Table<TrackerInfo>(
-                key: const ValueKey(DashboardFeed.requests),
-                tableId: 'dashboard.requests',
-                items: _requests,
-                rowHeight: rowHeight,
-                columnsOf: (_) => _requestColumns(context),
-              ),
-              DashboardFeed.dns => _Table<DnsQuery>(
-                key: const ValueKey(DashboardFeed.dns),
-                tableId: 'dashboard.dns',
-                items: _queries,
-                rowHeight: rowHeight,
-                columnsOf: (_) => _dnsColumns(context),
-              ),
-            },
+            child: InteractionPaced(
+              key: ValueKey(_feed),
+              revision: (connections, _requests, _queries),
+              builder: (context) => switch (_feed) {
+                DashboardFeed.connections => _Table<TrackerInfo>(
+                  key: const ValueKey(DashboardFeed.connections),
+                  tableId: 'dashboard.connections',
+                  items: connections,
+                  rowHeight: rowHeight,
+                  columnsOf: (width) => _connectionColumns(context, width),
+                ),
+                DashboardFeed.requests => _Table<TrackerInfo>(
+                  key: const ValueKey(DashboardFeed.requests),
+                  tableId: 'dashboard.requests',
+                  items: _requests,
+                  rowHeight: rowHeight,
+                  columnsOf: (_) => _requestColumns(context),
+                ),
+                DashboardFeed.dns => _Table<DnsQuery>(
+                  key: const ValueKey(DashboardFeed.dns),
+                  tableId: 'dashboard.dns',
+                  items: _queries,
+                  rowHeight: rowHeight,
+                  columnsOf: (_) => _dnsColumns(context),
+                ),
+              },
+            ),
           ),
         ],
       ),

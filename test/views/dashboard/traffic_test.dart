@@ -8,8 +8,10 @@ import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/ui/ui.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
 import 'package:fl_clash/views/dashboard/widgets/traffic.dart';
+import 'package:fl_clash/widgets/aurora.dart' show AuroraMotionActivity;
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -66,6 +68,57 @@ void main() {
       '0 B/s',
       '0 B/s',
     ]);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a scroll shows the speed every other second, then the latest '
+      'at once', (tester) async {
+    await tester.pumpWidget(
+      const TestApp(
+        includeNavigatorKey: false,
+        wrapInProviderScope: true,
+        child: AuroraMotionActivity(enabled: false, child: NetworkSpeedCard()),
+      ),
+    );
+    await tester.pump();
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(NetworkSpeedCard)),
+    );
+    String download() => tester
+        .widgetList<GlassText>(
+          find.byWidgetPredicate(
+            (widget) =>
+                widget is GlassText && widget.inkRole == GlassInkRole.body,
+          ),
+        )
+        .last
+        .textSpan!
+        .toPlainText();
+    Future<void> sample(int kilobytes) async {
+      await tester.pump(const Duration(seconds: 1));
+      container
+          .read(trafficsProvider.notifier)
+          .addTraffic(Traffic(down: kilobytes * 1024));
+      await tester.pump();
+    }
+
+    await sample(1);
+    expect(download(), '1 KB/s');
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byType(NetworkSpeedCard)),
+    );
+    final shown = <String>[];
+    for (var kilobytes = 2; kilobytes <= 6; kilobytes++) {
+      await sample(kilobytes);
+      shown.add(download());
+    }
+    expect(shown, ['1 KB/s', '3 KB/s', '3 KB/s', '5 KB/s', '5 KB/s']);
+    await gesture.up();
+    await tester.pump(const Duration(milliseconds: 349));
+    expect(download(), '5 KB/s');
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(download(), '6 KB/s');
+    expect(container.read(trafficsProvider).list.length, 6);
     expect(tester.takeException(), isNull);
   });
 
