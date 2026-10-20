@@ -42,6 +42,9 @@ void main() {
         ),
       ],
     );
+    addTearDown(container.dispose);
+    container.listen(patchClashConfigProvider, (_, _) {});
+    container.listen(profilesProvider, (_, _) {});
     container
         .read(patchClashConfigProvider.notifier)
         .update(
@@ -59,7 +62,6 @@ void main() {
             dnsOverrideKeys: {},
           ),
         );
-    addTearDown(container.dispose);
     globalState.container = container;
     container
         .read(viewSizeProvider.notifier)

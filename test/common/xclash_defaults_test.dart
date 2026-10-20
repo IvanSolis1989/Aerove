@@ -487,7 +487,7 @@ void main() {
 
   for (final fixture in ['baseline', 'private']) {
     test(
-      'normal profile assembly preserves every script DNS field ($fixture)',
+      'normal profile assembly changes only selected DNS defaults ($fixture)',
       () async {
         await install();
         final config = savedConfig!;
@@ -520,8 +520,20 @@ void main() {
         final finalConfig = loadYaml(result.yaml) as YamlMap;
         expect(finalConfig['dns'], {
           ...dns,
+          'ipv6': true,
+          'fake-ip-range6': xclashDefaultDns.fakeIpRange6,
           'default-nameserver': xclashBootstrapNameservers,
         });
+        for (final key in const [
+          'nameserver',
+          'fallback',
+          'proxy-server-nameserver',
+          'proxy-server-nameserver-policy',
+          'direct-nameserver',
+          'nameserver-policy',
+        ]) {
+          expect(finalConfig['dns'][key], dns[key], reason: key);
+        }
         expect(finalConfig['dns']['nameserver'], isNot(contains('system://')));
       },
     );

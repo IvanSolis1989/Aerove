@@ -302,4 +302,3 @@ localhost
 截图中的开关和值已统一到模型及Android首次预设；本轮深审进一步补齐DNS IPv6、官方IPv6 fake pool、selected最终覆盖、缺失字段/legacy兼容及自动私网排除中的池路由。维持 mips、MTU9000、cubic、ARC、prefer-h3=false、TLS校验、日志级别、自动更新周期及所有既有resolver。
 
 当前证据是源代码、固定Core机制、静态检查与已编写回归；新增模型生成、格式化、分析及相关Flutter测试由CI统一执行，未将独立CIDR算术验证当作生产路径测试通过。真机VPN路由、DNS6、切网及目标运营商吞吐/时延/功耗仍待实测，因此不宣称“全国最优”或“无泄漏”。
-

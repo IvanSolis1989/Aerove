@@ -832,9 +832,20 @@ dns:
           target: 'HK',
         ),
       ]);
+      final importedOverrides =
+          container.read(profileProvider(profileId))!.overrides;
+      expect(importedOverrides.dnsOverrideKeys, {
+        ...xclashDefaultDnsOverrideKeys,
+        DnsOverrideKey.enable,
+      });
+      expect(importedOverrides.dns, xclashDefaultDns);
       expect(
-        container.read(profileProvider(profileId))?.overrides.dnsOverrideKeys,
-        {DnsOverrideKey.enable},
+        importedOverrides.dns.overrideJson(importedOverrides.dnsOverrideKeys),
+        {
+          'enable': true,
+          'ipv6': true,
+          'fake-ip-range6': xclashDefaultDns.fakeIpRange6,
+        },
       );
     });
 
