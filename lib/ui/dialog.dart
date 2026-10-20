@@ -431,11 +431,13 @@ class CommonDialog extends StatelessWidget {
       maxPull: _pressPull,
       panelOf: _surfaceRectIn,
       child: glass
-          ? _AlertGlass(
-              style: LiquidGlassStyle.alert(colorScheme),
-              rim: LiquidGlassRim.alert(colorScheme),
-              shadows: glassMenuShadows(colorScheme),
-              child: dialog,
+          ? LiquidGlassBody(
+              child: _AlertGlass(
+                style: LiquidGlassStyle.alert(colorScheme),
+                rim: LiquidGlassRim.alert(colorScheme),
+                shadows: glassMenuShadows(colorScheme),
+                child: dialog,
+              ),
             )
           : dialog,
     );

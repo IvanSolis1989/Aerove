@@ -352,54 +352,56 @@ class CommonPopupRoute<T> extends PopupRoute<T> {
   ) {
     final colorScheme = context.colorScheme;
     final glass = LiquidGlassScope.of(context);
-    return Stack(
-      children: [
-        Positioned.fill(child: _buildDismissLayer()),
-        _PopupAnchorTracker(
-          anchorOf: anchorOf,
-          builder: (anchor, safeInsets, child) => CustomSingleChildLayout(
-            delegate: _PopupLayoutDelegate(
-              anchor: anchor,
-              safeInsets: safeInsets,
-              placement: placement,
-              avoid: avoid,
-              pin: _pin,
+    return LiquidGlassBody(
+      child: Stack(
+        children: [
+          Positioned.fill(child: _buildDismissLayer()),
+          _PopupAnchorTracker(
+            anchorOf: anchorOf,
+            builder: (anchor, safeInsets, child) => CustomSingleChildLayout(
+              delegate: _PopupLayoutDelegate(
+                anchor: anchor,
+                safeInsets: safeInsets,
+                placement: placement,
+                avoid: avoid,
+                pin: _pin,
+              ),
+              child: _PopupMorph(
+                anchor: anchor,
+                animation: animation,
+                grow: _grow,
+                moveX: _moveX,
+                moveY: _moveY,
+                content: _content,
+                platter: _platter,
+                sourceColor: sourceColor,
+                sourceImage: sourceImage,
+                surfaceColor: SurfaceLevel.floatingOf(
+                  colorScheme,
+                ).colorOf(colorScheme),
+                shadows: glass
+                    ? glassMenuShadows(colorScheme)
+                    : _cardShadows(colorScheme),
+                glass: glass
+                    ? (
+                        from: LiquidGlassStyle.regular(colorScheme),
+                        to: LiquidGlassStyle.menu(colorScheme),
+                        rim: LiquidGlassRim.menu(colorScheme),
+                      )
+                    : null,
+                child: child,
+              ),
             ),
-            child: _PopupMorph(
-              anchor: anchor,
-              animation: animation,
-              grow: _grow,
-              moveX: _moveX,
-              moveY: _moveY,
-              content: _content,
-              platter: _platter,
-              sourceColor: sourceColor,
-              sourceImage: sourceImage,
-              surfaceColor: SurfaceLevel.floatingOf(
-                colorScheme,
-              ).colorOf(colorScheme),
-              shadows: glass
-                  ? glassMenuShadows(colorScheme)
-                  : _cardShadows(colorScheme),
-              glass: glass
-                  ? (
-                      from: LiquidGlassStyle.regular(colorScheme),
-                      to: LiquidGlassStyle.menu(colorScheme),
-                      rim: LiquidGlassRim.menu(colorScheme),
-                    )
-                  : null,
+            child: NotificationListener<_PopupUnfoldNotification>(
+              onNotification: (_) {
+                _unfolded.value = true;
+                return true;
+              },
               child: child,
             ),
           ),
-          child: NotificationListener<_PopupUnfoldNotification>(
-            onNotification: (_) {
-              _unfolded.value = true;
-              return true;
-            },
-            child: child,
-          ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }

@@ -639,21 +639,23 @@ class CommonScaffoldState extends State<CommonScaffold> {
   }
 
   Widget _buildFootActions(IconButtonData confirmation) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-      child: AlertActions(
-        actions: [
-          TextButton(
-            onPressed: _closeSheet,
-            child: GlassText(UiLocalizations.of(context).cancel),
-          ),
-          TextButton(
-            onPressed: confirmation.isLoading ? null : confirmation.onPressed,
-            child: confirmation.isLoading
-                ? CommonCircleLoading(size: TonalButtonSize.bar.icon)
-                : GlassText(confirmation.tooltip!),
-          ),
-        ],
+    return LiquidGlassBody(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        child: AlertActions(
+          actions: [
+            TextButton(
+              onPressed: _closeSheet,
+              child: GlassText(UiLocalizations.of(context).cancel),
+            ),
+            TextButton(
+              onPressed: confirmation.isLoading ? null : confirmation.onPressed,
+              child: confirmation.isLoading
+                  ? CommonCircleLoading(size: TonalButtonSize.bar.icon)
+                  : GlassText(confirmation.tooltip!),
+            ),
+          ],
+        ),
       ),
     );
   }

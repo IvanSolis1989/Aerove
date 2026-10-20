@@ -144,6 +144,55 @@ void main() {
     });
   }
 
+  testWidgets('the tile a transition carries keeps Standard body glass', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      LiquidGlassScope(
+        enabled: true,
+        quality: LiquidGlassQuality.standard,
+        child: MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 160,
+                height: 80,
+                child: OpenContainer<void>(
+                  closedBuilder: (_, open) => TextButton(
+                    onPressed: open,
+                    child: const Text('Open tile'),
+                  ),
+                  openBuilder: (_, close) => TextButton(
+                    onPressed: close,
+                    child: const Text('Close tile'),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    Finder bodies() => find.ancestor(
+      of: find.text('Open tile', skipOffstage: false),
+      matching: find.byType(LiquidGlassBody),
+    );
+    expect(bodies(), findsNothing);
+    await tester.tap(find.text('Open tile'));
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(bodies(), findsWidgets);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Close tile'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(bodies(), findsWidgets);
+    await tester.pumpAndSettle();
+    expect(bodies(), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('OpenContainer opens, closes, and returns a value', (
     tester,
   ) async {

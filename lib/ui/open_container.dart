@@ -339,18 +339,20 @@ class _OpenContainerRoute<T> extends ModalRoute<T>
           settledColor: glass ? Colors.transparent : theme.canvasColor,
           backdrop: glass ? const LiquidGlassBackdrop() : null,
           closed: _hostsClosed.value
-              ? IgnorePointer(
-                  child: ExcludeFocus(
-                    child: ExcludeSemantics(
-                      child: Material(
-                        type: MaterialType.transparency,
-                        child: Builder(
-                          key: closedBuilderKey,
-                          builder: (BuildContext context) {
-                            // Use dummy "open container" callback
-                            // since we are in the process of opening.
-                            return closedBuilder(context, () {});
-                          },
+              ? LiquidGlassBody(
+                  child: IgnorePointer(
+                    child: ExcludeFocus(
+                      child: ExcludeSemantics(
+                        child: Material(
+                          type: MaterialType.transparency,
+                          child: Builder(
+                            key: closedBuilderKey,
+                            builder: (BuildContext context) {
+                              // Use dummy "open container" callback
+                              // since we are in the process of opening.
+                              return closedBuilder(context, () {});
+                            },
+                          ),
                         ),
                       ),
                     ),
