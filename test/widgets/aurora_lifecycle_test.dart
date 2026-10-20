@@ -60,6 +60,10 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 100));
         final state = key.currentState!;
+        expect(
+          AuroraMotionActivity.rateOf(state.context)!.value,
+          mode == LiquidGlassMode.standard ? 15 : 30,
+        );
         final surfaceState = tester.state(find.byType(AuroraAppSurface));
         final wallpaperState = mode == LiquidGlassMode.none
             ? null

@@ -228,6 +228,9 @@ class _AuroraAppSurfaceState extends ConsumerState<AuroraAppSurface>
       enabled: _foreground,
       child: AuroraMotionActivity(
         enabled: enabled && widget.motion,
+        quality: glassMode == LiquidGlassMode.standard
+            ? LiquidGlassQuality.standard
+            : LiquidGlassQuality.ultra,
         child: Offstage(offstage: !_visible, child: surface),
       ),
     );
@@ -238,10 +241,12 @@ class AuroraMotionActivity extends StatefulWidget {
   const AuroraMotionActivity({
     super.key,
     this.enabled = true,
+    this.quality,
     required this.child,
   });
 
   final bool enabled;
+  final LiquidGlassQuality? quality;
   final Widget child;
 
   static ValueListenable<int>? rateOf(BuildContext context) =>
@@ -255,7 +260,10 @@ class _AuroraMotionActivityState extends State<AuroraMotionActivity>
     with WidgetsBindingObserver {
   static const _idleDelay = Duration(milliseconds: 350);
 
-  final _rate = ValueNotifier(30);
+  int get _idleRate => widget.quality == LiquidGlassQuality.standard ? 15 : 30;
+  int get _activeRate => widget.quality == LiquidGlassQuality.standard ? 10 : 15;
+
+  late final _rate = ValueNotifier(_idleRate);
   final _pointers = <int>{};
   final _scrolls = <BuildContext>{};
   Timer? _idleTimer;
@@ -301,25 +309,29 @@ class _AuroraMotionActivityState extends State<AuroraMotionActivity>
       _idleTimer = null;
       _pointers.clear();
       _scrolls.clear();
-      _rate.value = 30;
+      _rate.value = _idleRate;
+    } else {
+      _rate.value = _pointers.isNotEmpty || _scrolls.isNotEmpty || _idleTimer != null
+          ? _activeRate
+          : _idleRate;
     }
   }
 
   void _activate() {
     _idleTimer?.cancel();
     _idleTimer = null;
-    _rate.value = 15;
+    _rate.value = _activeRate;
   }
 
   void _release() {
-    if (_rate.value == 30 || _pointers.isNotEmpty) return;
+    if (_rate.value == _idleRate || _pointers.isNotEmpty) return;
     _idleTimer?.cancel();
     _idleTimer = Timer(_idleDelay, () {
       _idleTimer = null;
       // Disposed scrollables may never send ScrollEndNotification.
       _scrolls.removeWhere((source) => !source.mounted);
       if (_scrolls.isEmpty) {
-        _rate.value = 30;
+        _rate.value = _idleRate;
       } else {
         _release();
       }

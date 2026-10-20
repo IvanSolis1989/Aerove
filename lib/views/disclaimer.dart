@@ -408,6 +408,32 @@ class _RestateDialogState extends State<_RestateDialog> {
   final _controller = TextEditingController();
   bool _acknowledged = false;
 
+  bool get _glass => LiquidGlassScope.of(context) && !MediaQuery.highContrastOf(context);
+
+  static const _panelGlass = LiquidGlassStyle(
+    tint: Colors.transparent,
+    blur: 16,
+    refraction: 0,
+    bevel: 0,
+    rim: 0.28,
+  );
+
+  Widget _surface(Widget child) => !_glass
+      ? child
+      : LiquidGlass(
+          style: _panelGlass,
+          clipper: const ShapeBorderClipper(shape: AppShape.lg),
+          child: child,
+        );
+
+  ButtonStyle? _actionStyle({bool primary = false}) => !_glass
+      ? null
+      : LiquidGlass.buttonStyle((states) => _panelGlass.copyWith(
+          tint: primary && !states.contains(WidgetState.disabled)
+              ? context.colorScheme.primary.withValues(alpha: 0.16)
+              : Colors.transparent,
+        ));
+
   @override
   void dispose() {
     _controller.dispose();
@@ -415,22 +441,23 @@ class _RestateDialogState extends State<_RestateDialog> {
   }
 
   Widget _buildStatement(String statement) {
-    return DecoratedBox(
+    final style = AppTextStyle.subheadline.of(context).copyWith(height: 1.6);
+    return _surface(DecoratedBox(
       decoration: ShapeDecoration(
-        color: LiquidGlassScope.surfaceColorOf(
-          context,
-          context.raisedSurfaceLevel.colorOf(context.colorScheme),
-        ),
+        color: _glass
+            ? Colors.transparent
+            : context.raisedSurfaceLevel.colorOf(context.colorScheme),
         shape: AppShape.lg,
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: SelectableText(
-          statement,
-          style: AppTextStyle.subheadline.of(context).copyWith(height: 1.6),
+        child: GlassInk(
+          source: style.color ?? context.colorScheme.onSurface,
+          role: GlassInkRole.body,
+          child: SelectableText(statement, style: style),
         ),
       ),
-    );
+    ));
   }
 
   Widget _buildDialog({
@@ -445,12 +472,14 @@ class _RestateDialogState extends State<_RestateDialog> {
       title: title,
       actions: [
         TextButton(
+          style: _actionStyle(),
           onPressed: () {
             Navigator.of(context).pop(false);
           },
           child: GlassText(appLocalizations.cancel),
         ),
         TextButton(
+          style: _actionStyle(primary: true),
           onPressed: canConfirm
               ? () {
                   Navigator.of(context).pop(true);
@@ -510,7 +539,8 @@ class _RestateDialogState extends State<_RestateDialog> {
           tip: appLocalizations.disclaimerRestateTip,
           statement: statement,
           canConfirm: restatement == _Restatement.complete,
-          confirmation: FilledInputTheme(
+          confirmation: _surface(FilledInputTheme(
+            fillColor: _glass ? Colors.transparent : null,
             borderRadius: AppRadius.lg,
             contentPadding: const EdgeInsets.symmetric(
               horizontal: 16,
@@ -527,7 +557,7 @@ class _RestateDialogState extends State<_RestateDialog> {
                     : null,
               ),
             ),
-          ),
+          )),
         );
       },
     );

@@ -45,137 +45,151 @@ void main() {
     expect(builds, originalBuilds);
   });
 
-  testWidgets('wheel and Navigator scroll activity bubble without rebuilding', (
-    tester,
-  ) async {
-    late ValueListenable<int> rate;
-    late BuildContext routeContext;
-    var notifications = 0;
-    final navigator = GlobalKey<NavigatorState>();
-    await tester.pumpWidget(
-      MaterialApp(
-        navigatorKey: navigator,
-        builder: (context, child) => NotificationListener<ScrollNotification>(
-          onNotification: (_) {
-            notifications++;
-            return false;
-          },
-          child: AuroraMotionActivity(child: child!),
-        ),
-        home: const SizedBox.expand(),
-      ),
-    );
-    final route = MaterialPageRoute<void>(
-      builder: (_) => Builder(
-        builder: (context) {
-          routeContext = context;
-          rate = AuroraMotionActivity.rateOf(context)!;
-          return const SizedBox.expand();
-        },
-      ),
-    );
-    navigator.currentState!.push(route);
-    await tester.pumpAndSettle();
-    await tester.sendEventToBinding(
-      const PointerScrollEvent(
-        position: Offset(20, 20),
-        scrollDelta: Offset(0, 40),
-      ),
-    );
-    expect(rate.value, 15);
-    await tester.pump(const Duration(milliseconds: 349));
-    expect(rate.value, 15);
-    final metrics = FixedScrollMetrics(
-      minScrollExtent: 0,
-      maxScrollExtent: 1000,
-      pixels: 40,
-      viewportDimension: 300,
-      axisDirection: AxisDirection.down,
-      devicePixelRatio: 1,
-    );
-    ScrollStartNotification(
-      metrics: metrics,
-      context: routeContext,
-    ).dispatch(routeContext);
-    await tester.pump(const Duration(seconds: 1));
-    expect(rate.value, 15);
-    ScrollUpdateNotification(
-      metrics: metrics,
-      context: routeContext,
-      scrollDelta: 40,
-    ).dispatch(routeContext);
-    ScrollEndNotification(
-      metrics: metrics,
-      context: routeContext,
-    ).dispatch(routeContext);
-    await tester.pump(const Duration(milliseconds: 349));
-    expect(rate.value, 15);
-    await tester.pump(const Duration(milliseconds: 1));
-    expect(rate.value, 30);
-    expect(notifications, 3);
-    ScrollStartNotification(
-      metrics: metrics,
-      context: routeContext,
-    ).dispatch(routeContext);
-    expect(rate.value, 15);
-    navigator.currentState!.removeRoute(route);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 350));
-    expect(rate.value, 30);
-  });
-
-  testWidgets('ballistic scrolling stays active after pointer release', (
-    tester,
-  ) async {
-    late ValueListenable<int> rate;
-    final controller = ScrollController();
-    addTearDown(controller.dispose);
-    await tester.pumpWidget(
-      MaterialApp(
-        home: AuroraMotionActivity(
-          child: Builder(
-            builder: (context) {
-              rate = AuroraMotionActivity.rateOf(context)!;
-              return ListView.builder(
-                controller: controller,
-                itemCount: 200,
-                itemBuilder: (_, index) =>
-                    SizedBox(height: 60, child: Text('$index')),
-              );
+  for (final quality in <LiquidGlassQuality?>[null, LiquidGlassQuality.standard]) {
+    final activeRate = quality == LiquidGlassQuality.standard ? 10 : 15;
+    final idleRate = quality == LiquidGlassQuality.standard ? 15 : 30;
+    testWidgets('wheel and Navigator scroll activity bubble without rebuilding quality=$quality', (
+      tester,
+    ) async {
+      late ValueListenable<int> rate;
+      late BuildContext routeContext;
+      var notifications = 0;
+      final navigator = GlobalKey<NavigatorState>();
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorKey: navigator,
+          builder: (context, child) => NotificationListener<ScrollNotification>(
+            onNotification: (_) {
+              notifications++;
+              return false;
             },
+            child: AuroraMotionActivity(quality: quality, child: child!),
+          ),
+          home: const SizedBox.expand(),
+        ),
+      );
+      final route = MaterialPageRoute<void>(
+        builder: (_) => Builder(
+          builder: (context) {
+            routeContext = context;
+            rate = AuroraMotionActivity.rateOf(context)!;
+            return const SizedBox.expand();
+          },
+        ),
+      );
+      navigator.currentState!.push(route);
+      await tester.pumpAndSettle();
+      await tester.sendEventToBinding(
+        const PointerScrollEvent(
+          position: Offset(20, 20),
+          scrollDelta: Offset(0, 40),
+        ),
+      );
+      expect(rate.value, activeRate);
+      await tester.pump(const Duration(milliseconds: 349));
+      expect(rate.value, activeRate);
+      final metrics = FixedScrollMetrics(
+        minScrollExtent: 0,
+        maxScrollExtent: 1000,
+        pixels: 40,
+        viewportDimension: 300,
+        axisDirection: AxisDirection.down,
+        devicePixelRatio: 1,
+      );
+      ScrollStartNotification(
+        metrics: metrics,
+        context: routeContext,
+      ).dispatch(routeContext);
+      await tester.pump(const Duration(seconds: 1));
+      expect(rate.value, activeRate);
+      ScrollUpdateNotification(
+        metrics: metrics,
+        context: routeContext,
+        scrollDelta: 40,
+      ).dispatch(routeContext);
+      ScrollEndNotification(
+        metrics: metrics,
+        context: routeContext,
+      ).dispatch(routeContext);
+      await tester.pump(const Duration(milliseconds: 349));
+      expect(rate.value, activeRate);
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(rate.value, idleRate);
+      expect(notifications, 3);
+      ScrollStartNotification(
+        metrics: metrics,
+        context: routeContext,
+      ).dispatch(routeContext);
+      expect(rate.value, activeRate);
+      navigator.currentState!.removeRoute(route);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(rate.value, idleRate);
+    });
+
+    testWidgets('ballistic scrolling stays active after pointer release quality=$quality', (
+      tester,
+    ) async {
+      late ValueListenable<int> rate;
+      final controller = ScrollController();
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AuroraMotionActivity(
+            quality: quality,
+            child: Builder(
+              builder: (context) {
+                rate = AuroraMotionActivity.rateOf(context)!;
+                return ListView.builder(
+                  controller: controller,
+                  itemCount: 200,
+                  itemBuilder: (_, index) =>
+                      SizedBox(height: 60, child: Text('$index')),
+                );
+              },
+            ),
           ),
         ),
-      ),
-    );
-    await tester.fling(find.byType(ListView), const Offset(0, -400), 1500);
-    expect(rate.value, 15);
-    await tester.pump(const Duration(milliseconds: 400));
-    expect(controller.position.isScrollingNotifier.value, isTrue);
-    expect(rate.value, 15);
-    for (
-      var frame = 0;
-      frame < 300 && controller.position.isScrollingNotifier.value;
-      frame++
-    ) {
-      await tester.pump(const Duration(milliseconds: 16));
-      expect(rate.value, 15);
-    }
-    expect(controller.position.isScrollingNotifier.value, isFalse);
-    await tester.pump(const Duration(milliseconds: 349));
-    expect(rate.value, 15);
-    await tester.pump(const Duration(milliseconds: 1));
-    expect(rate.value, 30);
-  });
+      );
+      await tester.fling(find.byType(ListView), const Offset(0, -400), 1500);
+      expect(rate.value, activeRate);
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(controller.position.isScrollingNotifier.value, isTrue);
+      expect(rate.value, activeRate);
+      for (
+        var frame = 0;
+        frame < 300 && controller.position.isScrollingNotifier.value;
+        frame++
+      ) {
+        await tester.pump(const Duration(milliseconds: 16));
+        expect(rate.value, activeRate);
+      }
+      expect(controller.position.isScrollingNotifier.value, isFalse);
+      await tester.pump(const Duration(milliseconds: 349));
+      expect(rate.value, activeRate);
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(rate.value, idleRate);
+    });
 
-  for (final refreshRate in [60, 120]) {
+  }
+
+  for (final quality in <LiquidGlassQuality?>[
+    null,
+    LiquidGlassQuality.standard,
+    LiquidGlassQuality.ultra,
+  ]) {
+    for (final refreshRate in [60, 120]) {
     testWidgets(
-      'adaptive cadence preserves the motion clock at $refreshRate Hz',
+      'adaptive cadence preserves the motion clock at $refreshRate Hz quality=$quality',
       (tester) async {
+        final idleRate = quality == LiquidGlassQuality.standard ? 15 : 30;
+        final activeRate = quality == LiquidGlassQuality.standard ? 10 : 15;
         late ValueListenable<int> rate;
         var builds = 0;
         await tester.pumpWidget(
           MaterialApp(
             home: AuroraMotionActivity(
+              quality: quality,
               child: Builder(
                 builder: (context) {
                   builds++;
@@ -215,22 +229,36 @@ void main() {
         Future<int> countPaints() async {
           boundary.debugResetMetrics();
           late Duration end;
+          var lastPaintTime = start;
+          var paints = 0;
           final interval = Duration(
             microseconds: (Duration.microsecondsPerSecond / refreshRate)
                 .round(),
           );
           for (var frame = 0; frame < refreshRate; frame++) {
-            if (frame == refreshRate - 1) {
-              tester.binding.addPostFrameCallback((timestamp) {
-                end = timestamp;
-              });
-            }
+            tester.binding.addPostFrameCallback((timestamp) {
+              end = timestamp;
+            });
             await tester.pump(interval);
+            final painted = boundary.debugSymmetricPaintCount +
+                boundary.debugAsymmetricPaintCount;
+            if (painted > paints) lastPaintTime = end;
+            paints = painted;
           }
+          final sampledTime = quality == LiquidGlassQuality.standard
+              ? lastPaintTime
+              : end;
+          expect(
+            end - lastPaintTime,
+            lessThanOrEqualTo(Duration(
+              microseconds: (Duration.microsecondsPerSecond / rate.value).ceil() +
+                  interval.inMicroseconds,
+            )),
+          );
           final actual = source.getTransformTo(null).storage;
           final expected = AuroraMotion(
             271828,
-          ).at(end - start, const Size(180, 300));
+          ).at(sampledTime - start, const Size(180, 300));
           final angle = math.atan2(actual[1], actual[0]);
           final difference = math.atan2(
             math.sin(angle - expected.angle),
@@ -241,18 +269,18 @@ void main() {
               boundary.debugAsymmetricPaintCount;
         }
 
-        expect(await countPaints(), inInclusiveRange(29, 30));
+        expect(await countPaints(), inInclusiveRange(idleRate - 1, idleRate));
         final gesture = await tester.startGesture(
           tester.getCenter(find.byType(SeededAuroraWallpaper)),
         );
-        expect(rate.value, 15);
-        expect(await countPaints(), inInclusiveRange(14, 15));
+        expect(rate.value, activeRate);
+        expect(await countPaints(), inInclusiveRange(activeRate - 1, activeRate));
         await gesture.up();
         await tester.pump(const Duration(milliseconds: 349));
-        expect(rate.value, 15);
+        expect(rate.value, activeRate);
         await tester.pump(const Duration(milliseconds: 1));
-        expect(rate.value, 30);
-        expect(await countPaints(), inInclusiveRange(29, 30));
+        expect(rate.value, idleRate);
+        expect(await countPaints(), inInclusiveRange(idleRate - 1, idleRate));
         expect(builds, originalBuilds);
         await tester.pumpWidget(const SizedBox.shrink());
         await tester.pump();
@@ -260,6 +288,81 @@ void main() {
       },
     );
   }
+  }
+
+  testWidgets('quality changes immediately retain activity and idle deadlines', (tester) async {
+    LiquidGlassQuality? quality;
+    var enabled = true;
+    late StateSetter update;
+    late ValueListenable<int> rate;
+    await tester.pumpWidget(MaterialApp(
+      home: StatefulBuilder(builder: (_, rebuild) {
+        update = rebuild;
+        return AuroraMotionActivity(
+          quality: quality,
+          enabled: enabled,
+          child: Builder(builder: (context) {
+            rate = AuroraMotionActivity.rateOf(context)!;
+            return const SizedBox.expand();
+          }),
+        );
+      }),
+    ));
+    expect(rate.value, 30);
+    update(() => quality = LiquidGlassQuality.standard);
+    await tester.pump();
+    expect(rate.value, 15);
+    final gesture = await tester.startGesture(const Offset(20, 20));
+    expect(rate.value, 10);
+    for (final next in [LiquidGlassQuality.ultra, null, LiquidGlassQuality.standard]) {
+      update(() => quality = next);
+      await tester.pump();
+      expect(rate.value, next == LiquidGlassQuality.standard ? 10 : 15);
+    }
+    await gesture.up();
+    await tester.pump(const Duration(milliseconds: 349));
+    expect(rate.value, 10);
+    update(() => quality = LiquidGlassQuality.ultra);
+    await tester.pump();
+    expect(rate.value, 15);
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(rate.value, 30);
+    update(() => quality = LiquidGlassQuality.standard);
+    await tester.pump();
+    expect(rate.value, 15);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    addTearDown(() => tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed));
+    for (final lifecycle in [
+      AppLifecycleState.inactive,
+      AppLifecycleState.hidden,
+      AppLifecycleState.paused,
+      AppLifecycleState.detached,
+    ]) {
+      final pointer = await tester.startGesture(const Offset(20, 20));
+      expect(rate.value, 10);
+      tester.binding.handleAppLifecycleStateChanged(lifecycle);
+      expect(rate.value, 15);
+      await pointer.cancel();
+      await tester.pump(const Duration(minutes: 1));
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      expect(rate.value, 15);
+    }
+    final pointer = await tester.startGesture(const Offset(20, 20));
+    expect(rate.value, 10);
+    update(() => enabled = false);
+    await tester.pump();
+    expect(rate.value, 15);
+    await pointer.cancel();
+    update(() => enabled = true);
+    await tester.pump();
+    expect(rate.value, 15);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 1));
+    expect(tester.binding.hasScheduledFrame, isFalse);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'disabled activity and lifecycle clear the idle timer and inputs',

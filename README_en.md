@@ -23,6 +23,8 @@ Soft fields of color unfold and mingle behind the page, like an aurora seen thro
 
 Choose between two treatments of light: **Standard** gives page-body surfaces a soft blur without refraction; **Ultra** retains body-glass refraction and richer optical layering. In both modes, header buttons and the bottom dock keep transparent refraction, revealing sharp content beneath, while header text has its own blurred backdrop. The result varies with the device and graphics backend.
 
+**Friendly tip: On less powerful devices, consider Standard Liquid Glass. For a lighter interface, switch to an ordinary theme color and turn Liquid Glass off.**
+
 - Generate a gradient wallpaper from 1–3 colors and tap **New wallpaper** to change its composition. The palette and composition persist. Automatic rotation becomes due at 05:00 local time each day and applies silently in the background without interrupting browsing.
 - Aurora wallpaper and Ultra Glass are the defaults. Switching to an ordinary theme color restores the regular palette; glass strength can be adjusted separately. Brightness can follow the system or be selected manually, while high-contrast and pure-black dark modes keep opaque surfaces.
 - Glass extends across dashboards, proxy groups, cards, buttons, selectors, fields, navigation, menus, popups, the editor, and forms. Text, icons, and interaction feedback coordinate with the background while status messages retain distinct colors. Switches, sliders, and segmented selectors use the corresponding glass and background coloring for their tracks, thumbs, and internal icons, preserving drag, keyboard, and state feedback. No-glass and high-contrast modes keep their existing fallbacks.
