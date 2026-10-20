@@ -42,9 +42,9 @@ func (pump *logPump) stop() {
 }
 
 var (
-	logMu     sync.Mutex
-	activeLog *logPump
-	logRequested bool
+	logMu         sync.Mutex
+	activeLog     *logPump
+	logRequested  bool
 	logRequestSeq uint64
 )
 

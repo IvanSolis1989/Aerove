@@ -112,23 +112,26 @@ void main() {
     expect(adapter.cancellations, 6);
   });
 
-  test('a hidden lookup waits for foreground and retains its success', () async {
-    final adapter = _Adapter(succeed: true);
-    final container = build(adapter);
-    container.read(appVisibleProvider.notifier).value = false;
-    container.listen(provider, (_, _) {});
-    await pumpEventQueue();
-    expect(adapter.requests, 0);
+  test(
+    'a hidden lookup waits for foreground and retains its success',
+    () async {
+      final adapter = _Adapter(succeed: true);
+      final container = build(adapter);
+      container.read(appVisibleProvider.notifier).value = false;
+      container.listen(provider, (_, _) {});
+      await pumpEventQueue();
+      expect(adapter.requests, 0);
 
-    container.read(appVisibleProvider.notifier).value = true;
-    final quality = await container.read(provider.future);
-    final sent = adapter.requests;
-    container.read(appVisibleProvider.notifier).value = false;
-    container.read(appVisibleProvider.notifier).value = true;
-    await pumpEventQueue();
-    expect(container.read(provider).value, quality);
-    expect(adapter.requests, sent);
-  });
+      container.read(appVisibleProvider.notifier).value = true;
+      final quality = await container.read(provider.future);
+      final sent = adapter.requests;
+      container.read(appVisibleProvider.notifier).value = false;
+      container.read(appVisibleProvider.notifier).value = true;
+      await pumpEventQueue();
+      expect(container.read(provider).value, quality);
+      expect(adapter.requests, sent);
+    },
+  );
 
   test('keeps a result after the last listener leaves', () async {
     final adapter = _Adapter(succeed: true);

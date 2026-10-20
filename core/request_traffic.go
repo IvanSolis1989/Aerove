@@ -41,7 +41,7 @@ var currentRequestTraffic = requestTrafficWatch{
 }
 
 var requestTrafficRun struct {
-	mu sync.Mutex
+	mu   sync.Mutex
 	stop chan struct{}
 }
 

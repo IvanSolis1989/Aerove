@@ -101,8 +101,10 @@ void main() {
   test('automatic profiles stop between downloads when hidden', () async {
     final profiles = [
       for (var index = 0; index < 2; index++)
-        Profile.normal(label: '$index', url: 'https://example.com/$index')
-            .copyWith(autoUpdate: true),
+        Profile.normal(
+          label: '$index',
+          url: 'https://example.com/$index',
+        ).copyWith(autoUpdate: true),
     ];
     final scoped = ProviderContainer(
       overrides: [
@@ -111,8 +113,8 @@ void main() {
       ],
     );
     addTearDown(scoped.dispose);
-    final action = scoped.read(profilesActionProvider.notifier)
-        as _AutoProfilesAction;
+    final action =
+        scoped.read(profilesActionProvider.notifier) as _AutoProfilesAction;
     scoped.read(appVisibleProvider.notifier).value = false;
     await action.autoUpdateProfiles();
     expect(action.updated, isEmpty);
@@ -125,8 +127,9 @@ void main() {
   });
 
   test('automatic profile runs do not overlap', () async {
-    final profile = Profile.normal(url: 'https://example.com/profile')
-        .copyWith(autoUpdate: true);
+    final profile = Profile.normal(
+      url: 'https://example.com/profile',
+    ).copyWith(autoUpdate: true);
     final pending = Completer<void>();
     final scoped = ProviderContainer(
       overrides: [
@@ -135,8 +138,8 @@ void main() {
       ],
     );
     addTearDown(scoped.dispose);
-    final action = scoped.read(profilesActionProvider.notifier)
-        as _AutoProfilesAction;
+    final action =
+        scoped.read(profilesActionProvider.notifier) as _AutoProfilesAction;
     action.duringUpdate = () => pending.future;
     final first = action.autoUpdateProfiles();
     await action.autoUpdateProfiles();

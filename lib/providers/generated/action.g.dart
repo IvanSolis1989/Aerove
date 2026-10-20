@@ -40,7 +40,7 @@ final class CommonActionProvider extends $NotifierProvider<CommonAction, void> {
   }
 }
 
-String _$commonActionHash() => r'ed1959e90ca2a7acf03b6e8ff5c5b86130cfaa9e';
+String _$commonActionHash() => r'0573effccc198c19d61b7bcf0282c5b16e52157d';
 
 abstract class _$CommonAction extends $Notifier<void> {
   void build();
@@ -244,7 +244,7 @@ final class SystemActionProvider extends $NotifierProvider<SystemAction, void> {
   }
 }
 
-String _$systemActionHash() => r'8289c73c9e50a4303646e6b5324dc65093ef1447';
+String _$systemActionHash() => r'b82ea115a6c0a13a12c758d157aff101d2842fd3';
 
 abstract class _$SystemAction extends $Notifier<void> {
   void build();
@@ -398,7 +398,7 @@ final class ProxiesActionProvider
   }
 }
 
-String _$proxiesActionHash() => r'721af9e0ec9103345422caa33b5d73851d7d1517';
+String _$proxiesActionHash() => r'1c8548e8d2fedd00f4c170000754606a01fa55fd';
 
 abstract class _$ProxiesAction extends $Notifier<void> {
   void build();
@@ -450,7 +450,7 @@ final class ProfilesActionProvider
   }
 }
 
-String _$profilesActionHash() => r'baf5b709b4ea1c6f319b94a83be396f73ec8f760';
+String _$profilesActionHash() => r'29dd2cbc0e1dd74ed7011f667cf37cc091a5055e';
 
 abstract class _$ProfilesAction extends $Notifier<void> {
   void build();
@@ -502,7 +502,7 @@ final class ScriptsActionProvider
   }
 }
 
-String _$scriptsActionHash() => r'f4ec8e120ae8163e4b7bb78636c30d75264de87d';
+String _$scriptsActionHash() => r'1a7974c2bb9b7dcfe8f7de9d75b1ddbf55656109';
 
 abstract class _$ScriptsAction extends $Notifier<void> {
   void build();
@@ -555,7 +555,7 @@ final class ClashProvidersActionProvider
 }
 
 String _$clashProvidersActionHash() =>
-    r'eddc52e010d900fbf17a95f466e92217eb2a9987';
+    r'35f1d484bf0d04fc1556277775f8d43591ffac29';
 
 abstract class _$ClashProvidersAction extends $Notifier<void> {
   void build();
@@ -607,7 +607,7 @@ final class IconSetsActionProvider
   }
 }
 
-String _$iconSetsActionHash() => r'2568fa51c9ac71e3f0b5c990db458ddc7337ee88';
+String _$iconSetsActionHash() => r'fce3b67976590ddb1d5ddb500e24e44068ca1d61';
 
 abstract class _$IconSetsAction extends $Notifier<void> {
   void build();
@@ -711,7 +711,7 @@ final class ResourcesActionProvider
   }
 }
 
-String _$resourcesActionHash() => r'4789f340b60eadbbc3bc124f296bbeaa35121ba6';
+String _$resourcesActionHash() => r'09d061e0cda545e25e6869e3d6eff8358286307e';
 
 abstract class _$ResourcesAction extends $Notifier<void> {
   void build();
@@ -763,7 +763,7 @@ final class UpdatingActionProvider
   }
 }
 
-String _$updatingActionHash() => r'f98e26e80cc700f84e880393d0b280a08c37789b';
+String _$updatingActionHash() => r'ac655b8e9e5b92cf39175d8d73234b3f52194bcf';
 
 abstract class _$UpdatingAction extends $Notifier<void> {
   void build();

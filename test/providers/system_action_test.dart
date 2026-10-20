@@ -113,8 +113,8 @@ void main() {
       overrides: [systemActionProvider.overrideWith(_LocalIpSystemAction.new)],
     );
     addTearDown(container.dispose);
-    final action = container.read(systemActionProvider.notifier)
-        as _LocalIpSystemAction;
+    final action =
+        container.read(systemActionProvider.notifier) as _LocalIpSystemAction;
     container.read(appVisibleProvider.notifier).value = false;
     await action.updateLocalIp();
     await action.updateLocalIp();
@@ -133,8 +133,8 @@ void main() {
       overrides: [systemActionProvider.overrideWith(_LocalIpSystemAction.new)],
     );
     addTearDown(container.dispose);
-    final action = container.read(systemActionProvider.notifier)
-        as _LocalIpSystemAction;
+    final action =
+        container.read(systemActionProvider.notifier) as _LocalIpSystemAction;
     final pending = action.pending = Completer<String?>();
     final update = action.updateLocalIp();
     await tester.pump(const Duration(seconds: 1));

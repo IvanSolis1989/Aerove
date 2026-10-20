@@ -83,8 +83,8 @@ const (
 
 type Message struct {
 	telemetryEpoch uint64
-	Type MessageType `json:"type"`
-	Data any         `json:"data"`
+	Type           MessageType `json:"type"`
+	Data           any         `json:"data"`
 }
 
 type InitParams struct {

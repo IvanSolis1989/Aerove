@@ -87,34 +87,35 @@ void main() {
     expect(runs, 3);
   });
 
-  testWidgets('resume waits for a cancelled run before starting one successor', (
-    tester,
-  ) async {
-    final download = Completer<void>();
-    var runs = 0;
-    var applies = 0;
-    final scheduler = ForegroundAutoUpdateScheduler(
-      run: (isCurrent) async {
-        runs++;
-        if (runs == 1) await download.future;
-        if (isCurrent()) applies++;
-      },
-    );
-    scheduler.setVisible(true);
-    await tester.pump(const Duration(minutes: 20));
-    expect(runs, 1);
-    scheduler.setVisible(false);
-    scheduler.setVisible(true);
-    scheduler.setVisible(true);
-    expect(runs, 1);
-    download.complete();
-    await tester.pump();
-    expect(runs, 2);
-    expect(applies, 1);
-    scheduler.dispose();
-    await tester.pump(const Duration(minutes: 40));
-    expect(runs, 2);
-  });
+  testWidgets(
+    'resume waits for a cancelled run before starting one successor',
+    (tester) async {
+      final download = Completer<void>();
+      var runs = 0;
+      var applies = 0;
+      final scheduler = ForegroundAutoUpdateScheduler(
+        run: (isCurrent) async {
+          runs++;
+          if (runs == 1) await download.future;
+          if (isCurrent()) applies++;
+        },
+      );
+      scheduler.setVisible(true);
+      await tester.pump(const Duration(minutes: 20));
+      expect(runs, 1);
+      scheduler.setVisible(false);
+      scheduler.setVisible(true);
+      scheduler.setVisible(true);
+      expect(runs, 1);
+      download.complete();
+      await tester.pump();
+      expect(runs, 2);
+      expect(applies, 1);
+      scheduler.dispose();
+      await tester.pump(const Duration(minutes: 40));
+      expect(runs, 2);
+    },
+  );
 
   testWidgets('dispose invalidates a download and prevents rescheduling', (
     tester,

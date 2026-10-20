@@ -151,24 +151,27 @@ void main() {
     });
   });
 
-  test('an automatic icon download cannot publish after it is hidden', () async {
-    body = _iconSetJson('Qure', ['Proxy']);
-    final saved = await action().importUrl(urlOf('guarded.json'));
-    await stored();
-    body = _iconSetJson('Qure', ['Proxy', 'Direct']);
-    held = Completer<void>();
-    var current = true;
-    final syncing = action().sync(saved, isCurrent: () => current);
-    final rejected = expectLater(
-      syncing,
-      throwsA(isA<UpdateCancelledException>()),
-    );
-    await pumpEventQueue();
-    current = false;
-    held!.complete();
-    await rejected;
-    expect((await stored()).single.icons, saved.icons);
-  });
+  test(
+    'an automatic icon download cannot publish after it is hidden',
+    () async {
+      body = _iconSetJson('Qure', ['Proxy']);
+      final saved = await action().importUrl(urlOf('guarded.json'));
+      await stored();
+      body = _iconSetJson('Qure', ['Proxy', 'Direct']);
+      held = Completer<void>();
+      var current = true;
+      final syncing = action().sync(saved, isCurrent: () => current);
+      final rejected = expectLater(
+        syncing,
+        throwsA(isA<UpdateCancelledException>()),
+      );
+      await pumpEventQueue();
+      current = false;
+      held!.complete();
+      await rejected;
+      expect((await stored()).single.icons, saved.icons);
+    },
+  );
 
   test(
     'a failed download or a document that is no icon set saves nothing',

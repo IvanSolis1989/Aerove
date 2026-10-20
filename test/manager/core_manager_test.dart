@@ -88,7 +88,9 @@ _MockCoreHandlerInterface _coreInterface() {
   final coreInterface = _MockCoreHandlerInterface();
   when(() => coreInterface.startLog()).thenAnswer((_) {});
   when(() => coreInterface.stopLog()).thenAnswer((_) {});
-  when(() => coreInterface.setUiTelemetryActive(any())).thenAnswer((_) async {});
+  when(
+    () => coreInterface.setUiTelemetryActive(any()),
+  ).thenAnswer((_) async {});
   return coreInterface;
 }
 
@@ -278,9 +280,9 @@ void main() {
   ) async {
     final coreInterface = _coreInterface();
     final enable = Completer<void>();
-    when(() => coreInterface.setUiTelemetryActive(true)).thenAnswer(
-      (_) => enable.future,
-    );
+    when(
+      () => coreInterface.setUiTelemetryActive(true),
+    ).thenAnswer((_) => enable.future);
     final container = await _pumpCoreManager(tester, coreInterface);
     container
         .read(appSettingProvider.notifier)
@@ -303,9 +305,9 @@ void main() {
   ) async {
     final coreInterface = _coreInterface();
     final enabled = Completer<void>();
-    when(() => coreInterface.setUiTelemetryActive(true)).thenAnswer(
-      (_) => enabled.future,
-    );
+    when(
+      () => coreInterface.setUiTelemetryActive(true),
+    ).thenAnswer((_) => enabled.future);
     final container = await _pumpCoreManager(tester, coreInterface);
     container.read(coreStatusProvider.notifier).value = CoreStatus.connected;
     await tester.pump();
@@ -329,7 +331,9 @@ void main() {
     final action = _GroupRecordingProxiesAction()..succeed = false;
     final coreInterface = _coreInterface();
     var providerReads = 0;
-    when(() => coreInterface.getExternalProvider('remote')).thenAnswer((_) async {
+    when(() => coreInterface.getExternalProvider('remote')).thenAnswer((
+      _,
+    ) async {
       if (++providerReads == 1) throw StateError('temporarily unavailable');
       return null;
     });
@@ -438,7 +442,9 @@ void main() {
     coreEventManager.sendEvent(
       const CoreEvent(
         type: CoreEventType.requestTraffic,
-        data: [{'id': 'hidden-request', 'upload': 40, 'download': 80}],
+        data: [
+          {'id': 'hidden-request', 'upload': 40, 'download': 80},
+        ],
       ),
     );
     coreEventManager.sendEvent(

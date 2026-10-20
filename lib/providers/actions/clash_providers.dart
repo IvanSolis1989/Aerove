@@ -50,11 +50,13 @@ class ClashProvidersAction extends _$ClashProvidersAction {
         ? await _stageAutomatic(provider, isCurrent)
         : null;
     try {
-      final compiled = staged?.provider ?? switch (content) {
-        final content? => await _compileContent(provider, content),
-        null when download => await _compile(provider, download: true),
-        null => provider,
-      };
+      final compiled =
+          staged?.provider ??
+          switch (content) {
+            final content? => await _compileContent(provider, content),
+            null when download => await _compile(provider, download: true),
+            null => provider,
+          };
       checkUpdateCurrent(isCurrent);
       final latest = before == null ? null : await _stored(provider.id);
       checkUpdateCurrent(isCurrent);

@@ -345,7 +345,9 @@ void main() {
         await _shot(tester, 'detached-pressure-${previous.name}');
         expect(LiquidGlassHost.debugLastCapture, isNull);
         expect(LiquidGlassHost.debugLastCacheTrim, pressure);
-        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
         await _frames(tester);
         _expectFrame(
           await _shot(tester, 'detached-restored-${previous.name}'),

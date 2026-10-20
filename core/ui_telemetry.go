@@ -9,12 +9,12 @@ import (
 )
 
 var uiTelemetry struct {
-	mu sync.Mutex
-	seq uint64
-	active atomic.Bool
-	epoch atomic.Uint64
+	mu           sync.Mutex
+	seq          uint64
+	active       atomic.Bool
+	epoch        atomic.Uint64
 	delayContext context.Context
-	cancelDelay context.CancelFunc
+	cancelDelay  context.CancelFunc
 }
 
 func hasUiTelemetry() bool {

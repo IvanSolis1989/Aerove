@@ -20,7 +20,10 @@ class _AutoResourcesAction extends ResourcesAction {
   final updated = <int>[];
 
   @override
-  Future<void> updateIconSet(IconSet iconSet, {bool Function()? isCurrent}) async {
+  Future<void> updateIconSet(
+    IconSet iconSet, {
+    bool Function()? isCurrent,
+  }) async {
     updated.add(iconSet.id);
     ref.read(appVisibleProvider.notifier).value = false;
   }
@@ -74,8 +77,8 @@ void main() {
       ],
     );
     addTearDown(scoped.dispose);
-    final action = scoped.read(resourcesActionProvider.notifier)
-        as _AutoResourcesAction;
+    final action =
+        scoped.read(resourcesActionProvider.notifier) as _AutoResourcesAction;
     scoped.read(appVisibleProvider.notifier).value = false;
     await action.autoUpdate();
     expect(action.updated, isEmpty);
