@@ -250,6 +250,7 @@ void main() {
       );
       boundary.debugResetMetrics();
       final originalBuilds = builds;
+      final frames = _countFrames(tester);
       final interval = Duration(
         microseconds: (Duration.microsecondsPerSecond / refreshRate).round(),
       );
@@ -264,10 +265,19 @@ void main() {
         inInclusiveRange(29, 30),
         reason: '$refreshRate Hz must retain the accumulated 30 fps cadence',
       );
+      expect(
+        frames(),
+        inInclusiveRange(29, 31),
+        reason: '$refreshRate Hz must schedule 30 frames, not one per vsync',
+      );
       expect(builds, originalBuilds);
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
+      final disposed = _countFrames(tester);
+      await tester.pump(const Duration(seconds: 1));
+      expect(disposed(), 0);
       expect(tester.binding.hasScheduledFrame, isFalse);
+      expect(tester.binding.transientCallbackCount, 0);
       expect(tester.takeException(), isNull);
     }
   });
@@ -286,9 +296,12 @@ void main() {
     for (final (reduced, ticker) in [(true, true), (false, false)]) {
       await tester.pumpWidget(_scene(key, reduced: reduced, ticker: ticker));
       final paused = await _pixels(tester, key);
+      final frames = _countFrames(tester);
       await tester.pump(const Duration(minutes: 5));
+      expect(frames(), 0);
       expect(await _pixels(tester, key), paused);
       expect(tester.binding.hasScheduledFrame, isFalse);
+      expect(tester.binding.transientCallbackCount, 0);
     }
     await tester.pumpWidget(_scene(key));
     await tester.pump();
@@ -304,9 +317,12 @@ void main() {
       tester.binding.handleAppLifecycleStateChanged(state);
       await tester.pump();
       final background = await _pixels(tester, key);
+      final frames = _countFrames(tester);
       await tester.pump(const Duration(minutes: 5));
+      expect(frames(), 0);
       expect(await _pixels(tester, key), background);
       expect(tester.binding.hasScheduledFrame, isFalse);
+      expect(tester.binding.transientCallbackCount, 0);
     }
     final background = await _pixels(tester, key);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
@@ -449,6 +465,22 @@ double _pixelDifference(Uint8List first, Uint8List next) {
     }
   }
   return difference / count;
+}
+
+int Function() _countFrames(WidgetTester tester) {
+  var frames = 0;
+  var counting = true;
+  void count(Duration _) {
+    if (!counting) return;
+    frames++;
+    tester.binding.addPostFrameCallback(count);
+  }
+
+  tester.binding.addPostFrameCallback(count);
+  return () {
+    counting = false;
+    return frames;
+  };
 }
 
 CustomPainter? _painter(WidgetTester tester) => tester

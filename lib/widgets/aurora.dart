@@ -4,6 +4,7 @@ import 'dart:ui' show ImageFilter, Vertices, VertexMode;
 import 'package:fl_clash/common/aurora.dart';
 import 'package:fl_clash/common/aurora_motion.dart';
 import 'package:fl_clash/ui/aurora.dart';
+import 'package:fl_clash/ui/frame_pacer.dart';
 import 'package:fl_clash/ui/shape.dart';
 import 'package:fl_clash/ui/typography.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
@@ -12,7 +13,6 @@ import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -427,17 +427,13 @@ class SeededAuroraWallpaper extends StatefulWidget {
 }
 
 class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper>
-    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
-  int _framesPerSecond = 30;
+    with WidgetsBindingObserver {
   ValueListenable<int>? _activityRate;
 
   late _AuroraPainter _painter;
-  late final Ticker _ticker;
+  late final _pacer = FramePacer(_publish);
   late final ValueNotifier<({bool square, Duration elapsed})> _frame;
   Duration _runBase = Duration.zero;
-  Duration _rateEpoch = Duration.zero;
-  Duration _lastTickElapsed = Duration.zero;
-  int _lastPublishedFrame = 0;
   bool _foreground = true;
 
   bool get _square => widget.motion || widget.motionTime != null;
@@ -453,16 +449,6 @@ class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper>
       square: _square,
       elapsed: widget.motionTime ?? Duration.zero,
     ));
-    _ticker = createTicker((elapsed) {
-      _lastTickElapsed = elapsed;
-      final frame =
-          (elapsed - _rateEpoch).inMicroseconds *
-          _framesPerSecond ~/
-          Duration.microsecondsPerSecond;
-      if (frame <= _lastPublishedFrame) return;
-      _lastPublishedFrame = frame;
-      _frame.value = (square: true, elapsed: _runBase + elapsed);
-    });
     WidgetsBinding.instance.addObserver(this);
     _updatePainter();
   }
@@ -477,38 +463,35 @@ class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper>
       _activityRate?.addListener(_onRateChanged);
       _onRateChanged();
     }
-    _syncTicker();
+    _syncMotion();
   }
 
   void _onRateChanged() {
-    final rate = _activityRate?.value ?? 30;
-    if (rate == _framesPerSecond) return;
-    _framesPerSecond = rate;
-    _rateEpoch = _lastTickElapsed;
-    _lastPublishedFrame = 0;
+    _pacer.framesPerSecond = _activityRate?.value ?? 30;
+  }
+
+  void _publish(Duration elapsed) {
+    _frame.value = (square: true, elapsed: _runBase + elapsed);
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _foreground = state == AppLifecycleState.resumed;
-    _syncTicker();
+    _syncMotion();
   }
 
-  void _syncTicker() {
+  void _syncMotion() {
     final running =
         widget.motion &&
         widget.motionTime == null &&
         _foreground &&
         TickerMode.valuesOf(context).enabled &&
         !(MediaQuery.maybeOf(context)?.disableAnimations ?? false);
-    if (running && !_ticker.isActive) {
+    if (running && !_pacer.isActive) {
       _runBase = _frame.value.elapsed;
-      _rateEpoch = Duration.zero;
-      _lastTickElapsed = Duration.zero;
-      _lastPublishedFrame = 0;
-      _ticker.start();
-    } else if (!running && _ticker.isActive) {
-      _ticker.stop();
+      _pacer.start();
+    } else if (!running && _pacer.isActive) {
+      _pacer.stop();
     }
   }
 
@@ -523,8 +506,8 @@ class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper>
   @override
   void didUpdateWidget(SeededAuroraWallpaper oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.seed != oldWidget.seed && _ticker.isActive) {
-      _ticker.stop();
+    if (widget.seed != oldWidget.seed && _pacer.isActive) {
+      _pacer.stop();
     }
     if (widget.seed != oldWidget.seed ||
         widget.brightness != oldWidget.brightness ||
@@ -540,14 +523,14 @@ class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper>
               ? _frame.value.elapsed
               : Duration.zero),
     );
-    _syncTicker();
+    _syncMotion();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _activityRate?.removeListener(_onRateChanged);
-    _ticker.dispose();
+    _pacer.dispose();
     _painter.dispose();
     _frame.dispose();
     super.dispose();

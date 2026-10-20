@@ -191,6 +191,10 @@ void main() {
           final activeRate = quality == LiquidGlassQuality.standard ? 10 : 15;
           late ValueListenable<int> rate;
           var builds = 0;
+          late Duration start;
+          tester.binding.addPostFrameCallback((timestamp) {
+            start = timestamp;
+          });
           await tester.pumpWidget(
             MaterialApp(
               home: AuroraMotionActivity(
@@ -216,10 +220,6 @@ void main() {
               ),
             ),
           );
-          late Duration start;
-          tester.binding.addPostFrameCallback((timestamp) {
-            start = timestamp;
-          });
           await tester.pump();
           final originalBuilds = builds;
           final source = tester.renderObject<RenderBox>(
@@ -233,6 +233,7 @@ void main() {
           );
           Future<int> countPaints() async {
             boundary.debugResetMetrics();
+            final frames = _countFrames(tester);
             late Duration end;
             var lastPaintTime = start;
             var paints = 0;
@@ -251,6 +252,11 @@ void main() {
               if (painted > paints) lastPaintTime = end;
               paints = painted;
             }
+            expect(
+              frames(),
+              inInclusiveRange(rate.value - 1, rate.value + 1),
+              reason: 'frames follow the wallpaper rate, not the display',
+            );
             final sampledTime = quality == LiquidGlassQuality.standard
                 ? lastPaintTime
                 : end;
@@ -469,4 +475,20 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+}
+
+int Function() _countFrames(WidgetTester tester) {
+  var frames = 0;
+  var counting = true;
+  void count(Duration _) {
+    if (!counting) return;
+    frames++;
+    tester.binding.addPostFrameCallback(count);
+  }
+
+  tester.binding.addPostFrameCallback(count);
+  return () {
+    counting = false;
+    return frames;
+  };
 }
