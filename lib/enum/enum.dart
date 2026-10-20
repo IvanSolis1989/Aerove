@@ -316,6 +316,7 @@ enum DnsOverrideKey with OverrideKey {
     listen,
     ipv6,
     enhancedMode,
+    fakeIpRange6,
     fakeIpFilter,
     fakeIpFilterMode,
     defaultNameserver,

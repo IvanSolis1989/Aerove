@@ -232,9 +232,14 @@ Future<RealProfile> _makeRealProfileTask(MakeRealProfileState data) async {
     'auto-detect-interface': true,
   };
   if (data.bypassPrivateRoute) {
+    final reservedFakeIpRanges = realPatchConfig.ipv6 && !data.safeMode
+        ? overrides.dns.reservedFakeIpRanges(overrides.dnsOverrideKeys)
+        : const <String>[];
     tun['route-exclude-address'] = [
       if (tun['route-exclude-address'] case final List routes) ...routes,
-      ...privateRouteAddress,
+      ...(reservedFakeIpRanges.isEmpty
+          ? privateRouteAddress
+          : subtractCidrs(privateRouteAddress, reservedFakeIpRanges)),
     ];
   }
   rawConfig['tun'] = tun;

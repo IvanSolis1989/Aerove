@@ -142,6 +142,7 @@ void main() {
       expect(savedConfig!.vpnProps.accessControlProps.enable, false);
       expect(savedConfig!.networkProps.appendSystemDns, false);
       expect(savedConfig!.patchClashConfig.dnsOverrideKeys, {
+        ...xclashDefaultDnsOverrideKeys,
         DnsOverrideKey.defaultNameserver,
       });
       expect(savedConfig!.patchClashConfig.ipv6, true);
@@ -247,6 +248,7 @@ void main() {
     final next = await defaults.initialize(previous);
     expect(next.patchClashConfig.dns, xclashDefaultDns);
     expect(next.patchClashConfig.dnsOverrideKeys, {
+      ...xclashDefaultDnsOverrideKeys,
       DnsOverrideKey.defaultNameserver,
     });
     expect(next.vpnProps, previous.vpnProps);

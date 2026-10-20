@@ -177,8 +177,45 @@ void main() {
       expect(_decode(json).dnsOverrideKeys, config.dnsOverrideKeys);
     });
 
-    test('a fresh config overrides nothing', () {
-      expect(const PatchClashConfig().dnsOverrideKeys, isEmpty);
+    test('fresh and missing settings select IPv6 and its virtual pool', () {
+      expect(const PatchClashConfig().dnsOverrideKeys, {
+        DnsOverrideKey.ipv6,
+        DnsOverrideKey.fakeIpRange6,
+      });
+      expect(_decode({}).dnsOverrideKeys, xclashDefaultDnsOverrideKeys);
+      expect(const ProfileOverrides().dnsOverrideKeys, xclashDefaultDnsOverrideKeys);
+      expect(ProfileOverrides.fromJson({}).dnsOverrideKeys, xclashDefaultDnsOverrideKeys);
+      expect(DnsOverrideKey.normalProfileKeys, contains(DnsOverrideKey.fakeIpRange6));
+    });
+
+    test('safe saved DNS decoding seeds only missing IPv6 fields', () {
+      final dns = Dns.safeDnsFromJson({'nameserver': ['9.9.9.9']});
+      expect(dns.ipv6, true);
+      expect(dns.fakeIpRange6, xclashDefaultDns.fakeIpRange6);
+      expect(dns.nameserver, ['9.9.9.9']);
+      final explicit = Dns.safeDnsFromJson({'ipv6': false, 'fake-ip-range6': ''});
+      expect(explicit.ipv6, false);
+      expect(explicit.fakeIpRange6, '');
+      final repaired = Dns.safeDnsFromJson({'ipv6': 'invalid'});
+      expect(repaired.ipv6, true);
+      expect(repaired.fakeIpRange6, xclashDefaultDns.fakeIpRange6);
+      expect(Dns.fromJson({}).ipv6, false);
+      expect(Dns.fromJson({}).fakeIpRange6, '');
+    });
+
+    test('a reserved virtual pool requires both selected enabled fields', () {
+      expect(xclashDefaultDns.reservedFakeIpRanges(xclashDefaultDnsOverrideKeys), [xclashDefaultDns.fakeIpRange6]);
+      expect(xclashDefaultDns.reservedFakeIpRanges({}), isEmpty);
+      expect(xclashDefaultDns.reservedFakeIpRanges({DnsOverrideKey.ipv6}), isEmpty);
+      for (final dns in [
+        xclashDefaultDns.copyWith(ipv6: false),
+        xclashDefaultDns.copyWith(fakeIpRange6: ''),
+        xclashDefaultDns.copyWith(fakeIpRange6: 'invalid'),
+        xclashDefaultDns.copyWith(fakeIpRange6: '198.18.0.1/16'),
+        xclashDefaultDns.copyWith(fakeIpRange6: 'fdfe:dcba:9876::1/126'),
+      ]) {
+        expect(dns.reservedFakeIpRanges(xclashDefaultDnsOverrideKeys), isEmpty);
+      }
     });
 
     test('the baseline a profile without DNS is given stays minimal', () {
@@ -196,13 +233,48 @@ void main() {
     });
 
     test('a config saved before the key set keeps the keys it overrode', () {
-      final json = const PatchClashConfig().toJson()
+      final json = const PatchClashConfig(dns: defaultDns).toJson()
         ..remove('dns-override-keys');
+      json['dns'] = defaultDns.toJson()..remove('fake-ip-range6');
       final keys = _decode(json).dnsOverrideKeys;
 
       expect(keys, hasLength(20));
       expect(keys, contains(DnsOverrideKey.fallbackFilterDomain));
       expect(keys, isNot(contains(DnsOverrideKey.directNameserver)));
+    });
+
+    test('legacy missing IPv6 defaults select the pool together', () {
+      final config = _decode({
+        'dns': {'nameserver': ['https://dns.example/dns-query']},
+      });
+      expect(config.dns.ipv6, true);
+      expect(config.dns.fakeIpRange6, xclashDefaultDns.fakeIpRange6);
+      expect(config.dnsOverrideKeys, containsAll(xclashDefaultDnsOverrideKeys));
+      expect(config.dns.nameserver, ['https://dns.example/dns-query']);
+      final repaired = _decode({'dns': {'ipv6': 'invalid'}});
+      expect(repaired.dns.ipv6, true);
+      expect(repaired.dnsOverrideKeys, contains(DnsOverrideKey.fakeIpRange6));
+    });
+
+    test('legacy explicit false and empty pools retain their values', () {
+      final disabled = _decode({'dns': {'ipv6': false}});
+      expect(disabled.dns.ipv6, false);
+      expect(disabled.dnsOverrideKeys, isNot(contains(DnsOverrideKey.fakeIpRange6)));
+      final repairedDisabled = _decode({
+        'dns': {'ipv6': false, 'nameserver': 42},
+      });
+      expect(repairedDisabled.dns.ipv6, false);
+      expect(repairedDisabled.dnsOverrideKeys, isNot(contains(DnsOverrideKey.fakeIpRange6)));
+      for (final ipv6 in [true, false]) {
+        final empty = _decode({'dns': {'ipv6': ipv6, 'fake-ip-range6': ''}});
+        expect(empty.dns.ipv6, ipv6);
+        expect(empty.dns.fakeIpRange6, '');
+        expect(empty.dnsOverrideKeys, contains(DnsOverrideKey.fakeIpRange6));
+      }
+      final unselected = _decode({'dns': {'ipv6': false, 'fake-ip-range6': ''}, 'dns-override-keys': <String>[]});
+      expect(unselected.dnsOverrideKeys, isEmpty);
+      expect(unselected.dns.ipv6, false);
+      expect(unselected.dns.fakeIpRange6, '');
     });
 
     test('a saved empty key set wins over edited values', () {

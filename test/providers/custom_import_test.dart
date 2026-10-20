@@ -626,6 +626,7 @@ tun:
       final overrides = config.overrides;
 
       expect(overrides.dnsOverrideKeys, {
+        ...xclashDefaultDnsOverrideKeys,
         DnsOverrideKey.enable,
         DnsOverrideKey.enhancedMode,
         DnsOverrideKey.nameserver,
@@ -639,6 +640,25 @@ tun:
       expect(overrides.tunOverrideKeys, {TunOverrideKey.excludeInterface});
       expect(overrides.tun.excludeInterface, ['docker0']);
       expect(overrides.ntpOverrideKeys, isEmpty);
+    });
+
+    test('missing imported DNS IPv6 fields inherit the client defaults', () {
+      final overrides = _read('dns:\n  nameserver: [https://dns.example.com/dns-query]\n').overrides;
+      expect(overrides.dnsOverrideKeys, containsAll(xclashDefaultDnsOverrideKeys));
+      expect(overrides.dns.ipv6, true);
+      expect(overrides.dns.fakeIpRange6, xclashDefaultDns.fakeIpRange6);
+      expect(overrides.dns.nameserver, ['https://dns.example.com/dns-query']);
+    });
+
+    test('explicit imported DNS IPv6 values are preserved', () {
+      final overrides = _read('''
+dns:
+  ipv6: false
+  fake-ip-range6: ''
+''').overrides;
+      expect(overrides.dns.ipv6, false);
+      expect(overrides.dns.fakeIpRange6, '');
+      expect(overrides.dnsOverrideKeys, containsAll(xclashDefaultDnsOverrideKeys));
     });
   });
 

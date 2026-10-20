@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -212,6 +214,33 @@ int _difference(Uint8List a, Uint8List b, Rect rect) {
   return maximum;
 }
 
+Map<String, Object> _frozenDifference(Uint8List before, Uint8List after) {
+  var maximum = 0;
+  var worst = ((_bodyRect.top + 4).toInt() * 320 +
+      (_bodyRect.left + 4).toInt()) * 4;
+  for (var y = (_bodyRect.top + 4).toInt(); y < _bodyRect.bottom - 4; y++) {
+    for (var x = (_bodyRect.left + 4).toInt(); x < _bodyRect.right - 4; x++) {
+      for (var channel = 0; channel < 4; channel++) {
+        final index = (y * 320 + x) * 4 + channel;
+        final delta = (after[index] - before[index]).abs();
+        if (delta > maximum) {
+          maximum = delta;
+          worst = index;
+        }
+      }
+    }
+  }
+  final pixel = worst ~/ 4 * 4;
+  return {
+    'maximum': maximum,
+    'x': worst ~/ 4 % 320,
+    'y': worst ~/ 4 ~/ 320,
+    'channel': worst % 4,
+    'beforeRGBA': before.sublist(pixel, pixel + 4),
+    'afterRGBA': after.sublist(pixel, pixel + 4),
+  };
+}
+
 void main() {
   setUpAll(() async {
     await ui.FragmentProgram.fromAsset('shaders/liquid_glass.frag');
@@ -326,9 +355,42 @@ void main() {
       addTearDown(tester.view.reset);
       final live = await _render(tester, _scene());
       final frozen = await _render(tester, _scene(frozen: true));
+      expect(LiquidGlassHost.debugLastCapture!.occludedPanes, 1);
+      final repeated = await _render(tester, _scene(frozen: true));
+      expect(LiquidGlassHost.debugLastCapture!.occludedPanes, 1);
       final changed = await _render(tester, _scene(frozen: true, phase: 1));
-      expect(_difference(frozen, changed, _bodyRect.deflate(4)), 0);
+      expect(LiquidGlassHost.debugLastCapture!.occludedPanes, 1);
+      final settled = await _render(tester, _scene(frozen: true, phase: 1));
+      expect(LiquidGlassHost.debugLastCapture!.occludedPanes, 1);
+      final diagnostics = {
+        'shaderSupported': ui.ImageFilter.isShaderFilterSupported,
+        'unchangedSource': _frozenDifference(frozen, repeated),
+        'changedSource': _frozenDifference(frozen, changed),
+        'settledChangedSource': _frozenDifference(changed, settled),
+        'outsideChange': _difference(
+          frozen,
+          changed,
+          const Rect.fromLTWH(8, 8, 8, 8),
+        ),
+        'occludedPanes': LiquidGlassHost.debugLastCapture!.occludedPanes,
+      };
+      final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+      if (output != null && output.isNotEmpty) {
+        Directory(output).createSync(recursive: true);
+        File('$output/glass-body-blur-freeze.json').writeAsStringSync(
+          jsonEncode(diagnostics),
+        );
+      }
+      for (final reference in [repeated, changed, settled]) {
+        expect(
+          _difference(frozen, reference, _bodyRect.deflate(4)),
+          lessThanOrEqualTo(2),
+          reason: jsonEncode(diagnostics),
+        );
+      }
+      expect(diagnostics['outsideChange'], greaterThan(8));
       final thawed = await _render(tester, _scene(phase: 1));
+      expect(LiquidGlassHost.debugLastCapture!.occludedPanes, 0);
       final expected = await _render(tester, _scene(native: true, phase: 1));
       expect(
         _difference(thawed, expected, _bodyRect.deflate(2)),

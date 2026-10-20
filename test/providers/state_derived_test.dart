@@ -840,11 +840,15 @@ void main() {
     await container.read(vpnOptionsProvider.future);
     expect(
       container.read(sharedStateProvider).vpnOptions?.routeAddress,
-      subtractCidrs(const [], privateRouteAddress, wholeWhenEmpty: true),
+      subtractCidrs(
+        const [],
+        subtractCidrs(privateRouteAddress, [xclashDefaultDns.fakeIpRange6]),
+        wholeWhenEmpty: true,
+      ),
     );
   });
 
-  test('only the route lists recompute the VPN routes', () async {
+  test('unrelated VPN options do not recompute the routes', () async {
     final computed = <List<String>?>[];
     container.listen(
       vpnRouteAddressProvider,
@@ -856,7 +860,7 @@ void main() {
 
     container
         .read(vpnSettingProvider.notifier)
-        .update((state) => state.copyWith(ipv6: !state.ipv6));
+        .update((state) => state.copyWith(allowBypass: !state.allowBypass));
     container
         .read(patchClashConfigProvider.notifier)
         .update(
@@ -877,6 +881,69 @@ void main() {
         );
     await container.read(vpnRouteAddressProvider.future);
     expect(computed.last, isNot(contains('0.0.0.0/0')));
+  });
+
+  test('VPN routes follow selected DNS pools and IPv6 gates', () async {
+    const pool = ['fdfe:dcba:9876::1/64'];
+    container.listen(vpnRouteAddressProvider, (_, _) {});
+
+    Future<void> expectReserved(bool reserved) async {
+      final routes = await container.read(vpnRouteAddressProvider.future);
+      expect(subtractCidrs(pool, routes).isEmpty, reserved);
+    }
+
+    await expectReserved(true);
+    container
+        .read(patchClashConfigProvider.notifier)
+        .update((state) => state.copyWith(dnsOverrideKeys: {}));
+    await expectReserved(false);
+    container
+        .read(patchClashConfigProvider.notifier)
+        .update(
+          (state) => state.copyWith(
+            dnsOverrideKeys: {
+              DnsOverrideKey.ipv6,
+              DnsOverrideKey.fakeIpRange6,
+            },
+          ),
+        );
+    await expectReserved(true);
+    container
+        .read(vpnSettingProvider.notifier)
+        .update((state) => state.copyWith(ipv6: false));
+    await expectReserved(false);
+    container
+        .read(vpnSettingProvider.notifier)
+        .update((state) => state.copyWith(ipv6: true));
+    container
+        .read(patchClashConfigProvider.notifier)
+        .update((state) => state.copyWith(ipv6: false));
+    await expectReserved(false);
+  });
+
+  test('custom VPN routes use only that profile DNS selections', () async {
+    const appPool = ['fdfe:dcba:9876::1/64'];
+    const customPool = ['fd12:3456::/64'];
+    final profile = Profile.custom(label: 'Custom routes').copyWith(
+      overrides: const ProfileOverrides(dnsOverrideKeys: {}),
+    );
+    _profiles(container).replace([profile]);
+    container.read(currentProfileIdProvider.notifier).update((_) => profile.id);
+    container.listen(vpnRouteAddressProvider, (_, _) {});
+
+    final unselected = await container.read(vpnRouteAddressProvider.future);
+    expect(subtractCidrs(appPool, unselected), isNotEmpty);
+    _profiles(container).put(
+      profile.copyWith(
+        overrides: const ProfileOverrides(
+          dns: Dns(ipv6: true, fakeIpRange6: 'fd12:3456::/64'),
+          dnsOverrideKeys: {DnsOverrideKey.ipv6, DnsOverrideKey.fakeIpRange6},
+        ),
+      ),
+    );
+    final selected = await container.read(vpnRouteAddressProvider.future);
+    expect(subtractCidrs(customPool, selected), isEmpty);
+    expect(subtractCidrs(appPool, selected), isNotEmpty);
   });
 
   test('shared state keeps the last routes while new ones compute', () async {

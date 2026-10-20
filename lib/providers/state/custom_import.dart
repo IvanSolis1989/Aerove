@@ -492,7 +492,7 @@ ProfileOverrides _importOverrides(
     );
     overrides = overrides.copyWith(
       dns: result.dns,
-      dnsOverrideKeys: result.keys,
+      dnsOverrideKeys: {...xclashDefaultDnsOverrideKeys, ...result.keys},
     );
   }
   if (_mapOf(document['ntp']) case final ntp?) {

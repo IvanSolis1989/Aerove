@@ -21,13 +21,15 @@ Future<YamlMap> _tunOf({
   required Map<String, dynamic> rawConfig,
   ProfileOverrides overrides = _overrides,
   bool bypassPrivateRoute = false,
+  PatchClashConfig patchConfig = const PatchClashConfig(),
+  bool safeMode = false,
 }) async {
   final result = await makeRealProfileTask(
     MakeRealProfileState(
       profilesPath: '/profiles',
       profileId: 1,
       rawConfig: rawConfig,
-      realPatchConfig: const PatchClashConfig(),
+      realPatchConfig: patchConfig,
       overrides: overrides,
       bypassPrivateRoute: bypassPrivateRoute,
       appendSystemDns: false,
@@ -35,6 +37,7 @@ Future<YamlMap> _tunOf({
       rules: const [],
       addedRules: const [],
       defaultUA: 'FlClash-Test',
+      safeMode: safeMode,
     ),
   );
   final config = loadYaml(result.yaml) as YamlMap;
@@ -96,7 +99,7 @@ void main() {
             'route-exclude-address': ['100.64.0.0/10'],
           },
         },
-        overrides: const ProfileOverrides(),
+        overrides: const ProfileOverrides(dnsOverrideKeys: {}),
         bypassPrivateRoute: true,
       );
 
@@ -123,5 +126,84 @@ void main() {
     expect(tun['mtu'], 1500);
     expect(tun['exclude-interface'], ['eth1']);
     expect(tun.containsKey('disable-icmp-forwarding'), isFalse);
+  });
+
+  test('reserves the selected client pool in automatic exclusions', () async {
+    const pool = ['fdfe:dcba:9876::1/64'];
+    const overrides = ProfileOverrides(
+      dns: Dns(ipv6: true, fakeIpRange6: 'fdfe:dcba:9876::1/64'),
+      dnsOverrideKeys: {DnsOverrideKey.ipv6, DnsOverrideKey.fakeIpRange6},
+    );
+    final tun = await _tunOf(
+      rawConfig: {
+        'dns': {'enable': true, 'ipv6': false, 'enhanced-mode': 'fake-ip'},
+        'tun': {'route-exclude-address': ['fdfe:dcba:9876::/80']},
+      },
+      overrides: overrides,
+      bypassPrivateRoute: true,
+    );
+    final excluded = List<String>.from(tun['route-exclude-address'] as List);
+
+    expect(excluded.first, 'fdfe:dcba:9876::/80');
+    expect(subtractCidrs(['fd12::/64'], excluded), isEmpty);
+    expect(subtractCidrs(pool, excluded), isNotEmpty);
+    expect(subtractCidrs(['fdfe:dcba:9876::/80'], excluded), isEmpty);
+
+    for (final input in [
+      (patch: const PatchClashConfig(ipv6: false), safe: false),
+      (patch: const PatchClashConfig(), safe: true),
+    ]) {
+      final disabled = await _tunOf(
+        rawConfig: {},
+        overrides: overrides,
+        bypassPrivateRoute: true,
+        patchConfig: input.patch,
+        safeMode: input.safe,
+      );
+      expect(disabled['route-exclude-address'], privateRouteAddress);
+    }
+  });
+
+  test('pool routes preserve resolvers and explicit includes', () async {
+    const nameservers = ['https://dns.alidns.com/dns-query'];
+    const fallback = ['https://1.1.1.1/dns-query'];
+    final result = await makeRealProfileTask(
+      MakeRealProfileState(
+        profilesPath: '/profiles',
+        profileId: 1,
+        rawConfig: {
+          'dns': {
+            'enable': true,
+            'enhanced-mode': 'fake-ip',
+            'nameserver': nameservers,
+            'fallback': fallback,
+          },
+          'tun': {'route-address': ['2000::/3']},
+        },
+        realPatchConfig: const PatchClashConfig(),
+        overrides: const ProfileOverrides(
+          dns: Dns(ipv6: true, fakeIpRange6: 'fdfe:dcba:9876::1/64'),
+          dnsOverrideKeys: {DnsOverrideKey.ipv6, DnsOverrideKey.fakeIpRange6},
+        ),
+        bypassPrivateRoute: true,
+        appendSystemDns: false,
+        proxyGroups: const [],
+        rules: const [],
+        addedRules: const [],
+        defaultUA: 'FlClash-Test',
+      ),
+    );
+    final config = loadYaml(result.yaml) as YamlMap;
+
+    expect(config['dns']['nameserver'], nameservers);
+    expect(config['dns']['fallback'], fallback);
+    expect(config['tun']['route-address'], ['2000::/3']);
+    expect(
+      subtractCidrs(
+        ['fdfe:dcba:9876::/64'],
+        List<String>.from(config['tun']['route-exclude-address'] as List),
+      ),
+      ['fdfe:dcba:9876::/64'],
+    );
   });
 }

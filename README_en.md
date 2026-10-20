@@ -47,6 +47,11 @@ Choose between two treatments of light: **Standard** gives page-body surfaces a 
 - The Scripts page shows its source and supports viewing, editing, copying or opening the source URL, and manual updates. Trying again during an update does not start another one. Script and subscription updates are managed separately.
 - Initial Android setup provides separate VPN, system proxy, IPv6, and DNS defaults to reduce manual setup. DNS bootstrap uses only the four encrypted addresses below; the script maintains business resolvers, routing, and fallback. Custom DNS is preserved; unchanged upstream defaults without explicit override selections are migrated.
 
+### Defaults for everyday networks in China
+
+- Keep the existing DNS servers and routing policies, with IPv6 enabled through the core, VPN, and DNS. The virtual IPv6 fake-IP pool is included in routing while preserving private-network bypass and explicit route choices.
+- Connection, cache, logging, and update defaults balance stability, compatibility, and security. Saved choices remain authoritative. See the [default-settings reference (Chinese)](docs/DEFAULTS_Aerove.md) for each value, platform differences, and rationale.
+
 ### Aerove identity and Android updates
 
 - The silver ribbon and `AEROVE` display name carry through the app, notifications, desktop tray, windows, and startup entries, with additional Spanish, French, and Korean text.

@@ -176,7 +176,10 @@ class XClashDefaults {
         : replaceLegacyDns
         ? config.copyWith.patchClashConfig(
             dns: xclashDefaultDns,
-            dnsOverrideKeys: {DnsOverrideKey.defaultNameserver},
+            dnsOverrideKeys: {
+              ...xclashDefaultDnsOverrideKeys,
+              DnsOverrideKey.defaultNameserver,
+            },
           )
         : config;
     await _writeAtomic(_scriptFile(id), bytes);
@@ -234,7 +237,10 @@ class XClashDefaults {
       mode: Mode.rule,
       ipv6: true,
       dns: xclashDefaultDns,
-      dnsOverrideKeys: const {DnsOverrideKey.defaultNameserver},
+      dnsOverrideKeys: const {
+        ...xclashDefaultDnsOverrideKeys,
+        DnsOverrideKey.defaultNameserver,
+      },
       unifiedDelay: true,
       tcpConcurrent: true,
       keepAliveIdle: 30,

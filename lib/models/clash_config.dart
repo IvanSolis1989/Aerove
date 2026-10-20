@@ -29,6 +29,8 @@ const xclashForeignNameservers = [
 ];
 const xclashDefaultDns = Dns(
   enable: true,
+  ipv6: true,
+  fakeIpRange6: 'fdfe:dcba:9876::1/64',
   useSystemHosts: false,
   respectRules: true,
   cacheAlgorithm: DnsCacheAlgorithm.arc,
@@ -128,6 +130,10 @@ const xclashDefaultDns = Dns(
     '+.miwifi.com',
   ],
 );
+const xclashDefaultDnsOverrideKeys = {
+  DnsOverrideKey.ipv6,
+  DnsOverrideKey.fakeIpRange6,
+};
 const defaultNtp = Ntp();
 const defaultSniffer = Sniffer();
 const defaultProfileTun = ProfileTun();
@@ -1141,15 +1147,25 @@ String _congestionControllerFromJson(String value) =>
     value.isEmpty ? defaultCongestionController : value;
 
 extension TunExt on Tun {
-  List<String> excludedRoutes({required bool bypassPrivateRoute}) => [
+  List<String> excludedRoutes({
+    required bool bypassPrivateRoute,
+    List<String> reservedFakeIpRanges = const [],
+  }) => [
     ...routeExcludeAddress,
-    if (bypassPrivateRoute) ...privateRouteAddress,
+    if (bypassPrivateRoute)
+      ...(reservedFakeIpRanges.isEmpty
+          ? privateRouteAddress
+          : subtractCidrs(privateRouteAddress, reservedFakeIpRanges)),
   ];
 
   Future<List<String>> vpnRouteAddress({
     required bool bypassPrivateRoute,
+    List<String> reservedFakeIpRanges = const [],
   }) async {
-    final excluded = excludedRoutes(bypassPrivateRoute: bypassPrivateRoute);
+    final excluded = excludedRoutes(
+      bypassPrivateRoute: bypassPrivateRoute,
+      reservedFakeIpRanges: reservedFakeIpRanges,
+    );
     if (routeAddress.isEmpty && excluded.isEmpty) {
       return const [];
     }
@@ -1245,7 +1261,15 @@ abstract class Dns with _$Dns {
   factory Dns.fromJson(Map<String, Object?> json) => _$DnsFromJson(json);
 
   factory Dns.safeDnsFromJson(Map<String, Object?> json) {
-    return decodeSalvaging('dns config', json, Dns.fromJson);
+    return decodeSalvaging(
+      'dns config',
+      json,
+      (value) => Dns.fromJson({
+        'ipv6': xclashDefaultDns.ipv6,
+        'fake-ip-range6': xclashDefaultDns.fakeIpRange6,
+        ...value,
+      }),
+    );
   }
 }
 
@@ -1282,18 +1306,36 @@ const _legacyDnsOverrideKeys = {
 };
 
 Map<String, Object?> _withLegacyDnsOverrideKeys(Map<String, Object?> json) {
-  if (json.containsKey(_dnsOverrideKeysJsonKey) || !json.containsKey('dns')) {
+  final rawDns = json['dns'];
+  if (json.containsKey(_dnsOverrideKeysJsonKey) || rawDns is! Map) {
     return json;
   }
+  final dns = Dns.safeDnsFromJson({
+    if (rawDns.containsKey('ipv6')) 'ipv6': rawDns['ipv6'],
+  });
   return {
     ...json,
     _dnsOverrideKeysJsonKey: [
       for (final key in _legacyDnsOverrideKeys) key.path,
+      if (dns.ipv6 || rawDns.containsKey('fake-ip-range6'))
+        DnsOverrideKey.fakeIpRange6.path,
     ],
   };
 }
 
 extension DnsOverrideExt on Dns {
+  List<String> reservedFakeIpRanges(Set<DnsOverrideKey> keys) {
+    if (!ipv6 ||
+        !keys.contains(DnsOverrideKey.ipv6) ||
+        !keys.contains(DnsOverrideKey.fakeIpRange6) ||
+        !fakeIpRange6.contains(':') ||
+        !isCidr(fakeIpRange6) ||
+        int.parse(fakeIpRange6.split('/').last) > 125) {
+      return const [];
+    }
+    return [fakeIpRange6];
+  }
+
   // toJson leaves nested models as objects; the fragment is read as plain maps.
   Map<String, Object?> get _json {
     final json = toJson();
@@ -1614,7 +1656,7 @@ Map<String, Object?> _withLegacyTunOverride(Map<String, Object?> json) {
 abstract class ProfileOverrides with _$ProfileOverrides {
   const factory ProfileOverrides({
     @Default(xclashDefaultDns) @JsonKey(fromJson: Dns.safeDnsFromJson) Dns dns,
-    @Default({})
+    @Default(xclashDefaultDnsOverrideKeys)
     @JsonKey(name: _dnsOverrideKeysJsonKey, fromJson: _dnsOverrideKeysFromJson)
     Set<DnsOverrideKey> dnsOverrideKeys,
     @Default(defaultNtp) @JsonKey(fromJson: Ntp.safeNtpFromJson) Ntp ntp,
@@ -2096,7 +2138,7 @@ abstract class PatchClashConfig with _$PatchClashConfig {
     @Default(true) @JsonKey(name: 'tcp-concurrent') bool tcpConcurrent,
     @Default(defaultTun) @JsonKey(fromJson: Tun.safeFormJson) Tun tun,
     @Default(xclashDefaultDns) @JsonKey(fromJson: Dns.safeDnsFromJson) Dns dns,
-    @Default({})
+    @Default(xclashDefaultDnsOverrideKeys)
     @JsonKey(name: _dnsOverrideKeysJsonKey, fromJson: _dnsOverrideKeysFromJson)
     Set<DnsOverrideKey> dnsOverrideKeys,
     @Default(defaultProfileTun)
