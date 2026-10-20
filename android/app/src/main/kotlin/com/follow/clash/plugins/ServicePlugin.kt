@@ -3,6 +3,7 @@ package com.follow.clash.plugins
 import com.follow.clash.ServiceController
 import com.follow.clash.ServiceState
 import com.follow.clash.common.Components
+import com.follow.clash.core.Core
 import com.follow.clash.models.SharedState
 import com.follow.clash.service.ServiceConfig
 import com.google.gson.Gson
@@ -13,8 +14,10 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.StandardMethodCodec
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
@@ -23,11 +26,13 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private lateinit var channel: MethodChannel
     private lateinit var coreChannel: MethodChannel
     private lateinit var scope: CoroutineScope
+    private lateinit var coreLoaded: Deferred<Result<Unit>>
     private val gson = Gson()
     private var commandRevision = 0
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        coreLoaded = scope.async(Dispatchers.IO) { runCatching { Core.load() } }
         messenger = binding.binaryMessenger
         channel = MethodChannel(messenger, SERVICE_CHANNEL)
         channel.setMethodCallHandler(this)
@@ -70,9 +75,12 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     }
 
     private fun initialize(result: MethodChannel.Result) {
-        ServiceController.setEventListener(::sendEvent)
-            .onSuccess { result.success("") }
-            .onFailure { error -> result.success(error.message.orEmpty()) }
+        scope.launch(Dispatchers.Main.immediate) {
+            coreLoaded.await()
+                .mapCatching { ServiceController.setEventListener(::sendEvent).getOrThrow() }
+                .onSuccess { result.success("") }
+                .onFailure { error -> result.success(error.message.orEmpty()) }
+        }
     }
 
     private fun shutdown(result: MethodChannel.Result) {

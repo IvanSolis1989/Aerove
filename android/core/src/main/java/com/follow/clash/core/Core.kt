@@ -8,6 +8,8 @@ import java.net.InetSocketAddress
 import java.net.URI
 
 object Core {
+    fun load() = Mobile.ready()
+
     fun forceGC() = Mobile.forceGC()
 
     fun updateDNS(

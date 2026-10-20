@@ -42,6 +42,10 @@ func (c tunCallbacks) ResolvePackage(uid int) string {
 	return packageName
 }
 
+// Ready returns once the Go runtime has initialized. The first exported call
+// waits for that, so the host makes this one off its main thread.
+func Ready() {}
+
 func InvokeMethod(data string, handler ResultHandler) {
 	core.InvokeMethod(data, func(result []byte) {
 		_ = handler.OnResult(result)
