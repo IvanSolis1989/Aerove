@@ -19,6 +19,9 @@ void main(List<String> args) {
   runZonedGuarded(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
+      // Only the byte budget is lowered: entries range from ~20 KB process
+      // icons to ~150 KB group icons, so an entry count cannot bound memory.
+      PaintingBinding.instance.imageCache.maximumSizeBytes = 24 << 20;
       if (Platform.isWindows || Platform.isLinux) {
         SharedPreferencesStorePlatform.instance = AtomicFilePreferencesStore(
           appPath.sharedPreferencesPath,

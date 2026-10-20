@@ -520,6 +520,11 @@ class _ImageCacheWidgetState extends State<ImageCacheWidget> {
   }
 }
 
+App? _packageIconApp = app;
+
+@visibleForTesting
+set packageIconApp(App? value) => _packageIconApp = value ?? app;
+
 class PackageIcon extends StatefulWidget {
   final String packageName;
   final double size;
@@ -533,12 +538,19 @@ class PackageIcon extends StatefulWidget {
 class _PackageIconState extends State<PackageIcon> {
   ImageProvider? _icon;
   int _generation = 0;
+  late double _devicePixelRatio;
 
   @override
   void initState() {
     super.initState();
     _showCachedIcon();
     _loadIcon();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _devicePixelRatio = MediaQuery.devicePixelRatioOf(context);
   }
 
   @override
@@ -552,12 +564,12 @@ class _PackageIconState extends State<PackageIcon> {
 
   void _showCachedIcon() {
     _generation++;
-    _icon = app?.getCachedPackageIcon(widget.packageName);
+    _icon = _packageIconApp?.getCachedPackageIcon(widget.packageName);
   }
 
   void _loadIcon() {
     final generation = _generation;
-    app?.getPackageIcon(widget.packageName).then((icon) {
+    _packageIconApp?.getPackageIcon(widget.packageName).then((icon) {
       if (!mounted ||
           generation != _generation ||
           icon == null ||
@@ -576,8 +588,14 @@ class _PackageIconState extends State<PackageIcon> {
     if (icon == null) {
       return SizedBox(width: widget.size, height: widget.size);
     }
+    final extent = (widget.size * _devicePixelRatio).ceil();
     return Image(
-      image: icon,
+      image: ResizeImage(
+        icon,
+        width: extent,
+        height: extent,
+        policy: ResizeImagePolicy.fit,
+      ),
       gaplessPlayback: true,
       width: widget.size,
       height: widget.size,
