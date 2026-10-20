@@ -1620,6 +1620,56 @@ class AppLocalizations {
     );
   }
 
+  /// `Ultra mode keeps glass refraction and richer optical depth in the main content, with a higher graphics rendering load.`
+  String get liquidGlassUltraIntro {
+    return Intl.message(
+      'Ultra mode keeps glass refraction and richer optical depth in the main content, with a higher graphics rendering load.',
+      name: 'liquidGlassUltraIntro',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Standard mode uses simple blur for the main content. The top buttons and bottom Dock keep transparent refraction, with a lighter rendering load.`
+  String get liquidGlassStandardIntro {
+    return Intl.message(
+      'Standard mode uses simple blur for the main content. The top buttons and bottom Dock keep transparent refraction, with a lighter rendering load.',
+      name: 'liquidGlassStandardIntro',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `On less powerful devices, consider Standard mode or turn off Liquid Glass effects.`
+  String get liquidGlassLowPowerTip {
+    return Intl.message(
+      'On less powerful devices, consider Standard mode or turn off Liquid Glass effects.',
+      name: 'liquidGlassLowPowerTip',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `You can change this at any time in Appearance. The random gradient background and Liquid Glass can each be turned on or off independently.`
+  String get liquidGlassSettingsTip {
+    return Intl.message(
+      'You can change this at any time in Appearance. The random gradient background and Liquid Glass can each be turned on or off independently.',
+      name: 'liquidGlassSettingsTip',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Got it`
+  String get liquidGlassIntroConfirm {
+    return Intl.message(
+      'Got it',
+      name: 'liquidGlassIntroConfirm',
+      desc: '',
+      args: [],
+    );
+  }
+
   /// `TCP keep-alive interval`
   String get keepAliveIntervalDesc {
     return Intl.message(

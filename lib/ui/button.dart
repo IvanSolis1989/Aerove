@@ -172,7 +172,8 @@ class _TonalButtonGroupState extends State<TonalButtonGroup> {
       child: Row(mainAxisSize: MainAxisSize.min, children: widget.children),
     );
     return ElasticPress(
-      child: TonalButtonTheme.glassOf(context) ||
+      child:
+          TonalButtonTheme.glassOf(context) ||
               LiquidGlassScope.of(context) ||
               HeaderButtonGlassScope.of(context) != null
           ? Listener(
@@ -234,7 +235,8 @@ class TonalButton extends StatelessWidget {
     );
     return ElasticPress(
       enabled: onPressed != null,
-      child: TonalButtonTheme.glassOf(context) ||
+      child:
+          TonalButtonTheme.glassOf(context) ||
               LiquidGlassScope.of(context) ||
               HeaderButtonGlassScope.of(context) != null
           ? _buttonGlassSurface(

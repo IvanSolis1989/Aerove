@@ -1128,6 +1128,19 @@ class MessageLookup extends MessageLookupByLibrary {
       "Получить профиль по ссылке на подписку или на прокси",
     ),
     "liquidGlass": MessageLookupByLibrary.simpleMessage("Жидкое стекло"),
+    "liquidGlassIntroConfirm": MessageLookupByLibrary.simpleMessage("Понятно"),
+    "liquidGlassLowPowerTip": MessageLookupByLibrary.simpleMessage(
+      "На менее мощных устройствах можно выбрать режим «Стандартный» или отключить эффекты жидкого стекла.",
+    ),
+    "liquidGlassSettingsTip": MessageLookupByLibrary.simpleMessage(
+      "Эти параметры можно изменить в разделе «Оформление» в любой момент. Фон со случайным градиентом и жидкое стекло можно включать и отключать независимо друг от друга.",
+    ),
+    "liquidGlassStandardIntro": MessageLookupByLibrary.simpleMessage(
+      "В режиме «Стандартный» для основного содержимого используется простое размытие. Верхние кнопки и нижняя панель Dock сохраняют прозрачное преломление, а нагрузка при отрисовке ниже.",
+    ),
+    "liquidGlassUltraIntro": MessageLookupByLibrary.simpleMessage(
+      "Режим «Максимум» сохраняет преломление стекла и более богатую оптическую глубину в основной области содержимого, но создаёт более высокую нагрузку при отрисовке.",
+    ),
     "list": MessageLookupByLibrary.simpleMessage("Список"),
     "listen": MessageLookupByLibrary.simpleMessage("Прослушивание"),
     "listenRoutingMark": MessageLookupByLibrary.simpleMessage(

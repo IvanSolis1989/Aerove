@@ -935,6 +935,19 @@ class MessageLookup extends MessageLookupByLibrary {
       "サブスクリプションリンクまたはプロキシの共有リンクからプロファイルを取得します",
     ),
     "liquidGlass": MessageLookupByLibrary.simpleMessage("リキッドグラス"),
+    "liquidGlassIntroConfirm": MessageLookupByLibrary.simpleMessage("わかりました"),
+    "liquidGlassLowPowerTip": MessageLookupByLibrary.simpleMessage(
+      "性能が低めの端末では、標準モードを選ぶか、リキッドグラスの効果をオフにすることを検討してください。",
+    ),
+    "liquidGlassSettingsTip": MessageLookupByLibrary.simpleMessage(
+      "「外観」でいつでも変更できます。ランダムなグラデーション背景とリキッドグラスは、それぞれ個別にオン・オフを切り替えられます。",
+    ),
+    "liquidGlassStandardIntro": MessageLookupByLibrary.simpleMessage(
+      "標準モードでは、メインコンテンツにシンプルなぼかしを使用します。上部のボタンと下部の Dock は透明な屈折表現を維持し、描画の負荷を抑えます。",
+    ),
+    "liquidGlassUltraIntro": MessageLookupByLibrary.simpleMessage(
+      "最高モードでは、メインコンテンツのガラス屈折と豊かな光学的な奥行きを維持するため、描画の負荷が高くなります。",
+    ),
     "list": MessageLookupByLibrary.simpleMessage("リスト"),
     "listen": MessageLookupByLibrary.simpleMessage("リッスン"),
     "listenRoutingMark": MessageLookupByLibrary.simpleMessage("リッスンのルーティングマーク"),

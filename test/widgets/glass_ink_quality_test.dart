@@ -131,14 +131,14 @@ Color _previousUltra(Color background, bool dark, bool icon) {
   final rgb = [background.r, background.g, background.b];
   final high = rgb.reduce(math.max), low = rgb.reduce(math.min);
   final span = high - low;
-  final target = icon ? 3.2 : dark ? 4.7 : 4.8;
+  final target = icon
+      ? 3.2
+      : dark
+      ? 4.7
+      : 4.8;
   List<double> readable(List<double> ink) {
-    Color color(List<double> values) => Color.from(
-      alpha: 1,
-      red: values[0],
-      green: values[1],
-      blue: values[2],
-    );
+    Color color(List<double> values) =>
+        Color.from(alpha: 1, red: values[0], green: values[1], blue: values[2]);
     if (_contrast(color(ink), background) >= target) return ink;
     final light = background.computeLuminance();
     final pole = (light + 0.05) / 0.05 > 1.05 / (light + 0.05) ? 0.0 : 1.0;
@@ -165,7 +165,8 @@ Color _previousUltra(Color background, bool dark, bool icon) {
     ink = [
       for (final value in rgb)
         peak *
-            (1 - saturation +
+            (1 -
+                saturation +
                 saturation *
                     (dark
                         ? (value - low) / span
@@ -181,12 +182,7 @@ Color _previousUltra(Color background, bool dark, bool icon) {
   ink = readable([
     for (final value in ink) (dark ? 1 : 0) * (1 - strength) + value * strength,
   ]);
-  return Color.from(
-    alpha: 1,
-    red: ink[0],
-    green: ink[1],
-    blue: ink[2],
-  );
+  return Color.from(alpha: 1, red: ink[0], green: ink[1], blue: ink[2]);
 }
 
 void main() {
@@ -287,9 +283,11 @@ void main() {
         File('$output/ink-quality-${brightness.name}.json').writeAsStringSync(
           jsonEncode({
             'samples': report,
-            'sourceCaptureDelta': switched.sourceCaptures - first.sourceCaptures,
+            'sourceCaptureDelta':
+                switched.sourceCaptures - first.sourceCaptures,
             'filterUpdateDelta': switched.filterUpdates - first.filterUpdates,
-            'returnFilterUpdateDelta': back.filterUpdates - switched.filterUpdates,
+            'returnFilterUpdateDelta':
+                back.filterUpdates - switched.filterUpdates,
           }),
         );
       }

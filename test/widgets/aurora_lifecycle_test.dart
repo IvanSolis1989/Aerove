@@ -32,10 +32,7 @@ void main() {
         final container = ProviderContainer(
           overrides: [
             themeSettingProvider.overrideWithBuild(
-              (_, _) => ThemeProps(
-                auroraEnabled: true,
-                liquidGlass: mode,
-              ),
+              (_, _) => ThemeProps(auroraEnabled: true, liquidGlass: mode),
             ),
           ],
         );

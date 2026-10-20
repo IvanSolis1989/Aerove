@@ -7,8 +7,11 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 /// True only after "Agree" and the restatement; any other way out declines.
-Future<bool> requestDisclaimerConsent({bool showGlassIntroduction = false}) async {
-  final accepted = await BaseNavigator.push<bool>(
+Future<bool> requestDisclaimerConsent({
+  bool showGlassIntroduction = false,
+}) async {
+  final accepted =
+      await BaseNavigator.push<bool>(
         rootNavigatorKey.currentContext!,
         const DisclaimerView(requireConsent: true),
       ) ??

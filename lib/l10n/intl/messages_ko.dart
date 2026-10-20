@@ -920,6 +920,19 @@ class MessageLookup extends MessageLookupByLibrary {
       "구독 링크 또는 프록시 공유 링크로 프로필 가져오기",
     ),
     "liquidGlass": MessageLookupByLibrary.simpleMessage("Liquid Glass"),
+    "liquidGlassIntroConfirm": MessageLookupByLibrary.simpleMessage("알겠습니다"),
+    "liquidGlassLowPowerTip": MessageLookupByLibrary.simpleMessage(
+      "성능이 낮은 기기에서는 표준 모드를 사용하거나 Liquid Glass 효과를 끄는 것을 고려해 보세요.",
+    ),
+    "liquidGlassSettingsTip": MessageLookupByLibrary.simpleMessage(
+      "외관에서 언제든지 변경할 수 있습니다. 무작위 그라데이션 배경과 Liquid Glass는 각각 독립적으로 켜거나 끌 수 있습니다.",
+    ),
+    "liquidGlassStandardIntro": MessageLookupByLibrary.simpleMessage(
+      "표준 모드는 본문 영역에 단순한 흐림 효과를 사용합니다. 상단 버튼과 하단 Dock은 투명한 굴절 효과를 유지하며, 렌더링 부하는 더 가볍습니다.",
+    ),
+    "liquidGlassUltraIntro": MessageLookupByLibrary.simpleMessage(
+      "최고 모드는 본문 영역의 유리 굴절과 풍부한 광학적 깊이감을 유지하므로 그래픽 렌더링 부하가 높습니다.",
+    ),
     "list": MessageLookupByLibrary.simpleMessage("목록"),
     "listen": MessageLookupByLibrary.simpleMessage("수신"),
     "listenRoutingMark": MessageLookupByLibrary.simpleMessage("수신 라우팅 마크"),

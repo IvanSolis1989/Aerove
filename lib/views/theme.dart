@@ -134,11 +134,7 @@ class _ThemeColorItem extends ConsumerWidget {
           ],
           onChanged: (enabled) => ref
               .read(themeSettingProvider.notifier)
-              .update(
-                (state) => state.copyWith(
-                  auroraEnabled: enabled,
-                ),
-              ),
+              .update((state) => state.copyWith(auroraEnabled: enabled)),
         ),
         if (gradient)
           const AuroraSettings()

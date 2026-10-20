@@ -1162,6 +1162,21 @@ class MessageLookup extends MessageLookupByLibrary {
       "Obtén un perfil desde un enlace de suscripción o un enlace para compartir proxies",
     ),
     "liquidGlass": MessageLookupByLibrary.simpleMessage("Liquid Glass"),
+    "liquidGlassIntroConfirm": MessageLookupByLibrary.simpleMessage(
+      "Entendido",
+    ),
+    "liquidGlassLowPowerTip": MessageLookupByLibrary.simpleMessage(
+      "En dispositivos menos potentes, considera el modo Estándar o desactiva los efectos de Liquid Glass.",
+    ),
+    "liquidGlassSettingsTip": MessageLookupByLibrary.simpleMessage(
+      "Puedes cambiar estos ajustes en Apariencia en cualquier momento. El fondo de degradado aleatorio y Liquid Glass se pueden activar o desactivar de forma independiente.",
+    ),
+    "liquidGlassStandardIntro": MessageLookupByLibrary.simpleMessage(
+      "El modo Estándar usa un desenfoque sencillo en el contenido principal. Los botones superiores y el Dock inferior conservan la refracción transparente, con una carga de renderizado más ligera.",
+    ),
+    "liquidGlassUltraIntro": MessageLookupByLibrary.simpleMessage(
+      "El modo Ultra conserva la refracción del cristal y una mayor profundidad óptica en el contenido principal, con una carga de renderizado gráfico más alta.",
+    ),
     "list": MessageLookupByLibrary.simpleMessage("Lista"),
     "listen": MessageLookupByLibrary.simpleMessage("Escucha"),
     "listenRoutingMark": MessageLookupByLibrary.simpleMessage(

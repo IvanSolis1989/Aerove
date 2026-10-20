@@ -850,6 +850,19 @@ class MessageLookup extends MessageLookupByLibrary {
     "link": MessageLookupByLibrary.simpleMessage("链接"),
     "linkDesc": MessageLookupByLibrary.simpleMessage("通过订阅链接或代理分享链接获取配置文件"),
     "liquidGlass": MessageLookupByLibrary.simpleMessage("液态玻璃"),
+    "liquidGlassIntroConfirm": MessageLookupByLibrary.simpleMessage("知道了"),
+    "liquidGlassLowPowerTip": MessageLookupByLibrary.simpleMessage(
+      "配置较低的设备可以考虑标准模式，或关闭液态玻璃特效。",
+    ),
+    "liquidGlassSettingsTip": MessageLookupByLibrary.simpleMessage(
+      "可在“外观”中随时调整。随机渐变底图与液态玻璃可以分别开启或关闭。",
+    ),
+    "liquidGlassStandardIntro": MessageLookupByLibrary.simpleMessage(
+      "标准模式的正文使用简单模糊，顶部按钮和底部 Dock 仍保留透明折射，渲染负担较轻。",
+    ),
+    "liquidGlassUltraIntro": MessageLookupByLibrary.simpleMessage(
+      "极致模式保留正文玻璃折射与更丰富的光学层次，图形渲染负担较高。",
+    ),
     "list": MessageLookupByLibrary.simpleMessage("列表"),
     "listen": MessageLookupByLibrary.simpleMessage("监听"),
     "listenRoutingMark": MessageLookupByLibrary.simpleMessage("监听路由标记"),
