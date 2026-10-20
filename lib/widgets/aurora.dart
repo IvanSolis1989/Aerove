@@ -261,7 +261,8 @@ class _AuroraMotionActivityState extends State<AuroraMotionActivity>
   static const _idleDelay = Duration(milliseconds: 350);
 
   int get _idleRate => widget.quality == LiquidGlassQuality.standard ? 15 : 30;
-  int get _activeRate => widget.quality == LiquidGlassQuality.standard ? 10 : 15;
+  int get _activeRate =>
+      widget.quality == LiquidGlassQuality.standard ? 10 : 15;
 
   late final _rate = ValueNotifier(_idleRate);
   final _pointers = <int>{};
@@ -311,7 +312,8 @@ class _AuroraMotionActivityState extends State<AuroraMotionActivity>
       _scrolls.clear();
       _rate.value = _idleRate;
     } else {
-      _rate.value = _pointers.isNotEmpty || _scrolls.isNotEmpty || _idleTimer != null
+      _rate.value =
+          _pointers.isNotEmpty || _scrolls.isNotEmpty || _idleTimer != null
           ? _activeRate
           : _idleRate;
     }

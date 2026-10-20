@@ -408,7 +408,8 @@ class _RestateDialogState extends State<_RestateDialog> {
   final _controller = TextEditingController();
   bool _acknowledged = false;
 
-  bool get _glass => LiquidGlassScope.of(context) && !MediaQuery.highContrastOf(context);
+  bool get _glass =>
+      LiquidGlassScope.of(context) && !MediaQuery.highContrastOf(context);
 
   static const _panelGlass = LiquidGlassStyle(
     tint: Colors.transparent,
@@ -428,11 +429,13 @@ class _RestateDialogState extends State<_RestateDialog> {
 
   ButtonStyle? _actionStyle({bool primary = false}) => !_glass
       ? null
-      : LiquidGlass.buttonStyle((states) => _panelGlass.copyWith(
-          tint: primary && !states.contains(WidgetState.disabled)
-              ? context.colorScheme.primary.withValues(alpha: 0.16)
-              : Colors.transparent,
-        ));
+      : LiquidGlass.buttonStyle(
+          (states) => _panelGlass.copyWith(
+            tint: primary && !states.contains(WidgetState.disabled)
+                ? context.colorScheme.primary.withValues(alpha: 0.16)
+                : Colors.transparent,
+          ),
+        );
 
   @override
   void dispose() {
@@ -442,22 +445,24 @@ class _RestateDialogState extends State<_RestateDialog> {
 
   Widget _buildStatement(String statement) {
     final style = AppTextStyle.subheadline.of(context).copyWith(height: 1.6);
-    return _surface(DecoratedBox(
-      decoration: ShapeDecoration(
-        color: _glass
-            ? Colors.transparent
-            : context.raisedSurfaceLevel.colorOf(context.colorScheme),
-        shape: AppShape.lg,
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: GlassInk(
-          source: style.color ?? context.colorScheme.onSurface,
-          role: GlassInkRole.body,
-          child: SelectableText(statement, style: style),
+    return _surface(
+      DecoratedBox(
+        decoration: ShapeDecoration(
+          color: _glass
+              ? Colors.transparent
+              : context.raisedSurfaceLevel.colorOf(context.colorScheme),
+          shape: AppShape.lg,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: GlassInk(
+            source: style.color ?? context.colorScheme.onSurface,
+            role: GlassInkRole.body,
+            child: SelectableText(statement, style: style),
+          ),
         ),
       ),
-    ));
+    );
   }
 
   Widget _buildDialog({
@@ -539,25 +544,27 @@ class _RestateDialogState extends State<_RestateDialog> {
           tip: appLocalizations.disclaimerRestateTip,
           statement: statement,
           canConfirm: restatement == _Restatement.complete,
-          confirmation: _surface(FilledInputTheme(
-            fillColor: _glass ? Colors.transparent : null,
-            borderRadius: AppRadius.lg,
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 12,
-            ),
-            child: TextField(
-              controller: _controller,
-              minLines: 3,
-              maxLines: null,
-              decoration: InputDecoration(
-                hintText: appLocalizations.disclaimerRestateHint,
-                errorText: restatement == _Restatement.diverged
-                    ? appLocalizations.disclaimerRestateMismatch
-                    : null,
+          confirmation: _surface(
+            FilledInputTheme(
+              fillColor: _glass ? Colors.transparent : null,
+              borderRadius: AppRadius.lg,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 12,
+              ),
+              child: TextField(
+                controller: _controller,
+                minLines: 3,
+                maxLines: null,
+                decoration: InputDecoration(
+                  hintText: appLocalizations.disclaimerRestateHint,
+                  errorText: restatement == _Restatement.diverged
+                      ? appLocalizations.disclaimerRestateMismatch
+                      : null,
+                ),
               ),
             ),
-          )),
+          ),
         );
       },
     );
