@@ -66,6 +66,7 @@ void main() {
       run: (_) async {
         runs++;
       },
+      now: () => tester.binding.clock.now(),
     );
     scheduler.setVisible(false);
     await tester.pump(const Duration(minutes: 40));
@@ -87,6 +88,34 @@ void main() {
     expect(runs, 3);
   });
 
+  testWidgets('a short hide keeps the interval instead of running at once', (
+    tester,
+  ) async {
+    var runs = 0;
+    final scheduler = ForegroundAutoUpdateScheduler(
+      run: (_) async {
+        runs++;
+      },
+      now: () => tester.binding.clock.now(),
+    );
+    scheduler.setVisible(true);
+    await tester.pump(const Duration(minutes: 5));
+    scheduler.setVisible(false);
+    await tester.pump(const Duration(seconds: 2));
+    scheduler.setVisible(true);
+    await tester.pump();
+    expect(runs, 0);
+    await tester.pump(const Duration(minutes: 15));
+    expect(runs, 1);
+    scheduler.setVisible(false);
+    await tester.pump(const Duration(minutes: 25));
+    expect(runs, 1);
+    scheduler.setVisible(true);
+    await tester.pump();
+    expect(runs, 2);
+    scheduler.dispose();
+  });
+
   testWidgets(
     'resume waits for a cancelled run before starting one successor',
     (tester) async {
@@ -99,6 +128,7 @@ void main() {
           if (runs == 1) await download.future;
           if (isCurrent()) applies++;
         },
+        now: () => tester.binding.clock.now(),
       );
       scheduler.setVisible(true);
       await tester.pump(const Duration(minutes: 20));
