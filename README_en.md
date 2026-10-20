@@ -21,12 +21,12 @@ The baseline is the FlClash `v0.9.1` revision recorded by this fork. Material Yo
 
 Soft fields of color unfold and mingle behind the page, like an aurora seen through a veil of mist. Cards float above them, their edges catching a little light while text and icons take their colors from the backdrop. Scrolling reveals these layers in motion, giving an everyday connection screen a quiet, dreamlike atmosphere.
 
-Choose between two treatments of light: **Standard** gives page-body surfaces a soft blur without refraction; **Ultra** retains body-glass refraction and richer optical layering. In both modes, header buttons and the bottom dock keep transparent refraction, revealing sharp content beneath, while header text has its own blurred backdrop. The result varies with the device and graphics backend.
+Choose between two treatments of light: **Soft frost** gives page-body surfaces a soft blur without refraction; **Clear shimmer** retains body-glass refraction and richer optical layering. In both modes, header buttons and the bottom dock keep transparent refraction, revealing sharp content beneath, while header text has its own blurred backdrop. The result varies with the device and graphics backend.
 
-**Friendly tip: On less powerful devices, consider Standard Liquid Glass or turn the effect off to reduce rendering work. You can keep the random gradient wallpaper with glass disabled.**
+**Friendly tip: On less powerful devices, consider Soft frost, or choose Plain solid to turn Liquid Glass off and reduce rendering work. You can keep the random gradient wallpaper with glass disabled.**
 
 - Generate a gradient wallpaper from 1–3 colors and tap **New wallpaper** to change its composition. The palette and composition persist. Automatic rotation becomes due at 05:00 local time each day and applies silently in the background without interrupting browsing.
-- Aurora wallpaper and Ultra Glass are the defaults. Switching to an ordinary theme color restores the regular palette; glass strength can be adjusted separately. Brightness can follow the system or be selected manually, while high-contrast and pure-black dark modes keep opaque surfaces.
+- Aurora wallpaper and Clear shimmer glass are the defaults. Switching to an ordinary theme color restores the regular palette; glass strength can be adjusted separately. Brightness can follow the system or be selected manually, while high-contrast and pure-black dark modes keep opaque surfaces.
 - Glass extends across dashboards, proxy groups, cards, buttons, selectors, fields, navigation, menus, popups, the editor, and forms. Text, icons, and interaction feedback coordinate with the background while status messages retain distinct colors. Switches, sliders, and segmented selectors use the corresponding glass and background coloring for their tracks, thumbs, and internal icons, preserving drag, keyboard, and state feedback. No-glass and high-contrast modes keep their existing fallbacks.
 - Fonts come from those available on your device; Aerove does not bundle MiSans. Devices without full glass support use a simpler frosted appearance.
 
@@ -35,7 +35,8 @@ Choose between two treatments of light: **Standard** gives page-body surfaces a 
 - Scrolling down compacts the floating bottom dock, keeping icons the same size while labels fade to leave more room for content. Scrolling up, returning to the top, or changing pages restores it.
 - With many proxy groups collapsed, only nearby titles are prepared. Entries appear when expanded, with expand/collapse animations retained, reducing waits in long lists. Scrollbars stay out of the way and show a position hint while dragging.
 - Group icons avoid repeating emoji from group names, and the active exit can show a country or region flag. The dashboard centers on the active outbound; connection, request, and DNS records use consistent text hierarchy and themed presentation.
-- When valid quota data is available, a translucent fill and percentage show subscription usage. Warning colors change near or above the limit; the fill is hidden without valid quota data.
+- The dashboard status card borrows from bubbles and sheer fabric: while the exit is being checked, a ring of bubbles drifts gently around the flag and settles once the result arrives; the start button is a large, irregular water droplet that bounces back when pressed; and a gauze ribbon echoing the logo flows across the card. Plain solid shows it with bouncy color shapes, Soft frost adds a frosted finish, and Clear shimmer renders it as transparent liquid glass.
+- When valid quota data is available, a translucent fill shows the remaining quota (the more you use, the lower the level) while the percentage still reports usage. Warning colors change near or above the limit, the tube runs dry once the quota is used up, and the fill is hidden without valid quota data.
 
 ### Dynamic effects with less repeated work
 
@@ -97,14 +98,14 @@ https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/main/FlClash/Fl
 
 ## Theme settings
 
-Fresh installations start with the animated gradient wallpaper and Ultra Liquid Glass enabled. Light and dark modes follow the system; you can switch to the ordinary UI at any time.
+Fresh installations start with the animated gradient wallpaper and Clear shimmer Liquid Glass enabled. Light and dark modes follow the system; you can switch to the ordinary UI at any time.
 
-After accepting the disclaimer for the first time, a short introduction explains Ultra and Standard and suggests Standard or no glass for less powerful devices.
+After accepting the disclaimer for the first time, a short introduction explains Clear shimmer and Soft frost and suggests Soft frost or Plain solid (no glass) for less powerful devices.
 
 Open **Tools → Theme → Theme colors** and choose one mode:
 
 - **Solid theme color:** use the usual palette and adjust Liquid Glass independently.
-- **Random gradient wallpaper:** select **1–3 colors**, then use **New wallpaper** to change the composition. Wallpaper and Liquid Glass have separate controls: None, Standard, and Ultra are all available, and enabling the wallpaper leaves your glass choice unchanged.
+- **Random gradient wallpaper:** select **1–3 colors**, then use **New wallpaper** to change the composition. Wallpaper and Liquid Glass have separate controls: Plain solid, Soft frost, and Clear shimmer are all available, and enabling the wallpaper leaves your glass choice unchanged.
 
 Switching back restores the ordinary palette. Wallpaper colors, composition, and your glass choice are saved independently.
 The gradient palette and current composition persist across restarts.

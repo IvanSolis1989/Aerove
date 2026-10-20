@@ -15,7 +15,9 @@ Android lib mode:
   calls.
 - Flutter runs the UI isolate on Android's main thread (3.47 merges the two and ignores the opt-out in release), so
   main-thread work anywhere in the process, the Core's included, costs frames. Only sending to Dart needs that thread;
-  a `MethodChannel.Result` may be answered from any thread. `${packageName}/core` is handled on a serial background
+  a `MethodChannel.Result` may be answered from any thread. `ServicePlugin` loads the Core library and waits out the Go
+  runtime's start (`Core.load`) on an IO thread as soon as it attaches, and `init` awaits that load before it sets the
+  event listener on main. `${packageName}/core` is handled on a serial background
   task queue and answered from the Core's goroutine, an event batch is encoded on the Core's thread and only sent on
   the main one, `ForceGC` (called from `onLowMemory`/`onTrimMemory`) collects on its own goroutine, and
   `NetworkObserveModule` refreshes DNS on its own looper.
@@ -570,7 +572,7 @@ down through `SheetCoverRouteMixin`, as `SnapSheetRoute` and `ModalSideSheetRout
 
 ## Liquid Glass
 
-`ThemeProps.liquidGlass` picks a `LiquidGlassMode`, `none` by default, and reaches widgets as `LiquidGlassScope`, on for
+`ThemeProps.liquidGlass` picks a `LiquidGlassMode`, `ultra` by default, and reaches widgets as `LiquidGlassScope`, on for
 `standard` and `ultra` with that `LiquidGlassQuality`, from `ThemeManager`. With it on, `CommonScaffold` passes `glass`
 to the bar's `TonalButtonTheme`,
 which puts a `LiquidGlass` pane behind each button through `ButtonStyle.backgroundBuilder` and one behind a
@@ -638,7 +640,7 @@ the button pressed last over the neighbours it swells past. `lib/ui/liquid_glass
   dropped: after an install, with no pipeline cache on disk, it compiled on the raster thread just as the app was first
   used, to spare the first menu and lens only a few pipelines.
 - A pane is a rounded rectangle, each corner with its own radius, unless a `clipper` gives it a path, as the start
-  button's cookie does. The shader reads that path as its reach from the pane's center in 64 directions, so it must
+  button's droplet (`OutboundDropletClipper`) does. The shader reads that path as its reach from the pane's center in 64 directions, so it must
   meet every ray from the center once.
 - Without Impeller's shader filters (Skia on the Intel macOS build, `flutter test`) a pane frosts from its capture:
   blur, saturation, brightness, tint, and a rim, with no refraction; the tint is not thickened there, as it is where a
@@ -1178,6 +1180,10 @@ seen. There are three levels of gating:
 - `_NavigationPage` puts every page except the current one under a disabled `TickerMode`. Home pages are kept alive in
   the `PageView`, and Flutter does not mute tickers on a kept-alive page off screen. A spinner left on one would
   otherwise keep scheduling frames.
+- Motion that needs only a few updates a second, such as the aurora wallpaper and the dashboard's outbound drift, runs
+  on `FramePacer` (`lib/ui/frame_pacer.dart`), which asks for a frame only when one is due. An active `Ticker` asks
+  for one every vsync even when its callback skips the update, and each of those frames rasterizes the whole scene
+  again, glass and ink included.
 
 A provider's own `ref.listen` delivers nothing while no one listens to that provider. That is the usual state of an
 action notifier, which is only ever read. A derived provider it listens to is never recomputed, and even a `ref.read`
