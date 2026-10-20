@@ -33,7 +33,7 @@ void main() {
           overrides: [
             themeSettingProvider.overrideWithBuild(
               (_, _) => ThemeProps(
-                auroraEnabled: mode != LiquidGlassMode.none,
+                auroraEnabled: true,
                 liquidGlass: mode,
               ),
             ),
@@ -65,9 +65,7 @@ void main() {
           mode == LiquidGlassMode.standard ? 15 : 30,
         );
         final surfaceState = tester.state(find.byType(AuroraAppSurface));
-        final wallpaperState = mode == LiquidGlassMode.none
-            ? null
-            : tester.state(find.byType(SeededAuroraWallpaper));
+        final wallpaperState = tester.state(find.byType(SeededAuroraWallpaper));
         expect(state.ticks, greaterThan(0));
         expect(state.paints, greaterThan(0));
         if (mode != LiquidGlassMode.none) {
@@ -117,12 +115,10 @@ void main() {
         expect(state.paints, greaterThan(inactivePaints));
         expect(key.currentState, same(state));
         expect(tester.state(find.byType(AuroraAppSurface)), same(surfaceState));
-        if (wallpaperState != null) {
-          expect(
-            tester.state(find.byType(SeededAuroraWallpaper)),
-            same(wallpaperState),
-          );
-        }
+        expect(
+          tester.state(find.byType(SeededAuroraWallpaper)),
+          same(wallpaperState),
+        );
 
         for (final lifecycle in [
           AppLifecycleState.hidden,
@@ -161,12 +157,10 @@ void main() {
             tester.state(find.byType(AuroraAppSurface)),
             same(surfaceState),
           );
-          if (wallpaperState != null) {
-            expect(
-              tester.state(find.byType(SeededAuroraWallpaper)),
-              same(wallpaperState),
-            );
-          }
+          expect(
+            tester.state(find.byType(SeededAuroraWallpaper)),
+            same(wallpaperState),
+          );
           if (mode != LiquidGlassMode.none) {
             expect(LiquidGlassHost.debugLastCapture, isNotNull);
             if (ui.ImageFilter.isShaderFilterSupported) {

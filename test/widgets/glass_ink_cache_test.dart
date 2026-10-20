@@ -207,16 +207,16 @@ List<int> _referenceBodyInk(List<double> rgba, Brightness brightness) {
   var color = background;
   if (high - low >= 0.015) {
     final saturation = math.min(
-      dark ? 0.92 : 0.98,
-      (high - low) / math.max(high, 0.001) * (dark ? 2.70 : 3.3) +
-          (dark ? 0.175 : 0.24),
+      dark ? 0.92 : 0.99,
+      (high - low) / math.max(high, 0.001) * (dark ? 2.70 : 3.45) +
+          (dark ? 0.175 : 0.26),
     );
-    final peak = dark ? 0.95 : 0.985;
+    final peak = dark ? 0.95 : 1.0;
     final hue = [
       for (final value in background)
         dark
             ? (value - low) / (high - low)
-            : math.pow((value - low) / (high - low), 1.20).toDouble(),
+            : math.pow((value - low) / (high - low), 1.22).toDouble(),
     ];
     color = [
       for (final value in hue) peak * (1 - saturation + value * saturation),
@@ -226,7 +226,7 @@ List<int> _referenceBodyInk(List<double> rgba, Brightness brightness) {
     color = readable(color);
     color = readable([for (final value in color) 0.08 + value * 0.92]);
   } else {
-    const strength = 0.92 + (1 - 0.92) * 0.14;
+    const strength = 0.92 + (1 - 0.92) * 0.18;
     color = readable([for (final value in color) value * strength]);
   }
   return [for (final value in color) (value * 255).round()];

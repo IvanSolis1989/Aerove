@@ -23,7 +23,7 @@ Soft fields of color unfold and mingle behind the page, like an aurora seen thro
 
 Choose between two treatments of light: **Standard** gives page-body surfaces a soft blur without refraction; **Ultra** retains body-glass refraction and richer optical layering. In both modes, header buttons and the bottom dock keep transparent refraction, revealing sharp content beneath, while header text has its own blurred backdrop. The result varies with the device and graphics backend.
 
-**Friendly tip: On less powerful devices, consider Standard Liquid Glass. For a lighter interface, switch to an ordinary theme color and turn Liquid Glass off.**
+**Friendly tip: On less powerful devices, consider Standard Liquid Glass or turn the effect off to reduce rendering work. You can keep the random gradient wallpaper with glass disabled.**
 
 - Generate a gradient wallpaper from 1–3 colors and tap **New wallpaper** to change its composition. The palette and composition persist. Automatic rotation becomes due at 05:00 local time each day and applies silently in the background without interrupting browsing.
 - Aurora wallpaper and Ultra Glass are the defaults. Switching to an ordinary theme color restores the regular palette; glass strength can be adjusted separately. Brightness can follow the system or be selected manually, while high-contrast and pure-black dark modes keep opaque surfaces.
@@ -98,12 +98,14 @@ https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/main/FlClash/Fl
 
 Fresh installations start with the animated gradient wallpaper and Ultra Liquid Glass enabled. Light and dark modes follow the system; you can switch to the ordinary UI at any time.
 
+After accepting the disclaimer for the first time, a short introduction explains Ultra and Standard and suggests Standard or no glass for less powerful devices.
+
 Open **Tools → Theme → Theme colors** and choose one mode:
 
 - **Solid theme color:** use the usual palette and adjust Liquid Glass independently.
-- **Random gradient wallpaper:** select **1–3 colors**, then use **New wallpaper** to change the composition. Liquid Glass switches to Ultra; only None is disabled. Standard and Ultra remain selectable.
+- **Random gradient wallpaper:** select **1–3 colors**, then use **New wallpaper** to change the composition. Wallpaper and Liquid Glass have separate controls: None, Standard, and Ultra are all available, and enabling the wallpaper leaves your glass choice unchanged.
 
-Switching back restores the ordinary palette and makes None selectable again. A manually selected glass quality is saved.
+Switching back restores the ordinary palette. Wallpaper colors, composition, and your glass choice are saved independently.
 The gradient palette and current composition persist across restarts.
 **Automatic rotation policy:** rotation becomes due at 05:00 in your phone's local time each day and is applied only while the app is truly in the background. If you are using the app then, it waits until you leave it. If the app was not running at 05:00, it catches up on the first move to the background after that day's first launch. Launching, resuming, and brief inactivity during screenshots do not change the wallpaper on screen. The app is not woken just to rotate it. **New wallpaper** still applies immediately and counts for the current daily cycle. See the [changelog (Chinese)](docs/CHANGELOG_Aerove.md) for version history.
 Brightness defaults to **system**, with explicit light and dark options at the top. High-contrast and dark pure-black modes use opaque surfaces.

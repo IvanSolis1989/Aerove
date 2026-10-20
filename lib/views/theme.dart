@@ -11,7 +11,6 @@ import 'package:fl_clash/views/font_family.dart';
 import 'package:fl_clash/views/aurora_settings.dart';
 import 'package:fl_clash/views/theme_preview.dart';
 import 'package:fl_clash/widgets/widgets.dart';
-import 'package:fl_clash/widgets/aurora.dart' show effectiveAuroraGlassMode;
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -138,9 +137,6 @@ class _ThemeColorItem extends ConsumerWidget {
               .update(
                 (state) => state.copyWith(
                   auroraEnabled: enabled,
-                  liquidGlass: enabled && !state.auroraEnabled
-                      ? LiquidGlassMode.ultra
-                      : state.liquidGlass,
                 ),
               ),
         ),
@@ -817,9 +813,6 @@ class _LiquidGlassItem extends ConsumerWidget {
     final mode = ref.watch(
       themeSettingProvider.select((state) => state.liquidGlass),
     );
-    final requiresGlass =
-        Theme.of(context).platform == TargetPlatform.android &&
-        ref.watch(themeSettingProvider.select((state) => state.auroraEnabled));
     final colorScheme = context.colorScheme;
     // Floating either way, as a docked bar stays a fill, over the list page,
     // whose rows run on under the bar where glass shows them.
@@ -836,11 +829,10 @@ class _LiquidGlassItem extends ConsumerWidget {
         label: appLocalizations.liquidGlass,
         glyph: AppGlyphs.liquidGlass,
       ),
-      value: effectiveAuroraGlassMode(mode, requiresGlass),
+      value: mode,
       choices: [
         PreviewChoice(
           value: LiquidGlassMode.none,
-          enabled: !requiresGlass,
           label: appLocalizations.none,
           pictogram: preview(false),
         ),
@@ -856,7 +848,6 @@ class _LiquidGlassItem extends ConsumerWidget {
         ),
       ],
       onChanged: (value) {
-        if (requiresGlass && value == LiquidGlassMode.none) return;
         ref
             .read(themeSettingProvider.notifier)
             .update((state) => state.copyWith(liquidGlass: value));

@@ -663,7 +663,7 @@ class CommonScaffoldState extends State<CommonScaffold> {
       glass: LiquidGlassScope.of(context),
       child: _isSearch ? _buildSearchingAppBarTheme(child) : child,
     );
-    if (LiquidGlassScope.of(context) && !MediaQuery.highContrastOf(context)) {
+    if (!MediaQuery.highContrastOf(context)) {
       appBar = HeaderButtonGlassScope(
         progress: _headerGlassProgress,
         child: appBar,

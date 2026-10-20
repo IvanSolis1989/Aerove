@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/header_blur.dart';
 import 'package:fl_clash/ui/ui.dart';
+import 'package:fl_clash/widgets/aurora.dart' show SeededAuroraWallpaper;
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -180,8 +181,10 @@ Widget _app(
   bool active = true,
   bool disableAnimations = false,
   bool search = false,
+  bool disableSecondaryAction = false,
   LiquidGlassQuality quality = LiquidGlassQuality.ultra,
   Widget? body,
+  Widget? backdrop,
 }) => TestApp(
   theme: ThemeData(brightness: brightness, platform: TargetPlatform.android),
   child: MediaQuery(
@@ -205,7 +208,7 @@ Widget _app(
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  const LiquidGlassColorField(
+                  backdrop ?? const LiquidGlassColorField(
                     child: LiquidGlassColorSource(
                       child: CustomPaint(painter: _Stripes()),
                     ),
@@ -220,7 +223,7 @@ Widget _app(
                         searchState: search
                             ? AppBarSearchState(onSearch: (_) {})
                             : null,
-                        backgroundColor: Colors.transparent,
+                        backgroundColor: glass ? Colors.transparent : null,
                         backAction: back,
                         selectionActions: [
                           IconButtonData(
@@ -232,7 +235,7 @@ Widget _app(
                           IconButtonData(
                             glyph: AppGlyphs.sync,
                             tooltip: 'Action B',
-                            onPressed: action,
+                            onPressed: disableSecondaryAction ? null : action,
                           ),
                         ],
                         iconActions: [
@@ -276,6 +279,142 @@ void main() {
     }
   });
   for (final brightness in Brightness.values) {
+    for (final gradient in [false, true]) {
+      testWidgets('None header reveals a plain surface only after scroll '
+          '${brightness.name} gradient=$gradient', (tester) async {
+        tester.view.physicalSize = const Size(390, 800);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final controller = ScrollController();
+        var taps = 0;
+        Finder backgrounds() => find.descendant(
+          of: find.byType(HeaderButtonGlassScope),
+          matching: find.byWidgetPredicate((widget) =>
+              widget is FadeTransition &&
+              widget.child is DecoratedBox &&
+              (widget.child! as DecoratedBox).decoration is ShapeDecoration),
+        );
+        Future<List<int>> pixel(String phase, Offset point) async {
+          final image = tester.renderObject<RenderRepaintBoundary>(
+            find.byKey(_scene),
+          ).toImageSync();
+          return (await tester.runAsync(() async {
+            try {
+              final data = (await image.toByteData(
+                format: ui.ImageByteFormat.rawRgba,
+              ))!;
+              final index = (point.dy.floor() * image.width +
+                  point.dx.floor()) * 4;
+              final rgba = [
+                for (var channel = 0; channel < 4; channel++)
+                  data.getUint8(index + channel),
+              ];
+              final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+              if (output != null) {
+                Directory(output).createSync(recursive: true);
+                final prefix = '$output/header-none-$_backend-'
+                    '${brightness.name}-$gradient-$phase';
+                final png = (await image.toByteData(
+                  format: ui.ImageByteFormat.png,
+                ))!;
+                File('$prefix.png').writeAsBytesSync(png.buffer.asUint8List());
+                File('$prefix.json').writeAsStringSync(jsonEncode({
+                  'glassEnabled': false,
+                  'gradientEnabled': gradient,
+                  'sample': rgba,
+                  'point': point.toString(),
+                }));
+              }
+              return rgba;
+            } finally {
+              image.dispose();
+            }
+          }))!;
+        }
+        try {
+          await tester.pumpWidget(_app(
+            controller, () => taps++, () {},
+            glass: false,
+            brightness: brightness,
+            disableSecondaryAction: true,
+            backdrop: gradient
+                ? SeededAuroraWallpaper(
+                    colors: const [
+                      Color(0xFF65BDD2), Color(0xFFC589CA), Color(0xFF75CCA8),
+                    ],
+                    seed: 271828,
+                    brightness: brightness,
+                  )
+                : const ColoredBox(color: Color(0xFF476386)),
+          ));
+          await tester.pumpAndSettle();
+          final action = find.byTooltip('Action A');
+          final rect = tester.getRect(action);
+          expect(rect.size, const Size.square(44));
+          final point = rect.center + const Offset(0, 16);
+          expect(backgrounds(), findsNothing);
+          expect(find.byType(LiquidGlass), findsNothing);
+          final top = await pixel('top', point);
+          await tester.tap(action);
+          expect(taps, 1);
+          await tester.tapAt(rect.center + const Offset(21, 0));
+          expect(taps, 2);
+          final disabled = tester.widget<IconButton>(find.ancestor(
+            of: find.byTooltip('Action B'),
+            matching: find.byType(IconButton),
+          ));
+          expect(disabled.onPressed, isNull);
+          final buttonTheme = IconButtonTheme.of(tester.element(action));
+          final focusSide = buttonTheme.style!.side!.resolve({
+            WidgetState.focused,
+          });
+          expect(focusSide, isNotNull);
+          expect(focusSide!.width, greaterThan(0));
+          controller.jumpTo(80);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 80));
+          expect(backgrounds(), findsWidgets);
+          expect(tester.widgetList<FadeTransition>(backgrounds()).any(
+            (fade) => fade.opacity.value > 0 && fade.opacity.value < 1,
+          ), isTrue);
+          await tester.pumpAndSettle();
+          expect(find.byType(LiquidGlass), findsNothing);
+          final context = tester.element(action);
+          final surface = context.raisedSurfaceLevel.colorOf(
+            Theme.of(context).colorScheme,
+          );
+          for (final fade in tester.widgetList<FadeTransition>(backgrounds())) {
+            expect(fade.opacity.value, 1);
+            expect(((fade.child! as DecoratedBox).decoration
+                as ShapeDecoration).color, surface);
+          }
+          final under = await pixel('under', point);
+          expect(under, [surface.r, surface.g, surface.b, surface.a]
+              .map((value) => (value * 255).round()).toList());
+          expect(tester.getRect(action), rect);
+          await tester.tap(action);
+          expect(taps, 3);
+          await tester.tap(find.byTooltip('More'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Extra 3'));
+          await tester.pumpAndSettle();
+          expect(taps, 4);
+          controller.jumpTo(0);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 80));
+          expect(backgrounds(), findsWidgets);
+          await tester.pumpAndSettle();
+          expect(backgrounds(), findsNothing);
+          expect(await pixel('restored', point), top);
+          expect(tester.getRect(action), rect);
+          expect(tester.takeException(), isNull);
+        } finally {
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump();
+          controller.dispose();
+        }
+      });
+    }
     for (final quality in LiquidGlassQuality.values) {
       testWidgets('real header samples sharp body through HeaderBlur '
           '${brightness.name} ${quality.name}', (tester) async {

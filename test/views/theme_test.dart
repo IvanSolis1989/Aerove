@@ -200,6 +200,7 @@ void main() {
               colorStyle: ColorStyle.soft,
               auroraColors: const [0xFF88BBCC, 0xFFAABBDD, 0xFFDDEEFF],
               auroraSeed: 4242,
+              liquidGlass: LiquidGlassMode.none,
             ),
           );
       final saved = readTheme();
@@ -222,7 +223,7 @@ void main() {
       await tester.ensureVisible(find.text('Solid theme color'));
       await tester.tap(find.text('Solid theme color'));
       await tester.pumpAndSettle();
-      expect(readTheme(), saved.copyWith(liquidGlass: LiquidGlassMode.ultra));
+      expect(readTheme(), saved);
       expect(find.byType(AuroraSettings), findsNothing);
       expect(find.text('Color style'), findsOneWidget);
       await tester.ensureVisible(swatch(0xFFFF9500));
@@ -415,10 +416,10 @@ void main() {
           .update((state) => state.copyWith(auroraEnabled: false));
     });
 
-    testWidgets('activating gradient starts at ultra from either saved mode', (
+    testWidgets('activating gradient preserves every saved glass mode', (
       tester,
     ) async {
-      for (final mode in [LiquidGlassMode.none, LiquidGlassMode.standard]) {
+      for (final mode in LiquidGlassMode.values) {
         container
             .read(themeSettingProvider.notifier)
             .update(
@@ -436,12 +437,12 @@ void main() {
         await tester.tap(find.text('Random gradient wallpaper'));
         await tester.pumpAndSettle();
         expect(readTheme().auroraEnabled, isTrue);
-        expect(readTheme().liquidGlass, LiquidGlassMode.ultra);
+        expect(readTheme().liquidGlass, mode);
       }
     });
 
     testWidgets(
-      'gradient disables only none and saves the selected glass tier',
+      'gradient permits none and saves the independently selected glass tier',
       (tester) async {
         await pumpThemeView(
           tester,
@@ -466,7 +467,7 @@ void main() {
             )
             .toList();
         expect(cards, hasLength(3));
-        expect(cards.first.onPressed, isNull);
+        expect(cards.first.onPressed, isNotNull);
         expect(cards[1].onPressed, isNotNull);
         expect(cards.last.onPressed, isNotNull);
         expect(
@@ -482,7 +483,7 @@ void main() {
           choices
               .singleWhere((choice) => choice.value == LiquidGlassMode.none)
               .enabled,
-          isFalse,
+          isTrue,
         );
         expect(
           choices
@@ -493,7 +494,7 @@ void main() {
         final none = find.descendant(of: group, matching: find.text('None'));
         await tester.tap(none, warnIfMissed: false);
         await tester.pumpAndSettle();
-        expect(readTheme().liquidGlass, LiquidGlassMode.ultra);
+        expect(readTheme().liquidGlass, LiquidGlassMode.none);
         final ultra = find.descendant(of: group, matching: find.text('Ultra'));
         await tester.tap(ultra);
         await tester.pumpAndSettle();
@@ -529,7 +530,7 @@ void main() {
         await revealThemeSetting(tester, group);
         await tester.tap(none, warnIfMissed: false);
         await tester.pumpAndSettle();
-        expect(readTheme().liquidGlass, LiquidGlassMode.standard);
+        expect(readTheme().liquidGlass, LiquidGlassMode.none);
         expect(readTheme().auroraSeed, seed);
         await tester.ensureVisible(find.text('Solid theme color'));
         await tester.tap(find.text('Solid theme color'));
@@ -537,7 +538,7 @@ void main() {
         await tester.ensureVisible(group);
         expect(
           tester.widget<PreviewChoiceGroup<LiquidGlassMode>>(group).value,
-          LiquidGlassMode.standard,
+          LiquidGlassMode.none,
         );
         expect(
           tester

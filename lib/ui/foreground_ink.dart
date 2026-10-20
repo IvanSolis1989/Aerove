@@ -221,6 +221,7 @@ class GlassInk extends StatelessWidget {
       source: source,
       outset: outset,
       dark: Theme.of(context).brightness == Brightness.dark,
+      quality: LiquidGlassScope.qualityOf(context),
       contrast: role == GlassInkRole.icon
           ? 3.2
           : GlassInkTextContrast.of(context),
@@ -235,6 +236,7 @@ class _InkBox extends SingleChildRenderObjectWidget {
     required this.source,
     required this.outset,
     required this.dark,
+    required this.quality,
     required this.contrast,
     required super.child,
   });
@@ -242,11 +244,12 @@ class _InkBox extends SingleChildRenderObjectWidget {
   final Color source;
   final double outset;
   final bool dark;
+  final LiquidGlassQuality quality;
   final double contrast;
 
   @override
   RenderObject createRenderObject(BuildContext context) =>
-      _InkRender(role, source, outset, dark, contrast);
+      _InkRender(role, source, outset, dark, quality, contrast);
 
   @override
   void updateRenderObject(BuildContext context, covariant _InkRender render) {
@@ -254,6 +257,7 @@ class _InkBox extends SingleChildRenderObjectWidget {
         render.source == source &&
         render.outset == outset &&
         render.dark == dark &&
+        render.quality == quality &&
         render.contrast == contrast) {
       return;
     }
@@ -262,17 +266,26 @@ class _InkBox extends SingleChildRenderObjectWidget {
       ..source = source
       ..outset = outset
       ..dark = dark
+      ..quality = quality
       ..contrast = contrast
       ..markNeedsPaint();
   }
 }
 
 class _InkRender extends RenderProxyBox {
-  _InkRender(this.role, this.source, this.outset, this.dark, this.contrast);
+  _InkRender(
+    this.role,
+    this.source,
+    this.outset,
+    this.dark,
+    this.quality,
+    this.contrast,
+  );
   GlassInkRole role;
   Color source;
   double outset;
   bool dark;
+  LiquidGlassQuality quality;
   double contrast;
   final _layer = LayerHandle<LiquidGlassInkLayer>();
 
@@ -348,6 +361,7 @@ class _InkRender extends RenderProxyBox {
       source: source,
       contrast: contrast,
       dark: dark,
+      quality: quality,
       program: _InkProgram.request(markNeedsPaint),
     );
     context.pushLayer(

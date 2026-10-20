@@ -221,7 +221,7 @@ localhost
 | `Profile.autoUpdateDuration` / 配置/订阅编辑 | `24h` | 降低后台电量/带宽，同时避免长期陈旧；有短时令牌要求按订阅服务说明改，不臆设所有机场1h。 | 全平台；启动检查及每20分钟到期扫描；并非每20分钟重复下载 | 保留 |
 | `Profile.label/url/ageSecretKey` / 配置/订阅编辑 | `{"label":"","url":"","ageSecretKey":""}` | 没有通用默认订阅地址/解密密钥，不编造来源。 | 全平台；用户导入指定；label按订阅信息/来源名优化，age密钥供验证 | 保留 |
 | `Profile.type` / 配置/添加 | `file（normal有URL则url；custom显式custom）` | 尊重来源类型，不把所有文件解释为订阅。 | 全平台；导入构造器决定 | 保留 |
-| `Profile.extendType/scriptId` / 配置/扩展 | `{"model":"standard / null","newNormalProfile":"journal complete且默认脚本文件/DB存在→script / bundled scriptId"}` | 当前Smart-Config-Kit离线脚本是受哈希校验的产品预设；已有/custom/显式配置及被删除脚本不重新绑定，不恢复旧stash。 | 全平台；XClashDefaults.associateNewProfile→订阅装配→Apply | 保留 |
+| `Profile.extendType/scriptId` / 配置/扩展 | `{"model":"standard / null","newNormalProfile":"journal complete且默认脚本文件/DB存在→script / bundled scriptId"}` | 当前Smart-Config-Kit离线脚本是受哈希校验的产品预设；已有/custom/显式配置及被删除脚本不重新绑定。 | 全平台；XClashDefaults.associateNewProfile→订阅装配→Apply | 保留 |
 | `Profile.selectedMap/currentGroupName/unfoldSet` / 代理组/视图 | `{"selectedMap":{},"currentGroupName":null,"unfoldSet":[]}` | 不预选不可知节点；保留用户选择。 | 全平台；用户选择落库→setup selected-map；展开状态仅UI | 保留 |
 | `Profile.overrides/matchTarget/order` / 配置/自定义/排序 | `{"overrides":"ProfileOverrides()","matchTarget":null,"order":null}` | DNS/NTP/sniffer/TUN按各自覆盖键生效；不默认叠加无依据覆写。 | 全平台；按配置类型装配→Apply；排序UI | 保留 |
 | `Config.currentProfileId` / 配置/选择 | `null` | 没有订阅不自动编造当前配置。 | 全平台；首次导入时ProfilesAction.putProfile选择；后续fullSetup | 保留 |

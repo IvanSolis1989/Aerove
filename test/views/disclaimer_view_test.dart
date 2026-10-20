@@ -158,6 +158,113 @@ void main() {
   });
 
   for (final brightness in Brightness.values) {
+    testWidgets('first consent awaits a separate scrollable glass introduction $brightness', (tester) async {
+      tester.view.physicalSize = const Size(320, 568);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final host = await _mount(tester, brightness, LiquidGlassMode.ultra, Colors.blue);
+      try {
+        final settings = host.container.read(themeSettingProvider);
+        var completed = false;
+        final consent = requestDisclaimerConsent(showGlassIntroduction: true).then((value) {
+          completed = true;
+          return value;
+        });
+        await tester.pumpAndSettle();
+        final strings = tester.element(find.byType(DisclaimerView)).appLocalizations;
+        expect(find.text(strings.liquidGlassUltraIntro), findsNothing);
+        await tester.tap(find.widgetWithText(FilledButton, strings.agree));
+        await tester.pumpAndSettle();
+        expect(find.text(strings.disclaimerRestateTitle), findsOneWidget);
+        expect(find.text(strings.liquidGlassUltraIntro), findsNothing);
+        await tester.enterText(_field, 'wrong');
+        await tester.pump();
+        expect(tester.widget<TextButton>(_confirm).onPressed, isNull);
+        expect(completed, isFalse);
+        await tester.enterText(_field, strings.disclaimerNoServiceStatement);
+        await tester.pump();
+        await tester.ensureVisible(_confirm);
+        await tester.tap(_confirm);
+        await tester.pumpAndSettle();
+        expect(find.byType(DisclaimerView), findsNothing);
+        expect(find.text(strings.liquidGlass), findsOneWidget);
+        expect(find.text(strings.ultra), findsOneWidget);
+        expect(find.text(strings.standard), findsOneWidget);
+        expect(completed, isFalse);
+        for (final paragraph in [
+          strings.liquidGlassUltraIntro,
+          strings.liquidGlassStandardIntro,
+          strings.liquidGlassLowPowerTip,
+          strings.liquidGlassSettingsTip,
+          strings.liquidGlassIntroConfirm,
+        ]) {
+          expect(find.text(paragraph), findsOneWidget);
+        }
+        final scroll = find.descendant(of: find.byType(CommonDialog), matching: find.byType(Scrollable));
+        expect(scroll, findsOneWidget);
+        final position = tester.state<ScrollableState>(scroll).position;
+        expect(position.maxScrollExtent, greaterThan(0));
+        await tester.scrollUntilVisible(find.text(strings.liquidGlassSettingsTip), 180, scrollable: scroll);
+        await tester.pumpAndSettle();
+        expect(tester.getRect(find.text(strings.liquidGlassSettingsTip)).overlaps(tester.getRect(scroll)), isTrue);
+        expect(host.container.read(themeSettingProvider), settings);
+        await _shot(tester, host.capture, '${brightness.name}-intro-small-scrolled');
+        if (brightness == Brightness.light) {
+          await tester.tap(find.widgetWithText(TextButton, strings.liquidGlassIntroConfirm));
+        } else {
+          Navigator.of(tester.element(find.byType(CommonDialog))).pop();
+        }
+        await tester.pumpAndSettle();
+        expect(await consent, isTrue);
+        expect(completed, isTrue);
+        expect(find.byType(CommonDialog), findsNothing);
+        expect(host.container.read(themeSettingProvider), settings);
+        expect(tester.takeException(), isNull);
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump(Duration.zero);
+        host.container.dispose();
+      }
+    });
+  }
+
+  testWidgets('decline back and the default consent API never introduce glass', (tester) async {
+    final host = await _mount(tester, Brightness.light, LiquidGlassMode.standard, Colors.blue);
+    try {
+      final settings = host.container.read(themeSettingProvider);
+      final declined = requestDisclaimerConsent(showGlassIntroduction: true);
+      await tester.pumpAndSettle();
+      final strings = tester.element(find.byType(DisclaimerView)).appLocalizations;
+      await tester.tap(find.widgetWithText(OutlinedButton, strings.exit));
+      await tester.pumpAndSettle();
+      expect(await declined, isFalse);
+      expect(find.text(strings.liquidGlassUltraIntro), findsNothing);
+      final backed = requestDisclaimerConsent(showGlassIntroduction: true);
+      await tester.pumpAndSettle();
+      Navigator.of(tester.element(find.byType(DisclaimerView))).pop();
+      await tester.pumpAndSettle();
+      expect(await backed, isFalse);
+      expect(find.text(strings.liquidGlassUltraIntro), findsNothing);
+      final accepted = requestDisclaimerConsent();
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, strings.agree));
+      await tester.pumpAndSettle();
+      await tester.enterText(_field, strings.disclaimerNoServiceStatement);
+      await tester.pump();
+      await tester.tap(_confirm);
+      await tester.pumpAndSettle();
+      expect(await accepted, isTrue);
+      expect(find.text(strings.liquidGlassUltraIntro), findsNothing);
+      expect(host.container.read(themeSettingProvider), settings);
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(Duration.zero);
+      host.container.dispose();
+    }
+  });
+
+  for (final brightness in Brightness.values) {
     for (final mode in LiquidGlassMode.values) {
       testWidgets(
         'first consent restatement preserves validation and material $brightness $mode',

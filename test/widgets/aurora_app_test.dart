@@ -24,6 +24,8 @@ import 'package:material_ui/material_ui.dart';
 import '../helpers/test_app.dart';
 import '../helpers/test_profiles.dart';
 
+const _surfaceCapture = ValueKey('aurora-surface-capture');
+
 void main() {
   Future<void> pumpSurface(
     WidgetTester tester, {
@@ -46,7 +48,10 @@ void main() {
           ),
           builder: (context, child) => MediaQuery(
             data: MediaQuery.of(context).copyWith(highContrast: highContrast),
-            child: AuroraAppSurface(motion: false, child: child!),
+            child: RepaintBoundary(
+              key: _surfaceCapture,
+              child: AuroraAppSurface(motion: false, child: child!),
+            ),
           ),
           home: const Scaffold(
             body: Center(child: CommonCard(child: Text('XClash'))),
@@ -116,25 +121,97 @@ void main() {
     },
   );
 
-  testWidgets('wallpaper enables effective glass without rewriting the mode', (
-    tester,
-  ) async {
+  for (final brightness in Brightness.values) {
+  testWidgets('None keeps a visible wallpaper without control optics $brightness', (tester) async {
+    LiquidGlassHost.debugLastCapture = null;
+    LiquidGlassHost.debugLastInkCapture = null;
     await pumpSurface(
       tester,
       props: const ThemeProps(liquidGlass: LiquidGlassMode.none),
+      brightness: brightness,
     );
     final context = tester.element(find.byType(CommonCard));
     expect(AuroraAppearance.enabledOf(context), isTrue);
-    expect(LiquidGlassScope.of(context), isTrue);
-    expect(LiquidGlassScope.qualityOf(context), LiquidGlassQuality.ultra);
+    expect(LiquidGlassScope.of(context), isFalse);
+    expect(find.byType(SeededAuroraWallpaper), findsOneWidget);
     expect(
       tester.widget<LiquidGlassHost>(find.byType(LiquidGlassHost)).enabled,
-      isTrue,
+      isFalse,
     );
     expect(
-      Theme.of(context).filledButtonTheme.style!.backgroundBuilder,
-      isNotNull,
+      Theme.of(context).filledButtonTheme.style?.backgroundBuilder,
+      isNull,
     );
+    expect(Theme.of(context).scaffoldBackgroundColor, Colors.transparent);
+    expect(LiquidGlassHost.debugLastCapture, isNull);
+    expect(LiquidGlassHost.debugLastInkCapture, isNull);
+    expect(find.descendant(of: find.byType(CommonCard), matching: find.byType(LiquidGlass)), findsNothing);
+    final scene = tester.renderObject<RenderRepaintBoundary>(find.byKey(_surfaceCapture));
+    final wallpaper = tester.renderObject<RenderRepaintBoundary>(find.descendant(
+      of: find.byType(SeededAuroraWallpaper),
+      matching: find.byType(RepaintBoundary),
+    ));
+    await tester.runAsync(() async {
+      final sceneImage = await scene.toImage();
+      final wallpaperImage = await wallpaper.toImage();
+      try {
+        expect(sceneImage.width, wallpaperImage.width);
+        final actual = (await sceneImage.toByteData(format: ui.ImageByteFormat.rawRgba))!;
+        final expected = (await wallpaperImage.toByteData(format: ui.ImageByteFormat.rawRgba))!;
+        for (var y = 8; y < 24; y++) {
+          for (var x = 8; x < 24; x++) {
+            final pixel = (y * sceneImage.width + x) * 4;
+            for (var channel = 0; channel < 4; channel++) {
+              expect((actual.getUint8(pixel + channel) - expected.getUint8(pixel + channel)).abs(), lessThanOrEqualTo(2));
+            }
+          }
+        }
+        final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+        if (output != null && output.isNotEmpty) {
+          Directory(output).createSync(recursive: true);
+          final png = (await sceneImage.toByteData(format: ui.ImageByteFormat.png))!;
+          File('$output/aurora-none-gradient-${brightness.name}.png')
+              .writeAsBytesSync(png.buffer.asUint8List());
+        }
+      } finally {
+        sceneImage.dispose();
+        wallpaperImage.dispose();
+      }
+    });
+  });
+  }
+
+  testWidgets('glass selection preserves the mounted gradient and its saved composition', (tester) async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final saved = container.read(themeSettingProvider);
+    expect(saved.auroraEnabled, isTrue);
+    expect(saved.liquidGlass, LiquidGlassMode.ultra);
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: container,
+      child: MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.android),
+        builder: (_, child) => AuroraAppSurface(motion: false, child: child!),
+        home: const Scaffold(body: Text('Independent gradient')),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    final originalWallpaper = tester.state(find.byType(SeededAuroraWallpaper));
+    for (final mode in [LiquidGlassMode.none, LiquidGlassMode.standard, LiquidGlassMode.ultra, LiquidGlassMode.none]) {
+      container.read(themeSettingProvider.notifier).update((state) => state.copyWith(liquidGlass: mode));
+      await tester.pumpAndSettle();
+      expect(container.read(themeSettingProvider), saved.copyWith(liquidGlass: mode));
+      expect(tester.state(find.byType(SeededAuroraWallpaper)), same(originalWallpaper));
+      final wallpaper = tester.widget<SeededAuroraWallpaper>(find.byType(SeededAuroraWallpaper));
+      expect(wallpaper.seed, saved.auroraSeed);
+      expect(wallpaper.colors.map((color) => color.toARGB32()), saved.auroraColors);
+      final context = tester.element(find.text('Independent gradient'));
+      expect(LiquidGlassScope.of(context), mode != LiquidGlassMode.none);
+      expect(AuroraMotionActivity.rateOf(context)!.value,
+          mode == LiquidGlassMode.standard ? 15 : 30);
+    }
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('system brightness reaches the app and saved wallpaper', (

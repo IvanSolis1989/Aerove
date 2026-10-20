@@ -515,8 +515,11 @@ void main() {
 
   group('SetupAction', () {
     group('rapid status changes', () {
-      test('updates runtime and traffic while core start is pending', () async {
-        final startCompleter = Completer<bool>();
+      ProviderContainer raceContainer({
+        bool bypassPrivateRoute = true,
+        bool suspended = false,
+        _RaceSetupAction Function()? createSetupAction,
+      }) {
         final container = ProviderContainer(
           overrides: [
             profilesProvider.overrideWith(TestProfiles.new),
@@ -526,10 +529,23 @@ void main() {
             ),
             initProvider.overrideWithBuild((_, _) => true),
             commonActionProvider.overrideWith(_RaceCommonAction.new),
-            setupActionProvider.overrideWith(_RaceSetupAction.new),
+            setupActionProvider.overrideWith(
+              createSetupAction ?? _RaceSetupAction.new,
+            ),
+            if (!bypassPrivateRoute)
+              networkSettingProvider.overrideWithBuild(
+                (_, _) => const NetworkProps(bypassPrivateRoute: false),
+              ),
+            if (suspended) suspendProvider.overrideWithValue(true),
           ],
         );
         addTearDown(container.dispose);
+        return container;
+      }
+
+      test('updates runtime and traffic while core start is pending', () async {
+        final startCompleter = Completer<bool>();
+        final container = raceContainer();
         final action =
             container.read(setupActionProvider.notifier) as _RaceSetupAction;
         final commonAction =
@@ -552,14 +568,7 @@ void main() {
 
       test('serializes listener changes while latest start owns UI', () async {
         final stopCompleter = Completer<bool>();
-        final container = ProviderContainer(
-          overrides: [
-            initProvider.overrideWithBuild((_, _) => true),
-            commonActionProvider.overrideWith(_RaceCommonAction.new),
-            setupActionProvider.overrideWith(_RaceSetupAction.new),
-          ],
-        );
-        addTearDown(container.dispose);
+        final container = raceContainer();
         final action =
             container.read(setupActionProvider.notifier) as _RaceSetupAction;
         await action.setRunning(true);
@@ -589,19 +598,8 @@ void main() {
 
       test('newer stop prevents stale start continuation', () async {
         final startCompleter = Completer<bool>();
-        final container = ProviderContainer(
-          overrides: [
-            initProvider.overrideWithBuild((_, _) => true),
-            commonActionProvider.overrideWith(_RaceCommonAction.new),
-            setupActionProvider.overrideWith(_RaceSetupAction.new),
-            // Bypassing private addresses computes the routes in an isolate,
-            // which outlasts the zero delay below.
-            networkSettingProvider.overrideWithBuild(
-              (_, _) => const NetworkProps(bypassPrivateRoute: false),
-            ),
-          ],
-        );
-        addTearDown(container.dispose);
+        // Route subtraction in an isolate outlasts the zero delay below.
+        final container = raceContainer(bypassPrivateRoute: false);
         final action =
             container.read(setupActionProvider.notifier) as _RaceSetupAction;
         action.startCompleter = startCompleter;
@@ -625,14 +623,7 @@ void main() {
 
       test('skips an intermediate stop when a newer start is queued', () async {
         final startCompleter = Completer<bool>();
-        final container = ProviderContainer(
-          overrides: [
-            initProvider.overrideWithBuild((_, _) => true),
-            commonActionProvider.overrideWith(_RaceCommonAction.new),
-            setupActionProvider.overrideWith(_RaceSetupAction.new),
-          ],
-        );
-        addTearDown(container.dispose);
+        final container = raceContainer();
         final action =
             container.read(setupActionProvider.notifier) as _RaceSetupAction;
         action.startCompleter = startCompleter;
@@ -654,14 +645,9 @@ void main() {
       });
 
       test('stale initialization cannot start after a newer stop', () async {
-        final container = ProviderContainer(
-          overrides: [
-            initProvider.overrideWithBuild((_, _) => true),
-            commonActionProvider.overrideWith(_RaceCommonAction.new),
-            setupActionProvider.overrideWith(_InitializingSetupAction.new),
-          ],
+        final container = raceContainer(
+          createSetupAction: _InitializingSetupAction.new,
         );
-        addTearDown(container.dispose);
         final action =
             container.read(setupActionProvider.notifier)
                 as _InitializingSetupAction;
@@ -683,15 +669,7 @@ void main() {
       test(
         'keeps suspended startup local until the listener resumes',
         () async {
-          final container = ProviderContainer(
-            overrides: [
-              initProvider.overrideWithBuild((_, _) => true),
-              suspendProvider.overrideWithValue(true),
-              commonActionProvider.overrideWith(_RaceCommonAction.new),
-              setupActionProvider.overrideWith(_RaceSetupAction.new),
-            ],
-          );
-          addTearDown(container.dispose);
+          final container = raceContainer(suspended: true);
           final action =
               container.read(setupActionProvider.notifier) as _RaceSetupAction;
 

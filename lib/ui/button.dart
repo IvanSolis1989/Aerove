@@ -53,6 +53,18 @@ Widget _buttonGlassSurface(
               curve: Curves.easeOut,
               builder: (_, opacity, _) => opacity <= 0
                   ? const SizedBox.expand()
+                  : !LiquidGlassScope.of(context)
+                  ? FadeTransition(
+                      opacity: AlwaysStoppedAnimation(opacity),
+                      child: DecoratedBox(
+                        decoration: ShapeDecoration(
+                          color: context.raisedSurfaceLevel.colorOf(
+                            context.colorScheme,
+                          ),
+                          shape: AppShape.full,
+                        ),
+                      ),
+                    )
                   : LiquidGlassFade(
                       opacity: AlwaysStoppedAnimation(opacity),
                       child: LiquidGlass(
@@ -160,7 +172,9 @@ class _TonalButtonGroupState extends State<TonalButtonGroup> {
       child: Row(mainAxisSize: MainAxisSize.min, children: widget.children),
     );
     return ElasticPress(
-      child: TonalButtonTheme.glassOf(context) || LiquidGlassScope.of(context)
+      child: TonalButtonTheme.glassOf(context) ||
+              LiquidGlassScope.of(context) ||
+              HeaderButtonGlassScope.of(context) != null
           ? Listener(
               onPointerDown: _handlePointerDown,
               onPointerUp: _handlePointerEnd,
@@ -220,7 +234,9 @@ class TonalButton extends StatelessWidget {
     );
     return ElasticPress(
       enabled: onPressed != null,
-      child: TonalButtonTheme.glassOf(context) || LiquidGlassScope.of(context)
+      child: TonalButtonTheme.glassOf(context) ||
+              LiquidGlassScope.of(context) ||
+              HeaderButtonGlassScope.of(context) != null
           ? _buttonGlassSurface(
               context,
               style: LiquidGlassStyle.regular(context.colorScheme),
@@ -263,7 +279,8 @@ class TonalButtonTheme extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
     final effectiveGlass = glass || LiquidGlassScope.of(context);
-    final paned = effectiveGlass && !grouped;
+    final header = HeaderButtonGlassScope.of(context) != null;
+    final paned = (effectiveGlass || header) && !grouped;
     final fill = grouped || paned
         ? Colors.transparent
         : LiquidGlassScope.surfaceColorOf(

@@ -7,12 +7,56 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 /// True only after "Agree" and the restatement; any other way out declines.
-Future<bool> requestDisclaimerConsent() async {
-  return await BaseNavigator.push<bool>(
+Future<bool> requestDisclaimerConsent({bool showGlassIntroduction = false}) async {
+  final accepted = await BaseNavigator.push<bool>(
         rootNavigatorKey.currentContext!,
         const DisclaimerView(requireConsent: true),
       ) ??
       false;
+  if (accepted && showGlassIntroduction) {
+    final context = rootNavigatorKey.currentContext;
+    if (context != null && context.mounted) {
+      await dialogs.showCommonDialog<void>(
+        context: context,
+        child: const _GlassIntroductionDialog(),
+      );
+    }
+  }
+  return accepted;
+}
+
+class _GlassIntroductionDialog extends StatelessWidget {
+  const _GlassIntroductionDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = context.appLocalizations;
+    return CommonDialog(
+      title: strings.liquidGlass,
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: GlassText(strings.liquidGlassIntroConfirm),
+        ),
+      ],
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          GlassText(strings.ultra, style: AppTextStyle.headline.of(context)),
+          const SizedBox(height: 6),
+          GlassText(strings.liquidGlassUltraIntro),
+          const SizedBox(height: 16),
+          GlassText(strings.standard, style: AppTextStyle.headline.of(context)),
+          const SizedBox(height: 6),
+          GlassText(strings.liquidGlassStandardIntro),
+          const SizedBox(height: 16),
+          GlassText(strings.liquidGlassLowPowerTip),
+          const SizedBox(height: 12),
+          GlassText(strings.liquidGlassSettingsTip),
+        ],
+      ),
+    );
+  }
 }
 
 class DisclaimerView extends StatelessWidget {

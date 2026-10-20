@@ -18,12 +18,6 @@ import 'package:material_ui/material_ui.dart';
 
 export 'package:fl_clash/ui/aurora.dart';
 
-LiquidGlassMode effectiveAuroraGlassMode(
-  LiquidGlassMode stored,
-  bool gradient,
-) =>
-    gradient && stored == LiquidGlassMode.none ? LiquidGlassMode.ultra : stored;
-
 class AuroraAppSurface extends ConsumerStatefulWidget {
   const AuroraAppSurface({super.key, this.motion = true, required this.child});
 
@@ -103,7 +97,7 @@ class _AuroraAppSurfaceState extends ConsumerState<AuroraAppSurface>
           ],
         )
         .withAppSurfaces;
-    final glassMode = effectiveAuroraGlassMode(settings.liquidGlass, enabled);
+    final glassMode = settings.liquidGlass;
     final glassEnabled = glassMode != LiquidGlassMode.none && !opaque;
     final surfaceTheme = enabled ? glassTheme : theme;
     final surfaceColors = surfaceTheme.colorScheme;
@@ -172,6 +166,8 @@ class _AuroraAppSurfaceState extends ConsumerState<AuroraAppSurface>
               foregroundColor: surfaceColors.onSurface,
             ),
           )
+        : enabled
+        ? surfaceTheme.copyWith(scaffoldBackgroundColor: Colors.transparent)
         : theme;
     final surface = LiquidGlassScope(
       enabled: glassEnabled,

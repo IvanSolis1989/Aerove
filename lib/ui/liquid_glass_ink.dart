@@ -219,6 +219,7 @@ class LiquidGlassInkLayer extends OffsetLayer {
   Color source = Colors.black;
   double contrast = 4.5;
   bool dark = false;
+  LiquidGlassQuality quality = LiquidGlassQuality.ultra;
   ui.FragmentProgram? program;
   ui.FragmentShader? _shader;
   ui.Picture? _coveragePicture;
@@ -262,6 +263,7 @@ class LiquidGlassInkLayer extends OffsetLayer {
     required Color source,
     required double contrast,
     required bool dark,
+    LiquidGlassQuality quality = LiquidGlassQuality.ultra,
     required ui.FragmentProgram? program,
   }) {
     final bounds = paintBounds ?? (Offset.zero & size);
@@ -271,6 +273,7 @@ class LiquidGlassInkLayer extends OffsetLayer {
         this.source != source ||
         this.contrast != contrast ||
         this.dark != dark ||
+        this.quality != quality ||
         !identical(this.program, program);
     this.offset = offset;
     this.paintBounds = bounds;
@@ -286,6 +289,7 @@ class LiquidGlassInkLayer extends OffsetLayer {
     alpha = source.a;
     this.contrast = contrast;
     this.dark = dark;
+    this.quality = quality;
     if (!identical(this.program, program)) {
       _shader?.dispose();
       _shader = null;
@@ -372,6 +376,7 @@ class LiquidGlassInkLayer extends OffsetLayer {
       source.r,
       source.g,
       source.b,
+      quality == LiquidGlassQuality.ultra ? 1.0 : 0.0,
     ];
     if (identical(field, _filteredField) && listEquals(values, _uniforms)) {
       return _effect;

@@ -82,9 +82,7 @@ void main() {
               child: TestApp(
                 theme: ThemeData(
                   brightness: brightness,
-                  platform: mode == LiquidGlassMode.none
-                      ? TargetPlatform.windows
-                      : TargetPlatform.android,
+                  platform: TargetPlatform.android,
                 ),
                 child: RepaintBoundary(
                   key: captureKey,
@@ -220,6 +218,31 @@ void main() {
       }
     });
   }
+
+  testWidgets('palette and composition changes preserve every glass selection', (tester) async {
+    for (final mode in LiquidGlassMode.values) {
+      container.read(themeSettingProvider.notifier).update((state) => state.copyWith(
+        auroraEnabled: true,
+        liquidGlass: mode,
+      ));
+      await pumpSettings(tester);
+      final saved = readTheme();
+      await tester.tap(find.byTooltip('Edit wallpaper color 1'));
+      await tester.pumpAndSettle();
+      tester.widget<Palette>(find.byType(Palette)).controller.value = const Color(0xFF338855);
+      await tester.pump();
+      await tester.tap(find.text('Confirm'));
+      await tester.pumpAndSettle();
+      final recolored = saved.copyWith(auroraColors: [0xFF338855, ...saved.auroraColors.skip(1)]);
+      expect(readTheme(), recolored);
+      await tester.tap(find.text('New wallpaper'));
+      await tester.pumpAndSettle();
+      expect(readTheme().auroraSeed, isNot(recolored.auroraSeed));
+      expect(readTheme().liquidGlass, mode);
+      expect(readTheme().auroraColors, recolored.auroraColors);
+      expect(readTheme().auroraEnabled, isTrue);
+    }
+  });
 
   testWidgets('only a requested new wallpaper changes its seed', (
     tester,

@@ -248,7 +248,9 @@ class Bootstrap {
     if (acceptedVersion >= disclaimerVersion) {
       return true;
     }
-    final isDisclaimerAccepted = await requestDisclaimerConsent();
+    final isDisclaimerAccepted = await requestDisclaimerConsent(
+      showGlassIntroduction: acceptedVersion == 0,
+    );
     if (!isDisclaimerAccepted) {
       await _container.read(systemActionProvider.notifier).handleExit();
       return false;
