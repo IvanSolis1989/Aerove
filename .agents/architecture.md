@@ -24,6 +24,8 @@ Android lib mode:
 - `lib/core/lib.dart` (`CoreLib`) implements the shared Core interface, gates method calls on its connection completer,
   initializes and synchronizes Android shared state, and closes the native service path exactly once.
 - Because Core is in the application process on Android, application RSS already includes Core memory.
+- The Android Core runs at GOGC 50 with heap profiling off (`core/mobile`, desktop keeps the defaults), and on every
+  platform the load-memory release drops mihomo's decoded geosite lists after each load while keeping their matchers.
 
 Desktop core mode:
 

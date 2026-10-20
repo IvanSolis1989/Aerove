@@ -120,7 +120,10 @@ func scheduleLoadMemoryRelease() {
 	loadReleaseMu.Lock()
 	defer loadReleaseMu.Unlock()
 	if loadReleaseTimer == nil {
-		loadReleaseTimer = time.AfterFunc(loadReleaseDelay, func() { releaseLoadMemory() })
+		loadReleaseTimer = time.AfterFunc(loadReleaseDelay, func() {
+			geoSiteLists.Reset()
+			releaseLoadMemory()
+		})
 		return
 	}
 	loadReleaseTimer.Reset(loadReleaseDelay)
