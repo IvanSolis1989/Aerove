@@ -1170,10 +1170,12 @@ a buffer you own outright (seeding, resets, tests), never on published state.
 A proxy client runs for days with nobody looking at it, so work that only feeds the UI stops when the UI cannot be
 seen. There are three levels of gating:
 
-- `appVisibleProvider` is false while the desktop window is hidden or the Android activity is in the background
-  (`hidden`, `paused`, `detached`). `AppStateManager` writes it. The one-second run-time and traffic ticker in
-  `SetupAction` follows it. The macOS menu bar title is the exception: it shows the traffic while the window is
-  hidden. `RouteTracker` and `RoutedProbe` follow it too, as described under Route Consistency.
+- `appVisibleProvider` is false while the desktop window is hidden or the Android activity is not resumed
+  (`inactive`, `hidden`, `paused`, `detached`). `AppStateManager` writes it. The one-second run-time and traffic ticker
+  in `SetupAction` follows it. The macOS menu bar title is the exception: it shows the traffic while the window is
+  hidden. `RouteTracker` and `RoutedProbe` follow it too, as described under Route Consistency. Pulling down the
+  notification shade is `inactive`, so a hide can last a second: work resumed on show keeps its own schedule, as
+  `ForegroundAutoUpdateScheduler` keeps its interval and reruns at once only a run the hide cancelled.
 - `ActivePollingMixin` is stricter for per-widget polls such as connections and memory. It polls only while the app is
   `resumed`, its home page is the current one, and no opaque route covers its page: the overlay turns tickers off on a
   covered page once the route over it has finished moving in, and the mixin follows `TickerMode`.
@@ -1183,7 +1185,8 @@ seen. There are three levels of gating:
 - Motion that needs only a few updates a second, such as the aurora wallpaper and the dashboard's outbound drift, runs
   on `FramePacer` (`lib/ui/frame_pacer.dart`), which asks for a frame only when one is due. An active `Ticker` asks
   for one every vsync even when its callback skips the update, and each of those frames rasterizes the whole scene
-  again, glass and ink included.
+  again, glass and ink included. Pacers running together count from one shared grid, so the drift's 15 fps lands on
+  the wallpaper's 30 fps frames instead of between them; a 120 Hz test drew 44 frames a second with a clock each.
 
 A provider's own `ref.listen` delivers nothing while no one listens to that provider. That is the usual state of an
 action notifier, which is only ever read. A derived provider it listens to is never recomputed, and even a `ref.read`
