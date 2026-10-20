@@ -475,7 +475,7 @@ class _CountryBadgeState extends State<_CountryBadge> {
                   painter: OutboundDropletPainter(
                     time: time,
                     wobble: wobble,
-                    color: hasFlag ? null : well,
+                    color: well,
                     shadow: shadow,
                     highlight: false,
                   ),

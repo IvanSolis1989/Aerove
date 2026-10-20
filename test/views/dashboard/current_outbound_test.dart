@@ -250,6 +250,8 @@ void main() {
           ),
           findsOneWidget,
         );
+        // Nepal's pennants leave part of the bubble to its own fill.
+        expect(_bubbles(tester).color, isNotNull);
         expect(find.byTooltip('Retry'), findsOneWidget);
         expect(tester.widget<InkResponse>(_bubble()).onTap, isNotNull);
         expect(tester.takeException(), isNull);
