@@ -353,7 +353,9 @@ puts the profile's bulk sections into the overlay, appends the profile's rules a
 for the Android service and the controller's reload, and parses it. `config.yaml` is encoded a slice at a time, because on a
 profile of 100k proxies and 2M rules one `Encode` call doubles the peak heap. The preview reads the YAML `buildProfile`
 merges into the spill directory, and the extend page only the names
-and types `getProfileOutbounds` lists; a script extension still needs the whole config from `getConfig`.
+and types `getProfileOutbounds` lists; a script extension still needs the whole config, which `getConfig` writes to the
+spill directory as the JSON text the script reads. That text and the script's answer stay strings until the build isolate
+decodes them, so a script profile costs the UI isolate no JSON pass.
 
 Go event delivery is intentionally non-blocking:
 

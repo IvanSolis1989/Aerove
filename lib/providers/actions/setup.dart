@@ -458,20 +458,23 @@ class SetupAction extends _$SetupAction {
     final profileBase = !isCustom && !hasScript
         ? await _core.getProfileBase(profileId)
         : null;
-    Map<String, dynamic> rawConfig = isCustom
-        ? {
+    final rawConfig = isCustom
+        ? <String, dynamic>{
             'proxies': appProxiesPayload(
               setupState.appProxies,
               dialers: setupState.proxyDialers,
               groups: setupState.proxyGroups,
             ),
           }
-        : profileBase?.base.config ?? await _core.getConfig(profileId);
+        : profileBase?.base.config ?? const <String, dynamic>{};
     final proxyGroups = isCustom ? setupState.proxyGroups : <ProxyGroup>[];
     final rules = isCustom ? setupState.rules : <Rule>[];
-    if (hasScript) {
-      rawConfig = await handleEvaluate(scriptContent!, rawConfig);
-    }
+    final scriptOutput = hasScript
+        ? await handleEvaluate(
+            scriptContent!,
+            await _core.getConfigJson(profileId),
+          )
+        : null;
     final directory = await appPath.profilesPath;
     final injected = await _resolveInjectedProviders(
       setupState,
@@ -487,6 +490,7 @@ class SetupAction extends _$SetupAction {
         profilesPath: directory,
         profileId: profileId,
         rawConfig: rawConfig,
+        rawConfigJson: scriptOutput,
         realPatchConfig: patchConfig,
         overrides: setupState.overrides,
         bypassPrivateRoute: networkSetting.bypassPrivateRoute,

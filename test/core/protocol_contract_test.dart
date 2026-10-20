@@ -83,10 +83,7 @@ class _RecordingCoreHandler extends CoreHandlerInterface {
         'vehicle-type': 'HTTP',
         'update-at': '2024-01-01T00:00:00.000Z',
       },
-      CoreMethod.getConfig => {
-        'mode': 'rule',
-        'rule': ['MATCH,DIRECT'],
-      },
+      CoreMethod.getConfig => '/home/responses/2.json',
       CoreMethod.getProfileOutbounds => {
         'proxies': [
           {'name': 'a', 'type': 'ss'},
@@ -399,10 +396,8 @@ void main() {
       (await handler.getExternalProvider('provider-1'))?.name,
       'provider-1',
     );
-    expect(await handler.getConfig('/config.yaml'), {
-      'mode': 'rule',
-      'rule': ['MATCH,DIRECT'],
-    });
+    expect(await handler.getConfig('/config.yaml'), '/home/responses/2.json');
+    expect(handler.calls[CoreMethod.getConfig], '/config.yaml');
     final memory = await handler.getMemoryStats();
     expect(memory?.rss, 2048);
     expect(memory?.runtimeTotal, 1024 + 256 + 64 + 32);

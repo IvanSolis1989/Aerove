@@ -24,25 +24,18 @@ void main() {
   }
 
   test(
-    'passes the profile as JSON and returns what the script produced',
+    'passes the profile text through and returns what the script produced',
     () async {
-      answerWith(json.encode({'mode': 'global'}));
+      final produced = json.encode({'mode': 'global'});
+      answerWith(produced);
 
-      final result = await handleEvaluate('main', {'mode': 'rule'});
+      final result = await handleEvaluate('main', '{"mode":"rule"}');
 
-      expect(result, {'mode': 'global'});
-      expect(json.decode(calls.single.config)['mode'], 'rule');
+      expect(result, produced);
+      expect(calls.single.config, '{"mode":"rule"}');
       expect(calls.single.script, 'main');
     },
   );
-
-  test('gives the script an empty proxy-providers map to work with', () async {
-    answerWith(json.encode({'mode': 'rule'}));
-
-    await handleEvaluate('main', {'mode': 'rule'});
-
-    expect(json.decode(calls.single.config)['proxy-providers'], isEmpty);
-  });
 
   test('reports what the engine threw', () async {
     scriptEvaluator = ({required String script, required String config}) async {
@@ -50,7 +43,7 @@ void main() {
     };
 
     await expectLater(
-      handleEvaluate('main', {}),
+      handleEvaluate('main', '{}'),
       throwsA(
         isA<MessageException>().having(
           (error) => error.message,
@@ -61,11 +54,13 @@ void main() {
     );
   });
 
-  test('rejects a result that is not a configuration object', () async {
-    answerWith(json.encode([1, 2, 3]));
+  test('decodes a configuration object the script returned', () {
+    expect(decodeScriptResult('{"mode":"global"}'), {'mode': 'global'});
+  });
 
-    await expectLater(
-      handleEvaluate('main', {}),
+  test('rejects a result that is not a configuration object', () {
+    expect(
+      () => decodeScriptResult(json.encode([1, 2, 3])),
       throwsA(isA<MessageException>()),
     );
   });

@@ -347,6 +347,52 @@ void main() {
     },
   );
 
+  group('makeRealProfileTask with a script result', () {
+    MakeRealProfileState stateOf(String rawConfigJson) => MakeRealProfileState(
+      profilesPath: '/profiles',
+      profileId: 7,
+      rawConfigJson: rawConfigJson,
+      realPatchConfig: const PatchClashConfig(mixedPort: 7893),
+      appendSystemDns: false,
+      proxyGroups: const [],
+      rules: const [],
+      addedRules: const [],
+      defaultUA: 'FlClash-Test',
+    );
+
+    test('decodes the result where it builds the profile', () async {
+      final result = await makeRealProfileTask(
+        stateOf(
+          jsonEncode({
+            'proxies': [
+              {'name': 'a', 'type': 'ss'},
+            ],
+            'rule-providers': {
+              'remote': {'type': 'http', 'url': 'https://example.com/r.yaml'},
+            },
+            'rules': ['MATCH,DIRECT'],
+          }),
+        ),
+      );
+      final config = loadYaml(result.yaml) as YamlMap;
+
+      expect(config['mixed-port'], 7893);
+      expect(
+        config['rule-providers']['remote']['path'],
+        startsWith(join('/profiles', providersDirectoryName, '7')),
+      );
+      expect(config['rules'], ['MATCH,DIRECT']);
+      expect(result.counts, (groups: 0, proxies: 1, rules: 1));
+    });
+
+    test('rejects a result that is not a configuration object', () async {
+      await expectLater(
+        makeRealProfileTask(stateOf('[1, 2, 3]')),
+        throwsA(isA<MessageException>()),
+      );
+    });
+  });
+
   test('lastMatchTarget reads the last MATCH rule that names a target', () {
     expect(
       lastMatchTarget(['MATCH,A', 'DOMAIN,x.test,B', 'match,C', 'MATCH,']),

@@ -1720,7 +1720,7 @@ void main() {
       final evaluated = <String>[];
       scriptEvaluator =
           ({required String script, required String config}) async {
-            evaluated.add(script);
+            evaluated.add(config);
             return config;
           };
       final script = await Script(
@@ -1729,7 +1729,14 @@ void main() {
         lastUpdateTime: DateTime(2026),
       ).save('const main = (config) => config;');
       final core = _MockCoreHandlerInterface();
-      when(() => core.getConfig(any())).thenAnswer((_) async => {});
+      final input = File(
+        join(await appPath.homeDirPath, coreSpillDirectoryName, 'input.json'),
+      );
+      when(() => core.getConfig(any())).thenAnswer((_) async {
+        await input.create(recursive: true);
+        await input.writeAsString('{"mode":"rule"}');
+        return input.path;
+      });
       final scoped = ProviderContainer(
         overrides: [
           coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
@@ -1754,8 +1761,9 @@ void main() {
       verifyNever(() => core.getConfig(any()));
 
       await build(ProfileType.file);
-      expect(evaluated, hasLength(1));
+      expect(evaluated, ['{"mode":"rule"}']);
       verify(() => core.getConfig(any())).called(1);
+      expect(input.existsSync(), isFalse);
     });
 
     test(

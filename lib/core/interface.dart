@@ -36,7 +36,7 @@ mixin CoreInterface {
 
   Future<List<List<Map<String, dynamic>>>> decodeShareLinks(List<String> lines);
 
-  Future<Map<String, dynamic>> getConfig(String path);
+  Future<String> getConfig(String path);
 
   Future<ProfileBase> getProfileBase(String path);
 
@@ -289,12 +289,12 @@ abstract class CoreHandlerInterface with CoreInterface {
   }
 
   @override
-  Future<Map<String, dynamic>> getConfig(String path) async {
-    final result = await _invokeMethod<Map<String, dynamic>>(
+  Future<String> getConfig(String path) async {
+    final result = await _invokeMethod<String>(
       method: CoreMethod.getConfig,
       arguments: path,
     );
-    if (result == null) {
+    if (result == null || result.isEmpty) {
       throw const CoreMethodException(
         code: 'empty_result',
         message: 'Core returned an empty config result',

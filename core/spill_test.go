@@ -24,20 +24,20 @@ func withSpillHome(t *testing.T, threshold int) string {
 	return home
 }
 
-func getConfigCall(t *testing.T, id string) *MethodCall {
+func profileBaseCall(t *testing.T, id string) *MethodCall {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "profile.yaml")
 	if err := os.WriteFile(path, []byte("mode: rule\nrules:\n  - MATCH,DIRECT\n"), 0o600); err != nil {
 		t.Fatalf("write profile: %v", err)
 	}
 	arguments, _ := json.Marshal(path)
-	return &MethodCall{ID: id, Method: getConfigMethod, Arguments: arguments}
+	return &MethodCall{ID: id, Method: getProfileBaseMethod, Arguments: arguments}
 }
 
 func TestHandleMethodCallSpillsALargeResultToAFile(t *testing.T) {
 	home := withSpillHome(t, 64)
 
-	frame := handleMethodCall(getConfigCall(t, "7"))
+	frame := handleMethodCall(profileBaseCall(t, "7"))
 
 	var envelope MethodResponse
 	if err := json.Unmarshal(frame, &envelope); err != nil {
@@ -60,7 +60,7 @@ func TestHandleMethodCallSpillsALargeResultToAFile(t *testing.T) {
 	if err := json.Unmarshal(data, &spilled); err != nil {
 		t.Fatalf("spilled response is not valid JSON: %v", err)
 	}
-	if spilled.ID != "7" || spilled.Result["mode"] != "rule" {
+	if spilled.ID != "7" || spilled.Result["rules"] != float64(1) {
 		t.Errorf("spilled response = %+v, want the full answer to call 7", spilled)
 	}
 	if runtime.GOOS != "windows" {
@@ -74,7 +74,7 @@ func TestHandleMethodCallSpillsALargeResultToAFile(t *testing.T) {
 func TestHandleMethodCallAnswersInlineUnderTheThreshold(t *testing.T) {
 	home := withSpillHome(t, responseSpillThreshold)
 
-	frame := handleMethodCall(getConfigCall(t, "8"))
+	frame := handleMethodCall(profileBaseCall(t, "8"))
 
 	var envelope MethodResponse
 	if err := json.Unmarshal(frame, &envelope); err != nil {
@@ -90,7 +90,7 @@ func TestHandleMethodCallAnswersInlineUnderTheThreshold(t *testing.T) {
 
 func TestClearSpilledResponsesKeepsTheDirectory(t *testing.T) {
 	home := withSpillHome(t, 64)
-	handleMethodCall(getConfigCall(t, "9"))
+	handleMethodCall(profileBaseCall(t, "9"))
 
 	clearSpilledResponses()
 

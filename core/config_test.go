@@ -96,6 +96,43 @@ func TestRouteConfigToleratesMissingTLSSection(t *testing.T) {
 	}
 }
 
+func TestGetConfigSpillsTheScriptInputAsJSONText(t *testing.T) {
+	home := withSpillHome(t, responseSpillThreshold)
+	profile := filepath.Join(t.TempDir(), "profile.yaml")
+	if err := os.WriteFile(profile, []byte("mode: rule\nrules:\n  - MATCH,DIRECT\n"), 0o600); err != nil {
+		t.Fatalf("write profile: %v", err)
+	}
+
+	path, err := handleGetConfig(profile)
+	if err != nil {
+		t.Fatalf("handleGetConfig: %v", err)
+	}
+
+	if filepath.Dir(path) != filepath.Join(home, spilledResponseDirName) {
+		t.Fatalf("path = %s, want it under the spill directory", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read script input: %v", err)
+	}
+	var input map[string]any
+	if err := json.Unmarshal(data, &input); err != nil {
+		t.Fatalf("script input is not JSON: %v", err)
+	}
+	if _, ok := input["rule"]; ok {
+		t.Errorf("input carries rule; want the rules only under rules: %s", data)
+	}
+	if rules, _ := input["rules"].([]any); len(rules) != 1 || rules[0] != "MATCH,DIRECT" {
+		t.Errorf("rules = %v, want [MATCH,DIRECT]", input["rules"])
+	}
+	if providers, ok := input["proxy-providers"].(map[string]any); !ok || len(providers) != 0 {
+		t.Errorf("proxy-providers = %v, want an empty map a script can add to", input["proxy-providers"])
+	}
+	if input["mode"] != "rule" {
+		t.Errorf("mode = %v, want rule", input["mode"])
+	}
+}
+
 func TestUpdateConfigRejectsAnUnappliedConfig(t *testing.T) {
 	withCurrentConfig(t, nil)
 
