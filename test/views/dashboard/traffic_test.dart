@@ -71,8 +71,8 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('a scroll shows the speed every other second, then the latest '
-      'at once', (tester) async {
+  testWidgets('a scroll shows the first speed, then every other second, then '
+      'the latest at once', (tester) async {
     await tester.pumpWidget(
       const TestApp(
         includeNavigatorKey: false,
@@ -108,17 +108,17 @@ void main() {
       tester.getCenter(find.byType(NetworkSpeedCard)),
     );
     final shown = <String>[];
-    for (var kilobytes = 2; kilobytes <= 6; kilobytes++) {
+    for (var kilobytes = 2; kilobytes <= 7; kilobytes++) {
       await sample(kilobytes);
       shown.add(download());
     }
-    expect(shown, ['1 KB/s', '3 KB/s', '3 KB/s', '5 KB/s', '5 KB/s']);
+    expect(shown, ['2 KB/s', '2 KB/s', '4 KB/s', '4 KB/s', '6 KB/s', '6 KB/s']);
     await gesture.up();
     await tester.pump(const Duration(milliseconds: 349));
-    expect(download(), '5 KB/s');
-    await tester.pump(const Duration(milliseconds: 1));
     expect(download(), '6 KB/s');
-    expect(container.read(trafficsProvider).list.length, 6);
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(download(), '7 KB/s');
+    expect(container.read(trafficsProvider).list.length, 7);
     expect(tester.takeException(), isNull);
   });
 

@@ -1202,11 +1202,13 @@ seen. There are three levels of gating:
   the wallpaper's instead of between them: idle, both at 15 fps, the dashboard draws 15 frames a second, not up to 30.
 - One interaction signal paces both motion and data: `AuroraMotionActivity.interactionOf` is true while a pointer is
   down or a page drags, flings or wheel-scrolls, and for 350 ms after. It is tracked whenever the app is in front and
-  its tickers run, the wallpaper off included. The wallpaper (when on) and the dashboard's drift drop from 15 to 10 fps
-  with it, and the dashboard cards wrap their figures in `InteractionPaced` (`lib/widgets/interaction_paced.dart`),
-  which builds every other new value while it holds and the latest the moment it ends. Pacing lives where a card
-  shows a value, never in the provider or poll that produces it, so history pages, totals and other readers keep
-  every update.
+  its tickers run, the wallpaper off included, and a scrollable whose own ticker is muted, such as a kept-alive page
+  left mid-fling, stops counting at the next idle check. The wallpaper (when on) and the dashboard's drift drop from
+  15 to 10 fps with it, and the dashboard cards wrap their figures in `InteractionPaced`
+  (`lib/widgets/interaction_paced.dart`), which builds the first new value of an interaction and every other one after
+  it, holding the rest, and the latest the moment it ends. Showing the first one keeps a tap's result and a freshly
+  mounted card's first poll immediate. Pacing lives where a card shows a value, never in the provider or poll that
+  produces it, so history pages, totals and other readers keep every update.
 
 A provider's own `ref.listen` delivers nothing while no one listens to that provider. That is the usual state of an
 action notifier, which is only ever read. A derived provider it listens to is never recomputed, and even a `ref.read`

@@ -3,8 +3,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
 /// Builds [builder] again whenever [revision] changes, but while the user
-/// interacts ([AuroraMotionActivity.interactionOf]) only every other change,
-/// and the latest one the moment the interaction ends.
+/// interacts ([AuroraMotionActivity.interactionOf]) only the first change and
+/// every other one after it, and the latest one the moment the interaction
+/// ends.
 class InteractionPaced extends StatefulWidget {
   const InteractionPaced({
     super.key,
@@ -26,7 +27,7 @@ class _InteractionPacedState extends State<InteractionPaced> {
   Object? _shown;
   Object? _seen;
   var _forceBuild = true;
-  var _odd = false;
+  var _odd = true;
   var _holding = false;
 
   bool get _interacting => _interaction?.value ?? false;
@@ -44,7 +45,7 @@ class _InteractionPacedState extends State<InteractionPaced> {
 
   void _onInteraction() {
     if (_interacting) {
-      _odd = false;
+      _odd = true;
     } else {
       _showHeld();
     }
