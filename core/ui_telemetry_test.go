@@ -3,6 +3,7 @@ package core
 import (
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -124,19 +125,23 @@ func TestUiTelemetryCancelsRequestTrafficWithoutClosingConnections(t *testing.T)
 	}
 }
 
-func TestUiTelemetryCancelsInFlightUserDelay(t *testing.T) {
+func TestUiTelemetryDiscardsAnInFlightUserDelayWithoutFailingTheNode(t *testing.T) {
 	activateTestTelemetry(t)
 	started := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		close(started)
-		<-r.Context().Done()
+		once.Do(func() { close(started) })
+		<-release
+		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
-	tunnel.UpdateProxies(map[string]constant.Proxy{"cancelable": namedProxy("cancelable")}, nil)
+	proxy := namedProxy("hidden-mid-test")
+	tunnel.UpdateProxies(map[string]constant.Proxy{"hidden-mid-test": proxy}, nil)
 	t.Cleanup(func() { tunnel.UpdateProxies(nil, nil) })
 	done := make(chan *Delay, 1)
 	go func() {
-		done <- handleTestDelay(&TestDelayParams{ProxyName: "cancelable", TestUrl: server.URL, Timeout: 5000})
+		done <- handleTestDelay(&TestDelayParams{ProxyName: "hidden-mid-test", TestUrl: server.URL, Timeout: 5000})
 	}()
 	select {
 	case <-started:
@@ -144,12 +149,17 @@ func TestUiTelemetryCancelsInFlightUserDelay(t *testing.T) {
 		t.Fatal("delay request never reached the test server")
 	}
 	setUiTelemetryActive(false, methodCallSeq.Add(1))
+	time.Sleep(50 * time.Millisecond)
+	close(release)
 	select {
 	case result := <-done:
 		if result != nil {
-			t.Fatalf("canceled delay reported a proxy failure: %v", result)
+			t.Fatalf("a delay the hidden UI no longer waits for was answered: %v", result)
 		}
-	case <-time.After(time.Second):
-		t.Fatal("background transition did not cancel the delay request")
+	case <-time.After(5 * time.Second):
+		t.Fatal("the delay test outlived its own timeout")
+	}
+	if !proxy.AliveForTestUrl(server.URL) {
+		t.Fatal("hiding the UI mid-test recorded a reachable node as dead")
 	}
 }

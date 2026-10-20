@@ -93,7 +93,9 @@ func handleTestDelay(params *TestDelayParams) *Delay {
 	}
 	defer delayTestSlots.release()
 
-	ctx, cancel := context.WithTimeout(parent, timeout)
+	// Hiding the UI cancels parent, and mihomo records a cancelled probe as a
+	// dead node; parent only decides whether anyone still wants the answer.
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	delay, err := proxy.URLTest(ctx, url, anyDelayTestStatus)
 	if parent.Err() != nil {
