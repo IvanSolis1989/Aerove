@@ -234,7 +234,7 @@ void main() {
     },
   );
 
-  testWidgets('display refresh cadences repaint the background at thirty fps', (
+  testWidgets('display refresh cadences repaint the background at fifteen fps', (
     tester,
   ) async {
     for (final refreshRate in [60, 120]) {
