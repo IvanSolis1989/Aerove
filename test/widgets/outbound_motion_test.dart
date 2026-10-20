@@ -5,6 +5,7 @@ import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/ui/inherited.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/views/dashboard/widgets/outbound_motion.dart';
+import 'package:fl_clash/widgets/aurora.dart' show AuroraMotionActivity;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -101,6 +102,50 @@ Future<void> _vsyncs(WidgetTester tester, int refreshRate) async {
   for (var vsync = 0; vsync < refreshRate; vsync++) {
     await tester.pump(interval);
   }
+}
+
+Widget _scrolling({required bool wallpaper}) => ProviderScope(
+  child: MaterialApp(
+    home: AuroraMotionActivity(
+      enabled: wallpaper,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          OutboundDrift(moving: true, builder: (_, phase, _) => _Probe(phase)),
+          Expanded(
+            child: ListView.builder(
+              itemCount: 400,
+              itemBuilder: (_, index) =>
+                  SizedBox(height: 60, child: Text('$index')),
+            ),
+          ),
+        ],
+      ),
+    ),
+  ),
+);
+
+/// Counts the drift's steps over one second of 60 Hz vsyncs, checking that no
+/// step moves further than the time since the last one, a tenth of a second
+/// at most for the first.
+Future<int> _steps(WidgetTester tester) async {
+  const interval = Duration(microseconds: 16667);
+  const radiansPerSecond = 2 * math.pi / 12;
+  var steps = 0;
+  var last = _phase(tester);
+  var since = const Duration(milliseconds: 100);
+  for (var vsync = 0; vsync < 60; vsync++) {
+    await tester.pump(interval);
+    since += interval;
+    final phase = _phase(tester);
+    if (phase == last) continue;
+    final allowed = radiansPerSecond * (since.inMicroseconds + 1000) / 1e6;
+    expect(phase - last, inExclusiveRange(0, allowed));
+    steps++;
+    last = phase;
+    since = Duration.zero;
+  }
+  return steps;
 }
 
 _Skin _skin(WidgetTester tester) => tester.widget<_Skin>(find.byType(_Skin));
@@ -285,6 +330,38 @@ void main() {
     expect(tester.binding.hasScheduledFrame, isFalse);
     expect(tester.binding.transientCallbackCount, 0);
   });
+
+  for (final wallpaper in [true, false]) {
+    testWidgets('a drag or fling drops the drift to ten steps a second '
+        '(wallpaper ${wallpaper ? 'on' : 'off'})', (tester) async {
+      await tester.pumpWidget(_scrolling(wallpaper: wallpaper));
+      await _advance(tester);
+      expect(await _steps(tester), inInclusiveRange(14, 16));
+
+      final list = find.byType(ListView);
+      final drag = await tester.startGesture(tester.getCenter(list));
+      await drag.moveBy(const Offset(0, -40));
+      expect(await _steps(tester), inInclusiveRange(9, 11));
+      await drag.up();
+      await tester.pump(const Duration(milliseconds: 349));
+      expect(await _steps(tester), inInclusiveRange(14, 16));
+
+      await tester.fling(list, const Offset(0, -400), 1500);
+      final position = tester.state<ScrollableState>(find.byType(Scrollable));
+      expect(position.position.isScrollingNotifier.value, isTrue);
+      expect(await _steps(tester), inInclusiveRange(9, 11));
+      while (position.position.isScrollingNotifier.value) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(await _steps(tester), inInclusiveRange(14, 16));
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      expect(tester.binding.transientCallbackCount, 0);
+    });
+  }
 
   testWidgets('drifts moving at once share the same fifteen frames', (
     tester,

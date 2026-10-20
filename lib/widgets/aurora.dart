@@ -275,11 +275,16 @@ class AuroraMotionActivity extends StatefulWidget {
     required this.child,
   });
 
+  /// Gates only the [rateOf] drop; [interactionOf] tracks either way.
   final bool enabled;
   final Widget child;
 
   static ValueListenable<int>? rateOf(BuildContext context) =>
-      context.dependOnInheritedWidgetOfExactType<_AuroraActivityRate>()?.rate;
+      context.dependOnInheritedWidgetOfExactType<_AuroraActivityScope>()?.rate;
+
+  static ValueListenable<bool>? interactionOf(BuildContext context) => context
+      .dependOnInheritedWidgetOfExactType<_AuroraActivityScope>()
+      ?.interaction;
 
   @override
   State<AuroraMotionActivity> createState() => _AuroraMotionActivityState();
@@ -293,10 +298,12 @@ class _AuroraMotionActivityState extends State<AuroraMotionActivity>
   static const _activeRate = 10;
 
   late final _rate = ValueNotifier(_idleRate);
+  final _interaction = ValueNotifier(false);
   final _pointers = <int>{};
   final _scrolls = <BuildContext>{};
   Timer? _idleTimer;
   bool _foreground = true;
+  bool _tracking = false;
   bool _accepting = false;
 
   @override
@@ -328,39 +335,37 @@ class _AuroraMotionActivityState extends State<AuroraMotionActivity>
   }
 
   void _syncEnabled() {
+    _tracking = _foreground && TickerMode.valuesOf(context).enabled;
     _accepting =
+        _tracking &&
         widget.enabled &&
-        _foreground &&
-        TickerMode.valuesOf(context).enabled &&
         !(MediaQuery.maybeOf(context)?.disableAnimations ?? false);
-    if (!_accepting) {
+    if (!_tracking) {
       _idleTimer?.cancel();
       _idleTimer = null;
       _pointers.clear();
       _scrolls.clear();
-      _rate.value = _idleRate;
-    } else {
-      _rate.value =
-          _pointers.isNotEmpty || _scrolls.isNotEmpty || _idleTimer != null
-          ? _activeRate
-          : _idleRate;
+      _interaction.value = false;
     }
+    if (!_accepting) _rate.value = _idleRate;
   }
 
   void _activate() {
     _idleTimer?.cancel();
     _idleTimer = null;
-    _rate.value = _activeRate;
+    _interaction.value = true;
+    if (_accepting) _rate.value = _activeRate;
   }
 
   void _release() {
-    if (_rate.value == _idleRate || _pointers.isNotEmpty) return;
+    if (!_interaction.value || _pointers.isNotEmpty) return;
     _idleTimer?.cancel();
     _idleTimer = Timer(_idleDelay, () {
       _idleTimer = null;
       // Disposed scrollables may never send ScrollEndNotification.
       _scrolls.removeWhere((source) => !source.mounted);
       if (_scrolls.isEmpty) {
+        _interaction.value = false;
         _rate.value = _idleRate;
       } else {
         _release();
@@ -369,7 +374,7 @@ class _AuroraMotionActivityState extends State<AuroraMotionActivity>
   }
 
   bool _onScroll(ScrollNotification notification) {
-    if (!_accepting) return false;
+    if (!_tracking) return false;
     final source = notification.context ?? context;
     if (notification is ScrollStartNotification ||
         notification is ScrollUpdateNotification ||
@@ -390,32 +395,34 @@ class _AuroraMotionActivityState extends State<AuroraMotionActivity>
     WidgetsBinding.instance.removeObserver(this);
     _idleTimer?.cancel();
     _rate.dispose();
+    _interaction.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return _AuroraActivityRate(
+    return _AuroraActivityScope(
       rate: _rate,
+      interaction: _interaction,
       child: Listener(
         behavior: HitTestBehavior.translucent,
         onPointerDown: (event) {
-          if (!_accepting) return;
+          if (!_tracking) return;
           _pointers.add(event.pointer);
           _activate();
         },
         onPointerUp: (event) {
-          if (!_accepting) return;
+          if (!_tracking) return;
           _pointers.remove(event.pointer);
           _release();
         },
         onPointerCancel: (event) {
-          if (!_accepting) return;
+          if (!_tracking) return;
           _pointers.remove(event.pointer);
           _release();
         },
         onPointerSignal: (_) {
-          if (!_accepting) return;
+          if (!_tracking) return;
           _activate();
           _release();
         },
@@ -428,14 +435,20 @@ class _AuroraMotionActivityState extends State<AuroraMotionActivity>
   }
 }
 
-class _AuroraActivityRate extends InheritedWidget {
-  const _AuroraActivityRate({required this.rate, required super.child});
+class _AuroraActivityScope extends InheritedWidget {
+  const _AuroraActivityScope({
+    required this.rate,
+    required this.interaction,
+    required super.child,
+  });
 
   final ValueListenable<int> rate;
+  final ValueListenable<bool> interaction;
 
   @override
-  bool updateShouldNotify(_AuroraActivityRate oldWidget) =>
-      !identical(rate, oldWidget.rate);
+  bool updateShouldNotify(_AuroraActivityScope oldWidget) =>
+      !identical(rate, oldWidget.rate) ||
+      !identical(interaction, oldWidget.interaction);
 }
 
 class SeededAuroraWallpaper extends StatefulWidget {

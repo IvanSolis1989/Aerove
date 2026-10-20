@@ -434,6 +434,55 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('interaction is tracked with the wallpaper rate held at rest', (
+    tester,
+  ) async {
+    late ValueListenable<int> rate;
+    late ValueListenable<bool> interaction;
+    Widget scene({
+      bool enabled = true,
+      bool reduced = false,
+      bool ticker = true,
+    }) => MediaQuery(
+      data: MediaQueryData(disableAnimations: reduced),
+      child: Directionality(
+        textDirection: TextDirection.ltr,
+        child: TickerMode(
+          enabled: ticker,
+          child: AuroraMotionActivity(
+            enabled: enabled,
+            child: Builder(
+              builder: (context) {
+                rate = AuroraMotionActivity.rateOf(context)!;
+                interaction = AuroraMotionActivity.interactionOf(context)!;
+                return const SizedBox.expand();
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    for (final quiet in [scene(enabled: false), scene(reduced: true)]) {
+      await tester.pumpWidget(quiet);
+      final gesture = await tester.startGesture(const Offset(20, 20));
+      expect((interaction.value, rate.value), (true, 15));
+      await gesture.up();
+      await tester.pump(const Duration(milliseconds: 349));
+      expect(interaction.value, isTrue);
+      await tester.pump(const Duration(milliseconds: 1));
+      expect((interaction.value, rate.value), (false, 15));
+    }
+    await tester.pumpWidget(scene());
+    final gesture = await tester.startGesture(const Offset(20, 20));
+    expect((interaction.value, rate.value), (true, 10));
+    await tester.pumpWidget(scene(ticker: false));
+    expect((interaction.value, rate.value), (false, 15));
+    await gesture.up();
+    await tester.pump(const Duration(seconds: 1));
+    expect(interaction.value, isFalse);
+    expect(tester.binding.hasScheduledFrame, isFalse);
+  });
 }
 
 int Function() _countFrames(WidgetTester tester) {

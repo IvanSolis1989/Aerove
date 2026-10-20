@@ -5,6 +5,8 @@ import 'package:fl_clash/ui/frame_pacer.dart';
 import 'package:fl_clash/ui/inherited.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/motion.dart';
+import 'package:fl_clash/widgets/aurora.dart' show AuroraMotionActivity;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
@@ -390,21 +392,37 @@ class OutboundDrift extends ConsumerStatefulWidget {
 /// Every drift on screen reads one paced clock, so the badge and the gauze
 /// moving together share their frames rather than asking for their own.
 abstract final class _DriftClock {
+  static const _restRate = 15;
+  static const _interactionRate = 10;
+
   static final _members = <_OutboundDriftState>{};
-  static final _pacer = FramePacer(_tick, framesPerSecond: 15);
+  static final _pacer = FramePacer(_tick, framesPerSecond: _restRate);
   static var _now = Duration.zero;
 
   static Duration join(_OutboundDriftState member) {
-    if (_members.isEmpty) {
+    final first = _members.isEmpty;
+    _members.add(member);
+    retune();
+    if (first) {
       _now = Duration.zero;
       _pacer.start();
     }
-    _members.add(member);
     return _now;
   }
 
   static void leave(_OutboundDriftState member) {
-    if (_members.remove(member) && _members.isEmpty) _pacer.stop();
+    if (!_members.remove(member)) return;
+    if (_members.isEmpty) {
+      _pacer.stop();
+    } else {
+      retune();
+    }
+  }
+
+  static void retune() {
+    _pacer.framesPerSecond = _members.any((member) => member._interacting)
+        ? _interactionRate
+        : _restRate;
   }
 
   static void _tick(Duration elapsed) {
@@ -421,6 +439,7 @@ class _OutboundDriftState extends ConsumerState<OutboundDrift>
 
   final _phase = ValueNotifier<double>(0);
   ScrollPosition? _position;
+  ValueListenable<bool>? _interaction;
   _OutboundVisibilityRender? _render;
   Duration? _joined;
   double _base = 0;
@@ -442,6 +461,12 @@ class _OutboundDriftState extends ConsumerState<OutboundDrift>
   }
 
   void _measure() => _visible = _render?.visible == true;
+
+  bool get _interacting => _interaction?.value ?? false;
+
+  void _onInteraction() {
+    if (_joined != null) _DriftClock.retune();
+  }
 
   void _runClock(bool run) {
     if (run == (_joined != null)) return;
@@ -507,6 +532,12 @@ class _OutboundDriftState extends ConsumerState<OutboundDrift>
       _position = position;
       _position?.addListener(_checkAfterLayout);
     }
+    final interaction = AuroraMotionActivity.interactionOf(context);
+    if (!identical(_interaction, interaction)) {
+      _interaction?.removeListener(_onInteraction);
+      _interaction = interaction?..addListener(_onInteraction);
+      _onInteraction();
+    }
     _sync();
     _checkAfterLayout();
   }
@@ -534,6 +565,7 @@ class _OutboundDriftState extends ConsumerState<OutboundDrift>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _position?.removeListener(_checkAfterLayout);
+    _interaction?.removeListener(_onInteraction);
     _phase.dispose();
     super.dispose();
   }
