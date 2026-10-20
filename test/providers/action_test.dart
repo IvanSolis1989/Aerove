@@ -519,6 +519,11 @@ void main() {
         final startCompleter = Completer<bool>();
         final container = ProviderContainer(
           overrides: [
+            profilesProvider.overrideWith(TestProfiles.new),
+            currentProfileIdProvider.overrideWithBuild((_, _) => null),
+            appSettingProvider.overrideWithBuild(
+              (_, _) => const AppSettingProps(),
+            ),
             initProvider.overrideWithBuild((_, _) => true),
             commonActionProvider.overrideWith(_RaceCommonAction.new),
             setupActionProvider.overrideWith(_RaceSetupAction.new),
