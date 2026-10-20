@@ -5,7 +5,6 @@ import com.follow.clash.ServiceState
 import com.follow.clash.common.Components
 import com.follow.clash.core.Core
 import com.follow.clash.models.SharedState
-import com.follow.clash.service.ServiceConfig
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -50,7 +49,6 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         channel.setMethodCallHandler(null)
         coreChannel.setMethodCallHandler(null)
         scope.cancel()
-        ServiceConfig.updateUiTelemetryActive(false)
         ServiceController.setEventListener(null)
     }
 
@@ -84,7 +82,6 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     }
 
     private fun shutdown(result: MethodChannel.Result) {
-        ServiceConfig.updateUiTelemetryActive(false)
         ServiceController.setEventListener(null)
         result.success(true)
     }
@@ -95,7 +92,6 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             result.error("INVALID_ARGUMENT", "UI telemetry state must be a boolean", null)
             return
         }
-        ServiceConfig.updateUiTelemetryActive(active)
         val data = gson.toJson(mapOf("method" to "setUiTelemetryActive", "arguments" to active))
         ServiceController.invokeMethod(data) { response ->
             val decoded = runCatching {

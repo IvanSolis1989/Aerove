@@ -25,7 +25,7 @@ import java.util.concurrent.ConcurrentHashMap
 import android.net.VpnService as SystemVpnService
 
 class VpnService : SystemVpnService(), ManagedService {
-    private val modules = ServiceModules(this)
+    private val modules = ServiceModules(this, foreground = false)
     private val binder = LocalBinder()
     private val tunLock = Any()
     private var tunRunning = false

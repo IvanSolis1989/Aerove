@@ -255,7 +255,10 @@ ConfigToggleItem _appSettingToggle({
 class GeneralView extends ConsumerWidget {
   const GeneralView({super.key});
 
-  List<Widget> _startupItems(AppLocalizations appLocalizations) {
+  List<Widget> _startupItems(
+    AppLocalizations appLocalizations, {
+    required bool notifies,
+  }) {
     return [
       if (system.isDesktop) ...[
         _appSettingToggle(
@@ -289,12 +292,13 @@ class GeneralView extends ConsumerWidget {
           select: (state) => state.hidden,
           update: (state, value) => state.copyWith(hidden: value),
         ),
-        _appSettingToggle(
-          title: (l) => l.showNotificationStopAction,
-          select: (state) => state.showNotificationStopAction,
-          update: (state, value) =>
-              state.copyWith(showNotificationStopAction: value),
-        ),
+        if (notifies)
+          _appSettingToggle(
+            title: (l) => l.showNotificationStopAction,
+            select: (state) => state.showNotificationStopAction,
+            update: (state, value) =>
+                state.copyWith(showNotificationStopAction: value),
+          ),
       ],
     ];
   }
@@ -431,6 +435,8 @@ class GeneralView extends ConsumerWidget {
         (state) => state.externalController == ExternalControllerStatus.open,
       ),
     );
+    // A VPN posts no notification, so it has no stop action to show.
+    final vpn = ref.watch(vpnSettingProvider.select((state) => state.enable));
     return BaseScaffold(
       title: appLocalizations.general,
       body: ListView(
@@ -440,7 +446,7 @@ class GeneralView extends ConsumerWidget {
         children: [
           generateSection(
             title: appLocalizations.startupAndBackground,
-            items: _startupItems(appLocalizations),
+            items: _startupItems(appLocalizations, notifies: !vpn),
             footer: [
               if (system.isDesktop) appLocalizations.silentLaunchDesc,
               appLocalizations.autoRunDesc,

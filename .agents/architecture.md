@@ -294,6 +294,10 @@ Android deliberately keeps Flutter requests optimistic and the native layer auth
   a lost connection and by nothing else. Flutter's `shutdown` only clears the Core event listener: Android keeps an
   established `VpnService` alive through its own connection, so a binding dropped on exit left a tunnel that was
   reported as running but that neither a stop nor a revoke could reach.
+- Only `ProxyService` posts a notification. Android binds an established `VpnService` at foreground importance and
+  marks it with its own key icon, so `ServiceModules(foreground = false)` leaves the VPN without one; a plain proxy has
+  no such binding and stays a foreground service behind a silent notification that changes only with
+  `notificationParams`. A start asks for notification permission only for the proxy.
 - The Core listens exactly while `runtime` is set: a successful start ends in `Core.startListener()` and every path
   that clears `runtime` calls `Core.stopListener()`. Both return at once when the Core is already there, which is the
   usual case, since `startTUN`/`stopTun` and Flutter's own `startListener`/`stopListener` got there first. They matter
@@ -1197,7 +1201,8 @@ it, as `SetupAction` does with `appVisibleProvider`, not to a provider derived f
 On Android the Core does not react to the screen or to Doze. Doze's firewall keeps apps without an exemption off the
 network before their traffic reaches the TUN, so what still arrives is traffic Doze allows, FCM among it; suspending the
 tunnel rejects exactly that and stalls push reconnects until their backoff runs out. The VPN service keeps its own
-network as a foreground service (`dumpsys netpolicy` shows its `DOZE` block allowed by `FOREGROUND`), so health checks
+network at foreground importance (`dumpsys netpolicy` showed its `DOZE` block allowed by `FOREGROUND` while it still
+posted a notification; now the system's binding alone holds it there, which no phone has measured yet), so health checks
 keep producing real results: holding them blocks the re-check mihomo runs after repeated dial failures, which is how a
 `url-test` group leaves a dead node, and hiding their failures hides the truth. Nothing re-probes on resume either:
 every proxy group is a provider, `select` groups included, and checking one tests every node in it. Should a ROM be

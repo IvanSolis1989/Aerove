@@ -168,11 +168,13 @@ internal class ServiceStateMachine(private val host: ServiceStateHost) {
         }
         val app = host.app()
         if (app != null) {
-            app.requestNotificationPermission { permitted ->
-                if (permitted) {
-                    app.requestLocalNetworkPermission { launch(true) }
-                } else {
-                    launch(false)
+            val askLocalNetwork = { app.requestLocalNetworkPermission { launch(true) } }
+            // A VPN posts no notification; only a plain proxy stays in the foreground.
+            if (sharedState.vpnOptions?.enable == true) {
+                askLocalNetwork()
+            } else {
+                app.requestNotificationPermission { permitted ->
+                    if (permitted) askLocalNetwork() else launch(false)
                 }
             }
         } else {

@@ -12,7 +12,14 @@ internal interface ServiceModule {
     fun stop()
 }
 
-internal class ServiceModules(private val service: Service) {
+/**
+ * A VPN needs no notification: the system's own binding keeps it running.
+ * A plain proxy has no such binding, so it stays a foreground service.
+ */
+internal class ServiceModules(
+    private val service: Service,
+    private val foreground: Boolean,
+) {
     private var scope: CoroutineScope? = null
     private var modules = emptyList<ServiceModule>()
 
@@ -21,8 +28,8 @@ internal class ServiceModules(private val service: Service) {
         if (scope != null) return
 
         val nextScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-        val nextModules = listOf(
-            NotificationModule(service, nextScope),
+        val nextModules = listOfNotNull(
+            if (foreground) NotificationModule(service, nextScope) else null,
             NetworkObserveModule(service),
         )
         val startedModules = mutableListOf<ServiceModule>()

@@ -60,11 +60,14 @@ private class FakeApp(
     var beforeVpnPrepared: (() -> Unit)? = null
     var cancelledPreparations = 0
     var localNetworkRequests = 0
+    var notificationRequests = 0
 
     private var heldCallback: ((Boolean) -> Unit)? = null
 
-    override fun requestNotificationPermission(callback: (Boolean) -> Unit) =
+    override fun requestNotificationPermission(callback: (Boolean) -> Unit) {
+        notificationRequests++
         callback(notificationGranted)
+    }
 
     override fun requestLocalNetworkPermission(callback: (Boolean) -> Unit) {
         localNetworkRequests++
@@ -262,16 +265,30 @@ class ServiceStateMachineTest {
     }
 
     @Test
-    fun `a denied notification permission cancels the start`() = runTest {
+    fun `a denied notification permission cancels a proxy start`() = runTest {
         val host = FakeHost(backgroundScope)
         host.app = FakeApp(notificationGranted = false)
         val machine = ServiceStateMachine(host)
-        machine.syncSharedState(configuredState())
+        machine.syncSharedState(configuredState(enable = false))
 
         assertFalse(machine.requestStart().await())
         assertEquals(0, host.startCalls)
         assertEquals(RunState.STOPPED, machine.runState.value)
         assertEquals(1, host.stoppedNotifications)
+    }
+
+    @Test
+    fun `a vpn starts without asking to post notifications`() = runTest {
+        val host = FakeHost(backgroundScope)
+        val app = FakeApp(notificationGranted = false)
+        host.app = app
+        val machine = ServiceStateMachine(host)
+        machine.syncSharedState(configuredState())
+
+        assertTrue(machine.requestStart().await())
+        assertEquals(0, app.notificationRequests)
+        assertEquals(1, app.localNetworkRequests)
+        assertEquals(1, host.startCalls)
     }
 
     @Test

@@ -8,7 +8,7 @@ import com.follow.clash.core.Core
 import com.follow.clash.service.modules.ServiceModules
 
 class ProxyService : Service(), ManagedService {
-    private val modules = ServiceModules(this)
+    private val modules = ServiceModules(this, foreground = true)
     private val binder = LocalBinder()
 
     override fun onDestroy() {
