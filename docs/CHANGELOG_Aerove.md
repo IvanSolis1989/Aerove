@@ -4,7 +4,9 @@
 
 分支差异以记录的 FlClash `v0.9.1`（`8d4f9744948751f1273fe871e1d05276fac09b0e`）为基线。代理协议、核心路由、VPN 授权和监控数据等上游已有能力，不列为 Aerove 独创功能。
 
-## 待发布
+## 0.9.1-X+2026101833 — 已发布
+
+发布于 **2026-10-20**：[Release](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.9.1-X%2B2026101833)。发布源码为 [`d4ef52b`](https://github.com/IvanSolis1989/Aerove/commit/d4ef52b3b10afc8e854253214d8176736e960197)，对应 [构建记录](https://github.com/IvanSolis1989/Aerove/actions/runs/39409382603)。本版本包含以下名称与玻璃档位、默认选项、启动流畅度、仪表盘气泡、订阅用量与后台工作调整，并恢复原有代理列表滚动。
 
 ### 名称与关于页
 
