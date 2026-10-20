@@ -5,8 +5,10 @@ import (
 	"strings"
 
 	"github.com/metacubex/mihomo/component/geodata"
+	"github.com/metacubex/mihomo/component/geodata/router"
 	"github.com/metacubex/mihomo/component/updater"
 	"github.com/metacubex/mihomo/log"
+	"github.com/metacubex/mihomo/tunnel"
 )
 
 type geoResource struct {
@@ -68,6 +70,10 @@ func onGeoUpdate(geoType string, updating bool, skipped bool, updateErr error) {
 		scheduleReclaimOwnership()
 		if !skipped && updateErr == nil {
 			bumpRouteEpoch()
+			if geoType == "GEOSITE" {
+				rebuildGeoSiteMatchers()
+				scheduleLoadMemoryRelease()
+			}
 		}
 	}
 	status := GeoUpdateStatus{Type: geoType, Updating: updating, Skipped: skipped}
@@ -75,6 +81,19 @@ func onGeoUpdate(geoType string, updating bool, skipped bool, updateErr error) {
 		status.Error = updateErr.Error()
 	}
 	sendMessage(GeoUpdateMessage, status)
+}
+
+type geoSiteRule interface {
+	GetDomainMatcher() (router.DomainMatcher, error)
+}
+
+// UpdateGeoSite drops the matchers too, and one a rule rebuilds after the release keeps its list.
+func rebuildGeoSiteMatchers() {
+	for _, rule := range tunnel.Rules() {
+		if geoSite, ok := rule.(geoSiteRule); ok {
+			_, _ = geoSite.GetDomainMatcher()
+		}
+	}
 }
 
 var (

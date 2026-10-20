@@ -7,6 +7,8 @@ import (
 
 	"github.com/metacubex/mihomo/component/geodata"
 	"github.com/metacubex/mihomo/component/geodata/router"
+	"github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/tunnel"
 )
 
 func storedGeoSiteList(list string) []*router.Domain {
@@ -79,5 +81,42 @@ func TestLoadMemoryReleaseDropsGeoSiteListsButKeepsTheirMatchers(t *testing.T) {
 	}
 	if !again.ApplyDomain(host) {
 		t.Errorf("the cached matcher no longer matches %s", host)
+	}
+}
+
+type geoSiteRuleProbe struct {
+	constant.Rule
+	rebuilt bool
+}
+
+func (r *geoSiteRuleProbe) GetDomainMatcher() (router.DomainMatcher, error) {
+	r.rebuilt = true
+	return nil, nil
+}
+
+func TestGeoSiteUpdateRebuildsRuleMatchersAndDropsTheirLists(t *testing.T) {
+	released := stubLoadMemoryRelease(t)
+	list := fmt.Sprintf("aerove-update-%d", time.Now().UnixNano())
+	geoSiteLists.Do(list, func() ([]*router.Domain, error) {
+		return []*router.Domain{{Type: router.Domain_Full, Value: "update.aerove.test"}}, nil
+	})
+	t.Cleanup(func() { geoSiteLists.Forget(list) })
+	probe := &geoSiteRuleProbe{}
+	tunnel.UpdateRules([]constant.Rule{probe}, nil, nil)
+	t.Cleanup(func() { tunnel.UpdateRules(nil, nil, nil) })
+	t.Cleanup(settleMessageBatcher)
+
+	onGeoUpdate("GEOSITE", false, false, nil)
+
+	if !probe.rebuilt {
+		t.Error("the update left the GEOSITE rule to rebuild its matcher on a later match, which can come after the release")
+	}
+	select {
+	case <-released:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a GEOSITE update never scheduled the load-memory release")
+	}
+	if len(storedGeoSiteList(list)) != 0 {
+		t.Error("a list decoded after the GEOSITE update outlived the release")
 	}
 }
