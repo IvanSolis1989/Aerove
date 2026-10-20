@@ -5,7 +5,18 @@
 // pending, and the next JNI call on that thread aborts the process.
 package mobile
 
-import "core"
+import (
+	"runtime"
+	"runtime/debug"
+
+	"core"
+)
+
+func init() {
+	debug.SetGCPercent(50)
+	// Heap profile buckets are never freed; only mihomo's debug pprof endpoint reads them.
+	runtime.MemProfileRate = 0
+}
 
 type ResultHandler interface {
 	OnResult(data []byte) error
