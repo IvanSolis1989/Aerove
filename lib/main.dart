@@ -19,6 +19,9 @@ void main(List<String> args) {
   runZonedGuarded(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
+      // Bytes only: a lower count cap would evict the precached group icons
+      // while the access list scrolls.
+      PaintingBinding.instance.imageCache.maximumSizeBytes = 24 << 20;
       if (Platform.isWindows || Platform.isLinux) {
         SharedPreferencesStorePlatform.instance = AtomicFilePreferencesStore(
           appPath.sharedPreferencesPath,
