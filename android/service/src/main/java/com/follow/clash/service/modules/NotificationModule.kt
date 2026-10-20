@@ -17,7 +17,6 @@ import com.follow.clash.service.R
 import com.follow.clash.service.ServiceConfig
 import com.follow.clash.service.models.NotificationParams
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 internal class NotificationModule(
@@ -28,9 +27,7 @@ internal class NotificationModule(
         service.ensureNotificationChannel()
         update(ServiceConfig.notificationParams.value)
         scope.launch {
-            ServiceConfig.notificationParams
-                .distinctUntilChanged()
-                .collect { params -> update(params) }
+            ServiceConfig.notificationParams.collect { params -> update(params) }
         }
     }
 
