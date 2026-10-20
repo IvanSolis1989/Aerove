@@ -93,6 +93,7 @@ func handleShutdown() bool {
 	isRunning.Store(false)
 	listener.StopListener()
 	updater.StopGeoUpdater()
+	healthRetries.reset()
 	executor.Shutdown()
 	currentConfig = nil
 	isInit.Store(false)

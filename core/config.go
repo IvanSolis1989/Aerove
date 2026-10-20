@@ -169,6 +169,7 @@ func applyConfig(params *SetupParams) error {
 	}
 
 	currentConfig = cfg
+	healthRetries.reset()
 	hub.ApplyConfig(cfg)
 	patchSelectGroup(params.SelectedMap)
 	bumpRouteEpoch()
