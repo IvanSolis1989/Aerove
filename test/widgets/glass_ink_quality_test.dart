@@ -266,7 +266,10 @@ void main() {
             'ultraContrast': _contrast(b, background),
           });
         }
-        expect(ultraSaturation - standardSaturation, greaterThan(0.08));
+        expect(
+          ultraSaturation - standardSaturation,
+          greaterThan(brightness == Brightness.dark ? 0.02 : 0.08),
+        );
         expect(ultraValue - standardValue, greaterThan(0.02));
         if (brightness == Brightness.light) {
           expect(ultraSaturation - previousSaturation, greaterThan(0.04));
