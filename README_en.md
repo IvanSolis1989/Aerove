@@ -11,7 +11,7 @@ AEROVE is an independent fork of [FlClash](https://github.com/chen08209/FlClash)
 
 **AEROVE** combines **Air + Rove**, evoking lightness and roaming through invisible networks. The suggested brand pronunciation is **AIR-rohv**, **/ˈeə.rəʊv/**: two syllables, stress on the first, with a silent final **e**. This is a creative pronunciation choice, not an established dictionary standard.
 
-The logo is a silver folded ribbon on charcoal. Its sweeping curve and shaded fold suggest a soft path left by the wind, echoing movement and roaming in an abstract form. [Naming and icon design process](https://chatgpt.com/share/6ad6973c-7f5c-83ec-99f7-e00594f8490b).
+The logo is a silver folded ribbon on charcoal. Its sweeping curve and shaded fold suggest a soft path left by the wind, echoing movement and roaming in an abstract form.
 
 ## What AEROVE adds to FlClash
 
