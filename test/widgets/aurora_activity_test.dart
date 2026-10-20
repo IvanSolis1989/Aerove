@@ -169,6 +169,56 @@ void main() {
     expect(rate.value, idleRate);
   });
 
+  testWidgets('a fling frozen on a page whose ticker stops ends interaction', (
+    tester,
+  ) async {
+    late ValueListenable<bool> interaction;
+    final controller = ScrollController();
+    addTearDown(controller.dispose);
+    Widget scene({required bool ticker}) => MaterialApp(
+      home: AuroraMotionActivity(
+        enabled: false,
+        child: Builder(
+          builder: (context) {
+            interaction = AuroraMotionActivity.interactionOf(context)!;
+            return TickerMode(
+              enabled: ticker,
+              child: ListView.builder(
+                controller: controller,
+                itemCount: 200,
+                itemBuilder: (_, index) =>
+                    SizedBox(height: 60, child: Text('$index')),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(scene(ticker: true));
+    await tester.fling(find.byType(ListView), const Offset(0, -400), 1500);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(controller.position.isScrollingNotifier.value, isTrue);
+    await tester.pumpWidget(scene(ticker: false));
+    await tester.pump(const Duration(seconds: 1));
+    expect(controller.position.isScrollingNotifier.value, isTrue);
+    expect(interaction.value, isFalse);
+    expect(tester.binding.hasScheduledFrame, isFalse);
+
+    await tester.pumpWidget(scene(ticker: true));
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(interaction.value, isTrue);
+    for (
+      var frame = 0;
+      frame < 300 && controller.position.isScrollingNotifier.value;
+      frame++
+    ) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(interaction.value, isFalse);
+  });
+
   for (final refreshRate in [60, 120]) {
     testWidgets(
       'adaptive cadence preserves the motion clock at $refreshRate Hz',

@@ -362,8 +362,9 @@ class _AuroraMotionActivityState extends State<AuroraMotionActivity>
     _idleTimer?.cancel();
     _idleTimer = Timer(_idleDelay, () {
       _idleTimer = null;
-      // Disposed scrollables may never send ScrollEndNotification.
-      _scrolls.removeWhere((source) => !source.mounted);
+      // A scrollable that was disposed, or whose ticker was muted mid-fling
+      // (a kept-alive inactive page), may never send ScrollEndNotification.
+      _scrolls.removeWhere((source) => !_ticking(source));
       if (_scrolls.isEmpty) {
         _interaction.value = false;
         _rate.value = _idleRate;
@@ -373,13 +374,16 @@ class _AuroraMotionActivityState extends State<AuroraMotionActivity>
     });
   }
 
+  static bool _ticking(BuildContext source) =>
+      source.mounted && TickerMode.getValuesNotifier(source).value.enabled;
+
   bool _onScroll(ScrollNotification notification) {
     if (!_tracking) return false;
     final source = notification.context ?? context;
     if (notification is ScrollStartNotification ||
         notification is ScrollUpdateNotification ||
         notification is OverscrollNotification) {
-      if (_scrolls.add(source)) {
+      if (_ticking(source) && _scrolls.add(source)) {
         _activate();
         _release();
       }
