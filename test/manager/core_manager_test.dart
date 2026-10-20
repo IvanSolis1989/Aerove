@@ -154,6 +154,8 @@ void main() {
   late Directory profileSwitchTempDir;
 
   setUpAll(() async {
+    // The permanent event subscription must not capture a widget test's clock.
+    expect(coreEventManager.hasListeners, isFalse);
     registerFallbackValue(const SetupParams(selectedMap: {}, testUrl: ''));
     await AppLocalizations.load(const Locale('en'));
     profileSwitchTempDir = Directory.systemTemp.createTempSync(
