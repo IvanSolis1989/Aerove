@@ -14,7 +14,7 @@ import (
 
 func init() {
 	debug.SetGCPercent(50)
-	// Heap profile buckets are never freed; only mihomo's debug pprof endpoint reads them.
+	// Heap profile buckets are never freed and nothing reads them, yet linking tailscale's pprof handler keeps sampling on.
 	runtime.MemProfileRate = 0
 }
 
