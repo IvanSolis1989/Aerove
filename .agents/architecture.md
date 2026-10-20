@@ -602,6 +602,10 @@ the button pressed last over the neighbours it swells past. `lib/ui/liquid_glass
   9.5 ms scrolling, 52, 40 and 17 dragging the lens, 34, 26 and 18 scrolling under an open menu, 22, 13 and 11
   opening it and 17, 9 and 5 closing it; scrolling took 18.8 render passes a frame in either tier against 23.6, and
   the lens 22 in `ultra` and 18 in `standard` against 30.
+- In `standard`, a pane under a `LiquidGlassBody` only blurs and tints (`_bodyBlur`): the scaffold body, the tile an
+  `OpenContainer` carries through its transition, popups, alerts and a sheet's foot actions. The bar's buttons, the
+  dock and the desktop sidebar keep their refraction. Any other pane refracts in `standard`, so a new overlay in the
+  middle of the screen wraps itself in `LiquidGlassBody`.
 - A pane over one painted before it in the same root reads a second image, a level up, with the first drawn in as
   glass. Over means within 2.5 sigmas of its frost and as far as it bends, where a pane takes under 1% of what it
   reads, rather than the 3 sigmas and 2 dp its slot holds: the bar's buttons stand 8 dp apart, inside the slot of the
