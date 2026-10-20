@@ -198,8 +198,8 @@ void main() {
           await tester.pumpAndSettle();
           expect(find.byType(DisclaimerView), findsNothing);
           expect(find.text(strings.liquidGlass), findsOneWidget);
-          expect(find.text(strings.ultra), findsOneWidget);
-          expect(find.text(strings.standard), findsOneWidget);
+          expect(find.text(strings.liquidGlassModeUltra), findsOneWidget);
+          expect(find.text(strings.liquidGlassModeStandard), findsOneWidget);
           expect(completed, isFalse);
           for (final paragraph in [
             strings.liquidGlassUltraIntro,

@@ -45,11 +45,17 @@ class _GlassIntroductionDialog extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          GlassText(strings.ultra, style: AppTextStyle.headline.of(context)),
+          GlassText(
+            strings.liquidGlassModeUltra,
+            style: AppTextStyle.headline.of(context),
+          ),
           const SizedBox(height: 6),
           GlassText(strings.liquidGlassUltraIntro),
           const SizedBox(height: 16),
-          GlassText(strings.standard, style: AppTextStyle.headline.of(context)),
+          GlassText(
+            strings.liquidGlassModeStandard,
+            style: AppTextStyle.headline.of(context),
+          ),
           const SizedBox(height: 6),
           GlassText(strings.liquidGlassStandardIntro),
           const SizedBox(height: 16),

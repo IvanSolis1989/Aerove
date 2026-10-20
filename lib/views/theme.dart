@@ -829,17 +829,17 @@ class _LiquidGlassItem extends ConsumerWidget {
       choices: [
         PreviewChoice(
           value: LiquidGlassMode.none,
-          label: appLocalizations.none,
+          label: LiquidGlassMode.none.label,
           pictogram: preview(false),
         ),
         PreviewChoice(
           value: LiquidGlassMode.standard,
-          label: appLocalizations.standard,
+          label: LiquidGlassMode.standard.label,
           pictogram: preview(true),
         ),
         PreviewChoice(
           value: LiquidGlassMode.ultra,
-          label: appLocalizations.ultra,
+          label: LiquidGlassMode.ultra.label,
           pictogram: preview(true),
         ),
       ],

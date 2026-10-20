@@ -1166,16 +1166,23 @@ class MessageLookup extends MessageLookupByLibrary {
       "Entendido",
     ),
     "liquidGlassLowPowerTip": MessageLookupByLibrary.simpleMessage(
-      "En dispositivos menos potentes, considera el modo Estándar o desactiva los efectos de Liquid Glass.",
+      "En dispositivos menos potentes, considera el modo Esmerilado suave o elige Color liso para desactivar los efectos de Liquid Glass.",
+    ),
+    "liquidGlassModeNone": MessageLookupByLibrary.simpleMessage("Color liso"),
+    "liquidGlassModeStandard": MessageLookupByLibrary.simpleMessage(
+      "Esmerilado suave",
+    ),
+    "liquidGlassModeUltra": MessageLookupByLibrary.simpleMessage(
+      "Brillo cristalino",
     ),
     "liquidGlassSettingsTip": MessageLookupByLibrary.simpleMessage(
       "Puedes cambiar estos ajustes en Apariencia en cualquier momento. El fondo de degradado aleatorio y Liquid Glass se pueden activar o desactivar de forma independiente.",
     ),
     "liquidGlassStandardIntro": MessageLookupByLibrary.simpleMessage(
-      "El modo Estándar usa un desenfoque sencillo en el contenido principal. Los botones superiores y el Dock inferior conservan la refracción transparente, con una carga de renderizado más ligera.",
+      "El modo Esmerilado suave usa un desenfoque sencillo en el contenido principal. Los botones superiores y el Dock inferior conservan la refracción transparente, con una carga de renderizado más ligera.",
     ),
     "liquidGlassUltraIntro": MessageLookupByLibrary.simpleMessage(
-      "El modo Ultra conserva la refracción del cristal y una mayor profundidad óptica en el contenido principal, con una carga de renderizado gráfico más alta.",
+      "El modo Brillo cristalino conserva la refracción del cristal y una mayor profundidad óptica en el contenido principal, con una carga de renderizado gráfico más alta.",
     ),
     "list": MessageLookupByLibrary.simpleMessage("Lista"),
     "listen": MessageLookupByLibrary.simpleMessage("Escucha"),
@@ -1970,7 +1977,6 @@ class MessageLookup extends MessageLookupByLibrary {
     "udpTimeoutDesc": MessageLookupByLibrary.simpleMessage(
       "El tiempo de espera UDP se indica en segundos y solo funciona con las pilas gvisor, system y mixed.",
     ),
-    "ultra": MessageLookupByLibrary.simpleMessage("Ultra"),
     "undo": MessageLookupByLibrary.simpleMessage("Deshacer"),
     "unifiedDelay": MessageLookupByLibrary.simpleMessage("Latencia unificada"),
     "unknown": MessageLookupByLibrary.simpleMessage("Desconocido"),

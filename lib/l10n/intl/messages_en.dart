@@ -1091,16 +1091,23 @@ class MessageLookup extends MessageLookupByLibrary {
     "liquidGlass": MessageLookupByLibrary.simpleMessage("Liquid Glass"),
     "liquidGlassIntroConfirm": MessageLookupByLibrary.simpleMessage("Got it"),
     "liquidGlassLowPowerTip": MessageLookupByLibrary.simpleMessage(
-      "On less powerful devices, consider Standard mode or turn off Liquid Glass effects.",
+      "On less powerful devices, consider Soft frost, or choose Plain solid to turn off Liquid Glass effects.",
+    ),
+    "liquidGlassModeNone": MessageLookupByLibrary.simpleMessage("Plain solid"),
+    "liquidGlassModeStandard": MessageLookupByLibrary.simpleMessage(
+      "Soft frost",
+    ),
+    "liquidGlassModeUltra": MessageLookupByLibrary.simpleMessage(
+      "Clear shimmer",
     ),
     "liquidGlassSettingsTip": MessageLookupByLibrary.simpleMessage(
       "You can change this at any time in Appearance. The random gradient background and Liquid Glass can each be turned on or off independently.",
     ),
     "liquidGlassStandardIntro": MessageLookupByLibrary.simpleMessage(
-      "Standard mode uses simple blur for the main content. The top buttons and bottom Dock keep transparent refraction, with a lighter rendering load.",
+      "Soft frost mode uses simple blur for the main content. The top buttons and bottom Dock keep transparent refraction, with a lighter rendering load.",
     ),
     "liquidGlassUltraIntro": MessageLookupByLibrary.simpleMessage(
-      "Ultra mode keeps glass refraction and richer optical depth in the main content, with a higher graphics rendering load.",
+      "Clear shimmer mode keeps glass refraction and richer optical depth in the main content, with a higher graphics rendering load.",
     ),
     "list": MessageLookupByLibrary.simpleMessage("List"),
     "listen": MessageLookupByLibrary.simpleMessage("Listen"),
@@ -1831,7 +1838,6 @@ class MessageLookup extends MessageLookupByLibrary {
     "udpTimeoutDesc": MessageLookupByLibrary.simpleMessage(
       "The UDP timeout is in seconds and works only with the gvisor, system and mixed stacks.",
     ),
-    "ultra": MessageLookupByLibrary.simpleMessage("Ultra"),
     "undo": MessageLookupByLibrary.simpleMessage("Undo"),
     "unifiedDelay": MessageLookupByLibrary.simpleMessage("Unified delay"),
     "unknown": MessageLookupByLibrary.simpleMessage("Unknown"),

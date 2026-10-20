@@ -108,6 +108,17 @@ extension ColorStyleL10n on ColorStyle {
   }
 }
 
+extension LiquidGlassModeL10n on LiquidGlassMode {
+  String get label {
+    final appLocalizations = currentAppLocalizations;
+    return switch (this) {
+      LiquidGlassMode.none => appLocalizations.liquidGlassModeNone,
+      LiquidGlassMode.standard => appLocalizations.liquidGlassModeStandard,
+      LiquidGlassMode.ultra => appLocalizations.liquidGlassModeUltra,
+    };
+  }
+}
+
 extension LocaleL10n on Locale {
   String get label {
     final appLocalizations = currentAppLocalizations;

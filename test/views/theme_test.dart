@@ -491,17 +491,23 @@ void main() {
               .every((choice) => choice.enabled),
           isTrue,
         );
-        final none = find.descendant(of: group, matching: find.text('None'));
+        final none = find.descendant(
+          of: group,
+          matching: find.text('Plain solid'),
+        );
         await tester.tap(none, warnIfMissed: false);
         await tester.pumpAndSettle();
         expect(readTheme().liquidGlass, LiquidGlassMode.none);
-        final ultra = find.descendant(of: group, matching: find.text('Ultra'));
+        final ultra = find.descendant(
+          of: group,
+          matching: find.text('Clear shimmer'),
+        );
         await tester.tap(ultra);
         await tester.pumpAndSettle();
         expect(readTheme().liquidGlass, LiquidGlassMode.ultra);
         final standard = find.descendant(
           of: group,
-          matching: find.text('Standard'),
+          matching: find.text('Soft frost'),
         );
         await tester.tap(standard);
         await tester.pumpAndSettle();
@@ -575,11 +581,11 @@ void main() {
 
       expect(readTheme().liquidGlass, LiquidGlassMode.none);
 
-      await tester.tap(choice('Standard'));
+      await tester.tap(choice('Soft frost'));
       await tester.pumpAndSettle();
       expect(readTheme().liquidGlass, LiquidGlassMode.standard);
 
-      await tester.tap(choice('None'));
+      await tester.tap(choice('Plain solid'));
       await tester.pumpAndSettle();
       expect(readTheme().liquidGlass, LiquidGlassMode.none);
     });

@@ -937,16 +937,21 @@ class MessageLookup extends MessageLookupByLibrary {
     "liquidGlass": MessageLookupByLibrary.simpleMessage("リキッドグラス"),
     "liquidGlassIntroConfirm": MessageLookupByLibrary.simpleMessage("わかりました"),
     "liquidGlassLowPowerTip": MessageLookupByLibrary.simpleMessage(
-      "性能が低めの端末では、標準モードを選ぶか、リキッドグラスの効果をオフにすることを検討してください。",
+      "性能が低めの端末では、「ふんわり磨りガラス」を選ぶか、「シンプル無地」でリキッドグラスの効果をオフにすることを検討してください。",
     ),
+    "liquidGlassModeNone": MessageLookupByLibrary.simpleMessage("シンプル無地"),
+    "liquidGlassModeStandard": MessageLookupByLibrary.simpleMessage(
+      "ふんわり磨りガラス",
+    ),
+    "liquidGlassModeUltra": MessageLookupByLibrary.simpleMessage("澄んだきらめき"),
     "liquidGlassSettingsTip": MessageLookupByLibrary.simpleMessage(
       "「外観」でいつでも変更できます。ランダムなグラデーション背景とリキッドグラスは、それぞれ個別にオン・オフを切り替えられます。",
     ),
     "liquidGlassStandardIntro": MessageLookupByLibrary.simpleMessage(
-      "標準モードでは、メインコンテンツにシンプルなぼかしを使用します。上部のボタンと下部の Dock は透明な屈折表現を維持し、描画の負荷を抑えます。",
+      "「ふんわり磨りガラス」では、メインコンテンツにシンプルなぼかしを使用します。上部のボタンと下部の Dock は透明な屈折表現を維持し、描画の負荷を抑えます。",
     ),
     "liquidGlassUltraIntro": MessageLookupByLibrary.simpleMessage(
-      "最高モードでは、メインコンテンツのガラス屈折と豊かな光学的な奥行きを維持するため、描画の負荷が高くなります。",
+      "「澄んだきらめき」では、メインコンテンツのガラス屈折と豊かな光学的な奥行きを維持するため、描画の負荷が高くなります。",
     ),
     "list": MessageLookupByLibrary.simpleMessage("リスト"),
     "listen": MessageLookupByLibrary.simpleMessage("リッスン"),
@@ -1573,7 +1578,6 @@ class MessageLookup extends MessageLookupByLibrary {
     "udpTimeoutDesc": MessageLookupByLibrary.simpleMessage(
       "UDP タイムアウトは秒単位で、gvisor・system・mixed スタックでのみ有効です。",
     ),
-    "ultra": MessageLookupByLibrary.simpleMessage("最高"),
     "undo": MessageLookupByLibrary.simpleMessage("元に戻す"),
     "unifiedDelay": MessageLookupByLibrary.simpleMessage("統一遅延"),
     "unknown": MessageLookupByLibrary.simpleMessage("不明"),

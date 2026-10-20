@@ -1620,30 +1620,60 @@ class AppLocalizations {
     );
   }
 
-  /// `Ultra mode keeps glass refraction and richer optical depth in the main content, with a higher graphics rendering load.`
+  /// `Plain solid`
+  String get liquidGlassModeNone {
+    return Intl.message(
+      'Plain solid',
+      name: 'liquidGlassModeNone',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Soft frost`
+  String get liquidGlassModeStandard {
+    return Intl.message(
+      'Soft frost',
+      name: 'liquidGlassModeStandard',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Clear shimmer`
+  String get liquidGlassModeUltra {
+    return Intl.message(
+      'Clear shimmer',
+      name: 'liquidGlassModeUltra',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Clear shimmer mode keeps glass refraction and richer optical depth in the main content, with a higher graphics rendering load.`
   String get liquidGlassUltraIntro {
     return Intl.message(
-      'Ultra mode keeps glass refraction and richer optical depth in the main content, with a higher graphics rendering load.',
+      'Clear shimmer mode keeps glass refraction and richer optical depth in the main content, with a higher graphics rendering load.',
       name: 'liquidGlassUltraIntro',
       desc: '',
       args: [],
     );
   }
 
-  /// `Standard mode uses simple blur for the main content. The top buttons and bottom Dock keep transparent refraction, with a lighter rendering load.`
+  /// `Soft frost mode uses simple blur for the main content. The top buttons and bottom Dock keep transparent refraction, with a lighter rendering load.`
   String get liquidGlassStandardIntro {
     return Intl.message(
-      'Standard mode uses simple blur for the main content. The top buttons and bottom Dock keep transparent refraction, with a lighter rendering load.',
+      'Soft frost mode uses simple blur for the main content. The top buttons and bottom Dock keep transparent refraction, with a lighter rendering load.',
       name: 'liquidGlassStandardIntro',
       desc: '',
       args: [],
     );
   }
 
-  /// `On less powerful devices, consider Standard mode or turn off Liquid Glass effects.`
+  /// `On less powerful devices, consider Soft frost, or choose Plain solid to turn off Liquid Glass effects.`
   String get liquidGlassLowPowerTip {
     return Intl.message(
-      'On less powerful devices, consider Standard mode or turn off Liquid Glass effects.',
+      'On less powerful devices, consider Soft frost, or choose Plain solid to turn off Liquid Glass effects.',
       name: 'liquidGlassLowPowerTip',
       desc: '',
       args: [],
@@ -1758,11 +1788,6 @@ class AppLocalizations {
   /// `Standard`
   String get standard {
     return Intl.message('Standard', name: 'standard', desc: '', args: []);
-  }
-
-  /// `Ultra`
-  String get ultra {
-    return Intl.message('Ultra', name: 'ultra', desc: '', args: []);
   }
 
   /// `Loose`
