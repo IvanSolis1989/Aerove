@@ -16,7 +16,9 @@ import '../helpers/test_app.dart';
 
 const _scene = ValueKey('usageScene');
 const _label = ValueKey('usageLabel');
-const _info = SubscriptionInfo(download: 16, total: 100);
+const _info = SubscriptionInfo(download: 84, total: 100);
+const _usedUp = SubscriptionInfo(download: 100, total: 100);
+const _unused = SubscriptionInfo(total: 100);
 
 Color _pixel(Uint8List bytes, int x, int y, {int scale = 1}) {
   final offset = (y * scale * 400 * scale + x * scale) * 4;
@@ -326,7 +328,7 @@ void main() {
             brightness: brightness,
             mode: mode,
             backdrop: backdrop,
-            info: const SubscriptionInfo(total: 100),
+            info: _usedUp,
           );
           final empty = await _snapshot(
             tester,
@@ -403,7 +405,7 @@ void main() {
             brightness: brightness,
             mode: mode,
             backdrop: changedBackdrop,
-            info: const SubscriptionInfo(total: 100),
+            info: _usedUp,
           );
           final changedEmpty = await _snapshot(
             tester,
@@ -454,7 +456,7 @@ void main() {
 
   for (final brightness in Brightness.values) {
     for (final mode in LiquidGlassMode.values) {
-      testWidgets('16 percent fills the quota meniscus '
+      testWidgets('16 percent remaining fills the quota meniscus '
           '(${brightness.name}, ${mode.name})', (tester) async {
         tester.view.physicalSize = const Size(400, 160);
         tester.view.devicePixelRatio = 1;
@@ -465,7 +467,7 @@ void main() {
             tester,
             brightness: brightness,
             mode: mode,
-            info: const SubscriptionInfo(total: 100),
+            info: _usedUp,
           );
           final empty = await _snapshot(tester, '$name-empty');
           await _pump(tester, brightness: brightness, mode: mode);
@@ -565,16 +567,10 @@ void main() {
           }
           for (final (info, label, color, glassAlpha) in [
             (
-              const SubscriptionInfo(download: 95, total: 100),
+              const SubscriptionInfo(download: 92, total: 100),
               'warning',
               colors.warning,
               0.16,
-            ),
-            (
-              const SubscriptionInfo(download: 125, total: 100),
-              'overrun',
-              colors.error,
-              0.20,
             ),
           ]) {
             await _pump(tester, brightness: brightness, mode: mode, info: info);
@@ -609,7 +605,18 @@ void main() {
             tester,
             brightness: brightness,
             mode: mode,
-            info: const SubscriptionInfo(download: 100, total: 100),
+            info: const SubscriptionInfo(download: 125, total: 100),
+          );
+          expect(
+            await _snapshot(tester, '$name-overrun'),
+            orderedEquals(empty),
+            reason: 'an overrun quota leaves no water in the tube',
+          );
+          await _pump(
+            tester,
+            brightness: brightness,
+            mode: mode,
+            info: _unused,
           );
           final full = await _snapshot(tester, '$name-full');
           if (glass) {
@@ -706,7 +713,7 @@ void main() {
           brightness: Brightness.dark,
           mode: LiquidGlassMode.ultra,
           cardSize: size,
-          info: const SubscriptionInfo(total: 100),
+          info: _usedUp,
         );
         final empty = await _snapshot(tester, 'tiny-${size.width}-empty');
         await _pump(
@@ -714,7 +721,7 @@ void main() {
           brightness: Brightness.dark,
           mode: LiquidGlassMode.ultra,
           cardSize: size,
-          info: const SubscriptionInfo(download: 100, total: 100),
+          info: _unused,
         );
         final full = await _snapshot(tester, 'tiny-${size.width}-full');
         for (var y = 27; y < 29 + size.height.ceil(); y++) {
@@ -740,107 +747,101 @@ void main() {
     }
   });
 
-  testWidgets(
-    'invalid totals do not invent progress, and overruns retain their percentage',
-    (tester) async {
-      tester.view.physicalSize = const Size(400, 160);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      try {
-        for (final info in <SubscriptionInfo?>[
-          null,
-          const SubscriptionInfo(download: 16),
-          const SubscriptionInfo(download: 16, total: -1),
-          const SubscriptionInfo(upload: -1, total: 100),
-        ]) {
-          await _pump(
-            tester,
-            brightness: Brightness.light,
-            mode: LiquidGlassMode.ultra,
-            info: info,
-          );
-          expect(
-            SubscriptionUsageFill.percentageOf(
-              tester.element(find.byType(SubscriptionUsageFill)),
-              info,
-            ),
-            isNull,
-          );
-          expect(LiquidGlassHost.debugLastCapture?.panes ?? [], isEmpty);
-        }
+  testWidgets('invalid totals do not invent progress, and overruns keep their '
+      'percentage over an empty tube', (tester) async {
+    tester.view.physicalSize = const Size(400, 160);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    try {
+      for (final info in <SubscriptionInfo?>[
+        null,
+        const SubscriptionInfo(download: 16),
+        const SubscriptionInfo(download: 16, total: -1),
+        const SubscriptionInfo(upload: -1, total: 100),
+      ]) {
         await _pump(
           tester,
           brightness: Brightness.light,
-          mode: LiquidGlassMode.none,
-          info: const SubscriptionInfo(total: 100),
-        );
-        final empty = await _snapshot(tester, 'zero');
-        expect(
-          SubscriptionUsageFill.percentageOf(
-            tester.element(find.byType(SubscriptionUsageFill)),
-            const SubscriptionInfo(total: 100),
-          ),
-          '0%',
-        );
-        await _pump(
-          tester,
-          brightness: Brightness.light,
-          mode: LiquidGlassMode.none,
-          info: const SubscriptionInfo(download: 100, total: 100),
-        );
-        final full = await _snapshot(tester, 'full');
-        expect(
-          SubscriptionUsageFill.percentageOf(
-            tester.element(find.byType(SubscriptionUsageFill)),
-            const SubscriptionInfo(download: 100, total: 100),
-          ),
-          '100%',
-        );
-        expect(_pixel(full, 21, 29), _pixel(empty, 21, 29));
-        expect(
-          _distance(_pixel(full, 40, 80), _pixel(empty, 40, 80)),
-          greaterThan(0.02),
-        );
-        expect(
-          _distance(_pixel(full, 350, 80), _pixel(empty, 350, 80)),
-          greaterThan(0.02),
-        );
-        await _pump(
-          tester,
-          brightness: Brightness.light,
-          mode: LiquidGlassMode.none,
-          info: const SubscriptionInfo(download: 125, total: 100),
+          mode: LiquidGlassMode.ultra,
+          info: info,
         );
         expect(
           SubscriptionUsageFill.percentageOf(
             tester.element(find.byType(SubscriptionUsageFill)),
-            const SubscriptionInfo(download: 125, total: 100),
+            info,
           ),
-          '125%',
+          isNull,
         );
-        final overrun = await _snapshot(tester, 'overrun');
-        expect(
-          _distance(_pixel(overrun, 350, 80), _pixel(empty, 350, 80)),
-          greaterThan(0.02),
-        );
-        await _pump(
-          tester,
-          brightness: Brightness.light,
-          mode: LiquidGlassMode.none,
-          direction: TextDirection.rtl,
-        );
-        final rtl = await _snapshot(tester, 'rtl');
-        expect(
-          _distance(_pixel(rtl, 350, 80), _pixel(empty, 350, 80)),
-          greaterThan(0.02),
-        );
-        expect(_pixel(rtl, 40, 80), _pixel(empty, 40, 80));
-      } finally {
-        await tester.pumpWidget(const SizedBox.shrink());
-        await tester.pump(Duration.zero);
+        expect(LiquidGlassHost.debugLastCapture?.panes ?? [], isEmpty);
       }
-    },
-  );
+      await _pump(
+        tester,
+        brightness: Brightness.light,
+        mode: LiquidGlassMode.none,
+        info: _usedUp,
+      );
+      final empty = await _snapshot(tester, 'used-up');
+      expect(
+        SubscriptionUsageFill.percentageOf(
+          tester.element(find.byType(SubscriptionUsageFill)),
+          _usedUp,
+        ),
+        '100%',
+      );
+      await _pump(
+        tester,
+        brightness: Brightness.light,
+        mode: LiquidGlassMode.none,
+        info: _unused,
+      );
+      final full = await _snapshot(tester, 'unused');
+      expect(
+        SubscriptionUsageFill.percentageOf(
+          tester.element(find.byType(SubscriptionUsageFill)),
+          _unused,
+        ),
+        '0%',
+      );
+      expect(_pixel(full, 21, 29), _pixel(empty, 21, 29));
+      expect(
+        _distance(_pixel(full, 40, 80), _pixel(empty, 40, 80)),
+        greaterThan(0.02),
+      );
+      expect(
+        _distance(_pixel(full, 350, 80), _pixel(empty, 350, 80)),
+        greaterThan(0.02),
+      );
+      await _pump(
+        tester,
+        brightness: Brightness.light,
+        mode: LiquidGlassMode.none,
+        info: const SubscriptionInfo(download: 125, total: 100),
+      );
+      expect(
+        SubscriptionUsageFill.percentageOf(
+          tester.element(find.byType(SubscriptionUsageFill)),
+          const SubscriptionInfo(download: 125, total: 100),
+        ),
+        '125%',
+      );
+      expect(await _snapshot(tester, 'overrun'), orderedEquals(empty));
+      await _pump(
+        tester,
+        brightness: Brightness.light,
+        mode: LiquidGlassMode.none,
+        direction: TextDirection.rtl,
+      );
+      final rtl = await _snapshot(tester, 'rtl');
+      expect(
+        _distance(_pixel(rtl, 350, 80), _pixel(empty, 350, 80)),
+        greaterThan(0.02),
+      );
+      expect(_pixel(rtl, 40, 80), _pixel(empty, 40, 80));
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(Duration.zero);
+    }
+  });
 
   testWidgets('reduced motion stops scheduling frames', (tester) async {
     tester.view.physicalSize = const Size(400, 160);

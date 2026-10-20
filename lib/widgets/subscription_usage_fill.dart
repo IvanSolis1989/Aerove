@@ -204,11 +204,7 @@ class _SubscriptionUsageFillState extends State<SubscriptionUsageFill>
     final share = _shareOf(widget.info);
     if (share == null) return widget.child;
     final colors = context.colorScheme;
-    final color = share > 1
-        ? colors.error
-        : share >= 0.9
-        ? colors.warning
-        : colors.primary;
+    final color = share >= 0.9 ? colors.warning : colors.primary;
     return ClipRSuperellipse(
       borderRadius: AppRadius.xl,
       child: Stack(
@@ -217,7 +213,8 @@ class _SubscriptionUsageFillState extends State<SubscriptionUsageFill>
           Positioned.fill(
             child: IgnorePointer(
               child: _UsageFillBackground(
-                share: widget.info!.usage!,
+                level: 1 - widget.info!.usage!,
+                used: share,
                 color: color,
                 glass:
                     LiquidGlassScope.of(context) &&
@@ -238,7 +235,8 @@ class _SubscriptionUsageFillState extends State<SubscriptionUsageFill>
 
 class _UsageFillBackground extends LeafRenderObjectWidget {
   const _UsageFillBackground({
-    required this.share,
+    required this.level,
+    required this.used,
     required this.color,
     required this.glass,
     required this.dark,
@@ -247,7 +245,8 @@ class _UsageFillBackground extends LeafRenderObjectWidget {
     required this.onPaint,
   });
 
-  final double share;
+  final double level;
+  final double used;
   final Color color;
   final bool glass;
   final bool dark;
@@ -322,14 +321,14 @@ class _UsageFillRender extends RenderBox {
   @override
   void paint(PaintingContext context, Offset offset) {
     settings.onPaint(this);
-    if (settings.share <= 0 || size.isEmpty) {
+    if (settings.level <= 0 || size.isEmpty) {
       _pane.clear();
       return;
     }
     final color = settings.color;
     if (!settings.glass) {
       _pane.clear();
-      final level = size.width * settings.share;
+      final level = size.width * settings.level;
       context.canvas.drawRect(
         Rect.fromLTWH(
           settings.rtl ? offset.dx + size.width - level : offset.dx,
@@ -348,7 +347,7 @@ class _UsageFillRender extends RenderBox {
     ).getOuterPath(Offset.zero & cavity.size);
     final surface = subscriptionUsageMeniscus(
       size: cavity.size,
-      share: settings.share,
+      share: settings.level,
       time: settings.time.value,
       rtl: settings.rtl,
     );
@@ -371,13 +370,7 @@ class _UsageFillRender extends RenderBox {
       origin & Size(width, cavity.height),
       shape: LiquidGlassOutline(liquid),
       style: LiquidGlassStyle(
-        tint: color.withValues(
-          alpha: settings.share > 1
-              ? 0.20
-              : settings.share >= 0.9
-              ? 0.16
-              : 0.07,
-        ),
+        tint: color.withValues(alpha: settings.used >= 0.9 ? 0.16 : 0.07),
         blur: 0.7,
         refraction: 3,
         bevel: 2.5,
