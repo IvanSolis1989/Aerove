@@ -15,7 +15,10 @@ void main() {
     final container = ProviderContainer(
       overrides: [
         themeSettingProvider.overrideWithBuild(
-          (_, _) => const ThemeProps(auroraEnabled: true, liquidGlass: LiquidGlassMode.none),
+          (_, _) => const ThemeProps(
+            auroraEnabled: true,
+            liquidGlass: LiquidGlassMode.none,
+          ),
         ),
       ],
     );
@@ -46,23 +49,30 @@ void main() {
     await tester.pumpAndSettle();
     expect(enabled, isFalse);
     expect(wallpaperEnabled, isTrue);
-    expect(container.read(themeSettingProvider).liquidGlass, LiquidGlassMode.none);
+    expect(
+      container.read(themeSettingProvider).liquidGlass,
+      LiquidGlassMode.none,
+    );
     for (final mode in LiquidGlassMode.values) {
-      container.read(themeSettingProvider.notifier).update(
-        (state) => state.copyWith(liquidGlass: mode),
-      );
+      container
+          .read(themeSettingProvider.notifier)
+          .update((state) => state.copyWith(liquidGlass: mode));
       for (final wallpaper in [true, false, true, false]) {
-        container.read(themeSettingProvider.notifier).update(
-          (state) => state.copyWith(auroraEnabled: wallpaper),
-        );
+        container
+            .read(themeSettingProvider.notifier)
+            .update((state) => state.copyWith(auroraEnabled: wallpaper));
         await tester.pumpAndSettle();
         expect(enabled, mode != LiquidGlassMode.none);
         expect(wallpaperEnabled, wallpaper);
         expect(container.read(themeSettingProvider).liquidGlass, mode);
         expect(container.read(themeSettingProvider).auroraEnabled, wallpaper);
         if (mode != LiquidGlassMode.none) {
-          expect(quality, mode == LiquidGlassMode.standard
-              ? LiquidGlassQuality.standard : LiquidGlassQuality.ultra);
+          expect(
+            quality,
+            mode == LiquidGlassMode.standard
+                ? LiquidGlassQuality.standard
+                : LiquidGlassQuality.ultra,
+          );
         }
       }
     }
