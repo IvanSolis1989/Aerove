@@ -234,53 +234,54 @@ void main() {
     },
   );
 
-  testWidgets('display refresh cadences repaint the background at fifteen fps', (
-    tester,
-  ) async {
-    for (final refreshRate in [60, 120]) {
-      final key = GlobalKey();
-      var builds = 0;
-      await tester.pumpWidget(_scene(key, foregroundBuild: () => builds++));
-      await tester.pump();
-      final boundary = tester.renderObject<RenderRepaintBoundary>(
-        find.descendant(
-          of: find.byType(SeededAuroraWallpaper),
-          matching: find.byType(RepaintBoundary),
-        ),
-      );
-      boundary.debugResetMetrics();
-      final originalBuilds = builds;
-      final frames = _countFrames(tester);
-      final interval = Duration(
-        microseconds: (Duration.microsecondsPerSecond / refreshRate).round(),
-      );
-      for (var frame = 0; frame < refreshRate; frame++) {
-        await tester.pump(interval);
+  testWidgets(
+    'display refresh cadences repaint the background at fifteen fps',
+    (tester) async {
+      for (final refreshRate in [60, 120]) {
+        final key = GlobalKey();
+        var builds = 0;
+        await tester.pumpWidget(_scene(key, foregroundBuild: () => builds++));
+        await tester.pump();
+        final boundary = tester.renderObject<RenderRepaintBoundary>(
+          find.descendant(
+            of: find.byType(SeededAuroraWallpaper),
+            matching: find.byType(RepaintBoundary),
+          ),
+        );
+        boundary.debugResetMetrics();
+        final originalBuilds = builds;
+        final frames = _countFrames(tester);
+        final interval = Duration(
+          microseconds: (Duration.microsecondsPerSecond / refreshRate).round(),
+        );
+        for (var frame = 0; frame < refreshRate; frame++) {
+          await tester.pump(interval);
+        }
+        final paints =
+            boundary.debugSymmetricPaintCount +
+            boundary.debugAsymmetricPaintCount;
+        expect(
+          paints,
+          inInclusiveRange(14, 15),
+          reason: '$refreshRate Hz must retain the accumulated 15 fps cadence',
+        );
+        expect(
+          frames(),
+          inInclusiveRange(14, 16),
+          reason: '$refreshRate Hz must schedule 15 frames, not one per vsync',
+        );
+        expect(builds, originalBuilds);
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+        final disposed = _countFrames(tester);
+        await tester.pump(const Duration(seconds: 1));
+        expect(disposed(), 0);
+        expect(tester.binding.hasScheduledFrame, isFalse);
+        expect(tester.binding.transientCallbackCount, 0);
+        expect(tester.takeException(), isNull);
       }
-      final paints =
-          boundary.debugSymmetricPaintCount +
-          boundary.debugAsymmetricPaintCount;
-      expect(
-        paints,
-        inInclusiveRange(14, 15),
-        reason: '$refreshRate Hz must retain the accumulated 15 fps cadence',
-      );
-      expect(
-        frames(),
-        inInclusiveRange(14, 16),
-        reason: '$refreshRate Hz must schedule 15 frames, not one per vsync',
-      );
-      expect(builds, originalBuilds);
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pump();
-      final disposed = _countFrames(tester);
-      await tester.pump(const Duration(seconds: 1));
-      expect(disposed(), 0);
-      expect(tester.binding.hasScheduledFrame, isFalse);
-      expect(tester.binding.transientCallbackCount, 0);
-      expect(tester.takeException(), isNull);
-    }
-  });
+    },
+  );
 
   testWidgets('reduced motion, ticker mode, and background pause active time', (
     tester,
