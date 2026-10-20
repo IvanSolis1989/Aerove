@@ -452,7 +452,7 @@ class _CountryBadgeState extends State<_CountryBadge> {
                 enabled &&
                 !context.disableAnimations &&
                 !MediaQuery.highContrastOf(context),
-            child: OutboundBubbleRing(
+            child: OutboundBubble(
               size: size,
               checking: widget.checking,
               well: well,
@@ -723,59 +723,68 @@ class _StartToggleState extends ConsumerState<_StartToggle>
           splashFactory: NoSplash.splashFactory,
           child: ElasticPress(
             enabled: enabled && !context.disableAnimations && !highContrast,
-            child: TweenAnimationBuilder<double>(
-              tween: Tween(end: _overlay),
-              duration: stateDuration,
-              builder: (_, overlay, child) => TweenAnimationBuilder<double>(
-                tween: Tween(end: _pressed ? 1 : 0),
-                duration: highContrast
-                    ? Duration.zero
-                    : context.motionDuration(
-                        _pressed
-                            ? const Duration(milliseconds: 120)
-                            : const Duration(milliseconds: 500),
-                      ),
-                curve: _pressed ? Curves.easeOutCubic : _dropletSpring,
-                builder: (_, press, child) => AnimatedBuilder(
-                  animation: _progress,
-                  builder: (_, child) {
-                    final progress = _progress.value;
-                    final squeeze = press + progress * (1 - progress) * 2.4;
-                    final phase = progress * 1.2;
-                    final color = Color.alphaBlend(
-                      ink.withValues(alpha: overlay),
-                      fill,
-                    );
-                    return CustomPaint(
-                      painter: OutboundDropletPainter(
-                        phase: phase,
-                        fullness: progress,
-                        squeeze: squeeze,
-                        color: glass ? null : color,
-                        shadow: shadow,
-                        highlight: enabled && !highContrast,
-                        ring: _focused
-                            ? focusRingSide(colorScheme, standsOff: true)
-                            : null,
-                      ),
-                      // The edit-mode drag proxy carries this card into the
-                      // overlay, outside the scaffold body's glass marker.
-                      child: glass
-                          ? LiquidGlassBody(
-                              child: LiquidGlass(
-                                style: pane,
-                                clipper: OutboundDropletClipper(
-                                  phase: phase,
-                                  fullness: progress,
-                                  squeeze: squeeze,
+            child: OutboundDrift(
+              moving: widget.running && !widget.suspended,
+              builder: (_, time, child) => TweenAnimationBuilder<double>(
+                tween: Tween(end: _overlay),
+                duration: stateDuration,
+                builder: (_, overlay, child) => TweenAnimationBuilder<double>(
+                  tween: Tween(end: _pressed ? 1 : 0),
+                  duration: highContrast
+                      ? Duration.zero
+                      : context.motionDuration(
+                          _pressed
+                              ? const Duration(milliseconds: 120)
+                              : const Duration(milliseconds: 500),
+                        ),
+                  curve: _pressed ? Curves.easeOutCubic : _dropletSpring,
+                  builder: (_, press, child) => AnimatedBuilder(
+                    animation: _progress,
+                    builder: (_, child) {
+                      final progress = _progress.value;
+                      final squeeze = press + progress * (1 - progress) * 2.4;
+                      final phase = progress * 1.2;
+                      final wobble = 0.55 * progress;
+                      final color = Color.alphaBlend(
+                        ink.withValues(alpha: overlay),
+                        fill,
+                      );
+                      return CustomPaint(
+                        painter: OutboundDropletPainter(
+                          phase: phase,
+                          fullness: progress,
+                          squeeze: squeeze,
+                          time: time,
+                          wobble: wobble,
+                          color: glass ? null : color,
+                          shadow: shadow,
+                          highlight: enabled && !highContrast,
+                          ring: _focused
+                              ? focusRingSide(colorScheme, standsOff: true)
+                              : null,
+                        ),
+                        // The edit-mode drag proxy carries this card into the
+                        // overlay, outside the scaffold body's glass marker.
+                        child: glass
+                            ? LiquidGlassBody(
+                                child: LiquidGlass(
+                                  style: pane,
+                                  clipper: OutboundDropletClipper(
+                                    phase: phase,
+                                    fullness: progress,
+                                    squeeze: squeeze,
+                                    time: time,
+                                    wobble: wobble,
+                                  ),
+                                  pressed: _pressed,
+                                  child: child,
                                 ),
-                                pressed: _pressed,
-                                child: child,
-                              ),
-                            )
-                          : child,
-                    );
-                  },
+                              )
+                            : child,
+                      );
+                    },
+                    child: child,
+                  ),
                   child: child,
                 ),
                 child: child,

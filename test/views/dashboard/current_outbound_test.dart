@@ -154,7 +154,7 @@ void _useTallView(WidgetTester tester) {
 }
 
 Finder _bubble() => find.ancestor(
-  of: find.byType(OutboundBubbleRing),
+  of: find.byType(OutboundBubble),
   matching: find.byWidgetPredicate(
     (widget) => widget is InkResponse && widget.runtimeType == InkResponse,
   ),
@@ -172,8 +172,8 @@ T _painterIn<T extends CustomPainter>(WidgetTester tester, Finder scope) {
   return paint.painter! as T;
 }
 
-OutboundBubbleRingPainter _bubbles(WidgetTester tester) =>
-    _painterIn<OutboundBubbleRingPainter>(tester, _bubble());
+OutboundBubblePainter _bubbles(WidgetTester tester) =>
+    _painterIn<OutboundBubblePainter>(tester, _bubble());
 
 DashboardChip _chip(WidgetTester tester, String label) =>
     tester.widget<DashboardChip>(
@@ -223,7 +223,7 @@ void main() {
         );
         final badge = find.descendant(
           of: _bubble(),
-          matching: find.byType(OutboundBubbleRing),
+          matching: find.byType(OutboundBubble),
         );
         final badgeSize = tester.getSize(badge);
         expect(badgeSize.width, density == DashboardDensity.compact ? 40 : 48);
@@ -303,7 +303,7 @@ void main() {
       expect(find.text('Status'), findsOneWidget);
       expect(find.byGlyph(AppGlyphs.refresh), findsNothing);
       expect(find.byType(ShapeBadge), findsNothing);
-      expect(find.byType(OutboundBubbleRing), findsOneWidget);
+      expect(find.byType(OutboundBubble), findsOneWidget);
       expect(find.byType(OutboundRibbon), findsOneWidget);
     });
 
@@ -379,8 +379,16 @@ void main() {
       final settled = _bubbles(tester);
       expect(settled.calm, 1);
       expect(
-        OutboundBubbleRingPainter.bubblesAt(settled.phase, settled.calm),
-        OutboundBubbleRingPainter.bubblesAt(0, 1),
+        OutboundBubblePainter.outline(
+          const Size.square(48),
+          phase: settled.phase,
+          calm: settled.calm,
+        ).getBounds(),
+        OutboundBubblePainter.outline(
+          const Size.square(48),
+          phase: 0,
+          calm: 1,
+        ).getBounds(),
       );
       await tester.pump(const Duration(seconds: 1));
       expect(_bubbles(tester).phase, settled.phase);

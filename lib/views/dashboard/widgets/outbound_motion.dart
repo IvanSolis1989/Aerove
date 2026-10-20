@@ -28,29 +28,58 @@ enum OutboundFinish {
   }
 }
 
-const _dropletSegments = 16;
+const _dropletSegments = 24;
 
-/// The start button's outline, a soft blob that meets every ray from the
-/// center of [size] once, as a glass clip must; [squeeze] widens it by as
-/// much as it flattens it.
+/// Standing waves on a bubble's skin: (order, amplitude, swing rate, swing
+/// offset, axis drift, axis); unequal rates keep the outline from repeating.
+const _surfaceModes = [
+  (2, 0.055, 3.1, 0.0, 0.35, 0.4),
+  (3, 0.028, 4.7, 1.3, -0.5, 1.1),
+  (4, 0.014, 6.3, 2.1, 0.7, 2.3),
+  (5, 0.008, 8.9, 0.7, -0.9, 0.5),
+];
+
+/// A droplet outline meeting every ray from the center once, as a glass clip
+/// must; [wobble] ripples its skin over [time], mirrored when negative.
 Path _dropletPath(
   Size size, {
   double phase = 0,
   double fullness = 0,
   double squeeze = 0,
+  double time = 0,
+  double wobble = 0,
 }) {
-  final base = 0.41 + 0.025 * fullness;
+  final base = (0.41 + 0.025 * fullness) * (1 - 0.1 * wobble.abs());
   final squash = 0.07 * squeeze.clamp(-0.6, 1.0);
+  final breath = 0.018 * wobble * math.sin(2.3 * time + 0.9);
+  final swings = [
+    for (final (_, amplitude, rate, offset, _, _) in _surfaceModes)
+      wobble * amplitude * math.sin(rate * time + offset),
+  ];
+  double wave(int index, double angle) {
+    final (order, _, _, _, drift, axis) = _surfaceModes[index];
+    return order * (angle - drift * time) + axis;
+  }
+
   double radius(double angle) {
     final tilt = 0.025 * math.cos(2 * angle + 1.1 + phase);
     final lobes = 0.03 * math.cos(3 * angle + 0.6 - 0.7 * phase);
-    return base * (1 + squash * math.cos(2 * angle) + tilt + lobes);
+    var skin = breath;
+    for (var index = 0; index < swings.length; index++) {
+      skin += swings[index] * math.cos(wave(index, angle));
+    }
+    return base * (1 + squash * math.cos(2 * angle) + tilt + lobes + skin);
   }
 
   double slope(double angle) {
     final tilt = 0.05 * math.sin(2 * angle + 1.1 + phase);
     final lobes = 0.09 * math.sin(3 * angle + 0.6 - 0.7 * phase);
-    return -base * (2 * squash * math.sin(2 * angle) + tilt + lobes);
+    var skin = 0.0;
+    for (var index = 0; index < swings.length; index++) {
+      final (order, _, _, _, _, _) = _surfaceModes[index];
+      skin += swings[index] * order * math.sin(wave(index, angle));
+    }
+    return -base * (2 * squash * math.sin(2 * angle) + tilt + lobes + skin);
   }
 
   Offset point(double angle) {
@@ -87,21 +116,33 @@ class OutboundDropletClipper extends CustomClipper<Path> {
     this.phase = 0,
     this.fullness = 0,
     this.squeeze = 0,
+    this.time = 0,
+    this.wobble = 0,
   });
 
   final double phase;
   final double fullness;
   final double squeeze;
+  final double time;
+  final double wobble;
 
   @override
-  Path getClip(Size size) =>
-      _dropletPath(size, phase: phase, fullness: fullness, squeeze: squeeze);
+  Path getClip(Size size) => _dropletPath(
+    size,
+    phase: phase,
+    fullness: fullness,
+    squeeze: squeeze,
+    time: time,
+    wobble: wobble,
+  );
 
   @override
   bool shouldReclip(OutboundDropletClipper oldClipper) =>
       oldClipper.phase != phase ||
       oldClipper.fullness != fullness ||
-      oldClipper.squeeze != squeeze;
+      oldClipper.squeeze != squeeze ||
+      oldClipper.time != time ||
+      oldClipper.wobble != wobble;
 }
 
 class OutboundDropletPainter extends CustomPainter {
@@ -109,6 +150,8 @@ class OutboundDropletPainter extends CustomPainter {
     this.phase = 0,
     this.fullness = 0,
     this.squeeze = 0,
+    this.time = 0,
+    this.wobble = 0,
     required this.color,
     this.shadow = Colors.transparent,
     this.ring,
@@ -121,6 +164,8 @@ class OutboundDropletPainter extends CustomPainter {
   final double phase;
   final double fullness;
   final double squeeze;
+  final double time;
+  final double wobble;
 
   /// No color leaves the inside to glass, and [shadow] then falls only
   /// outside the droplet, as one under glass would show.
@@ -137,6 +182,8 @@ class OutboundDropletPainter extends CustomPainter {
       phase: phase,
       fullness: fullness,
       squeeze: squeeze,
+      time: time,
+      wobble: wobble,
     );
     final color = this.color;
     if (shadow.a > 0) {
@@ -196,6 +243,8 @@ class OutboundDropletPainter extends CustomPainter {
         phase: phase,
         fullness: fullness,
         squeeze: squeeze,
+        time: time,
+        wobble: wobble,
       );
       canvas
         ..save()
@@ -210,6 +259,8 @@ class OutboundDropletPainter extends CustomPainter {
       oldDelegate.phase != phase ||
       oldDelegate.fullness != fullness ||
       oldDelegate.squeeze != squeeze ||
+      oldDelegate.time != time ||
+      oldDelegate.wobble != wobble ||
       oldDelegate.color != color ||
       oldDelegate.shadow != shadow ||
       oldDelegate.ring != ring ||
@@ -224,10 +275,9 @@ final _bubbleSettle = SpringCurve(
   seconds: 0.7,
 );
 
-/// A ring of bubbles around [child] that drift while [checking] and spring
-/// back into their places once it ends.
-class OutboundBubbleRing extends StatefulWidget {
-  const OutboundBubbleRing({
+/// A bubble around [child] that writhes while [checking], then settles.
+class OutboundBubble extends StatefulWidget {
+  const OutboundBubble({
     super.key,
     required this.size,
     required this.checking,
@@ -247,10 +297,10 @@ class OutboundBubbleRing extends StatefulWidget {
   final Widget child;
 
   @override
-  State<OutboundBubbleRing> createState() => _OutboundBubbleRingState();
+  State<OutboundBubble> createState() => _OutboundBubbleState();
 }
 
-class _OutboundBubbleRingState extends State<OutboundBubbleRing>
+class _OutboundBubbleState extends State<OutboundBubble>
     with SingleTickerProviderStateMixin {
   late final AnimationController _calm = AnimationController(
     vsync: this,
@@ -279,7 +329,7 @@ class _OutboundBubbleRingState extends State<OutboundBubbleRing>
   }
 
   @override
-  void didUpdateWidget(OutboundBubbleRing oldWidget) {
+  void didUpdateWidget(OutboundBubble oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.checking == widget.checking) return;
     if (_still) {
@@ -304,7 +354,7 @@ class _OutboundBubbleRingState extends State<OutboundBubbleRing>
     builder: (_, phase, child) => AnimatedBuilder(
       animation: _rest,
       builder: (_, child) => CustomPaint(
-        painter: OutboundBubbleRingPainter(
+        painter: OutboundBubblePainter(
           phase: phase,
           calm: _rest.value,
           well: widget.well,
@@ -323,8 +373,8 @@ class _OutboundBubbleRingState extends State<OutboundBubbleRing>
   );
 }
 
-class OutboundBubbleRingPainter extends CustomPainter {
-  const OutboundBubbleRingPainter({
+class OutboundBubblePainter extends CustomPainter {
+  const OutboundBubblePainter({
     required this.phase,
     required this.calm,
     required this.well,
@@ -333,107 +383,92 @@ class OutboundBubbleRingPainter extends CustomPainter {
     this.ring,
   });
 
-  static const _wellRadius = 0.42;
-  static const _wellBounds = Rect.fromLTRB(0.08, 0.08, 0.92, 0.92);
-  static const _ringRadius = 0.445;
-  static const _bubbles = [
-    (-1.57, 0.072),
-    (-0.98, 0.04),
-    (-0.33, 0.058),
-    (0.27, 0.034),
-    (0.88, 0.064),
-    (1.55, 0.044),
-    (2.2, 0.068),
-    (2.8, 0.036),
-    (3.42, 0.056),
-    (4.08, 0.042),
-  ];
   static const _sheen = RadialGradient(
     center: Alignment(-0.35, -0.4),
-    radius: 0.7,
-    colors: [Color(0x8CFFFFFF), Color(0x00FFFFFF)],
+    radius: 0.75,
+    colors: [Color(0x80FFFFFF), Color(0x00FFFFFF)],
   );
-  static const _rimColor = Color(0xB3FFFFFF);
-  static const _glintColor = Color(0xD9FFFFFF);
+  static const _film = SweepGradient(
+    colors: [
+      Color(0x66FFB3D9),
+      Color(0x6699E6FF),
+      Color(0x66FFF0A0),
+      Color(0x66C9A8FF),
+      Color(0x66FFB3D9),
+    ],
+  );
 
   final double phase;
 
-  /// 0 while the bubbles drift and 1 once they rest in the ring.
+  /// 0 while the skin writhes and 1 at rest; the settle overshoots past 1.
   final double calm;
   final Color well;
   final Color tint;
   final OutboundFinish finish;
   final BorderSide? ring;
 
-  /// Each bubble's center and radius in the unit square. A swell travels
-  /// round the ring with [phase], so the drift also reads as progress.
-  static List<(Offset, double)> bubblesAt(double phase, double calm) {
-    final drift = 1 - calm;
-    final sway = 0.2 * math.sin(1.6 * phase);
-    final bubbles = <(Offset, double)>[];
-    for (var index = 0; index < _bubbles.length; index++) {
-      final (angle, radius) = _bubbles[index];
-      final speed = 2.6 + 0.37 * index;
-      final offset = 2.4 * index;
-      final wave = math.sin(5 * phase - angle);
-      final wobble = 0.12 * math.sin(speed * phase + offset);
-      final bob = 0.03 * math.sin(1.3 * speed * phase + 2 * offset);
-      final turn = angle + drift * (sway + wobble);
-      final reach = _ringRadius + drift * (bob + 0.02 * wave);
-      final swell = math.max(0.2, 1 + 0.32 * drift * wave);
-      final around = Offset(math.cos(turn), math.sin(turn)) * reach;
-      bubbles.add((const Offset(0.5, 0.5) + around, radius * swell));
-    }
-    return bubbles;
-  }
+  static Path outline(
+    Size size, {
+    required double phase,
+    required double calm,
+  }) => _dropletPath(size, time: phase, wobble: 1 - calm);
 
   @override
   void paint(Canvas canvas, Size size) {
     if (size.isEmpty) return;
-    final extent = size.shortestSide;
-    canvas.drawCircle(
-      size.center(Offset.zero),
-      _wellRadius * extent,
-      Paint()..color = well,
-    );
-    for (final (center, radius) in bubblesAt(phase, calm)) {
-      _paintBubble(canvas, center * extent, radius * extent);
+    final bounds = Offset.zero & size;
+    final path = outline(size, phase: phase, calm: calm);
+    canvas.drawPath(path, _fill(well));
+    switch (finish) {
+      case OutboundFinish.solid:
+        canvas
+          ..drawPath(path, _fill(tint.withValues(alpha: 0.3)))
+          ..drawPath(path, Paint()..shader = _sheen.createShader(bounds));
+      case OutboundFinish.frost:
+        canvas
+          ..drawPath(path, _fill(tint.withValues(alpha: 0.16)))
+          ..drawPath(path, Paint()..shader = _sheen.createShader(bounds))
+          ..drawPath(path, _stroke(const Color(0x59FFFFFF), 0.8));
+      case OutboundFinish.clear:
+        final rim = math.max(0.8, size.shortestSide * 0.03);
+        canvas
+          ..drawPath(path, _fill(tint.withValues(alpha: 0.05)))
+          ..drawPath(
+            path,
+            _stroke(Colors.white, rim)..shader = _film.createShader(bounds),
+          )
+          ..drawPath(path, _stroke(const Color(0x8CFFFFFF), rim * 0.5));
+    }
+    final edges = path.computeMetrics().iterator;
+    if (edges.moveNext()) {
+      final edge = edges.current;
+      canvas.drawPath(
+        edge.extractPath(edge.length * 0.56, edge.length * 0.7),
+        _stroke(const Color(0xB3FFFFFF), 1.2)..strokeCap = StrokeCap.round,
+      );
+    }
+    if (finish == OutboundFinish.clear) {
+      canvas.drawOval(
+        Rect.fromCenter(
+          center: Offset(size.width * 0.33, size.height * 0.3),
+          width: size.width * 0.12,
+          height: size.height * 0.08,
+        ),
+        _fill(const Color(0xD9FFFFFF)),
+      );
     }
     if (ring case final ring?) {
+      final unit = outline(const Size.square(1), phase: phase, calm: calm);
       canvas
         ..save()
-        ..scale(extent);
-      strokeUnitShape(canvas, Path()..addOval(_wellBounds), extent, ring);
+        ..scale(size.width, size.height);
+      strokeUnitShape(canvas, unit, size.width, ring);
       canvas.restore();
     }
   }
 
-  void _paintBubble(Canvas canvas, Offset center, double radius) {
-    switch (finish) {
-      case OutboundFinish.solid:
-        final fill = Color.alphaBlend(tint.withValues(alpha: 0.45), well);
-        canvas.drawCircle(center, radius, _fill(fill));
-      case OutboundFinish.frost:
-        final bounds = Rect.fromCircle(center: center, radius: radius);
-        final sheen = Paint()..shader = _sheen.createShader(bounds);
-        canvas
-          ..drawCircle(center, radius, _fill(tint.withValues(alpha: 0.22)))
-          ..drawCircle(center, radius, sheen);
-      case OutboundFinish.clear:
-        final rim = math.min(1.0, radius * 0.3);
-        final edge = Rect.fromCircle(center: center, radius: radius - rim / 2);
-        final glint = center + const Offset(-0.36, -0.36) * radius;
-        final shade = tint.withValues(alpha: 0.4);
-        canvas
-          ..drawCircle(center, radius, _fill(tint.withValues(alpha: 0.06)))
-          ..drawOval(edge, _stroke(_rimColor, rim))
-          ..drawArc(edge, 0.2, 1.6, false, _stroke(shade, rim))
-          ..drawCircle(glint, radius * 0.26, _fill(_glintColor));
-    }
-  }
-
   @override
-  bool shouldRepaint(OutboundBubbleRingPainter oldDelegate) =>
+  bool shouldRepaint(OutboundBubblePainter oldDelegate) =>
       oldDelegate.phase != phase ||
       oldDelegate.calm != calm ||
       oldDelegate.well != well ||
@@ -442,7 +477,7 @@ class OutboundBubbleRingPainter extends CustomPainter {
       oldDelegate.ring != ring;
 
   @override
-  bool shouldRebuildSemantics(OutboundBubbleRingPainter oldDelegate) => false;
+  bool shouldRebuildSemantics(OutboundBubblePainter oldDelegate) => false;
 }
 
 Paint _fill(Color color) => Paint()..color = color;
@@ -663,7 +698,7 @@ class _OutboundVisibilityRender extends RenderProxyBox {
       ancestor = ancestor.parent;
     }
     final viewport = RenderAbstractViewport.maybeOf(this);
-    if (viewport case RenderBox viewportBox) {
+    if (viewport case final RenderBox viewportBox) {
       return MatrixUtils.transformRect(
         getTransformTo(viewportBox),
         paintBounds,

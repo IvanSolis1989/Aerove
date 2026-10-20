@@ -58,7 +58,7 @@ Widget _ring({required bool checking, bool reduced = false}) => ProviderScope(
       data: MediaQueryData(disableAnimations: reduced),
       child: Align(
         alignment: Alignment.topLeft,
-        child: OutboundBubbleRing(
+        child: OutboundBubble(
           size: 48,
           checking: checking,
           well: Colors.grey,
@@ -96,6 +96,22 @@ Future<void> _vsyncs(WidgetTester tester, int refreshRate) async {
     await tester.pump(interval);
   }
 }
+
+List<Offset> _outline(double phase, double calm) {
+  final contour = OutboundBubblePainter.outline(
+    const Size.square(100),
+    phase: phase,
+    calm: calm,
+  ).computeMetrics().single;
+  return [
+    for (var index = 0; index < 48; index++)
+      contour.getTangentForOffset(contour.length * index / 48)!.position,
+  ];
+}
+
+double _farthest(List<Offset> a, List<Offset> b) => [
+  for (var index = 0; index < a.length; index++) (a[index] - b[index]).distance,
+].reduce(math.max);
 
 int Function() _countFrames(WidgetTester tester) {
   var frames = 0;
@@ -162,21 +178,48 @@ void main() {
     }
   });
 
-  test('the bubble ring rests in one place whatever the drift reached', () {
-    final rest = OutboundBubbleRingPainter.bubblesAt(0, 1);
-    expect(rest, hasLength(greaterThanOrEqualTo(6)));
-    expect({for (final (_, radius) in rest) radius}.length, greaterThan(3));
-    for (final phase in [0.4, 1.7, 3.3, 9.1]) {
-      expect(OutboundBubbleRingPainter.bubblesAt(phase, 1), rest);
-      final drifting = OutboundBubbleRingPainter.bubblesAt(phase, 0);
-      expect(drifting, isNot(rest));
-      for (final (center, _) in drifting) {
-        expect(
-          (center - const Offset(0.5, 0.5)).distance,
-          inInclusiveRange(0.35, 0.5),
-        );
+  test('a writhing skin keeps one outline inside its box', () {
+    const center = Offset(50, 50);
+    for (final time in [0.0, 0.7, 2.9, 5.3, 11.1, 40.0]) {
+      for (final wobble in [-0.25, 0.55, 1.0]) {
+        final contour = OutboundDropletClipper(
+          fullness: 1,
+          squeeze: 1,
+          time: time,
+          wobble: wobble,
+        ).getClip(const Size.square(100)).computeMetrics().single;
+        expect(contour.isClosed, isTrue);
+        var turned = 0.0;
+        Offset? previous;
+        for (var index = 0; index <= 240; index++) {
+          final here = contour
+              .getTangentForOffset(contour.length * index / 240)!
+              .position;
+          expect(const Rect.fromLTWH(0, 0, 100, 100).contains(here), isTrue);
+          if (previous case final previous?) {
+            final from = previous - center;
+            final to = here - center;
+            final sweep = math.atan2(
+              from.dx * to.dy - from.dy * to.dx,
+              from.dx * to.dx + from.dy * to.dy,
+            );
+            expect(sweep, greaterThan(0));
+            turned += sweep;
+          }
+          previous = here;
+        }
+        expect(turned, closeTo(2 * math.pi, 1e-6));
       }
     }
+  });
+
+  test('the bubble rests in one shape whatever its skin reached', () {
+    final rest = _outline(0, 1);
+    for (final phase in [0.4, 1.7, 3.3, 9.1]) {
+      expect(_farthest(_outline(phase, 1), rest), lessThan(1e-9));
+      expect(_farthest(_outline(phase, 0), rest), greaterThan(1));
+    }
+    expect(_farthest(_outline(1.7, 0), _outline(3.3, 0)), greaterThan(1));
   });
 
   testWidgets('checking drifts and holds still the moment it completes', (
@@ -372,42 +415,39 @@ void main() {
     scroll.dispose();
   });
 
-  testWidgets('bubbles drift while checking, then spring into a fixed ring', (
+  testWidgets('the bubble writhes while checking, then springs back to rest', (
     tester,
   ) async {
     await tester.pumpWidget(_ring(checking: true));
     await _advance(tester);
-    final drifting = _painter<OutboundBubbleRingPainter>(tester);
+    final drifting = _painter<OutboundBubblePainter>(tester);
     expect(drifting.phase, greaterThan(0));
     expect(drifting.calm, 0);
     await tester.pumpWidget(_ring(checking: false));
     await tester.pump(const Duration(milliseconds: 100));
-    expect(_painter<OutboundBubbleRingPainter>(tester).calm, greaterThan(0));
+    expect(_painter<OutboundBubblePainter>(tester).calm, greaterThan(0));
     await tester.pumpAndSettle();
     expect(tester.binding.hasScheduledFrame, isFalse);
-    final rest = _painter<OutboundBubbleRingPainter>(tester);
+    final rest = _painter<OutboundBubblePainter>(tester);
     expect(rest.calm, 1);
-    expect(
-      OutboundBubbleRingPainter.bubblesAt(rest.phase, rest.calm),
-      OutboundBubbleRingPainter.bubblesAt(0, 1),
-    );
+    expect(_farthest(_outline(rest.phase, rest.calm), _outline(0, 1)), 0);
     await tester.pump(const Duration(seconds: 1));
-    expect(_painter<OutboundBubbleRingPainter>(tester).phase, rest.phase);
+    expect(_painter<OutboundBubblePainter>(tester).phase, rest.phase);
   });
 
-  testWidgets('reduced motion rests the bubbles until it is turned off', (
+  testWidgets('reduced motion rests the bubble until it is turned off', (
     tester,
   ) async {
     await tester.pumpWidget(_ring(checking: true, reduced: true));
     await _advance(tester);
-    final still = _painter<OutboundBubbleRingPainter>(tester);
+    final still = _painter<OutboundBubblePainter>(tester);
     expect(still.calm, 1);
     expect(still.phase, 0);
     expect(tester.binding.hasScheduledFrame, isFalse);
 
     await tester.pumpWidget(_ring(checking: true));
     await _advance(tester);
-    final released = _painter<OutboundBubbleRingPainter>(tester);
+    final released = _painter<OutboundBubblePainter>(tester);
     expect(released.calm, lessThan(1));
     expect(released.phase, greaterThan(0));
     await tester.pumpWidget(const SizedBox.shrink());
