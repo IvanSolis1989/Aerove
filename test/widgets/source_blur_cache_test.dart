@@ -18,6 +18,9 @@ const _rects = [
   Rect.fromLTWH(240, 160, 100, 140),
 ];
 const _colors = [Color(0xFFB8DCF2), Color(0xFFF0BFD8), Color(0xFFD5E9D3)];
+// Of the 1024 px gradient source, blurs 12 and 16 keep a quarter, 24 an eighth.
+const _quarterEntry = 256 * 256;
+const _eighthEntry = 128 * 128;
 
 class _SourcePainter extends CustomPainter {
   const _SourcePainter(this.seed);
@@ -406,7 +409,7 @@ void main() {
           ui.ImageFilter.isShaderFilterSupported ? 2 : 0,
         );
         expect(stats.entries, ui.ImageFilter.isShaderFilterSupported ? 2 : 0);
-        expect(stats.sourceBlurPixels, lessThanOrEqualTo(8 * 1024 * 1024));
+        expect(stats.sourceBlurPixels, lessThanOrEqualTo(2 * 1024 * 1024));
       }
       expect(contrast, greaterThan(8));
       final stats = LiquidGlassHost.debugLastSourceBlurCapture!;
@@ -441,7 +444,7 @@ void main() {
       tester.view.physicalSize = _size;
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
-      LiquidGlassHost.debugSourceBlurBudgetOverride = 2 * 1024 * 1024;
+      LiquidGlassHost.debugSourceBlurBudgetOverride = 2 * _quarterEntry;
       for (var frame = 0; frame < 8; frame++) {
         await _pump(
           tester,
@@ -460,7 +463,7 @@ void main() {
         );
         expect(
           stats.sourceBlurPixels,
-          ui.ImageFilter.isShaderFilterSupported ? 2 * 1024 * 1024 : 0,
+          ui.ImageFilter.isShaderFilterSupported ? 2 * _quarterEntry : 0,
         );
         expect(stats.evictions, 0);
         expect(stats.pinned, ui.ImageFilter.isShaderFilterSupported ? 3 : 0);
@@ -490,7 +493,7 @@ void main() {
       );
       expect(
         changed.sourceBlurPixels,
-        ui.ImageFilter.isShaderFilterSupported ? 2 * 1024 * 1024 : 0,
+        ui.ImageFilter.isShaderFilterSupported ? 2 * _quarterEntry : 0,
       );
       LiquidGlassHost.debugSourceBlurBudgetOverride = 0;
       await _pump(
@@ -625,5 +628,100 @@ void main() {
         await _unmount(tester);
       }
     },
+  );
+
+  testWidgets('a wide blur keeps a shrunken entry that matches the full blur', (
+    tester,
+  ) async {
+    tester.view.physicalSize = _size;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final app = _app(quality: LiquidGlassQuality.ultra, aurora: false);
+    await _pump(tester, app, false);
+    final before = await _shot(tester);
+    await _pump(tester, app, true);
+    final after = await _shot(tester, 'shrunken');
+    _oracle(before, after, [for (final rect in _rects) rect.inflate(2)], 1);
+    final stats = LiquidGlassHost.debugLastSourceBlurCapture!;
+    expect(stats.entries, 2);
+    expect(stats.sourceBlurPixels, _quarterEntry + _eighthEntry);
+    await _unmount(tester);
+  }, skip: !ui.ImageFilter.isShaderFilterSupported);
+
+  testWidgets(
+    'an entry nothing reads for two seconds is released under budget',
+    (tester) async {
+      tester.view.physicalSize = _size;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await _pump(
+        tester,
+        _app(quality: LiquidGlassQuality.ultra, aurora: false),
+        true,
+      );
+      expect(LiquidGlassHost.debugLastSourceBlurCapture!.entries, 2);
+      await _pump(
+        tester,
+        _app(
+          quality: LiquidGlassQuality.ultra,
+          aurora: false,
+          blurs: const [12],
+        ),
+        true,
+      );
+      Future<SourceBlurCapture> frame(Duration elapsed) async {
+        tester.renderObject(find.byType(LiquidGlassHost)).markNeedsPaint();
+        await tester.pump(elapsed);
+        return LiquidGlassHost.debugLastSourceBlurCapture!;
+      }
+
+      var stats = await frame(const Duration(milliseconds: 1900));
+      expect(stats.entries, 2);
+      expect(stats.evictions, 0);
+      stats = await frame(const Duration(milliseconds: 200));
+      expect(stats.entries, 1);
+      expect(stats.evictions, 1);
+      expect(stats.sourceBlurPixels, _quarterEntry);
+      final builds = stats.sourceBlurBuilds;
+      stats = await frame(const Duration(seconds: 5));
+      expect(stats.entries, 1);
+      expect(stats.sourceBlurBuilds, builds);
+      expect(stats.evictions, 1);
+      await _unmount(tester);
+    },
+    skip: !ui.ImageFilter.isShaderFilterSupported,
+  );
+
+  testWidgets(
+    'a pane whose frost changes every frame builds only once it holds',
+    (tester) async {
+      tester.view.physicalSize = _size;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      Widget app(double blur) =>
+          _app(quality: LiquidGlassQuality.ultra, aurora: false, blurs: [blur]);
+      await _pump(tester, app(12), true);
+      final start = LiquidGlassHost.debugLastSourceBlurCapture!;
+      expect(start.sourceBlurBuilds, 1);
+      for (var step = 1; step <= 8; step++) {
+        await tester.pumpWidget(
+          app(12 + step / 4),
+          duration: const Duration(milliseconds: 16),
+        );
+      }
+      final moving = LiquidGlassHost.debugLastSourceBlurCapture!;
+      expect(moving.sourceBlurBuilds, start.sourceBlurBuilds);
+      expect(moving.reasons['moving'], greaterThan(0));
+      await tester.pumpWidget(
+        app(14),
+        duration: const Duration(milliseconds: 16),
+      );
+      expect(
+        LiquidGlassHost.debugLastSourceBlurCapture!.sourceBlurBuilds,
+        start.sourceBlurBuilds + 1,
+      );
+      await _unmount(tester);
+    },
+    skip: !ui.ImageFilter.isShaderFilterSupported,
   );
 }

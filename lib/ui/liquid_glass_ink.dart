@@ -108,10 +108,15 @@ abstract class _ColorSnapshotLayer extends OffsetLayer {
     return image;
   }
 
-  @override
-  void dispose() {
+  void _releaseImage() {
     _image?.dispose();
     _image = null;
+    _key = const [];
+  }
+
+  @override
+  void dispose() {
+    _releaseImage();
     super.dispose();
   }
 }
@@ -639,6 +644,7 @@ extension _InkCapture on _LiquidGlassHostLayer {
         updates++;
       }
     }
+    if (selected != null && image != null) viewport?.$1._releaseImage();
     for (final ink in covered) {
       ink._freeze();
     }

@@ -91,6 +91,23 @@ Future<_FieldProbe> _fieldProbe(WidgetTester tester) async {
   );
 }
 
+ui.Image _inkField(WidgetTester tester) {
+  LiquidGlassInkLayer? ink;
+  void visit(ContainerLayer parent) {
+    for (Layer? child = parent.firstChild; child != null && ink == null;) {
+      if (child is LiquidGlassInkLayer) {
+        ink = child;
+      } else if (child is ContainerLayer) {
+        visit(child);
+      }
+      child = child.nextSibling;
+    }
+  }
+
+  visit(tester.binding.renderViews.first.debugLayer!);
+  return ink!.debugField!.$1;
+}
+
 Offset _sourcePoint(_FieldProbe field, Offset point) {
   final local = MatrixUtils.transformPoint(
     Matrix4.inverted(field.inkToRoot),
@@ -682,9 +699,11 @@ void main() {
       }
       final crossfade = await render(crossfade: true);
       final blended = LiquidGlassHost.debugLastInkCapture!;
+      final viewportField = _inkField(tester);
       expect(blended.fallbackCaptures, greaterThan(stats.fallbackCaptures));
       expect(crossfade, isNot(pixels));
       await render();
+      expect(viewportField.debugDisposed, isTrue);
       expect(
         LiquidGlassHost.debugLastInkCapture!.sourceCaptures,
         greaterThan(blended.sourceCaptures),

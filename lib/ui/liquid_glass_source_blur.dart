@@ -1,10 +1,25 @@
 part of 'liquid_glass.dart';
 
-const _sourceBlurBudget = 8 * 1024 * 1024;
+const _sourceBlurBudget = 2 * 1024 * 1024;
+const _sourceBlurIdle = Duration(seconds: 2);
 const _sourceBlurredBand = Object();
 int _liveSourceBlurPixels = 0;
 typedef _SourceSigma = ({double x, double y});
-typedef _SourceBlurImage = ({ui.Image image, int pixels, int used});
+typedef _SourceBlurImage = ({
+  ui.Image image,
+  int pixels,
+  int used,
+  Duration read,
+});
+
+/// Shrinks as a capture does: while [sigma] still spans [_captureFrost] pixels.
+double _sourceBlurShrink(double sigma) {
+  var shrink = 1.0;
+  while (sigma * shrink >= 2 * _captureFrost) {
+    shrink /= 2;
+  }
+  return shrink;
+}
 
 typedef SourceBlurCapture = ({
   int sourceBlurBuilds,
@@ -24,6 +39,10 @@ class _SourceBlurCache {
   Size _size = Size.zero;
   int _seen = 0;
   Duration? _seenFrame;
+  Duration? _frame;
+  Duration? _askedFrame;
+  var _asked = <_LiquidGlassLayer, _SourceSigma>{};
+  var _asking = <_LiquidGlassLayer, _SourceSigma>{};
   int _clock = 0;
   int builds = 0;
   int hits = 0;
@@ -64,6 +83,12 @@ class _SourceBlurCache {
       _seen++;
       _seenFrame = frame;
     }
+    if (frame != null && frame != _askedFrame) {
+      _asked = _asking;
+      _asking = {};
+      _askedFrame = frame;
+    }
+    _frame = frame;
     pinned = {};
     while (pixels > budget) {
       _evict();
@@ -91,6 +116,26 @@ class _SourceBlurCache {
     reasons.update(reason, (value) => value + 1, ifAbsent: () => 1);
   }
 
+  /// A scaling pane asks a new sigma every frame; it builds one once it holds.
+  bool settled(_LiquidGlassLayer pane, _SourceSigma sigma) {
+    if (_frame == null) return true;
+    final last = _asked[pane];
+    _asking[pane] = sigma;
+    return last == null || last == sigma || images.containsKey(sigma);
+  }
+
+  void pin(Set<_SourceSigma> sigmas) {
+    pinned = sigmas;
+    final frame = _frame;
+    if (frame == null) return;
+    for (final sigma in images.keys.toList()) {
+      if (!pinned.contains(sigma) &&
+          frame - images[sigma]!.read > _sourceBlurIdle) {
+        _remove(sigma);
+      }
+    }
+  }
+
   bool _evict() {
     _SourceSigma? oldest;
     var clock = _clock + 1;
@@ -101,7 +146,12 @@ class _SourceBlurCache {
       }
     }
     if (oldest == null) return false;
-    final removed = images.remove(oldest)!;
+    _remove(oldest);
+    return true;
+  }
+
+  void _remove(_SourceSigma sigma) {
+    final removed = images.remove(sigma)!;
     pixels -= removed.pixels;
     removed.image.dispose();
     assert(() {
@@ -109,7 +159,6 @@ class _SourceBlurCache {
       return true;
     }());
     evictions++;
-    return true;
   }
 
   ui.Image? read(_SourceSigma sigma) {
@@ -118,16 +167,21 @@ class _SourceBlurCache {
         image: previous.image,
         pixels: previous.pixels,
         used: ++_clock,
+        read: _frame ?? previous.read,
       );
       hits++;
       return previous.image;
     }
-    if (SchedulerBinding.instance.schedulerPhase == SchedulerPhase.idle) {
+    final frame = _frame;
+    if (frame == null) {
       fallback('idle');
       return null;
     }
     final source = _source!;
-    final needed = source.width * source.height;
+    final shrink = _sourceBlurShrink(math.min(sigma.x, sigma.y));
+    final width = math.max(1, (source.width * shrink).round());
+    final height = math.max(1, (source.height * shrink).round());
+    final needed = width * height;
     if (needed > budget) {
       fallback('budget');
       return null;
@@ -138,33 +192,34 @@ class _SourceBlurCache {
         return null;
       }
     }
-    final bounds = Rect.fromLTWH(
-      0,
-      0,
-      source.width.toDouble(),
-      source.height.toDouble(),
-    );
+    final x = width / source.width;
+    final y = height / source.height;
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     canvas.saveLayer(
-      bounds,
+      Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
       Paint()
         ..imageFilter = ui.ImageFilter.blur(
-          sigmaX: sigma.x,
-          sigmaY: sigma.y,
+          sigmaX: sigma.x * x,
+          sigmaY: sigma.y * y,
           tileMode: TileMode.clamp,
         ),
     );
-    canvas.drawImage(
-      source,
-      Offset.zero,
-      Paint()..filterQuality = FilterQuality.none,
-    );
-    canvas.restore();
+    // Impeller would scale the blur by a scale left set as the layer restores.
+    canvas
+      ..save()
+      ..scale(x, y)
+      ..drawImage(
+        source,
+        Offset.zero,
+        Paint()..filterQuality = FilterQuality.low,
+      )
+      ..restore()
+      ..restore();
     final picture = recorder.endRecording();
-    final image = picture.toImageSync(source.width, source.height);
+    final image = picture.toImageSync(width, height);
     picture.dispose();
-    images[sigma] = (image: image, pixels: needed, used: ++_clock);
+    images[sigma] = (image: image, pixels: needed, used: ++_clock, read: frame);
     pixels += needed;
     assert(() {
       _liveSourceBlurPixels += needed;
@@ -191,6 +246,8 @@ class _SourceBlurCache {
   void dispose() {
     _release();
     _source = null;
+    _asked = {};
+    _asking = {};
   }
 }
 
@@ -240,7 +297,7 @@ extension _SourceBlurCapture on _LiquidGlassHostLayer {
         plans.add((entry, sigma));
       }
     }
-    cache.pinned = {for (final (_, sigma) in plans) sigma};
+    cache.pin({for (final (_, sigma) in plans) sigma});
     for (final (entry, sigma) in plans) {
       entry.sourceBlur = cache.read(sigma);
     }
@@ -300,6 +357,7 @@ extension _SourceBlurCapture on _LiquidGlassHostLayer {
       cache.fallback('transform');
       return null;
     }
+    final settled = cache.settled(entry.pane, sigma);
     final paneScale = math.max(
       entry.toHost.storage[0].abs(),
       entry.toHost.storage[5].abs(),
@@ -338,6 +396,10 @@ extension _SourceBlurCapture on _LiquidGlassHostLayer {
       pixels,
     )) {
       cache.fallback('edge');
+      return null;
+    }
+    if (!settled) {
+      cache.fallback('moving');
       return null;
     }
     return sigma;
