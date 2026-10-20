@@ -165,22 +165,33 @@ class _CoreContainerState extends ConsumerState<CoreManager>
   }
 
   Future<void> _refreshUiData(int revision) async {
-    for (final entry in _loadedWhileHidden.entries.toList()) {
-      if (!_uiVisible || revision != _uiRevision) return;
-      try {
-        final provider = await _core.getExternalProvider(entry.key);
+    final pending = _loadedWhileHidden.entries.toList();
+    try {
+      // setProvider skips unlisted names; a Core that does not answer lists [].
+      if (pending.length > 1 ||
+          (pending.isNotEmpty && ref.read(providersProvider).isEmpty)) {
+        final providers = await _core.getExternalProviders();
+        if (!_uiVisible || revision != _uiRevision) return;
+        if (providers.isEmpty && ref.read(providersProvider).isNotEmpty) {
+          return;
+        }
+        ref.read(providersProvider.notifier).value = providers;
+      } else if (pending.isNotEmpty) {
+        final provider = await _core.getExternalProvider(pending.single.key);
         if (!_uiVisible || revision != _uiRevision) return;
         ref.read(providersProvider.notifier).setProvider(provider);
+      }
+      if (!_uiVisible || revision != _uiRevision) return;
+      for (final entry in pending) {
         if (_loadedWhileHidden[entry.key] == entry.value) {
           _loadedWhileHidden.remove(entry.key);
         }
-      } catch (error) {
-        commonPrint.log(
-          'Provider refresh failed: $error',
-          logLevel: coreFailureLogLevel(error),
-        );
       }
-      if (!_uiVisible || revision != _uiRevision) return;
+    } catch (error) {
+      commonPrint.log(
+        'Provider refresh failed: $error',
+        logLevel: coreFailureLogLevel(error),
+      );
     }
     if (!_groupsNeedRefresh || !_uiVisible || revision != _uiRevision) return;
     final groupsRevision = _groupsRevision;
@@ -314,7 +325,13 @@ class _CoreContainerState extends ConsumerState<CoreManager>
     if (_closed) return;
     _loadedWhileHidden[providerName] = ++_providerRevision;
     _markGroupsDirty();
-    _requestUiRefresh();
+    if (_uiVisible) {
+      debouncer.call(
+        FunctionTag.loadedProvider,
+        _requestUiRefresh,
+        duration: const Duration(milliseconds: 500),
+      );
+    }
     super.onLoaded(providerName);
   }
 

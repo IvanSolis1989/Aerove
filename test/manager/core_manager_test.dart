@@ -84,6 +84,25 @@ class _GroupRecordingProxiesAction extends ProxiesAction {
   }
 }
 
+List<ExternalProvider> _listedProviders(String name) => [
+  ExternalProvider(
+    name: name,
+    type: 'Proxy',
+    count: 1,
+    vehicleType: 'HTTP',
+    updateAt: DateTime.utc(2026),
+  ),
+];
+
+// onLoaded runs in the zone of coreEventManager's permanent subscription, so
+// its debounce timer and the refresh it starts run on the real clock.
+Future<void> _settleLoadedRefresh(WidgetTester tester) async {
+  await tester.runAsync(
+    () => Future<void>.delayed(const Duration(milliseconds: 600)),
+  );
+  await tester.pump(const Duration(milliseconds: 1));
+}
+
 _MockCoreHandlerInterface _coreInterface() {
   final coreInterface = _MockCoreHandlerInterface();
   when(() => coreInterface.startLog()).thenAnswer((_) {});
@@ -344,6 +363,9 @@ void main() {
       coreInterface,
       overrides: [proxiesActionProvider.overrideWith(() => action)],
     );
+    container.read(providersProvider.notifier).value = _listedProviders(
+      'remote',
+    );
     container.read(coreStatusProvider.notifier).value = CoreStatus.connected;
     await tester.pump();
     container.read(appVisibleProvider.notifier).value = false;
@@ -384,20 +406,24 @@ void main() {
       overrides: [proxiesActionProvider.overrideWith(() => action)],
     );
     try {
+      container.read(providersProvider.notifier).value = _listedProviders(
+        'remote',
+      );
       container.read(coreStatusProvider.notifier).value = CoreStatus.connected;
       await tester.pump(const Duration(milliseconds: 1));
       coreEventManager.sendEvent(
         const CoreEvent(type: CoreEventType.loaded, data: 'remote'),
       );
       await tester.pump(const Duration(milliseconds: 1));
+      expect(reads, 0);
+      await _settleLoadedRefresh(tester);
       expect(reads, 1);
       container.read(appVisibleProvider.notifier).value = false;
       container.read(appVisibleProvider.notifier).value = true;
       await tester.pump(const Duration(milliseconds: 1));
       first.complete(null);
-      for (var attempt = 0; attempt < 20 && action.groupReads == 0; attempt++) {
-        await tester.pump(const Duration(milliseconds: 1));
-      }
+      await tester.pump(const Duration(milliseconds: 1));
+      await _settleLoadedRefresh(tester);
 
       expect(reads, 2);
       expect(action.groupReads, 1);
@@ -406,6 +432,95 @@ void main() {
       expect(action.groupReads, 1);
     } finally {
       if (!first.isCompleted) first.complete(null);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(milliseconds: 1));
+    }
+  });
+
+  testWidgets('a burst of loaded events is read back in one pass', (
+    tester,
+  ) async {
+    final action = _GroupRecordingProxiesAction();
+    final coreInterface = _coreInterface();
+    var listReads = 0;
+    when(() => coreInterface.getExternalProviders()).thenAnswer((_) async {
+      listReads++;
+      return const <ExternalProvider>[];
+    });
+    final container = await _pumpCoreManager(
+      tester,
+      coreInterface,
+      overrides: [proxiesActionProvider.overrideWith(() => action)],
+    );
+    try {
+      container.read(coreStatusProvider.notifier).value = CoreStatus.connected;
+      await tester.pump(const Duration(milliseconds: 1));
+      for (var index = 0; index < 20; index++) {
+        coreEventManager.sendEvent(
+          CoreEvent(type: CoreEventType.loaded, data: 'provider-$index'),
+        );
+      }
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(listReads, 0);
+      expect(action.groupReads, 0);
+
+      await _settleLoadedRefresh(tester);
+
+      expect(listReads, 1);
+      expect(action.groupReads, 1);
+      verifyNever(() => coreInterface.getExternalProvider(any()));
+
+      container.read(coreStatusProvider.notifier).value =
+          CoreStatus.disconnected;
+      container.read(coreStatusProvider.notifier).value = CoreStatus.connected;
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(listReads, 1);
+      expect(action.groupReads, 1);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(milliseconds: 1));
+    }
+  });
+
+  testWidgets('an unanswered bulk read keeps the listed providers', (
+    tester,
+  ) async {
+    final action = _GroupRecordingProxiesAction();
+    final coreInterface = _coreInterface();
+    final listed = _listedProviders('provider-0');
+    final fresh = _listedProviders('provider-1');
+    var listReads = 0;
+    when(() => coreInterface.getExternalProviders()).thenAnswer((_) async {
+      return ++listReads == 1 ? const <ExternalProvider>[] : fresh;
+    });
+    final container = await _pumpCoreManager(
+      tester,
+      coreInterface,
+      overrides: [proxiesActionProvider.overrideWith(() => action)],
+    );
+    try {
+      container.read(providersProvider.notifier).value = listed;
+      container.read(coreStatusProvider.notifier).value = CoreStatus.connected;
+      await tester.pump(const Duration(milliseconds: 1));
+      for (final name in const ['provider-0', 'provider-1']) {
+        coreEventManager.sendEvent(
+          CoreEvent(type: CoreEventType.loaded, data: name),
+        );
+      }
+      await _settleLoadedRefresh(tester);
+
+      expect(listReads, 1);
+      expect(container.read(providersProvider), same(listed));
+      expect(action.groupReads, 0);
+
+      container.read(appVisibleProvider.notifier).value = false;
+      container.read(appVisibleProvider.notifier).value = true;
+      await tester.pump(const Duration(milliseconds: 1));
+
+      expect(listReads, 2);
+      expect(container.read(providersProvider), same(fresh));
+      expect(action.groupReads, 1);
+    } finally {
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump(const Duration(milliseconds: 1));
     }
