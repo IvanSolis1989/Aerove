@@ -217,7 +217,7 @@ localhost
 
 | 字段 / 页面 | 默认值 | 国内使用取舍 | 平台 / 生效边界 | 决定 |
 |---|---|---|---|---|
-| `Profile.autoUpdate` / 配置/订阅编辑 | `true` | 保持节点/到期信息新鲜；本地文件与custom不会触发远程更新，不能笼统说所有配置后台下载。 | 全平台；仅type=url有效；Bootstrap和Application定时扫描→ProfilesAction.autoUpdateProfiles | 保留 |
+| `Profile.autoUpdate` / 配置/订阅编辑 | normal为`true`；custom构造为`false` | 保持URL订阅节点/到期信息新鲜；本地文件与custom不远程更新 | 全平台；仅type=url且开关为true有效；启动和应用定时检查 | 保留 |
 | `Profile.autoUpdateDuration` / 配置/订阅编辑 | `24h` | 降低后台电量/带宽，同时避免长期陈旧；有短时令牌要求按订阅服务说明改，不臆设所有机场1h。 | 全平台；启动检查及每20分钟到期扫描；并非每20分钟重复下载 | 保留 |
 | `Profile.label/url/ageSecretKey` / 配置/订阅编辑 | `{"label":"","url":"","ageSecretKey":""}` | 没有通用默认订阅地址/解密密钥，不编造来源。 | 全平台；用户导入指定；label按订阅信息/来源名优化，age密钥供验证 | 保留 |
 | `Profile.type` / 配置/添加 | `file（normal有URL则url；custom显式custom）` | 尊重来源类型，不把所有文件解释为订阅。 | 全平台；导入构造器决定 | 保留 |
@@ -228,6 +228,7 @@ localhost
 | `Script.url / ClashProvider.url / IconSet.url` / 资源/添加 | `{"script":null,"provider":"","iconSet":""}` | 没有通用可信用户来源；捆绑Smart-Config-Kit是单独受校验例外，不默认添加更多源。 | 全平台；非空合法远程来源才下载；ResourcesAction手动或geoAutoUpdate调度→验证/落盘；脚本再经Apply | 保留 |
 | `ClashProvider.behavior/format` / 资源/规则源 | `{"behavior":"classical","format":"yaml"}` | 兼容常见规则文件；用户导入其他格式按实际来源识别，不凭国内偏好统一强转。 | 全平台；资源解析与Core规则源配置 | 保留 |
 | `Config.davProps` / 备份/WebDAV | `null` | 不预置云账号/凭据或自动上传；国内可达性不替代用户授权。 | 全平台；用户配置后显式备份恢复 | 保留 |
+| `DAVProps.uri / user / password / fileName` / WebDAV绑定与文件 | 未绑定无账号；模型password为空，绑定表单要求填写；文件名`backup.zip` | 不预填地址/账号；固定文件名只是备份目标名，不自动上传 | 绑定时uri/user必填，表单同时要求密码；编辑保留原fileName，文件名可单独改/重置 | 保留 |
 | `Config.hotKeyActions` / 工具/快捷键 | `{"newWindows":[],"newOther":["Ctrl+Alt+V","Ctrl+Alt+S","Ctrl+Alt+M","Ctrl+Alt+P","Ctrl+Alt+D"],"constructor":[]}` | 保留平台差异，不把其他平台快捷键强加Windows。 | 实际注册能力依桌面插件；Windows避免AltGr冲突；Config.realFromJson(null)→defaultHotKeyActions→热键注册 | 保留 |
 
 `Profile.extendType/scriptId` 行的“journal complete”指当前设备已完成默认脚本安装且记录和文件仍在。新普通订阅/文件可关联捆绑 Smart-Config-Kit；已有配置、自定义配置、已显式关联或已删除的默认脚本不被重绑。源脚本、远程规则与节点协议的用户输入不是一个通用“国内最佳值”，不凭空预选节点或替换订阅地址。
@@ -245,6 +246,108 @@ localhost
 订阅自动更新独立于资源自动更新：URL订阅默认24小时，启动及应用每20分钟检查到期情况；本地文件/custom不远程下载。应用版本检查默认开，只提示，下载/安装沿用户确认入口。Core未运行或SSID暂停时应用请求可能直连，GitHub可达性并无无代理引导保证；不因此硬改未经来源验证的第三方镜像。
 
 来源：[订阅模型](../lib/models/profile.dart)、[订阅更新](../lib/providers/actions/profiles.dart)、[资源更新](../lib/providers/actions/resources.dart)、[请求与版本检查](../lib/common/request.dart)、[应用调度](../lib/application.dart)、[mihomo全局Geo配置](https://wiki.metacubex.one/config/general/)。
+
+## 自定义代理组、代理源与节点选项
+
+这些参数属于特定配置、代理组或节点，不是全局性能开关。普通导入保留来源值；自定义编辑器中，**未添加选项**通常是`null`或节点definition中没有该键，不会把表格中的“添加初值”写给所有节点。用户明确添加后才初始化，已有值优先，移除后恢复未设置。空文本可以留在表单中，但不会作为有效值输出。
+
+### 代理组
+
+新建组为`type=select`、空名称，需填写可验证名称和成员；不预选不可知节点。以下13个可添加选项原值均为`null`。
+
+| 字段（ProxyGroup / YAML） | 用户添加后的初值 | 生效边界 / 国内使用取舍 | 决定 |
+|---|---|---|---|
+| `url` | `https://www.gstatic.com/generate_204` | 代理健康检查目标；不换成只能证明国内站点可达的目标 | 保留 |
+| `interval` | `300s` | 对消费该字段的组进行周期检查，不是所有节点统一每300秒测速 | 保留 |
+| `timeout` | `5000ms` | 保留失败等待取舍，无链路证据不缩短 | 保留 |
+| `maxFailedTimes / max-failed-times` | `5` | 失败触发策略由对应组/Core处理，不等于对每个业务请求重试5次 | 保留 |
+| `lazy` | `true` | 按使用情况进行健康检查，避免无用途的持续探测 | 保留 |
+| `expectedStatus / expected-status` | 空字符串，输出省略 | 不虚构服务端状态条件；用户设值后由Core校验 | 保留 |
+| `tolerance` | `0` | 仅url-test组提供；无统一链路证据不预设额外容差 | 保留 |
+| `defaultSelected / default-selected` | 空字符串，输出省略 | 仅select组；实际用户选择仍由selectedMap管理 | 保留 |
+| `strategy` | `consistent-hashing` | 仅load-balance组；不假定轮询或其他算法适合所有会话 | 保留 |
+| `hashKey / hash-key` | 空字符串，输出省略 | 非round-robin负载均衡才提供；界面开关可选择`in-user`，不默认改哈希语义 | 保留 |
+| `emptyFallback / empty-fallback` | `COMPATIBLE` | 空成员组的回退目标需通过现有名称/引用校验 | 保留 |
+| `hidden` | `false` | 保留诊断可见性 | 保留 |
+| `disableUDP / disable-udp` | `false` | 不因国内UDP质量可能有差异就全局禁用UDP；仍受节点能力限制 | 保留 |
+
+其余组字段：`proxies / use / usePosition / filter / excludeFilter / excludeType / includeAllProxies / includeAllProviders / icon`初始均未设置。用户添加节点、源、“全部节点/源”、筛选或图标后才形成对应列表、布尔值或表达式；`include-all`导入兼容为同时包含节点和源。`order / memberLayout`是本地排序布局记录。`name/type`为必填，不属于可空的添加参数。未被对应组类型读取的选项不输出，不把上述初值当作任意组类型都有效。
+
+来源：[组编辑器的类型条件、reset和clear](../lib/views/profiles/custom/groups.dart)、[成员与筛选](../lib/views/profiles/custom/members.dart)、[模型与definition输出](../lib/models/clash_config.dart)、[mihomo代理组](https://wiki.metacubex.one/config/proxy-groups/)。
+
+### 自定义代理源
+
+`ProxyProviderOptions`默认包含空`ProviderHealthCheck`和空`ProviderOverride`；内部字段均`null`，不是健康检查或TLS覆盖已启用。`filter / excludeFilter / memberLayout`也未设置。用户添加以下选项后才改变该配置引用的源，不改全局下载周期。
+
+| 字段 | 用户添加后的初值 | 生效边界 / 国内使用取舍 | 决定 |
+|---|---|---|---|
+| `healthCheck.url` / `health-check.url` | gstatic测速URL | 非空健康检查配置输出时写`enable=true`；若仅设置间隔/超时等，输出补同一默认URL | 保留 |
+| `healthCheck.interval` | `300s` | 源内节点健康检查；区别于订阅/资源文件更新周期 | 保留 |
+| `healthCheck.timeout` | `5000ms` | 不以一次延迟测量调低全体节点失败阈值 | 保留 |
+| `healthCheck.lazy` | `true` | 保留按使用检查的资源取舍 | 保留 |
+| `healthCheck.expectedStatus` / `expected-status` | 空字符串，输出省略 | 仅添加空状态项不会单独生成有效健康检查 | 保留 |
+| `proxyOverride.additionalPrefix / additionalSuffix` | 各为空字符串，输出省略 | 只改节点名称，不提供速度收益；实际填值才覆盖 | 保留 |
+| `proxyOverride.udp` | `true` | 明确为该源节点启用UDP；不能创造服务端不支持的UDP | 保留 |
+| `proxyOverride.skipCertVerify` / `override.skip-cert-verify` | `true` | 用户明确添加“跳过证书校验”后才启用，影响该源节点TLS；安全边界见下文 | 保留显式选择，不默认添加 |
+| `proxyOverride.ipVersion` / `override.ip-version` | `dual` | 不强制ipv6-only/ipv6-prefer；后续可按节点实际能力选择 | 保留 |
+
+`filter / exclude-filter`保留用户筛选；没有表达式时不预填正则。添加空prefix/suffix同样不形成有效override。上述选项移除为`null`；普通订阅内原有provider设置仍由源配置/脚本处理，不能把自定义配置空表当成清除所有来源设置。
+
+来源：[源选项添加入口](../lib/views/profiles/custom/providers.dart)、[ProviderHealthCheck、ProviderOverride和definition](../lib/models/clash_config.dart)、[mihomo代理集合](https://wiki.metacubex.one/config/proxy-providers/)。
+
+### 自定义节点
+
+新建节点表单仅初始化`name=''`、`type='ss'`，没有默认服务器、端口、账号或密钥，不能据此生成可用节点。切换类型时只为缺失值补`vmess: cipher=auto, alterId=0`和`mieru: transport=TCP`，保留兼容的已有值。其他必填项必须来自服务器/订阅资料并经Core验证。
+
+节点可添加字段完整映射如下：是否展示由协议类型和已选transport/plugin决定。未添加时definition没有该键，Core按协议处理；添加开关项才写`true`，选择项才写当前协议候选列表首项，文本/数字/列表项仅显示空行，不写虚构值。表中候选首项不是全局推荐协议或算法。
+
+| 字段（ProxyField / YAML路径） | 缺失或用户添加后的初值 | 展示及生效边界 / 取舍 | 决定 |
+|---|---|---|---|
+| `username / password / uuid / psk / key / auth-str` | 未设置，用户填写 | 按协议显示的凭据/必填项；无通用账号或密钥 | 保留 |
+| `private-key / public-key / private-key-passphrase / pre-shared-key` | 未设置，用户填写 | WireGuard、MASQUE、SSH等读取各自字段；私钥口令仅SSH可添加，不生成密钥 | 保留 |
+| `cipher / alterId` | SS/SSR不代选；切换到VMess仅补`auto / 0` | cipher候选依协议；不能把首个加密算法强配给服务端 | 保留 |
+| `protocol` | SSR必填项不自动补；Hysteria可添加时为`udp` | 是协议选项，不是全局代理模式 | 保留 |
+| `obfs / obfs-password / obfs（obfsSecret）` | SSR混淆需用户资料；Hysteria2添加obfs为`salamander`；密码/secret未设置 | obfs-password在Hysteria2已选混淆后出现；Hysteria的同名obfs为secret文本 | 保留 |
+| `transport` | Mieru切换类型补`TCP` | 服务端可用传输仍需匹配；不是TUN stack | 保留 |
+| `up / down / ports / hop-interval` | 未设置 | Hysteria/Hysteria2按协议提供；不猜带宽、跳端口或间隔 | 保留 |
+| `network` | 添加时VMess/VLESS/Trojan首项均`tcp` | 只有对应协议提供候选；不默认替用户转成WS/QUIC | 保留 |
+| `flow` | 添加时`xtls-rprx-vision` | 仅VLESS；必须匹配服务端，非通用加速开关 | 保留 |
+| `ws-opts.path / ws-opts.headers.Host` | 未设置 | 选择可用WS transport后提供，Host不自动填DNS服务器 | 保留 |
+| `grpc-opts.grpc-service-name` | 未设置 | 可用gRPC transport后提供，按服务端填写 | 保留 |
+| `xhttp-opts.path / xhttp-opts.host` | 未设置 | VLESS可用xhttp transport后提供，按服务端填写 | 保留 |
+| `tls` | 用户添加时`true` | 仅支持显式tls字段的协议；其他TLS协议不靠添加此键才加密 | 保留显式选择 |
+| `sni / servername / alpn` | 未设置，列表为空行不写入 | 按协议读取；不猜域名/ALPN，避免与服务端及证书不匹配 | 保留 |
+| `skip-cert-verify` | 用户添加时`true` | 仅支持该项的协议；不是新安装全局默认，风险见下文 | 保留显式选择，不默认添加 |
+| `client-fingerprint` | 添加时`chrome` | 仅支持的协议；指纹选择不等于证书校验，不宣称伪装保证可达 | 保留 |
+| `reality-opts.public-key / reality-opts.short-id` | 未设置 | VMess/VLESS/Trojan支持时提供；必须来自服务端，不能预造 | 保留 |
+| `plugin / plugin-opts.mode / plugin-opts.host` | 添加plugin时`obfs`；其mode/host未设置 | 仅SS；子项是否展示依plugin实际读取能力，不默认安装或下载插件 | 保留 |
+| `udp-over-tcp` | 用户添加时`true` | 仅SS；需服务端支持，不与所有UDP流量混为一谈 | 保留显式选择 |
+| `protocol-param / obfs-param` | 未设置 | 仅SSR，按服务端资料填写 | 保留 |
+| `obfs-opts.mode / obfs-opts.host / version` | 添加mode时`http`，host/version未设置 | 仅Snell；不猜服务端版本 | 保留 |
+| `congestion-controller` | 用户添加时`cubic` | TUIC/ShadowQUIC/MASQUE/TrustTunnel等支持时提供；这是节点传输算法，区别于TUN本地mipstack选项 | 保留 |
+| `udp-relay-mode / reduce-rtt` | 添加时`native / true` | 仅TUIC；reduce-rtt是显式选项，不作为无代价全局降延迟承诺 | 保留显式选择 |
+| `ip / ipv6 / allowed-ips / dns / remote-dns-resolve / mtu` | 地址/列表/MTU未设置；添加remote-dns-resolve才写true | 仅WireGuard/MASQUE相关字段；这里ipv6是地址文本，不是Core/DNS布尔开关；dns是节点隧道配置，不新增全局resolver | 保留 |
+| `tfo / mptcp` | 用户添加时`true` | 不适用DNS/reject/rematch及部分UDP/隧道协议；取决于协议与系统能力，不默认全开 | 保留显式选择 |
+| `interface-name / routing-mark` | 未设置 | 支持的节点可定向指定；仍有操作系统限制，不预填网卡名或mark | 保留 |
+| `ip-version` | 用户添加时`dual` | 支持的节点可选dual、ipv4、ipv6、ipv4-prefer、ipv6-prefer；IPv6全开不等于强制每个节点ipv6-only | 保留 |
+
+`CustomProxy.definition={}`、`emptyOptions={}`为模型初值，`emptyOptions`只记表单可见空行，不送Core。删除选项去掉键及空父map；更换network/plugin/type会清除不再适用的子选项。`name / type / server / port`是基础资料，`dialer-proxy`另由每配置的拨号链显式绑定，不默认创建链。原始YAML/分享链接的其他协议字段保持输入及Core校验，不凭空赋“国内最佳”值。
+
+来源：[ProxyField完整枚举](../lib/enum/enum.dart)、[协议条件及类型切换](../lib/models/clash_config.dart)、[节点创建和添加初值](../lib/views/profiles/custom/custom_proxies.dart)、[拨号链](../lib/views/profiles/custom/dialers.dart)。
+
+### 证书覆盖不是应用下载校验开关
+
+代理源和节点的“跳过证书校验”均由用户在“添加设置项”中明确选择后写入`true`；未添加不写、移除恢复未设置，已有`false`不会因重新展示而变成`true`。这是绕过节点TLS验证的显式选择，会放弃相应服务端证书认证，不应为国内网络可达性普遍添加。当前证据支持保留该按需行为，不修改生产源默认。
+
+全局`AppSettingProps.checkCertificate=true`控制应用HTTP下载及Core资源下载的宽松证书钩子，**不会覆盖每个节点/代理源中独立设置的skip-cert-verify**。`tls=true`、客户端指纹、Reality与证书校验也不是同一个开关。应优先使用正确证书、可信链及匹配的SNI；来源要求例外时由用户判断，不能把官方文档示例中的true当成推荐默认。
+
+依据：[mihomo节点TLS字段](https://wiki.metacubex.one/config/proxies/tls/)、[应用下载证书边界](../lib/common/http.dart)、[Core资源HTTP钩子](../core/hooks.go)、[证书实现](../core/certificate.go)。
+
+### Windows 环回入口
+
+网络→系统中的`LoopbackItem`是仅Windows显示的操作入口：用户点击后以提权方式启动随软件提供的`EnableLoopback.exe`。它没有`AppSettingProps`默认布尔值，也不代表安装或打开设置页就自动启用全部UWP环回豁免；实际Windows豁免状态由系统/该工具管理。本轮不运行工具、不更改豁免名单。
+
+来源：[Windows环回入口及平台条件](../lib/views/config/network.dart)。
 
 ## 嗅探、NTP与来源配置
 

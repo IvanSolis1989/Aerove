@@ -839,7 +839,11 @@ dns:
         ...xclashDefaultDnsOverrideKeys,
         DnsOverrideKey.enable,
       });
-      expect(importedOverrides.dns, xclashDefaultDns);
+      final allDnsKeys = DnsOverrideKey.values.toSet();
+      expect(
+        importedOverrides.dns.overrideJson(allDnsKeys, keepEmpty: true),
+        xclashDefaultDns.overrideJson(allDnsKeys, keepEmpty: true),
+      );
       expect(
         importedOverrides.dns.overrideJson(importedOverrides.dnsOverrideKeys),
         {
