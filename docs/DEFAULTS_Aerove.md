@@ -23,7 +23,7 @@
 | `AppSettingProps.locale` / 工具/语言 | `null` | 跟随系统覆盖国内中文系统，也保留海外设备语言；不硬设zh_CN。 | 全平台；空值跟随系统；ThemeManager.locale→MaterialApp | 保留 |
 | `AppSettingProps.dashboardWidgets` / 仪表盘/编辑 | `["currentOutbound","networkSpeed","outboundMode","vpnButton","networkTakeover","intranetIp","serviceStatus","profiles","proxyGroups","connectionStats"]` | 展示偏好不改变路由；保留当前产品默认，不以国内网络为理由增减后台探测。 | 按设备布局展示；dashboardStateProvider→Dashboard | 保留 |
 | `AppSettingProps.onlyStatisticsProxy` / 常规/连接 | `true` | 截图明确开启；统计代理口径，不构成只代理这些流量。 | 全平台；CommonAction.updateTraffic→Core.getTraffic/getTotalTraffic | 保留 |
-| `AppSettingProps.showNotificationStopAction` / 常规/启动与后台 | `true` | 保留截图，便于随时停止VPN；不是后台自动运行开关。 | 仅Android显示；sharedState→Service notification | 保留 |
+| `AppSettingProps.showNotificationStopAction` / 常规/启动与后台 | `true` | 保留截图，便于在通知里随时停止仅代理模式；VPN 模式不挂通知；不是后台自动运行开关。 | 仅Android且实际以仅代理模式运行（VPN 关闭或安全模式）时显示；sharedState→ProxyService notification | 保留 |
 | `AppSettingProps.autoLaunch` / 常规/启动与后台 | `false` | 不替用户注册自启动，避免登录后意外接管网络。 | 仅桌面显示；safe mode禁用主机集成；WindowManager→AutoLaunch launcher | 保留 |
 | `AppSettingProps.silentLaunch` / 常规/启动与后台 | `false` | 首次使用应可见并能完成授权和配置。 | 仅桌面显示；Bootstrap._initApp→window.show/hide | 保留 |
 | `AppSettingProps.autoRun` / 常规/启动与后台 | `false` | 保留截图；避免没有有效订阅或首次授权时自动接管。 | 全平台；SetupAction.initStatus→setRunning | 保留 |

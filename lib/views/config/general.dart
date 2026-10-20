@@ -436,7 +436,9 @@ class GeneralView extends ConsumerWidget {
       ),
     );
     // A VPN posts no notification, so it has no stop action to show.
-    final vpn = ref.watch(vpnSettingProvider.select((state) => state.enable));
+    final vpn =
+        ref.watch(vpnSettingProvider.select((state) => state.enable)) &&
+        !ref.watch(safeModeProvider);
     return BaseScaffold(
       title: appLocalizations.general,
       body: ListView(

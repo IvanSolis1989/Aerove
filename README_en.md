@@ -44,7 +44,7 @@ Choose between two treatments of light: **Soft frost** gives page-body surfaces 
 - Wallpaper updates adapt to interaction and app visibility, pausing in the background. Returning to the app retains the current image before motion resumes.
 - Only a few likely icons load in advance, and groups share node information. Rebuildable graphics caches can be reclaimed and restored when the app returns to the foreground. These changes reduce repeated work without promising a particular memory reduction, frame rate, or battery saving.
 - On Android, backgrounding pauses ongoing UI telemetry, logs, and application auto-updates. The foreground refreshes current state while proxy forwarding and necessary system services remain active. See the [background-work review (Chinese)](docs/BACKGROUND_Aerove.md) for boundaries and validation scope.
-- The default VPN mode no longer keeps a persistent notification; the status bar shows only the system's own VPN key icon. Proxy-only mode keeps one silent notification that never refreshes, as Android requires, with an optional stop button.
+- The default VPN mode no longer keeps a persistent notification; the status bar shows only the system's own VPN key icon. Proxy-only mode keeps one silent notification, as Android requires, that no longer refreshes the speed every second, with an optional stop button.
 
 ### A bundled script for easier setup
 
