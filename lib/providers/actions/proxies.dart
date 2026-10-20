@@ -126,7 +126,7 @@ class ProxiesAction extends _$ProxiesAction {
     final revision = _groupsRevision;
     bool readSucceeded = false;
     try {
-      final groups = await retry(
+      final groups = await retry<List<Group>>(
         task: () async {
           readSucceeded = false;
           if (!ref.mounted ||
