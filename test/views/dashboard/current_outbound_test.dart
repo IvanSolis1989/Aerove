@@ -15,9 +15,9 @@ import 'package:fl_clash/state.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
 import 'package:fl_clash/views/dashboard/widgets/card.dart';
 import 'package:fl_clash/views/dashboard/widgets/current_outbound.dart';
+import 'package:fl_clash/views/dashboard/widgets/outbound_motion.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -76,21 +76,26 @@ OutboundIpResult _address({int coreEpoch = 1}) => OutboundIpResult(
   picksVersion: 1,
 );
 
-Widget _card({DashboardDensity density = DashboardDensity.standard}) =>
-    Scaffold(
-      body: Align(
-        alignment: Alignment.topLeft,
-        child: SizedBox(
-          width: density.isDesktop ? 600 : 380,
-          height: density.isDesktop ? 208 : null,
-          child: DashboardDensityScope(
-            density: density,
-            scale: 1,
-            child: const CurrentOutboundCard(),
-          ),
+Widget _card({
+  DashboardDensity density = DashboardDensity.standard,
+  bool motion = true,
+}) => Scaffold(
+  body: Align(
+    alignment: Alignment.topLeft,
+    child: SizedBox(
+      width: density.isDesktop ? 600 : 380,
+      height: density.isDesktop ? 208 : null,
+      child: DashboardDensityScope(
+        density: density,
+        scale: 1,
+        child: PageActivityScope(
+          isActive: motion,
+          child: const CurrentOutboundCard(),
         ),
       ),
-    );
+    ),
+  ),
+);
 
 Widget _app(
   Future<IpQuality> Function(Ref ref, String ip) quality, {
@@ -137,7 +142,7 @@ Widget _probingApp(
       coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
       ipQualityProvider.overrideWith(quality ?? (_, _) async => _residential),
     ],
-    child: _card(),
+    child: _card(motion: false),
   );
 }
 
@@ -148,23 +153,48 @@ void _useTallView(WidgetTester tester) {
   addTearDown(tester.view.resetDevicePixelRatio);
 }
 
-Finder _clover() => find.ancestor(
-  of: find.byType(ShapeBadge),
+Finder _bubble() => find.ancestor(
+  of: find.byType(OutboundBubbleRing),
   matching: find.byWidgetPredicate(
     (widget) => widget is InkResponse && widget.runtimeType == InkResponse,
   ),
 );
 
-double _cloverTurn(WidgetTester tester) => tester
-    .widget<ShapeBadge>(
-      find.descendant(of: _clover(), matching: find.byType(ShapeBadge)),
-    )
-    .rotation;
+T _painterIn<T extends CustomPainter>(WidgetTester tester, Finder scope) {
+  final paint = tester.widget<CustomPaint>(
+    find.descendant(
+      of: scope,
+      matching: find.byWidgetPredicate(
+        (widget) => widget is CustomPaint && widget.painter is T,
+      ),
+    ),
+  );
+  return paint.painter! as T;
+}
+
+OutboundBubbleRingPainter _bubbles(WidgetTester tester) =>
+    _painterIn<OutboundBubbleRingPainter>(tester, _bubble());
 
 DashboardChip _chip(WidgetTester tester, String label) =>
     tester.widget<DashboardChip>(
       find.ancestor(of: find.text(label), matching: find.byType(DashboardChip)),
     );
+
+int Function() _countFrames(WidgetTester tester) {
+  var frames = 0;
+  var counting = true;
+  void count(Duration _) {
+    if (!counting) return;
+    frames++;
+    tester.binding.addPostFrameCallback(count);
+  }
+
+  tester.binding.addPostFrameCallback(count);
+  return () {
+    counting = false;
+    return frames;
+  };
+}
 
 void main() {
   setUpAll(() => registerFallbackValue(const OutboundIpParams(timeout: 0)));
@@ -192,8 +222,8 @@ void main() {
           inInclusiveRange(1.25, 1.35),
         );
         final badge = find.descendant(
-          of: _clover(),
-          matching: find.byType(ShapeBadge),
+          of: _bubble(),
+          matching: find.byType(OutboundBubbleRing),
         );
         final badgeSize = tester.getSize(badge);
         expect(badgeSize.width, density == DashboardDensity.compact ? 40 : 48);
@@ -203,7 +233,7 @@ void main() {
           lessThanOrEqualTo(badgeSize.height),
         );
         expect(find.byTooltip('Retry'), findsOneWidget);
-        expect(tester.widget<InkResponse>(_clover()).onTap, isNotNull);
+        expect(tester.widget<InkResponse>(_bubble()).onTap, isNotNull);
         expect(tester.takeException(), isNull);
       });
     }
@@ -228,7 +258,7 @@ void main() {
         );
         expect(find.bySemanticsLabel(RegExp('HK')), findsOneWidget);
         expect(find.byTooltip('Retry'), findsOneWidget);
-        expect(tester.widget<InkResponse>(_clover()).onTap, isNotNull);
+        expect(tester.widget<InkResponse>(_bubble()).onTap, isNotNull);
       } finally {
         await tester.pumpWidget(const SizedBox.shrink());
         semantics.dispose();
@@ -245,17 +275,17 @@ void main() {
         await tester.pump();
         expect(
           find.descendant(
-            of: _clover(),
+            of: _bubble(),
             matching: find.byGlyph(AppGlyphs.proxies),
           ),
           findsOneWidget,
         );
         expect(
-          find.descendant(of: _clover(), matching: find.byType(EmojiText)),
+          find.descendant(of: _bubble(), matching: find.byType(EmojiText)),
           findsNothing,
         );
         expect(find.byTooltip('Retry'), findsOneWidget);
-        expect(tester.widget<InkResponse>(_clover()).onTap, isNotNull);
+        expect(tester.widget<InkResponse>(_bubble()).onTap, isNotNull);
       });
     }
 
@@ -272,6 +302,9 @@ void main() {
       expect(find.text('Example Broadband'), findsOneWidget);
       expect(find.text('Status'), findsOneWidget);
       expect(find.byGlyph(AppGlyphs.refresh), findsNothing);
+      expect(find.byType(ShapeBadge), findsNothing);
+      expect(find.byType(OutboundBubbleRing), findsOneWidget);
+      expect(find.byType(OutboundRibbon), findsOneWidget);
     });
 
     testWidgets('a little wider than its card shrinks to fit', (tester) async {
@@ -331,21 +364,30 @@ void main() {
 
       expect(find.byType(SkeletonPill), findsNWidgets(3));
       expect(find.byType(SkeletonText), findsOneWidget);
-      expect(tester.widget<InkResponse>(_clover()).onTap, isNull);
-      final turn = _cloverTurn(tester);
+      expect(tester.widget<InkResponse>(_bubble()).onTap, isNull);
+      final checking = _bubbles(tester);
+      expect(checking.calm, 0);
       await tester.pump(const Duration(milliseconds: 300));
-      expect(_cloverTurn(tester), isNot(turn));
+      expect(_bubbles(tester).phase, greaterThan(checking.phase));
 
       quality.complete(_residential);
       await tester.pumpAndSettle();
 
       expect(find.byType(SkeletonPill), findsNothing);
       expect(find.text('Residential'), findsOneWidget);
-      expect(_cloverTurn(tester) % (math.pi / 2), closeTo(0, 1e-9));
-      expect(tester.widget<InkResponse>(_clover()).onTap, isNotNull);
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      final settled = _bubbles(tester);
+      expect(settled.calm, 1);
+      expect(
+        OutboundBubbleRingPainter.bubblesAt(settled.phase, settled.calm),
+        OutboundBubbleRingPainter.bubblesAt(0, 1),
+      );
+      await tester.pump(const Duration(seconds: 1));
+      expect(_bubbles(tester).phase, settled.phase);
+      expect(tester.widget<InkResponse>(_bubble()).onTap, isNotNull);
     });
 
-    testWidgets('checks a failed quality again from its clover', (
+    testWidgets('checks a failed quality again from its bubble', (
       tester,
     ) async {
       final core = _MockCore();
@@ -586,6 +628,10 @@ void main() {
       DashboardDensity density = DashboardDensity.standard,
       bool glass = false,
       bool aurora = false,
+      LiquidGlassQuality quality = LiquidGlassQuality.ultra,
+      bool reduced = false,
+      bool highContrast = false,
+      bool motion = false,
     }) async {
       globalState.container = container;
       await tester.pumpWidget(
@@ -596,7 +642,16 @@ void main() {
               enabled: aurora,
               child: LiquidGlassScope(
                 enabled: glass,
-                child: _card(density: density),
+                quality: quality,
+                child: Builder(
+                  builder: (context) => MediaQuery(
+                    data: MediaQuery.of(context).copyWith(
+                      disableAnimations: reduced,
+                      highContrast: highContrast,
+                    ),
+                    child: _card(density: density, motion: motion),
+                  ),
+                ),
               ),
             ),
           ),
@@ -608,6 +663,14 @@ void main() {
     Finder startButton() => find
         .byWidgetPredicate((widget) => widget.runtimeType == InkResponse)
         .last;
+
+    OutboundDropletPainter droplet(WidgetTester tester) =>
+        _painterIn<OutboundDropletPainter>(tester, startButton());
+
+    double gauze(WidgetTester tester) {
+      final ribbon = find.byType(OutboundRibbon);
+      return _painterIn<OutboundRibbonPainter>(tester, ribbon).phase;
+    }
 
     testWidgets('dispatches each toggle through the shared running state', (
       tester,
@@ -673,8 +736,11 @@ void main() {
         tester.renderObject<RenderProxyBox>(press).child!.debugLayer,
         isA<TransformLayer>(),
       );
+      await tester.pump(const Duration(milliseconds: 60));
+      expect(droplet(tester).squeeze, greaterThan(0.5));
       await gesture.cancel();
       await tester.pumpAndSettle();
+      expect(droplet(tester).squeeze, closeTo(0, 1e-9));
     });
 
     testWidgets('active glass stays clear without Aurora while toggling', (
@@ -693,6 +759,175 @@ void main() {
       expect(pane().style.tint, Colors.transparent);
       expect(tester.takeException(), isNull);
     });
+
+    for (final quality in LiquidGlassQuality.values) {
+      testWidgets('${quality.name} uses the shared body glass renderer', (
+        tester,
+      ) async {
+        container = containerWith();
+        await pumpCard(tester, glass: true, quality: quality);
+        await tester.pumpAndSettle();
+        final pane = find.descendant(
+          of: startButton(),
+          matching: find.byType(LiquidGlass),
+        );
+        final glass = tester.widget<LiquidGlass>(pane);
+        expect(glass.clipper, isA<OutboundDropletClipper>());
+        expect(
+          find.ancestor(of: pane, matching: find.byType(LiquidGlassBody)),
+          findsOneWidget,
+        );
+        expect(LiquidGlassScope.qualityOf(tester.element(pane)), quality);
+        expect(
+          glass.style.tint.a,
+          quality == LiquidGlassQuality.ultra ? 0 : greaterThan(0),
+        );
+      });
+    }
+
+    testWidgets('none keeps the droplet filled without a glass pane', (
+      tester,
+    ) async {
+      container = containerWith();
+      await pumpCard(tester);
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(of: startButton(), matching: find.byType(LiquidGlass)),
+        findsNothing,
+      );
+      expect(droplet(tester).color, isNotNull);
+    });
+
+    for (final (glass, quality, highContrast, finish) in [
+      (false, LiquidGlassQuality.ultra, false, OutboundFinish.solid),
+      (true, LiquidGlassQuality.standard, false, OutboundFinish.frost),
+      (true, LiquidGlassQuality.ultra, false, OutboundFinish.clear),
+      (true, LiquidGlassQuality.ultra, true, OutboundFinish.solid),
+    ]) {
+      final mode = glass ? '${quality.name} glass' : 'no glass';
+      final contrast = highContrast ? ' in high contrast' : '';
+      testWidgets('${finish.name} bubbles under $mode$contrast', (
+        tester,
+      ) async {
+        container = containerWith();
+        await pumpCard(
+          tester,
+          glass: glass,
+          quality: quality,
+          highContrast: highContrast,
+        );
+        await tester.pumpAndSettle();
+        expect(_bubbles(tester).finish, finish);
+        final start = droplet(tester);
+        expect(start.color == null, finish != OutboundFinish.solid);
+        expect(start.shadow.a > 0, finish != OutboundFinish.clear);
+      });
+    }
+
+    testWidgets('the gauze drifts only while the tunnel runs', (tester) async {
+      container = containerWith();
+      container.read(runTimeProvider.notifier).value = 1;
+      await pumpCard(tester, motion: true);
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(gauze(tester), greaterThan(0));
+
+      await tester.pumpAndSettle();
+      final drifting = gauze(tester);
+      final frames = _countFrames(tester);
+      for (var vsync = 0; vsync < 120; vsync++) {
+        await tester.pump(const Duration(microseconds: 8333));
+      }
+      expect(frames(), inInclusiveRange(14, 16));
+      expect(gauze(tester), greaterThan(drifting));
+
+      container.read(runTimeProvider.notifier).value = null;
+      await tester.pump();
+      final stopped = gauze(tester);
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(gauze(tester), stopped);
+      await tester.pumpAndSettle();
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      final idle = _countFrames(tester);
+      await tester.pump(const Duration(seconds: 1));
+      expect(idle(), 0);
+      expect(tester.binding.transientCallbackCount, 0);
+    });
+
+    testWidgets('a suspended tunnel holds the gauze still', (tester) async {
+      container = containerWith(suspended: true);
+      container.read(runTimeProvider.notifier).value = 1;
+      await pumpCard(tester, motion: true);
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(gauze(tester), 0);
+      await tester.pumpAndSettle();
+      expect(tester.binding.hasScheduledFrame, isFalse);
+    });
+
+    testWidgets('a hidden app holds the gauze still', (tester) async {
+      container = containerWith();
+      container.read(runTimeProvider.notifier).value = 1;
+      await pumpCard(tester, motion: true);
+      await tester.pump(const Duration(seconds: 1));
+      container.read(appVisibleProvider.notifier).value = false;
+      await tester.pump();
+      final hidden = gauze(tester);
+      final idle = _countFrames(tester);
+      await tester.pump(const Duration(seconds: 1));
+      expect(idle(), 0);
+      expect(gauze(tester), hidden);
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      container.read(appVisibleProvider.notifier).value = true;
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(gauze(tester), greaterThan(hidden));
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      final disposed = _countFrames(tester);
+      await tester.pump(const Duration(seconds: 1));
+      expect(disposed(), 0);
+      expect(tester.binding.transientCallbackCount, 0);
+    });
+
+    for (final highContrast in [false, true]) {
+      testWidgets(
+        '${highContrast ? 'high contrast' : 'reduced motion'} keeps taps without press animation',
+        (tester) async {
+          container = containerWith();
+          await pumpCard(
+            tester,
+            glass: true,
+            reduced: !highContrast,
+            highContrast: highContrast,
+          );
+          await tester.pumpAndSettle();
+          expect(tester.widget<InkResponse>(startButton()).onTap, isNotNull);
+          final press = tester.widget<ElasticPress>(
+            find.descendant(
+              of: startButton(),
+              matching: find.byType(ElasticPress),
+            ),
+          );
+          expect(press.enabled, isFalse);
+          if (highContrast) {
+            expect(
+              find.descendant(
+                of: startButton(),
+                matching: find.byType(LiquidGlass),
+              ),
+              findsNothing,
+            );
+          }
+          await tester.tap(startButton());
+          await tester.pumpAndSettle();
+          expect(container.read(isStartProvider), isTrue);
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
 
     testWidgets('is off without a profile', (tester) async {
       container = containerWith(profiles: const []);

@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/common/service_probe.dart';
 import 'package:fl_clash/enum/enum.dart';
@@ -16,20 +14,16 @@ import 'package:fl_clash/views/dashboard/probe_start_hold.dart';
 import 'package:fl_clash/views/dashboard/style.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:material_new_shapes/material_new_shapes.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'card.dart';
+import 'outbound_motion.dart';
 
 const _builtinOutbounds = {'DIRECT', 'REJECT', 'REJECT-DROP', 'PASS'};
 
 bool isBuiltinOutbound(String name) => _builtinOutbounds.contains(name);
 
 const _ipMask = '*****';
-
-const _decorationGrowth = 0.12;
-
-const _decorationTurn = 2 * math.pi / 12;
 
 /// The address the proxied traffic leaves by, next to the start button.
 class CurrentOutboundCard extends ConsumerStatefulWidget {
@@ -86,8 +80,6 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
     final loading = ipInfo == null ? !failed : qualityLoading;
     final metrics = _OutboundMetrics.of(density);
     final appLocalizations = context.appLocalizations;
-    final colorScheme = context.colorScheme;
-    final colors = DashboardColors.of(context);
     final (chipLabel, chipTone) = suspended
         ? (appLocalizations.suspended, DashboardChipTone.warn)
         : isStart
@@ -104,38 +96,7 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
                 shape: AppShape.all(dashboardCardRadius(density)),
                 textDirection: Directionality.of(context),
               ),
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  PositionedDirectional(
-                    end: metrics.decorationEnd,
-                    top: metrics.decorationTop,
-                    child: TweenAnimationBuilder<double>(
-                      tween: Tween(end: isStart ? 1 : 0),
-                      duration: context.motionDuration(_morphDuration),
-                      curve: Curves.easeOutBack,
-                      builder: (_, progress, _) => Transform.rotate(
-                        angle: _decorationTurn * progress,
-                        child: Transform.scale(
-                          scale: 1 + _decorationGrowth * progress,
-                          child: ShapeBadge(
-                            shape: MaterialShapes.cookie12Sided,
-                            color: Color.lerp(
-                              colors.tone,
-                              Color.alphaBlend(
-                                colorScheme.primary.withValues(alpha: 0.1),
-                                colors.card,
-                              ),
-                              progress.clamp(0, 1),
-                            )!,
-                            size: metrics.decorationSize,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+              child: OutboundRibbon(running: isStart && !suspended),
             ),
           ),
           Padding(
@@ -213,9 +174,6 @@ class _OutboundMetrics {
     required this.ip,
     required this.buttonSize,
     required this.buttonSlot,
-    required this.decorationSize,
-    required this.decorationEnd,
-    required this.decorationTop,
   });
 
   factory _OutboundMetrics.of(DashboardDensity density) => switch (density) {
@@ -228,9 +186,6 @@ class _OutboundMetrics {
       ip: AppTextStyle.title1,
       buttonSize: 104,
       buttonSlot: 120,
-      decorationSize: 290,
-      decorationEnd: -64,
-      decorationTop: -87,
     ),
     DashboardDensity.compact => _OutboundMetrics(
       padding: dashboardCardPadding(density),
@@ -241,9 +196,6 @@ class _OutboundMetrics {
       ip: AppTextStyle.title2,
       buttonSize: 84,
       buttonSlot: 100,
-      decorationSize: 250,
-      decorationEnd: -64,
-      decorationTop: -75,
     ),
     DashboardDensity.mobile => const _OutboundMetrics(
       padding: EdgeInsetsDirectional.fromSTEB(20, 18, 16, 18),
@@ -254,9 +206,6 @@ class _OutboundMetrics {
       ip: AppTextStyle.title2,
       buttonSize: 88,
       buttonSlot: 88,
-      decorationSize: 240,
-      decorationEnd: -60,
-      decorationTop: -66,
     ),
   };
 
@@ -268,9 +217,6 @@ class _OutboundMetrics {
   final AppTextStyle ip;
   final double buttonSize;
   final double buttonSlot;
-  final double decorationSize;
-  final double decorationEnd;
-  final double decorationTop;
 }
 
 class _ExitRow extends StatelessWidget {
@@ -449,10 +395,6 @@ class _IpChips extends StatelessWidget {
   }
 }
 
-const _spinPeriod = Duration(milliseconds: 1500);
-
-/// The exit's country on a clover that checks the exit again when tapped and
-/// turns while it is being checked.
 class _CountryBadge extends StatefulWidget {
   const _CountryBadge({
     required this.countryCode,
@@ -472,46 +414,9 @@ class _CountryBadge extends StatefulWidget {
   State<_CountryBadge> createState() => _CountryBadgeState();
 }
 
-class _CountryBadgeState extends State<_CountryBadge>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _turns = AnimationController(
-    vsync: this,
-    duration: _spinPeriod,
-  );
+class _CountryBadgeState extends State<_CountryBadge> {
   var _hovered = false;
   var _focused = false;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _spin();
-  }
-
-  @override
-  void didUpdateWidget(_CountryBadge oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.checking != widget.checking) {
-      _spin();
-    }
-  }
-
-  @override
-  void dispose() {
-    _turns.dispose();
-    super.dispose();
-  }
-
-  void _spin() {
-    if (context.disableAnimations) {
-      _turns.value = 0;
-    } else if (widget.checking) {
-      _turns.repeat();
-    } else {
-      // A clover looks the same every quarter turn, so it stops on the next.
-      final rest = (_turns.value * 4).ceil() / 4;
-      _turns.animateTo(rest, duration: _spinPeriod * (rest - _turns.value));
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -526,7 +431,7 @@ class _CountryBadgeState extends State<_CountryBadge>
     final hasFlag =
         flag != null && flag != code && code != 'XX' && code != 'ZZ';
     final tooltip = context.appLocalizations.retry;
-    final color = Color.alphaBlend(
+    final well = Color.alphaBlend(
       foreground.withValues(alpha: enabled && _hovered ? 0.08 : 0),
       DashboardColors.of(context).tone2,
     );
@@ -543,17 +448,19 @@ class _CountryBadgeState extends State<_CountryBadge>
           overlayColor: const WidgetStatePropertyAll(Colors.transparent),
           splashFactory: NoSplash.splashFactory,
           child: ElasticPress(
-            enabled: enabled,
-            child: AnimatedBuilder(
-              animation: _turns,
-              builder: (_, child) => ShapeBadge(
-                shape: MaterialShapes.clover4Leaf,
-                color: color,
-                size: size,
-                rotation: _turns.value * 2 * math.pi,
-                ring: _focused ? focusRingSide(colorScheme) : null,
-                child: child,
-              ),
+            enabled:
+                enabled &&
+                !context.disableAnimations &&
+                !MediaQuery.highContrastOf(context),
+            child: OutboundBubbleRing(
+              size: size,
+              checking: widget.checking,
+              well: well,
+              tint: widget.active
+                  ? colorScheme.primary
+                  : colorScheme.onSurfaceVariant,
+              finish: OutboundFinish.of(context),
+              ring: _focused ? focusRingSide(colorScheme) : null,
               child: !hasFlag
                   ? GlyphIcon(
                       AppGlyphs.proxies,
@@ -685,19 +592,15 @@ class _RunTimeValue extends ConsumerWidget {
 
 const _morphDuration = Duration(milliseconds: 450);
 const _stateDuration = Duration(milliseconds: 150);
-
-final _startMorph = Morph(MaterialShapes.circle, MaterialShapes.cookie9Sided);
-
-Path _morphPath(double progress) => _startMorph.toPath(
-  progress: progress,
-  rotationPivotX: 0.5,
-  rotationPivotY: 0.5,
+final _dropletSpring = SpringCurve(
+  const SpringDescription(mass: 1, stiffness: 260, damping: 18),
+  seconds: 0.5,
 );
+final _dropletFall = SpringCurve(
+  const SpringDescription(mass: 1, stiffness: 300, damping: 16),
+  seconds: 0.5,
+).flipped;
 
-double _morphTurn(double progress) => progress * 2 * math.pi / 9;
-
-/// A circle with a play glyph while stopped that grows the cookie-9 of a
-/// running tunnel, the way the M3 Expressive loader morphs between shapes.
 class _StartToggle extends ConsumerStatefulWidget {
   const _StartToggle({
     required this.size,
@@ -722,10 +625,10 @@ class _StartToggleState extends ConsumerState<_StartToggle>
     duration: _morphDuration,
     value: widget.running ? 1 : 0,
   );
-  late final Animation<double> _progress = CurvedAnimation(
+  late final CurvedAnimation _progress = CurvedAnimation(
     parent: _controller,
-    curve: Curves.easeOutBack,
-    reverseCurve: Curves.easeInCubic,
+    curve: _dropletSpring,
+    reverseCurve: _dropletFall,
   );
   var _hovered = false;
   var _pressed = false;
@@ -742,15 +645,28 @@ class _StartToggleState extends ConsumerState<_StartToggle>
       : 0;
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (context.disableAnimations || MediaQuery.highContrastOf(context)) {
+      _controller.value = widget.running ? 1 : 0;
+    }
+  }
+
+  @override
   void didUpdateWidget(_StartToggle oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.running != widget.running) {
-      widget.running ? _controller.forward() : _controller.reverse();
+      if (context.disableAnimations || MediaQuery.highContrastOf(context)) {
+        _controller.value = widget.running ? 1 : 0;
+      } else {
+        widget.running ? _controller.forward() : _controller.reverse();
+      }
     }
   }
 
   @override
   void dispose() {
+    _progress.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -763,14 +679,15 @@ class _StartToggleState extends ConsumerState<_StartToggle>
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
     final appLocalizations = context.appLocalizations;
-    final glass = LiquidGlassScope.of(context);
+    final highContrast = MediaQuery.highContrastOf(context);
+    final finish = OutboundFinish.of(context);
+    final glass = finish != OutboundFinish.solid;
     final size = widget.size;
     final enabled = widget.enabled;
     final fill = enabled
         ? colorScheme.primary
         : DashboardColors.of(context).tone2;
-    final clearSurface = LiquidGlassScope.of(context);
-    final ink = enabled && !clearSurface
+    final ink = enabled && !glass
         ? colorScheme.onPrimary
         : colorScheme.onSurfaceVariant;
     final tooltip = widget.suspended
@@ -778,7 +695,19 @@ class _StartToggleState extends ConsumerState<_StartToggle>
         : widget.running
         ? appLocalizations.stop
         : appLocalizations.start;
-    final stateDuration = context.motionDuration(_stateDuration);
+    final stateDuration = highContrast
+        ? Duration.zero
+        : context.motionDuration(_stateDuration);
+    final shadow = !enabled || finish == OutboundFinish.clear
+        ? Colors.transparent
+        : finish == OutboundFinish.solid
+        ? colorScheme.primary.withValues(alpha: 0.3)
+        : colorScheme.shadow.withValues(alpha: 0.14);
+    final pane = LiquidGlassStyle.regular(colorScheme).copyWith(
+      tint: finish == OutboundFinish.frost
+          ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.15)
+          : Colors.transparent,
+    );
     return Tooltip(
       message: tooltip,
       child: Semantics(
@@ -793,43 +722,62 @@ class _StartToggleState extends ConsumerState<_StartToggle>
           overlayColor: const WidgetStatePropertyAll(Colors.transparent),
           splashFactory: NoSplash.splashFactory,
           child: ElasticPress(
-            enabled: enabled,
+            enabled: enabled && !context.disableAnimations && !highContrast,
             child: TweenAnimationBuilder<double>(
               tween: Tween(end: _overlay),
               duration: stateDuration,
-              builder: (_, overlay, child) => AnimatedBuilder(
-                animation: _progress,
-                builder: (_, child) {
-                  final progress = _progress.value;
-                  final color = Color.alphaBlend(
-                    ink.withValues(alpha: overlay),
-                    fill,
-                  );
-                  return CustomPaint(
-                    painter: _MorphPainter(
-                      progress: progress,
-                      color: glass ? null : color,
-                      shadow: enabled && !clearSurface
-                          ? colorScheme.primary.withValues(alpha: 0.3)
-                          : Colors.transparent,
-                      ring: _focused
-                          ? focusRingSide(colorScheme, standsOff: true)
-                          : null,
-                    ),
-                    child: glass
-                        ? LiquidGlass(
-                            style: clearSurface
-                                ? LiquidGlassStyle.regular(
-                                    colorScheme,
-                                  ).copyWith(tint: Colors.transparent)
-                                : LiquidGlassStyle.tinted(colorScheme, color),
-                            clipper: _MorphClipper(progress),
-                            pressed: _pressed,
-                            child: child,
-                          )
-                        : child,
-                  );
-                },
+              builder: (_, overlay, child) => TweenAnimationBuilder<double>(
+                tween: Tween(end: _pressed ? 1 : 0),
+                duration: highContrast
+                    ? Duration.zero
+                    : context.motionDuration(
+                        _pressed
+                            ? const Duration(milliseconds: 120)
+                            : const Duration(milliseconds: 500),
+                      ),
+                curve: _pressed ? Curves.easeOutCubic : _dropletSpring,
+                builder: (_, press, child) => AnimatedBuilder(
+                  animation: _progress,
+                  builder: (_, child) {
+                    final progress = _progress.value;
+                    final squeeze = press + progress * (1 - progress) * 2.4;
+                    final phase = progress * 1.2;
+                    final color = Color.alphaBlend(
+                      ink.withValues(alpha: overlay),
+                      fill,
+                    );
+                    return CustomPaint(
+                      painter: OutboundDropletPainter(
+                        phase: phase,
+                        fullness: progress,
+                        squeeze: squeeze,
+                        color: glass ? null : color,
+                        shadow: shadow,
+                        highlight: enabled && !highContrast,
+                        ring: _focused
+                            ? focusRingSide(colorScheme, standsOff: true)
+                            : null,
+                      ),
+                      // The edit-mode drag proxy carries this card into the
+                      // overlay, outside the scaffold body's glass marker.
+                      child: glass
+                          ? LiquidGlassBody(
+                              child: LiquidGlass(
+                                style: pane,
+                                clipper: OutboundDropletClipper(
+                                  phase: phase,
+                                  fullness: progress,
+                                  squeeze: squeeze,
+                                ),
+                                pressed: _pressed,
+                                child: child,
+                              ),
+                            )
+                          : child,
+                    );
+                  },
+                  child: child,
+                ),
                 child: child,
               ),
               child: SizedBox.square(
@@ -844,7 +792,9 @@ class _StartToggleState extends ConsumerState<_StartToggle>
                         )
                       : TweenAnimationBuilder<double>(
                           tween: Tween(end: widget.running ? 1 : 0),
-                          duration: _morphDuration,
+                          duration: highContrast
+                              ? Duration.zero
+                              : context.motionDuration(_morphDuration),
                           curve: Curves.easeOutBack,
                           builder: (_, progress, _) => GlyphIcon(
                             AppGlyphs.playPause(progress),
@@ -861,95 +811,4 @@ class _StartToggleState extends ConsumerState<_StartToggle>
       ),
     );
   }
-}
-
-/// Fills the morph, or with no [color] leaves its inside to glass and casts
-/// [shadow] only outside it, as one under glass would show through.
-class _MorphPainter extends CustomPainter {
-  const _MorphPainter({
-    required this.progress,
-    required this.color,
-    required this.shadow,
-    required this.ring,
-  });
-
-  static const _shadowOffset = Offset(0, 6);
-  static const _shadowBlur = 14.0;
-
-  final double progress;
-  final Color? color;
-  final Color shadow;
-  final BorderSide? ring;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final path = _morphPath(progress);
-    final color = this.color;
-    canvas
-      ..save()
-      ..translate(size.width / 2, size.height / 2)
-      ..rotate(_morphTurn(progress))
-      ..scale(size.width, size.height)
-      ..translate(-0.5, -0.5);
-    if (shadow.a > 0) {
-      canvas.save();
-      if (color == null) {
-        canvas.clipPath(
-          Path()
-            ..fillType = PathFillType.evenOdd
-            ..addRect(const Rect.fromLTRB(-1, -1, 2, 2))
-            ..addPath(path, Offset.zero),
-        );
-      }
-      canvas
-        ..translate(
-          _shadowOffset.dx / size.width,
-          _shadowOffset.dy / size.height,
-        )
-        ..drawPath(
-          path,
-          Paint()
-            ..color = shadow
-            ..maskFilter = MaskFilter.blur(
-              BlurStyle.normal,
-              _shadowBlur / 2 / size.width,
-            ),
-        )
-        ..restore();
-    }
-    if (color != null) {
-      canvas.drawPath(path, Paint()..color = color);
-    }
-    if (ring case final ring?) {
-      strokeUnitShape(canvas, path, size.width, ring);
-    }
-    canvas.restore();
-  }
-
-  @override
-  bool shouldRepaint(_MorphPainter oldDelegate) =>
-      oldDelegate.progress != progress ||
-      oldDelegate.color != color ||
-      oldDelegate.shadow != shadow ||
-      oldDelegate.ring != ring;
-}
-
-class _MorphClipper extends CustomClipper<Path> {
-  const _MorphClipper(this.progress);
-
-  final double progress;
-
-  @override
-  Path getClip(Size size) {
-    final transform =
-        Matrix4.translationValues(size.width / 2, size.height / 2, 0)
-          ..rotateZ(_morphTurn(progress))
-          ..scaleByDouble(size.width, size.height, 1, 1)
-          ..translateByDouble(-0.5, -0.5, 0, 1);
-    return _morphPath(progress).transform(transform.storage);
-  }
-
-  @override
-  bool shouldReclip(_MorphClipper oldClipper) =>
-      oldClipper.progress != progress;
 }
