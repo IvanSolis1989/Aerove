@@ -53,85 +53,112 @@ Future<YamlMap> _dnsOf({
 }
 
 void main() {
-  test('legacy missing IPv6 fields produce a complete final DNS override', () async {
-    final config = PatchClashConfig.fromJson({
-      'dns': {'nameserver': xclashDomesticNameservers},
-    });
-    final dns = await _dnsOf(
-      rawConfig: {
-        'dns': {
-          'enable': true,
-          'enhanced-mode': 'fake-ip',
-          'ipv6': false,
-          'nameserver': xclashDomesticNameservers,
-        },
-      },
-      dns: config.dns,
-      keys: config.dnsOverrideKeys.intersection(DnsOverrideKey.normalProfileKeys),
-      keepEmpty: true,
-    );
-    expect(dns['ipv6'], true);
-    expect(dns['fake-ip-range6'], xclashDefaultDns.fakeIpRange6);
-    expect(dns['nameserver'], xclashDomesticNameservers);
-  });
-
-  test('client IPv6 defaults reach final YAML without changing resolvers', () async {
-    final source = <String, dynamic>{
-      'enable': true,
-      'ipv6': false,
-      'enhanced-mode': 'fake-ip',
-      'default-nameserver': xclashBootstrapNameservers,
-      'nameserver': xclashDomesticNameservers,
-      'fallback': xclashForeignNameservers,
-      'proxy-server-nameserver': xclashDefaultDns.proxyServerNameserver,
-      'direct-nameserver': xclashDomesticNameservers,
-      'nameserver-policy': {
-        'geosite:cn': xclashDomesticNameservers,
-        'geosite:geolocation-!cn': xclashForeignNameservers,
-      },
-      'proxy-server-nameserver-policy': {
-        'node.example': xclashForeignNameservers,
-      },
-    };
-    final dns = await _dnsOf(
-      rawConfig: {'dns': source},
-      dns: xclashDefaultDns,
-      keys: const PatchClashConfig().dnsOverrideKeys.intersection(
-        DnsOverrideKey.normalProfileKeys,
-      ),
-      keepEmpty: true,
-    );
-    expect(dns, {
-      ...source,
-      'ipv6': true,
-      'fake-ip-range6': xclashDefaultDns.fakeIpRange6,
-    });
-  });
-
-  test('new custom and no-DNS profiles produce IPv6-ready fake-ip YAML', () async {
-    for (final raw in <Map<String, dynamic>>[
-      {},
-      {'dns': {'enable': false, 'ipv6': false}},
-    ]) {
+  test(
+    'legacy missing IPv6 fields produce a complete final DNS override',
+    () async {
+      final config = PatchClashConfig.fromJson({
+        'dns': {'nameserver': xclashDomesticNameservers},
+      });
       final dns = await _dnsOf(
-        rawConfig: raw,
-        dns: const ProfileOverrides().dns,
-        keys: const ProfileOverrides().dnsOverrideKeys,
+        rawConfig: {
+          'dns': {
+            'enable': true,
+            'enhanced-mode': 'fake-ip',
+            'ipv6': false,
+            'nameserver': xclashDomesticNameservers,
+          },
+        },
+        dns: config.dns,
+        keys: config.dnsOverrideKeys.intersection(
+          DnsOverrideKey.normalProfileKeys,
+        ),
+        keepEmpty: true,
       );
-      expect(dns['enable'], true);
-      expect(dns['enhanced-mode'], 'fake-ip');
       expect(dns['ipv6'], true);
       expect(dns['fake-ip-range6'], xclashDefaultDns.fakeIpRange6);
       expect(dns['nameserver'], xclashDomesticNameservers);
-      expect(dns['default-nameserver'], xclashBootstrapNameservers);
-    }
-  });
+    },
+  );
+
+  test(
+    'client IPv6 defaults reach final YAML without changing resolvers',
+    () async {
+      final source = <String, dynamic>{
+        'enable': true,
+        'ipv6': false,
+        'enhanced-mode': 'fake-ip',
+        'default-nameserver': xclashBootstrapNameservers,
+        'nameserver': xclashDomesticNameservers,
+        'fallback': xclashForeignNameservers,
+        'proxy-server-nameserver': xclashDefaultDns.proxyServerNameserver,
+        'direct-nameserver': xclashDomesticNameservers,
+        'nameserver-policy': {
+          'geosite:cn': xclashDomesticNameservers,
+          'geosite:geolocation-!cn': xclashForeignNameservers,
+        },
+        'proxy-server-nameserver-policy': {
+          'node.example': xclashForeignNameservers,
+        },
+      };
+      final dns = await _dnsOf(
+        rawConfig: {'dns': source},
+        dns: xclashDefaultDns,
+        keys: const PatchClashConfig().dnsOverrideKeys.intersection(
+          DnsOverrideKey.normalProfileKeys,
+        ),
+        keepEmpty: true,
+      );
+      expect(dns, {
+        ...source,
+        'ipv6': true,
+        'fake-ip-range6': xclashDefaultDns.fakeIpRange6,
+      });
+    },
+  );
+
+  test(
+    'new custom and no-DNS profiles produce IPv6-ready fake-ip YAML',
+    () async {
+      for (final raw in <Map<String, dynamic>>[
+        {},
+        {
+          'dns': {'enable': false, 'ipv6': false},
+        },
+      ]) {
+        final dns = await _dnsOf(
+          rawConfig: raw,
+          dns: const ProfileOverrides().dns,
+          keys: const ProfileOverrides().dnsOverrideKeys,
+        );
+        expect(dns['enable'], true);
+        expect(dns['enhanced-mode'], 'fake-ip');
+        expect(dns['ipv6'], true);
+        expect(dns['fake-ip-range6'], xclashDefaultDns.fakeIpRange6);
+        expect(dns['nameserver'], xclashDomesticNameservers);
+        expect(dns['default-nameserver'], xclashBootstrapNameservers);
+      }
+    },
+  );
 
   test('saved opt-outs remain intact in final profile YAML', () async {
-    final source = {'enable': true, 'ipv6': false, 'fake-ip-range6': 'fd00::/64', 'nameserver': xclashDomesticNameservers};
-    final unselected = await _dnsOf(rawConfig: {'dns': source}, dns: xclashDefaultDns, keys: {});
+    final source = {
+      'enable': true,
+      'ipv6': false,
+      'fake-ip-range6': 'fd00::/64',
+      'nameserver': xclashDomesticNameservers,
+    };
+    final unselected = await _dnsOf(
+      rawConfig: {'dns': source},
+      dns: xclashDefaultDns,
+      keys: {},
+    );
     expect(unselected, source);
-    final disabled = await _dnsOf(rawConfig: {'dns': source}, dns: const Dns(ipv6: false, fakeIpRange6: ''), keys: xclashDefaultDnsOverrideKeys, keepEmpty: true);
+    final disabled = await _dnsOf(
+      rawConfig: {'dns': source},
+      dns: const Dns(ipv6: false, fakeIpRange6: ''),
+      keys: xclashDefaultDnsOverrideKeys,
+      keepEmpty: true,
+    );
     expect(disabled['ipv6'], false);
     expect(disabled['fake-ip-range6'], '');
   });

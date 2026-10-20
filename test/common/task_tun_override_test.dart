@@ -137,7 +137,9 @@ void main() {
     final tun = await _tunOf(
       rawConfig: {
         'dns': {'enable': true, 'ipv6': false, 'enhanced-mode': 'fake-ip'},
-        'tun': {'route-exclude-address': ['fdfe:dcba:9876::/80']},
+        'tun': {
+          'route-exclude-address': ['fdfe:dcba:9876::/80'],
+        },
       },
       overrides: overrides,
       bypassPrivateRoute: true,
@@ -178,7 +180,9 @@ void main() {
             'nameserver': nameservers,
             'fallback': fallback,
           },
-          'tun': {'route-address': ['2000::/3']},
+          'tun': {
+            'route-address': ['2000::/3'],
+          },
         },
         realPatchConfig: const PatchClashConfig(),
         overrides: const ProfileOverrides(
@@ -199,10 +203,9 @@ void main() {
     expect(config['dns']['fallback'], fallback);
     expect(config['tun']['route-address'], ['2000::/3']);
     expect(
-      subtractCidrs(
-        ['fdfe:dcba:9876::/64'],
-        List<String>.from(config['tun']['route-exclude-address'] as List),
-      ),
+      subtractCidrs([
+        'fdfe:dcba:9876::/64',
+      ], List<String>.from(config['tun']['route-exclude-address'] as List)),
       ['fdfe:dcba:9876::/64'],
     );
   });

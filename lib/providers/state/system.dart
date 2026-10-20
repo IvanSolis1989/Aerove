@@ -223,23 +223,17 @@ Future<List<String>> vpnRouteAddress(Ref ref) {
   );
   final dnsSettings = ref.watch(
     patchClashConfigProvider.select(
-      (state) => (
-        ipv6: state.ipv6,
-        dns: state.dns,
-        keys: state.dnsOverrideKeys,
-      ),
+      (state) =>
+          (ipv6: state.ipv6, dns: state.dns, keys: state.dnsOverrideKeys),
     ),
   );
   final customOverrides = ref.watch(
     currentProfileProvider.select(
-      (profile) => profile?.type == ProfileType.custom
-          ? profile?.overrides
-          : null,
+      (profile) =>
+          profile?.type == ProfileType.custom ? profile?.overrides : null,
     ),
   );
-  final vpnIpv6 = ref.watch(
-    vpnSettingProvider.select((state) => state.ipv6),
-  );
+  final vpnIpv6 = ref.watch(vpnSettingProvider.select((state) => state.ipv6));
   final safeMode = ref.watch(safeModeProvider);
   final reservedFakeIpRanges = dnsSettings.ipv6 && vpnIpv6 && !safeMode
       ? (customOverrides?.dns ?? dnsSettings.dns).reservedFakeIpRanges(

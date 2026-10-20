@@ -216,8 +216,8 @@ int _difference(Uint8List a, Uint8List b, Rect rect) {
 
 Map<String, Object> _frozenDifference(Uint8List before, Uint8List after) {
   var maximum = 0;
-  var worst = ((_bodyRect.top + 4).toInt() * 320 +
-      (_bodyRect.left + 4).toInt()) * 4;
+  var worst =
+      ((_bodyRect.top + 4).toInt() * 320 + (_bodyRect.left + 4).toInt()) * 4;
   for (var y = (_bodyRect.top + 4).toInt(); y < _bodyRect.bottom - 4; y++) {
     for (var x = (_bodyRect.left + 4).toInt(); x < _bodyRect.right - 4; x++) {
       for (var channel = 0; channel < 4; channel++) {
@@ -377,9 +377,9 @@ void main() {
       final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
       if (output != null && output.isNotEmpty) {
         Directory(output).createSync(recursive: true);
-        File('$output/glass-body-blur-freeze.json').writeAsStringSync(
-          jsonEncode(diagnostics),
-        );
+        File(
+          '$output/glass-body-blur-freeze.json',
+        ).writeAsStringSync(jsonEncode(diagnostics));
       }
       for (final reference in [repeated, changed, settled]) {
         expect(

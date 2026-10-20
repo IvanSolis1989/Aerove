@@ -901,10 +901,7 @@ void main() {
         .read(patchClashConfigProvider.notifier)
         .update(
           (state) => state.copyWith(
-            dnsOverrideKeys: {
-              DnsOverrideKey.ipv6,
-              DnsOverrideKey.fakeIpRange6,
-            },
+            dnsOverrideKeys: {DnsOverrideKey.ipv6, DnsOverrideKey.fakeIpRange6},
           ),
         );
     await expectReserved(true);
@@ -924,9 +921,9 @@ void main() {
   test('custom VPN routes use only that profile DNS selections', () async {
     const appPool = ['fdfe:dcba:9876::1/64'];
     const customPool = ['fd12:3456::/64'];
-    final profile = Profile.custom(label: 'Custom routes').copyWith(
-      overrides: const ProfileOverrides(dnsOverrideKeys: {}),
-    );
+    final profile = Profile.custom(
+      label: 'Custom routes',
+    ).copyWith(overrides: const ProfileOverrides(dnsOverrideKeys: {}));
     _profiles(container).replace([profile]);
     container.read(currentProfileIdProvider.notifier).update((_) => profile.id);
     container.listen(vpnRouteAddressProvider, (_, _) {});

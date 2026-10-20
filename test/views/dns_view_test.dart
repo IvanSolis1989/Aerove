@@ -42,19 +42,23 @@ void main() {
         ),
       ],
     );
-    container.read(patchClashConfigProvider.notifier).update(
-      (state) => state.copyWith(
-        dns: state.dns.copyWith(ipv6: false),
-        dnsOverrideKeys: {},
-      ),
-    );
-    container.read(profilesProvider.notifier).updateProfile(
-      _profileId,
-      (profile) => profile.copyWith.overrides(
-        dns: profile.overrides.dns.copyWith(ipv6: false),
-        dnsOverrideKeys: {},
-      ),
-    );
+    container
+        .read(patchClashConfigProvider.notifier)
+        .update(
+          (state) => state.copyWith(
+            dns: state.dns.copyWith(ipv6: false),
+            dnsOverrideKeys: {},
+          ),
+        );
+    container
+        .read(profilesProvider.notifier)
+        .updateProfile(
+          _profileId,
+          (profile) => profile.copyWith.overrides(
+            dns: profile.overrides.dns.copyWith(ipv6: false),
+            dnsOverrideKeys: {},
+          ),
+        );
     addTearDown(container.dispose);
     globalState.container = container;
     container

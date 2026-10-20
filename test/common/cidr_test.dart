@@ -122,10 +122,7 @@ void main() {
     test('an explicit exclusion still wins over the reservation', () async {
       final routes = await const Tun(
         routeExcludeAddress: pool,
-      ).vpnRouteAddress(
-        bypassPrivateRoute: true,
-        reservedFakeIpRanges: pool,
-      );
+      ).vpnRouteAddress(bypassPrivateRoute: true, reservedFakeIpRanges: pool);
 
       expect(subtractCidrs(pool, routes), ['fdfe:dcba:9876::/64']);
     });
@@ -133,22 +130,22 @@ void main() {
     test('a narrow include is not widened by a reserved pool', () async {
       final routes = await const Tun(
         routeAddress: ['2000::/3'],
-      ).vpnRouteAddress(
-        bypassPrivateRoute: true,
-        reservedFakeIpRanges: pool,
-      );
+      ).vpnRouteAddress(bypassPrivateRoute: true, reservedFakeIpRanges: pool);
 
       expect(subtractCidrs(pool, routes), ['fdfe:dcba:9876::/64']);
     });
 
-    test('without private bypass an empty list still means all routes', () async {
-      expect(
-        await const Tun().vpnRouteAddress(
-          bypassPrivateRoute: false,
-          reservedFakeIpRanges: pool,
-        ),
-        isEmpty,
-      );
-    });
+    test(
+      'without private bypass an empty list still means all routes',
+      () async {
+        expect(
+          await const Tun().vpnRouteAddress(
+            bypassPrivateRoute: false,
+            reservedFakeIpRanges: pool,
+          ),
+          isEmpty,
+        );
+      },
+    );
   });
 }

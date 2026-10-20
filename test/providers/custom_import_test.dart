@@ -643,8 +643,13 @@ tun:
     });
 
     test('missing imported DNS IPv6 fields inherit the client defaults', () {
-      final overrides = _read('dns:\n  nameserver: [https://dns.example.com/dns-query]\n').overrides;
-      expect(overrides.dnsOverrideKeys, containsAll(xclashDefaultDnsOverrideKeys));
+      final overrides = _read(
+        'dns:\n  nameserver: [https://dns.example.com/dns-query]\n',
+      ).overrides;
+      expect(
+        overrides.dnsOverrideKeys,
+        containsAll(xclashDefaultDnsOverrideKeys),
+      );
       expect(overrides.dns.ipv6, true);
       expect(overrides.dns.fakeIpRange6, xclashDefaultDns.fakeIpRange6);
       expect(overrides.dns.nameserver, ['https://dns.example.com/dns-query']);
@@ -658,7 +663,10 @@ dns:
 ''').overrides;
       expect(overrides.dns.ipv6, false);
       expect(overrides.dns.fakeIpRange6, '');
-      expect(overrides.dnsOverrideKeys, containsAll(xclashDefaultDnsOverrideKeys));
+      expect(
+        overrides.dnsOverrideKeys,
+        containsAll(xclashDefaultDnsOverrideKeys),
+      );
     });
   });
 

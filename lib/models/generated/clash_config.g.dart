@@ -530,7 +530,7 @@ _ProfileOverrides _$ProfileOverridesFromJson(Map<String, dynamic> json) =>
           ? xclashDefaultDns
           : Dns.safeDnsFromJson(json['dns'] as Map<String, Object?>),
       dnsOverrideKeys: json['dns-override-keys'] == null
-          ? const {}
+          ? xclashDefaultDnsOverrideKeys
           : _dnsOverrideKeysFromJson(json['dns-override-keys'] as List),
       ntp: json['ntp'] == null
           ? defaultNtp
@@ -874,7 +874,7 @@ _PatchClashConfig _$PatchClashConfigFromJson(Map<String, dynamic> json) =>
           ? xclashDefaultDns
           : Dns.safeDnsFromJson(json['dns'] as Map<String, Object?>),
       dnsOverrideKeys: json['dns-override-keys'] == null
-          ? const {}
+          ? xclashDefaultDnsOverrideKeys
           : _dnsOverrideKeysFromJson(json['dns-override-keys'] as List),
       tunOverride: json['tun-override'] == null
           ? defaultProfileTun
