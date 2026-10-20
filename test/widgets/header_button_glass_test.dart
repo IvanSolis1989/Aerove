@@ -995,6 +995,61 @@ void main() {
     }
   });
 
+  for (final replacement in ['the empty state', 'a static body']) {
+    testWidgets('a scrolled list replaced by $replacement drops the frame', (
+      tester,
+    ) async {
+      final controller = ScrollController();
+      final empty = ValueNotifier(false);
+      double progress() => tester
+          .widget<HeaderButtonGlassScope>(find.byType(HeaderButtonGlassScope))
+          .progress
+          .value;
+      final list = ListView.builder(
+        controller: controller,
+        itemCount: 40,
+        itemExtent: 64,
+        itemBuilder: (_, index) => GlassText('Context row $index'),
+      );
+      try {
+        await tester.pumpWidget(
+          _app(
+            controller,
+            () {},
+            () {},
+            body: ValueListenableBuilder<bool>(
+              valueListenable: empty,
+              builder: (_, isEmpty, _) => replacement == 'the empty state'
+                  ? NullStatusSwitcher(
+                      isEmpty: isEmpty,
+                      nullStatus: const NullStatus(label: 'Nothing here'),
+                      child: list,
+                    )
+                  : isEmpty
+                  ? const Center(child: GlassText('Nothing here'))
+                  : list,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.drag(find.byType(ListView), const Offset(0, -200));
+        await tester.pumpAndSettle();
+        expect(progress(), 1);
+        empty.value = true;
+        await tester.pumpAndSettle();
+        expect(find.byType(ListView), findsNothing);
+        expect(progress(), 0);
+        expect(_headerPanes, findsNothing);
+        expect(tester.takeException(), isNull);
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+        controller.dispose();
+        empty.dispose();
+      }
+    });
+  }
+
   testWidgets('a list starting below the bar leaves the frame to the body', (
     tester,
   ) async {
@@ -1121,6 +1176,17 @@ void main() {
         await tester.pumpAndSettle();
         expect(progress(), 0);
         expect(_headerPanes, findsNothing);
+        if (!reversed) {
+          await tester.drag(find.byType(ListView), const Offset(0, -200));
+          await tester.pumpAndSettle();
+          expect(progress(), 1);
+          DefaultTabController.of(
+            tester.element(find.byType(TabBarView)),
+          ).animateTo(1);
+          await tester.pumpAndSettle();
+          expect(find.byType(ListView), findsNothing);
+          expect(progress(), 0);
+        }
         expect(tester.takeException(), isNull);
       } finally {
         await tester.pumpWidget(const SizedBox.shrink());

@@ -113,6 +113,7 @@ class CommonScaffoldState extends State<CommonScaffold> {
   final _pendingHeaderScrolls = <BuildContext, ScrollMetrics>{};
   bool _headerGlassUpdateScheduled = false;
   BuildContext? _barScroll;
+  bool _watchingBarScroll = false;
   var _sorting = false;
 
   void _updateHeaderGlass(ScrollMetrics metrics, BuildContext? source) {
@@ -145,9 +146,31 @@ class CommonScaffoldState extends State<CommonScaffold> {
 
   void _applyHeaderGlass(ScrollMetrics metrics, BuildContext source) {
     final underBar = _contentUnderBar(metrics, source);
-    if (underBar == null && !identical(source, _barScroll)) return;
+    final barScroll = _barScroll;
+    if (underBar == null &&
+        barScroll != null &&
+        barScroll.mounted &&
+        !identical(source, barScroll)) {
+      return;
+    }
     _barScroll = source;
     _headerGlassProgress.value = ((underBar ?? 0) / 24).clamp(0.0, 1.0);
+    _watchBarScroll();
+  }
+
+  /// An AnimatedSwitcher drops a scroll view without a notification.
+  void _watchBarScroll() {
+    if (_watchingBarScroll || _headerGlassProgress.value == 0) return;
+    _watchingBarScroll = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _watchingBarScroll = false;
+      if (!mounted) return;
+      if (_barScroll?.mounted != true) {
+        _barScroll = null;
+        _headerGlassProgress.value = 0;
+      }
+      _watchBarScroll();
+    });
   }
 
   /// Horizontal scroll views around [source], as a TabBarView, do not count.

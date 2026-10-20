@@ -286,4 +286,35 @@ void main() {
       await tester.pump(const Duration(seconds: 2));
     }
   });
+
+  for (final MapEntry(key: name, value: page) in {
+    'requests': const RequestsView(),
+    'dns': const DnsQueriesView(),
+    'logs': const LogsView(),
+  }.entries) {
+    testWidgets('$name drops the frame once a search leaves no results', (
+      tester,
+    ) async {
+      _seedRecords(container);
+      try {
+        await _pumpPage(tester, container, page, _phone);
+        final list = find.byType(Scrollable).first;
+        await tester.drag(list, const Offset(0, -240));
+        await _settle(tester);
+        final progress = _progressOf(tester, tester.element(list));
+        expect(progress.value, 1);
+        await tester.tap(find.byTooltip('Search'));
+        await _settle(tester);
+        await tester.enterText(find.byType(TextField), 'no such record');
+        await _settle(tester);
+        await tester.pump(const Duration(milliseconds: 600));
+        expect(find.byType(NullStatus), findsOneWidget);
+        expect(progress.value, 0);
+        expect(_frames, findsNothing);
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump(const Duration(seconds: 2));
+      }
+    });
+  }
 }
