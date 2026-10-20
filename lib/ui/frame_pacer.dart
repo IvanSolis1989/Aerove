@@ -2,24 +2,27 @@ import 'dart:async';
 
 import 'package:flutter/scheduler.dart';
 
-/// Runs [onFrame] at a capped rate, scheduling a frame only when one is due.
+/// Runs [onFrame] at a capped rate, scheduling a frame only when one is due;
+/// pacers running together count from one grid, so their frames coincide.
 class FramePacer {
   FramePacer(this.onFrame, {int framesPerSecond = 30})
     : assert(framesPerSecond > 0),
       _framesPerSecond = framesPerSecond;
 
+  static final _running = <FramePacer>{};
+  static Duration? _grid;
+
   final void Function(Duration elapsed) onFrame;
 
   int _framesPerSecond;
   Duration? _origin;
-  Duration _lastElapsed = Duration.zero;
-  Duration _rateEpoch = Duration.zero;
+  Duration _last = Duration.zero;
+  Duration _target = Duration.zero;
   int _lastPublishedFrame = 0;
   Timer? _timer;
   int? _callbackId;
-  bool _active = false;
 
-  bool get isActive => _active;
+  bool get isActive => _running.contains(this);
 
   int get framesPerSecond => _framesPerSecond;
 
@@ -27,32 +30,26 @@ class FramePacer {
     assert(value > 0);
     if (value == _framesPerSecond) return;
     _framesPerSecond = value;
-    _rateEpoch = _lastElapsed;
-    _lastPublishedFrame = 0;
-    if (_timer == null) return;
-    _timer!.cancel();
-    _arm();
+    if (!isActive || _origin == null) return;
+    if (_running.length == 1) _grid = _last;
+    _lastPublishedFrame = _frameAt(_last);
   }
 
   /// Restarts elapsed time at zero; a stopped pacer resumes this way.
   void start() {
-    if (_active) return;
-    _active = true;
-    _lastElapsed = Duration.zero;
-    _rateEpoch = Duration.zero;
-    _lastPublishedFrame = 0;
+    if (!_running.add(this)) return;
     final binding = SchedulerBinding.instance;
     if (binding.schedulerPhase == SchedulerPhase.idle) {
       _origin = null;
       _request();
     } else {
-      _origin = binding.currentFrameTimeStamp;
-      _arm();
+      _begin(binding.currentFrameTimeStamp);
+      _wait(_due, from: _last);
     }
   }
 
   void stop() {
-    _active = false;
+    if (_running.remove(this) && _running.isEmpty) _grid = null;
     _timer?.cancel();
     _timer = null;
     final id = _callbackId;
@@ -63,30 +60,58 @@ class FramePacer {
 
   void dispose() => stop();
 
-  void _arm() {
+  void _begin(Duration timeStamp) {
+    _origin = timeStamp;
+    _last = timeStamp;
+    _grid ??= timeStamp;
+    _lastPublishedFrame = _frameAt(timeStamp);
+  }
+
+  int _frameAt(Duration timeStamp) =>
+      (timeStamp - _grid!).inMicroseconds *
+      _framesPerSecond ~/
+      Duration.microsecondsPerSecond;
+
+  Duration get _due {
     final next = (_lastPublishedFrame + 1) * Duration.microsecondsPerSecond;
-    final sinceEpoch = (next + _framesPerSecond - 1) ~/ _framesPerSecond;
-    final due = _rateEpoch + Duration(microseconds: sinceEpoch);
-    _timer = Timer((due - _lastElapsed) * timeDilation, _request);
+    final sinceGrid = (next + _framesPerSecond - 1) ~/ _framesPerSecond;
+    return _grid! + Duration(microseconds: sinceGrid);
+  }
+
+  void _wait(Duration target, {required Duration from}) {
+    _target = target;
+    _timer = Timer((target - from) * timeDilation, _fire);
+  }
+
+  void _fire() {
+    _timer = null;
+    final due = _due;
+    if (due > _target) {
+      _wait(due, from: _target);
+    } else {
+      _request();
+    }
   }
 
   void _request() {
-    _timer = null;
     _callbackId = SchedulerBinding.instance.scheduleFrameCallback(_tick);
   }
 
   void _tick(Duration timeStamp) {
     _callbackId = null;
-    final origin = _origin ??= timeStamp;
-    _lastElapsed = timeStamp - origin;
-    final frame =
-        (_lastElapsed - _rateEpoch).inMicroseconds *
-        _framesPerSecond ~/
-        Duration.microsecondsPerSecond;
-    if (frame > _lastPublishedFrame) {
-      _lastPublishedFrame = frame;
-      onFrame(_lastElapsed);
+    final origin = _origin;
+    if (origin == null) {
+      _begin(timeStamp);
+    } else {
+      _last = timeStamp;
+      final frame = _frameAt(timeStamp);
+      if (frame > _lastPublishedFrame) {
+        _lastPublishedFrame = frame;
+        onFrame(timeStamp - origin);
+      }
     }
-    if (_active && _timer == null && _callbackId == null) _arm();
+    if (isActive && _timer == null && _callbackId == null) {
+      _wait(_due, from: _last);
+    }
   }
 }

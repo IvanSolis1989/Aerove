@@ -26,11 +26,14 @@ class ForegroundAutoUpdateScheduler {
   ForegroundAutoUpdateScheduler({
     required this.run,
     this.interval = const Duration(minutes: 20),
-  });
+    DateTime Function()? now,
+  }) : _now = now ?? DateTime.now;
 
   final Future<void> Function(bool Function() isCurrent) run;
   final Duration interval;
+  final DateTime Function() _now;
   Timer? _timer;
+  DateTime? _dueAt;
   bool _visible = false;
   bool _started = false;
   bool _due = false;
@@ -47,19 +50,21 @@ class ForegroundAutoUpdateScheduler {
     _timer?.cancel();
     _timer = null;
     if (!visible) {
-      _due = true;
+      if (first || _running) _due = true;
     } else if (first) {
       _schedule();
-    } else if (_due) {
+    } else if (_due || !_now().isBefore(_dueAt!)) {
       unawaited(_run());
     } else {
-      _schedule();
+      final remaining = _dueAt!.difference(_now());
+      _schedule(remaining < interval ? remaining : interval);
     }
   }
 
-  void _schedule() {
+  void _schedule([Duration? delay]) {
     if (_disposed || !_visible || _running || _timer != null) return;
-    _timer = Timer(interval, () {
+    if (delay == null) _dueAt = _now().add(interval);
+    _timer = Timer(delay ?? interval, () {
       _timer = null;
       unawaited(_run());
     });

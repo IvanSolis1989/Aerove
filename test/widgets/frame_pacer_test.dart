@@ -32,6 +32,41 @@ void main() {
     pacer.dispose();
   });
 
+  testWidgets('pacers running together share their frames', (tester) async {
+    final fast = <Duration>[];
+    final slow = <Duration>[];
+    final wallpaper = FramePacer(fast.add);
+    final drift = FramePacer(slow.add, framesPerSecond: 15);
+    addTearDown(wallpaper.dispose);
+    addTearDown(drift.dispose);
+    wallpaper.start();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 11));
+    drift.start();
+    await tester.pump();
+    const vsync = Duration(microseconds: 8333);
+    final frames = _countFrames(tester);
+    for (var index = 0; index < 120; index++) {
+      await tester.pump(vsync);
+    }
+    expect(frames(), inInclusiveRange(29, 30));
+    expect(slow.length, inInclusiveRange(14, 15));
+    expect(fast.length, frames());
+
+    drift.framesPerSecond = 10;
+    final slower = _countFrames(tester);
+    final before = (fast.length, slow.length);
+    for (var index = 0; index < 120; index++) {
+      await tester.pump(vsync);
+    }
+    expect(slower(), inInclusiveRange(29, 30));
+    expect(fast.length - before.$1, slower());
+    expect(slow.length - before.$2, inInclusiveRange(9, 10));
+    wallpaper.dispose();
+    drift.dispose();
+    expect(tester.binding.transientCallbackCount, 0);
+  });
+
   testWidgets('a rate change moves the next frame onto the new rate', (
     tester,
   ) async {

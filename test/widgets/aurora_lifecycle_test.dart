@@ -173,6 +173,60 @@ void main() {
       },
     );
   }
+
+  for (final mode in LiquidGlassMode.values) {
+    testWidgets('lifecycle changes leave theme dependents alone ($mode)', (
+      tester,
+    ) async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      addTearDown(() {
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+      });
+      var builds = 0;
+      ThemeData? seen;
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            themeSettingProvider.overrideWithBuild(
+              (_, _) => ThemeProps(auroraEnabled: true, liquidGlass: mode),
+            ),
+          ],
+          child: MaterialApp(
+            theme: ThemeData(platform: TargetPlatform.android),
+            home: AuroraAppSurface(
+              motion: false,
+              child: Builder(
+                builder: (context) {
+                  builds++;
+                  seen = Theme.of(context);
+                  return const SizedBox.shrink();
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      final theme = seen;
+      final initialBuilds = builds;
+      for (final lifecycle in [
+        AppLifecycleState.inactive,
+        AppLifecycleState.resumed,
+        AppLifecycleState.inactive,
+        AppLifecycleState.hidden,
+        AppLifecycleState.paused,
+        AppLifecycleState.hidden,
+        AppLifecycleState.inactive,
+        AppLifecycleState.resumed,
+      ]) {
+        tester.binding.handleAppLifecycleStateChanged(lifecycle);
+        await tester.pump();
+      }
+      expect(builds, initialBuilds);
+      expect(seen, same(theme));
+    });
+  }
 }
 
 Future<List<int>> _pixels(WidgetTester tester, GlobalKey capture) async {

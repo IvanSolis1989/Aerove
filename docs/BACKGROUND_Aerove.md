@@ -14,6 +14,8 @@
 | 自动订阅、图标、脚本与规则更新 | 每 20 分钟运行，后台也会下载、提交及 apply | 后台取消应用定时器；每项下载和提交边界检查资格，前台补查，保持单个在途循环 |
 | 本地 IP 与应用标签 | 后台网络、安装包事件仍可能触发 UI 枚举 | 后台只标记失效，前台合并读取，丢弃跨后台代际的旧结果 |
 | 更新状态清理 | 仅有本地下载时也启动 30 秒扫描 | 只在有 Core 更新需要超时保护时保留扫描 |
+| 回前台自动更新 | 任何一次离开（含下拉通知栏）后返回都立即跑一轮订阅、图标、脚本与规则检查 | 按 20 分钟间隔到期才跑；只有被离开中断的那一轮在返回时补做 |
+| 代理链循环提示 | 后台仍逐次弹出提示，帧停止时提示无法退场而在队列中累积 | 后台只记下最近一次，返回前台显示一次 |
 
 主要入口：[Core 遥测](../core/ui_telemetry.go)、[请求观察](../core/request_traffic.go)、[事件管理](../lib/manager/core_manager.dart)、[应用调度](../lib/application.dart)、[IP 查询](../lib/providers/ip_quality.dart)、[代理操作](../lib/providers/actions/proxies.dart)、[通知](../android/service/src/main/java/com/follow/clash/service/modules/NotificationModule.kt)。
 

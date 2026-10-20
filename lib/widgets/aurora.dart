@@ -32,6 +32,7 @@ class _AuroraAppSurfaceState extends ConsumerState<AuroraAppSurface>
     with WidgetsBindingObserver {
   late bool _foreground;
   late bool _visible;
+  ({ThemeData source, bool enabled, bool glassEnabled, ThemeData data})? _theme;
 
   @override
   void initState() {
@@ -83,92 +84,13 @@ class _AuroraAppSurfaceState extends ConsumerState<AuroraAppSurface>
         (settings.pureBlack && theme.brightness == Brightness.dark);
     final enabled =
         theme.platform == TargetPlatform.android && settings.enabled && !opaque;
-    final glassColors = auroraColorScheme(theme.brightness);
-    final glassTheme = theme
-        .withNeutralTextColors(glassColors)
-        .copyWith(
-          colorScheme: glassColors,
-          extensions: [
-            for (final extension in theme.extensions.values)
-              if (extension is ElevatedColorScheme)
-                ElevatedColorScheme(glassColors.elevated)
-              else
-                extension,
-          ],
-        )
-        .withAppSurfaces;
     final glassMode = settings.liquidGlass;
     final glassEnabled = glassMode != LiquidGlassMode.none && !opaque;
-    final surfaceTheme = enabled ? glassTheme : theme;
-    final surfaceColors = surfaceTheme.colorScheme;
-    final glassPane = LiquidGlass.buttonStyle(
-      (_) => LiquidGlassStyle.regular(surfaceColors),
+    final effectiveTheme = _surfaceTheme(
+      theme,
+      enabled: enabled,
+      glassEnabled: glassEnabled,
     );
-    ButtonStyle neutralGlass(ButtonStyle? original, {bool outlined = false}) {
-      final style = glassPane
-          .merge(original)
-          .copyWith(
-            backgroundBuilder: (context, states, child) => LiquidGlass(
-              style: LiquidGlassStyle.regular(surfaceColors),
-              clipper: ShapeBorderClipper(
-                shape: original?.shape?.resolve(states) ?? AppShape.full,
-                textDirection: Directionality.of(context),
-              ),
-              pressed: states.contains(WidgetState.pressed),
-              child: child,
-            ),
-          );
-      if (!outlined) return style;
-      return style.copyWith(
-        side: WidgetStateProperty.resolveWith((states) {
-          return original?.side?.resolve(states) ??
-              (states.contains(WidgetState.focused)
-                  ? focusRingSide(surfaceColors)
-                  : BorderSide.none);
-        }),
-      );
-    }
-
-    final glassButtons =
-        LiquidGlass.buttonStyle(
-          (_) => LiquidGlassStyle.regular(surfaceColors),
-        ).merge(
-          FilledButton.styleFrom(
-            backgroundColor: Colors.transparent,
-            foregroundColor: surfaceColors.onSurface,
-          ),
-        );
-    final effectiveTheme = glassEnabled
-        ? surfaceTheme.copyWith(
-            scaffoldBackgroundColor: Colors.transparent,
-            filledButtonTheme: FilledButtonThemeData(
-              style: glassButtons.merge(surfaceTheme.filledButtonTheme.style),
-            ),
-            outlinedButtonTheme: OutlinedButtonThemeData(
-              style: neutralGlass(
-                surfaceTheme.outlinedButtonTheme.style,
-                outlined: true,
-              ),
-            ),
-            textButtonTheme: TextButtonThemeData(
-              style: neutralGlass(surfaceTheme.textButtonTheme.style),
-            ),
-            iconButtonTheme: IconButtonThemeData(
-              style: neutralGlass(surfaceTheme.iconButtonTheme.style),
-            ),
-            elevatedButtonTheme: ElevatedButtonThemeData(
-              style: neutralGlass(surfaceTheme.elevatedButtonTheme.style),
-            ),
-            floatingActionButtonTheme: theme.floatingActionButtonTheme.copyWith(
-              backgroundColor: surfaceColors.surfaceContainer.withValues(
-                alpha: 0.28,
-              ),
-              foregroundColor: surfaceColors.onSurface,
-            ),
-          )
-        : enabled
-        ? surfaceTheme.copyWith(scaffoldBackgroundColor: Colors.transparent)
-        : theme;
     final surface = LiquidGlassScope(
       enabled: glassEnabled,
       quality: glassMode == LiquidGlassMode.ultra
@@ -227,6 +149,122 @@ class _AuroraAppSurfaceState extends ConsumerState<AuroraAppSurface>
         child: Offstage(offstage: !_visible, child: surface),
       ),
     );
+  }
+
+  ThemeData _surfaceTheme(
+    ThemeData theme, {
+    required bool enabled,
+    required bool glassEnabled,
+  }) {
+    if (_theme case final cached?
+        when identical(cached.source, theme) &&
+            cached.enabled == enabled &&
+            cached.glassEnabled == glassEnabled) {
+      return cached.data;
+    }
+    final data = _buildSurfaceTheme(
+      theme,
+      enabled: enabled,
+      glassEnabled: glassEnabled,
+    );
+    _theme = (
+      source: theme,
+      enabled: enabled,
+      glassEnabled: glassEnabled,
+      data: data,
+    );
+    return data;
+  }
+
+  static ThemeData _buildSurfaceTheme(
+    ThemeData theme, {
+    required bool enabled,
+    required bool glassEnabled,
+  }) {
+    final glassColors = auroraColorScheme(theme.brightness);
+    final glassTheme = theme
+        .withNeutralTextColors(glassColors)
+        .copyWith(
+          colorScheme: glassColors,
+          extensions: [
+            for (final extension in theme.extensions.values)
+              if (extension is ElevatedColorScheme)
+                ElevatedColorScheme(glassColors.elevated)
+              else
+                extension,
+          ],
+        )
+        .withAppSurfaces;
+    final surfaceTheme = enabled ? glassTheme : theme;
+    final surfaceColors = surfaceTheme.colorScheme;
+    final glassPane = LiquidGlass.buttonStyle(
+      (_) => LiquidGlassStyle.regular(surfaceColors),
+    );
+    ButtonStyle neutralGlass(ButtonStyle? original, {bool outlined = false}) {
+      final style = glassPane
+          .merge(original)
+          .copyWith(
+            backgroundBuilder: (context, states, child) => LiquidGlass(
+              style: LiquidGlassStyle.regular(surfaceColors),
+              clipper: ShapeBorderClipper(
+                shape: original?.shape?.resolve(states) ?? AppShape.full,
+                textDirection: Directionality.of(context),
+              ),
+              pressed: states.contains(WidgetState.pressed),
+              child: child,
+            ),
+          );
+      if (!outlined) return style;
+      return style.copyWith(
+        side: WidgetStateProperty.resolveWith((states) {
+          return original?.side?.resolve(states) ??
+              (states.contains(WidgetState.focused)
+                  ? focusRingSide(surfaceColors)
+                  : BorderSide.none);
+        }),
+      );
+    }
+
+    final glassButtons =
+        LiquidGlass.buttonStyle(
+          (_) => LiquidGlassStyle.regular(surfaceColors),
+        ).merge(
+          FilledButton.styleFrom(
+            backgroundColor: Colors.transparent,
+            foregroundColor: surfaceColors.onSurface,
+          ),
+        );
+    return glassEnabled
+        ? surfaceTheme.copyWith(
+            scaffoldBackgroundColor: Colors.transparent,
+            filledButtonTheme: FilledButtonThemeData(
+              style: glassButtons.merge(surfaceTheme.filledButtonTheme.style),
+            ),
+            outlinedButtonTheme: OutlinedButtonThemeData(
+              style: neutralGlass(
+                surfaceTheme.outlinedButtonTheme.style,
+                outlined: true,
+              ),
+            ),
+            textButtonTheme: TextButtonThemeData(
+              style: neutralGlass(surfaceTheme.textButtonTheme.style),
+            ),
+            iconButtonTheme: IconButtonThemeData(
+              style: neutralGlass(surfaceTheme.iconButtonTheme.style),
+            ),
+            elevatedButtonTheme: ElevatedButtonThemeData(
+              style: neutralGlass(surfaceTheme.elevatedButtonTheme.style),
+            ),
+            floatingActionButtonTheme: theme.floatingActionButtonTheme.copyWith(
+              backgroundColor: surfaceColors.surfaceContainer.withValues(
+                alpha: 0.28,
+              ),
+              foregroundColor: surfaceColors.onSurface,
+            ),
+          )
+        : enabled
+        ? surfaceTheme.copyWith(scaffoldBackgroundColor: Colors.transparent)
+        : theme;
   }
 }
 

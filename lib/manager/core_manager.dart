@@ -32,6 +32,7 @@ class _CoreContainerState extends ConsumerState<CoreManager>
   bool _refreshAgain = false;
   bool _closed = false;
   bool _groupsNeedRefresh = false;
+  String? _hiddenDialerLoop;
   int _groupsRevision = 0;
   int _providerRevision = 0;
   int _uiRevision = 0;
@@ -83,6 +84,9 @@ class _CoreContainerState extends ConsumerState<CoreManager>
         _markGroupsDirty();
         _cancelUiWork();
         ref.read(proxiesActionProvider.notifier).cancelDelayTests();
+      } else if (_hiddenDialerLoop case final proxyName?) {
+        _hiddenDialerLoop = null;
+        _notifyDialerLoop(proxyName);
       }
       _requestUiSync();
     });
@@ -285,6 +289,15 @@ class _CoreContainerState extends ConsumerState<CoreManager>
 
   @override
   void onDialerLoop(String proxyName) {
+    if (_uiVisible) {
+      _notifyDialerLoop(proxyName);
+    } else {
+      _hiddenDialerLoop = proxyName;
+    }
+    super.onDialerLoop(proxyName);
+  }
+
+  void _notifyDialerLoop(String proxyName) {
     throttler.call(
       FunctionTag.dialerLoopNotifier,
       () => dialogs.showNotifier(
@@ -294,7 +307,6 @@ class _CoreContainerState extends ConsumerState<CoreManager>
       duration: const Duration(seconds: 3),
       fire: true,
     );
-    super.onDialerLoop(proxyName);
   }
 
   @override
