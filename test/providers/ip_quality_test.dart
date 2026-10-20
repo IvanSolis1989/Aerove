@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -5,6 +6,7 @@ import 'package:dio/dio.dart';
 import 'package:fl_clash/common/ip_quality.dart';
 import 'package:fl_clash/common/request.dart';
 import 'package:fl_clash/enum/enum.dart';
+import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/providers/ip_quality.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:riverpod/riverpod.dart';
@@ -40,6 +42,29 @@ class _Adapter implements HttpClientAdapter {
   void close({bool force = false}) {}
 }
 
+class _PendingAdapter implements HttpClientAdapter {
+  int requests = 0;
+  int cancellations = 0;
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    requests++;
+    await cancelFuture;
+    cancellations++;
+    throw DioException.requestCancelled(
+      requestOptions: options,
+      reason: 'cancelled',
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
 void main() {
   late HttpClientAdapter originalAdapter;
 
@@ -51,7 +76,7 @@ void main() {
     request.dio.httpClientAdapter = originalAdapter;
   });
 
-  ProviderContainer build(_Adapter adapter) {
+  ProviderContainer build(HttpClientAdapter adapter) {
     request.dio.httpClientAdapter = adapter;
     final container = ProviderContainer(
       overrides: [
@@ -63,6 +88,47 @@ void main() {
   }
 
   final provider = ipQualityProvider(_ip);
+
+  testWidgets('hiding cancels the active wave and stops hedged requests', (
+    tester,
+  ) async {
+    final adapter = _PendingAdapter();
+    final container = build(adapter);
+    container.listen(provider, (_, _) {});
+    await tester.pump();
+    expect(adapter.requests, 3);
+
+    container.read(appVisibleProvider.notifier).value = false;
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 4));
+    expect(adapter.requests, 3);
+    expect(adapter.cancellations, 3);
+
+    container.read(appVisibleProvider.notifier).value = true;
+    await tester.pump();
+    expect(adapter.requests, 6);
+    container.read(appVisibleProvider.notifier).value = false;
+    await tester.pump();
+    expect(adapter.cancellations, 6);
+  });
+
+  test('a hidden lookup waits for foreground and retains its success', () async {
+    final adapter = _Adapter(succeed: true);
+    final container = build(adapter);
+    container.read(appVisibleProvider.notifier).value = false;
+    container.listen(provider, (_, _) {});
+    await pumpEventQueue();
+    expect(adapter.requests, 0);
+
+    container.read(appVisibleProvider.notifier).value = true;
+    final quality = await container.read(provider.future);
+    final sent = adapter.requests;
+    container.read(appVisibleProvider.notifier).value = false;
+    container.read(appVisibleProvider.notifier).value = true;
+    await pumpEventQueue();
+    expect(container.read(provider).value, quality);
+    expect(adapter.requests, sent);
+  });
 
   test('keeps a result after the last listener leaves', () async {
     final adapter = _Adapter(succeed: true);

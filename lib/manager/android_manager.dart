@@ -21,6 +21,9 @@ class AndroidManager extends ConsumerStatefulWidget {
 
 class _AndroidContainerState extends ConsumerState<AndroidManager>
     with ServiceListener {
+  bool _packagesStale = false;
+  bool _packagesUpdating = false;
+
   @override
   void initState() {
     super.initState();
@@ -46,18 +49,35 @@ class _AndroidContainerState extends ConsumerState<AndroidManager>
       }
     });
     service?.addListener(this);
-    app?.onPackagesChanged = _reloadPackages;
+    app?.onPackagesChanged = onPackagesChanged;
+    ref.listenManual(appVisibleProvider, (_, visible) {
+      if (!visible) {
+        debouncer.cancel(FunctionTag.reloadPackages);
+      } else if (_packagesStale) {
+        onPackagesChanged();
+      }
+    });
   }
 
   /// A reload reads every installed app's label, and a round of store updates
   /// reports each app on its own.
-  void _reloadPackages() {
+  void onPackagesChanged() {
     if (ref.read(packagesProvider).isEmpty) {
       return;
     }
+    _packagesStale = true;
+    if (!ref.read(appVisibleProvider) || _packagesUpdating) return;
     debouncer.call(FunctionTag.reloadPackages, () async {
-      if (mounted) {
+      if (!mounted || !ref.read(appVisibleProvider)) return;
+      _packagesStale = false;
+      _packagesUpdating = true;
+      try {
         await ref.read(systemActionProvider.notifier).getPackages();
+      } finally {
+        _packagesUpdating = false;
+        if (mounted && _packagesStale && ref.read(appVisibleProvider)) {
+          onPackagesChanged();
+        }
       }
     }, duration: const Duration(seconds: 2));
   }
@@ -65,7 +85,7 @@ class _AndroidContainerState extends ConsumerState<AndroidManager>
   @override
   void dispose() {
     debouncer.cancel(FunctionTag.reloadPackages);
-    if (app?.onPackagesChanged == _reloadPackages) {
+    if (app?.onPackagesChanged == onPackagesChanged) {
       app?.onPackagesChanged = null;
     }
     service?.removeListener(this);

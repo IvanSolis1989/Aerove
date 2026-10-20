@@ -323,9 +323,11 @@ func TestHandleMethodCallReportsUnknownMethod(t *testing.T) {
 }
 
 func TestSendMessageBatchWrapsMessagesInMethodCall(t *testing.T) {
+	activateTestTelemetry(t)
+	epoch := uiTelemetry.epoch.Load()
 	batch := []Message{
-		{Type: DelayMessage, Data: Delay{Url: "https://example.test", Name: "a", Value: 12}},
-		{Type: LogMessage, Data: "hello"},
+		{Type: DelayMessage, Data: Delay{Url: "https://example.test", Name: "a", Value: 12}, telemetryEpoch: epoch},
+		{Type: LogMessage, Data: "hello", telemetryEpoch: epoch},
 	}
 
 	frame := captureSingleFrame(t, func() {
@@ -767,6 +769,7 @@ func TestDeliveryFailureIsReportedOncePerConnection(t *testing.T) {
 }
 
 func TestHandleStartLogAndStopLogLifecycle(t *testing.T) {
+	activateTestTelemetry(t)
 	handleStartLog()
 	first := currentLogPump()
 	if first == nil {
@@ -791,6 +794,7 @@ func TestHandleStartLogAndStopLogLifecycle(t *testing.T) {
 // mihomo emits to a subscriber under a lock and blocks once its buffer is full,
 // so a pump that stopped reading before the unsubscribe would wedge the stop.
 func TestHandleStopLogReturnsWhileTheLogIsFlooded(t *testing.T) {
+	activateTestTelemetry(t)
 	previous := log.Level()
 	log.SetLevel(log.SILENT)
 	t.Cleanup(func() { log.SetLevel(previous) })
@@ -846,6 +850,7 @@ func TestServeReleasesTheCoreWhenTheHostDisconnects(t *testing.T) {
 }
 
 func TestReleaseOnExitIsANoOpBeforeInit(t *testing.T) {
+	activateTestTelemetry(t)
 	isInit.Store(false)
 	handleStartLog()
 	t.Cleanup(handleStopLog)

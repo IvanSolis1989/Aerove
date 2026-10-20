@@ -44,23 +44,56 @@ func (pump *logPump) stop() {
 var (
 	logMu     sync.Mutex
 	activeLog *logPump
+	logRequested bool
+	logRequestSeq uint64
 )
 
 func handleStartLog() {
+	setLogRequested(true, methodCallSeq.Add(1))
+}
+
+func setLogRequested(requested bool, seq uint64) {
 	logMu.Lock()
 	defer logMu.Unlock()
+	if seq < logRequestSeq {
+		return
+	}
+	logRequestSeq = seq
+	logRequested = requested
 	if activeLog != nil {
 		activeLog.stop()
+		activeLog = nil
+	}
+	if !requested || !hasUiTelemetry() {
+		return
 	}
 	activeLog = &logPump{subscription: log.Subscribe()}
 	go activeLog.run()
 }
 
 func handleStopLog() {
+	setLogRequested(false, methodCallSeq.Add(1))
+}
+
+func logRequestHandler(requested bool) methodHandler {
+	return func(call *MethodCall) (any, error) {
+		setLogRequested(requested, call.seq)
+		return true, nil
+	}
+}
+
+func syncLogTelemetry() {
 	logMu.Lock()
 	defer logMu.Unlock()
-	if activeLog != nil {
-		activeLog.stop()
-		activeLog = nil
+	if !hasUiTelemetry() || !logRequested {
+		if activeLog != nil {
+			activeLog.stop()
+			activeLog = nil
+		}
+		return
+	}
+	if activeLog == nil {
+		activeLog = &logPump{subscription: log.Subscribe()}
+		go activeLog.run()
 	}
 }

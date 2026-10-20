@@ -287,4 +287,80 @@ void main() {
       }
     },
   );
+
+  for (final previous in [
+    AppLifecycleState.resumed,
+    AppLifecycleState.inactive,
+  ]) {
+    testWidgets('detached releases a mounted host from ${previous.name}', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(320, 320);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      final host = GlobalKey();
+      try {
+        await tester.pumpWidget(_app(host));
+        await _frames(tester);
+        await tester.pumpWidget(_app(host, modal: true));
+        await _frames(tester);
+        final before = await _shot(tester, 'before-detached-${previous.name}');
+        expect(LiquidGlassHost.debugLastCapture!.occludedPanes, 1);
+        expect(LiquidGlassHost.debugLastFlatCapture!.pixels, greaterThan(0));
+        LiquidGlassHost.debugLastCacheTrim = null;
+        tester.binding.handleAppLifecycleStateChanged(previous);
+        expect(LiquidGlassHost.debugLastCacheTrim, isNull);
+        _expectFrame(await _shot(tester, 'before-${previous.name}'), before);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.detached,
+        );
+        final trim = LiquidGlassHost.debugLastCacheTrim!;
+        expect(trim.reason, 'detached');
+        expect(trim.releasedAtlasPixels, greaterThan(0));
+        expect(trim.releasedFlatPixels, greaterThan(0));
+        if (ui.ImageFilter.isShaderFilterSupported) {
+          expect(trim.releasedSourceBlurPixels, greaterThan(0));
+        }
+        expect(trim.retainedAtlasPixels, 0);
+        expect(trim.retainedFlatPixels, 0);
+        expect(trim.retainedFrozenPixels, 0);
+        for (var frame = 0; frame < 3; frame++) {
+          tester.renderObject(find.byType(LiquidGlassHost)).markNeedsPaint();
+          tester.binding.scheduleForcedFrame();
+          await tester.pump(const Duration(milliseconds: 16));
+          await _shot(tester, 'detached-${previous.name}-$frame');
+          expect(LiquidGlassHost.debugLastCapture, isNull);
+          expect(LiquidGlassHost.debugLiveSourceBlurPixels, 0);
+          expect(LiquidGlassHost.debugLastCacheTrim, trim);
+        }
+        tester.binding.handleMemoryPressure();
+        final pressure = LiquidGlassHost.debugLastCacheTrim!;
+        expect(pressure.reason, 'pressure');
+        expect(pressure.retainedAtlasPixels, 0);
+        expect(pressure.retainedFlatPixels, 0);
+        expect(pressure.retainedFrozenPixels, 0);
+        tester.binding.scheduleForcedFrame();
+        await tester.pump();
+        await _shot(tester, 'detached-pressure-${previous.name}');
+        expect(LiquidGlassHost.debugLastCapture, isNull);
+        expect(LiquidGlassHost.debugLastCacheTrim, pressure);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        await _frames(tester);
+        _expectFrame(
+          await _shot(tester, 'detached-restored-${previous.name}'),
+          before,
+          tolerance: 2,
+        );
+        expect(LiquidGlassHost.debugLastCapture!.panes, isNotEmpty);
+        expect(tester.takeException(), isNull);
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.pump();
+      }
+    });
+  }
 }

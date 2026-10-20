@@ -339,7 +339,8 @@ class _RenderLiquidGlassHost extends RenderProxyBox
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.hidden ||
-        state == AppLifecycleState.paused) {
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
       _suspended = true;
       final layer = _layer.layer;
       if (layer != null) {
@@ -358,7 +359,9 @@ class _RenderLiquidGlassHost extends RenderProxyBox
   void didHaveMemoryPressure() {
     final state = WidgetsBinding.instance.lifecycleState;
     final hidden =
-        state == AppLifecycleState.hidden || state == AppLifecycleState.paused;
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached;
     _layer.layer?._trimCaches(
       all: hidden,
       preserveModal: !hidden,

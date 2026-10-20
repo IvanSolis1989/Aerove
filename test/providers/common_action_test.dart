@@ -79,6 +79,28 @@ void main() {
   });
 
   group('CommonAction.updateTraffic', () {
+    test('drops an answer from before hide even after resume', () async {
+      final container = buildContainer();
+      final answer = Completer<Traffic>();
+      when(() => core.getTraffic(any())).thenAnswer((_) => answer.future);
+      when(() => core.getTotalTraffic(any())).thenAnswer((_) => answer.future);
+      final history = container.read(trafficsProvider).list.toList();
+      final total = container.read(totalTrafficProvider);
+      final action = container.read(commonActionProvider.notifier);
+      final run = action.updateTraffic();
+
+      container.read(appVisibleProvider.notifier).value = false;
+      container.read(appVisibleProvider.notifier).value = true;
+      await action.updateTraffic();
+      answer.complete(const Traffic(up: 17, down: 29));
+      await run;
+
+      expect(container.read(trafficsProvider).list, history);
+      expect(container.read(totalTrafficProvider), total);
+      verify(() => core.getTraffic(any())).called(1);
+      verify(() => core.getTotalTraffic(any())).called(1);
+    });
+
     test('records the sampled traffic and the running total', () async {
       final container = buildContainer();
       container

@@ -15,6 +15,16 @@ part 'generated/common.freezed.dart';
 
 part 'generated/common.g.dart';
 
+final class UpdateCancelledException implements Exception {
+  const UpdateCancelledException();
+}
+
+void checkUpdateCurrent(bool Function()? isCurrent) {
+  if (isCurrent != null && !isCurrent()) {
+    throw const UpdateCancelledException();
+  }
+}
+
 @freezed
 abstract class NavigationItem with _$NavigationItem {
   const factory NavigationItem({
@@ -735,18 +745,26 @@ extension ScriptExt on Script {
 
   Future<String?> get content async => readTextFileTask(await path);
 
-  Future<Script> save(String content) async {
+  Future<Script> save(String content, {bool Function()? isCurrent}) async {
+    checkUpdateCurrent(isCurrent);
     final file = File(await path);
-    if (!await file.exists()) {
+    checkUpdateCurrent(isCurrent);
+    final exists = await file.exists();
+    checkUpdateCurrent(isCurrent);
+    if (!exists) {
       await file.create(recursive: true);
+      checkUpdateCurrent(isCurrent);
     }
     await file.writeAsString(content);
+    checkUpdateCurrent(isCurrent);
     return copyWith(lastUpdateTime: DateTime.now());
   }
 
-  Future<Script> update() async {
+  Future<Script> update({bool Function()? isCurrent}) async {
+    checkUpdateCurrent(isCurrent);
     final response = await request.getTextResponseForUrl(url!);
-    return save(response.data ?? '');
+    checkUpdateCurrent(isCurrent);
+    return save(response.data ?? '', isCurrent: isCurrent);
   }
 }
 

@@ -36,6 +36,7 @@ class _RecordingCoreHandler extends CoreHandlerInterface {
     calls[method] = arguments;
     final result = switch (method) {
       CoreMethod.initClash => true as T,
+      CoreMethod.setUiTelemetryActive => true,
       CoreMethod.getTraffic ||
       CoreMethod.getTotalTraffic => {'up': 12, 'down': 34},
       CoreMethod.asyncTestDelay => {
@@ -225,6 +226,14 @@ void main() {
       'max-body': 64,
     });
     expect(handler.calls[CoreMethod.clearEffect], 42);
+  });
+
+  test('UI telemetry uses a boolean without stopping Core listeners', () async {
+    final handler = _RecordingCoreHandler();
+    await handler.setUiTelemetryActive(false);
+    expect(handler.calls, {CoreMethod.setUiTelemetryActive: false});
+    await handler.setUiTelemetryActive(true);
+    expect(handler.calls, {CoreMethod.setUiTelemetryActive: true});
   });
 
   test('validateFilters sends the filters and reads one error each', () async {

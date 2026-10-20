@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:drift/native.dart';
@@ -26,6 +27,21 @@ import '../helpers/test_app.dart';
 import '../helpers/test_profiles.dart';
 
 class _MockCoreHandlerInterface extends Mock implements CoreHandlerInterface {}
+
+class _AutoProfilesAction extends ProfilesAction {
+  final updated = <int>[];
+  Future<void> Function()? duringUpdate;
+
+  @override
+  Future<void> updateProfile(
+    Profile profile, {
+    bool showLoading = false,
+    bool Function()? isCurrent,
+  }) async {
+    updated.add(profile.id);
+    await duringUpdate?.call();
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -81,6 +97,53 @@ void main() {
     final config = loadYaml(await (await profile.file).readAsString()) as Map;
     return [for (final proxy in config['proxies'] as List) proxy as Map];
   }
+
+  test('automatic profiles stop between downloads when hidden', () async {
+    final profiles = [
+      for (var index = 0; index < 2; index++)
+        Profile.normal(label: '$index', url: 'https://example.com/$index')
+            .copyWith(autoUpdate: true),
+    ];
+    final scoped = ProviderContainer(
+      overrides: [
+        profilesProvider.overrideWith(() => TestProfiles(profiles)),
+        profilesActionProvider.overrideWith(_AutoProfilesAction.new),
+      ],
+    );
+    addTearDown(scoped.dispose);
+    final action = scoped.read(profilesActionProvider.notifier)
+        as _AutoProfilesAction;
+    scoped.read(appVisibleProvider.notifier).value = false;
+    await action.autoUpdateProfiles();
+    expect(action.updated, isEmpty);
+    scoped.read(appVisibleProvider.notifier).value = true;
+    action.duringUpdate = () async {
+      scoped.read(appVisibleProvider.notifier).value = false;
+    };
+    await action.autoUpdateProfiles();
+    expect(action.updated, [profiles.first.id]);
+  });
+
+  test('automatic profile runs do not overlap', () async {
+    final profile = Profile.normal(url: 'https://example.com/profile')
+        .copyWith(autoUpdate: true);
+    final pending = Completer<void>();
+    final scoped = ProviderContainer(
+      overrides: [
+        profilesProvider.overrideWith(() => TestProfiles([profile])),
+        profilesActionProvider.overrideWith(_AutoProfilesAction.new),
+      ],
+    );
+    addTearDown(scoped.dispose);
+    final action = scoped.read(profilesActionProvider.notifier)
+        as _AutoProfilesAction;
+    action.duringUpdate = () => pending.future;
+    final first = action.autoUpdateProfiles();
+    await action.autoUpdateProfiles();
+    expect(action.updated, [profile.id]);
+    pending.complete();
+    await first;
+  });
 
   group('addProfileFromLink with a share link', () {
     test(

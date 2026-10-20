@@ -54,6 +54,12 @@ func sendMessage(messageType MessageType, data any) (queued bool) {
 		return false
 	}
 	message := Message{Type: messageType, Data: data}
+	if isUiTelemetryMessage(messageType) {
+		message.telemetryEpoch = uiTelemetry.epoch.Load()
+		if !hasUiTelemetry() {
+			return false
+		}
+	}
 	switch classOfMessage(message) {
 	case stateMessageClass:
 		return enqueueState(stateMessageQueue, message)
@@ -191,6 +197,10 @@ type messageBatchCall struct {
 }
 
 func sendMessageBatch(messages []Message) {
+	messages = filterUiTelemetryMessages(messages)
+	if len(messages) == 0 {
+		return
+	}
 	data, err := json.Marshal(messageBatchCall{
 		Method:    messageMethod,
 		Arguments: messages,

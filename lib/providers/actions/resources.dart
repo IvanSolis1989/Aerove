@@ -7,24 +7,36 @@ class ResourcesAction extends _$ResourcesAction {
   @override
   void build() {}
 
-  Future<void> updateIconSet(IconSet iconSet) {
+  Future<void> updateIconSet(IconSet iconSet, {bool Function()? isCurrent}) {
     return _track(
       iconSet.updatingKey,
-      () => ref.read(iconSetsActionProvider.notifier).sync(iconSet),
+      () => ref
+          .read(iconSetsActionProvider.notifier)
+          .sync(iconSet, isCurrent: isCurrent),
     );
   }
 
-  Future<void> updateRuleProvider(ClashProvider provider) {
+  Future<void> updateRuleProvider(
+    ClashProvider provider, {
+    bool Function()? isCurrent,
+  }) {
     return _track(
       provider.updatingKey,
       () => ref
           .read(clashProvidersActionProvider.notifier)
-          .putProvider(provider, previous: provider, refresh: true),
+          .putProvider(
+            provider,
+            previous: provider,
+            refresh: true,
+            isCurrent: isCurrent,
+          ),
     );
   }
 
-  Future<void> updateScript(Script script) {
-    return ref.read(scriptsActionProvider.notifier).updateScript(script);
+  Future<void> updateScript(Script script, {bool Function()? isCurrent}) {
+    return ref
+        .read(scriptsActionProvider.notifier)
+        .updateScript(script, isCurrent: isCurrent);
   }
 
   Future<void> _track(String key, Future<Object?> Function() task) async {
@@ -100,44 +112,79 @@ class ResourcesAction extends _$ResourcesAction {
   }
 
   /// Geo files are left to the Core, which reads the same two settings.
-  Future<void> autoUpdate() async {
+  Future<void> autoUpdate({bool Function()? isCurrent}) async {
+    bool canUpdate() =>
+        ref.mounted &&
+        ref.read(appVisibleProvider) &&
+        (isCurrent?.call() ?? true);
+    if (!canUpdate()) return;
     final setting = ref.read(patchClashConfigProvider);
-    if (!setting.geoAutoUpdate || _autoUpdating) {
+    if (_autoUpdating) {
       return;
     }
     _autoUpdating = true;
     try {
+      await ref
+          .read(clashProvidersActionProvider.notifier)
+          .resumeAutomaticUpdates(isCurrent: canUpdate);
+      if (!canUpdate()) return;
+      if (!setting.geoAutoUpdate) return;
       final interval = Duration(hours: setting.geoUpdateInterval);
       bool isDue(DateTime? lastUpdateTime) =>
           lastUpdateTime?.add(interval).isBeforeNow ?? true;
       for (final iconSet in await database.iconSetsDao.query().get()) {
+        if (!canUpdate()) return;
         if (iconSet.isRemote && isDue(iconSet.lastUpdateTime)) {
-          await _tryUpdate(iconSet.name, () => updateIconSet(iconSet));
+          await _tryUpdate(
+            iconSet.name,
+            () => updateIconSet(iconSet, isCurrent: canUpdate),
+            isCurrent: canUpdate,
+          );
         }
       }
+      if (!canUpdate()) return;
       for (final script in await database.scriptsDao.query().get()) {
+        if (!canUpdate()) return;
         if (script.url != null && isDue(script.lastUpdateTime)) {
-          await _tryUpdate(script.label, () => updateScript(script));
+          await _tryUpdate(
+            script.label,
+            () => updateScript(script, isCurrent: canUpdate),
+            isCurrent: canUpdate,
+          );
         }
       }
+      if (!canUpdate()) return;
       for (final provider in await database.clashProvidersDao.query().get()) {
+        if (!canUpdate()) return;
         if (ref.read(coreStatusProvider) != CoreStatus.connected) {
           break;
         }
-        if (provider.isRemote &&
-            isDue((await provider.fileInfo)?.lastModified)) {
-          await _tryUpdate(provider.label, () => updateRuleProvider(provider));
+        final info = provider.isRemote ? await provider.fileInfo : null;
+        if (!canUpdate()) return;
+        if (provider.isRemote && isDue(info?.lastModified)) {
+          await _tryUpdate(
+            provider.label,
+            () => updateRuleProvider(provider, isCurrent: canUpdate),
+            isCurrent: canUpdate,
+          );
         }
       }
+    } on UpdateCancelledException {
+      return;
     } finally {
       _autoUpdating = false;
     }
   }
 
-  Future<void> _tryUpdate(String label, Future<void> Function() update) async {
+  Future<void> _tryUpdate(
+    String label,
+    Future<void> Function() update, {
+    required bool Function() isCurrent,
+  }) async {
     try {
       await update();
     } catch (e) {
+      if (e is UpdateCancelledException || !isCurrent()) return;
       commonPrint.log(
         'auto update $label: ${compactError(e)}',
         logLevel: LogLevel.warning,

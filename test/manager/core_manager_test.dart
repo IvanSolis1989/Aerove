@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:fl_clash/core/core.dart';
@@ -72,10 +73,22 @@ class _ApplyRecordingSetupAction extends SetupAction {
   }
 }
 
+class _GroupRecordingProxiesAction extends ProxiesAction {
+  int groupReads = 0;
+  bool succeed = true;
+
+  @override
+  Future<bool> updateGroups() async {
+    groupReads++;
+    return succeed;
+  }
+}
+
 _MockCoreHandlerInterface _coreInterface() {
   final coreInterface = _MockCoreHandlerInterface();
   when(() => coreInterface.startLog()).thenAnswer((_) {});
   when(() => coreInterface.stopLog()).thenAnswer((_) {});
+  when(() => coreInterface.setUiTelemetryActive(any())).thenAnswer((_) async {});
   return coreInterface;
 }
 
@@ -257,6 +270,224 @@ void main() {
 
     verify(() => coreInterface.stopLog()).called(1);
 
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('a pending enable converges to hidden without restarting logs', (
+    tester,
+  ) async {
+    final coreInterface = _coreInterface();
+    final enable = Completer<void>();
+    when(() => coreInterface.setUiTelemetryActive(true)).thenAnswer(
+      (_) => enable.future,
+    );
+    final container = await _pumpCoreManager(tester, coreInterface);
+    container
+        .read(appSettingProvider.notifier)
+        .update((state) => state.copyWith(openLogs: true));
+    container.read(coreStatusProvider.notifier).value = CoreStatus.connected;
+    await tester.pump();
+    container.read(appVisibleProvider.notifier).value = false;
+    await tester.pump();
+    clearInteractions(coreInterface);
+    enable.complete();
+    await tester.pump();
+
+    verify(() => coreInterface.setUiTelemetryActive(false)).called(1);
+    verifyNever(() => coreInterface.startLog());
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('dispose closes telemetry after an outstanding enable settles', (
+    tester,
+  ) async {
+    final coreInterface = _coreInterface();
+    final enabled = Completer<void>();
+    when(() => coreInterface.setUiTelemetryActive(true)).thenAnswer(
+      (_) => enabled.future,
+    );
+    final container = await _pumpCoreManager(tester, coreInterface);
+    container.read(coreStatusProvider.notifier).value = CoreStatus.connected;
+    await tester.pump();
+    clearInteractions(coreInterface);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    verify(() => coreInterface.stopLog()).called(1);
+    verifyNever(() => coreInterface.setUiTelemetryActive(false));
+    enabled.complete();
+    await tester.pump();
+
+    verify(() => coreInterface.setUiTelemetryActive(false)).called(1);
+    verify(() => coreInterface.stopLog()).called(1);
+    verifyNever(() => coreInterface.startLog());
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a failed resume refresh is retried on the next connection', (
+    tester,
+  ) async {
+    final action = _GroupRecordingProxiesAction()..succeed = false;
+    final coreInterface = _coreInterface();
+    var providerReads = 0;
+    when(() => coreInterface.getExternalProvider('remote')).thenAnswer((_) async {
+      if (++providerReads == 1) throw StateError('temporarily unavailable');
+      return null;
+    });
+    final container = await _pumpCoreManager(
+      tester,
+      coreInterface,
+      overrides: [proxiesActionProvider.overrideWith(() => action)],
+    );
+    container.read(coreStatusProvider.notifier).value = CoreStatus.connected;
+    await tester.pump();
+    container.read(appVisibleProvider.notifier).value = false;
+    coreEventManager.sendEvent(
+      const CoreEvent(type: CoreEventType.loaded, data: 'remote'),
+    );
+    await tester.pump();
+    container.read(appVisibleProvider.notifier).value = true;
+    await tester.pump();
+    expect(providerReads, 1);
+    expect(action.groupReads, 1);
+    await tester.pump(const Duration(seconds: 30));
+    expect(providerReads, 1);
+    expect(action.groupReads, 1);
+
+    action.succeed = true;
+    container.read(coreStatusProvider.notifier).value = CoreStatus.disconnected;
+    container.read(coreStatusProvider.notifier).value = CoreStatus.connected;
+    await tester.pump();
+    expect(providerReads, 2);
+    expect(action.groupReads, 2);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('a loaded read spanning hide and resume is refreshed again', (
+    tester,
+  ) async {
+    final action = _GroupRecordingProxiesAction();
+    final coreInterface = _coreInterface();
+    final first = Completer<ExternalProvider?>();
+    var reads = 0;
+    when(() => coreInterface.getExternalProvider('remote')).thenAnswer((_) {
+      return ++reads == 1 ? first.future : Future<ExternalProvider?>.value();
+    });
+    final container = await _pumpCoreManager(
+      tester,
+      coreInterface,
+      overrides: [proxiesActionProvider.overrideWith(() => action)],
+    );
+    container.read(coreStatusProvider.notifier).value = CoreStatus.connected;
+    await tester.pump();
+    coreEventManager.sendEvent(
+      const CoreEvent(type: CoreEventType.loaded, data: 'remote'),
+    );
+    await tester.pump();
+    expect(reads, 1);
+    container.read(appVisibleProvider.notifier).value = false;
+    container.read(appVisibleProvider.notifier).value = true;
+    await tester.pump();
+    first.complete(null);
+    await tester.pump();
+
+    expect(reads, 2);
+    expect(action.groupReads, 1);
+    await tester.pump(const Duration(seconds: 30));
+    expect(reads, 2);
+    expect(action.groupReads, 1);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('hidden UI events leave histories and delay results untouched', (
+    tester,
+  ) async {
+    final coreInterface = _coreInterface();
+    final container = await _pumpCoreManager(tester, coreInterface);
+    container.read(appVisibleProvider.notifier).value = false;
+    coreEventManager.sendEvent(
+      const CoreEvent(
+        type: CoreEventType.log,
+        data: {'LogLevel': 'info', 'Payload': 'hidden'},
+      ),
+    );
+    coreEventManager.sendEvent(
+      const CoreEvent(
+        type: CoreEventType.dns,
+        data: {
+          'domain': 'hidden.test',
+          'type': 'A',
+          'answers': ['1.1.1.1'],
+          'delay': 3,
+          'time': '2026-09-18T04:30:01Z',
+        },
+      ),
+    );
+    coreEventManager.sendEvent(
+      const CoreEvent(
+        type: CoreEventType.request,
+        data: {
+          'id': 'hidden-request',
+          'start': '2026-09-18T04:30:01Z',
+          'metadata': <String, Object?>{},
+          'chains': ['DIRECT'],
+          'rule': 'MATCH',
+          'rulePayload': '',
+        },
+      ),
+    );
+    coreEventManager.sendEvent(
+      const CoreEvent(
+        type: CoreEventType.requestTraffic,
+        data: [{'id': 'hidden-request', 'upload': 40, 'download': 80}],
+      ),
+    );
+    coreEventManager.sendEvent(
+      const CoreEvent(
+        type: CoreEventType.delay,
+        data: {'name': 'HK', 'url': 'https://delay.test', 'value': 9},
+      ),
+    );
+    await tester.pump(const Duration(seconds: 6));
+
+    expect(container.read(logsProvider).list, isEmpty);
+    expect(container.read(dnsQueriesProvider).list, isEmpty);
+    expect(container.read(dnsQueryCountProvider), 0);
+    expect(container.read(requestsProvider).list, isEmpty);
+    expect(container.read(requestCountProvider), 0);
+    expect(container.read(delayDataSourceProvider), isEmpty);
+    verifyNever(coreInterface.getProxies);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('hiding cancels pending delay refresh and resumes groups once', (
+    tester,
+  ) async {
+    final action = _GroupRecordingProxiesAction();
+    final coreInterface = _coreInterface();
+    final container = await _pumpCoreManager(
+      tester,
+      coreInterface,
+      overrides: [proxiesActionProvider.overrideWith(() => action)],
+    );
+    container.read(coreStatusProvider.notifier).value = CoreStatus.connected;
+    await tester.pump();
+    coreEventManager.sendEvent(
+      const CoreEvent(
+        type: CoreEventType.delay,
+        data: {'name': 'HK', 'url': 'https://delay.test', 'value': 9},
+      ),
+    );
+    await tester.pump();
+    container.read(appVisibleProvider.notifier).value = false;
+    await tester.pump(const Duration(seconds: 6));
+    expect(action.groupReads, 0);
+    expect(container.read(delayDataSourceProvider), isEmpty);
+
+    container.read(appVisibleProvider.notifier).value = true;
+    await tester.pump();
+    expect(action.groupReads, 1);
+    await tester.pump(const Duration(seconds: 6));
+    expect(action.groupReads, 1);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 

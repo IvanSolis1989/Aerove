@@ -25,6 +25,33 @@ void main() {
   });
 
   group('Profile.saveFile', () {
+    test(
+      'cancellation after validation preserves the file and removes staging',
+      () async {
+        final profile = Profile.normal(label: 'cancelled');
+        final file = await profile.file;
+        await file.writeAsString('original');
+        var current = true;
+        String? staged;
+
+        await expectLater(
+          profile.saveFile(
+            Uint8List.fromList(utf8.encode('replacement')),
+            isCurrent: () => current,
+            validate: (path, _) async {
+              staged = path;
+              current = false;
+              return '';
+            },
+          ),
+          throwsA(isA<UpdateCancelledException>()),
+        );
+
+        expect(await file.readAsString(), 'original');
+        expect(await File(staged!).exists(), isFalse);
+      },
+    );
+
     // EditProfileView relies on this throwing rather than silently
     // succeeding, so a caller-level try/catch can surface the failure.
     test('rejects an invalid config without touching the saved file', () async {

@@ -95,6 +95,8 @@ mixin CoreInterface {
 
   FutureOr<void> stopLog();
 
+  Future<void> setUiTelemetryActive(bool active);
+
   Future<bool> crash();
 
   FutureOr<List<TrackerInfo>> getConnections();
@@ -531,6 +533,17 @@ abstract class CoreHandlerInterface with CoreInterface {
 
   @override
   FutureOr<void> stopLog() => _invokeUnobserved(CoreMethod.stopLog);
+
+  @override
+  Future<void> setUiTelemetryActive(bool active) async {
+    final applied = await _invokeMethod<bool>(
+      method: CoreMethod.setUiTelemetryActive,
+      arguments: active,
+    );
+    if (applied == null) {
+      throw StateError('Missing UI telemetry response');
+    }
+  }
 
   /// For calls whose callers never wait on them, so a Core that is gone or
   /// restarting cannot surface as an unhandled asynchronous error.

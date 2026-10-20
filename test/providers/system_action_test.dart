@@ -5,6 +5,7 @@ import 'package:fl_clash/common/app_ports.dart';
 import 'package:fl_clash/common/preferences.dart';
 import 'package:fl_clash/models/config.dart';
 import 'package:fl_clash/providers/action.dart';
+import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/providers/actions/system_exit.dart';
 import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/state.dart';
@@ -53,6 +54,17 @@ class _PersistenceSystemAction extends SystemAction {
   Future<void> persist() => savePreferences();
 }
 
+class _LocalIpSystemAction extends SystemAction {
+  int reads = 0;
+  Completer<String?>? pending;
+
+  @override
+  Future<String?> readLocalIpAddress() async {
+    reads++;
+    return pending == null ? '192.0.2.$reads' : await pending!.future;
+  }
+}
+
 class _GeometryWindowPort implements WindowPort {
   final WindowProps geometry;
   final Error? error;
@@ -93,6 +105,51 @@ class _GeometryWindowPort implements WindowPort {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  testWidgets('background IP events coalesce into one foreground read', (
+    tester,
+  ) async {
+    final container = ProviderContainer(
+      overrides: [systemActionProvider.overrideWith(_LocalIpSystemAction.new)],
+    );
+    addTearDown(container.dispose);
+    final action = container.read(systemActionProvider.notifier)
+        as _LocalIpSystemAction;
+    container.read(appVisibleProvider.notifier).value = false;
+    await action.updateLocalIp();
+    await action.updateLocalIp();
+    await tester.pump(const Duration(minutes: 30));
+    expect(action.reads, 0);
+    container.read(appVisibleProvider.notifier).value = true;
+    await tester.pump(const Duration(seconds: 1));
+    expect(action.reads, 1);
+    expect(container.read(localIpProvider), '192.0.2.1');
+  });
+
+  testWidgets('IP result crossing a background epoch is discarded', (
+    tester,
+  ) async {
+    final container = ProviderContainer(
+      overrides: [systemActionProvider.overrideWith(_LocalIpSystemAction.new)],
+    );
+    addTearDown(container.dispose);
+    final action = container.read(systemActionProvider.notifier)
+        as _LocalIpSystemAction;
+    final pending = action.pending = Completer<String?>();
+    final update = action.updateLocalIp();
+    await tester.pump(const Duration(seconds: 1));
+    expect(action.reads, 1);
+    container.read(appVisibleProvider.notifier).value = false;
+    pending.complete('stale');
+    await tester.pump();
+    await update;
+    expect(container.read(localIpProvider), isNull);
+    action.pending = null;
+    container.read(appVisibleProvider.notifier).value = true;
+    await tester.pump(const Duration(seconds: 1));
+    expect(action.reads, 2);
+    expect(container.read(localIpProvider), '192.0.2.2');
+  });
 
   test('coalesces repeated exit requests and runs cleanup once', () async {
     final closeCoreCompleter = Completer<void>();

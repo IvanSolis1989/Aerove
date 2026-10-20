@@ -128,6 +128,15 @@ class CoreLib extends CoreHandlerInterface {
   }
 
   @override
+  Future<void> setUiTelemetryActive(bool active) async {
+    final service = _service;
+    if (service == null) {
+      throw StateError('Android service is unavailable');
+    }
+    await service.setUiTelemetryActive(active);
+  }
+
+  @override
   Future<T?> invokeMethod<T>({
     required CoreMethod method,
     Object? arguments,

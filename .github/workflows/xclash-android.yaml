@@ -55,6 +55,10 @@ jobs:
           cache: true
       - name: Install dependencies
         run: flutter pub get
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+          cache-dependency-path: core/go.sum
       - name: Test repository commit hooks
         run: bash tool/hooks/test.sh
       - name: Test upstream version selection and release notes
@@ -67,11 +71,12 @@ jobs:
           dart run intl_utils:generate
           dart run build_runner build --delete-conflicting-outputs
           dart format lib test
+          gofmt -w core/*.go
           cp "$RUNNER_TEMP/xclash-pubspec.yaml" pubspec.yaml
-          git add -- lib test
-          git diff --cached --binary -- lib test > "$RUNNER_TEMP/xclash-generated.patch"
+          git add -- lib test core/*.go pubspec.lock
+          git diff --cached --binary -- lib test core/*.go pubspec.lock > "$RUNNER_TEMP/xclash-generated.patch"
           git write-tree > "$RUNNER_TEMP/xclash-verified-tree.txt"
-          git restore --staged -- lib test
+          git restore --staged -- lib test core/*.go pubspec.lock
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -82,6 +87,13 @@ jobs:
       - name: Require committed generated sources
         if: ${{ !inputs.prepare_sources }}
         run: test "$(cat "$RUNNER_TEMP/xclash-verified-tree.txt")" = "$(git rev-parse 'HEAD^{tree}')"
+      - name: Verify Core background telemetry
+        working-directory: core
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          go test . -run UiTelemetry -count=2
+          go test .
       - name: Analyze
         id: analyze
         run: flutter analyze --no-fatal-infos
@@ -159,7 +171,7 @@ jobs:
           cp pubspec.yaml "$RUNNER_TEMP/ink-pubspec.yaml"
           trap 'cp "$RUNNER_TEMP/ink-pubspec.yaml" pubspec.yaml' EXIT
           sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
-          flutter test --enable-impeller --reporter expanded test/widgets/glass_foreground_test.dart test/widgets/glass_ink_cache_test.dart test/widgets/glass_ink_quality_test.dart test/widgets/glass_visibility_test.dart test/widgets/glass_body_blur_test.dart test/widgets/target_icon_test.dart test/widgets/selection_mark_test.dart test/widgets/loading_ink_test.dart test/widgets/core_status_button_test.dart test/lint/sheet_scroll_controller_test.dart test/widgets/appbar_actions_test.dart test/widgets/switch_glass_test.dart test/widgets/slider_glass_test.dart test/widgets/segmented_control_glass_test.dart test/widgets/palette_glass_test.dart test/widgets/header_button_glass_test.dart test/manager/status_message_glass_test.dart test/common/changelog_test.dart test/common/request_test.dart test/widgets/update_dialog_test.dart test/l10n/app_localizations_test.dart test/tool/packaging_config_test.dart test/common/protocol_test.dart test/views/dashboard/network_takeover_test.dart test/models/config_test.dart test/providers/config_test.dart test/common/xclash_defaults_test.dart test/manager/android_manager_test.dart test/views/network_config_test.dart test/models/dns_override_test.dart test/common/cidr_test.dart test/common/task_dns_override_test.dart test/common/task_tun_override_test.dart test/providers/state_derived_test.dart test/providers/custom_import_test.dart test/views/dns_view_test.dart test/views/disclaimer_view_test.dart test/common/dialog_test.dart test/widgets/aurora_app_test.dart test/views/theme_test.dart test/views/aurora_settings_test.dart test/providers/action_test.dart test/widgets/aurora_activity_test.dart test/widgets/aurora_lifecycle_test.dart
+          flutter test --enable-impeller --reporter expanded test/widgets/glass_foreground_test.dart test/widgets/glass_ink_cache_test.dart test/widgets/glass_ink_quality_test.dart test/widgets/glass_visibility_test.dart test/widgets/glass_body_blur_test.dart test/widgets/target_icon_test.dart test/widgets/selection_mark_test.dart test/widgets/loading_ink_test.dart test/widgets/core_status_button_test.dart test/lint/sheet_scroll_controller_test.dart test/widgets/appbar_actions_test.dart test/widgets/switch_glass_test.dart test/widgets/slider_glass_test.dart test/widgets/segmented_control_glass_test.dart test/widgets/palette_glass_test.dart test/widgets/header_button_glass_test.dart test/manager/status_message_glass_test.dart test/common/changelog_test.dart test/common/request_test.dart test/widgets/update_dialog_test.dart test/l10n/app_localizations_test.dart test/tool/packaging_config_test.dart test/common/protocol_test.dart test/views/dashboard/network_takeover_test.dart test/models/config_test.dart test/providers/config_test.dart test/common/xclash_defaults_test.dart test/manager/android_manager_test.dart test/views/network_config_test.dart test/models/dns_override_test.dart test/common/cidr_test.dart test/common/task_dns_override_test.dart test/common/task_tun_override_test.dart test/providers/state_derived_test.dart test/providers/custom_import_test.dart test/views/dns_view_test.dart test/views/disclaimer_view_test.dart test/common/dialog_test.dart test/widgets/aurora_app_test.dart test/views/theme_test.dart test/views/aurora_settings_test.dart test/providers/action_test.dart test/widgets/aurora_activity_test.dart test/widgets/aurora_lifecycle_test.dart test/manager/core_manager_test.dart test/providers/proxies_action_test.dart test/providers/common_action_test.dart test/providers/ip_quality_test.dart test/common/ip_quality_test.dart test/application_test.dart test/providers/profiles_action_test.dart test/providers/resources_action_test.dart test/providers/system_action_test.dart test/providers/icon_sets_action_test.dart test/providers/clash_providers_action_test.dart test/models/profile_save_test.dart test/providers/updating_action_test.dart test/core/protocol_contract_test.dart
       - name: Verify feather blend pixels
         id: feather
         if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
@@ -351,9 +363,9 @@ jobs:
         run: |
           patch="$RUNNER_TEMP/xclash-generated/xclash-generated.patch"
           if test -s "$patch"; then git apply "$patch"; fi
-          git add -- lib test
+          git add -- lib test core/*.go pubspec.lock
           test "$(git write-tree)" = "$(cat "$RUNNER_TEMP/xclash-generated/xclash-verified-tree.txt")"
-          git restore --staged -- lib test
+          git restore --staged -- lib test core/*.go pubspec.lock
       - uses: subosito/flutter-action@v2
         with:
           channel: stable

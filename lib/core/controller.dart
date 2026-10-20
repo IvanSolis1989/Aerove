@@ -211,6 +211,10 @@ class CoreController {
     return _interface.watchRoute(watch);
   }
 
+  Future<void> setUiTelemetryActive(bool active) {
+    return _interface.setUiTelemetryActive(active);
+  }
+
   Future<List<TrackerInfo>> getConnections() async {
     return _interface.getConnections();
   }

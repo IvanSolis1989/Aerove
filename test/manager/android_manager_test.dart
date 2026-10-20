@@ -4,6 +4,7 @@ import 'package:fl_clash/manager/android_manager.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/plugins/service.dart';
 import 'package:fl_clash/providers/action.dart';
+import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/providers/database.dart';
 import 'package:fl_clash/providers/state.dart';
@@ -27,6 +28,16 @@ class _RecordingSetupAction extends SetupAction {
   }
 }
 
+class _PackagesSystemAction extends SystemAction {
+  static int reads = 0;
+
+  @override
+  Future<List<Package>> getPackages() async {
+    reads++;
+    return ref.read(packagesProvider);
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -37,10 +48,12 @@ void main() {
     await mockPreferences();
     store = await SharedPreferences.getInstance();
     _RecordingSetupAction.requests.clear();
+    _PackagesSystemAction.reads = 0;
     container = ProviderContainer(
       overrides: [
         profilesProvider.overrideWith(TestProfiles.new),
         setupActionProvider.overrideWith(_RecordingSetupAction.new),
+        systemActionProvider.overrideWith(_PackagesSystemAction.new),
         // Bypassing private addresses computes the routes in Isolate.run, which
         // the fake clock never lets finish.
         networkSettingProvider.overrideWithBuild(
@@ -73,6 +86,35 @@ void main() {
     expect(tester.takeException(), null);
 
     await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('background package events reload once on resume', (
+    tester,
+  ) async {
+    await pumpAndroidManager(tester);
+    container.read(packagesProvider.notifier).value = const [
+      Package(
+        packageName: 'example.app',
+        label: 'Example',
+        system: false,
+        internet: true,
+        lastUpdateTime: 0,
+      ),
+    ];
+    final dynamic listener = tester.state(find.byType(AndroidManager));
+    listener.onPackagesChanged();
+    container.read(appVisibleProvider.notifier).value = false;
+    listener.onPackagesChanged();
+    listener.onPackagesChanged();
+    await tester.pump(const Duration(minutes: 30));
+    expect(_PackagesSystemAction.reads, 0);
+    container.read(appVisibleProvider.notifier).value = true;
+    await tester.pump(const Duration(seconds: 3));
+    expect(_PackagesSystemAction.reads, 1);
+    listener.onPackagesChanged();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 3));
+    expect(_PackagesSystemAction.reads, 1);
   });
 
   testWidgets('a stop the service reports turns the running state off', (

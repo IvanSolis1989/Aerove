@@ -61,13 +61,19 @@ class _Lookup {
   Timer? _timer;
 
   Future<IpQuality> run() {
+    unawaited(
+      cancelToken.whenCancel.then((error) {
+        _timer?.cancel();
+        if (!_completer.isCompleted) _completer.completeError(error);
+      }),
+    );
     _launch();
     return _completer.future;
   }
 
   void _launch() {
     _timer?.cancel();
-    if (_completer.isCompleted) {
+    if (_completer.isCompleted || cancelToken.isCancelled) {
       return;
     }
     if (_wave == _waves.length) {

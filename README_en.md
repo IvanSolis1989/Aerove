@@ -42,6 +42,7 @@ Choose between two treatments of light: **Standard** gives page-body surfaces a 
 - Glass panels share background processing for a consistent view of the same wallpaper, and covered areas pause unnecessary effects. Glass and text fully outside the screen or fully clipped by the viewport skip extra sampling until visible again, reducing repeated work for content you cannot see.
 - Wallpaper updates adapt to interaction and app visibility, pausing in the background. Returning to the app retains the current image before motion resumes.
 - Only a few likely icons load in advance, and groups share node information. Rebuildable graphics caches can be reclaimed and restored when the app returns to the foreground. These changes reduce repeated work without promising a particular memory reduction, frame rate, or battery saving.
+- On Android, backgrounding pauses ongoing UI telemetry, logs, notification speed polling, and application auto-updates. The foreground refreshes current state while proxy forwarding and necessary system services remain active. See the [background-work review (Chinese)](docs/BACKGROUND_Aerove.md) for boundaries and validation scope.
 
 ### A bundled script for easier setup
 

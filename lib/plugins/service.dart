@@ -129,6 +129,10 @@ class Service {
     return await methodChannel.invokeMethod<String>('init') ?? '';
   }
 
+  Future<void> setUiTelemetryActive(bool active) async {
+    await methodChannel.invokeMethod<void>('setUiTelemetryActive', active);
+  }
+
   Future<String> syncState(SharedState state) async {
     return await methodChannel.invokeMethod<String>(
           'syncState',

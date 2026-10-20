@@ -50,6 +50,7 @@ const (
 	sideLoadExternalProviderMethod CoreMethod = "sideLoadExternalProvider"
 	startLogMethod                 CoreMethod = "startLog"
 	stopLogMethod                  CoreMethod = "stopLog"
+	setUiTelemetryActiveMethod     CoreMethod = "setUiTelemetryActive"
 	startListenerMethod            CoreMethod = "startListener"
 	stopListenerMethod             CoreMethod = "stopListener"
 	updateDnsMethod                CoreMethod = "updateDns"
@@ -81,6 +82,7 @@ const (
 )
 
 type Message struct {
+	telemetryEpoch uint64
 	Type MessageType `json:"type"`
 	Data any         `json:"data"`
 }

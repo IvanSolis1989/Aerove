@@ -506,6 +506,7 @@ func currentLogPump() *logPump {
 }
 
 func TestHandleShutdownTearsDownBackgroundWork(t *testing.T) {
+	activateTestTelemetry(t)
 	withCurrentConfig(t, &config.Config{General: &config.General{}, Controller: &config.Controller{}})
 	isInit.Store(true)
 

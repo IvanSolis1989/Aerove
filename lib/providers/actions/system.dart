@@ -5,9 +5,20 @@ class SystemAction extends _$SystemAction {
   CoreController get _core => ref.read(coreHandlerProvider);
 
   SystemExitCoordinator? _exitCoordinator;
+  bool _localIpStale = false;
+  bool _localIpUpdating = false;
+  int _localIpGeneration = 0;
 
   @override
-  void build() {}
+  void build() {
+    ref.listen(appVisibleProvider, (_, visible) {
+      if (!visible) {
+        _localIpGeneration++;
+      } else if (_localIpStale) {
+        unawaited(_flushLocalIp());
+      }
+    });
+  }
 
   Future<List<Package>> getPackages() async {
     ref.read(packagesProvider.notifier).value = await app?.getPackages() ?? [];
@@ -159,8 +170,44 @@ class SystemAction extends _$SystemAction {
   }
 
   Future<void> updateLocalIp() async {
-    ref.read(localIpProvider.notifier).value = null;
-    await Future.delayed(commonDuration);
-    ref.read(localIpProvider.notifier).value = await getLocalIpAddress();
+    _localIpStale = true;
+    await _flushLocalIp();
+  }
+
+  @protected
+  Future<String?> readLocalIpAddress() => getLocalIpAddress();
+
+  Future<void> _flushLocalIp() async {
+    if (_localIpUpdating || !ref.mounted || !ref.read(appVisibleProvider)) {
+      return;
+    }
+    _localIpUpdating = true;
+    try {
+      while (_localIpStale && ref.mounted && ref.read(appVisibleProvider)) {
+        _localIpStale = false;
+        final generation = _localIpGeneration;
+        bool isCurrent() =>
+            ref.mounted &&
+            ref.read(appVisibleProvider) &&
+            generation == _localIpGeneration;
+        ref.read(localIpProvider.notifier).value = null;
+        await Future<void>.delayed(commonDuration);
+        if (!isCurrent()) {
+          _localIpStale = true;
+          break;
+        }
+        final address = await readLocalIpAddress();
+        if (!isCurrent()) {
+          _localIpStale = true;
+          break;
+        }
+        ref.read(localIpProvider.notifier).value = address;
+      }
+    } finally {
+      _localIpUpdating = false;
+      if (_localIpStale && ref.mounted && ref.read(appVisibleProvider)) {
+        unawaited(_flushLocalIp());
+      }
+    }
   }
 }

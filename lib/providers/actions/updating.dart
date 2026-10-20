@@ -12,13 +12,22 @@ class UpdatingAction extends _$UpdatingAction {
   void build() {
     ref.onDispose(_cancelSweep);
     ref.listen(updatingKeysProvider, (_, next) {
-      _elapsed.removeWhere((key, _) => !next.contains(key));
-      if (next.isEmpty) {
-        _cancelSweep();
-        return;
-      }
-      _sweepTimer ??= Timer.periodic(updatingSweepInterval, (_) => _sweep());
+      _syncSweep(next);
     });
+    _syncSweep(ref.read(updatingKeysProvider));
+  }
+
+  void _syncSweep(Set<String> keys) {
+    _elapsed.removeWhere((key, _) => !keys.contains(key));
+    final notifier = ref.read(updatingKeysProvider.notifier);
+    final hasCoreUpdate = keys.any(
+      (key) => notifier.scopeOf(key) == UpdatingScope.core,
+    );
+    if (!hasCoreUpdate) {
+      _cancelSweep();
+      return;
+    }
+    _sweepTimer ??= Timer.periodic(updatingSweepInterval, (_) => _sweep());
   }
 
   void _cancelSweep() {

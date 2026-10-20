@@ -92,6 +92,29 @@ class _Adapter implements HttpClientAdapter {
 }
 
 void main() {
+  testWidgets('cancelling a lookup settles it without launching later waves', (
+    tester,
+  ) async {
+    final adapter = _Adapter({
+      for (final host in _hosts.values)
+        host: _ok({'ip': _ip, 'type': 'isp'}, const Duration(seconds: 20)),
+    });
+    final dio = Dio()..httpClientAdapter = adapter;
+    addTearDown(dio.close);
+    final token = CancelToken();
+    final result = lookupIpQuality(dio, _ip, cancelToken: token);
+    final cancelled = expectLater(result, throwsA(isA<DioException>()));
+    await tester.pump();
+    expect(adapter.requested, hasLength(3));
+
+    token.cancel('hidden');
+    await tester.pump();
+    await cancelled;
+    await tester.pump(const Duration(seconds: 4));
+    expect(adapter.requested, hasLength(3));
+    expect(adapter.cancelled, hasLength(3));
+  });
+
   final samples = <IpQualitySource, (Object, IpQuality)>{
     IpQualitySource.identMe: (
       {

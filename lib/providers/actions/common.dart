@@ -5,9 +5,18 @@ class CommonAction extends _$CommonAction {
   CoreController get _core => ref.read(coreHandlerProvider);
   bool _isUpdatingTraffic = false;
   bool _isHandlingUpdate = false;
+  int _trafficRevision = 0;
 
   @override
-  void build() {}
+  void build() {
+    ref.listen(appVisibleProvider, (_, _) => _trafficRevision++);
+  }
+
+  bool get _trafficVisible =>
+      ref.read(appVisibleProvider) ||
+      (system.isMacOS &&
+          !ref.read(safeModeProvider) &&
+          ref.read(appSettingProvider).showTrayTitle);
 
   void toggleRunning() {
     final running = !ref.read(isStartProvider);
@@ -39,10 +48,11 @@ class CommonAction extends _$CommonAction {
   }
 
   Future<void> updateTraffic() async {
-    if (_isUpdatingTraffic) {
+    if (_isUpdatingTraffic || !_trafficVisible) {
       return;
     }
     _isUpdatingTraffic = true;
+    final revision = _trafficRevision;
     try {
       final onlyStatisticsProxy = ref.read(
         appSettingProvider.select((state) => state.onlyStatisticsProxy),
@@ -51,6 +61,9 @@ class CommonAction extends _$CommonAction {
         _readTraffic(() => _core.getTraffic(onlyStatisticsProxy)),
         _readTraffic(() => _core.getTotalTraffic(onlyStatisticsProxy)),
       ]);
+      if (!ref.mounted || !_trafficVisible || revision != _trafficRevision) {
+        return;
+      }
       if (traffic != null) {
         ref.read(trafficsProvider.notifier).addTraffic(traffic);
       }

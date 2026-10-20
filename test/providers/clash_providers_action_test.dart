@@ -32,6 +32,16 @@ class _RecordingSetupAction extends SetupAction {
   void applyProfileDebounce({bool silence = false, bool force = false}) {
     forced.add(force);
   }
+
+  @override
+  Future<bool> applyProfile({
+    bool silence = false,
+    bool force = false,
+    Future<void> Function()? preloadInvoke,
+  }) async {
+    forced.add(force);
+    return true;
+  }
 }
 
 /// Only a change the current custom profile can see is worth a reapply.
@@ -474,6 +484,63 @@ void main() {
 
     expect(compiles, hasLength(1));
     expect(setup.forced, [true, false]);
+  });
+
+  test('cancelled automatic rule downloads discard staging and clear updating',
+  () async {
+    const remote = ClashProvider(
+      id: 45,
+      label: 'Automatic',
+      url: 'https://example.com/automatic.list',
+    );
+    compileGate = Completer<void>();
+    var current = true;
+    final updating = container
+        .read(resourcesActionProvider.notifier)
+        .updateRuleProvider(remote, isCurrent: () => current);
+    final rejected = expectLater(
+      updating,
+      throwsA(isA<UpdateCancelledException>()),
+    );
+    await pumpEventQueue();
+    current = false;
+    compileGate!.complete();
+    await rejected;
+    expect(File(await remote.path).existsSync(), isFalse);
+    expect(File(await remote.compiledPath).existsSync(), isFalse);
+    expect(await testDatabase.clashProvidersDao.query().get(), isEmpty);
+    expect(container.read(updatingKeysProvider), isEmpty);
+    expect(setup.forced, isEmpty);
+    final files = Directory(await appPath.providerCacheRootPath)
+        .listSync(recursive: true)
+        .whereType<File>();
+    expect(files, isEmpty);
+  });
+
+  test('committed rules deferred by hiding apply once on the next foreground',
+  () async {
+    const remote = ClashProvider(
+      id: 46,
+      label: 'Automatic',
+      url: 'https://example.com/automatic.list',
+    );
+    await ruleSetIn(profileId, remote.label, id: 31);
+    final target = File(await remote.path);
+    await expectLater(
+      action().putProvider(
+        remote,
+        refresh: true,
+        isCurrent: () => !target.existsSync(),
+      ),
+      throwsA(isA<UpdateCancelledException>()),
+    );
+    expect(await target.readAsString(), 'downloaded');
+    await pumpEventQueue();
+    expect((await stored(remote.id)).behavior, RuleProviderBehavior.domain);
+    expect(setup.forced, isEmpty);
+    await action().resumeAutomaticUpdates(isCurrent: () => true);
+    await action().resumeAutomaticUpdates(isCurrent: () => true);
+    expect(setup.forced, [true]);
   });
 
   group('a set changed while it downloads', () {

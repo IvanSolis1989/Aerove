@@ -21,7 +21,7 @@ class _PendingScriptsAction extends ScriptsAction {
   final pending = <Completer<void>>[];
 
   @override
-  Future<void> updateScript(Script script) async {
+  Future<void> updateScript(Script script, {bool Function()? isCurrent}) async {
     updated.add(script);
     final completion = Completer<void>();
     pending.add(completion);

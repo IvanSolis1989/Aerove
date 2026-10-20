@@ -528,6 +528,7 @@ func TestSetTestURLIgnoresAnEmptyValue(t *testing.T) {
 }
 
 func TestTestDelayRejectsAnUnknownProxyWithoutWaitingForASlot(t *testing.T) {
+	activateTestTelemetry(t)
 	for i := 0; i < delayTestConcurrency; i++ {
 		delayTestSlots <- struct{}{}
 	}
@@ -850,6 +851,7 @@ func TestTimeoutFromMillisFallsBackWhenUnset(t *testing.T) {
 }
 
 func TestTestDelayQueuesWhenTheTimeoutIsUnset(t *testing.T) {
+	activateTestTelemetry(t)
 	for i := 0; i < delayTestConcurrency; i++ {
 		delayTestSlots <- struct{}{}
 	}
@@ -934,6 +936,7 @@ func blackHoleServer(t *testing.T) net.Addr {
 // which is what a bulk test of a large subscription does to everything at the
 // back of the queue.
 func TestTestDelayDoesNotSpendTheProbeBudgetQueueing(t *testing.T) {
+	activateTestTelemetry(t)
 	const (
 		timeout  = 200 * time.Millisecond
 		queueFor = 150 * time.Millisecond
@@ -992,6 +995,7 @@ func TestTestDelayDoesNotSpendTheProbeBudgetQueueing(t *testing.T) {
 }
 
 func TestTestDelayStopsQueueingOnceTheTimeoutIsSpent(t *testing.T) {
+	activateTestTelemetry(t)
 	for i := 0; i < delayTestConcurrency; i++ {
 		delayTestSlots <- struct{}{}
 	}

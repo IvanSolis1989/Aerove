@@ -167,9 +167,10 @@ void main() {
           _group('Stale', const []),
         ];
 
-        await actionOf(container).updateGroups();
+        final refreshed = await actionOf(container).updateGroups();
 
         expect(container.read(groupsProvider), isEmpty);
+        expect(refreshed, isFalse);
         verify(core.getProxies).called(3);
       },
     );
@@ -406,6 +407,46 @@ void main() {
   });
 
   group('delayTest', () {
+    test('hiding cancels queued tests and ignores in-flight results', () async {
+      final answers = <String, Completer<Delay?>>{};
+      when(() => core.asyncTestDelay(_testUrl, any())).thenAnswer((call) {
+        final name = call.positionalArguments[1] as String;
+        return (answers[name] = Completer<Delay?>()).future;
+      });
+      final container = _delayContainer(buildContainer);
+      final proxies = List.generate(
+        maxConcurrentDelayTests + 8,
+        (index) => Proxy(name: 'HK-$index', type: 'ss'),
+      );
+      final before = container.read(sortNumProvider);
+      final run = actionOf(container).delayTest(proxies);
+      expect(answers, hasLength(maxConcurrentDelayTests));
+
+      container.read(appVisibleProvider.notifier).value = false;
+      expect(container.read(pendingDelayTestsProvider), isEmpty);
+      expect(container.read(sortNumProvider), before);
+      container.read(appVisibleProvider.notifier).value = true;
+      for (final entry in answers.entries) {
+        entry.value.complete(Delay(name: entry.key, url: _testUrl, value: 8));
+      }
+      await run;
+
+      expect(answers, hasLength(maxConcurrentDelayTests));
+      expect(container.read(delayDataSourceProvider), isEmpty);
+      expect(container.read(pendingDelayTestsProvider), isEmpty);
+      expect(container.read(sortNumProvider), before);
+    });
+
+    test('does not start a UI delay test while hidden', () async {
+      final container = _delayContainer(buildContainer);
+      container.read(appVisibleProvider.notifier).value = false;
+
+      await actionOf(container).delayTest(const [_proxy]);
+
+      verifyNever(() => core.asyncTestDelay(any(), any()));
+      expect(container.read(pendingDelayTestsProvider), isEmpty);
+    });
+
     test('measures every proxy and bumps the sort counter', () async {
       when(() => core.asyncTestDelay(_testUrl, any())).thenAnswer(
         (invocation) async => Delay(

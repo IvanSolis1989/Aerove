@@ -22,11 +22,7 @@ import com.follow.clash.service.ServiceConfig
 import com.follow.clash.service.models.NotificationParams
 import com.follow.clash.service.models.getSpeedTrafficText
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
@@ -38,13 +34,12 @@ private data class ExtendedNotificationParams(
     val contentText: String,
 )
 
-private val NotificationParams.extended: ExtendedNotificationParams
-    get() = ExtendedNotificationParams(
-        title,
-        stopText,
-        showStopAction,
-        Core.getSpeedTrafficText(onlyStatisticsProxy),
-    )
+private fun NotificationParams.extended(showSpeed: Boolean) = ExtendedNotificationParams(
+    title,
+    stopText,
+    showStopAction,
+    if (showSpeed) Core.getSpeedTrafficText(onlyStatisticsProxy) else "",
+)
 
 internal class NotificationModule(
     private val service: Service,
@@ -52,13 +47,13 @@ internal class NotificationModule(
 ) : ServiceModule {
     override fun start() {
         service.ensureNotificationChannel()
-        update(ServiceConfig.notificationParams.value.extended)
+        update(ServiceConfig.notificationParams.value.extended(false))
         scope.launch {
             // Some ROMs, vivo's among them, drop updates posted behind the
             // keyguard, so unlocking restarts the loop to post once more.
             // SystemUI, an app, sends USER_PRESENT, which a receiver that is
             // not exported never gets; all three actions are protected.
-            service.receiveBroadcastFlow(exported = true) {
+            val screenOn = service.receiveBroadcastFlow(exported = true) {
                 addAction(Intent.ACTION_SCREEN_ON)
                 addAction(Intent.ACTION_SCREEN_OFF)
                 addAction(Intent.ACTION_USER_PRESENT)
@@ -66,21 +61,14 @@ internal class NotificationModule(
                 intent.action != Intent.ACTION_SCREEN_OFF
             }.onStart {
                 emit(isScreenOn())
-            }.collectLatest { screenOn ->
-                if (!screenOn) return@collectLatest
-                combine(
-                    flow {
-                        while (true) {
-                            delay(1_000)
-                            emit(Unit)
-                        }
-                    },
-                    ServiceConfig.notificationParams,
-                ) { _, params ->
-                    params.extended
-                }.distinctUntilChanged()
-                    .collect(::update)
             }
+            notificationUpdates(
+                screenOn,
+                ServiceConfig.uiTelemetryActive,
+                ServiceConfig.notificationParams,
+            ).map { it.session to it.params.extended(it.showSpeed) }
+                .distinctUntilChanged()
+                .collect { (_, params) -> update(params) }
         }
     }
 

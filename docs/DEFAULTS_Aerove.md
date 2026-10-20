@@ -243,7 +243,7 @@ localhost
 | `geoXUrl.GEOIP` | `https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat` | 同上 | 保留 |
 | `geoXUrl.GEOSITE` | `https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat` | 同上 | 保留 |
 
-订阅自动更新独立于资源自动更新：URL订阅默认24小时，启动及应用每20分钟检查到期情况；本地文件/custom不远程下载。应用版本检查默认开，只提示，下载/安装沿用户确认入口。Core未运行或SSID暂停时应用请求可能直连，GitHub可达性并无无代理引导保证；不因此硬改未经来源验证的第三方镜像。
+订阅自动更新独立于资源自动更新：URL订阅默认24小时，启动及前台每20分钟检查到期情况，退后台暂停应用检查、返回前台补查；本地文件/custom不远程下载。应用版本检查默认开，只提示，下载/安装沿用户确认入口。Core未运行或SSID暂停时应用请求可能直连，GitHub可达性并无无代理引导保证；不因此硬改未经来源验证的第三方镜像。
 
 来源：[订阅模型](../lib/models/profile.dart)、[订阅更新](../lib/providers/actions/profiles.dart)、[资源更新](../lib/providers/actions/resources.dart)、[请求与版本检查](../lib/common/request.dart)、[应用调度](../lib/application.dart)、[mihomo全局Geo配置](https://wiki.metacubex.one/config/general/)。
 

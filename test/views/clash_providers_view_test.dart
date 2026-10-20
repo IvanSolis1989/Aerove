@@ -52,6 +52,7 @@ class _RecordingClashProvidersAction extends ClashProvidersAction {
     ClashProvider? previous,
     List<int>? content,
     bool refresh = false,
+    bool Function()? isCurrent,
   }) async {
     if (putFailure case final failure?) {
       throw failure;

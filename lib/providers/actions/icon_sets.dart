@@ -36,10 +36,14 @@ class IconSetsAction extends _$IconSetsAction {
     );
   }
 
-  Future<IconSet> sync(IconSet iconSet) async {
+  Future<IconSet> sync(IconSet iconSet, {bool Function()? isCurrent}) async {
+    checkUpdateCurrent(isCurrent);
     final before = await _stored(iconSet.id);
-    final content = await _download(iconSet.url);
+    checkUpdateCurrent(isCurrent);
+    final content = await _download(iconSet.url, isCurrent: isCurrent);
+    checkUpdateCurrent(isCurrent);
     final latest = before == null ? null : await _stored(iconSet.id);
+    checkUpdateCurrent(isCurrent);
     if (before != null && (latest == null || latest.url != before.url)) {
       return latest ?? iconSet;
     }
@@ -76,8 +80,13 @@ class IconSetsAction extends _$IconSetsAction {
     return currentAppLocalizations.iconSets;
   }
 
-  Future<({String name, List<IconSetIcon> icons})> _download(String url) async {
+  Future<({String name, List<IconSetIcon> icons})> _download(
+    String url, {
+    bool Function()? isCurrent,
+  }) async {
+    checkUpdateCurrent(isCurrent);
     final response = await request.getTextResponseForUrl(url);
+    checkUpdateCurrent(isCurrent);
     return _parse(response.data ?? '');
   }
 

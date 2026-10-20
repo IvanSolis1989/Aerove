@@ -9,11 +9,17 @@ object ServiceConfig {
     @Volatile
     private var currentVpnOptions: VpnOptions? = null
     private val mutableNotificationParams = MutableStateFlow(NotificationParams())
+    private val mutableUiTelemetryActive = MutableStateFlow(false)
 
     val vpnOptions: VpnOptions?
         get() = currentVpnOptions
 
     val notificationParams = mutableNotificationParams.asStateFlow()
+    val uiTelemetryActive = mutableUiTelemetryActive.asStateFlow()
+
+    fun updateUiTelemetryActive(active: Boolean) {
+        mutableUiTelemetryActive.value = active
+    }
 
     fun updateVpnOptions(options: VpnOptions) {
         currentVpnOptions = options

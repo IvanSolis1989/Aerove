@@ -39,12 +39,21 @@ class ProxiesAction extends _$ProxiesAction {
   Timer? _delayFlushTimer;
 
   final Map<String, String> _pendingSelectedRollback = {};
+  int _groupsRevision = 0;
 
   @override
   void build() {
     ref.onDispose(() => _delayFlushTimer?.cancel());
+    ref.listen(appVisibleProvider, (_, visible) {
+      if (!visible) {
+        _groupsRevision++;
+        debouncer.cancel(FunctionTag.updateGroups);
+        cancelDelayTests();
+      }
+    });
     ref.listen(coreStatusProvider, (_, next) {
       if (next != CoreStatus.connected) {
+        _groupsRevision++;
         cancelDelayTests();
       }
     });
@@ -87,6 +96,7 @@ class ProxiesAction extends _$ProxiesAction {
   }
 
   void updateGroupsDebounce([Duration? duration]) {
+    if (!ref.read(appVisibleProvider)) return;
     debouncer.call(FunctionTag.updateGroups, updateGroups, duration: duration);
   }
 
@@ -111,10 +121,19 @@ class ProxiesAction extends _$ProxiesAction {
     return ref.read(currentProfileProvider)?.selectedMap[groupName] ?? '';
   }
 
-  Future<void> updateGroups() async {
+  Future<bool> updateGroups() async {
+    if (!ref.read(appVisibleProvider)) return false;
+    final revision = _groupsRevision;
+    bool readSucceeded = false;
     try {
-      ref.read(groupsProvider.notifier).value = await retry(
+      final groups = await retry(
         task: () async {
+          readSucceeded = false;
+          if (!ref.mounted ||
+              !ref.read(appVisibleProvider) ||
+              revision != _groupsRevision) {
+            return <Group>[];
+          }
           final sortType = ref.read(
             proxiesStyleSettingProvider.select((state) => state.sortType),
           );
@@ -126,12 +145,14 @@ class ProxiesAction extends _$ProxiesAction {
             currentProfileProvider.select((state) => state?.selectedMap ?? {}),
           );
           try {
-            return await _core.getProxiesGroups(
+            final groups = await _core.getProxiesGroups(
               selectedMap: selectedMap,
               sortType: sortType,
               delayMap: delayMap,
               defaultTestUrl: testUrl,
             );
+            readSucceeded = true;
+            return groups;
           } catch (e) {
             commonPrint.log(
               'updateGroups error: $e',
@@ -140,8 +161,18 @@ class ProxiesAction extends _$ProxiesAction {
             return [];
           }
         },
-        retryIf: (res) => res.isEmpty,
+        retryIf: (res) =>
+            res.isEmpty &&
+            ref.mounted &&
+            ref.read(appVisibleProvider) &&
+            revision == _groupsRevision,
       );
+      if (ref.mounted &&
+          ref.read(appVisibleProvider) &&
+          revision == _groupsRevision) {
+        ref.read(groupsProvider.notifier).value = groups;
+        return readSucceeded;
+      }
     } catch (e) {
       // The Core failure path already runs inside the retry task above; a
       // throw here only means ref.read hit a disposed container or the
@@ -151,6 +182,7 @@ class ProxiesAction extends _$ProxiesAction {
         logLevel: coreFailureLogLevel(e),
       );
     }
+    return false;
   }
 
   void updateCurrentGroupName(String groupName) {
@@ -170,6 +202,7 @@ class ProxiesAction extends _$ProxiesAction {
   }
 
   void setDelay(Delay delay) {
+    if (!ref.read(appVisibleProvider)) return;
     _bufferedDelays.add(delay);
     _scheduleDelayFlush();
   }
@@ -290,15 +323,25 @@ class ProxiesAction extends _$ProxiesAction {
   }
 
   Future<void> delayTest(List<Proxy> proxies, [String? testUrl]) async {
+    final revision = _groupsRevision;
     await _runDelayTests([(proxies: proxies, testUrl: testUrl)]);
-    ref.read(sortNumProvider.notifier).add();
+    if (ref.mounted &&
+        ref.read(appVisibleProvider) &&
+        revision == _groupsRevision) {
+      ref.read(sortNumProvider.notifier).add();
+    }
   }
 
   Future<void> delayTestGroups(List<Group> groups) async {
+    final revision = _groupsRevision;
     await _runDelayTests([
       for (final group in groups) (proxies: group.all, testUrl: group.testUrl),
     ]);
-    ref.read(sortNumProvider.notifier).add();
+    if (ref.mounted &&
+        ref.read(appVisibleProvider) &&
+        revision == _groupsRevision) {
+      ref.read(sortNumProvider.notifier).add();
+    }
   }
 
   Future<void> delayTestPageGroup(
@@ -364,6 +407,7 @@ class ProxiesAction extends _$ProxiesAction {
   }
 
   Future<void> _runDelayTests(List<_DelayTestBatch> batches) async {
+    if (!ref.read(appVisibleProvider)) return;
     final targets = _resolveDelayTestTargets(batches);
     if (targets.isEmpty) {
       return;
@@ -397,7 +441,7 @@ class ProxiesAction extends _$ProxiesAction {
   }
 
   Future<void> _runDelayTest(_DelayTestJob job, _DelayTestTarget target) async {
-    if (job.cancelled) {
+    if (job.cancelled || !ref.mounted || !ref.read(appVisibleProvider)) {
       return;
     }
     if (!job.startedOnDispatch.contains(target.key)) {

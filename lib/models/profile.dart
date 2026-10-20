@@ -6,6 +6,7 @@ import 'package:fl_clash/enum/enum.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 
 import 'clash_config.dart';
+import 'common.dart';
 
 part 'generated/profile.freezed.dart';
 part 'generated/profile.g.dart';
@@ -168,10 +169,16 @@ extension ProfileExtension on Profile {
     return update(validate: validate);
   }
 
-  Future<File> _getFile([bool autoCreate = true]) async {
+  Future<File> _getFile([
+    bool autoCreate = true,
+    bool Function()? isCurrent,
+  ]) async {
+    checkUpdateCurrent(isCurrent);
     final path = await appPath.getProfilePath(id.toString());
+    checkUpdateCurrent(isCurrent);
     final file = File(path);
     final isExists = await file.exists();
+    checkUpdateCurrent(isCurrent);
     if (!isExists && autoCreate) {
       return file.create(recursive: true);
     }
@@ -182,8 +189,13 @@ extension ProfileExtension on Profile {
     return _getFile();
   }
 
-  Future<Profile> update({required ValidateConfig validate}) async {
+  Future<Profile> update({
+    required ValidateConfig validate,
+    bool Function()? isCurrent,
+  }) async {
+    checkUpdateCurrent(isCurrent);
     final response = await request.getFileResponseForUrl(url);
+    checkUpdateCurrent(isCurrent);
     final disposition = response.headers.value('content-disposition');
     final userinfo = response.headers.value('subscription-userinfo');
     return copyWith(
@@ -195,23 +207,34 @@ extension ProfileExtension on Profile {
     ).saveFile(
       decompressUnlabeled(response.data ?? Uint8List(0)),
       validate: validate,
+      isCurrent: isCurrent,
     );
   }
 
   Future<Profile> saveFile(
     Uint8List bytes, {
     required ValidateConfig validate,
+    bool Function()? isCurrent,
   }) async {
+    checkUpdateCurrent(isCurrent);
     final path = await appPath.tempFilePath;
     final tempFile = File(path);
-    await tempFile.safeWriteAsBytes(bytes);
-    final message = await validate(path, ageSecretKey);
-    if (message.isNotEmpty) {
-      throw MessageException(message);
+    try {
+      checkUpdateCurrent(isCurrent);
+      await tempFile.safeWriteAsBytes(bytes);
+      checkUpdateCurrent(isCurrent);
+      final message = await validate(path, ageSecretKey);
+      checkUpdateCurrent(isCurrent);
+      if (message.isNotEmpty) {
+        throw MessageException(message);
+      }
+      final mFile = await _getFile(true, isCurrent);
+      checkUpdateCurrent(isCurrent);
+      await tempFile.copy(mFile.path);
+      checkUpdateCurrent(isCurrent);
+      return copyWith(lastUpdateDate: DateTime.now());
+    } finally {
+      await tempFile.safeDelete();
     }
-    final mFile = await file;
-    await tempFile.copy(mFile.path);
-    await tempFile.safeDelete();
-    return copyWith(lastUpdateDate: DateTime.now());
   }
 }

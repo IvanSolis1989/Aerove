@@ -40,6 +40,11 @@ var currentRequestTraffic = requestTrafficWatch{
 	requests: map[string]*watchedRequest{},
 }
 
+var requestTrafficRun struct {
+	mu sync.Mutex
+	stop chan struct{}
+}
+
 func (w *requestTrafficWatch) add(tracker statistic.Tracker) (start bool) {
 	info := tracker.Info()
 	w.mu.Lock()
@@ -97,17 +102,40 @@ func (w *requestTrafficWatch) clear() {
 }
 
 func watchRequestTraffic(tracker statistic.Tracker) {
+	requestTrafficRun.mu.Lock()
+	defer requestTrafficRun.mu.Unlock()
+	if !hasUiTelemetry() {
+		return
+	}
 	if currentRequestTraffic.add(tracker) {
-		go runRequestTrafficWatch()
+		stop := make(chan struct{})
+		requestTrafficRun.stop = stop
+		go runRequestTrafficWatch(stop)
 	}
 }
 
-func runRequestTrafficWatch() {
+func stopRequestTrafficWatch() {
+	requestTrafficRun.mu.Lock()
+	defer requestTrafficRun.mu.Unlock()
+	if requestTrafficRun.stop != nil {
+		close(requestTrafficRun.stop)
+		requestTrafficRun.stop = nil
+	}
+	currentRequestTraffic.clear()
+}
+
+func runRequestTrafficWatch(stop chan struct{}) {
 	ticker := time.NewTicker(requestTrafficInterval)
 	defer ticker.Stop()
-	for range ticker.C {
-		if !hasEventListener() {
-			currentRequestTraffic.clear()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+		}
+		requestTrafficRun.mu.Lock()
+		if requestTrafficRun.stop != stop {
+			requestTrafficRun.mu.Unlock()
 			return
 		}
 		watching := currentRequestTraffic.collect(
@@ -119,7 +147,10 @@ func runRequestTrafficWatch() {
 			},
 		)
 		if !watching {
+			requestTrafficRun.stop = nil
+			requestTrafficRun.mu.Unlock()
 			return
 		}
+		requestTrafficRun.mu.Unlock()
 	}
 }

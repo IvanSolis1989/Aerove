@@ -5,8 +5,10 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/common/window.dart';
 import 'package:fl_clash/bootstrap.dart';
+import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/common/system_dns.dart';
 import 'package:fl_clash/l10n/l10n.dart';
+import 'package:fl_clash/models/models.dart' show UpdateCancelledException;
 import 'package:fl_clash/manager/hotkey_manager.dart';
 import 'package:fl_clash/manager/manager.dart';
 import 'package:fl_clash/plugins/app.dart';
@@ -19,6 +21,80 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'pages/pages.dart';
+
+class ForegroundAutoUpdateScheduler {
+  ForegroundAutoUpdateScheduler({
+    required this.run,
+    this.interval = const Duration(minutes: 20),
+  });
+
+  final Future<void> Function(bool Function() isCurrent) run;
+  final Duration interval;
+  Timer? _timer;
+  bool _visible = false;
+  bool _started = false;
+  bool _due = false;
+  bool _running = false;
+  bool _disposed = false;
+  int _generation = 0;
+
+  void setVisible(bool visible) {
+    if (_disposed || (_started && visible == _visible)) return;
+    final first = !_started;
+    _started = true;
+    _visible = visible;
+    _generation++;
+    _timer?.cancel();
+    _timer = null;
+    if (!visible) {
+      _due = true;
+    } else if (first) {
+      _schedule();
+    } else if (_due) {
+      unawaited(_run());
+    } else {
+      _schedule();
+    }
+  }
+
+  void _schedule() {
+    if (_disposed || !_visible || _running || _timer != null) return;
+    _timer = Timer(interval, () {
+      _timer = null;
+      unawaited(_run());
+    });
+  }
+
+  Future<void> _run() async {
+    if (_disposed || !_visible) return;
+    if (_running) {
+      _due = true;
+      return;
+    }
+    _running = true;
+    _due = false;
+    final generation = _generation;
+    try {
+      await run(() => !_disposed && _visible && generation == _generation);
+    } finally {
+      _running = false;
+      if (!_disposed && _visible) {
+        if (_due) {
+          unawaited(_run());
+        } else {
+          _schedule();
+        }
+      }
+    }
+  }
+
+  void dispose() {
+    _disposed = true;
+    _generation++;
+    _timer?.cancel();
+    _timer = null;
+  }
+}
 
 Widget buildManagerStack({
   required bool isDesktop,
@@ -72,7 +148,7 @@ class Application extends ConsumerStatefulWidget {
 }
 
 class ApplicationState extends ConsumerState<Application> {
-  Timer? _autoUpdateProfilesTaskTimer;
+  ForegroundAutoUpdateScheduler? _autoUpdates;
   bool _preHasVpn = false;
   // Windows can only watch SIGINT and SIGHUP.
   final _terminateSignals = system.isDesktop && !system.isWindows
@@ -90,7 +166,11 @@ class ApplicationState extends ConsumerState<Application> {
       } else {
         exit(0);
       }
-      _autoUpdateProfilesTask();
+      if (!mounted) return;
+      _autoUpdates = ForegroundAutoUpdateScheduler(run: _runAutoUpdates);
+      ref.listenManual(appVisibleProvider, (_, visible) {
+        _autoUpdates?.setVisible(visible);
+      }, fireImmediately: true);
       _initLink();
       if (!safeModeBuild) {
         unawaited(app?.initShortcuts());
@@ -127,15 +207,23 @@ class ApplicationState extends ConsumerState<Application> {
     });
   }
 
-  void _autoUpdateProfilesTask() {
-    _autoUpdateProfilesTaskTimer = Timer(const Duration(minutes: 20), () async {
-      await ref.read(profilesActionProvider.notifier).autoUpdateProfiles();
-      await ref.read(resourcesActionProvider.notifier).autoUpdate();
-      if (!mounted) {
-        return;
-      }
-      _autoUpdateProfilesTask();
-    });
+  Future<void> _runAutoUpdates(bool Function() isCurrent) async {
+    try {
+      if (!mounted || !isCurrent()) return;
+      await ref
+          .read(profilesActionProvider.notifier)
+          .autoUpdateProfiles(isCurrent: isCurrent);
+      if (!mounted || !isCurrent()) return;
+      await ref
+          .read(resourcesActionProvider.notifier)
+          .autoUpdate(isCurrent: isCurrent);
+    } catch (error) {
+      if (error is UpdateCancelledException || !mounted || !isCurrent()) return;
+      commonPrint.log(
+        'auto update failed: ${compactError(error)}',
+        logLevel: LogLevel.warning,
+      );
+    }
   }
 
   Future<void> _handleConnectivityChanged(
@@ -204,7 +292,7 @@ class ApplicationState extends ConsumerState<Application> {
   @override
   void dispose() {
     if (widget._testHome == null) linkManager.destroy();
-    _autoUpdateProfilesTaskTimer?.cancel();
+    _autoUpdates?.dispose();
     super.dispose();
   }
 }

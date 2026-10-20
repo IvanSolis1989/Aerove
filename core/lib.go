@@ -316,6 +316,7 @@ func SetEventListener(listener func([]byte)) {
 	listening.Store(listener != nil)
 	eventListenerLock.Unlock()
 	if listener == nil {
+		setUiTelemetryActive(false, methodCallSeq.Add(1))
 		stopRouteWatch()
 	}
 }

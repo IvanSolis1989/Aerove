@@ -43,6 +43,7 @@ enum CoreMethod {
   sideLoadExternalProvider,
   startLog,
   stopLog,
+  setUiTelemetryActive,
   startListener,
   stopListener,
   getMemoryStats,

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:fl_clash/application.dart';
 import 'package:fl_clash/manager/hotkey_manager.dart';
 import 'package:fl_clash/manager/manager.dart';
@@ -56,6 +58,84 @@ Widget _stack({required bool isDesktop}) {
 }
 
 void main() {
+  testWidgets('auto updates stay idle in background and resume once', (
+    tester,
+  ) async {
+    var runs = 0;
+    final scheduler = ForegroundAutoUpdateScheduler(
+      run: (_) async {
+        runs++;
+      },
+    );
+    scheduler.setVisible(false);
+    await tester.pump(const Duration(minutes: 40));
+    expect(runs, 0);
+    scheduler.setVisible(true);
+    scheduler.setVisible(true);
+    await tester.pump();
+    expect(runs, 1);
+    await tester.pump(const Duration(minutes: 20));
+    expect(runs, 2);
+    scheduler.setVisible(false);
+    await tester.pump(const Duration(minutes: 40));
+    expect(runs, 2);
+    scheduler.setVisible(true);
+    await tester.pump();
+    expect(runs, 3);
+    scheduler.dispose();
+    await tester.pump(const Duration(hours: 2));
+    expect(runs, 3);
+  });
+
+  testWidgets('resume waits for a cancelled run before starting one successor', (
+    tester,
+  ) async {
+    final download = Completer<void>();
+    var runs = 0;
+    var applies = 0;
+    final scheduler = ForegroundAutoUpdateScheduler(
+      run: (isCurrent) async {
+        runs++;
+        if (runs == 1) await download.future;
+        if (isCurrent()) applies++;
+      },
+    );
+    scheduler.setVisible(true);
+    await tester.pump(const Duration(minutes: 20));
+    expect(runs, 1);
+    scheduler.setVisible(false);
+    scheduler.setVisible(true);
+    scheduler.setVisible(true);
+    expect(runs, 1);
+    download.complete();
+    await tester.pump();
+    expect(runs, 2);
+    expect(applies, 1);
+    scheduler.dispose();
+    await tester.pump(const Duration(minutes: 40));
+    expect(runs, 2);
+  });
+
+  testWidgets('dispose invalidates a download and prevents rescheduling', (
+    tester,
+  ) async {
+    final download = Completer<void>();
+    var applies = 0;
+    final scheduler = ForegroundAutoUpdateScheduler(
+      run: (isCurrent) async {
+        await download.future;
+        if (isCurrent()) applies++;
+      },
+    );
+    scheduler.setVisible(true);
+    await tester.pump(const Duration(minutes: 20));
+    scheduler.dispose();
+    download.complete();
+    await tester.pump();
+    await tester.pump(const Duration(minutes: 40));
+    expect(applies, 0);
+  });
+
   test('the desktop manager stack nests in ownership order', () {
     expect(_chainFrom(_stack(isDesktop: true)), [
       AppEnvManager,

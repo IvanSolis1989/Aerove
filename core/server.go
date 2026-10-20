@@ -32,6 +32,10 @@ const (
 
 var deliveryFailureReported atomic.Bool
 
+func init() {
+	uiTelemetry.active.Store(true)
+}
+
 // logDeliveryError must not reach the mihomo logger: a log event is published
 // to the log subscriber, batched, and handed back to send, so reporting a send
 // failure through it feeds the failure straight back into itself.

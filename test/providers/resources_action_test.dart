@@ -5,13 +5,26 @@ import 'package:fl_clash/database/database.dart' as db;
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/providers/action.dart';
+import 'package:fl_clash/providers/app.dart';
+import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/providers/core.dart';
+import 'package:fl_clash/models/models.dart';
 import 'package:flutter/widgets.dart' show Locale;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:riverpod/riverpod.dart';
 
 class _MockCoreHandlerInterface extends Mock implements CoreHandlerInterface {}
+
+class _AutoResourcesAction extends ResourcesAction {
+  final updated = <int>[];
+
+  @override
+  Future<void> updateIconSet(IconSet iconSet, {bool Function()? isCurrent}) async {
+    updated.add(iconSet.id);
+    ref.read(appVisibleProvider.notifier).value = false;
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -42,6 +55,33 @@ void main() {
   tearDown(() async {
     container.dispose();
     await testDatabase.close();
+  });
+
+  test('automatic resources stop between downloads when hidden', () async {
+    final sets = [
+      for (var index = 1; index <= 2; index++)
+        IconSet(id: index, name: '$index', url: 'https://example.com/$index'),
+    ];
+    await testDatabase.iconSetsDao.putAll([
+      for (final iconSet in sets) iconSet.toCompanion(),
+    ]);
+    final scoped = ProviderContainer(
+      overrides: [
+        resourcesActionProvider.overrideWith(_AutoResourcesAction.new),
+        patchClashConfigProvider.overrideWithBuild(
+          (_, _) => const PatchClashConfig(geoAutoUpdate: true),
+        ),
+      ],
+    );
+    addTearDown(scoped.dispose);
+    final action = scoped.read(resourcesActionProvider.notifier)
+        as _AutoResourcesAction;
+    scoped.read(appVisibleProvider.notifier).value = false;
+    await action.autoUpdate();
+    expect(action.updated, isEmpty);
+    scoped.read(appVisibleProvider.notifier).value = true;
+    await action.autoUpdate();
+    expect(action.updated, [sets.first.id]);
   });
 
   test(

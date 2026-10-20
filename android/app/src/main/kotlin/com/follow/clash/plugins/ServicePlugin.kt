@@ -4,7 +4,9 @@ import com.follow.clash.ServiceController
 import com.follow.clash.ServiceState
 import com.follow.clash.common.Components
 import com.follow.clash.models.SharedState
+import com.follow.clash.service.ServiceConfig
 import com.google.gson.Gson
+import com.google.gson.JsonObject
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
@@ -43,6 +45,7 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         channel.setMethodCallHandler(null)
         coreChannel.setMethodCallHandler(null)
         scope.cancel()
+        ServiceConfig.updateUiTelemetryActive(false)
         ServiceController.setEventListener(null)
     }
 
@@ -52,6 +55,7 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             "shutdown" -> shutdown(result)
             "getRunTime" -> getRunTime(result)
             "syncState" -> syncState(call, result)
+            "setUiTelemetryActive" -> setUiTelemetryActive(call, result)
             "start" -> start(call, result)
             "stop" -> stop(call, result)
             else -> result.notImplemented()
@@ -72,8 +76,30 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     }
 
     private fun shutdown(result: MethodChannel.Result) {
+        ServiceConfig.updateUiTelemetryActive(false)
         ServiceController.setEventListener(null)
         result.success(true)
+    }
+
+    private fun setUiTelemetryActive(call: MethodCall, result: MethodChannel.Result) {
+        val active = call.arguments as? Boolean
+        if (active == null) {
+            result.error("INVALID_ARGUMENT", "UI telemetry state must be a boolean", null)
+            return
+        }
+        ServiceConfig.updateUiTelemetryActive(active)
+        val data = gson.toJson(mapOf("method" to "setUiTelemetryActive", "arguments" to active))
+        ServiceController.invokeMethod(data) { response ->
+            val decoded = runCatching {
+                requireNotNull(gson.fromJson(response?.decodeToString(), JsonObject::class.java))
+            }
+            val error = decoded.getOrNull()?.get("error")?.takeUnless { it.isJsonNull }
+            if (decoded.isFailure || error != null) {
+                result.error("CORE_ERROR", error?.toString() ?: "Invalid telemetry response", null)
+            } else {
+                result.success(null)
+            }
+        }.onFailure { error -> result.error("CORE_ERROR", error.message, null) }
     }
 
     private fun invokeMethod(call: MethodCall, result: MethodChannel.Result) {

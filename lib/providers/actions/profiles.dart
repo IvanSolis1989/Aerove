@@ -3,6 +3,7 @@ part of '../action.dart';
 @Riverpod(keepAlive: true)
 class ProfilesAction extends _$ProfilesAction {
   CoreController get _core => ref.read(coreHandlerProvider);
+  bool _autoUpdating = false;
 
   @override
   void build() {}
@@ -39,23 +40,35 @@ class ProfilesAction extends _$ProfilesAction {
     return _core.validateConfigWithData(data);
   }
 
-  Future<void> autoUpdateProfiles() async {
-    for (final id in [
-      for (final profile in ref.read(profilesProvider)) profile.id,
-    ]) {
-      final profile = ref.read(profilesProvider).getProfile(id);
-      if (profile == null || !profile.autoUpdate) continue;
-      final isNotNeedUpdate = profile.lastUpdateDate
-          ?.add(profile.autoUpdateDuration)
-          .isBeforeNow;
-      if (isNotNeedUpdate == false || profile.type != ProfileType.url) {
-        continue;
+  Future<void> autoUpdateProfiles({bool Function()? isCurrent}) async {
+    bool canUpdate() =>
+        ref.mounted &&
+        ref.read(appVisibleProvider) &&
+        (isCurrent?.call() ?? true);
+    if (_autoUpdating || !canUpdate()) return;
+    _autoUpdating = true;
+    try {
+      for (final id in [
+        for (final profile in ref.read(profilesProvider)) profile.id,
+      ]) {
+        if (!canUpdate()) return;
+        final profile = ref.read(profilesProvider).getProfile(id);
+        if (profile == null || !profile.autoUpdate) continue;
+        final isNotNeedUpdate = profile.lastUpdateDate
+            ?.add(profile.autoUpdateDuration)
+            .isBeforeNow;
+        if (isNotNeedUpdate == false || profile.type != ProfileType.url) {
+          continue;
+        }
+        try {
+          await updateProfile(profile, isCurrent: canUpdate);
+        } catch (e) {
+          if (e is UpdateCancelledException || !canUpdate()) return;
+          commonPrint.log(compactError(e), logLevel: LogLevel.warning);
+        }
       }
-      try {
-        await updateProfile(profile);
-      } catch (e) {
-        commonPrint.log(compactError(e), logLevel: LogLevel.warning);
-      }
+    } finally {
+      _autoUpdating = false;
     }
   }
 
@@ -138,7 +151,9 @@ class ProfilesAction extends _$ProfilesAction {
   Future<void> updateProfile(
     Profile profile, {
     bool showLoading = false,
+    bool Function()? isCurrent,
   }) async {
+    checkUpdateCurrent(isCurrent);
     final operation = showLoading
         ? ref.read(updatingKeysProvider.notifier).start(profile.updatingKey)
         : null;
@@ -146,7 +161,9 @@ class ProfilesAction extends _$ProfilesAction {
       ref.read(profilesProvider.notifier).put(profile);
       final updated = await profile.update(
         validate: (path, key) => _core.validateProfile(path, key),
+        isCurrent: isCurrent,
       );
+      checkUpdateCurrent(isCurrent);
       // The download can take minutes; edits and deletes made meanwhile win.
       final latest = ref.read(profilesProvider).getProfile(profile.id);
       if (latest == null) {
@@ -160,21 +177,30 @@ class ProfilesAction extends _$ProfilesAction {
       );
       ref.read(profilesProvider.notifier).put(newProfile);
       if (profile.id == ref.read(currentProfileIdProvider)) {
-        ref
-            .read(setupActionProvider.notifier)
-            .applyProfileDebounce(silence: true);
+        final setup = ref.read(setupActionProvider.notifier);
+        if (isCurrent == null) {
+          setup.applyProfileDebounce(silence: true);
+        } else {
+          await setup.applyProfile(silence: true);
+        }
       } else {
         final label = ref
             .read(profilesProvider.notifier)
             .labeled(newProfile)
             .realLabel;
-        unawaited(
-          ref.read(clashProvidersActionProvider.notifier).applyIfReferenced(
-            ProviderKind.proxy,
-            {label},
-            force: true,
-          ),
-        );
+        final apply = ref
+            .read(clashProvidersActionProvider.notifier)
+            .applyIfReferenced(
+              ProviderKind.proxy,
+              {label},
+              force: true,
+              isCurrent: isCurrent,
+            );
+        if (isCurrent == null) {
+          unawaited(apply);
+        } else {
+          await apply;
+        }
       }
     } finally {
       if (operation != null) {

@@ -24,7 +24,19 @@ class CoreManager extends ConsumerStatefulWidget {
 
 class _CoreContainerState extends ConsumerState<CoreManager>
     with CoreEventListener {
-  CoreController get _core => ref.read(coreHandlerProvider);
+  late final CoreController _core;
+  final _loadedWhileHidden = <String, int>{};
+  Future<void> _pendingUiSync = Future<void>.value();
+  bool _syncingUi = false;
+  bool _refreshingUi = false;
+  bool _refreshAgain = false;
+  bool _closed = false;
+  bool _groupsNeedRefresh = false;
+  int _groupsRevision = 0;
+  int _providerRevision = 0;
+  int _uiRevision = 0;
+
+  bool get _uiVisible => !_closed && mounted && ref.read(appVisibleProvider);
 
   @override
   Widget build(BuildContext context) {
@@ -34,6 +46,8 @@ class _CoreContainerState extends ConsumerState<CoreManager>
   @override
   void initState() {
     super.initState();
+    _core = ref.read(coreHandlerProvider);
+    _groupsNeedRefresh = !ref.read(appVisibleProvider);
     coreEventManager.addListener(this);
     ref.read(updatingActionProvider.notifier);
     // A rejected profile stays selected on purpose: silently reverting to
@@ -64,19 +78,135 @@ class _CoreContainerState extends ConsumerState<CoreManager>
         _syncLogStream();
       }
     });
-    // Every Core process starts without a log stream.
+    ref.listenManual(appVisibleProvider, (_, visible) {
+      if (!visible) {
+        _markGroupsDirty();
+        _cancelUiWork();
+        ref.read(proxiesActionProvider.notifier).cancelDelayTests();
+      }
+      _requestUiSync();
+    });
     ref.listenManual(coreStatusProvider, (prev, next) {
-      if (next == CoreStatus.connected && prev != CoreStatus.connected) {
-        _syncLogStream();
+      if (prev != next) {
+        _requestUiSync();
       }
     }, fireImmediately: true);
+  }
+
+  void _requestUiSync() {
+    if (_closed) return;
+    _uiRevision++;
+    _syncLogStream();
+    if (!_syncingUi) {
+      _pendingUiSync = _syncUiTelemetry();
+      unawaited(_pendingUiSync);
+    }
+  }
+
+  Future<void> _syncUiTelemetry() async {
+    if (_syncingUi) return;
+    _syncingUi = true;
+    try {
+      while (!_closed &&
+          mounted &&
+          ref.read(coreStatusProvider) == CoreStatus.connected) {
+        final revision = _uiRevision;
+        final active = _uiVisible;
+        try {
+          await _core.setUiTelemetryActive(active);
+          if (_closed || !mounted) return;
+          if (revision != _uiRevision) continue;
+          if (active) {
+            _requestUiRefresh();
+          }
+        } catch (error) {
+          commonPrint.log(
+            'UI telemetry sync failed: $error',
+            logLevel: coreFailureLogLevel(error),
+          );
+        }
+        if (_closed || !mounted || revision == _uiRevision) return;
+      }
+    } finally {
+      _syncingUi = false;
+    }
+  }
+
+  void _markGroupsDirty() {
+    _groupsNeedRefresh = true;
+    _groupsRevision++;
+  }
+
+  void _requestUiRefresh() {
+    if (!_uiVisible || ref.read(coreStatusProvider) != CoreStatus.connected) {
+      return;
+    }
+    _refreshAgain = true;
+    if (!_refreshingUi) unawaited(_drainUiData());
+  }
+
+  Future<void> _drainUiData() async {
+    _refreshingUi = true;
+    try {
+      while (_refreshAgain &&
+          _uiVisible &&
+          ref.read(coreStatusProvider) == CoreStatus.connected) {
+        _refreshAgain = false;
+        await _refreshUiData(_uiRevision);
+      }
+    } catch (error) {
+      commonPrint.log(
+        'UI data refresh failed: $error',
+        logLevel: coreFailureLogLevel(error),
+      );
+    } finally {
+      _refreshingUi = false;
+    }
+  }
+
+  Future<void> _refreshUiData(int revision) async {
+    for (final entry in _loadedWhileHidden.entries.toList()) {
+      if (!_uiVisible || revision != _uiRevision) return;
+      try {
+        final provider = await _core.getExternalProvider(entry.key);
+        if (!_uiVisible || revision != _uiRevision) return;
+        ref.read(providersProvider.notifier).setProvider(provider);
+        if (_loadedWhileHidden[entry.key] == entry.value) {
+          _loadedWhileHidden.remove(entry.key);
+        }
+      } catch (error) {
+        commonPrint.log(
+          'Provider refresh failed: $error',
+          logLevel: coreFailureLogLevel(error),
+        );
+      }
+      if (!_uiVisible || revision != _uiRevision) return;
+    }
+    if (!_groupsNeedRefresh || !_uiVisible || revision != _uiRevision) return;
+    final groupsRevision = _groupsRevision;
+    final refreshed = await ref
+        .read(proxiesActionProvider.notifier)
+        .updateGroups();
+    if (refreshed &&
+        _uiVisible &&
+        revision == _uiRevision &&
+        groupsRevision == _groupsRevision) {
+      _groupsNeedRefresh = false;
+    }
+  }
+
+  void _cancelUiWork() {
+    debouncer.cancel(FunctionTag.updateDelay);
+    debouncer.cancel(FunctionTag.updateGroups);
+    debouncer.cancel(FunctionTag.loadedProvider);
+    throttler.cancel(FunctionTag.coreErrorNotifier);
   }
 
   void _syncLogStream() {
     if (ref.read(coreStatusProvider) != CoreStatus.connected) {
       return;
     }
-    if (ref.read(appSettingProvider).openLogs) {
+    if (_uiVisible && ref.read(appSettingProvider).openLogs) {
       _core.startLog();
     } else {
       _core.stopLog();
@@ -85,22 +215,51 @@ class _CoreContainerState extends ConsumerState<CoreManager>
 
   @override
   void dispose() {
+    _closed = true;
+    _uiRevision++;
+    _cancelUiWork();
     coreEventManager.removeListener(this);
+    try {
+      _core.stopLog();
+    } catch (error) {
+      commonPrint.log('Log stream release failed: $error');
+    }
+    unawaited(_pendingUiSync.then((_) => _closeUiTelemetry()));
     super.dispose();
+  }
+
+  Future<void> _closeUiTelemetry() async {
+    try {
+      await _core.setUiTelemetryActive(false);
+    } catch (error) {
+      commonPrint.log('UI telemetry release failed: $error');
+    } finally {
+      try {
+        _core.stopLog();
+      } catch (error) {
+        commonPrint.log('Log stream release failed: $error');
+      }
+    }
   }
 
   @override
   Future<void> onDelay(Delay delay) async {
+    if (!_uiVisible) {
+      _markGroupsDirty();
+      return;
+    }
     super.onDelay(delay);
     final proxiesAction = ref.read(proxiesActionProvider.notifier);
     proxiesAction.setDelay(delay);
     debouncer.call(FunctionTag.updateDelay, () async {
+      if (!_uiVisible) return;
       proxiesAction.updateGroupsDebounce();
     }, duration: const Duration(milliseconds: 5000));
   }
 
   @override
   void onLog(Log log) {
+    if (!_uiVisible) return;
     ref.read(logsProvider.notifier).add(log);
     if (log.logLevel == LogLevel.error) {
       throttler.call(
@@ -129,6 +288,7 @@ class _CoreContainerState extends ConsumerState<CoreManager>
 
   @override
   void onRequest(TrackerInfo trackerInfo) async {
+    if (!_uiVisible) return;
     ref.read(requestsProvider.notifier).addRequest(trackerInfo);
     ref.read(requestCountProvider.notifier).update((count) => count + 1);
     super.onRequest(trackerInfo);
@@ -136,12 +296,14 @@ class _CoreContainerState extends ConsumerState<CoreManager>
 
   @override
   void onRequestTraffic(Map<String, RequestTraffic> traffic) {
+    if (!_uiVisible) return;
     ref.read(requestsProvider.notifier).updateTraffic(traffic);
     super.onRequestTraffic(traffic);
   }
 
   @override
   void onDns(DnsQuery dnsQuery) {
+    if (!_uiVisible) return;
     ref.read(dnsQueriesProvider.notifier).addQuery(dnsQuery);
     ref.read(dnsQueryCountProvider.notifier).update((count) => count + 1);
     super.onDns(dnsQuery);
@@ -149,17 +311,10 @@ class _CoreContainerState extends ConsumerState<CoreManager>
 
   @override
   Future<void> onLoaded(String providerName) async {
-    final provider = await _core.getExternalProvider(providerName);
-    if (!mounted) {
-      return;
-    }
-    ref.read(providersProvider.notifier).setProvider(provider);
-    debouncer.call(FunctionTag.loadedProvider, () async {
-      if (!mounted) {
-        return;
-      }
-      ref.read(proxiesActionProvider.notifier).updateGroupsDebounce();
-    }, duration: const Duration(milliseconds: 5000));
+    if (_closed) return;
+    _loadedWhileHidden[providerName] = ++_providerRevision;
+    _markGroupsDirty();
+    _requestUiRefresh();
     super.onLoaded(providerName);
   }
 

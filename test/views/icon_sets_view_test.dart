@@ -58,7 +58,7 @@ class _RecordingIconSetsAction extends IconSetsAction {
   }
 
   @override
-  Future<IconSet> sync(IconSet iconSet) async {
+  Future<IconSet> sync(IconSet iconSet, {bool Function()? isCurrent}) async {
     synced.add(iconSet);
     return iconSet;
   }
