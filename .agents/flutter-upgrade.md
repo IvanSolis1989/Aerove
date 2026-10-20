@@ -98,6 +98,6 @@ listed in the SDK's `CHANGELOG.md`.
   layer that is still in effect when the layer is restored. A host's capture shrinks each pane's slot inside the
   layer that blurs it, so its blur vanished at a quarter scale and spread half again as far at 1.5.
 - **Workaround:** `_LiquidGlassHostLayer._snapshot` sets each slot's transform inside a `save` of its own, and each
-  band's offset, restored before the layer is.
+  band's offset, restored before the layer is. `_SourceBlurCache.read` shrinks a wide source blur the same way.
 - **Remove when:** without that `save`, the frosted-pane case of `test/widgets/liquid_glass_host_test.dart` passes
   under `flutter test --enable-impeller`.
