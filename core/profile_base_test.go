@@ -222,9 +222,9 @@ func TestLoadConfigWithBaseWritesAConfigThatLoadsAlone(t *testing.T) {
 	if len(reloaded.Proxies) != len(cfg.Proxies) {
 		t.Errorf("reloaded %d proxies, want %d", len(reloaded.Proxies), len(cfg.Proxies))
 	}
-	raw, err := handleGetConfig(configPath)
+	raw, err := readRawConfig(configPath)
 	if err != nil {
-		t.Fatalf("handleGetConfig(config.yaml) = %v", err)
+		t.Fatalf("readRawConfig(config.yaml) = %v", err)
 	}
 	for _, proxy := range raw.Proxy {
 		if proxy["name"] != "b" {

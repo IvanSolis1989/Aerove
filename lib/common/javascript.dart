@@ -10,22 +10,17 @@ typedef ScriptEvaluator =
 @visibleForTesting
 ScriptEvaluator scriptEvaluator = evaluateScript;
 
-Future<Map<String, dynamic>> handleEvaluate(
-  String scriptContent,
-  Map<String, dynamic> config,
-) async {
-  if (config['proxy-providers'] == null) {
-    config['proxy-providers'] = {};
-  }
-  final String result;
+/// Both sides stay JSON text: a profile runs to megabytes, and decoding it is
+/// left to the isolate that builds the profile.
+Future<String> handleEvaluate(String scriptContent, String config) async {
   try {
-    result = await scriptEvaluator(
-      script: scriptContent,
-      config: json.encode(config),
-    );
+    return await scriptEvaluator(script: scriptContent, config: config);
   } catch (e) {
     throw MessageException(e.toString());
   }
+}
+
+Map<String, dynamic> decodeScriptResult(String result) {
   final decoded = json.decode(result);
   if (decoded is! Map<String, dynamic>) {
     throw const MessageException(

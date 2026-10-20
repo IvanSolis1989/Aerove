@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestHandleGetConfigKeepsAnUnquotedShortIDAsWritten(t *testing.T) {
+func TestReadRawConfigKeepsAnUnquotedShortIDAsWritten(t *testing.T) {
 	profile := `proxies:
   - name: octal
     type: vless
@@ -38,9 +38,9 @@ listeners:
 		t.Fatalf("write profile: %v", err)
 	}
 
-	raw, err := handleGetConfig(path)
+	raw, err := readRawConfig(path)
 	if err != nil {
-		t.Fatalf("handleGetConfig = %v", err)
+		t.Fatalf("readRawConfig = %v", err)
 	}
 
 	want := map[string]string{
@@ -63,15 +63,15 @@ listeners:
 	}
 }
 
-func TestHandleGetConfigLeavesProfilesWithoutShortIDsToMihomo(t *testing.T) {
+func TestReadRawConfigLeavesProfilesWithoutShortIDsToMihomo(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "profile.yaml")
 	if err := os.WriteFile(path, []byte("mixed-port: 7899\n"), 0o600); err != nil {
 		t.Fatalf("write profile: %v", err)
 	}
 
-	raw, err := handleGetConfig(path)
+	raw, err := readRawConfig(path)
 	if err != nil {
-		t.Fatalf("handleGetConfig = %v", err)
+		t.Fatalf("readRawConfig = %v", err)
 	}
 	if raw.MixedPort != 7899 || raw.Mode.String() == "" {
 		t.Errorf("raw config = port %d mode %q, want 7899 and the default mode", raw.MixedPort, raw.Mode)

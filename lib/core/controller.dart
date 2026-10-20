@@ -291,15 +291,10 @@ class CoreController {
   Future<List<ServiceCheckItem>> serviceCheck(ServiceCheckParams params) =>
       _interface.serviceCheck(params);
 
-  Future<Map<String, dynamic>> getConfig(int id) async {
-    return _readConfig(await appPath.getProfilePath(id.toString()));
-  }
-
-  Future<Map<String, dynamic>> _readConfig(String path) async {
-    final data = Map<String, dynamic>.from(await _interface.getConfig(path));
-    data['rules'] = data['rule'];
-    data.remove('rule');
-    return data;
+  /// The profile as the JSON text a script reads.
+  Future<String> getConfigJson(int id) async {
+    final path = await appPath.getProfilePath(id.toString());
+    return readSpilledText(await _interface.getConfig(path));
   }
 
   Future<Map<String, dynamic>> getProfileOutbounds(int id) async {

@@ -215,7 +215,10 @@ abstract class MakeRealProfileState with _$MakeRealProfileState {
   const factory MakeRealProfileState({
     required String profilesPath,
     required int profileId,
-    required Map<String, dynamic> rawConfig,
+    @Default({}) Map<String, dynamic> rawConfig,
+
+    /// A script's output, decoded on the build isolate in place of [rawConfig].
+    String? rawConfigJson,
     required PatchClashConfig realPatchConfig,
     @Default(ProfileOverrides()) ProfileOverrides overrides,
     @Default(false) bool bypassPrivateRoute,

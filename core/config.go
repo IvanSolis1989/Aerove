@@ -62,8 +62,30 @@ func handleSetupConfig(params *SetupParams) error {
 	return setupConfig(params)
 }
 
-func handleGetConfig(path string) (*config.RawConfig, error) {
+type scriptInput struct {
+	*config.RawConfig
+	Rule  []string `json:"rule,omitempty"` // hides RawConfig's tag; scripts read "rules"
+	Rules []string `json:"rules"`
+}
+
+// Only a profile script reads this, so the host gets it as spilled JSON text.
+func handleGetConfig(path string) (string, error) {
 	defer scheduleLoadMemoryRelease()
+	raw, err := readRawConfig(path)
+	if err != nil {
+		return "", err
+	}
+	if raw.ProxyProvider == nil {
+		raw.ProxyProvider = map[string]map[string]any{}
+	}
+	data, err := json.Marshal(scriptInput{RawConfig: raw, Rules: raw.Rule})
+	if err != nil {
+		return "", err
+	}
+	return writeSpilledResponse(data)
+}
+
+func readRawConfig(path string) (*config.RawConfig, error) {
 	buf, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -72,7 +94,8 @@ func handleGetConfig(path string) (*config.RawConfig, error) {
 }
 
 func handleValidateConfig(path string) error {
-	_, err := handleGetConfig(path)
+	defer scheduleLoadMemoryRelease()
+	_, err := readRawConfig(path)
 	return err
 }
 
