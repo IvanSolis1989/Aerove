@@ -832,8 +832,9 @@ dns:
           target: 'HK',
         ),
       ]);
-      final importedOverrides =
-          container.read(profileProvider(profileId))!.overrides;
+      final importedOverrides = container
+          .read(profileProvider(profileId))!
+          .overrides;
       expect(importedOverrides.dnsOverrideKeys, {
         ...xclashDefaultDnsOverrideKeys,
         DnsOverrideKey.enable,
