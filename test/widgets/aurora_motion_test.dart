@@ -262,13 +262,13 @@ void main() {
           boundary.debugAsymmetricPaintCount;
       expect(
         paints,
-        inInclusiveRange(29, 30),
-        reason: '$refreshRate Hz must retain the accumulated 30 fps cadence',
+        inInclusiveRange(14, 15),
+        reason: '$refreshRate Hz must retain the accumulated 15 fps cadence',
       );
       expect(
         frames(),
-        inInclusiveRange(29, 31),
-        reason: '$refreshRate Hz must schedule 30 frames, not one per vsync',
+        inInclusiveRange(14, 16),
+        reason: '$refreshRate Hz must schedule 15 frames, not one per vsync',
       );
       expect(builds, originalBuilds);
       await tester.pumpWidget(const SizedBox.shrink());

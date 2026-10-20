@@ -57,10 +57,7 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 100));
         final state = key.currentState!;
-        expect(
-          AuroraMotionActivity.rateOf(state.context)!.value,
-          mode == LiquidGlassMode.standard ? 15 : 30,
-        );
+        expect(AuroraMotionActivity.rateOf(state.context)!.value, 15);
         final surfaceState = tester.state(find.byType(AuroraAppSurface));
         final wallpaperState = tester.state(find.byType(SeededAuroraWallpaper));
         expect(state.ticks, greaterThan(0));

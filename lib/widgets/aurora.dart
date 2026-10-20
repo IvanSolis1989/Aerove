@@ -224,9 +224,6 @@ class _AuroraAppSurfaceState extends ConsumerState<AuroraAppSurface>
       enabled: _foreground,
       child: AuroraMotionActivity(
         enabled: enabled && widget.motion,
-        quality: glassMode == LiquidGlassMode.standard
-            ? LiquidGlassQuality.standard
-            : LiquidGlassQuality.ultra,
         child: Offstage(offstage: !_visible, child: surface),
       ),
     );
@@ -237,12 +234,10 @@ class AuroraMotionActivity extends StatefulWidget {
   const AuroraMotionActivity({
     super.key,
     this.enabled = true,
-    this.quality,
     required this.child,
   });
 
   final bool enabled;
-  final LiquidGlassQuality? quality;
   final Widget child;
 
   static ValueListenable<int>? rateOf(BuildContext context) =>
@@ -256,9 +251,8 @@ class _AuroraMotionActivityState extends State<AuroraMotionActivity>
     with WidgetsBindingObserver {
   static const _idleDelay = Duration(milliseconds: 350);
 
-  int get _idleRate => widget.quality == LiquidGlassQuality.standard ? 15 : 30;
-  int get _activeRate =>
-      widget.quality == LiquidGlassQuality.standard ? 10 : 15;
+  static const _idleRate = 15;
+  static const _activeRate = 10;
 
   late final _rate = ValueNotifier(_idleRate);
   final _pointers = <int>{};
@@ -431,7 +425,7 @@ class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper>
   ValueListenable<int>? _activityRate;
 
   late _AuroraPainter _painter;
-  late final _pacer = FramePacer(_publish);
+  late final _pacer = FramePacer(_publish, framesPerSecond: 15);
   late final ValueNotifier<({bool square, Duration elapsed})> _frame;
   Duration _runBase = Duration.zero;
   bool _foreground = true;
@@ -467,7 +461,7 @@ class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper>
   }
 
   void _onRateChanged() {
-    _pacer.framesPerSecond = _activityRate?.value ?? 30;
+    _pacer.framesPerSecond = _activityRate?.value ?? 15;
   }
 
   void _publish(Duration elapsed) {

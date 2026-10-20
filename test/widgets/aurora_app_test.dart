@@ -257,10 +257,7 @@ void main() {
         );
         final context = tester.element(find.text('Independent gradient'));
         expect(LiquidGlassScope.of(context), mode != LiquidGlassMode.none);
-        expect(
-          AuroraMotionActivity.rateOf(context)!.value,
-          mode == LiquidGlassMode.standard ? 15 : 30,
-        );
+        expect(AuroraMotionActivity.rateOf(context)!.value, 15);
       }
       await tester.pumpWidget(const SizedBox.shrink());
       expect(tester.takeException(), isNull);
