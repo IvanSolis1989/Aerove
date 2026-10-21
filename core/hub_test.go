@@ -509,11 +509,16 @@ func TestHandleShutdownTearsDownBackgroundWork(t *testing.T) {
 	activateTestTelemetry(t)
 	withCurrentConfig(t, &config.Config{General: &config.General{}, Controller: &config.Controller{}})
 	isInit.Store(true)
+	retrier := pendingHealthRetry(t)
 
 	handleStartLog()
 	pump := currentLogPump()
 
 	handleShutdown()
+
+	if len(retrier.retries) != 0 {
+		t.Error("shutdown kept a pending health retry, which would probe a provider of the config it dropped")
+	}
 
 	if currentConfig != nil {
 		t.Error("currentConfig survived shutdown, so updateConfig would still patch a dead config")

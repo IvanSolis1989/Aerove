@@ -16,7 +16,9 @@ import (
 func init() {
 	mihomoHttp.TLSConfigHook = relaxCertVerify
 	adapter.UrlTestHook = func(url string, name string, delay uint16, timedOut bool) {
-		sendMessage(DelayMessage, &Delay{Url: url, Name: name, Value: delayValue(delay, timedOut)})
+		value := delayValue(delay, timedOut)
+		healthRetries.record(url, name, value > 0)
+		sendMessage(DelayMessage, &Delay{Url: url, Name: name, Value: value})
 	}
 	statistic.DefaultRequestNotify = func(c statistic.Tracker) {
 		notifyProbeRoute(c)

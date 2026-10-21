@@ -75,6 +75,24 @@ void main() {
     expect(response.unwrap<List<TrackerInfo>>()?.single.id, 'c1');
   });
 
+  test('a spilled delay list arrives parsed', () async {
+    final file = spill(spillDirectory, {
+      'id': '5',
+      'result': [
+        {'name': 'HK', 'url': 'https://delay.test', 'value': 88},
+      ],
+    });
+
+    final response = await resolveSpilledResponse(
+      CoreMethodResponse(id: '5', file: file.path),
+      method: CoreMethod.getLatestDelays,
+    );
+
+    expect(response.unwrap<List<Delay>>(), const [
+      Delay(name: 'HK', url: 'https://delay.test', value: 88),
+    ]);
+  });
+
   test('refuses a file outside the spill directory', () async {
     final file = spill(home, {'id': '3', 'result': 'secret'});
 

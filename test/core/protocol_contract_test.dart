@@ -44,6 +44,10 @@ class _RecordingCoreHandler extends CoreHandlerInterface {
         'url': 'https://example.com',
         'value': 42,
       },
+      CoreMethod.getLatestDelays => [
+        {'name': 'HK', 'url': 'https://example.com', 'value': 88},
+        {'name': 'JP', 'url': 'https://example.com', 'value': -2},
+      ],
       CoreMethod.probe => {
         'status-code': 204,
         'delay': 17,
@@ -377,6 +381,11 @@ void main() {
       await handler.asyncTestDelay('https://example.com', 'DIRECT'),
       const Delay(name: 'DIRECT', url: 'https://example.com', value: 42),
     );
+    expect(await handler.getLatestDelays(), const [
+      Delay(name: 'HK', url: 'https://example.com', value: 88),
+      Delay(name: 'JP', url: 'https://example.com', value: -2),
+    ]);
+    expect(handler.calls, containsPair(CoreMethod.getLatestDelays, isNull));
     expect(
       await handler.probe(
         const ProbeParams(url: 'https://example.com', timeout: 1000),

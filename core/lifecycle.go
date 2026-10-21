@@ -54,6 +54,7 @@ func handleStopListener() bool {
 	configMu.Lock()
 	defer configMu.Unlock()
 	isRunning.Store(false)
+	healthRetries.reset()
 	listener.StopListener()
 	resolver.ResetConnection()
 	return true
@@ -93,6 +94,7 @@ func handleShutdown() bool {
 	isRunning.Store(false)
 	listener.StopListener()
 	updater.StopGeoUpdater()
+	healthRetries.reset()
 	executor.Shutdown()
 	currentConfig = nil
 	isInit.Store(false)

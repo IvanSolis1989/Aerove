@@ -34,6 +34,7 @@ const (
 	getTotalTrafficMethod          CoreMethod = "getTotalTraffic"
 	resetTrafficMethod             CoreMethod = "resetTraffic"
 	asyncTestDelayMethod           CoreMethod = "asyncTestDelay"
+	getLatestDelaysMethod          CoreMethod = "getLatestDelays"
 	probeMethod                    CoreMethod = "probe"
 	outboundIpMethod               CoreMethod = "outboundIp"
 	serviceCheckMethod             CoreMethod = "serviceCheck"

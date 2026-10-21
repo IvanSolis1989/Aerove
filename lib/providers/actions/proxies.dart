@@ -22,6 +22,11 @@ class _DelayTestJob {
   bool cancelled = false;
 }
 
+class _DelaySync {
+  final Set<String> setMeanwhile = {};
+  bool cancelled = false;
+}
+
 @Riverpod(keepAlive: true)
 class ProxiesAction extends _$ProxiesAction {
   CoreController get _core => ref.read(coreHandlerProvider);
@@ -37,6 +42,8 @@ class ProxiesAction extends _$ProxiesAction {
   final List<String> _bufferedFinishes = [];
 
   Timer? _delayFlushTimer;
+
+  _DelaySync? _delaySync;
 
   final Map<String, String> _pendingSelectedRollback = {};
   int _groupsRevision = 0;
@@ -60,6 +67,8 @@ class ProxiesAction extends _$ProxiesAction {
   }
 
   void cancelDelayTests() {
+    _delaySync?.cancelled = true;
+    _delaySync = null;
     for (final job in _delayTestJobs) {
       job.cancelled = true;
       job.held.clear();
@@ -203,8 +212,40 @@ class ProxiesAction extends _$ProxiesAction {
 
   void setDelay(Delay delay) {
     if (!ref.read(appVisibleProvider)) return;
+    _delaySync?.setMeanwhile.add(delayTestKey(delay.url, delay.name));
     _bufferedDelays.add(delay);
     _scheduleDelayFlush();
+  }
+
+  /// A result that lands while the read is in flight is newer than the read.
+  Future<bool> syncLatestDelays() async {
+    if (!ref.read(appVisibleProvider)) return false;
+    final sync = _delaySync = _DelaySync();
+    try {
+      final latest = await _core.getLatestDelays();
+      if (sync.cancelled || !ref.mounted || !ref.read(appVisibleProvider)) {
+        return false;
+      }
+      final shown = ref.read(delayDataSourceProvider);
+      final fresh = latest.where((delay) {
+        if (sync.setMeanwhile.contains(delayTestKey(delay.url, delay.name))) {
+          return false;
+        }
+        final current = shown[delay.url]?[delay.name];
+        final failed = (delay.value ?? -1) < 0;
+        return !failed || current == null || current >= 0;
+      }).toList();
+      ref.read(delayDataSourceProvider.notifier).setDelays(fresh);
+      return true;
+    } catch (error) {
+      commonPrint.log(
+        'syncLatestDelays failed: $error',
+        logLevel: coreFailureLogLevel(error),
+      );
+      return false;
+    } finally {
+      if (identical(_delaySync, sync)) _delaySync = null;
+    }
   }
 
   Future<void> changeProxy({

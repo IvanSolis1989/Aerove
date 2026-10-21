@@ -406,6 +406,46 @@ void main() {
     });
   });
 
+  group('syncLatestDelays', () {
+    test('keeps a result that lands while the read is in flight', () async {
+      final answer = Completer<List<Delay>>();
+      when(core.getLatestDelays).thenAnswer((_) => answer.future);
+      when(() => core.asyncTestDelay(_testUrl, 'HK-01')).thenAnswer(
+        (_) async => const Delay(name: 'HK-01', url: _testUrl, value: 90),
+      );
+      final container = _delayContainer(buildContainer);
+      final action = actionOf(container);
+
+      final sync = action.syncLatestDelays();
+      await action.proxyDelayTest(_proxy);
+      answer.complete(const [
+        Delay(name: 'HK-01', url: _testUrl, value: 300),
+        Delay(name: 'HK-02', url: _testUrl, value: 40),
+      ]);
+
+      expect(await sync, isTrue);
+      expect(container.read(delayDataSourceProvider)[_testUrl], {
+        'HK-01': 90,
+        'HK-02': 40,
+      });
+    });
+
+    test('drops a read that a hide overtook', () async {
+      final answer = Completer<List<Delay>>();
+      when(core.getLatestDelays).thenAnswer((_) => answer.future);
+      final container = _delayContainer(buildContainer);
+      final action = actionOf(container);
+
+      final sync = action.syncLatestDelays();
+      container.read(appVisibleProvider.notifier).value = false;
+      container.read(appVisibleProvider.notifier).value = true;
+      answer.complete(const [Delay(name: 'HK-01', url: _testUrl, value: 300)]);
+
+      expect(await sync, isFalse);
+      expect(container.read(delayDataSourceProvider), isEmpty);
+    });
+  });
+
   group('delayTest', () {
     test('hiding cancels queued tests and ignores in-flight results', () async {
       final answers = <String, Completer<Delay?>>{};
