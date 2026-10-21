@@ -30,7 +30,7 @@ var (
 	configMu      sync.Mutex
 	currentConfig *config.Config
 
-	// The host's record of the setup behind currentConfig; the core never reads it.
+	// The host's record of the setup behind currentConfig; the core reads only its yaml-md5.
 	appliedSetup json.RawMessage
 
 	errConfigNotApplied = errors.New("config is not applied")
@@ -169,6 +169,37 @@ func handleGetAppliedSetup() AppliedSetup {
 		Running: isRunning.Load(),
 		Applied: appliedSetup,
 	}
+}
+
+func handleRefreshAppliedSetup(params *SetupParams) bool {
+	configMu.Lock()
+	defer configMu.Unlock()
+	if currentConfig == nil || !sameAppliedYAML(appliedSetup, params.Applied) {
+		return false
+	}
+	setTestURL(params.TestURL)
+	skipCertVerify.Store(params.SkipCertVerify)
+	appliedSetup = params.Applied
+	return true
+}
+
+func sameAppliedYAML(current, next json.RawMessage) bool {
+	currentMd5, ok := appliedYAMLMd5(current)
+	if !ok {
+		return false
+	}
+	nextMd5, ok := appliedYAMLMd5(next)
+	return ok && nextMd5 == currentMd5
+}
+
+func appliedYAMLMd5(record json.RawMessage) (string, bool) {
+	var applied *struct {
+		YAMLMd5 string `json:"yaml-md5"`
+	}
+	if json.Unmarshal(record, &applied) != nil || applied == nil {
+		return "", false
+	}
+	return applied.YAMLMd5, true
 }
 
 func loadAndApplyConfigLocked(params *SetupParams) error {

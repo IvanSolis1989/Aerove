@@ -58,6 +58,7 @@ const (
 	crashMethod                    CoreMethod = "crash"
 	setupConfigMethod              CoreMethod = "setupConfig"
 	getAppliedSetupMethod          CoreMethod = "getAppliedSetup"
+	refreshAppliedSetupMethod      CoreMethod = "refreshAppliedSetup"
 	getConfigMethod                CoreMethod = "getConfig"
 	getProfileBaseMethod           CoreMethod = "getProfileBase"
 	getProfileOutboundsMethod      CoreMethod = "getProfileOutbounds"
