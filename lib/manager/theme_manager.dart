@@ -70,6 +70,11 @@ ThemeData watchAppTheme(WidgetRef ref, Brightness brightness) {
     pageTransitionsTheme: _pageTransitionsTheme,
     actionIconTheme: _actionIconTheme,
     colorScheme: colorScheme,
+    textSelectionTheme: TextSelectionThemeData(
+      cursorColor: colorScheme.primary,
+      selectionColor: colorScheme.primary.withValues(alpha: 0.3),
+      selectionHandleColor: colorScheme.primary,
+    ),
     fontFamily: themeSetting.fontFamily,
     fontFamilyFallback: appFontFamilyFallback(
       platform: defaultTargetPlatform,

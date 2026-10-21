@@ -1,6 +1,8 @@
 import 'package:fl_clash/common/input_limits.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
+import 'package:fl_clash/ui/input.dart';
 import 'package:fl_clash/ui/l10n.dart';
+import 'package:fl_clash/ui/text_context_menu.dart';
 import 'package:fl_clash/ui/typography.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -49,6 +51,7 @@ class _SearchFieldState extends State<SearchField> {
         return TextField(
           controller: _controller,
           focusNode: widget.focusNode,
+          contextMenuBuilder: glassEditableTextContextMenu,
           textInputAction: TextInputAction.search,
           style: AppTextStyle.body.of(context),
           inputFormatters: TextInputLimits.limit(TextInputLimits.search),
@@ -60,6 +63,7 @@ class _SearchFieldState extends State<SearchField> {
             suffixIcon: value.text.isEmpty
                 ? null
                 : IconButton(
+                    style: fieldIconButtonStyle(Theme.of(context).colorScheme),
                     tooltip: localizations.clearSearch,
                     onPressed: _handleClear,
                     icon: const GlyphIcon(AppGlyphs.close, size: 20),

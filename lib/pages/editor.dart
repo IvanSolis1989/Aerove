@@ -514,6 +514,7 @@ class _EditorTitleField extends StatelessWidget {
       maxLength: TextInputLimits.name,
       enabled: enabled,
       controller: controller,
+      contextMenuBuilder: glassEditableTextContextMenu,
       decoration: InputDecoration(
         border: const NoInputBorder(),
         counter: const SizedBox(),
@@ -611,6 +612,7 @@ class _CodeEditorState extends ConsumerState<_CodeEditor> {
   // highlighter on any change, so each is rebuilt only when its inputs change.
   ColorScheme? _colorScheme;
   Map<String, TextStyle> _editorTheme = const {};
+  TextSelectionThemeData? _selectionTheme;
   CodeSelectionStyle? _selectionStyle;
   TextStyle? _textStyle;
   TextStyle? _lineNumberStyle;
@@ -670,6 +672,7 @@ class _CodeEditorState extends ConsumerState<_CodeEditor> {
 
   void _updateStyles(BuildContext context, EditorFontSize fontSize) {
     final colorScheme = context.colorScheme;
+    final selection = TextSelectionTheme.of(context);
     final background = LiquidGlassScope.surfaceColorOf(
       context,
       colorScheme.surface,
@@ -680,10 +683,14 @@ class _CodeEditorState extends ConsumerState<_CodeEditor> {
     if (schemeChanged) {
       _colorScheme = colorScheme;
       _editorTheme = _highlightTheme(colorScheme, widget.language, background);
+    }
+    if (schemeChanged || selection != _selectionTheme) {
+      _selectionTheme = selection;
+      final accent = selection.cursorColor ?? colorScheme.primary;
       _selectionStyle = CodeSelectionStyle(
-        cursorColor: colorScheme.primary,
-        selectionColor: colorScheme.primary.opacity30,
-        cursorBubbleColor: colorScheme.primary,
+        cursorColor: accent,
+        selectionColor: selection.selectionColor ?? accent.opacity30,
+        cursorBubbleColor: selection.selectionHandleColor ?? accent,
       );
     }
     final appFont = AppTextStyle.footnote.of(context);
@@ -830,7 +837,9 @@ class _CodeEditorState extends ConsumerState<_CodeEditor> {
       magnifierBuilder: (context, controller, magnifierInfo) => TextLoupe(
         controller: controller,
         magnifierInfo: magnifierInfo,
-        borderColor: context.colorScheme.primary,
+        borderColor:
+            TextSelectionTheme.of(context).selectionHandleColor ??
+            context.colorScheme.primary,
       ),
       textStyle: _textStyle,
       lineWrap: lineWrap,
@@ -1167,6 +1176,7 @@ class _FindField extends StatelessWidget {
       maxLines: 1,
       controller: controller,
       focusNode: focusNode,
+      contextMenuBuilder: glassEditableTextContextMenu,
       textAlignVertical: TextAlignVertical.center,
       inputFormatters: TextInputLimits.limit(TextInputLimits.search),
       style: AppTextStyle.body.of(context),
@@ -1184,7 +1194,12 @@ class _FindField extends StatelessWidget {
         border: pill.copyWith(borderSide: BorderSide.none),
         enabledBorder: pill.copyWith(borderSide: BorderSide.none),
         focusedBorder: pill.copyWith(
-          borderSide: BorderSide(color: colorScheme.primary, width: 2),
+          borderSide: BorderSide(
+            color:
+                TextSelectionTheme.of(context).selectionHandleColor ??
+                colorScheme.primary,
+            width: 2,
+          ),
         ),
         contentPadding: const EdgeInsetsDirectional.only(end: 8),
         prefixIcon: GlyphIcon(glyph, size: 20),
@@ -1239,7 +1254,8 @@ class _FindOptionToggle extends StatelessWidget {
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
             )
-            .merge(focusRingStyle(colorScheme, standsOff: selected)),
+            .merge(focusRingStyle(colorScheme, standsOff: selected))
+            .copyWith(backgroundBuilder: _selectedGlassOf(context, selected)),
         icon: AnimatedGlyph(glyph: glyph, filled: selected),
       ),
     );
@@ -1271,18 +1287,33 @@ class _FindBarButton extends StatelessWidget {
           onPressed: onPressed,
           style: selected
               ? IconButton.styleFrom(
-                  backgroundColor: LiquidGlassScope.surfaceColorOf(
-                    context,
-                    colorScheme.primary,
-                  ),
-                  foregroundColor: LiquidGlassScope.of(context)
-                      ? colorScheme.onSurface
-                      : colorScheme.onPrimary,
-                ).merge(focusRingStyle(colorScheme, standsOff: true))
+                      backgroundColor: LiquidGlassScope.surfaceColorOf(
+                        context,
+                        colorScheme.primary,
+                      ),
+                      foregroundColor: LiquidGlassScope.of(context)
+                          ? colorScheme.onSurface
+                          : colorScheme.onPrimary,
+                    )
+                    .merge(focusRingStyle(colorScheme, standsOff: true))
+                    .copyWith(
+                      backgroundBuilder: _selectedGlassOf(context, true),
+                    )
               : null,
           icon: GlyphIcon(glyph),
         ),
       ),
     );
   }
+}
+
+// A selected find button's fill lies under the glass pane its theme gives it.
+ButtonLayerBuilder? _selectedGlassOf(BuildContext context, bool selected) {
+  if (!selected || !LiquidGlassScope.of(context)) {
+    return null;
+  }
+  final colorScheme = context.colorScheme;
+  return LiquidGlass.buttonStyle(
+    (_) => LiquidGlassStyle.tinted(colorScheme, colorScheme.primary),
+  ).backgroundBuilder;
 }

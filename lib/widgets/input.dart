@@ -145,6 +145,7 @@ class _EntryDialogState<T> extends State<EntryDialog<T>> {
             : TextInputLimits.limit(widget.valueMaxLength!),
         keyboardType: TextInputType.text,
         controller: _valueController,
+        contextMenuBuilder: glassEditableTextContextMenu,
         decoration: InputDecoration(hintText: valueField.label),
         onFieldSubmitted: (_) {
           _submit();
@@ -251,6 +252,7 @@ class _BatchInputField<T> extends StatelessWidget {
     final appLocalizations = context.appLocalizations;
     return TextField(
       controller: controller,
+      contextMenuBuilder: glassEditableTextContextMenu,
       autofocus: true,
       minLines: 4,
       maxLines: null,

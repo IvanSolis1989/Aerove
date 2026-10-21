@@ -195,11 +195,7 @@ class ApplicationState extends ConsumerState<Application> {
             TextSpan(text: parts.first),
             TextSpan(
               text: url,
-              style: TextStyle(
-                color: context.colorScheme.primary,
-                decoration: TextDecoration.underline,
-                decorationColor: context.colorScheme.primary,
-              ),
+              style: const TextStyle(decoration: TextDecoration.underline),
             ),
             if (parts.length > 1) TextSpan(text: parts.last),
           ],

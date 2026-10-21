@@ -1,7 +1,9 @@
 import 'package:code_forge/code_forge.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/features/editor/editor.dart';
+import 'package:fl_clash/ui/ui.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 
 CodeForgeCompletion? _complete(
   String document, {
@@ -319,6 +321,97 @@ void main() {
       );
       expect(script("const a = 'con|"), isNull);
       expect(script('// con|'), isNull);
+    });
+  });
+
+  group('popup', () {
+    final card = find.byType(PopupMenuCard);
+
+    Future<ThemeData> pumpPopup(
+      WidgetTester tester, {
+      required bool glass,
+    }) async {
+      final theme = ThemeData(colorScheme: auroraColorScheme(Brightness.light));
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: theme,
+          builder: (_, child) => LiquidGlassScope(
+            enabled: glass,
+            child: LiquidGlassHost(enabled: glass, child: child!),
+          ),
+          home: Scaffold(
+            body: Align(
+              alignment: Alignment.topLeft,
+              child: SizedBox(
+                width: 300,
+                height: 300,
+                child: Align(
+                  alignment: Alignment.topLeft,
+                  child: EditorCompletionPopup(
+                    details: CodeForgeSuggestionDetails(
+                      suggestions: const [
+                        CodeForgeSuggestion(label: 'proxies', detail: 'list'),
+                        CodeForgeSuggestion(label: 'proxy-groups'),
+                        CodeForgeSuggestion(label: 'port', detail: 'int'),
+                      ],
+                      selectedIndex: 1,
+                      onAccept: (_) {},
+                      caretRect: Rect.zero,
+                    ),
+                    textStyle: const TextStyle(fontSize: 14),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      return theme;
+    }
+
+    List<Color?> rowFills(WidgetTester tester) => [
+      for (final ink in tester.widgetList<Ink>(find.byType(Ink)))
+        (ink.decoration! as ShapeDecoration).color,
+    ];
+
+    testWidgets('stands on one pane of menu glass', (tester) async {
+      final theme = await pumpPopup(tester, glass: true);
+      expect(tester.widget<PopupMenuCard>(card).glass, isNotNull);
+      final rect = tester.getRect(card).inflate(1);
+      final panes = [
+        for (final pane in LiquidGlassHost.debugLastCapture!.panes)
+          if (rect.contains(pane.pane.center)) pane.pane,
+      ];
+      expect(panes, hasLength(1));
+      expect(find.byType(LiquidGlass), findsNothing);
+      expect(rowFills(tester), [null, theme.highlightColor, null]);
+      expect(
+        rowFills(tester),
+        isNot(contains(theme.colorScheme.primaryContainer)),
+      );
+    });
+
+    testWidgets('is opaque without glass', (tester) async {
+      final theme = await pumpPopup(tester, glass: false);
+      final colorScheme = theme.colorScheme;
+      final popup = tester.widget<PopupMenuCard>(card);
+      expect(popup.glass, isNull);
+      expect(
+        popup.fill,
+        SurfaceLevel.floatingOf(colorScheme).colorOf(colorScheme),
+      );
+      expect(popup.fill.a, 1);
+      expect(rowFills(tester), [null, theme.highlightColor, null]);
+      expect(
+        find.descendant(
+          of: find.byType(EditorCompletionPopup),
+          matching: find.byWidgetPredicate(
+            (widget) => widget is Material && widget.elevation > 0,
+          ),
+        ),
+        findsNothing,
+      );
     });
   });
 }

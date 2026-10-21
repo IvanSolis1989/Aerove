@@ -109,6 +109,7 @@ class SubscriptionInfoDetailView extends StatelessWidget {
           ).show
         : appLocalizations.infiniteTime;
     return SelectionArea(
+      contextMenuBuilder: glassSelectableRegionContextMenu,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [

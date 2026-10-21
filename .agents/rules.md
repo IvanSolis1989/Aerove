@@ -85,6 +85,9 @@ ask for a password keyboard; a link, key, rule or regex field that should not be
 alone. `test/lint/text_field_suggestions_test.dart` fails on `enableSuggestions: false` or
 `TextInputType.visiblePassword` anywhere else in `lib/`.
 
+Every `TextField`, `TextFormField`, `SelectableText`, `SelectionArea` and `EditableText` passes the glass selection menu
+from `lib/ui/text_context_menu.dart` as its `contextMenuBuilder`, which `test/lint/text_context_menu_test.dart` enforces.
+
 ### Length Units
 
 Flutter lengths are logical pixels, the unit Android calls dp. Comments, test names, docs and reports give them in dp,

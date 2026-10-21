@@ -69,6 +69,7 @@ export 'surface.dart';
 export 'switch.dart';
 export 'table_layout.dart';
 export 'text.dart';
+export 'text_context_menu.dart';
 export 'text_loupe.dart';
 export 'text_style.dart';
 export 'theme.dart';
