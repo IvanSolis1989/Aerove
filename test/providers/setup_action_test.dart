@@ -125,10 +125,18 @@ class TestSetupAction extends SetupAction {
 
 class _ReattachSetupAction extends SetupAction {
   ServiceRunTime? serviceRunTime;
+  Completer<ServiceRunTime?>? serviceRunTimeGate;
+  Exception? serviceRunTimeError;
   final List<String> listenerCalls = [];
 
   @override
-  Future<ServiceRunTime?> readServiceRunTime() async => serviceRunTime;
+  Future<ServiceRunTime?> readServiceRunTime() async {
+    if (serviceRunTimeError case final error?) {
+      throw error;
+    }
+    final gate = serviceRunTimeGate;
+    return gate == null ? serviceRunTime : await gate.future;
+  }
 
   @override
   Future<bool> setCoreRunning(bool running) async {
@@ -696,6 +704,21 @@ void main() {
       expect(container.read(runTimeProvider), greaterThanOrEqualTo(hour));
     });
 
+    test('a stop tapped on the prefilled run keeps autoRun off it', () async {
+      action.serviceRunTime = (startedAt: hourAgo, vpnOptions: null);
+      container.read(appSettingProvider.notifier).value = const AppSettingProps(
+        autoRun: true,
+      );
+      await action.prefillRunTime();
+
+      await action.setRunning(false);
+      await action.initStatus();
+
+      expect(action.coreRunningCalls, [false]);
+      expect(action.appliedForce, [true]);
+      expect(container.read(isStartProvider), isFalse);
+    });
+
     test('initStatus clears a prefill whose run ended meanwhile', () async {
       action.serviceRunTime = (startedAt: hourAgo, vpnOptions: null);
       await action.prefillRunTime();
@@ -720,10 +743,6 @@ void main() {
     test(
       'a degraded launch with nothing to take over starts nothing',
       () async {
-        action.serviceRunTime = (
-          startedAt: DateTime.now().subtract(const Duration(minutes: 1)),
-          vpnOptions: null,
-        );
         container.read(appSettingProvider.notifier).value =
             const AppSettingProps(autoRun: true);
 
@@ -2022,6 +2041,13 @@ void main() {
         () => core.getProxies(),
       ).thenAnswer((_) async => const ProxiesData(proxies: {}, all: []));
       when(() => core.getAppliedSetup()).thenAnswer((_) async => applied);
+      when(() => core.refreshAppliedSetup(any())).thenAnswer((
+        invocation,
+      ) async {
+        final params = invocation.positionalArguments.single as SetupParams;
+        applied = applied?.copyWith(applied: params.applied);
+        return applied != null;
+      });
     });
 
     tearDown(() {
@@ -2106,7 +2132,31 @@ void main() {
 
       verify(() => core.getProfileBase(any())).called(1);
       expect(pushed, isEmpty);
+      verify(() => core.getExternalProviders()).called(greaterThan(0));
     });
+
+    test(
+      'inputs that moved without the YAML are recorded for the next reopen',
+      () async {
+        final record = await pushedByAnEarlierEngine();
+        applied = AppliedSetup(init: true, applied: record);
+        setupState = setupState.copyWith(profileLastUpdateDate: 1);
+        final refreshing = _ReattachSetupAction();
+        launch(refreshing);
+        await refreshing.initStatus();
+        expect(applied?.applied?.digest, isNot(record.digest));
+        expect(applied?.applied?.yamlMd5, record.yamlMd5);
+        clearInteractions(core);
+
+        final action = _ReattachSetupAction();
+        launch(action);
+        await action.initStatus();
+
+        verifyNever(() => core.getProfileBase(any()));
+        verifyNever(() => core.refreshAppliedSetup(any()));
+        expect(pushed, isEmpty);
+      },
+    );
 
     test('a YAML that moved is pushed with the record of its inputs', () async {
       final record = await pushedByAnEarlierEngine();
@@ -2221,6 +2271,74 @@ void main() {
       expect(action.listenerCalls, ['adopt']);
       expect(scoped.read(isStartProvider), isTrue);
     });
+
+    test('a degraded launch takes over a run it holds no record of', () async {
+      applied = const AppliedSetup(init: true, running: true);
+      final action = _ReattachSetupAction()..serviceRunTime = serviceRun();
+      final scoped = launch(action);
+
+      await action.initStatus(degraded: true);
+
+      expect(action.listenerCalls, ['adopt']);
+      expect(scoped.read(runTimeProvider), greaterThanOrEqualTo(hour));
+      expect(pushed, isEmpty);
+      verifyNever(() => core.getProfileBase(any()));
+      expect(globalState.lastConfigMd5, isNull);
+    });
+
+    test('a degraded launch survives a run time it cannot read', () async {
+      final record = await pushedByAnEarlierEngine();
+      applied = AppliedSetup(init: true, running: true, applied: record);
+      final action = _ReattachSetupAction()
+        ..serviceRunTimeError = const FormatException('bypassDomain');
+      launch(action);
+
+      await action.initStatus(degraded: true);
+
+      expect(action.listenerCalls, isEmpty);
+      expect(pushed, isEmpty);
+    });
+
+    test(
+      'a stop tapped on the prefilled run is not undone by autoRun',
+      () async {
+        final record = await pushedByAnEarlierEngine();
+        applied = AppliedSetup(init: true, running: true, applied: record);
+        final action = _ReattachSetupAction()..serviceRunTime = serviceRun();
+        final scoped = launch(action);
+        enableAutoRun(scoped);
+        await action.prefillRunTime();
+        expect(scoped.read(isStartProvider), isTrue);
+
+        await action.setRunning(false);
+        await action.initStatus();
+
+        expect(action.listenerCalls, ['stop']);
+        expect(scoped.read(isStartProvider), isFalse);
+        expect(pushed, isEmpty);
+        expect(globalState.needInitStatus, isFalse);
+      },
+    );
+
+    test(
+      'a stop that lands while the run time is read stays stopped',
+      () async {
+        final record = await pushedByAnEarlierEngine();
+        applied = AppliedSetup(init: true, running: true, applied: record);
+        final action = _ReattachSetupAction()..serviceRunTime = serviceRun();
+        final scoped = launch(action);
+        await action.prefillRunTime();
+        final gate = action.serviceRunTimeGate = Completer<ServiceRunTime?>();
+
+        final initializing = action.initStatus();
+        await action.setRunning(false);
+        gate.complete(serviceRun());
+        await initializing;
+
+        expect(action.listenerCalls, ['stop']);
+        expect(scoped.read(isStartProvider), isFalse);
+      },
+    );
 
     test('a stop that lands while taking over wins', () async {
       final record = await pushedByAnEarlierEngine();

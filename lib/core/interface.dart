@@ -62,6 +62,8 @@ mixin CoreInterface {
 
   Future<AppliedSetup?> getAppliedSetup();
 
+  Future<bool> refreshAppliedSetup(SetupParams setupParams);
+
   Future<ProxiesData> getProxies();
 
   Future<ChangeProxyResult> changeProxy(ChangeProxyParams changeProxyParams);
@@ -366,6 +368,15 @@ abstract class CoreHandlerInterface with CoreInterface {
       method: CoreMethod.getAppliedSetup,
     );
     return data == null ? null : AppliedSetup.fromJson(data);
+  }
+
+  @override
+  Future<bool> refreshAppliedSetup(SetupParams setupParams) async {
+    return await _invokeMethod<bool>(
+          method: CoreMethod.refreshAppliedSetup,
+          arguments: setupParams.toJson(),
+        ) ??
+        false;
   }
 
   @override

@@ -181,26 +181,50 @@ class SetupAction extends _$SetupAction {
     if (!globalState.needInitStatus) {
       return;
     }
-    final runTime = await readServiceRunTime();
-    _takeServiceStartTime(runTime);
-    final running =
-        _isRunning || (!degraded && ref.read(appSettingProvider).autoRun);
+    final runTime = await _readServiceRunTime();
+    if (_latestRunRequest == null) {
+      _takeServiceStartTime(runTime);
+    }
     final applied = await _readAppliedSetup();
+    if (!globalState.needInitStatus) {
+      return;
+    }
+    final running =
+        _latestRunRequest == null &&
+        (_isRunning || (!degraded && ref.read(appSettingProvider).autoRun));
+    final adopt = applied?.running == false ? null : runTime;
     final record = applied?.applied;
-    if (applied != null && record != null) {
-      await _reattach(
-        record,
-        running: running,
-        adopt: applied.running ? runTime : null,
-        push: !degraded,
-      );
+    if (record != null) {
+      await _reattach(record, running: running, adopt: adopt, push: !degraded);
     } else if (degraded) {
-      _takeServiceStartTime(null);
+      if (running) {
+        await _adoptRunOnly(adopt);
+      }
     } else if (running) {
       await setRunning(true, initialize: true);
     } else {
       await globalState.safeRun(() => applyProfile(force: true));
     }
+  }
+
+  Future<ServiceRunTime?> _readServiceRunTime() async {
+    try {
+      return await readServiceRunTime();
+    } catch (e) {
+      commonPrint.log(
+        'getRunTime ===> ${compactError(e)}',
+        logLevel: LogLevel.warning,
+      );
+      return null;
+    }
+  }
+
+  Future<void> _adoptRunOnly(ServiceRunTime? adopt) async {
+    final request = _claim(true, initialize: true);
+    await _settleInitialStart(request, () async {
+      await _startCoreRunning(request, adopt: adopt);
+      return true;
+    });
   }
 
   Future<AppliedSetup?> _readAppliedSetup() async {
@@ -254,13 +278,11 @@ class SetupAction extends _$SetupAction {
       }
       return true;
     });
-    if (!adopted) {
-      return applyProfile(preloadInvoke: preloadInvoke);
-    }
+    final applied = adopted || await applyProfile(preloadInvoke: preloadInvoke);
     await globalState.safeRun(
       () => ref.read(providersProvider.notifier).syncProviders(),
     );
-    return true;
+    return applied;
   }
 
   Future<bool> _adoptAppliedSetup(SetupRecord record) async {
@@ -566,6 +588,24 @@ class SetupAction extends _$SetupAction {
       proxies: profile.counts.proxies,
       rules: profile.counts.rules,
     );
+  }
+
+  /// Go records a setup only when it applies one, so inputs that moved without
+  /// moving the YAML reach it here, or every reopen would rebuild the profile.
+  Future<void> _refreshRecord(_SetupInputs inputs, BuiltProfile profile) async {
+    final record = await _setupRecord(inputs, profile);
+    if (record == null) {
+      return;
+    }
+    final (_, _, _, params) = inputs;
+    try {
+      await _core.refreshAppliedSetup(params.copyWith(applied: record));
+    } catch (e) {
+      commonPrint.log(
+        'refreshAppliedSetup ===> ${compactError(e)}',
+        logLevel: coreFailureLogLevel(e),
+      );
+    }
   }
 
   /// [globalState.safeRun] shows the failure; the caller still needs it to
@@ -921,7 +961,10 @@ class SetupAction extends _$SetupAction {
     };
     final yamlString = realProfile?.yaml ?? '';
     final yamlMd5 = realProfile?.md5 ?? '';
-    if (!profileFailed && yamlMd5 == globalState.lastConfigMd5 && !force) {
+    if (realProfile != null && yamlMd5 == globalState.lastConfigMd5 && !force) {
+      if (inputs != null && inputs != _appliedInputs) {
+        await _refreshRecord(inputs, realProfile);
+      }
       _appliedInputs = inputs;
       if (preloadInvoke != null) {
         await _runSurfaced(preloadInvoke);

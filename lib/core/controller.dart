@@ -187,6 +187,9 @@ class CoreController {
 
   Future<AppliedSetup?> getAppliedSetup() => _interface.getAppliedSetup();
 
+  Future<bool> refreshAppliedSetup(SetupParams params) =>
+      _interface.refreshAppliedSetup(params);
+
   Future<List<Group>> getProxiesGroups({
     required ProxiesSortType sortType,
     required DelayMap delayMap,

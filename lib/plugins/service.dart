@@ -161,10 +161,22 @@ class Service {
     final options = report['vpnOptions'];
     return (
       startedAt: DateTime.fromMillisecondsSinceEpoch(startedAt),
-      vpnOptions: options is Map
-          ? VpnOptions.fromJson(Map<String, Object?>.from(options))
-          : null,
+      vpnOptions: options is Map ? _runningVpnOptionsOf(options) : null,
     );
+  }
+
+  // Gson fills the service's options from preferences an older build may have
+  // written, and leaves a field that build lacked null, which toJson omits.
+  VpnOptions? _runningVpnOptionsOf(Map<Object?, Object?> options) {
+    try {
+      return VpnOptions.fromJson(Map<String, Object?>.from(options));
+    } catch (e) {
+      commonPrint.log(
+        'getRunTime vpnOptions ===> ${compactError(e)}',
+        logLevel: LogLevel.warning,
+      );
+      return null;
+    }
   }
 
   bool get hasListeners {

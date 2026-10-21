@@ -36,7 +36,7 @@ class _RecordingCoreHandler extends CoreHandlerInterface {
     calls[method] = arguments;
     final result = switch (method) {
       CoreMethod.initClash => true as T,
-      CoreMethod.setUiTelemetryActive => true,
+      CoreMethod.setUiTelemetryActive || CoreMethod.refreshAppliedSetup => true,
       CoreMethod.getTraffic ||
       CoreMethod.getTotalTraffic => {'up': 12, 'down': 34},
       CoreMethod.asyncTestDelay => {
@@ -489,6 +489,34 @@ void main() {
       'rules': 3,
     });
   });
+
+  test(
+    'refreshAppliedSetup hands the Core what lives outside the YAML',
+    () async {
+      final handler = _RecordingCoreHandler();
+
+      expect(
+        await handler.refreshAppliedSetup(
+          const SetupParams(
+            selectedMap: {},
+            testUrl: 'test',
+            skipCertVerify: true,
+            applied: SetupRecord(digest: 'abc', yamlMd5: 'def'),
+          ),
+        ),
+        isTrue,
+      );
+
+      final sent =
+          json.decode(
+                json.encode(handler.calls[CoreMethod.refreshAppliedSetup]),
+              )
+              as Map;
+      expect(sent['test-url'], 'test');
+      expect(sent['skip-cert-verify'], isTrue);
+      expect((sent['applied'] as Map)['yaml-md5'], 'def');
+    },
+  );
 
   test('getAppliedSetup reads the record the Core kept', () async {
     final applied = await _RecordingCoreHandler().getAppliedSetup();

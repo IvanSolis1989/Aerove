@@ -251,27 +251,28 @@ void main() {
 
   group('getRunTime', () {
     // Gson's spelling of the Kotlin RunTime, which ServicePlugin sends.
-    String report(int startedAt) => json.encode({
-      'startedAt': startedAt,
-      'vpnOptions': {
-        'enable': true,
-        'port': 7890,
-        'ipv6': false,
-        'dnsHijacking': true,
-        'accessControlProps': {
-          'enable': true,
-          'mode': 'rejectSelected',
-          'acceptList': <String>[],
-          'rejectList': ['com.example.app'],
-        },
-        'allowBypass': false,
-        'systemProxy': true,
-        'bypassDomain': ['localhost'],
-        'stack': 'gvisor',
-        'routeAddress': ['0.0.0.0/0'],
-        'mtu': 0,
-      },
-    });
+    String report(int startedAt, {Set<String> missing = const {}}) =>
+        json.encode({
+          'startedAt': startedAt,
+          'vpnOptions': {
+            'enable': true,
+            'port': 7890,
+            'ipv6': false,
+            'dnsHijacking': true,
+            'accessControlProps': {
+              'enable': true,
+              'mode': 'rejectSelected',
+              'acceptList': <String>[],
+              'rejectList': ['com.example.app'],
+            },
+            'allowBypass': false,
+            'systemProxy': true,
+            'bypassDomain': ['localhost'],
+            'stack': 'gvisor',
+            'routeAddress': ['0.0.0.0/0'],
+            'mtu': 0,
+          }..removeWhere((key, _) => missing.contains(key)),
+        });
 
     test('reads the start stamp and the options the service runs', () async {
       final stamp = DateTime.utc(2026, 8, 16).millisecondsSinceEpoch;
@@ -290,6 +291,16 @@ void main() {
         'com.example.app',
       ]);
       expect(runTime?.vpnOptions?.congestionController, '');
+    });
+
+    test('keeps the run when its options cannot be read', () async {
+      final stamp = DateTime.utc(2026, 8, 16).millisecondsSinceEpoch;
+      mockChannel((_) async => report(stamp, missing: {'bypassDomain'}));
+
+      final runTime = await Service().getRunTime();
+
+      expect(runTime?.startedAt, DateTime.fromMillisecondsSinceEpoch(stamp));
+      expect(runTime?.vpnOptions, isNull);
     });
 
     test('treats no report and a zero stamp as not running', () async {
