@@ -4,6 +4,8 @@ import 'package:fl_clash/common/app_localizations.dart';
 import 'package:fl_clash/pages/scan.dart';
 import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/ui/activate_box.dart';
+import 'package:fl_clash/ui/foreground_ink.dart';
+import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/null_status.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
@@ -770,6 +772,116 @@ void main() {
         0,
       );
     });
+  });
+
+  group('ScanPage glass', () {
+    Finder inPage(Finder finder) =>
+        find.descendant(of: find.byType(ScanPage), matching: finder);
+
+    Finder button(String tooltip) => find.byWidgetPredicate(
+      (widget) => widget is IconButton && widget.tooltip == tooltip,
+    );
+
+    Color fillOf(WidgetTester tester, String tooltip) => tester
+        .widget<Material>(
+          find
+              .descendant(of: button(tooltip), matching: find.byType(Material))
+              .first,
+        )
+        .color!;
+
+    Color glyphColorOf(WidgetTester tester, String tooltip) => IconTheme.of(
+      tester.element(
+        find.descendant(of: button(tooltip), matching: find.byType(GlyphIcon)),
+      ),
+    ).color!;
+
+    SystemUiOverlayStyle overlayStyle(WidgetTester tester) => tester
+        .widget<AnnotatedRegion<SystemUiOverlayStyle>>(
+          inPage(find.byType(AnnotatedRegion<SystemUiOverlayStyle>)).first,
+        )
+        .value;
+
+    for (final quality in LiquidGlassQuality.values) {
+      testWidgets('over the camera a light glass app turns glass and ink off '
+          '($quality)', (tester) async {
+        await pumpScanPage(tester, onPopped: (_) {}, glassQuality: quality);
+        expect(
+          Theme.of(tester.element(find.byType(Navigator))).brightness,
+          Brightness.light,
+        );
+
+        expect(inPage(find.byType(LiquidGlass)), findsNothing);
+        final hint = find.text(currentAppLocalizations.qrcodeDesc);
+        expect(tester.widget(hint), isNot(isA<GlassText>()));
+        expect(
+          tester.widget<Text>(hint).style!.color!.computeLuminance(),
+          greaterThan(0.8),
+        );
+        final inks = inPage(find.byType(GlassInk)).evaluate();
+        expect(inks, isNotEmpty);
+        for (final ink in inks) {
+          expect(
+            GlassForeground.colorsInk(ink, (ink.widget as GlassInk).source),
+            isFalse,
+          );
+        }
+        for (final tooltip in [
+          currentAppLocalizations.close,
+          currentAppLocalizations.pickFromAlbum,
+          currentAppLocalizations.torch,
+        ]) {
+          final fill = fillOf(tester, tooltip);
+          expect(fill.a, closeTo(0.45, 0.01), reason: tooltip);
+          expect(fill.computeLuminance(), 0, reason: tooltip);
+          expect(glyphColorOf(tester, tooltip), Colors.white, reason: tooltip);
+        }
+        expect(overlayStyle(tester).statusBarIconBrightness, Brightness.light);
+      });
+    }
+
+    testWidgets('a lit torch stands apart from an unlit one', (tester) async {
+      await pumpScanPage(
+        tester,
+        onPopped: (_) {},
+        glassQuality: LiquidGlassQuality.ultra,
+      );
+      final torch = currentAppLocalizations.torch;
+      final unlit = fillOf(tester, torch);
+
+      platform.emitTorch(TorchState.on);
+      await pumpFrames(tester);
+
+      final lit = fillOf(tester, torch);
+      expect(lit, isNot(unlit));
+      expect(lit.computeLuminance(), greaterThan(0.8));
+      expect(glyphColorOf(tester, torch).computeLuminance(), lessThan(0.1));
+    });
+
+    for (final quality in [null, ...LiquidGlassQuality.values]) {
+      testWidgets('a failed camera leaves the app page in its own look '
+          '($quality)', (tester) async {
+        platform.startError = const MobileScannerException(
+          errorCode: MobileScannerErrorCode.permissionDenied,
+        );
+        await pumpScanPage(tester, onPopped: (_) {}, glassQuality: quality);
+
+        final app = Theme.of(tester.element(find.byType(Navigator)));
+        final status = tester.element(find.byType(NullStatus));
+        expect(Theme.of(status).brightness, Brightness.light);
+        expect(Theme.of(status).colorScheme, app.colorScheme);
+        expect(LiquidGlassScope.of(status), quality != null);
+        expect(
+          find.descendant(
+            of: button(currentAppLocalizations.close),
+            matching: find.byType(LiquidGlass),
+          ),
+          quality == null ? findsNothing : findsOneWidget,
+        );
+        expect(overlayStyle(tester).statusBarIconBrightness, Brightness.dark);
+        expect(overlayStyle(tester).statusBarBrightness, Brightness.light);
+      });
+    }
   });
 
   group('ScanPage theme', () {

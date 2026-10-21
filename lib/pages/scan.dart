@@ -13,15 +13,21 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
-const _systemUiOverlayStyle = SystemUiOverlayStyle(
-  statusBarColor: Colors.transparent,
-  statusBarIconBrightness: Brightness.light,
-  statusBarBrightness: Brightness.dark,
-  systemNavigationBarColor: Colors.transparent,
-  systemNavigationBarDividerColor: Colors.transparent,
-  systemNavigationBarIconBrightness: Brightness.light,
-  systemNavigationBarContrastEnforced: false,
-);
+SystemUiOverlayStyle _systemUiOverlayStyleOf(Brightness page) {
+  final icons = page == Brightness.dark ? Brightness.light : Brightness.dark;
+  return SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: icons,
+    statusBarBrightness: page,
+    systemNavigationBarColor: Colors.transparent,
+    systemNavigationBarDividerColor: Colors.transparent,
+    systemNavigationBarIconBrightness: icons,
+    systemNavigationBarContrastEnforced: false,
+  );
+}
+
+const _cameraControlFill = Color(0x73000000);
+const _cameraControlForeground = Colors.white;
 
 const _invalidHintDuration = Duration(seconds: 2);
 
@@ -202,132 +208,154 @@ class _ScanPageState extends ConsumerState<ScanPage>
 
   @override
   Widget build(BuildContext context) {
-    final theme = watchAppTheme(ref, Brightness.dark);
-    final appLocalizations = context.appLocalizations;
+    final cameraTheme = watchAppTheme(ref, Brightness.dark);
+    final appTheme = Theme.of(context);
+    final appIconTheme = IconTheme.of(context);
     final glass = LiquidGlassScope.of(context);
-    return Theme(
-      data: theme,
-      // `Theme` inserts no `IconTheme`, so the app's light one would color
-      // the icons here.
-      child: IconTheme(
-        data: theme.iconTheme,
-        child: AnnotatedRegion<SystemUiOverlayStyle>(
-          value: _systemUiOverlayStyle,
-          sized: false,
-          child: ValueListenableBuilder<MobileScannerState>(
-            valueListenable: _controller,
-            builder: (context, scanner, _) => Scaffold(
-              backgroundColor: scanner.error != null
-                  ? LiquidGlassScope.surfaceColorOf(
-                      context,
-                      theme.scaffoldBackgroundColor,
-                    )
-                  : theme.scaffoldBackgroundColor,
-              body: LayoutBuilder(
-                builder: (context, constraints) {
-                  final hintStyle = AppTextStyle.subheadline.of(context);
-                  final layout = _ScanLayout(
-                    size: constraints.biggest,
-                    padding: MediaQuery.paddingOf(context),
-                    hintHeight:
-                        MediaQuery.textScalerOf(
-                          context,
-                        ).scale(hintStyle.fontSize!) *
-                        hintStyle.height! *
-                        _hintMaxLines,
-                  );
-                  return Stack(
-                    children: [
-                      Positioned.fill(
-                        child: MobileScanner(
-                          controller: _controller,
-                          errorBuilder: (_, _) => const SizedBox.shrink(),
-                        ),
-                      ),
-                      Positioned.fill(
-                        child: ValueListenableBuilder<MobileScannerState>(
-                          valueListenable: _controller,
-                          builder: (context, state, _) => AnimatedOpacity(
-                            opacity: state.isRunning || state.error != null
-                                ? 0
-                                : 1,
-                            duration: _disableAnimations || !state.isRunning
-                                ? Duration.zero
-                                : _previewRevealDuration,
-                            curve: _previewRevealAwaitingFirstFrame,
-                            child: const ColoredBox(color: Colors.black),
-                          ),
-                        ),
-                      ),
-                      Positioned.fill(
-                        child: ValueListenableBuilder<MobileScannerState>(
-                          valueListenable: _controller,
-                          builder: (context, state, _) {
-                            final error = state.error;
-                            if (error != null) {
-                              return _ScannerError(
-                                errorCode: error.errorCode,
-                                onRetry: _start,
-                                onOpenSettings: _openAppSettings,
-                              );
-                            }
-                            return _buildScanFrame(theme, layout, hintStyle);
-                          },
-                        ),
-                      ),
-                      Positioned(
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        child: TonalButtonTheme(
-                          glass: glass,
-                          child: AppBarInsetScope(
-                            child: AppBar(
-                              backgroundColor: Colors.transparent,
-                              surfaceTintColor: Colors.transparent,
-                              automaticallyImplyLeading: false,
-                              leading: Center(
-                                child: ElasticPress(
-                                  child: AppBarActionButton(
-                                    data: IconButtonData(
-                                      glyph: AppGlyphs.close,
-                                      tooltip: appLocalizations.close,
-                                      onPressed: () {
-                                        Navigator.of(context).pop();
-                                      },
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              actions: genActions([
-                                ElasticPress(
-                                  child: AppBarActionButton(
-                                    data: IconButtonData(
-                                      glyph: AppGlyphs.photos,
-                                      tooltip: appLocalizations.pickFromAlbum,
-                                      onPressed: _pickFromAlbum,
-                                    ),
-                                  ),
-                                ),
-                              ], edge: AppBarActionEdge.container),
+    final glassQuality = LiquidGlassScope.qualityOf(context);
+    return ValueListenableBuilder<MobileScannerState>(
+      valueListenable: _controller,
+      builder: (context, scanner, _) {
+        // No pane can read the camera's texture, and ink keyed to the hidden
+        // wallpaper misreads the feed, so both stay off over the camera.
+        final failed = scanner.error != null;
+        final theme = failed ? appTheme : cameraTheme;
+        return LiquidGlassScope(
+          enabled: failed && glass,
+          quality: glassQuality,
+          child: Theme(
+            data: theme,
+            // `Theme` inserts no `IconTheme`, so the app's light one would
+            // color the icons over the camera.
+            child: IconTheme(
+              data: failed ? appIconTheme : theme.iconTheme,
+              child: AnnotatedRegion<SystemUiOverlayStyle>(
+                value: _systemUiOverlayStyleOf(theme.brightness),
+                sized: false,
+                child: _buildPage(
+                  context,
+                  theme: theme,
+                  failed: failed,
+                  glass: glass,
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildPage(
+    BuildContext context, {
+    required ThemeData theme,
+    required bool failed,
+    required bool glass,
+  }) {
+    final appLocalizations = context.appLocalizations;
+    Widget controls(Widget child) => failed
+        ? TonalButtonTheme(glass: glass, child: child)
+        : _CameraButtonTheme(child: child);
+    return Scaffold(
+      backgroundColor: failed
+          ? LiquidGlassScope.surfaceColorOf(
+              context,
+              theme.scaffoldBackgroundColor,
+            )
+          : theme.scaffoldBackgroundColor,
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final hintStyle = AppTextStyle.subheadline.of(context);
+          final layout = _ScanLayout(
+            size: constraints.biggest,
+            padding: MediaQuery.paddingOf(context),
+            hintHeight:
+                MediaQuery.textScalerOf(context).scale(hintStyle.fontSize!) *
+                hintStyle.height! *
+                _hintMaxLines,
+          );
+          return Stack(
+            children: [
+              Positioned.fill(
+                child: MobileScanner(
+                  controller: _controller,
+                  errorBuilder: (_, _) => const SizedBox.shrink(),
+                ),
+              ),
+              Positioned.fill(
+                child: ValueListenableBuilder<MobileScannerState>(
+                  valueListenable: _controller,
+                  builder: (context, state, _) => AnimatedOpacity(
+                    opacity: state.isRunning || state.error != null ? 0 : 1,
+                    duration: _disableAnimations || !state.isRunning
+                        ? Duration.zero
+                        : _previewRevealDuration,
+                    curve: _previewRevealAwaitingFirstFrame,
+                    child: const ColoredBox(color: Colors.black),
+                  ),
+                ),
+              ),
+              Positioned.fill(
+                child: ValueListenableBuilder<MobileScannerState>(
+                  valueListenable: _controller,
+                  builder: (context, state, _) {
+                    final error = state.error;
+                    if (error != null) {
+                      return _ScannerError(
+                        errorCode: error.errorCode,
+                        onRetry: _start,
+                        onOpenSettings: _openAppSettings,
+                      );
+                    }
+                    return _buildScanFrame(theme, layout, hintStyle);
+                  },
+                ),
+              ),
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: controls(
+                  AppBarInsetScope(
+                    child: AppBar(
+                      backgroundColor: Colors.transparent,
+                      surfaceTintColor: Colors.transparent,
+                      automaticallyImplyLeading: false,
+                      leading: Center(
+                        child: ElasticPress(
+                          child: AppBarActionButton(
+                            data: IconButtonData(
+                              glyph: AppGlyphs.close,
+                              tooltip: appLocalizations.close,
+                              onPressed: () {
+                                Navigator.of(context).pop();
+                              },
                             ),
                           ),
                         ),
                       ),
-                      Positioned.fromRect(
-                        rect: layout.torch,
-                        child: TonalButtonTheme(
-                          glass: glass,
-                          child: _TorchButton(controller: _controller),
+                      actions: genActions([
+                        ElasticPress(
+                          child: AppBarActionButton(
+                            data: IconButtonData(
+                              glyph: AppGlyphs.photos,
+                              tooltip: appLocalizations.pickFromAlbum,
+                              onPressed: _pickFromAlbum,
+                            ),
+                          ),
                         ),
-                      ),
-                    ],
-                  );
-                },
+                      ], edge: AppBarActionEdge.container),
+                    ),
+                  ),
+                ),
               ),
-            ),
-          ),
-        ),
+              Positioned.fromRect(
+                rect: layout.torch,
+                child: controls(_TorchButton(controller: _controller)),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -372,7 +400,7 @@ class _ScanPageState extends ConsumerState<ScanPage>
             valueListenable: _invalidHint,
             builder: (context, invalid, _) => Semantics(
               liveRegion: true,
-              child: GlassText(
+              child: Text(
                 invalid
                     ? appLocalizations.invalidProfileQrcode
                     : appLocalizations.qrcodeDesc,
@@ -380,9 +408,7 @@ class _ScanPageState extends ConsumerState<ScanPage>
                 maxLines: _hintMaxLines,
                 overflow: TextOverflow.ellipsis,
                 style: hintStyle.copyWith(
-                  color: invalid
-                      ? colorScheme.error
-                      : colorScheme.onSurfaceVariant,
+                  color: invalid ? colorScheme.error : _cameraControlForeground,
                 ),
               ),
             ),
@@ -613,8 +639,6 @@ class _TorchButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = context.colorScheme;
-    final glass = TonalButtonTheme.glassOf(context);
     return ValueListenableBuilder<MobileScannerState>(
       valueListenable: controller,
       builder: (context, state, _) {
@@ -634,9 +658,10 @@ class _TorchButton extends StatelessWidget {
                 style: IconButton.styleFrom(
                   fixedSize: const Size.square(_torchSize),
                   iconSize: _torchIconSize,
-                  backgroundColor: lit && !glass ? colorScheme.primary : null,
-                  foregroundColor: lit ? colorScheme.onPrimary : null,
-                ).merge(focusRingStyle(colorScheme, standsOff: lit && !glass)),
+                  backgroundColor: lit ? Colors.white : null,
+                  foregroundColor: lit ? Colors.black : null,
+                  overlayColor: lit ? Colors.black : null,
+                ),
                 onPressed: controller.toggleTorch,
                 icon: const GlyphIcon(AppGlyphs.torchOff),
                 selectedIcon: GlyphIcon(
@@ -649,6 +674,35 @@ class _TorchButton extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+/// Camera-style controls: dark translucent fills that read over any feed.
+class _CameraButtonTheme extends StatelessWidget {
+  const _CameraButtonTheme({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    const size = TonalButtonSize.bar;
+    return IconButtonTheme(
+      data: IconButtonThemeData(
+        style: IconButton.styleFrom(
+          backgroundColor: _cameraControlFill,
+          foregroundColor: _cameraControlForeground,
+          overlayColor: _cameraControlForeground,
+          fixedSize: Size.square(size.button),
+          minimumSize: Size.square(size.button),
+          padding: EdgeInsets.zero,
+          iconSize: size.icon,
+          shape: AppShape.full,
+          visualDensity: VisualDensity.standard,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ).merge(focusRingStyle(context.colorScheme, standsOff: true)),
+      ),
+      child: IconTheme.merge(data: const IconThemeData(fill: 1), child: child),
     );
   }
 }
