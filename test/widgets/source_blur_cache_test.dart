@@ -18,7 +18,7 @@ const _rects = [
   Rect.fromLTWH(240, 160, 100, 140),
 ];
 const _colors = [Color(0xFFB8DCF2), Color(0xFFF0BFD8), Color(0xFFD5E9D3)];
-// Of the 1024 px gradient source, blurs 12 and 16 keep a quarter, 24 an eighth.
+// Of the gradient source, 1024 physical pixels wide, blurs 12 and 16 keep a quarter, 24 an eighth.
 const _quarterEntry = 256 * 256;
 const _eighthEntry = 128 * 128;
 
