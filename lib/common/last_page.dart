@@ -7,12 +7,26 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 const _homeModes = {NavigationItemMode.mobile, NavigationItemMode.desktop};
 
-/// Reopens Android on the home page it was left on, while that page exists.
+/// A degraded boot opens the dashboard: the saved page may be what crashed.
 Future<void> restoreLastPage(
   ProviderContainer container, {
   required bool isAndroid,
+  required bool degraded,
 }) async {
   if (!isAndroid) return;
+  if (degraded) {
+    await preferences.saveLastPageLabel(
+      container.read(currentPageLabelProvider),
+    );
+  } else {
+    await _restore(container);
+  }
+  container.listen(currentPageLabelProvider, (_, label) {
+    unawaited(preferences.saveLastPageLabel(label));
+  });
+}
+
+Future<void> _restore(ProviderContainer container) async {
   final name = await preferences.getLastPageLabel();
   final saved = PageLabel.values.asNameMap()[name];
   final exists = container
@@ -24,7 +38,4 @@ Future<void> restoreLastPage(
   if (saved != null && exists) {
     container.read(currentPageLabelProvider.notifier).value = saved;
   }
-  container.listen(currentPageLabelProvider, (_, label) {
-    unawaited(preferences.saveLastPageLabel(label));
-  });
 }

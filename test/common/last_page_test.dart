@@ -29,6 +29,7 @@ void main() {
     bool isAndroid = true,
     bool hasProfiles = false,
     bool openLogs = false,
+    bool degraded = false,
   }) async {
     await mockPreferences({lastPageLabelKey: ?saved});
     final container = ProviderContainer(
@@ -42,7 +43,7 @@ void main() {
       ],
     );
     addTearDown(container.dispose);
-    await restoreLastPage(container, isAndroid: isAndroid);
+    await restoreLastPage(container, isAndroid: isAndroid, degraded: degraded);
     return container;
   }
 
@@ -92,6 +93,20 @@ void main() {
     await pumpEventQueue();
     expect(await preferences.getLastPageLabel(), 'profiles');
   });
+
+  test(
+    'opens the dashboard after a degraded boot and forgets the page',
+    () async {
+      final container = await restore('tools', degraded: true);
+
+      expect(container.read(currentPageLabelProvider), PageLabel.dashboard);
+      expect(await preferences.getLastPageLabel(), 'dashboard');
+
+      container.read(currentPageLabelProvider.notifier).toPage(PageLabel.tools);
+      await pumpEventQueue();
+      expect(await preferences.getLastPageLabel(), 'tools');
+    },
+  );
 
   test('leaves other platforms on the dashboard and saves nothing', () async {
     final container = await restore('tools', isAndroid: false);
