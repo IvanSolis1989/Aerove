@@ -393,15 +393,14 @@ class _ColorSwatches extends ConsumerWidget {
     final systemColor = ref
         .watch(dynamicColorProvider)
         .seedOf(Theme.of(context).brightness);
-    return Container(
+    final swatches = Container(
       padding: const EdgeInsets.all(_inset),
-      decoration: ShapeDecoration(
-        color: LiquidGlassScope.surfaceColorOf(
-          context,
-          level.colorOf(colorScheme),
-        ),
-        shape: AppShape.xl,
-      ),
+      decoration: LiquidGlassScope.of(context)
+          ? null
+          : ShapeDecoration(
+              color: level.colorOf(colorScheme),
+              shape: AppShape.xl,
+            ),
       child: SurfaceScope(
         level: level,
         child: LayoutBuilder(
@@ -451,6 +450,7 @@ class _ColorSwatches extends ConsumerWidget {
         ),
       ),
     );
+    return CardGroup(child: swatches);
   }
 }
 
@@ -545,11 +545,15 @@ class _ColorSwatchState extends State<_ColorSwatch> {
                   scale: selected ? 1 : 0,
                   duration: _ColorSwatch._duration,
                   curve: Curves.easeOutBack,
-                  child: GlyphIcon(
-                    AppGlyphs.check,
-                    size: 18,
-                    fill: 1,
-                    color: check,
+                  child: LiquidGlassScope(
+                    enabled: false,
+                    quality: LiquidGlassScope.qualityOf(context),
+                    child: GlyphIcon(
+                      AppGlyphs.check,
+                      size: 18,
+                      fill: 1,
+                      color: check,
+                    ),
                   ),
                 ),
               ],
@@ -926,10 +930,9 @@ class _FontFamilyItem extends ConsumerWidget {
         ],
       ),
     );
-    final cardColor = LiquidGlassScope.surfaceColorOf(
-      context,
-      context.raisedSurfaceLevel.colorOf(colorScheme),
-    );
+    final cardColor = LiquidGlassScope.of(context)
+        ? Colors.transparent
+        : context.raisedSurfaceLevel.colorOf(colorScheme);
     Widget card(VoidCallback onTap) => Material(
       color: cardColor,
       shape: AppShape.lg,
@@ -944,19 +947,22 @@ class _FontFamilyItem extends ConsumerWidget {
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-          child: context.isMobileView
-              ? OpenContainer<void>(
-                  closedShape: AppShape.lg,
-                  closedColor: cardColor,
-                  closedBuilder: (_, open) => card(open),
-                  openBuilder: (_, _) => const FontFamilyView(),
-                )
-              : card(
-                  () => showSheet<void>(
-                    context: context,
-                    builder: (_) => const FontFamilyView(),
+          child: CardGroup(
+            shape: AppShape.lg,
+            child: context.isMobileView
+                ? OpenContainer<void>(
+                    closedShape: AppShape.lg,
+                    closedColor: cardColor,
+                    closedBuilder: (_, open) => card(open),
+                    openBuilder: (_, _) => const FontFamilyView(),
+                  )
+                : card(
+                    () => showSheet<void>(
+                      context: context,
+                      builder: (_) => const FontFamilyView(),
+                    ),
                   ),
-                ),
+          ),
         ),
       ],
     );
@@ -1027,6 +1033,8 @@ class _TextScaleFactorItemState extends ConsumerState<_TextScaleFactorItem> {
                 onChanged: (value) =>
                     _update((state) => state.copyWith(enable: value)),
               ),
+              // A wash rather than a CardGroup: the slider's track and thumb
+              // are panes, and a pane under them would stack glass on glass.
               Container(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                 decoration: ShapeDecoration(

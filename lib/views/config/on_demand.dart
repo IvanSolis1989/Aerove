@@ -197,18 +197,23 @@ class _OnDemandViewState extends ConsumerState<OnDemandView>
     return CommonMinFilledButtonTheme(
       child: ElasticButton(
         child: FilledButton(
-          style: FilledButton.styleFrom(
-            backgroundColor: authorized
-                ? null
-                : context.colorScheme.errorContainer,
-            foregroundColor: authorized
-                ? null
-                : context.colorScheme.onErrorContainer,
-            padding: const EdgeInsets.symmetric(
-              horizontal: _authorizeButtonPadding,
-            ),
-            minimumSize: const Size(_minAuthorizeButtonWidth, 40),
-          ),
+          style:
+              FilledButton.styleFrom(
+                backgroundColor: authorized
+                    ? null
+                    : context.colorScheme.errorContainer,
+                foregroundColor: authorized
+                    ? null
+                    : context.colorScheme.onErrorContainer,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: _authorizeButtonPadding,
+                ),
+                minimumSize: const Size(_minAuthorizeButtonWidth, 40),
+              ).copyWith(
+                backgroundBuilder: authorized
+                    ? null
+                    : (_, _, child) => child ?? const SizedBox.shrink(),
+              ),
           onPressed: onPressed,
           child: Stack(
             alignment: Alignment.center,

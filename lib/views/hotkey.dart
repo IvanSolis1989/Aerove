@@ -132,15 +132,14 @@ class _HotKeyIntro extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
-    return Container(
+    final intro = Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      decoration: ShapeDecoration(
-        color: LiquidGlassScope.surfaceColorOf(
-          context,
-          context.raisedSurfaceLevel.colorOf(colorScheme),
-        ),
-        shape: AppShape.xl,
-      ),
+      decoration: LiquidGlassScope.of(context)
+          ? null
+          : ShapeDecoration(
+              color: context.raisedSurfaceLevel.colorOf(colorScheme),
+              shape: AppShape.xl,
+            ),
       child: Row(
         spacing: 14,
         children: [
@@ -156,6 +155,7 @@ class _HotKeyIntro extends StatelessWidget {
         ],
       ),
     );
+    return CardGroup(child: intro);
   }
 }
 

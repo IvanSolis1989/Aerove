@@ -12,6 +12,7 @@ const _recordCellInset = 8.0;
 const _recordCellLineHeight = 20.0;
 const _recordHeaderLineHeight = 16.0;
 const _recordRowPadding = 8.0;
+const _recordBodyGap = 4.0;
 
 class RecordColumn<T> {
   final TableColumn layout;
@@ -201,7 +202,7 @@ class _RecordTableFrameState<T> extends ConsumerState<RecordTableFrame<T>>
       layouts: layouts,
       widths: tableColumnWidths(
         layouts,
-        width - _recordTableMargin * 2,
+        width - _recordTableInset(context) * 2,
         columnWidths,
       ),
       rowHeight:
@@ -251,9 +252,11 @@ class _RecordTableFrameState<T> extends ConsumerState<RecordTableFrame<T>>
                       onReset: resetColumnWidths,
                     ),
                     Expanded(
-                      child: Builder(
-                        builder: (context) =>
-                            widget.builder(context, table, items),
+                      child: _RecordTableBody(
+                        child: Builder(
+                          builder: (context) =>
+                              widget.builder(context, table, items),
+                        ),
                       ),
                     ),
                   ],
@@ -263,6 +266,41 @@ class _RecordTableFrameState<T> extends ConsumerState<RecordTableFrame<T>>
           ),
         );
       },
+    );
+  }
+}
+
+/// On glass the rows stand inside the body's pane, as far again from its edge.
+double _recordTableInset(BuildContext context) =>
+    _recordTableMargin * (LiquidGlassScope.of(context) ? 2 : 1);
+
+/// One still pane under all rows, so scrolling adds no panes or captures.
+class _RecordTableBody extends StatelessWidget {
+  final Widget child;
+
+  const _RecordTableBody({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!LiquidGlassScope.of(context)) {
+      return child;
+    }
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        _recordTableMargin,
+        _recordBodyGap,
+        _recordTableMargin,
+        _recordTableMargin + BottomInsetScope.of(context),
+      ),
+      child: CardGroup(
+        child: ClipRSuperellipse(
+          borderRadius: AppRadius.xl,
+          child: TopInsetScope(
+            inset: _recordTableMargin,
+            child: BottomInsetScope(inset: 0, child: child),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -305,30 +343,37 @@ class _RecordTableHeader<T> extends StatelessWidget {
               : context.raisedSurfaceLevel.colorOf(colorScheme),
           shape: AppShape.all(AppCorner.fit(height)),
           clipBehavior: Clip.antiAlias,
-          child: TableColumnResizer(
-            columns: table.layouts,
-            widths: table.widths,
-            onResize: onResize,
-            onResizeEnd: onResizeEnd,
-            onReset: onReset,
-            child: TableCells(
+          child: Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: _recordTableInset(context) - _recordTableMargin,
+            ),
+            child: TableColumnResizer(
               columns: table.layouts,
               widths: table.widths,
-              height: height,
-              inset: 0,
-              cells: [
-                for (final column in table.columns)
-                  RecordHeaderCell(
-                    label: column.layout.label,
-                    end: column.layout.end,
-                    style: style,
-                    inset: _recordCellInset,
-                    descending: sort?.columnId == column.id
-                        ? sort?.descending
-                        : null,
-                    onTap: column.sortKey == null ? null : () => onSort(column),
-                  ),
-              ],
+              onResize: onResize,
+              onResizeEnd: onResizeEnd,
+              onReset: onReset,
+              child: TableCells(
+                columns: table.layouts,
+                widths: table.widths,
+                height: height,
+                inset: 0,
+                cells: [
+                  for (final column in table.columns)
+                    RecordHeaderCell(
+                      label: column.layout.label,
+                      end: column.layout.end,
+                      style: style,
+                      inset: _recordCellInset,
+                      descending: sort?.columnId == column.id
+                          ? sort?.descending
+                          : null,
+                      onTap: column.sortKey == null
+                          ? null
+                          : () => onSort(column),
+                    ),
+                ],
+              ),
             ),
           ),
         ),
@@ -470,10 +515,7 @@ class RecordTableRow extends StatelessWidget {
     }
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: _recordTableMargin),
-      child: CardGroup(
-        shape: shape,
-        child: SurfaceScope(level: level, child: row),
-      ),
+      child: SurfaceScope(level: level, child: row),
     );
   }
 }

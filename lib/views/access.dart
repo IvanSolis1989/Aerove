@@ -375,12 +375,45 @@ class _AccessViewState extends ConsumerState<AccessView>
     required AccessControlMode mode,
     required int count,
   }) {
+    final glass = LiquidGlassScope.of(context);
+    final banner = _buildBanner(
+      enable: enable,
+      mode: mode,
+      count: count,
+      backgroundColor: glass
+          ? Colors.transparent
+          : context.raisedSurfaceLevel.colorOf(context.colorScheme),
+    );
+    if (!glass) {
+      return banner;
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      // Turn on is a glass button, so the banner holding it stays a wash
+      // rather than a pane under it.
+      child: enable
+          ? CardGroup(child: banner)
+          : DecoratedBox(
+              decoration: ShapeDecoration(
+                color: LiquidGlassScope.surfaceColorOf(
+                  context,
+                  context.raisedSurfaceLevel.colorOf(context.colorScheme),
+                ),
+                shape: AppShape.xl,
+              ),
+              child: banner,
+            ),
+    );
+  }
+
+  Widget _buildBanner({
+    required bool enable,
+    required AccessControlMode mode,
+    required int count,
+    required Color backgroundColor,
+  }) {
     final appLocalizations = context.appLocalizations;
     final level = context.raisedSurfaceLevel;
-    final backgroundColor = LiquidGlassScope.surfaceColorOf(
-      context,
-      level.colorOf(context.colorScheme),
-    );
     if (!enable) {
       return MaterialBanner(
         backgroundColor: backgroundColor,
@@ -413,19 +446,23 @@ class _AccessViewState extends ConsumerState<AccessView>
       dividerColor: Colors.transparent,
       content: GlassText(describe),
       actions: [
-        Card.filled(
-          color: context.colorScheme.primary,
-          elevation: 0,
-          shape: AppShape.md,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                GlassText(appLocalizations.selected, style: textStyle),
-                const SizedBox(width: 4),
-                Flexible(child: GlassText('$count', style: textStyle)),
-              ],
+        LiquidGlassScope(
+          enabled: false,
+          quality: LiquidGlassScope.qualityOf(context),
+          child: Card.filled(
+            color: context.colorScheme.primary,
+            elevation: 0,
+            shape: AppShape.md,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  GlassText(appLocalizations.selected, style: textStyle),
+                  const SizedBox(width: 4),
+                  Flexible(child: GlassText('$count', style: textStyle)),
+                ],
+              ),
             ),
           ),
         ),

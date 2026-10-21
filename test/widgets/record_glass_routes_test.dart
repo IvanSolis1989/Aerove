@@ -36,6 +36,78 @@ void main() {
     }
   });
 
+  testWidgets('a table adds no glass pane per row', (tester) async {
+    tester.view.physicalSize = const Size(1100, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    Future<(int, int)> pump({required bool glass, required int rows}) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          child: TestApp(
+            homeBuilder: (child) => LiquidGlassScope(
+              enabled: glass,
+              child: Material(type: MaterialType.transparency, child: child),
+            ),
+            child: RecordTableFrame<int>(
+              tableId: 'glass-rows',
+              items: [for (var index = 0; index < rows; index++) index],
+              columnsOf: (_) => [
+                RecordColumn(
+                  const TableColumn('name', 'Name', flex: 1),
+                  cell: (_, item) => RecordCellText('row $item'),
+                ),
+                RecordColumn(
+                  const TableColumn('exit', 'Exit', width: 120),
+                  cell: (_, item) => TonalChip(
+                    label: 'exit $item',
+                    color: Colors.blue,
+                    foregroundColor: Colors.white,
+                    onPressed: () {},
+                  ),
+                ),
+              ],
+              builder: (_, table, items) => ListView.builder(
+                itemCount: items.length,
+                itemBuilder: (context, index) => RecordTableRow(
+                  table: table!,
+                  striped: index.isOdd,
+                  cells: table.cellsOf(context, items[index]),
+                  onTap: () {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      return (
+        find.byType(RecordTableRow).evaluate().length,
+        find.byType(LiquidGlass).evaluate().length,
+      );
+    }
+
+    final (fewRows, fewPanes) = await pump(glass: true, rows: 3);
+    final (manyRows, manyPanes) = await pump(glass: true, rows: 200);
+    expect(manyRows, greaterThan(fewRows * 4));
+    expect(fewPanes, 2);
+    expect(manyPanes, fewPanes);
+    final firstRow = find.byType(RecordTableRow).first;
+    final row = tester.getRect(
+      find.descendant(of: firstRow, matching: find.byType(TableCells)),
+    );
+    final header = tester.getRect(find.byType(TableCells).first);
+    final envelope = tester.getRect(
+      find.ancestor(of: firstRow, matching: find.byType(CardGroup)),
+    );
+    expect(row.left - envelope.left, 8);
+    expect(envelope.right - row.right, 8);
+    expect((row.left, row.right), (header.left, header.right));
+    final (_, plainPanes) = await pump(glass: false, rows: 200);
+    expect(plainPanes, 0);
+    expect(find.byType(CardGroup), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   for (final feed in DashboardFeed.values) {
     for (final entry in ['page', 'sheet', 'table']) {
       testWidgets('${feed.name} $entry renders glass and opaque fallbacks', (
@@ -168,13 +240,23 @@ void main() {
             await tester.pumpAndSettle();
             final glass =
                 mode != LiquidGlassMode.none && !highContrast && !pureBlack;
-            final record = entry == 'table'
+            final table = entry == 'table';
+            final record = table
                 ? find.byType(RecordTableRow).first
                 : find.byType(RecordListItem).first;
             expect(record, findsOneWidget);
-            final group = find
-                .descendant(of: record, matching: find.byType(CardGroup))
-                .first;
+            final group = table
+                ? find.ancestor(of: record, matching: find.byType(CardGroup))
+                : find
+                      .descendant(of: record, matching: find.byType(CardGroup))
+                      .first;
+            if (table) {
+              expect(group, glass ? findsOneWidget : findsNothing);
+              expect(
+                find.descendant(of: record, matching: find.byType(CardGroup)),
+                findsNothing,
+              );
+            }
             final panes = find.descendant(
               of: group,
               matching: find.byType(LiquidGlass),
@@ -191,7 +273,7 @@ void main() {
                   of: find.byWidget(chip),
                   matching: find.byType(LiquidGlass),
                 ),
-                glass ? findsOneWidget : findsNothing,
+                findsNothing,
               );
             }
             expect(find.byType(LiquidGlassHost), findsOneWidget);

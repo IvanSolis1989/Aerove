@@ -552,13 +552,17 @@ class _AddRow extends StatelessWidget {
     final colors = DashboardColors.of(context);
     final label = item.label(context);
     final description = item.description(context);
-    return Container(
+    final glass = LiquidGlassScope.of(context);
+    final shape = AppShape.all(DashboardCorner.mobileBlock);
+    final row = Container(
       height: _rowHeight,
       padding: const EdgeInsetsDirectional.fromSTEB(12, 0, 8, 0),
-      decoration: ShapeDecoration(
-        color: colors.card.withValues(alpha: 0.55),
-        shape: AppShape.all(DashboardCorner.mobileBlock),
-      ),
+      decoration: glass
+          ? null
+          : ShapeDecoration(
+              color: colors.card.withValues(alpha: 0.55),
+              shape: shape,
+            ),
       child: Row(
         spacing: 12,
         children: [
@@ -608,6 +612,7 @@ class _AddRow extends StatelessWidget {
         ],
       ),
     );
+    return glass ? CardGroup(shape: shape, child: row) : row;
   }
 }
 
@@ -628,20 +633,28 @@ class _RoundButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox.square(
-      dimension: 28,
-      child: IconButton(
-        tooltip: tooltip,
-        padding: EdgeInsets.zero,
-        style: IconButton.styleFrom(
-          backgroundColor: LiquidGlassScope.surfaceColorOf(context, background),
-          foregroundColor: foreground,
-          minimumSize: const Size.square(28),
-          fixedSize: const Size.square(28),
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    return LiquidGlassScope(
+      enabled: false,
+      quality: LiquidGlassScope.qualityOf(context),
+      child: SizedBox.square(
+        dimension: 28,
+        child: IconButton(
+          tooltip: tooltip,
+          padding: EdgeInsets.zero,
+          style:
+              IconButton.styleFrom(
+                backgroundColor: background,
+                foregroundColor: foreground,
+                minimumSize: const Size.square(28),
+                fixedSize: const Size.square(28),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ).copyWith(
+                backgroundBuilder: (_, _, child) =>
+                    child ?? const SizedBox.shrink(),
+              ),
+          onPressed: onPressed,
+          icon: GlyphIcon(glyph, size: 16, color: foreground),
         ),
-        onPressed: onPressed,
-        icon: GlyphIcon(glyph, size: 16, color: foreground),
       ),
     );
   }
