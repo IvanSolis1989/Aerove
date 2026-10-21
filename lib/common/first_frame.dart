@@ -4,7 +4,6 @@ import 'package:fl_clash/providers/app.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
-/// Holds the first frame until the home page has a size to lay out in.
 class FirstFrameGate {
   FirstFrameGate._(this._binding);
 
