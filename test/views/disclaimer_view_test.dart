@@ -31,7 +31,11 @@ Future<({ProviderContainer container, GlobalKey capture})> _mount(
   final container = ProviderContainer(
     overrides: [
       themeSettingProvider.overrideWithBuild(
-        (_, _) => ThemeProps(auroraEnabled: aurora, liquidGlass: mode),
+        (_, _) => ThemeProps(
+          auroraEnabled: aurora,
+          auroraColors: [backdrop.toARGB32()],
+          liquidGlass: mode,
+        ),
       ),
     ],
   );
@@ -80,6 +84,46 @@ Finder _paneAbove(Finder child) =>
     find.ancestor(of: child, matching: find.byType(LiquidGlass));
 Finder get _confirm => find.widgetWithText(TextButton, 'Confirm');
 Finder get _field => find.byType(TextField);
+
+Finder _expectStatementInk(
+  WidgetTester tester,
+  String statement, {
+  required bool aurora,
+  required bool glass,
+}) {
+  final quote = find.byWidgetPredicate(
+    (widget) =>
+        widget is GlassSelectableText && widget.span.toPlainText() == statement,
+  );
+  expect(quote, findsOneWidget);
+  final context = tester.element(quote);
+  expect(AuroraAppearance.enabledOf(context), aurora);
+  expect(LiquidGlassScope.of(context), glass);
+  expect(LiquidGlassScope.foregroundOf(context), aurora);
+  final ink = find.descendant(of: quote, matching: find.byType(GlassInk));
+  expect(ink, aurora ? findsOneWidget : findsNothing);
+  final editable = find.descendant(
+    of: quote,
+    matching: find.byType(EditableText),
+  );
+  expect(
+    tester.widget<EditableText>(editable).style.color,
+    context.colorScheme.onSurface,
+  );
+  if (aurora) {
+    expect(tester.widget<GlassInk>(ink).source, context.colorScheme.onSurface);
+    if (ui.ImageFilter.isShaderFilterSupported) {
+      final layers = tester.layers.whereType<LiquidGlassInkLayer>();
+      expect(layers, isNotEmpty);
+      for (final layer in layers) {
+        expect(layer.subtle, !glass);
+      }
+    }
+  } else {
+    expect(tester.layers.whereType<LiquidGlassInkLayer>(), isEmpty);
+  }
+  return quote;
+}
 
 Future<List<Color>> _shot(
   WidgetTester tester,
@@ -158,77 +202,89 @@ void main() {
     }
   });
 
-  for (final aurora in [false, true]) {
-    for (final mode in LiquidGlassMode.values) {
-      testWidgets('restatement tier follows $mode aurora=$aurora', (
-        tester,
-      ) async {
-        tester.view.physicalSize = const Size(430, 900);
-        tester.view.devicePixelRatio = 1;
-        addTearDown(tester.view.reset);
-        final host = await _mount(
-          tester,
-          Brightness.light,
-          mode,
-          Colors.blue,
-          aurora: aurora,
+  for (final brightness in Brightness.values) {
+    for (final aurora in [false, true]) {
+      for (final mode in LiquidGlassMode.values) {
+        testWidgets(
+          'restatement tier follows $mode aurora=$aurora $brightness',
+          (tester) async {
+            tester.view.physicalSize = const Size(430, 900);
+            tester.view.devicePixelRatio = 1;
+            addTearDown(tester.view.reset);
+            final host = await _mount(
+              tester,
+              brightness,
+              mode,
+              Colors.blue,
+              aurora: aurora,
+            );
+            try {
+              final consent = requestDisclaimerConsent();
+              await tester.pumpAndSettle();
+              await tester.tap(find.widgetWithText(FilledButton, 'Agree'));
+              await tester.pumpAndSettle();
+              final glass = mode != LiquidGlassMode.none;
+              final fieldPane = _paneAbove(_field);
+              expect(fieldPane, glass ? findsOneWidget : findsNothing);
+              if (glass) {
+                final pane = tester.widget<LiquidGlass>(fieldPane);
+                expect(
+                  pane.style,
+                  LiquidGlassStyle.regular(
+                    tester.element(fieldPane).colorScheme,
+                  ),
+                );
+                final quality = LiquidGlassScope.qualityOf(
+                  tester.element(fieldPane),
+                );
+                expect(
+                  quality,
+                  mode == LiquidGlassMode.ultra
+                      ? LiquidGlassQuality.ultra
+                      : LiquidGlassQuality.standard,
+                );
+                final effective = pane.style.forQuality(quality);
+                expect(
+                  effective.refraction,
+                  mode == LiquidGlassMode.ultra ? greaterThan(0) : 0,
+                );
+              }
+              expect(tester.widget<TextButton>(_confirm).onPressed, isNull);
+              final statement = tester
+                  .element(_field)
+                  .appLocalizations
+                  .disclaimerNoServiceStatement;
+              final quote = _expectStatementInk(
+                tester,
+                statement,
+                aurora: aurora,
+                glass: glass,
+              );
+              expect(_paneAbove(quote), glass ? findsOneWidget : findsNothing);
+              await tester.enterText(_field, statement);
+              await tester.pump();
+              expect(tester.widget<TextButton>(_confirm).onPressed, isNotNull);
+              if (glass) {
+                final actionPane = find.descendant(
+                  of: _confirm,
+                  matching: find.byType(LiquidGlass),
+                );
+                final style = tester.widget<LiquidGlass>(actionPane).style;
+                expect(style.refraction, greaterThan(0));
+                expect(style.tint.a, closeTo(0.16, 0.005));
+              }
+              await tester.tap(_confirm);
+              await tester.pumpAndSettle();
+              expect(await consent, isTrue);
+              expect(tester.takeException(), isNull);
+            } finally {
+              await tester.pumpWidget(const SizedBox.shrink());
+              await tester.pump(Duration.zero);
+              host.container.dispose();
+            }
+          },
         );
-        try {
-          final consent = requestDisclaimerConsent();
-          await tester.pumpAndSettle();
-          await tester.tap(find.widgetWithText(FilledButton, 'Agree'));
-          await tester.pumpAndSettle();
-          final glass = mode != LiquidGlassMode.none;
-          final fieldPane = _paneAbove(_field);
-          expect(fieldPane, glass ? findsOneWidget : findsNothing);
-          if (glass) {
-            final pane = tester.widget<LiquidGlass>(fieldPane);
-            expect(
-              pane.style,
-              LiquidGlassStyle.regular(tester.element(fieldPane).colorScheme),
-            );
-            final quality = LiquidGlassScope.qualityOf(
-              tester.element(fieldPane),
-            );
-            expect(
-              quality,
-              mode == LiquidGlassMode.ultra
-                  ? LiquidGlassQuality.ultra
-                  : LiquidGlassQuality.standard,
-            );
-            final effective = pane.style.forQuality(quality);
-            expect(
-              effective.refraction,
-              mode == LiquidGlassMode.ultra ? greaterThan(0) : 0,
-            );
-          }
-          expect(tester.widget<TextButton>(_confirm).onPressed, isNull);
-          final statement = tester
-              .element(_field)
-              .appLocalizations
-              .disclaimerNoServiceStatement;
-          await tester.enterText(_field, statement);
-          await tester.pump();
-          expect(tester.widget<TextButton>(_confirm).onPressed, isNotNull);
-          if (glass) {
-            final actionPane = find.descendant(
-              of: _confirm,
-              matching: find.byType(LiquidGlass),
-            );
-            final style = tester.widget<LiquidGlass>(actionPane).style;
-            expect(style.refraction, greaterThan(0));
-            expect(style.tint.a, closeTo(0.16, 0.005));
-          }
-          await tester.tap(_confirm);
-          await tester.pumpAndSettle();
-          expect(await consent, isTrue);
-          expect(tester.takeException(), isNull);
-        } finally {
-          await tester.pumpWidget(const SizedBox.shrink());
-          await tester.pump(Duration.zero);
-          host.container.dispose();
-        }
-      });
+      }
     }
   }
 
@@ -437,15 +493,11 @@ void main() {
                 tester.widget(find.text(strings.disclaimerRestateTip)),
                 isA<GlassText>(),
               );
-              final quote = find.byWidgetPredicate(
-                (widget) =>
-                    widget is GlassSelectableText &&
-                    widget.span.toPlainText() == statement,
-              );
-              expect(quote, findsOneWidget);
-              expect(
-                find.descendant(of: quote, matching: find.byType(GlassInk)),
-                glass ? findsOneWidget : findsNothing,
+              final quote = _expectStatementInk(
+                tester,
+                statement,
+                aurora: false,
+                glass: glass,
               );
               expect(tester.widget<TextField>(_field).minLines, 3);
               expect(tester.widget<TextField>(_field).maxLines, isNull);

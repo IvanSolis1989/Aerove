@@ -997,15 +997,16 @@ void main() {
             if ((frozen[index] - live[index]).abs() > 4) changedPixels++;
             for (var channel = 0; channel < 4; channel++) {
               final expected =
-                  frozenStrip[index + channel] * (1 - weight) +
-                  nativeStrip[index + channel] * weight;
+                  (frozenStrip[index + channel] * (1 - weight) +
+                          nativeStrip[index + channel] * weight)
+                      .round();
               expect(
                 mixed[index + channel],
                 closeTo(expected, 2),
                 reason: 'premultiplied circular rim $x,$y channel $channel',
               );
               final crossedExpected = x >= 60 && x < 80 && y >= 114 && y < 120
-                  ? frozen[index + channel].toDouble()
+                  ? frozen[index + channel]
                   : expected;
               expect(
                 crossed[index + channel],
