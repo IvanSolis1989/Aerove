@@ -8,6 +8,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import com.follow.clash.common.GlobalState
+import com.follow.clash.common.ListenerSlot
 import com.follow.clash.common.intent
 import com.follow.clash.core.Core
 import com.follow.clash.service.ManagedService
@@ -30,6 +31,7 @@ import kotlin.coroutines.resume
 object ServiceController {
     private val lock = Mutex()
     private var binding: ManagedServiceBinding? = null
+    private val eventListener = ListenerSlot<(ByteArray) -> Unit>(Core::updateEventListener)
 
     @Volatile
     internal var runtime: ServiceRuntime? = null
@@ -64,8 +66,12 @@ object ServiceController {
         }
     }
 
-    fun setEventListener(callback: ((ByteArray) -> Unit)?): Result<Unit> = runCatching {
-        Core.updateEventListener(callback)
+    fun setEventListener(callback: (ByteArray) -> Unit): Result<Unit> = runCatching {
+        eventListener.set(callback)
+    }
+
+    fun clearEventListener(callback: (ByteArray) -> Unit): Result<Boolean> = runCatching {
+        eventListener.clear(callback)
     }
 
     suspend fun start(options: VpnOptions): Boolean = lock.withLock {

@@ -27,6 +27,7 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private lateinit var scope: CoroutineScope
     private lateinit var coreLoaded: Deferred<Result<Unit>>
     private val gson = Gson()
+    private val eventListener: (ByteArray) -> Unit = ::sendEvent
     private var commandRevision = 0
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
@@ -49,7 +50,7 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         channel.setMethodCallHandler(null)
         coreChannel.setMethodCallHandler(null)
         scope.cancel()
-        ServiceController.setEventListener(null)
+        ServiceController.clearEventListener(eventListener)
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -75,14 +76,14 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private fun initialize(result: MethodChannel.Result) {
         scope.launch(Dispatchers.Main.immediate) {
             coreLoaded.await()
-                .mapCatching { ServiceController.setEventListener(::sendEvent).getOrThrow() }
+                .mapCatching { ServiceController.setEventListener(eventListener).getOrThrow() }
                 .onSuccess { result.success("") }
                 .onFailure { error -> result.success(error.message.orEmpty()) }
         }
     }
 
     private fun shutdown(result: MethodChannel.Result) {
-        ServiceController.setEventListener(null)
+        ServiceController.clearEventListener(eventListener)
         result.success(true)
     }
 
