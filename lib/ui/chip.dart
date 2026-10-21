@@ -103,30 +103,14 @@ class TonalChip extends StatelessWidget {
         ),
       ),
     );
-    final glass = onPressed != null && LiquidGlassScope.of(context);
-    final material = Material(
-      color: glass
-          ? Colors.transparent
-          : LiquidGlassScope.surfaceColorOf(context, color),
+    return Material(
+      color: LiquidGlassScope.surfaceColorOf(context, color),
       shape: AppShape.sm,
       clipBehavior: Clip.antiAlias,
       child: onPressed == null
           ? content
           : InkWell(onTap: onPressed, child: content),
     );
-    return glass
-        ? LiquidGlass(
-            style: LiquidGlassStyle.regular(context.colorScheme).copyWith(
-              tint: LiquidGlassScope.surfaceColorOf(
-                context,
-                color,
-                opacity: 0.12,
-              ),
-            ),
-            clipper: const ShapeBorderClipper(shape: AppShape.sm),
-            child: material,
-          )
-        : material;
   }
 }
 
