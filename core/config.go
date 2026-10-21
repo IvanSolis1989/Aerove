@@ -30,6 +30,9 @@ var (
 	configMu      sync.Mutex
 	currentConfig *config.Config
 
+	// The host's record of the setup behind currentConfig; the core never reads it.
+	appliedSetup json.RawMessage
+
 	errConfigNotApplied = errors.New("config is not applied")
 	errNotInitialized   = errors.New("not initialized")
 )
@@ -143,11 +146,32 @@ func loadSetupConfig(params *SetupParams) (*config.Config, error) {
 	return loadConfig(path)
 }
 
+var applyConfigLocked = loadAndApplyConfigLocked
+
 func applyConfig(params *SetupParams) error {
 	runtime.GC()
 	configMu.Lock()
 	defer configMu.Unlock()
 
+	appliedSetup = nil
+	if err := applyConfigLocked(params); err != nil {
+		return err
+	}
+	appliedSetup = params.Applied
+	return nil
+}
+
+func handleGetAppliedSetup() AppliedSetup {
+	configMu.Lock()
+	defer configMu.Unlock()
+	return AppliedSetup{
+		Init:    isInit.Load(),
+		Running: isRunning.Load(),
+		Applied: appliedSetup,
+	}
+}
+
+func loadAndApplyConfigLocked(params *SetupParams) error {
 	setTestURL(params.TestURL)
 	skipCertVerify.Store(params.SkipCertVerify)
 	cfg, err := loadSetupConfig(params)

@@ -95,6 +95,7 @@ func handleShutdown() bool {
 	updater.StopGeoUpdater()
 	executor.Shutdown()
 	currentConfig = nil
+	appliedSetup = nil
 	isInit.Store(false)
 	configMu.Unlock()
 
