@@ -60,15 +60,10 @@ Finder get _panes => find.descendant(
 );
 Rect _thumb(WidgetTester tester) => tester.getRect(_panes.last);
 
-Finder get _track => find
-    .descendant(
-      of: find.byType(GlassSwitch),
-      matching: find.byType(DecoratedBox),
-    )
-    .at(1);
+Finder get _track => _panes.first;
 
 Color? _trackFill(WidgetTester tester) =>
-    (tester.widget<DecoratedBox>(_track).decoration as ShapeDecoration).color;
+    tester.widget<LiquidGlass>(_track).style.tint;
 
 Future<({List<int> pixels, int width})> _frame(
   WidgetTester tester,
@@ -159,7 +154,7 @@ void main() {
             ),
           );
           await tester.pumpAndSettle();
-          expect(_panes, findsOneWidget);
+          expect(_panes, findsNWidgets(2));
           expect(
             tester.getSize(find.byType(GlassSwitch)),
             tester.getSize(find.byType(Switch)),
@@ -259,6 +254,42 @@ void main() {
     );
   }
 
+  for (final quality in LiquidGlassQuality.values) {
+    testWidgets('a switch on a glass card keeps its ${quality.name} finish', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _app(
+          LiquidGlassBody(
+            child: GlassSurfaceScope(
+              child: GlassSwitch(
+                child: Switch(value: false, onChanged: (_) {}),
+              ),
+            ),
+          ),
+          quality: quality,
+          brightness: Brightness.dark,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(_panes, findsNWidgets(2));
+      for (final pane in tester.widgetList<LiquidGlass>(_panes)) {
+        expect(pane.style.tint.a, lessThan(0.25));
+        if (quality == LiquidGlassQuality.ultra) {
+          expect(pane.style.refraction, greaterThan(0));
+          expect(pane.style.bevel, greaterThan(0));
+          expect(pane.style.blur, 0);
+        } else {
+          expect(pane.style.refraction, 0);
+          expect(pane.style.bevel, 0);
+          expect(pane.style.blur, greaterThanOrEqualTo(2.5));
+        }
+      }
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
+
   testWidgets('None and high contrast retain the exact original switch', (
     tester,
   ) async {
@@ -286,7 +317,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('a row on the page keeps one pane and its row action', (
+  testWidgets('a row on the page keeps the glass switch and its row action', (
     tester,
   ) async {
     final changes = <bool>[];
@@ -304,7 +335,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byType(GlassSwitch), findsOneWidget);
-    expect(_panes, findsOneWidget);
+    expect(_panes, findsNWidgets(2));
     await tester.tap(find.text('LAN'));
     await tester.pumpAndSettle();
     expect(changes, [true]);
@@ -332,7 +363,7 @@ void main() {
                     value: value,
                     onChanged: (_) {},
                     padding: const EdgeInsetsDirectional.only(start: 8),
-                    thumbIcon: WidgetStatePropertyAll(icon),
+                    thumbIcon: const WidgetStatePropertyAll(icon),
                     trackColor: const WidgetStatePropertyAll(Colors.orange),
                     thumbColor: const WidgetStatePropertyAll(Colors.orange),
                     trackOutlineColor: const WidgetStatePropertyAll(
@@ -364,7 +395,7 @@ void main() {
       await tester.pump();
       await tester.pump();
       expect(_thumb(tester).center.dx - before.center.dx, closeTo(20, 0.01));
-      final pane = tester.widget<LiquidGlass>(_panes);
+      final pane = tester.widget<LiquidGlass>(_panes.last);
       final fill = _trackFill(tester)!;
       for (final tint in [pane.style.tint, fill]) {
         expect(tint.r, Colors.orange.r);
@@ -386,7 +417,7 @@ void main() {
     for (final quality in LiquidGlassQuality.values) {
       for (final value in [false, true]) {
         testWidgets(
-          'flat track and thumb pane transmit moving source $brightness $quality on=$value',
+          'track and thumb glass transmit moving source $brightness $quality on=$value',
           (tester) async {
             tester.view.physicalSize = const Size(240, 160);
             tester.view.devicePixelRatio = 1;
@@ -425,8 +456,12 @@ void main() {
               expect(
                 _trackFill(tester),
                 value
-                    ? colors.primary.withValues(alpha: 0.35)
-                    : glassFillOf(colors),
+                    ? colors.primary.withValues(alpha: 0.18)
+                    : colors.onSurface.withValues(
+                        alpha: quality == LiquidGlassQuality.standard
+                            ? 0.13
+                            : 0.06,
+                      ),
               );
               for (final point in [
                 thumb.center + const Offset(0, 6),
@@ -448,18 +483,13 @@ void main() {
                   red + blue,
                   greaterThan(40),
                   reason:
-                      'the pane and the flat track must both let the source through',
+                      'the thumb and track must both let the source through',
                 );
               }
               expect(find.byType(LiquidGlassHost), findsOneWidget);
               final capture = LiquidGlassHost.debugLastCapture!;
-              expect(capture.panes, hasLength(1));
-              expect(
-                capture.panes.every(
-                  (pane) => pane.wallpaper && pane.level == 0,
-                ),
-                isTrue,
-              );
+              expect(capture.panes, hasLength(2));
+              expect(capture.panes.every((pane) => pane.wallpaper), isTrue);
               if (ui.ImageFilter.isShaderFilterSupported) {
                 expect(LiquidGlass.debugShaderReady, isTrue);
               }

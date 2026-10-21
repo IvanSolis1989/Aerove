@@ -46,6 +46,7 @@ class OutboundModeCard extends ConsumerWidget {
               for (final (index, item) in Mode.values.indexed)
                 Expanded(
                   child: DashboardConnectedButton(
+                    pane: true,
                     selected: item == mode,
                     first: index == 0,
                     last: index == Mode.values.length - 1,
@@ -134,6 +135,7 @@ class OutboundModeBar extends ConsumerWidget {
                   for (final (index, item) in Mode.values.indexed)
                     Expanded(
                       child: DashboardConnectedButton(
+                        pane: true,
                         selected: item == mode,
                         first: index == 0,
                         last: index == Mode.values.length - 1,

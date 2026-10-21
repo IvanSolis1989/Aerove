@@ -343,9 +343,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "auroraColors": MessageLookupByLibrary.simpleMessage("Colores del fondo"),
     "auroraEditColor": m0,
     "auroraRegenerate": MessageLookupByLibrary.simpleMessage("Nuevo fondo"),
-    "auroraWallpaper": MessageLookupByLibrary.simpleMessage(
-      "Fondo de degradado aleatorio",
-    ),
+    "auroraWallpaper": MessageLookupByLibrary.simpleMessage("Aurora dinámica"),
     "auroraWallpaperDescription": MessageLookupByLibrary.simpleMessage(
       "Elige de 1 a 3 colores para una aurora suave. El diseño se conserva hasta que lo cambies.",
     ),
@@ -1176,7 +1174,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "Brillo cristalino",
     ),
     "liquidGlassSettingsTip": MessageLookupByLibrary.simpleMessage(
-      "Puedes cambiar estos ajustes en Apariencia en cualquier momento. El fondo de degradado aleatorio y Liquid Glass se pueden activar o desactivar de forma independiente.",
+      "Puedes cambiar estos ajustes en Apariencia en cualquier momento. Aurora dinámica y Liquid Glass se pueden activar o desactivar de forma independiente.",
     ),
     "liquidGlassStandardIntro": MessageLookupByLibrary.simpleMessage(
       "El modo Esmerilado suave usa un desenfoque sencillo en el contenido principal. Los botones superiores y el Dock inferior conservan la refracción transparente, con una carga de renderizado más ligera.",

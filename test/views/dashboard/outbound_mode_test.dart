@@ -110,59 +110,68 @@ void main() {
   });
 
   for (final quality in LiquidGlassQuality.values) {
-    testWidgets('the modes stand flat on the card\'s clear ${quality.name} '
-        'glass and still switch', (tester) async {
-      await pump(
-        tester,
-        LiquidGlassScope(
-          enabled: true,
-          quality: quality,
-          child: const OutboundModeCard(),
-        ),
-      );
-      final colorScheme = Theme.of(
-        tester.element(find.byType(OutboundModeCard)),
-      ).colorScheme;
+    testWidgets(
+      'every mode keeps its ${quality.name} glass and still switches',
+      (tester) async {
+        await pump(
+          tester,
+          LiquidGlassScope(
+            enabled: true,
+            quality: quality,
+            child: const OutboundModeCard(),
+          ),
+        );
+        final colorScheme = Theme.of(
+          tester.element(find.byType(OutboundModeCard)),
+        ).colorScheme;
 
-      void expectClearModes() {
-        expect(find.byType(LiquidGlass), findsOneWidget);
-        final selected = container.read(patchClashConfigProvider).mode;
-        for (final mode in Mode.values) {
-          expect(
-            decorationOf(tester, mode).color,
-            mode == selected
-                ? glassChosenFillOf(colorScheme)
-                : Colors.transparent,
-          );
-        }
-        for (final pane in tester.widgetList<LiquidGlass>(
-          find.byType(LiquidGlass),
-        )) {
-          expect(
-            pane.style.tint,
-            quality == LiquidGlassQuality.standard
-                ? glassRaisedFillOf(
-                    tester.element(find.byType(OutboundModeCard)),
+        void expectClearModes() {
+          expect(find.byType(LiquidGlass), findsNWidgets(4));
+          final selected = container.read(patchClashConfigProvider).mode;
+          for (final mode in Mode.values) {
+            expect(decorationOf(tester, mode).color, Colors.transparent);
+            final pane = tester.widget<LiquidGlass>(
+              find
+                  .ancestor(
+                    of: buttonOf(mode),
+                    matching: find.byType(LiquidGlass),
                   )
-                : Colors.transparent,
-          );
+                  .first,
+            );
+            expect(
+              pane.style.tint,
+              mode == selected
+                  ? glassChosenFillOf(colorScheme)
+                  : Colors.transparent,
+            );
+            expect(
+              pane.style.refraction,
+              quality == LiquidGlassQuality.standard ? 0 : greaterThan(0),
+            );
+            expect(
+              pane.style.blur,
+              quality == LiquidGlassQuality.standard
+                  ? greaterThanOrEqualTo(2.5)
+                  : 0,
+            );
+          }
         }
-      }
 
-      expectClearModes();
-      await tester.tap(buttonOf(Mode.direct));
-      await tester.pumpAndSettle();
-      expect(container.read(patchClashConfigProvider).mode, Mode.direct);
-      expect(
-        tester.widget<Text>(find.text(Mode.direct.label)).style!.color,
-        colorScheme.onSurface,
-      );
-      expectClearModes();
-      await tester.tap(buttonOf(Mode.rule));
-      await tester.pumpAndSettle();
-      expect(container.read(patchClashConfigProvider).mode, Mode.rule);
-      expectClearModes();
-    });
+        expectClearModes();
+        await tester.tap(buttonOf(Mode.direct));
+        await tester.pumpAndSettle();
+        expect(container.read(patchClashConfigProvider).mode, Mode.direct);
+        expect(
+          tester.widget<Text>(find.text(Mode.direct.label)).style!.color,
+          colorScheme.onSurface,
+        );
+        expectClearModes();
+        await tester.tap(buttonOf(Mode.rule));
+        await tester.pumpAndSettle();
+        expect(container.read(patchClashConfigProvider).mode, Mode.rule);
+        expectClearModes();
+      },
+    );
   }
 
   for (final quality in LiquidGlassQuality.values) {
@@ -170,7 +179,7 @@ void main() {
       testWidgets('${quality.name} mode geometry stays equal in '
           '${direction.name} through selection', (tester) async {
         void expectGeometry() {
-          expect(find.byType(LiquidGlass), findsOneWidget);
+          expect(find.byType(LiquidGlass), findsNWidgets(4));
           for (final mode in Mode.values) {
             final decoration = decorationOf(tester, mode);
             final shape = decoration.shape as RoundedSuperellipseBorder;
@@ -187,7 +196,7 @@ void main() {
                 of: buttonOf(mode),
                 matching: find.byType(LiquidGlass),
               ),
-              findsOneWidget,
+              findsNWidgets(2),
             );
             for (var x = 0; x <= 8; x++) {
               for (var y = 0; y <= 8; y++) {

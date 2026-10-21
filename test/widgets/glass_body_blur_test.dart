@@ -57,6 +57,7 @@ class _Pattern extends CustomPainter {
 Widget _scene({
   bool direct = false,
   bool native = false,
+  bool nativeChrome = false,
   bool body = true,
   bool dark = false,
   bool enabled = true,
@@ -78,6 +79,15 @@ Widget _scene({
           wallpaperOnly: true,
           child: Builder(
             builder: (context) {
+              Widget chrome(LiquidGlassStyle style) => nativeChrome
+                  ? ClipPath(
+                      clipper: const ShapeBorderClipper(shape: AppShape.full),
+                      child: BackdropFilter(
+                        filter: ui.ImageFilter.blur(sigmaX: 2.5, sigmaY: 2.5),
+                        child: const SizedBox.expand(),
+                      ),
+                    )
+                  : LiquidGlass(style: style);
               Widget pane = direct
                   ? const _DirectPane()
                   : const LiquidGlass(
@@ -112,18 +122,14 @@ Widget _scene({
                   Positioned.fromRect(rect: _bodyRect, child: pane),
                   Positioned.fromRect(
                     rect: _headerRect,
-                    child: LiquidGlass(
-                      style: LiquidGlassStyle.regular(
-                        Theme.of(context).colorScheme,
-                      ),
+                    child: chrome(
+                      LiquidGlassStyle.regular(Theme.of(context).colorScheme),
                     ),
                   ),
                   Positioned.fromRect(
                     rect: _dockRect,
-                    child: LiquidGlass(
-                      style: LiquidGlassStyle.lens(
-                        Theme.of(context).colorScheme,
-                      ),
+                    child: chrome(
+                      LiquidGlassStyle.lens(Theme.of(context).colorScheme),
                     ),
                   ),
                   if (frozen)
@@ -248,6 +254,29 @@ void main() {
 
   for (final dark in [false, true]) {
     for (final direct in [false, true]) {
+      testWidgets('Standard uniformly frosts chrome and unmarked panes '
+          'dark=$dark direct=$direct', (tester) async {
+        tester.view.physicalSize = const Size(320, 224);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final expected = await _render(
+          tester,
+          _scene(native: true, nativeChrome: true, body: false, dark: dark),
+        );
+        final actual = await _render(
+          tester,
+          _scene(body: false, dark: dark, direct: direct),
+        );
+        for (final rect in [_bodyRect, _headerRect, _dockRect]) {
+          expect(
+            _difference(actual, expected, rect.deflate(16)),
+            lessThanOrEqualTo(2),
+            reason: 'Frost must not retain a clear lens at $rect',
+          );
+        }
+        await tester.pumpWidget(const SizedBox.shrink());
+      });
+
       testWidgets(
         'Standard body matches native blur dark=$dark direct=$direct',
         (tester) async {
@@ -266,8 +295,13 @@ void main() {
             _difference(actual, expected, _bodyRect.deflate(2)),
             lessThanOrEqualTo(2),
           );
-          expect(LiquidGlassHost.debugLastBodyCapture, hasLength(1));
-          expect(LiquidGlassHost.debugLastBodyCapture.single.blur, 2.5);
+          expect(LiquidGlassHost.debugLastBodyCapture, hasLength(3));
+          expect(
+            LiquidGlassHost.debugLastBodyCapture.every(
+              (pane) => pane.blur == 2.5,
+            ),
+            isTrue,
+          );
           final flat = await _render(
             tester,
             _scene(native: true, dark: dark, enabled: false),

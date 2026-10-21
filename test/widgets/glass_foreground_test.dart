@@ -1170,7 +1170,10 @@ void main() {
                     'bodyLeft': Color(0xFF1C606C),
                     'glyphLeft': Color(0xFF278595),
                   };
-            final previous = previousSamples[name];
+            final previous =
+                quality == LiquidGlassQuality.standard && name == 'dock'
+                ? null
+                : previousSamples[name];
             if (!swapped && previous != null) {
               // Actual solid glyph pixels from CI 39102679488 on this fixture.
               previousHsv = HSVColor.fromColor(previous);

@@ -344,9 +344,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "auroraColors": MessageLookupByLibrary.simpleMessage("Couleurs du fond"),
     "auroraEditColor": m0,
     "auroraRegenerate": MessageLookupByLibrary.simpleMessage("Nouveau fond"),
-    "auroraWallpaper": MessageLookupByLibrary.simpleMessage(
-      "Fond dégradé aléatoire",
-    ),
+    "auroraWallpaper": MessageLookupByLibrary.simpleMessage("Aurore animée"),
     "auroraWallpaperDescription": MessageLookupByLibrary.simpleMessage(
       "Choisissez de 1 à 3 couleurs pour une aurore douce. Le motif reste identique jusqu’à votre prochaine modification.",
     ),
@@ -1177,7 +1175,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "Éclat limpide",
     ),
     "liquidGlassSettingsTip": MessageLookupByLibrary.simpleMessage(
-      "Vous pouvez modifier ces réglages à tout moment dans Apparence. Le fond à dégradé aléatoire et Liquid Glass peuvent être activés ou désactivés indépendamment.",
+      "Vous pouvez modifier ces réglages à tout moment dans Apparence. Aurore animée et Liquid Glass peuvent être activés ou désactivés indépendamment.",
     ),
     "liquidGlassStandardIntro": MessageLookupByLibrary.simpleMessage(
       "Le mode Givre doux utilise un flou simple pour le contenu principal. Les boutons du haut et le Dock du bas conservent la réfraction transparente, avec une charge de rendu plus légère.",

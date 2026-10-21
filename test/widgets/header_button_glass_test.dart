@@ -613,7 +613,7 @@ void main() {
           controller.dispose();
         }
       });
-      testWidgets('header optics match the clear Dock lens '
+      testWidgets('header and Dock lens share the selected finish '
           '${brightness.name} ${quality.name}', (tester) async {
         tester.view.physicalSize = const Size(160, 120);
         tester.view.devicePixelRatio = 1;
@@ -774,7 +774,10 @@ void main() {
           expect(residual, 0);
           if (ui.ImageFilter.isShaderFilterSupported) {
             expect(LiquidGlass.debugShaderReady, isTrue);
-            expect(refraction, greaterThan(noise));
+            expect(
+              refraction,
+              quality == LiquidGlassQuality.ultra ? greaterThan(noise) : 0,
+            );
           }
         } finally {
           await tester.pumpWidget(const SizedBox.shrink());

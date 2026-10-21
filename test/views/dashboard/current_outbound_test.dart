@@ -854,11 +854,11 @@ void main() {
         expect(glass.clipper, isA<OutboundDropletClipper>());
         expect(
           find.ancestor(of: pane, matching: find.byType(GlassSurfaceScope)),
-          findsNothing,
+          findsOneWidget,
         );
         expect(
           tester.widget<DashboardCard>(find.byType(DashboardCard)).pane,
-          isFalse,
+          isTrue,
         );
         expect(
           find.ancestor(of: pane, matching: find.byType(LiquidGlassBody)),
@@ -906,7 +906,11 @@ void main() {
         await tester.pumpAndSettle();
         final gloss =
             _badge(tester).foregroundPainter! as OutboundDropletPainter;
-        expect(gloss.rim == null, finish == OutboundFinish.solid);
+        expect(gloss.rim != null, finish == OutboundFinish.clear);
+        expect(
+          gloss.highlight,
+          !highContrast && finish != OutboundFinish.frost,
+        );
         expect(
           _bubbles(tester).shadow.a > 0,
           finish != OutboundFinish.clear && !highContrast,

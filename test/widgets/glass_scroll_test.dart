@@ -144,7 +144,11 @@ void main() {
                   final green = pixel(x, y).g;
                   if (green > rim) rim = green;
                 }
-                expect(rim, greaterThan(0.015), reason: '$phase visible rim');
+                expect(
+                  rim,
+                  quality == LiquidGlassQuality.ultra ? greaterThan(0.015) : 0,
+                  reason: '$phase rim follows the selected finish',
+                );
                 final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
                 if (output != null && !phase.startsWith('frame-')) {
                   final png = (await image.toByteData(

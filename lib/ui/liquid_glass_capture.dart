@@ -713,14 +713,15 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     List<_GlassCoverage> coverage,
     _GlassVisibility visibility,
   ) {
+    if (layer is _LiquidGlassDecorationLayer) {
+      layer.enabled = quality == LiquidGlassQuality.ultra;
+      if (!layer.enabled) return;
+    }
     chain.add(layer);
     for (Layer? child = layer.firstChild; child != null;) {
       switch (child) {
         case final _LiquidGlassLayer pane:
-          pane._setSimpleBlur(
-            quality == LiquidGlassQuality.standard &&
-                chain.any((layer) => layer is _GlassBodyLayer),
-          );
+          pane._setSimpleBlur(quality == LiquidGlassQuality.standard);
           if (!visibility.shows(pane.rect, toHost)) {
             _skippedPanes++;
             if (pane._captured != null || pane._captureShader != null) {
@@ -735,12 +736,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
           found.add(
             _Behind(
                 pane,
-                pane._simpleBlur
-                    ? pane.style._bodyBlur
-                    : switch (quality) {
-                        LiquidGlassQuality.standard => pane.style._standard,
-                        LiquidGlassQuality.ultra => pane.style,
-                      },
+                pane.style.forQuality(quality),
                 toHost,
                 root,
                 rootToHost,
@@ -1419,7 +1415,10 @@ class _Replay {
   void run() => _walk(entry.root, root: true);
 
   bool _walk(ContainerLayer layer, {required bool root}) {
-    if (entry.flatContent && layer is _LiquidGlassDecorationLayer) return false;
+    if (layer is _LiquidGlassDecorationLayer &&
+        (entry.flatContent || !layer.enabled)) {
+      return false;
+    }
     if (entry.flatUI && layer is _ColorFieldLayer) return false;
     if (!root && !entry.ancestors.contains(layer) && !_mayShow(layer)) {
       return false;

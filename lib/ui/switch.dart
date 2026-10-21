@@ -23,8 +23,6 @@ class _GlassSwitchState extends State<GlassSwitch> {
   static const _thumbExtent = 24.0;
   static const _inset = 4.0;
   static const _travel = _trackWidth - _thumbExtent - _inset * 2;
-  static const _disabledShare = 0.4;
-  static const _onTrackAlpha = 0.35;
 
   int? _pointer;
   double _start = 0;
@@ -82,7 +80,6 @@ class _GlassSwitchState extends State<GlassSwitch> {
       return widget.child;
     }
     final colors = context.colorScheme;
-    final onGlass = GlassSurfaceScope.of(context);
     final value = widget.child.value;
     final states = <WidgetState>{
       if (value) WidgetState.selected,
@@ -91,13 +88,19 @@ class _GlassSwitchState extends State<GlassSwitch> {
       if (_hovered) WidgetState.hovered,
       if (_pointer != null) WidgetState.pressed,
     };
-    final track = value
-        ? (widget.child.trackColor?.resolve(states) ?? colors.primary)
-              .withValues(alpha: _onTrackAlpha)
-        : glassFillOf(colors);
-    final trackFill = _enabled
-        ? track
-        : track.withValues(alpha: track.a * _disabledShare);
+    final tint =
+        widget.child.trackColor?.resolve(states) ??
+        (value ? colors.primary : colors.onSurface);
+    final quality = LiquidGlassScope.qualityOf(context);
+    final finish = LiquidGlassStyle.regular(
+      colors,
+    ).copyWith(blur: 0).forQuality(quality);
+    final inactiveAlpha = quality == LiquidGlassQuality.standard ? 0.13 : 0.06;
+    final trackStyle = finish.copyWith(
+      tint: tint.withValues(
+        alpha: _enabled ? (value ? 0.18 : inactiveAlpha) : 0.03,
+      ),
+    );
     final outline = widget.child.trackOutlineColor?.resolve(states);
     final side = _focused && _enabled
         ? focusRingSide(colors)
@@ -107,22 +110,13 @@ class _GlassSwitchState extends State<GlassSwitch> {
             width: widget.child.trackOutlineWidth?.resolve(states) ?? 1,
           )
         : BorderSide.none;
-    final dark = colors.brightness == Brightness.dark;
     final thumbColor = widget.child.thumbColor?.resolve(states);
     final saturated =
         thumbColor != null && HSVColor.fromColor(thumbColor).saturation >= 0.20;
-    final knob = saturated
-        ? thumbColor
-        : dark
-        ? colors.inverseSurface
-        : SurfaceLevel.card.colorOf(colors);
     final customIcon = widget.child.thumbIcon?.resolve(states);
     final iconColor =
         customIcon?.color ??
-        (onGlass && dark && !saturated
-                ? colors.onInverseSurface
-                : colors.onSurface)
-            .withValues(alpha: _enabled ? 1 : 0.38);
+        colors.onSurface.withValues(alpha: _enabled ? 1 : 0.38);
     final mark = customIcon == null
         ? GlyphIcon(
             value ? AppGlyphs.check : AppGlyphs.close,
@@ -140,30 +134,14 @@ class _GlassSwitchState extends State<GlassSwitch> {
             ),
           );
     final thumbTint = saturated ? thumbColor : colors.surface;
-    final thumbStyle = LiquidGlassStyle.regular(colors).copyWith(
-      blur: 0,
+    final thumbStyle = finish.copyWith(
       tint: thumbTint.withValues(alpha: _enabled ? 0.08 : 0.03),
     );
-    final thumb = onGlass
-        ? DecoratedBox(
-            decoration: ShapeDecoration(
-              color: _enabled ? knob : Color.alphaBlend(trackFill, knob),
-              shape: AppShape.circle,
-              shadows: [
-                BoxShadow(
-                  color: colors.shadow.withValues(alpha: 0.18),
-                  blurRadius: 4,
-                  offset: const Offset(0, 1),
-                ),
-              ],
-            ),
-            child: Center(child: LiquidGlassScope(enabled: false, child: mark)),
-          )
-        : LiquidGlass(
-            style: thumbStyle,
-            pressed: _enabled && (_pointer != null || _hovered),
-            child: Center(child: mark),
-          );
+    final thumb = LiquidGlass(
+      style: thumbStyle,
+      pressed: _enabled && (_pointer != null || _hovered),
+      child: Center(child: mark),
+    );
     return Focus(
       canRequestFocus: false,
       skipTraversal: true,
@@ -193,11 +171,10 @@ class _GlassSwitchState extends State<GlassSwitch> {
                             decoration: ShapeDecoration(
                               shape: AppShape.full.copyWith(side: side),
                             ),
-                            child: DecoratedBox(
-                              decoration: ShapeDecoration(
-                                color: trackFill,
-                                shape: AppShape.full,
-                              ),
+                            child: LiquidGlass(
+                              style: trackStyle,
+                              pressed:
+                                  _enabled && (_pointer != null || _hovered),
                               child: Padding(
                                 padding: const EdgeInsets.all(_inset),
                                 child: TweenAnimationBuilder<double>(

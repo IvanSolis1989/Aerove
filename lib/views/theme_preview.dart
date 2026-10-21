@@ -187,9 +187,7 @@ class _ThemeLivePreviewState extends ConsumerState<ThemeLivePreview>
       appSettingProvider.select((state) => state.tabAnimation),
     );
     final liquidGlass = ref.watch(
-      themeSettingProvider.select(
-        (state) => state.liquidGlass != LiquidGlassMode.none,
-      ),
+      themeSettingProvider.select((state) => state.liquidGlass),
     );
     final corner = AppCorner.fit(_phoneWidth);
     final card = Container(
@@ -250,7 +248,7 @@ class MiniScreen extends StatelessWidget {
     super.key,
     required this.colorScheme,
     required this.floatingBar,
-    this.liquidGlass = false,
+    this.liquidGlass = LiquidGlassMode.none,
     this.selected = 0,
     this.previous,
     this.progress = 1,
@@ -263,9 +261,7 @@ class MiniScreen extends StatelessWidget {
   final ColorScheme colorScheme;
   final bool floatingBar;
 
-  /// Draws a floating bar as glass; a docked one stays a fill, as the app's
-  /// does.
-  final bool liquidGlass;
+  final LiquidGlassMode liquidGlass;
 
   final int selected;
   final int? previous;
@@ -282,7 +278,7 @@ class MiniScreen extends StatelessWidget {
               ? auroraColorScheme(colorScheme.brightness)
               : colorScheme,
           floatingBar: floatingBar,
-          liquidGlass: liquidGlass || AuroraAppearance.enabledOf(context),
+          liquidGlass: liquidGlass,
           selected: selected,
           previous: previous,
           progress: progress,
@@ -299,6 +295,7 @@ class MiniScreen extends StatelessWidget {
         final geometry = _MiniGeometry(
           constraints.biggest,
           floatingBar: floatingBar,
+          glass: liquidGlass != LiquidGlassMode.none,
         );
         return Stack(
           children: [
@@ -362,11 +359,11 @@ class _DiagonalClipper extends CustomClipper<Path> {
 }
 
 class _MiniGeometry {
-  _MiniGeometry(this.size, {required bool floatingBar})
+  _MiniGeometry(this.size, {required bool floatingBar, required bool glass})
     : unit = size.width / 20 {
     margin = unit * 1.5;
     final barHeight = floatingBar ? unit * 3.2 : unit * 3.6;
-    pageBottom = floatingBar ? 0 : barHeight;
+    pageBottom = floatingBar || glass ? 0 : barHeight;
     bar = floatingBar
         ? Rect.fromLTWH(
             margin,
@@ -397,13 +394,13 @@ class _MiniScreenPainter extends CustomPainter {
 
   final ColorScheme colorScheme;
   final bool floatingBar;
-  final bool liquidGlass;
+  final LiquidGlassMode liquidGlass;
   final int selected;
   final int? previous;
   final double progress;
   final TabAnimation tabAnimation;
 
-  bool get _glass => floatingBar && liquidGlass;
+  bool get _glass => liquidGlass != LiquidGlassMode.none;
 
   static _MiniPage _pageOf(int index) =>
       _MiniPage.values[index % _MiniPage.values.length];
@@ -422,7 +419,11 @@ class _MiniScreenPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final geometry = _MiniGeometry(size, floatingBar: floatingBar);
+    final geometry = _MiniGeometry(
+      size,
+      floatingBar: floatingBar,
+      glass: _glass,
+    );
     _paintPages(canvas, geometry);
     final unit = geometry.unit;
     final dock = SurfaceLevel.floatingOf(colorScheme).colorOf(colorScheme);
@@ -473,42 +474,62 @@ class _MiniScreenPainter extends CustomPainter {
     canvas.restore();
   }
 
-  /// The page frosted under a tint, ringed with light and casting its shadow
-  /// only outside, after what [LiquidGlass] does at full size.
   void _paintGlassBar(Canvas canvas, _MiniGeometry geometry, BoxShadow shadow) {
     final bar = geometry.bar;
     final unit = geometry.unit;
-    final path = AppShape.full.getOuterPath(bar);
-    final style = LiquidGlassStyle.pill(colorScheme);
-    final blur = unit * 0.4;
+    final shape = floatingBar ? AppShape.full : AppShape.none;
+    final path = shape.getOuterPath(bar);
+    final quality = liquidGlass == LiquidGlassMode.ultra
+        ? LiquidGlassQuality.ultra
+        : LiquidGlassQuality.standard;
+    final style = LiquidGlassStyle.pill(colorScheme).forQuality(quality);
+    final scale = geometry.size.width / 400;
+    if (floatingBar) {
+      canvas
+        ..save()
+        ..clipPath(
+          Path()
+            ..fillType = PathFillType.evenOdd
+            ..addRect(bar.inflate(unit * 3))
+            ..addPath(path, Offset.zero),
+        );
+      shape.paintInterior(canvas, bar.shift(shadow.offset), shadow.toPaint());
+      canvas.restore();
+    }
     canvas
       ..save()
-      ..clipPath(
-        Path()
-          ..fillType = PathFillType.evenOdd
-          ..addRect(bar.inflate(unit * 3))
-          ..addPath(path, Offset.zero),
-      );
-    AppShape.full.paintInterior(
-      canvas,
-      bar.shift(shadow.offset),
-      shadow.toPaint(),
-    );
-    canvas
-      ..restore()
-      ..save()
-      ..clipPath(path)
-      ..saveLayer(
+      ..clipPath(path);
+    void backdrop(double blur) {
+      if (blur == 0) {
+        _paintPages(canvas, geometry);
+        return;
+      }
+      canvas.saveLayer(
         bar,
-        Paint()..imageFilter = ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+        Paint()
+          ..imageFilter = ImageFilter.blur(
+            sigmaX: blur * scale,
+            sigmaY: blur * scale,
+          ),
       );
-    _paintPages(canvas, geometry);
-    final rimWidth = unit * 0.15;
-    canvas
-      ..restore()
-      ..drawPath(path, Paint()..color = style.tint)
-      ..drawPath(
-        AppShape.full.getOuterPath(bar.deflate(rimWidth / 2)),
+      _paintPages(canvas, geometry);
+      canvas.restore();
+    }
+
+    backdrop(style.blur);
+    if (style.haze > 0) {
+      canvas.saveLayer(
+        bar,
+        Paint()..color = Colors.white.withValues(alpha: style.haze),
+      );
+      backdrop(style.hazeBlur);
+      canvas.restore();
+    }
+    canvas.drawPath(path, Paint()..color = style.tint);
+    if (style.rim > 0) {
+      final rimWidth = style.rimWidth * scale;
+      canvas.drawPath(
+        shape.getOuterPath(bar.deflate(rimWidth / 2)),
         Paint()
           ..style = PaintingStyle.stroke
           ..strokeWidth = rimWidth
@@ -521,8 +542,9 @@ class _MiniScreenPainter extends CustomPainter {
               Colors.white.withValues(alpha: style.rim * 0.5),
             ],
           ).createShader(bar),
-      )
-      ..restore();
+      );
+    }
+    canvas.restore();
   }
 
   void _paintPage(

@@ -272,7 +272,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "auroraColors": MessageLookupByLibrary.simpleMessage("底图配色"),
     "auroraEditColor": m0,
     "auroraRegenerate": MessageLookupByLibrary.simpleMessage("换一张"),
-    "auroraWallpaper": MessageLookupByLibrary.simpleMessage("随机渐变底图"),
+    "auroraWallpaper": MessageLookupByLibrary.simpleMessage("灵动极光"),
     "auroraWallpaperDescription": MessageLookupByLibrary.simpleMessage(
       "选择 1–3 种颜色生成淡雅极光，图案保持不变，直到主动换图。",
     ),
@@ -858,7 +858,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "liquidGlassModeStandard": MessageLookupByLibrary.simpleMessage("柔光磨砂"),
     "liquidGlassModeUltra": MessageLookupByLibrary.simpleMessage("流光清透"),
     "liquidGlassSettingsTip": MessageLookupByLibrary.simpleMessage(
-      "可在“外观”中随时调整。随机渐变底图与液态玻璃可以分别开启或关闭。",
+      "可在“外观”中随时调整。灵动极光与液态玻璃可以分别开启或关闭。",
     ),
     "liquidGlassStandardIntro": MessageLookupByLibrary.simpleMessage(
       "柔光磨砂模式的正文使用简单模糊，顶部按钮和底部 Dock 仍保留透明折射，渲染负担较轻。",

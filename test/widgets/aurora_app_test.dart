@@ -94,6 +94,79 @@ void main() {
     );
   });
 
+  for (final brightness in Brightness.values) {
+    for (final mode in LiquidGlassMode.values) {
+      testWidgets(
+        'ordinary theme preserves foreground colors $brightness $mode',
+        (tester) async {
+          await pumpSurface(
+            tester,
+            brightness: brightness,
+            props: ThemeProps(auroraEnabled: false, liquidGlass: mode),
+            home: Scaffold(
+              body: Center(
+                child: CommonCard(
+                  child: Builder(
+                    builder: (context) => Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        GlassText(
+                          'Theme ink',
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                        ),
+                        GlyphIcon(
+                          AppGlyphs.search,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+          final context = tester.element(find.text('Theme ink'));
+          expect(AuroraAppearance.enabledOf(context), isFalse);
+          expect(LiquidGlassScope.foregroundOf(context), isFalse);
+          expect(LiquidGlassScope.of(context), mode != LiquidGlassMode.none);
+          final boundary = tester.renderObject<RenderRepaintBoundary>(
+            find.byKey(_surfaceCapture),
+          );
+          final bytes = (await tester.runAsync(() async {
+            final image = await boundary.toImage();
+            try {
+              return (await image.toByteData(
+                format: ui.ImageByteFormat.rawRgba,
+              ))!.buffer.asUint8List();
+            } finally {
+              image.dispose();
+            }
+          }))!;
+          final colors = Theme.of(context).colorScheme;
+          final pixels = <int>{
+            for (var i = 0; i < bytes.length; i += 4)
+              Color.fromARGB(
+                bytes[i + 3],
+                bytes[i],
+                bytes[i + 1],
+                bytes[i + 2],
+              ).toARGB32(),
+          };
+          expect(pixels, contains(colors.onSurface.toARGB32()));
+          expect(pixels, contains(colors.primary.toARGB32()));
+          expect(tester.layers.whereType<LiquidGlassInkLayer>(), isEmpty);
+          if (mode == LiquidGlassMode.none) {
+            expect(find.byType(LiquidGlass), findsNothing);
+          } else {
+            expect(find.byType(LiquidGlass), findsWidgets);
+          }
+        },
+      );
+    }
+  }
+
   testWidgets(
     'wallpaper removes the saved accent from light and dark controls',
     (tester) async {
@@ -717,7 +790,7 @@ void main() {
               Colors.transparent,
             );
           }
-          final wallpaperOption = find.text('随机渐变底图');
+          final wallpaperOption = find.text('灵动极光');
           await tester.scrollUntilVisible(
             wallpaperOption,
             250,

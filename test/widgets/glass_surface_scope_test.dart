@@ -243,39 +243,52 @@ void main() {
     for (final mode in _glassModes) {
       final name = '${brightness.name} ${mode.name}';
 
-      testWidgets('controls in a section add no pane to its card $name', (
-        tester,
-      ) async {
-        await _pump(
-          tester,
-          mode: mode,
-          brightness: brightness,
-          home: _page(inCard: true),
-        );
-        final card = find.byType(CardGroup);
-        expect(_panesIn(card), findsOneWidget);
-        for (final control in _controls) {
-          expect(control, findsWidgets);
-          expect(_panesIn(control), findsNothing, reason: '$control');
-        }
-        final panes = LiquidGlassHost.debugLastCapture!.panes;
-        expect(panes, hasLength(1));
-        expect(panes.single.pane, rectMoreOrLessEquals(tester.getRect(card)));
-        final row = tester.element(find.text('Option 1'));
-        expect(GlassSurfaceScope.of(row), isTrue);
-        final colors = Theme.of(row).colorScheme;
-        final tonal = find.descendant(
-          of: find.byType(TonalButton),
-          matching: find.byWidgetPredicate(
-            (widget) =>
-                widget is DecoratedBox &&
-                (widget.decoration as ShapeDecoration?)?.color ==
-                    glassFillOf(colors),
-          ),
-        );
-        expect(tonal, findsOneWidget);
-        expect(tester.takeException(), isNull);
-      });
+      testWidgets(
+        'a section keeps optical switches and flat other controls $name',
+        (tester) async {
+          await _pump(
+            tester,
+            mode: mode,
+            brightness: brightness,
+            home: _page(inCard: true),
+          );
+          final card = find.byType(CardGroup);
+          expect(_panesIn(card), findsNWidgets(3));
+          for (final control in _controls) {
+            expect(control, findsWidgets);
+            final switches = find
+                .descendant(
+                  of: control,
+                  matching: find.byType(GlassSwitch),
+                  matchRoot: true,
+                )
+                .evaluate()
+                .length;
+            expect(
+              _panesIn(control),
+              findsNWidgets(switches * 2),
+              reason: '$control',
+            );
+          }
+          final panes = LiquidGlassHost.debugLastCapture!.panes;
+          expect(panes, hasLength(3));
+          expect(panes.first.pane, rectMoreOrLessEquals(tester.getRect(card)));
+          final row = tester.element(find.text('Option 1'));
+          expect(GlassSurfaceScope.of(row), isTrue);
+          final colors = Theme.of(row).colorScheme;
+          final tonal = find.descendant(
+            of: find.byType(TonalButton),
+            matching: find.byWidgetPredicate(
+              (widget) =>
+                  widget is DecoratedBox &&
+                  (widget.decoration as ShapeDecoration?)?.color ==
+                      glassFillOf(colors),
+            ),
+          );
+          expect(tonal, findsOneWidget);
+          expect(tester.takeException(), isNull);
+        },
+      );
 
       testWidgets('controls on the page take a pane each at most $name', (
         tester,
@@ -292,12 +305,12 @@ void main() {
               _panesIn(
                 find.byElementPredicate((e) => e == element),
               ).evaluate().length,
-              lessThanOrEqualTo(1),
+              lessThanOrEqualTo(element.widget is GlassSwitch ? 2 : 1),
               reason: '${element.widget.runtimeType}',
             );
           }
         }
-        expect(LiquidGlassHost.debugLastCapture!.panes, hasLength(9));
+        expect(LiquidGlassHost.debugLastCapture!.panes, hasLength(10));
         expect(tester.takeException(), isNull);
       });
 
@@ -305,7 +318,7 @@ void main() {
         ('snap sheet', const Size(400, 800), showSheet),
         ('form sheet', const Size(1200, 800), showFormSheet),
       ]) {
-        testWidgets('a section in a $kind paints no pane $name', (
+        testWidgets('a section in a $kind keeps only its switch panes $name', (
           tester,
         ) async {
           final navigator = GlobalKey<NavigatorState>();
@@ -342,7 +355,7 @@ void main() {
           );
           await tester.pumpAndSettle();
           final card = find.byType(CardGroup);
-          expect(_panesIn(card), findsNothing);
+          expect(_panesIn(card), findsNWidgets(2));
           final surface = find.byType(SheetSurface);
           expect(
             find.descendant(
@@ -466,7 +479,7 @@ void main() {
         expect(tester.takeException(), isNull);
       });
 
-      testWidgets('header buttons on glass keep their lens $name', (
+      testWidgets('header buttons on glass keep their tier finish $name', (
         tester,
       ) async {
         final progress = ValueNotifier(1.0);

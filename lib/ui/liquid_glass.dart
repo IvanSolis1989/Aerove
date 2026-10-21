@@ -425,38 +425,16 @@ class LiquidGlassStyle {
 
   double get _hairlineSide => hairlineSide ?? hairline;
 
-  LiquidGlassStyle get _bodyBlur => LiquidGlassStyle(
-    tint: tint,
-    blur: math.max(2.5, haze > 0 ? hazeBlur : blur),
-    refraction: 0,
-    bevel: 0,
-    rim: 0,
-  );
-
-  /// The standard tier's: no colors parted, and a haze for the whole frost.
-  LiquidGlassStyle get _standard {
-    if (haze == 0 && dispersion == 0) {
-      return this;
-    }
-    return LiquidGlassStyle(
-      tint: tint,
-      contrast: contrast,
-      blur: haze > 0 ? hazeBlur : blur,
-      refraction: refraction,
-      bevel: bevel,
-      saturation: saturation,
-      brightness: brightness,
-      rim: rim,
-      rimWidth: rimWidth,
-      rimTail: rimTail,
-      rimFocus: rimFocus,
-      rimAdded: rimAdded,
-      endShade: endShade,
-      rimBlur: rimBlur,
-      hairline: hairline,
-      hairlineSide: hairlineSide,
-    );
-  }
+  LiquidGlassStyle forQuality(LiquidGlassQuality quality) =>
+      quality == LiquidGlassQuality.ultra
+      ? this
+      : LiquidGlassStyle(
+          tint: tint,
+          blur: math.max(2.5, haze > 0 ? hazeBlur : blur),
+          refraction: 0,
+          bevel: 0,
+          rim: 0,
+        );
 }
 
 /// An iOS 27 menu's or alert's, measured over white.
@@ -749,16 +727,19 @@ class LiquidGlass extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final quality = LiquidGlassScope.qualityOf(context);
+    final resolvedStyle = style.forQuality(quality);
+    final resolvedRim = quality == LiquidGlassQuality.ultra ? rim : null;
     if (glow case final glow?) {
       return _LiquidGlassPane(
-        style: style,
+        style: resolvedStyle,
         clipper: clipper,
         shadows: shadows,
         press: 0,
         fading: false,
         glow: glow,
         contentBackdrop: contentBackdrop,
-        rim: rim,
+        rim: resolvedRim,
         child: child,
       );
     }
@@ -767,14 +748,14 @@ class LiquidGlass extends StatelessWidget {
       duration: context.motionDuration(pressed ? _glowIn : _glowOut),
       curve: Curves.easeOut,
       builder: (context, press, child) => _LiquidGlassPane(
-        style: style,
+        style: resolvedStyle,
         clipper: clipper,
         shadows: shadows,
         press: press,
         fading: !pressed,
         glow: null,
         contentBackdrop: contentBackdrop,
-        rim: rim,
+        rim: resolvedRim,
         child: child,
       ),
       child: child,
@@ -1248,7 +1229,26 @@ abstract final class _GlassProgram {
       ui.FragmentProgram.fromAsset(_shaderAsset);
 }
 
-class _LiquidGlassDecorationLayer extends OffsetLayer {}
+class _LiquidGlassDecorationLayer extends OffsetLayer {
+  bool _enabled = true;
+
+  bool get enabled => _enabled;
+
+  set enabled(bool value) {
+    if (_enabled == value) return;
+    _enabled = value;
+    markNeedsAddToScene();
+  }
+
+  @override
+  void addToScene(ui.SceneBuilder builder) {
+    if (_enabled) {
+      super.addToScene(builder);
+    } else {
+      engineLayer = null;
+    }
+  }
+}
 
 class _LiquidGlassLayer extends Layer {
   static int _skipped = 0;

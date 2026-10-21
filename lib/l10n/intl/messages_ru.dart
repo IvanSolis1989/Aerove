@@ -333,9 +333,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "auroraColors": MessageLookupByLibrary.simpleMessage("Цвета фона"),
     "auroraEditColor": m0,
     "auroraRegenerate": MessageLookupByLibrary.simpleMessage("Новый фон"),
-    "auroraWallpaper": MessageLookupByLibrary.simpleMessage(
-      "Случайный градиентный фон",
-    ),
+    "auroraWallpaper": MessageLookupByLibrary.simpleMessage("Живая аврора"),
     "auroraWallpaperDescription": MessageLookupByLibrary.simpleMessage(
       "Выберите 1–3 цвета для мягкого сияния. Рисунок сохраняется, пока вы его не смените.",
     ),
@@ -1138,7 +1136,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "liquidGlassModeUltra": MessageLookupByLibrary.simpleMessage("Кристальный"),
     "liquidGlassSettingsTip": MessageLookupByLibrary.simpleMessage(
-      "Эти параметры можно изменить в разделе «Оформление» в любой момент. Фон со случайным градиентом и жидкое стекло можно включать и отключать независимо друг от друга.",
+      "Эти параметры можно изменить в разделе «Оформление» в любой момент. Живую аврору и жидкое стекло можно включать и отключать независимо друг от друга.",
     ),
     "liquidGlassStandardIntro": MessageLookupByLibrary.simpleMessage(
       "В режиме «Мягкий матовый» для основного содержимого используется простое размытие. Верхние кнопки и нижняя панель Dock сохраняют прозрачное преломление, а нагрузка при отрисовке ниже.",

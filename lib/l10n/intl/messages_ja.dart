@@ -279,7 +279,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "auroraColors": MessageLookupByLibrary.simpleMessage("背景の配色"),
     "auroraEditColor": m0,
     "auroraRegenerate": MessageLookupByLibrary.simpleMessage("別の背景を生成"),
-    "auroraWallpaper": MessageLookupByLibrary.simpleMessage("ランダムグラデーションの背景"),
+    "auroraWallpaper": MessageLookupByLibrary.simpleMessage("ゆらめくオーロラ"),
     "auroraWallpaperDescription": MessageLookupByLibrary.simpleMessage(
       "1～3 色で淡いオーロラを作成します。背景を変更するまで模様は保持されます。",
     ),
@@ -945,7 +945,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "liquidGlassModeUltra": MessageLookupByLibrary.simpleMessage("澄んだきらめき"),
     "liquidGlassSettingsTip": MessageLookupByLibrary.simpleMessage(
-      "「外観」でいつでも変更できます。ランダムなグラデーション背景とリキッドグラスは、それぞれ個別にオン・オフを切り替えられます。",
+      "「外観」でいつでも変更できます。ゆらめくオーロラとリキッドグラスは、それぞれ個別にオン・オフを切り替えられます。",
     ),
     "liquidGlassStandardIntro": MessageLookupByLibrary.simpleMessage(
       "「ふんわり磨りガラス」では、メインコンテンツにシンプルなぼかしを使用します。上部のボタンと下部の Dock は透明な屈折表現を維持し、描画の負荷を抑えます。",

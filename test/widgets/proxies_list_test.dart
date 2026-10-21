@@ -256,6 +256,284 @@ void main() {
     }
   }
 
+  for (final theme in Brightness.values) {
+    testWidgets('solid proxy groups stay joined over wallpaper $theme', (
+      tester,
+    ) async {
+      const wallpaper = Color(0xFF24CDF2);
+      final brightness = ValueNotifier(theme);
+      addTearDown(brightness.dispose);
+      await pumpList(
+        tester,
+        aurora: true,
+        glass: false,
+        backdrop: wallpaper,
+        brightness: brightness,
+        groups: [
+          _group('G0', 60),
+          for (var i = 1; i < 14; i++) _group('G$i', 0),
+        ],
+        unfoldSet: {'G0'},
+      );
+      final top = tester.getRect(headerOf('G0')).top;
+      Future<void> checkSurface(bool joined) async {
+        final bounds = tester.getRect(headerOf('G0'));
+        final context = tester.element(headerOf('G0'));
+        final radius = AppCorner.xl.ap(context);
+        final fill = context.raisedSurfaceLevel.colorOf(context.colorScheme);
+        final boundary = tester.renderObject<RenderRepaintBoundary>(
+          find.byKey(_capture),
+        );
+        await tester.runAsync(() async {
+          final image = await boundary.toImage();
+          try {
+            final pixels = (await image.toByteData(
+              format: ui.ImageByteFormat.rawRgba,
+            ))!;
+            Color pixel(int x, int y) {
+              final offset = (y * image.width + x) * 4;
+              return Color.fromARGB(
+                pixels.getUint8(offset + 3),
+                pixels.getUint8(offset),
+                pixels.getUint8(offset + 1),
+                pixels.getUint8(offset + 2),
+              );
+            }
+
+            for (final x in [
+              bounds.left.ceil() + 2,
+              bounds.right.floor() - 3,
+            ]) {
+              expect(pixel(x, bounds.top.ceil() + 2), wallpaper);
+              expect(
+                pixel(x, bounds.bottom.floor() - 2),
+                joined ? fill : wallpaper,
+                reason: 'the header edge must join the rows at $x',
+              );
+              if (joined) {
+                for (
+                  var y = (bounds.bottom - radius / 2).ceil();
+                  y <= bounds.bottom.ceil() + 3;
+                  y++
+                ) {
+                  expect(pixel(x, y), fill, reason: 'group seam at ($x, $y)');
+                }
+              }
+            }
+            expect(
+              pixel(bounds.left.floor() - 2, bounds.bottom.floor() - 2),
+              wallpaper,
+            );
+          } finally {
+            image.dispose();
+          }
+        });
+        final surface = surfaceOf(tester, 'G0');
+        expect(surface.color, fill);
+        expect(surface.shadows, isNull);
+        expect(
+          (surface.shape as RoundedSuperellipseBorder).borderRadius,
+          joined ? AppRadius.top(radius) : AppRadius.all(radius),
+        );
+      }
+
+      final action = container.read(proxiesActionProvider.notifier);
+      await checkSurface(true);
+
+      final position = tester.state<ScrollableState>(scrollable()).position;
+      position.jumpTo(180);
+      await tester.pumpAndSettle();
+      expect(tester.getRect(headerOf('G0')).top, top);
+      await checkSurface(true);
+
+      while (headerOf('G1').evaluate().isEmpty) {
+        position.jumpTo(position.pixels + 200);
+        await tester.pump();
+      }
+      final next = tester.getRect(headerOf('G1'));
+      final headerHeight = tester.getSize(headerOf('G0')).height;
+      final gap = cardSpacingOf(
+        tester.element(headerOf('G1')),
+        ViewMode.mobile,
+      );
+      position.jumpTo(
+        position.pixels + next.top - gap - top - headerHeight / 2,
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester.getRect(headerOf('G0')).bottom,
+        moreOrLessEquals(top + headerHeight / 2),
+      );
+      await checkSurface(false);
+
+      position.jumpTo(0);
+      await tester.pumpAndSettle();
+      action.updateCurrentUnfoldSet({});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 120));
+      expect(find.byType(UnfoldEntryTransition), findsWidgets);
+      await checkSurface(true);
+      await tester.pumpAndSettle();
+      await checkSurface(false);
+
+      action.updateCurrentUnfoldSet({'G0'});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 120));
+      expect(find.byType(UnfoldEntryTransition), findsWidgets);
+      await checkSurface(true);
+      await tester.pumpAndSettle();
+      await checkSurface(true);
+      expect(tester.takeException(), isNull);
+      await unmountList(tester);
+    });
+  }
+
+  for (final theme in Brightness.values) {
+    testWidgets('solid group outline follows its first and unfolding frames '
+        '$theme', (tester) async {
+      const wallpaper = Color(0xFF24CDF2);
+      final brightness = ValueNotifier(theme);
+      addTearDown(brightness.dispose);
+      await pumpList(
+        tester,
+        aurora: true,
+        glass: false,
+        backdrop: wallpaper,
+        brightness: brightness,
+        groups: [_group('G0', 4), _group('G1', 0)],
+        unfoldSet: {},
+      );
+      final header = tester.getRect(headerOf('G0'));
+      final gap = cardSpacingOf(
+        tester.element(headerOf('G1')),
+        ViewMode.mobile,
+      );
+      Rect groupBounds() => Rect.fromLTRB(
+        header.left,
+        tester.getRect(headerOf('G0')).top,
+        header.right,
+        tester.getRect(headerOf('G1')).top - gap,
+      );
+      Future<void> checkOutline() async {
+        final bounds = groupBounds();
+        final context = tester.element(headerOf('G0'));
+        final radius = AppCorner.xl.ap(context);
+        final outline = AppShape.all(radius).getOuterPath(bounds);
+        final fill = context.raisedSurfaceLevel.colorOf(context.colorScheme);
+        final boundary = tester.renderObject<RenderRepaintBoundary>(
+          find.byKey(_capture),
+        );
+        await tester.runAsync(() async {
+          final image = await boundary.toImage();
+          try {
+            final pixels = (await image.toByteData(
+              format: ui.ImageByteFormat.rawRgba,
+            ))!;
+            for (final x in [
+              bounds.left.ceil() + 2,
+              bounds.right.floor() - 3,
+            ]) {
+              for (
+                var y = (bounds.bottom - radius - 2).ceil();
+                y <= bounds.bottom.ceil() + 2;
+                y++
+              ) {
+                final center = Offset(x + 0.5, y + 0.5);
+                final inside = outline.contains(center);
+                if ([
+                  const Offset(-1, 0),
+                  const Offset(1, 0),
+                  const Offset(0, -1),
+                  const Offset(0, 1),
+                ].any((delta) => outline.contains(center + delta) != inside)) {
+                  continue;
+                }
+                final offset = (y * image.width + x) * 4;
+                final actual = Color.fromARGB(
+                  pixels.getUint8(offset + 3),
+                  pixels.getUint8(offset),
+                  pixels.getUint8(offset + 1),
+                  pixels.getUint8(offset + 2),
+                );
+                expect(
+                  actual,
+                  inside ? fill : wallpaper,
+                  reason:
+                      'continuous outline at ($x, $y), height ${bounds.height}',
+                );
+              }
+            }
+          } finally {
+            image.dispose();
+          }
+        });
+      }
+
+      await checkOutline();
+      final action = container.read(proxiesActionProvider.notifier);
+      action.updateCurrentUnfoldSet({'G0'});
+      await tester.pump();
+      final entries = find.byType(UnfoldEntryTransition, skipOffstage: false);
+      expect(entries, findsWidgets);
+      final entry = tester.widget<UnfoldEntryTransition>(entries.first);
+      final animation = entry.animation as CurvedAnimation;
+      expect(animation.parent.value, 0);
+      expect(animation.parent.status, AnimationStatus.forward);
+      expect(groupBounds().height, closeTo(header.height, 0.001));
+      await checkOutline();
+      await tester.pump();
+      var previous = groupBounds().height;
+      var sawSmallBody = false;
+      final radius = AppCorner.xl.ap(tester.element(headerOf('G0')));
+      for (final step in [1, 3, 6, 10, 20, 40, 40, 120]) {
+        await tester.pump(Duration(milliseconds: step));
+        final height = groupBounds().height;
+        expect(height, greaterThanOrEqualTo(previous));
+        if (height > header.height && height < header.height + radius) {
+          sawSmallBody = true;
+        }
+        previous = height;
+        await checkOutline();
+      }
+      expect(sawSmallBody, isTrue);
+      await tester.pumpAndSettle();
+      final expandedHeight = groupBounds().height;
+      await checkOutline();
+
+      action.updateCurrentUnfoldSet({});
+      await tester.pump();
+      expect(groupBounds().height, closeTo(expandedHeight, 0.001));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 160));
+      final reversingHeight = groupBounds().height;
+      expect(reversingHeight, inExclusiveRange(header.height, expandedHeight));
+      await checkOutline();
+      action.updateCurrentUnfoldSet({'G0'});
+      await tester.pump();
+      expect(groupBounds().height, closeTo(reversingHeight, 0.001));
+      await checkOutline();
+      await tester.pumpAndSettle();
+      expect(groupBounds().height, closeTo(expandedHeight, 0.001));
+
+      action.updateCurrentUnfoldSet({});
+      await tester.pump();
+      await tester.pump();
+      previous = groupBounds().height;
+      for (final step in [120, 40, 40, 20, 10, 6, 3, 1]) {
+        await tester.pump(Duration(milliseconds: step));
+        final height = groupBounds().height;
+        expect(height, lessThanOrEqualTo(previous));
+        previous = height;
+        await checkOutline();
+      }
+      await tester.pumpAndSettle();
+      expect(groupBounds().height, closeTo(header.height, 0.001));
+      await checkOutline();
+      expect(tester.takeException(), isNull);
+      await unmountList(tester);
+    });
+  }
+
   for (final tab in [false, true]) {
     for (final quality in [null, ...LiquidGlassQuality.values]) {
       testWidgets(

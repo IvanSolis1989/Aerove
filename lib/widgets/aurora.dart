@@ -95,7 +95,7 @@ class _AuroraAppSurfaceState extends ConsumerState<AuroraAppSurface>
     );
     final surface = LiquidGlassScope(
       enabled: glassEnabled,
-      foregroundEnabled: glassEnabled || enabled,
+      foregroundEnabled: enabled,
       quality: glassMode == LiquidGlassMode.ultra
           ? LiquidGlassQuality.ultra
           : LiquidGlassQuality.standard,

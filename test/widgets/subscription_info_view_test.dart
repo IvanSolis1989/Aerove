@@ -1,4 +1,5 @@
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/widgets/widgets.dart';
@@ -8,6 +9,68 @@ import 'package:material_ui/material_ui.dart';
 import '../helpers/test_app.dart';
 
 void main() {
+  for (final aurora in [false, true]) {
+    for (final mode in LiquidGlassMode.values) {
+      testWidgets('subscription progress follows $mode aurora=$aurora', (
+        tester,
+      ) async {
+        final glass = mode != LiquidGlassMode.none;
+        final quality = mode == LiquidGlassMode.ultra
+            ? LiquidGlassQuality.ultra
+            : LiquidGlassQuality.standard;
+        await tester.pumpWidget(
+          TestApp(
+            homeBuilder: (child) => AuroraAppearance(
+              enabled: aurora,
+              child: LiquidGlassScope(
+                enabled: glass,
+                quality: quality,
+                child: LiquidGlassHost(enabled: glass, child: child),
+              ),
+            ),
+            child: const SizedBox(
+              width: 300,
+              child: SubscriptionInfoView(
+                subscriptionInfo: SubscriptionInfo(
+                  upload: 20,
+                  download: 40,
+                  total: 100,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final loading = find.descendant(
+          of: find.byType(SubscriptionInfoView),
+          matching: find.byType(CommonLinearLoading),
+        );
+        expect(loading, findsOneWidget);
+        expect(tester.widget<CommonLinearLoading>(loading).value, 0.6);
+        expect(tester.getSize(loading).height, 4);
+        final indicator = tester.widget<LinearProgressIndicator>(
+          find.descendant(
+            of: loading,
+            matching: find.byType(LinearProgressIndicator),
+          ),
+        );
+        expect(indicator.value, 0.6);
+        expect(
+          find.descendant(of: loading, matching: find.byType(GlassInk)),
+          glass ? findsOneWidget : findsNothing,
+        );
+        if (glass) {
+          expect(indicator.stopIndicatorRadius, 0);
+          expect(
+            indicator.color!.a,
+            closeTo(mode == LiquidGlassMode.ultra ? 0.88 : 0.72, 0.005),
+          );
+        }
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
+
   testWidgets('hides expiry when both values do not fit', (tester) async {
     const trafficLabel = '1KB / 1GB';
 

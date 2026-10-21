@@ -342,93 +342,114 @@ void main() {
     });
 
     for (final disableAnimations in [false, true]) {
-      testWidgets('Aurora keeps a clear resting lens on ${quality.name} glass '
-          '(reduced motion: $disableAnimations)', (tester) async {
-        tester.view.physicalSize = _mobileSize;
-        tester.view.devicePixelRatio = 1;
-        addTearDown(tester.view.reset);
-        final selections = <int>[];
-        await tester.pumpWidget(
-          TestApp(
-            homeBuilder: (child) => Builder(
-              builder: (context) => MediaQuery(
-                data: MediaQuery.of(
-                  context,
-                ).copyWith(disableAnimations: disableAnimations),
-                child: child,
+      testWidgets(
+        'Aurora keeps a visible tier-matched lens on ${quality.name} glass '
+        '(reduced motion: $disableAnimations)',
+        (tester) async {
+          tester.view.physicalSize = _mobileSize;
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+          final selections = <int>[];
+          await tester.pumpWidget(
+            TestApp(
+              homeBuilder: (child) => Builder(
+                builder: (context) => MediaQuery(
+                  data: MediaQuery.of(
+                    context,
+                  ).copyWith(disableAnimations: disableAnimations),
+                  child: child,
+                ),
               ),
-            ),
-            child: AuroraAppearance(
-              enabled: true,
-              child: LiquidGlassScope(
+              child: AuroraAppearance(
                 enabled: true,
-                quality: quality,
-                child: LiquidGlassHost(
+                child: LiquidGlassScope(
                   enabled: true,
-                  child: Scaffold(
-                    body: Align(
-                      alignment: Alignment.bottomCenter,
-                      child: NavigationDock(
-                        destinations: const [
-                          NavigationDockDestination(
-                            glyph: AppGlyphs.dashboard,
-                            label: 'a',
-                          ),
-                          NavigationDockDestination(
-                            glyph: AppGlyphs.tools,
-                            label: 'b',
-                          ),
-                        ],
-                        selectedIndex: 0,
-                        onSelected: selections.add,
+                  quality: quality,
+                  child: LiquidGlassHost(
+                    enabled: true,
+                    child: Scaffold(
+                      body: Align(
+                        alignment: Alignment.bottomCenter,
+                        child: NavigationDock(
+                          destinations: const [
+                            NavigationDockDestination(
+                              glyph: AppGlyphs.dashboard,
+                              label: 'a',
+                            ),
+                            NavigationDockDestination(
+                              glyph: AppGlyphs.tools,
+                              label: 'b',
+                            ),
+                          ],
+                          selectedIndex: 0,
+                          onSelected: selections.add,
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
             ),
-          ),
-        );
-        await tester.pumpAndSettle();
-        expect(find.byType(LiquidGlass), findsNWidgets(2));
-        final selectedGlass = find.descendant(
-          of: find.byType(FloatingNavigationBar),
-          matching: find.byWidgetPredicate(
-            (widget) => widget is LiquidGlass && widget.style.refraction < 0,
-          ),
-        );
-        expect(selectedGlass, findsOneWidget);
-        expect(
-          tester.widget<LiquidGlass>(selectedGlass).style.tint,
-          Colors.transparent,
-        );
-        expect(tester.getRect(selectedGlass), tester.getRect(_lens));
-        expect(
-          tester.getSize(selectedGlass).width,
-          lessThan(tester.getSize(find.byType(FloatingNavigationBar)).width),
-        );
-        final destination = _destinationButton('b');
-        expect(find.text('b'), findsNWidgets(2));
-        expect(destination, findsOneWidget);
-        expect(tester.getSize(destination).width, greaterThanOrEqualTo(48));
-        expect(tester.getSize(destination).height, greaterThanOrEqualTo(48));
-        final gesture = await tester.startGesture(
-          tester.getCenter(destination),
-        );
-        await tester.pumpAndSettle();
-        expect(find.byType(LiquidGlass), findsNWidgets(lifted));
-        await gesture.up();
-        await tester.pumpAndSettle();
-        expect(find.byType(LiquidGlass), findsNWidgets(2));
-        expect(selectedGlass, findsOneWidget);
-        expect(
-          tester.widget<LiquidGlass>(selectedGlass).style.tint,
-          Colors.transparent,
-        );
-        expect(tester.getRect(selectedGlass), tester.getRect(_lens));
-        expect(selections, [1]);
-        expect(tester.takeException(), isNull);
-      });
+          );
+          await tester.pumpAndSettle();
+          expect(find.byType(LiquidGlass), findsNWidgets(2));
+          final selectedGlass = find.descendant(
+            of: find.byType(FloatingNavigationBar),
+            matching: find.byWidgetPredicate(
+              (widget) => widget is LiquidGlass && widget.style.refraction < 0,
+            ),
+          );
+          expect(selectedGlass, findsOneWidget);
+          final colors = Theme.of(tester.element(selectedGlass)).colorScheme;
+          final expectedTint = quality == LiquidGlassQuality.standard
+              ? glassFillOf(colors)
+              : Colors.transparent;
+          final contrastBackgrounds = find.descendant(
+            of: find.byType(FloatingNavigationBar),
+            matching: find.byType(GlassInkBackground),
+          );
+          if (quality == LiquidGlassQuality.standard) {
+            expect(contrastBackgrounds, findsWidgets);
+            for (final background in tester.widgetList<GlassInkBackground>(
+              contrastBackgrounds,
+            )) {
+              expect(background.color, expectedTint);
+            }
+          } else {
+            expect(contrastBackgrounds, findsNothing);
+          }
+          expect(
+            tester.widget<LiquidGlass>(selectedGlass).style.tint,
+            expectedTint,
+          );
+          expect(tester.getRect(selectedGlass), tester.getRect(_lens));
+          expect(
+            tester.getSize(selectedGlass).width,
+            lessThan(tester.getSize(find.byType(FloatingNavigationBar)).width),
+          );
+          final destination = _destinationButton('b');
+          expect(find.text('b'), findsNWidgets(2));
+          expect(destination, findsOneWidget);
+          expect(tester.getSize(destination).width, greaterThanOrEqualTo(48));
+          expect(tester.getSize(destination).height, greaterThanOrEqualTo(48));
+          final gesture = await tester.startGesture(
+            tester.getCenter(destination),
+          );
+          await tester.pumpAndSettle();
+          expect(find.byType(LiquidGlass), findsNWidgets(lifted));
+          await gesture.up();
+          await tester.pumpAndSettle();
+          expect(find.byType(LiquidGlass), findsNWidgets(2));
+          expect(selectedGlass, findsOneWidget);
+          expect(
+            tester.widget<LiquidGlass>(selectedGlass).style.tint,
+            expectedTint,
+          );
+          expect(tester.getRect(selectedGlass), tester.getRect(_lens));
+          expect(selections, [1]);
+          expect(tester.takeException(), isNull);
+        },
+      );
     }
   }
 

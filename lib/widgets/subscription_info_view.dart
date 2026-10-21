@@ -77,11 +77,7 @@ class SubscriptionInfoView extends StatelessWidget {
           },
         ),
         const SizedBox(height: 4),
-        LinearProgressIndicator(
-          minHeight: 4,
-          value: progress,
-          backgroundColor: context.colorScheme.primary.opacity15,
-        ),
+        SizedBox(height: 4, child: CommonLinearLoading(value: progress)),
       ],
     );
   }

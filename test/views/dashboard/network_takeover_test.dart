@@ -130,7 +130,7 @@ void main() {
 
   for (final quality in LiquidGlassQuality.values) {
     for (final testCase in _rowCases) {
-      testWidgets('${testCase.name} stands flat on clear ${quality.name} '
+      testWidgets('${testCase.name} uses ${quality.name} glass '
           'glass and swells under a press', (tester) async {
         await pumpCard(
           tester,
@@ -176,7 +176,7 @@ void main() {
               of: find.byWidget(control.widget),
               matching: find.byType(LiquidGlass),
             ),
-            findsNothing,
+            findsNWidgets(2),
           );
         }
         final containers = tester.widgetList<Container>(

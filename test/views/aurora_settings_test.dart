@@ -176,7 +176,7 @@ void main() {
     final original = readTheme();
     expect(find.byType(SeededAuroraWallpaper), findsOneWidget);
 
-    expect(find.text('Random gradient wallpaper'), findsNothing);
+    expect(find.text('Living Aurora'), findsNothing);
     expect(find.byType(Switch), findsNothing);
     container
         .read(themeSettingProvider.notifier)

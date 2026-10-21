@@ -135,27 +135,63 @@ class EmojiText extends StatelessWidget {
 class EmojiCover extends StatelessWidget {
   const EmojiCover(this.emoji, {super.key, required this.size});
 
-  static const _twemojiFlagHeightPerFontSize = 0.84;
-  static const _twemojiFlagRisePerFontSize = 0.055;
+  static const _twemojiUnitsPerEm = 1024.0;
+  static const _twemojiFlagAdvance = 1275.0;
+  static const _twemojiAscentFraction = 950 / 1200;
 
   final String emoji;
   final double size;
 
   @override
   Widget build(BuildContext context) {
-    final fontSize = size / _twemojiFlagHeightPerFontSize;
+    // COLR layer bounds in Twemoji.Mozilla.ttf, relative to its baseline.
+    final bounds = switch (emoji) {
+      '🇧🇪' => const Rect.fromLTRB(138, -83, 1138, 783),
+      '🇨🇭' || '🇻🇦' => const Rect.fromLTRB(204, -83, 1071, 783),
+      '🇳🇵' => const Rect.fromLTRB(304, -83, 964, 783),
+      '🇸🇲' => const Rect.fromLTRB(38, -83, 1238, 782),
+      _ => const Rect.fromLTRB(38, -83, 1238, 783),
+    };
+    final scale = size / bounds.shortestSide;
+    final fontSize = scale * _twemojiUnitsPerEm;
+    // SkParagraph rounds its painted baseline; keep the layout baseline integral.
+    final lineBaseline = fontSize * _twemojiAscentFraction;
     return SizedBox.square(
       dimension: size,
       child: OverflowBox(
+        minWidth: 0,
+        minHeight: 0,
         maxWidth: double.infinity,
         maxHeight: double.infinity,
-        child: Transform.translate(
-          offset: Offset(0, fontSize * _twemojiFlagRisePerFontSize),
-          child: MediaQuery.withNoTextScaling(
-            child: EmojiText(
-              emoji,
-              maxLines: 1,
-              style: TextStyle(fontSize: fontSize, height: 1),
+        child: SizedBox(
+          width: _twemojiFlagAdvance * scale,
+          height: bounds.height * scale,
+          child: OverflowBox(
+            alignment: Alignment.topCenter,
+            minHeight: 0,
+            maxHeight: double.infinity,
+            child: Transform.translate(
+              offset: Offset(
+                (_twemojiFlagAdvance / 2 - bounds.center.dx) * scale,
+                0,
+              ),
+              child: Baseline(
+                baseline: bounds.bottom * scale,
+                baselineType: TextBaseline.alphabetic,
+                child: MediaQuery.withNoTextScaling(
+                  child: EmojiText(
+                    emoji,
+                    maxLines: 1,
+                    style: TextStyle(
+                      inherit: false,
+                      fontFamily: FontFamily.twEmoji.value,
+                      fontSize: fontSize,
+                      height: lineBaseline.ceilToDouble() / lineBaseline,
+                      leadingDistribution: TextLeadingDistribution.proportional,
+                    ),
+                  ),
+                ),
+              ),
             ),
           ),
         ),

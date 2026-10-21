@@ -208,8 +208,8 @@ void main() {
         tester,
         theme: ThemeData(platform: TargetPlatform.android),
       );
-      await tester.ensureVisible(find.text('Random gradient wallpaper'));
-      await tester.tap(find.text('Random gradient wallpaper'));
+      await tester.ensureVisible(find.text('Living Aurora'));
+      await tester.tap(find.text('Living Aurora'));
       await tester.pumpAndSettle();
       expect(find.byType(AuroraSettings), findsOneWidget);
       expect(swatch(0xFFFF9500), findsNothing);
@@ -430,11 +430,8 @@ void main() {
           tester,
           theme: ThemeData(platform: TargetPlatform.android),
         );
-        await revealThemeSetting(
-          tester,
-          find.text('Random gradient wallpaper'),
-        );
-        await tester.tap(find.text('Random gradient wallpaper'));
+        await revealThemeSetting(tester, find.text('Living Aurora'));
+        await tester.tap(find.text('Living Aurora'));
         await tester.pumpAndSettle();
         expect(readTheme().auroraEnabled, isTrue);
         expect(readTheme().liquidGlass, mode);
@@ -450,8 +447,8 @@ void main() {
         );
         final group = find.byType(PreviewChoiceGroup<LiquidGlassMode>);
         final seed = readTheme().auroraSeed;
-        await tester.ensureVisible(find.text('Random gradient wallpaper'));
-        await tester.tap(find.text('Random gradient wallpaper'));
+        await tester.ensureVisible(find.text('Living Aurora'));
+        await tester.tap(find.text('Living Aurora'));
         await tester.pumpAndSettle();
         await tester.ensureVisible(group);
         expect(
@@ -526,11 +523,8 @@ void main() {
           tester.widget<PreviewChoiceGroup<LiquidGlassMode>>(group).value,
           LiquidGlassMode.standard,
         );
-        await revealThemeSetting(
-          tester,
-          find.text('Random gradient wallpaper'),
-        );
-        await tester.tap(find.text('Random gradient wallpaper'));
+        await revealThemeSetting(tester, find.text('Living Aurora'));
+        await tester.tap(find.text('Living Aurora'));
         await tester.pumpAndSettle();
         expect(readTheme().liquidGlass, LiquidGlassMode.standard);
         await revealThemeSetting(tester, group);

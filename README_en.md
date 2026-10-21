@@ -21,14 +21,15 @@ The baseline is the FlClash `v0.9.1` revision recorded by this fork. Material Yo
 
 Soft fields of color unfold and mingle behind the page, like an aurora seen through a veil of mist. Cards float above them, their edges catching a little light while text and icons take their colors from the backdrop. Scrolling reveals these layers in motion, giving an everyday connection screen a quiet, dreamlike atmosphere.
 
-Choose between two treatments of light: **Soft frost** gives page-body surfaces a soft blur without refraction; **Clear shimmer** retains body-glass refraction and richer optical layering. In both modes, header buttons and the bottom dock keep transparent refraction, revealing sharp content beneath, while header text has its own blurred backdrop. The result varies with the device and graphics backend.
+Choose between two treatments of light: **Soft frost** uses a soft blur without refraction across content, header buttons, bottom navigation and overlays; **Clear shimmer** retains transparent refraction and glass edge highlights. Header text has its own blurred backdrop. The result varies with the device and graphics backend.
 
-**Friendly tip: On less powerful devices, consider Soft frost, or choose Plain solid to turn Liquid Glass off and reduce rendering work. You can keep the random gradient wallpaper with glass disabled.**
+**Friendly tip: On less powerful devices, consider Soft frost, or choose Plain solid to turn Liquid Glass off and reduce rendering work. You can keep the Living Aurora with glass disabled.**
 
-With a random gradient wallpaper, Plain solid gives text and icons, including selected icons, a subtler background tint than Soft frost. Black and white control fills retain their original colors without glass optics.
+With Living Aurora, Plain solid gives text and icons, including selected icons, a subtler background tint than Soft frost. Black and white control fills retain their original colors without glass optics.
+Soft frost uses a frosted finish across content, header controls, navigation and overlays; Clear shimmer keeps transparent refraction. See the [appearance rules](docs/APPEARANCE_Aerove.md) for the wallpaper and finish combinations.
 
 - Generate a gradient wallpaper from 1–3 colors and tap **New wallpaper** to change its composition. The palette and composition persist. Automatic rotation becomes due at 05:00 local time each day and applies silently in the background without interrupting browsing.
-- Aurora wallpaper and Clear shimmer glass are the defaults. Switching to an ordinary theme color restores the regular palette; glass strength can be adjusted separately. Brightness can follow the system or be selected manually, while high-contrast and pure-black dark modes keep opaque surfaces.
+- Living Aurora and Clear shimmer glass are the defaults. Switching to an ordinary theme color restores the regular palette; glass strength can be adjusted separately. Brightness can follow the system or be selected manually, while high-contrast and pure-black dark modes keep opaque surfaces.
 - Glass extends across dashboards, proxy groups, cards, fields, navigation, menus, popups, the editor, and forms, including copy, paste, and overflow menus. Cards and panels keep one glass layer; buttons, switches, slider thumbs, and segmented selectors on that layer use flat fills while retaining drag, keyboard, and state feedback. Text and icons coordinate with the background while preserving readability, and status messages retain distinct colors. No-glass and high-contrast modes use opaque fallbacks.
 - Fonts come from those available on your device; Aerove does not bundle MiSans. Devices without full glass support use a simpler frosted appearance.
 
@@ -108,7 +109,7 @@ After accepting the disclaimer for the first time, a short introduction explains
 Open **Tools → Theme → Theme colors** and choose one mode:
 
 - **Solid theme color:** use the usual palette and adjust Liquid Glass independently.
-- **Random gradient wallpaper:** select **1–3 colors**, then use **New wallpaper** to change the composition. Wallpaper and Liquid Glass have separate controls: Plain solid, Soft frost, and Clear shimmer are all available, and enabling the wallpaper leaves your glass choice unchanged.
+- **Living Aurora:** select **1–3 colors**, then use **New wallpaper** to change the composition. Wallpaper and Liquid Glass have separate controls: Plain solid, Soft frost, and Clear shimmer are all available, and enabling the wallpaper leaves your glass choice unchanged.
 
 Switching back restores the ordinary palette. Wallpaper colors, composition, and your glass choice are saved independently.
 The gradient palette and current composition persist across restarts.

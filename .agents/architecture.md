@@ -634,14 +634,13 @@ down through `SheetCoverRouteMixin`, as `SnapSheetRoute` and `ModalSideSheetRout
 to the bar's `TonalButtonTheme`,
 which puts a `LiquidGlass` pane behind each button through `ButtonStyle.backgroundBuilder` and one behind a
 `TonalButtonGroup`; the navigation dock's bar and lifted lens become panes as well, and so do a sheet's docked search,
-the cards of a `CommonPopupMenu`, and a `CommonDialog`. On the dashboard each card is the one pane: its connected
-buttons, switches and speed tiles stand flat on it, since each pane adds its area to a capture retaken whenever the
-dashboard redraws, which it does often. The status card's start-button droplet and flag badge are bubbles of their own,
-as the user specified them. That card uses `DashboardCard.pane: false`, so its flat fill leaves the bubbles as its
-only optical layer. Each control still swells on its own under `ElasticPress`, and a `DashboardConnectedGroup` paints the button
+the cards of a `CommonPopupMenu`, and a `CommonDialog`. Dashboard cards provide the outer pane, including the status
+card; its start-button droplet and flag badge remain bubbles of their own. Static speed tiles share their card's
+surface. Switch tracks and thumbs and the outbound-mode buttons retain their own material rather than flattening
+against the card. Each control swells on its own under `ElasticPress`, and a `DashboardConnectedGroup` paints the button
 pressed last over the neighbours it swells past. `lib/ui/liquid_glass.dart` holds the rest:
 
-- One pane at a time. The host captures only the wallpaper (`wallpaperOnly`), so a pane over another pane does not
+- Structural nesting shares a pane. The host captures only the wallpaper (`wallpaperOnly`), so a pane over another pane does not
   read it: it cuts a clearer window through it, which reads as a defect at any size. `GlassSurfaceScope` says a pane
   already lies behind a subtree. `CardGroup` and `CommonCard` set it when they paint a pane, and so do
   `SliverGlassGroup`, `DashboardGlass`, `SheetSurface`, and `GlassPlatter`, the rimmed platter under a `CommonDialog`
@@ -650,9 +649,10 @@ pressed last over the neighbours it swells past. `lib/ui/liquid_glass.dart` hold
   the raised level at most 24% in light mode and `onSurface` at 6% in dark, where a dark level's fill reads as a hole.
   The theme's text, icon, outlined and elevated buttons stand bare, a filled button and a `TonalButton`,
   `TonalButtonGroup` or `TonalButtonTheme` pane take `glassFillOf`, and a selected one `glassChosenFillOf`, primary at
-  20%. A switch keeps a flat track and a flat knob, a slider a flat track and a flat handle, a `SegmentedControl` a
+  20%. Switches are explicit optical controls, while a slider keeps a flat track and a flat handle and a `SegmentedControl` a
   flat track and a flat chosen segment; on a bare page the knob, the handle and the chosen segment are each the
-  control's one pane. A label on a flat fill asks its ink for at least 9:1 through `glassFlatLabel`, since the ink measures the backdrop
+  control's one pane. The outbound-mode buttons opt into their own panes with `DashboardConnectedButton.pane`.
+  A label on a flat fill asks its ink for at least 9:1 through `glassFlatLabel`, since the ink measures the backdrop
   and not the fill between. `HeaderButtonGlassScope` wins over the scope, so a sheet's bar buttons keep their lens, and
   `LiquidGlass` and `LiquidGlass.buttonStyle` never read it: `CoreStatusButton`, the dashboard's droplet and flag, the
   docked search and the disclaimer's actions are panes wherever they stand. Plain solid and high contrast set no glass,
@@ -660,14 +660,17 @@ pressed last over the neighbours it swells past. `lib/ui/liquid_glass.dart` hold
 
 - Foreground ink is independently enabled by `LiquidGlassScope.foregroundEnabled`. Plain solid with Aurora wallpaper
   uses the shared host for ink only, with lower saturation and brightness than Soft frost and no optical panes.
+  Ordinary themes retain their original foreground colors in every glass tier; Aurora alone enables wallpaper ink.
   On-primary text retains its original color on solid controls. Selected icons sample the wallpaper for hue but use
   their primary fill for contrast; selection badges keep a flat disc and tint only the glyph, and the navigation dock
   leaves its selected foreground ink visible rather than replacing it with a flat color filter.
   A nested disabled scope still disables ink unless explicitly overridden; high contrast and pure black stay opaque.
 
 - `LiquidGlassStyle.card` gives Soft frost cards a raised-surface tint; blur alone vanishes over a smooth wallpaper.
-  Clear shimmer keeps the regular clear pane. Connected dashboard buttons leave their unchosen segments transparent,
-  so the chosen 20% primary fill remains distinct without making the label's backing too bright in dark mode.
+  Clear shimmer keeps the regular clear pane. Outbound-mode panes leave unchosen segments transparent, so the chosen
+  20% primary tint remains distinct. `LiquidGlassStyle.forQuality` resolves Soft frost to blur without refraction,
+  bevel or optical rim everywhere, including the header, dock, menu and alert. Independent rim decoration is gated
+  in final composition and backdrop replay too. There is no navigation exception. See `docs/APPEARANCE_Aerove.md`.
 
 - A `LiquidGlassHost` over the app (`lib/ui/liquid_glass_capture.dart`, after g1455's atlas proxy) draws its panes
   without reading the backdrop. As the frame is composited, before its children, it redraws onto one small image what
@@ -681,18 +684,18 @@ pressed last over the neighbours it swells past. `lib/ui/liquid_glass.dart` hold
   A pane outside any host draws only its tint and rim.
 - `ultra` draws all of the glass below. `standard` leaves out what costs most for least: a haze becomes the whole
   frost, so the dock takes one shrunken slot in place of a sharp one at the screen's resolution, and its text no
-  longer shows faintly through; a lens's rim parts no colors; the lifted lens's copy goes unwarped, tinted with the
-  light its pane would add; and the dock casts no shadow, which is under 3/255. The host applies the style changes to
-  every pane it draws, the dock the rest. A config saved with `standard` before `ultra` existed moves to `ultra` once
-  (`Migration.upgradeVersion` 2), since that was its look. On the SwiftShader emulator, as raster time a frame over
+  longer shows faintly through. Lenses have no optical rim and their lifted copies go unwarped. The selected lens's
+  tint also reaches text and icon contrast through `GlassInkBackground`, so ink is checked against the visible fill.
+  The dock casts no shadow, which is under 3/255. A config saved with `standard` before `ultra` existed moves to `ultra`
+  once (`Migration.upgradeVersion` 2), since that was its look. At the original tier split, on the SwiftShader
+  emulator, as raster time a frame over
   glass off, median of four alternating runs, the glass before the tiers, `ultra` and `standard` added 16.4, 13.5 and
   9.5 ms scrolling, 52, 40 and 17 dragging the lens, 34, 26 and 18 scrolling under an open menu, 22, 13 and 11
   opening it and 17, 9 and 5 closing it; scrolling took 18.8 render passes a frame in either tier against 23.6, and
   the lens 22 in `ultra` and 18 in `standard` against 30.
-- In `standard`, a pane under a `LiquidGlassBody` only blurs and tints (`_bodyBlur`): the scaffold body, the tile an
-  `OpenContainer` carries through its transition, popups, alerts, toasts and a sheet's foot actions. The bar's buttons, the
-  dock and the desktop sidebar keep their refraction. Any other pane refracts in `standard`, so a new overlay in the
-  middle of the screen wraps itself in `LiquidGlassBody`.
+- In `standard`, every pane only blurs and tints, regardless of where it stands. The scaffold, carried tiles, popups,
+  alerts, toasts, headers, dock and sidebar all resolve through `LiquidGlassStyle.forQuality`; a missing
+  `LiquidGlassBody` marker cannot accidentally restore refraction. Independent rim decorations obey the same tier.
 - A pane over one painted before it in the same root reads a second image, a level up, with the first drawn in as
   glass. Over means within 2.5 sigmas of its frost and as far as it bends, where a pane takes under 1% of what it
   reads, rather than the 3 sigmas and 2 dp its slot holds: the bar's buttons stand 8 dp apart, inside the slot of the

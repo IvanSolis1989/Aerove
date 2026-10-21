@@ -469,13 +469,8 @@ class _RestateDialogState extends State<_RestateDialog> {
   bool get _glass =>
       LiquidGlassScope.of(context) && !MediaQuery.highContrastOf(context);
 
-  static const _panelGlass = LiquidGlassStyle(
-    tint: Colors.transparent,
-    blur: 16,
-    refraction: 0,
-    bevel: 0,
-    rim: 0.28,
-  );
+  LiquidGlassStyle get _panelGlass =>
+      LiquidGlassStyle.regular(context.colorScheme);
 
   Widget _surface(Widget child) => !_glass
       ? child

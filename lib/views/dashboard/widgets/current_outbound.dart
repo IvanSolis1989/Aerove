@@ -95,7 +95,6 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
         ? (appLocalizations.running, DashboardChipTone.ok)
         : (appLocalizations.notRunning, DashboardChipTone.idle);
     return DashboardCard(
-      pane: false,
       padding: EdgeInsets.zero,
       semanticLabel: appLocalizations.status,
       child: Stack(
@@ -450,7 +449,6 @@ class _CountryBadgeState extends State<_CountryBadge> {
       DashboardColors.of(context).tone2,
     );
     final finish = OutboundFinish.of(context);
-    final glass = finish != OutboundFinish.solid;
     final highContrast = MediaQuery.highContrastOf(context);
     final shadow = highContrast || finish == OutboundFinish.clear
         ? Colors.transparent
@@ -495,8 +493,8 @@ class _CountryBadgeState extends State<_CountryBadge> {
                     wobble: wobble,
                     irregularity: wobble.abs(),
                     color: Colors.transparent,
-                    highlight: !highContrast,
-                    rim: glass ? rim : null,
+                    highlight: !highContrast && finish != OutboundFinish.frost,
+                    rim: finish == OutboundFinish.clear ? rim : null,
                     ring: _focused ? focusRingSide(colorScheme) : null,
                   ),
                   child: hasFlag
@@ -810,7 +808,10 @@ class _StartToggleState extends ConsumerState<_StartToggle>
                           wobble: wobble,
                           color: glass ? null : color,
                           shadow: shadow,
-                          highlight: enabled && !highContrast,
+                          highlight:
+                              enabled &&
+                              !highContrast &&
+                              finish != OutboundFinish.frost,
                           ring: _focused
                               ? focusRingSide(colorScheme, standsOff: true)
                               : null,

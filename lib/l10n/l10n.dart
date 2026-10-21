@@ -1680,10 +1680,10 @@ class AppLocalizations {
     );
   }
 
-  /// `You can change this at any time in Appearance. The random gradient background and Liquid Glass can each be turned on or off independently.`
+  /// `You can change this at any time in Appearance. Living Aurora and Liquid Glass can each be turned on or off independently.`
   String get liquidGlassSettingsTip {
     return Intl.message(
-      'You can change this at any time in Appearance. The random gradient background and Liquid Glass can each be turned on or off independently.',
+      'You can change this at any time in Appearance. Living Aurora and Liquid Glass can each be turned on or off independently.',
       name: 'liquidGlassSettingsTip',
       desc: '',
       args: [],
@@ -7962,10 +7962,10 @@ class AppLocalizations {
     );
   }
 
-  /// `Random gradient wallpaper`
+  /// `Living Aurora`
   String get auroraWallpaper {
     return Intl.message(
-      'Random gradient wallpaper',
+      'Living Aurora',
       name: 'auroraWallpaper',
       desc: '',
       args: [],

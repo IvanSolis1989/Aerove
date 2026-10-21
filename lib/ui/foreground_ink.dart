@@ -203,6 +203,24 @@ class GlassInkTextContrast extends InheritedWidget {
       contrast != oldWidget.contrast;
 }
 
+/// A tint over the sampled backdrop, used for text and icon contrast.
+class GlassInkBackground extends InheritedWidget {
+  const GlassInkBackground({
+    super.key,
+    required this.color,
+    required super.child,
+  });
+
+  final Color color;
+
+  static Color? of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<GlassInkBackground>()?.color;
+
+  @override
+  bool updateShouldNotify(GlassInkBackground oldWidget) =>
+      color != oldWidget.color;
+}
+
 class GlassInk extends StatelessWidget {
   const GlassInk({
     super.key,
@@ -236,9 +254,11 @@ class GlassInk extends StatelessWidget {
       dark: Theme.of(context).brightness == Brightness.dark,
       quality: LiquidGlassScope.qualityOf(context),
       subtle: !LiquidGlassScope.of(context),
-      background: role == GlassInkRole.icon
-          ? GlassForeground.solidBackgroundOf(context, source)
-          : null,
+      background:
+          GlassInkBackground.of(context) ??
+          (role == GlassInkRole.icon
+              ? GlassForeground.solidBackgroundOf(context, source)
+              : null),
       contrast: role == GlassInkRole.icon
           ? 3.2
           : GlassInkTextContrast.of(context),

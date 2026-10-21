@@ -1481,6 +1481,8 @@ class _GlassLens extends StatelessWidget {
       return const SizedBox.shrink();
     }
     final colorScheme = context.colorScheme;
+    final frosted =
+        LiquidGlassScope.qualityOf(context) == LiquidGlassQuality.standard;
     return Positioned.directional(
       textDirection: Directionality.of(context),
       start: rect.left,
@@ -1490,7 +1492,11 @@ class _GlassLens extends StatelessWidget {
       child: IgnorePointer(
         child: LiquidGlass(
           contentBackdrop: true,
-          style: LiquidGlassStyle.lens(colorScheme).scale(strength),
+          style: LiquidGlassStyle.lens(colorScheme)
+              .copyWith(
+                tint: frosted ? glassFillOf(colorScheme) : Colors.transparent,
+              )
+              .scale(strength),
           shadows: _lensShadows(colorScheme, lift),
         ),
       ),
@@ -1729,7 +1735,10 @@ class _FloatingBarItemState extends State<_FloatingBarItem> {
       ),
     );
     if (widget.part == _LensPart.inside) {
-      return content;
+      return glass &&
+              LiquidGlassScope.qualityOf(context) == LiquidGlassQuality.standard
+          ? GlassInkBackground(color: glassFillOf(colorScheme), child: content)
+          : content;
     }
     return FocusableActionDetector(
       actions: _actions,

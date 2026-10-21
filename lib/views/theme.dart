@@ -663,7 +663,7 @@ final _floatingBarProvider = appSettingProvider.select(
 );
 
 final _liquidGlassProvider = themeSettingProvider.select(
-  (state) => state.liquidGlass != LiquidGlassMode.none,
+  (state) => state.liquidGlass,
 );
 
 class _PureBlackItem extends ConsumerWidget {
@@ -744,7 +744,11 @@ class _NavigationBarItem extends ConsumerWidget {
           value: false,
           label: appLocalizations.docked,
           pictogram: MiniScreenThumb(
-            screen: MiniScreen(colorScheme: colorScheme, floatingBar: false),
+            screen: MiniScreen(
+              colorScheme: colorScheme,
+              floatingBar: false,
+              liquidGlass: liquidGlass,
+            ),
           ),
         ),
       ],
@@ -814,9 +818,7 @@ class _LiquidGlassItem extends ConsumerWidget {
       themeSettingProvider.select((state) => state.liquidGlass),
     );
     final colorScheme = context.colorScheme;
-    // Floating either way, as a docked bar stays a fill, over the list page,
-    // whose rows run on under the bar where glass shows them.
-    Widget preview(bool liquidGlass) => MiniScreenThumb(
+    Widget preview(LiquidGlassMode liquidGlass) => MiniScreenThumb(
       screen: MiniScreen(
         colorScheme: colorScheme,
         floatingBar: true,
@@ -834,17 +836,17 @@ class _LiquidGlassItem extends ConsumerWidget {
         PreviewChoice(
           value: LiquidGlassMode.none,
           label: LiquidGlassMode.none.label,
-          pictogram: preview(false),
+          pictogram: preview(LiquidGlassMode.none),
         ),
         PreviewChoice(
           value: LiquidGlassMode.standard,
           label: LiquidGlassMode.standard.label,
-          pictogram: preview(true),
+          pictogram: preview(LiquidGlassMode.standard),
         ),
         PreviewChoice(
           value: LiquidGlassMode.ultra,
           label: LiquidGlassMode.ultra.label,
-          pictogram: preview(true),
+          pictogram: preview(LiquidGlassMode.ultra),
         ),
       ],
       onChanged: (value) {

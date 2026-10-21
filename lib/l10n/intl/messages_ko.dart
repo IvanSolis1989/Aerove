@@ -276,7 +276,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "auroraColors": MessageLookupByLibrary.simpleMessage("배경 색상"),
     "auroraEditColor": m0,
     "auroraRegenerate": MessageLookupByLibrary.simpleMessage("새 배경"),
-    "auroraWallpaper": MessageLookupByLibrary.simpleMessage("무작위 그라데이션 배경"),
+    "auroraWallpaper": MessageLookupByLibrary.simpleMessage("생동하는 오로라"),
     "auroraWallpaperDescription": MessageLookupByLibrary.simpleMessage(
       "부드러운 오로라에 사용할 색상을 1~3개 선택하세요. 변경하기 전까지 무늬가 유지됩니다.",
     ),
@@ -928,7 +928,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "liquidGlassModeStandard": MessageLookupByLibrary.simpleMessage("은은한 젖빛"),
     "liquidGlassModeUltra": MessageLookupByLibrary.simpleMessage("맑은 광채"),
     "liquidGlassSettingsTip": MessageLookupByLibrary.simpleMessage(
-      "외관에서 언제든지 변경할 수 있습니다. 무작위 그라데이션 배경과 Liquid Glass는 각각 독립적으로 켜거나 끌 수 있습니다.",
+      "외관에서 언제든지 변경할 수 있습니다. 생동하는 오로라와 Liquid Glass는 각각 독립적으로 켜거나 끌 수 있습니다.",
     ),
     "liquidGlassStandardIntro": MessageLookupByLibrary.simpleMessage(
       "은은한 젖빛 모드는 본문 영역에 단순한 흐림 효과를 사용합니다. 상단 버튼과 하단 Dock은 투명한 굴절 효과를 유지하며, 렌더링 부하는 더 가볍습니다.",

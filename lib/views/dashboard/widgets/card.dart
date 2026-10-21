@@ -402,6 +402,7 @@ class _RenderRaisedRow extends RenderFlex {
 class DashboardConnectedButton extends StatelessWidget {
   const DashboardConnectedButton({
     super.key,
+    this.pane = false,
     required this.selected,
     required this.first,
     required this.last,
@@ -414,6 +415,7 @@ class DashboardConnectedButton extends StatelessWidget {
   });
 
   final bool selected;
+  final bool pane;
   final bool first;
   final bool last;
   final double outer;
@@ -431,6 +433,7 @@ class DashboardConnectedButton extends StatelessWidget {
     final colorScheme = context.colorScheme;
     final glass = LiquidGlassScope.of(context);
     final onGlass = GlassSurfaceScope.of(context);
+    final ownPane = glass && pane && !MediaQuery.highContrastOf(context);
     return Semantics(
       button: true,
       selected: selected,
@@ -458,6 +461,8 @@ class DashboardConnectedButton extends StatelessWidget {
               decoration: ShapeDecoration(
                 color: !glass
                     ? Color.lerp(background, colorScheme.primary, amount)
+                    : ownPane
+                    ? Colors.transparent
                     : onGlass
                     ? Color.lerp(
                         Colors.transparent,
@@ -478,22 +483,33 @@ class DashboardConnectedButton extends StatelessWidget {
                 ),
               ),
             );
-            return FocusRing(
-              shape: shape,
-              standsOff: selected,
-              child: onGlass
-                  ? fill
-                  : DashboardGlass(
-                      shape: shape,
-                      style: selected
-                          ? LiquidGlassStyle.tinted(
-                              colorScheme,
-                              colorScheme.primary,
-                            )
-                          : null,
-                      child: fill,
+            Widget button = fill;
+            if (ownPane) {
+              final style = LiquidGlassStyle.regular(colorScheme)
+                  .copyWith(
+                    tint: Color.lerp(
+                      Colors.transparent,
+                      glassChosenFillOf(colorScheme),
+                      amount,
                     ),
-            );
+                    blur: 0,
+                  )
+                  .forQuality(LiquidGlassScope.qualityOf(context));
+              button = LiquidGlass(
+                style: style,
+                clipper: ShapeBorderClipper(shape: shape),
+                child: fill,
+              );
+            } else if (!onGlass) {
+              button = DashboardGlass(
+                shape: shape,
+                style: selected
+                    ? LiquidGlassStyle.tinted(colorScheme, colorScheme.primary)
+                    : null,
+                child: fill,
+              );
+            }
+            return FocusRing(shape: shape, standsOff: selected, child: button);
           },
           child: glassFlatLabel(
             context,

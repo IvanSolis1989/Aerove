@@ -661,6 +661,7 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
     if (rows != null && clipsRows) {
       rows = _HeaderClippedRows(sliver: rows);
     }
+    final joinsRows = clipsRows && !glass && rows != null;
     Widget buildHeader({double floating = 0, double lift = 0}) => KeyedSubtree(
       key: widget.headerKey,
       child: SizedBox(
@@ -673,6 +674,7 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
           key: ValueKey(groupName),
           isExpand: isExpand,
           unfolded: unfolded,
+          joinsRows: joinsRows,
           hasGlassEnvelope: glass,
           group: widget.group,
           onChange: widget.onChange,
@@ -691,6 +693,8 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
               style: LiquidGlassStyle.card(context),
               slivers: slivers,
             )
+          : clipsRows
+          ? _SolidGroupClip(radius: AppCorner.xl.ap(context), slivers: slivers)
           : SliverMainAxisGroup(slivers: slivers),
     );
   }
@@ -765,6 +769,71 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
   }
 }
 
+class _SolidGroupClip extends SingleChildRenderObjectWidget {
+  _SolidGroupClip({required this.radius, required List<Widget> slivers})
+    : super(child: SliverMainAxisGroup(slivers: slivers));
+
+  final double radius;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderSolidGroupClip(radius);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    covariant _RenderSolidGroupClip renderObject,
+  ) => renderObject.radius = radius;
+}
+
+class _RenderSolidGroupClip extends RenderProxySliver {
+  _RenderSolidGroupClip(this._radius);
+
+  double _radius;
+  final _clip = LayerHandle<ClipRSuperellipseLayer>();
+
+  set radius(double value) {
+    if (_radius == value) return;
+    _radius = value;
+    markNeedsPaint();
+  }
+
+  @override
+  void dispose() {
+    _clip.layer = null;
+    super.dispose();
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    final group = child! as RenderSliverMainAxisGroup;
+    final first = group.firstChild;
+    final layout = geometry!;
+    if (!layout.visible || first == null) {
+      _clip.layer = null;
+      return;
+    }
+    assert(constraints.axisDirection == AxisDirection.down);
+    final top = (first.parentData! as SliverPhysicalParentData).paintOffset.dy;
+    // The viewport's paint extent can end before the card's rounded tail.
+    final bottom = layout.scrollExtent - constraints.scrollOffset;
+    final bounds = Rect.fromLTRB(0, top, constraints.crossAxisExtent, bottom);
+    if (bounds.isEmpty) {
+      _clip.layer = null;
+      super.paint(context, offset);
+      return;
+    }
+    _clip.layer = context.pushClipRSuperellipse(
+      needsCompositing,
+      offset,
+      bounds,
+      AppRadius.all(_radius).toRSuperellipse(bounds),
+      super.paint,
+      oldLayer: _clip.layer,
+    );
+  }
+}
+
 class _HeaderClippedRows extends SingleChildRenderObjectWidget {
   const _HeaderClippedRows({required Widget sliver}) : super(child: sliver);
 
@@ -806,6 +875,8 @@ class ListHeader extends ConsumerWidget {
   /// Whether the rows have settled under the header, squaring its bottom.
   final bool unfolded;
 
+  final bool joinsRows;
+
   final bool hasGlassEnvelope;
 
   final bool enterAnimated;
@@ -822,6 +893,7 @@ class ListHeader extends ConsumerWidget {
     this.enterAnimated = true,
     this.floating = 0,
     this.lift = 0,
+    this.joinsRows = false,
     this.hasGlassEnvelope = false,
     required this.group,
     required this.onChange,
@@ -837,7 +909,7 @@ class ListHeader extends ConsumerWidget {
       delayTestingGroupsProvider.select((state) => state.contains(groupName)),
     );
     final colorScheme = context.colorScheme;
-    final level = floating > 0
+    final level = floating > 0 && !joinsRows
         ? SurfaceLevel.floatingOf(colorScheme)
         : context.raisedSurfaceLevel;
     final radius = AppCorner.xl.ap(context);
@@ -885,7 +957,7 @@ class ListHeader extends ConsumerWidget {
     );
     final shape = AppShape.vertical(
       top: radius,
-      bottom: hasGlassEnvelope
+      bottom: hasGlassEnvelope || (joinsRows && (floating == 0 || lift > 0))
           ? 0
           : unfolded
           ? radius * floating
@@ -897,7 +969,7 @@ class ListHeader extends ConsumerWidget {
             ? Colors.transparent
             : level.colorOf(colorScheme),
         shape: shape,
-        shadows: lift == 0 || hasGlassEnvelope
+        shadows: lift == 0 || hasGlassEnvelope || joinsRows
             ? null
             : _floatingShadows(colorScheme, lift),
       ),

@@ -206,7 +206,26 @@ void main() {
       await mount(wallpaperOnly: true, shift: 300);
       final moved = await _shot(tester, '${quality.name}-moved');
       expect(_pixel(moved, 390, 290), _blue);
-      expect(_pixel(moved, 100, 100), _blue);
+      expect(_pixel(moved, 180, 100), _blue);
+      final boundary = _pixel(moved, 100, 100);
+      if (quality == LiquidGlassQuality.standard) {
+        for (final (actual, pink, blue) in [
+          (boundary.r, _pink.r, _blue.r),
+          (boundary.g, _pink.g, _blue.g),
+          (boundary.b, _pink.b, _blue.b),
+        ]) {
+          expect(
+            actual,
+            inInclusiveRange(
+              pink < blue ? pink : blue,
+              pink > blue ? pink : blue,
+            ),
+          );
+        }
+        expect(boundary, isNot(_blue));
+      } else {
+        expect(boundary, _blue);
+      }
       expect(_pixel(moved, 130, 130).toARGB32(), Colors.orange.toARGB32());
       await tester.pump();
       final stable = await _shot(tester, '${quality.name}-stable');

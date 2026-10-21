@@ -324,9 +324,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "auroraColors": MessageLookupByLibrary.simpleMessage("Wallpaper colors"),
     "auroraEditColor": m0,
     "auroraRegenerate": MessageLookupByLibrary.simpleMessage("New wallpaper"),
-    "auroraWallpaper": MessageLookupByLibrary.simpleMessage(
-      "Random gradient wallpaper",
-    ),
+    "auroraWallpaper": MessageLookupByLibrary.simpleMessage("Living Aurora"),
     "auroraWallpaperDescription": MessageLookupByLibrary.simpleMessage(
       "Choose 1–3 colors for a soft aurora. The pattern stays until you change it.",
     ),
@@ -1101,7 +1099,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "Clear shimmer",
     ),
     "liquidGlassSettingsTip": MessageLookupByLibrary.simpleMessage(
-      "You can change this at any time in Appearance. The random gradient background and Liquid Glass can each be turned on or off independently.",
+      "You can change this at any time in Appearance. Living Aurora and Liquid Glass can each be turned on or off independently.",
     ),
     "liquidGlassStandardIntro": MessageLookupByLibrary.simpleMessage(
       "Soft frost mode uses simple blur for the main content. The top buttons and bottom Dock keep transparent refraction, with a lighter rendering load.",
