@@ -475,6 +475,7 @@ class _CountryBadgeState extends State<_CountryBadge> {
                   painter: OutboundDropletPainter(
                     time: time,
                     wobble: wobble,
+                    irregularity: wobble.abs(),
                     color: well,
                     shadow: shadow,
                     highlight: false,
@@ -482,6 +483,7 @@ class _CountryBadgeState extends State<_CountryBadge> {
                   foregroundPainter: OutboundDropletPainter(
                     time: time,
                     wobble: wobble,
+                    irregularity: wobble.abs(),
                     color: Colors.transparent,
                     highlight: !highContrast,
                     rim: glass ? rim : null,
@@ -492,6 +494,7 @@ class _CountryBadgeState extends State<_CountryBadge> {
                           clipper: OutboundDropletClipper(
                             time: time,
                             wobble: wobble,
+                            irregularity: wobble.abs(),
                           ),
                           child: child,
                         )

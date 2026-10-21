@@ -182,6 +182,38 @@ int Function() _countFrames(WidgetTester tester) {
 }
 
 void main() {
+  test('a droplet without irregularity or wobble is a circle', () {
+    const center = Offset(50, 50);
+    final contour = const OutboundDropletClipper(
+      irregularity: 0,
+    ).getClip(const Size.square(100)).computeMetrics().single;
+    for (var index = 0; index < 96; index++) {
+      final point = contour
+          .getTangentForOffset(contour.length * index / 96)!
+          .position;
+      expect((point - center).distance, closeTo(41, 0.05));
+    }
+  });
+
+  testWidgets('the droplet highlight draws no line along its edge', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const Center(
+        child: SizedBox.square(
+          dimension: 48,
+          child: CustomPaint(
+            painter: OutboundDropletPainter(color: Colors.blue),
+          ),
+        ),
+      ),
+    );
+    expect(
+      tester.renderObject(find.byType(CustomPaint)),
+      isNot(paints..path(style: PaintingStyle.stroke)),
+    );
+  });
+
   test('droplets keep one convex outline that every ray crosses once', () {
     const center = Offset(50, 50);
     for (final phase in [0.0, 1.5, 3.0, 4.5, 6.0]) {

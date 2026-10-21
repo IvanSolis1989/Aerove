@@ -387,6 +387,7 @@ void main() {
       expect(tester.widget<InkResponse>(_bubble()).onTap, isNull);
       final checking = _bubbles(tester);
       expect(checking.wobble, 1);
+      expect(checking.irregularity, 1);
       await tester.pump(const Duration(milliseconds: 300));
       expect(_bubbles(tester).time, greaterThan(checking.time));
 
@@ -398,14 +399,16 @@ void main() {
       expect(tester.binding.hasScheduledFrame, isFalse);
       final settled = _bubbles(tester);
       expect(settled.wobble, 0);
+      expect(settled.irregularity, 0);
       expect(
         OutboundDropletClipper(
           time: settled.time,
           wobble: settled.wobble,
+          irregularity: settled.irregularity,
         ).getClip(const Size.square(48)).getBounds(),
-        const OutboundDropletClipper()
-            .getClip(const Size.square(48))
-            .getBounds(),
+        const OutboundDropletClipper(
+          irregularity: 0,
+        ).getClip(const Size.square(48)).getBounds(),
       );
       await tester.pump(const Duration(seconds: 1));
       expect(_bubbles(tester).time, settled.time);

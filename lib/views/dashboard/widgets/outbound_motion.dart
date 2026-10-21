@@ -42,7 +42,8 @@ const _surfaceModes = [
 ];
 
 /// A droplet outline meeting every ray from the center once, as a glass clip
-/// must; [wobble] ripples its skin over [time], mirrored when negative.
+/// must; [wobble] ripples its skin over [time], mirrored when negative, and
+/// [irregularity] scales the lobes away, down to a circle at 0.
 Path _dropletPath(
   Size size, {
   double phase = 0,
@@ -50,6 +51,7 @@ Path _dropletPath(
   double squeeze = 0,
   double time = 0,
   double wobble = 0,
+  double irregularity = 1,
 }) {
   final base = (0.41 + 0.025 * fullness) * (1 - 0.1 * wobble.abs());
   final squash = 0.07 * squeeze.clamp(-0.6, 1.0);
@@ -64,8 +66,8 @@ Path _dropletPath(
   }
 
   double radius(double angle) {
-    final tilt = 0.025 * math.cos(2 * angle + 1.1 + phase);
-    final lobes = 0.03 * math.cos(3 * angle + 0.6 - 0.7 * phase);
+    final tilt = irregularity * 0.025 * math.cos(2 * angle + 1.1 + phase);
+    final lobes = irregularity * 0.03 * math.cos(3 * angle + 0.6 - 0.7 * phase);
     var skin = breath;
     for (var index = 0; index < swings.length; index++) {
       skin += swings[index] * math.cos(wave(index, angle));
@@ -74,8 +76,8 @@ Path _dropletPath(
   }
 
   double slope(double angle) {
-    final tilt = 0.05 * math.sin(2 * angle + 1.1 + phase);
-    final lobes = 0.09 * math.sin(3 * angle + 0.6 - 0.7 * phase);
+    final tilt = irregularity * 0.05 * math.sin(2 * angle + 1.1 + phase);
+    final lobes = irregularity * 0.09 * math.sin(3 * angle + 0.6 - 0.7 * phase);
     var skin = 0.0;
     for (var index = 0; index < swings.length; index++) {
       final (order, _, _, _, _, _) = _surfaceModes[index];
@@ -120,6 +122,7 @@ class OutboundDropletClipper extends CustomClipper<Path> {
     this.squeeze = 0,
     this.time = 0,
     this.wobble = 0,
+    this.irregularity = 1,
   });
 
   final double phase;
@@ -127,6 +130,7 @@ class OutboundDropletClipper extends CustomClipper<Path> {
   final double squeeze;
   final double time;
   final double wobble;
+  final double irregularity;
 
   @override
   Path getClip(Size size) => _dropletPath(
@@ -136,6 +140,7 @@ class OutboundDropletClipper extends CustomClipper<Path> {
     squeeze: squeeze,
     time: time,
     wobble: wobble,
+    irregularity: irregularity,
   );
 
   @override
@@ -144,7 +149,8 @@ class OutboundDropletClipper extends CustomClipper<Path> {
       oldClipper.fullness != fullness ||
       oldClipper.squeeze != squeeze ||
       oldClipper.time != time ||
-      oldClipper.wobble != wobble;
+      oldClipper.wobble != wobble ||
+      oldClipper.irregularity != irregularity;
 }
 
 class OutboundDropletPainter extends CustomPainter {
@@ -154,6 +160,7 @@ class OutboundDropletPainter extends CustomPainter {
     this.squeeze = 0,
     this.time = 0,
     this.wobble = 0,
+    this.irregularity = 1,
     required this.color,
     this.shadow = Colors.transparent,
     this.ring,
@@ -166,6 +173,7 @@ class OutboundDropletPainter extends CustomPainter {
   final double squeeze;
   final double time;
   final double wobble;
+  final double irregularity;
 
   /// No color leaves the inside to glass, and [shadow] then falls only
   /// outside the droplet, as one under glass would show.
@@ -186,6 +194,7 @@ class OutboundDropletPainter extends CustomPainter {
       squeeze: squeeze,
       time: time,
       wobble: wobble,
+      irregularity: irregularity,
     );
     final color = this.color;
     if (shadow.a > 0) {
@@ -225,18 +234,6 @@ class OutboundDropletPainter extends CustomPainter {
               stops: const [0, 0.46, 1],
             ).createShader(Offset.zero & size),
         );
-        final edges = path.computeMetrics().iterator;
-        if (edges.moveNext()) {
-          final edge = edges.current;
-          canvas.drawPath(
-            edge.extractPath(edge.length * 0.56, edge.length * 0.71),
-            Paint()
-              ..color = Colors.white.withValues(alpha: 0.48)
-              ..style = PaintingStyle.stroke
-              ..strokeWidth = 1.2
-              ..strokeCap = StrokeCap.round,
-          );
-        }
       }
     }
     if (rim case final rim?) {
@@ -256,6 +253,7 @@ class OutboundDropletPainter extends CustomPainter {
         squeeze: squeeze,
         time: time,
         wobble: wobble,
+        irregularity: irregularity,
       );
       canvas
         ..save()
@@ -272,6 +270,7 @@ class OutboundDropletPainter extends CustomPainter {
       oldDelegate.squeeze != squeeze ||
       oldDelegate.time != time ||
       oldDelegate.wobble != wobble ||
+      oldDelegate.irregularity != irregularity ||
       oldDelegate.color != color ||
       oldDelegate.shadow != shadow ||
       oldDelegate.ring != ring ||
