@@ -378,4 +378,23 @@ void main() {
       );
     },
   );
+
+  testWidgets('selectable text is no stop on the way to a button', (
+    tester,
+  ) async {
+    await _pumpApp(
+      tester,
+      Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const GlassSelectableText(TextSpan(text: 'hello glass world')),
+          TextButton(onPressed: () {}, child: const Text('OK')),
+        ],
+      ),
+    );
+    final button = tester.element(find.text('OK'));
+    FocusScope.of(button).nextFocus();
+    await tester.pump();
+    expect(Focus.of(button).hasPrimaryFocus, isTrue);
+  });
 }

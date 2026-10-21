@@ -229,7 +229,7 @@ class GlassSelectableText extends StatefulWidget {
 
 class _GlassSelectableTextState extends State<GlassSelectableText> {
   final _canvas = GlobalKey();
-  final _focusNode = FocusNode();
+  final _focusNode = FocusNode(skipTraversal: true);
   final _selection = ValueNotifier<TextSelection?>(null);
 
   @override
