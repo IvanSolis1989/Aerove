@@ -12,6 +12,7 @@ import 'application.dart';
 import 'bootstrap.dart';
 import 'common/app_data.dart';
 import 'common/common.dart';
+import 'common/first_frame.dart';
 import 'common/preferences_store.dart';
 import 'common/window.dart';
 
@@ -45,6 +46,7 @@ void main(List<String> args) {
         await FlClashHttpOverrides.trustCoreRoots();
         HttpOverrides.global = FlClashHttpOverrides(container);
         request.attach(container.read);
+        if (system.isAndroid) FirstFrameGate.untilViewSize(container);
         runApp(
           UncontrolledProviderScope(
             container: container,

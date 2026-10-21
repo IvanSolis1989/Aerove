@@ -17,11 +17,15 @@ class _MockCore extends Mock implements CoreHandlerInterface {}
 
 class _Probe extends Notifier<RoutedProbeState<String, String>>
     with RoutedProbe<String, String> {
+  _Probe([this.provisional = const {}]);
+
+  final Map<String, ({String value, bool proxied})> provisional;
   final calls = <String>[];
   final pending = <Completer<Map<String, ProbeAnswer<String>>>>[];
 
   @override
-  RoutedProbeState<String, String> build() => buildProbe();
+  RoutedProbeState<String, String> build() =>
+      buildProbe(provisional: provisional);
 
   @override
   bool isFailure(String value) => value == 'down';
@@ -556,6 +560,53 @@ void main() {
       probe.unwatch('a');
       await pumpEventQueue();
       verify(() => core.watchRoute(false)).called(1);
+    });
+  });
+
+  group('a provisional value', () {
+    const old = ProbeEntry(phase: ProbePhase.probing, value: 'old');
+
+    (_Probe, ProbeEntry<String> Function()) seeded({required bool proxied}) {
+      final provider =
+          NotifierProvider<_Probe, RoutedProbeState<String, String>>(
+            () => _Probe({'a': (value: 'old', proxied: proxied)}),
+          );
+      final container = ProviderContainer(
+        overrides: [routeTrackerProvider.overrideWithBuild((_, _) => _route)],
+      );
+      addTearDown(container.dispose);
+      container.listen(provider, (_, _) {});
+      return (
+        container.read(provider.notifier),
+        () => container.read(provider).entryOf('a'),
+      );
+    }
+
+    test('shows as loading until the first answer replaces it', () async {
+      final (probe, entry) = seeded(proxied: true);
+      expect(entry(), old);
+
+      probe.watch('a');
+      await pumpEventQueue();
+      expect(probe.calls, ['a']);
+      expect(entry(), old);
+
+      probe.answer({
+        'a': _ok(['HK-01', 'Proxy']),
+      });
+      await pumpEventQueue();
+      expect(entry().phase, ProbePhase.fresh);
+      expect(entry().value, 'ok');
+    });
+
+    test('is dropped by a probe under another proxied state', () async {
+      final (probe, entry) = seeded(proxied: false);
+
+      probe.watch('a');
+      await pumpEventQueue();
+
+      expect(probe.calls, ['a']);
+      expect(entry(), const ProbeEntry<String>(phase: ProbePhase.probing));
     });
   });
 }

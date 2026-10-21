@@ -8,6 +8,7 @@ import 'package:fl_clash/models/models.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import 'app.dart';
+import 'last_exit.dart';
 
 part 'generated/ip_quality.g.dart';
 
@@ -44,6 +45,7 @@ Future<IpQuality> ipQuality(Ref ref, String ip) async {
     );
     settled = true;
     ref.keepAlive();
+    ref.read(lastExitProvider.notifier).rememberQuality(quality);
     return quality;
   } on IpQualityLookupException catch (error) {
     settled = true;

@@ -99,8 +99,12 @@ class CommonAction extends _$CommonAction {
       );
       return false;
     }
+    if (res == null) return false;
+    final tag = res['tag_name'] as String;
+    if (await preferences.getPromptedUpdateTag() == tag) return true;
+    await preferences.savePromptedUpdateTag(tag);
     await checkUpdateResultHandle(data: res);
-    return res != null;
+    return true;
   }
 
   TextSpan _releaseSpan(BuildContext context, String tagName, String? body) {

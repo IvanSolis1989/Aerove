@@ -1,4 +1,5 @@
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/common/exit_snapshot.dart';
 import 'package:fl_clash/common/ip_quality.dart';
 import 'package:fl_clash/common/service_probe.dart'
     show directOutbound, routedOutbound;
@@ -8,6 +9,7 @@ import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/ip_quality.dart';
+import 'package:fl_clash/providers/last_exit.dart';
 import 'package:fl_clash/providers/outbound_ip.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/providers/routed_probe.dart';
@@ -413,6 +415,55 @@ void main() {
       await tester.pump(const Duration(seconds: 1));
       expect(_bubbles(tester).time, settled.time);
       expect(tester.widget<InkResponse>(_bubble()).onTap, isNotNull);
+    });
+
+    testWidgets('shows the last exit and its quality while both are checked', (
+      tester,
+    ) async {
+      final quality = Completer<IpQuality>();
+      await tester.pumpWidget(
+        TestApp(
+          locale: const Locale('en'),
+          overrides: [
+            profilesProvider.overrideWithValue(const [_profile]),
+            suspendProvider.overrideWithValue(false),
+            currentProfileIdProvider.overrideWithBuild((_, _) => _profile.id),
+            lastExitProvider.overrideWithBuild(
+              (_, _) => const ExitSnapshot(
+                profileId: 1,
+                proxied: false,
+                ip: IpInfo(ip: _ip, countryCode: 'GB'),
+                quality: _residential,
+              ),
+            ),
+            routeTrackerProvider.overrideWithBuild(
+              (_, _) => const RouteState(),
+            ),
+            ipQualityProvider.overrideWith((_, _) => quality.future),
+          ],
+          child: _card(),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text(_ip), findsOneWidget);
+      expect(find.text('Residential'), findsOneWidget);
+      expect(find.text('Example Broadband'), findsOneWidget);
+      expect(find.byType(SkeletonPill), findsNothing);
+      expect(find.byType(SkeletonText), findsNothing);
+      expect(_bubbles(tester).wobble, 1);
+
+      quality.complete(
+        _residential.copyWith(
+          type: IpType.hosting,
+          organization: 'Example Hosting',
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text('Data center'), findsOneWidget);
+      expect(find.text('Example Hosting'), findsOneWidget);
     });
 
     testWidgets('checks a failed quality again from its bubble', (

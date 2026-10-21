@@ -4,11 +4,14 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:fake_async/fake_async.dart';
+import 'package:fl_clash/common/exit_snapshot.dart';
 import 'package:fl_clash/common/ip_quality.dart';
 import 'package:fl_clash/common/request.dart';
 import 'package:fl_clash/enum/enum.dart';
+import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/providers/ip_quality.dart';
+import 'package:fl_clash/providers/last_exit.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:riverpod/riverpod.dart';
 
@@ -77,11 +80,12 @@ void main() {
     request.dio.httpClientAdapter = originalAdapter;
   });
 
-  ProviderContainer build(HttpClientAdapter adapter) {
+  ProviderContainer build(HttpClientAdapter adapter, {ExitSnapshot? lastExit}) {
     request.dio.httpClientAdapter = adapter;
     final container = ProviderContainer(
       overrides: [
         ipQualityFailureCooldownProvider.overrideWithValue(_cooldown),
+        lastExitProvider.overrideWithBuild((_, _) => lastExit),
       ],
     );
     addTearDown(container.dispose);
@@ -154,6 +158,22 @@ void main() {
 
     expect(container.read(provider).value, quality);
     expect(adapter.requests, sent);
+  });
+
+  test('a found quality joins the last exit of its address', () async {
+    final container = build(
+      _Adapter(succeed: true),
+      lastExit: const ExitSnapshot(
+        profileId: 1,
+        proxied: true,
+        ip: IpInfo(ip: _ip, countryCode: 'GB'),
+      ),
+    );
+    container.listen(provider, (_, _) {});
+
+    final quality = await container.read(provider.future);
+
+    expect(container.read(lastExitProvider)?.quality, quality);
   });
 
   test('keeps a failed lookup through the cooldown', () async {

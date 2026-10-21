@@ -1,14 +1,20 @@
+import 'package:fl_clash/common/exit_snapshot.dart';
+import 'package:fl_clash/common/preferences.dart';
 import 'package:fl_clash/common/service_probe.dart';
 import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/interface.dart';
 import 'package:fl_clash/models/models.dart';
+import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/providers/core.dart';
+import 'package:fl_clash/providers/last_exit.dart';
 import 'package:fl_clash/providers/outbound_ip.dart';
 import 'package:fl_clash/providers/route_state.dart';
 import 'package:fl_clash/providers/routed_probe.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:riverpod/riverpod.dart';
+
+import '../helpers/preferences.dart';
 
 class _MockCore extends Mock implements CoreHandlerInterface {}
 
@@ -27,9 +33,15 @@ void main() {
 
   setUp(() => core = _MockCore());
 
-  ProviderContainer build({bool proxied = true}) {
+  ProviderContainer build({
+    bool proxied = true,
+    int? profileId = 7,
+    ExitSnapshot? lastExit,
+  }) {
     final container = ProviderContainer(
       overrides: [
+        currentProfileIdProvider.overrideWithBuild((_, _) => profileId),
+        lastExitProvider.overrideWithBuild((_, _) => lastExit),
         routeTrackerProvider.overrideWithBuild(
           (_, _) => RouteState(
             coreEpoch: 1,
@@ -143,5 +155,44 @@ void main() {
     await pumpEventQueue();
 
     verify(() => core.outboundIp(any())).called(1);
+  });
+
+  group('the last exit', () {
+    const last = ExitSnapshot(
+      profileId: 7,
+      proxied: true,
+      ip: IpInfo(ip: '1.1.1.1', countryCode: 'JP'),
+    );
+
+    ProbeEntry<IpInfo> routed(ProviderContainer container) =>
+        container.read(outboundIpProbeProvider).entryOf(routedOutbound);
+
+    test('is shown as loading while the same profile is current', () {
+      expect(
+        routed(build(lastExit: last)),
+        ProbeEntry(phase: ProbePhase.probing, value: last.ip),
+      );
+      expect(
+        routed(build(lastExit: last, profileId: 8)).phase,
+        ProbePhase.empty,
+      );
+    });
+
+    test('becomes the fresh routed answer', () async {
+      await mockPreferences();
+      when(() => core.outboundIp(any())).thenAnswer((_) async => _answer);
+      final container = build();
+
+      container.read(outboundIpProbeProvider.notifier).watch(routedOutbound);
+      await pumpEventQueue();
+
+      const remembered = ExitSnapshot(
+        profileId: 7,
+        proxied: true,
+        ip: IpInfo(ip: '2.2.2.2', countryCode: 'US'),
+      );
+      expect(container.read(lastExitProvider), remembered);
+      expect(await preferences.getExitSnapshot(), remembered);
+    });
   });
 }
