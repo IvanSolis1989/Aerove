@@ -513,15 +513,7 @@ class _RestateDialogState extends State<_RestateDialog> {
         ),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: GlassInk(
-            source: style.color ?? context.colorScheme.onSurface,
-            role: GlassInkRole.body,
-            child: SelectableText(
-              statement,
-              style: style,
-              contextMenuBuilder: glassEditableTextContextMenu,
-            ),
-          ),
+          child: GlassSelectableText(TextSpan(text: statement), style: style),
         ),
       ),
     );

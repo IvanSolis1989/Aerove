@@ -645,7 +645,9 @@ void main() {
     final statement = _noServiceStatement(tester);
     expect(
       find.byWidgetPredicate(
-        (widget) => widget is SelectableText && widget.data == statement,
+        (widget) =>
+            widget is SelectableText &&
+            widget.textSpan?.toPlainText() == statement,
       ),
       findsOneWidget,
     );
