@@ -186,6 +186,7 @@ void main() {
     expect(_inScrollbar(find.byType(LiquidGlass)), findsOneWidget);
     expect(pane.style, LiquidGlassStyle.menu(colorScheme));
     expect(pane.shadows, glassMenuShadows(colorScheme));
+    expect(pane.rim, LiquidGlassRim.menu(colorScheme));
     expect((pane.clipper! as ShapeBorderClipper).shape, AppShape.sm);
     expect(_inScrollbar(_elevatedFill), findsNothing);
     expect(_inScrollbar(find.byType(FadeTransition)), findsNothing);

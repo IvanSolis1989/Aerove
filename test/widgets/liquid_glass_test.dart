@@ -175,6 +175,50 @@ void main() {
     });
   });
 
+  testWidgets('a rounded pane given a rim draws its line outside itself', (
+    tester,
+  ) async {
+    final scheme = ColorScheme.fromSeed(seedColor: Colors.blue);
+    final key = GlobalKey();
+    Future<int> alphaBeside(LiquidGlassRim? rim) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Center(
+            child: RepaintBoundary(
+              key: key,
+              child: Padding(
+                padding: const EdgeInsets.all(4),
+                child: SizedBox(
+                  width: 60,
+                  height: 24,
+                  child: LiquidGlass(
+                    style: LiquidGlassStyle.menu(scheme),
+                    clipper: const ShapeBorderClipper(shape: AppShape.sm),
+                    rim: rim,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      final boundary =
+          key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+      final image = boundary.toImageSync(pixelRatio: 3);
+      addTearDown(image.dispose);
+      const midSide = (4 + 24 / 2) * 3;
+      const justOutside = 4 * 3 - 1;
+      return (await tester.runAsync(() async {
+        final bytes = (await image.toByteData())!;
+        final pixel = midSide.round() * image.width + justOutside;
+        return bytes.getUint8(pixel * 4 + 3);
+      }))!;
+    }
+
+    expect(await alphaBeside(null), 0);
+    expect(await alphaBeside(LiquidGlassRim.menu(scheme)), greaterThan(32));
+  });
+
   testWidgets('active card glass follows grouped corners when disabled too', (
     tester,
   ) async {

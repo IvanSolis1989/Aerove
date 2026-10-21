@@ -637,6 +637,7 @@ class LiquidGlass extends StatelessWidget {
     this.pressed = false,
     this.glow,
     this.contentBackdrop = false,
+    this.rim,
     this.child,
   });
 
@@ -656,6 +657,9 @@ class LiquidGlass extends StatelessWidget {
 
   /// Reads UI beneath this pane in a wallpaper-only host, for small dock lenses.
   final bool contentBackdrop;
+
+  /// The rim of the [LiquidGlassStyle.menu] glass; needs a rounded pane.
+  final LiquidGlassRim? rim;
 
   final Widget? child;
 
@@ -697,6 +701,7 @@ class LiquidGlass extends StatelessWidget {
         fading: false,
         glow: glow,
         contentBackdrop: contentBackdrop,
+        rim: rim,
         child: child,
       );
     }
@@ -712,6 +717,7 @@ class LiquidGlass extends StatelessWidget {
         fading: !pressed,
         glow: null,
         contentBackdrop: contentBackdrop,
+        rim: rim,
         child: child,
       ),
       child: child,
@@ -728,6 +734,7 @@ class _LiquidGlassPane extends SingleChildRenderObjectWidget {
     required this.fading,
     required this.glow,
     required this.contentBackdrop,
+    required this.rim,
     super.child,
   });
 
@@ -738,6 +745,7 @@ class _LiquidGlassPane extends SingleChildRenderObjectWidget {
   final bool fading;
   final LiquidGlassGlow? glow;
   final bool contentBackdrop;
+  final LiquidGlassRim? rim;
 
   @override
   _RenderLiquidGlass createRenderObject(BuildContext context) {
@@ -749,6 +757,7 @@ class _LiquidGlassPane extends SingleChildRenderObjectWidget {
       fading: fading,
       glow: glow,
       contentBackdrop: contentBackdrop,
+      rim: rim,
     );
   }
 
@@ -764,7 +773,8 @@ class _LiquidGlassPane extends SingleChildRenderObjectWidget {
       ..press = press
       ..fading = fading
       ..glow = glow
-      ..contentBackdrop = contentBackdrop;
+      ..contentBackdrop = contentBackdrop
+      ..rim = rim;
   }
 }
 
@@ -777,13 +787,15 @@ class _RenderLiquidGlass extends RenderProxyBox {
     required bool fading,
     required LiquidGlassGlow? glow,
     required bool contentBackdrop,
+    required LiquidGlassRim? rim,
   }) : _style = style,
        _clipper = clipper,
        _shadows = shadows,
        _press = press,
        _fading = fading,
        _glow = glow,
-       _contentBackdrop = contentBackdrop;
+       _contentBackdrop = contentBackdrop,
+       _rim = rim;
 
   late final _pane = LiquidGlassPane(markNeedsPaint);
   bool _contentBackdrop;
@@ -799,6 +811,15 @@ class _RenderLiquidGlass extends RenderProxyBox {
       return;
     }
     _style = value;
+    markNeedsPaint();
+  }
+
+  LiquidGlassRim? _rim;
+  set rim(LiquidGlassRim? value) {
+    if (value == _rim) {
+      return;
+    }
+    _rim = value;
     markNeedsPaint();
   }
 
@@ -918,12 +939,14 @@ class _RenderLiquidGlass extends RenderProxyBox {
     if (size.isEmpty) {
       _pane.clear();
     } else {
+      final shape = _currentShape;
       _pane.paint(
         context,
         offset & size,
-        shape: _currentShape,
+        shape: shape,
         style: _style,
         shadows: _shadows,
+        rim: _rim,
         contentBackdrop: _contentBackdrop,
         glow:
             _glow ??
@@ -935,6 +958,12 @@ class _RenderLiquidGlass extends RenderProxyBox {
                   (1 + (_fading ? _glowSpread * (1 - _press) : 0)),
               strength: _press * 0.16,
             ),
+      );
+      _pane.paintRim(
+        context,
+        offset & size,
+        shape is LiquidGlassCorners ? shape.radius.topLeft.x : 0,
+        _rim,
       );
     }
     super.paint(context, offset);

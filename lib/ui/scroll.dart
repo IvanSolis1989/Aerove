@@ -676,6 +676,7 @@ class _ScrollbarHintPill extends StatelessWidget {
         style: LiquidGlassStyle.menu(colorScheme),
         clipper: const ShapeBorderClipper(shape: AppShape.sm),
         shadows: glassMenuShadows(colorScheme),
+        rim: LiquidGlassRim.menu(colorScheme),
         child: content,
       );
     }
