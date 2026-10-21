@@ -64,7 +64,7 @@ class _FakeService implements Service {
   }
 
   @override
-  Future<DateTime?> getRunTime() async => null;
+  Future<ServiceRunTime?> getRunTime() async => null;
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -253,6 +253,20 @@ void main() {
       expect(await lib.stopListener(), isTrue);
       expect(service.calls, ['stop', 'invokeMethod:stopListener']);
     });
+
+    test(
+      'adopting a run claims the service and leaves the core alone',
+      () async {
+        await lib.start();
+        service.calls.clear();
+
+        expect(await lib.adoptListener(), isTrue);
+        expect(service.calls, ['start']);
+
+        service.startResult = false;
+        expect(await lib.adoptListener(), isFalse);
+      },
+    );
   });
 
   group('invokeMethod', () {

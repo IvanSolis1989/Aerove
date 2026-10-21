@@ -18,6 +18,8 @@ class TileManager extends ConsumerStatefulWidget {
 }
 
 class _TileContainerState extends ConsumerState<TileManager> with TileListener {
+  final List<ProviderSubscription<bool>> _heldStart = [];
+
   @override
   Widget build(BuildContext context) {
     return widget.child;
@@ -30,9 +32,43 @@ class _TileContainerState extends ConsumerState<TileManager> with TileListener {
     if (isStart && ref.read(coreStatusProvider) == CoreStatus.connected) {
       return;
     }
-    unawaited(ref.read(setupActionProvider.notifier).setRunning(true));
     unawaited(app?.tip(currentAppLocalizations.startVpn));
+    if (ref.read(initProvider)) {
+      _start();
+    } else {
+      _holdStart();
+    }
     super.onStart();
+  }
+
+  // A run command that lands while the launch finishes is newer than the tap.
+  void _holdStart() {
+    if (_heldStart.isNotEmpty) {
+      return;
+    }
+    _heldStart.addAll([
+      ref.listenManual(initProvider, (_, initialized) {
+        if (!initialized) {
+          return;
+        }
+        _dropHeldStart();
+        if (!isStart) {
+          _start();
+        }
+      }),
+      ref.listenManual(isStartProvider, (_, _) => _dropHeldStart()),
+    ]);
+  }
+
+  void _dropHeldStart() {
+    for (final subscription in _heldStart) {
+      subscription.close();
+    }
+    _heldStart.clear();
+  }
+
+  void _start() {
+    unawaited(ref.read(setupActionProvider.notifier).setRunning(true));
   }
 
   @override

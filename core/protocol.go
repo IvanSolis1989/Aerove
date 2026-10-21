@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/metacubex/http"
@@ -57,6 +58,8 @@ const (
 	updateDnsMethod                CoreMethod = "updateDns"
 	crashMethod                    CoreMethod = "crash"
 	setupConfigMethod              CoreMethod = "setupConfig"
+	getAppliedSetupMethod          CoreMethod = "getAppliedSetup"
+	refreshAppliedSetupMethod      CoreMethod = "refreshAppliedSetup"
 	getConfigMethod                CoreMethod = "getConfig"
 	getProfileBaseMethod           CoreMethod = "getProfileBase"
 	getProfileOutboundsMethod      CoreMethod = "getProfileOutbounds"
@@ -103,6 +106,13 @@ type SetupParams struct {
 	TestURL        string            `json:"test-url"`
 	SkipCertVerify bool              `json:"skip-cert-verify"`
 	Base           *SetupBase        `json:"base,omitempty"`
+	Applied        json.RawMessage   `json:"applied,omitempty"`
+}
+
+type AppliedSetup struct {
+	Init    bool            `json:"init"`
+	Running bool            `json:"running"`
+	Applied json.RawMessage `json:"applied"`
 }
 
 type SetupBase struct {

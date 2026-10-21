@@ -1,5 +1,6 @@
 package com.follow.clash
 
+import com.follow.clash.models.RunTime
 import com.follow.clash.models.SharedState
 import io.flutter.embedding.engine.FlutterEngine
 import kotlinx.coroutines.Deferred
@@ -26,7 +27,7 @@ object ServiceState {
 
     suspend fun handleVpnRevokeAction() = machine.handleVpnRevokeAction()
 
-    suspend fun awaitRunTime(): Long = machine.awaitRunTime()
+    suspend fun awaitRunTime(): RunTime? = machine.awaitRunTime()
 
     fun requestStart(): Deferred<Boolean> = machine.requestStart()
 

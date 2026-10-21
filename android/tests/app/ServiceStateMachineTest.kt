@@ -1,12 +1,14 @@
 package com.follow.clash
 
 import com.follow.clash.common.AccessControlMode
+import com.follow.clash.models.RunTime
 import com.follow.clash.models.SetupParams
 import com.follow.clash.models.SharedState
 import com.follow.clash.service.models.AccessControlProps
 import com.follow.clash.service.models.NotificationParams
 import com.follow.clash.service.models.VpnOptions
 import com.google.gson.Gson
+import com.google.gson.JsonParser
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.toList
@@ -15,6 +17,7 @@ import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -152,14 +155,18 @@ private class FakeHost(override val scope: CoroutineScope) : ServiceStateHost {
         return setupResult
     }
 
-    override suspend fun startService(options: VpnOptions): Boolean {
+    override suspend fun startService(options: VpnOptions, requested: VpnOptions): Boolean {
         startCalls++
         lastStartOptions = options
         beforeStartService?.invoke()
         if (!startSucceeds) {
             return false
         }
-        runtime = ServiceRuntime(vpn = runsAsVpn ?: options.enable, startedAtMillis = STARTED_AT)
+        runtime = ServiceRuntime(
+            vpn = runsAsVpn ?: options.enable,
+            startedAtMillis = STARTED_AT,
+            requested = requested,
+        )
         return true
     }
 
@@ -207,13 +214,39 @@ class ServiceStateMachineTest {
         val machine = ServiceStateMachine(host)
         machine.syncSharedState(configuredState())
 
-        assertEquals(0L, machine.awaitRunTime())
+        assertNull(machine.awaitRunTime())
 
         machine.requestStart().await()
-        assertEquals(STARTED_AT, machine.awaitRunTime())
+        assertEquals(STARTED_AT, machine.awaitRunTime()?.startedAt)
 
         machine.requestStop().await()
-        assertEquals(0L, machine.awaitRunTime())
+        assertNull(machine.awaitRunTime())
+    }
+
+    /** Flutter compares them with the options it would start now, which never carry the fallback. */
+    @Test
+    fun `the run time reports the options the start asked for and not the stack fallback`() = runTest {
+        val host = FakeHost(backgroundScope)
+        host.localNetworkPermissionGranted = false
+        val machine = ServiceStateMachine(host)
+        val state = configuredState(stack = "system")
+        machine.syncSharedState(state)
+
+        machine.requestStart().await()
+
+        assertEquals(ServiceStateMachine.FALLBACK_STACK, host.lastStartOptions?.stack)
+        assertEquals(state.vpnOptions, machine.awaitRunTime()?.vpnOptions)
+    }
+
+    @Test
+    fun `the run time crosses to Flutter under the keys it reads`() {
+        val json = JsonParser.parseString(Gson().toJson(RunTime(STARTED_AT, vpnOptions())))
+            .asJsonObject
+        val options = json["vpnOptions"].asJsonObject
+
+        assertEquals(STARTED_AT, json["startedAt"].asLong)
+        assertEquals("gvisor", options["stack"].asString)
+        assertEquals("acceptSelected", options["accessControlProps"].asJsonObject["mode"].asString)
     }
 
     @Test
@@ -226,7 +259,7 @@ class ServiceStateMachineTest {
         val stop = machine.requestStop()
 
         assertEquals(RunState.STOPPING, machine.runState.value)
-        assertEquals(0L, machine.awaitRunTime())
+        assertNull(machine.awaitRunTime())
         assertTrue(stop.await())
         assertEquals(RunState.STOPPED, machine.runState.value)
     }

@@ -97,6 +97,7 @@ func handleShutdown() bool {
 	healthRetries.reset()
 	executor.Shutdown()
 	currentConfig = nil
+	appliedSetup = nil
 	isInit.Store(false)
 	configMu.Unlock()
 

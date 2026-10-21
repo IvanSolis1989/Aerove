@@ -195,6 +195,8 @@ var methodHandlers = map[CoreMethod]methodHandler{
 	getProfileOutboundsMethod:      withFallible(handleGetProfileOutbounds),
 	buildProfileMethod:             withFallible(handleBuildProfile),
 	setupConfigMethod:              withMessage(handleSetupConfig),
+	getAppliedSetupMethod:          withoutArguments(handleGetAppliedSetup),
+	refreshAppliedSetupMethod:      withArguments(handleRefreshAppliedSetup),
 	updateConfigMethod:             withMessage(updateConfig),
 	validateProxiesMethod:          withArguments(handleValidateProxies),
 	validateFiltersMethod:          withArguments(handleValidateFilters),

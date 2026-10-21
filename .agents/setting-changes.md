@@ -59,8 +59,10 @@ A change to anything else in `PatchClashConfig` therefore reaches it. Today that
 the profile build reads from another settings object has to be added to `setupPatchProvider`.
 
 An apply without `force` sends nothing when the md5 of the generated YAML has not changed. A value that only
-`SetupParams` carries never changes the YAML, so this path does not deliver it. `testUrl` is that case: Go's default
-health-check URL follows it only when some other change or a `force` apply reaches the Core.
+`SetupParams` carries never changes the YAML, so this path does not deliver it. `testUrl` is that case: nothing
+applies when it changes, and Go's default health-check URL follows it at the next apply. One that finds the YAML
+unchanged hands it to Go's `refreshAppliedSetup` with the new setup record, which Go takes only for the config it
+runs; a `force` apply pushes it with the profile.
 
 Profile content does not go through `setupPatchProvider`. `setupStateProvider` reads rules, groups and scripts from the
 database once instead of watching them. Content is applied explicitly by whatever changes it:
@@ -111,8 +113,9 @@ To add a VPN option:
    `ServiceController.start` and `VpnService.handleStart`.
 
 The notifier stays off while nothing runs, during on-demand suspension, in safe mode, and on desktop, where
-`VpnManager` is not mounted. When Flutter reattaches to a service that is already running, it records the current
-options, because the service does not report the options it was started with.
+`VpnManager` is not mounted. When Flutter reattaches to a service that is already running, it records the options
+`getRunTime` reports: the ones that service's start asked for, before the local-network stack fallback, which is what
+a normal start records too.
 
 ## One Setting, Several Paths
 

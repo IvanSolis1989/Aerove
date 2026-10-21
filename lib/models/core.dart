@@ -12,10 +12,38 @@ abstract class SetupParams with _$SetupParams {
     @JsonKey(name: 'test-url') required String testUrl,
     @Default(false) @JsonKey(name: 'skip-cert-verify') bool skipCertVerify,
     @JsonKey(includeIfNull: false) SetupBase? base,
+    @JsonKey(includeIfNull: false) SetupRecord? applied,
   }) = _SetupParams;
 
   factory SetupParams.fromJson(Map<String, dynamic> json) =>
       _$SetupParamsFromJson(json);
+}
+
+/// The Core keeps it beside the config it applied and hands it back as is.
+@freezed
+abstract class SetupRecord with _$SetupRecord {
+  const factory SetupRecord({
+    required String digest,
+    @JsonKey(name: 'yaml-md5') required String yamlMd5,
+    @Default(0) int groups,
+    @Default(0) int proxies,
+    @Default(0) int rules,
+  }) = _SetupRecord;
+
+  factory SetupRecord.fromJson(Map<String, dynamic> json) =>
+      _$SetupRecordFromJson(json);
+}
+
+@freezed
+abstract class AppliedSetup with _$AppliedSetup {
+  const factory AppliedSetup({
+    @Default(false) bool init,
+    @Default(false) bool running,
+    SetupRecord? applied,
+  }) = _AppliedSetup;
+
+  factory AppliedSetup.fromJson(Map<String, dynamic> json) =>
+      _$AppliedSetupFromJson(json);
 }
 
 @freezed

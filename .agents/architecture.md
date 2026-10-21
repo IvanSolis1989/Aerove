@@ -293,8 +293,9 @@ Android deliberately keeps Flutter requests optimistic and the native layer auth
   and `getRunTime` both read this one value, so they cannot disagree with the service.
 - `ServiceController` owns exactly one `ManagedServiceBinding`, selects `VpnService` or `ProxyService` from `VpnOptions`,
   binds with a five-second connection timeout, and invokes `ManagedService.start()`/`stop()` off the main thread. The
-  binding and `runtime` (which service runs, and since when) are set and cleared together, by a stop, a failed start, or
-  a lost connection and by nothing else. Flutter's `shutdown` only clears the Core event listener: Android keeps an
+  binding and `runtime` (which service runs, the `VpnOptions` its start asked for, and since when) are set and cleared
+  together, by a stop, a failed start, or a lost connection and by nothing else. Flutter's `shutdown` only clears the
+  Core event listener, and only its own engine's (see Reattaching To A Running Core): Android keeps an
   established `VpnService` alive through its own connection, so a binding dropped on exit left a tunnel that was
   reported as running but that neither a stop nor a revoke could reach.
 - Only `ProxyService` posts a notification. Android binds an established `VpnService` at foreground importance and
@@ -340,6 +341,53 @@ Quick Settings, notification, revoke, and Always-on VPN paths converge on the sa
 - `ServiceBroadcastReceiver` uses `goAsync()` and an atomic one-shot completion. Normal completion or a nine-second
   watchdog calls `PendingResult.finish()` exactly once; the watchdog releases Android's broadcast lease and does not
   cancel or redefine the underlying lifecycle intent.
+
+### Reattaching To A Running Core
+
+On Android the Core lives in the application process, so a new Flutter engine (the activity finished, the app was
+swiped from recents while the VPN service kept the process, or "Don't keep activities" is on) finds the Core
+initialized, configured and often running. `SetupAction.initStatus` takes that Core over instead of reloading it:
+
+- Every push carries a `SetupRecord` in `SetupParams.applied`: a sha256 over the setup-only inputs
+  (`setupInputsDigest` in `lib/common/task.dart`: the `SetupState`, `PatchClashConfig.setupOnly`, `appendSystemDns`,
+  `bypassPrivateRoute`, `testUrl`, `skipCertVerify`, safe mode and the build number), the YAML md5 and the counts. Go
+  keeps it in `appliedSetup` (`core/config.go`) and only for a config that applied without error: a failed apply,
+  a setup that carries no record (the native `quickSetup`) and `handleShutdown` all clear it. `getAppliedSetup` answers
+  `{init, running, applied}`.
+- An apply that pushes nothing because the YAML md5 did not move, while the inputs did (a subscription or script
+  refresh with the same content, a new `testUrl`), hands Go the new record through `refreshAppliedSetup`. Go takes it,
+  with the `testUrl` and `skipCertVerify` that live outside the YAML, only over a record with the same `yaml-md5`, the
+  one field of the record it reads. Without it the record would stay stale and every reopen would rebuild the profile.
+- With a record, `initStatus` takes `lastConfigMd5` and `lastConfigCounts` from it inside `_setupScheduler`. A matching
+  digest skips the build and writes `_appliedInputs`, so a later restart does not force a reload; a digest that moved
+  runs a non-forced apply, which pushes only when the YAML moved; no record keeps the forced apply. `fullSetup` (a
+  profile switch) always forces. Both paths sync the provider list, which a fresh engine starts without.
+- A start the md5 short-circuit satisfies still runs its `preloadInvoke`, so reopening onto a configured Core whose
+  service was stopped from the tile starts the service under autoRun.
+- When Go listens and the service reports a run, the start adopts it: `CoreLib.adoptListener` sends only the service
+  `start`, which is a no-op on a settled run and is what lets a later `stopped` report reach this engine, and skips
+  Go's `startListener`, whose `resolver.ResetConnection()` would drop every DNS connection. `runningVpnOptions` takes the
+  options `getRunTime` reports: the ones the start asked for, before the local-network stack fallback, as a normal
+  start records them. `getRunTime` drops options it cannot decode rather than the run, and `initStatus` reads a run
+  time that fails as none, so neither can fail a launch.
+- The reattach claims a `_RunRequest`, so a stop that arrives meanwhile wins, and ends with one `updateConfig()` to
+  resync what is patched live and so absent from the digest, authentication among it. A run command that lands before
+  `initStatus` decides wins too, such as a stop tapped on the prefilled button: `initStatus` then neither takes the
+  service's start time nor claims a run, and only takes over the config.
+- A degraded launch (`BootGuard`) still reattaches, and takes over a run the service holds even without a record, but
+  never pushes a config or starts a run. Without a record it leaves `lastConfigMd5` unset, so the first change applies
+  the profile.
+- `Bootstrap._initData` prefills `runTime` from `getRunTime` before the first frame, so the VPN button does not flash
+  stopped. The read is bounded by a short timeout because `awaitRunTime` waits out a transition in flight; `initStatus`
+  reads the run time again and owns `_startTime` from there.
+- A tile start that arrives before `initProvider` is true is held by `TileManager` until it is, and dropped as soon as
+  the run state changes meanwhile, since whatever changed it is newer than the tap.
+- `ServicePlugin` installs and clears the Go event listener through a `ListenerSlot`, so an engine that detaches after
+  its successor attached cannot clear the successor's listener.
+
+Nothing here survives the process: after a kill or an app update the Core starts cold. A Core that `quickSetup` started
+without an engine has no record, so the next engine reloads it once. A reload through the external controller is
+invisible to the record, as it already is to `lastConfigMd5`.
 
 ## Core Protocol And Event Delivery
 

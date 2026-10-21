@@ -50,6 +50,8 @@ enum CoreMethod {
   getMemoryStats,
   crash,
   setupConfig,
+  getAppliedSetup,
+  refreshAppliedSetup,
   clearEffect,
   updateDns,
   watchRoute,

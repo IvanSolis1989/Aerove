@@ -2,6 +2,10 @@ part of '../action.dart';
 
 enum _SetupTaskResult { completed, handoffToCoreRestart, failed }
 
+// getRunTime waits out a service transition in flight, which can outlast the
+// splash; past this the button catches up in initStatus instead.
+const _runTimePrefillTimeout = Duration(milliseconds: 300);
+
 typedef _SetupInputs = (
   SetupState,
   PatchClashConfig,
@@ -140,58 +144,208 @@ class SetupAction extends _$SetupAction {
               startTime.millisecondsSinceEpoch;
   }
 
-  Future<void> _updateStartTime() async {
-    _startTime = await service?.getRunTime();
+  @protected
+  Future<ServiceRunTime?> readServiceRunTime() async =>
+      await service?.getRunTime();
+
+  @protected
+  Future<AppliedSetup?> readAppliedSetup() => _core.getAppliedSetup();
+
+  void _takeServiceStartTime(ServiceRunTime? runTime) {
+    final startedAt = runTime?.startedAt;
+    _startTime = startedAt != null && startedAt.isBeforeNow ? startedAt : null;
+    _updateRunTime();
   }
 
-  Future<void> initStatus() async {
+  /// Runs before the first frame, so a run the service holds never shows as
+  /// stopped while [initStatus] catches up.
+  Future<void> prefillRunTime() async {
+    try {
+      _takeServiceStartTime(
+        await readServiceRunTime().timeout(
+          _runTimePrefillTimeout,
+          onTimeout: () => null,
+        ),
+      );
+    } catch (e) {
+      commonPrint.log(
+        'prefill run time ===> ${compactError(e)}',
+        logLevel: LogLevel.warning,
+      );
+    }
+  }
+
+  /// A degraded launch hands the Core no config and starts nothing, but still
+  /// takes over a run the Core already serves.
+  Future<void> initStatus({bool degraded = false}) async {
     if (!globalState.needInitStatus) {
       return;
     }
-    if (system.isAndroid) {
-      await _updateStartTime();
+    final runTime = await _readServiceRunTime();
+    if (_latestRunRequest == null) {
+      _takeServiceStartTime(runTime);
     }
-    final shouldRun = _isRunning || ref.read(appSettingProvider).autoRun;
-    if (shouldRun) {
+    final applied = await _readAppliedSetup();
+    if (!globalState.needInitStatus) {
+      return;
+    }
+    final running =
+        _latestRunRequest == null &&
+        (_isRunning || (!degraded && ref.read(appSettingProvider).autoRun));
+    final adopt = applied?.running == false ? null : runTime;
+    final record = applied?.applied;
+    if (record != null) {
+      await _reattach(record, running: running, adopt: adopt, push: !degraded);
+    } else if (degraded) {
+      if (running) {
+        await _adoptRunOnly(adopt);
+      }
+    } else if (running) {
       await setRunning(true, initialize: true);
     } else {
       await globalState.safeRun(() => applyProfile(force: true));
     }
   }
 
+  Future<ServiceRunTime?> _readServiceRunTime() async {
+    try {
+      return await readServiceRunTime();
+    } catch (e) {
+      commonPrint.log(
+        'getRunTime ===> ${compactError(e)}',
+        logLevel: LogLevel.warning,
+      );
+      return null;
+    }
+  }
+
+  Future<void> _adoptRunOnly(ServiceRunTime? adopt) async {
+    final request = _claim(true, initialize: true);
+    await _settleInitialStart(request, () async {
+      await _startCoreRunning(request, adopt: adopt);
+      return true;
+    });
+  }
+
+  Future<AppliedSetup?> _readAppliedSetup() async {
+    try {
+      return await readAppliedSetup();
+    } catch (e) {
+      commonPrint.log(
+        'getAppliedSetup ===> ${compactError(e)}',
+        logLevel: coreFailureLogLevel(e),
+      );
+      return null;
+    }
+  }
+
+  Future<void> _reattach(
+    SetupRecord record, {
+    required bool running,
+    required ServiceRunTime? adopt,
+    required bool push,
+  }) async {
+    if (running) {
+      final request = _claim(true, initialize: true);
+      await _settleInitialStart(
+        request,
+        () => _adoptOrApply(
+          record,
+          push: push,
+          preloadInvoke: () => _startCoreRunning(request, adopt: adopt),
+        ),
+      );
+    } else {
+      globalState.needInitStatus = false;
+      await globalState.safeRun(() => _adoptOrApply(record, push: push));
+    }
+    await updateConfig();
+  }
+
+  /// Keeps the config the Core runs when the inputs still match [record];
+  /// otherwise rebuilds and pushes only if the YAML moved, unless [push] is off.
+  Future<bool> _adoptOrApply(
+    SetupRecord record, {
+    required bool push,
+    Future<void> Function()? preloadInvoke,
+  }) async {
+    final adopted = await _setupScheduler.run(() async {
+      if (!await _adoptAppliedSetup(record) && push) {
+        return false;
+      }
+      if (preloadInvoke != null) {
+        await _runSurfaced(preloadInvoke);
+      }
+      return true;
+    });
+    final applied = adopted || await applyProfile(preloadInvoke: preloadInvoke);
+    await globalState.safeRun(
+      () => ref.read(providersProvider.notifier).syncProviders(),
+    );
+    return applied;
+  }
+
+  Future<bool> _adoptAppliedSetup(SetupRecord record) async {
+    globalState.lastConfigMd5 = record.yamlMd5;
+    globalState.lastConfigCounts = (
+      groups: record.groups,
+      proxies: record.proxies,
+      rules: record.rules,
+    );
+    final inputs = await _currentInputs();
+    final adopted =
+        inputs != null && await _inputsDigest(inputs) == record.digest;
+    _appliedInputs = adopted ? inputs : null;
+    return adopted;
+  }
+
   Future<bool> setRunning(bool running, {bool initialize = false}) {
     if (running && !initialize && !ref.read(initProvider)) {
       return Future.value(true);
     }
+    final request = _claim(running, initialize: running && initialize);
+    return running ? _start(request) : _stop(request);
+  }
 
+  _RunRequest _claim(bool running, {required bool initialize}) {
     final request = _RunRequest(
       running: running,
-      initialize: running && initialize,
+      initialize: initialize,
       previousStartTime: _startTime,
     );
     _latestRunRequest = request;
     _setLocalRunning(running);
-    if (request.initialize) {
+    if (initialize) {
       globalState.needInitStatus = false;
     }
-    return running ? _start(request) : _stop(request);
+    return request;
+  }
+
+  Future<bool> _settleInitialStart(
+    _RunRequest request,
+    Future<bool> Function() apply,
+  ) async {
+    var applied = false;
+    try {
+      applied = await apply();
+    } catch (_) {
+      applied = false;
+    }
+    if (!applied && _isCurrent(request)) {
+      await globalState.safeRun(() => setRunning(false));
+    }
+    return applied;
   }
 
   Future<bool> _start(_RunRequest request) async {
     if (request.initialize) {
-      var applied = false;
-      try {
-        applied = await applyProfile(
+      return _settleInitialStart(
+        request,
+        () => applyProfile(
           force: true,
           preloadInvoke: () => _startCoreRunning(request),
-        );
-      } catch (_) {
-        applied = false;
-      }
-      if (!applied && _isCurrent(request)) {
-        await globalState.safeRun(() => setRunning(false));
-      }
-      return applied;
+        ),
+      );
     }
 
     try {
@@ -207,8 +361,11 @@ class SetupAction extends _$SetupAction {
     return true;
   }
 
-  Future<void> _startCoreRunning(_RunRequest request) async {
-    if (!await _setCoreRunning(request) && _isCurrent(request)) {
+  Future<void> _startCoreRunning(
+    _RunRequest request, {
+    ServiceRunTime? adopt,
+  }) async {
+    if (!await _setCoreRunning(request, adopt: adopt) && _isCurrent(request)) {
       throw _unanswered(CoreMethod.startListener);
     }
   }
@@ -234,7 +391,7 @@ class SetupAction extends _$SetupAction {
     return true;
   }
 
-  Future<bool> _setCoreRunning(_RunRequest request) {
+  Future<bool> _setCoreRunning(_RunRequest request, {ServiceRunTime? adopt}) {
     return _listenerScheduler.run(() async {
       if (!_isCurrent(request)) {
         return true;
@@ -245,8 +402,21 @@ class SetupAction extends _$SetupAction {
       if (ref.read(safeModeProvider)) {
         return true;
       }
+      if (adopt != null) {
+        return _adoptListening(adopt);
+      }
       return _setListening(request.running);
     });
+  }
+
+  Future<bool> _adoptListening(ServiceRunTime runTime) async {
+    final vpnOptions =
+        runTime.vpnOptions ?? await ref.read(vpnOptionsProvider.future);
+    final answered = await adoptCoreRunning();
+    ref.read(runningVpnOptionsProvider.notifier).value = answered
+        ? vpnOptions
+        : null;
+    return answered;
   }
 
   Future<bool> _setListening(bool running) async {
@@ -301,6 +471,9 @@ class SetupAction extends _$SetupAction {
   Future<bool> setCoreRunning(bool running) {
     return running ? _core.startListener() : _core.stopListener();
   }
+
+  @protected
+  Future<bool> adoptCoreRunning() => _core.adoptListener();
 
   @protected
   void resetCoreTraffic() {
@@ -359,23 +532,97 @@ class SetupAction extends _$SetupAction {
 
   Future<bool> _inputsApplied() async {
     final applied = _appliedInputs;
-    if (applied == null) {
-      return false;
-    }
+    return applied != null && applied == await _currentInputs();
+  }
+
+  Future<_SetupInputs?> _currentInputs() async {
     final profileId = ref.read(currentProfileIdProvider);
     final SetupState setupState;
     try {
       setupState = await ref.read(setupStateProvider(profileId).future);
     } catch (_) {
-      return false;
+      return null;
     }
-    return applied ==
-        (
-          setupState,
-          _effectivePatchConfig(ref.read(patchClashConfigProvider)),
-          ref.read(networkSettingProvider),
-          _appliedParams,
-        );
+    return (
+      setupState,
+      _effectivePatchConfig(ref.read(patchClashConfigProvider)),
+      ref.read(networkSettingProvider),
+      _appliedParams,
+    );
+  }
+
+  Future<String?> _inputsDigest(_SetupInputs inputs) async {
+    final (setupState, patchConfig, networkSetting, params) = inputs;
+    try {
+      return await setupInputsDigestTask((
+        setupState: setupState,
+        setupPatch: patchConfig.setupOnly,
+        appendSystemDns: networkSetting.appendSystemDns,
+        bypassPrivateRoute: networkSetting.bypassPrivateRoute,
+        testUrl: params.testUrl,
+        skipCertVerify: params.skipCertVerify,
+        safeMode: ref.read(safeModeProvider),
+        build: globalState.packageInfo.buildNumber,
+      ));
+    } catch (e, s) {
+      commonPrint.log(
+        'setup digest ===> ${compactError(e)}, $s',
+        logLevel: LogLevel.warning,
+      );
+      return null;
+    }
+  }
+
+  Future<SetupRecord?> _setupRecord(
+    _SetupInputs? inputs,
+    BuiltProfile profile,
+  ) async {
+    final digest = inputs == null ? null : await _inputsDigest(inputs);
+    if (digest == null) {
+      return null;
+    }
+    return SetupRecord(
+      digest: digest,
+      yamlMd5: profile.md5,
+      groups: profile.counts.groups,
+      proxies: profile.counts.proxies,
+      rules: profile.counts.rules,
+    );
+  }
+
+  /// Go records a setup only when it applies one, so inputs that moved without
+  /// moving the YAML reach it here, or every reopen would rebuild the profile.
+  Future<void> _refreshRecord(_SetupInputs inputs, BuiltProfile profile) async {
+    final record = await _setupRecord(inputs, profile);
+    if (record == null) {
+      return;
+    }
+    final (_, _, _, params) = inputs;
+    try {
+      await _core.refreshAppliedSetup(params.copyWith(applied: record));
+    } catch (e) {
+      commonPrint.log(
+        'refreshAppliedSetup ===> ${compactError(e)}',
+        logLevel: coreFailureLogLevel(e),
+      );
+    }
+  }
+
+  /// [globalState.safeRun] shows the failure; the caller still needs it to
+  /// roll the start back.
+  Future<void> _runSurfaced(Future<void> Function() task) async {
+    (Object, StackTrace)? failure;
+    await globalState.safeRun(() async {
+      try {
+        await task();
+      } catch (e, s) {
+        failure = (e, s);
+        rethrow;
+      }
+    });
+    if (failure case (final error, final stackTrace)?) {
+      Error.throwWithStackTrace(error, stackTrace);
+    }
   }
 
   // False means building the profile, the config write, or the Core setup
@@ -714,8 +961,14 @@ class SetupAction extends _$SetupAction {
     };
     final yamlString = realProfile?.yaml ?? '';
     final yamlMd5 = realProfile?.md5 ?? '';
-    if (!profileFailed && yamlMd5 == globalState.lastConfigMd5 && !force) {
+    if (realProfile != null && yamlMd5 == globalState.lastConfigMd5 && !force) {
+      if (inputs != null && inputs != _appliedInputs) {
+        await _refreshRecord(inputs, realProfile);
+      }
       _appliedInputs = inputs;
+      if (preloadInvoke != null) {
+        await _runSurfaced(preloadInvoke);
+      }
       return _SetupTaskResult.completed;
     }
     // Go answers a config it rejects by running its built-in default, which
@@ -723,6 +976,9 @@ class SetupAction extends _$SetupAction {
     _appliedInputs = null;
     globalState.lastConfigMd5 = null;
     globalState.lastConfigCounts = null;
+    final record = realProfile == null
+        ? null
+        : await _setupRecord(inputs, realProfile);
     if (system.isAndroid) {
       await ref.read(vpnOptionsProvider.future);
       await preferences.saveShareState(ref.read(sharedStateProvider));
@@ -742,7 +998,7 @@ class SetupAction extends _$SetupAction {
             await appPath.ensureProviderDirs(profileId);
           }
           final message = await _core.setupConfig(
-            params: setupParams,
+            params: setupParams.copyWith(applied: record),
             preloadInvoke: preloadInvoke,
           );
           if (message.isNotEmpty) {

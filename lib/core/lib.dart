@@ -120,6 +120,11 @@ class CoreLib extends CoreHandlerInterface {
     return await _service?.start() ?? false;
   }
 
+  // The Core is listening already; the service only takes this engine's
+  // command, so a stop it reports later is not dropped as stale.
+  @override
+  Future<bool> adoptListener() async => await _service?.start() ?? false;
+
   @override
   Future<bool> stopListener() async {
     final serviceStopped = await _service?.stop() ?? false;

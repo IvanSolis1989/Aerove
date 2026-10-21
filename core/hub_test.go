@@ -508,6 +508,7 @@ func currentLogPump() *logPump {
 func TestHandleShutdownTearsDownBackgroundWork(t *testing.T) {
 	activateTestTelemetry(t)
 	withCurrentConfig(t, &config.Config{General: &config.General{}, Controller: &config.Controller{}})
+	withAppliedSetup(t, json.RawMessage(`{"digest":"d"}`))
 	isInit.Store(true)
 	retrier := pendingHealthRetry(t)
 
@@ -522,6 +523,9 @@ func TestHandleShutdownTearsDownBackgroundWork(t *testing.T) {
 
 	if currentConfig != nil {
 		t.Error("currentConfig survived shutdown, so updateConfig would still patch a dead config")
+	}
+	if appliedSetup != nil {
+		t.Error("the applied setup survived shutdown, so a host coming back would adopt a config nothing runs")
 	}
 	if isInit.Load() {
 		t.Error("isInit stayed true after shutdown")

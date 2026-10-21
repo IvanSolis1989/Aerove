@@ -150,6 +150,9 @@ class Bootstrap {
     await window?.init(version, config.windowProps);
     if (system.isAndroid) {
       await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      if (!_bootDecision.isDegraded) {
+        await container.read(setupActionProvider.notifier).prefillRunTime();
+      }
     }
     return container;
   }
@@ -184,9 +187,9 @@ class Bootstrap {
     }
     await _showCrashRecoveryTip();
     await _container.read(coreActionProvider.notifier).startCore();
-    if (!_bootDecision.isDegraded) {
-      await _container.read(setupActionProvider.notifier).initStatus();
-    }
+    await _container
+        .read(setupActionProvider.notifier)
+        .initStatus(degraded: _bootDecision.isDegraded);
     _container.read(initProvider.notifier).value = true;
     unawaited(_container.read(resourcesActionProvider.notifier).autoUpdate());
     await bootGuard.markRunning();

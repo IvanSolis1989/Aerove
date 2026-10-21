@@ -1,6 +1,7 @@
 package com.follow.clash
 
 import com.follow.clash.common.RunIntentArbiter
+import com.follow.clash.models.RunTime
 import com.follow.clash.models.SharedState
 import com.follow.clash.service.models.NotificationParams
 import com.follow.clash.service.models.VpnOptions
@@ -70,8 +71,8 @@ internal class ServiceStateMachine(private val host: ServiceStateHost) {
         }
     }
 
-    suspend fun awaitRunTime(): Long = transitionLock.withLock {
-        host.runtime?.startedAtMillis?.takeIf { isRunRequested } ?: 0L
+    suspend fun awaitRunTime(): RunTime? = transitionLock.withLock {
+        host.runtime?.takeIf { isRunRequested }?.let { RunTime(it.startedAtMillis, it.requested) }
     }
 
     fun captureRequestToken(): RunRequest = arbiter.current()
@@ -253,7 +254,8 @@ internal class ServiceStateMachine(private val host: ServiceStateHost) {
                 !isCurrent(request) -> false
                 host.runtime?.vpn == options.enable -> true
                 else -> transitioning(RunState.STARTING) {
-                    host.startService(withLocalNetworkFallback(options)) && isCurrent(request)
+                    host.startService(withLocalNetworkFallback(options), options) &&
+                        isCurrent(request)
                 }
             }
         }

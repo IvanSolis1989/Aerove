@@ -36,7 +36,7 @@ class _RecordingCoreHandler extends CoreHandlerInterface {
     calls[method] = arguments;
     final result = switch (method) {
       CoreMethod.initClash => true as T,
-      CoreMethod.setUiTelemetryActive => true,
+      CoreMethod.setUiTelemetryActive || CoreMethod.refreshAppliedSetup => true,
       CoreMethod.getTraffic ||
       CoreMethod.getTotalTraffic => {'up': 12, 'down': 34},
       CoreMethod.asyncTestDelay => {
@@ -118,6 +118,17 @@ class _RecordingCoreHandler extends CoreHandlerInterface {
         'core-epoch': 1,
         'picks-version': 0,
         'picks': <String, String>{},
+      },
+      CoreMethod.getAppliedSetup => {
+        'init': true,
+        'running': true,
+        'applied': {
+          'digest': 'abc',
+          'yaml-md5': 'def',
+          'groups': 1,
+          'proxies': 2,
+          'rules': 3,
+        },
       },
       _ => '',
     };
@@ -464,6 +475,79 @@ void main() {
       'path': '/profiles/1.yaml',
       'overlay': 'mode: rule',
     });
+  });
+
+  test('setupConfig hands the Core the record as an object', () async {
+    final handler = _RecordingCoreHandler();
+    Object? sent() =>
+        json.decode(json.encode(handler.calls[CoreMethod.setupConfig]));
+
+    await handler.setupConfig(
+      const SetupParams(
+        selectedMap: {},
+        testUrl: 'test',
+        applied: SetupRecord(digest: 'abc', yamlMd5: 'def', rules: 3),
+      ),
+    );
+
+    expect((sent()! as Map)['applied'], {
+      'digest': 'abc',
+      'yaml-md5': 'def',
+      'groups': 0,
+      'proxies': 0,
+      'rules': 3,
+    });
+  });
+
+  test(
+    'refreshAppliedSetup hands the Core what lives outside the YAML',
+    () async {
+      final handler = _RecordingCoreHandler();
+
+      expect(
+        await handler.refreshAppliedSetup(
+          const SetupParams(
+            selectedMap: {},
+            testUrl: 'test',
+            skipCertVerify: true,
+            applied: SetupRecord(digest: 'abc', yamlMd5: 'def'),
+          ),
+        ),
+        isTrue,
+      );
+
+      final sent =
+          json.decode(
+                json.encode(handler.calls[CoreMethod.refreshAppliedSetup]),
+              )
+              as Map;
+      expect(sent['test-url'], 'test');
+      expect(sent['skip-cert-verify'], isTrue);
+      expect((sent['applied'] as Map)['yaml-md5'], 'def');
+    },
+  );
+
+  test('getAppliedSetup reads the record the Core kept', () async {
+    final applied = await _RecordingCoreHandler().getAppliedSetup();
+
+    expect(
+      applied,
+      const AppliedSetup(
+        init: true,
+        running: true,
+        applied: SetupRecord(
+          digest: 'abc',
+          yamlMd5: 'def',
+          groups: 1,
+          proxies: 2,
+          rules: 3,
+        ),
+      ),
+    );
+    expect(
+      AppliedSetup.fromJson(const {'init': true, 'applied': null}).applied,
+      isNull,
+    );
   });
 
   test('getConfig preserves structured core errors', () async {
