@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:fl_clash/ui/foreground_ink.dart';
 
@@ -1327,7 +1328,11 @@ class _FloatingNavigationBarState extends State<FloatingNavigationBar>
                         ],
                       ),
                     );
-                    final split = glass && widget.destinations.isNotEmpty;
+                    final split =
+                        (glass ||
+                            (LiquidGlassScope.foregroundOf(context) &&
+                                ui.ImageFilter.isShaderFilterSupported)) &&
+                        widget.destinations.isNotEmpty;
                     return Stack(
                       clipBehavior: Clip.none,
                       children: [
@@ -1365,7 +1370,7 @@ class _FloatingNavigationBarState extends State<FloatingNavigationBar>
                             builder: (_, child) => _LensContent(
                               rect: lensRect(),
                               lift: _lift.value,
-                              warp: ultra,
+                              warp: glass && ultra,
                               child: child!,
                             ),
                             child: items(_LensPart.inside),
@@ -1651,15 +1656,21 @@ class _FloatingBarItemState extends State<_FloatingBarItem> {
     final colorScheme = context.colorScheme;
     final color = colorScheme.onSurfaceVariant;
     final glass = LiquidGlassScope.of(context);
+    final ink =
+        LiquidGlassScope.foregroundOf(context) &&
+        ui.ImageFilter.isShaderFilterSupported;
+    final solidLabel = !glass && ink && widget.part == _LensPart.inside;
     final label = GlassText(
       widget.destination.label,
       maxLines: 1,
       softWrap: false,
       overflow: TextOverflow.ellipsis,
-      style: widget.labelStyle?.copyWith(
+      style: (widget.labelStyle ?? const TextStyle()).copyWith(
         color: glass
             ? color
-            : color.withValues(alpha: color.a * widget.labelVisibility),
+            : (solidLabel ? colorScheme.primary : color).withValues(
+                alpha: color.a * widget.labelVisibility,
+              ),
       ),
     );
     var tint = colorScheme.primary;
@@ -1682,7 +1693,7 @@ class _FloatingBarItemState extends State<_FloatingBarItem> {
       lift: widget.lift,
       parallax: widget.parallax,
       index: widget.index,
-      color: glass ? Colors.transparent : tint,
+      color: glass || ink ? Colors.transparent : tint,
       textDirection: Directionality.of(context),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: _labelInset),
@@ -1706,6 +1717,8 @@ class _FloatingBarItemState extends State<_FloatingBarItem> {
                     scale: widget.labelVisibility,
                     child: glass
                         ? Opacity(opacity: widget.labelVisibility, child: label)
+                        : solidLabel
+                        ? LiquidGlassScope(enabled: false, child: label)
                         : label,
                   ),
                 ),

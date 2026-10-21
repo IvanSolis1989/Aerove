@@ -14,15 +14,12 @@ class SelectionCheck extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final icon = GlyphIcon(
+    return GlyphIcon(
       AppGlyphs.check,
       size: size,
       fill: 1,
       color: context.colorScheme.primary,
     );
-    return LiquidGlassScope.of(context)
-        ? icon
-        : LiquidGlassScope(enabled: false, child: icon);
   }
 }
 
@@ -70,15 +67,12 @@ class SelectionBadge extends StatelessWidget {
               ? colorScheme.primary.withValues(alpha: 0.14)
               : colorScheme.primary,
         ),
-        child: LiquidGlassScope(
-          enabled: false,
-          child: Center(
-            child: GlyphIcon(
-              glyph,
-              size: size - 6,
-              fill: 1,
-              color: tonal ? colorScheme.primary : colorScheme.onPrimary,
-            ),
+        child: Center(
+          child: GlyphIcon(
+            glyph,
+            size: size - 6,
+            fill: 1,
+            color: tonal ? colorScheme.primary : colorScheme.onPrimary,
           ),
         ),
       ),

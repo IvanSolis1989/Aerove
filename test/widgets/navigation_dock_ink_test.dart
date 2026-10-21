@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:fl_clash/ui/foreground_ink.dart';
+import 'package:fl_clash/ui/aurora.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/navigation_dock.dart';
@@ -17,9 +18,16 @@ const _labels = ['Home', 'Profiles with a very long label', 'Tools'];
 const _glyphs = [AppGlyphs.dashboard, AppGlyphs.profiles, AppGlyphs.tools];
 
 class _Fixture extends StatefulWidget {
-  const _Fixture({super.key, this.glass = true});
+  const _Fixture({
+    super.key,
+    this.glass = true,
+    this.foreground = false,
+    this.scheme,
+  });
 
   final bool glass;
+  final bool foreground;
+  final ColorScheme? scheme;
 
   @override
   State<_Fixture> createState() => _FixtureState();
@@ -37,15 +45,17 @@ class _FixtureState extends State<_Fixture> {
   Widget build(BuildContext context) {
     return TestApp(
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+        colorScheme:
+            widget.scheme ?? ColorScheme.fromSeed(seedColor: Colors.blue),
       ),
       child: RepaintBoundary(
         key: _scene,
         child: LiquidGlassScope(
           enabled: widget.glass,
+          foregroundEnabled: widget.glass || widget.foreground,
           quality: LiquidGlassQuality.ultra,
           child: LiquidGlassHost(
-            enabled: widget.glass,
+            enabled: widget.glass || widget.foreground,
             wallpaperOnly: true,
             child: Stack(
               fit: StackFit.expand,
@@ -221,6 +231,53 @@ void main() {
   setUpAll(() async {
     if (ui.ImageFilter.isShaderFilterSupported) await GlassInk.prepare();
   });
+
+  testWidgets(
+    'Plain selected dock icons tint while labels keep their solid ink',
+    (tester) async {
+      tester.view.physicalSize = const Size(400, 220);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final key = GlobalKey<_FixtureState>();
+      final scheme = auroraColorScheme(Brightness.light);
+      Future<Uint8List> render(bool foreground) async {
+        await tester.pumpWidget(
+          _Fixture(
+            key: key,
+            glass: false,
+            foreground: foreground,
+            scheme: scheme,
+          ),
+        );
+        await tester.pumpAndSettle();
+        return _pixels(tester);
+      }
+
+      final original = await render(false);
+      final ink = await render(true);
+      expect(LiquidGlassHost.debugLastCapture?.panes, isEmpty);
+      List<int> crop(Uint8List pixels, Rect rect) => [
+        for (var y = rect.top.ceil(); y < rect.bottom.floor(); y++)
+          for (var x = rect.left.ceil(); x < rect.right.floor(); x++)
+            ...pixels.sublist((y * 400 + x) * 4, (y * 400 + x) * 4 + 4),
+      ];
+      final glyph = tester.getRect(_glyph(0).first);
+      final label = tester.getRect(find.text(_labels[0]).first);
+      if (ui.ImageFilter.isShaderFilterSupported) {
+        expect(crop(ink, glyph), isNot(crop(original, glyph)));
+      }
+      expect(crop(ink, label), crop(original, label));
+      final protected = find
+          .text(_labels[0])
+          .evaluate()
+          .where((element) => !LiquidGlassScope.foregroundOf(element));
+      if (ui.ImageFilter.isShaderFilterSupported) {
+        expect(protected, hasLength(1));
+      } else {
+        expect(ink, original);
+      }
+    },
+  );
 
   testWidgets('glass resting glyph copies have independent ink layers', (
     tester,

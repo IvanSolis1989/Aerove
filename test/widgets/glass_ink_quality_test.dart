@@ -26,13 +26,15 @@ Widget _scene(
   bool highContrast = false,
   bool foregroundOnly = false,
   Color? inkSource,
+  ColorScheme? scheme,
+  bool solid = false,
 }) {
   final source =
       inkSource ??
       (brightness == Brightness.dark ? Colors.white : Colors.black);
   final active = enabled && !highContrast;
   return MaterialApp(
-    theme: ThemeData(brightness: brightness),
+    theme: ThemeData(brightness: brightness, colorScheme: scheme),
     themeAnimationStyle: AnimationStyle.noAnimation,
     home: MediaQuery(
       data: MediaQueryData(highContrast: highContrast),
@@ -56,14 +58,22 @@ Widget _scene(
                 for (var row = 0; row < 2; row++)
                   for (var column = 0; column < 4; column++)
                     Positioned(
-                      left: column * 80.0 + 30,
-                      top: row * 80.0 + 30,
-                      width: 20,
-                      height: 20,
-                      child: GlassInk(
-                        source: source,
-                        role: row == 0 ? GlassInkRole.body : GlassInkRole.icon,
-                        child: ColoredBox(color: source),
+                      left: column * 80.0 + (solid ? 24 : 30),
+                      top: row * 80.0 + (solid ? 24 : 30),
+                      width: solid ? 32 : 20,
+                      height: solid ? 32 : 20,
+                      child: ColoredBox(
+                        color: solid ? scheme!.primary : Colors.transparent,
+                        child: Padding(
+                          padding: EdgeInsets.all(solid ? 6 : 0),
+                          child: GlassInk(
+                            source: source,
+                            role: row == 0
+                                ? GlassInkRole.body
+                                : GlassInkRole.icon,
+                            child: ColoredBox(color: source),
+                          ),
+                        ),
                       ),
                     ),
               ],
@@ -200,6 +210,41 @@ void main() {
   });
 
   for (final brightness in Brightness.values) {
+    testWidgets(
+      'Plain selected glyphs contrast with their solid fill ${brightness.name}',
+      (tester) async {
+        tester.view.physicalSize = const Size(320, 160);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final scheme = auroraColorScheme(brightness);
+        await tester.pumpWidget(
+          _scene(
+            brightness,
+            LiquidGlassQuality.standard,
+            foregroundOnly: true,
+            inkSource: scheme.onPrimary,
+            scheme: scheme,
+            solid: true,
+          ),
+        );
+        await tester.pumpAndSettle();
+        final pixels = await _shot(tester);
+        final inks = <Color>[];
+        for (var column = 0; column < 4; column++) {
+          final x = column * 80 + 40;
+          expect(_pixel(pixels, x - 14, 120), scheme.primary);
+          final ink = _pixel(pixels, x, 120);
+          inks.add(ink);
+          expect(ink, isNot(scheme.onPrimary));
+          expect(HSVColor.fromColor(ink).saturation, greaterThan(0.05));
+          expect(_contrast(ink, scheme.primary), greaterThanOrEqualTo(3.0));
+          expect(_pixel(pixels, x, 40), scheme.onPrimary);
+        }
+        expect(inks.toSet().length, greaterThan(1));
+      },
+      skip: !ui.ImageFilter.isShaderFilterSupported,
+    );
+
     testWidgets('Plain wallpaper ink is weaker than frost ${brightness.name}', (
       tester,
     ) async {

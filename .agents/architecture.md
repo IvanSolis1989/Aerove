@@ -660,7 +660,9 @@ pressed last over the neighbours it swells past. `lib/ui/liquid_glass.dart` hold
 
 - Foreground ink is independently enabled by `LiquidGlassScope.foregroundEnabled`. Plain solid with Aurora wallpaper
   uses the shared host for ink only, with lower saturation and brightness than Soft frost and no optical panes.
-  On-primary ink retains its original color on solid controls; selection marks explicitly keep their original ink.
+  On-primary text retains its original color on solid controls. Selected icons sample the wallpaper for hue but use
+  their primary fill for contrast; selection badges keep a flat disc and tint only the glyph, and the navigation dock
+  leaves its selected foreground ink visible rather than replacing it with a flat color filter.
   A nested disabled scope still disables ink unless explicitly overridden; high contrast and pure black stay opaque.
 
 - `LiquidGlassStyle.card` gives Soft frost cards a raised-surface tint; blur alone vanishes over a smooth wallpaper.

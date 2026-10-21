@@ -221,7 +221,11 @@ class GlassInk extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!GlassForeground.colorsInk(context, source) ||
+    if (!GlassForeground.colorsInk(
+          context,
+          source,
+          icon: role == GlassInkRole.icon,
+        ) ||
         !ui.ImageFilter.isShaderFilterSupported) {
       return child;
     }
@@ -232,6 +236,9 @@ class GlassInk extends StatelessWidget {
       dark: Theme.of(context).brightness == Brightness.dark,
       quality: LiquidGlassScope.qualityOf(context),
       subtle: !LiquidGlassScope.of(context),
+      background: role == GlassInkRole.icon
+          ? GlassForeground.solidBackgroundOf(context, source)
+          : null,
       contrast: role == GlassInkRole.icon
           ? 3.2
           : GlassInkTextContrast.of(context),
@@ -248,6 +255,7 @@ class _InkBox extends SingleChildRenderObjectWidget {
     required this.dark,
     required this.quality,
     required this.subtle,
+    required this.background,
     required this.contrast,
     required super.child,
   });
@@ -257,11 +265,20 @@ class _InkBox extends SingleChildRenderObjectWidget {
   final bool dark;
   final LiquidGlassQuality quality;
   final bool subtle;
+  final Color? background;
   final double contrast;
 
   @override
-  RenderObject createRenderObject(BuildContext context) =>
-      _InkRender(role, source, outset, dark, quality, subtle, contrast);
+  RenderObject createRenderObject(BuildContext context) => _InkRender(
+    role,
+    source,
+    outset,
+    dark,
+    quality,
+    subtle,
+    background,
+    contrast,
+  );
 
   @override
   void updateRenderObject(BuildContext context, covariant _InkRender render) {
@@ -271,6 +288,7 @@ class _InkBox extends SingleChildRenderObjectWidget {
         render.dark == dark &&
         render.quality == quality &&
         render.subtle == subtle &&
+        render.background == background &&
         render.contrast == contrast) {
       return;
     }
@@ -281,6 +299,7 @@ class _InkBox extends SingleChildRenderObjectWidget {
       ..dark = dark
       ..quality = quality
       ..subtle = subtle
+      ..background = background
       ..contrast = contrast
       ..markNeedsPaint();
   }
@@ -294,6 +313,7 @@ class _InkRender extends RenderProxyBox {
     this.dark,
     this.quality,
     this.subtle,
+    this.background,
     this.contrast,
   );
   GlassInkRole role;
@@ -302,6 +322,7 @@ class _InkRender extends RenderProxyBox {
   bool dark;
   LiquidGlassQuality quality;
   bool subtle;
+  Color? background;
   double contrast;
   final _layer = LayerHandle<LiquidGlassInkLayer>();
 
@@ -379,6 +400,7 @@ class _InkRender extends RenderProxyBox {
       dark: dark,
       quality: quality,
       subtle: subtle,
+      background: background,
       program: _InkProgram.request(markNeedsPaint),
     );
     context.pushLayer(

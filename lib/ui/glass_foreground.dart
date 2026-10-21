@@ -5,14 +5,20 @@ abstract final class GlassForeground {
   static bool _sameRgb(Color a, Color b) =>
       a.r == b.r && a.g == b.g && a.b == b.b;
 
-  static bool colorsInk(BuildContext context, Color color) {
+  static bool colorsInk(
+    BuildContext context,
+    Color color, {
+    bool icon = false,
+  }) {
     if (!LiquidGlassScope.foregroundOf(context) ||
         MediaQuery.maybeHighContrastOf(context) == true ||
         color.a < 0.70) {
       return false;
     }
     final colors = Theme.of(context).colorScheme;
-    if (!LiquidGlassScope.of(context) && _sameRgb(color, colors.onPrimary)) {
+    if (!icon &&
+        !LiquidGlassScope.of(context) &&
+        _sameRgb(color, colors.onPrimary)) {
       return false;
     }
     if (_sameRgb(color, colors.error) ||
@@ -21,6 +27,13 @@ abstract final class GlassForeground {
     return _sameRgb(color, colors.onSurface) ||
         _sameRgb(color, colors.onSurfaceVariant) ||
         HSVColor.fromColor(color).saturation < 0.20;
+  }
+
+  static Color? solidBackgroundOf(BuildContext context, Color source) {
+    final colors = Theme.of(context).colorScheme;
+    return !LiquidGlassScope.of(context) && _sameRgb(source, colors.onPrimary)
+        ? colors.primary
+        : null;
   }
 
   static Color iconColorOf(BuildContext context, Color color, double opacity) =>

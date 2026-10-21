@@ -12,6 +12,7 @@ uniform float uAlpha;
 uniform vec3 uSource;
 uniform float uUltra;
 uniform float uSubtle;
+uniform vec4 uContrastBackground;
 uniform sampler2D uField;
 out vec4 fragColor;
 
@@ -62,9 +63,10 @@ vec3 readable(vec3 ink, vec3 background, float backgroundLuminance, float alpha)
 void main() {
   vec2 local = FlutterFragCoord().xy;
   vec2 position = uOrigin + uAxisX * local.x + uAxisY * local.y;
-  vec3 background = texture(uField, clamp(position / uFieldSize, 0.0, 1.0)).rgb;
+  vec3 field = texture(uField, clamp(position / uFieldSize, 0.0, 1.0)).rgb;
+  vec3 background = mix(field, uContrastBackground.rgb, uContrastBackground.a);
   float backgroundLuminance = luminance(background);
-  vec3 colored = vivid(background);
+  vec3 colored = vivid(field);
   float strength = uStrength;
   if (uDark < 0.5) {
     strength = mix(strength, 1.0, mix(0.14, 0.18, uUltra));

@@ -140,7 +140,7 @@ void main() {
   );
 
   for (final brightness in Brightness.values) {
-    testWidgets('Plain ink preserves solid controls exactly $brightness', (
+    testWidgets('Plain selected ink keeps solid fills $brightness', (
       tester,
     ) async {
       const controls = [
@@ -232,8 +232,35 @@ void main() {
       final original = await render(false);
       final inked = await render(true);
       for (final (index, name) in controls.indexed) {
-        if (name == 'ordinary' && ui.ImageFilter.isShaderFilterSupported) {
+        if (const [
+              'ordinary',
+              'filled',
+              'badge',
+              'preferred',
+              'check',
+            ].contains(name) &&
+            ui.ImageFilter.isShaderFilterSupported) {
           expect(inked[index], isNot(original[index]));
+          if (name == 'filled' || name == 'badge') {
+            final primary = auroraColorScheme(brightness).primary.toARGB32();
+            var fills = 0;
+            for (var pixel = 0; pixel < original[index].length; pixel += 4) {
+              final color = Color.fromARGB(
+                original[index][pixel + 3],
+                original[index][pixel],
+                original[index][pixel + 1],
+                original[index][pixel + 2],
+              ).toARGB32();
+              if (color == primary) {
+                fills++;
+                expect(
+                  inked[index].sublist(pixel, pixel + 4),
+                  original[index].sublist(pixel, pixel + 4),
+                );
+              }
+            }
+            expect(fills, greaterThan(10));
+          }
           continue;
         }
         expect(
