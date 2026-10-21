@@ -122,7 +122,7 @@ void main() {
             expect(GlassInkTextContrast.of(context), textInkTarget);
             expect(
               GlassInkTextContrast.of(tester.element(find.text('Restart'))),
-              textInkTarget,
+              7,
             );
             final boundary =
                 capture.currentContext!.findRenderObject()!
@@ -396,15 +396,36 @@ void main() {
             );
             final panes = find.ancestor(
               of: find.text(_message),
-              matching: find.byType(LiquidGlass),
+              matching: find.byType(GlassPlatter),
+            );
+            expect(
+              find.ancestor(
+                of: find.text(_message),
+                matching: find.byType(LiquidGlass),
+              ),
+              findsNothing,
             );
             if (glass) {
               expect(panes, findsOneWidget);
-              final pane = tester.widget<LiquidGlass>(panes);
-              expect(pane.style.blur, 2.5);
-              expect(pane.style.haze, 0);
-              expect(pane.style.tint.a, 0);
-              expect(pane.contentBackdrop, isFalse);
+              final pane = tester.widget<GlassPlatter>(panes);
+              final colors = Theme.of(context).colorScheme;
+              expect(pane.style, LiquidGlassStyle.menu(colors));
+              expect(pane.rim, LiquidGlassRim.menu(colors));
+              expect(pane.corner, AppCorner.lg);
+              expect(
+                find.ancestor(
+                  of: panes,
+                  matching: find.byType(LiquidGlassBody),
+                ),
+                findsOneWidget,
+              );
+              expect(
+                find.descendant(
+                  of: panes,
+                  matching: find.byType(GlassSurfaceScope),
+                ),
+                findsWidgets,
+              );
               expect(
                 find.ancestor(
                   of: panes,
@@ -479,13 +500,19 @@ void main() {
                 );
               }
               if (glass) {
-                final pane = tester.widget<LiquidGlass>(
-                  find.ancestor(of: text, matching: find.byType(LiquidGlass)),
+                final pane = tester.widget<GlassPlatter>(
+                  find.ancestor(of: text, matching: find.byType(GlassPlatter)),
                 );
-                expect(pane.style.haze, 0);
+                final colors = Theme.of(context).colorScheme;
                 expect(
-                  pane.style.tint.a,
-                  level == MessageLevel.error ? 0.16 : 0,
+                  pane.style,
+                  level == MessageLevel.error
+                      ? LiquidGlassStyle.menu(colors).copyWith(
+                          tint: level
+                              .containerColor(context)
+                              .withValues(alpha: 0.16),
+                        )
+                      : LiquidGlassStyle.menu(colors),
                 );
               }
               await tester.drag(card, const Offset(400, 0));

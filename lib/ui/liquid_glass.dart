@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 
 import 'package:fl_clash/ui/context.dart';
 import 'package:fl_clash/ui/shape.dart';
+import 'package:fl_clash/ui/surface.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
@@ -87,6 +88,32 @@ class LiquidGlassScope extends InheritedWidget {
   @override
   bool updateShouldNotify(LiquidGlassScope oldWidget) =>
       enabled != oldWidget.enabled || quality != oldWidget.quality;
+}
+
+/// A pane already lies behind [child] (.agents/architecture.md).
+class GlassSurfaceScope extends InheritedWidget {
+  const GlassSurfaceScope({
+    super.key,
+    this.enabled = true,
+    this.grouped = false,
+    required super.child,
+  });
+
+  final bool enabled;
+  final bool grouped;
+
+  static bool of(BuildContext context) =>
+      LiquidGlassScope.of(context) && (_of(context)?.enabled ?? false);
+
+  static bool groupedOf(BuildContext context) =>
+      of(context) && (_of(context)?.grouped ?? false);
+
+  static GlassSurfaceScope? _of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<GlassSurfaceScope>();
+
+  @override
+  bool updateShouldNotify(GlassSurfaceScope oldWidget) =>
+      enabled != oldWidget.enabled || grouped != oldWidget.grouped;
 }
 
 /// Lengths are dp. The shader shrinks [bevel] and [refraction] to fit a pane
@@ -437,6 +464,20 @@ List<BoxShadow> glassMenuShadows(ColorScheme colorScheme, [double depth = 1]) {
 Color glassFillOf(ColorScheme colorScheme) =>
     (colorScheme.brightness == Brightness.dark ? Colors.white : Colors.black)
         .withValues(alpha: 0.13);
+
+Color glassChosenFillOf(ColorScheme colorScheme) =>
+    colorScheme.primary.withValues(alpha: 0.2);
+
+/// A dark level's own fill would darken the glass into a hole.
+Color glassRaisedFillOf(BuildContext context) {
+  final colorScheme = context.colorScheme;
+  return colorScheme.brightness == Brightness.dark
+      ? colorScheme.onSurface.withValues(alpha: 0.06)
+      : LiquidGlassScope.surfaceColorOf(
+          context,
+          context.raisedSurfaceLevel.colorOf(colorScheme),
+        );
+}
 
 /// iOS 27's rim around a menu's or an alert's glass (.agents/architecture.md).
 @immutable

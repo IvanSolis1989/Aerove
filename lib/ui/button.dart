@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:fl_clash/ui/foreground_ink.dart';
 import 'package:fl_clash/ui/context.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
@@ -30,15 +32,32 @@ class HeaderButtonGlassScope extends InheritedWidget {
       progress != oldWidget.progress;
 }
 
+const double _flatInkContrast = 7;
+
 Widget _buttonGlassSurface(
   BuildContext context, {
   required LiquidGlassStyle style,
+  Color? flat,
   bool pressed = false,
   required Widget child,
 }) {
   final header = HeaderButtonGlassScope.of(context);
-  if (header == null)
-    return LiquidGlass(style: style, pressed: pressed, child: child);
+  if (header == null) {
+    if (!GlassSurfaceScope.of(context)) {
+      return LiquidGlass(style: style, pressed: pressed, child: child);
+    }
+    // Ink measures the backdrop, not the fill laid between it and the label.
+    return DecoratedBox(
+      decoration: ShapeDecoration(
+        color: flat ?? glassFillOf(context.colorScheme),
+        shape: AppShape.full,
+      ),
+      child: GlassInkTextContrast(
+        contrast: math.max(GlassInkTextContrast.of(context), _flatInkContrast),
+        child: child,
+      ),
+    );
+  }
   return Stack(
     fit: StackFit.passthrough,
     clipBehavior: Clip.none,
@@ -296,8 +315,9 @@ class TonalButtonTheme extends StatelessWidget {
       if (!paned) {
         return null;
       }
+      final aurora = AuroraAppearance.enabledOf(context);
       final regularGlass = LiquidGlassStyle.regular(colorScheme);
-      final tintedGlass = AuroraAppearance.enabledOf(context)
+      final tintedGlass = aurora
           ? regularGlass
           : LiquidGlassStyle.tinted(colorScheme, colorScheme.primary);
       return ButtonStyle(
@@ -305,6 +325,9 @@ class TonalButtonTheme extends StatelessWidget {
         backgroundBuilder: (context, states, child) => _buttonGlassSurface(
           context,
           style: tinted(states) ? tintedGlass : regularGlass,
+          flat: tinted(states) && !aurora
+              ? glassChosenFillOf(colorScheme)
+              : null,
           pressed: states.contains(WidgetState.pressed),
           child: child ?? const SizedBox.shrink(),
         ),

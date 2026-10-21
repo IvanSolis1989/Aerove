@@ -42,9 +42,10 @@ class _GroupsState extends State<_Groups> with SingleTickerProviderStateMixin {
   );
 }
 
-void _expectBackdropColor(List<int> samples, Color backdrop) {
-  final expected = [backdrop.r * 255, backdrop.g * 255, backdrop.b * 255];
-  for (final offset in [0, 3]) {
+void _expectBackdropColor(List<int> samples, Color backdrop, Color tile) {
+  final block = Color.alphaBlend(tile, backdrop);
+  for (final (offset, color) in [(0, block), (3, backdrop)]) {
+    final expected = [color.r * 255, color.g * 255, color.b * 255];
     for (var channel = 0; channel < 3; channel++) {
       final actual = samples[offset + channel];
       expect(actual, inInclusiveRange(2, 253));
@@ -62,6 +63,7 @@ void main() {
         tester.view.devicePixelRatio = 1;
         addTearDown(tester.view.reset);
         final key = GlobalKey();
+        var tile = Colors.transparent;
         Future<List<int>> render(
           bool aurora,
           Color backdrop, {
@@ -146,6 +148,9 @@ void main() {
           await tester.pumpAndSettle();
           final context = tester.element(find.byType(NetworkSpeedCard));
           final colors = DashboardColors.of(context);
+          if (glass) {
+            tile = Color.alphaBlend(colors.tone, glassRaisedFillOf(context));
+          }
           expect(colors.tone.a, glass ? lessThan(0.2) : 1.0);
           expect(colors.tone2.a, glass ? lessThan(0.2) : 1.0);
           expect(colors.track.a, glass ? lessThan(0.2) : 1.0);
@@ -173,7 +178,7 @@ void main() {
                 of: find.byType(NetworkSpeedCard),
                 matching: find.byType(LiquidGlass),
               ),
-              findsNWidgets(3),
+              findsOneWidget,
             );
           }
           if (glass) {
@@ -253,10 +258,10 @@ void main() {
           difference(plainGlassFirst, plainGlassSecond),
           greaterThan(difference(ordinaryFirst, ordinarySecond) + 20),
         );
-        _expectBackdropColor(clearFirst, first);
-        _expectBackdropColor(clearSecond, second);
-        _expectBackdropColor(plainGlassFirst, first);
-        _expectBackdropColor(plainGlassSecond, second);
+        _expectBackdropColor(clearFirst, first, tile);
+        _expectBackdropColor(clearSecond, second, tile);
+        _expectBackdropColor(plainGlassFirst, first, tile);
+        _expectBackdropColor(plainGlassSecond, second, tile);
         final backgroundDifference =
             [
               (first.r - second.r).abs(),

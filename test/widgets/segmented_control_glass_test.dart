@@ -19,9 +19,8 @@ void main() {
 
   for (final brightness in Brightness.values) {
     for (final quality in LiquidGlassQuality.values) {
-      testWidgets('segments refract the field in $brightness $quality', (
-        tester,
-      ) async {
+      testWidgets('the chosen segment refracts over a flat track in '
+          '$brightness $quality', (tester) async {
         tester.view.physicalSize = const Size(320, 160);
         tester.view.devicePixelRatio = 1;
         addTearDown(tester.view.reset);
@@ -88,14 +87,23 @@ void main() {
               final image = await boundary.toImage();
               try {
                 final bytes = (await image.toByteData())!;
-                final panes = LiquidGlassHost.debugLastCapture!.panes;
-                expect(panes, hasLength(2));
+                final thumb = LiquidGlassHost.debugLastCapture!.panes.single;
+                final control = tester.getRect(
+                  find.byType(SegmentedControl<int>),
+                );
+                final track = Offset(
+                  thumb.pane.center.dx < control.center.dx
+                      ? control.right - 30
+                      : control.left + 30,
+                  thumb.pane.top + 8,
+                );
                 samples.add([
-                  for (final pane in panes)
+                  for (final point in [
+                    Offset(thumb.pane.center.dx, thumb.pane.top + 8),
+                    track,
+                  ])
                     bytes.getUint8(
-                      ((pane.pane.top + 8).floor() * image.width +
-                              pane.pane.center.dx.floor()) *
-                          4,
+                      (point.dy.floor() * image.width + point.dx.floor()) * 4,
                     ),
                 ]);
                 final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];

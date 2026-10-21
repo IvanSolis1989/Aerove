@@ -851,9 +851,8 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('Aurora proxy groups share one envelope without a header pane', (
-    tester,
-  ) async {
+  testWidgets('Aurora proxy groups share one envelope whose header buttons '
+      'stand flat on it', (tester) async {
     await pumpList(
       tester,
       aurora: true,
@@ -885,21 +884,8 @@ void main() {
       ),
       findsNothing,
     );
-    expect(buttonPanes, findsOneWidget);
+    expect(buttonPanes, findsNothing);
     expect(find.byType(LiquidGlassHost), findsOneWidget);
-    final sharedHost = tester.element(find.byType(LiquidGlassHost));
-    for (final pane in tester.widgetList<LiquidGlass>(buttonPanes)) {
-      expect(pane.style.tint.a, lessThan(1));
-      expect(
-        tester.element(
-          find.ancestor(
-            of: find.byWidget(pane),
-            matching: find.byType(LiquidGlassHost),
-          ),
-        ),
-        same(sharedHost),
-      );
-    }
     final pinned = find.ancestor(
       of: header,
       matching: find.byType(PinnedHeaderSliver),

@@ -110,9 +110,8 @@ void main() {
   });
 
   for (final quality in LiquidGlassQuality.values) {
-    testWidgets('the modes use clear ${quality.name} glass and still switch', (
-      tester,
-    ) async {
+    testWidgets('the modes stand flat on the card\'s clear ${quality.name} '
+        'glass and still switch', (tester) async {
       await pump(
         tester,
         LiquidGlassScope(
@@ -126,9 +125,15 @@ void main() {
       ).colorScheme;
 
       void expectClearModes() {
-        expect(find.byType(LiquidGlass), findsNWidgets(4));
+        expect(find.byType(LiquidGlass), findsOneWidget);
+        final selected = container.read(patchClashConfigProvider).mode;
         for (final mode in Mode.values) {
-          expect(decorationOf(tester, mode).color!.a, lessThan(1));
+          expect(
+            decorationOf(tester, mode).color,
+            mode == selected
+                ? glassChosenFillOf(colorScheme)
+                : glassFillOf(colorScheme),
+          );
         }
         for (final pane in tester.widgetList<LiquidGlass>(
           find.byType(LiquidGlass),
@@ -158,7 +163,7 @@ void main() {
       testWidgets('${quality.name} mode geometry stays equal in '
           '${direction.name} through selection', (tester) async {
         void expectGeometry() {
-          expect(find.byType(LiquidGlass), findsNWidgets(4));
+          expect(find.byType(LiquidGlass), findsOneWidget);
           for (final mode in Mode.values) {
             final decoration = decorationOf(tester, mode);
             final shape = decoration.shape as RoundedSuperellipseBorder;
@@ -170,20 +175,17 @@ void main() {
             final bounds = Offset.zero & size;
             final expected = AppShape.full.getOuterPath(bounds);
             final actual = shape.getOuterPath(bounds);
-            final panes = find.ancestor(
-              of: buttonOf(mode),
-              matching: find.byType(LiquidGlass),
+            expect(
+              find.ancestor(
+                of: buttonOf(mode),
+                matching: find.byType(LiquidGlass),
+              ),
+              findsOneWidget,
             );
-            final pane = panes.first;
-            final clip = tester
-                .widget<LiquidGlass>(pane)
-                .clipper!
-                .getClip(size);
             for (var x = 0; x <= 8; x++) {
               for (var y = 0; y <= 8; y++) {
                 final point = Offset(size.width * x / 8, size.height * y / 8);
                 expect(actual.contains(point), expected.contains(point));
-                expect(clip.contains(point), expected.contains(point));
               }
             }
           }

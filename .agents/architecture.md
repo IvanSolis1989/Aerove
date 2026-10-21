@@ -634,10 +634,29 @@ down through `SheetCoverRouteMixin`, as `SnapSheetRoute` and `ModalSideSheetRout
 to the bar's `TonalButtonTheme`,
 which puts a `LiquidGlass` pane behind each button through `ButtonStyle.backgroundBuilder` and one behind a
 `TonalButtonGroup`; the navigation dock's bar and lifted lens become panes as well, and so do a sheet's docked search,
-the cards of a `CommonPopupMenu`, and a `CommonDialog`. On the dashboard only the start button is a pane: its connected
-buttons and switches keep their fills, since each pane adds its area to a capture retaken whenever the dashboard
-redraws, which it does often. Each still swells on its own under `ElasticPress`, and a `DashboardConnectedGroup` paints
-the button pressed last over the neighbours it swells past. `lib/ui/liquid_glass.dart` holds the rest:
+the cards of a `CommonPopupMenu`, and a `CommonDialog`. On the dashboard each card is the one pane: its connected
+buttons, switches and speed tiles stand flat on it, since each pane adds its area to a capture retaken whenever the
+dashboard redraws, which it does often. The status card's start-button droplet and flag badge are bubbles of their own,
+as the user specified them, over the card's pane; whether that card should stay a pane under them is still the user's
+call. Each control still swells on its own under `ElasticPress`, and a `DashboardConnectedGroup` paints the button
+pressed last over the neighbours it swells past. `lib/ui/liquid_glass.dart` holds the rest:
+
+- One pane at a time. The host captures only the wallpaper (`wallpaperOnly`), so a pane over another pane does not
+  read it: it cuts a clearer window through it, which reads as a defect at any size. `GlassSurfaceScope` says a pane
+  already lies behind a subtree. `CardGroup` and `CommonCard` set it when they paint a pane, and so do
+  `SliverGlassGroup`, `DashboardGlass`, `SheetSurface`, and `GlassPlatter`, the rimmed platter under a `CommonDialog`
+  and a toast; `CardGroup` marks it `grouped`, so its rows stand bare. Header bars, the dock and popup platters never
+  set it. Under it a surface paints a flat fill rather than a pane: a card, a group or a tile takes `glassRaisedFillOf`,
+  the raised level at most 24% in light mode and `onSurface` at 6% in dark, where a dark level's fill reads as a hole.
+  The theme's text, icon, outlined and elevated buttons stand bare, a filled button and a `TonalButton`,
+  `TonalButtonGroup` or `TonalButtonTheme` pane take `glassFillOf`, and a selected one `glassChosenFillOf`, primary at
+  20%. A switch keeps a flat track and a flat knob, a slider a flat track and a flat handle, a `SegmentedControl` a
+  flat track and a flat chosen segment; on a bare page the knob, the handle and the chosen segment are each the
+  control's one pane. A label on a flat button fill asks its ink for at least 7:1, since the ink measures the backdrop
+  and not the fill between. `HeaderButtonGlassScope` wins over the scope, so a sheet's bar buttons keep their lens, and
+  `LiquidGlass` and `LiquidGlass.buttonStyle` never read it: `CoreStatusButton`, the dashboard's droplet and flag, the
+  docked search and the disclaimer's actions are panes wherever they stand. Plain solid and high contrast set no glass,
+  so the scope is off there and every control keeps its Material look.
 
 - A `LiquidGlassHost` over the app (`lib/ui/liquid_glass_capture.dart`, after g1455's atlas proxy) draws its panes
   without reading the backdrop. As the frame is composited, before its children, it redraws onto one small image what
@@ -660,7 +679,7 @@ the button pressed last over the neighbours it swells past. `lib/ui/liquid_glass
   opening it and 17, 9 and 5 closing it; scrolling took 18.8 render passes a frame in either tier against 23.6, and
   the lens 22 in `ultra` and 18 in `standard` against 30.
 - In `standard`, a pane under a `LiquidGlassBody` only blurs and tints (`_bodyBlur`): the scaffold body, the tile an
-  `OpenContainer` carries through its transition, popups, alerts and a sheet's foot actions. The bar's buttons, the
+  `OpenContainer` carries through its transition, popups, alerts, toasts and a sheet's foot actions. The bar's buttons, the
   dock and the desktop sidebar keep their refraction. Any other pane refracts in `standard`, so a new overlay in the
   middle of the screen wraps itself in `LiquidGlassBody`.
 - A pane over one painted before it in the same root reads a second image, a level up, with the first drawn in as
@@ -724,7 +743,9 @@ the button pressed last over the neighbours it swells past. `lib/ui/liquid_glass
   `LiquidGlassFade`, so the glass keeps its full blur and fades with the text, as UIKit fades an alert and its glass on
   one layer. Its plain buttons and fields fill with `glassFillOf`, black or in dark mode white at 13%: iOS 27 shifts
   them from the glass under them by about 30/255, darker or lighter, a blend Flutter has no mode for, which 13% meets
-  over the glass an alert shows on a page. Its route dims by `alertScrim`, iOS's fifth in light mode and near half in
+  over the glass an alert shows on a page. Its default action fills with `glassChosenFillOf` under a primary label, a
+  destructive one with `glassFillOf` under `ColorScheme.destructive`; no action is a pane of its own, and a sheet's foot
+  actions take the same fills. Its route dims by `alertScrim`, iOS's fifth in light mode and near half in
   dark mode, not Material's third, so the glass reads the backdrop iOS's reads; under Material's a light alert came
   out grey. Measured against UIKit over the same page, the title sits 21 dp down, a message 6 dp under it and a field
   16, the buttons 20 under either; plain button labels take the medium weight, and a light message takes

@@ -130,8 +130,8 @@ void main() {
 
   for (final quality in LiquidGlassQuality.values) {
     for (final testCase in _rowCases) {
-      testWidgets('${testCase.name} uses clear ${quality.name} glass and '
-          'swells under a press', (tester) async {
+      testWidgets('${testCase.name} stands flat on clear ${quality.name} '
+          'glass and swells under a press', (tester) async {
         await pumpCard(
           tester,
           LiquidGlassScope(
@@ -146,7 +146,12 @@ void main() {
         );
         final outerPane = find.byWidgetPredicate(
           (widget) =>
-              widget is LiquidGlass && identical(widget.child, cardGlass.child),
+              widget is LiquidGlass &&
+              widget.child is GlassSurfaceScope &&
+              identical(
+                (widget.child! as GlassSurfaceScope).child,
+                cardGlass.child,
+              ),
         );
         expect(outerPane, findsOneWidget);
         final pane = tester.widget<LiquidGlass>(outerPane);
@@ -166,7 +171,7 @@ void main() {
               of: find.byWidget(control.widget),
               matching: find.byType(LiquidGlass),
             ),
-            findsNWidgets(2),
+            findsNothing,
           );
         }
         final containers = tester.widgetList<Container>(

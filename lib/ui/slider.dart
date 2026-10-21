@@ -1,8 +1,11 @@
+import 'dart:math' as math;
+
 import 'package:flutter/rendering.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'liquid_glass.dart';
 import 'shape.dart';
+import 'surface.dart';
 
 class GlassSlider extends StatefulWidget {
   const GlassSlider({super.key, required this.child, this.colorPreview});
@@ -15,11 +18,14 @@ class GlassSlider extends StatefulWidget {
 }
 
 class _GlassSliderState extends State<GlassSlider> {
+  static const _thumb = Size(12, 32);
+  static const _thumbClearance = 3.0;
+  static const _disabledShare = 0.4;
+  static const _activeAlpha = 0.5;
+  static const _paneTint = 0.6;
+
   RenderBox? _paintParent;
-  late final _track = LiquidGlassPane(_ready);
-  late final _active = LiquidGlassPane(_ready);
-  late final _secondary = LiquidGlassPane(_ready);
-  late final _thumb = LiquidGlassPane(_ready);
+  late final _pane = LiquidGlassPane(_ready);
 
   void _ready() {
     if (_paintParent?.attached ?? false) _paintParent!.markNeedsPaint();
@@ -27,77 +33,83 @@ class _GlassSliderState extends State<GlassSlider> {
 
   @override
   void dispose() {
-    _track.dispose();
-    _active.dispose();
-    _secondary.dispose();
-    _thumb.dispose();
+    _pane.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     if (!LiquidGlassScope.of(context) || MediaQuery.highContrastOf(context)) {
-      _track.clear();
-      _active.clear();
-      _secondary.clear();
-      _thumb.clear();
+      _pane.clear();
+      return widget.child;
+    }
+    final onGlass = GlassSurfaceScope.of(context);
+    final preview = widget.colorPreview;
+    if (preview != null && onGlass) {
+      _pane.clear();
       return widget.child;
     }
     final theme = SliderTheme.of(context);
     final colors = Theme.of(context).colorScheme;
     final enabled =
         widget.child.onChanged != null && widget.child.min < widget.child.max;
-    final trackColor = enabled
-        ? widget.child.inactiveColor ??
-              theme.inactiveTrackColor ??
-              colors.onSurface
-        : theme.disabledInactiveTrackColor ?? colors.onSurface;
-    final activeColor = enabled
-        ? widget.child.activeColor ?? theme.activeTrackColor ?? colors.primary
-        : theme.disabledActiveTrackColor ?? colors.onSurface;
-    final secondaryColor = enabled
-        ? widget.child.secondaryActiveColor ??
-              theme.secondaryActiveTrackColor ??
-              activeColor
-        : theme.disabledSecondaryActiveTrackColor ?? colors.onSurface;
-    final thumbColor = widget.child.thumbColor ?? colors.surface;
-    final style = LiquidGlassStyle.regular(colors).copyWith(blur: 0);
+    final share = enabled ? 1.0 : _disabledShare;
+    Color faded(Color color) => color.withValues(alpha: color.a * share);
+    final activeColor =
+        (enabled
+                ? widget.child.activeColor ??
+                      theme.activeTrackColor ??
+                      colors.primary
+                : colors.onSurface)
+            .withValues(alpha: _activeAlpha);
+    final thumbColor = widget.child.thumbColor;
+    final knob = thumbColor != null && thumbColor.a > 0
+        ? thumbColor
+        : colors.brightness == Brightness.dark
+        ? colors.inverseSurface
+        : SurfaceLevel.card.colorOf(colors);
+    final thumb = _GlassThumbShape(
+      delegate: theme.thumbShape ?? const HandleThumbShape(),
+      size: preview == null ? _thumb : null,
+      pane: onGlass ? null : _pane,
+      style: LiquidGlassStyle.regular(
+        colors,
+      ).copyWith(blur: 0, tint: faded(knob.withValues(alpha: _paneTint))),
+      knob: faded(knob),
+      shadow: colors.shadow.withValues(alpha: 0.18 * share),
+      preview: preview,
+      onPaint: (parent) => _paintParent = parent,
+    );
     return _SliderCompositing(
       child: SliderTheme(
         data: theme.copyWith(
-          trackShape: _GlassTrackShape(
-            delegate: theme.trackShape ?? const GappedSliderTrackShape(),
-            track: _track,
-            active: _active,
-            secondary: _secondary,
-            style: style.copyWith(
-              tint: trackColor.withValues(
-                alpha: trackColor.a * (enabled ? 0.05 : 0.02),
-              ),
-            ),
-            activeStyle: style.copyWith(
-              tint: activeColor.withValues(
-                alpha: activeColor.a * (enabled ? 0.22 : 0.04),
-              ),
-            ),
-            secondaryStyle: style.copyWith(
-              tint: secondaryColor.withValues(
-                alpha: secondaryColor.a * (enabled ? 0.12 : 0.03),
-              ),
-            ),
-            preserveTrack: widget.colorPreview != null,
-            onPaint: (parent) => _paintParent = parent,
-          ),
-          thumbShape: _GlassThumbShape(
-            delegate: theme.thumbShape ?? const HandleThumbShape(),
-            pane: _thumb,
-            style: style.copyWith(
-              tint: thumbColor.withValues(
-                alpha: thumbColor.a * (enabled ? 0.08 : 0.03),
-              ),
-            ),
-            preview: widget.colorPreview,
-            onPaint: (parent) => _paintParent = parent,
+          trackShape: preview != null
+              ? null
+              : _FlatTrackShape(
+                  delegate: theme.trackShape ?? const GappedSliderTrackShape(),
+                  gap: math.max(
+                    theme.trackGap ?? 0,
+                    _thumb.width / 2 + _thumbClearance,
+                  ),
+                  inactive: faded(
+                    widget.child.inactiveColor?.withValues(
+                          alpha: glassFillOf(colors).a,
+                        ) ??
+                        glassFillOf(colors),
+                  ),
+                  active: faded(activeColor),
+                  secondary: faded(
+                    (widget.child.secondaryActiveColor ?? activeColor)
+                        .withValues(alpha: activeColor.a / 2),
+                  ),
+                ),
+          thumbShape: thumb,
+          tickMarkShape: SliderTickMarkShape.noTickMark,
+          valueIndicatorColor: theme.valueIndicatorTextStyle == null
+              ? null
+              : SurfaceLevel.floatingOf(colors).colorOf(colors),
+          valueIndicatorTextStyle: theme.valueIndicatorTextStyle?.copyWith(
+            color: colors.onSurface,
           ),
         ),
         child: widget.child,
@@ -119,28 +131,23 @@ class _SliderCompositingBox extends RenderProxyBox {
   bool get alwaysNeedsCompositing => true;
 }
 
-class _GlassTrackShape extends SliderTrackShape {
-  const _GlassTrackShape({
+/// The inactive and active runs as flat fills, parted around the thumb.
+class _FlatTrackShape extends SliderTrackShape {
+  const _FlatTrackShape({
     required this.delegate,
-    required this.track,
+    required this.gap,
+    required this.inactive,
     required this.active,
     required this.secondary,
-    required this.style,
-    required this.activeStyle,
-    required this.secondaryStyle,
-    required this.preserveTrack,
-    required this.onPaint,
   });
 
+  static const _innerCorner = Radius.circular(2);
+
   final SliderTrackShape delegate;
-  final LiquidGlassPane track;
-  final LiquidGlassPane active;
-  final LiquidGlassPane secondary;
-  final LiquidGlassStyle style;
-  final LiquidGlassStyle activeStyle;
-  final LiquidGlassStyle secondaryStyle;
-  final bool preserveTrack;
-  final ValueChanged<RenderBox> onPaint;
+  final double gap;
+  final Color inactive;
+  final Color active;
+  final Color secondary;
 
   @override
   bool get isRounded => delegate.isRounded;
@@ -173,7 +180,6 @@ class _GlassTrackShape extends SliderTrackShape {
     bool isDiscrete = false,
     bool isEnabled = false,
   }) {
-    onPaint(parentBox);
     final rect = getPreferredRect(
       parentBox: parentBox,
       offset: offset,
@@ -181,74 +187,42 @@ class _GlassTrackShape extends SliderTrackShape {
       isEnabled: isEnabled,
       isDiscrete: isDiscrete,
     );
-    if (preserveTrack) {
-      delegate.paint(
-        context,
-        offset,
-        parentBox: parentBox,
-        sliderTheme: sliderTheme,
-        enableAnimation: enableAnimation,
-        textDirection: textDirection,
-        thumbCenter: thumbCenter,
-        secondaryOffset: secondaryOffset,
-        isDiscrete: isDiscrete,
-        isEnabled: isEnabled,
+    if (rect.isEmpty) return;
+    final ltr = textDirection == TextDirection.ltr;
+    final x = thumbCenter.dx.clamp(rect.left, rect.right);
+    final outer = Radius.circular(rect.shortestSide / 2);
+    final canvas = context.canvas;
+    void run(double from, double to, Color color, {required bool startsOuter}) {
+      if (to - from <= rect.height / 2 || color.a == 0) return;
+      final start = startsOuter ? outer : _innerCorner;
+      final end = startsOuter ? _innerCorner : outer;
+      canvas.drawRSuperellipse(
+        RSuperellipse.fromLTRBAndCorners(
+          from,
+          rect.top,
+          to,
+          rect.bottom,
+          topLeft: start,
+          bottomLeft: start,
+          topRight: end,
+          bottomRight: end,
+        ),
+        Paint()..color = color,
       );
     }
-    track.paint(
-      context,
-      preserveTrack
-          ? Rect.fromLTRB(
-              offset.dx,
-              rect.top,
-              offset.dx + parentBox.size.width,
-              rect.bottom,
-            )
-          : rect,
-      shape: const LiquidGlassCorners(AppRadius.full),
-      style: style,
-      contentBackdrop: preserveTrack,
-    );
-    if (preserveTrack) {
-      active.clear();
-      secondary.clear();
-      return;
-    }
-    final x = thumbCenter.dx.clamp(rect.left, rect.right);
+
+    final before = ltr ? active : inactive;
+    final after = ltr ? inactive : active;
+    run(rect.left, x - gap, before, startsOuter: true);
+    run(x + gap, rect.right, after, startsOuter: false);
     final secondaryX = secondaryOffset?.dx.clamp(rect.left, rect.right);
     if (secondaryX != null &&
-        (textDirection == TextDirection.ltr
-            ? secondaryX > x
-            : secondaryX < x)) {
-      secondary.paint(
-        context,
-        Rect.fromLTRB(
-          textDirection == TextDirection.ltr ? x : secondaryX,
-          rect.top,
-          textDirection == TextDirection.ltr ? secondaryX : x,
-          rect.bottom,
-        ),
-        shape: const LiquidGlassCorners(AppRadius.full),
-        style: secondaryStyle,
-      );
-    } else {
-      secondary.clear();
-    }
-    final selected = Rect.fromLTRB(
-      textDirection == TextDirection.ltr ? rect.left : x,
-      rect.top,
-      textDirection == TextDirection.ltr ? x : rect.right,
-      rect.bottom,
-    );
-    if (selected.isEmpty) {
-      active.clear();
-    } else {
-      active.paint(
-        context,
-        selected,
-        shape: const LiquidGlassCorners(AppRadius.full),
-        style: activeStyle,
-      );
+        (ltr ? secondaryX > x + gap : secondaryX < x - gap)) {
+      if (ltr) {
+        run(x + gap, secondaryX, secondary, startsOuter: false);
+      } else {
+        run(secondaryX, x - gap, secondary, startsOuter: true);
+      }
     }
   }
 }
@@ -256,15 +230,25 @@ class _GlassTrackShape extends SliderTrackShape {
 class _GlassThumbShape extends SliderComponentShape {
   const _GlassThumbShape({
     required this.delegate,
+    required this.size,
     required this.pane,
     required this.style,
+    required this.knob,
+    required this.shadow,
     required this.preview,
     required this.onPaint,
   });
 
   final SliderComponentShape delegate;
-  final LiquidGlassPane pane;
+
+  /// What it paints, laid out at the delegate's size; null paints that.
+  final Size? size;
+
+  /// Null on glass, where the thumb is a flat knob.
+  final LiquidGlassPane? pane;
   final LiquidGlassStyle style;
+  final Color knob;
+  final Color shadow;
   final Color? preview;
   final ValueChanged<RenderBox> onPaint;
 
@@ -288,23 +272,37 @@ class _GlassThumbShape extends SliderComponentShape {
     required Size sizeWithOverflow,
   }) {
     onPaint(parentBox);
-    final base = preview == null
-        ? sliderTheme.thumbSize?.resolve(<WidgetState>{}) ??
-              getPreferredSize(enableAnimation.value > 0, isDiscrete)
-        : getPreferredSize(enableAnimation.value > 0, isDiscrete);
+    final base =
+        size ?? getPreferredSize(enableAnimation.value > 0, isDiscrete);
     final growth = preview == null ? 0.0 : activationAnimation.value * 4;
     final rect = Rect.fromCenter(
       center: center,
       width: base.width + growth,
       height: base.height + growth,
     );
-    pane.paint(
-      context,
-      rect,
-      shape: const LiquidGlassCorners(AppRadius.full),
-      style: style,
-      contentBackdrop: preview != null,
-    );
+    final pane = this.pane;
+    if (pane == null) {
+      final shape = RSuperellipse.fromRectAndRadius(
+        rect,
+        Radius.circular(rect.shortestSide / 2),
+      );
+      context.canvas
+        ..drawRSuperellipse(
+          shape.shift(const Offset(0, 1)),
+          Paint()
+            ..color = shadow
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2),
+        )
+        ..drawRSuperellipse(shape, Paint()..color = knob);
+    } else {
+      pane.paint(
+        context,
+        rect,
+        shape: const LiquidGlassCorners(AppRadius.full),
+        style: style,
+        contentBackdrop: preview != null,
+      );
+    }
     if (preview case final color?) {
       context.canvas.drawCircle(
         center,

@@ -57,6 +57,7 @@ Future<void> _pump(
   ScrollController controller, {
   required double bodyHeight,
   required LiquidGlassQuality quality,
+  bool onGlass = false,
 }) async {
   tester.view.physicalSize = const Size(240, 320);
   tester.view.devicePixelRatio = 1;
@@ -74,32 +75,35 @@ Future<void> _pump(
               key: _sceneKey,
               child: ColoredBox(
                 color: _backdrop,
-                child: CustomScrollView(
-                  controller: controller,
-                  slivers: [
-                    SliverPadding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      sliver: SliverGlassGroup(
-                        shape: AppShape.xl,
-                        style: const LiquidGlassStyle(
-                          tint: _fill,
-                          blur: 0,
-                          refraction: 0,
-                          bevel: 0,
-                          rim: 0,
+                child: GlassSurfaceScope(
+                  enabled: onGlass,
+                  child: CustomScrollView(
+                    controller: controller,
+                    slivers: [
+                      SliverPadding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        sliver: SliverGlassGroup(
+                          shape: AppShape.xl,
+                          style: const LiquidGlassStyle(
+                            tint: _fill,
+                            blur: 0,
+                            refraction: 0,
+                            bevel: 0,
+                            rim: 0,
+                          ),
+                          slivers: [
+                            const PinnedHeaderSliver(
+                              child: SizedBox(key: _headerKey, height: 80),
+                            ),
+                            SliverToBoxAdapter(
+                              child: SizedBox(height: bodyHeight),
+                            ),
+                          ],
                         ),
-                        slivers: [
-                          const PinnedHeaderSliver(
-                            child: SizedBox(key: _headerKey, height: 80),
-                          ),
-                          SliverToBoxAdapter(
-                            child: SizedBox(height: bodyHeight),
-                          ),
-                        ],
                       ),
-                    ),
-                    const SliverToBoxAdapter(child: SizedBox(height: 400)),
-                  ],
+                      const SliverToBoxAdapter(child: SizedBox(height: 400)),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -113,6 +117,30 @@ Future<void> _pump(
 
 void main() {
   for (final quality in LiquidGlassQuality.values) {
+    testWidgets('on glass the group is a flat fill that scopes its slivers '
+        '(${quality.name})', (tester) async {
+      final controller = ScrollController();
+      try {
+        await _pump(
+          tester,
+          controller,
+          bodyHeight: 120,
+          quality: quality,
+          onGlass: true,
+        );
+        expect(LiquidGlassHost.debugLastCapture?.panes ?? const [], isEmpty);
+        final header = tester.element(find.byKey(_headerKey));
+        expect(GlassSurfaceScope.of(header), isTrue);
+        final shot = await _snapshot(tester, '${quality.name}-flat');
+        final fill = Color.alphaBlend(glassRaisedFillOf(header), _backdrop);
+        expect(_pixel(shot, 21, 1), _backdrop);
+        expect(_pixel(shot, 120, 100), isSameColorAs(fill, threshold: 0.01));
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        controller.dispose();
+      }
+    });
+
     testWidgets('the complete group paints rounded outer corners and no seam '
         '(${quality.name})', (tester) async {
       final controller = ScrollController();

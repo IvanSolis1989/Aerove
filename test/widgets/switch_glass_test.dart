@@ -60,6 +60,16 @@ Finder get _panes => find.descendant(
 );
 Rect _thumb(WidgetTester tester) => tester.getRect(_panes.last);
 
+Finder get _track => find
+    .descendant(
+      of: find.byType(GlassSwitch),
+      matching: find.byType(DecoratedBox),
+    )
+    .at(1);
+
+Color? _trackFill(WidgetTester tester) =>
+    (tester.widget<DecoratedBox>(_track).decoration as ShapeDecoration).color;
+
 Future<({List<int> pixels, int width})> _frame(
   WidgetTester tester,
   String name,
@@ -149,7 +159,7 @@ void main() {
             ),
           );
           await tester.pumpAndSettle();
-          expect(_panes, findsNWidgets(2));
+          expect(_panes, findsOneWidget);
           expect(
             tester.getSize(find.byType(GlassSwitch)),
             tester.getSize(find.byType(Switch)),
@@ -276,7 +286,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('settings rows share glass and preserve their row action', (
+  testWidgets('a row on the page keeps one pane and its row action', (
     tester,
   ) async {
     final changes = <bool>[];
@@ -294,7 +304,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byType(GlassSwitch), findsOneWidget);
-    expect(_panes, findsNWidgets(2));
+    expect(_panes, findsOneWidget);
     await tester.tap(find.text('LAN'));
     await tester.pumpAndSettle();
     expect(changes, [true]);
@@ -354,11 +364,13 @@ void main() {
       await tester.pump();
       await tester.pump();
       expect(_thumb(tester).center.dx - before.center.dx, closeTo(20, 0.01));
-      for (final pane in tester.widgetList<LiquidGlass>(_panes)) {
-        expect(pane.style.tint.r, Colors.orange.r);
-        expect(pane.style.tint.g, Colors.orange.g);
-        expect(pane.style.tint.b, Colors.orange.b);
-        expect(pane.style.tint.a, lessThan(1));
+      final pane = tester.widget<LiquidGlass>(_panes);
+      final fill = _trackFill(tester)!;
+      for (final tint in [pane.style.tint, fill]) {
+        expect(tint.r, Colors.orange.r);
+        expect(tint.g, Colors.orange.g);
+        expect(tint.b, Colors.orange.b);
+        expect(tint.a, lessThan(1));
       }
       final ink = tester.widget<GlassInk>(find.byType(GlassInk));
       expect(ink.source, Colors.orange);
@@ -374,7 +386,7 @@ void main() {
     for (final quality in LiquidGlassQuality.values) {
       for (final value in [false, true]) {
         testWidgets(
-          'track and thumb transmit moving source $brightness $quality on=$value',
+          'flat track and thumb pane transmit moving source $brightness $quality on=$value',
           (tester) async {
             tester.view.physicalSize = const Size(240, 160);
             tester.view.devicePixelRatio = 1;
@@ -406,7 +418,16 @@ void main() {
                 );
               }
               final thumb = _thumb(tester);
-              final track = tester.getRect(_panes.first);
+              final track = tester.getRect(_track);
+              final colors = Theme.of(
+                tester.element(find.byType(Switch)),
+              ).colorScheme;
+              expect(
+                _trackFill(tester),
+                value
+                    ? colors.primary.withValues(alpha: 0.35)
+                    : glassFillOf(colors),
+              );
               for (final point in [
                 thumb.center + const Offset(0, 6),
                 Offset(
@@ -427,12 +448,12 @@ void main() {
                   red + blue,
                   greaterThan(40),
                   reason:
-                      'both optical surfaces must transmit the source instead of solid thumb paint',
+                      'the pane and the flat track must both let the source through',
                 );
               }
               expect(find.byType(LiquidGlassHost), findsOneWidget);
               final capture = LiquidGlassHost.debugLastCapture!;
-              expect(capture.panes, hasLength(2));
+              expect(capture.panes, hasLength(1));
               expect(
                 capture.panes.every(
                   (pane) => pane.wallpaper && pane.level == 0,
