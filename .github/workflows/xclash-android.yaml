@@ -313,6 +313,10 @@ jobs:
           XCLASH_REQUIRE_IMPELLER=true \
             XCLASH_SCREENSHOT_DIR="$RUNNER_TEMP/xclash-previews/impeller" \
             flutter test --enable-impeller --reporter expanded \
+              test/widgets/glass_surface_scope_test.dart test/widgets/page_surfaces_glass_test.dart \
+              test/widgets/text_context_menu_test.dart test/widgets/linear_loading_test.dart \
+              test/widgets/record_table_scroll_test.dart test/widgets/liquid_glass_test.dart \
+              test/widgets/sheet_drag_handle_test.dart \
               test/widgets/header_blur_test.dart test/widgets/glass_scroll_test.dart \
               test/widgets/liquid_glass_host_test.dart test/widgets/glass_foreground_test.dart \
               test/widgets/sliver_glass_group_test.dart test/widgets/header_title_test.dart test/widgets/sheet_surface_render_test.dart test/widgets/subscription_usage_fill_test.dart test/views/dashboard/traffic_test.dart \
@@ -323,6 +327,8 @@ jobs:
           flutter test --reporter expanded \
             test/application_theme_test.dart \
             test/features/glass_feature_surfaces_test.dart \
+            test/features/custom_quick_edit_test.dart test/features/editor_completion_test.dart \
+            test/manager/window_header_test.dart test/manager/window_manager_test.dart \
             test/pages/editor_load_test.dart test/pages/scan_test.dart \
             test/models/config_test.dart test/models/dns_override_test.dart test/providers/config_test.dart \
             test/manager/theme_manager_test.dart test/manager/status_manager_test.dart test/manager/status_message_glass_test.dart \
