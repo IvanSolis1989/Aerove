@@ -393,15 +393,14 @@ class _ColorSwatches extends ConsumerWidget {
     final systemColor = ref
         .watch(dynamicColorProvider)
         .seedOf(Theme.of(context).brightness);
-    return Container(
+    final swatches = Container(
       padding: const EdgeInsets.all(_inset),
-      decoration: ShapeDecoration(
-        color: LiquidGlassScope.surfaceColorOf(
-          context,
-          level.colorOf(colorScheme),
-        ),
-        shape: AppShape.xl,
-      ),
+      decoration: LiquidGlassScope.of(context)
+          ? null
+          : ShapeDecoration(
+              color: level.colorOf(colorScheme),
+              shape: AppShape.xl,
+            ),
       child: SurfaceScope(
         level: level,
         child: LayoutBuilder(
@@ -451,6 +450,7 @@ class _ColorSwatches extends ConsumerWidget {
         ),
       ),
     );
+    return CardGroup(child: swatches);
   }
 }
 
@@ -545,11 +545,15 @@ class _ColorSwatchState extends State<_ColorSwatch> {
                   scale: selected ? 1 : 0,
                   duration: _ColorSwatch._duration,
                   curve: Curves.easeOutBack,
-                  child: GlyphIcon(
-                    AppGlyphs.check,
-                    size: 18,
-                    fill: 1,
-                    color: check,
+                  child: LiquidGlassScope(
+                    enabled: false,
+                    quality: LiquidGlassScope.qualityOf(context),
+                    child: GlyphIcon(
+                      AppGlyphs.check,
+                      size: 18,
+                      fill: 1,
+                      color: check,
+                    ),
                   ),
                 ),
               ],
@@ -926,10 +930,9 @@ class _FontFamilyItem extends ConsumerWidget {
         ],
       ),
     );
-    final cardColor = LiquidGlassScope.surfaceColorOf(
-      context,
-      context.raisedSurfaceLevel.colorOf(colorScheme),
-    );
+    final cardColor = LiquidGlassScope.of(context)
+        ? Colors.transparent
+        : context.raisedSurfaceLevel.colorOf(colorScheme);
     Widget card(VoidCallback onTap) => Material(
       color: cardColor,
       shape: AppShape.lg,
@@ -944,19 +947,22 @@ class _FontFamilyItem extends ConsumerWidget {
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-          child: context.isMobileView
-              ? OpenContainer<void>(
-                  closedShape: AppShape.lg,
-                  closedColor: cardColor,
-                  closedBuilder: (_, open) => card(open),
-                  openBuilder: (_, _) => const FontFamilyView(),
-                )
-              : card(
-                  () => showSheet<void>(
-                    context: context,
-                    builder: (_) => const FontFamilyView(),
+          child: CardGroup(
+            shape: AppShape.lg,
+            child: context.isMobileView
+                ? OpenContainer<void>(
+                    closedShape: AppShape.lg,
+                    closedColor: cardColor,
+                    closedBuilder: (_, open) => card(open),
+                    openBuilder: (_, _) => const FontFamilyView(),
+                  )
+                : card(
+                    () => showSheet<void>(
+                      context: context,
+                      builder: (_) => const FontFamilyView(),
+                    ),
                   ),
-                ),
+          ),
         ),
       ],
     );
@@ -1027,129 +1033,131 @@ class _TextScaleFactorItemState extends ConsumerState<_TextScaleFactorItem> {
                 onChanged: (value) =>
                     _update((state) => state.copyWith(enable: value)),
               ),
-              Container(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                decoration: ShapeDecoration(
-                  color: LiquidGlassScope.surfaceColorOf(
-                    context,
-                    level.colorOf(colorScheme),
-                  ),
-                  shape: AppShape.lg,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      spacing: 12,
-                      children: [
-                        Expanded(
-                          child: AnimatedSize(
-                            duration: const Duration(milliseconds: 200),
-                            curve: Curves.easeOutCubic,
-                            alignment: Alignment.topLeft,
-                            child: MediaQuery(
-                              data: MediaQuery.of(
-                                context,
-                              ).copyWith(textScaler: TextScaler.linear(scale)),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                spacing: 4,
-                                children: [
-                                  GlassText(
-                                    'Aa',
-                                    style: AppTextStyle.title3.of(context),
-                                  ),
-                                  GlassText(
-                                    appLocalizations.textScalePreview,
-                                    style: AppTextStyle.subheadline
-                                        .of(context)
-                                        .copyWith(
-                                          color: colorScheme.onSurfaceVariant,
-                                        ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
+              CardGroup(
+                shape: AppShape.lg,
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  decoration: LiquidGlassScope.of(context)
+                      ? null
+                      : ShapeDecoration(
+                          color: level.colorOf(colorScheme),
+                          shape: AppShape.lg,
                         ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 4,
-                          ),
-                          decoration: ShapeDecoration(
-                            color: LiquidGlassScope.surfaceColorOf(
-                              context,
-                              level.next.colorOf(colorScheme),
-                            ),
-                            shape: AppShape.full,
-                          ),
-                          child: GlassText(
-                            percent,
-                            style: AppTextStyle.subheadline
-                                .of(context, emphasized: true)
-                                .copyWith(
-                                  color: colorScheme.onSurfaceVariant,
-                                  fontFeatures: const [
-                                    FontFeature.tabularFigures(),
-                                  ],
-                                ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    MediaQuery.withNoTextScaling(
-                      child: Row(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         spacing: 12,
                         children: [
-                          ExcludeSemantics(
-                            child: GlassText(
-                              'A',
-                              style: AppTextStyle.footnote
-                                  .of(context)
-                                  .copyWith(
-                                    color: colorScheme.onSurfaceVariant,
-                                  ),
-                            ),
-                          ),
                           Expanded(
-                            child: SliderTheme(
-                              data: SliderDefaultsM3(context),
-                              child: GlassSlider(
-                                child: Slider(
-                                  padding: EdgeInsets.zero,
-                                  min: minTextScale,
-                                  max: maxTextScale,
-                                  divisions: divisions,
-                                  value: scale,
-                                  label: percent,
-                                  onChanged: textScale.enable
-                                      ? (value) =>
-                                            setState(() => _draft = value)
-                                      : null,
-                                  onChangeEnd: (value) => _update(
-                                    (state) => state.copyWith(scale: value),
-                                  ),
+                            child: AnimatedSize(
+                              duration: const Duration(milliseconds: 200),
+                              curve: Curves.easeOutCubic,
+                              alignment: Alignment.topLeft,
+                              child: MediaQuery(
+                                data: MediaQuery.of(context).copyWith(
+                                  textScaler: TextScaler.linear(scale),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  spacing: 4,
+                                  children: [
+                                    GlassText(
+                                      'Aa',
+                                      style: AppTextStyle.title3.of(context),
+                                    ),
+                                    GlassText(
+                                      appLocalizations.textScalePreview,
+                                      style: AppTextStyle.subheadline
+                                          .of(context)
+                                          .copyWith(
+                                            color: colorScheme.onSurfaceVariant,
+                                          ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ),
                           ),
-                          ExcludeSemantics(
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            decoration: ShapeDecoration(
+                              color: LiquidGlassScope.surfaceColorOf(
+                                context,
+                                level.next.colorOf(colorScheme),
+                              ),
+                              shape: AppShape.full,
+                            ),
                             child: GlassText(
-                              'A',
-                              style: AppTextStyle.title2
-                                  .of(context)
+                              percent,
+                              style: AppTextStyle.subheadline
+                                  .of(context, emphasized: true)
                                   .copyWith(
                                     color: colorScheme.onSurfaceVariant,
+                                    fontFeatures: const [
+                                      FontFeature.tabularFigures(),
+                                    ],
                                   ),
                             ),
                           ),
                         ],
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 8),
+                      MediaQuery.withNoTextScaling(
+                        child: Row(
+                          spacing: 12,
+                          children: [
+                            ExcludeSemantics(
+                              child: GlassText(
+                                'A',
+                                style: AppTextStyle.footnote
+                                    .of(context)
+                                    .copyWith(
+                                      color: colorScheme.onSurfaceVariant,
+                                    ),
+                              ),
+                            ),
+                            Expanded(
+                              child: SliderTheme(
+                                data: SliderDefaultsM3(context),
+                                child: GlassSlider(
+                                  child: Slider(
+                                    padding: EdgeInsets.zero,
+                                    min: minTextScale,
+                                    max: maxTextScale,
+                                    divisions: divisions,
+                                    value: scale,
+                                    label: percent,
+                                    onChanged: textScale.enable
+                                        ? (value) =>
+                                              setState(() => _draft = value)
+                                        : null,
+                                    onChangeEnd: (value) => _update(
+                                      (state) => state.copyWith(scale: value),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            ExcludeSemantics(
+                              child: GlassText(
+                                'A',
+                                style: AppTextStyle.title2
+                                    .of(context)
+                                    .copyWith(
+                                      color: colorScheme.onSurfaceVariant,
+                                    ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ],

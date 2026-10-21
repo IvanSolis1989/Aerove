@@ -192,17 +192,15 @@ class _ThemeLivePreviewState extends ConsumerState<ThemeLivePreview>
       ),
     );
     final corner = AppCorner.fit(_phoneWidth);
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
+    final card = Container(
       padding: const EdgeInsets.symmetric(vertical: 24),
       alignment: Alignment.center,
-      decoration: ShapeDecoration(
-        color: LiquidGlassScope.surfaceColorOf(
-          context,
-          context.raisedSurfaceLevel.colorOf(context.colorScheme),
-        ),
-        shape: AppShape.xxl,
-      ),
+      decoration: LiquidGlassScope.of(context)
+          ? null
+          : ShapeDecoration(
+              color: context.raisedSurfaceLevel.colorOf(context.colorScheme),
+              shape: AppShape.xxl,
+            ),
       child: SizedBox(
         width: _phoneWidth,
         child: AspectRatio(
@@ -233,6 +231,10 @@ class _ThemeLivePreviewState extends ConsumerState<ThemeLivePreview>
           ),
         ),
       ),
+    );
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: CardGroup(shape: AppShape.xxl, child: card),
     );
   }
 }

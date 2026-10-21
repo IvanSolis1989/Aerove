@@ -1,0 +1,372 @@
+import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/enum/enum.dart';
+import 'package:fl_clash/l10n/l10n.dart';
+import 'package:fl_clash/manager/theme_manager.dart';
+import 'package:fl_clash/models/models.dart';
+import 'package:fl_clash/providers/providers.dart';
+import 'package:fl_clash/state.dart';
+import 'package:fl_clash/ui/glass_foreground.dart';
+import 'package:fl_clash/ui/icons/icons.dart';
+import 'package:fl_clash/ui/ui.dart';
+import 'package:fl_clash/views/access.dart';
+import 'package:fl_clash/views/config/on_demand.dart';
+import 'package:fl_clash/views/dashboard/dashboard.dart';
+import 'package:fl_clash/views/hotkey.dart';
+import 'package:fl_clash/views/theme.dart';
+import 'package:fl_clash/views/theme_preview.dart';
+import 'package:fl_clash/widgets/aurora.dart';
+import 'package:fl_clash/widgets/widgets.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
+import 'package:riverpod_annotation/riverpod_annotation.dart' show Override;
+import 'package:wifi_ssid/wifi_ssid.dart';
+
+import '../helpers/test_app.dart';
+import '../helpers/test_profiles.dart';
+
+class _ExcludeSSIDs extends ExcludeSSIDs {
+  @override
+  List<String> build() => const ['Home'];
+}
+
+class _LocationPermissions extends LocationPermissions {
+  @override
+  WifiSsidPermission build() => WifiSsidPermission.denied;
+}
+
+class _BatteryIgnored extends BatteryOptimizationIgnored {
+  @override
+  Stream<bool> build() => Stream.value(false);
+}
+
+class _SystemAction extends SystemAction {
+  @override
+  Future<List<Package>> getPackages() async => ref.read(packagesProvider);
+
+  @override
+  Future<bool> isInstalledAppsPermissionGranted() async => true;
+}
+
+typedef _Case = ({
+  Brightness brightness,
+  LiquidGlassMode mode,
+  bool highContrast,
+});
+
+final _cases = <_Case>[
+  for (final brightness in Brightness.values) ...[
+    for (final mode in LiquidGlassMode.values)
+      (brightness: brightness, mode: mode, highContrast: false),
+    (brightness: brightness, mode: LiquidGlassMode.ultra, highContrast: true),
+  ],
+];
+
+Future<void> _pump(
+  WidgetTester tester,
+  _Case glass, {
+  required Widget page,
+  Size size = const Size(400, 900),
+  List<Override> overrides = const [],
+  void Function(ProviderContainer container)? seed,
+}) async {
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  final container = ProviderContainer(
+    overrides: [
+      profilesProvider.overrideWith(TestProfiles.new),
+      themeSettingProvider.overrideWithBuild(
+        (_, _) => ThemeProps(
+          themeMode: glass.brightness == Brightness.light
+              ? ThemeMode.light
+              : ThemeMode.dark,
+          liquidGlass: glass.mode,
+          auroraEnabled: false,
+        ),
+      ),
+      ...overrides,
+    ],
+  );
+  addTearDown(container.dispose);
+  addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+  globalState.container = container;
+  container.read(viewSizeProvider.notifier).value = size;
+  seed?.call(container);
+  await tester.pumpWidget(
+    UncontrolledProviderScope(
+      container: container,
+      child: Consumer(
+        builder: (_, ref, _) => MaterialApp(
+          navigatorKey: globalState.navigatorKey,
+          theme: watchAppTheme(ref, glass.brightness),
+          darkTheme: watchAppTheme(ref, glass.brightness),
+          themeMode: glass.brightness == Brightness.light
+              ? ThemeMode.light
+              : ThemeMode.dark,
+          localizationsDelegates: const [
+            AppLocalizations.delegate,
+            AppUiLocalizations.delegate,
+            ...GlobalMaterialLocalizations.delegates,
+          ],
+          supportedLocales: AppLocalizations.delegate.supportedLocales,
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(highContrast: glass.highContrast),
+            child: wrapAppScopes(
+              context,
+              AuroraAppSurface(motion: false, child: child!),
+            ),
+          ),
+          home: page,
+        ),
+      ),
+    ),
+  );
+  for (var frame = 0; frame < 6; frame++) {
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+}
+
+bool _glassOn(_Case glass) =>
+    glass.mode != LiquidGlassMode.none && !glass.highContrast;
+
+String _name(_Case glass) =>
+    '${glass.brightness.name} ${glass.mode.name}'
+    '${glass.highContrast ? ' high contrast' : ''}';
+
+/// The card [anchor] sits on: one [CardGroup] pane on glass with no fill of
+/// its own between the pane and [anchor], the opaque fill off glass.
+void _expectOneCardPane(WidgetTester tester, Finder anchor, _Case glass) {
+  expect(anchor, findsWidgets);
+  final group = find.ancestor(
+    of: anchor.first,
+    matching: find.byType(CardGroup),
+  );
+  expect(group, findsOneWidget);
+  expect(
+    find.descendant(of: group, matching: find.byType(LiquidGlass)),
+    _glassOn(glass) ? findsWidgets : findsNothing,
+  );
+  final fills = <Color>[];
+  final groupElement = tester.element(group);
+  tester.element(anchor.first).visitAncestorElements((element) {
+    if (identical(element, groupElement)) return false;
+    final widget = element.widget;
+    final decoration = switch (widget) {
+      Container(:final decoration?) => decoration,
+      DecoratedBox(:final decoration) => decoration,
+      _ => null,
+    };
+    if (decoration case ShapeDecoration(:final color?)) fills.add(color);
+    if (widget case Material(:final color?)) fills.add(color);
+    return true;
+  });
+  if (_glassOn(glass)) {
+    expect(fills.where((color) => color.a > 0), isEmpty);
+  } else {
+    expect(fills.where((color) => color.a == 1), isNotEmpty);
+  }
+}
+
+void main() {
+  for (final glass in _cases) {
+    testWidgets('theme page cards stand on one pane each ${_name(glass)}', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        glass,
+        page: const ThemeView(),
+        size: const Size(400, 4200),
+      );
+      _expectOneCardPane(
+        tester,
+        find.descendant(
+          of: find.byType(ThemeLivePreview),
+          matching: find.byType(MiniScreen),
+        ),
+        glass,
+      );
+      _expectOneCardPane(tester, find.byTooltip('Add'), glass);
+      _expectOneCardPane(tester, find.text('Default'), glass);
+      _expectOneCardPane(
+        tester,
+        find.text('Text in the app will look like this'),
+        glass,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the hotkey intro stands on one pane ${_name(glass)}', (
+      tester,
+    ) async {
+      await _pump(tester, glass, page: const HotKeyView());
+      _expectOneCardPane(
+        tester,
+        find.textContaining('Global hotkeys work even while'),
+        glass,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    for (final enable in [false, true]) {
+      testWidgets('the access banner is one pane, enabled $enable '
+          '${_name(glass)}', (tester) async {
+        await _pump(
+          tester,
+          glass,
+          page: const AccessView(),
+          overrides: [systemActionProvider.overrideWith(_SystemAction.new)],
+          seed: (container) {
+            container.read(packagesProvider.notifier).value = const [
+              Package(
+                packageName: 'com.example.chat',
+                label: 'Chat',
+                system: false,
+                internet: true,
+                lastUpdateTime: 0,
+              ),
+            ];
+            container.read(vpnSettingProvider.notifier).value = VpnProps(
+              accessControlProps: AccessControlProps(enable: enable),
+            );
+          },
+        );
+        final banner = find.byType(MaterialBanner);
+        expect(banner, findsOneWidget);
+        expect(
+          find.ancestor(of: banner, matching: find.byType(CardGroup)),
+          _glassOn(glass) ? findsOneWidget : findsNothing,
+        );
+        final background = tester
+            .widget<MaterialBanner>(banner)
+            .backgroundColor!;
+        expect(background.a, _glassOn(glass) ? 0 : 1);
+        if (enable) {
+          final scheme = Theme.of(tester.element(banner)).colorScheme;
+          for (final label in [find.text('Selected'), find.text('0')]) {
+            expect(label, findsOneWidget);
+            expect(
+              find.descendant(of: label, matching: find.byType(GlassInk)),
+              findsNothing,
+            );
+            expect(
+              GlassForeground.colorsInk(
+                tester.element(label),
+                scheme.onPrimary,
+              ),
+              isFalse,
+            );
+            expect(tester.widget<Text>(label).style?.color, scheme.onPrimary);
+          }
+          final chip = tester.widget<Card>(
+            find.ancestor(
+              of: find.text('Selected'),
+              matching: find.byType(Card),
+            ),
+          );
+          expect(chip.color, scheme.primary);
+        }
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    testWidgets('the on-demand authorize button keeps its warning fill '
+        '${_name(glass)}', (tester) async {
+      await _pump(
+        tester,
+        glass,
+        page: const OnDemandView(isAndroid: true, isMacOS: false),
+        overrides: [
+          excludeSSIDsProvider.overrideWith(_ExcludeSSIDs.new),
+          locationPermissionsProvider.overrideWith(_LocationPermissions.new),
+          batteryOptimizationIgnoredProvider.overrideWith(_BatteryIgnored.new),
+          isStartProvider.overrideWithValue(false),
+        ],
+      );
+      await tester.pumpAndSettle();
+      final labels = find.text('Tap to authorize').evaluate().toList();
+      expect(labels, hasLength(2));
+      for (final label in labels) {
+        final button = find.byWidget(
+          label.findAncestorWidgetOfExactType<FilledButton>()!,
+        );
+        final scheme = Theme.of(label).colorScheme;
+        final fill = find
+            .descendant(of: button, matching: find.byType(Material))
+            .first;
+        expect(tester.widget<Material>(fill).color, scheme.errorContainer);
+        expect(
+          find.descendant(of: button, matching: find.byType(LiquidGlass)),
+          findsNothing,
+        );
+      }
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('dashboard edit badges keep their state fills '
+        '${_name(glass)}', (tester) async {
+      await _pump(
+        tester,
+        glass,
+        page: const DashboardView(platform: SupportPlatform.Android),
+        size: const Size(412, 1800),
+        seed: (container) => container
+            .read(appSettingProvider.notifier)
+            .update(
+              (state) => state.copyWith(
+                dashboardWidgets: const [
+                  DashboardWidget.networkSpeed,
+                  DashboardWidget.outboundMode,
+                ],
+              ),
+            ),
+      );
+      await tester.tap(find.byTooltip('Edit dashboard'));
+      for (var frame = 0; frame < 10; frame++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      for (final (prefix, fillOf, glyphOf) in [
+        (
+          'Remove ',
+          (ColorScheme scheme) => scheme.errorContainer,
+          (ColorScheme scheme) => scheme.onErrorContainer,
+        ),
+        (
+          'Add ',
+          (ColorScheme scheme) => scheme.primary,
+          (ColorScheme scheme) => scheme.onPrimary,
+        ),
+      ]) {
+        final badges = find.byWidgetPredicate(
+          (widget) =>
+              widget is IconButton &&
+              widget.tooltip?.startsWith(prefix) == true,
+        );
+        expect(badges, findsWidgets, reason: prefix);
+        final badge = badges.first;
+        final scheme = Theme.of(tester.element(badge)).colorScheme;
+        final fill = find
+            .descendant(of: badge, matching: find.byType(Material))
+            .first;
+        expect(tester.widget<Material>(fill).color, fillOf(scheme));
+        expect(
+          find.descendant(of: badge, matching: find.byType(LiquidGlass)),
+          findsNothing,
+        );
+        final glyph = find.descendant(
+          of: badge,
+          matching: find.byType(GlyphIcon),
+        );
+        expect(tester.widget<GlyphIcon>(glyph).color, glyphOf(scheme));
+        expect(
+          GlassForeground.colorsInk(tester.element(glyph), glyphOf(scheme)),
+          isFalse,
+        );
+      }
+      expect(tester.takeException(), isNull);
+    });
+  }
+}
