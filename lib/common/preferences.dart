@@ -183,6 +183,16 @@ class Preferences {
     await preferences?.setString(lastPageLabelKey, label.name);
   }
 
+  Future<String?> getPromptedUpdateTag() async {
+    final preferences = await _store.value;
+    return preferences?.getString(promptedUpdateTagKey);
+  }
+
+  Future<void> savePromptedUpdateTag(String tag) async {
+    final preferences = await _store.value;
+    await preferences?.setString(promptedUpdateTagKey, tag);
+  }
+
   Future<void> clearPreferences() async {
     final sharedPreferencesIns = await _store.value;
     await sharedPreferencesIns?.clear();

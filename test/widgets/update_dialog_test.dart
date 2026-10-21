@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:dio/dio.dart';
+import 'package:fl_clash/common/request.dart';
 import 'package:fl_clash/providers/action.dart';
 import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/providers/config.dart';
@@ -11,6 +13,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../helpers/preferences.dart';
 import '../helpers/test_app.dart';
 
 const _runningVersion = '0.8.95';
@@ -35,6 +38,28 @@ Map<String, dynamic> release(String? body) => <String, dynamic>{
   'tag_name': 'v0.8.96',
   'body': body,
 };
+
+class _LatestRelease implements HttpClientAdapter {
+  String tag = 'v0.8.96';
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    return ResponseBody.fromString(
+      jsonEncode({'tag_name': tag, 'body': _bulletsOnly}),
+      200,
+      headers: {
+        Headers.contentTypeHeader: [Headers.jsonContentType],
+      },
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
 
 Future<ProviderContainer> pumpApp(
   WidgetTester tester, {
@@ -323,5 +348,59 @@ void main() {
     expect(find.textContaining('v0.8.96'), findsOneWidget);
     await tapCancel(tester);
     await retry;
+  });
+
+  group('automatic checks', () {
+    late HttpClientAdapter adapter;
+    late _LatestRelease latest;
+
+    setUp(() async {
+      await mockPreferences();
+      adapter = request.dio.httpClientAdapter;
+      latest = _LatestRelease();
+      request.dio.httpClientAdapter = latest;
+    });
+
+    tearDown(() => request.dio.httpClientAdapter = adapter);
+
+    Future<void> dismiss(WidgetTester tester) async {
+      Navigator.of(tester.element(find.byType(CommonDialog))).pop();
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('prompt each release once while a manual check still shows', (
+      tester,
+    ) async {
+      final container = await pumpApp(tester);
+      final action = container.read(commonActionProvider.notifier);
+
+      final first = action.autoCheckUpdate();
+      await tester.pumpAndSettle();
+      expect(find.textContaining('v0.8.96'), findsOneWidget);
+      await dismiss(tester);
+      expect(await first, isTrue);
+
+      final reopened = action.autoCheckUpdate();
+      await tester.pumpAndSettle();
+      expect(find.byType(CommonDialog), findsNothing);
+      expect(await reopened, isTrue);
+
+      final manual = action.checkUpdateResultHandle(
+        data: release(_bulletsOnly),
+        isUser: true,
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('v0.8.96'), findsOneWidget);
+      await tapCancel(tester);
+      await manual;
+
+      latest.tag = 'v0.8.97';
+      final next = action.autoCheckUpdate();
+      await tester.pumpAndSettle();
+      expect(find.textContaining('v0.8.97'), findsOneWidget);
+      await dismiss(tester);
+      await next;
+      expect(container.read(appSettingProvider).autoCheckUpdate, isTrue);
+    });
   });
 }
