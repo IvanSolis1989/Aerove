@@ -658,6 +658,11 @@ pressed last over the neighbours it swells past. `lib/ui/liquid_glass.dart` hold
   docked search and the disclaimer's actions are panes wherever they stand. Plain solid and high contrast set no glass,
   so the scope is off there and every control keeps its Material look.
 
+- Foreground ink is independently enabled by `LiquidGlassScope.foregroundEnabled`. Plain solid with Aurora wallpaper
+  uses the shared host for ink only, with lower saturation and brightness than Soft frost and no optical panes.
+  On-primary ink retains its original color on solid controls; selection marks explicitly keep their original ink.
+  A nested disabled scope still disables ink unless explicitly overridden; high contrast and pure black stay opaque.
+
 - `LiquidGlassStyle.card` gives Soft frost cards a raised-surface tint; blur alone vanishes over a smooth wallpaper.
   Clear shimmer keeps the regular clear pane. Connected dashboard buttons leave their unchosen segments transparent,
   so the chosen 20% primary fill remains distinct without making the label's backing too bright in dark mode.

@@ -60,14 +60,21 @@ class LiquidGlassScope extends InheritedWidget {
   const LiquidGlassScope({
     super.key,
     required this.enabled,
+    this.foregroundEnabled,
     this.quality = LiquidGlassQuality.ultra,
     required super.child,
   });
 
   final bool enabled;
+  final bool? foregroundEnabled;
   final LiquidGlassQuality quality;
 
   static bool of(BuildContext context) => _of(context)?.enabled ?? false;
+
+  static bool foregroundOf(BuildContext context) {
+    final scope = _of(context);
+    return scope?.foregroundEnabled ?? scope?.enabled ?? false;
+  }
 
   static Color surfaceColorOf(
     BuildContext context,
@@ -87,7 +94,9 @@ class LiquidGlassScope extends InheritedWidget {
 
   @override
   bool updateShouldNotify(LiquidGlassScope oldWidget) =>
-      enabled != oldWidget.enabled || quality != oldWidget.quality;
+      enabled != oldWidget.enabled ||
+      foregroundEnabled != oldWidget.foregroundEnabled ||
+      quality != oldWidget.quality;
 }
 
 /// A pane already lies behind [child] (.agents/architecture.md).

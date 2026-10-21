@@ -25,6 +25,8 @@ Choose between two treatments of light: **Soft frost** gives page-body surfaces 
 
 **Friendly tip: On less powerful devices, consider Soft frost, or choose Plain solid to turn Liquid Glass off and reduce rendering work. You can keep the random gradient wallpaper with glass disabled.**
 
+With a random gradient wallpaper, Plain solid gives ordinary text and icons a subtler background tint than Soft frost. Black and white solid controls retain their original colors without glass optics.
+
 - Generate a gradient wallpaper from 1–3 colors and tap **New wallpaper** to change its composition. The palette and composition persist. Automatic rotation becomes due at 05:00 local time each day and applies silently in the background without interrupting browsing.
 - Aurora wallpaper and Clear shimmer glass are the defaults. Switching to an ordinary theme color restores the regular palette; glass strength can be adjusted separately. Brightness can follow the system or be selected manually, while high-contrast and pure-black dark modes keep opaque surfaces.
 - Glass extends across dashboards, proxy groups, cards, fields, navigation, menus, popups, the editor, and forms, including copy, paste, and overflow menus. Cards and panels keep one glass layer; buttons, switches, slider thumbs, and segmented selectors on that layer use flat fills while retaining drag, keyboard, and state feedback. Text and icons coordinate with the background while preserving readability, and status messages retain distinct colors. No-glass and high-contrast modes use opaque fallbacks.

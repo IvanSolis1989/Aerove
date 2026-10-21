@@ -95,11 +95,12 @@ class _AuroraAppSurfaceState extends ConsumerState<AuroraAppSurface>
     );
     final surface = LiquidGlassScope(
       enabled: glassEnabled,
+      foregroundEnabled: glassEnabled || enabled,
       quality: glassMode == LiquidGlassMode.ultra
           ? LiquidGlassQuality.ultra
           : LiquidGlassQuality.standard,
       child: LiquidGlassHost(
-        enabled: glassEnabled,
+        enabled: glassEnabled || enabled,
         wallpaperOnly: true,
         child: AuroraAppearance(
           enabled: enabled,

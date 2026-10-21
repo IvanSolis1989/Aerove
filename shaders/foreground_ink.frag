@@ -11,6 +11,7 @@ uniform float uContrast;
 uniform float uAlpha;
 uniform vec3 uSource;
 uniform float uUltra;
+uniform float uSubtle;
 uniform sampler2D uField;
 out vec4 fragColor;
 
@@ -71,6 +72,11 @@ void main() {
     colored = readable(colored, background, backgroundLuminance, 1.0);
     strength *= mix(0.99, 1.0, uUltra);
   }
-  vec3 ink = readable(mix(uSource, colored, strength), background, backgroundLuminance, uAlpha);
+  vec3 ink = mix(uSource, colored, strength);
+  if (uSubtle > 0.5) {
+    float neutral = dot(ink, vec3(0.2126, 0.7152, 0.0722));
+    ink = mix(vec3(neutral), ink, 0.52) * mix(1.0, 0.84, uDark);
+  }
+  ink = readable(ink, background, backgroundLuminance, uAlpha);
   fragColor = vec4(ink, 1.0);
 }

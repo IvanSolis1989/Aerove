@@ -3,6 +3,7 @@ import 'package:fl_clash/ui/foreground_ink.dart';
 import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/glyph_painter.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
+import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/shape.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -13,12 +14,15 @@ class SelectionCheck extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GlyphIcon(
+    final icon = GlyphIcon(
       AppGlyphs.check,
       size: size,
       fill: 1,
       color: context.colorScheme.primary,
     );
+    return LiquidGlassScope.of(context)
+        ? icon
+        : LiquidGlassScope(enabled: false, child: icon);
   }
 }
 
@@ -42,7 +46,8 @@ class SelectionBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
-    if (GlassForeground.colorsInk(context, colorScheme.onSurface)) {
+    if (LiquidGlassScope.of(context) &&
+        GlassForeground.colorsInk(context, colorScheme.onSurface)) {
       return GlassInk(
         source: colorScheme.onSurface,
         role: GlassInkRole.icon,
@@ -65,12 +70,15 @@ class SelectionBadge extends StatelessWidget {
               ? colorScheme.primary.withValues(alpha: 0.14)
               : colorScheme.primary,
         ),
-        child: Center(
-          child: GlyphIcon(
-            glyph,
-            size: size - 6,
-            fill: 1,
-            color: tonal ? colorScheme.primary : colorScheme.onPrimary,
+        child: LiquidGlassScope(
+          enabled: false,
+          child: Center(
+            child: GlyphIcon(
+              glyph,
+              size: size - 6,
+              fill: 1,
+              color: tonal ? colorScheme.primary : colorScheme.onPrimary,
+            ),
           ),
         ),
       ),

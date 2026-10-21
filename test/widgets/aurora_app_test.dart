@@ -8,6 +8,10 @@ import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
+import 'package:fl_clash/ui/foreground_ink.dart';
+import 'package:fl_clash/ui/icons/icons.dart';
+import 'package:fl_clash/ui/selection_mark.dart';
+import 'package:fl_clash/ui/switch.dart';
 import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/providers/database.dart';
@@ -136,6 +140,113 @@ void main() {
   );
 
   for (final brightness in Brightness.values) {
+    testWidgets('Plain ink preserves solid controls exactly $brightness', (
+      tester,
+    ) async {
+      const controls = [
+        'filled',
+        'badge',
+        'preferred',
+        'check',
+        'switch',
+        'checkbox',
+        'selected',
+        'ordinary',
+      ];
+      Widget capture(String name, Widget child) =>
+          RepaintBoundary(key: ValueKey(name), child: child);
+      Widget home(bool ink) => LiquidGlassScope(
+        enabled: false,
+        foregroundEnabled: ink,
+        child: Column(
+          children: [
+            const GlassText('Ordinary page text'),
+            capture(
+              'ordinary',
+              Builder(
+                builder: (context) => GlyphIcon(
+                  AppGlyphs.search,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+            ),
+            capture(
+              'filled',
+              FilledButton.icon(
+                onPressed: () {},
+                icon: const GlyphIcon(AppGlyphs.add),
+                label: const GlassText('Add'),
+              ),
+            ),
+            capture('badge', const SelectionBadge()),
+            capture('preferred', const SelectionBadge.preferred()),
+            capture('check', const SelectionCheck()),
+            capture(
+              'switch',
+              GlassSwitch(child: Switch(value: true, onChanged: (_) {})),
+            ),
+            capture('checkbox', Checkbox(value: true, onChanged: (_) {})),
+            capture(
+              'selected',
+              const CommonCard(isSelected: true, child: GlassText('Chosen')),
+            ),
+            const LiquidGlassScope(
+              enabled: false,
+              child: GlassText('Original foreground'),
+            ),
+          ],
+        ),
+      );
+      Future<List<List<int>>> render(bool ink) async {
+        await pumpSurface(
+          tester,
+          brightness: brightness,
+          props: const ThemeProps(liquidGlass: LiquidGlassMode.none),
+          home: Material(type: MaterialType.transparency, child: home(ink)),
+        );
+        expect(LiquidGlassHost.debugLastCapture?.panes, isEmpty);
+        expect(find.byType(BackdropFilter), findsNothing);
+        final bypass = tester.element(find.text('Original foreground'));
+        expect(LiquidGlassScope.foregroundOf(bypass), isFalse);
+        final pixels = <List<int>>[];
+        for (final name in controls) {
+          final boundary = tester.renderObject<RenderRepaintBoundary>(
+            find.byKey(ValueKey(name)),
+          );
+          pixels.add(
+            (await tester.runAsync(() async {
+              final image = await boundary.toImage();
+              try {
+                return (await image.toByteData(
+                  format: ui.ImageByteFormat.rawRgba,
+                ))!.buffer.asUint8List().toList();
+              } finally {
+                image.dispose();
+              }
+            }))!,
+          );
+        }
+        return pixels;
+      }
+
+      final original = await render(false);
+      final inked = await render(true);
+      for (final (index, name) in controls.indexed) {
+        if (name == 'ordinary' && ui.ImageFilter.isShaderFilterSupported) {
+          expect(inked[index], isNot(original[index]));
+          continue;
+        }
+        expect(
+          inked[index],
+          original[index],
+          reason: '$name keeps its solid look',
+        );
+      }
+      if (ui.ImageFilter.isShaderFilterSupported) {
+        expect(tester.layers.whereType<LiquidGlassInkLayer>(), isNotEmpty);
+      }
+    });
+
     testWidgets(
       'None keeps a visible wallpaper without control optics $brightness',
       (tester) async {
@@ -147,7 +258,7 @@ void main() {
           brightness: brightness,
           home: const CommonScaffold(
             title: 'Page',
-            body: Center(child: CommonCard(child: Text('XClash'))),
+            body: Center(child: CommonCard(child: GlassText('XClash'))),
           ),
         );
         final context = tester.element(find.byType(CommonCard));
@@ -156,15 +267,18 @@ void main() {
         expect(find.byType(SeededAuroraWallpaper), findsOneWidget);
         expect(
           tester.widget<LiquidGlassHost>(find.byType(LiquidGlassHost)).enabled,
-          isFalse,
+          isTrue,
         );
         expect(
           Theme.of(context).filledButtonTheme.style?.backgroundBuilder,
           isNull,
         );
         expect(Theme.of(context).scaffoldBackgroundColor, Colors.transparent);
-        expect(LiquidGlassHost.debugLastCapture, isNull);
-        expect(LiquidGlassHost.debugLastInkCapture, isNull);
+        expect(LiquidGlassScope.foregroundOf(context), isTrue);
+        expect(LiquidGlassHost.debugLastCapture?.panes, isEmpty);
+        if (ui.ImageFilter.isShaderFilterSupported) {
+          expect(LiquidGlassHost.debugLastInkCapture?.masks, greaterThan(0));
+        }
         expect(
           find.descendant(
             of: find.byType(CommonCard),

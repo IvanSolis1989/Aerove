@@ -6,12 +6,15 @@ abstract final class GlassForeground {
       a.r == b.r && a.g == b.g && a.b == b.b;
 
   static bool colorsInk(BuildContext context, Color color) {
-    if (!LiquidGlassScope.of(context) ||
+    if (!LiquidGlassScope.foregroundOf(context) ||
         MediaQuery.maybeHighContrastOf(context) == true ||
         color.a < 0.70) {
       return false;
     }
     final colors = Theme.of(context).colorScheme;
+    if (!LiquidGlassScope.of(context) && _sameRgb(color, colors.onPrimary)) {
+      return false;
+    }
     if (_sameRgb(color, colors.error) ||
         _sameRgb(color, colors.onErrorContainer))
       return false;

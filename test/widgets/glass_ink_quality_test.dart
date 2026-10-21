@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:fl_clash/ui/foreground_ink.dart';
+import 'package:fl_clash/ui/aurora.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -23,8 +24,12 @@ Widget _scene(
   LiquidGlassQuality quality, {
   bool enabled = true,
   bool highContrast = false,
+  bool foregroundOnly = false,
+  Color? inkSource,
 }) {
-  final source = brightness == Brightness.dark ? Colors.white : Colors.black;
+  final source =
+      inkSource ??
+      (brightness == Brightness.dark ? Colors.white : Colors.black);
   final active = enabled && !highContrast;
   return MaterialApp(
     theme: ThemeData(brightness: brightness),
@@ -34,7 +39,8 @@ Widget _scene(
       child: RepaintBoundary(
         key: _capture,
         child: LiquidGlassScope(
-          enabled: active,
+          enabled: active && !foregroundOnly,
+          foregroundEnabled: active,
           quality: quality,
           child: LiquidGlassHost(
             enabled: active,
@@ -194,6 +200,58 @@ void main() {
   });
 
   for (final brightness in Brightness.values) {
+    testWidgets('Plain wallpaper ink is weaker than frost ${brightness.name}', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(320, 160);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final source = auroraColorScheme(brightness).onSurface;
+      Future<Uint8List> render({
+        bool plain = false,
+        bool enabled = true,
+      }) async {
+        await tester.pumpWidget(
+          _scene(
+            brightness,
+            LiquidGlassQuality.standard,
+            foregroundOnly: plain,
+            inkSource: source,
+            enabled: enabled,
+          ),
+        );
+        await tester.pumpAndSettle();
+        return _shot(tester);
+      }
+
+      final frost = await render();
+      final plain = await render(plain: true);
+      expect(LiquidGlassHost.debugLastCapture?.panes, isEmpty);
+      final flat = await render(plain: true, enabled: false);
+      for (var row = 0; row < 2; row++) {
+        var plainSaturation = 0.0, frostSaturation = 0.0;
+        var plainValue = 0.0, frostValue = 0.0;
+        for (var column = 0; column < 4; column++) {
+          final x = column * 80 + 40, y = row * 80 + 40;
+          final a = _pixel(plain, x, y), b = _pixel(frost, x, y);
+          final ah = HSVColor.fromColor(a), bh = HSVColor.fromColor(b);
+          plainSaturation += ah.saturation;
+          frostSaturation += bh.saturation;
+          plainValue += ah.value;
+          frostValue += bh.value;
+          expect(a, isNot(_pixel(flat, x, y)));
+          expect(
+            _contrast(a, _pixel(plain, x - 30, y)),
+            greaterThanOrEqualTo(row == 0 ? 4.5 : 3.0),
+          );
+        }
+        expect(plainSaturation, greaterThan(0.1));
+        expect(frostSaturation - plainSaturation, greaterThan(0.2));
+        expect(frostValue - plainValue, greaterThan(0.05));
+      }
+      expect(await render(plain: true), plain);
+    }, skip: !ui.ImageFilter.isShaderFilterSupported);
+
     testWidgets('quality changes measured ink color ${brightness.name}', (
       tester,
     ) async {
