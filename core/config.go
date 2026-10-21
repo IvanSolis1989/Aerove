@@ -55,6 +55,8 @@ func (params *SetupParams) UnmarshalJSON(data []byte) error {
 
 var setupConfig = applyConfig
 
+var applyHubConfig = hub.ApplyConfig
+
 func handleSetupConfig(params *SetupParams) error {
 	if !isInit.Load() {
 		return errNotInitialized
@@ -170,7 +172,7 @@ func applyConfig(params *SetupParams) error {
 
 	currentConfig = cfg
 	healthRetries.reset()
-	hub.ApplyConfig(cfg)
+	applyHubConfig(cfg)
 	patchSelectGroup(params.SelectedMap)
 	bumpRouteEpoch()
 	updateListeners(cfg)

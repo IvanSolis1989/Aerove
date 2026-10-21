@@ -54,6 +54,7 @@ func handleStopListener() bool {
 	configMu.Lock()
 	defer configMu.Unlock()
 	isRunning.Store(false)
+	healthRetries.reset()
 	listener.StopListener()
 	resolver.ResetConnection()
 	return true

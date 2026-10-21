@@ -13,8 +13,7 @@ import (
 const (
 	// Longer than one probe's timeout, so the pause between the batches of a
 	// health check never splits its round in two.
-	healthRoundSettle  = 15 * time.Second
-	healthRetryEpisode = 10 * time.Minute
+	healthRoundSettle = 15 * time.Second
 )
 
 var healthRetryBackoff = []time.Duration{30 * time.Second, 60 * time.Second, 120 * time.Second}
@@ -25,6 +24,7 @@ type retryTimer interface {
 }
 
 type healthRound struct {
+	started   time.Time
 	failed    map[string]struct{}
 	succeeded bool
 	settle    retryTimer
@@ -33,12 +33,14 @@ type healthRound struct {
 type healthRetry struct {
 	provider    cp.ProxyProvider
 	names       map[string]struct{}
-	failures    int
-	lastFailure time.Time
+	scheduled   int
+	lastSettled time.Time
 	timer       retryTimer
+	seq         uint64
 }
 
 func (retry *healthRetry) stop() {
+	retry.seq++
 	if retry.timer != nil {
 		retry.timer.Stop()
 		retry.timer = nil
@@ -46,8 +48,7 @@ func (retry *healthRetry) stop() {
 }
 
 // healthRetrier re-runs the health check of a provider whose whole round
-// failed, as a round run before the network came back does. mihomo's lazy
-// check skips a provider unused for an interval, so such a round implies use.
+// failed, as a round run before the network came back does.
 type healthRetrier struct {
 	mu         sync.Mutex
 	generation uint64
@@ -78,7 +79,7 @@ func (r *healthRetrier) record(url, name string, ok bool) {
 	defer r.mu.Unlock()
 	round := r.rounds[url]
 	if round == nil {
-		round = &healthRound{failed: map[string]struct{}{}}
+		round = &healthRound{started: r.now(), failed: map[string]struct{}{}}
 		r.rounds[url] = round
 		generation := r.generation
 		round.settle = r.afterFunc(healthRoundSettle, func() { r.settle(url, round, generation) })
@@ -86,13 +87,10 @@ func (r *healthRetrier) record(url, name string, ok bool) {
 		round.settle.Reset(healthRoundSettle)
 	}
 	if !ok {
-		if !round.succeeded {
-			round.failed[name] = struct{}{}
-		}
+		round.failed[name] = struct{}{}
 		return
 	}
 	round.succeeded = true
-	round.failed = nil
 	for providerName, retry := range r.retries {
 		if _, member := retry.names[name]; member {
 			retry.stop()
@@ -108,15 +106,14 @@ func (r *healthRetrier) settle(url string, round *healthRound, generation uint64
 		return
 	}
 	delete(r.rounds, url)
-	failed := round.failed
 	r.mu.Unlock()
-	if len(failed) == 0 {
+	if round.succeeded || len(round.failed) == 0 || !isRunning.Load() {
 		return
 	}
 
 	var lost []cp.ProxyProvider
 	for _, pd := range r.candidates() {
-		if failedEveryProxy(failed, pd.Proxies()) {
+		if failedEveryProxy(round.failed, pd.Proxies()) {
 			lost = append(lost, pd)
 		}
 	}
@@ -129,49 +126,74 @@ func (r *healthRetrier) settle(url string, round *healthRound, generation uint64
 		return
 	}
 	for _, pd := range lost {
-		r.roundFailedLocked(pd, generation)
+		r.roundFailedLocked(pd, round.started, generation)
 	}
 }
 
 // mihomo's own failed rounds count too, so a group whose interval is shorter
 // than the backoff is never probed more often than it probes itself.
-func (r *healthRetrier) roundFailedLocked(pd cp.ProxyProvider, generation uint64) {
+func (r *healthRetrier) roundFailedLocked(pd cp.ProxyProvider, started time.Time, generation uint64) {
 	name := pd.Name()
 	now := r.now()
 	retry := r.retries[name]
-	if retry != nil && (retry.provider != pd || now.Sub(retry.lastFailure) > healthRetryEpisode) {
+	if retry != nil && retry.provider != pd {
 		retry.stop()
 		retry = nil
 	}
 	if retry == nil {
 		retry = &healthRetry{provider: pd}
 		r.retries[name] = retry
-	} else if now.Sub(retry.lastFailure) < healthRoundSettle {
+	} else if started.Before(retry.lastSettled) {
+		retry.lastSettled = now
+		if retry.timer != nil {
+			r.armLocked(name, retry, healthRetryBackoff[retry.scheduled-1], generation)
+		}
 		return
 	}
-	retry.lastFailure = now
-	retry.failures++
+	retry.lastSettled = now
 	retry.names = proxyNameSet(pd.Proxies())
 	retry.stop()
-	if retry.failures > len(healthRetryBackoff) {
+	if retry.scheduled == len(healthRetryBackoff) {
 		return
 	}
-	retry.timer = r.afterFunc(healthRetryBackoff[retry.failures-1], func() {
-		r.fire(name, retry, generation)
-	})
+	retry.scheduled++
+	r.armLocked(name, retry, healthRetryBackoff[retry.scheduled-1], generation)
 }
 
-func (r *healthRetrier) fire(name string, retry *healthRetry, generation uint64) {
+func (r *healthRetrier) armLocked(name string, retry *healthRetry, d time.Duration, generation uint64) {
+	retry.stop()
+	seq := retry.seq
+	retry.timer = r.afterFunc(d, func() { r.fire(name, retry, seq, generation) })
+}
+
+// mihomo joins a HealthCheck to the one in flight, which would probe nothing.
+func (r *healthRetrier) fire(name string, retry *healthRetry, seq, generation uint64) {
 	r.mu.Lock()
-	current := r.generation == generation && r.retries[name] == retry
+	current := r.generation == generation && r.retries[name] == retry && retry.seq == seq
+	running := isRunning.Load()
+	if current && running && r.reportingLocked(retry.names) {
+		r.armLocked(name, retry, healthRoundSettle, generation)
+		current = false
+	}
 	if current {
 		retry.timer = nil
 	}
 	r.mu.Unlock()
-	if !current || r.candidates()[name] != retry.provider {
+	if !current || !running || r.candidates()[name] != retry.provider {
 		return
 	}
 	retry.provider.HealthCheck()
+}
+
+func (r *healthRetrier) reportingLocked(names map[string]struct{}) bool {
+	for _, round := range r.rounds {
+		for name := range round.failed {
+			if _, member := names[name]; member {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (r *healthRetrier) reset() {
