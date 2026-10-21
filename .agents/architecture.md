@@ -1226,12 +1226,16 @@ and a result that lands while the read is in flight wins over it.
 A round that failed as a whole, as one run before the network came back does, is retried by `healthRetrier` in
 `core/health_retry.go`. It groups results into rounds per test URL, and when every node of a provider behind a
 `url-test`, `fallback` or `load-balance` group failed, it runs that provider's `HealthCheck` again after 30, 60 and 120
-seconds, at most three times per outage, and stops once any node of it answers. mihomo's lazy check only runs a round
-for a provider used within its interval, so a failed round already implies recent use. mihomo keeps the interval
-private; its own failed rounds count toward the three instead, which holds a group with a short interval to its own
-pace. `select` providers are never retried, the timers are `time.AfterFunc` timers that do not wake the device, and an
-apply or a shutdown drops them. A delay test the UI started still runs to its own deadline after a hide, because mihomo
-records a cancelled probe as a dead node; the hidden UI just never receives the answer.
+seconds, and stops once any node of it answers. A spent series stays until a node answers, so an outage gets three
+retries however long it lasts and whatever the group's interval. mihomo keeps the interval private; its own failed
+rounds count toward the three instead, which holds a group with a short interval to its own pace. Only a round that
+settles while the Core is running counts, and a retry that comes due once it stopped probes nothing: mihomo checks every
+provider once after an apply whether anything uses it or not, and the app applies the profile with the proxy off too.
+One check runs its URLs one after the other, so a round that started before the last counted one settled is part of
+that check, and a retry waits while the provider's nodes still report, since mihomo would join it to the check in
+flight. `select` providers are never retried, the timers are `time.AfterFunc` timers that do not wake the device, and an
+apply, a stop or a shutdown drops them. A delay test the UI started still runs to its own deadline after a hide, because
+mihomo records a cancelled probe as a dead node; the hidden UI just never receives the answer.
 
 ## Database
 
