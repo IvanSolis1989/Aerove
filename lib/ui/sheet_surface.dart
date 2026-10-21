@@ -21,8 +21,7 @@ class SheetSurface extends StatelessWidget {
   Widget build(BuildContext context) {
     final glass =
         LiquidGlassScope.of(context) && !MediaQuery.highContrastOf(context);
-    final enclosed =
-        context.dependOnInheritedWidgetOfExactType<_SheetGlassScope>() != null;
+    final enclosed = GlassSurfaceScope.of(context);
     final content = glass && !enclosed
         ? Stack(
             fit: StackFit.passthrough,
@@ -58,7 +57,7 @@ class SheetSurface extends StatelessWidget {
               data: Theme.of(
                 context,
               ).copyWith(scaffoldBackgroundColor: Colors.transparent),
-              child: _SheetGlassScope(child: content),
+              child: GlassSurfaceScope(child: content),
             )
           : content,
     );
@@ -66,11 +65,4 @@ class SheetSurface extends StatelessWidget {
         ? LiquidGlassOcclusion(shape: shape, child: surface)
         : surface;
   }
-}
-
-class _SheetGlassScope extends InheritedWidget {
-  const _SheetGlassScope({required super.child});
-
-  @override
-  bool updateShouldNotify(_SheetGlassScope oldWidget) => false;
 }

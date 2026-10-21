@@ -22,9 +22,8 @@ void main() {
 
   for (final brightness in Brightness.values) {
     for (final quality in LiquidGlassQuality.values) {
-      testWidgets('slider samples its backdrop in $brightness $quality', (
-        tester,
-      ) async {
+      testWidgets('one thumb pane and a flat track show the backdrop in '
+          '$brightness $quality', (tester) async {
         tester.view.physicalSize = const Size(320, 160);
         tester.view.devicePixelRatio = 1;
         addTearDown(tester.view.reset);
@@ -91,14 +90,20 @@ void main() {
                 final image = await boundary.toImage();
                 try {
                   final rgba = (await image.toByteData())!;
-                  final panes = LiquidGlassHost.debugLastCapture!.panes;
-                  expect(panes, hasLength(3));
+                  final thumb = LiquidGlassHost.debugLastCapture!.panes.single;
+                  final slider = tester.getRect(find.byType(Slider));
+                  final ltr = direction == TextDirection.ltr;
                   samples.add([
-                    for (final pane in panes)
+                    for (final point in [
+                      thumb.pane.center,
+                      Offset(
+                        ltr ? slider.right - 40 : slider.left + 40,
+                        thumb.pane.center.dy,
+                      ),
+                    ])
                       for (var channel = 0; channel < 3; channel++)
                         rgba.getUint8(
-                          (pane.pane.center.dy.floor() * image.width +
-                                      pane.pane.center.dx.floor()) *
+                          (point.dy.floor() * image.width + point.dx.floor()) *
                                   4 +
                               channel,
                         ),
@@ -119,12 +124,11 @@ void main() {
               });
               expect(tester.takeException(), isNull);
             }
-            for (var pane = 0; pane < 3; pane++) {
+            for (var point = 0; point < 2; point++) {
               expect(
-                (samples[0][pane * 3] - samples[1][pane * 3]).abs(),
+                (samples[0][point * 3] - samples[1][point * 3]).abs(),
                 greaterThan(30),
-                reason:
-                    'each track/selected/thumb pane must transmit the field',
+                reason: 'the thumb pane and the flat track show the field',
               );
             }
           }
@@ -228,7 +232,8 @@ void main() {
   );
 
   testWidgets(
-    'glass preserves native discrete endpoints, ticks and pressed handle bounds',
+    'glass keeps the native thumb travel, hides the ticks and holds its '
+    'handle under a press',
     (tester) async {
       tester.view.physicalSize = const Size(320, 160);
       tester.view.devicePixelRatio = 1;
@@ -298,32 +303,21 @@ void main() {
           await render(false, native, value, direction);
           final glass = _SliderGeometry();
           await render(true, glass, value, direction);
-          final thumb = LiquidGlassHost.debugLastCapture!.panes.last.pane;
+          final thumb = LiquidGlassHost.debugLastCapture!.panes.single.pane;
           expect(thumb.center, native.thumb!.center);
-          expect(thumb.size, native.thumb!.size);
-          expect(glass.ticks, native.ticks);
-          expect(glass.ticks, isNotEmpty);
+          expect(thumb.size, const Size(12, 32));
+          expect(native.ticks, isNotEmpty);
+          expect(glass.ticks, isEmpty);
           final theme = SliderTheme.of(tester.element(find.byType(Slider)));
           expect(theme.trackShape!.isRounded, isTrue);
         }
-        final native = _SliderGeometry();
-        await render(false, native, 0.5, direction);
-        expect(native.thumb!.width, 4);
-        final nativePress = await tester.startGesture(native.thumb!.center);
-        await tester.pumpAndSettle();
-        expect(native.thumb!.width, 2);
-        final pressed = native.thumb!;
-        await nativePress.up();
-        await tester.pumpAndSettle();
         await render(true, _SliderGeometry(), 0.5, direction);
-        final rest = LiquidGlassHost.debugLastCapture!.panes.last.pane;
-        expect(rest.width, 4);
+        final rest = LiquidGlassHost.debugLastCapture!.panes.single.pane;
         final glassPress = await tester.startGesture(rest.center);
         await tester.pumpAndSettle();
-        expect(LiquidGlassHost.debugLastCapture!.panes.last.pane, pressed);
+        expect(LiquidGlassHost.debugLastCapture!.panes.single.pane, rest);
         await glassPress.up();
         await tester.pumpAndSettle();
-        expect(LiquidGlassHost.debugLastCapture!.panes.last.pane.width, 4);
       }
       expect(tester.takeException(), isNull);
     },
@@ -393,33 +387,40 @@ void main() {
   });
 
   testWidgets(
-    'secondary glass follows native value direction and clears when removed',
+    'the secondary run follows the value direction and clears when removed',
     (tester) async {
+      tester.view.physicalSize = const Size(320, 160);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final capture = GlobalKey();
       for (final direction in TextDirection.values) {
         for (final secondary in [0.75, null]) {
           await tester.pumpWidget(
             MaterialApp(
               home: Directionality(
                 textDirection: direction,
-                child: LiquidGlassScope(
-                  enabled: true,
-                  child: LiquidGlassHost(
+                child: RepaintBoundary(
+                  key: capture,
+                  child: LiquidGlassScope(
                     enabled: true,
-                    child: Material(
-                      child: Center(
-                        child: SizedBox(
-                          width: 280,
-                          child: Builder(
-                            builder: (context) => SliderTheme(
-                              data: SliderDefaultsM3(context),
-                              child: GlassSlider(
-                                child: Slider(
-                                  value: 0.25,
-                                  secondaryTrackValue: secondary,
-                                  activeColor: Colors.green,
-                                  inactiveColor: Colors.orange,
-                                  secondaryActiveColor: Colors.blue,
-                                  onChanged: (_) {},
+                    child: LiquidGlassHost(
+                      enabled: true,
+                      child: Material(
+                        child: Center(
+                          child: SizedBox(
+                            width: 280,
+                            child: Builder(
+                              builder: (context) => SliderTheme(
+                                data: SliderDefaultsM3(context),
+                                child: GlassSlider(
+                                  child: Slider(
+                                    value: 0.25,
+                                    secondaryTrackValue: secondary,
+                                    activeColor: Colors.green,
+                                    inactiveColor: Colors.orange,
+                                    secondaryActiveColor: Colors.blue,
+                                    onChanged: (_) {},
+                                  ),
                                 ),
                               ),
                             ),
@@ -433,19 +434,36 @@ void main() {
             ),
           );
           await tester.pumpAndSettle();
-          final panes = LiquidGlassHost.debugLastCapture!.panes;
-          expect(panes, hasLength(secondary == null ? 3 : 4));
-          if (secondary != null) {
-            final secondaryRect = panes[1].pane;
-            final thumb = panes.last.pane;
-            expect(secondaryRect.width, greaterThan(0));
-            expect(
-              direction == TextDirection.ltr
-                  ? secondaryRect.left
-                  : secondaryRect.right,
-              thumb.center.dx,
-            );
-          }
+          final thumb = LiquidGlassHost.debugLastCapture!.panes.single.pane;
+          final ahead = direction == TextDirection.ltr ? 1.0 : -1.0;
+          final boundary = tester.renderObject<RenderRepaintBoundary>(
+            find.byKey(capture),
+          );
+          final pixels = await tester.runAsync(() async {
+            final image = await boundary.toImage();
+            try {
+              final rgba = (await image.toByteData())!;
+              Color at(double dx) {
+                final index =
+                    (thumb.center.dy.floor() * image.width +
+                        (thumb.center.dx + dx * ahead).floor()) *
+                    4;
+                return Color.fromARGB(
+                  255,
+                  rgba.getUint8(index),
+                  rgba.getUint8(index + 1),
+                  rgba.getUint8(index + 2),
+                );
+              }
+
+              return (secondary: at(40), inactive: at(150));
+            } finally {
+              image.dispose();
+            }
+          });
+          final blue = pixels!.secondary.b - pixels.secondary.r;
+          expect(blue, secondary == null ? lessThan(0) : greaterThan(0));
+          expect(pixels.inactive.r, greaterThan(pixels.inactive.b));
           expect(tester.takeException(), isNull);
         }
       }

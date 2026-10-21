@@ -234,6 +234,52 @@ void main() {
     );
   });
 
+  testWidgets('on glass the actions stand flat on the one pane', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (_, child) => LiquidGlassScope(
+          enabled: true,
+          child: LiquidGlassHost(enabled: true, child: child!),
+        ),
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => GestureDetector(
+              onTap: () => showFloatingDialog<void>(
+                context: context,
+                child: CommonDialog(
+                  title: 'Title',
+                  actions: [
+                    TextButton(onPressed: () {}, child: const Text('Cancel')),
+                    TextButton(onPressed: () {}, child: const Text('OK')),
+                  ],
+                  child: const Text('Body'),
+                ),
+              ),
+              child: const Text('Open'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+    expect(find.byType(LiquidGlass), findsNothing);
+    expect(LiquidGlassHost.debugLastCapture!.panes, hasLength(1));
+    final surface = find
+        .descendant(
+          of: find.byType(AlertDialog),
+          matching: find.byType(Material),
+        )
+        .first;
+    expect(
+      LiquidGlassHost.debugLastCapture!.panes.single.pane,
+      rectMoreOrLessEquals(tester.getRect(surface)),
+    );
+  });
+
   testWidgets('a tap on the scrim dismisses a dismissible dialog', (
     tester,
   ) async {

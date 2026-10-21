@@ -227,39 +227,82 @@ Rect _surfaceRectIn(RenderBox box) {
   );
 }
 
-/// An [AlertDialog] takes only a color, so the pane goes where its [Material]
-/// lays out its [PhysicalShape].
-class _AlertGlass extends SingleChildRenderObjectWidget {
-  const _AlertGlass({
+/// A rimmed pane under the first [Material] in [child], where it lays out its
+/// [PhysicalShape], since an [AlertDialog] takes only a color.
+class GlassPlatter extends StatelessWidget {
+  const GlassPlatter({
+    super.key,
     required this.style,
     required this.rim,
     required this.shadows,
+    this.corner = AppCorner.alert,
+    this.occludes = true,
+    required this.child,
+  });
+
+  final LiquidGlassStyle style;
+  final LiquidGlassRim rim;
+  final List<BoxShadow> shadows;
+  final double corner;
+  final bool occludes;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return _PlatterGlass(
+      style: style,
+      rim: rim,
+      shadows: shadows,
+      corner: corner,
+      occludes: occludes,
+      child: GlassSurfaceScope(child: child),
+    );
+  }
+}
+
+class _PlatterGlass extends SingleChildRenderObjectWidget {
+  const _PlatterGlass({
+    required this.style,
+    required this.rim,
+    required this.shadows,
+    required this.corner,
+    required this.occludes,
     super.child,
   });
 
   final LiquidGlassStyle style;
   final LiquidGlassRim rim;
   final List<BoxShadow> shadows;
+  final double corner;
+  final bool occludes;
 
   @override
-  _RenderAlertGlass createRenderObject(BuildContext context) {
-    return _RenderAlertGlass(style, rim, shadows);
+  _RenderPlatterGlass createRenderObject(BuildContext context) {
+    return _RenderPlatterGlass(style, rim, shadows, corner, occludes);
   }
 
   @override
   void updateRenderObject(
     BuildContext context,
-    _RenderAlertGlass renderObject,
+    _RenderPlatterGlass renderObject,
   ) {
     renderObject
       ..style = style
       ..rim = rim
-      ..shadows = shadows;
+      ..shadows = shadows
+      ..corner = corner
+      ..occludes = occludes;
   }
 }
 
-class _RenderAlertGlass extends RenderProxyBox {
-  _RenderAlertGlass(this._style, this._rim, this._shadows);
+class _RenderPlatterGlass extends RenderProxyBox {
+  _RenderPlatterGlass(
+    this._style,
+    this._rim,
+    this._shadows,
+    this._corner,
+    this._occludes,
+  );
 
   late final _pane = LiquidGlassPane(markNeedsPaint);
   final _occlusion = LiquidGlassOcclusionPane();
@@ -291,6 +334,24 @@ class _RenderAlertGlass extends RenderProxyBox {
     markNeedsPaint();
   }
 
+  double _corner;
+  set corner(double value) {
+    if (value == _corner) {
+      return;
+    }
+    _corner = value;
+    markNeedsPaint();
+  }
+
+  bool _occludes;
+  set occludes(bool value) {
+    if (value == _occludes) {
+      return;
+    }
+    _occludes = value;
+    markNeedsPaint();
+  }
+
   @override
   bool get alwaysNeedsCompositing => true;
 
@@ -310,23 +371,30 @@ class _RenderAlertGlass extends RenderProxyBox {
       return;
     }
     final rect = _surfaceRectIn(this);
+    void painter(PaintingContext context, Offset offset) {
+      _pane.paint(
+        context,
+        rect.shift(offset),
+        shape: LiquidGlassCorners.circular(_corner),
+        style: _style,
+        shadows: _shadows,
+        rim: _rim,
+      );
+      _pane.paintRim(context, rect.shift(offset), _corner, _rim);
+      super.paint(context, offset);
+    }
+
+    if (!_occludes) {
+      _occlusion.clear();
+      painter(context, offset);
+      return;
+    }
     _occlusion.paint(
       context,
       offset,
       rect: rect,
-      shape: AppShape.all(AppCorner.alert),
-      painter: (context, offset) {
-        _pane.paint(
-          context,
-          rect.shift(offset),
-          shape: LiquidGlassCorners.circular(AppCorner.alert),
-          style: _style,
-          shadows: _shadows,
-          rim: _rim,
-        );
-        _pane.paintRim(context, rect.shift(offset), AppCorner.alert, _rim);
-        super.paint(context, offset);
-      },
+      shape: AppShape.all(_corner),
+      painter: painter,
     );
   }
 }
@@ -432,7 +500,7 @@ class CommonDialog extends StatelessWidget {
       panelOf: _surfaceRectIn,
       child: glass
           ? LiquidGlassBody(
-              child: _AlertGlass(
+              child: GlassPlatter(
                 style: LiquidGlassStyle.alert(colorScheme),
                 rim: LiquidGlassRim.alert(colorScheme),
                 shadows: glassMenuShadows(colorScheme),
@@ -630,23 +698,23 @@ class _AlertAction extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
     final glass = LiquidGlassScope.of(context);
-    final glassDefault = isDefault && glass;
-    final fill = LiquidGlassScope.surfaceColorOf(
-      context,
-      this.fill ?? context.raisedSurfaceLevel.colorOf(colorScheme),
-    );
-    final foreground = glassDefault
+    final fill =
+        this.fill ??
+        (glass
+            ? glassFillOf(colorScheme)
+            : context.raisedSurfaceLevel.colorOf(colorScheme));
+    final foreground = isDefault && glass
         ? colorScheme.primary
         : isDefault
         ? colorScheme.onPrimary
         : destructive
         ? colorScheme.destructive
         : colorScheme.onSurface;
-    final background = glass
-        ? Colors.transparent
-        : isDefault
-        ? colorScheme.primary
-        : fill;
+    final background = !isDefault
+        ? fill
+        : glass
+        ? glassChosenFillOf(colorScheme)
+        : colorScheme.primary;
     final pressedShare = switch ((isDefault, colorScheme.brightness)) {
       (true, Brightness.dark) => _pressedDarkDefaultShare,
       (false, Brightness.dark) => 1.0,
@@ -672,20 +740,8 @@ class _AlertAction extends StatelessWidget {
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               splashFactory: NoSplash.splashFactory,
             ).copyWith(
-              backgroundBuilder: glass
-                  ? LiquidGlass.buttonStyle(
-                      (_) => glassDefault
-                          ? LiquidGlassStyle.tinted(
-                              colorScheme,
-                              colorScheme.primary,
-                            ).copyWith(
-                              tint: colorScheme.primary.withValues(alpha: 0.2),
-                            )
-                          : LiquidGlassStyle.regular(colorScheme),
-                    ).backgroundBuilder
-                  : null,
               backgroundColor: WidgetStateProperty<Color?>.fromMap({
-                WidgetState.disabled: glass ? Colors.transparent : fill,
+                WidgetState.disabled: fill,
                 WidgetState.pressed: background.withValues(
                   alpha: background.a * pressedShare,
                 ),

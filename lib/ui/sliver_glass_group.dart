@@ -8,16 +8,22 @@ class SliverGlassGroup extends SingleChildRenderObjectWidget {
     required this.shape,
     required this.style,
     required List<Widget> slivers,
-  }) : super(child: SliverMainAxisGroup(slivers: slivers));
+  }) : super(
+         child: GlassSurfaceScope(child: SliverMainAxisGroup(slivers: slivers)),
+       );
 
   final RoundedSuperellipseBorder shape;
   final LiquidGlassStyle style;
+
+  Color? _flatOf(BuildContext context) =>
+      GlassSurfaceScope.of(context) ? glassRaisedFillOf(context) : null;
 
   @override
   RenderObject createRenderObject(BuildContext context) =>
       _RenderSliverGlassGroup(
         shape.borderRadius.resolve(Directionality.of(context)),
         style,
+        _flatOf(context),
       );
 
   @override
@@ -28,22 +34,25 @@ class SliverGlassGroup extends SingleChildRenderObjectWidget {
     (renderObject as _RenderSliverGlassGroup).update(
       shape.borderRadius.resolve(Directionality.of(context)),
       style,
+      _flatOf(context),
     );
   }
 }
 
 class _RenderSliverGlassGroup extends RenderProxySliver {
-  _RenderSliverGlassGroup(this._shape, this._style);
+  _RenderSliverGlassGroup(this._shape, this._style, this._flat);
 
   BorderRadius _shape;
   LiquidGlassStyle _style;
+  Color? _flat;
   late final _pane = LiquidGlassPane(markNeedsPaint);
   final _clip = LayerHandle<ClipRectLayer>();
 
-  void update(BorderRadius shape, LiquidGlassStyle style) {
-    if (shape == _shape && style == _style) return;
+  void update(BorderRadius shape, LiquidGlassStyle style, Color? flat) {
+    if (shape == _shape && style == _style && flat == _flat) return;
     _shape = shape;
     _style = style;
+    _flat = flat;
     markNeedsPaint();
   }
 
@@ -88,12 +97,20 @@ class _RenderSliverGlassGroup extends RenderProxySliver {
         layout.paintExtent,
       ),
       (context, offset) {
-        _pane.paint(
-          context,
-          rect.shift(offset),
-          shape: LiquidGlassCorners(_shape),
-          style: _style,
-        );
+        if (_flat case final flat?) {
+          _pane.clear();
+          context.canvas.drawRSuperellipse(
+            _shape.toRSuperellipse(rect.shift(offset)),
+            Paint()..color = flat,
+          );
+        } else {
+          _pane.paint(
+            context,
+            rect.shift(offset),
+            shape: LiquidGlassCorners(_shape),
+            style: _style,
+          );
+        }
         super.paint(context, offset);
       },
       oldLayer: _clip.layer,

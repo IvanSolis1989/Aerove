@@ -95,7 +95,9 @@ Color marks the one item that differs, never the structure around it.
   check.
 - **Chosen segment** in a connected button group, a mode switch, or a run of compact choice chips
   (`CommonCard.fillsSelection`): solid `primary` with `onPrimary`, as the dashboard outbound mode does. Only one
-  segment per group.
+  segment per group. With Liquid Glass on it is a pane tinted `primary` on a bare page and a flat `glassChosenFillOf`,
+  `primary` at 20%, on glass, with its label in `onSurface`; the `SegmentedControl`, `CommonCard.fillsSelection` and
+  `DashboardConnectedButton` all follow it, and the selection draws no border.
 - **Error** on a row or card: `errorContainer` with `onErrorContainer`, no border.
 - **Status** values (delay, availability, success, warning): the color goes on text, a glyph, or a small chip, never
   on a whole card. `success` and `warning` come from fixed green and orange palettes that ignore the seed, like
@@ -165,6 +167,10 @@ twice as much on the dark page as on the light one and carried the seed's tint.
 - With Liquid Glass on (Theme settings), the dock, the buttons of a page's bar, a sheet's docked search, popup
   menus, and alerts are glass from `lib/ui/liquid_glass.dart` instead of a fill, and the dock's platter takes the
   secondary hue and chroma at tone 90, or at tone 4 in dark, which sinks it below the bar as iOS 27 does.
+- Glass is one layer. A control on a card, a grouped run, a sheet, an alert or a toast is flat, never a second pane:
+  a plain button stands bare, a filled or tonal one takes `glassFillOf`, a switch, a slider and a segmented control keep
+  flat tracks, and a card on glass takes `glassRaisedFillOf` with no rim or outline. `GlassSurfaceScope` tells them
+  apart; Liquid Glass in `.agents/architecture.md` says who sets it.
 - The proxies page's group tabs are compact choice chips, the current group in the chosen segment's solid `primary`.
   Once they overflow, a tonal button at their end opens every group as a popup menu, the current one checked and
   scrolled into view. A profile can carry dozens of groups, so the menu stops at seven rows and half of the next.

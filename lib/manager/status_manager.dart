@@ -575,17 +575,21 @@ class _MessageCardState extends State<_MessageCard>
             _release(0);
           },
           child: glass
-              ? LiquidGlass(
-                  style: LiquidGlassStyle.regular(colorScheme).copyWith(
-                    tint: message.level == MessageLevel.error
-                        ? message.level
-                              .containerColor(context)
-                              .withValues(alpha: 0.16)
-                        : Colors.transparent,
+              ? LiquidGlassBody(
+                  child: GlassPlatter(
+                    style: message.level == MessageLevel.error
+                        ? LiquidGlassStyle.menu(colorScheme).copyWith(
+                            tint: message.level
+                                .containerColor(context)
+                                .withValues(alpha: 0.16),
+                          )
+                        : LiquidGlassStyle.menu(colorScheme),
+                    rim: LiquidGlassRim.menu(colorScheme),
+                    shadows: glassMenuShadows(colorScheme),
+                    corner: AppCorner.lg,
+                    occludes: false,
+                    child: surface,
                   ),
-                  clipper: const ShapeBorderClipper(shape: AppShape.lg),
-                  shadows: dockGlassShadows(colorScheme),
-                  child: surface,
                 )
               : surface,
         ),

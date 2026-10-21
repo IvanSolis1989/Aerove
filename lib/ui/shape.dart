@@ -269,6 +269,7 @@ extension AppShapeThemeExt on ThemeData {
       ),
     ),
     chipTheme: chipTheme.copyWith(shape: AppShape.sm),
+    checkboxTheme: checkboxTheme.copyWith(shape: AppShape.xs),
     popupMenuTheme: popupMenuTheme.copyWith(shape: AppShape.md),
     menuTheme: MenuThemeData(
       style: (menuTheme.style ?? const MenuStyle()).copyWith(

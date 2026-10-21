@@ -9,6 +9,91 @@ import 'package:material_ui/material_ui.dart';
 import '../helpers/test_app.dart';
 
 void main() {
+  for (final onGlass in [false, true]) {
+    testWidgets(
+      'a chosen card is ${onGlass ? 'a flat primary fill on glass' : 'a tinted pane on the page'}, '
+      'and selection draws no border',
+      (tester) async {
+        await tester.pumpWidget(
+          TestApp(
+            includeNavigatorKey: false,
+            child: Scaffold(
+              body: LiquidGlassScope(
+                enabled: true,
+                child: LiquidGlassHost(
+                  enabled: true,
+                  child: Center(
+                    child: GlassSurfaceScope(
+                      enabled: onGlass,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          CommonCard(
+                            isSelected: true,
+                            fillsSelection: true,
+                            onPressed: () {},
+                            child: const Text('Chosen'),
+                          ),
+                          CommonCard(
+                            isSelected: true,
+                            onPressed: () {},
+                            child: const Text('Picked'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final context = tester.element(find.byType(Row));
+        final colors = Theme.of(context).colorScheme;
+        ButtonStyle styleOf(String label) => tester
+            .widget<FilledButton>(find.widgetWithText(FilledButton, label))
+            .style!;
+        Finder panesOf(String label) => find.descendant(
+          of: find.widgetWithText(FilledButton, label),
+          matching: find.byType(LiquidGlass),
+        );
+        for (final label in ['Chosen', 'Picked']) {
+          expect(styleOf(label).side!.resolve({}), BorderSide.none);
+          expect(
+            styleOf(label).side!.resolve({WidgetState.selected}),
+            BorderSide.none,
+          );
+        }
+        if (onGlass) {
+          expect(find.byType(LiquidGlass), findsNothing);
+          expect(
+            styleOf('Chosen').backgroundColor!.resolve({}),
+            glassChosenFillOf(colors),
+          );
+          expect(
+            styleOf('Picked').backgroundColor!.resolve({}),
+            glassRaisedFillOf(context),
+          );
+        } else {
+          expect(
+            tester.widget<LiquidGlass>(panesOf('Chosen')).style,
+            LiquidGlassStyle.tinted(colors, colors.primary),
+          );
+          expect(
+            tester.widget<LiquidGlass>(panesOf('Picked')).style,
+            LiquidGlassStyle.regular(colors),
+          );
+          expect(
+            styleOf('Chosen').backgroundColor!.resolve({}),
+            Colors.transparent,
+          );
+        }
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   for (final brightness in Brightness.values) {
     testWidgets('active glass rows share one continuous glass ($brightness)', (
       tester,

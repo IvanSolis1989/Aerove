@@ -30,9 +30,15 @@ double dashboardCardRadius(DashboardDensity density) => density.isDesktop
     : DashboardCorner.mobileCard;
 
 class DashboardGlass extends StatelessWidget {
-  const DashboardGlass({super.key, required this.shape, required this.child});
+  const DashboardGlass({
+    super.key,
+    required this.shape,
+    this.style,
+    required this.child,
+  });
 
   final OutlinedBorder shape;
+  final LiquidGlassStyle? style;
   final Widget child;
 
   @override
@@ -40,15 +46,26 @@ class DashboardGlass extends StatelessWidget {
     if (!LiquidGlassScope.of(context)) {
       return child;
     }
+    if (GlassSurfaceScope.of(context)) {
+      return DecoratedBox(
+        decoration: ShapeDecoration(
+          color: glassRaisedFillOf(context),
+          shape: shape,
+        ),
+        child: child,
+      );
+    }
     return LiquidGlass(
-      style: LiquidGlassStyle.regular(
-        context.colorScheme,
-      ).copyWith(tint: Colors.transparent),
+      style:
+          style ??
+          LiquidGlassStyle.regular(
+            context.colorScheme,
+          ).copyWith(tint: Colors.transparent),
       clipper: ShapeBorderClipper(
         shape: shape,
         textDirection: Directionality.of(context),
       ),
-      child: child,
+      child: GlassSurfaceScope(child: child),
     );
   }
 }
@@ -75,14 +92,7 @@ class DashboardCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final density = DashboardDensityScope.of(context);
-    final shape = AppShape.all(dashboardCardRadius(density)).copyWith(
-      side: LiquidGlassScope.of(context)
-          ? BorderSide(
-              color: context.colorScheme.outlineVariant.withValues(alpha: 0.38),
-              width: 0.5,
-            )
-          : BorderSide.none,
-    );
+    final shape = AppShape.all(dashboardCardRadius(density));
     final content = Padding(
       padding: padding ?? dashboardCardPadding(density),
       child: child,
@@ -95,15 +105,14 @@ class DashboardCard extends StatelessWidget {
         child: Container(
           clipBehavior: clipBehavior,
           decoration: ShapeDecoration(
-            color: DashboardColors.of(context).card,
-            shape: shape.copyWith(side: BorderSide.none),
+            color: GlassSurfaceScope.of(context)
+                ? glassRaisedFillOf(context)
+                : DashboardColors.of(context).card,
+            shape: shape,
             shadows: LiquidGlassScope.of(context)
                 ? null
                 : DashboardShadows.e1(context),
           ),
-          foregroundDecoration: LiquidGlassScope.of(context)
-              ? ShapeDecoration(shape: shape)
-              : null,
           child: Material(
             type: MaterialType.transparency,
             child: onTap == null
@@ -425,6 +434,7 @@ class DashboardConnectedButton extends StatelessWidget {
     final endRest = last ? outer : inner;
     final colorScheme = context.colorScheme;
     final glass = LiquidGlassScope.of(context);
+    final onGlass = GlassSurfaceScope.of(context);
     return Semantics(
       button: true,
       selected: selected,
@@ -439,7 +449,7 @@ class DashboardConnectedButton extends StatelessWidget {
           builder: (context, amount, child) {
             final start = lerpDouble(startRest, outer, amount)!;
             final end = lerpDouble(endRest, outer, amount)!;
-            final outline = glass
+            final shape = glass
                 ? AppShape.full
                 : AppShape.of(
                     BorderRadius.horizontal(
@@ -447,38 +457,46 @@ class DashboardConnectedButton extends StatelessWidget {
                       right: Radius.circular(rtl ? start : end),
                     ),
                   );
-            final shape = outline.copyWith(
-              side: selected && glass
-                  ? BorderSide(
-                      color: colorScheme.onSurface.withValues(alpha: 0.45),
-                    )
-                  : BorderSide.none,
+            final fill = Container(
+              clipBehavior: Clip.antiAlias,
+              decoration: ShapeDecoration(
+                color: !glass
+                    ? Color.lerp(background, colorScheme.primary, amount)
+                    : onGlass
+                    ? Color.lerp(
+                        glassFillOf(colorScheme),
+                        glassChosenFillOf(colorScheme),
+                        amount,
+                      )
+                    : background,
+                shape: shape,
+              ),
+              child: Material(
+                type: MaterialType.transparency,
+                child: InkWell(
+                  customBorder: shape,
+                  splashFactory: NoSplash.splashFactory,
+                  highlightColor: Colors.transparent,
+                  onTap: onTap,
+                  child: child,
+                ),
+              ),
             );
             return FocusRing(
               shape: shape,
               standsOff: selected,
-              child: DashboardGlass(
-                shape: shape,
-                child: Container(
-                  clipBehavior: Clip.antiAlias,
-                  decoration: ShapeDecoration(
-                    color: LiquidGlassScope.of(context)
-                        ? background
-                        : Color.lerp(background, colorScheme.primary, amount),
-                    shape: shape,
-                  ),
-                  child: Material(
-                    type: MaterialType.transparency,
-                    child: InkWell(
-                      customBorder: shape,
-                      splashFactory: NoSplash.splashFactory,
-                      highlightColor: Colors.transparent,
-                      onTap: onTap,
-                      child: child,
+              child: onGlass
+                  ? fill
+                  : DashboardGlass(
+                      shape: shape,
+                      style: selected
+                          ? LiquidGlassStyle.tinted(
+                              colorScheme,
+                              colorScheme.primary,
+                            )
+                          : null,
+                      child: fill,
                     ),
-                  ),
-                ),
-              ),
             );
           },
           child: builder(

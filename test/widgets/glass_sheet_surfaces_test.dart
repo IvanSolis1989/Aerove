@@ -332,7 +332,7 @@ void main() {
   });
 
   testWidgets(
-    'default alert action uses tinted glass and preserves its action',
+    'default alert action takes a flat primary fill and preserves its action',
     (tester) async {
       var taps = 0;
       for (final (enabled, highContrast) in [
@@ -372,9 +372,13 @@ void main() {
         final scheme = Theme.of(context).colorScheme;
         expect(
           style.backgroundColor!.resolve({}),
-          enabled ? Colors.transparent : scheme.primary,
+          enabled ? scheme.primary.withValues(alpha: 0.2) : scheme.primary,
         );
-        expect(style.backgroundBuilder, enabled ? isNotNull : isNull);
+        expect(style.backgroundBuilder, isNull);
+        expect(
+          find.descendant(of: button, matching: find.byType(LiquidGlass)),
+          findsNothing,
+        );
         final foreground = style.foregroundColor!.resolve({})!;
         final source = enabled ? scheme.primary : scheme.onPrimary;
         expect(foreground.a, enabled && !highContrast ? 1.0 : 1);

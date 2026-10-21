@@ -90,6 +90,7 @@ class _AuroraAppSurfaceState extends ConsumerState<AuroraAppSurface>
       theme,
       enabled: enabled,
       glassEnabled: glassEnabled,
+      tooltipText: AppTextStyle.footnote.of(context),
     );
     final surface = LiquidGlassScope(
       enabled: glassEnabled,
@@ -155,6 +156,7 @@ class _AuroraAppSurfaceState extends ConsumerState<AuroraAppSurface>
     ThemeData theme, {
     required bool enabled,
     required bool glassEnabled,
+    required TextStyle tooltipText,
   }) {
     if (_theme case final cached?
         when identical(cached.source, theme) &&
@@ -166,6 +168,7 @@ class _AuroraAppSurfaceState extends ConsumerState<AuroraAppSurface>
       theme,
       enabled: enabled,
       glassEnabled: glassEnabled,
+      tooltipText: tooltipText,
     );
     _theme = (
       source: theme,
@@ -180,6 +183,7 @@ class _AuroraAppSurfaceState extends ConsumerState<AuroraAppSurface>
     ThemeData theme, {
     required bool enabled,
     required bool glassEnabled,
+    required TextStyle tooltipText,
   }) {
     final glassColors = auroraColorScheme(theme.brightness);
     final glassTheme = theme
@@ -204,15 +208,18 @@ class _AuroraAppSurfaceState extends ConsumerState<AuroraAppSurface>
       final style = glassPane
           .merge(original)
           .copyWith(
-            backgroundBuilder: (context, states, child) => LiquidGlass(
-              style: LiquidGlassStyle.regular(surfaceColors),
-              clipper: ShapeBorderClipper(
-                shape: original?.shape?.resolve(states) ?? AppShape.full,
-                textDirection: Directionality.of(context),
-              ),
-              pressed: states.contains(WidgetState.pressed),
-              child: child,
-            ),
+            backgroundBuilder: (context, states, child) =>
+                GlassSurfaceScope.of(context)
+                ? child ?? const SizedBox.shrink()
+                : LiquidGlass(
+                    style: LiquidGlassStyle.regular(surfaceColors),
+                    clipper: ShapeBorderClipper(
+                      shape: original?.shape?.resolve(states) ?? AppShape.full,
+                      textDirection: Directionality.of(context),
+                    ),
+                    pressed: states.contains(WidgetState.pressed),
+                    child: child,
+                  ),
           );
       if (!outlined) return style;
       return style.copyWith(
@@ -225,9 +232,24 @@ class _AuroraAppSurfaceState extends ConsumerState<AuroraAppSurface>
       );
     }
 
+    final filledStyle = surfaceTheme.filledButtonTheme.style;
     final glassButtons =
-        LiquidGlass.buttonStyle(
-          (_) => LiquidGlassStyle.regular(surfaceColors),
+        ButtonStyle(
+          backgroundColor: const WidgetStatePropertyAll(Colors.transparent),
+          backgroundBuilder: (context, states, child) =>
+              GlassSurfaceScope.of(context)
+              ? DecoratedBox(
+                  decoration: ShapeDecoration(
+                    color: glassFillOf(surfaceColors),
+                    shape: filledStyle?.shape?.resolve(states) ?? AppShape.full,
+                  ),
+                  child: child,
+                )
+              : LiquidGlass(
+                  style: LiquidGlassStyle.regular(surfaceColors),
+                  pressed: states.contains(WidgetState.pressed),
+                  child: child,
+                ),
         ).merge(
           FilledButton.styleFrom(
             backgroundColor: Colors.transparent,
@@ -238,7 +260,7 @@ class _AuroraAppSurfaceState extends ConsumerState<AuroraAppSurface>
         ? surfaceTheme.copyWith(
             scaffoldBackgroundColor: Colors.transparent,
             filledButtonTheme: FilledButtonThemeData(
-              style: glassButtons.merge(surfaceTheme.filledButtonTheme.style),
+              style: glassButtons.merge(filledStyle),
             ),
             outlinedButtonTheme: OutlinedButtonThemeData(
               style: neutralGlass(
@@ -260,6 +282,33 @@ class _AuroraAppSurfaceState extends ConsumerState<AuroraAppSurface>
                 alpha: 0.28,
               ),
               foregroundColor: surfaceColors.onSurface,
+            ),
+            tooltipTheme: surfaceTheme.tooltipTheme.copyWith(
+              decoration: ShapeDecoration(
+                shape: AppShape.xs,
+                color: SurfaceLevel.floatingOf(
+                  surfaceColors,
+                ).colorOf(surfaceColors).withValues(alpha: 0.94),
+                shadows: glassMenuShadows(surfaceColors, 0.6),
+              ),
+              textStyle: tooltipText.copyWith(color: surfaceColors.onSurface),
+            ),
+            progressIndicatorTheme: surfaceTheme.progressIndicatorTheme
+                .copyWith(
+                  linearTrackColor: surfaceColors.onSurface.withValues(
+                    alpha: 0.08,
+                  ),
+                  stopIndicatorRadius: 0,
+                ),
+            checkboxTheme: surfaceTheme.checkboxTheme.copyWith(
+              fillColor: WidgetStateProperty.resolveWith(
+                (states) => !states.contains(WidgetState.selected)
+                    ? glassFillOf(surfaceColors)
+                    : states.contains(WidgetState.disabled)
+                    ? surfaceColors.onSurface.withValues(alpha: 0.38)
+                    : surfaceColors.primary,
+              ),
+              side: BorderSide.none,
             ),
           )
         : enabled

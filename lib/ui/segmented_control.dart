@@ -26,14 +26,15 @@ class SegmentedControl<T> extends StatelessWidget {
     final colorScheme = context.colorScheme;
     final glass =
         LiquidGlassScope.of(context) && !MediaQuery.highContrastOf(context);
+    final onGlass = glass && GlassSurfaceScope.of(context);
     final count = segments.length;
     final index = segments.indexWhere((segment) => segment.$1 == value);
-    final body = Container(
+    return Container(
       height: _height,
       padding: const EdgeInsets.all(_inset),
       decoration: ShapeDecoration(
         color: glass
-            ? Colors.transparent
+            ? glassFillOf(colorScheme)
             : context.raisedSurfaceLevel.colorOf(colorScheme),
         shape: AppShape.full,
       ),
@@ -50,7 +51,7 @@ class SegmentedControl<T> extends StatelessWidget {
               child: FractionallySizedBox(
                 widthFactor: 1 / count,
                 heightFactor: 1,
-                child: glass
+                child: glass && !onGlass
                     ? LiquidGlass(
                         style: LiquidGlassStyle.tinted(
                           colorScheme,
@@ -61,7 +62,9 @@ class SegmentedControl<T> extends StatelessWidget {
                       )
                     : DecoratedBox(
                         decoration: ShapeDecoration(
-                          color: colorScheme.primary,
+                          color: onGlass
+                              ? glassChosenFillOf(colorScheme)
+                              : colorScheme.primary,
                           shape: AppShape.full,
                         ),
                       ),
@@ -122,12 +125,5 @@ class SegmentedControl<T> extends StatelessWidget {
         ],
       ),
     );
-    return glass
-        ? LiquidGlass(
-            style: LiquidGlassStyle.regular(colorScheme),
-            clipper: const ShapeBorderClipper(shape: AppShape.full),
-            child: body,
-          )
-        : body;
   }
 }
