@@ -173,6 +173,16 @@ class Preferences {
     await sharedPreferencesIns?.setString(bootRecordKey, json.encode(record));
   }
 
+  Future<String?> getLastPageLabel() async {
+    final preferences = await _store.value;
+    return preferences?.getString(lastPageLabelKey);
+  }
+
+  Future<void> saveLastPageLabel(PageLabel label) async {
+    final preferences = await _store.value;
+    await preferences?.setString(lastPageLabelKey, label.name);
+  }
+
   Future<void> clearPreferences() async {
     final sharedPreferencesIns = await _store.value;
     await sharedPreferencesIns?.clear();
