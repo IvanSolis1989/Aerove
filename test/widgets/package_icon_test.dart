@@ -30,7 +30,7 @@ void main() {
   });
 
   testWidgets('a package icon decodes at its display size, never above the '
-      '128 px the platform exports', (tester) async {
+      '128 physical pixels the platform exports', (tester) async {
     final iconPath = '${icons.path}/app.png';
     await tester.runAsync(
       () async => File(iconPath).writeAsBytes(await _squarePng(128)),
