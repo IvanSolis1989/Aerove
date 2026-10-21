@@ -57,6 +57,10 @@ void main() {
     container.read(runTimeProvider.notifier).value = 1;
   }
 
+  void markInitialized() {
+    container.read(initProvider.notifier).value = true;
+  }
+
   testWidgets('renders its child untouched', (tester) async {
     await pumpTileManager(tester);
 
@@ -65,6 +69,7 @@ void main() {
 
   testWidgets('a tile start request starts a stopped core', (tester) async {
     final listener = await pumpTileManager(tester);
+    markInitialized();
 
     listener.onStart();
     await tester.pumpAndSettle();
@@ -90,6 +95,7 @@ void main() {
     tester,
   ) async {
     final listener = await pumpTileManager(tester);
+    markInitialized();
     markStarted();
     container.read(coreStatusProvider.notifier).value = CoreStatus.connecting;
     await tester.pump();
@@ -98,5 +104,33 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(_RecordingSetupAction.requests, [true]);
+  });
+
+  group('during startup', () {
+    testWidgets('a tile start waits for the app to initialize', (tester) async {
+      final listener = await pumpTileManager(tester);
+
+      listener.onStart();
+      listener.onStart();
+      await tester.pumpAndSettle();
+      expect(_RecordingSetupAction.requests, isEmpty);
+
+      markInitialized();
+      await tester.pumpAndSettle();
+      expect(_RecordingSetupAction.requests, [true]);
+    });
+
+    testWidgets('a tile start is dropped once startup brought the run up', (
+      tester,
+    ) async {
+      final listener = await pumpTileManager(tester);
+
+      listener.onStart();
+      markStarted();
+      markInitialized();
+      await tester.pumpAndSettle();
+
+      expect(_RecordingSetupAction.requests, isEmpty);
+    });
   });
 }
