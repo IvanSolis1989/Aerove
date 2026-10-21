@@ -609,6 +609,7 @@ class _RestateDialogState extends State<_RestateDialog> {
               child: TextField(
                 controller: _controller,
                 contextMenuBuilder: glassEditableTextContextMenu,
+                magnifierConfiguration: glassTextMagnifierConfiguration,
                 minLines: 3,
                 maxLines: null,
                 decoration: InputDecoration(

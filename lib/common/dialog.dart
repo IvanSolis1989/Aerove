@@ -204,6 +204,7 @@ class _FailureDetailsSheet extends StatelessWidget {
       title: context.appLocalizations.errorDetails,
       body: SelectionArea(
         contextMenuBuilder: glassSelectableRegionContextMenu,
+        magnifierConfiguration: glassTextMagnifierConfiguration,
         child: ListView.separated(
           padding: const EdgeInsets.symmetric(
             horizontal: 16,

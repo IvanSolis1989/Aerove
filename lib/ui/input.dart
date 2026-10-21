@@ -76,6 +76,7 @@ class _SecretTextFormFieldState extends State<SecretTextFormField> {
       focusNode: widget.focusNode,
       controller: widget.controller,
       contextMenuBuilder: glassEditableTextContextMenu,
+      magnifierConfiguration: glassTextMagnifierConfiguration,
       obscureText: _obscure,
       keyboardType: TextInputType.visiblePassword,
       maxLines: _obscure ? 1 : widget.maxLines,
@@ -264,6 +265,7 @@ class _InputDialogState extends State<InputDialog> {
                 minLines: 1,
                 controller: _textController,
                 contextMenuBuilder: glassEditableTextContextMenu,
+                magnifierConfiguration: glassTextMagnifierConfiguration,
                 onFieldSubmitted: (_) {
                   _handleUpdate();
                 },

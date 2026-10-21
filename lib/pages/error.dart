@@ -308,6 +308,7 @@ class _ErrorSection extends StatelessWidget {
               text,
               style: style,
               contextMenuBuilder: glassEditableTextContextMenu,
+              magnifierConfiguration: glassTextMagnifierConfiguration,
             ),
           ),
         ),

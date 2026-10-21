@@ -515,6 +515,7 @@ class _EditorTitleField extends StatelessWidget {
       enabled: enabled,
       controller: controller,
       contextMenuBuilder: glassEditableTextContextMenu,
+      magnifierConfiguration: glassTextMagnifierConfiguration,
       decoration: InputDecoration(
         border: const NoInputBorder(),
         counter: const SizedBox(),
@@ -1177,6 +1178,7 @@ class _FindField extends StatelessWidget {
       controller: controller,
       focusNode: focusNode,
       contextMenuBuilder: glassEditableTextContextMenu,
+      magnifierConfiguration: glassTextMagnifierConfiguration,
       textAlignVertical: TextAlignVertical.center,
       inputFormatters: TextInputLimits.limit(TextInputLimits.search),
       style: AppTextStyle.body.of(context),

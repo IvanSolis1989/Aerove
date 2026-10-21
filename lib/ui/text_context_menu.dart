@@ -8,6 +8,7 @@ import 'liquid_glass.dart';
 import 'popup.dart';
 import 'shape.dart';
 import 'surface.dart';
+import 'text_loupe.dart';
 import 'typography.dart';
 
 // Half the height of Material's 44 dp bar, so the bar is a capsule.
@@ -45,6 +46,23 @@ Widget glassSelectableRegionContextMenu(
     anchors: state.contextMenuAnchors,
     buttonItems: state.contextMenuButtonItems,
   ),
+);
+
+const glassTextMagnifierConfiguration = TextMagnifierConfiguration(
+  shouldDisplayHandlesInMagnifier: false,
+  magnifierBuilder: _textLoupe,
+);
+
+Widget _textLoupe(
+  BuildContext context,
+  MagnifierController controller,
+  ValueNotifier<MagnifierInfo> info,
+) => TextLoupe(
+  controller: controller,
+  magnifierInfo: info,
+  borderColor:
+      TextSelectionTheme.of(context).selectionHandleColor ??
+      Theme.of(context).colorScheme.primary,
 );
 
 // The menu is built in the root overlay, which sees none of the themes a sheet
@@ -276,6 +294,7 @@ class _GlassSelectableTextState extends State<GlassSelectableText> {
       focusNode: _focusNode,
       selectionColor: inked ? Colors.transparent : null,
       contextMenuBuilder: glassEditableTextContextMenu,
+      magnifierConfiguration: glassTextMagnifierConfiguration,
       onSelectionChanged: (selection, _) => _selection.value = selection,
     );
     if (!inked) {

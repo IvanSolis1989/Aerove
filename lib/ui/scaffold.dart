@@ -573,6 +573,7 @@ class CommonScaffoldState extends State<CommonScaffold> {
             controller: _textController,
             focusNode: _searchFocusNode,
             contextMenuBuilder: glassEditableTextContextMenu,
+            magnifierConfiguration: glassTextMagnifierConfiguration,
             textInputAction: TextInputAction.search,
             inputFormatters: TextInputLimits.limit(TextInputLimits.search),
             style: AppTextStyle.body.of(context),

@@ -52,6 +52,7 @@ class _SearchFieldState extends State<SearchField> {
           controller: _controller,
           focusNode: widget.focusNode,
           contextMenuBuilder: glassEditableTextContextMenu,
+          magnifierConfiguration: glassTextMagnifierConfiguration,
           textInputAction: TextInputAction.search,
           style: AppTextStyle.body.of(context),
           inputFormatters: TextInputLimits.limit(TextInputLimits.search),

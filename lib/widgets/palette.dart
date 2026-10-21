@@ -762,6 +762,7 @@ class _HexColorFieldState extends State<HexColorField> {
       child: TextField(
         controller: _controller,
         contextMenuBuilder: glassEditableTextContextMenu,
+        magnifierConfiguration: glassTextMagnifierConfiguration,
         autocorrect: false,
         textCapitalization: TextCapitalization.characters,
         style: const TextStyle(fontFeatures: [FontFeature.tabularFigures()]),

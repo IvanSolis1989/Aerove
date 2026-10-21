@@ -200,6 +200,7 @@ class FormRowTextField extends StatelessWidget {
       initialValue: initialValue,
       focusNode: focusNode,
       contextMenuBuilder: glassEditableTextContextMenu,
+      magnifierConfiguration: glassTextMagnifierConfiguration,
       keyboardType: keyboardType,
       textInputAction: textInputAction,
       inputFormatters: inputFormatters,

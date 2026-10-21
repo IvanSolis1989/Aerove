@@ -146,6 +146,7 @@ class _EntryDialogState<T> extends State<EntryDialog<T>> {
         keyboardType: TextInputType.text,
         controller: _valueController,
         contextMenuBuilder: glassEditableTextContextMenu,
+        magnifierConfiguration: glassTextMagnifierConfiguration,
         decoration: InputDecoration(hintText: valueField.label),
         onFieldSubmitted: (_) {
           _submit();
@@ -253,6 +254,7 @@ class _BatchInputField<T> extends StatelessWidget {
     return TextField(
       controller: controller,
       contextMenuBuilder: glassEditableTextContextMenu,
+      magnifierConfiguration: glassTextMagnifierConfiguration,
       autofocus: true,
       minLines: 4,
       maxLines: null,

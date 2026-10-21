@@ -7,6 +7,7 @@ import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/ui/ui.dart';
 import 'package:fl_clash/widgets/aurora.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -149,6 +150,7 @@ Widget _textField() => SizedBox(
     key: const ValueKey('field'),
     controller: TextEditingController(text: 'hello glass world'),
     contextMenuBuilder: glassEditableTextContextMenu,
+    magnifierConfiguration: glassTextMagnifierConfiguration,
   ),
 );
 
@@ -353,6 +355,25 @@ void main() {
           .ancestor(of: ink, matching: find.byType(CustomPaint))
           .first;
       expect(tester.renderObject(highlight), paints..rect(color: accent));
+    },
+  );
+
+  testWidgets(
+    'dragging over a field shows the superellipse loupe in the accent',
+    variant: _android,
+    (tester) async {
+      final appTheme = await _pumpApp(tester, _textField());
+      final gesture = await tester.startGesture(tester.getCenter(_field));
+      await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
+      await tester.pump();
+      expect(find.byType(TextMagnifier), findsNothing);
+      expect(
+        tester.widget<TextLoupe>(find.byType(TextLoupe)).borderColor,
+        appTheme.colorScheme.primary,
+      );
+      await gesture.up();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(TextLoupe), findsNothing);
     },
   );
 

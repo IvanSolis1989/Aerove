@@ -664,6 +664,7 @@ class _ShareLinkDialogState extends State<_ShareLinkDialog> {
       child: TextField(
         controller: _controller,
         contextMenuBuilder: glassEditableTextContextMenu,
+        magnifierConfiguration: glassTextMagnifierConfiguration,
         autofocus: true,
         minLines: 3,
         maxLines: null,

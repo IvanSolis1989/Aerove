@@ -6,7 +6,7 @@ final _textWidget = RegExp(
   r'\b(TextField|TextFormField|SelectableText(?:\.rich)?|SelectionArea|EditableText)\(',
 );
 
-final _builderArgument = RegExp(r'\bcontextMenuBuilder\s*:');
+const _requiredArguments = ['contextMenuBuilder', 'magnifierConfiguration'];
 
 /// The text between the parentheses opening at [open], with everything nested
 /// deeper than its own arguments blanked out, or null if it never closes.
@@ -57,16 +57,21 @@ List<String> _offenders(String path, String source) {
     if (before.startsWith('//')) {
       continue;
     }
-    final arguments = _topLevelArguments(source, match.end - 1);
-    if (arguments != null && _builderArgument.hasMatch(arguments)) {
+    final arguments = _topLevelArguments(source, match.end - 1) ?? '';
+    final missing = [
+      for (final name in _requiredArguments)
+        if (!RegExp('\\b$name\\s*:').hasMatch(arguments)) name,
+    ];
+    if (missing.isEmpty) {
       continue;
     }
     final line = '\n'.allMatches(source.substring(0, match.start)).length + 1;
     offenders.add(
-      '$path:$line — ${match[1]} needs contextMenuBuilder: '
+      '$path:$line — ${match[1]} needs ${missing.join(' and ')}. Pass '
       'glassEditableTextContextMenu (glassSelectableRegionContextMenu for a '
-      'SelectionArea) from lib/ui/text_context_menu.dart, or it shows '
-      "Material's opaque toolbar with a glass pill behind every button.",
+      'SelectionArea) and glassTextMagnifierConfiguration from '
+      "lib/ui/text_context_menu.dart, or it shows Material's opaque toolbar "
+      'with a glass pill behind every button and its rounded-rectangle loupe.',
     );
   }
   return offenders;
@@ -91,19 +96,28 @@ void main() {
   test('the scan reads only the arguments of the widget itself', () {
     const source = '''
 SelectionArea(
-  child: TextField(contextMenuBuilder: glassEditableTextContextMenu),
+  child: TextField(
+    contextMenuBuilder: glassEditableTextContextMenu,
+    magnifierConfiguration: glassTextMagnifierConfiguration,
+  ),
 );
 FormRowTextField(controller: controller);
 SelectableText.rich(
   TextSpan(text: 'a (b'),
   // contextMenuBuilder: in a comment
   contextMenuBuilder: glassEditableTextContextMenu,
+  magnifierConfiguration: glassTextMagnifierConfiguration,
 );
 TextFormField(decoration: InputDecoration(hintText: ')'));
+EditableText(contextMenuBuilder: glassEditableTextContextMenu);
 ''';
     expect(_offenders('sample.dart', source), [
-      startsWith('sample.dart:1 — SelectionArea'),
-      startsWith('sample.dart:10 — TextFormField'),
+      startsWith(
+        'sample.dart:1 — SelectionArea needs contextMenuBuilder and '
+        'magnifierConfiguration.',
+      ),
+      startsWith('sample.dart:14 — TextFormField needs contextMenuBuilder and'),
+      startsWith('sample.dart:15 — EditableText needs magnifierConfiguration.'),
     ]);
   });
 }

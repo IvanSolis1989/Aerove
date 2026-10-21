@@ -86,7 +86,8 @@ alone. `test/lint/text_field_suggestions_test.dart` fails on `enableSuggestions:
 `TextInputType.visiblePassword` anywhere else in `lib/`.
 
 Every `TextField`, `TextFormField`, `SelectableText`, `SelectionArea` and `EditableText` passes the glass selection menu
-from `lib/ui/text_context_menu.dart` as its `contextMenuBuilder`, which `test/lint/text_context_menu_test.dart` enforces.
+from `lib/ui/text_context_menu.dart` as its `contextMenuBuilder` and `glassTextMagnifierConfiguration`, the superellipse
+`TextLoupe`, as its `magnifierConfiguration`, which `test/lint/text_context_menu_test.dart` enforces.
 
 ### Length Units
 

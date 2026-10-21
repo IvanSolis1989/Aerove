@@ -268,6 +268,7 @@ class _LogBody extends StatelessWidget {
         ],
       ),
       contextMenuBuilder: glassEditableTextContextMenu,
+      magnifierConfiguration: glassTextMagnifierConfiguration,
     );
   }
 }
