@@ -785,4 +785,122 @@ void main() {
       }
     });
   });
+
+  group('WindowHeaderBar chrome', () {
+    late ValueNotifier<WindowCaptionState> caption;
+
+    setUp(() {
+      caption = ValueNotifier(const WindowCaptionState());
+    });
+
+    tearDown(() {
+      caption.dispose();
+    });
+
+    Future<void> pumpBar(
+      WidgetTester tester, {
+      required bool glass,
+      bool highContrast = false,
+      bool macOS = false,
+    }) async {
+      await tester.pumpWidget(
+        TestApp(
+          child: LiquidGlassScope(
+            enabled: glass,
+            child: Builder(
+              builder: (context) => MediaQuery(
+                data: MediaQuery.of(
+                  context,
+                ).copyWith(highContrast: highContrast),
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: WindowHeaderBar(
+                    height: macOS ? _macOSHeaderHeight : _windowsHeaderHeight,
+                    onDragStart: () {},
+                    onDoubleTap: () {},
+                    title: macOS ? const Text(appName) : null,
+                    actions: macOS
+                        ? null
+                        : WindowHeaderActions(
+                            state: caption,
+                            onPin: () {},
+                            onMinimize: () {},
+                            onMaximize: () {},
+                            onClose: () {},
+                          ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+    }
+
+    Material bar(WidgetTester tester) => tester.widget<Material>(
+      find
+          .descendant(
+            of: find.byType(WindowHeaderBar),
+            matching: find.byType(Material),
+          )
+          .first,
+    );
+
+    Color dragSurface(WidgetTester tester) => tester
+        .widget<ColoredBox>(
+          find
+              .descendant(
+                of: find.byType(WindowHeaderBar),
+                matching: find.byType(ColoredBox),
+              )
+              .first,
+        )
+        .color;
+
+    testWidgets('on glass the caption bar is clear and has no divider', (
+      tester,
+    ) async {
+      await pumpBar(tester, glass: true);
+
+      expect(bar(tester).color, Colors.transparent);
+      expect(bar(tester).shape, isNull);
+      expect(dragSurface(tester), Colors.transparent);
+      expect(
+        find.descendant(
+          of: find.byType(WindowHeaderBar),
+          matching: find.byType(LiquidGlass),
+        ),
+        findsNothing,
+      );
+    });
+
+    for (final (name, glass, highContrast, macOS) in [
+      ('plain solid', false, false, false),
+      ('high contrast', true, true, false),
+      ('the macOS title bar on glass', true, false, true),
+    ]) {
+      testWidgets('$name keeps the opaque chrome and its divider', (
+        tester,
+      ) async {
+        await pumpBar(
+          tester,
+          glass: glass,
+          highContrast: highContrast,
+          macOS: macOS,
+        );
+
+        final context = tester.element(find.byType(WindowHeaderBar));
+        expect(bar(tester).color, isNot(Colors.transparent));
+        expect(
+          bar(tester).shape,
+          Border(bottom: Divider.createBorderSide(context)),
+        );
+        expect(
+          dragSurface(tester),
+          Theme.of(context).colorScheme.chromeSurface,
+        );
+      });
+    }
+  });
 }

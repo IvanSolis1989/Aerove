@@ -443,9 +443,15 @@ class WindowHeaderBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
+    // The macOS bar, a plain title beside the native traffic lights, keeps
+    // its chrome; the caption bar gives way to the glass below it.
+    final glass =
+        actions != null &&
+        LiquidGlassScope.of(context) &&
+        !MediaQuery.highContrastOf(context);
     return Material(
-      color: translucent ? Colors.transparent : null,
-      shape: Border(bottom: Divider.createBorderSide(context)),
+      color: translucent || glass ? Colors.transparent : null,
+      shape: glass ? null : Border(bottom: Divider.createBorderSide(context)),
       child: SizedBox(
         height: height,
         child: Stack(
@@ -458,7 +464,9 @@ class WindowHeaderBar extends StatelessWidget {
                 },
                 onDoubleTap: onDoubleTap,
                 child: ColoredBox(
-                  color: translucent
+                  color: glass
+                      ? Colors.transparent
+                      : translucent
                       ? colorScheme.chromeSurface.withValues(
                           alpha: kSidebarBlurOpacity,
                         )

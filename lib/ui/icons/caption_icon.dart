@@ -16,16 +16,17 @@ class CaptionIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color =
-        IconTheme.of(context).color ?? Theme.of(context).colorScheme.onSurface;
-    return GlassInk(
-      source: color,
-      role: GlassInkRole.icon,
-      child: CustomPaint(
-        size: const Size.square(captionGlyphSize),
-        painter: _CaptionGlyphPainter(glyph: glyph, color: color),
-      ),
+    final colorScheme = Theme.of(context).colorScheme;
+    final color = IconTheme.of(context).color ?? colorScheme.onSurface;
+    final painted = CustomPaint(
+      size: const Size.square(captionGlyphSize),
+      painter: _CaptionGlyphPainter(glyph: glyph, color: color),
     );
+    // onError marks the close button's own solid fill, which ink would darken.
+    if (color == colorScheme.onError) {
+      return painted;
+    }
+    return GlassInk(source: color, role: GlassInkRole.icon, child: painted);
   }
 }
 

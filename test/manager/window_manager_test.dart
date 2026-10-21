@@ -9,7 +9,10 @@ import 'package:fl_clash/manager/window_manager.dart';
 import 'package:fl_clash/models/config.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
+import 'package:fl_clash/ui/foreground_ink.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
+import 'package:fl_clash/ui/liquid_glass.dart';
+import 'package:flutter/gestures.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -451,15 +454,18 @@ void main() {
       caption.dispose();
     });
 
-    Future<void> pumpActions(WidgetTester tester) async {
+    Future<void> pumpActions(WidgetTester tester, {bool glass = false}) async {
       await tester.pumpWidget(
         TestApp(
-          child: WindowHeaderActions(
-            state: caption,
-            onPin: () => pressed.add('pin'),
-            onMinimize: () => pressed.add('minimize'),
-            onMaximize: () => pressed.add('maximize'),
-            onClose: () => pressed.add('close'),
+          child: LiquidGlassScope(
+            enabled: glass,
+            child: WindowHeaderActions(
+              state: caption,
+              onPin: () => pressed.add('pin'),
+              onMinimize: () => pressed.add('minimize'),
+              onMaximize: () => pressed.add('maximize'),
+              onClose: () => pressed.add('close'),
+            ),
           ),
         ),
       );
@@ -536,6 +542,30 @@ void main() {
         tooltipOf(tester, glyph(CaptionGlyph.restore)),
         currentAppLocalizations.exitFullScreen,
       );
+    });
+
+    testWidgets('on glass the hovered close glyph keeps its own white', (
+      tester,
+    ) async {
+      await pumpActions(tester, glass: true);
+      Finder inkOf(CaptionGlyph caption) =>
+          find.descendant(of: glyph(caption), matching: find.byType(GlassInk));
+      expect(inkOf(CaptionGlyph.close), findsOneWidget);
+
+      final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await gesture.addPointer(location: Offset.zero);
+      addTearDown(gesture.removePointer);
+      await gesture.moveTo(tester.getCenter(glyph(CaptionGlyph.close)));
+      await tester.pumpAndSettle();
+
+      final close = tester.element(glyph(CaptionGlyph.close));
+      expect(IconTheme.of(close).color, Theme.of(close).colorScheme.onError);
+      expect(inkOf(CaptionGlyph.close), findsNothing);
+      expect(inkOf(CaptionGlyph.minimize), findsOneWidget);
+
+      await gesture.moveTo(Offset.zero);
+      await tester.pumpAndSettle();
+      expect(inkOf(CaptionGlyph.close), findsOneWidget);
     });
 
     testWidgets('each button reports its own press', (tester) async {
