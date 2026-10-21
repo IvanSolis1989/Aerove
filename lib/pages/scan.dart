@@ -253,9 +253,10 @@ class _ScanPageState extends ConsumerState<ScanPage>
     required bool glass,
   }) {
     final appLocalizations = context.appLocalizations;
-    Widget controls(Widget child) => failed
-        ? TonalButtonTheme(glass: glass, child: child)
-        : _CameraButtonTheme(child: child);
+    final translucent = !failed && glass && !MediaQuery.highContrastOf(context);
+    Widget controls(Widget child) => translucent
+        ? _CameraButtonTheme(child: child)
+        : TonalButtonTheme(glass: failed && glass, child: child);
     return Scaffold(
       backgroundColor: failed
           ? LiquidGlassScope.surfaceColorOf(

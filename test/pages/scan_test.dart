@@ -840,6 +840,39 @@ void main() {
       });
     }
 
+    for (final (mode, quality, highContrast) in [
+      ('plain solid', null, false),
+      ('high contrast', LiquidGlassQuality.ultra, true),
+    ]) {
+      testWidgets('over the camera the controls stay opaque in $mode', (
+        tester,
+      ) async {
+        tester.platformDispatcher.accessibilityFeaturesTestValue =
+            FakeAccessibilityFeatures(highContrast: highContrast);
+        addTearDown(
+          tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+        );
+        await pumpScanPage(tester, onPopped: (_) {}, glassQuality: quality);
+
+        expect(inPage(find.byType(LiquidGlass)), findsNothing);
+        for (final tooltip in [
+          currentAppLocalizations.close,
+          currentAppLocalizations.pickFromAlbum,
+          currentAppLocalizations.torch,
+        ]) {
+          final fill = fillOf(tester, tooltip);
+          final glyph = glyphColorOf(tester, tooltip);
+          expect(fill.a, 1, reason: tooltip);
+          expect(
+            (glyph.computeLuminance() + 0.05) /
+                (fill.computeLuminance() + 0.05),
+            greaterThan(7),
+            reason: tooltip,
+          );
+        }
+      });
+    }
+
     testWidgets('a lit torch stands apart from an unlit one', (tester) async {
       await pumpScanPage(
         tester,
