@@ -66,16 +66,16 @@ class Dialogs {
                   onPressed: () {
                     Navigator.of(context).pop(false);
                   },
-                  child: Text(cancelText ?? appLocalizations.cancel),
+                  child: GlassText(cancelText ?? appLocalizations.cancel),
                 ),
               TextButton(
                 onPressed: () {
                   Navigator.of(context).pop(true);
                 },
-                child: Text(confirmText ?? appLocalizations.confirm),
+                child: GlassText(confirmText ?? appLocalizations.confirm),
               ),
             ],
-            child: SelectableText.rich(
+            child: GlassSelectableText(
               TextSpan(children: [message]),
               style: const TextStyle(overflow: TextOverflow.visible),
             ),
@@ -203,6 +203,8 @@ class _FailureDetailsSheet extends StatelessWidget {
     return CommonScaffold(
       title: context.appLocalizations.errorDetails,
       body: SelectionArea(
+        contextMenuBuilder: glassSelectableRegionContextMenu,
+        magnifierConfiguration: glassTextMagnifierConfiguration,
         child: ListView.separated(
           padding: const EdgeInsets.symmetric(
             horizontal: 16,

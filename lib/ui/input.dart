@@ -6,6 +6,7 @@ import 'package:fl_clash/ui/l10n.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/shape.dart';
 import 'package:fl_clash/ui/surface.dart';
+import 'package:fl_clash/ui/text_context_menu.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -74,6 +75,8 @@ class _SecretTextFormFieldState extends State<SecretTextFormField> {
       autofocus: widget.autofocus,
       focusNode: widget.focusNode,
       controller: widget.controller,
+      contextMenuBuilder: glassEditableTextContextMenu,
+      magnifierConfiguration: glassTextMagnifierConfiguration,
       obscureText: _obscure,
       keyboardType: TextInputType.visiblePassword,
       maxLines: _obscure ? 1 : widget.maxLines,
@@ -84,6 +87,7 @@ class _SecretTextFormFieldState extends State<SecretTextFormField> {
       validator: widget.validator,
       decoration: widget.decoration.copyWith(
         suffixIcon: IconButton(
+          style: fieldIconButtonStyle(context.colorScheme),
           tooltip: _obscure
               ? localizations.showPassword
               : localizations.hidePassword,
@@ -98,6 +102,15 @@ class _SecretTextFormFieldState extends State<SecretTextFormField> {
     );
   }
 }
+
+/// A button inside a field stands bare on whatever surface holds the field.
+ButtonStyle fieldIconButtonStyle(ColorScheme colorScheme) =>
+    IconButton.styleFrom(
+      backgroundColor: Colors.transparent,
+      foregroundColor: colorScheme.onSurfaceVariant,
+    ).copyWith(
+      backgroundBuilder: (_, _, child) => child ?? const SizedBox.shrink(),
+    );
 
 // A limit holds as iOS and macOS hold one, without a counter under the field.
 List<TextInputFormatter>? _limited(
@@ -251,6 +264,8 @@ class _InputDialogState extends State<InputDialog> {
                 maxLines: null,
                 minLines: 1,
                 controller: _textController,
+                contextMenuBuilder: glassEditableTextContextMenu,
+                magnifierConfiguration: glassTextMagnifierConfiguration,
                 onFieldSubmitted: (_) {
                   _handleUpdate();
                 },

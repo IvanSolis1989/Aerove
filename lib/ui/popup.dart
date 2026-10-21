@@ -57,7 +57,7 @@ const _itemArrowPadding = EdgeInsets.only(
 const _dividerHeight = _cardInset * 2 + 1;
 
 // Soft and wide like HyperOS menus rather than a Material elevation.
-List<BoxShadow> _cardShadows(ColorScheme colorScheme, [double depth = 1]) {
+List<BoxShadow> popupCardShadows(ColorScheme colorScheme, [double depth = 1]) {
   final strength = colorScheme.brightness == Brightness.dark ? 3.0 : 1.0;
   final alpha = strength * depth;
   return [
@@ -381,7 +381,7 @@ class CommonPopupRoute<T> extends PopupRoute<T> {
                 ).colorOf(colorScheme),
                 shadows: glass
                     ? glassMenuShadows(colorScheme)
-                    : _cardShadows(colorScheme),
+                    : popupCardShadows(colorScheme),
                 glass: glass
                     ? (
                         from: LiquidGlassStyle.regular(colorScheme),
@@ -2257,7 +2257,7 @@ class _CommonPopupMenuState extends State<CommonPopupMenu>
                           height: step.itemHeight,
                         ),
                   shadows: glass == null
-                      ? _cardShadows(colorScheme, shadow)
+                      ? popupCardShadows(colorScheme, shadow)
                       : glassMenuShadows(colorScheme, shadow),
                   fill: fill,
                   dim: colorScheme.surface.withValues(
@@ -2465,7 +2465,6 @@ class _RowPressRecognizer extends OneSequenceGestureRecognizer {
 /// A menu card, which a sub menu grows out of the item that opens it: its
 /// surface and clip move from that item at [grow] 0 to its own bounds at 1,
 /// over content laid out at full height.
-@visibleForTesting
 class PopupMenuCard extends SingleChildRenderObjectWidget {
   const PopupMenuCard({
     super.key,
@@ -2477,10 +2476,14 @@ class PopupMenuCard extends SingleChildRenderObjectWidget {
     required this.glass,
     this.rim,
     required this.bare,
+    this.radius,
     super.child,
   });
 
   final double grow;
+
+  /// Replaces the corner a menu derives from its inset rows.
+  final double? radius;
 
   /// The top and height of the item a sub menu grows out of, which spans the
   /// card's current width since the content is laid out to it.
@@ -2509,6 +2512,7 @@ class PopupMenuCard extends SingleChildRenderObjectWidget {
       glass: glass,
       rim: rim,
       bare: bare,
+      radius: radius,
     );
   }
 
@@ -2522,7 +2526,8 @@ class PopupMenuCard extends SingleChildRenderObjectWidget {
       ..dim = dim
       ..glass = glass
       ..rim = rim
-      ..bare = bare;
+      ..bare = bare
+      ..radius = radius;
   }
 }
 
@@ -2536,6 +2541,7 @@ class _RenderPopupMenuCard extends RenderProxyBox {
     required LiquidGlassStyle? glass,
     required LiquidGlassRim? rim,
     required bool bare,
+    required double? radius,
   }) : _grow = grow,
        _origin = origin,
        _shadows = shadows,
@@ -2543,7 +2549,8 @@ class _RenderPopupMenuCard extends RenderProxyBox {
        _dim = dim,
        _glass = glass,
        _rim = rim,
-       _bare = bare;
+       _bare = bare,
+       _cornerRadius = radius;
 
   late final _pane = LiquidGlassPane(markNeedsPaint);
   final _occlusion = LiquidGlassOcclusionPane();
@@ -2624,6 +2631,15 @@ class _RenderPopupMenuCard extends RenderProxyBox {
     markNeedsPaint();
   }
 
+  double? _cornerRadius;
+  set radius(double? value) {
+    if (value == _cornerRadius) {
+      return;
+    }
+    _cornerRadius = value;
+    markNeedsPaint();
+  }
+
   @override
   bool get alwaysNeedsCompositing => _glass != null;
 
@@ -2642,9 +2658,12 @@ class _RenderPopupMenuCard extends RenderProxyBox {
     return Rect.lerp(item, bounds, _grow)!;
   }
 
-  double get _radius => _origin == null
-      ? _cardRadius
-      : math.max(0.0, lerpDouble(_itemRadius, _cardRadius, _grow)!);
+  double get _radius {
+    final card = _cornerRadius ?? _cardRadius;
+    return _origin == null
+        ? card
+        : math.max(0.0, lerpDouble(_itemRadius, card, _grow)!);
+  }
 
   @override
   bool hitTest(BoxHitTestResult result, {required Offset position}) {

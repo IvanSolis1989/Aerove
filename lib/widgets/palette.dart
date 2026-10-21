@@ -761,6 +761,8 @@ class _HexColorFieldState extends State<HexColorField> {
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: TextField(
         controller: _controller,
+        contextMenuBuilder: glassEditableTextContextMenu,
+        magnifierConfiguration: glassTextMagnifierConfiguration,
         autocorrect: false,
         textCapitalization: TextCapitalization.characters,
         style: const TextStyle(fontFeatures: [FontFeature.tabularFigures()]),

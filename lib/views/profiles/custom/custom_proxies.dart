@@ -663,6 +663,8 @@ class _ShareLinkDialogState extends State<_ShareLinkDialog> {
       ],
       child: TextField(
         controller: _controller,
+        contextMenuBuilder: glassEditableTextContextMenu,
+        magnifierConfiguration: glassTextMagnifierConfiguration,
         autofocus: true,
         minLines: 3,
         maxLines: null,
@@ -1030,6 +1032,7 @@ class _EditCustomProxyViewState extends ConsumerState<_EditCustomProxyView> {
       onChanged: onChanged,
       suffix: CommonMinIconButtonTheme(
         child: IconButton(
+          style: fieldIconButtonStyle(context.colorScheme),
           tooltip: revealed
               ? appLocalizations.hidePassword
               : appLocalizations.showPassword,

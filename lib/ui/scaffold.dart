@@ -34,6 +34,7 @@ import 'sheet.dart';
 import 'sheet_header.dart';
 import 'sheet_navigator.dart';
 import 'sortable.dart';
+import 'text_context_menu.dart';
 
 typedef OnKeywordsUpdateCallback = void Function(List<String> keywords);
 
@@ -571,6 +572,8 @@ class CommonScaffoldState extends State<CommonScaffold> {
             autofocus: true,
             controller: _textController,
             focusNode: _searchFocusNode,
+            contextMenuBuilder: glassEditableTextContextMenu,
+            magnifierConfiguration: glassTextMagnifierConfiguration,
             textInputAction: TextInputAction.search,
             inputFormatters: TextInputLimits.limit(TextInputLimits.search),
             style: AppTextStyle.body.of(context),

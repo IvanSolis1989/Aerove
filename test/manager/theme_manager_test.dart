@@ -140,4 +140,66 @@ void main() {
     expect(themes[1], same(themes[0]));
     expect(themes[2], isNot(same(themes[1])));
   });
+
+  testWidgets(
+    'text selection keeps the seed accent under the wallpaper',
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+    (tester) async {
+      for (final brightness in Brightness.values) {
+        for (final mode in LiquidGlassMode.values) {
+          late ThemeData appTheme;
+          late BuildContext page;
+          await tester.pumpWidget(
+            ProviderScope(
+              key: ValueKey((brightness, mode)),
+              overrides: [
+                themeSettingProvider.overrideWithBuild(
+                  (_, _) => ThemeProps(liquidGlass: mode),
+                ),
+              ],
+              child: Consumer(
+                builder: (_, ref, _) {
+                  appTheme = watchAppTheme(ref, brightness);
+                  return MaterialApp(
+                    theme: appTheme,
+                    themeAnimationStyle: AnimationStyle.noAnimation,
+                    builder: (context, child) =>
+                        AuroraAppSurface(motion: false, child: child!),
+                    home: Builder(
+                      builder: (context) {
+                        page = context;
+                        return const SizedBox.shrink();
+                      },
+                    ),
+                  );
+                },
+              ),
+            ),
+          );
+          final seed = appTheme.colorScheme.primary;
+          expect(
+            appTheme.textSelectionTheme,
+            TextSelectionThemeData(
+              cursorColor: seed,
+              selectionColor: seed.withValues(alpha: 0.3),
+              selectionHandleColor: seed,
+            ),
+          );
+          expect(
+            Theme.of(page).colorScheme.primary,
+            auroraColorScheme(brightness).primary,
+          );
+          expect(LiquidGlassScope.of(page), mode != LiquidGlassMode.none);
+          expect(TextSelectionTheme.of(page), appTheme.textSelectionTheme);
+          expect(DefaultSelectionStyle.of(page).cursorColor, seed);
+          expect(
+            DefaultSelectionStyle.of(page).selectionColor,
+            seed.withValues(alpha: 0.3),
+          );
+        }
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    },
+  );
 }

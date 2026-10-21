@@ -233,7 +233,10 @@ class _LogBody extends StatelessWidget {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SelectableText(payload.message, style: styles.primary),
+          GlassSelectableText(
+            TextSpan(text: payload.message),
+            style: styles.primary,
+          ),
           if (payload.tag.isNotEmpty)
             GlassText(payload.tag, style: styles.secondary),
         ],
@@ -264,6 +267,8 @@ class _LogBody extends StatelessWidget {
           TextSpan(text: '\n$_sourceText', style: styles.secondary),
         ],
       ),
+      contextMenuBuilder: glassEditableTextContextMenu,
+      magnifierConfiguration: glassTextMagnifierConfiguration,
     );
   }
 }

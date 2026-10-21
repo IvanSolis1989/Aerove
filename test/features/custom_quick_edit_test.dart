@@ -567,6 +567,14 @@ void main() {
         find.byTooltip(currentAppLocalizations.showPassword),
       );
       await tester.pumpAndSettle();
+      final eye = tester.widget<IconButton>(
+        find.ancestor(
+          of: find.byTooltip(currentAppLocalizations.showPassword),
+          matching: find.byType(IconButton),
+        ),
+      );
+      expect(eye.style?.backgroundColor?.resolve({}), Colors.transparent);
+      expect(eye.style?.backgroundBuilder, isNotNull);
       await tester.tap(find.byTooltip(currentAppLocalizations.showPassword));
       await tester.pump();
       expect(tester.widget<EditableText>(password).obscureText, isFalse);

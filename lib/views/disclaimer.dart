@@ -149,28 +149,33 @@ class DisclaimerView extends StatelessWidget {
           );
         }
         return Scaffold(
-          body: SafeArea(
-            child: _ConsentLayout(
-              maxWidth: _maxContentWidth,
-              gutter: _desktopGutter,
-              compact: false,
-              child: _buildBody(
-                padding: const EdgeInsets.fromLTRB(
-                  _desktopGutter,
-                  _desktopTopPadding,
-                  _desktopGutter,
-                  32,
-                ),
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 20),
-                    child: GlassText(
-                      appLocalizations.disclaimer,
-                      style: AppTextStyle.title2.of(context, emphasized: true),
-                    ),
+          body: LiquidGlassBody(
+            child: SafeArea(
+              child: _ConsentLayout(
+                maxWidth: _maxContentWidth,
+                gutter: _desktopGutter,
+                compact: false,
+                child: _buildBody(
+                  padding: const EdgeInsets.fromLTRB(
+                    _desktopGutter,
+                    _desktopTopPadding,
+                    _desktopGutter,
+                    32,
                   ),
-                  ...terms,
-                ],
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 20),
+                      child: GlassText(
+                        appLocalizations.disclaimer,
+                        style: AppTextStyle.title2.of(
+                          context,
+                          emphasized: true,
+                        ),
+                      ),
+                    ),
+                    ...terms,
+                  ],
+                ),
               ),
             ),
           ),
@@ -508,11 +513,7 @@ class _RestateDialogState extends State<_RestateDialog> {
         ),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: GlassInk(
-            source: style.color ?? context.colorScheme.onSurface,
-            role: GlassInkRole.body,
-            child: SelectableText(statement, style: style),
-          ),
+          child: GlassSelectableText(TextSpan(text: statement), style: style),
         ),
       ),
     );
@@ -607,6 +608,8 @@ class _RestateDialogState extends State<_RestateDialog> {
               ),
               child: TextField(
                 controller: _controller,
+                contextMenuBuilder: glassEditableTextContextMenu,
+                magnifierConfiguration: glassTextMagnifierConfiguration,
                 minLines: 3,
                 maxLines: null,
                 decoration: InputDecoration(

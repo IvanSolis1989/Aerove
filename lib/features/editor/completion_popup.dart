@@ -10,7 +10,7 @@ const _suggestionItemPadding = 10.0;
 const _suggestionMinWidth = 160.0;
 const _suggestionDetailGap = 16.0;
 const _suggestionItemShape = AppShape.sm;
-final _suggestionShape = AppShape.all(AppCorner.sm + _suggestionInset);
+const _suggestionRadius = AppCorner.sm + _suggestionInset;
 
 class EditorCompletionPopup extends StatefulWidget {
   final CodeForgeSuggestionDetails details;
@@ -125,12 +125,7 @@ class _EditorCompletionPopupState extends State<EditorCompletionPopup> {
             horizontal: _suggestionItemPadding,
           ),
           decoration: ShapeDecoration(
-            color: selected
-                ? LiquidGlassScope.surfaceColorOf(
-                    context,
-                    colorScheme.primaryContainer,
-                  )
-                : null,
+            color: selected ? Theme.of(context).highlightColor : null,
             shape: _suggestionItemShape,
           ),
           child: Row(
@@ -142,9 +137,7 @@ class _EditorCompletionPopupState extends State<EditorCompletionPopup> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: widget.textStyle.copyWith(
-                    color: selected
-                        ? colorScheme.onPrimaryContainer
-                        : colorScheme.onSurface,
+                    color: colorScheme.onSurface,
                   ),
                 ),
               ),
@@ -159,9 +152,7 @@ class _EditorCompletionPopupState extends State<EditorCompletionPopup> {
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.end,
                     style: _detailStyle.copyWith(
-                      color: selected
-                          ? colorScheme.onPrimaryContainer
-                          : colorScheme.onSurfaceVariant,
+                      color: colorScheme.onSurfaceVariant,
                     ),
                   ),
                 ),
@@ -183,37 +174,47 @@ class _EditorCompletionPopupState extends State<EditorCompletionPopup> {
             .clamp(math.min(_suggestionMinWidth, maxWidth), maxWidth)
             .toDouble();
         final rowWidth = math.max(0.0, width - _itemInset * 2);
-        return Material(
-          type: MaterialType.card,
-          elevation: 8,
-          color: LiquidGlassScope.surfaceColorOf(
-            context,
-            SurfaceLevel.floatingOf(
-              context.colorScheme,
-            ).colorOf(context.colorScheme),
-          ),
-          textStyle: widget.textStyle,
-          clipBehavior: Clip.antiAlias,
-          shape: _suggestionShape,
-          child: SizedBox(
-            width: width,
-            child: ScrollConfiguration(
-              behavior: const ShowBarScrollBehavior(
-                scrollbarPadding: EdgeInsets.symmetric(
-                  vertical: _suggestionInset,
+        final colorScheme = context.colorScheme;
+        final glass = LiquidGlassScope.of(context);
+        return PopupMenuCard(
+          grow: 1,
+          origin: null,
+          bare: false,
+          dim: Colors.transparent,
+          radius: _suggestionRadius,
+          glass: glass ? LiquidGlassStyle.menu(colorScheme) : null,
+          rim: glass ? LiquidGlassRim.menu(colorScheme) : null,
+          shadows: glass
+              ? glassMenuShadows(colorScheme)
+              : popupCardShadows(colorScheme),
+          fill: SurfaceLevel.floatingOf(colorScheme).colorOf(colorScheme),
+          child: Material(
+            type: MaterialType.transparency,
+            textStyle: widget.textStyle,
+            child: SizedBox(
+              width: width,
+              child: ScrollConfiguration(
+                behavior: const ShowBarScrollBehavior(
+                  scrollbarPadding: EdgeInsets.symmetric(
+                    vertical: _suggestionInset,
+                  ),
                 ),
-              ),
-              child: ListView.builder(
-                controller: _scrollController,
-                shrinkWrap: true,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: _suggestionInset,
-                  vertical: _listPadding,
+                child: ListView.builder(
+                  controller: _scrollController,
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: _suggestionInset,
+                    vertical: _listPadding,
+                  ),
+                  itemExtent: _itemExtent,
+                  itemCount: widget.details.suggestions.length,
+                  itemBuilder: (context, index) => _buildItem(
+                    context,
+                    index,
+                    widths.labels[index],
+                    rowWidth,
+                  ),
                 ),
-                itemExtent: _itemExtent,
-                itemCount: widget.details.suggestions.length,
-                itemBuilder: (context, index) =>
-                    _buildItem(context, index, widths.labels[index], rowWidth),
               ),
             ),
           ),

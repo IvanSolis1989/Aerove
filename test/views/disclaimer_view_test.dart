@@ -364,12 +364,13 @@ void main() {
               );
               final quote = find.byWidgetPredicate(
                 (widget) =>
-                    widget is SelectableText && widget.data == statement,
+                    widget is GlassSelectableText &&
+                    widget.span.toPlainText() == statement,
               );
               expect(quote, findsOneWidget);
               expect(
-                find.ancestor(of: quote, matching: find.byType(GlassInk)),
-                findsOneWidget,
+                find.descendant(of: quote, matching: find.byType(GlassInk)),
+                glass ? findsOneWidget : findsNothing,
               );
               expect(tester.widget<TextField>(_field).minLines, 3);
               expect(tester.widget<TextField>(_field).maxLines, isNull);

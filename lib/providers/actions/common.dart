@@ -149,7 +149,7 @@ class CommonAction extends _$CommonAction {
               .copyWith(
                 color: group.type == ChangelogType.breaking
                     ? context.colorScheme.error
-                    : context.colorScheme.primary,
+                    : context.colorScheme.onSurface,
               ),
         ),
         for (final entry in group.entries)

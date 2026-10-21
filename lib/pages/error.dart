@@ -304,7 +304,12 @@ class _ErrorSection extends StatelessWidget {
           ),
           child: Padding(
             padding: const EdgeInsets.all(16),
-            child: SelectableText(text, style: style),
+            child: SelectableText(
+              text,
+              style: style,
+              contextMenuBuilder: glassEditableTextContextMenu,
+              magnifierConfiguration: glassTextMagnifierConfiguration,
+            ),
           ),
         ),
       ],

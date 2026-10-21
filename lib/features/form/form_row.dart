@@ -199,6 +199,8 @@ class FormRowTextField extends StatelessWidget {
       controller: controller,
       initialValue: initialValue,
       focusNode: focusNode,
+      contextMenuBuilder: glassEditableTextContextMenu,
+      magnifierConfiguration: glassTextMagnifierConfiguration,
       keyboardType: keyboardType,
       textInputAction: textInputAction,
       inputFormatters: inputFormatters,
@@ -282,6 +284,7 @@ class _FormRowSecretTextFieldState extends State<FormRowSecretTextField> {
         ),
         CommonMinIconButtonTheme(
           child: IconButton(
+            style: fieldIconButtonStyle(context.colorScheme),
             tooltip: _obscure
                 ? appLocalizations.showPassword
                 : appLocalizations.hidePassword,

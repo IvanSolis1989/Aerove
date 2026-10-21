@@ -31,6 +31,8 @@ class BatchSection<T> extends StatelessWidget {
         DecorationListItem(
           title: TextField(
             controller: controller,
+            contextMenuBuilder: glassEditableTextContextMenu,
+            magnifierConfiguration: glassTextMagnifierConfiguration,
             autofocus: true,
             minLines: 4,
             maxLines: null,
