@@ -115,6 +115,17 @@ class _RecordingCoreHandler extends CoreHandlerInterface {
         'picks-version': 0,
         'picks': <String, String>{},
       },
+      CoreMethod.getAppliedSetup => {
+        'init': true,
+        'running': true,
+        'applied': {
+          'digest': 'abc',
+          'yaml-md5': 'def',
+          'groups': 1,
+          'proxies': 2,
+          'rules': 3,
+        },
+      },
       _ => '',
     };
     return result as T;
@@ -455,6 +466,51 @@ void main() {
       'path': '/profiles/1.yaml',
       'overlay': 'mode: rule',
     });
+  });
+
+  test('setupConfig hands the Core the record as an object', () async {
+    final handler = _RecordingCoreHandler();
+    Object? sent() =>
+        json.decode(json.encode(handler.calls[CoreMethod.setupConfig]));
+
+    await handler.setupConfig(
+      const SetupParams(
+        selectedMap: {},
+        testUrl: 'test',
+        applied: SetupRecord(digest: 'abc', yamlMd5: 'def', rules: 3),
+      ),
+    );
+
+    expect((sent()! as Map)['applied'], {
+      'digest': 'abc',
+      'yaml-md5': 'def',
+      'groups': 0,
+      'proxies': 0,
+      'rules': 3,
+    });
+  });
+
+  test('getAppliedSetup reads the record the Core kept', () async {
+    final applied = await _RecordingCoreHandler().getAppliedSetup();
+
+    expect(
+      applied,
+      const AppliedSetup(
+        init: true,
+        running: true,
+        applied: SetupRecord(
+          digest: 'abc',
+          yamlMd5: 'def',
+          groups: 1,
+          proxies: 2,
+          rules: 3,
+        ),
+      ),
+    );
+    expect(
+      AppliedSetup.fromJson(const {'init': true, 'applied': null}).applied,
+      isNull,
+    );
   });
 
   test('getConfig preserves structured core errors', () async {

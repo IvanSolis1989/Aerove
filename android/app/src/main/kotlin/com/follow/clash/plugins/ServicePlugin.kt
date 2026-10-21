@@ -122,7 +122,7 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     private fun getRunTime(result: MethodChannel.Result) {
         scope.launch {
-            result.success(ServiceState.awaitRunTime())
+            result.success(ServiceState.awaitRunTime()?.let { gson.toJson(it) })
         }
     }
 

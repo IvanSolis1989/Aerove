@@ -250,21 +250,56 @@ void main() {
   });
 
   group('getRunTime', () {
-    test('maps a millisecond stamp to a DateTime', () async {
-      final stamp = DateTime.utc(2026, 8, 16).millisecondsSinceEpoch;
-      mockChannel((_) async => stamp);
-
-      expect(
-        await Service().getRunTime(),
-        DateTime.fromMillisecondsSinceEpoch(stamp),
-      );
+    // Gson's spelling of the Kotlin RunTime, which ServicePlugin sends.
+    String report(int startedAt) => json.encode({
+      'startedAt': startedAt,
+      'vpnOptions': {
+        'enable': true,
+        'port': 7890,
+        'ipv6': false,
+        'dnsHijacking': true,
+        'accessControlProps': {
+          'enable': true,
+          'mode': 'rejectSelected',
+          'acceptList': <String>[],
+          'rejectList': ['com.example.app'],
+        },
+        'allowBypass': false,
+        'systemProxy': true,
+        'bypassDomain': ['localhost'],
+        'stack': 'gvisor',
+        'routeAddress': ['0.0.0.0/0'],
+        'mtu': 0,
+      },
     });
 
-    test('treats zero and a missing stamp as not running', () async {
-      mockChannel((_) async => 0);
+    test('reads the start stamp and the options the service runs', () async {
+      final stamp = DateTime.utc(2026, 8, 16).millisecondsSinceEpoch;
+      mockChannel((_) async => report(stamp));
+
+      final runTime = await Service().getRunTime();
+
+      expect(runTime?.startedAt, DateTime.fromMillisecondsSinceEpoch(stamp));
+      expect(runTime?.vpnOptions?.stack, 'gvisor');
+      expect(runTime?.vpnOptions?.dnsHijacking, isTrue);
+      expect(
+        runTime?.vpnOptions?.accessControlProps.mode,
+        AccessControlMode.rejectSelected,
+      );
+      expect(runTime?.vpnOptions?.accessControlProps.rejectList, [
+        'com.example.app',
+      ]);
+      expect(runTime?.vpnOptions?.congestionController, '');
+    });
+
+    test('treats no report and a zero stamp as not running', () async {
+      mockChannel((_) async => null);
       expect(await Service().getRunTime(), isNull);
 
-      mockChannel((_) async => null);
+      mockChannel((_) async => '');
+      expect(await Service().getRunTime(), isNull);
+
+      mockChannel((_) async => report(0));
       expect(await Service().getRunTime(), isNull);
     });
   });

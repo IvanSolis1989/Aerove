@@ -60,6 +60,8 @@ mixin CoreInterface {
 
   Future<String> setupConfig(SetupParams setupParams);
 
+  Future<AppliedSetup?> getAppliedSetup();
+
   Future<ProxiesData> getProxies();
 
   Future<ChangeProxyResult> changeProxy(ChangeProxyParams changeProxyParams);
@@ -69,6 +71,8 @@ mixin CoreInterface {
   Future<bool> startListener();
 
   Future<bool> stopListener();
+
+  Future<bool> adoptListener();
 
   Future<List<ExternalProvider>> getExternalProviders();
 
@@ -357,6 +361,14 @@ abstract class CoreHandlerInterface with CoreInterface {
   }
 
   @override
+  Future<AppliedSetup?> getAppliedSetup() async {
+    final data = await _invokeMethod<Map<String, dynamic>>(
+      method: CoreMethod.getAppliedSetup,
+    );
+    return data == null ? null : AppliedSetup.fromJson(data);
+  }
+
+  @override
   Future<String> dumpRuleSet(String path) async {
     return _invokeMessage(method: CoreMethod.dumpRuleSet, arguments: path);
   }
@@ -567,6 +579,11 @@ abstract class CoreHandlerInterface with CoreInterface {
   Future<bool> stopListener() async {
     return await _invokeMethod<bool>(method: CoreMethod.stopListener) ?? false;
   }
+
+  /// Claims a run the Core already serves. Only Android keeps a service that
+  /// holds one without this host, so anywhere else it is a plain start.
+  @override
+  Future<bool> adoptListener() => startListener();
 
   @override
   Future<Delay?> asyncTestDelay(String url, String proxyName) async {

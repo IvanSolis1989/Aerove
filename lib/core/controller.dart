@@ -185,6 +185,8 @@ class CoreController {
     return result;
   }
 
+  Future<AppliedSetup?> getAppliedSetup() => _interface.getAppliedSetup();
+
   Future<List<Group>> getProxiesGroups({
     required ProxiesSortType sortType,
     required DelayMap delayMap,
@@ -278,6 +280,8 @@ class CoreController {
   Future<bool> stopListener() async {
     return _interface.stopListener();
   }
+
+  Future<bool> adoptListener() => _interface.adoptListener();
 
   Future<Delay?> getDelay(String url, String proxyName) async {
     return _interface.asyncTestDelay(url, proxyName);

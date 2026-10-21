@@ -9,6 +9,7 @@ import 'package:fl_clash/core/spill.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
+import 'package:fl_clash/plugins/service.dart';
 import 'package:fl_clash/providers/action.dart';
 import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/providers/config.dart';
@@ -75,6 +76,15 @@ class TestSetupAction extends SetupAction {
   final Set<bool> unansweredCoreCalls = {};
   int authorizeCalls = 0;
   AuthorizeCode authorizeResult = AuthorizeCode.none;
+  ServiceRunTime? serviceRunTime;
+  Completer<ServiceRunTime?>? serviceRunTimeGate;
+
+  @override
+  Future<ServiceRunTime?> readServiceRunTime() =>
+      serviceRunTimeGate?.future ?? Future.value(serviceRunTime);
+
+  @override
+  Future<AppliedSetup?> readAppliedSetup() async => null;
 
   @override
   Future<AuthorizeCode> authorizeCore() async {
@@ -111,6 +121,32 @@ class TestSetupAction extends SetupAction {
     await preloadInvoke?.call();
     return true;
   }
+}
+
+class _ReattachSetupAction extends SetupAction {
+  ServiceRunTime? serviceRunTime;
+  final List<String> listenerCalls = [];
+
+  @override
+  Future<ServiceRunTime?> readServiceRunTime() async => serviceRunTime;
+
+  @override
+  Future<bool> setCoreRunning(bool running) async {
+    listenerCalls.add(running ? 'start' : 'stop');
+    return true;
+  }
+
+  @override
+  Future<bool> adoptCoreRunning() async {
+    listenerCalls.add('adopt');
+    return true;
+  }
+
+  @override
+  void resetCoreTraffic() {}
+
+  @override
+  Future<AuthorizeCode> authorizeCore() async => AuthorizeCode.none;
 }
 
 void main() {
@@ -633,7 +669,72 @@ void main() {
     });
   });
 
+  group('run time prefill', () {
+    final hourAgo = DateTime.now().subtract(const Duration(hours: 1));
+    final hour = const Duration(hours: 1).inMilliseconds;
+
+    test(
+      'shows a run the service holds before the launch catches up',
+      () async {
+        action.serviceRunTime = (startedAt: hourAgo, vpnOptions: null);
+
+        await action.prefillRunTime();
+
+        expect(container.read(isStartProvider), isTrue);
+        expect(container.read(runTimeProvider), greaterThanOrEqualTo(hour));
+        expect(action.coreRunningCalls, isEmpty);
+      },
+    );
+
+    test('initStatus keeps the service start time it prefilled', () async {
+      action.serviceRunTime = (startedAt: hourAgo, vpnOptions: null);
+      await action.prefillRunTime();
+
+      await action.initStatus();
+
+      expect(action.coreRunningCalls, [true]);
+      expect(container.read(runTimeProvider), greaterThanOrEqualTo(hour));
+    });
+
+    test('initStatus clears a prefill whose run ended meanwhile', () async {
+      action.serviceRunTime = (startedAt: hourAgo, vpnOptions: null);
+      await action.prefillRunTime();
+      action.serviceRunTime = null;
+
+      await action.initStatus();
+
+      expect(container.read(runTimeProvider), isNull);
+      expect(action.appliedForce, [true]);
+    });
+
+    test('never waits out a service that does not answer', () async {
+      action.serviceRunTimeGate = Completer<ServiceRunTime?>();
+
+      await action.prefillRunTime().timeout(const Duration(seconds: 2));
+
+      expect(container.read(runTimeProvider), isNull);
+    });
+  });
+
   group('initStatus', () {
+    test(
+      'a degraded launch with nothing to take over starts nothing',
+      () async {
+        action.serviceRunTime = (
+          startedAt: DateTime.now().subtract(const Duration(minutes: 1)),
+          vpnOptions: null,
+        );
+        container.read(appSettingProvider.notifier).value =
+            const AppSettingProps(autoRun: true);
+
+        await action.initStatus(degraded: true);
+
+        expect(action.coreRunningCalls, isEmpty);
+        expect(action.applyProfileCalls, 0);
+        expect(container.read(runTimeProvider), isNull);
+      },
+    );
+
     test('is a no-op once the status has already been initialized', () async {
       globalState.needInitStatus = false;
 
@@ -1845,5 +1946,297 @@ void main() {
         verify(() => core.setupConfig(any())).called(1);
       },
     );
+  });
+
+  group('reattach', () {
+    late Directory tempDir;
+    late Profile profile;
+    late SetupState setupState;
+    late _MockCoreHandlerInterface core;
+    late List<SetupParams> pushed;
+    AppliedSetup? applied;
+    Completer<void>? setupStateGate;
+
+    const runningOptions = VpnOptions(
+      enable: true,
+      port: 7890,
+      ipv6: false,
+      dnsHijacking: false,
+      accessControlProps: AccessControlProps(),
+      allowBypass: false,
+      systemProxy: true,
+      bypassDomain: [],
+      stack: 'gvisor',
+    );
+    final hour = const Duration(hours: 1).inMilliseconds;
+    ServiceRunTime serviceRun() => (
+      startedAt: DateTime.now().subtract(const Duration(hours: 1)),
+      vpnOptions: runningOptions,
+    );
+
+    setUpAll(() async {
+      tempDir = Directory.systemTemp.createTempSync('reattach_test');
+      await useAppPaths(tempDir);
+      await AppLocalizations.load(const Locale('en'));
+      globalState.packageInfo = PackageInfo(
+        appName: 'FlClash',
+        packageName: 'com.follow.clash',
+        version: '0.0.0',
+        buildNumber: '0',
+      );
+    });
+
+    tearDownAll(() {
+      try {
+        tempDir.deleteSync(recursive: true);
+      } catch (_) {}
+    });
+
+    setUp(() {
+      profile = Profile.normal(label: 'p');
+      setupState = SetupState(
+        profileId: profile.id,
+        profileLastUpdateDate: null,
+        profileType: ProfileType.file,
+        extendType: ExtendType.standard,
+        rules: const [],
+        proxyGroups: const [],
+        addedRules: const [],
+        script: null,
+        overrides: const ProfileOverrides(),
+      );
+      core = _MockCoreHandlerInterface();
+      pushed = [];
+      applied = null;
+      setupStateGate = null;
+      when(
+        () => core.getProfileBase(any()),
+      ).thenAnswer((_) async => const ProfileBase(config: {}, digest: 'd'));
+      when(() => core.setupConfig(any())).thenAnswer((invocation) async {
+        pushed.add(invocation.positionalArguments.single as SetupParams);
+        return '';
+      });
+      when(() => core.updateConfig(any())).thenAnswer((_) async => '');
+      when(() => core.getExternalProviders()).thenAnswer((_) async => []);
+      when(
+        () => core.getProxies(),
+      ).thenAnswer((_) async => const ProxiesData(proxies: {}, all: []));
+      when(() => core.getAppliedSetup()).thenAnswer((_) async => applied);
+    });
+
+    tearDown(() {
+      globalState.lastConfigMd5 = null;
+      globalState.lastConfigCounts = null;
+    });
+
+    // A fresh container stands in for the engine a reopened app starts.
+    ProviderContainer launch(SetupAction action) {
+      final scoped = ProviderContainer(
+        overrides: [
+          profilesProvider.overrideWith(() => TestProfiles([profile])),
+          currentProfileIdProvider.overrideWithBuild((_, _) => profile.id),
+          setupStateProvider.overrideWith((_, _) async {
+            await setupStateGate?.future;
+            return setupState;
+          }),
+          coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
+          setupActionProvider.overrideWith(() => action),
+          commonActionProvider.overrideWith(TestCommonAction.new),
+        ],
+      );
+      addTearDown(scoped.dispose);
+      scoped.listen(patchClashConfigProvider, (_, _) {});
+      scoped.listen(appSettingProvider, (_, _) {});
+      globalState.container = scoped;
+      globalState.needInitStatus = true;
+      globalState.lastConfigMd5 = null;
+      globalState.lastConfigCounts = null;
+      scoped.read(setupActionProvider.notifier);
+      return scoped;
+    }
+
+    Future<SetupRecord> pushedByAnEarlierEngine() async {
+      final earlier = launch(_ReattachSetupAction());
+      expect(
+        await earlier
+            .read(setupActionProvider.notifier)
+            .applyProfile(force: true),
+        isTrue,
+      );
+      final record = pushed.single.applied!;
+      pushed.clear();
+      clearInteractions(core);
+      return record;
+    }
+
+    void enableAutoRun(ProviderContainer scoped) {
+      scoped
+          .read(appSettingProvider.notifier)
+          .update((state) => state.copyWith(autoRun: true));
+    }
+
+    test('the same inputs take over the running config unpushed', () async {
+      final record = await pushedByAnEarlierEngine();
+      applied = AppliedSetup(init: true, running: true, applied: record);
+      final action = _ReattachSetupAction()..serviceRunTime = serviceRun();
+      final scoped = launch(action);
+
+      await action.initStatus();
+
+      expect(pushed, isEmpty);
+      verifyNever(() => core.getProfileBase(any()));
+      expect(action.listenerCalls, ['adopt']);
+      expect(scoped.read(isStartProvider), isTrue);
+      expect(scoped.read(runTimeProvider), greaterThanOrEqualTo(hour));
+      expect(scoped.read(runningVpnOptionsProvider), runningOptions);
+      expect(globalState.lastConfigMd5, record.yamlMd5);
+      expect(globalState.lastConfigCounts, (groups: 0, proxies: 0, rules: 0));
+      expect(globalState.needInitStatus, isFalse);
+      verify(() => core.updateConfig(any())).called(1);
+    });
+
+    test('changed inputs rebuild but push only a YAML that moved', () async {
+      final record = await pushedByAnEarlierEngine();
+      applied = AppliedSetup(init: true, applied: record);
+      setupState = setupState.copyWith(profileLastUpdateDate: 1);
+      final action = _ReattachSetupAction();
+      launch(action);
+
+      await action.initStatus();
+
+      verify(() => core.getProfileBase(any())).called(1);
+      expect(pushed, isEmpty);
+    });
+
+    test('a YAML that moved is pushed with the record of its inputs', () async {
+      final record = await pushedByAnEarlierEngine();
+      applied = AppliedSetup(init: true, applied: record);
+      final action = _ReattachSetupAction();
+      final scoped = launch(action);
+      scoped
+          .read(patchClashConfigProvider.notifier)
+          .update((state) => state.copyWith(hosts: {'a.test': '1.1.1.1'}));
+
+      await action.initStatus();
+
+      expect(pushed, hasLength(1));
+      expect(pushed.single.applied?.digest, isNot(record.digest));
+      expect(pushed.single.applied?.yamlMd5, isNot(record.yamlMd5));
+    });
+
+    test(
+      'a Core with no applied config is pushed the profile anyway',
+      () async {
+        final record = await pushedByAnEarlierEngine();
+        applied = const AppliedSetup(init: true);
+        final action = _ReattachSetupAction();
+        launch(action);
+        globalState.lastConfigMd5 = record.yamlMd5;
+
+        await action.initStatus();
+
+        expect(pushed, hasLength(1));
+        verifyNever(() => core.updateConfig(any()));
+      },
+    );
+
+    test('autoRun starts a stopped service over the same inputs', () async {
+      final record = await pushedByAnEarlierEngine();
+      applied = AppliedSetup(init: true, applied: record);
+      final action = _ReattachSetupAction();
+      final scoped = launch(action);
+      enableAutoRun(scoped);
+
+      await action.initStatus();
+
+      expect(pushed, isEmpty);
+      expect(action.listenerCalls, ['start']);
+      expect(scoped.read(isStartProvider), isTrue);
+    });
+
+    test(
+      'autoRun starts a stopped service when the rebuild skips the push',
+      () async {
+        final record = await pushedByAnEarlierEngine();
+        applied = AppliedSetup(init: true, applied: record);
+        setupState = setupState.copyWith(profileLastUpdateDate: 1);
+        final action = _ReattachSetupAction();
+        final scoped = launch(action);
+        enableAutoRun(scoped);
+
+        await action.initStatus();
+
+        verify(() => core.getProfileBase(any())).called(1);
+        expect(pushed, isEmpty);
+        expect(action.listenerCalls, ['start']);
+        expect(scoped.read(isStartProvider), isTrue);
+      },
+    );
+
+    test('a restart after taking over does not reload the Core', () async {
+      final record = await pushedByAnEarlierEngine();
+      applied = AppliedSetup(init: true, running: true, applied: record);
+      final action = _ReattachSetupAction()..serviceRunTime = serviceRun();
+      final scoped = launch(action);
+      await action.initStatus();
+      scoped.read(initProvider.notifier).value = true;
+
+      await action.restartVpn();
+      await Future<void>.delayed(const Duration(milliseconds: 800));
+
+      expect(action.listenerCalls, ['adopt', 'stop', 'start']);
+      verifyNever(() => core.getProfileBase(any()));
+      expect(pushed, isEmpty);
+    });
+
+    test(
+      'switching profiles after taking over still reloads the Core',
+      () async {
+        final record = await pushedByAnEarlierEngine();
+        applied = AppliedSetup(init: true, running: true, applied: record);
+        final action = _ReattachSetupAction()..serviceRunTime = serviceRun();
+        final scoped = launch(action);
+        await action.initStatus();
+        scoped.read(initProvider.notifier).value = true;
+
+        expect(await action.fullSetup(), isTrue);
+
+        expect(pushed, hasLength(1));
+      },
+    );
+
+    test('a degraded launch takes over the run but never pushes', () async {
+      final record = await pushedByAnEarlierEngine();
+      applied = AppliedSetup(init: true, running: true, applied: record);
+      final action = _ReattachSetupAction()..serviceRunTime = serviceRun();
+      final scoped = launch(action);
+      scoped
+          .read(patchClashConfigProvider.notifier)
+          .update((state) => state.copyWith(hosts: {'a.test': '1.1.1.1'}));
+
+      await action.initStatus(degraded: true);
+
+      expect(pushed, isEmpty);
+      verifyNever(() => core.getProfileBase(any()));
+      expect(action.listenerCalls, ['adopt']);
+      expect(scoped.read(isStartProvider), isTrue);
+    });
+
+    test('a stop that lands while taking over wins', () async {
+      final record = await pushedByAnEarlierEngine();
+      applied = AppliedSetup(init: true, running: true, applied: record);
+      final action = _ReattachSetupAction()..serviceRunTime = serviceRun();
+      final scoped = launch(action);
+      final gate = setupStateGate = Completer<void>();
+
+      final reattaching = action.initStatus();
+      await pumpEventQueue();
+      await action.setRunning(false);
+      gate.complete();
+      await reattaching;
+
+      expect(action.listenerCalls, ['stop']);
+      expect(scoped.read(isStartProvider), isFalse);
+    });
   });
 }

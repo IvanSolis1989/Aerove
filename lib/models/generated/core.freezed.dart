@@ -16,7 +16,7 @@ T _$identity<T>(T value) => value;
 /// @nodoc
 mixin _$SetupParams {
 
-@JsonKey(name: 'selected-map') Map<String, String> get selectedMap;@JsonKey(name: 'test-url') String get testUrl;@JsonKey(name: 'skip-cert-verify') bool get skipCertVerify;@JsonKey(includeIfNull: false) SetupBase? get base;
+@JsonKey(name: 'selected-map') Map<String, String> get selectedMap;@JsonKey(name: 'test-url') String get testUrl;@JsonKey(name: 'skip-cert-verify') bool get skipCertVerify;@JsonKey(includeIfNull: false) SetupBase? get base;@JsonKey(includeIfNull: false) SetupRecord? get applied;
 /// Create a copy of SetupParams
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -30,20 +30,20 @@ $SetupParamsCopyWith<SetupParams> get copyWith => _$SetupParamsCopyWithImpl<Setu
 @override
 bool operator ==(Object other) {
   final _this = this as SetupParams;
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is SetupParams&&const DeepCollectionEquality().equals(other.selectedMap, _this.selectedMap)&&(identical(other.testUrl, _this.testUrl) || other.testUrl == _this.testUrl)&&(identical(other.skipCertVerify, _this.skipCertVerify) || other.skipCertVerify == _this.skipCertVerify)&&(identical(other.base, _this.base) || other.base == _this.base));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is SetupParams&&const DeepCollectionEquality().equals(other.selectedMap, _this.selectedMap)&&(identical(other.testUrl, _this.testUrl) || other.testUrl == _this.testUrl)&&(identical(other.skipCertVerify, _this.skipCertVerify) || other.skipCertVerify == _this.skipCertVerify)&&(identical(other.base, _this.base) || other.base == _this.base)&&(identical(other.applied, _this.applied) || other.applied == _this.applied));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
 int get hashCode {
   final _this = this as SetupParams;
-  return Object.hash(runtimeType,const DeepCollectionEquality().hash(_this.selectedMap),_this.testUrl,_this.skipCertVerify,_this.base);
+  return Object.hash(runtimeType,const DeepCollectionEquality().hash(_this.selectedMap),_this.testUrl,_this.skipCertVerify,_this.base,_this.applied);
 }
 
 @override
 String toString() {
   final _this = this as SetupParams;
-  return 'SetupParams(selectedMap: ${_this.selectedMap}, testUrl: ${_this.testUrl}, skipCertVerify: ${_this.skipCertVerify}, base: ${_this.base})';
+  return 'SetupParams(selectedMap: ${_this.selectedMap}, testUrl: ${_this.testUrl}, skipCertVerify: ${_this.skipCertVerify}, base: ${_this.base}, applied: ${_this.applied})';
 }
 
 
@@ -54,11 +54,11 @@ abstract mixin class $SetupParamsCopyWith<$Res>  {
   factory $SetupParamsCopyWith(SetupParams value, $Res Function(SetupParams) _then) = _$SetupParamsCopyWithImpl;
 @useResult
 $Res call({
-@JsonKey(name: 'selected-map') Map<String, String> selectedMap,@JsonKey(name: 'test-url') String testUrl,@JsonKey(name: 'skip-cert-verify') bool skipCertVerify,@JsonKey(includeIfNull: false) SetupBase? base
+@JsonKey(name: 'selected-map') Map<String, String> selectedMap,@JsonKey(name: 'test-url') String testUrl,@JsonKey(name: 'skip-cert-verify') bool skipCertVerify,@JsonKey(includeIfNull: false) SetupBase? base,@JsonKey(includeIfNull: false) SetupRecord? applied
 });
 
 
-$SetupBaseCopyWith<$Res>? get base;
+$SetupBaseCopyWith<$Res>? get base;$SetupRecordCopyWith<$Res>? get applied;
 
 }
 /// @nodoc
@@ -71,13 +71,14 @@ class _$SetupParamsCopyWithImpl<$Res>
 
 /// Create a copy of SetupParams
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? selectedMap = null,Object? testUrl = null,Object? skipCertVerify = null,Object? base = freezed,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? selectedMap = null,Object? testUrl = null,Object? skipCertVerify = null,Object? base = freezed,Object? applied = freezed,}) {
   return _then(SetupParams(
 selectedMap: null == selectedMap ? _self.selectedMap : selectedMap // ignore: cast_nullable_to_non_nullable
 as Map<String, String>,testUrl: null == testUrl ? _self.testUrl : testUrl // ignore: cast_nullable_to_non_nullable
 as String,skipCertVerify: null == skipCertVerify ? _self.skipCertVerify : skipCertVerify // ignore: cast_nullable_to_non_nullable
 as bool,base: freezed == base ? _self.base : base // ignore: cast_nullable_to_non_nullable
-as SetupBase?,
+as SetupBase?,applied: freezed == applied ? _self.applied : applied // ignore: cast_nullable_to_non_nullable
+as SetupRecord?,
   ));
 }
 /// Create a copy of SetupParams
@@ -91,6 +92,18 @@ $SetupBaseCopyWith<$Res>? get base {
 
   return $SetupBaseCopyWith<$Res>(_self.base!, (value) {
     return _then(_self.copyWith(base: value));
+  });
+}/// Create a copy of SetupParams
+/// with the given fields replaced by the non-null parameter values.
+@override
+@pragma('vm:prefer-inline')
+$SetupRecordCopyWith<$Res>? get applied {
+    if (_self.applied == null) {
+    return null;
+  }
+
+  return $SetupRecordCopyWith<$Res>(_self.applied!, (value) {
+    return _then(_self.copyWith(applied: value));
   });
 }
 }
@@ -174,10 +187,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function(@JsonKey(name: 'selected-map')  Map<String, String> selectedMap, @JsonKey(name: 'test-url')  String testUrl, @JsonKey(name: 'skip-cert-verify')  bool skipCertVerify, @JsonKey(includeIfNull: false)  SetupBase? base)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function(@JsonKey(name: 'selected-map')  Map<String, String> selectedMap, @JsonKey(name: 'test-url')  String testUrl, @JsonKey(name: 'skip-cert-verify')  bool skipCertVerify, @JsonKey(includeIfNull: false)  SetupBase? base, @JsonKey(includeIfNull: false)  SetupRecord? applied)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _SetupParams() when $default != null:
-return $default(_that.selectedMap,_that.testUrl,_that.skipCertVerify,_that.base);case _:
+return $default(_that.selectedMap,_that.testUrl,_that.skipCertVerify,_that.base,_that.applied);case _:
   return orElse();
 
 }
@@ -195,10 +208,10 @@ return $default(_that.selectedMap,_that.testUrl,_that.skipCertVerify,_that.base)
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function(@JsonKey(name: 'selected-map')  Map<String, String> selectedMap, @JsonKey(name: 'test-url')  String testUrl, @JsonKey(name: 'skip-cert-verify')  bool skipCertVerify, @JsonKey(includeIfNull: false)  SetupBase? base)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function(@JsonKey(name: 'selected-map')  Map<String, String> selectedMap, @JsonKey(name: 'test-url')  String testUrl, @JsonKey(name: 'skip-cert-verify')  bool skipCertVerify, @JsonKey(includeIfNull: false)  SetupBase? base, @JsonKey(includeIfNull: false)  SetupRecord? applied)  $default,) {final _that = this;
 switch (_that) {
 case _SetupParams():
-return $default(_that.selectedMap,_that.testUrl,_that.skipCertVerify,_that.base);case _:
+return $default(_that.selectedMap,_that.testUrl,_that.skipCertVerify,_that.base,_that.applied);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -215,10 +228,10 @@ return $default(_that.selectedMap,_that.testUrl,_that.skipCertVerify,_that.base)
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function(@JsonKey(name: 'selected-map')  Map<String, String> selectedMap, @JsonKey(name: 'test-url')  String testUrl, @JsonKey(name: 'skip-cert-verify')  bool skipCertVerify, @JsonKey(includeIfNull: false)  SetupBase? base)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function(@JsonKey(name: 'selected-map')  Map<String, String> selectedMap, @JsonKey(name: 'test-url')  String testUrl, @JsonKey(name: 'skip-cert-verify')  bool skipCertVerify, @JsonKey(includeIfNull: false)  SetupBase? base, @JsonKey(includeIfNull: false)  SetupRecord? applied)?  $default,) {final _that = this;
 switch (_that) {
 case _SetupParams() when $default != null:
-return $default(_that.selectedMap,_that.testUrl,_that.skipCertVerify,_that.base);case _:
+return $default(_that.selectedMap,_that.testUrl,_that.skipCertVerify,_that.base,_that.applied);case _:
   return null;
 
 }
@@ -230,7 +243,7 @@ return $default(_that.selectedMap,_that.testUrl,_that.skipCertVerify,_that.base)
 @JsonSerializable()
 
 class _SetupParams implements SetupParams {
-  const _SetupParams({@JsonKey(name: 'selected-map') required  Map<String, String> selectedMap, @JsonKey(name: 'test-url') required this.testUrl, @JsonKey(name: 'skip-cert-verify') this.skipCertVerify = false, @JsonKey(includeIfNull: false) this.base}): _selectedMap = selectedMap;
+  const _SetupParams({@JsonKey(name: 'selected-map') required  Map<String, String> selectedMap, @JsonKey(name: 'test-url') required this.testUrl, @JsonKey(name: 'skip-cert-verify') this.skipCertVerify = false, @JsonKey(includeIfNull: false) this.base, @JsonKey(includeIfNull: false) this.applied}): _selectedMap = selectedMap;
   factory _SetupParams.fromJson(Map<String, dynamic> json) => _$SetupParamsFromJson(json);
 
  final  Map<String, String> _selectedMap;
@@ -243,6 +256,7 @@ class _SetupParams implements SetupParams {
 @override@JsonKey(name: 'test-url') final  String testUrl;
 @override@JsonKey(name: 'skip-cert-verify') final  bool skipCertVerify;
 @override@JsonKey(includeIfNull: false) final  SetupBase? base;
+@override@JsonKey(includeIfNull: false) final  SetupRecord? applied;
 
 /// Create a copy of SetupParams
 /// with the given fields replaced by the non-null parameter values.
@@ -257,18 +271,18 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is _SetupParams&&const DeepCollectionEquality().equals(other.selectedMap, _selectedMap)&&(identical(other.testUrl, testUrl) || other.testUrl == testUrl)&&(identical(other.skipCertVerify, skipCertVerify) || other.skipCertVerify == skipCertVerify)&&(identical(other.base, base) || other.base == base));
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is _SetupParams&&const DeepCollectionEquality().equals(other.selectedMap, _selectedMap)&&(identical(other.testUrl, testUrl) || other.testUrl == testUrl)&&(identical(other.skipCertVerify, skipCertVerify) || other.skipCertVerify == skipCertVerify)&&(identical(other.base, base) || other.base == base)&&(identical(other.applied, applied) || other.applied == applied));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
 int get hashCode {
-    return Object.hash(runtimeType,const DeepCollectionEquality().hash(_selectedMap),testUrl,skipCertVerify,base);
+    return Object.hash(runtimeType,const DeepCollectionEquality().hash(_selectedMap),testUrl,skipCertVerify,base,applied);
 }
 
 @override
 String toString() {
-    return 'SetupParams(selectedMap: $selectedMap, testUrl: $testUrl, skipCertVerify: $skipCertVerify, base: $base)';
+    return 'SetupParams(selectedMap: $selectedMap, testUrl: $testUrl, skipCertVerify: $skipCertVerify, base: $base, applied: $applied)';
 }
 
 
@@ -279,11 +293,11 @@ abstract mixin class _$SetupParamsCopyWith<$Res> implements $SetupParamsCopyWith
   factory _$SetupParamsCopyWith(_SetupParams value, $Res Function(_SetupParams) _then) = __$SetupParamsCopyWithImpl;
 @override @useResult
 $Res call({
-@JsonKey(name: 'selected-map') Map<String, String> selectedMap,@JsonKey(name: 'test-url') String testUrl,@JsonKey(name: 'skip-cert-verify') bool skipCertVerify,@JsonKey(includeIfNull: false) SetupBase? base
+@JsonKey(name: 'selected-map') Map<String, String> selectedMap,@JsonKey(name: 'test-url') String testUrl,@JsonKey(name: 'skip-cert-verify') bool skipCertVerify,@JsonKey(includeIfNull: false) SetupBase? base,@JsonKey(includeIfNull: false) SetupRecord? applied
 });
 
 
-@override $SetupBaseCopyWith<$Res>? get base;
+@override $SetupBaseCopyWith<$Res>? get base;@override $SetupRecordCopyWith<$Res>? get applied;
 
 }
 /// @nodoc
@@ -296,13 +310,14 @@ class __$SetupParamsCopyWithImpl<$Res>
 
 /// Create a copy of SetupParams
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? selectedMap = null,Object? testUrl = null,Object? skipCertVerify = null,Object? base = freezed,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? selectedMap = null,Object? testUrl = null,Object? skipCertVerify = null,Object? base = freezed,Object? applied = freezed,}) {
   return _then(_SetupParams(
 selectedMap: null == selectedMap ? _self._selectedMap : selectedMap // ignore: cast_nullable_to_non_nullable
 as Map<String, String>,testUrl: null == testUrl ? _self.testUrl : testUrl // ignore: cast_nullable_to_non_nullable
 as String,skipCertVerify: null == skipCertVerify ? _self.skipCertVerify : skipCertVerify // ignore: cast_nullable_to_non_nullable
 as bool,base: freezed == base ? _self.base : base // ignore: cast_nullable_to_non_nullable
-as SetupBase?,
+as SetupBase?,applied: freezed == applied ? _self.applied : applied // ignore: cast_nullable_to_non_nullable
+as SetupRecord?,
   ));
 }
 
@@ -317,6 +332,600 @@ $SetupBaseCopyWith<$Res>? get base {
 
   return $SetupBaseCopyWith<$Res>(_self.base!, (value) {
     return _then(_self.copyWith(base: value));
+  });
+}/// Create a copy of SetupParams
+/// with the given fields replaced by the non-null parameter values.
+@override
+@pragma('vm:prefer-inline')
+$SetupRecordCopyWith<$Res>? get applied {
+    if (_self.applied == null) {
+    return null;
+  }
+
+  return $SetupRecordCopyWith<$Res>(_self.applied!, (value) {
+    return _then(_self.copyWith(applied: value));
+  });
+}
+}
+
+
+/// @nodoc
+mixin _$SetupRecord {
+
+ String get digest;@JsonKey(name: 'yaml-md5') String get yamlMd5; int get groups; int get proxies; int get rules;
+/// Create a copy of SetupRecord
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$SetupRecordCopyWith<SetupRecord> get copyWith => _$SetupRecordCopyWithImpl<SetupRecord>(this as SetupRecord, _$identity);
+
+  /// Serializes this SetupRecord to a JSON map.
+  Map<String, dynamic> toJson();
+
+
+@override
+bool operator ==(Object other) {
+  final _this = this as SetupRecord;
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is SetupRecord&&(identical(other.digest, _this.digest) || other.digest == _this.digest)&&(identical(other.yamlMd5, _this.yamlMd5) || other.yamlMd5 == _this.yamlMd5)&&(identical(other.groups, _this.groups) || other.groups == _this.groups)&&(identical(other.proxies, _this.proxies) || other.proxies == _this.proxies)&&(identical(other.rules, _this.rules) || other.rules == _this.rules));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode {
+  final _this = this as SetupRecord;
+  return Object.hash(runtimeType,_this.digest,_this.yamlMd5,_this.groups,_this.proxies,_this.rules);
+}
+
+@override
+String toString() {
+  final _this = this as SetupRecord;
+  return 'SetupRecord(digest: ${_this.digest}, yamlMd5: ${_this.yamlMd5}, groups: ${_this.groups}, proxies: ${_this.proxies}, rules: ${_this.rules})';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $SetupRecordCopyWith<$Res>  {
+  factory $SetupRecordCopyWith(SetupRecord value, $Res Function(SetupRecord) _then) = _$SetupRecordCopyWithImpl;
+@useResult
+$Res call({
+ String digest,@JsonKey(name: 'yaml-md5') String yamlMd5, int groups, int proxies, int rules
+});
+
+
+
+
+}
+/// @nodoc
+class _$SetupRecordCopyWithImpl<$Res>
+    implements $SetupRecordCopyWith<$Res> {
+  _$SetupRecordCopyWithImpl(this._self, this._then);
+
+  final SetupRecord _self;
+  final $Res Function(SetupRecord) _then;
+
+/// Create a copy of SetupRecord
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') @override $Res call({Object? digest = null,Object? yamlMd5 = null,Object? groups = null,Object? proxies = null,Object? rules = null,}) {
+  return _then(SetupRecord(
+digest: null == digest ? _self.digest : digest // ignore: cast_nullable_to_non_nullable
+as String,yamlMd5: null == yamlMd5 ? _self.yamlMd5 : yamlMd5 // ignore: cast_nullable_to_non_nullable
+as String,groups: null == groups ? _self.groups : groups // ignore: cast_nullable_to_non_nullable
+as int,proxies: null == proxies ? _self.proxies : proxies // ignore: cast_nullable_to_non_nullable
+as int,rules: null == rules ? _self.rules : rules // ignore: cast_nullable_to_non_nullable
+as int,
+  ));
+}
+
+}
+
+
+/// Adds pattern-matching-related methods to [SetupRecord].
+extension SetupRecordPatterns on SetupRecord {
+/// A variant of `map` that fallback to returning `orElse`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>(TResult Function( _SetupRecord value)?  $default,{required TResult orElse(),}){
+final _that = this;
+switch (_that) {
+case _SetupRecord() when $default != null:
+return $default(_that);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// Callbacks receives the raw object, upcasted.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case final Subclass2 value:
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult map<TResult extends Object?>(TResult Function( _SetupRecord value)  $default,){
+final _that = this;
+switch (_that) {
+case _SetupRecord():
+return $default(_that);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `map` that fallback to returning `null`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>(TResult? Function( _SetupRecord value)?  $default,){
+final _that = this;
+switch (_that) {
+case _SetupRecord() when $default != null:
+return $default(_that);case _:
+  return null;
+
+}
+}
+/// A variant of `when` that fallback to an `orElse` callback.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String digest, @JsonKey(name: 'yaml-md5')  String yamlMd5,  int groups,  int proxies,  int rules)?  $default,{required TResult orElse(),}) {final _that = this;
+switch (_that) {
+case _SetupRecord() when $default != null:
+return $default(_that.digest,_that.yamlMd5,_that.groups,_that.proxies,_that.rules);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// As opposed to `map`, this offers destructuring.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case Subclass2(:final field2):
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String digest, @JsonKey(name: 'yaml-md5')  String yamlMd5,  int groups,  int proxies,  int rules)  $default,) {final _that = this;
+switch (_that) {
+case _SetupRecord():
+return $default(_that.digest,_that.yamlMd5,_that.groups,_that.proxies,_that.rules);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `when` that fallback to returning `null`
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String digest, @JsonKey(name: 'yaml-md5')  String yamlMd5,  int groups,  int proxies,  int rules)?  $default,) {final _that = this;
+switch (_that) {
+case _SetupRecord() when $default != null:
+return $default(_that.digest,_that.yamlMd5,_that.groups,_that.proxies,_that.rules);case _:
+  return null;
+
+}
+}
+
+}
+
+/// @nodoc
+@JsonSerializable()
+
+class _SetupRecord implements SetupRecord {
+  const _SetupRecord({required this.digest, @JsonKey(name: 'yaml-md5') required this.yamlMd5, this.groups = 0, this.proxies = 0, this.rules = 0});
+  factory _SetupRecord.fromJson(Map<String, dynamic> json) => _$SetupRecordFromJson(json);
+
+@override final  String digest;
+@override@JsonKey(name: 'yaml-md5') final  String yamlMd5;
+@override@JsonKey() final  int groups;
+@override@JsonKey() final  int proxies;
+@override@JsonKey() final  int rules;
+
+/// Create a copy of SetupRecord
+/// with the given fields replaced by the non-null parameter values.
+@override @JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+_$SetupRecordCopyWith<_SetupRecord> get copyWith => __$SetupRecordCopyWithImpl<_SetupRecord>(this, _$identity);
+
+@override
+Map<String, dynamic> toJson() {
+  return _$SetupRecordToJson(this, );
+}
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is _SetupRecord&&(identical(other.digest, digest) || other.digest == digest)&&(identical(other.yamlMd5, yamlMd5) || other.yamlMd5 == yamlMd5)&&(identical(other.groups, groups) || other.groups == groups)&&(identical(other.proxies, proxies) || other.proxies == proxies)&&(identical(other.rules, rules) || other.rules == rules));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode {
+    return Object.hash(runtimeType,digest,yamlMd5,groups,proxies,rules);
+}
+
+@override
+String toString() {
+    return 'SetupRecord(digest: $digest, yamlMd5: $yamlMd5, groups: $groups, proxies: $proxies, rules: $rules)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class _$SetupRecordCopyWith<$Res> implements $SetupRecordCopyWith<$Res> {
+  factory _$SetupRecordCopyWith(_SetupRecord value, $Res Function(_SetupRecord) _then) = __$SetupRecordCopyWithImpl;
+@override @useResult
+$Res call({
+ String digest,@JsonKey(name: 'yaml-md5') String yamlMd5, int groups, int proxies, int rules
+});
+
+
+
+
+}
+/// @nodoc
+class __$SetupRecordCopyWithImpl<$Res>
+    implements _$SetupRecordCopyWith<$Res> {
+  __$SetupRecordCopyWithImpl(this._self, this._then);
+
+  final _SetupRecord _self;
+  final $Res Function(_SetupRecord) _then;
+
+/// Create a copy of SetupRecord
+/// with the given fields replaced by the non-null parameter values.
+@override @pragma('vm:prefer-inline') $Res call({Object? digest = null,Object? yamlMd5 = null,Object? groups = null,Object? proxies = null,Object? rules = null,}) {
+  return _then(_SetupRecord(
+digest: null == digest ? _self.digest : digest // ignore: cast_nullable_to_non_nullable
+as String,yamlMd5: null == yamlMd5 ? _self.yamlMd5 : yamlMd5 // ignore: cast_nullable_to_non_nullable
+as String,groups: null == groups ? _self.groups : groups // ignore: cast_nullable_to_non_nullable
+as int,proxies: null == proxies ? _self.proxies : proxies // ignore: cast_nullable_to_non_nullable
+as int,rules: null == rules ? _self.rules : rules // ignore: cast_nullable_to_non_nullable
+as int,
+  ));
+}
+
+
+}
+
+
+/// @nodoc
+mixin _$AppliedSetup {
+
+ bool get init; bool get running; SetupRecord? get applied;
+/// Create a copy of AppliedSetup
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$AppliedSetupCopyWith<AppliedSetup> get copyWith => _$AppliedSetupCopyWithImpl<AppliedSetup>(this as AppliedSetup, _$identity);
+
+  /// Serializes this AppliedSetup to a JSON map.
+  Map<String, dynamic> toJson();
+
+
+@override
+bool operator ==(Object other) {
+  final _this = this as AppliedSetup;
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is AppliedSetup&&(identical(other.init, _this.init) || other.init == _this.init)&&(identical(other.running, _this.running) || other.running == _this.running)&&(identical(other.applied, _this.applied) || other.applied == _this.applied));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode {
+  final _this = this as AppliedSetup;
+  return Object.hash(runtimeType,_this.init,_this.running,_this.applied);
+}
+
+@override
+String toString() {
+  final _this = this as AppliedSetup;
+  return 'AppliedSetup(init: ${_this.init}, running: ${_this.running}, applied: ${_this.applied})';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $AppliedSetupCopyWith<$Res>  {
+  factory $AppliedSetupCopyWith(AppliedSetup value, $Res Function(AppliedSetup) _then) = _$AppliedSetupCopyWithImpl;
+@useResult
+$Res call({
+ bool init, bool running, SetupRecord? applied
+});
+
+
+$SetupRecordCopyWith<$Res>? get applied;
+
+}
+/// @nodoc
+class _$AppliedSetupCopyWithImpl<$Res>
+    implements $AppliedSetupCopyWith<$Res> {
+  _$AppliedSetupCopyWithImpl(this._self, this._then);
+
+  final AppliedSetup _self;
+  final $Res Function(AppliedSetup) _then;
+
+/// Create a copy of AppliedSetup
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') @override $Res call({Object? init = null,Object? running = null,Object? applied = freezed,}) {
+  return _then(AppliedSetup(
+init: null == init ? _self.init : init // ignore: cast_nullable_to_non_nullable
+as bool,running: null == running ? _self.running : running // ignore: cast_nullable_to_non_nullable
+as bool,applied: freezed == applied ? _self.applied : applied // ignore: cast_nullable_to_non_nullable
+as SetupRecord?,
+  ));
+}
+/// Create a copy of AppliedSetup
+/// with the given fields replaced by the non-null parameter values.
+@override
+@pragma('vm:prefer-inline')
+$SetupRecordCopyWith<$Res>? get applied {
+    if (_self.applied == null) {
+    return null;
+  }
+
+  return $SetupRecordCopyWith<$Res>(_self.applied!, (value) {
+    return _then(_self.copyWith(applied: value));
+  });
+}
+}
+
+
+/// Adds pattern-matching-related methods to [AppliedSetup].
+extension AppliedSetupPatterns on AppliedSetup {
+/// A variant of `map` that fallback to returning `orElse`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>(TResult Function( _AppliedSetup value)?  $default,{required TResult orElse(),}){
+final _that = this;
+switch (_that) {
+case _AppliedSetup() when $default != null:
+return $default(_that);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// Callbacks receives the raw object, upcasted.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case final Subclass2 value:
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult map<TResult extends Object?>(TResult Function( _AppliedSetup value)  $default,){
+final _that = this;
+switch (_that) {
+case _AppliedSetup():
+return $default(_that);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `map` that fallback to returning `null`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>(TResult? Function( _AppliedSetup value)?  $default,){
+final _that = this;
+switch (_that) {
+case _AppliedSetup() when $default != null:
+return $default(_that);case _:
+  return null;
+
+}
+}
+/// A variant of `when` that fallback to an `orElse` callback.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( bool init,  bool running,  SetupRecord? applied)?  $default,{required TResult orElse(),}) {final _that = this;
+switch (_that) {
+case _AppliedSetup() when $default != null:
+return $default(_that.init,_that.running,_that.applied);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// As opposed to `map`, this offers destructuring.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case Subclass2(:final field2):
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( bool init,  bool running,  SetupRecord? applied)  $default,) {final _that = this;
+switch (_that) {
+case _AppliedSetup():
+return $default(_that.init,_that.running,_that.applied);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `when` that fallback to returning `null`
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( bool init,  bool running,  SetupRecord? applied)?  $default,) {final _that = this;
+switch (_that) {
+case _AppliedSetup() when $default != null:
+return $default(_that.init,_that.running,_that.applied);case _:
+  return null;
+
+}
+}
+
+}
+
+/// @nodoc
+@JsonSerializable()
+
+class _AppliedSetup implements AppliedSetup {
+  const _AppliedSetup({this.init = false, this.running = false, this.applied});
+  factory _AppliedSetup.fromJson(Map<String, dynamic> json) => _$AppliedSetupFromJson(json);
+
+@override@JsonKey() final  bool init;
+@override@JsonKey() final  bool running;
+@override final  SetupRecord? applied;
+
+/// Create a copy of AppliedSetup
+/// with the given fields replaced by the non-null parameter values.
+@override @JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+_$AppliedSetupCopyWith<_AppliedSetup> get copyWith => __$AppliedSetupCopyWithImpl<_AppliedSetup>(this, _$identity);
+
+@override
+Map<String, dynamic> toJson() {
+  return _$AppliedSetupToJson(this, );
+}
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is _AppliedSetup&&(identical(other.init, init) || other.init == init)&&(identical(other.running, running) || other.running == running)&&(identical(other.applied, applied) || other.applied == applied));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode {
+    return Object.hash(runtimeType,init,running,applied);
+}
+
+@override
+String toString() {
+    return 'AppliedSetup(init: $init, running: $running, applied: $applied)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class _$AppliedSetupCopyWith<$Res> implements $AppliedSetupCopyWith<$Res> {
+  factory _$AppliedSetupCopyWith(_AppliedSetup value, $Res Function(_AppliedSetup) _then) = __$AppliedSetupCopyWithImpl;
+@override @useResult
+$Res call({
+ bool init, bool running, SetupRecord? applied
+});
+
+
+@override $SetupRecordCopyWith<$Res>? get applied;
+
+}
+/// @nodoc
+class __$AppliedSetupCopyWithImpl<$Res>
+    implements _$AppliedSetupCopyWith<$Res> {
+  __$AppliedSetupCopyWithImpl(this._self, this._then);
+
+  final _AppliedSetup _self;
+  final $Res Function(_AppliedSetup) _then;
+
+/// Create a copy of AppliedSetup
+/// with the given fields replaced by the non-null parameter values.
+@override @pragma('vm:prefer-inline') $Res call({Object? init = null,Object? running = null,Object? applied = freezed,}) {
+  return _then(_AppliedSetup(
+init: null == init ? _self.init : init // ignore: cast_nullable_to_non_nullable
+as bool,running: null == running ? _self.running : running // ignore: cast_nullable_to_non_nullable
+as bool,applied: freezed == applied ? _self.applied : applied // ignore: cast_nullable_to_non_nullable
+as SetupRecord?,
+  ));
+}
+
+/// Create a copy of AppliedSetup
+/// with the given fields replaced by the non-null parameter values.
+@override
+@pragma('vm:prefer-inline')
+$SetupRecordCopyWith<$Res>? get applied {
+    if (_self.applied == null) {
+    return null;
+  }
+
+  return $SetupRecordCopyWith<$Res>(_self.applied!, (value) {
+    return _then(_self.copyWith(applied: value));
   });
 }
 }

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart' show sha256;
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
@@ -118,6 +119,62 @@ String? lastMatchTarget(List<String> rules) {
     }
   }
   return null;
+}
+
+typedef SetupInputsState = ({
+  SetupState setupState,
+  PatchClashConfig setupPatch,
+  bool appendSystemDns,
+  bool bypassPrivateRoute,
+  String testUrl,
+  bool skipCertVerify,
+  bool safeMode,
+  String build,
+});
+
+Future<String> setupInputsDigestTask(SetupInputsState state) {
+  return compute(setupInputsDigest, state);
+}
+
+@visibleForTesting
+String setupInputsDigest(SetupInputsState state) {
+  final setupState = state.setupState;
+  final canonical = json.encode({
+    'profile-id': setupState.profileId,
+    'profile-last-update-date': setupState.profileLastUpdateDate,
+    'profile-type': setupState.profileType.name,
+    'extend-type': setupState.extendType.name,
+    'rules': setupState.rules,
+    'proxy-groups': setupState.proxyGroups,
+    'added-rules': setupState.addedRules,
+    'script': setupState.script,
+    'overrides': setupState.overrides,
+    'clash-providers': [
+      for (final provider in setupState.clashProviders)
+        [
+          provider.id,
+          provider.label,
+          provider.url,
+          provider.behavior.name,
+          provider.format.name,
+        ],
+    ],
+    'profile-providers': setupState.profileProviders,
+    'app-proxies': setupState.appProxies,
+    'proxy-dialers': {
+      for (final MapEntry(:key, :value) in setupState.proxyDialers.entries)
+        '$key': value,
+    },
+    'match-target': setupState.matchTarget,
+    'setup-patch': state.setupPatch,
+    'append-system-dns': state.appendSystemDns,
+    'bypass-private-route': state.bypassPrivateRoute,
+    'test-url': state.testUrl,
+    'skip-cert-verify': state.skipCertVerify,
+    'safe-mode': state.safeMode,
+    'build': state.build,
+  });
+  return sha256.convert(utf8.encode(canonical)).toString();
 }
 
 Future<RealProfile> makeRealProfileTask(MakeRealProfileState data) async {

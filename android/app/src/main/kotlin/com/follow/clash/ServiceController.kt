@@ -114,6 +114,7 @@ object ServiceController {
         runtime = ServiceRuntime(
             vpn = options.enable,
             startedAtMillis = runtime?.startedAtMillis ?: System.currentTimeMillis(),
+            options = options,
         )
         true
     }

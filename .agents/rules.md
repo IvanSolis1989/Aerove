@@ -294,7 +294,8 @@ leaving a repo-wide policy as a comment reaches only the reader of that one file
   exit, so a bare sentinel there would read a window closed on the disclaimer dialog, or a session ended by shutdown,
   as a failed launch. Keep the platform check inside the guard; callers in `bootstrap.dart` and `SystemAction` stay
   unconditional.
-- Recovery is graded: the first failed launch only skips `initStatus`, and `currentProfileId` is cleared only from
+- Recovery is graded: the first failed launch only keeps `initStatus` from pushing a config or starting a run (it still
+  takes over a run the Core already serves), and `currentProfileId` is cleared only from
   `crashRecoveryClearThreshold` consecutive failures on. Do not let a single interrupted launch write to the config.
 - Desktop process ownership belongs to `DesktopCoreLifecycle`; do not start/kill `FlClashCore` from providers, widgets,
   managers, or ad hoc exit callbacks. Acquire and release it through a `CoreProcessLease`.

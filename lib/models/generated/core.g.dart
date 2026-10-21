@@ -13,6 +13,9 @@ _SetupParams _$SetupParamsFromJson(Map<String, dynamic> json) => _SetupParams(
   base: json['base'] == null
       ? null
       : SetupBase.fromJson(json['base'] as Map<String, dynamic>),
+  applied: json['applied'] == null
+      ? null
+      : SetupRecord.fromJson(json['applied'] as Map<String, dynamic>),
 );
 
 Map<String, dynamic> _$SetupParamsToJson(_SetupParams instance) =>
@@ -21,6 +24,40 @@ Map<String, dynamic> _$SetupParamsToJson(_SetupParams instance) =>
       'test-url': instance.testUrl,
       'skip-cert-verify': instance.skipCertVerify,
       'base': ?instance.base,
+      'applied': ?instance.applied,
+    };
+
+_SetupRecord _$SetupRecordFromJson(Map<String, dynamic> json) => _SetupRecord(
+  digest: json['digest'] as String,
+  yamlMd5: json['yaml-md5'] as String,
+  groups: (json['groups'] as num?)?.toInt() ?? 0,
+  proxies: (json['proxies'] as num?)?.toInt() ?? 0,
+  rules: (json['rules'] as num?)?.toInt() ?? 0,
+);
+
+Map<String, dynamic> _$SetupRecordToJson(_SetupRecord instance) =>
+    <String, dynamic>{
+      'digest': instance.digest,
+      'yaml-md5': instance.yamlMd5,
+      'groups': instance.groups,
+      'proxies': instance.proxies,
+      'rules': instance.rules,
+    };
+
+_AppliedSetup _$AppliedSetupFromJson(Map<String, dynamic> json) =>
+    _AppliedSetup(
+      init: json['init'] as bool? ?? false,
+      running: json['running'] as bool? ?? false,
+      applied: json['applied'] == null
+          ? null
+          : SetupRecord.fromJson(json['applied'] as Map<String, dynamic>),
+    );
+
+Map<String, dynamic> _$AppliedSetupToJson(_AppliedSetup instance) =>
+    <String, dynamic>{
+      'init': instance.init,
+      'running': instance.running,
+      'applied': instance.applied,
     };
 
 _SetupBase _$SetupBaseFromJson(Map<String, dynamic> json) => _SetupBase(

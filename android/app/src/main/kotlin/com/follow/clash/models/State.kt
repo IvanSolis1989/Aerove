@@ -16,6 +16,11 @@ data class SharedState(
     val setupParams: SetupParams? = null,
 )
 
+data class RunTime(
+    val startedAt: Long,
+    val vpnOptions: VpnOptions,
+)
+
 data class SetupParams(
     @SerializedName("test-url")
     val testUrl: String,
