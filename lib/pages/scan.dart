@@ -302,10 +302,12 @@ class _ScanPageState extends ConsumerState<ScanPage>
                   builder: (context, state, _) {
                     final error = state.error;
                     if (error != null) {
-                      return _ScannerError(
-                        errorCode: error.errorCode,
-                        onRetry: _start,
-                        onOpenSettings: _openAppSettings,
+                      return LiquidGlassBody(
+                        child: _ScannerError(
+                          errorCode: error.errorCode,
+                          onRetry: _start,
+                          onOpenSettings: _openAppSettings,
+                        ),
                       );
                     }
                     return _buildScanFrame(theme, layout, hintStyle);

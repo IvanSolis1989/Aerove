@@ -911,6 +911,21 @@ void main() {
           ),
           quality == null ? findsNothing : findsOneWidget,
         );
+        final body = find.byType(LiquidGlassBody);
+        expect(
+          find.ancestor(
+            of: find.text(currentAppLocalizations.settings),
+            matching: body,
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.ancestor(
+            of: button(currentAppLocalizations.close),
+            matching: body,
+          ),
+          findsNothing,
+        );
         expect(overlayStyle(tester).statusBarIconBrightness, Brightness.dark);
         expect(overlayStyle(tester).statusBarBrightness, Brightness.light);
       });
