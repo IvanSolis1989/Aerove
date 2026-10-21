@@ -853,6 +853,14 @@ void main() {
         final glass = tester.widget<LiquidGlass>(pane);
         expect(glass.clipper, isA<OutboundDropletClipper>());
         expect(
+          find.ancestor(of: pane, matching: find.byType(GlassSurfaceScope)),
+          findsNothing,
+        );
+        expect(
+          tester.widget<DashboardCard>(find.byType(DashboardCard)).pane,
+          isFalse,
+        );
+        expect(
           find.ancestor(of: pane, matching: find.byType(LiquidGlassBody)),
           findsOneWidget,
         );

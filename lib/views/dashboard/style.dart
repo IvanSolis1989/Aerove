@@ -29,7 +29,7 @@ class DashboardColors {
         ? Colors.transparent
         : SurfaceLevel.card.colorOf(colorScheme);
     return DashboardColors._(
-      page: LiquidGlassScope.of(context)
+      page: glass || AuroraAppearance.enabledOf(context)
           ? Colors.transparent
           : SurfaceLevel.page.colorOf(colorScheme),
       card: card,

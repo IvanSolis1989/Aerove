@@ -258,7 +258,9 @@ class _SpectrumState extends State<_Spectrum> {
   @override
   Widget build(BuildContext context) {
     final glass =
-        LiquidGlassScope.of(context) && !MediaQuery.highContrastOf(context);
+        LiquidGlassScope.of(context) &&
+        !MediaQuery.highContrastOf(context) &&
+        !GlassSurfaceScope.of(context);
     final position = _positionOf(widget.color);
     return AspectRatio(
       aspectRatio: 6 / 5,

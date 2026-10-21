@@ -11,6 +11,7 @@ import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/config/general.dart';
+import 'package:fl_clash/views/dashboard/style.dart';
 import 'package:fl_clash/views/tools.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:fl_clash/views/navigation.dart';
@@ -26,7 +27,7 @@ import '../helpers/test_app.dart';
 Finder _glyph(Glyph glyph) => find.byGlyph(glyph);
 
 void main() {
-  testWidgets('ordinary glass home shell transmits its backdrop', (
+  testWidgets('home shell reveals independently enabled glass or wallpaper', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(400, 800);
@@ -35,85 +36,95 @@ void main() {
     for (final brightness in Brightness.values) {
       for (final quality in LiquidGlassQuality.values) {
         for (final enabled in [false, true]) {
-          final container = ProviderContainer(
-            overrides: [
-              navigationItemsStateProvider.overrideWithValue(
-                NavigationItemsState(
-                  value: [
-                    NavigationItem(
-                      glyph: AppGlyphs.dashboard,
-                      label: PageLabel.dashboard,
-                      builder: (_) => const SizedBox.expand(),
-                    ),
-                    NavigationItem(
-                      glyph: AppGlyphs.tools,
-                      label: PageLabel.tools,
-                      builder: (_) => const SizedBox.expand(),
-                    ),
-                  ],
+          for (final wallpaper in [false, true]) {
+            final container = ProviderContainer(
+              overrides: [
+                navigationItemsStateProvider.overrideWithValue(
+                  NavigationItemsState(
+                    value: [
+                      NavigationItem(
+                        glyph: AppGlyphs.dashboard,
+                        label: PageLabel.dashboard,
+                        builder: (_) => const SizedBox.expand(),
+                      ),
+                      NavigationItem(
+                        glyph: AppGlyphs.tools,
+                        label: PageLabel.tools,
+                        builder: (_) => const SizedBox.expand(),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
-          );
-          globalState.container = container;
-          container.read(viewSizeProvider.notifier).value = const Size(
-            400,
-            800,
-          );
-          const backdrop = Color(0xFF286C85);
-          final capture = GlobalKey();
-          await tester.pumpWidget(
-            UncontrolledProviderScope(
-              container: container,
-              child: TestApp(
-                includeNavigatorKey: false,
-                theme: ThemeData(brightness: brightness),
-                child: AuroraAppearance(
-                  enabled: false,
-                  child: LiquidGlassScope(
-                    enabled: enabled,
-                    quality: quality,
-                    child: RepaintBoundary(
-                      key: capture,
-                      child: const Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          ColoredBox(color: backdrop),
-                          HomePage(),
-                        ],
+              ],
+            );
+            globalState.container = container;
+            container.read(viewSizeProvider.notifier).value = const Size(
+              400,
+              800,
+            );
+            const backdrop = Color(0xFF286C85);
+            final capture = GlobalKey();
+            await tester.pumpWidget(
+              UncontrolledProviderScope(
+                container: container,
+                child: TestApp(
+                  includeNavigatorKey: false,
+                  theme: ThemeData(brightness: brightness),
+                  child: AuroraAppearance(
+                    enabled: wallpaper,
+                    child: LiquidGlassScope(
+                      enabled: enabled,
+                      quality: quality,
+                      child: RepaintBoundary(
+                        key: capture,
+                        child: const Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            ColoredBox(color: backdrop),
+                            HomePage(),
+                          ],
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
-            ),
-          );
-          await tester.pumpAndSettle();
-          final boundary =
-              capture.currentContext!.findRenderObject()!
-                  as RenderRepaintBoundary;
-          final image = boundary.toImageSync();
-          try {
-            final bytes = (await tester.runAsync(image.toByteData))!;
-            final at = (400 * image.width + 200) * 4;
-            final pixel = Color.fromARGB(
-              bytes.getUint8(at + 3),
-              bytes.getUint8(at),
-              bytes.getUint8(at + 1),
-              bytes.getUint8(at + 2),
             );
-            final colors = Theme.of(
-              tester.element(find.byType(HomePage)),
-            ).colorScheme;
-            expect(
-              pixel,
-              enabled ? backdrop : SurfaceLevel.page.colorOf(colors),
-            );
-          } finally {
-            image.dispose();
+            await tester.pumpAndSettle();
+            final boundary =
+                capture.currentContext!.findRenderObject()!
+                    as RenderRepaintBoundary;
+            final image = boundary.toImageSync();
+            try {
+              final bytes = (await tester.runAsync(image.toByteData))!;
+              final at = (400 * image.width + 200) * 4;
+              final pixel = Color.fromARGB(
+                bytes.getUint8(at + 3),
+                bytes.getUint8(at),
+                bytes.getUint8(at + 1),
+                bytes.getUint8(at + 2),
+              );
+              final colors = Theme.of(
+                tester.element(find.byType(HomePage)),
+              ).colorScheme;
+              expect(
+                pixel,
+                enabled || wallpaper
+                    ? backdrop
+                    : SurfaceLevel.page.colorOf(colors),
+              );
+              expect(
+                DashboardColors.of(tester.element(find.byType(HomePage))).page,
+                enabled || wallpaper
+                    ? Colors.transparent
+                    : SurfaceLevel.page.colorOf(colors),
+              );
+            } finally {
+              image.dispose();
+            }
+            await tester.pumpWidget(const SizedBox.shrink());
+            container.dispose();
           }
-          await tester.pumpWidget(const SizedBox.shrink());
-          container.dispose();
         }
       }
     }

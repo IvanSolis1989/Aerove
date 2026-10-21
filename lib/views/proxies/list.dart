@@ -394,7 +394,7 @@ class _CollapsedGroupRun extends StatelessWidget {
           );
           if (glass) {
             header = LiquidGlass(
-              style: LiquidGlassStyle.regular(context.colorScheme),
+              style: LiquidGlassStyle.card(context),
               clipper: ShapeBorderClipper(
                 shape: AppShape.all(AppCorner.xl.ap(context)),
                 textDirection: Directionality.of(context),
@@ -684,7 +684,7 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
       sliver: glass
           ? SliverGlassGroup(
               shape: AppShape.all(AppCorner.xl.ap(context)),
-              style: LiquidGlassStyle.regular(context.colorScheme),
+              style: LiquidGlassStyle.card(context),
               slivers: slivers,
             )
           : SliverMainAxisGroup(slivers: slivers),

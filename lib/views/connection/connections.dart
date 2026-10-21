@@ -208,7 +208,7 @@ class _BlockConnectionButton extends StatelessWidget {
       message: context.appLocalizations.blockConnection,
       child: Semantics(
         button: true,
-        child: LiquidGlassScope.of(context)
+        child: LiquidGlassScope.of(context) && !GlassSurfaceScope.of(context)
             ? LiquidGlass(
                 style: LiquidGlassStyle.regular(context.colorScheme),
                 clipper: const ShapeBorderClipper(shape: AppShape.circle),

@@ -5,7 +5,41 @@ import 'package:fl_clash/ui/context.dart';
 import 'package:fl_clash/ui/foreground_ink.dart';
 import 'package:fl_clash/ui/glass_foreground.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
+import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:material_ui/material_ui.dart';
+
+class CommonLinearLoading extends StatelessWidget {
+  const CommonLinearLoading({super.key, this.value, this.semanticLabel});
+
+  final double? value;
+  final String? semanticLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final glass =
+        LiquidGlassScope.of(context) && !MediaQuery.highContrastOf(context);
+    if (!glass) {
+      return LinearProgressIndicator(
+        value: value,
+        semanticsLabel: semanticLabel,
+      );
+    }
+    final color = context.colorScheme.onSurface;
+    final clear =
+        LiquidGlassScope.qualityOf(context) == LiquidGlassQuality.ultra;
+    return GlassInk(
+      source: color,
+      role: GlassInkRole.icon,
+      child: LinearProgressIndicator(
+        value: value,
+        semanticsLabel: semanticLabel,
+        color: color.withValues(alpha: clear ? 0.88 : 0.72),
+        backgroundColor: color.withValues(alpha: 0.08),
+        stopIndicatorRadius: 0,
+      ),
+    );
+  }
+}
 
 class CommonCircleLoading extends StatefulWidget {
   const CommonCircleLoading({

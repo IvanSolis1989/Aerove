@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:fl_clash/ui/foreground_ink.dart';
 import 'package:fl_clash/ui/context.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
@@ -32,8 +30,6 @@ class HeaderButtonGlassScope extends InheritedWidget {
       progress != oldWidget.progress;
 }
 
-const double _flatInkContrast = 7;
-
 Widget _buttonGlassSurface(
   BuildContext context, {
   required LiquidGlassStyle style,
@@ -46,16 +42,12 @@ Widget _buttonGlassSurface(
     if (!GlassSurfaceScope.of(context)) {
       return LiquidGlass(style: style, pressed: pressed, child: child);
     }
-    // Ink measures the backdrop, not the fill laid between it and the label.
     return DecoratedBox(
       decoration: ShapeDecoration(
         color: flat ?? glassFillOf(context.colorScheme),
         shape: AppShape.full,
       ),
-      child: GlassInkTextContrast(
-        contrast: math.max(GlassInkTextContrast.of(context), _flatInkContrast),
-        child: child,
-      ),
+      child: glassFlatLabel(context, child),
     );
   }
   return Stack(

@@ -9,6 +9,7 @@ import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
+import 'package:fl_clash/ui/sheet_surface.dart';
 import 'package:fl_clash/views/connection/connections.dart';
 import 'package:fl_clash/views/connection/requests.dart';
 import 'package:fl_clash/views/dashboard/widgets/connections_table.dart';
@@ -104,7 +105,7 @@ void main() {
     expect((row.left, row.right), (header.left, header.right));
     final (_, plainPanes) = await pump(glass: false, rows: 200);
     expect(plainPanes, 0);
-    expect(find.byType(CardGroup), findsOneWidget);
+    expect(find.byType(CardGroup), findsNWidgets(2));
     expect(tester.takeException(), isNull);
   });
 
@@ -251,7 +252,8 @@ void main() {
                       .descendant(of: record, matching: find.byType(CardGroup))
                       .first;
             if (table) {
-              expect(group, glass ? findsOneWidget : findsNothing);
+              expect(group, findsOneWidget);
+              expect(tester.widget<CardGroup>(group).paintSurface, glass);
               expect(
                 find.descendant(of: record, matching: find.byType(CardGroup)),
                 findsNothing,
@@ -261,7 +263,10 @@ void main() {
               of: group,
               matching: find.byType(LiquidGlass),
             );
-            expect(panes, glass ? findsWidgets : findsNothing);
+            expect(
+              panes,
+              glass && entry != 'sheet' ? findsWidgets : findsNothing,
+            );
             final chips = tester
                 .widgetList<TonalChip>(
                   find.descendant(of: record, matching: find.byType(TonalChip)),
@@ -298,8 +303,23 @@ void main() {
                       (pane.pane.width - rect.width).abs() < 0.5 &&
                       (pane.pane.height - rect.height).abs() < 0.5,
                 ),
-                hasLength(1),
+                hasLength(entry == 'sheet' ? 0 : 1),
               );
+              if (entry == 'sheet') {
+                expect(find.byType(SheetSurface), findsWidgets);
+                final fill = tester.widget<DecoratedBox>(
+                  find
+                      .descendant(
+                        of: group,
+                        matching: find.byType(DecoratedBox),
+                      )
+                      .first,
+                );
+                expect(
+                  (fill.decoration as ShapeDecoration).color,
+                  glassRaisedFillOf(tester.element(group)),
+                );
+              }
               final boundary = tester.renderObject<RenderRepaintBoundary>(
                 find.byKey(captureKey),
               );

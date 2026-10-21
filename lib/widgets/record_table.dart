@@ -282,22 +282,30 @@ class _RecordTableBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!LiquidGlassScope.of(context)) {
-      return child;
-    }
+    final glass = LiquidGlassScope.of(context);
+    final bottomInset = BottomInsetScope.of(context);
     return Padding(
-      padding: EdgeInsets.fromLTRB(
-        _recordTableMargin,
-        _recordBodyGap,
-        _recordTableMargin,
-        _recordTableMargin + BottomInsetScope.of(context),
-      ),
+      padding: glass
+          ? EdgeInsets.fromLTRB(
+              _recordTableMargin,
+              _recordBodyGap,
+              _recordTableMargin,
+              _recordTableMargin + bottomInset,
+            )
+          : EdgeInsets.zero,
       child: CardGroup(
+        paintSurface: glass,
         child: ClipRSuperellipse(
           borderRadius: AppRadius.xl,
+          clipBehavior: glass ? Clip.antiAlias : Clip.none,
           child: TopInsetScope(
-            inset: _recordTableMargin,
-            child: BottomInsetScope(inset: 0, child: child),
+            inset: glass
+                ? _recordTableMargin
+                : (TopInsetScope.of(context) ?? 0),
+            child: BottomInsetScope(
+              inset: glass ? 0 : bottomInset,
+              child: child,
+            ),
           ),
         ),
       ),

@@ -96,13 +96,16 @@ class FloatingHeader extends StatelessWidget {
   Gradient _scrimOf(double height) {
     final start = (height - overhang) * fadeStart / height;
     final stops = <double>[0];
-    final colors = <Color>[backgroundColor.withValues(alpha: _alpha)];
+    final colors = <Color>[
+      backgroundColor.withValues(alpha: _alpha * backgroundColor.a),
+    ];
     for (var i = 0; i <= _fadeSteps; i++) {
       final t = i / _fadeSteps;
       stops.add(start + (1 - start) * t);
       colors.add(
         backgroundColor.withValues(
-          alpha: _alpha * (1 - Curves.easeInOut.transform(t)),
+          alpha:
+              _alpha * backgroundColor.a * (1 - Curves.easeInOut.transform(t)),
         ),
       );
     }

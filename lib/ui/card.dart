@@ -117,7 +117,6 @@ class CardGroup extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final enabled = LiquidGlassScope.of(context);
-    final colorScheme = context.colorScheme;
     return Stack(
       fit: StackFit.passthrough,
       clipBehavior: Clip.none,
@@ -133,7 +132,7 @@ class CardGroup extends StatelessWidget {
                   ),
                 )
               : LiquidGlass(
-                  style: LiquidGlassStyle.regular(colorScheme),
+                  style: LiquidGlassStyle.card(context),
                   clipper: ShapeBorderClipper(
                     shape: shape,
                     textDirection: Directionality.of(context),
@@ -257,7 +256,7 @@ class CommonCard extends StatelessWidget {
         ? LiquidGlass.buttonStyle(
             (_) => _filled
                 ? LiquidGlassStyle.tinted(colorScheme, colorScheme.primary)
-                : LiquidGlassStyle.regular(colorScheme),
+                : LiquidGlassStyle.card(context),
             clipper: ShapeBorderClipper(
               shape: cardShape,
               textDirection: Directionality.of(context),
@@ -305,7 +304,12 @@ class CommonCard extends StatelessWidget {
         enabled: paned || onGlass,
         child: Semantics(
           selected: isSelected ? true : null,
-          child: SurfaceScope(level: level, child: child),
+          child: SurfaceScope(
+            level: level,
+            child: glass && onGlass && _filled
+                ? glassFlatLabel(context, child)
+                : child,
+          ),
         ),
       ),
     );

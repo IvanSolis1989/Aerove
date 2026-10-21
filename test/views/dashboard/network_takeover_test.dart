@@ -155,7 +155,12 @@ void main() {
         );
         expect(outerPane, findsOneWidget);
         final pane = tester.widget<LiquidGlass>(outerPane);
-        expect(pane.style.tint, Colors.transparent);
+        expect(
+          pane.style.tint,
+          quality == LiquidGlassQuality.standard
+              ? glassRaisedFillOf(tester.element(find.byType(DashboardCard)))
+              : Colors.transparent,
+        );
         expect(
           tester.getRect(outerPane),
           tester.getRect(find.byType(DashboardCard)),

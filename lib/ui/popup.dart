@@ -161,6 +161,7 @@ class CommonPopupRoute<T> extends PopupRoute<T> {
     this.placement = PopupPlacement.overAnchorEnd,
     this.elevated = false,
     this.sourceColor = Colors.transparent,
+    this.sourceHasGlass = true,
     this.sourceImage,
     this.modal = true,
     this.avoid,
@@ -178,6 +179,7 @@ class CommonPopupRoute<T> extends PopupRoute<T> {
 
   /// The background of the source control, which the platter starts from.
   final Color sourceColor;
+  final bool sourceHasGlass;
 
   /// A snapshot of the source control, drawn inside the platter while the
   /// control itself is hidden; null while it is still being taken.
@@ -384,7 +386,15 @@ class CommonPopupRoute<T> extends PopupRoute<T> {
                     : popupCardShadows(colorScheme),
                 glass: glass
                     ? (
-                        from: LiquidGlassStyle.regular(colorScheme),
+                        from: sourceHasGlass
+                            ? LiquidGlassStyle.regular(colorScheme)
+                            : const LiquidGlassStyle(
+                                tint: Colors.transparent,
+                                blur: 0,
+                                refraction: 0,
+                                bevel: 0,
+                                rim: 0,
+                              ),
                         to: LiquidGlassStyle.menu(colorScheme),
                         rim: LiquidGlassRim.menu(colorScheme),
                       )
@@ -833,11 +843,7 @@ class _RenderPopupMorph extends RenderProxyBox {
           context,
           rect.shift(offset),
           shape: LiquidGlassCorners.circular(math.max(0.0, radius)),
-          style: LiquidGlassStyle.lerp(
-            glass.from,
-            glass.to,
-            settled,
-          ).copyWith(blur: glass.to.blur),
+          style: LiquidGlassStyle.lerp(glass.from, glass.to, settled),
           hold: bounds
               .expandToInclude(from)
               .inflate(size.longestSide * _overshootPerLongestSide)
@@ -1316,6 +1322,7 @@ class _CommonPopupBoxState extends State<CommonPopupBox> {
       placement: widget.placement,
       elevated: ElevatedSurfaceTheme.isIn(context),
       sourceColor: _sourceColor(),
+      sourceHasGlass: !GlassSurfaceScope.of(context),
       sourceImage: snapshot,
     );
     Navigator.of(context).push(route);

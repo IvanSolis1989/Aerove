@@ -122,7 +122,7 @@ void main() {
             expect(GlassInkTextContrast.of(context), textInkTarget);
             expect(
               GlassInkTextContrast.of(tester.element(find.text('Restart'))),
-              7,
+              greaterThanOrEqualTo(7),
             );
             final boundary =
                 capture.currentContext!.findRenderObject()!

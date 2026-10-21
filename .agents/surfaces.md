@@ -97,7 +97,8 @@ Color marks the one item that differs, never the structure around it.
   (`CommonCard.fillsSelection`): solid `primary` with `onPrimary`, as the dashboard outbound mode does. Only one
   segment per group. With Liquid Glass on it is a pane tinted `primary` on a bare page and a flat `glassChosenFillOf`,
   `primary` at 20%, on glass, with its label in `onSurface`; the `SegmentedControl`, `CommonCard.fillsSelection` and
-  `DashboardConnectedButton` all follow it, and the selection draws no border.
+  `DashboardConnectedButton` all follow it, and the selection draws no border. Dashboard connected buttons leave
+  unchosen segments transparent so their selection stays distinct over the card.
 - **Error** on a row or card: `errorContainer` with `onErrorContainer`, no border.
 - **Status** values (delay, availability, success, warning): the color goes on text, a glyph, or a small chip, never
   on a whole card. `success` and `warning` come from fixed green and orange palettes that ignore the seed, like

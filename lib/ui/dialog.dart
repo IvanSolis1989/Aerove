@@ -755,7 +755,7 @@ class _AlertAction extends StatelessWidget {
               side: focusRingStyle(colorScheme, standsOff: isDefault).side,
             ),
       ),
-      child: child,
+      child: glass ? glassFlatLabel(context, child) : child,
     );
   }
 }

@@ -116,7 +116,7 @@ class _HomeShellState extends ConsumerState<_HomeShell> {
       appSettingProvider.select((state) => state.floatingNavigationBar),
     );
     return Material(
-      color: LiquidGlassScope.of(context)
+      color: LiquidGlassScope.of(context) || AuroraAppearance.enabledOf(context)
           ? Colors.transparent
           : SurfaceLevel.page.colorOf(context.colorScheme),
       child: Column(

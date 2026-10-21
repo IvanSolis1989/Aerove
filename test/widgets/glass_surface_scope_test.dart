@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:fl_clash/common/app_localizations.dart';
@@ -11,8 +12,10 @@ import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/sheet_surface.dart';
 import 'package:fl_clash/ui/ui.dart';
+import 'package:fl_clash/views/dashboard/widgets/card.dart';
 import 'package:fl_clash/widgets/aurora.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -39,6 +42,7 @@ Future<void> _pump(
   Size size = const Size(400, 1000),
   bool highContrast = false,
   GlobalKey<NavigatorState>? navigator,
+  GlobalKey? captureKey,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -68,7 +72,10 @@ Future<void> _pump(
         supportedLocales: AppLocalizations.delegate.supportedLocales,
         builder: (context, child) => wrapAppScopes(
           context,
-          AuroraAppSurface(motion: false, child: child!),
+          RepaintBoundary(
+            key: captureKey,
+            child: AuroraAppSurface(motion: false, child: child!),
+          ),
         ),
         home: home,
       ),
@@ -150,6 +157,77 @@ Widget _page({required bool inCard}) => Scaffold(
 
 Finder _panesIn(Finder of) =>
     find.descendant(of: of, matching: find.byType(LiquidGlass));
+
+Future<double> _labelContrast(
+  WidgetTester tester,
+  GlobalKey captureKey,
+  ValueNotifier<bool> visible,
+) async {
+  final boundary = tester.renderObject<RenderRepaintBoundary>(
+    find.byKey(captureKey),
+  );
+  final text = tester.renderObject<RenderParagraph>(
+    find.descendant(of: find.text('Cancel'), matching: find.byType(RichText)),
+  );
+  final transform = text.getTransformTo(boundary);
+  final bounds = MatrixUtils.transformRect(transform, Offset.zero & text.size);
+  final layer = boundary.debugLayer! as OffsetLayer;
+  Future<List<int>> bytes(ui.Image image) async {
+    try {
+      return (await tester.runAsync(
+        () async => (await image.toByteData(
+          format: ui.ImageByteFormat.rawRgba,
+        ))!.buffer.asUint8List().toList(),
+      ))!;
+    } finally {
+      image.dispose();
+    }
+  }
+
+  final image = layer.toImageSync(bounds, pixelRatio: 3);
+  final width = image.width;
+  final height = image.height;
+  final actual = await bytes(image);
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder)
+    ..scale(3)
+    ..translate(-bounds.left, -bounds.top)
+    ..transform(transform.storage);
+  final painter = TextPainter(
+    text: text.text,
+    textDirection: text.textDirection,
+  )..layout(maxWidth: text.size.width);
+  painter.paint(canvas, Offset.zero);
+  painter.dispose();
+  final picture = recorder.endRecording();
+  final mask = await bytes(picture.toImageSync(width, height));
+  picture.dispose();
+  visible.value = false;
+  await tester.pump();
+  final blank = await bytes(layer.toImageSync(bounds, pixelRatio: 3));
+  visible.value = true;
+  await tester.pump();
+  var minimum = double.infinity;
+  var solid = 0;
+  for (var at = 0; at < mask.length; at += 4) {
+    if (mask[at + 3] != 255) continue;
+    solid++;
+    double luminance(List<int> data) => Color.fromARGB(
+      255,
+      data[at],
+      data[at + 1],
+      data[at + 2],
+    ).computeLuminance();
+    final a = luminance(actual);
+    final b = luminance(blank);
+    minimum = math.min(
+      minimum,
+      (math.max(a, b) + 0.05) / (math.min(a, b) + 0.05),
+    );
+  }
+  expect(solid, greaterThan(0));
+  return minimum;
+}
 
 void main() {
   setUpAll(() async {
@@ -294,11 +372,15 @@ void main() {
         tester,
       ) async {
         final navigator = GlobalKey<NavigatorState>();
+        final captureKey = GlobalKey();
+        final visible = ValueNotifier(true);
+        addTearDown(visible.dispose);
         await _pump(
           tester,
           mode: mode,
           brightness: brightness,
           navigator: navigator,
+          captureKey: captureKey,
           home: const Scaffold(body: SizedBox.expand()),
         );
         unawaited(
@@ -308,7 +390,15 @@ void main() {
               title: 'Rename',
               hasFields: true,
               actions: [
-                TextButton(onPressed: () {}, child: const Text('Cancel')),
+                TextButton(
+                  onPressed: () {},
+                  child: ValueListenableBuilder<bool>(
+                    valueListenable: visible,
+                    builder: (_, shown, child) =>
+                        Opacity(opacity: shown ? 1 : 0, child: child),
+                    child: const GlassText('Cancel'),
+                  ),
+                ),
                 TextButton(onPressed: () {}, child: const Text('Save')),
               ],
               child: const TextField(),
@@ -332,10 +422,47 @@ void main() {
             .color;
         expect(fillOf('Save'), colors.primary.withValues(alpha: 0.2));
         expect(fillOf('Cancel'), glassFillOf(colors));
+        if (ui.ImageFilter.isShaderFilterSupported) {
+          expect(
+            await _labelContrast(tester, captureKey, visible),
+            greaterThanOrEqualTo(4.5),
+          );
+        }
         expect(
           DefaultTextStyle.of(tester.element(find.text('Save'))).style.color,
           colors.primary,
         );
+        expect(tester.takeException(), isNull);
+      });
+
+      testWidgets('a dashboard card on a pane paints its fill once $name', (
+        tester,
+      ) async {
+        await _pump(
+          tester,
+          mode: mode,
+          brightness: brightness,
+          home: const Scaffold(
+            body: Center(
+              child: CardGroup(child: DashboardCard(child: Text('Nested'))),
+            ),
+          ),
+        );
+        final card = find.byType(DashboardCard);
+        final fill = glassRaisedFillOf(tester.element(card));
+        expect(
+          tester
+              .widgetList<DecoratedBox>(
+                find.descendant(of: card, matching: find.byType(DecoratedBox)),
+              )
+              .where(
+                (box) =>
+                    box.decoration is ShapeDecoration &&
+                    (box.decoration as ShapeDecoration).color == fill,
+              ),
+          hasLength(1),
+        );
+        expect(LiquidGlassHost.debugLastCapture!.panes, hasLength(1));
         expect(tester.takeException(), isNull);
       });
 

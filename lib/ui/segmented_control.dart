@@ -108,10 +108,13 @@ class SegmentedControl<T> extends StatelessWidget {
                                               : colorScheme.onPrimary
                                         : colorScheme.onSurfaceVariant,
                                   ),
-                              child: GlassText(
-                                label,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                              child: glassFlatLabel(
+                                context,
+                                GlassText(
+                                  label,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ),
                             ),
                           ),

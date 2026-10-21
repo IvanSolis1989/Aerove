@@ -172,6 +172,15 @@ class GlassText extends Text {
   }
 }
 
+// Ink samples the backdrop, before a flat control's fill is composited over it.
+Widget glassFlatLabel(BuildContext context, Widget child) =>
+    !LiquidGlassScope.of(context)
+    ? child
+    : GlassInkTextContrast(
+        contrast: math.max(GlassInkTextContrast.of(context), 9),
+        child: child,
+      );
+
 class GlassInkTextContrast extends InheritedWidget {
   const GlassInkTextContrast({
     super.key,

@@ -78,7 +78,7 @@ void main() {
             await tester.pumpAndSettle();
             expect(HSLColor.fromColor(color.value).hue, closeTo(180, 2));
             final spectrumGlass = LiquidGlassHost.debugLastCapture!.panes;
-            expect(spectrumGlass, hasLength(onGlass ? 1 : 2));
+            expect(spectrumGlass, hasLength(onGlass ? 0 : 2));
             final boundary = tester.renderObject<RenderRepaintBoundary>(
               find.byKey(capture),
             );

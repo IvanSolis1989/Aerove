@@ -132,13 +132,20 @@ void main() {
             decorationOf(tester, mode).color,
             mode == selected
                 ? glassChosenFillOf(colorScheme)
-                : glassFillOf(colorScheme),
+                : Colors.transparent,
           );
         }
         for (final pane in tester.widgetList<LiquidGlass>(
           find.byType(LiquidGlass),
         )) {
-          expect(pane.style.tint, Colors.transparent);
+          expect(
+            pane.style.tint,
+            quality == LiquidGlassQuality.standard
+                ? glassRaisedFillOf(
+                    tester.element(find.byType(OutboundModeCard)),
+                  )
+                : Colors.transparent,
+          );
         }
       }
 

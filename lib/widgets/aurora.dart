@@ -4,6 +4,7 @@ import 'dart:ui' show ImageFilter, Vertices, VertexMode;
 import 'package:fl_clash/common/aurora.dart';
 import 'package:fl_clash/common/aurora_motion.dart';
 import 'package:fl_clash/ui/aurora.dart';
+import 'package:fl_clash/ui/foreground_ink.dart';
 import 'package:fl_clash/ui/frame_pacer.dart';
 import 'package:fl_clash/ui/shape.dart';
 import 'package:fl_clash/ui/typography.dart';
@@ -243,7 +244,10 @@ class _AuroraAppSurfaceState extends ConsumerState<AuroraAppSurface>
                     color: glassFillOf(surfaceColors),
                     shape: filledStyle?.shape?.resolve(states) ?? AppShape.full,
                   ),
-                  child: child,
+                  child: glassFlatLabel(
+                    context,
+                    child ?? const SizedBox.shrink(),
+                  ),
                 )
               : LiquidGlass(
                   style: LiquidGlassStyle.regular(surfaceColors),

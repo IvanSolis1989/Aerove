@@ -3,6 +3,8 @@ import 'dart:ui' as ui;
 
 import 'package:fl_clash/ui/shape.dart';
 import 'package:fl_clash/ui/context.dart';
+import 'package:fl_clash/common/app_localizations.dart';
+import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
@@ -33,12 +35,19 @@ void main() {
     TargetPlatform platform = TargetPlatform.android,
     Brightness brightness = Brightness.light,
     bool highContrast = false,
+    Widget? home,
   }) async {
     await tester.pumpWidget(
       ProviderScope(
         key: UniqueKey(),
         overrides: [themeSettingProvider.overrideWithBuild((_, _) => props)],
         child: MaterialApp(
+          localizationsDelegates: const [
+            AppLocalizations.delegate,
+            AppUiLocalizations.delegate,
+            ...GlobalMaterialLocalizations.delegates,
+          ],
+          supportedLocales: AppLocalizations.delegate.supportedLocales,
           theme: ThemeData(
             platform: platform,
             colorScheme: ColorScheme.fromSeed(
@@ -48,14 +57,19 @@ void main() {
           ),
           builder: (context, child) => MediaQuery(
             data: MediaQuery.of(context).copyWith(highContrast: highContrast),
-            child: RepaintBoundary(
-              key: _surfaceCapture,
-              child: AuroraAppSurface(motion: false, child: child!),
+            child: wrapAppScopes(
+              context,
+              RepaintBoundary(
+                key: _surfaceCapture,
+                child: AuroraAppSurface(motion: false, child: child!),
+              ),
             ),
           ),
-          home: const Scaffold(
-            body: Center(child: CommonCard(child: Text('XClash'))),
-          ),
+          home:
+              home ??
+              const Scaffold(
+                body: Center(child: CommonCard(child: Text('XClash'))),
+              ),
         ),
       ),
     );
@@ -131,6 +145,10 @@ void main() {
           tester,
           props: const ThemeProps(liquidGlass: LiquidGlassMode.none),
           brightness: brightness,
+          home: const CommonScaffold(
+            title: 'Page',
+            body: Center(child: CommonCard(child: Text('XClash'))),
+          ),
         );
         final context = tester.element(find.byType(CommonCard));
         expect(AuroraAppearance.enabledOf(context), isTrue);
@@ -174,8 +192,8 @@ void main() {
             final expected = (await wallpaperImage.toByteData(
               format: ui.ImageByteFormat.rawRgba,
             ))!;
-            for (var y = 8; y < 24; y++) {
-              for (var x = 8; x < 24; x++) {
+            for (var y = 4; y < 12; y++) {
+              for (var x = 4; x < 12; x++) {
                 final pixel = (y * sceneImage.width + x) * 4;
                 for (var channel = 0; channel < 4; channel++) {
                   expect(

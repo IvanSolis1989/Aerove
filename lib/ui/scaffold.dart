@@ -27,6 +27,7 @@ import 'dialog.dart';
 import 'inherited.dart';
 import 'liquid_glass.dart';
 import 'loading.dart';
+import 'aurora.dart';
 import 'navigation_dock.dart';
 import 'popup.dart';
 import 'search_field.dart';
@@ -760,7 +761,9 @@ class CommonScaffoldState extends State<CommonScaffold> {
     return FloatingHeader(
       backgroundColor:
           widget.backgroundColor ??
-          SurfaceLevel.page.colorOf(context.colorScheme),
+          (AuroraAppearance.enabledOf(context)
+              ? Colors.transparent
+              : SurfaceLevel.page.colorOf(context.colorScheme)),
       blur: LiquidGlassScope.of(context),
       fadeStart: top / (top + pageToolbarHeight),
       overhang: _headerOverhang,
@@ -842,9 +845,7 @@ class CommonScaffoldState extends State<CommonScaffold> {
           ValueListenableBuilder(
             valueListenable: _loadingNotifier,
             builder: (_, value, _) {
-              return value == true
-                  ? const LinearProgressIndicator()
-                  : Container();
+              return value == true ? const CommonLinearLoading() : Container();
             },
           ),
         ],

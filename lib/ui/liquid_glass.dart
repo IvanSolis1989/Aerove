@@ -185,6 +185,13 @@ class LiquidGlassStyle {
           );
   }
 
+  factory LiquidGlassStyle.card(BuildContext context) =>
+      LiquidGlassStyle.regular(context.colorScheme).copyWith(
+        tint: LiquidGlassScope.qualityOf(context) == LiquidGlassQuality.standard
+            ? glassRaisedFillOf(context)
+            : Colors.transparent,
+      );
+
   /// Thicker than [LiquidGlassStyle.regular], for rows that read over anything.
   /// It takes its rim from a [LiquidGlassRim].
   factory LiquidGlassStyle.menu(ColorScheme colorScheme) {

@@ -637,8 +637,8 @@ which puts a `LiquidGlass` pane behind each button through `ButtonStyle.backgrou
 the cards of a `CommonPopupMenu`, and a `CommonDialog`. On the dashboard each card is the one pane: its connected
 buttons, switches and speed tiles stand flat on it, since each pane adds its area to a capture retaken whenever the
 dashboard redraws, which it does often. The status card's start-button droplet and flag badge are bubbles of their own,
-as the user specified them, over the card's pane; whether that card should stay a pane under them is still the user's
-call. Each control still swells on its own under `ElasticPress`, and a `DashboardConnectedGroup` paints the button
+as the user specified them. That card uses `DashboardCard.pane: false`, so its flat fill leaves the bubbles as its
+only optical layer. Each control still swells on its own under `ElasticPress`, and a `DashboardConnectedGroup` paints the button
 pressed last over the neighbours it swells past. `lib/ui/liquid_glass.dart` holds the rest:
 
 - One pane at a time. The host captures only the wallpaper (`wallpaperOnly`), so a pane over another pane does not
@@ -652,11 +652,15 @@ pressed last over the neighbours it swells past. `lib/ui/liquid_glass.dart` hold
   `TonalButtonGroup` or `TonalButtonTheme` pane take `glassFillOf`, and a selected one `glassChosenFillOf`, primary at
   20%. A switch keeps a flat track and a flat knob, a slider a flat track and a flat handle, a `SegmentedControl` a
   flat track and a flat chosen segment; on a bare page the knob, the handle and the chosen segment are each the
-  control's one pane. A label on a flat button fill asks its ink for at least 7:1, since the ink measures the backdrop
+  control's one pane. A label on a flat fill asks its ink for at least 9:1 through `glassFlatLabel`, since the ink measures the backdrop
   and not the fill between. `HeaderButtonGlassScope` wins over the scope, so a sheet's bar buttons keep their lens, and
   `LiquidGlass` and `LiquidGlass.buttonStyle` never read it: `CoreStatusButton`, the dashboard's droplet and flag, the
   docked search and the disclaimer's actions are panes wherever they stand. Plain solid and high contrast set no glass,
   so the scope is off there and every control keeps its Material look.
+
+- `LiquidGlassStyle.card` gives Soft frost cards a raised-surface tint; blur alone vanishes over a smooth wallpaper.
+  Clear shimmer keeps the regular clear pane. Connected dashboard buttons leave their unchosen segments transparent,
+  so the chosen 20% primary fill remains distinct without making the label's backing too bright in dark mode.
 
 - A `LiquidGlassHost` over the app (`lib/ui/liquid_glass_capture.dart`, after g1455's atlas proxy) draws its panes
   without reading the backdrop. As the frame is composited, before its children, it redraws onto one small image what

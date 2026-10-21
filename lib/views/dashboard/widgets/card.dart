@@ -56,11 +56,7 @@ class DashboardGlass extends StatelessWidget {
       );
     }
     return LiquidGlass(
-      style:
-          style ??
-          LiquidGlassStyle.regular(
-            context.colorScheme,
-          ).copyWith(tint: Colors.transparent),
+      style: style ?? LiquidGlassStyle.card(context),
       clipper: ShapeBorderClipper(
         shape: shape,
         textDirection: Directionality.of(context),
@@ -77,6 +73,7 @@ class DashboardCard extends StatelessWidget {
     this.onTap,
     this.semanticLabel,
     this.clipBehavior = Clip.none,
+    this.pane = true,
     required this.child,
   });
 
@@ -87,6 +84,7 @@ class DashboardCard extends StatelessWidget {
   /// Off by default so a control swelling under an [ElasticPress] can paint
   /// past the card's edge; only a card whose own content bleeds clips.
   final Clip clipBehavior;
+  final bool pane;
   final Widget child;
 
   @override
@@ -97,37 +95,35 @@ class DashboardCard extends StatelessWidget {
       padding: padding ?? dashboardCardPadding(density),
       child: child,
     );
+    final card = Container(
+      clipBehavior: clipBehavior,
+      decoration: ShapeDecoration(
+        color: !pane && LiquidGlassScope.of(context)
+            ? glassRaisedFillOf(context)
+            : DashboardColors.of(context).card,
+        shape: shape,
+        shadows: LiquidGlassScope.of(context)
+            ? null
+            : DashboardShadows.e1(context),
+      ),
+      child: Material(
+        type: MaterialType.transparency,
+        child: onTap == null
+            ? content
+            : FocusRing(
+                shape: shape,
+                child: InkWell(
+                  customBorder: shape,
+                  onTap: onTap,
+                  child: content,
+                ),
+              ),
+      ),
+    );
     return Semantics(
       container: true,
       label: semanticLabel,
-      child: DashboardGlass(
-        shape: shape,
-        child: Container(
-          clipBehavior: clipBehavior,
-          decoration: ShapeDecoration(
-            color: GlassSurfaceScope.of(context)
-                ? glassRaisedFillOf(context)
-                : DashboardColors.of(context).card,
-            shape: shape,
-            shadows: LiquidGlassScope.of(context)
-                ? null
-                : DashboardShadows.e1(context),
-          ),
-          child: Material(
-            type: MaterialType.transparency,
-            child: onTap == null
-                ? content
-                : FocusRing(
-                    shape: shape,
-                    child: InkWell(
-                      customBorder: shape,
-                      onTap: onTap,
-                      child: content,
-                    ),
-                  ),
-          ),
-        ),
-      ),
+      child: pane ? DashboardGlass(shape: shape, child: card) : card,
     );
   }
 }
@@ -464,7 +460,7 @@ class DashboardConnectedButton extends StatelessWidget {
                     ? Color.lerp(background, colorScheme.primary, amount)
                     : onGlass
                     ? Color.lerp(
-                        glassFillOf(colorScheme),
+                        Colors.transparent,
                         glassChosenFillOf(colorScheme),
                         amount,
                       )
@@ -499,12 +495,15 @@ class DashboardConnectedButton extends StatelessWidget {
                     ),
             );
           },
-          child: builder(
-            selected
-                ? LiquidGlassScope.of(context)
-                      ? colorScheme.onSurface
-                      : colorScheme.onPrimary
-                : colorScheme.onSurfaceVariant,
+          child: glassFlatLabel(
+            context,
+            builder(
+              selected
+                  ? LiquidGlassScope.of(context)
+                        ? colorScheme.onSurface
+                        : colorScheme.onPrimary
+                  : colorScheme.onSurfaceVariant,
+            ),
           ),
         ),
       ),

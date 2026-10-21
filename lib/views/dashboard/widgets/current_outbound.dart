@@ -95,6 +95,7 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
         ? (appLocalizations.running, DashboardChipTone.ok)
         : (appLocalizations.notRunning, DashboardChipTone.idle);
     return DashboardCard(
+      pane: false,
       padding: EdgeInsets.zero,
       semanticLabel: appLocalizations.status,
       child: Stack(
