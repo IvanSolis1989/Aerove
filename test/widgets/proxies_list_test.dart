@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:ui' as ui;
 
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
@@ -21,6 +22,8 @@ import 'package:material_ui/material_ui.dart';
 import '../helpers/test_app.dart';
 import '../helpers/test_profiles.dart';
 import '../helpers/scrollbar.dart';
+
+const _capture = ValueKey('proxy-corners');
 
 class _RecordingProxiesAction extends ProxiesAction {
   static final List<String> tested = [];
@@ -54,6 +57,7 @@ void main() {
     bool? glass,
     LiquidGlassQuality quality = LiquidGlassQuality.standard,
     Widget? view,
+    Color? backdrop,
   }) async {
     tester.view.physicalSize = const Size(900, 700);
     tester.view.devicePixelRatio = 1;
@@ -84,21 +88,30 @@ void main() {
         container: container,
         child: TestApp(
           homeBuilder: (child) => Scaffold(
-            body: Builder(
-              builder: (context) => MediaQuery(
-                data: MediaQuery.of(
-                  context,
-                ).copyWith(padding: const EdgeInsets.only(top: 64)),
-                child: (glass ?? aurora)
-                    ? AuroraAppearance(
-                        enabled: aurora,
-                        child: LiquidGlassScope(
-                          enabled: true,
-                          quality: quality,
-                          child: LiquidGlassHost(enabled: true, child: child),
-                        ),
-                      )
-                    : child,
+            body: RepaintBoundary(
+              key: _capture,
+              child: ColoredBox(
+                color: backdrop ?? Colors.transparent,
+                child: Builder(
+                  builder: (context) => MediaQuery(
+                    data: MediaQuery.of(
+                      context,
+                    ).copyWith(padding: const EdgeInsets.only(top: 64)),
+                    child: ((glass ?? aurora) || aurora)
+                        ? AuroraAppearance(
+                            enabled: aurora,
+                            child: LiquidGlassScope(
+                              enabled: glass ?? aurora,
+                              quality: quality,
+                              child: LiquidGlassHost(
+                                enabled: glass ?? aurora,
+                                child: child,
+                              ),
+                            ),
+                          )
+                        : child,
+                  ),
+                ),
               ),
             ),
           ),
@@ -180,6 +193,67 @@ void main() {
   Future<void> unmountList(WidgetTester tester) async {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(Duration.zero);
+  }
+
+  for (final theme in Brightness.values) {
+    for (final expanded in [false, true]) {
+      testWidgets(
+        'proxy rounded corners over wallpaper $theme expanded=$expanded',
+        (tester) async {
+          const wallpaper = Color(0xFF24CDF2);
+          final brightness = ValueNotifier(theme);
+          addTearDown(brightness.dispose);
+          await pumpList(
+            tester,
+            aurora: true,
+            glass: false,
+            backdrop: wallpaper,
+            brightness: brightness,
+            groups: [_group('G0', 60)],
+            unfoldSet: expanded ? {'G0'} : {},
+          );
+          Future<void> checkCorners() async {
+            final bounds = tester.getRect(headerOf('G0'));
+            final boundary = tester.renderObject<RenderRepaintBoundary>(
+              find.byKey(_capture),
+            );
+            await tester.runAsync(() async {
+              final image = await boundary.toImage();
+              try {
+                final pixels = (await image.toByteData(
+                  format: ui.ImageByteFormat.rawRgba,
+                ))!;
+                Color pixel(int x, int y) {
+                  final offset = (y * image.width + x) * 4;
+                  return Color.fromARGB(
+                    pixels.getUint8(offset + 3),
+                    pixels.getUint8(offset),
+                    pixels.getUint8(offset + 1),
+                    pixels.getUint8(offset + 2),
+                  );
+                }
+
+                final y = bounds.top.ceil() + 2;
+                expect(pixel(bounds.left.ceil() + 2, y), wallpaper);
+                expect(pixel(bounds.right.floor() - 3, y), wallpaper);
+                expect(pixel(bounds.center.dx.floor(), y), isNot(wallpaper));
+              } finally {
+                image.dispose();
+              }
+            });
+          }
+
+          await checkCorners();
+          if (expanded) {
+            final state = tester.state<ScrollableState>(scrollable());
+            state.position.jumpTo(180);
+            await tester.pumpAndSettle();
+            await checkCorners();
+          }
+          await unmountList(tester);
+        },
+      );
+    }
   }
 
   for (final tab in [false, true]) {

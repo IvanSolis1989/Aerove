@@ -618,6 +618,7 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
   Widget build(BuildContext context) {
     final groupName = widget.group.name;
     final glass = LiquidGlassScope.of(context);
+    final clipsRows = glass || AuroraAppearance.enabledOf(context);
     final isExpand = ref.watch(
       unfoldSetProvider.select((state) => state.contains(groupName)),
     );
@@ -657,7 +658,7 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
     } else {
       _rows = null;
     }
-    if (rows != null && LiquidGlassScope.of(context)) {
+    if (rows != null && clipsRows) {
       rows = _HeaderClippedRows(sliver: rows);
     }
     Widget buildHeader({double floating = 0, double lift = 0}) => KeyedSubtree(
@@ -678,7 +679,10 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
         ),
       ),
     );
-    final slivers = [_buildPinnedHeader(isExpand, buildHeader), ?rows];
+    final slivers = [
+      _buildPinnedHeader(isExpand, buildHeader, clipsRows: clipsRows),
+      ?rows,
+    ];
     return SliverPadding(
       padding: EdgeInsets.only(bottom: widget.gap),
       sliver: glass
@@ -691,12 +695,13 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
     );
   }
 
-  /// Opaque themes cover rows behind the header with page fill; glass themes
-  /// clip those rows instead. Headers outside the cache build no content.
+  /// Opaque themes cover rows behind the header with page fill; transparent
+  /// pages clip those rows instead. Headers outside the cache build no content.
   Widget _buildPinnedHeader(
     bool isExpand,
-    Widget Function({double floating, double lift}) buildHeader,
-  ) {
+    Widget Function({double floating, double lift}) buildHeader, {
+    required bool clipsRows,
+  }) {
     final columns = widget.columns;
     final rowCount = (widget.group.all.length + columns - 1) ~/ columns;
     final rowsExtent = isExpand ? _rowsExtent(rowCount, _rowExtent) : 0.0;
@@ -725,7 +730,7 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
                 ),
                 isExpand ? constraints.overlap : 0.0,
                 context.surfaceLevel.colorOf(context.colorScheme),
-                LiquidGlassScope.of(context),
+                clipsRows,
               );
         if (header != null && state == headerState) {
           return header!;
@@ -736,13 +741,13 @@ class _GroupSliverState extends ConsumerState<_GroupSliver>
             child: SizedBox(height: listHeaderHeight),
           );
         }
-        final (floating, lift, cover, pageColor, aurora) = state;
+        final (floating, lift, cover, pageColor, clipped) = state;
         return header = PinnedHeaderSliver(
           child: RepaintBoundary(
             child: Stack(
               clipBehavior: Clip.none,
               children: [
-                if (!aurora)
+                if (!clipped)
                   Positioned(
                     top: -cover,
                     left: 0,
