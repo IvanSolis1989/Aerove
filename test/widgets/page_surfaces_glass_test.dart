@@ -136,6 +136,44 @@ String _name(_Case glass) =>
     '${glass.brightness.name} ${glass.mode.name}'
     '${glass.highContrast ? ' high contrast' : ''}';
 
+List<Rect> get _panes => [
+  for (final pane in LiquidGlassHost.debugLastCapture!.panes) pane.pane,
+];
+
+bool _covers(Rect outer, Rect inner) {
+  final bounds = outer.inflate(0.5);
+  return bounds.left <= inner.left &&
+      bounds.top <= inner.top &&
+      bounds.right >= inner.right &&
+      bounds.bottom >= inner.bottom;
+}
+
+List<({Color color, Element element})> _fillsBetween(
+  WidgetTester tester,
+  Finder anchor,
+  Finder? outer,
+) {
+  final fills = <({Color color, Element element})>[];
+  final stop = outer == null ? null : tester.element(outer);
+  tester.element(anchor.first).visitAncestorElements((element) {
+    if (identical(element, stop)) return false;
+    final widget = element.widget;
+    final decoration = switch (widget) {
+      Container(:final decoration?) => decoration,
+      DecoratedBox(:final decoration) => decoration,
+      _ => null,
+    };
+    final color = switch ((decoration, widget)) {
+      (ShapeDecoration(:final color?), _) => color,
+      (_, Material(:final color?)) => color,
+      _ => null,
+    };
+    if (color != null) fills.add((color: color, element: element));
+    return true;
+  });
+  return fills;
+}
+
 /// The card [anchor] sits on: one [CardGroup] pane on glass with no fill of
 /// its own between the pane and [anchor], the opaque fill off glass.
 void _expectOneCardPane(WidgetTester tester, Finder anchor, _Case glass) {
@@ -147,26 +185,37 @@ void _expectOneCardPane(WidgetTester tester, Finder anchor, _Case glass) {
   expect(group, findsOneWidget);
   expect(
     find.descendant(of: group, matching: find.byType(LiquidGlass)),
-    _glassOn(glass) ? findsWidgets : findsNothing,
+    _glassOn(glass) ? findsOneWidget : findsNothing,
   );
-  final fills = <Color>[];
-  final groupElement = tester.element(group);
-  tester.element(anchor.first).visitAncestorElements((element) {
-    if (identical(element, groupElement)) return false;
-    final widget = element.widget;
-    final decoration = switch (widget) {
-      Container(:final decoration?) => decoration,
-      DecoratedBox(:final decoration) => decoration,
-      _ => null,
-    };
-    if (decoration case ShapeDecoration(:final color?)) fills.add(color);
-    if (widget case Material(:final color?)) fills.add(color);
-    return true;
-  });
-  if (_glassOn(glass)) {
-    expect(fills.where((color) => color.a > 0), isEmpty);
-  } else {
+  final fills = _fillsBetween(tester, anchor, group).map((fill) => fill.color);
+  if (!_glassOn(glass)) {
     expect(fills.where((color) => color.a == 1), isNotEmpty);
+    return;
+  }
+  expect(fills.where((color) => color.a > 0), isEmpty);
+  final card = tester.getRect(group);
+  expect(_panes.where((pane) => _covers(card, pane)), [
+    rectMoreOrLessEquals(card, epsilon: 0.5),
+  ]);
+}
+
+void _expectWashCard(WidgetTester tester, Finder anchor, _Case glass) {
+  expect(anchor, findsWidgets);
+  expect(
+    find.ancestor(of: anchor.first, matching: find.byType(CardGroup)),
+    findsNothing,
+  );
+  final wash = _fillsBetween(
+    tester,
+    anchor,
+    null,
+  ).firstWhere((fill) => fill.color.a > 0);
+  expect(wash.color.a, _glassOn(glass) ? 0.24 : 1);
+  if (_glassOn(glass)) {
+    final card = tester.getRect(
+      find.byElementPredicate((e) => e == wash.element),
+    );
+    expect(_panes.where((pane) => _covers(pane, card)), isEmpty);
   }
 }
 
@@ -191,7 +240,7 @@ void main() {
       );
       _expectOneCardPane(tester, find.byTooltip('Add'), glass);
       _expectOneCardPane(tester, find.text('Default'), glass);
-      _expectOneCardPane(
+      _expectWashCard(
         tester,
         find.text('Text in the app will look like this'),
         glass,
@@ -236,14 +285,27 @@ void main() {
         );
         final banner = find.byType(MaterialBanner);
         expect(banner, findsOneWidget);
-        expect(
-          find.ancestor(of: banner, matching: find.byType(CardGroup)),
-          _glassOn(glass) ? findsOneWidget : findsNothing,
-        );
         final background = tester
             .widget<MaterialBanner>(banner)
             .backgroundColor!;
         expect(background.a, _glassOn(glass) ? 0 : 1);
+        if (!_glassOn(glass)) {
+          expect(
+            find.ancestor(of: banner, matching: find.byType(CardGroup)),
+            findsNothing,
+          );
+        } else if (enable) {
+          _expectOneCardPane(tester, banner, glass);
+        } else {
+          _expectWashCard(tester, banner, glass);
+          expect(
+            find.descendant(
+              of: find.widgetWithText(TonalButton, 'Turn on'),
+              matching: find.byType(LiquidGlass),
+            ),
+            findsOneWidget,
+          );
+        }
         if (enable) {
           final scheme = Theme.of(tester.element(banner)).colorScheme;
           for (final label in [find.text('Selected'), find.text('0')]) {

@@ -389,7 +389,20 @@ class _AccessViewState extends ConsumerState<AccessView>
     }
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: CardGroup(child: banner),
+      // Turn on is a glass button, so the banner holding it stays a wash
+      // rather than a pane under it.
+      child: enable
+          ? CardGroup(child: banner)
+          : DecoratedBox(
+              decoration: ShapeDecoration(
+                color: LiquidGlassScope.surfaceColorOf(
+                  context,
+                  context.raisedSurfaceLevel.colorOf(context.colorScheme),
+                ),
+                shape: AppShape.xl,
+              ),
+              child: banner,
+            ),
     );
   }
 

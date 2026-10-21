@@ -1033,131 +1033,131 @@ class _TextScaleFactorItemState extends ConsumerState<_TextScaleFactorItem> {
                 onChanged: (value) =>
                     _update((state) => state.copyWith(enable: value)),
               ),
-              CardGroup(
-                shape: AppShape.lg,
-                child: Container(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                  decoration: LiquidGlassScope.of(context)
-                      ? null
-                      : ShapeDecoration(
-                          color: level.colorOf(colorScheme),
-                          shape: AppShape.lg,
+              // A wash rather than a CardGroup: the slider's track and thumb
+              // are panes, and a pane under them would stack glass on glass.
+              Container(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                decoration: ShapeDecoration(
+                  color: LiquidGlassScope.surfaceColorOf(
+                    context,
+                    level.colorOf(colorScheme),
+                  ),
+                  shape: AppShape.lg,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      spacing: 12,
+                      children: [
+                        Expanded(
+                          child: AnimatedSize(
+                            duration: const Duration(milliseconds: 200),
+                            curve: Curves.easeOutCubic,
+                            alignment: Alignment.topLeft,
+                            child: MediaQuery(
+                              data: MediaQuery.of(
+                                context,
+                              ).copyWith(textScaler: TextScaler.linear(scale)),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                spacing: 4,
+                                children: [
+                                  GlassText(
+                                    'Aa',
+                                    style: AppTextStyle.title3.of(context),
+                                  ),
+                                  GlassText(
+                                    appLocalizations.textScalePreview,
+                                    style: AppTextStyle.subheadline
+                                        .of(context)
+                                        .copyWith(
+                                          color: colorScheme.onSurfaceVariant,
+                                        ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
                         ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          decoration: ShapeDecoration(
+                            color: LiquidGlassScope.surfaceColorOf(
+                              context,
+                              level.next.colorOf(colorScheme),
+                            ),
+                            shape: AppShape.full,
+                          ),
+                          child: GlassText(
+                            percent,
+                            style: AppTextStyle.subheadline
+                                .of(context, emphasized: true)
+                                .copyWith(
+                                  color: colorScheme.onSurfaceVariant,
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
+                                ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    MediaQuery.withNoTextScaling(
+                      child: Row(
                         spacing: 12,
                         children: [
+                          ExcludeSemantics(
+                            child: GlassText(
+                              'A',
+                              style: AppTextStyle.footnote
+                                  .of(context)
+                                  .copyWith(
+                                    color: colorScheme.onSurfaceVariant,
+                                  ),
+                            ),
+                          ),
                           Expanded(
-                            child: AnimatedSize(
-                              duration: const Duration(milliseconds: 200),
-                              curve: Curves.easeOutCubic,
-                              alignment: Alignment.topLeft,
-                              child: MediaQuery(
-                                data: MediaQuery.of(context).copyWith(
-                                  textScaler: TextScaler.linear(scale),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  spacing: 4,
-                                  children: [
-                                    GlassText(
-                                      'Aa',
-                                      style: AppTextStyle.title3.of(context),
-                                    ),
-                                    GlassText(
-                                      appLocalizations.textScalePreview,
-                                      style: AppTextStyle.subheadline
-                                          .of(context)
-                                          .copyWith(
-                                            color: colorScheme.onSurfaceVariant,
-                                          ),
-                                    ),
-                                  ],
+                            child: SliderTheme(
+                              data: SliderDefaultsM3(context),
+                              child: GlassSlider(
+                                child: Slider(
+                                  padding: EdgeInsets.zero,
+                                  min: minTextScale,
+                                  max: maxTextScale,
+                                  divisions: divisions,
+                                  value: scale,
+                                  label: percent,
+                                  onChanged: textScale.enable
+                                      ? (value) =>
+                                            setState(() => _draft = value)
+                                      : null,
+                                  onChangeEnd: (value) => _update(
+                                    (state) => state.copyWith(scale: value),
+                                  ),
                                 ),
                               ),
                             ),
                           ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 4,
-                            ),
-                            decoration: ShapeDecoration(
-                              color: LiquidGlassScope.surfaceColorOf(
-                                context,
-                                level.next.colorOf(colorScheme),
-                              ),
-                              shape: AppShape.full,
-                            ),
+                          ExcludeSemantics(
                             child: GlassText(
-                              percent,
-                              style: AppTextStyle.subheadline
-                                  .of(context, emphasized: true)
+                              'A',
+                              style: AppTextStyle.title2
+                                  .of(context)
                                   .copyWith(
                                     color: colorScheme.onSurfaceVariant,
-                                    fontFeatures: const [
-                                      FontFeature.tabularFigures(),
-                                    ],
                                   ),
                             ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 8),
-                      MediaQuery.withNoTextScaling(
-                        child: Row(
-                          spacing: 12,
-                          children: [
-                            ExcludeSemantics(
-                              child: GlassText(
-                                'A',
-                                style: AppTextStyle.footnote
-                                    .of(context)
-                                    .copyWith(
-                                      color: colorScheme.onSurfaceVariant,
-                                    ),
-                              ),
-                            ),
-                            Expanded(
-                              child: SliderTheme(
-                                data: SliderDefaultsM3(context),
-                                child: GlassSlider(
-                                  child: Slider(
-                                    padding: EdgeInsets.zero,
-                                    min: minTextScale,
-                                    max: maxTextScale,
-                                    divisions: divisions,
-                                    value: scale,
-                                    label: percent,
-                                    onChanged: textScale.enable
-                                        ? (value) =>
-                                              setState(() => _draft = value)
-                                        : null,
-                                    onChangeEnd: (value) => _update(
-                                      (state) => state.copyWith(scale: value),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            ExcludeSemantics(
-                              child: GlassText(
-                                'A',
-                                style: AppTextStyle.title2
-                                    .of(context)
-                                    .copyWith(
-                                      color: colorScheme.onSurfaceVariant,
-                                    ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
             ],
