@@ -155,7 +155,7 @@ private class FakeHost(override val scope: CoroutineScope) : ServiceStateHost {
         return setupResult
     }
 
-    override suspend fun startService(options: VpnOptions): Boolean {
+    override suspend fun startService(options: VpnOptions, requested: VpnOptions): Boolean {
         startCalls++
         lastStartOptions = options
         beforeStartService?.invoke()
@@ -165,7 +165,7 @@ private class FakeHost(override val scope: CoroutineScope) : ServiceStateHost {
         runtime = ServiceRuntime(
             vpn = runsAsVpn ?: options.enable,
             startedAtMillis = STARTED_AT,
-            options = options,
+            requested = requested,
         )
         return true
     }
@@ -223,18 +223,19 @@ class ServiceStateMachineTest {
         assertNull(machine.awaitRunTime())
     }
 
+    /** Flutter compares them with the options it would start now, which never carry the fallback. */
     @Test
-    fun `the run time reports the options the service runs with`() = runTest {
+    fun `the run time reports the options the start asked for and not the stack fallback`() = runTest {
         val host = FakeHost(backgroundScope)
         host.localNetworkPermissionGranted = false
         val machine = ServiceStateMachine(host)
-        machine.syncSharedState(configuredState(stack = "system"))
+        val state = configuredState(stack = "system")
+        machine.syncSharedState(state)
 
         machine.requestStart().await()
 
-        val options = machine.awaitRunTime()?.vpnOptions
-        assertEquals(host.lastStartOptions, options)
-        assertEquals(ServiceStateMachine.FALLBACK_STACK, options?.stack)
+        assertEquals(ServiceStateMachine.FALLBACK_STACK, host.lastStartOptions?.stack)
+        assertEquals(state.vpnOptions, machine.awaitRunTime()?.vpnOptions)
     }
 
     @Test
