@@ -1212,10 +1212,26 @@ tunnel rejects exactly that and stalls push reconnects until their backoff runs 
 network at foreground importance (`dumpsys netpolicy` showed its `DOZE` block allowed by `FOREGROUND` while it still
 posted a notification; now the system's binding alone holds it there, which no phone has measured yet), so health checks
 keep producing real results: holding them blocks the re-check mihomo runs after repeated dial failures, which is how a
-`url-test` group leaves a dead node, and hiding their failures hides the truth. Nothing re-probes on resume either:
-every proxy group is a provider, `select` groups included, and checking one tests every node in it. Should a ROM be
-shown to cut the VPN's own network while the screen is off, holding back failures measured then needs only a screen
-on/off signal.
+`url-test` group leaves a dead node, and hiding their failures hides the truth. Nothing probes on resume or unlock
+either: every proxy group is a provider, `select` groups included, checking one tests every node in it, and that moment
+is when the network is least ready. Should a ROM be shown to cut the VPN's own network while the screen is off,
+holding back failures measured then needs only a screen on/off signal.
+
+A resume reads instead. The Core drops delay results while the UI is hidden, so the first refresh after a resume or a
+cold attach calls `getLatestDelays`: the last result per test URL of every node a group holds, without the history
+`getProxies` leaves out. It runs before the groups are re-read, which lets a list sorted by delay sort on what it
+brought. A node the Core has no result for keeps what the UI shows, a failure keeps the kind of failure already shown,
+and a result that lands while the read is in flight wins over it.
+
+A round that failed as a whole, as one run before the network came back does, is retried by `healthRetrier` in
+`core/health_retry.go`. It groups results into rounds per test URL, and when every node of a provider behind a
+`url-test`, `fallback` or `load-balance` group failed, it runs that provider's `HealthCheck` again after 30, 60 and 120
+seconds, at most three times per outage, and stops once any node of it answers. mihomo's lazy check only runs a round
+for a provider used within its interval, so a failed round already implies recent use. mihomo keeps the interval
+private; its own failed rounds count toward the three instead, which holds a group with a short interval to its own
+pace. `select` providers are never retried, the timers are `time.AfterFunc` timers that do not wake the device, and an
+apply or a shutdown drops them. A delay test the UI started still runs to its own deadline after a hide, because mihomo
+records a cancelled probe as a dead node; the hidden UI just never receives the answer.
 
 ## Database
 
