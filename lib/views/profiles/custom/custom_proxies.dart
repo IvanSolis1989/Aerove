@@ -1031,6 +1031,7 @@ class _EditCustomProxyViewState extends ConsumerState<_EditCustomProxyView> {
       onChanged: onChanged,
       suffix: CommonMinIconButtonTheme(
         child: IconButton(
+          style: fieldIconButtonStyle(context.colorScheme),
           tooltip: revealed
               ? appLocalizations.hidePassword
               : appLocalizations.showPassword,
