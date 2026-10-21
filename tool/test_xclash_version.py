@@ -205,6 +205,8 @@ class XClashVersionTest(unittest.TestCase):
             self.assertEqual(selected["tag"], "v0.9.1-pre.10")
             self.assertEqual(selected["source_commit"], pre10)
             self.assertEqual(selected["source_branches"], ["feature"])
+            with self.assertRaisesRegex(version.VersionError, "No legal upstream stable"):
+                version.select_reachable_release(repo, stable_only=True)
 
     def test_release_plan_requires_source_commit_in_head_and_matching_pubspec(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -250,7 +252,7 @@ class XClashVersionTest(unittest.TestCase):
             self.assertEqual(plan["tag"], "v0.9.1-pre.4-X+2026101701")
 
             forged_newer_tag = dict(
-                metadata, tag="v99.0.0", version="99.0.0"
+                metadata, tag="v99.0.0-pre.1", version="99.0.0-pre.1"
             )
             with self.assertRaisesRegex(version.VersionError, "highest official"):
                 version.build_release_plan(
@@ -320,6 +322,71 @@ class XClashVersionTest(unittest.TestCase):
                     head=source_commit,
                     run_number=2,
                 )
+
+    def test_stable_release_remains_valid_when_next_preview_is_published(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary)
+            self.git(repo, "init", "-b", "main")
+            self.git(repo, "config", "user.name", "Offline Test")
+            self.git(repo, "config", "user.email", "offline@example.invalid")
+            stable_pubspec = "name: fixture\nversion: 0.9.1+2026101701\n"
+            (repo / "pubspec.yaml").write_text(stable_pubspec, encoding="utf-8")
+            self.git(repo, "add", "pubspec.yaml")
+            self.git(repo, "commit", "-m", "stable source")
+            stable = self.git(repo, "rev-parse", "HEAD")
+            self.git(repo, "update-ref", "refs/remotes/upstream/main", stable)
+            self.git(repo, "update-ref", "refs/upstream-tags/v0.9.1", stable)
+            metadata = version.make_metadata(
+                source_commit=stable,
+                tag_ref="refs/upstream-tags/v0.9.1",
+                tag_commit=stable,
+                source_branches=["main"],
+                pubspec_version="0.9.1+2026101701",
+            )
+
+            preview_pubspec = "name: fixture\nversion: 0.9.2+2026102101\n"
+            (repo / "pubspec.yaml").write_text(preview_pubspec, encoding="utf-8")
+            self.git(repo, "add", "pubspec.yaml")
+            self.git(repo, "commit", "-m", "preview source")
+            preview = self.git(repo, "rev-parse", "HEAD")
+            self.git(repo, "update-ref", "refs/remotes/upstream/dev", preview)
+            self.git(repo, "update-ref", "refs/upstream-tags/v0.9.2-pre.1", preview)
+
+            plan = version.build_release_plan(
+                metadata=metadata, current_pubspec=stable_pubspec,
+                repo=repo, head=stable, run_number=3,
+            )
+            self.assertEqual(plan["name"], "0.9.1-X")
+            self.assertEqual(plan["app_env"], "stable")
+            self.assertEqual(plan["upstream_source_commit"], stable)
+            self.assertEqual(version.select_reachable_release(repo)["tag"], "v0.9.2-pre.1")
+            self.assertEqual(
+                version.select_reachable_release(repo, stable_only=True)["tag"],
+                "v0.9.1",
+            )
+            preview_metadata = version.make_metadata(
+                source_commit=preview,
+                tag_ref="refs/upstream-tags/v0.9.2-pre.1",
+                tag_commit=preview,
+                source_branches=["dev"],
+                pubspec_version="0.9.2+2026102101",
+            )
+            preview_plan = version.build_release_plan(
+                metadata=preview_metadata, current_pubspec=preview_pubspec,
+                repo=repo, head=preview, run_number=4,
+            )
+            self.assertEqual(preview_plan["name"], "0.9.2-pre.1-X")
+            self.assertEqual(preview_plan["app_env"], "pre")
+
+            for tag in ("v0.9.1", "v0.9.2"):
+                with self.subTest(changed_tag=tag):
+                    self.git(repo, "update-ref", f"refs/upstream-tags/{tag}", preview)
+                    with self.assertRaisesRegex(version.VersionError, "highest official"):
+                        version.build_release_plan(
+                            metadata=metadata, current_pubspec=stable_pubspec,
+                            repo=repo, head=stable, run_number=5,
+                        )
+                    self.git(repo, "update-ref", "refs/upstream-tags/v0.9.1", stable)
 
     def test_release_environment_follows_selected_tag_instead_of_pubspec_or_branch(self):
         with tempfile.TemporaryDirectory() as temporary:

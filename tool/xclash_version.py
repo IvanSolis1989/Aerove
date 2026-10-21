@@ -110,7 +110,7 @@ def _git_ref_commit(repo: Path, ref: str) -> str:
     return _require_sha1("peeled ref commit", result.stdout.strip())
 
 
-def select_reachable_release(repo: Path) -> dict[str, Any]:
+def select_reachable_release(repo: Path, *, stable_only: bool = False) -> dict[str, Any]:
     branch_refs = subprocess.run(
         ["git", "for-each-ref", "--format=%(refname)", UPSTREAM_BRANCH_NAMESPACE],
         cwd=repo,
@@ -138,7 +138,7 @@ def select_reachable_release(repo: Path) -> dict[str, Any]:
             continue
         tag = tag_ref.removeprefix(UPSTREAM_TAG_NAMESPACE)
         parsed = parse_release_tag(tag)
-        if parsed is None:
+        if parsed is None or (stable_only and "-" in parsed.version):
             continue
         tag_commit = resolve_tag_commit(repo, tag_ref)
         reachable_branches = sorted(
@@ -161,8 +161,9 @@ def select_reachable_release(repo: Path) -> dict[str, Any]:
                 )
             )
     if not candidates:
+        channel = "stable release" if stable_only else "release"
         raise VersionError(
-            "No legal upstream release tag is reachable from a fetched upstream branch"
+            f"No legal upstream {channel} tag is reachable from a fetched upstream branch"
         )
     return max(candidates, key=lambda candidate: candidate[0].precedence)[1]
 
@@ -321,7 +322,7 @@ def build_release_plan(
     run_number: int,
 ) -> dict[str, Any]:
     validate_metadata_shape(metadata)
-    selected = select_reachable_release(repo)
+    selected = select_reachable_release(repo, stable_only="-" not in metadata["version"])
     if (
         selected["tag"] != metadata["tag"]
         or selected["tag_commit"] != metadata["tag_commit"]

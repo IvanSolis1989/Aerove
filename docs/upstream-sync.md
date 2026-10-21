@@ -66,7 +66,10 @@ APK 显示版本取 `tool/upstream-version.json` 中上游 tag 去掉 `v` 后追
 `v0.9.1-pre.4` 显示为 `0.9.1-pre.4-X`；不从 `pubspec.yaml` 的基础版本推导，因此保留上游预发布编号。
 同步 CI 会验证 metadata 的 schema、上游仓库、完整 commit SHA、tag commit 与 source commit 一致、记录的
 pubspec 来源版本与当前 `pubspec.yaml`，并确认 source commit 已包含在构建 `HEAD`。过期或不匹配 metadata 会使 APK
-构建失败。`pubspec.yaml` 保留上游内容；内部 Android versionCode 固定为 `2026101700 + GITHUB_RUN_NUMBER`，
+构建失败。正式版构建核对最高可达的官方正式标签，后续预发布标签不阻止当前正式基线的修复版发布；
+预览版构建仍核对包含预发布的最高官方标签。自动同步的标签选择不变，仍跟随两者中的最高版本。
+两个通道都保留 tag/source、源码祖先与 pubspec 来源验证，新正式标签仍会阻止过期正式基线发布。
+`pubspec.yaml` 保留上游内容；内部 Android versionCode 固定为 `2026101700 + GITHUB_RUN_NUMBER`，
 不读取或累加上游 build number。Release tag 为 `v<显示版本>+<内部versionCode>`，且 APK 使用同一名称和编号。
 构建编号只用于 CI 打包，不回写 pubspec；`BUILD_INFO.json` 保存上游 source/tag/pubspec 来源，便于核对。
 README 的 `/releases/latest/download/Aerove-android-arm64.apk` 始终指向最近成功发布的 ARM64 APK。
