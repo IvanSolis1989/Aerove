@@ -1,4 +1,5 @@
 import 'package:fl_clash/ui/context.dart';
+import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/metrics.dart';
 import 'package:fl_clash/ui/scroll_behavior.dart';
 import 'package:fl_clash/ui/shape.dart';
@@ -21,6 +22,9 @@ class SheetDragHandle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = context.colorScheme;
+    final glass =
+        LiquidGlassScope.of(context) && !MediaQuery.highContrastOf(context);
     return Padding(
       padding: const EdgeInsets.only(top: _topPadding),
       child: Container(
@@ -28,7 +32,9 @@ class SheetDragHandle extends StatelessWidget {
         height: _thickness,
         width: _width,
         decoration: ShapeDecoration(
-          color: context.colorScheme.onSurfaceVariant,
+          color: glass
+              ? colorScheme.onSurface.withValues(alpha: 0.3)
+              : colorScheme.onSurfaceVariant,
           shape: AppShape.all(_thickness / 2),
         ),
       ),

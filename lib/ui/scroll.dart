@@ -446,8 +446,12 @@ class FloatingScrollbar extends StatefulWidget {
   State<FloatingScrollbar> createState() => _FloatingScrollbarState();
 }
 
-class _FloatingScrollbarState extends State<FloatingScrollbar> {
-  var _hintVisible = false;
+class _FloatingScrollbarState extends State<FloatingScrollbar>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _hintFade = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 150),
+  )..addStatusListener(_handleHintFade);
   var _hintMounted = false;
   double? _scrubRate;
   var _pillHeight = 0.0;
@@ -473,6 +477,7 @@ class _FloatingScrollbarState extends State<FloatingScrollbar> {
   @override
   void dispose() {
     _hideTimer?.cancel();
+    _hintFade.dispose();
     widget.controller.removeListener(_syncPosition);
     super.dispose();
   }
@@ -483,30 +488,27 @@ class _FloatingScrollbarState extends State<FloatingScrollbar> {
     }
   }
 
+  void _handleHintFade(AnimationStatus status) {
+    if (status.isDismissed && _hintMounted && mounted) {
+      setState(() => _hintMounted = false);
+    }
+  }
+
   void _handleScrub(double? rate) {
     _hideTimer?.cancel();
     if (rate != null) {
-      final appearing = !_hintMounted;
       setState(() {
         _scrubRate = rate;
-        _hintVisible = !appearing;
         _hintMounted = true;
       });
-      if (appearing) {
-        // Mounts transparent so AnimatedOpacity has a value to fade from.
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted && _hintMounted) {
-            setState(() => _hintVisible = true);
-          }
-        });
-      }
+      _hintFade.forward();
       return;
     }
     setState(() => _scrubRate = null);
     // Lingers so letting go and grabbing again does not blink the hint.
     _hideTimer = Timer(const Duration(milliseconds: 500), () {
       if (mounted) {
-        setState(() => _hintVisible = false);
+        _hintFade.reverse();
       }
     });
   }
@@ -554,6 +556,8 @@ class _FloatingScrollbarState extends State<FloatingScrollbar> {
         : EdgeInsets.zero;
     // A finger on the thumb covers the bar's edge, so the hint keeps clear.
     final hintGap = isTouchPlatform(Theme.of(context).platform) ? 40.0 : 20.0;
+    final glass =
+        LiquidGlassScope.of(context) && !MediaQuery.highContrastOf(context);
     return LayoutBuilder(
       builder: (context, constraints) {
         String? label;
@@ -584,6 +588,20 @@ class _FloatingScrollbarState extends State<FloatingScrollbar> {
             label = widget.hintBuilder(fraction);
           }
         }
+        final hint = label == null
+            ? const SizedBox.shrink()
+            : _MeasureSize(
+                onChanged: (size) {
+                  if (mounted && size.height != _pillHeight) {
+                    setState(() => _pillHeight = size.height);
+                  }
+                },
+                child: _ScrollbarHintPill(
+                  label: label,
+                  scrubRate: _scrubRate,
+                  glass: glass,
+                ),
+              );
         return Stack(
           children: [
             CommonScrollBar(
@@ -601,28 +619,9 @@ class _FloatingScrollbarState extends State<FloatingScrollbar> {
                 child: FractionalTranslation(
                   translation: const Offset(0, -0.5),
                   child: IgnorePointer(
-                    child: AnimatedOpacity(
-                      opacity: _hintVisible ? 1 : 0,
-                      duration: const Duration(milliseconds: 150),
-                      onEnd: () {
-                        if (!_hintVisible) {
-                          setState(() => _hintMounted = false);
-                        }
-                      },
-                      child: label == null
-                          ? const SizedBox.shrink()
-                          : _MeasureSize(
-                              onChanged: (size) {
-                                if (mounted && size.height != _pillHeight) {
-                                  setState(() => _pillHeight = size.height);
-                                }
-                              },
-                              child: _ScrollbarHintPill(
-                                label: label,
-                                scrubRate: _scrubRate,
-                              ),
-                            ),
-                    ),
+                    child: glass
+                        ? LiquidGlassFade(opacity: _hintFade, child: hint)
+                        : FadeTransition(opacity: _hintFade, child: hint),
                   ),
                 ),
               ),
@@ -636,44 +635,58 @@ class _FloatingScrollbarState extends State<FloatingScrollbar> {
 class _ScrollbarHintPill extends StatelessWidget {
   final String label;
   final double? scrubRate;
+  final bool glass;
 
-  const _ScrollbarHintPill({required this.label, required this.scrubRate});
+  const _ScrollbarHintPill({
+    required this.label,
+    required this.scrubRate,
+    required this.glass,
+  });
+
+  static const _key = ValueKey('scrollbarHintPill');
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
     final style = AppTextStyle.caption1.of(context, emphasized: true);
     final rate = scrubRate;
+    final content = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          GlassText(
+            label,
+            style: style.copyWith(color: colorScheme.onSurfaceVariant),
+          ),
+          if (rate != null && rate < 1) ...[
+            const SizedBox(width: 6),
+            GlassText(
+              '×1/${(1 / rate).round()}',
+              key: const ValueKey('scrollbarScrubRate'),
+              style: style.copyWith(color: colorScheme.primary),
+            ),
+          ],
+        ],
+      ),
+    );
+    if (glass) {
+      return LiquidGlass(
+        key: _key,
+        style: LiquidGlassStyle.menu(colorScheme),
+        clipper: const ShapeBorderClipper(shape: AppShape.sm),
+        shadows: glassMenuShadows(colorScheme),
+        child: content,
+      );
+    }
     return DecoratedBox(
-      key: const ValueKey('scrollbarHintPill'),
+      key: _key,
       decoration: ShapeDecoration(
-        color: LiquidGlassScope.surfaceColorOf(
-          context,
-          SurfaceLevel.floatingOf(colorScheme).colorOf(colorScheme),
-        ),
+        color: SurfaceLevel.floatingOf(colorScheme).colorOf(colorScheme),
         shape: AppShape.sm,
         shadows: kElevationToShadow[2],
       ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            GlassText(
-              label,
-              style: style.copyWith(color: colorScheme.onSurfaceVariant),
-            ),
-            if (rate != null && rate < 1) ...[
-              const SizedBox(width: 6),
-              GlassText(
-                '×1/${(1 / rate).round()}',
-                key: const ValueKey('scrollbarScrubRate'),
-                style: style.copyWith(color: colorScheme.primary),
-              ),
-            ],
-          ],
-        ),
-      ),
+      child: content,
     );
   }
 }

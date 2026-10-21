@@ -1,4 +1,7 @@
+import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/scroll.dart';
+import 'package:fl_clash/ui/shape.dart';
+import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -13,17 +16,27 @@ Widget _list(
   ScrollController controller, {
   bool thumbVisibility = false,
   int itemCount = _itemCount,
+  bool glass = false,
+  bool highContrast = false,
 }) => MaterialApp(
-  home: Scaffold(
-    body: FloatingScrollbar(
-      controller: controller,
-      thumbVisibility: thumbVisibility,
-      hintBuilder: (fraction) => fraction.toStringAsFixed(2),
-      child: ListView.builder(
-        controller: controller,
-        itemCount: itemCount,
-        itemBuilder: (_, index) =>
-            SizedBox(height: _itemHeight, child: Text('$index')),
+  home: LiquidGlassScope(
+    enabled: glass,
+    child: Builder(
+      builder: (context) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(highContrast: highContrast),
+        child: Scaffold(
+          body: FloatingScrollbar(
+            controller: controller,
+            thumbVisibility: thumbVisibility,
+            hintBuilder: (fraction) => fraction.toStringAsFixed(2),
+            child: ListView.builder(
+              controller: controller,
+              itemCount: itemCount,
+              itemBuilder: (_, index) =>
+                  SizedBox(height: _itemHeight, child: Text('$index')),
+            ),
+          ),
+        ),
       ),
     ),
   ),
@@ -32,12 +45,43 @@ Widget _list(
 Future<ScrollController> _pumpList(
   WidgetTester tester, {
   bool thumbVisibility = false,
+  bool glass = false,
+  bool highContrast = false,
 }) async {
   final controller = ScrollController();
   addTearDown(controller.dispose);
-  await tester.pumpWidget(_list(controller, thumbVisibility: thumbVisibility));
+  await tester.pumpWidget(
+    _list(
+      controller,
+      thumbVisibility: thumbVisibility,
+      glass: glass,
+      highContrast: highContrast,
+    ),
+  );
   return controller;
 }
+
+Future<TestGesture> _holdThumb(WidgetTester tester) async {
+  final thumb = await revealScrollbarThumb(tester);
+  final gesture = await tester.startGesture(thumb);
+  await gesture.moveBy(const Offset(0, 40));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 200));
+  return gesture;
+}
+
+final _elevatedFill = find.byWidgetPredicate(
+  (widget) =>
+      widget is DecoratedBox &&
+      widget.decoration is ShapeDecoration &&
+      listEquals(
+        (widget.decoration as ShapeDecoration).shadows,
+        kElevationToShadow[2],
+      ),
+);
+
+Finder _inScrollbar(Finder finder) =>
+    find.descendant(of: find.byType(FloatingScrollbar), matching: finder);
 
 void main() {
   testWidgets('dragging the content leaves the hint hidden', (tester) async {
@@ -129,6 +173,64 @@ void main() {
     await gesture.up();
     await tester.pumpAndSettle(const Duration(seconds: 2));
   });
+
+  testWidgets('on glass the hint is one menu pane that fades as glass', (
+    tester,
+  ) async {
+    await _pumpList(tester, glass: true);
+    final gesture = await _holdThumb(tester);
+
+    final hint = find.byKey(_hintKey);
+    final colorScheme = Theme.of(tester.element(hint)).colorScheme;
+    final pane = tester.widget<LiquidGlass>(hint);
+    expect(_inScrollbar(find.byType(LiquidGlass)), findsOneWidget);
+    expect(pane.style, LiquidGlassStyle.menu(colorScheme));
+    expect(pane.shadows, glassMenuShadows(colorScheme));
+    expect((pane.clipper! as ShapeBorderClipper).shape, AppShape.sm);
+    expect(_inScrollbar(_elevatedFill), findsNothing);
+    expect(_inScrollbar(find.byType(FadeTransition)), findsNothing);
+    final fade = find.ancestor(
+      of: hint,
+      matching: find.byType(LiquidGlassFade),
+    );
+    expect(tester.widget<LiquidGlassFade>(fade).opacity.value, 1);
+
+    await gesture.up();
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump(const Duration(milliseconds: 75));
+    expect(
+      tester.widget<LiquidGlassFade>(fade).opacity.value,
+      inExclusiveRange(0, 1),
+    );
+    await tester.pumpAndSettle(const Duration(seconds: 2));
+    expect(hint, findsNothing);
+  });
+
+  for (final (name, glass, highContrast) in [
+    ('plain solid', false, false),
+    ('high contrast', true, true),
+  ]) {
+    testWidgets('in $name the hint keeps its opaque fill and shadow', (
+      tester,
+    ) async {
+      await _pumpList(tester, glass: glass, highContrast: highContrast);
+      final gesture = await _holdThumb(tester);
+
+      final hint = find.byKey(_hintKey);
+      final fill = tester.widget<DecoratedBox>(hint);
+      expect(_inScrollbar(_elevatedFill), findsOneWidget);
+      expect((fill.decoration as ShapeDecoration).color!.a, 1);
+      expect(_inScrollbar(find.byType(LiquidGlass)), findsNothing);
+      expect(_inScrollbar(find.byType(LiquidGlassFade)), findsNothing);
+      expect(
+        find.ancestor(of: hint, matching: find.byType(FadeTransition)),
+        findsWidgets,
+      );
+
+      await gesture.up();
+      await tester.pumpAndSettle(const Duration(seconds: 2));
+    });
+  }
 
   testWidgets('straying sideways keeps the scrub speed on desktop', (
     tester,
