@@ -86,6 +86,11 @@ class GlassTextSelectionToolbar extends StatelessWidget {
         data: IconButtonThemeData(
           style: bare.copyWith(
             shape: const WidgetStatePropertyAll(AppShape.full),
+            foregroundBuilder: (_, _, icon) => GlassInk(
+              source: foreground,
+              role: GlassInkRole.icon,
+              child: icon ?? const SizedBox.shrink(),
+            ),
           ),
         ),
         child: switch (theme.platform) {

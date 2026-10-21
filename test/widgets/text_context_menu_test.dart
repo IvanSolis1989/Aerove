@@ -222,9 +222,18 @@ void main() {
           await tester.pump();
           await tester.pump(const Duration(milliseconds: 300));
           expect(find.text('朗读'), findsOneWidget);
+          final back = find.byKey(StandardComponentType.backButton.key);
+          expect(back, findsOneWidget);
+          final ink = tester.widget<GlassInk>(
+            find.ancestor(
+              of: find.descendant(of: back, matching: find.byType(Icon)),
+              matching: find.byType(GlassInk),
+            ),
+          );
+          expect(ink.role, GlassInkRole.icon);
           expect(
-            find.byKey(StandardComponentType.backButton.key),
-            findsOneWidget,
+            ink.source,
+            Theme.of(tester.element(back)).colorScheme.onSurface,
           );
           _expectOneBarePane(tester);
         },
