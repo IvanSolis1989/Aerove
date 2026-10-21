@@ -1,9 +1,19 @@
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:fl_clash/common/aurora.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 String _read(String path) => File(path).readAsStringSync();
+
+String _color(String file, String name) => RegExp(
+  '<color name="$name">(#[0-9A-F]{6})</color>',
+).firstMatch(_read('android/app/src/main/res/$file'))!.group(1)!;
+
+String _hex(ui.Color color) {
+  final rgb = color.toARGB32() & 0xFFFFFF;
+  return '#${rgb.toRadixString(16).padLeft(6, '0').toUpperCase()}';
+}
 
 String _attribute(String source, String element, String attribute) {
   final tag = RegExp('<$element\\b[^>]*>').firstMatch(source)!.group(0)!;
@@ -46,6 +56,38 @@ void main() {
         _attribute(vector, 'path', 'android:fillColor'),
         '#FFFFFF',
         reason: file,
+      );
+    }
+  });
+
+  test('launch screens take the app background of the system theme', () {
+    expect(
+      _color('values/colors.xml', 'launch_background'),
+      _hex(auroraBaseColor(ui.Brightness.light)),
+    );
+    expect(
+      _color('values-night/colors.xml', 'launch_background'),
+      _color('values/ic_launcher_background.xml', 'ic_launcher_background'),
+    );
+    for (final variant in [
+      'values',
+      'values-night',
+      'values-v27',
+      'values-night-v27',
+    ]) {
+      expect(
+        _read('android/app/src/main/res/$variant/styles.xml'),
+        contains(
+          '<item name="android:windowBackground">@color/launch_background',
+        ),
+        reason: variant,
+      );
+    }
+    for (final variant in ['values-v27', 'values-night-v27']) {
+      expect(
+        _read('android/app/src/main/res/$variant/styles.xml'),
+        contains('tools:targetApi="s">@color/launch_background</item>'),
+        reason: variant,
       );
     }
   });
