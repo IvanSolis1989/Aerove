@@ -18,7 +18,7 @@ class TileManager extends ConsumerStatefulWidget {
 }
 
 class _TileContainerState extends ConsumerState<TileManager> with TileListener {
-  ProviderSubscription<bool>? _pendingStart;
+  final List<ProviderSubscription<bool>> _heldStart = [];
 
   @override
   Widget build(BuildContext context) {
@@ -36,18 +36,35 @@ class _TileContainerState extends ConsumerState<TileManager> with TileListener {
     if (ref.read(initProvider)) {
       _start();
     } else {
-      _pendingStart ??= ref.listenManual(initProvider, (_, initialized) {
+      _holdStart();
+    }
+    super.onStart();
+  }
+
+  // A run command that lands while the launch finishes is newer than the tap.
+  void _holdStart() {
+    if (_heldStart.isNotEmpty) {
+      return;
+    }
+    _heldStart.addAll([
+      ref.listenManual(initProvider, (_, initialized) {
         if (!initialized) {
           return;
         }
-        _pendingStart?.close();
-        _pendingStart = null;
+        _dropHeldStart();
         if (!isStart) {
           _start();
         }
-      });
+      }),
+      ref.listenManual(isStartProvider, (_, _) => _dropHeldStart()),
+    ]);
+  }
+
+  void _dropHeldStart() {
+    for (final subscription in _heldStart) {
+      subscription.close();
     }
-    super.onStart();
+    _heldStart.clear();
   }
 
   void _start() {

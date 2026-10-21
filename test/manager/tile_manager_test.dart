@@ -132,5 +132,19 @@ void main() {
 
       expect(_RecordingSetupAction.requests, isEmpty);
     });
+
+    testWidgets('a stop made after the tile start drops it', (tester) async {
+      final listener = await pumpTileManager(tester);
+
+      listener.onStart();
+      markStarted();
+      await tester.pump();
+      container.read(runTimeProvider.notifier).value = null;
+      await tester.pump();
+      markInitialized();
+      await tester.pumpAndSettle();
+
+      expect(_RecordingSetupAction.requests, isEmpty);
+    });
   });
 }
