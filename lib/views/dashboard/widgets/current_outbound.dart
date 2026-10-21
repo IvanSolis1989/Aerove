@@ -5,6 +5,7 @@ import 'package:fl_clash/features/features.dart';
 import 'package:fl_clash/features/ip_quality/labels.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/ip_quality.dart';
+import 'package:fl_clash/providers/last_exit.dart';
 import 'package:fl_clash/providers/outbound_ip.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/providers/routed_probe.dart';
@@ -74,9 +75,17 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
     final qualityState = ipInfo == null
         ? null
         : ref.watch(ipQualityProvider(ipInfo.ip));
-    final quality = qualityState?.value;
+    final lastQuality = ipInfo == null
+        ? null
+        : ref.watch(
+            lastExitProvider.select((last) => last?.qualityOf(ipInfo.ip)),
+          );
     final qualityLoading =
-        qualityState != null && quality == null && qualityState.isLoading;
+        qualityState != null &&
+        qualityState.value == null &&
+        qualityState.isLoading;
+    final quality =
+        qualityState?.value ?? (qualityLoading ? lastQuality : null);
     final loading = ipInfo == null ? !failed : qualityLoading;
     final metrics = _OutboundMetrics.of(density);
     final appLocalizations = context.appLocalizations;

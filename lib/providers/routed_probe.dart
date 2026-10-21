@@ -80,6 +80,7 @@ mixin RoutedProbe<K, V>
   final Map<K, int> _inFlight = {};
   int _runs = 0;
   final Map<K, RouteState> _staleUnder = {};
+  final Map<K, bool> _provisionalProxied = {};
   bool _scheduled = false;
   RouteState _route = const RouteState();
 
@@ -92,7 +93,9 @@ mixin RoutedProbe<K, V>
   bool isFailure(V value) => false;
 
   @protected
-  RoutedProbeState<K, V> buildProbe() {
+  RoutedProbeState<K, V> buildProbe({
+    Map<K, ({V value, bool proxied})> provisional = const {},
+  }) {
     _route = ref.read(routeTrackerProvider);
     ref.listen(routeTrackerProvider, _onRoute);
     ref.listen(appVisibleProvider, (_, visible) {
@@ -100,7 +103,14 @@ mixin RoutedProbe<K, V>
         _schedule();
       }
     });
-    return RoutedProbeState<K, V>();
+    _provisionalProxied.addAll({
+      for (final MapEntry(:key, :value) in provisional.entries)
+        key: value.proxied,
+    });
+    return RoutedProbeState<K, V>({
+      for (final MapEntry(:key, :value) in provisional.entries)
+        key: ProbeEntry(phase: ProbePhase.probing, value: value.value),
+    });
   }
 
   void watch(K target) {
@@ -195,9 +205,12 @@ mixin RoutedProbe<K, V>
         continue;
       }
       targets.add(target);
+      final provisional =
+          _provisionalProxied.remove(target) == route.proxied &&
+          entries[target]?.stamp == null;
       entries[target] = ProbeEntry(
         phase: ProbePhase.probing,
-        value: due.keepValue ? entries[target]?.value : null,
+        value: due.keepValue || provisional ? entries[target]?.value : null,
       );
     }
     _due.clear();

@@ -110,6 +110,7 @@ const systemDnsRecordKey = 'system_dns_record';
 const bootRecordKey = 'boot_record';
 const lastPageLabelKey = 'last_page_label';
 const promptedUpdateTagKey = 'prompted_update_tag';
+const exitSnapshotKey = 'exit_snapshot';
 const defaultSystemDnsFallback = '223.5.5.5';
 const repository = 'IvanSolis1989/Aerove';
 const maxMobileWidth = 600;

@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:fl_clash/common/boot_record.dart';
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/common/exit_snapshot.dart';
 import 'package:fl_clash/common/system_dns.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
@@ -191,6 +192,26 @@ class Preferences {
   Future<void> savePromptedUpdateTag(String tag) async {
     final preferences = await _store.value;
     await preferences?.setString(promptedUpdateTagKey, tag);
+  }
+
+  Future<ExitSnapshot?> getExitSnapshot() async {
+    try {
+      final preferences = await _store.value;
+      final raw = preferences?.getString(exitSnapshotKey);
+      return raw == null ? null : ExitSnapshot.fromJson(json.decode(raw));
+    } catch (e) {
+      commonPrint.log('getExitSnapshot error $e', logLevel: LogLevel.warning);
+      return null;
+    }
+  }
+
+  Future<void> saveExitSnapshot(ExitSnapshot? snapshot) async {
+    final preferences = await _store.value;
+    if (snapshot == null) {
+      await preferences?.remove(exitSnapshotKey);
+    } else {
+      await preferences?.setString(exitSnapshotKey, json.encode(snapshot));
+    }
   }
 
   Future<void> clearPreferences() async {
