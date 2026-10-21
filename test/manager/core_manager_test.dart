@@ -110,6 +110,7 @@ _MockCoreHandlerInterface _coreInterface() {
   when(
     () => coreInterface.setUiTelemetryActive(any()),
   ).thenAnswer((_) async {});
+  when(coreInterface.getLatestDelays).thenAnswer((_) async => const []);
   return coreInterface;
 }
 
@@ -586,6 +587,46 @@ void main() {
     expect(container.read(requestCountProvider), 0);
     expect(container.read(delayDataSourceProvider), isEmpty);
     verifyNever(coreInterface.getProxies);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('a resume replaces a stale failure with the latest Core result', (
+    tester,
+  ) async {
+    const url = 'https://delay.test';
+    final coreInterface = _coreInterface();
+    var latest = const <Delay>[];
+    when(coreInterface.getLatestDelays).thenAnswer((_) async => latest);
+    final container = await _pumpCoreManager(
+      tester,
+      coreInterface,
+      overrides: [
+        proxiesActionProvider.overrideWith(_GroupRecordingProxiesAction.new),
+      ],
+    );
+    container.read(coreStatusProvider.notifier).value = CoreStatus.connected;
+    await tester.pump();
+    container.read(delayDataSourceProvider.notifier).setDelays(const [
+      Delay(name: 'HK', url: url, value: -1),
+      Delay(name: 'JP', url: url, value: -1),
+      Delay(name: 'SG', url: url, value: -1),
+    ]);
+    container.read(appVisibleProvider.notifier).value = false;
+    await tester.pump();
+    latest = const [
+      Delay(name: 'HK', url: url, value: 120),
+      Delay(name: 'JP', url: url, value: -2),
+    ];
+
+    container.read(appVisibleProvider.notifier).value = true;
+    await tester.pump();
+
+    expect(container.read(delayDataSourceProvider)[url], {
+      'HK': 120,
+      'JP': -1,
+      'SG': -1,
+    });
+    verify(coreInterface.getLatestDelays).called(2);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 

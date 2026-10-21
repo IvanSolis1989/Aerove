@@ -283,6 +283,8 @@ class CoreController {
     return _interface.asyncTestDelay(url, proxyName);
   }
 
+  Future<List<Delay>> getLatestDelays() => _interface.getLatestDelays();
+
   Future<ProbeResult?> probe(ProbeParams params) => _interface.probe(params);
 
   Future<OutboundIpResult?> outboundIp(OutboundIpParams params) =>

@@ -50,6 +50,8 @@ mixin CoreInterface {
 
   Future<Delay?> asyncTestDelay(String url, String proxyName);
 
+  Future<List<Delay>> getLatestDelays();
+
   Future<ProbeResult?> probe(ProbeParams params);
 
   Future<OutboundIpResult?> outboundIp(OutboundIpParams params);
@@ -581,6 +583,20 @@ abstract class CoreHandlerInterface with CoreInterface {
       timeout: delayTestGuardDuration,
     );
     return data == null ? null : Delay.fromJson(data);
+  }
+
+  @override
+  Future<List<Delay>> getLatestDelays() async {
+    final data = await _invokeMethod<Object>(
+      method: CoreMethod.getLatestDelays,
+    );
+    if (data == null) {
+      throw CoreMethodException(
+        code: 'no_response',
+        message: 'Core did not answer ${CoreMethod.getLatestDelays.name}',
+      );
+    }
+    return data is List<Delay> ? data : delaysOf(data);
   }
 
   @override

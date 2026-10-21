@@ -32,6 +32,7 @@ class _CoreContainerState extends ConsumerState<CoreManager>
   bool _refreshAgain = false;
   bool _closed = false;
   bool _groupsNeedRefresh = false;
+  bool _delaysNeedSync = true;
   String? _hiddenDialerLoop;
   int _groupsRevision = 0;
   int _providerRevision = 0;
@@ -82,6 +83,7 @@ class _CoreContainerState extends ConsumerState<CoreManager>
     ref.listenManual(appVisibleProvider, (_, visible) {
       if (!visible) {
         _markGroupsDirty();
+        _delaysNeedSync = true;
         _cancelUiWork();
         ref.read(proxiesActionProvider.notifier).cancelDelayTests();
       } else if (_hiddenDialerLoop case final proxyName?) {
@@ -197,7 +199,16 @@ class _CoreContainerState extends ConsumerState<CoreManager>
         logLevel: coreFailureLogLevel(error),
       );
     }
-    if (!_groupsNeedRefresh || !_uiVisible || revision != _uiRevision) return;
+    if (!_uiVisible || revision != _uiRevision) return;
+    // Before the groups, so a list sorted by delay sorts on the synced values.
+    if (_delaysNeedSync) {
+      final synced = await ref
+          .read(proxiesActionProvider.notifier)
+          .syncLatestDelays();
+      if (!_uiVisible || revision != _uiRevision) return;
+      if (synced) _delaysNeedSync = false;
+    }
+    if (!_groupsNeedRefresh) return;
     final groupsRevision = _groupsRevision;
     final refreshed = await ref
         .read(proxiesActionProvider.notifier)

@@ -187,6 +187,16 @@ abstract class Delay with _$Delay {
   factory Delay.fromJson(Map<String, Object?> json) => _$DelayFromJson(json);
 }
 
+List<Delay> delaysOf(Object? data) {
+  if (data is! List) {
+    return const [];
+  }
+  return [
+    for (final item in data.whereType<Map>())
+      Delay.fromJson(Map<String, Object?>.from(item)),
+  ];
+}
+
 @freezed
 abstract class ProbeParams with _$ProbeParams {
   const factory ProbeParams({

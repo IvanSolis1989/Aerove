@@ -5,8 +5,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/metacubex/mihomo/adapter/outboundgroup"
 	"github.com/metacubex/mihomo/common/utils"
 	"github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/tunnel"
 )
 
 const (
@@ -106,4 +108,35 @@ func handleTestDelay(params *TestDelayParams) *Delay {
 	}
 	result.Value = delayValue(delay, ctx.Err() != nil)
 	return result
+}
+
+// What a hidden UI dropped: the last result per test URL of every grouped node.
+func handleGetLatestDelays() []Delay {
+	proxies := tunnel.AllProxies()
+	seen := make(map[string]struct{}, len(proxies))
+	delays := []Delay{}
+	for _, proxy := range proxies {
+		group, ok := adapterAs[outboundgroup.ProxyGroup](proxy)
+		if !ok {
+			continue
+		}
+		for _, member := range group.Proxies() {
+			name := member.Name()
+			if _, done := seen[name]; done || isProxyGroupType(member.Type()) {
+				continue
+			}
+			seen[name] = struct{}{}
+			for url, state := range member.ExtraDelayHistories() {
+				if len(state.History) == 0 {
+					continue
+				}
+				var delay uint16
+				if state.Alive {
+					delay = state.History[len(state.History)-1].Delay
+				}
+				delays = append(delays, Delay{Url: url, Name: name, Value: delayValue(delay, false)})
+			}
+		}
+	}
+	return delays
 }
