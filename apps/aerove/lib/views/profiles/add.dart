@@ -265,7 +265,12 @@ class _SendFromPhoneDialogState extends State<_SendFromPhoneDialog> {
       spacing: 16,
       children: [
         QrCodeView(data: address, size: 200),
-        SelectableText(address, textAlign: TextAlign.center),
+        SelectableText(
+          address,
+          textAlign: TextAlign.center,
+          contextMenuBuilder: glassEditableTextContextMenu,
+          magnifierConfiguration: glassTextMagnifierConfiguration,
+        ),
         GlassText(
           appLocalizations.sendFromPhoneTip,
           textAlign: TextAlign.center,

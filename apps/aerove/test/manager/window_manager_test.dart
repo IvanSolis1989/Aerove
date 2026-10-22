@@ -251,9 +251,23 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('sidebar blur starts off and start-up still asks for no effect', (
+  testWidgets('sidebar blur starts on and start-up applies the effect', (
     tester,
   ) async {
+    await pumpWindowManager(tester);
+    await tester.pumpAndSettle();
+
+    expect(container.read(themeSettingProvider).sidebarBlur, isTrue);
+    expect(window.blurRequests.single.enabled, isTrue);
+    expect(container.read(windowBlurProvider), 0);
+  });
+
+  testWidgets('an explicitly disabled sidebar blur starts without an effect', (
+    tester,
+  ) async {
+    container
+        .read(themeSettingProvider.notifier)
+        .update((state) => state.copyWith(sidebarBlur: false));
     await pumpWindowManager(tester);
     await tester.pumpAndSettle();
 

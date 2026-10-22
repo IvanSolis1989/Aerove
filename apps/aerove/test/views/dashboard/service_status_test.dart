@@ -672,6 +672,13 @@ void main() {
     ProviderScope.containerOf(tester.element(find.byType(ServiceStatusCard)))
         .read(routeTrackerProvider.notifier)
         .applySnapshot(const RouteSnapshot(coreEpoch: 2, picksVersion: 1));
+    await tester.pump();
+    await tester.pump(
+      probeMoveSettleDuration - const Duration(milliseconds: 1),
+    );
+    expect(asked, ['google']);
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(asked, ['google', 'google']);
     await tester.pumpAndSettle();
 
     expect(asked, ['google', 'google']);
