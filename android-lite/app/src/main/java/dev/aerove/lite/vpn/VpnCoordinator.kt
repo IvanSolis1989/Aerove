@@ -80,12 +80,16 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend) 
 
     @Synchronized
     fun start(plan: VpnPlan) {
-        requests.value = Request(generation.incrementAndGet(), plan)
+        val next = generation.incrementAndGet()
+        mutableState.value = VpnSnapshot(VpnPhase.Starting)
+        requests.value = Request(next, plan)
     }
 
     @Synchronized
     fun stop() {
-        requests.value = Request(generation.incrementAndGet(), null)
+        val next = generation.incrementAndGet()
+        if (mutableState.value.phase != VpnPhase.Stopped) mutableState.value = VpnSnapshot(VpnPhase.Stopping)
+        requests.value = Request(next, null)
     }
 
     @Synchronized
@@ -98,6 +102,7 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend) 
         worker.cancelAndJoin()
     }
 
+    @Synchronized
     private fun publish(request: Request, snapshot: VpnSnapshot) {
         if (request.generation == generation.get()) mutableState.value = snapshot
     }

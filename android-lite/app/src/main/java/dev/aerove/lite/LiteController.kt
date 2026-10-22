@@ -176,7 +176,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (_: IOException) {
-                        null
+                        -1
                     }
                     mutableState.update { state -> state.copy(groups = state.groups.map { current ->
                         if (current.name != group) current else current.copy(nodes = current.nodes.map {

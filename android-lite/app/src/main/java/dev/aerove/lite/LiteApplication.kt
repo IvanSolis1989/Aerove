@@ -15,7 +15,7 @@ import kotlinx.coroutines.sync.Mutex
 class LiteApplication : Application() {
     internal val nativeLifecycle = Mutex()
     val profiles by lazy {
-        ProfileRepository(filesDir, CompatibilityValidator(NativeConfigValidator(NativeCore::validate), File(filesDir, "runtime")))
+        ProfileRepository(filesDir, CompatibilityValidator(NativeConfigValidator { NativeCore.validate(it) }, File(filesDir, "runtime")))
     }
     val settings by lazy { LiteSettingsStore(filesDir) }
     private val mutableVpn = MutableStateFlow(VpnSnapshot())

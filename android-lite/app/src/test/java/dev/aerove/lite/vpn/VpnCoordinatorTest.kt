@@ -9,6 +9,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -56,6 +57,32 @@ class VpnCoordinatorTest {
         assertEquals(2, opened)
         coordinator.close()
         assertTrue(next.stopped)
+    }
+
+    @Test
+    fun replacingSessionWithdrawsItsEndpointBeforeWaitingForJoin() = runTest {
+        val joined = CompletableDeferred<Unit>()
+        val previous = object : TunnelSession {
+            override val endpoint = CoreEndpoint(1234, "test-secret")
+            override suspend fun awaitReady() = Unit
+            override suspend fun awaitExit(): Unit = awaitCancellation()
+            override suspend fun stop() { joined.await() }
+        }
+        var opened = 0
+        val coordinator = VpnCoordinator(backgroundScope, TunnelBackend {
+            if (opened++ == 0) previous else Session().apply { ready() }
+        })
+        coordinator.start(VpnPlan("first", LiteSettings()))
+        runCurrent()
+        coordinator.start(VpnPlan("next", LiteSettings()))
+        assertEquals(VpnPhase.Starting, coordinator.state.value.phase)
+        assertNull(coordinator.state.value.endpoint)
+        runCurrent()
+        assertEquals(1, opened)
+        joined.complete(Unit)
+        runCurrent()
+        assertEquals(VpnPhase.Running, coordinator.state.value.phase)
+        coordinator.close()
     }
 
     @Test

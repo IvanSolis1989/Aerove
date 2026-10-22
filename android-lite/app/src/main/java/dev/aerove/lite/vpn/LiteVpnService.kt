@@ -37,10 +37,18 @@ class LiteVpnService : VpnService() {
     private var lastPlan: VpnPlan? = null
     @Volatile private var network: Network? = null
     private var networkKey: String? = null
+    private val physicalNetworks = linkedSetOf<Network>()
     private var callbackRegistered = false
     private val callback = object : ConnectivityManager.NetworkCallback() {
-        override fun onAvailable(network: Network) = updateUnderlying()
-        override fun onLost(network: Network) = updateUnderlying()
+        override fun onAvailable(network: Network) {
+            physicalNetworks += network
+            updateUnderlying()
+        }
+        override fun onLost(network: Network) {
+            physicalNetworks -= network
+            updateUnderlying()
+        }
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = updateUnderlying()
         override fun onLinkPropertiesChanged(network: Network, properties: LinkProperties) = updateUnderlying()
     }
 
@@ -104,7 +112,7 @@ class LiteVpnService : VpnService() {
     }
 
     private fun updateUnderlying() {
-        val available = connectivity.allNetworks.filter { candidate ->
+        val available = physicalNetworks.filter { candidate ->
             connectivity.getNetworkCapabilities(candidate)?.let {
                 it.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN) &&
                     it.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)

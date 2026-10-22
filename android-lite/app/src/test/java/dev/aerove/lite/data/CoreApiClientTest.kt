@@ -35,7 +35,7 @@ class CoreApiClientTest {
                 val request = server.next()
                 assertEquals("/proxies", request.path)
                 assertEquals("Bearer $secret", request.getHeader("Authorization"))
-                assertEquals("127.0.0.1", request.requestUrl!!.host)
+                assertEquals("127.0.0.1:${server.port}", request.getHeader("Host"))
             }
         }
     }
