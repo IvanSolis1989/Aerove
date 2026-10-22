@@ -37,7 +37,8 @@ class NativeSmokeTest {
     }
 
     @Test
-    fun vpnForwardsOtherUidTrafficAndStopsWithoutLeavingAnInstance() = runBlocking {
+    fun vpnForwardsOtherUidTrafficAndStopsWithoutLeavingAnInstance() {
+        runBlocking<Unit> {
         val fixture = InstrumentationRegistry.getArguments().getString("fixtureUrl")
             ?: error("A controlled fixtureUrl is required for the TUN acceptance test")
         require(fixture.matches(Regex("http://10\\.0\\.2\\.2:[0-9]+")))
@@ -101,6 +102,7 @@ class NativeSmokeTest {
                 withTimeout(15_000) { graph.vpn.first { it.phase == VpnPhase.Stopped } }
                 graph.profiles.delete(profile.id)
             } finally { activity.close() }
+        }
         }
     }
 

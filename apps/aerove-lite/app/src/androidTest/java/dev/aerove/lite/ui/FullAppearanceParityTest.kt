@@ -46,7 +46,9 @@ class FullAppearanceParityTest {
             val mono = fullColorScheme(seed, dark, false, ColorStyle.Monochrome)
             assertEquals(vivid.primary, tinted.primary)
             assertEquals(vivid.onPrimary, tinted.onPrimary)
-            assertTrue(vivid.surface != tinted.surface)
+            vivid.assertStandardSurfaces(standardSurfaceGoldens.single { it.seed == seed && it.dark == dark && it.style == ColorStyle.Vivid })
+            tinted.assertStandardSurfaces(standardSurfaceGoldens.single { it.seed == seed && it.dark == dark && it.style == ColorStyle.Tinted })
+            assertTrue(vivid.surfaceContainer != tinted.surfaceContainer)
             assertTrue(Hct.fromInt(tinted.surface.toArgb()).chroma <= minOf(Hct.fromInt(seed).chroma / 6.0, 10.0) + 1.0)
             assertEquals(Hct.fromInt(vivid.surface.toArgb()).tone, Hct.fromInt(tinted.surface.toArgb()).tone, 0.5)
             assertTrue(soft.primary != vivid.primary)
@@ -79,16 +81,15 @@ class FullAppearanceParityTest {
 
     @Test
     fun seededPaletteKeepsFullToneAndChromaBudgets() {
-        for (seed in listOf(0xffffff00, 0xffd8c0c3, 0xff03a9f4, 0xffe91e63)) for (dark in listOf(false, true)) {
-            val colors = fullColorScheme(seed.toInt(), dark, false)
-            for (surface in listOf(colors.surfaceDim, colors.surfaceContainerLowest, colors.surfaceContainerLow, colors.surfaceContainer, colors.surfaceContainerHigh, colors.surfaceContainerHighest)) {
-                assertTrue("Full neutral surface cap", Hct.fromInt(surface.toArgb()).chroma <= 3.1)
-            }
-            for (paper in listOf(colors.surface, colors.surfaceBright)) assertTrue(Hct.fromInt(paper.toArgb()).chroma <= if (dark) 3.1 else 1.6)
+        for (golden in standardSurfaceGoldens) {
+            val seed = golden.seed
+            val dark = golden.dark
+            val colors = fullColorScheme(seed, dark, false, golden.style)
+            colors.assertStandardSurfaces(golden)
             assertEquals(if (dark) 30.0 else 90.0, Hct.fromInt(colors.primaryContainer.toArgb()).tone, 1.0)
-            val tone = Hct.fromInt(seed.toInt()).tone.let { if (dark) (it + 3).coerceIn(50.0, 75.0) else it.coerceIn(35.0, 60.0) }
+            val tone = Hct.fromInt(seed).tone.let { if (dark) (it + 3).coerceIn(50.0, 75.0) else it.coerceIn(35.0, 60.0) }
             assertEquals(tone, Hct.fromInt(colors.primary.toArgb()).tone, 0.6)
-            assertEquals(colors.signature(), fullColorScheme(seed.toInt(), dark, false).signature())
+            assertEquals(colors.signature(), fullColorScheme(seed, dark, false, golden.style).signature())
         }
         for (dark in listOf(false, true)) assertEquals(fullColorScheme(0xff007aff.toInt(), dark, true).signature(), fullColorScheme(0xffe91e63.toInt(), dark, true).signature())
     }
@@ -112,3 +113,15 @@ class FullAppearanceParityTest {
 }
 
 private fun androidx.compose.material3.ColorScheme.signature(): List<Int> = listOf(primary, onPrimary, primaryContainer, onPrimaryContainer, secondary, tertiary, surface, surfaceBright, surfaceDim, surfaceContainer, surfaceContainerHighest, onSurface, onSurfaceVariant, outline, outlineVariant).map { it.toArgb() }
+
+private fun androidx.compose.material3.ColorScheme.assertStandardSurfaces(golden: StandardSurfaceGolden) {
+    val actual = listOf(surface, surfaceBright, surfaceDim, surfaceContainerLowest, surfaceContainerLow,
+        surfaceContainer, surfaceContainerHigh, surfaceContainerHighest)
+    val names = listOf("surface", "surfaceBright", "surfaceDim", "surfaceContainerLowest", "surfaceContainerLow",
+        "surfaceContainer", "surfaceContainerHigh", "surfaceContainerHighest")
+    assertEquals(golden.argb.size, actual.size)
+    actual.forEachIndexed { index, color ->
+        assertEquals("Standard seed=${golden.seed.toUInt().toString(16)} dark=${golden.dark} style=${golden.style} ${names[index]}",
+            golden.argb[index], color.toArgb())
+    }
+}

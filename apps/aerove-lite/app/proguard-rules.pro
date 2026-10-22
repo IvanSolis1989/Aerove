@@ -332,7 +332,6 @@
 -keep,includedescriptorclasses class androidx.lifecycle.ViewModelProvider { *; }
 -keep,includedescriptorclasses class androidx.lifecycle.ViewModelStoreOwner { *; }
 -keep,includedescriptorclasses class androidx.lifecycle.compose.LocalLifecycleOwnerKt { *; }
--keep,includedescriptorclasses class androidx.tracing.Trace { *; }
 -keep,includedescriptorclasses class com.google.common.util.concurrent.ListenableFuture { *; }
 -keep,includedescriptorclasses class com.google.zxing.common.BitMatrix { *; }
 -keep,includedescriptorclasses class com.kyant.backdrop.Backdrop { *; }
@@ -732,3 +731,112 @@
 -keep,includedescriptorclasses class kotlin.coroutines.intrinsics.IntrinsicsKt__IntrinsicsJvmKt$createSimpleCoroutineForSuspendFunction$2 { *; }
 -keep,includedescriptorclasses class androidx.collection.IntObjectMap { *; }
 -keep,includedescriptorclasses class androidx.concurrent.futures.AbstractResolvableFuture { *; }
+-keep,includedescriptorclasses interface androidx.compose.foundation.interaction.InteractionSource { *; }
+-keep,includedescriptorclasses class androidx.compose.foundation.layout.BoxWithConstraintsKt { *; }
+-keep,includedescriptorclasses interface androidx.compose.runtime.ScopeUpdateScope { *; }
+-keep,includedescriptorclasses interface androidx.compose.runtime.internal.ComposableLambda { *; }
+-keep,includedescriptorclasses class androidx.compose.ui.input.indirect.IndirectPointerEventType$Companion { *; }
+-keep,includedescriptorclasses interface androidx.compose.ui.platform.PlatformTextInputInterceptor { *; }
+-keep,includedescriptorclasses interface androidx.compose.ui.platform.PlatformTextInputMethodRequest { *; }
+-keep,includedescriptorclasses class androidx.compose.ui.semantics.Role$Companion { *; }
+-keep,includedescriptorclasses class androidx.compose.ui.semantics.SemanticsConfigurationKt { *; }
+-keep,includedescriptorclasses class androidx.compose.ui.unit.DpRect { *; }
+-keep,includedescriptorclasses class androidx.compose.ui.viewinterop.AndroidView_androidKt { *; }
+-keep,includedescriptorclasses interface androidx.core.view.KeyEventDispatcher$Component { *; }
+-keep,includedescriptorclasses class kotlin.collections.ArraysKt___ArraysJvmKt$asList$1 { *; }
+-keep,includedescriptorclasses class kotlin.collections.ArraysKt___ArraysJvmKt$asList$2 { *; }
+-keep,includedescriptorclasses class kotlin.collections.ArraysKt___ArraysJvmKt$asList$3 { *; }
+-keep,includedescriptorclasses class kotlin.collections.ArraysKt___ArraysJvmKt$asList$4 { *; }
+-keep,includedescriptorclasses class kotlin.collections.ArraysKt___ArraysJvmKt$asList$5 { *; }
+-keep,includedescriptorclasses class kotlin.collections.ArraysKt___ArraysJvmKt$asList$6 { *; }
+-keep,includedescriptorclasses class kotlin.collections.ArraysKt___ArraysJvmKt$asList$7 { *; }
+-keep,includedescriptorclasses class kotlin.collections.ArraysKt___ArraysJvmKt$asList$8 { *; }
+-keep,includedescriptorclasses class kotlin.collections.ArraysKt___ArraysKt$asIterable$$inlined$Iterable$2 { *; }
+-keep,includedescriptorclasses class kotlin.collections.ArraysKt___ArraysKt$asSequence$$inlined$Sequence$1 { *; }
+-keep,includedescriptorclasses class kotlin.collections.ArraysKt___ArraysKt$groupingBy$1 { *; }
+-keep,includedescriptorclasses class kotlin.collections.CollectionsKt__CollectionsKt$binarySearchBy$1 { *; }
+-keep,includedescriptorclasses class kotlin.collections.CollectionsKt__IterablesKt$Iterable$1 { *; }
+-keep,includedescriptorclasses class kotlin.collections.CollectionsKt__IteratorsJVMKt$iterator$1 { *; }
+-keep,includedescriptorclasses class kotlin.collections.CollectionsKt___CollectionsKt$groupingBy$1 { *; }
+-keep,includedescriptorclasses class kotlin.comparisons.ComparisonsKt__ComparisonsKt$compareBy$2 { *; }
+-keep,includedescriptorclasses class kotlin.comparisons.ComparisonsKt__ComparisonsKt$compareBy$3 { *; }
+-keep,includedescriptorclasses class kotlin.comparisons.ComparisonsKt__ComparisonsKt$thenBy$1 { *; }
+-keep,includedescriptorclasses class kotlin.comparisons.ComparisonsKt__ComparisonsKt$thenBy$2 { *; }
+-keep,includedescriptorclasses class kotlin.coroutines.ContinuationInterceptor$Key { *; }
+-keep,includedescriptorclasses class kotlin.coroutines.intrinsics.IntrinsicsKt__IntrinsicsJvmKt$createCoroutineFromSuspendFunction$1 { *; }
+-keep,includedescriptorclasses class kotlin.coroutines.intrinsics.IntrinsicsKt__IntrinsicsJvmKt$createCoroutineFromSuspendFunction$2 { *; }
+-keep,includedescriptorclasses interface kotlin.jvm.functions.Function10 { *; }
+-keep,includedescriptorclasses interface kotlin.jvm.functions.Function11 { *; }
+-keep,includedescriptorclasses interface kotlin.jvm.functions.Function13 { *; }
+-keep,includedescriptorclasses interface kotlin.jvm.functions.Function14 { *; }
+-keep,includedescriptorclasses interface kotlin.jvm.functions.Function15 { *; }
+-keep,includedescriptorclasses interface kotlin.jvm.functions.Function16 { *; }
+-keep,includedescriptorclasses interface kotlin.jvm.functions.Function17 { *; }
+-keep,includedescriptorclasses interface kotlin.jvm.functions.Function18 { *; }
+-keep,includedescriptorclasses interface kotlin.jvm.functions.Function19 { *; }
+-keep,includedescriptorclasses interface kotlin.jvm.functions.Function20 { *; }
+-keep,includedescriptorclasses interface kotlin.jvm.functions.Function21 { *; }
+-keep,includedescriptorclasses interface kotlin.jvm.functions.Function4 { *; }
+-keep,includedescriptorclasses interface kotlin.jvm.functions.Function5 { *; }
+-keep,includedescriptorclasses interface kotlin.jvm.functions.Function6 { *; }
+-keep,includedescriptorclasses interface kotlin.jvm.functions.Function7 { *; }
+-keep,includedescriptorclasses interface kotlin.jvm.functions.Function8 { *; }
+-keep,includedescriptorclasses interface kotlin.jvm.functions.Function9 { *; }
+-keep,includedescriptorclasses class kotlin.jvm.internal.StringCompanionObject { *; }
+-keep,includedescriptorclasses class kotlin.ranges.LongProgression { *; }
+-keep,includedescriptorclasses class kotlin.ranges.LongRange { *; }
+-keep,includedescriptorclasses interface kotlin.ranges.OpenEndRange { *; }
+-keep,includedescriptorclasses class kotlin.sequences.SequencesKt__SequenceBuilderKt$sequence$$inlined$Sequence$1 { *; }
+-keep,includedescriptorclasses class kotlin.sequences.SequencesKt__SequencesKt$flatMapIndexed$1 { *; }
+-keep,includedescriptorclasses class kotlin.sequences.SequencesKt__SequencesKt$ifEmpty$1 { *; }
+-keep,includedescriptorclasses class kotlin.sequences.SequencesKt__SequencesKt$sequenceOf$1$1 { *; }
+-keep,includedescriptorclasses class kotlin.sequences.SequencesKt__SequencesKt$shuffled$1 { *; }
+-keep,includedescriptorclasses class kotlin.sequences.SequencesKt___SequencesKt$filterIsInstance$1 { *; }
+-keep,includedescriptorclasses class kotlin.sequences.SequencesKt___SequencesKt$flatMap$1 { *; }
+-keep,includedescriptorclasses class kotlin.sequences.SequencesKt___SequencesKt$flatMap$2 { *; }
+-keep,includedescriptorclasses class kotlin.sequences.SequencesKt___SequencesKt$flatMapIndexed$1 { *; }
+-keep,includedescriptorclasses class kotlin.sequences.SequencesKt___SequencesKt$flatMapIndexed$2 { *; }
+-keep,includedescriptorclasses class kotlin.sequences.SequencesKt___SequencesKt$groupingBy$1 { *; }
+-keep,includedescriptorclasses class kotlin.sequences.SequencesKt___SequencesKt$minus$1 { *; }
+-keep,includedescriptorclasses class kotlin.sequences.SequencesKt___SequencesKt$runningFold$1 { *; }
+-keep,includedescriptorclasses class kotlin.sequences.SequencesKt___SequencesKt$runningFoldIndexed$1 { *; }
+-keep,includedescriptorclasses class kotlin.sequences.SequencesKt___SequencesKt$runningReduce$1 { *; }
+-keep,includedescriptorclasses class kotlin.sequences.SequencesKt___SequencesKt$runningReduceIndexed$1 { *; }
+-keep,includedescriptorclasses class kotlin.sequences.SequencesKt___SequencesKt$zipWithNext$2 { *; }
+-keep,includedescriptorclasses class kotlin.text.StringsKt___StringsKt$asIterable$$inlined$Iterable$1 { *; }
+-keep,includedescriptorclasses class kotlin.text.StringsKt___StringsKt$asSequence$$inlined$Sequence$1 { *; }
+-keep,includedescriptorclasses class kotlin.text.StringsKt___StringsKt$groupingBy$1 { *; }
+-keep,includedescriptorclasses interface kotlinx.coroutines.ChildJob { *; }
+-keep,includedescriptorclasses interface kotlinx.coroutines.CopyableThrowable { *; }
+-keep,includedescriptorclasses class kotlinx.coroutines.CoroutineExceptionHandler$Key { *; }
+-keep,includedescriptorclasses class kotlinx.coroutines.Job$Key { *; }
+-keep,includedescriptorclasses interface kotlinx.coroutines.ParentJob { *; }
+-keep,includedescriptorclasses interface kotlinx.coroutines.internal.ThreadSafeHeapNode { *; }
+-keep,includedescriptorclasses interface kotlinx.coroutines.selects.SelectBuilder { *; }
+-keep,includedescriptorclasses interface kotlinx.coroutines.selects.SelectClause { *; }
+-keep,includedescriptorclasses interface kotlinx.coroutines.selects.SelectClause0 { *; }
+-keep,includedescriptorclasses interface kotlinx.coroutines.selects.SelectClause1 { *; }
+
+# Runtime META-INF/services entries are a reflection ABI shared across the app and test APK classloaders.
+# Preserve service names and method descriptors across the independently minified app and androidTest APKs.
+-keep interface kotlinx.coroutines.CoroutineExceptionHandler {}
+-keepclassmembers,includedescriptorclasses interface kotlinx.coroutines.CoroutineExceptionHandler { *; }
+-keep,includedescriptorclasses class kotlinx.coroutines.android.AndroidExceptionPreHandler {
+    public <init>();
+    public void handleException(kotlin.coroutines.CoroutineContext,java.lang.Throwable);
+}
+-keep interface kotlinx.coroutines.internal.MainDispatcherFactory {}
+-keepclassmembers,includedescriptorclasses interface kotlinx.coroutines.internal.MainDispatcherFactory {
+    public int getLoadPriority();
+    public java.lang.String hintOnError();
+}
+-keepclassmembers,includedescriptorclasses interface kotlinx.coroutines.internal.MainDispatcherFactory {
+    public kotlinx.coroutines.MainCoroutineDispatcher createDispatcher(java.util.List);
+}
+-keep,includedescriptorclasses class kotlinx.coroutines.android.AndroidDispatcherFactory {
+    public <init>();
+    public kotlinx.coroutines.MainCoroutineDispatcher createDispatcher(java.util.List);
+}
+-keep class kotlin.coroutines.jvm.internal.SpillingKt { *; }
+-keep class org.yaml.snakeyaml.TypeDescription { *; }
+-keep class com.google.zxing.qrcode.QRCodeWriter { *; }
