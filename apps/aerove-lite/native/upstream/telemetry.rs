@@ -2,12 +2,12 @@ use std::{sync::{Arc, Mutex, atomic::{AtomicU64, Ordering}}, time::Duration};
 
 use axum::{
     Router,
-    extract::{WebSocketUpgrade, ws::{Message, WebSocket}},
+    extract::{Query, WebSocketUpgrade, ws::{Message, WebSocket}},
     http::StatusCode,
     response::IntoResponse,
     routing::get,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::{sync::{Notify, watch}, task::JoinHandle, time::Instant};
 use tokio_util::sync::CancellationToken;
 
@@ -29,12 +29,16 @@ enum Frame {
     Traffic(Traffic),
     #[serde(rename = "groupsChanged")]
     GroupsChanged { revision: u64 },
+    #[serde(rename = "observations")]
+    Observations(super::observations::Window),
 }
 
 pub(crate) struct Bus {
+    pub(crate) observations: Arc<super::observations::Collector>,
     traffic: watch::Sender<Traffic>,
     groups: watch::Sender<u64>,
     cancel: CancellationToken,
+    log_level: Mutex<Option<tracing::level_filters::LevelFilter>>,
     delay: Mutex<Delay>,
     delay_updated: Notify,
     route: Mutex<RouteState>,
@@ -76,14 +80,22 @@ struct Delay {
 impl Bus {
     pub(crate) fn new(cancel: CancellationToken) -> Arc<Self> {
         Arc::new(Self {
+            observations: super::observations::Collector::new(cancel.clone()),
             traffic: watch::channel(Traffic::default()).0,
             groups: watch::channel(0).0,
             cancel,
+            log_level: Mutex::new(None),
             delay: Mutex::new(Delay::default()),
             delay_updated: Notify::new(),
             route: Mutex::new(RouteState { stamp: (NEXT_EPOCH.fetch_add(1, Ordering::SeqCst), 0), active: 0, pending: false }),
         })
     }
+
+    pub(crate) fn cancellation(&self) -> CancellationToken { self.cancel.clone() }
+
+    pub(crate) fn log_level(&self) -> Option<tracing::level_filters::LevelFilter> { *self.log_level.lock().unwrap() }
+
+    pub(crate) fn set_log_level(&self, level: tracing::level_filters::LevelFilter) { if !self.cancel.is_cancelled() { *self.log_level.lock().unwrap() = Some(level); } }
 
     pub(crate) fn publish(&self, sample: Traffic) {
         if !self.cancel.is_cancelled() {
@@ -191,10 +203,13 @@ pub(crate) fn delay_changed() {
     }
 }
 
+#[derive(Default, Deserialize)]
+struct Options { #[serde(default)] observations: bool }
+
 pub(crate) fn routes(cancel: CancellationToken) -> Router {
     // Capture this runtime's bus; a surviving socket must never read its successor.
     let bus = source();
-    Router::new().route("/aerove/telemetry", get(move |upgrade: WebSocketUpgrade| {
+    Router::new().route("/aerove/telemetry", get(move |upgrade: WebSocketUpgrade, Query(options): Query<Options>| {
         let bus = bus.clone();
         let cancel = cancel.clone();
         async move {
@@ -202,7 +217,7 @@ pub(crate) fn routes(cancel: CancellationToken) -> Router {
                 return StatusCode::SERVICE_UNAVAILABLE.into_response();
             };
             upgrade.max_message_size(1024).max_frame_size(1024)
-                .on_upgrade(move |socket| stream(socket, bus, cancel))
+                .on_upgrade(move |socket| stream(socket, bus, cancel, options.observations))
         }
     }))
 }
@@ -219,7 +234,14 @@ async fn send(socket: &mut WebSocket, frame: Frame, bus: &Bus, cancel: &Cancella
     }
 }
 
-async fn stream(mut socket: WebSocket, bus: Arc<Bus>, cancel: CancellationToken) {
+async fn stream(mut socket: WebSocket, bus: Arc<Bus>, cancel: CancellationToken, observe: bool) {
+    let lease = observe.then(|| bus.observations.lease());
+    let mut observation_cursor = lease.as_ref().map_or(0, |l| l.cursor);
+    if let Some(l) = &lease {
+        l.collector.resume().await;
+        let Some(window) = l.collector.window(l.generation, observation_cursor, true) else { return; };
+        if !send(&mut socket, Frame::Observations(window), &bus, &cancel).await { return; }
+    }
     let (mut traffic, mut groups) = bus.subscribe();
     let sample = *traffic.borrow_and_update();
     let revision = *groups.borrow_and_update();
@@ -229,7 +251,18 @@ async fn stream(mut socket: WebSocket, bus: Arc<Bus>, cancel: CancellationToken)
         return;
     }
     loop {
+        // Register before inspecting the queue: a publication between inspection
+        // and await must not strand an event until unrelated traffic arrives.
+        let notified = bus.observations.changed.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        let pending = if let Some(l) = &lease {
+            let Some(window) = l.collector.window(l.generation, observation_cursor, false) else { break; };
+            (window.cursor.parse::<u64>().unwrap() > observation_cursor).then_some(window)
+        } else { None };
+        let has_observation = pending.is_some();
         let frame = tokio::select! {
+            biased;
             _ = cancel.cancelled() => break,
             _ = bus.cancel.cancelled() => break,
             message = socket.recv() => {
@@ -245,6 +278,11 @@ async fn stream(mut socket: WebSocket, bus: Arc<Bus>, cancel: CancellationToken)
             changed = traffic.changed() => {
                 if changed.is_err() { break; }
                 Frame::Traffic(*traffic.borrow_and_update())
+            }
+            _ = async { if !has_observation { (&mut notified).await; } }, if observe => {
+                let Some(window) = pending else { continue; };
+                observation_cursor = window.cursor.parse().unwrap();
+                Frame::Observations(window)
             }
         };
         if !send(&mut socket, frame, &bus, &cancel).await { break; }

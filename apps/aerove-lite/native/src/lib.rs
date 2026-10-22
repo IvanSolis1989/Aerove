@@ -1,3 +1,5 @@
+mod script_engine;
+mod script_jni;
 use std::{
     io,
     os::fd::{BorrowedFd, OwnedFd},
@@ -16,6 +18,7 @@ use jni::{
 };
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
+use clash_lib::mobile::{ReadyInfo, RuntimeInput, RuntimeMode};
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 enum State {
@@ -31,11 +34,15 @@ struct Snapshot {
     state: State,
     error: Option<String>,
     api_address: Option<String>,
+    runtime_mode: Option<RuntimeMode>,
+    tun_ready: bool,
+    user_listeners_ready: bool,
 }
 
 impl Snapshot {
     fn exited() -> Self {
-        Self { state: State::Exited, error: None, api_address: None }
+        Self { state: State::Exited, error: None, api_address: None, runtime_mode: None,
+            tun_ready: false, user_listeners_ready: false }
     }
 }
 
@@ -47,10 +54,11 @@ struct Session {
 }
 
 impl Session {
-    fn new() -> Self {
+    fn new(mode: RuntimeMode) -> Self {
         Self {
             snapshot: Mutex::new(Snapshot {
                 state: State::Starting, error: None, api_address: None,
+                runtime_mode: Some(mode), tun_ready: false, user_listeners_ready: false,
             }),
             changed: Condvar::new(),
             cancel: CancellationToken::new(),
@@ -58,17 +66,25 @@ impl Session {
         }
     }
 
-    fn ready(&self, address: std::net::SocketAddr) {
+    fn ready(&self, info: ReadyInfo) {
         let mut state = self.snapshot.lock().unwrap();
-        if state.state == State::Starting && !self.cancel.is_cancelled() {
+        if state.state == State::Starting && !self.cancel.is_cancelled()
+            && state.runtime_mode == Some(info.runtime_mode) && info.user_listeners_ready
+            && info.tun_ready == (info.runtime_mode == RuntimeMode::Tun) {
             state.state = State::Running;
-            state.api_address = Some(address.to_string());
+            state.api_address = Some(info.address.to_string());
+            state.tun_ready = info.tun_ready;
+            state.user_listeners_ready = true;
             self.changed.notify_all();
         }
     }
 
     fn finished(&self, result: Result<()>) {
         let mut state = self.snapshot.lock().unwrap();
+        state.api_address = None;
+        state.runtime_mode = None;
+        state.tun_ready = false;
+        state.user_listeners_ready = false;
         match result {
             Err(error) => {
                 state.state = State::Failed;
@@ -113,19 +129,34 @@ fn duplicate_tun(fd: i32) -> Result<OwnedFd> {
         .context("duplicate TUN descriptor")
 }
 
+fn admit_runtime(mode: &str, fd: i32, has_protector: bool) -> Result<RuntimeMode> {
+    let mode = RuntimeMode::parse(mode)?;
+    match mode {
+        RuntimeMode::Tun if fd < 0 => bail!("tunFd: tun runtime requires a descriptor"),
+        RuntimeMode::Tun if !has_protector => bail!("protector: tun runtime requires a VPN socket protector"),
+        RuntimeMode::Proxy if fd != -1 => bail!("tunFd: proxy runtime requires -1 and owns no descriptor"),
+        RuntimeMode::Proxy if has_protector => bail!("protector: proxy runtime requires null"),
+        _ => Ok(mode),
+    }
+}
+
 fn start(
     config_path: PathBuf,
     working_directory: PathBuf,
     tun: OwnedFd,
     protector: clash_lib::mobile::Protector,
 ) -> Result<i64> {
+    start_runtime(config_path, working_directory, RuntimeInput::Tun { fd: tun, protector })
+}
+
+fn start_runtime(config_path: PathBuf, working_directory: PathBuf, input: RuntimeInput) -> Result<i64> {
     let mut registry = registry().lock().unwrap();
     if registry.active.is_some() {
         bail!("previous core must complete stop and join before start");
     }
     let handle = registry.next_handle;
     let next = handle.checked_add(1).ok_or_else(|| anyhow!("core handles exhausted"))?;
-    let session = Arc::new(Session::new());
+    let session = Arc::new(Session::new(input.mode()));
     let worker_session = session.clone();
     let worker = std::thread::Builder::new().name(format!("aerove-core-{handle}"))
         .spawn(move || {
@@ -136,10 +167,10 @@ fn start(
                 }
                 let runtime = tokio::runtime::Builder::new_multi_thread()
                     .worker_threads(2).enable_all().build().context("create core runtime")?;
-                let result = runtime.block_on(clash_lib::mobile::run(
-                    source, working_directory, tun, protector,
+                let result = runtime.block_on(clash_lib::mobile::run_runtime(
+                    source, working_directory, input,
                     worker_session.cancel.clone(),
-                    |address| worker_session.ready(address),
+                    |info| worker_session.ready(info),
                 ));
                 // Dropping the instance runtime joins its workers and closes detached connection tasks.
                 drop(runtime);
@@ -271,15 +302,34 @@ pub extern "system" fn Java_dev_aerove_lite_core_NativeCore_start<'local>(
     working_directory: JString<'local>, tun_fd: i32, protector: JObject<'local>,
 ) -> i64 {
     env.with_env(|env| -> std::result::Result<i64, BridgeError> {
+        admit_runtime("tun", tun_fd, !protector.is_null()).map_err(bridge_error)?;
         let config_path = PathBuf::from(config_path.try_to_string(env)?);
         let working_directory = PathBuf::from(working_directory.try_to_string(env)?);
         let tun = duplicate_tun(tun_fd).map_err(bridge_error)?;
-        if protector.is_null() {
-            return Err(BridgeError("VPN protector must not be null".into()));
-        }
         let protector = JavaProtector { vm: env.get_java_vm()?, callback: env.new_global_ref(protector)? };
         start(config_path, working_directory, tun, Arc::new(move |fd| protector.protect(fd)))
             .map_err(bridge_error)
+    }).resolve::<ThrowRuntimeExAndDefault>()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_NativeCore_startRuntime<'local>(
+    mut env: EnvUnowned<'local>, _class: JClass<'local>, config_path: JString<'local>,
+    working_directory: JString<'local>, runtime_mode: JString<'local>, tun_fd: i32, protector: JObject<'local>,
+) -> i64 {
+    env.with_env(|env| -> std::result::Result<i64, BridgeError> {
+        let mode = admit_runtime(&runtime_mode.try_to_string(env)?, tun_fd, !protector.is_null()).map_err(bridge_error)?;
+        let config_path = PathBuf::from(config_path.try_to_string(env)?);
+        let working_directory = PathBuf::from(working_directory.try_to_string(env)?);
+        let input = match mode {
+            RuntimeMode::Tun => {
+                let fd = duplicate_tun(tun_fd).map_err(bridge_error)?;
+                let protector = JavaProtector { vm: env.get_java_vm()?, callback: env.new_global_ref(protector)? };
+                RuntimeInput::Tun { fd, protector: Arc::new(move |fd| protector.protect(fd)) }
+            },
+            RuntimeMode::Proxy => RuntimeInput::Proxy,
+        };
+        start_runtime(config_path, working_directory, input).map_err(bridge_error)
     }).resolve::<ThrowRuntimeExAndDefault>()
 }
 
@@ -359,6 +409,9 @@ mod service_check_tests;
 mod inbound_tests;
 
 #[cfg(test)]
+mod runtime_mode_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::os::{fd::AsRawFd, unix::net::UnixStream};
@@ -377,6 +430,7 @@ mod tests {
 
     #[test]
     fn failed_start_is_not_ready_and_requires_join_before_replacement() {
+        clash_lib::mobile::outbound::regression::with_runtime_lock(|| {
         let (fd, _) = UnixStream::pair().unwrap();
         let directory = std::env::temp_dir();
         let path = directory.join(format!("aerove-missing-{}.yaml", std::process::id()));
@@ -395,13 +449,18 @@ mod tests {
         stop(next).unwrap();
         stop(next).unwrap();
         assert!(snapshot(0).is_err());
+        });
     }
 
     #[test]
     fn late_ready_cannot_revive_a_cancelled_session() {
-        let session = Session::new();
+        let session = Session::new(RuntimeMode::Tun);
         session.cancel.cancel();
-        session.ready("127.0.0.1:1234".parse().unwrap());
+        session.ready(ReadyInfo { address: "127.0.0.1:1234".parse().unwrap(), runtime_mode: RuntimeMode::Tun,
+            tun_ready: true, user_listeners_ready: true });
         assert_ne!(session.snapshot.lock().unwrap().state, State::Running);
     }
 }
+
+#[cfg(test)]
+mod observation_tests;

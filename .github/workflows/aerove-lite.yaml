@@ -7,6 +7,12 @@ on:
       - 'apps/aerove-lite/**'
       - '.github/workflows/aerove-lite.yaml'
   workflow_dispatch:
+    inputs:
+      native_preflight:
+        description: Resolve the native Cargo lock and run host Rust tests only; skip Android verification and APK builds
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -34,16 +40,77 @@ jobs:
         with:
           workspaces: apps/aerove-lite/native -> target
       - name: Resolve and check the real pinned bridge dependency lock
+        if: ${{ !inputs.native_preflight }}
         run: |
           python3 apps/aerove-lite/native/build.py --initialize-lock --prepare-only
           git diff --exit-code -- apps/aerove-lite/native/Cargo.lock
+      - name: Initialize native lock and run host Rust tests
+        if: ${{ inputs.native_preflight }}
+        shell: bash
+        run: |
+          evidence="$RUNNER_TEMP/lite-native-preflight"
+          mkdir -p "$evidence"
+          python3 - <<'PY' > "$evidence/before.json"
+          import hashlib, json, subprocess
+          from pathlib import Path
+          root = Path('apps/aerove-lite/native')
+          lock = root / 'Cargo.lock'
+          source_lock = subprocess.check_output(['git', 'show', 'HEAD:apps/aerove-lite/native/Cargo.lock'])
+          print(json.dumps({
+              'sourceSha': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+              'sourceTree': subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], text=True).strip(),
+              'lockSha256Before': hashlib.sha256(lock.read_bytes()).hexdigest() if lock.is_file() else None,
+              'lockSha256AtSource': hashlib.sha256(source_lock).hexdigest(),
+              'lockPresentBefore': lock.is_file(),
+          }, indent=2))
+          PY
+          set +e
+          python3 apps/aerove-lite/native/build.py --initialize-lock --test > "$evidence/native-test.log" 2>&1
+          command_status=$?
+          set -e
+          cat "$evidence/native-test.log"
+          python3 - "$command_status" <<'PY'
+          import hashlib, json, os, sys
+          from pathlib import Path
+          evidence = Path(os.environ['RUNNER_TEMP']) / 'lite-native-preflight'
+          before = json.loads((evidence / 'before.json').read_text())
+          lock = Path('apps/aerove-lite/native/Cargo.lock')
+          provenance_path = Path('apps/aerove-lite/native/.upstream/clash-rs/AEROVE_PROVENANCE.json')
+          provenance = json.loads(provenance_path.read_text()) if provenance_path.is_file() else None
+          result = {
+              **before,
+              'command': 'python3 apps/aerove-lite/native/build.py --initialize-lock --test',
+              'commandLog': 'native-test.log',
+              'commandExitCode': int(sys.argv[1]),
+              'lockSha256After': hashlib.sha256(lock.read_bytes()).hexdigest() if lock.is_file() else None,
+              'lockChanged': (hashlib.sha256(lock.read_bytes()).hexdigest() if lock.is_file() else None) != before['lockSha256Before'],
+              'stableLockGate': 'not-run-in-native-preflight',
+              'preparedSourceProvenance': provenance,
+          }
+          (evidence / 'after.json').write_text(json.dumps(result, indent=2) + '\n')
+          if result['lockChanged']:
+              print('::notice::Native preflight generated or changed Cargo.lock; this does not pass the normal stable-lock gate.')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write('Native-only preflight completed. The normal stable Cargo.lock diff gate and Android verification/APK gates were not run.\n')
+              summary.write(f"Cargo.lock changed during lock initialization: {result['lockChanged']}\n")
+          sys.exit(int(sys.argv[1]))
+          PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always()
+        if: ${{ always() && !inputs.native_preflight }}
         with:
           name: AEROVE-Lite-resolved-lock
           path: apps/aerove-lite/native/Cargo.lock
           if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ always() && inputs.native_preflight }}
+        with:
+          name: AEROVE-Lite-native-preflight
+          path: |
+            apps/aerove-lite/native/Cargo.lock
+            ${{ runner.temp }}/lite-native-preflight/
+          if-no-files-found: warn
   verify:
+    if: ${{ !inputs.native_preflight }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -88,6 +155,7 @@ jobs:
             apps/aerove-lite/app/build/test-results/
           if-no-files-found: warn
   build:
+    if: ${{ !inputs.native_preflight }}
     needs: [resolve, verify]
     env:
       AEROVE_LITE_KEYSTORE_PASSWORD: ${{ secrets.AEROVE_LITE_KEYSTORE_PASSWORD }}

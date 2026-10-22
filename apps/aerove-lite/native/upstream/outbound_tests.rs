@@ -6,6 +6,11 @@ use tower::ServiceExt;
 
 static LOCK: StdMutex<()> = StdMutex::new(());
 
+pub fn with_runtime_lock(operation: impl FnOnce()) {
+    let _lock = LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    operation();
+}
+
 #[path = "telemetry_tests.rs"]
 mod telemetry_tests;
 
@@ -17,6 +22,16 @@ mod route_tests;
 
 pub fn run(case: &str) {
     let _lock = LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    if case.starts_with("observations-") {
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
+            .block_on(crate::mobile::observation_tests::run(case));
+        return;
+    }
+    if case.starts_with("runtime-") {
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
+            .block_on(crate::mobile::runtime_mode_tests::run(case));
+        return;
+    }
     let count = Arc::new(AtomicUsize::new(0));
     let refused = Arc::new(AtomicBool::new(false));
     let (events, _receiver) = tokio::sync::mpsc::unbounded_channel();

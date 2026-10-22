@@ -119,6 +119,9 @@ def prepare(archive: Path | None = None) -> Path:
     if digest(data) != ARCHIVE_SHA256:
         raise ValueError("upstream archive SHA256 mismatch")
     patch = (ROOT / "upstream.patch").read_bytes()
+    observation_patch = (ROOT / "newobs.patch").read_bytes()
+    observations = (ROOT / "upstream/observations.rs").read_bytes()
+    observation_tests = (ROOT / "upstream/observation_tests.rs").read_bytes()
     overlay = (ROOT / "upstream/mobile.rs").read_bytes()
     resources = (ROOT / "upstream/resources.rs").read_bytes()
     outbound = (ROOT / "upstream/outbound.rs").read_bytes()
@@ -132,9 +135,12 @@ def prepare(archive: Path | None = None) -> Path:
     service_check_tests = (ROOT / "upstream/service_check_tests.rs").read_bytes()
     inbound = (ROOT / "upstream/inbound.rs").read_bytes()
     inbound_tests = (ROOT / "upstream/inbound_tests.rs").read_bytes()
+    runtime_mode_tests = (ROOT / "upstream/runtime_mode_tests.rs").read_bytes()
     provenance = {
         "repository": "https://github.com/ibigbug/clash-rs",
         "tag": "v0.10.10", "commit": COMMIT, "archiveSha256": digest(data),
+        "observationPatchSha256": digest(observation_patch),
+        "observationsSha256": digest(observations), "observationTestsSha256": digest(observation_tests),
         "patchSha256": digest(patch), "mobileSha256": digest(overlay),
         "resourcesSha256": digest(resources),
         "outboundSha256": digest(outbound), "outboundTestsSha256": digest(outbound_tests),
@@ -145,6 +151,7 @@ def prepare(archive: Path | None = None) -> Path:
         "serviceRulesSha256": digest(service_rules),
         "serviceCheckTestsSha256": digest(service_check_tests),
         "inboundSha256": digest(inbound), "inboundTestsSha256": digest(inbound_tests),
+        "runtimeModeTestsSha256": digest(runtime_mode_tests),
     }
     target = cache / "clash-rs"
     marker = target / "AEROVE_PROVENANCE.json"
@@ -159,10 +166,13 @@ def prepare(archive: Path | None = None) -> Path:
         staging.mkdir()
         extract(data, staging)
         apply_patch(staging, patch.decode("utf-8"))
+        apply_patch(staging, observation_patch.decode("utf-8"))
         (staging / "clash-lib/src/mobile.rs").write_bytes(overlay)
         resource_target = staging / "clash-lib/src/mobile/resources.rs"
         resource_target.parent.mkdir(exist_ok=True)
         resource_target.write_bytes(resources)
+        (resource_target.parent / "observations.rs").write_bytes(observations)
+        (resource_target.parent / "observation_tests.rs").write_bytes(observation_tests)
         (resource_target.parent / "outbound.rs").write_bytes(outbound)
         (resource_target.parent / "outbound_tests.rs").write_bytes(outbound_tests)
         (resource_target.parent / "outbound_route_tests.rs").write_bytes(outbound_route_tests)
@@ -174,6 +184,7 @@ def prepare(archive: Path | None = None) -> Path:
         (resource_target.parent / "service_check_tests.rs").write_bytes(service_check_tests)
         (resource_target.parent / "inbound.rs").write_bytes(inbound)
         (resource_target.parent / "inbound_tests.rs").write_bytes(inbound_tests)
+        (resource_target.parent / "runtime_mode_tests.rs").write_bytes(runtime_mode_tests)
         provenance["treeSha256"] = tree_digest(staging)
         (staging / "AEROVE_PROVENANCE.json").write_text(
             json.dumps(provenance, indent=2) + "\n", encoding="utf-8", newline="\n")

@@ -1,0 +1,483 @@
+--- a/clash-lib/src/app/api/handlers/config.rs
++++ b/clash-lib/src/app/api/handlers/config.rs
+@@ -40,6 +40,8 @@
+ 
+ #[derive(Clone)]
+ struct ConfigState {
++    #[cfg(feature = "aerove-mobile")]
++    telemetry: Option<Arc<crate::mobile::telemetry::Bus>>,
+     components: Arc<RwLock<Arc<RuntimeComponents>>>,
+     global_state: Arc<Mutex<GlobalState>>,
+ }
+@@ -54,6 +56,8 @@
+             get(get_configs).put(update_configs).patch(patch_configs),
+         )
+         .with_state(ConfigState {
++            #[cfg(feature = "aerove-mobile")]
++            telemetry: crate::mobile::telemetry::source(),
+             components,
+             global_state,
+         })
+@@ -316,6 +320,8 @@
+     if let Some(log_level) = payload.log_level {
+         let mut global_state = state.global_state.lock().await;
+         global_state.log_level = log_level;
++        #[cfg(feature = "aerove-mobile")]
++        if let Some(bus) = &state.telemetry { bus.set_log_level(log_level.into()); }
+     }
+ 
+     (
+--- a/clash-lib/src/app/api/handlers/log.rs
++++ b/clash-lib/src/app/api/handlers/log.rs
+@@ -14,12 +14,25 @@
+     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+     State(state): State<Arc<AppState>>,
+ ) -> impl IntoResponse {
++    #[cfg(feature = "aerove-mobile")]
++    let cancel = crate::mobile::telemetry::source().map(|b| b.cancellation());
++    #[cfg(not(feature = "aerove-mobile"))]
++    let cancel: Option<tokio_util::sync::CancellationToken> = None;
+     ws.on_failed_upgrade(move |e| {
+         warn!("ws upgrade error: {} with {}", e, addr);
+     })
+     .on_upgrade(move |mut socket| async move {
+         let mut rx = state.log_source_tx.subscribe();
+-        while let Ok(evt) = rx.recv().await {
++        loop {
++            let evt = tokio::select! {
++                biased;
++                _ = async { match &cancel { Some(c) => c.cancelled().await, None => std::future::pending().await } } => break,
++                incoming = socket.recv() => match incoming {
++                    Some(Ok(Message::Ping(_) | Message::Pong(_))) => continue,
++                    _ => break,
++                },
++                result = rx.recv() => match result { Ok(event) => event, Err(_) => break },
++            };
+             let res_str = match serde_json::to_string(&evt) {
+                 Ok(s) => s,
+                 Err(e) => {
+@@ -28,10 +41,8 @@
+                 }
+             };
+ 
+-            if let Err(e) = socket.send(Message::Text(res_str.into())).await {
+-                warn!("ws send error: {}", e);
+-                break;
+-            }
++            let send = tokio::time::timeout(std::time::Duration::from_secs(2), socket.send(Message::Text(res_str.into())));
++            if !matches!(send.await, Ok(Ok(()))) { break; }
+         }
+     })
+ }
+--- a/clash-lib/src/app/dispatcher/mod.rs
++++ b/clash-lib/src/app/dispatcher/mod.rs
+@@ -1,5 +1,7 @@
+ mod dispatcher_impl;
+ mod statistics_manager;
++#[cfg(feature = "aerove-mobile")]
++pub(crate) use statistics_manager::TrackerInfo;
+ mod tracked;
+ 
+ pub use dispatcher_impl::Dispatcher;
+--- a/clash-lib/src/app/dispatcher/statistics_manager.rs
++++ b/clash-lib/src/app/dispatcher/statistics_manager.rs
+@@ -186,6 +186,8 @@
+ }
+ 
+ pub struct Manager {
++    #[cfg(feature = "aerove-mobile")]
++    observations: Option<Arc<crate::mobile::observations::Collector>>,
+     connections: Arc<Mutex<ConnectionMap>>,
+     /// Ring buffer of recently closed connections for the /flows API.
+     /// Uses `ClosedFlowInfo` (lightweight) instead of `Arc<TrackerInfo>`
+@@ -299,6 +301,8 @@
+         };
+ 
+         let v = Arc::new(Self {
++            #[cfg(feature = "aerove-mobile")]
++            observations: crate::mobile::observations::source(),
+             connections: Arc::new(Mutex::new(HashMap::new())),
+             closed_flows: Arc::new(Mutex::new(VecDeque::new())),
+             upload_temp: AtomicU64::new(0),
+@@ -321,6 +325,9 @@
+         tokio::spawn(async move {
+             c.kick_off().await;
+         });
++        #[cfg(feature = "aerove-mobile")]
++        if let Some(collector) = &v.observations { collector.attach(Arc::downgrade(&v)); }
++
+         v
+     }
+ 
+@@ -369,8 +376,15 @@
+             }
+         }
+ 
++        #[cfg(feature = "aerove-mobile")]
++        let info = item.tracker_info();
+         let mut connections = self.connections.lock().await;
+         connections.insert(item.id(), (item, Some(close_notify)));
++        drop(connections);
++        #[cfg(feature = "aerove-mobile")]
++        if let Some(ticket) = self.observations.as_ref().and_then(|c| c.ticket()) {
++            ticket.request(&info).await;
++        }
+     }
+ 
+     /// Untrack a connection.
+@@ -378,6 +392,10 @@
+     /// When the connection has an inbound_user, its final byte counts are
+     /// accumulated into `user_period_stats` so they survive connection close.
+     pub fn untrack(&self, id: uuid::Uuid) {
++        #[cfg(feature = "aerove-mobile")]
++        let observation = self.observations.as_ref().and_then(|c| c.ticket());
++        #[cfg(feature = "aerove-mobile")]
++        let closed_at = Utc::now();
+         let connections = self.connections.clone();
+         let user_period_stats = self.user_period_stats.clone();
+         let closed_flows = self.closed_flows.clone();
+@@ -397,6 +415,8 @@
+             // --- connections lock released ---
+ 
+             if let Some(info) = info {
++                #[cfg(feature = "aerove-mobile")]
++                if let Some(ticket) = observation { ticket.traffic(&info, Some(closed_at)); }
+                 // Phase 2: update user stats (no connections lock held).
+                 let upload = info.user_upload.swap(0, Ordering::AcqRel);
+                 let download = info.user_download.swap(0, Ordering::AcqRel);
+@@ -432,6 +452,12 @@
+     /// Return `Arc<TrackerInfo>` for every currently-active connection.
+     /// Unlike `snapshot()`, this preserves the full `session_holder` so
+     /// callers can access destination, source, and network fields directly.
++    #[cfg(feature = "aerove-mobile")]
++    pub(crate) async fn observation_snapshot(&self) -> Vec<Arc<TrackerInfo>> {
++        let connections = self.connections.lock().await;
++        connections.values().take(2000).map(|(tracked,_)| tracked.tracker_info()).collect()
++    }
++
+     pub async fn active_connections_snapshot(&self) -> Vec<Arc<TrackerInfo>> {
+         let conns = self.connections.lock().await;
+         conns
+@@ -619,6 +645,15 @@
+                 });
+             }
+ 
++            #[cfg(feature = "aerove-mobile")]
++            if let Some(ticket) = self.observations.as_ref().and_then(|c| c.ticket()) {
++                let ids = ticket.watched_ids();
++                let infos = {
++                    let connections = self.connections.lock().await;
++                    ids.iter().filter_map(|id| connections.get(id).map(|(tracked,_)| tracked.tracker_info())).collect::<Vec<_>>()
++                };
++                for info in infos { ticket.traffic(&info, None); }
++            }
+             // Memory pressure check every 5 seconds
+             mem_check_counter += 1;
+             if mem_check_counter >= 5 {
+--- a/clash-lib/src/app/dns/resolver/enhanced.rs
++++ b/clash-lib/src/app/dns/resolver/enhanced.rs
+@@ -31,6 +31,8 @@
+ use tracing::{debug, error, instrument, trace, warn};
+ 
+ pub struct EnhancedResolver {
++    #[cfg(feature = "aerove-mobile")]
++    observation_sources: std::sync::Mutex<std::collections::VecDeque<(String, String)>>,
+     ipv6: AtomicBool,
+     hosts: Option<trie::StringTrie<net::IpAddr>>,
+     main: Vec<ThreadSafeDNSClient>,
+@@ -62,6 +64,8 @@
+         use crate::app::dns::config::NameServer;
+ 
+         EnhancedResolver {
++            #[cfg(feature = "aerove-mobile")]
++            observation_sources: Default::default(),
+             ipv6: AtomicBool::new(false),
+             hosts: None,
+             main: make_clients(
+@@ -106,6 +110,8 @@
+         let edns_client_subnet = cfg.edns_client_subnet.clone();
+ 
+         let default_resolver = Arc::new(EnhancedResolver {
++            #[cfg(feature = "aerove-mobile")]
++            observation_sources: Default::default(),
+             ipv6: AtomicBool::new(false),
+             hosts: None,
+             main: make_clients(
+@@ -183,6 +189,8 @@
+             };
+ 
+         Self {
++            #[cfg(feature = "aerove-mobile")]
++            observation_sources: Default::default(),
+             ipv6: AtomicBool::new(cfg.ipv6),
+             main: make_clients(
+                 cfg.nameserver.clone(),
+@@ -338,7 +346,7 @@
+                                 err = ?x,
+                                 "resolve error");
+                         })
+-                        .await
++                        .await.map(|reply| (reply, c.id()))
+                 }
+                 .boxed(),
+             )
+@@ -348,7 +356,13 @@
+ 
+         tokio::select! {
+             result = futures::future::select_ok(queries) => match result {
+-                Ok(r) => Ok(r.0),
++                Ok(((reply, source), _)) => {
++                    #[cfg(feature = "aerove-mobile")]
++                    crate::mobile::observations::dns_source(source, false);
++                    #[cfg(not(feature = "aerove-mobile"))]
++                    let _ = source;
++                    Ok(reply)
++                },
+                 Err(e) => Err(e),
+             },
+             _ = timeout => Err(Error::DNSError("DNS query timeout".into()).into())
+@@ -381,6 +395,13 @@
+ 
+     #[instrument(skip_all, level = "trace")]
+     async fn exchange(&self, message: &op::Message) -> anyhow::Result<op::Message> {
++        #[cfg(feature = "aerove-mobile")]
++        { return crate::mobile::observations::dns_message(message, self.exchange_observed(message)).await; }
++        #[cfg(not(feature = "aerove-mobile"))]
++        self.exchange_observed(message).await
++    }
++
++    async fn exchange_observed(&self, message: &op::Message) -> anyhow::Result<op::Message> {
+         let q = message
+             .queries
+             .first()
+@@ -388,6 +409,11 @@
+ 
+         trace!(q = q.to_string(), "start");
+ 
++        {
++        #[cfg(feature = "aerove-mobile")]
++        let sources = self.observation_sources.lock().unwrap();
++        // Cache response and provenance use one admission lock so concurrent
++        // queries cannot pair an old answer with a different winning client.
+         // Cache hit — return early
+         if let Some(lru_lock) = &self.lru_cache
+             && let Ok(guard) = lru_lock.read()
+@@ -399,11 +425,17 @@
+                 q = q.to_string(),
+                 "cache hit for DNS query, returning cached response",
+             );
++            #[cfg(feature = "aerove-mobile")]
++            {
++                let source = sources.iter().find(|(key,_)| key == &q.to_string()).map(|(_,v)| v.clone()).unwrap_or_default();
++                crate::mobile::observations::dns_source(source, true);
++            }
+             let mut reply = build_dns_response_message(message, true, false);
+             reply.add_answers(cached.answers.iter().cloned());
+             return Ok(reply);
+         }
+ 
++        }
+         trace!(q = q.to_string(), "querying resolver");
+         let res = self.exchange_no_cache(message).await.map(|mut r| {
+             if let Some(edns) = r.edns.as_mut() {
+@@ -435,6 +467,8 @@
+         };
+ 
+         let rv = query.await;
++        #[cfg(feature = "aerove-mobile")]
++        let mut sources = self.observation_sources.lock().unwrap();
+ 
+         if let Ok(msg) = &rv
+             && let Some(lru_lock) = &self.lru_cache
+@@ -451,6 +485,13 @@
+             && let Ok(guard) = lru_lock.read()
+         {
+             guard.0.insert(q.clone(), Ok(msg.clone()), Instant::now());
++            #[cfg(feature = "aerove-mobile")]
++            {
++                let key = q.to_string();
++                sources.retain(|(k,_)| k != &key);
++                sources.push_back((key, crate::mobile::observations::current_dns_source()));
++                if sources.len() > 4096 { sources.pop_front(); }
++            }
+         }
+ 
+         rv
+@@ -620,12 +661,18 @@
+         host: &str,
+         enhanced: bool,
+     ) -> anyhow::Result<Option<net::Ipv4Addr>> {
++        #[cfg(feature = "aerove-mobile")]
++        let observation_start = (chrono::Utc::now(), Instant::now());
+         if enhanced
+             && let Some(hosts) = &self.hosts
+             && let Some(v) = hosts.search(host)
+         {
+             return Ok(v.get_data().map(|v| match v {
+-                net::IpAddr::V4(v4) => *v4,
++                net::IpAddr::V4(v4) => {
++                    #[cfg(feature = "aerove-mobile")]
++                    crate::mobile::observations::synthetic(host, net::IpAddr::V4(*v4), observation_start);
++                    *v4
++                },
+                 _ => unreachable!("invalid IP family"),
+             }));
+         }
+@@ -640,7 +687,11 @@
+                 let ip = fake_dns.lookup(host).await;
+                 debug!("fake dns lookup: {} -> {:?}", host, ip);
+                 match ip {
+-                    net::IpAddr::V4(v4) => return Ok(Some(v4)),
++                    net::IpAddr::V4(v4) => {
++                        #[cfg(feature = "aerove-mobile")]
++                        crate::mobile::observations::synthetic(host, net::IpAddr::V4(v4), observation_start);
++                        return Ok(Some(v4));
++                    },
+                     _ => unreachable!("invalid IP family"),
+                 }
+             }
+@@ -661,6 +712,8 @@
+         host: &str,
+         enhanced: bool,
+     ) -> anyhow::Result<Option<net::Ipv6Addr>> {
++        #[cfg(feature = "aerove-mobile")]
++        let observation_start = (chrono::Utc::now(), Instant::now());
+         if let Some(std::net::IpAddr::V6(ip)) = parse_ip_literal(host) {
+             return Ok(Some(ip));
+         }
+@@ -674,7 +727,11 @@
+             && let Some(v) = hosts.search(host)
+         {
+             return Ok(v.get_data().map(|v| match v {
+-                net::IpAddr::V6(v6) => *v6,
++                net::IpAddr::V6(v6) => {
++                    #[cfg(feature = "aerove-mobile")]
++                    crate::mobile::observations::synthetic(host, net::IpAddr::V6(*v6), observation_start);
++                    *v6
++                },
+                 _ => unreachable!("invalid IP family"),
+             }));
+         }
+@@ -737,6 +794,8 @@
+     /// - reverse_lookup_cache: cleared immediately (Arc<RwLock<LruCache>>)
+     /// - lru_cache: ResponseCache replaced with a clean instance.
+     async fn clear_cache(&self) {
++        #[cfg(feature = "aerove-mobile")]
++        self.observation_sources.lock().unwrap().clear();
+         if let Some(lru) = &self.reverse_lookup_cache {
+             let mut guard = lru.write().await;
+             guard.clear();
+--- a/clash-lib/src/app/dns/server/handler.rs
++++ b/clash-lib/src/app/dns/server/handler.rs
+@@ -11,6 +11,13 @@
+     req: &'a Message,
+     enhanced: bool,
+ ) -> Result<Message, watfaq_dns::DNSError> {
++    #[cfg(feature = "aerove-mobile")]
++    { return crate::mobile::observations::app_dns(req, exchange_inner(resolver, req, enhanced)).await; }
++    #[cfg(not(feature = "aerove-mobile"))]
++    exchange_inner(resolver, req, enhanced).await
++}
++
++async fn exchange_inner(resolver: &ThreadSafeDNSResolver, req: &Message, enhanced: bool) -> Result<Message, watfaq_dns::DNSError> {
+     if req.queries.first().map(|q| q.query_type())
+         == Some(hickory_proto::rr::RecordType::AAAA)
+         || !resolver.fake_ip_enabled()
+--- a/clash-lib/src/app/router/mod.rs
++++ b/clash-lib/src/app/router/mod.rs
+@@ -100,6 +100,10 @@
+         &self,
+         sess: &mut Session,
+     ) -> (&str, Option<&RuleEntry>) {
++        #[cfg(feature = "aerove-mobile")]
++        let dns_resolver = crate::mobile::observations::resolver(self.dns_resolver.clone(), crate::mobile::observations::Origin::Rule);
++        #[cfg(not(feature = "aerove-mobile"))]
++        let dns_resolver = self.dns_resolver.clone();
+         let mut sess_resolved = false;
+ 
+         for r in self.rules.iter() {
+@@ -107,8 +111,7 @@
+             if sess.destination.is_domain()
+                 && r.matcher.should_resolve_ip()
+                 && !sess_resolved
+-                && let Ok(Some(ip)) = self
+-                    .dns_resolver
++                && let Ok(Some(ip)) = dns_resolver
+                     .resolve(sess.destination.domain().unwrap(), false)
+                     .await
+             {
+--- a/clash-lib/src/proxy/direct/mod.rs
++++ b/clash-lib/src/proxy/direct/mod.rs
+@@ -70,6 +70,8 @@
+         sess: &Session,
+         resolver: ThreadSafeDNSResolver,
+     ) -> std::io::Result<BoxedInstrumentedStream> {
++        #[cfg(feature = "aerove-mobile")]
++        let resolver = crate::mobile::observations::resolver(resolver, crate::mobile::observations::Origin::Direct);
+         let port = sess.destination.port();
+         let addrs: Vec<std::net::SocketAddr> =
+             if let Some(ip) = sess.destination.ip() {
+@@ -112,6 +114,8 @@
+         sess: &Session,
+         resolver: ThreadSafeDNSResolver,
+     ) -> std::io::Result<BoxedInstrumentedDatagram> {
++        #[cfg(feature = "aerove-mobile")]
++        let resolver = crate::mobile::observations::resolver(resolver, crate::mobile::observations::Origin::Direct);
+         // The outbound socket is shared across ALL destinations from the same
+         // client (keyed by src_addr only in the dispatcher). Use a dual-stack
+         // socket so one socket can send to both IPv4 and IPv6 destinations
+--- a/clash-lib/src/proxy/hysteria2/outbound/mod.rs
++++ b/clash-lib/src/proxy/hysteria2/outbound/mod.rs
+@@ -185,6 +185,8 @@
+         );
+         // Everytime we enstablish a new session, we should lookup the server
+         // address. maybe it changed since it use ddns
++        #[cfg(feature = "aerove-mobile")]
++        let resolver = crate::mobile::observations::resolver(resolver, crate::mobile::observations::Origin::Proxy);
+         let server_socket_addr = match self.opts.addr.clone() {
+             SocksAddr::Ip(ip) => ip,
+             SocksAddr::Domain(d, port) => {
+--- a/clash-lib/src/proxy/shadowsocks/outbound/mod.rs
++++ b/clash-lib/src/proxy/shadowsocks/outbound/mod.rs
+@@ -218,6 +218,8 @@
+             &cfg,
+             ShadowsocksUdpIo::new(socket),
+         );
++        #[cfg(feature = "aerove-mobile")]
++        let resolver = crate::mobile::observations::resolver(resolver, crate::mobile::observations::Origin::Proxy);
+         let server_addr = resolver
+             .resolve(&self.opts.server, false)
+             .await
+--- a/clash-lib/src/proxy/socks/outbound/mod.rs
++++ b/clash-lib/src/proxy/socks/outbound/mod.rs
+@@ -109,6 +109,8 @@
+         let bind_ip = bind_addr
+             .ip()
+             .ok_or(new_io_error("missing IP in bind address"))?;
++        #[cfg(feature = "aerove-mobile")]
++        let resolver = crate::mobile::observations::resolver(resolver, crate::mobile::observations::Origin::Proxy);
+         let bind_ip = if bind_ip.is_unspecified() {
+             trace!("bind address is unspecified, resolving server address");
+             let remote_addr = resolver
+--- a/clash-lib/src/proxy/tuic/types.rs
++++ b/clash-lib/src/proxy/tuic/types.rs
+@@ -226,6 +226,8 @@
+         &self,
+         resolver: &ThreadSafeDNSResolver,
+     ) -> Result<SocketAddr> {
++        #[cfg(feature = "aerove-mobile")]
++        let resolver = crate::mobile::observations::resolver(resolver.clone(), crate::mobile::observations::Origin::Proxy);
+         if let Some(ip) = self.ip {
+             Ok(SocketAddr::from((ip, self.port)))
+         } else {
+--- a/clash-lib/src/proxy/utils/proxy_connector.rs
++++ b/clash-lib/src/proxy/utils/proxy_connector.rs
+@@ -72,6 +72,8 @@
+         iface: Option<&OutboundInterface>,
+         #[cfg(target_os = "linux")] so_mark: Option<u32>,
+     ) -> std::io::Result<AnyStream> {
++        #[cfg(feature = "aerove-mobile")]
++        let resolver = crate::mobile::observations::resolver(resolver, crate::mobile::observations::Origin::Proxy);
+         let addrs: Vec<SocketAddr> = if let Some(ip) =
+             crate::app::dns::parse_ip_literal(address)
+         {

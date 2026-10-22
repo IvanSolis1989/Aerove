@@ -34,10 +34,57 @@ use crate::{
 
 pub type Protector = Arc<dyn Fn(RawFd) -> io::Result<()> + Send + Sync>;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RuntimeMode { Tun, Proxy }
+
+impl RuntimeMode {
+    pub fn parse(value: &str) -> Result<Self> {
+        match value {
+            "tun" => Ok(Self::Tun),
+            "proxy" => Ok(Self::Proxy),
+            _ => Err(invalid("runtimeMode: expected tun or proxy")),
+        }
+    }
+}
+
+pub enum RuntimeInput { Tun { fd: OwnedFd, protector: Protector }, Proxy }
+
+impl RuntimeInput {
+    pub fn mode(&self) -> RuntimeMode {
+        match self { Self::Tun { .. } => RuntimeMode::Tun, Self::Proxy => RuntimeMode::Proxy }
+    }
+}
+
+enum SocketPolicy { Vpn(Protector), PlatformDefault }
+
+impl SocketPolicy {
+    fn hook(self) -> Protector {
+        Arc::new(move |fd| match &self {
+            Self::Vpn(protector) => protector(fd),
+            Self::PlatformDefault => Ok(()),
+        })
+    }
+}
+
+pub struct ReadyInfo {
+    pub address: SocketAddr,
+    pub runtime_mode: RuntimeMode,
+    pub tun_ready: bool,
+    pub user_listeners_ready: bool,
+}
+
 pub mod resources;
 pub mod outbound;
 pub mod telemetry;
+pub mod observations;
+#[cfg(feature = "aerove-mobile-tests")]
+pub mod observation_tests;
 pub mod inbound;
+
+#[cfg(feature = "aerove-mobile-tests")]
+#[path = "runtime_mode_tests.rs"]
+pub mod runtime_mode_tests;
 
 enum Event {
     TunReady,
@@ -62,7 +109,7 @@ static LOGGING: OnceLock<std::result::Result<(), String>> = OnceLock::new();
 
 fn context() -> io::Result<Arc<Context>> {
     CONTEXT.read().unwrap().clone().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::PermissionDenied, "no active VPN protector")
+        io::Error::new(io::ErrorKind::PermissionDenied, "no active mobile runtime")
     })
 }
 
@@ -109,7 +156,8 @@ impl<S: tracing::Subscriber> Layer<S> for LogSource {
         scope: tracing_subscriber::layer::Context<'_, S>,
     ) {
         if let Ok(context) = context()
-            && *event.metadata().level() <= context.level
+            && context.logs.receiver_count() > 0
+            && *event.metadata().level() <= context.telemetry.log_level().unwrap_or(context.level)
         {
             EventCollector::new(vec![context.logs.clone()]).on_event(event, scope);
         }
@@ -227,10 +275,31 @@ pub async fn run(
     cancel: CancellationToken,
     ready: impl FnOnce(SocketAddr),
 ) -> Result<()> {
+    run_runtime(source, working_directory, RuntimeInput::Tun { fd: tun, protector }, cancel,
+        |info| ready(info.address)).await
+}
+
+pub async fn run_runtime(
+    source: String,
+    working_directory: PathBuf,
+    input: RuntimeInput,
+    cancel: CancellationToken,
+    ready: impl FnOnce(ReadyInfo),
+) -> Result<()> {
     let mut config = parse(&source)?;
-    if !config.tun.enable || !config.tun.dns_hijack || !config.dns.enable {
-        return Err(invalid("runtime requires TUN, dns-hijack and DNS enabled"));
+    let log_level = config.general.log_level;
+    let mode = input.mode();
+    match mode {
+        RuntimeMode::Tun if !config.tun.enable || !config.tun.dns_hijack || !config.dns.enable => {
+            return Err(invalid("$.tun.enable/$.tun.dns-hijack/$.dns.enable: tun runtime requires all enabled"));
+        },
+        RuntimeMode::Proxy if config.tun.enable => return Err(invalid("$.tun.enable: proxy runtime requires false")),
+        _ => {},
     }
+    let (tun, policy) = match input {
+        RuntimeInput::Tun { fd, protector } => (Some(fd), SocketPolicy::Vpn(protector)),
+        RuntimeInput::Proxy => (None, SocketPolicy::PlatformDefault),
+    };
     let controller = config.general.controller.clone();
     let address = inbound::controller(&config)?;
     let bootstrap = bootstrap(&config)?;
@@ -248,8 +317,8 @@ pub async fn run(
             return Err(Error::Operation("another mobile runtime is active".into()));
         }
         *active = Some(Arc::new(Context {
-            protector, bootstrap, events, logs: logs.clone(),
-            level: config.general.log_level.into(), cancel: cancel.clone(),
+            protector: policy.hook(), bootstrap, events, logs: logs.clone(),
+            level: log_level.into(), cancel: cancel.clone(),
             telemetry: telemetry.clone(),
             network: Some(network.clone()),
         }));
@@ -257,17 +326,22 @@ pub async fn run(
     let _lease = ContextLease;
     setup_logging()?;
     crate::setup_default_crypto_provider();
-    config.tun.device_id = format!("fd://{}", tun.as_raw_fd());
-    let tun = unsafe { tun_rs::AsyncDevice::from_fd(tun.into_raw_fd())? };
+    let tun = match tun {
+        Some(tun) => {
+            config.tun.device_id = format!("fd://{}", tun.as_raw_fd());
+            Some(unsafe { tun_rs::AsyncDevice::from_fd(tun.into_raw_fd())? })
+        },
+        None => None,
+    };
     let components = tokio::select! {
         biased;
         _ = cancel.cancelled() => return Ok(()),
         result = crate::create_components(working_directory.clone(), config) => Arc::new(result?),
     };
-    components.tun_runner.set_device(tun);
+    if let Some(tun) = tun { components.tun_runner.set_device(tun); }
     let (reload_tx, _reload_rx) = mpsc::channel(1);
     let global_state = Arc::new(Mutex::new(GlobalState {
-        log_level: crate::config::def::LogLevel::Info,
+        log_level,
         tunnel_runner: components.tun_runner.clone(),
         dns_listener: components.dns_listener.clone(),
         reload_tx,
@@ -296,10 +370,12 @@ pub async fn run(
                 None => break Err(Error::Operation("core readiness channel closed".into())),
             }
         }
-        if tun_ready && inbound_ready.is_empty() && let Some(address) = api_address && let Some(ready) = ready.take() {
+        if (mode == RuntimeMode::Proxy || tun_ready) && inbound_ready.is_empty()
+            && let Some(address) = api_address && let Some(ready) = ready.take() {
             network.mark_ready();
-            tracing::info!("AEROVE mobile TUN, user listeners and controller ready at {address}");
-            ready(address);
+            tracing::info!("AEROVE mobile {mode:?}, user listeners and controller ready at {address}");
+            ready(ReadyInfo { address, runtime_mode: mode, tun_ready: mode == RuntimeMode::Tun && tun_ready,
+                user_listeners_ready: true });
         }
     };
     cancel.cancel();
@@ -322,13 +398,12 @@ pub(crate) async fn lookup_host(host_port: String) -> io::Result<std::vec::IntoI
     let mut last_error = None;
     for record_type in [RecordType::A, RecordType::AAAA] {
         for server in &context.bootstrap {
-            match tokio::time::timeout(Duration::from_secs(5), query(host, record_type, *server)).await {
-                Ok(Ok(ips)) => {
+            match query(host, record_type, *server).await {
+                Ok(ips) => {
                     addresses.extend(ips.into_iter().map(|ip| SocketAddr::new(ip, port)));
                     break;
                 }
-                Ok(Err(error)) => last_error = Some(error),
-                Err(error) => last_error = Some(io::Error::new(io::ErrorKind::TimedOut, error)),
+                Err(error) => last_error = Some(error),
             }
         }
     }
@@ -346,6 +421,19 @@ async fn query(host: &str, record_type: RecordType, server: SocketAddr) -> io::R
     question.set_name(Name::from_str_relaxed(host).map_err(io::Error::other)?);
     question.set_query_type(record_type);
     message.add_query(question);
+    let response = observations::dns_message(&message, async {
+        observations::dns_source(server.to_string(), false);
+        tokio::time::timeout(Duration::from_secs(5), query_exchange(&message, server)).await
+            .map_err(|e| io::Error::new(io::ErrorKind::TimedOut, e))?
+    }).await?;
+    Ok(response.answers.iter().filter_map(|record| match &record.data {
+        RData::A(ip) if record_type == RecordType::A => Some(IpAddr::V4(**ip)),
+        RData::AAAA(ip) if record_type == RecordType::AAAA => Some(IpAddr::V6(**ip)),
+        _ => None,
+    }).collect())
+}
+
+async fn query_exchange(message: &Message, server: SocketAddr) -> io::Result<Message> {
     let bytes = message.to_vec().map_err(io::Error::other)?;
     let socket = socket_helpers::new_udp_socket(None, None,
         #[cfg(target_os = "linux")] None, Some(server)).await?;
@@ -354,7 +442,7 @@ async fn query(host: &str, record_type: RecordType, server: SocketAddr) -> io::R
     let mut buffer = vec![0; 65535];
     let count = socket.recv(&mut buffer).await?;
     let mut response = Message::from_vec(&buffer[..count]).map_err(io::Error::other)?;
-    check_response(&message, &response)?;
+    check_response(message, &response)?;
     if response.metadata.truncation {
         let mut stream = socket_helpers::new_tcp_stream(server, None,
             #[cfg(target_os = "linux")] None).await?;
@@ -364,16 +452,12 @@ async fn query(host: &str, record_type: RecordType, server: SocketAddr) -> io::R
         buffer.resize(count, 0);
         stream.read_exact(&mut buffer).await?;
         response = Message::from_vec(&buffer).map_err(io::Error::other)?;
-        check_response(&message, &response)?;
+        check_response(message, &response)?;
         if response.metadata.truncation {
             return Err(io::Error::other("truncated TCP bootstrap response"));
         }
     }
-    Ok(response.answers.iter().filter_map(|record| match &record.data {
-        RData::A(ip) if record_type == RecordType::A => Some(IpAddr::V4(**ip)),
-        RData::AAAA(ip) if record_type == RecordType::AAAA => Some(IpAddr::V6(**ip)),
-        _ => None,
-    }).collect())
+    Ok(response)
 }
 
 fn check_response(query: &Message, response: &Message) -> io::Result<()> {
