@@ -1,23 +1,19 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-Future<ByteData> loadSdkTestFont() async {
-  var directory = File(Platform.resolvedExecutable).parent;
-  final root = Platform.environment['FLUTTER_ROOT'];
-  final candidates = <File>[
-    if (root != null)
-      File('$root/bin/cache/artifacts/material_fonts/roboto-regular.ttf'),
-  ];
-  for (var level = 0; level < 8; level++) {
-    candidates.add(
-      File('${directory.path}/artifacts/material_fonts/roboto-regular.ttf'),
-    );
-    directory = directory.parent;
+import 'package:crypto/crypto.dart';
+
+Future<ByteData>? _testFont;
+
+Future<ByteData> loadSdkTestFont() => _testFont ??= _loadTestFont();
+
+Future<ByteData> _loadTestFont() async {
+  final bytes = await File(
+    'test/fixtures/fonts/Roboto-Regular.ttf',
+  ).readAsBytes();
+  if (sha256.convert(bytes).toString() !=
+      '79e851404657dac2106b3d22ad256d47824a9a5765458edb72c9102a45816d95') {
+    throw StateError('Roboto test fixture SHA256 mismatch');
   }
-  for (final file in candidates) {
-    if (await file.exists()) {
-      return ByteData.sublistView(await file.readAsBytes());
-    }
-  }
-  throw StateError('Flutter SDK test font unavailable');
+  return ByteData.sublistView(bytes);
 }

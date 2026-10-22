@@ -1,0 +1,26 @@
+{
+  "origin": {
+    "frameworkRevision": "5fc346839b5d0eef006ed8404392afb4dfae428d",
+    "relativePath": "bin/cache/artifacts/material_fonts/roboto-regular.ttf",
+    "frameworkVersion": "3.47.6",
+    "distribution": "Flutter SDK",
+    "engineRevision": "692136cb6582dbfc5af3fb33c2515a069f2f66d0"
+  },
+  "license": {
+    "sourceRelativePath": "bin/cache/artifacts/material_fonts/roboto_license.txt",
+    "file": "LICENSE-Roboto.txt",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "identifier": "Apache-2.0"
+  },
+  "font": {
+    "copyright": "Copyright 2011 Google Inc. All Rights Reserved.",
+    "postscriptName": "Roboto-Regular",
+    "sizeBytes": 171676,
+    "sha256": "79e851404657dac2106b3d22ad256d47824a9a5765458edb72c9102a45816d95",
+    "family": "Roboto",
+    "style": "Regular",
+    "version": "Version 2.137; 2017",
+    "file": "Roboto-Regular.ttf"
+  },
+  "purpose": "Test-only Latin text fixture; not an application asset"
+}
