@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'dart:ui' as ui;
 
-import 'package:fl_clash/common/aurora.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 String _read(String path) => File(path).readAsStringSync();
@@ -9,11 +8,6 @@ String _read(String path) => File(path).readAsStringSync();
 String _color(String file, String name) => RegExp(
   '<color name="$name">(#[0-9A-F]{6})</color>',
 ).firstMatch(_read('android/app/src/main/res/$file'))!.group(1)!;
-
-String _hex(ui.Color color) {
-  final rgb = color.toARGB32() & 0xFFFFFF;
-  return '#${rgb.toRadixString(16).padLeft(6, '0').toUpperCase()}';
-}
 
 String _attribute(String source, String element, String attribute) {
   final tag = RegExp('<$element\\b[^>]*>').firstMatch(source)!.group(0)!;
@@ -60,15 +54,14 @@ void main() {
     }
   });
 
-  test('launch screens take the app background of the system theme', () {
-    expect(
-      _color('values/colors.xml', 'launch_background'),
-      _hex(auroraBaseColor(ui.Brightness.light)),
+  test('full launch background and system bars share the dark brand tile', () {
+    final brand = _color(
+      'values/ic_launcher_background.xml',
+      'ic_launcher_background',
     );
-    expect(
-      _color('values-night/colors.xml', 'launch_background'),
-      _color('values/ic_launcher_background.xml', 'ic_launcher_background'),
-    );
+    expect(brand, '#0E1115');
+    expect(_color('values/colors.xml', 'launch_background'), brand);
+    expect(_color('values-night/colors.xml', 'launch_background'), brand);
     for (final variant in [
       'values',
       'values-night',
@@ -82,6 +75,19 @@ void main() {
         ),
         reason: variant,
       );
+      final style = _read('android/app/src/main/res/$variant/styles.xml');
+      for (final bar in ['statusBarColor', 'navigationBarColor']) {
+        expect(
+          style,
+          contains('<item name="android:$bar">@color/launch_background</item>'),
+          reason: variant,
+        );
+      }
+      expect(
+        style,
+        contains('<item name="android:windowLightStatusBar">false</item>'),
+        reason: variant,
+      );
     }
     for (final variant in ['values-v27', 'values-night-v27']) {
       expect(
@@ -91,6 +97,47 @@ void main() {
       );
     }
   });
+
+  test(
+    'Lite launches on a full white window with dark system bar icons',
+    () async {
+      final style = _read('android-lite/app/src/main/res/values/styles.xml');
+      expect(
+        style,
+        contains('<color name="launcher_background">#FFFFFF</color>'),
+      );
+      for (final region in [
+        'windowBackground',
+        'statusBarColor',
+        'navigationBarColor',
+        'windowSplashScreenBackground',
+        'windowSplashScreenIconBackgroundColor',
+      ]) {
+        expect(
+          style,
+          contains('<item name="android:$region">@color/launcher_background'),
+        );
+      }
+      expect(
+        style,
+        contains('<item name="android:windowLightStatusBar">true</item>'),
+      );
+      expect(
+        style,
+        contains('<item name="android:windowLightNavigationBar">true</item>'),
+      );
+      final codec = await ui.instantiateImageCodec(
+        await File(
+          'android-lite/app/src/main/res/drawable-nodpi/aerove_lite_splash_art.png',
+        ).readAsBytes(),
+      );
+      final frame = await codec.getNextFrame();
+      final pixels = (await frame.image.toByteData())!;
+      expect(pixels.getUint8(3), 0);
+      frame.image.dispose();
+      codec.dispose();
+    },
+  );
 
   test('standard and round adaptive icons resolve current artwork', () {
     for (final name in ['ic_launcher', 'ic_launcher_round']) {

@@ -1,0 +1,3 @@
+Built-in imagegen edit, 2026-10-22.
+Target: aerove-lite-icon-tile.png. Remove only the white/off-white background; preserve the black satin ribbon's silhouette, proportions, folds, texture, lighting and position. Use real alpha transparency outside the ribbon, including open spaces. No text, border, added shadow or redesign. The Android theme supplies a full-screen white background.
+Output: aerove-lite-splash.png. The launcher tile remains unchanged.
