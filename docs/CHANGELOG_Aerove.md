@@ -1,11 +1,13 @@
 <!-- Generated compatibility feed. Edit docs/aerove/CHANGELOG.md and run tooling/sync_update_feed.py. -->
 # Aerove 变更记录
 
-本文件记录 Aerove 分支的功能调整和修复；功能概览与使用方法见 [中文 README](../README.md) / [English README](i18n/README.en.md)。上游生成的根目录 `CHANGELOG.md` 与 `changelog.json` 保持独立，不由本文件替代。
+本文件记录 Aerove 的功能调整和修复；功能概览与使用方法见 [中文 README](../README.md) / [English README](i18n/README.en.md)。[历史上游记录](archive/README.md) 保持独立，不由本文件替代。
 
 分支差异以记录的 FlClash `v0.9.1`（`8d4f9744948751f1273fe871e1d05276fac09b0e`）为基线。代理协议、核心路由、VPN 授权和监控数据等上游已有能力，不列为 Aerove 独创功能。
 
-## 待发布
+## 0.9.1+2026102203 — 已发布
+
+发布于 **2026-10-22 20:53:32（日本时间）**：[Release](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.9.1%2B2026102203)。发布源码为 [`99c05c69`](https://github.com/IvanSolis1989/Aerove/commit/99c05c6911baf2d70d81273c09a9eacfee04c740)，对应 [原构建 #3](https://github.com/IvanSolis1989/Aerove/actions/runs/39765735127) 与 [main 发布 #4](https://github.com/IvanSolis1989/Aerove/actions/runs/39773942413)。main 复用该成功构建的原始 APK，验证及编译作业按设计跳过；正式下载资产与原产物逐字节相同，版本、签名与构建来源保持一致。
 
 ### 工程与内核来源
 

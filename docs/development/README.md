@@ -3,6 +3,7 @@
 - [仓库与文档归档规则](REPOSITORY_LAYOUT.md)
 - [独立维护架构](INDEPENDENCE.md)
 - [上游来源与更新策略](upstreams.md)
+- [标准版与 Lite 独立版本规范](VERSIONING.md)
 - [项目上下文](../../.agents/project.md)
 - [构建与验证命令](../../.agents/commands.md)
 - [工程约束](../../.agents/rules.md)

@@ -1,9 +1,9 @@
 # Project Context
 
-Paths and commands for the full product are relative to `apps/aerove/`; run its commands there.
+Paths and commands for the Standard edition are relative to `apps/aerove/`; run its commands there.
 Repository governance and workflows remain at the repository root. See [workspace layout](../docs/development/REPOSITORY_LAYOUT.md).
 
-Aerove is an independently maintained proxy client with a historical FlClash codebase. The current implementation uses
+AEROVE 标准版 (Standard edition, previously Full) is an independently maintained proxy client with a historical FlClash codebase. The current implementation uses
 Flutter and a pinned Mihomo core on Android, Windows, macOS, and Linux. Material You from `material_ui` and the existing
 custom visual system remain the production baseline. AEROVE Lite is the separate Android-native/Rust product in
 `apps/aerove-lite/`, requiring Android 13 or later. Both products share this repository, with separate versions and release
@@ -11,11 +11,12 @@ entries. Share specifications and test vectors, not platform runtimes; keep pack
 separate. All shared client features must be implemented and verified before release. Source-proven core capability
 exceptions belong in development records, not placeholder or disabled controls;
 unsupported imported configuration still requires an explicit compatibility error. Its icon uses a white background
-and black ribbon derived from the full product, without replacing the full product's icon.
+and black ribbon derived from the Standard edition, without replacing the Standard edition's icon.
 
 Both products must have identical shared UI, interaction and client functionality, including all future refinements in
 either direction. Only a capability proven unsupported by the pinned Rust core may be deferred. Incomplete client code,
-missing wrappers or a first-release deadline are not product exceptions. Follow `docs/shared/UI_CONTRACT.md`.
+missing wrappers or a first-release deadline are not product exceptions. Follow the
+[binding shared contract](../docs/shared/UI_CONTRACT.md).
 
 The long-term Android objective is for the native product to replace the current Android application after measured
 energy efficiency, functionality, visual quality and reliability justify migration. Keep both products separate during
@@ -23,8 +24,9 @@ development; preserve the existing stable app and desktop support. Rust/clash-rs
 the most efficient core. Compare cores on the same native frontend and workload before making that claim.
 
 Product versions belong to Aerove, not to the latest FlClash tag. Upstream work is a reference and requires a scoped
-change, source attribution and product validation; never automatically merge it or resume the frozen 0.9.2 preview
-integration. Preserve existing licenses, signing identity and user data. See
+change, source attribution and product validation; never automatically merge it or resume a paused integration without
+current explicit user authorization. Both products use [independent version rules](../docs/development/VERSIONING.md).
+Preserve existing licenses, signing identity and user data. See
 `docs/development/INDEPENDENCE.md` and `docs/development/upstreams.md` for ownership and migration boundaries.
 
 ## Version Notes
