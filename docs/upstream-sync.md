@@ -54,13 +54,24 @@ source/tag peeled commit、发现时包含该 tag commit 的上游分支、tag �
 
 ## Android 发布与签名
 
-`Aerove Android` 先验证、再构建和执行 Android 单元测试，全部成功后才由独立
-`contents: write` 任务创建草稿、上传资产并公开为 latest。发布任务检出实际构建 SHA，
+`Aerove Android` 在分支上先完整验证，再构建 APK 和执行 Android 单元测试。相同提交快进进入
+`main` 后，工作流先查找本仓库同一 Android 工作流中该精确 SHA 的成功运行；只有完整 verify 与 APK
+任务都成功、两个产物均未过期时才复用，并按不可变 artifact ID 下载。找到后跳过重复测试和编译，
+由独立 `contents: write` 任务校验并发布原 APK；没有合格产物才在当前运行完整验证和构建。
+查询失败明确停止，不把查询错误当成没有产物；下载或校验失败也停止，不静默替换构建。
+正式通道公开为 latest，预览通道标为 prerelease 且不替换稳定版 latest；通道取自原构建来源信息。
+
+发布前要求生成补丁为空、verified tree 等于发布提交的 tree，核对原始运行编号、源码、上游来源、
+版本通道、双文件哈希、APK ZIP/ARM64 主库及签名和包信息。复用不会改写 APK、`BUILD_INFO.json`
+或 `SHA256SUMS`，版本号和 `workflow` 链接始终保留第一次实际构建的信息；发布运行另外记录原构建链接。
+任何源码变更都会使精确 SHA 匹配失效，必须重新验证构建。发布任务检出实际构建 SHA，
 在上传前和公开前各获取一次最新 main：构建 SHA 必须仍是 main 的祖先，且其后变化只能是
 上述非 APK 文档。README 等文档更新不会阻止已完成的包发布；任何代码、资源、依赖或打包变化
 仍阻止旧包替换 latest，若已上传则保留草稿。`BUILD_INFO.json` 和 tag 始终指向实际构建 SHA，
 不会标成后续文档提交。重跑不会覆盖已经公开的同名版本资产。`prepare_sources=true`
-只用于准备生成文件，永不发布；仅验证时可关闭 `build_apk`，只构建时可关闭 `publish_release`。
+只用于准备生成文件，永不直接发布；补丁为空且成功的准备运行可在同一提交进入 main 后作为已验证产物复用。
+仅验证时可关闭 `build_apk`，只构建时可关闭 `publish_release`。手动关闭 `build_apk` 时不强制构建，
+若 main 也没有可复用产物则不会发布。
 
 APK 显示版本取 `tool/upstream-version.json` 中上游 tag 去掉 `v` 后追加 `-X`，例如
 `v0.9.1-pre.4` 显示为 `0.9.1-pre.4-X`；不从 `pubspec.yaml` 的基础版本推导，因此保留上游预发布编号。
