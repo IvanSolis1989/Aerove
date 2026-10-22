@@ -91,7 +91,7 @@ data class SuperellipseOctant(
             val meet = OpticsPoint(m, m)
             val chord = meet - joint
             val reach = sqrt(max(0.0, arc * arc - chord.length().pow(2) / 4))
-            val center = (joint + meet) / 2 + OpticsPoint(chord.y, -chord.x) * (reach / chord.length())
+            val center = (joint + meet) / 2.0 + OpticsPoint(chord.y, -chord.x) * (reach / chord.length())
             return SuperellipseOctant(a, n, joint, center, arc, meet)
         }
     }
@@ -183,7 +183,7 @@ data class SuperellipseQuadrant(
         )
 
         private fun intersection(p: OpticsPoint, k: Double, q: OpticsPoint, l: Double): OpticsPoint {
-            if (abs(k - l) < 1e-3) return (p + q) / 2
+            if (abs(k - l) < 1e-3) return (p + q) / 2.0
             val x = (k * p.x - l * q.x + q.y - p.y) / (k - l)
             return OpticsPoint(x, k * (x - p.x) + p.y)
         }
