@@ -107,6 +107,14 @@
       "sourceAtTag": "https://raw.githubusercontent.com/material-components/material-components-android/1.13.0/lib/java/com/google/android/material/color/utilities/SchemeMonochrome.java"
     },
     {
+      "path": "src/dev/aerove/lite/ui/colorutilities/SchemeTonalSpot.java",
+      "source": "https://raw.githubusercontent.com/material-components/material-components-android/84c0e6d6d493fcf176d2099683245b78afbeb78d/lib/java/com/google/android/material/color/utilities/SchemeTonalSpot.java",
+      "sourceSha256": "24357bf421c786c36977491f35397a633bd9d1edbe1cd727a3bf0dc00696755a",
+      "sha256": "a95662935f8f32c84c9c339bbcb06d268c7fb80319005e79ee9212bfb4dd5062",
+      "adaptation": "package relocation only",
+      "sourceAtTag": "https://raw.githubusercontent.com/material-components/material-components-android/1.13.0/lib/java/com/google/android/material/color/utilities/SchemeTonalSpot.java"
+    },
+    {
       "path": "src/dev/aerove/lite/ui/colorutilities/TemperatureCache.java",
       "source": "https://raw.githubusercontent.com/material-components/material-components-android/84c0e6d6d493fcf176d2099683245b78afbeb78d/lib/java/com/google/android/material/color/utilities/TemperatureCache.java",
       "sourceSha256": "ba5609b62f9da311991a0266853c1f53cfb42dd2892c80fcb43216dfa4ece3d1",
@@ -155,5 +163,5 @@
       "sourceAtTag": "https://raw.githubusercontent.com/material-components/material-components-android/1.13.0/lib/java/com/google/android/material/color/utilities/ViewingConditions.java"
     }
   ],
-  "algorithmAdaptation": "None; byte restoration after reversing package relocation and source-only Error Prone annotation removal verified for all 19 classes"
+  "algorithmAdaptation": "None; byte restoration after reversing package relocation and source-only Error Prone annotation removal verified for all 20 classes"
 }

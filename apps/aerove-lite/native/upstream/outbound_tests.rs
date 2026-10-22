@@ -1,4 +1,5 @@
 use super::*;
+use std::net::SocketAddr;
 use std::sync::{Mutex as StdMutex, atomic::{AtomicBool, AtomicUsize, Ordering}};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpListener, sync::Notify, task::JoinSet};
 use tower::ServiceExt;
@@ -7,6 +8,9 @@ static LOCK: StdMutex<()> = StdMutex::new(());
 
 #[path = "telemetry_tests.rs"]
 mod telemetry_tests;
+
+#[path = "service_check_tests.rs"]
+mod service_check_tests;
 
 #[path = "outbound_route_tests.rs"]
 mod route_tests;
@@ -32,6 +36,14 @@ pub fn run(case: &str) {
     crate::setup_default_crypto_provider();
     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
         match case {
+            "route-snapshot" => service_check_tests::route_snapshot().await,
+            "service-targets" => service_check_tests::targets().await,
+            "service-statuses" => service_check_tests::statuses().await,
+            "service-routing" => service_check_tests::routing().await,
+            "service-cancel" => service_check_tests::cancellation().await,
+            "service-partial" => service_check_tests::partial().await,
+            "service-protect" => service_check_tests::protection(count, refused).await,
+            "service-http" => service_check_tests::http().await,
             "http-fixture" => http_fixture().await,
             "routing" => routing(count).await,
             "auth" => auth(count).await,

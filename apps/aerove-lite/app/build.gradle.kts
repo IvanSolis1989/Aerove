@@ -38,6 +38,7 @@ android {
         buildConfig = true
     }
     sourceSets.getByName("main").java.srcDir("../third_party/material-color-utilities/src")
+    sourceSets.getByName("main").assets.srcDir("src/main/java/dev/aerove/lite/editor/assets")
     testOptions { unitTests.isReturnDefaultValues = true }
     packaging { jniLibs.useLegacyPackaging = false }
     testBuildType = "release"
@@ -95,6 +96,12 @@ dependencies {
     implementation("io.github.kyant0:shapes:1.2.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.yaml:snakeyaml:2.4")
+    implementation("androidx.camera:camera-camera2:1.5.3")
+    implementation("androidx.camera:camera-lifecycle:1.5.3")
+    implementation("androidx.camera:camera-view:1.5.3")
+    implementation("com.google.zxing:core:3.5.3")
+    implementation("io.github.rosemoe:editor:0.23.7")
+    implementation("io.github.rosemoe:language-textmate:0.23.7")
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")

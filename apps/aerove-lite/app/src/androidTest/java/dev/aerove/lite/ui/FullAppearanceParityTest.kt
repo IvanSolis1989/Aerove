@@ -1,12 +1,65 @@
 package dev.aerove.lite.ui
 
 import androidx.compose.ui.graphics.toArgb
+import dev.aerove.lite.ColorStyle
 import dev.aerove.lite.ui.colorutilities.Hct
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FullAppearanceParityTest {
+    @Test
+    fun pre1ContrastTonesFollowBrightnessForEveryStyleAndAurora() {
+        for (dark in listOf(false, true)) for (aurora in listOf(false, true)) {
+            for (style in ColorStyle.entries) for (seed in listOf(0xffffff00, 0xffd8c0c3, 0xff03a9f4, 0xffe91e63)) {
+                val colors = fullColorScheme(seed.toInt(), dark, aurora, style)
+                val reason = "seed=$seed style=$style dark=$dark aurora=$aurora"
+                assertEquals("$reason onSurface", if (dark) 97.0 else 10.0, Hct.fromInt(colors.onSurface.toArgb()).tone, 0.5)
+                for ((name, color, tone) in listOf(
+                    Triple("surfaceContainer", colors.surfaceContainer, if (dark) 15.0 else 94.0),
+                    Triple("surfaceContainerHigh", colors.surfaceContainerHigh, if (dark) 21.0 else 92.0),
+                    Triple("surfaceContainerHighest", colors.surfaceContainerHighest, if (dark) 27.0 else 90.0),
+                )) assertEquals("$reason $name", tone, Hct.fromInt(color.toArgb()).tone, 0.6)
+                assertEquals("$reason legacy ink alias", colors.onSurface, colors.onBackground)
+                assertEquals("$reason card role", if (dark) colors.surfaceContainer else colors.surfaceBright, colors.fullCard(dark))
+                assertEquals("$reason block role", if (dark) colors.surfaceContainerHigh else colors.surfaceContainer, colors.fullBlock(dark))
+            }
+        }
+    }
+
+    @Test
+    fun auroraNightContrastUsesTheFullExactGrayRoles() {
+        val expected = listOf(0xfff6f6f6, 0xff262626, 0xff323232, 0xff404040).map { it.toInt() }
+        for (style in ColorStyle.entries) for (seed in listOf(0xff007aff, 0xffe91e63)) {
+            val colors = fullColorScheme(seed.toInt(), true, true, style)
+            assertEquals("seed=$seed style=$style", expected,
+                listOf(colors.onSurface, colors.surfaceContainer, colors.surfaceContainerHigh, colors.surfaceContainerHighest).map { it.toArgb() })
+        }
+    }
+
+    @Test
+    fun fourStylesKeepFullAccentAndNeutralRules() {
+        for (dark in listOf(false, true)) for (seed in listOf(0xff007aff.toInt(), 0xffe91e63.toInt())) {
+            val vivid = fullColorScheme(seed, dark, false, ColorStyle.Vivid)
+            val tinted = fullColorScheme(seed, dark, false, ColorStyle.Tinted)
+            val soft = fullColorScheme(seed, dark, false, ColorStyle.Soft)
+            val mono = fullColorScheme(seed, dark, false, ColorStyle.Monochrome)
+            assertEquals(vivid.primary, tinted.primary)
+            assertEquals(vivid.onPrimary, tinted.onPrimary)
+            assertTrue(vivid.surface != tinted.surface)
+            assertTrue(Hct.fromInt(tinted.surface.toArgb()).chroma <= minOf(Hct.fromInt(seed).chroma / 6.0, 10.0) + 1.0)
+            assertEquals(Hct.fromInt(vivid.surface.toArgb()).tone, Hct.fromInt(tinted.surface.toArgb()).tone, 0.5)
+            assertTrue(soft.primary != vivid.primary)
+            for (argb in listOf(mono.primary.toArgb(), mono.surface.toArgb())) {
+                assertEquals(argb ushr 16 and 255, argb ushr 8 and 255)
+                assertEquals(argb ushr 8 and 255, argb and 255)
+            }
+            for (style in ColorStyle.entries) {
+                assertEquals(fullColorScheme(seed, dark, true).signature(), fullColorScheme(seed, dark, true, style).signature())
+            }
+        }
+    }
+
     @Test
     fun motionMatchesFullSourceGoldenPoses() {
         val motion = FullAuroraMotion(832838199)

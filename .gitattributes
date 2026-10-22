@@ -4,6 +4,7 @@ apps/aerove/lib/**/generated/** -whitespace
 apps/aerove/core/patches/*.patch -text -whitespace
 apps/aerove-lite/native/upstream.patch -text -whitespace
 apps/aerove-lite/third_party/material-color-utilities/src/**/*.java -text
+apps/aerove-lite/app/src/main/java/dev/aerove/lite/editor/assets/editor/licenses/JetBrainsMono-OFL.txt -text -whitespace
 .github/actions/flutter/action.yaml -text
 .github/actions/flutter/setup.sh -text
 .github/actions/flutter/LICENSE -text

@@ -18,11 +18,25 @@ internal object ProfileArchive {
     private const val MAX_ENTRIES = 256
     private val legacyCharset = Charset.forName("CP437")
 
+    internal data class Limits(
+        val archiveBytes: Long = MAX_ARCHIVE_BYTES,
+        val expandedBytes: Long = MAX_EXPANDED_BYTES,
+        val entryBytes: Long = MAX_ENTRY_BYTES,
+        val entries: Int = MAX_ENTRIES,
+        val requiredRoot: String = "config.yaml",
+        val rootBytes: Long = MAX_PROFILE_BYTES.toLong(),
+    )
+
     suspend fun extract(input: InputStream, archive: File, destination: File): String {
+        extractFiles(input, archive, destination)
+        return File(destination, "config.yaml").inputStream().use { it.readBounded(MAX_PROFILE_BYTES).strictUtf8() }
+    }
+
+    internal suspend fun extractFiles(input: InputStream, archive: File, destination: File, limits: Limits = Limits()) {
         check(archive.parentFile!!.isDirectory || archive.parentFile!!.mkdirs())
         check(destination.mkdirs()) { "ZIP staging directory already exists or cannot be created" }
-        copyResource(input, archive, MAX_ARCHIVE_BYTES)
-        val metadata = metadata(archive)
+        copyResource(input, archive, limits.archiveBytes)
+        val metadata = metadata(archive, limits)
         val seen = mutableSetOf<String>()
         metadata.forEach { entry ->
             val path = entry.name.removeSuffix("/")
@@ -40,8 +54,8 @@ internal object ProfileArchive {
                 parent = parent.substringBeforeLast('/', "")
             }
         }
-        require(metadata.count { it.name == "config.yaml" } == 1) { "ZIP must contain config.yaml at its root" }
-        require(metadata.sumOf { it.size } <= MAX_EXPANDED_BYTES) { "ZIP expanded size limit exceeded" }
+        require(metadata.count { it.name == limits.requiredRoot } == 1) { "ZIP is missing its required root document" }
+        require(metadata.sumOf { it.size } <= limits.expandedBytes) { "ZIP expanded size limit exceeded" }
         ZipFile(archive, legacyCharset).use { zip ->
             val entries = zip.entries().toList()
             require(entries.size == metadata.size) { "ZIP central directory does not match entries" }
@@ -53,7 +67,7 @@ internal object ProfileArchive {
                     check(file.isDirectory || file.mkdirs())
                 } else {
                     check(file.parentFile!!.isDirectory || file.parentFile!!.mkdirs())
-                    val limit = if (entry.name == "config.yaml") MAX_PROFILE_BYTES.toLong() else MAX_ENTRY_BYTES
+                    val limit = if (entry.name == limits.requiredRoot) limits.rootBytes else limits.entryBytes
                     require(meta.size <= limit) { "ZIP entry exceeds $limit bytes" }
                     zip.getInputStream(entry).use { stream ->
                         val checked = CheckedInputStream(stream, CRC32())
@@ -63,11 +77,10 @@ internal object ProfileArchive {
                 }
             }
         }
-        return File(destination, "config.yaml").inputStream().use { it.readBounded(MAX_PROFILE_BYTES).strictUtf8() }
     }
 
     // ZipEntry does not expose Unix file types; read bounded central metadata before opening any entry.
-    private fun metadata(archive: File): List<Entry> = RandomAccessFile(archive, "r").use { file ->
+    private fun metadata(archive: File, limits: Limits): List<Entry> = RandomAccessFile(archive, "r").use { file ->
         require(file.length() >= 22) { "Truncated ZIP" }
         val tail = ByteArray(minOf(file.length(), 65557L).toInt())
         file.seek(file.length() - tail.size)
@@ -81,7 +94,7 @@ internal object ProfileArchive {
         val size = u32(tail, end + 12)
         val start = u32(tail, end + 16)
         val endOffset = file.length() - tail.size + end
-        require(count in 1..MAX_ENTRIES && start + size == endOffset) { "ZIP64, excessive entries or invalid central directory" }
+        require(count in 1..limits.entries && start + size == endOffset) { "ZIP64, excessive entries or invalid central directory" }
         file.seek(start)
         val result = ArrayList<Entry>(count)
         repeat(count) {
@@ -100,7 +113,7 @@ internal object ProfileArchive {
             require(nameSize in 1..1024 && file.filePointer + nameSize + extraSize + commentSize <= endOffset) { "Invalid ZIP entry name/extra data" }
             val compressed = u32(header, 20)
             val expanded = u32(header, 24)
-            require(compressed <= MAX_ARCHIVE_BYTES && expanded <= MAX_ENTRY_BYTES && u32(header, 42) < start) { "ZIP entry size or offset is invalid" }
+            require(compressed <= limits.archiveBytes && expanded <= limits.entryBytes && u32(header, 42) < start) { "ZIP entry size or offset is invalid" }
             val nameBytes = ByteArray(nameSize)
             file.readFully(nameBytes)
             val name = if (flags and 0x800 != 0) nameBytes.strictUtf8() else String(nameBytes, legacyCharset)

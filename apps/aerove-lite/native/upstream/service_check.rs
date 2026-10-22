@@ -1,0 +1,200 @@
+use super::{Probe, failure, http_probe::{PinnedRoute, ProbeRequest, ProbeResult, run_probe}};
+use std::{collections::HashMap, io, sync::{Arc, Mutex}, time::{Duration, SystemTime, UNIX_EPOCH}};
+use axum::{body::to_bytes, extract::Request, response::{IntoResponse, Response}};
+use futures::{FutureExt, StreamExt, stream::FuturesUnordered};
+use http::StatusCode;
+use serde::{Deserialize, Serialize};
+use tokio::{sync::Semaphore, time::Instant};
+use tokio_util::sync::CancellationToken;
+use crate::{RuntimeComponents, mobile::telemetry};
+
+#[path = "service_rules.rs"]
+mod rules;
+
+pub(super) const TARGETS: &[&str] = &["google", "github", "youtube", "chatgpt", "claude", "gemini", "netflix", "disney-plus", "prime-video", "spotify", "tiktok", "discord", "bilibili"];
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Params {
+    names: Vec<String>,
+    #[serde(default, rename = "proxy-name")]
+    proxy_name: String,
+    #[serde(default)]
+    timeout: i64,
+}
+
+#[derive(Clone, Default, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) struct Item {
+    pub name: String,
+    pub status: String,
+    pub region: String,
+    pub delay: u64,
+    pub chains: Vec<String>,
+    pub checked_at: u64,
+    pub core_epoch: u64,
+    pub picks_version: u64,
+}
+
+pub(super) struct Services {
+    slots: Semaphore,
+    claims: Mutex<HashMap<String, Arc<CancellationToken>>>,
+    #[cfg(feature = "aerove-mobile-tests")]
+    pub(super) fixture_base: std::sync::RwLock<Option<String>>,
+}
+
+struct Claims<'a> {
+    owner: &'a Services,
+    entries: Vec<(String, Arc<CancellationToken>)>,
+}
+
+impl Drop for Claims<'_> {
+    fn drop(&mut self) {
+        let mut claims = self.owner.claims.lock().unwrap();
+        for (name, token) in &self.entries {
+            token.cancel();
+            if claims.get(name).is_some_and(|current| Arc::ptr_eq(current, token)) { claims.remove(name); }
+        }
+    }
+}
+
+impl Services {
+    pub(super) fn new() -> Self {
+        Self { slots: Semaphore::new(4), claims: Mutex::new(HashMap::new()),
+            #[cfg(feature = "aerove-mobile-tests")] fixture_base: std::sync::RwLock::new(None) }
+    }
+
+    pub(super) async fn handle(&self, probe: &Arc<Probe>, request: Request) -> Response {
+        if request.uri().query().is_some() { return failure(StatusCode::BAD_REQUEST, "no_query_parameters"); }
+        if probe.cancel.is_cancelled() { return failure(StatusCode::SERVICE_UNAVAILABLE, "session_stopped"); }
+        let body = tokio::select! {
+            biased;
+            _ = probe.cancel.cancelled() => return failure(StatusCode::SERVICE_UNAVAILABLE, "session_stopped"),
+            body = tokio::time::timeout(Duration::from_secs(5), to_bytes(request.into_body(), 8192)) => body,
+        };
+        let Ok(Ok(body)) = body else { return failure(StatusCode::BAD_REQUEST, "invalid_request_body"); };
+        let Ok(params) = serde_json::from_slice::<Params>(&body) else { return failure(StatusCode::BAD_REQUEST, "invalid_service_parameters"); };
+        if params.names.is_empty() || params.names.len() > TARGETS.len() || params.timeout > 60_000 || params.proxy_name.len() > 4096
+            || params.names.iter().enumerate().any(|(index, name)| !TARGETS.contains(&name.as_str()) || params.names[..index].contains(name))
+        { return failure(StatusCode::BAD_REQUEST, "invalid_service_targets_or_budget"); }
+        let timeout = if params.timeout <= 0 { DEFAULT_TIMEOUT } else { Duration::from_millis(params.timeout as u64) };
+        let deadline = Instant::now() + timeout * 6;
+        let Ok(stamp) = telemetry::route_stamp() else { return failure(StatusCode::CONFLICT, "service_check_superseded"); };
+        let entries = {
+            let mut claims = self.claims.lock().unwrap();
+            params.names.iter().map(|name| {
+                let token = Arc::new(probe.cancel.child_token());
+                if let Some(previous) = claims.insert(name.clone(), token.clone()) { previous.cancel(); }
+                (name.clone(), token)
+            }).collect()
+        };
+        let claims = Claims { owner: self, entries };
+        let mut pending = FuturesUnordered::new();
+        for (index, (name, token)) in claims.entries.iter().enumerate() {
+            let proxy_name = &params.proxy_name;
+            pending.push(async move { (index, self.check(probe, name, proxy_name, timeout, deadline, token, stamp).await) });
+        }
+        let mut items = vec![Item::default(); params.names.len()];
+        let mut superseded = 0;
+        while let Some((index, result)) = pending.next().await {
+            if probe.cancel.is_cancelled() { return failure(StatusCode::SERVICE_UNAVAILABLE, "session_stopped"); }
+            match result {
+                Ok(item) => items[index] = item,
+                Err(_) => {
+                    superseded += 1;
+                    let Ok(checked_at) = timestamp() else { return failure(StatusCode::SERVICE_UNAVAILABLE, "clock_unavailable"); };
+                    items[index] = Item { name: params.names[index].clone(), status: "failed".into(), checked_at,
+                        core_epoch: stamp.0, picks_version: stamp.1, ..Item::default() };
+                }
+            }
+        }
+        if superseded == items.len() || telemetry::route_stamp().ok() != Some(stamp) {
+            return failure(StatusCode::CONFLICT, "service_check_superseded");
+        }
+        ([(http::header::CACHE_CONTROL, "no-store")], axum::Json(items)).into_response()
+    }
+
+    async fn check(&self, probe: &Arc<Probe>, name: &str, proxy_name: &str, timeout: Duration, deadline: Instant, cancel: &CancellationToken, stamp: (u64, u64)) -> io::Result<Item> {
+        let work = async {
+            let slot = tokio::time::timeout_at(deadline, self.slots.acquire()).await;
+            let components = probe.components.read().unwrap().clone();
+            let mode = components.dispatcher.get_mode().await;
+            let env = Env { components: components.clone(), proxy_name, timeout, deadline,
+                #[cfg(feature = "aerove-mobile-tests")] fixture_base: self.fixture_base.read().unwrap().clone() };
+            let permit = slot.ok().transpose().map_err(io::Error::other)?;
+            let mut item = if permit.is_some() { evaluate(name, &env).await }
+                else { Item { status: "failed".into(), ..Item::default() } };
+            if item.status == "timeout" && deadline.saturating_duration_since(Instant::now()) >= timeout {
+                item = evaluate(name, &env).await;
+            }
+            if cancel.is_cancelled() || stamp != telemetry::route_stamp()?
+                || (!item.chains.is_empty() && !probe.fresh(&components, mode, &item.chains).await)
+                || stamp != telemetry::route_stamp()?
+            { return Err(io::Error::new(io::ErrorKind::Interrupted, "service route changed")); }
+            item.name = name.into();
+            item.checked_at = timestamp()?;
+            (item.core_epoch, item.picks_version) = stamp;
+            Ok(item)
+        };
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => Err(io::Error::new(io::ErrorKind::Interrupted, "service check cancelled")),
+            result = work => result,
+        }
+    }
+}
+
+fn timestamp() -> io::Result<u64> {
+    Ok(SystemTime::now().duration_since(UNIX_EPOCH).map_err(io::Error::other)?.as_millis() as u64)
+}
+
+async fn evaluate(name: &str, env: &Env<'_>) -> Item {
+    std::panic::AssertUnwindSafe(rules::check(name, env)).catch_unwind().await
+        .unwrap_or_else(|_| Item { status: "failed".into(), ..Item::default() })
+}
+
+struct Env<'a> {
+    components: Arc<RuntimeComponents>,
+    proxy_name: &'a str,
+    timeout: Duration,
+    deadline: Instant,
+    #[cfg(feature = "aerove-mobile-tests")]
+    fixture_base: Option<String>,
+}
+
+impl Env<'_> {
+    async fn get(&self, url: &str, max_body: usize) -> (Item, Option<ProbeResult>) {
+        self.send(ProbeRequest::get(url, max_body, self.timeout)).await
+    }
+
+    async fn scan(&self, url: &str, until: fn(&str) -> bool) -> (Item, Option<ProbeResult>) {
+        let mut request = ProbeRequest::get(url, 8 * 1024 * 1024, self.timeout);
+        request.until = Some(until);
+        self.send(request).await
+    }
+
+    async fn send(&self, mut request: ProbeRequest) -> (Item, Option<ProbeResult>) {
+        request.timeout = self.timeout;
+        #[cfg(feature = "aerove-mobile-tests")]
+        if let Some(base) = &self.fixture_base {
+            let uri: http::Uri = request.url.parse().unwrap();
+            request.headers.insert("x-aerove-fixture-url", request.url.parse().unwrap());
+            request.url = format!("{base}{}", uri.path_and_query().map(|path| path.as_str()).unwrap_or("/"));
+        }
+        let result = async {
+            let pin = if self.proxy_name.is_empty() { None } else {
+                let handler = self.components.outbound_manager.get_outbound(self.proxy_name).await
+                    .ok_or_else(|| io::Error::other("requested proxy is not in the applied config"))?;
+                Some(PinnedRoute { handler, resolver: self.components.dns_resolver.clone() })
+            };
+            if Instant::now() >= self.deadline { return Err(io::Error::other("service sweep expired")); }
+            tokio::time::timeout_at(self.deadline, run_probe(self.components.dispatcher.clone(), pin, request)).await
+                .map_err(|error| io::Error::new(io::ErrorKind::TimedOut, error))?
+        }.await;
+        match result {
+            Ok(result) => (Item { delay: result.delay, chains: result.chains.clone(), ..Item::default() }, Some(result)),
+            Err(error) => (Item { status: if error.kind() == io::ErrorKind::TimedOut { "timeout" } else { "failed" }.into(), ..Item::default() }, None),
+        }
+    }
+}

@@ -353,6 +353,9 @@ mod outbound_tests;
 mod telemetry_tests;
 
 #[cfg(test)]
+mod service_check_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::os::{fd::AsRawFd, unix::net::UnixStream};

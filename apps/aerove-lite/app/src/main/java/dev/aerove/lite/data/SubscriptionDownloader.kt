@@ -28,6 +28,7 @@ internal suspend fun Call.awaitResponse(): Response = suspendCancellableCoroutin
 }
 
 class SubscriptionDownloader(client: OkHttpClient = OkHttpClient()) {
+    data class Download(val yaml: String, val subscriptionUserInfo: String?, val contentDisposition: String?)
     private val http = client.newBuilder()
         .proxy(Proxy.NO_PROXY)
         .followRedirects(false)
@@ -35,7 +36,9 @@ class SubscriptionDownloader(client: OkHttpClient = OkHttpClient()) {
         .callTimeout(45, TimeUnit.SECONDS)
         .build()
 
-    suspend fun download(url: String): String = withContext(Dispatchers.IO) {
+    suspend fun download(url: String): String = downloadResult(url).yaml
+
+    suspend fun downloadResult(url: String): Download = withContext(Dispatchers.IO) {
         var target = parseUrl(url)
         repeat(6) { redirect ->
             val request = Request.Builder().url(target)
@@ -54,7 +57,9 @@ class SubscriptionDownloader(client: OkHttpClient = OkHttpClient()) {
                     if (!response.isSuccessful) throw IOException("Subscription HTTP ${response.code}")
                     val body = response.body ?: throw IOException("Subscription response is empty")
                     if (body.contentLength() > MAX_PROFILE_BYTES) throw IOException("Subscription is too large")
-                    return@withContext body.byteStream().readBounded(MAX_PROFILE_BYTES).strictUtf8()
+                    return@withContext Download(body.byteStream().readBounded(MAX_PROFILE_BYTES).strictUtf8(),
+                        response.header("subscription-userinfo")?.take(8192),
+                        response.header("content-disposition")?.take(8192))
                 }
             }
         }

@@ -19,6 +19,7 @@ class LiteSettingsStoreTest {
             aurora = true,
             colorMode = ColorMode.Dark,
             themeColor = 0xff124578,
+            themeColors = LiteSettings().themeColors + 0xff124578L,
             colorStyle = ColorStyle.Tinted,
             auroraColors = listOf(0xFF123456L, 0xFFABCDEFL),
             auroraSeed = 9876543210L,
@@ -32,6 +33,8 @@ class LiteSettingsStoreTest {
             packages = setOf("com.example.one", "com.example.two"),
             autoStart = true,
             openLogs = true,
+            serviceOrder = listOf("netflix") + serviceTargetIds.filterNot { it == "netflix" },
+            disabledServices = setOf("google", "github"),
         )
         assertEquals(settings, LiteSettingsStore(temporary.root).save(settings, vpnAuthorized = true))
         assertEquals(settings, LiteSettingsStore(temporary.root).read())
@@ -42,12 +45,14 @@ class LiteSettingsStoreTest {
     }
 
     @Test fun oldSchemaOnePreservesExplicitThemeChoicesWhileAddingNewDefaults() = runBlocking<Unit> {
-        val old = LiteSettings(material = MaterialTier.Solid, aurora = false, themeColor = 0xFF6B52AEL, colorMode = ColorMode.Light)
+        val old = LiteSettings(material = MaterialTier.Solid, aurora = false, themeColor = 0xFF6B52AEL,
+            themeColors = LiteSettings().themeColors + 0xFF6B52AEL, colorMode = ColorMode.Light)
         val store = LiteSettingsStore(temporary.root)
         store.save(old)
         val file = File(temporary.root, "settings/settings.json")
         val json = JSONObject(file.readText()).apply {
-            listOf("colorStyle", "auroraColors", "auroraSeed", "auroraRotationDay", "dashboardWidgets").forEach { remove(it) }
+            listOf("colorStyle", "auroraColors", "auroraSeed", "auroraRotationDay", "dashboardWidgets",
+                "themeColors", "followSystemColor", "editorFontSize", "editorLineWrap").forEach { remove(it) }
         }
         file.writeText(json.toString())
         val originalBytes = file.readBytes()
@@ -114,6 +119,7 @@ class LiteSettingsStoreTest {
         val original = LiteSettings(
             material = MaterialTier.Frosted, aurora = false, colorMode = ColorMode.Dark,
             themeColor = 0xFF123456L, mode = ProxyMode.Direct,
+            themeColors = LiteSettings().themeColors + 0xFF123456L,
             dnsServers = listOf("tls://8.8.8.8:853"), openLogs = true,
         )
         val store = LiteSettingsStore(temporary.root)
@@ -178,6 +184,7 @@ class LiteSettingsStoreTest {
         val customized = LiteSettings(
             material = MaterialTier.Solid, aurora = false, colorMode = ColorMode.Dark,
             themeColor = 0xFF123456L, colorStyle = ColorStyle.Monochrome,
+            themeColors = LiteSettings().themeColors + 0xFF123456L,
             auroraColors = listOf(0xFF010203L), auroraSeed = 9876543210L, auroraRotationDay = 20261022L,
             dashboardWidgets = listOf(DashboardWidget.MemoryInfo, DashboardWidget.CurrentOutbound),
             mode = ProxyMode.Global, ipv6 = true, overrideDns = true,

@@ -1,0 +1,16 @@
+<resources>
+    <string name="lite_scan_close">关闭</string>
+    <string name="lite_scan_album">相册</string>
+    <string name="lite_scan_torch_on">打开手电筒</string>
+    <string name="lite_scan_torch_off">关闭手电筒</string>
+    <string name="lite_scan_hint">扫描二维码导入配置</string>
+    <string name="lite_scan_invalid">此二维码不包含有效的配置链接</string>
+    <string name="lite_scan_permission">扫描二维码需要相机权限</string>
+    <string name="lite_scan_camera_error">无法启动相机</string>
+    <string name="lite_scan_retry">重试</string>
+    <string name="lite_scan_settings">打开应用设置</string>
+    <string name="lite_scan_decoding">正在识别二维码…</string>
+    <string name="lite_scan_image_error">无法读取此图片，请选择不超过 16 MiB 的图片。</string>
+    <string name="lite_scan_no_code">图片中未找到二维码</string>
+    <string name="lite_scan_continue">继续扫描</string>
+</resources>

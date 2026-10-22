@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="diag_service_status">Service status</string>
+    <string name="diag_service_available">Available</string>
+    <string name="diag_service_restricted">Access restricted</string>
+    <string name="diag_service_unavailable">Unavailable</string>
+    <string name="diag_service_disallowed_isp">Disallowed ISP</string>
+    <string name="diag_service_blocked">Blocked</string>
+    <string name="diag_service_unsupported_region">Region not supported</string>
+    <string name="diag_service_originals_only">Originals only</string>
+    <string name="diag_service_coming_soon">Coming soon</string>
+    <string name="diag_service_timeout">Timeout</string>
+    <string name="diag_service_failed">Check failed</string>
+    <string name="diag_service_pending">Not checked</string>
+    <string name="diag_service_connect">Connect to check service availability</string>
+    <string name="diag_service_check_all">Check all</string>
+    <string name="diag_service_all_available">All available</string>
+    <string name="diag_service_one_issue">1 issue</string>
+    <string name="diag_service_issues">%1$d issues</string>
+    <string name="diag_service_delay">%1$d ms</string>
+    <string name="diag_service_checked_at">Checked at %1$s</string>
+    <string name="diag_service_manage">Manage services</string>
+    <string name="diag_service_check">Check %1$s</string>
+    <string name="diag_service_shown">Shown on the dashboard</string>
+    <string name="diag_service_move_up">Move up</string>
+    <string name="diag_service_move_down">Move down</string>
+    <string name="diag_memory">Memory</string>
+    <string name="diag_memory_process_rss">Application process RSS</string>
+    <string name="diag_memory_in_use">In use</string>
+    <string name="diag_memory_limit">Configured limit</string>
+    <string name="diag_memory_no_sample">No memory sample</string>
+    <string name="diag_loading">Loading</string>
+    <string name="diag_close">Close</string>
+</resources>

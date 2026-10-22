@@ -110,7 +110,8 @@ class LiteDashboardMatrixTest {
                         assertEquals(android.graphics.Color.TRANSPARENT, window.statusBarColor)
                         @Suppress("DEPRECATION")
                         assertEquals(android.graphics.Color.TRANSPARENT, window.navigationBarColor)
-                        assertTrue(!window.isNavigationBarContrastEnforced && !window.isStatusBarContrastEnforced)
+                        assertTrue(window.isNavigationBarContrastEnforced)
+                        assertTrue(!window.isStatusBarContrastEnforced)
                     }
                     val tab = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab)
                     compose.onNode(tab and hasText(context.getString(R.string.lite_tab_home))).assertIsSelected()

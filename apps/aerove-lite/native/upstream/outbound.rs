@@ -1,29 +1,29 @@
 use std::{
     collections::HashMap,
     io,
-    net::{IpAddr, SocketAddr},
+    net::IpAddr,
     sync::{Arc, Mutex, RwLock},
     time::Duration,
 };
 
-use axum::{Router, extract::Request, middleware::Next, response::{IntoResponse, Response}, routing::get};
-use bytes::Bytes;
+use axum::{Router, extract::Request, middleware::Next, response::{IntoResponse, Response}, routing::{get, post}};
 use futures::{StreamExt, stream::FuturesUnordered};
-use http::{Method, StatusCode, Uri};
-use http_body_util::{BodyExt, Empty};
-use hyper_util::rt::TokioIo;
+use http::{Method, StatusCode};
 use serde::Serialize;
 use serde_json::{Value, json};
-use tokio::{io::{AsyncRead, AsyncWrite}, sync::Semaphore};
+use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 
-use crate::{RuntimeComponents, app::dispatcher::Dispatcher, common::tls::GLOBAL_ROOT_STORE,
-    session::{Network, Session, SocksAddr, Type}};
+use crate::{RuntimeComponents, app::dispatcher::Dispatcher};
+
+#[path = "http_probe.rs"]
+mod http_probe;
+#[path = "service_check.rs"]
+mod service_check;
 
 const MAX_BODY: usize = 4096;
 const TIMEOUT: Duration = Duration::from_secs(6);
 const STAGGER: Duration = Duration::from_millis(800);
-const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 #[derive(Clone, Copy)]
 enum Format { Cloudflare, IpSb, IpInfo, IpWho, IpApi, GeoJs, CountryIs, IpQuery, IdentMe }
@@ -48,6 +48,7 @@ pub(crate) struct Probe {
     changes: Mutex<HashMap<String, usize>>,
     timeout: Duration,
     sources: Vec<Source>,
+    services: service_check::Services,
 }
 
 struct SelectionChange { probe: Arc<Probe>, name: String }
@@ -66,7 +67,7 @@ impl Probe {
     pub(crate) fn new(components: Arc<RwLock<Arc<RuntimeComponents>>>, cancel: CancellationToken) -> Arc<Self> {
         Arc::new(Self {
             components, cancel, slot: Semaphore::new(1),
-            changes: Mutex::new(HashMap::new()), timeout: TIMEOUT,
+            changes: Mutex::new(HashMap::new()), timeout: TIMEOUT, services: service_check::Services::new(),
             sources: vec![
                 Source { url: "https://www.cloudflare.com/cdn-cgi/trace".into(), format: Format::Cloudflare },
                 Source { url: "https://api.ip.sb/geoip".into(), format: Format::IpSb },
@@ -83,10 +84,52 @@ impl Probe {
 
     pub(crate) fn routes(self: &Arc<Self>) -> Router {
         let probe = self.clone();
+        let services = self.clone();
+        let route = self.clone();
         Router::new().route("/aerove/outbound", get(move |request: Request| {
             let probe = probe.clone();
             async move { probe.handle(request).await }
+        })).route("/aerove/service-check", post(move |request: Request| {
+            let probe = services.clone();
+            async move { probe.services.handle(&probe, request).await }
+        })).route("/aerove/route", get(move |request: Request| {
+            let probe = route.clone();
+            async move { probe.route_snapshot(request).await }
         }))
+    }
+
+    async fn route_snapshot(&self, request: Request) -> Response {
+        if request.uri().query().is_some() { return failure(StatusCode::BAD_REQUEST, "no_parameters"); }
+        if self.cancel.is_cancelled() { return failure(StatusCode::SERVICE_UNAVAILABLE, "session_stopped"); }
+        let result = tokio::select! {
+            biased;
+            _ = self.cancel.cancelled() => return failure(StatusCode::SERVICE_UNAVAILABLE, "session_stopped"),
+            result = tokio::time::timeout(Duration::from_secs(3), self.read_route()) => result,
+        };
+        match result {
+            Ok(Ok(snapshot)) => ([(http::header::CACHE_CONTROL, "no-store")], axum::Json(snapshot)).into_response(),
+            Ok(Err(())) => failure(StatusCode::CONFLICT, "route_changed"),
+            Err(_) => failure(StatusCode::GATEWAY_TIMEOUT, "route_timeout"),
+        }
+    }
+
+    async fn read_route(&self) -> Result<Value, ()> {
+        let stamp = super::telemetry::route_stamp().map_err(|_| ())?;
+        let components = self.components.read().unwrap().clone();
+        let proxies = components.outbound_manager.get_proxies().await;
+        let proxies = serde_json::to_value(proxies).map_err(|_| ())?;
+        let mut picks = std::collections::BTreeMap::new();
+        for (name, value) in proxies.as_object().ok_or(())? {
+            if value.get("all").is_some() {
+                if let Some(active) = value.get("now").and_then(Value::as_str) {
+                    picks.insert(name.clone(), active.to_owned());
+                }
+            }
+        }
+        if self.cancel.is_cancelled() || super::telemetry::route_stamp().ok() != Some(stamp)
+            || !Arc::ptr_eq(&components, &self.components.read().unwrap())
+        { return Err(()); }
+        Ok(json!({ "core-epoch": stamp.0, "picks-version": stamp.1, "picks": picks }))
     }
 
     pub(crate) async fn guard(self: Arc<Self>, request: Request, next: Next) -> Response {
@@ -199,72 +242,12 @@ async fn fetch(dispatcher: Arc<Dispatcher>, source: Source) -> io::Result<Outbou
 }
 
 async fn routed_http(dispatcher: Arc<Dispatcher>, url: &str) -> io::Result<(Vec<u8>, Vec<String>)> {
-    let uri: Uri = url.parse().map_err(io::Error::other)?;
-    let host = uri.host().ok_or_else(|| io::Error::other("missing probe host"))?.to_owned();
-    let https = uri.scheme_str() == Some("https");
-    if !https && uri.scheme_str() != Some("http") { return Err(io::Error::other("unsupported probe scheme")); }
-    let port = uri.port_u16().unwrap_or(if https { 443 } else { 80 });
-    let destination = match host.parse::<IpAddr>() {
-        Ok(ip) => SocksAddr::Ip(SocketAddr::new(ip, port)),
-        Err(_) => SocksAddr::Domain(host.clone(), port),
-    };
-    let session = Session { network: Network::Tcp, typ: Type::Ignore, destination, ..Default::default() };
-    let (stream, ingress) = tokio::io::duplex(16 * 1024);
-    let (route_tx, route_rx) = tokio::sync::oneshot::channel();
-    let routed = dispatcher.dispatch_probe_stream(session, Box::new(ingress), route_tx);
-    let query = async {
-        if https {
-            let tls = rustls::ClientConfig::builder().with_root_certificates(GLOBAL_ROOT_STORE.clone()).with_no_client_auth();
-            let name = rustls::pki_types::ServerName::try_from(host).map_err(io::Error::other)?;
-            let stream = tokio_rustls::TlsConnector::from(Arc::new(tls)).connect(name, stream).await?;
-            exchange(stream, uri).await
-        } else { exchange(stream, uri).await }
-    };
-    tokio::pin!(query, routed);
-    // Both futures own their streams; dropping a timed-out or superseded query closes the entire route.
-    let body = tokio::select! { result = &mut query => result, _ = &mut routed => query.await }?;
-    let chains = route_rx.await.map_err(|_| io::Error::other("dispatcher did not report the probe route"))?;
-    if chains.is_empty() { return Err(io::Error::other("dispatcher reported an empty probe route")); }
-    Ok((body, chains))
-}
-
-async fn exchange<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(stream: S, uri: Uri) -> io::Result<Vec<u8>> {
-    let request = http::Request::builder()
-        .uri(uri.path_and_query().map(|path| path.as_str()).unwrap_or("/"))
-        .header(http::header::HOST, uri.authority().ok_or_else(|| io::Error::other("missing authority"))?.as_str())
-        .header(http::header::USER_AGENT, USER_AGENT)
-        .header(http::header::ACCEPT, "application/json")
-        .header(http::header::ACCEPT_ENCODING, "identity")
-        .header(http::header::CONNECTION, "close")
-        .body(Empty::<Bytes>::new()).map_err(io::Error::other)?;
-    let (mut sender, connection) = hyper::client::conn::http1::Builder::new()
-        .max_buf_size(8192).handshake(TokioIo::new(stream)).await.map_err(io::Error::other)?;
-    let read = async {
-        let response = sender.send_request(request).await.map_err(io::Error::other)?;
-        if response.status() != StatusCode::OK { return Err(io::Error::other("probe returned a non-200 status")); }
-        if response.headers().get(http::header::CONTENT_ENCODING).is_some_and(|value| value != "identity") {
-            return Err(io::Error::other("encoded probe response is not supported"));
-        }
-        if let Some(length) = response.headers().get(http::header::CONTENT_LENGTH) {
-            let length: usize = length.to_str().map_err(io::Error::other)?.parse().map_err(io::Error::other)?;
-            if length > MAX_BODY { return Err(io::Error::other("probe body limit exceeded")); }
-        }
-        let mut body = response.into_body();
-        let mut bytes = Vec::new();
-        while let Some(frame) = body.frame().await {
-            let frame = frame.map_err(io::Error::other)?;
-            if let Ok(chunk) = frame.into_data() {
-                if chunk.len() > MAX_BODY - bytes.len() { return Err(io::Error::other("probe body limit exceeded")); }
-                bytes.extend_from_slice(&chunk);
-            }
-        }
-        Ok(bytes)
-    };
-    tokio::pin!(read, connection);
-    tokio::select! {
-        result = &mut read => result,
-        result = &mut connection => { result.map_err(io::Error::other)?; read.await }
-    }
+    let mut request = http_probe::ProbeRequest::get(url, MAX_BODY, TIMEOUT);
+    request.strict = true;
+    request.no_redirect = true;
+    request.headers.insert(http::header::ACCEPT, "application/json".parse().unwrap());
+    let result = http_probe::run_probe(dispatcher, None, request).await?;
+    Ok((result.body, result.chains))
 }
 
 fn parse(format: Format, body: &[u8]) -> io::Result<OutboundInfo> {

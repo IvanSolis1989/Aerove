@@ -147,7 +147,19 @@
      axum::serve(listener, app.into_make_service())
 --- a/clash-lib/src/app/api/runner.rs
 +++ b/clash-lib/src/app/api/runner.rs
-@@ -149,9 +149,15 @@
+@@ -60,7 +60,11 @@
+     }
+ 
+     pub fn update_components(&self, new_components: Arc<RuntimeComponents>) {
++        #[cfg(feature = "aerove-mobile")]
++        let _route_change = crate::mobile::telemetry::route_mutation();
+         *self.components.write().unwrap() = new_components;
++        #[cfg(feature = "aerove-mobile")]
++        crate::mobile::telemetry::structure_changed();
+     }
+ }
+ 
+@@ -149,9 +153,15 @@
                      middlewares::fix_json_content_type::fix_content_type,
                  ))
                  .route_layer(cors)
@@ -164,7 +176,7 @@
              if let Some(external_ui) = controller_cfg
                  .external_ui
                  .filter(|path| !path.trim().is_empty())
-@@ -262,6 +268,14 @@
+@@ -262,6 +272,14 @@
              };
              if let Err(e) = result {
                  error!("API server failed to start, error: {}", e);
@@ -179,7 +191,7 @@
              }
          });
          *self.task_handle.lock().unwrap() = Some(handle);
-@@ -276,7 +290,7 @@
+@@ -276,7 +294,7 @@
          Box::pin(async move {
              let handle = self.task_handle.lock().unwrap().take();
              if let Some(h) = handle {
@@ -190,10 +202,15 @@
          })
 --- a/clash-lib/src/proxy/tun/mod.rs
 +++ b/clash-lib/src/proxy/tun/mod.rs
-@@ -7,2 +7,2 @@
+@@ -4,7 +4,7 @@
+ pub use runner::TunRunner;
+ mod stream;
+ 
 -#[cfg(target_os = "linux")] // for tproxy
 +#[cfg(all(target_os = "linux", feature = "tproxy"))] // for tproxy
  pub use datagram::TunDatagram;
+ 
+ #[cfg(test)]
 --- a/clash-lib/src/proxy/tun/runner.rs
 +++ b/clash-lib/src/proxy/tun/runner.rs
 @@ -1,4 +1,4 @@
@@ -445,16 +462,24 @@
  }
  
  struct Inner {
-@@ -142,6 +257,8 @@
+@@ -136,12 +251,16 @@
+                             }
+                         }
+                     }
++                    #[cfg(feature = "aerove-mobile")]
++                    let _route_change = crate::mobile::telemetry::route_mutation();
+                     {
+                         let mut inner = inner.write().await;
+                         debug!("updating {} proxies for: {}", n, input.len());
                          inner.proxies.clone_from(&input);
                      }
                      hc.update(input).await;
 +                    #[cfg(feature = "aerove-mobile")]
-+                    crate::mobile::telemetry::groups_changed();
++                    crate::mobile::telemetry::structure_changed();
                      tokio::spawn(async move {
                          hc.check(false).await;
                      });
-@@ -150,119 +267,12 @@
+@@ -150,119 +269,12 @@
          );
  
          let n = name.clone();
@@ -595,7 +620,21 @@
      RuleProviderImpl, RuleSetBehavior, RuleSetFormat, ThreadSafeRuleProvider,
 --- a/clash-lib/src/app/remote_content_manager/providers/rule_provider/provider.rs
 +++ b/clash-lib/src/app/remote_content_manager/providers/rule_provider/provider.rs
-@@ -229,6 +229,10 @@
+@@ -215,9 +215,13 @@
+                 let n = n.clone(); // Clone name for the async block
+                 let inner: Arc<tokio::sync::RwLock<Inner>> = inner_clone.clone();
+                 Box::pin(async move {
++                    #[cfg(feature = "aerove-mobile")]
++                    let _route_change = crate::mobile::telemetry::route_mutation();
+                     let mut inner = inner.write().await;
+                     trace!("updated rules for provider: {}", n);
+                     inner.content = input;
++                    #[cfg(feature = "aerove-mobile")]
++                    crate::mobile::telemetry::structure_changed();
+                 })
+             });
+ 
+@@ -229,6 +233,10 @@
          let geodata_clone = geodata.clone();
          let parser: RuleParser =
              Box::new(move |input: &[u8]| -> anyhow::Result<RuleContent> {
@@ -606,7 +645,20 @@
                  match current_format {
                      RuleSetFormat::Yaml => {
                          let scheme: ProviderScheme = serde_yaml::from_slice(input)
-@@ -473,7 +477,7 @@
+@@ -419,8 +427,12 @@
+ 
+             match rules {
+                 Ok(content) => {
++                    #[cfg(feature = "aerove-mobile")]
++                    let _route_change = crate::mobile::telemetry::route_mutation();
+                     let mut inner = self.inner.write().await;
+                     inner.content = content;
++                    #[cfg(feature = "aerove-mobile")]
++                    crate::mobile::telemetry::structure_changed();
+                 }
+                 Err(e) => {
+                     return Err(std::io::Error::new(
+@@ -473,7 +485,7 @@
  }
  
  // --- make_rules is needed for Yaml and Text formats ---
@@ -615,7 +667,7 @@
      behavior: RuleSetBehavior,
      rules: Vec<String>, // Input is Vec<String> for Yaml/Text
      mmdb: Option<MmdbLookup>,
-@@ -496,7 +500,11 @@
+@@ -496,7 +508,11 @@
  fn make_domain_rules(rules: Vec<String>) -> Result<trie::StringTrie<bool>, Error> {
      let mut trie = trie::StringTrie::new();
      for rule in rules {
@@ -628,7 +680,7 @@
      }
      Ok(trie)
  }
-@@ -504,9 +512,27 @@
+@@ -504,9 +520,27 @@
  fn make_ip_cidr_rules(rules: Vec<String>) -> Result<CidrTrie, Error> {
      let mut trie = CidrTrie::new();
      for rule in rules {
@@ -657,7 +709,7 @@
  }
  
  fn make_classical_rules(
-@@ -522,18 +548,7 @@
+@@ -522,18 +556,7 @@
      let mut other_rules = Vec::new();
  
      for rule in rules {
@@ -847,7 +899,7 @@
              mem_check_counter += 1;
 --- a/clash-lib/src/proxy/group/selector/mod.rs
 +++ b/clash-lib/src/proxy/group/selector/mod.rs
-@@ -102,10 +102,11 @@
+@@ -102,10 +102,13 @@
      async fn select(&self, name: &str) -> Result<(), Error> {
          let proxies = get_proxies_from_providers(&self.providers, false).await;
          if proxies.iter().any(|x| x.name() == name) {
@@ -855,31 +907,35 @@
 -                proxies.iter().position(|p| p.name() == name).unwrap() as u16,
 -                std::sync::atomic::Ordering::Relaxed,
 -            );
++            #[cfg(feature = "aerove-mobile")]
++            let _route_change = crate::mobile::telemetry::route_mutation();
 +            let index = proxies.iter().position(|p| p.name() == name).unwrap() as u16;
 +            if self.current_selected_index.swap(index, std::sync::atomic::Ordering::Relaxed) != index {
 +                #[cfg(feature = "aerove-mobile")]
-+                crate::mobile::telemetry::groups_changed();
++                crate::mobile::telemetry::selection_changed();
 +            }
              Ok(())
          } else {
              Err(Error::Operation(format!("proxy {name} not found")))
 --- a/clash-lib/src/proxy/group/urltest/mod.rs
 +++ b/clash-lib/src/proxy/group/urltest/mod.rs
-@@ -273,6 +273,13 @@
+@@ -273,6 +273,15 @@
          }
      }
  
 +    fn set_fastest_index(&self, index: u16) {
++        #[cfg(feature = "aerove-mobile")]
++        let _route_change = crate::mobile::telemetry::route_mutation();
 +        if self.fastest_proxy_index.swap(index, Ordering::Relaxed) != index {
 +            #[cfg(feature = "aerove-mobile")]
-+            crate::mobile::telemetry::groups_changed();
++            crate::mobile::telemetry::selection_changed();
 +        }
 +    }
 +
      pub(crate) fn record_failure(&self, name: &str) {
          if let Ok(mut cb) = self.circuit_breaker.lock() {
              let newly_tripped = cb.record_failure(name, Instant::now());
-@@ -341,12 +348,14 @@
+@@ -341,12 +350,16 @@
                  .enumerate()
                  .find(|(_, p)| p.name() == locked_name)
              {
@@ -890,14 +946,16 @@
                  return Some(proxy.clone());
              } else {
 -                *lock = None;
++                #[cfg(feature = "aerove-mobile")]
++                let _route_change = crate::mobile::telemetry::route_mutation();
 +                if lock.take().is_some() {
 +                    #[cfg(feature = "aerove-mobile")]
-+                    crate::mobile::telemetry::groups_changed();
++                    crate::mobile::telemetry::selection_changed();
 +                }
                  warn!(
                      locked_name = locked_name,
                      "manual_lock: node no longer exists, lock cleared"
-@@ -418,8 +427,7 @@
+@@ -418,8 +431,7 @@
                      from = %proxies[current_fastest_index].name(),
                      "force_switch: manual test triggered, selecting fastest"
                  );
@@ -907,7 +965,7 @@
                  // Reset adaptive state
                  if let Ok(mut state) = self.adaptive_state.lock() {
                      state.rounds_since_switch = 0;
-@@ -528,8 +536,7 @@
+@@ -528,8 +540,7 @@
              }
          }
  
@@ -917,29 +975,33 @@
  
          let selected = &proxies[selected_index];
          let selected_delay = if selected_index == fastest_index {
-@@ -751,7 +758,10 @@
+@@ -751,7 +762,12 @@
                      || name.eq_ignore_ascii_case("default")))
          {
              if let Ok(mut lock) = self.manual_lock.lock() {
 -                *lock = None;
++                #[cfg(feature = "aerove-mobile")]
++                let _route_change = crate::mobile::telemetry::route_mutation();
 +                if lock.take().is_some() {
 +                    #[cfg(feature = "aerove-mobile")]
-+                    crate::mobile::telemetry::groups_changed();
++                    crate::mobile::telemetry::selection_changed();
 +                }
                  warn!("manual_lock: cleared, resuming auto mode");
                  return Ok(());
              } else {
-@@ -763,9 +773,12 @@
+@@ -763,9 +779,14 @@
              proxies.iter().enumerate().find(|(_, p)| p.name() == name)
          {
              if let Ok(mut lock) = self.manual_lock.lock() {
 -                *lock = Some(proxy.name().to_string());
 -                self.fastest_proxy_index
 -                    .store(idx as u16, Ordering::Relaxed);
++                #[cfg(feature = "aerove-mobile")]
++                let _route_change = crate::mobile::telemetry::route_mutation();
 +                if lock.as_deref() != Some(proxy.name()) {
 +                    *lock = Some(proxy.name().to_string());
 +                    #[cfg(feature = "aerove-mobile")]
-+                    crate::mobile::telemetry::groups_changed();
++                    crate::mobile::telemetry::selection_changed();
 +                }
 +                self.set_fastest_index(idx as u16);
                  warn!(node = name, "manual_lock: locked to node");
@@ -965,7 +1027,7 @@
          }
      }
  
-@@ -58,15 +62,29 @@
+@@ -58,15 +62,31 @@
          get_proxies_from_providers(&self.providers, touch).await
      }
  
@@ -974,10 +1036,12 @@
 +        {
 +            let next = proxy.as_ref().map(|proxy| proxy.name());
 +            let mut active = self.active.lock().unwrap();
++            #[cfg(feature = "aerove-mobile")]
++            let _route_change = crate::mobile::telemetry::route_mutation();
 +            if active.as_deref() != next {
 +                let previously_selected = active.is_some();
 +                *active = next.map(str::to_owned);
-+                if previously_selected { crate::mobile::telemetry::groups_changed(); }
++                if previously_selected { crate::mobile::telemetry::selection_changed(); }
 +            }
 +        }
 +        proxy
@@ -999,11 +1063,25 @@
  
 --- a/clash-lib/src/app/dispatcher/dispatcher_impl.rs
 +++ b/clash-lib/src/app/dispatcher/dispatcher_impl.rs
-@@ -78,11 +78,31 @@
+@@ -71,18 +71,45 @@
+     pub async fn set_mode(&self, mode: RunMode) {
+         info!("run mode switched to {}", mode);
+ 
+-        *self.mode.write().await = mode;
++        #[cfg(feature = "aerove-mobile")]
++        let _route_change = crate::mobile::telemetry::route_mutation();
++        let mut current = self.mode.write().await;
++        if std::mem::discriminant(&*current) != std::mem::discriminant(&mode) {
++            *current = mode;
++            #[cfg(feature = "aerove-mobile")]
++            crate::mobile::telemetry::structure_changed();
++        }
+     }
+ 
+     pub async fn get_mode(&self) -> RunMode {
          *self.mode.read().await
      }
--
-+
+ 
 -    #[instrument(skip(self, sess, lhs))]
      pub async fn dispatch_stream(
 +        &self,
@@ -1033,7 +1111,7 @@
      ) {
          let dest: SocksAddr =
              match reverse_lookup(&self.resolver, &sess.destination).await {
-@@ -131,6 +151,10 @@
+@@ -131,6 +158,10 @@
              .await
          {
              Ok(mut rhs) => {
@@ -1057,7 +1135,7 @@
          let entry = state.entry(name.to_owned()).or_default();
          entry.alive.store(alive, Ordering::Relaxed);
          // Reset consecutive failures on success
-@@ -372,7 +376,14 @@
+@@ -372,5 +376,12 @@
              if entry.delay_history.len() > 10 {
                  entry.delay_history.pop_front();
              }
@@ -1070,5 +1148,3 @@
 +            crate::mobile::telemetry::groups_changed();
          }
      }
- 
-     #[cfg(test)]

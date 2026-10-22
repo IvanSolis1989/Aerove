@@ -1,0 +1,10 @@
+<resources>
+    <string name="integration_scan_profile">扫描二维码</string>
+    <string name="integration_source_editor">编辑源配置</string>
+    <string name="integration_runtime_preview">预览运行配置</string>
+    <string name="integration_profile_actions">配置操作</string>
+    <string name="integration_input">订阅、分享链接或 YAML 配置</string>
+    <string name="integration_input_error">请输入配置、订阅或支持的分享链接。</string>
+    <string name="integration_preview_not_running">当前未运行此配置。</string>
+    <string name="integration_preview_changed">运行配置已变化，请重新打开预览。</string>
+</resources>

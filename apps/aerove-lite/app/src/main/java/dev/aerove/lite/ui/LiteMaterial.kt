@@ -11,12 +11,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.State
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
@@ -27,13 +25,11 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.repeatOnLifecycle
 import androidx.core.view.WindowCompat
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
@@ -43,7 +39,6 @@ import com.kyant.backdrop.drawPlainBackdrop
 import dev.aerove.lite.ColorMode
 import dev.aerove.lite.LiteSettings
 import dev.aerove.lite.MaterialTier
-import kotlinx.coroutines.isActive
 import dev.aerove.lite.optics.AeroveGlassQuality
 import dev.aerove.lite.optics.AeroveGlassStyle
 import dev.aerove.lite.optics.AeroveSuperellipseShape
@@ -93,13 +88,29 @@ internal val LocalLiteInkBackdrop = staticCompositionLocalOf<Backdrop?> { null }
 internal val LocalLiteHighContrast = staticCompositionLocalOf { false }
 
 @Composable
+internal fun rememberSystemThemeColor(dark: Boolean): Long {
+    val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    return remember(context, configuration, dark) {
+        runCatching {
+            context.getColor(if (dark) android.R.color.system_accent1_200 else android.R.color.system_accent1_600).toLong() and 0xffffffffL
+        }.getOrDefault(FullDefaultThemeColor)
+    }
+}
+
+@Composable
 internal fun LiteTheme(settings: LiteSettings, content: @Composable () -> Unit) {
     val dark = when (settings.colorMode) {
         ColorMode.System -> isSystemInDarkTheme()
         ColorMode.Light -> false
         ColorMode.Dark -> true
     }
-    val colors = remember(settings.themeColor, dark, settings.aurora) { fullColorScheme(settings.themeColor.toInt(), dark, settings.aurora) }
+    val systemColor = rememberSystemThemeColor(dark)
+    val seed = if (settings.followSystemColor) systemColor else settings.themeColor
+    val colors = remember(seed, dark, settings.aurora, settings.colorStyle) {
+        fullColorScheme(seed.toInt(), dark, settings.aurora, settings.colorStyle)
+    }
+    val reducedMotion = rememberLiteReducedMotion()
     val visuals = LiteVisuals(settings.material, settings.aurora, dark, colors.primary, colors.fullPage(dark), colors.fullCard(dark), colors.onSurface, colors.onSurfaceVariant)
     val view = LocalView.current
     val activity = remember(view) { view.context.activityOrNull() }
@@ -110,7 +121,7 @@ internal fun LiteTheme(settings: LiteSettings, content: @Composable () -> Unit) 
             @Suppress("DEPRECATION")
             window.navigationBarColor = android.graphics.Color.TRANSPARENT
             window.isStatusBarContrastEnforced = false
-            window.isNavigationBarContrastEnforced = false
+            window.isNavigationBarContrastEnforced = true
             WindowCompat.getInsetsController(window, view).apply {
                 isAppearanceLightStatusBars = !visuals.dark
                 isAppearanceLightNavigationBars = !visuals.dark
@@ -128,7 +139,7 @@ internal fun LiteTheme(settings: LiteSettings, content: @Composable () -> Unit) 
         resolver.registerContentObserver(android.provider.Settings.Secure.getUriFor("high_text_contrast_enabled"), false, observer)
         onDispose { resolver.unregisterContentObserver(observer) }
     }
-    CompositionLocalProvider(LocalLiteVisuals provides visuals, LocalLiteHighContrast provides highContrast.value) {
+    CompositionLocalProvider(LocalLiteVisuals provides visuals, LocalLiteHighContrast provides highContrast.value, LocalLiteReducedMotion provides reducedMotion) {
         MaterialTheme(
             colorScheme = colors,
             typography = Typography(
@@ -153,34 +164,6 @@ internal typealias LiteSuperellipse = AeroveSuperellipseShape
 
 @Composable
 internal fun rememberLiteShape(corner: Dp = LiteCorner.Card): AeroveSuperellipseShape = remember(corner) { LiteSuperellipse(corner) }
-
-@Composable
-internal fun rememberAuroraPhase(enabled: Boolean, restartKey: Any? = null): State<Float> {
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    return produceState(0f, enabled, lifecycle, restartKey) {
-        value = 0f
-        if (enabled) lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            val base = value
-            var start = 0L
-            var published = -1L
-            while (isActive) {
-                androidx.compose.runtime.withFrameNanos { now ->
-                    if (start == 0L) start = now
-                    if (now - published >= 1_000_000_000L / 15 || published < 0) {
-                        value = base + (now - start) / 90_000_000_000f
-                        published = now
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-internal fun LiteWallpaper(phase: State<Float>, modifier: Modifier = Modifier) {
-    val visuals = LocalLiteVisuals.current
-    Box(if (visuals.aurora) modifier.background(if (visuals.dark) Color(0xff111419) else Color(0xfff7f8fa)).fullAuroraWallpaper(phase, visuals.dark) else modifier.background(visuals.page))
-}
 
 @Composable
 internal fun LitePane(

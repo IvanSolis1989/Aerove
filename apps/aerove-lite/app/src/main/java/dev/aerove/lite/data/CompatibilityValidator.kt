@@ -219,7 +219,8 @@ class CompatibilityValidator(
                 if (proxy["plugin-opts"] != null) {
                     val pluginFields = when (proxy["plugin"]) {
                         "obfs", "obfs-local" -> keys("mode host")
-                        "v2ray-plugin" -> keys("mode host path tls mux skip-cert-verify")
+                        "v2ray-plugin" -> keys("mode host path tls mux skip-cert-verify port headers")
+                        "shadow-tls" -> keys("host password strict")
                         else -> emptySet()
                     }
                     fields(proxy["plugin-opts"], "$path.plugin-opts", pluginFields)

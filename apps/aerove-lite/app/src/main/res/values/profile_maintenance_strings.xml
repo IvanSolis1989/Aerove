@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="profile_properties">Properties</string>
+    <string name="profile_name">Name</string>
+    <string name="profile_name_required">Please enter the profile name</string>
+    <string name="profile_url_invalid">Please enter a valid profile URL</string>
+    <string name="profile_auto_update">Auto update</string>
+    <string name="profile_update_minutes">Auto-update interval (minutes)</string>
+    <string name="profile_interval_invalid">Please enter a valid positive whole number of minutes</string>
+    <string name="profile_save">Save</string>
+    <string name="profile_cancel_update">Cancel update</string>
+    <string name="profile_subscription_info">Subscription information</string>
+    <string name="profile_usage_used">Used traffic</string>
+    <string name="profile_usage_total">Total traffic</string>
+    <string name="profile_expire">Expiration time</string>
+    <string name="profile_never_expires">Never expires</string>
+    <string name="profile_expiry_unavailable">Expiration time unavailable</string>
+    <string name="profile_usage_unavailable">Subscription information unavailable</string>
+</resources>

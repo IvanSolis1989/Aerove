@@ -1,0 +1,10 @@
+<resources>
+    <string name="integration_scan_profile">Scan QR code</string>
+    <string name="integration_source_editor">Edit source configuration</string>
+    <string name="integration_runtime_preview">Preview running configuration</string>
+    <string name="integration_profile_actions">Configuration actions</string>
+    <string name="integration_input">Subscription, share link or YAML configuration</string>
+    <string name="integration_input_error">Enter a configuration, subscription or supported share link.</string>
+    <string name="integration_preview_not_running">This configuration is not currently running.</string>
+    <string name="integration_preview_changed">The running configuration changed. Open its preview again.</string>
+</resources>

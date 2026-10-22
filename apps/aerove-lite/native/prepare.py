@@ -126,6 +126,10 @@ def prepare(archive: Path | None = None) -> Path:
     outbound_route_tests = (ROOT / "upstream/outbound_route_tests.rs").read_bytes()
     telemetry = (ROOT / "upstream/telemetry.rs").read_bytes()
     telemetry_tests = (ROOT / "upstream/telemetry_tests.rs").read_bytes()
+    http_probe = (ROOT / "upstream/http_probe.rs").read_bytes()
+    service_check = (ROOT / "upstream/service_check.rs").read_bytes()
+    service_rules = (ROOT / "upstream/service_rules.rs").read_bytes()
+    service_check_tests = (ROOT / "upstream/service_check_tests.rs").read_bytes()
     provenance = {
         "repository": "https://github.com/ibigbug/clash-rs",
         "tag": "v0.10.10", "commit": COMMIT, "archiveSha256": digest(data),
@@ -134,6 +138,10 @@ def prepare(archive: Path | None = None) -> Path:
         "outboundSha256": digest(outbound), "outboundTestsSha256": digest(outbound_tests),
         "outboundRouteTestsSha256": digest(outbound_route_tests),
         "telemetrySha256": digest(telemetry), "telemetryTestsSha256": digest(telemetry_tests),
+        "httpProbeSha256": digest(http_probe),
+        "serviceCheckSha256": digest(service_check),
+        "serviceRulesSha256": digest(service_rules),
+        "serviceCheckTestsSha256": digest(service_check_tests),
     }
     target = cache / "clash-rs"
     marker = target / "AEROVE_PROVENANCE.json"
@@ -157,6 +165,10 @@ def prepare(archive: Path | None = None) -> Path:
         (resource_target.parent / "outbound_route_tests.rs").write_bytes(outbound_route_tests)
         (resource_target.parent / "telemetry.rs").write_bytes(telemetry)
         (resource_target.parent / "telemetry_tests.rs").write_bytes(telemetry_tests)
+        (resource_target.parent / "http_probe.rs").write_bytes(http_probe)
+        (resource_target.parent / "service_check.rs").write_bytes(service_check)
+        (resource_target.parent / "service_rules.rs").write_bytes(service_rules)
+        (resource_target.parent / "service_check_tests.rs").write_bytes(service_check_tests)
         provenance["treeSha256"] = tree_digest(staging)
         (staging / "AEROVE_PROVENANCE.json").write_text(
             json.dumps(provenance, indent=2) + "\n", encoding="utf-8", newline="\n")

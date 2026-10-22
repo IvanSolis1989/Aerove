@@ -1,6 +1,11 @@
 package dev.aerove.lite.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -33,6 +38,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.saveable.mapSaver
@@ -56,9 +63,12 @@ import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import dev.aerove.lite.LiteActions
+import dev.aerove.lite.DashboardWidget
 import dev.aerove.lite.LiteState
 import dev.aerove.lite.ProfileSummary
 import dev.aerove.lite.R
+import dev.aerove.lite.editor.EditorFontSize
+import dev.aerove.lite.editor.EditorPreferences
 import kotlin.math.abs
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -74,6 +84,7 @@ internal enum class MainTab(@StringRes val label: Int, val icon: LiteGlyph) {
 internal enum class DetailPage(@StringRes val label: Int) {
     Theme(R.string.lite_theme), General(R.string.lite_general), Connections(R.string.lite_tab_connections),
     Dns(R.string.lite_dns), Apps(R.string.lite_app_filter), Logs(R.string.lite_logs), About(R.string.lite_about),
+    Backup(R.string.backup_title),
 }
 
 private val PageScrollSaver = mapSaver<MutableMap<String, LazyListState>>(
@@ -90,7 +101,6 @@ fun LiteApp(state: LiteState, actions: LiteActions) {
         val wallpaper = rememberLayerBackdrop()
         val page = rememberLayerBackdrop()
         val chromeSource = rememberCombinedBackdrop(wallpaper, page)
-        val phase = rememberAuroraPhase(state.settings.aurora, LocalLiteVisuals.current.dark)
         val density = LocalDensity.current
         val topInset = with(density) { WindowInsets.statusBars.getTop(this).toDp() }
         val bottomInset = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
@@ -99,9 +109,36 @@ fun LiteApp(state: LiteState, actions: LiteActions) {
         val activeTab = tab.takeIf { it in tabs } ?: MainTab.Home
         var detail by rememberSaveable { mutableStateOf<DetailPage?>(null) }
         var subscriptionEditor by rememberSaveable { mutableStateOf(false) }
+        var dashboardEditing by rememberSaveable { mutableStateOf(false) }
+        var importInput by rememberSaveable { mutableStateOf("") }
+        var editorProfile by rememberSaveable { mutableStateOf<String?>(null) }
+        var editorTitle by rememberSaveable { mutableStateOf("") }
+        var editorReadOnly by rememberSaveable { mutableStateOf(false) }
+        val features = LocalLiteFeatures.current
+        val scanner = remember { MutableTransitionState(false) }
+        var pendingScan by remember { mutableStateOf<String?>(null) }
+        val scanMounted = scanner.currentState || scanner.targetState
         var deleting by remember { mutableStateOf<ProfileSummary?>(null) }
-        val modal = subscriptionEditor || deleting != null || state.message != null
+        val appearanceOverlay = remember { LiteOverlayState() }
+        val covered = subscriptionEditor || deleting != null || state.message != null || appearanceOverlay.content != null
+        val modal = covered || scanMounted || editorProfile != null || dashboardEditing
         val lifecycle = LocalLifecycleOwner.current.lifecycle
+        var resumed by remember(lifecycle) { mutableStateOf(lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) }
+        DisposableEffect(lifecycle) {
+            val observer = LifecycleEventObserver { _, _ -> resumed = lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) }
+            lifecycle.addObserver(observer)
+            onDispose { lifecycle.removeObserver(observer) }
+        }
+        val canDeliverScan by rememberUpdatedState(resumed && !covered)
+        LaunchedEffect(scanner.isIdle, scanner.currentState, scanner.targetState, resumed, covered) {
+            if (!scanner.isIdle || scanner.currentState || scanner.targetState || !canDeliverScan) return@LaunchedEffect
+            withFrameNanos {}
+            if (!scanner.isIdle || scanner.currentState || scanner.targetState || !canDeliverScan) return@LaunchedEffect
+            val value = pendingScan ?: return@LaunchedEffect
+            pendingScan = null
+            importInput = value
+            subscriptionEditor = true
+        }
         DisposableEffect(detail, modal, lifecycle, actions) {
             if (detail == DetailPage.Connections && !modal) {
                 var declared: Boolean? = null
@@ -123,7 +160,9 @@ fun LiteApp(state: LiteState, actions: LiteActions) {
         var dockCollapsed by remember(activeTab, detail) { mutableStateOf(false) }
         val pages = rememberSaveableStateHolder()
         val scrolls = rememberSaveable(saver = PageScrollSaver) { mutableMapOf<String, LazyListState>() }
-        val pageKey = detail?.name ?: activeTab.name
+        val pageKey = if (dashboardEditing) "dashboard-editor" else editorProfile?.let { "editor:$it:$editorReadOnly" } ?: detail?.name ?: activeTab.name
+        val motionActivity = rememberAuroraMotionActivity(pageKey)
+        val phase = rememberAuroraPhase(state.settings.aurora && !covered && !scanMounted, activity = motionActivity)
         val scroll = scrolls.getOrPut(pageKey) { LazyListState() }
         val dockScroll = remember(scroll, density.density) {
             object : NestedScrollConnection {
@@ -145,9 +184,36 @@ fun LiteApp(state: LiteState, actions: LiteActions) {
         }
         BackHandler(detail != null && !modal) { detail = null }
         BackHandler(activeTab != MainTab.Home && detail == null && !modal) { tab = MainTab.Home }
-        Box(Modifier.fillMaxSize()) {
-            Box(Modifier.fillMaxSize().layerBackdrop(wallpaper)) { LiteWallpaper(phase, Modifier.fillMaxSize()) }
-            CompositionLocalProvider(LocalLiteBackdrop provides wallpaper, LocalLiteInkBackdrop provides wallpaper, LocalLiteListState provides scroll) {
+        Box(Modifier.fillMaxSize().auroraMotionActivity(motionActivity, state.settings.aurora)) {
+            Box(Modifier.fillMaxSize().layerBackdrop(wallpaper)) {
+                LiteWallpaper(phase, Modifier.fillMaxSize(), state.settings.auroraColors, state.settings.auroraSeed)
+            }
+            CompositionLocalProvider(LocalLiteBackdrop provides wallpaper, LocalLiteInkBackdrop provides wallpaper, LocalLiteListState provides scroll, LocalAuroraPhase provides phase, LocalLiteOverlay provides appearanceOverlay) {
+                val cardContent: @Composable (DashboardWidget) -> Unit = { widget ->
+                    DashboardCard(widget, state, actions, { tab = MainTab.Profiles },
+                        { detail = DetailPage.Connections }, { tab = MainTab.Proxies },
+                        serviceStatusContent = { ServiceStatusPanel(state, actions) },
+                        memoryInfoContent = { MemoryInfoPanel(state, actions) })
+                }
+                CompositionLocalProvider(LocalDiagnosticsForeground provides
+                    (resumed && !subscriptionEditor && deleting == null && state.message == null && !scanMounted && editorProfile == null && !dashboardEditing)) {
+                val editing = editorProfile
+                if (dashboardEditing) {
+                    Box(Modifier.fillMaxSize().safeDrawingPadding()) {
+                        DashboardEditor(state.settings, actions::changeSettings, { dashboardEditing = false }, cardContent = cardContent)
+                    }
+                } else if (editing != null) {
+                    val session = remember(editing, editorTitle, editorReadOnly) { features().editor(editing, editorTitle, editorReadOnly) }
+                    val close = { features().closeEditor(); editorProfile = null }
+                    val preferences = EditorPreferences(
+                        EditorFontSize.entries.first { it.sp.toInt() == state.settings.editorFontSize },
+                        state.settings.editorLineWrap,
+                    )
+                    EditorScreen(session, close, { features().editorSaved(editing); close() },
+                        preferences = preferences, onPreferencesChange = { value ->
+                            actions.changeSettings(state.settings.copy(editorFontSize = value.fontSize.sp.toInt(), editorLineWrap = value.lineWrap))
+                        })
+                } else {
                 val contentModifier = Modifier.fillMaxSize().nestedScroll(dockScroll).then(if (modal) Modifier.clearAndSetSemantics {} else Modifier)
                 Box(contentModifier.layerBackdrop(page)) {
                     val dockInset = if (detail == null) 62.dp + maxOf(21.dp, bottomInset) else bottomInset
@@ -161,10 +227,13 @@ fun LiteApp(state: LiteState, actions: LiteActions) {
                             DetailPage.Apps -> AppFilterScreen(state, actions, padding)
                             DetailPage.Logs -> LogsScreen(state, actions, padding)
                             DetailPage.About -> AboutScreen(padding)
+                            DetailPage.Backup -> BackupScreen(features().backup, padding)
                             null -> when (activeTab) {
-                                MainTab.Home -> OverviewScreen(state, actions, padding, { tab = MainTab.Profiles }, { detail = DetailPage.Connections }, { tab = MainTab.Proxies })
+                                MainTab.Home -> OverviewScreen(state.settings, padding, cardContent)
                                 MainTab.Proxies -> ProxiesScreen(state, actions, padding)
-                                MainTab.Profiles -> ProfilesScreen(state, actions, padding, { subscriptionEditor = true }, { deleting = it })
+                                MainTab.Profiles -> ProfilesScreen(state, actions, padding,
+                                    { importInput = ""; subscriptionEditor = true }, { deleting = it },
+                                    { profile, preview -> editorTitle = profile.name; editorReadOnly = preview; editorProfile = profile.id })
                                 MainTab.Tools -> ToolsScreen(state, padding) { detail = it }
                             }
                         }
@@ -177,14 +246,21 @@ fun LiteApp(state: LiteState, actions: LiteActions) {
                         back = if (detail != null) ({ detail = null }) else null,
                         backLabel = stringResource(R.string.lite_back),
                     ) {
-                        if (detail == null && activeTab == MainTab.Profiles) LiteIconButton(stringResource(R.string.lite_add_subscription), FullGlyphs.add, { subscriptionEditor = true })
+                        if (detail == null && activeTab == MainTab.Home) DashboardEditAction { dashboardEditing = true }
+                        if (detail == null && activeTab == MainTab.Profiles) {
+                            LiteButton(stringResource(R.string.integration_scan_profile), {
+                                if (!scanMounted && pendingScan == null) scanner.targetState = true
+                            })
+                            LiteIconButton(stringResource(R.string.lite_add_subscription), FullGlyphs.add, { importInput = ""; subscriptionEditor = true })
+                        }
                     }
                     if (detail == null) LiteNavigationDock(
                         items = tabs, selected = activeTab, collapsed = dockCollapsed, bottomInset = bottomInset,
                         onSelected = { tab = it; detail = null },
                         modifier = Modifier.align(Alignment.BottomCenter).then(if (modal) Modifier.clearAndSetSemantics {} else Modifier),
                     )
-                    if (subscriptionEditor) SubscriptionEditor(state, actions) { subscriptionEditor = false }
+                    if (subscriptionEditor) SubscriptionEditor(state, actions, { subscriptionEditor = false }, importInput,
+                        { name, input -> features().importProfileText(name, input) })
                     deleting?.let { profile ->
                         LiteModal(stringResource(R.string.lite_delete_profile), { deleting = null }) {
                             LiteText(stringResource(R.string.lite_delete_profile_detail, profile.name))
@@ -194,6 +270,17 @@ fun LiteApp(state: LiteState, actions: LiteActions) {
                             }
                         }
                     }
+                    appearanceOverlay.content?.invoke()
+                }
+                }
+                }
+                AnimatedVisibility(scanner, enter = fadeIn(tween(if (LocalLiteReducedMotion.current) 0 else 220)),
+                    exit = fadeOut(tween(if (LocalLiteReducedMotion.current) 0 else 180))) {
+                    ScanScreen(onResult = { pendingScan = it; scanner.targetState = false },
+                        onClose = { pendingScan = null; scanner.targetState = false },
+                        routeSettled = scanner.isIdle && scanner.currentState && scanner.targetState && !covered)
+                }
+                CompositionLocalProvider(LocalLiteBackdrop provides if (scanMounted) wallpaper else chromeSource) {
                     state.message?.let { message ->
                         LiteModal(stringResource(R.string.lite_message), actions::dismissMessage) {
                             SelectionContainer { LiteText(message, Modifier.fillMaxWidth().heightIn(max = 320.dp).verticalScroll(rememberScrollState())) }

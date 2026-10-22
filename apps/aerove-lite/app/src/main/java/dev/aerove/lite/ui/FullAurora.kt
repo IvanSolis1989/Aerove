@@ -2,16 +2,10 @@ package dev.aerove.lite.ui
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.platform.testTag
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -193,16 +187,11 @@ internal class FullAuroraMotion(seed: Long) {
 
 @Composable
 internal fun Modifier.fullAuroraWallpaper(time: State<Float>, dark: Boolean, colors: List<Long> = FullAuroraColors, seed: Long = FullAuroraSeed): Modifier {
-    val mesh by key(dark, colors, seed) {
-        produceState<FullAuroraMesh?>(cachedAuroraMesh(seed, colors, dark), dark, colors, seed) {
-            value = withContext(Dispatchers.Default) { fullAuroraMesh(seed, colors, dark) }
-        }
-    }
+    val mesh = remember(dark, colors, seed) { fullAuroraMesh(seed, colors, dark) }
     val motion = remember(seed) { FullAuroraMotion(seed) }
-    return testTag(if (mesh == null) "aurora-wallpaper-building" else "aurora-wallpaper-ready").drawWithCache {
+    return drawWithCache {
         val paint = android.graphics.Paint().apply { color = android.graphics.Color.WHITE; isAntiAlias = false }
         onDrawBehind {
-            val ready = mesh ?: return@onDrawBehind
             val pose = motion.at((time.value.toDouble() * 90_000_000).toLong(), size.width.toDouble(), size.height.toDouble())
             val canvas = drawContext.canvas.nativeCanvas
             val checkpoint = canvas.save()
@@ -211,7 +200,7 @@ internal fun Modifier.fullAuroraWallpaper(time: State<Float>, dark: Boolean, col
             canvas.rotate((pose.angle * 180 / PI).toFloat())
             canvas.scale(pose.side.toFloat(), pose.side.toFloat())
             canvas.translate(-0.5f, -0.5f)
-            canvas.drawVertices(android.graphics.Canvas.VertexMode.TRIANGLES, FullAuroraMesh.positions.size, FullAuroraMesh.positions, 0, null, 0, ready.colors, 0, FullAuroraMesh.indices, 0, FullAuroraMesh.indices.size, paint)
+            canvas.drawVertices(android.graphics.Canvas.VertexMode.TRIANGLES, FullAuroraMesh.positions.size, FullAuroraMesh.positions, 0, null, 0, mesh.colors, 0, FullAuroraMesh.indices, 0, FullAuroraMesh.indices.size, paint)
             canvas.restoreToCount(checkpoint)
         }
     }

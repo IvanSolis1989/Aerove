@@ -79,6 +79,10 @@ class SourcePreparationTest(unittest.TestCase):
             (root / "upstream/outbound_route_tests.rs").write_bytes(b"outbound route tests\n")
             (root / "upstream/telemetry.rs").write_bytes(b"telemetry\n")
             (root / "upstream/telemetry_tests.rs").write_bytes(b"telemetry tests\n")
+            (root / "upstream/http_probe.rs").write_bytes(b"http_probe\n")
+            (root / "upstream/service_check.rs").write_bytes(b"service_check\n")
+            (root / "upstream/service_rules.rs").write_bytes(b"service_rules\n")
+            (root / "upstream/service_check_tests.rs").write_bytes(b"service_check_tests\n")
             (root / "upstream.patch").write_text(
                 "--- a/clash-lib/src/lib.rs\n+++ b/clash-lib/src/lib.rs\n@@ -1 +1 @@\n-original\n+patched\n")
             blob = root / "source.tar.gz"
@@ -104,6 +108,14 @@ class SourcePreparationTest(unittest.TestCase):
                 self.assertEqual(provenance["outboundRouteTestsSha256"], prepare.digest(b"outbound route tests\n"))
                 self.assertEqual(provenance["telemetrySha256"], prepare.digest(b"telemetry\n"))
                 self.assertEqual(provenance["telemetryTestsSha256"], prepare.digest(b"telemetry tests\n"))
+                self.assertEqual(provenance["httpProbeSha256"], prepare.digest(b"http_probe\n"))
+                self.assertEqual((target / "clash-lib/src/mobile/http_probe.rs").read_bytes(), b"http_probe\n")
+                self.assertEqual(provenance["serviceCheckSha256"], prepare.digest(b"service_check\n"))
+                self.assertEqual((target / "clash-lib/src/mobile/service_check.rs").read_bytes(), b"service_check\n")
+                self.assertEqual(provenance["serviceRulesSha256"], prepare.digest(b"service_rules\n"))
+                self.assertEqual((target / "clash-lib/src/mobile/service_rules.rs").read_bytes(), b"service_rules\n")
+                self.assertEqual(provenance["serviceCheckTestsSha256"], prepare.digest(b"service_check_tests\n"))
+                self.assertEqual((target / "clash-lib/src/mobile/service_check_tests.rs").read_bytes(), b"service_check_tests\n")
                 self.assertEqual(provenance["treeSha256"], prepare.tree_digest(target))
                 prepare.prepare(blob)
                 (target / "clash-lib/src/lib.rs").write_text("tampered")
@@ -122,6 +134,11 @@ class SourcePreparationTest(unittest.TestCase):
                 updated = json.loads((target / "AEROVE_PROVENANCE.json").read_text())
                 self.assertEqual(updated["telemetrySha256"], prepare.digest(b"updated telemetry\n"))
                 self.assertEqual((target / "clash-lib/src/mobile/telemetry.rs").read_bytes(), b"updated telemetry\n")
+                (root / "upstream/service_rules.rs").write_bytes(b"updated service rules\n")
+                prepare.prepare(blob)
+                updated = json.loads((target / "AEROVE_PROVENANCE.json").read_text())
+                self.assertEqual(updated["serviceRulesSha256"], prepare.digest(b"updated service rules\n"))
+                self.assertEqual((target / "clash-lib/src/mobile/service_rules.rs").read_bytes(), b"updated service rules\n")
 
     def test_prepare_rejects_wrong_archive_hash_before_extract(self):
         with tempfile.TemporaryDirectory() as temporary:

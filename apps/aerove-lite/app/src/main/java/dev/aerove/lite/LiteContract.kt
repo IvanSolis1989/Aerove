@@ -23,6 +23,11 @@ enum class DashboardWidget(val wireName: String) {
     MemoryInfo("memoryInfo"),
 }
 
+private const val defaultThemeColor = 0xFF007AFFL
+private val defaultThemeColors = listOf(
+    defaultThemeColor, 0xFFCB30E0L, 0xFFFF2D55L, 0xFFFF383CL,
+    0xFFFF8D28L, 0xFFFFCC00L, 0xFF34C759L, 0xFF8E8E93L,
+)
 private val defaultAuroraColors = listOf(0xFF65BDD2L, 0xFFC589CAL, 0xFF75CCA8L)
 private val defaultDashboardWidgets = listOf(
     DashboardWidget.CurrentOutbound,
@@ -56,7 +61,7 @@ data class LiteSettings(
     val material: MaterialTier = MaterialTier.Clear,
     val aurora: Boolean = true,
     val colorMode: ColorMode = ColorMode.System,
-    val themeColor: Long = 0xFF007AFFL,
+    val themeColor: Long = defaultThemeColor,
     val mode: ProxyMode = ProxyMode.Rule,
     val ipv6: Boolean = false,
     val overrideDns: Boolean = false,
@@ -70,7 +75,21 @@ data class LiteSettings(
     val auroraSeed: Long = 271828,
     val auroraRotationDay: Long = 0,
     val dashboardWidgets: List<DashboardWidget> = defaultDashboardWidgets.toList(),
+    val themeColors: List<Long> = defaultThemeColors.toList(),
+    val followSystemColor: Boolean = false,
+    val editorFontSize: Int = 16,
+    val editorLineWrap: Boolean = false,
+    val serviceOrder: List<String> = serviceTargetIds.toList(),
+    val disabledServices: Set<String> = emptySet(),
 )
+
+val serviceTargetIds: List<String> = listOf("google", "github", "youtube", "chatgpt", "claude", "gemini",
+    "netflix", "disney-plus", "prime-video", "spotify", "tiktok", "discord", "bilibili")
+
+fun LiteSettings.enabledServiceIds(): List<String> {
+    val ordered = (serviceOrder.filter { it in serviceTargetIds } + serviceTargetIds).distinct()
+    return ordered.filterNot { it in disabledServices }.ifEmpty { ordered }
+}
 
 fun normalizeDashboardWidgets(names: List<String>?): List<DashboardWidget> = normalizeDashboardWidgetValues(names)
 
@@ -99,12 +118,29 @@ internal fun normalizeAuroraColors(colors: List<*>?): List<Long> {
     return colors.take(3).map { (it as Number).toLong() or 0xFF000000L }
 }
 
-fun LiteSettings.normalized(): LiteSettings = copy(
-    auroraColors = normalizeAuroraColors(auroraColors),
-    dashboardWidgets = normalizeDashboardWidgets(dashboardWidgets.map { it.wireName }),
-    dnsServers = dnsServers.toList(),
-    packages = packages.toSet(),
-)
+internal fun normalizeThemeColors(colors: List<*>?): List<Long> {
+    if (colors == null || colors.any {
+        (it !is Int && it !is Long) || (it as Number).toLong() !in 0..0xFFFFFFFFL
+    }) return defaultThemeColors.toList()
+    return colors.map { (it as Number).toLong() }.distinct()
+}
+
+fun LiteSettings.normalized(): LiteSettings {
+    val colors = normalizeThemeColors(themeColors)
+    val missingSelection = !followSystemColor && themeColor in 0..0xFFFFFFFFL && themeColor !in colors
+    return copy(
+        themeColors = colors,
+        themeColor = if (missingSelection && defaultThemeColor in colors) defaultThemeColor else themeColor,
+        followSystemColor = followSystemColor || (missingSelection && defaultThemeColor !in colors),
+        editorFontSize = when (editorFontSize) { 16, 18, 20 -> editorFontSize; else -> 16 },
+        auroraColors = normalizeAuroraColors(auroraColors),
+        dashboardWidgets = normalizeDashboardWidgets(dashboardWidgets.map { it.wireName }),
+        dnsServers = dnsServers.toList(),
+        packages = packages.toSet(),
+        serviceOrder = (serviceOrder.filter { it in serviceTargetIds } + serviceTargetIds).distinct(),
+        disabledServices = disabledServices.filterTo(linkedSetOf()) { it in serviceTargetIds },
+    )
+}
 
 fun LiteSettings.resetDashboardWidgets(): LiteSettings = copy(dashboardWidgets = defaultDashboardWidgets.toList())
 
@@ -113,6 +149,12 @@ data class ProfileSummary(
     val name: String,
     val url: String?,
     val updatedAt: Long,
+    val autoUpdate: Boolean = true,
+    val updateIntervalMillis: Long = 86_400_000L,
+    val lastSuccessfulUpdateAt: Long? = null,
+    val sourceIdentity: String = "",
+    val subscriptionUserInfo: String? = null,
+    val contentDisposition: String? = null,
 )
 
 data class ProxyNode(val name: String, val type: String, val delayMillis: Int? = null)
@@ -154,6 +196,8 @@ data class LiteState(
     val installedApps: List<InstalledApp> = emptyList(),
     val busy: Set<String> = emptySet(),
     val message: String? = null,
+    val diagnostics: DiagnosticsState = DiagnosticsState(),
+    val updatingProfileIds: Set<String> = emptySet(),
 )
 
 interface LiteActions {
@@ -162,14 +206,21 @@ interface LiteActions {
     fun importFile()
     fun addSubscription(name: String, url: String)
     fun updateProfile(id: String)
+    fun updateProfileMetadata(id: String, name: String, url: String?, autoUpdate: Boolean, intervalMillis: Long)
+    fun cancelProfileUpdate(id: String)
     fun selectProfile(id: String)
     fun deleteProfile(id: String)
     fun selectProxy(group: String, proxy: String)
     fun testGroup(group: String)
     fun refreshOutbound()
+    fun refreshServiceChecks()
+    fun refreshServiceCheck(id: String)
+    fun setServiceTelemetryTargets(ids: Set<String>)
+    fun setMemoryTelemetryActive(active: Boolean)
     fun setConnectionTelemetryActive(active: Boolean)
     fun closeConnection(id: String)
     fun closeAllConnections()
+    fun shuffleAurora()
     fun changeSettings(settings: LiteSettings)
     fun loadInstalledApps()
     fun clearLogs()

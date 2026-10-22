@@ -9,6 +9,7 @@ import dev.aerove.lite.LiteApplication
 import dev.aerove.lite.MainActivity
 import dev.aerove.lite.core.NativeCore
 import dev.aerove.lite.core.SocketProtector
+import dev.aerove.lite.data.AppliedConfigSnapshot
 import dev.aerove.lite.data.ProfileConflictException
 import dev.aerove.lite.data.PreparedProfile
 import dev.aerove.lite.data.ProfileLease
@@ -49,7 +50,6 @@ class AndroidTunnelBackend(
             val directory = File(runtime, "profiles/${prepared.profileId}").apply { check(isDirectory || mkdirs()) }
             val port = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { it.localPort }
             val secret = ByteArray(32).also(SecureRandom()::nextBytes).joinToString("") { "%02x".format(it) }
-            val endpoint = CoreEndpoint(port, secret)
             config = File(directory, "${UUID.randomUUID()}.yaml")
             val builder = service.Builder()
                 .setSession("AEROVE Lite")
@@ -78,6 +78,7 @@ class AndroidTunnelBackend(
             config.writeText(RuntimeConfigComposer(runtime).compose(prepared, plan.settings, tun.fd, port, secret))
             config.setReadable(false, false)
             config.setReadable(true, true)
+            val endpoint = CoreEndpoint(port, secret, AppliedConfigSnapshot(prepared.profileId, config))
             handle = NativeCore.start(config.path, directory.path, tun.fd, SocketProtector(service::protect))
             Session(checkNotNull(handle), tun, config, endpoint, prepared, checkNotNull(profileLease), lease)
         } catch (failure: Throwable) {

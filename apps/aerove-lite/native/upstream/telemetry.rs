@@ -1,4 +1,4 @@
-use std::{sync::{Arc, Mutex}, time::Duration};
+use std::{sync::{Arc, Mutex, atomic::{AtomicU64, Ordering}}, time::Duration};
 
 use axum::{
     Router,
@@ -10,6 +10,8 @@ use axum::{
 use serde::Serialize;
 use tokio::{sync::{Notify, watch}, task::JoinHandle, time::Instant};
 use tokio_util::sync::CancellationToken;
+
+static NEXT_EPOCH: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,6 +37,34 @@ pub(crate) struct Bus {
     cancel: CancellationToken,
     delay: Mutex<Delay>,
     delay_updated: Notify,
+    route: Mutex<RouteState>,
+}
+
+struct RouteState {
+    stamp: (u64, u64),
+    active: usize,
+    pending: bool,
+}
+
+pub(crate) struct RouteMutation(Option<Arc<Bus>>);
+
+impl Drop for RouteMutation {
+    fn drop(&mut self) {
+        if let Some(bus) = &self.0 {
+            let mut route = bus.route.lock().unwrap();
+            route.active -= 1;
+            let notify = route.active == 0 && route.pending;
+            if notify { route.pending = false; }
+            drop(route);
+            if notify { bus.groups_changed(); }
+        }
+    }
+}
+
+pub(crate) fn route_mutation() -> RouteMutation {
+    let bus = source();
+    if let Some(bus) = &bus { bus.route.lock().unwrap().active += 1; }
+    RouteMutation(bus)
 }
 
 #[derive(Default)]
@@ -51,6 +81,7 @@ impl Bus {
             cancel,
             delay: Mutex::new(Delay::default()),
             delay_updated: Notify::new(),
+            route: Mutex::new(RouteState { stamp: (NEXT_EPOCH.fetch_add(1, Ordering::SeqCst), 0), active: 0, pending: false }),
         })
     }
 
@@ -68,6 +99,16 @@ impl Bus {
         if !self.cancel.is_cancelled() {
             self.groups.send_modify(|revision| *revision = revision.wrapping_add(1));
         }
+    }
+
+    fn route_changed(&self, structure: bool) {
+        let mut route = self.route.lock().unwrap();
+        if structure { route.stamp.0 = NEXT_EPOCH.fetch_add(1, Ordering::SeqCst); }
+        else { route.stamp.1 = route.stamp.1.wrapping_add(1); }
+        route.pending = route.active != 0;
+        let notify = !route.pending;
+        drop(route);
+        if notify { self.groups_changed(); }
     }
 
     fn delay_changed(self: &Arc<Self>) {
@@ -115,6 +156,27 @@ impl Bus {
 pub(crate) fn source() -> Option<Arc<Bus>> {
     super::context().ok().filter(|context| !context.cancel.is_cancelled())
         .map(|context| context.telemetry.clone())
+}
+
+pub(crate) fn route_stamp() -> std::io::Result<(u64, u64)> {
+    let bus = super::context()?.telemetry.clone();
+    let route = bus.route.lock().unwrap();
+    if bus.cancel.is_cancelled() || route.active != 0 {
+        return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "route is changing"));
+    }
+    Ok(route.stamp)
+}
+
+pub(crate) fn selection_changed() {
+    if let Some(bus) = source() {
+        bus.route_changed(false);
+    }
+}
+
+pub(crate) fn structure_changed() {
+    if let Some(bus) = source() {
+        bus.route_changed(true);
+    }
 }
 
 pub(crate) fn groups_changed() {

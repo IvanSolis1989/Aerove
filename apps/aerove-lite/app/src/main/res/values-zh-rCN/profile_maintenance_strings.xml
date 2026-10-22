@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="profile_properties">属性</string>
+    <string name="profile_name">名称</string>
+    <string name="profile_name_required">请输入配置名称</string>
+    <string name="profile_url_invalid">请输入有效配置URL</string>
+    <string name="profile_auto_update">自动更新</string>
+    <string name="profile_update_minutes">自动更新间隔（分钟）</string>
+    <string name="profile_interval_invalid">请输入有效的正整数分钟数</string>
+    <string name="profile_save">保存</string>
+    <string name="profile_cancel_update">取消更新</string>
+    <string name="profile_subscription_info">订阅信息</string>
+    <string name="profile_usage_used">已用流量</string>
+    <string name="profile_usage_total">总流量</string>
+    <string name="profile_expire">到期时间</string>
+    <string name="profile_never_expires">长期有效</string>
+    <string name="profile_expiry_unavailable">无法读取到期时间</string>
+    <string name="profile_usage_unavailable">暂无订阅信息</string>
+</resources>

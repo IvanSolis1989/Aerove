@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material3.MaterialTheme
@@ -55,6 +56,8 @@ import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import dev.aerove.lite.LiteActions
+import dev.aerove.lite.DashboardWidget
+import dev.aerove.lite.LiteSettings
 import dev.aerove.lite.LiteState
 import dev.aerove.lite.MaterialTier
 import dev.aerove.lite.ProxyMode
@@ -65,56 +68,95 @@ import kotlin.math.hypot
 
 @Composable
 internal fun OverviewScreen(
-    state: LiteState,
-    actions: LiteActions,
+    settings: LiteSettings,
     padding: PaddingValues,
-    openProfiles: () -> Unit,
-    openConnections: () -> Unit,
-    openProxies: () -> Unit,
+    cardContent: @Composable (DashboardWidget) -> Unit,
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val side = maxOf(16.dp, (maxWidth - 560.dp) / 2)
         LazyColumn(
+            modifier = Modifier.testTag("dashboard-layout"),
             state = LocalLiteListState.current,
             contentPadding = PaddingValues(start = side, end = side, top = padding.calculateTopPadding() + 4.dp, bottom = padding.calculateBottomPadding()),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            item("status") { OutboundStatusCard(state, actions) }
-            item("speed") { NetworkSpeedCard(state) }
-            item("mode") { OutboundModeCard(state, actions) }
-            item("vpn") { DashboardVpnCard(state, actions) }
-            item("intranet") { IntranetCard(state.localAddress) }
-            item("profile") {
-                val profile = state.profiles.firstOrNull { it.id == state.selectedProfile }
-                if (profile == null) EmptyContent(stringResource(R.string.lite_profile_required), stringResource(R.string.lite_profile_required_detail), FullGlyphs.profiles) {
-                    LiteButton(stringResource(R.string.lite_import), actions::importFile, Modifier.fillMaxWidth(), FullGlyphs.importFile, enabled = state.busy.isEmpty())
-                    LiteButton(stringResource(R.string.lite_tab_profiles), openProfiles, Modifier.fillMaxWidth())
-                } else DashboardPane(Modifier.clickable(role = Role.Button, onClick = openProfiles)) {
-                    DashboardHeader(FullGlyphs.profiles, stringResource(R.string.lite_tab_profiles))
-                    Spacer(Modifier.height(12.dp))
-                    LiteText(profile.name, style = LiteType.Headline, maxLines = 1)
-                }
-            }
-            if (state.groups.isNotEmpty()) item("groups") {
-                DashboardPane(Modifier.clickable(role = Role.Button, onClick = openProxies)) {
-                    DashboardHeader(FullGlyphs.proxies, stringResource(R.string.lite_tab_proxies))
-                    Spacer(Modifier.height(12.dp))
-                    state.groups.forEach { group ->
-                        Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            LiteText(group.name, Modifier.weight(1f), style = LiteType.Label, maxLines = 1)
-                            LiteText(group.selected, style = LiteType.Footnote, color = LocalLiteVisuals.current.secondaryInk, maxLines = 1)
-                        }
-                    }
-                }
-            }
-            item("connections") {
-                DashboardPane(Modifier.clickable(role = Role.Button, onClick = openConnections)) {
-                    DashboardHeader(FullGlyphs.connections, stringResource(R.string.lite_tab_connections))
-                    Spacer(Modifier.height(12.dp))
-                    LiteText(stringResource(R.string.lite_connection_count, state.connections.size), style = LiteType.Title2)
-                }
+            items(settings.dashboardWidgets, key = { it.wireName }, contentType = { it }) { widget ->
+                Box(Modifier.fillMaxWidth().testTag("dashboard-card-${widget.wireName}")) { cardContent(widget) }
             }
         }
+    }
+}
+
+@Composable
+internal fun DashboardCard(
+    widget: DashboardWidget,
+    state: LiteState,
+    actions: LiteActions,
+    openProfiles: () -> Unit,
+    openConnections: () -> Unit,
+    openProxies: () -> Unit,
+    serviceStatusContent: @Composable () -> Unit,
+    memoryInfoContent: @Composable () -> Unit,
+) {
+    when (widget) {
+        DashboardWidget.CurrentOutbound -> OutboundStatusCard(state, actions)
+        DashboardWidget.NetworkSpeed -> NetworkSpeedCard(state)
+        DashboardWidget.OutboundMode -> OutboundModeCard(state, actions)
+        DashboardWidget.VpnButton -> DashboardVpnCard(state, actions)
+        DashboardWidget.IntranetIp -> IntranetCard(state.localAddress)
+        DashboardWidget.ServiceStatus -> serviceStatusContent()
+        DashboardWidget.Profiles -> ProfilesCard(state, actions, openProfiles)
+        DashboardWidget.ProxyGroups -> ProxyGroupsCard(state, openProxies)
+        DashboardWidget.ConnectionStats -> ConnectionStatsCard(state, openConnections)
+        DashboardWidget.MemoryInfo -> memoryInfoContent()
+    }
+}
+
+@Composable
+internal fun DashboardEditAction(onEdit: () -> Unit) {
+    LiteIconButton(stringResource(R.string.lite_dashboard_edit), DashboardEditGlyph, onEdit)
+}
+
+private val DashboardEditGlyph = LiteGlyph(listOf(
+    glyphPolyline(listOf(vertex(4, 20, 1), vertex(8.75, 18.75, 1), vertex(20.25, 7.25, 1.5), vertex(16.75, 3.75, 1.5), vertex(5.25, 15.25, 1)), closed = true),
+    glyphPath("M13.25 7.25L16.75 10.75", role = LiteGlyphRole.Detail),
+))
+
+@Composable
+private fun ProfilesCard(state: LiteState, actions: LiteActions, openProfiles: () -> Unit) {
+    val profile = state.profiles.firstOrNull { it.id == state.selectedProfile }
+    if (profile == null) EmptyContent(stringResource(R.string.lite_profile_required), stringResource(R.string.lite_profile_required_detail), FullGlyphs.profiles) {
+        LiteButton(stringResource(R.string.lite_import), actions::importFile, Modifier.fillMaxWidth(), FullGlyphs.importFile, enabled = state.busy.isEmpty())
+        LiteButton(stringResource(R.string.lite_tab_profiles), openProfiles, Modifier.fillMaxWidth())
+    } else DashboardPane(Modifier.clickable(role = Role.Button, onClick = openProfiles)) {
+        DashboardHeader(FullGlyphs.profiles, stringResource(R.string.lite_tab_profiles))
+        Spacer(Modifier.height(12.dp))
+        LiteText(profile.name, style = LiteType.Headline, maxLines = 1)
+    }
+}
+
+@Composable
+private fun ProxyGroupsCard(state: LiteState, openProxies: () -> Unit) {
+    DashboardPane(if (state.groups.isNotEmpty()) Modifier.clickable(role = Role.Button, onClick = openProxies) else Modifier) {
+        DashboardHeader(FullGlyphs.proxies, stringResource(R.string.lite_tab_proxies))
+        Spacer(Modifier.height(12.dp))
+        if (state.groups.isEmpty()) LiteText(stringResource(if (state.phase == VpnPhase.Running) R.string.lite_no_proxies else R.string.lite_no_proxies_detail),
+            style = LiteType.Footnote, color = LocalLiteVisuals.current.secondaryInk)
+        else state.groups.forEach { group ->
+            Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                LiteText(group.name, Modifier.weight(1f), style = LiteType.Label, maxLines = 1)
+                LiteText(group.selected, style = LiteType.Footnote, color = LocalLiteVisuals.current.secondaryInk, maxLines = 1)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConnectionStatsCard(state: LiteState, openConnections: () -> Unit) {
+    DashboardPane(Modifier.clickable(role = Role.Button, onClick = openConnections)) {
+        DashboardHeader(FullGlyphs.connections, stringResource(R.string.lite_tab_connections))
+        Spacer(Modifier.height(12.dp))
+        LiteText(stringResource(R.string.lite_connection_count, state.connections.size), style = LiteType.Title2)
     }
 }
 

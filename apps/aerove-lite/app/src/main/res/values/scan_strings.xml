@@ -1,0 +1,16 @@
+<resources>
+    <string name="lite_scan_close">Close</string>
+    <string name="lite_scan_album">Album</string>
+    <string name="lite_scan_torch_on">Turn on flashlight</string>
+    <string name="lite_scan_torch_off">Turn off flashlight</string>
+    <string name="lite_scan_hint">Scan a QR code to import a profile</string>
+    <string name="lite_scan_invalid">This QR code does not contain a valid profile link</string>
+    <string name="lite_scan_permission">Camera permission is required to scan QR codes</string>
+    <string name="lite_scan_camera_error">Unable to start the camera</string>
+    <string name="lite_scan_retry">Retry</string>
+    <string name="lite_scan_settings">Open app settings</string>
+    <string name="lite_scan_decoding">Reading QR code…</string>
+    <string name="lite_scan_image_error">Unable to read this image. Choose an image up to 16 MiB.</string>
+    <string name="lite_scan_no_code">No QR code found in this image</string>
+    <string name="lite_scan_continue">Continue scanning</string>
+</resources>

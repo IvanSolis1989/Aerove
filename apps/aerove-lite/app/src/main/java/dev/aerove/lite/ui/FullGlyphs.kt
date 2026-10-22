@@ -6,6 +6,13 @@ import kotlin.math.sin
 
 // Geometry and roles are ported from lib/ui/icons/app_glyphs.dart.
 internal object FullGlyphs {
+    val shuffle = LiteGlyph(listOf(
+        glyphPolyline(listOf(vertex(3, 7), vertex(7, 7, 2), vertex(15, 17, 2), vertex(20.5, 17)), role = LiteGlyphRole.Line),
+        glyphPath("M3 17H5Q7 17 8.25 15.44L8.69 14.88", role = LiteGlyphRole.Line),
+        glyphPath("M13.31 9.12L13.75 8.56Q15 7 17 7H20.5", role = LiteGlyphRole.Line),
+        glyphPolyline(listOf(vertex(17.5, 4), vertex(20.5, 7, 0.4), vertex(17.5, 10)), role = LiteGlyphRole.Line),
+        glyphPolyline(listOf(vertex(17.5, 14), vertex(20.5, 17, 0.4), vertex(17.5, 20)), role = LiteGlyphRole.Line),
+    ))
 
     val target = LiteGlyph(listOf(
         glyphArc(12, 12, 8.8, PI * -0.93, PI * 0.86, role = LiteGlyphRole.Line),

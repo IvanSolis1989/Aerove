@@ -8,6 +8,9 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -33,7 +36,7 @@ class ProfileRepository(
     suspend fun importText(name: String, yaml: String, url: String? = null): ProfileSummary =
         importText(UUID.randomUUID().toString(), name, yaml, url)
 
-    private suspend fun importText(id: String, name: String, yaml: String, url: String?): ProfileSummary {
+    private suspend fun importText(id: String, name: String, yaml: String, url: String?, download: SubscriptionDownloader.Download? = null): ProfileSummary {
         checkName(name)
         url?.let(SubscriptionDownloader::parseUrl)
         val bundle = prepareBundle(id, yaml)
@@ -41,7 +44,10 @@ class ProfileRepository(
         try { return storage.transaction {
             val index = load()
             check(index.entries.size < 1000) { "Profile limit reached" }
-            val summary = ProfileSummary(id, name.trim(), url, clock())
+            val timestamp = clock()
+            val summary = ProfileSummary(id, name.trim(), url, timestamp,
+                sourceIdentity = UUID.randomUUID().toString(), lastSuccessfulUpdateAt = if (download != null) timestamp else null,
+                subscriptionUserInfo = download?.subscriptionUserInfo, contentDisposition = download?.contentDisposition)
             val revision = writeRevision(yaml)
             save(index.copy(
                 entries = index.entries + Entry(summary, revision, bundle = bundle?.generation, nextRefreshAt = bundle?.nextRefreshAt),
@@ -74,40 +80,85 @@ class ProfileRepository(
         }
     }
 
-    suspend fun addSubscription(name: String, url: String): ProfileSummary =
-        importText(name, downloader.download(url), url)
+    suspend fun addSubscription(name: String, url: String): ProfileSummary {
+        val download = downloader.downloadResult(url)
+        return importText(UUID.randomUUID().toString(), name, download.yaml, url, download)
+    }
 
-    suspend fun update(id: String): ProfileSummary {
+    suspend fun update(id: String, request: ProfileMaintenanceRequest? = null): ProfileSummary {
         val original = storage.transaction { load().entry(id) }
+        checkRequest(original.summary, request)
         val url = original.summary.url ?: throw IOException("Local profile requires a replacement file")
-        return replace(id, downloader.download(url), original.current)
+        val download = downloader.downloadResult(url)
+        return replace(id, download.yaml, original.current, original.summary.sourceIdentity, request, download)
     }
 
     suspend fun replace(id: String, yaml: String): ProfileSummary {
         val revision = storage.transaction { load().entry(id).current }
-        return replace(id, yaml, revision)
+        return replace(id, yaml, revision, replaceSource = true)
     }
 
-    private suspend fun replace(id: String, yaml: String, expectedRevision: String): ProfileSummary {
+    private suspend fun replace(id: String, yaml: String, expectedRevision: String,
+        expectedSource: String? = null, request: ProfileMaintenanceRequest? = null,
+        download: SubscriptionDownloader.Download? = null, replaceSource: Boolean = false): ProfileSummary {
         val bundle = prepareBundle(id, yaml)
         var committed = false
         try { return storage.transaction {
             val index = load()
             val old = index.entry(id)
             if (old.current != expectedRevision) throw ProfileConflictException(id)
+            if (expectedSource != null && old.summary.sourceIdentity != expectedSource) throw CancellationException("Profile source changed")
+            currentCoroutineContext().ensureActive()
+            checkRequest(old.summary, request)
+            val timestamp = clock()
             val updated = old.copy(
-                summary = old.summary.copy(updatedAt = clock()),
+                summary = old.summary.copy(updatedAt = timestamp,
+                    sourceIdentity = if (replaceSource) UUID.randomUUID().toString() else old.summary.sourceIdentity,
+                    lastSuccessfulUpdateAt = if (download != null) timestamp else if (replaceSource) null else old.summary.lastSuccessfulUpdateAt,
+                    subscriptionUserInfo = if (download != null) download.subscriptionUserInfo else if (replaceSource) null else old.summary.subscriptionUserInfo,
+                    contentDisposition = if (download != null) download.contentDisposition else if (replaceSource) null else old.summary.contentDisposition),
                 current = writeRevision(yaml),
                 previous = old.current,
                 bundle = bundle?.generation,
                 previousBundle = old.bundle,
                 nextRefreshAt = bundle?.nextRefreshAt,
             )
+            checkRequest(old.summary, request)
+            currentCoroutineContext().ensureActive()
             save(index.copy(entries = index.entries.map { if (it.summary.id == id) updated else it }))
             committed = true
             bundle?.let { resources?.committed(id, it.generation) }
             updated.summary
         } } finally { if (!committed && bundle != null) withContext(NonCancellable) { resources?.discard(id, bundle.generation) } }
+    }
+
+    suspend fun isCurrentSource(id: String, sourceIdentity: String): Boolean = storage.transaction {
+        load().entries.any { it.summary.id == id && it.summary.sourceIdentity == sourceIdentity }
+    }
+
+    suspend fun editMetadata(id: String, name: String, url: String?, autoUpdate: Boolean, intervalMillis: Long): ProfileSummary {
+        checkName(name)
+        url?.let(SubscriptionDownloader::parseUrl)
+        require(intervalMillis > 0) { "Update interval must be positive" }
+        return storage.transaction {
+            val index = load()
+            val old = index.entry(id)
+            val changedSource = old.summary.url != url
+            val summary = old.summary.copy(name = name.trim(), url = url, autoUpdate = autoUpdate,
+                updateIntervalMillis = intervalMillis,
+                sourceIdentity = if (changedSource) UUID.randomUUID().toString() else old.summary.sourceIdentity,
+                lastSuccessfulUpdateAt = if (changedSource) null else old.summary.lastSuccessfulUpdateAt,
+                subscriptionUserInfo = if (changedSource) null else old.summary.subscriptionUserInfo,
+                contentDisposition = if (changedSource) null else old.summary.contentDisposition)
+            save(index.copy(entries = index.entries.map { if (it.summary.id == id) it.copy(summary = summary) else it }))
+            summary
+        }
+    }
+
+    private fun checkRequest(summary: ProfileSummary, request: ProfileMaintenanceRequest?) {
+        if (request != null && (request.profileId != summary.id || request.sourceIdentity != summary.sourceIdentity || !request.isCurrent())) {
+            throw CancellationException("Profile update superseded")
+        }
     }
 
     suspend fun prepare(id: String): PreparedProfile {
@@ -214,10 +265,102 @@ class ProfileRepository(
         return prepare(id)
     }
 
-    suspend fun importResource(id: String, path: String, input: InputStream): PreparedProfile {
+    suspend fun importResource(id: String, path: String, input: InputStream): PreparedProfile = privateDomainTransaction(storage.root.parentFile!!) {
         storage.transaction { load().entry(id) }
         checkNotNull(resources) { "Resource manager is not configured" }.importLocal(id, path, input)
-        return refreshResources(id)
+        refreshResources(id)
+    }
+
+    internal suspend fun <T> withBackupSnapshot(action: suspend (List<BackupProfileSource>, String?) -> T): T = storage.transaction {
+        val index = load()
+        val entries = index.entries.map { entry ->
+            val source = storage.read(entry.current)
+            val bundle = entry.bundle?.let { checkNotNull(resources).load(entry.summary.id, it, source) }
+            if (bundle == null) validate(source)
+            val local = linkedMapOf<String, File>()
+            bundle?.let {
+                val manifest = JSONObject(File(it.directory, "manifest.json").inputStream().use { stream -> stream.readBounded(1024 * 1024).strictUtf8() })
+                val records = manifest.getJSONArray("records")
+                for (i in 0 until records.length()) {
+                    val record = records.getJSONObject(i)
+                    if (!record.isNull("url") || record.isNull("localPath")) continue
+                    val normalized = privateResource(it.directory, record.getString("localPath"))
+                    val path = it.directory.toPath().relativize(normalized.toPath()).joinToString("/")
+                    val file = privateResource(it.directory, record.getString("file"))
+                    val previous = local.put(path, file)
+                    require(previous == null || sha256(previous) == sha256(file)) { "Local resource snapshot has conflicting content" }
+                }
+            }
+            BackupProfileSource(entry.backupId ?: entry.summary.id, entry.summary, source, local)
+        }
+        action(entries, index.entries.find { it.summary.id == index.selected }?.let { it.backupId ?: it.summary.id })
+    }
+
+    internal suspend fun restoreBackup(
+        incoming: List<BackupProfileInput>,
+        selectedId: String?,
+        replaceExisting: Boolean,
+        restoreSelection: Boolean,
+        applySettings: suspend () -> Unit,
+    ): Map<String, String> = privateDomainTransaction(storage.root.parentFile!!) {
+        require(incoming.size <= 1000 && incoming.map { it.id }.distinct().size == incoming.size) { "Invalid backup profile count" }
+        require(selectedId == null || incoming.any { it.id == selectedId }) { "Invalid backup selection" }
+        val before = storage.transaction { load() }
+        val identities = incoming.map { it.id }.toSet()
+        val kept = if (replaceExisting) emptyList() else before.entries.filterNot { (it.backupId ?: it.summary.id) in identities }
+        require(kept.size + incoming.size <= 1000) { "Profile limit reached" }
+        val candidates = mutableListOf<Pair<String, ResourceBundle>>()
+        val restored = mutableListOf<Entry>()
+        try {
+            for (input in incoming) {
+                require(UUID.fromString(input.id).toString() == input.id) { "Invalid backup profile id" }
+                checkName(input.name)
+                input.url?.let(SubscriptionDownloader::parseUrl)
+                require(input.updatedAt >= 0) { "Invalid profile timestamp" }
+                require(input.updateIntervalMillis > 0 && (input.lastSuccessfulUpdateAt == null || input.lastSuccessfulUpdateAt >= 0)) { "Invalid profile maintenance metadata" }
+                require(input.sourceIdentity == null || (input.sourceIdentity.isNotBlank() && input.sourceIdentity.length <= 16384)) { "Invalid source identity" }
+                require(listOfNotNull(input.subscriptionUserInfo, input.contentDisposition).all { it.length <= 8192 }) { "Profile response header too large" }
+                val id = UUID.randomUUID().toString()
+                val bundle = if (resources != null) {
+                    input.localResources.forEach { (path, file) ->
+                        resources.importLocal(id, path, file.inputStream())
+                    }
+                    checkNotNull(prepareBundle(id, input.source)).also { candidates += id to it }
+                } else {
+                    require(input.localResources.isEmpty()) { "Resource manager is required to restore local resources" }
+                    validate(input.source)
+                    null
+                }
+                restored += Entry(ProfileSummary(id, input.name.trim(), input.url, input.updatedAt,
+                    autoUpdate = input.autoUpdate, updateIntervalMillis = input.updateIntervalMillis,
+                    lastSuccessfulUpdateAt = input.lastSuccessfulUpdateAt, sourceIdentity = input.sourceIdentity ?: UUID.randomUUID().toString(),
+                    subscriptionUserInfo = input.subscriptionUserInfo, contentDisposition = input.contentDisposition), writeRevision(input.source),
+                    bundle = bundle?.generation, nextRefreshAt = bundle?.nextRefreshAt, backupId = input.id)
+            }
+            val mapping = incoming.zip(restored).associate { (source, entry) -> source.id to entry.summary.id }
+            val previousIdentity = before.entries.find { it.summary.id == before.selected }?.let { it.backupId ?: it.summary.id }
+            val selected = when {
+                restoreSelection -> mapping[selectedId]
+                !replaceExisting && kept.any { it.summary.id == before.selected } -> before.selected
+                !replaceExisting && previousIdentity in mapping -> mapping[previousIdentity]
+                else -> mapping[selectedId] ?: kept.firstOrNull()?.summary?.id ?: restored.firstOrNull()?.summary?.id
+            }
+            atomicDomainRestore(storage.root.parentFile!!) {
+                applySettings()
+                storage.transaction { save(Index(kept + restored, selected), collect = false) }
+            }
+            candidates.forEach { (id, bundle) -> resources?.committed(id, bundle.generation) }
+            runCatching { storage.transaction { collectGarbage(load()) } }
+            mapping
+        } catch (failure: Throwable) {
+            withContext(NonCancellable) {
+                candidates.forEach { (id, bundle) ->
+                    try { resources?.discard(id, bundle.generation) } catch (cleanup: Throwable) { failure.addSuppressed(cleanup) }
+                }
+                try { storage.transaction { collectGarbage(load()) } } catch (cleanup: Throwable) { failure.addSuppressed(cleanup) }
+            }
+            throw failure
+        }
     }
 
     suspend fun readConfig(id: String): String = storage.transaction {
@@ -283,7 +426,11 @@ class ProfileRepository(
                 row.getString(key).also { require(it.matches(REVISION)) { "Invalid revision path" } }
             }
             Entry(
-                ProfileSummary(id, row.getString("name"), nullableString(row, "url"), row.getLong("updatedAt")),
+                ProfileSummary(id, row.getString("name"), nullableString(row, "url"), row.getLong("updatedAt"),
+                    autoUpdate = row.optBoolean("autoUpdate", true), updateIntervalMillis = row.optLong("updateIntervalMillis", 86_400_000L).also { require(it > 0) },
+                    lastSuccessfulUpdateAt = if (row.isNull("lastSuccessfulUpdateAt")) null else row.getLong("lastSuccessfulUpdateAt").also { require(it >= 0) },
+                    sourceIdentity = row.optString("sourceIdentity", id).also { require(it.isNotBlank() && it.length <= 16384) },
+                    subscriptionUserInfo = nullableString(row, "subscriptionUserInfo"), contentDisposition = nullableString(row, "contentDisposition")),
                 revision("current") ?: throw IOException("Profile has no configuration"),
                 revision("previous"),
                 revision("lastUsable"),
@@ -291,6 +438,7 @@ class ProfileRepository(
                 nullableString(row, "previousBundle")?.also(::checkGeneration),
                 nullableString(row, "lastUsableBundle")?.also(::checkGeneration),
                 if (row.isNull("nextRefreshAt")) null else row.getLong("nextRefreshAt"),
+                nullableString(row, "backupId")?.also(::checkGeneration),
             )
         }
         require(entries.map { it.summary.id }.distinct().size == entries.size) { "Duplicate profile id" }
@@ -299,20 +447,27 @@ class ProfileRepository(
         return Index(entries, selected)
     }
 
-    private fun save(index: Index) {
+    private fun save(index: Index, collect: Boolean = true) {
         val array = JSONArray()
         index.entries.forEach { e ->
             array.put(JSONObject().put("id", e.summary.id).put("name", e.summary.name)
                 .put("url", e.summary.url ?: JSONObject.NULL).put("updatedAt", e.summary.updatedAt)
+                .put("autoUpdate", e.summary.autoUpdate).put("updateIntervalMillis", e.summary.updateIntervalMillis)
+                .put("lastSuccessfulUpdateAt", e.summary.lastSuccessfulUpdateAt ?: JSONObject.NULL)
+                .put("sourceIdentity", e.summary.sourceIdentity)
+                .put("subscriptionUserInfo", e.summary.subscriptionUserInfo ?: JSONObject.NULL)
+                .put("contentDisposition", e.summary.contentDisposition ?: JSONObject.NULL)
                 .put("current", e.current).put("previous", e.previous ?: JSONObject.NULL)
                 .put("lastUsable", e.lastUsable ?: JSONObject.NULL)
                 .put("bundle", e.bundle ?: JSONObject.NULL).put("previousBundle", e.previousBundle ?: JSONObject.NULL)
                 .put("lastUsableBundle", e.lastUsableBundle ?: JSONObject.NULL)
-                .put("nextRefreshAt", e.nextRefreshAt ?: JSONObject.NULL))
+                .put("nextRefreshAt", e.nextRefreshAt ?: JSONObject.NULL).put("backupId", e.backupId ?: JSONObject.NULL))
         }
-        storage.write("index.json", JSONObject().put("schema", 1).put("profiles", array)
-            .put("selected", index.selected ?: JSONObject.NULL).toString())
-        runCatching { collectGarbage(index) }
+        val encoded = JSONObject().put("schema", 1).put("profiles", array)
+            .put("selected", index.selected ?: JSONObject.NULL).toString()
+        require(encoded.toByteArray(Charsets.UTF_8).size <= 1024 * 1024) { "Profile metadata limit reached" }
+        storage.write("index.json", encoded)
+        if (collect) runCatching { collectGarbage(index) }
     }
 
     private fun collectGarbage(index: Index) {
@@ -343,6 +498,7 @@ class ProfileRepository(
         val previousBundle: String? = null,
         val lastUsableBundle: String? = null,
         val nextRefreshAt: Long? = null,
+        val backupId: String? = null,
     )
 
     private data class Index(val entries: List<Entry>, val selected: String?) {

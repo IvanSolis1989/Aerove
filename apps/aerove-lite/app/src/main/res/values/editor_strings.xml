@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="editor_back">Back</string>
+    <string name="editor_save">Save</string>
+    <string name="editor_search">Search</string>
+    <string name="editor_options">More options</string>
+    <string name="editor_undo">Undo</string>
+    <string name="editor_redo">Redo</string>
+    <string name="editor_font_size">Font size</string>
+    <string name="editor_font_standard">Standard</string>
+    <string name="editor_font_large">Large</string>
+    <string name="editor_font_extra_large">Extra large</string>
+    <string name="editor_line_wrap">Line wrap</string>
+    <string name="editor_copy">Copy</string>
+    <string name="editor_cut">Cut</string>
+    <string name="editor_paste">Paste</string>
+    <string name="editor_select_all">Select all</string>
+    <string name="editor_match_case">Match case</string>
+    <string name="editor_regex">Regular expression</string>
+    <string name="editor_previous_match">Previous match</string>
+    <string name="editor_next_match">Next match</string>
+    <string name="editor_replace">Replace</string>
+    <string name="editor_replace_all">Replace all</string>
+    <string name="editor_matches">%1$d/%2$d</string>
+    <string name="editor_close">Close</string>
+    <string name="editor_loading">Loading…</string>
+    <string name="editor_saving">Saving…</string>
+    <string name="editor_working">Working…</string>
+    <string name="editor_unsaved_changes">Save changes before leaving?</string>
+    <string name="editor_discard">Discard changes</string>
+    <string name="editor_keep_editing">Keep editing</string>
+    <string name="editor_error">Unable to complete the operation</string>
+    <string name="editor_retry">Retry</string>
+</resources>

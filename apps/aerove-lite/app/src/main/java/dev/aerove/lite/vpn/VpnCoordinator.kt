@@ -2,6 +2,7 @@ package dev.aerove.lite.vpn
 
 import dev.aerove.lite.LiteSettings
 import dev.aerove.lite.VpnPhase
+import dev.aerove.lite.data.AppliedConfigSnapshot
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -14,7 +15,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 data class VpnPlan(val profileId: String, val settings: LiteSettings)
-class CoreEndpoint(val port: Int, val secret: String) {
+class CoreEndpoint @JvmOverloads constructor(
+    val port: Int,
+    val secret: String,
+    val configuration: AppliedConfigSnapshot? = null,
+) {
     override fun toString(): String = "CoreEndpoint(127.0.0.1:$port, secret=<redacted>)"
 }
 data class VpnSnapshot(

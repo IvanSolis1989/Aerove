@@ -32,6 +32,7 @@ internal fun ToolsScreen(state: LiteState, padding: PaddingValues, open: (Detail
                         LiteIcon(FullGlyphs.chevronForward)
                     }
                     ToolRow(R.string.lite_general, FullGlyphs.settings) { open(DetailPage.General) }
+                    ToolRow(R.string.backup_title, FullGlyphs.importFile) { open(DetailPage.Backup) }
                 }
             }
         }

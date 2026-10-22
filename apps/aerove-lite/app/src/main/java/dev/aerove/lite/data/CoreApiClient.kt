@@ -18,9 +18,12 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -61,6 +64,7 @@ class CoreApiClient(
     private val streamScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val closedSignal = MutableStateFlow(false)
     private val http = client.newBuilder()
+        .cache(null)
         .proxy(Proxy.NO_PROXY)
         .followRedirects(false)
         .followSslRedirects(false)
@@ -102,6 +106,28 @@ class CoreApiClient(
 
     suspend fun connections(): List<ConnectionInfo> = withContext(Dispatchers.Default) {
         decodeConnections(json(listOf("connections")))
+    }
+
+    suspend fun serviceChecks(
+        targets: List<ServiceTarget>,
+        proxyName: String = "",
+        timeoutMillis: Int = 10_000,
+    ): List<ServiceCheck> = withContext(Dispatchers.Default) {
+        val wanted = targets.toList()
+        val body = serviceCheckBody(wanted, proxyName, timeoutMillis)
+        decodeServiceChecks(request(
+            listOf("aerove", "service-check"), "POST", body,
+            budgetMillis = timeoutMillis * 6L,
+            failure = ::serviceCheckFailure,
+        ), wanted)
+    }
+
+    suspend fun memorySnapshot(): MemorySnapshot = withContext(Dispatchers.Default) {
+        decodeMemorySnapshot(request(listOf("memory"), maxBytes = 1024))
+    }
+
+    suspend fun routeSnapshot(): RouteSnapshot = withContext(Dispatchers.Default) {
+        decodeRouteSnapshot(request(listOf("aerove", "route")))
     }
 
     suspend fun outboundIdentity(): OutboundIdentity = decodeOutbound(json(listOf("aerove", "outbound")))
@@ -226,20 +252,37 @@ class CoreApiClient(
         method: String = "GET",
         data: JSONObject? = null,
         query: Map<String, String> = emptyMap(),
+        budgetMillis: Long? = null,
+        failure: ((Int, String) -> IOException)? = null,
+        maxBytes: Int = MAX_PROFILE_BYTES,
     ): String = withContext(Dispatchers.IO) {
         check(!closed.get()) { "Core client is closed" }
         val builder = authenticated(url(path, query))
         val body = data?.toString()?.toRequestBody("application/json; charset=utf-8".toMediaType())
-        val call = http.newCall(builder.method(method, body).build())
+        val transport = if (budgetMillis == null) http else http.newBuilder()
+            .readTimeout(budgetMillis + 5000, TimeUnit.MILLISECONDS)
+            .callTimeout(budgetMillis + 10000, TimeUnit.MILLISECONDS)
+            .build()
+        val call = transport.newCall(builder.method(method, body).build())
+        val cancellation = Job(currentCoroutineContext()[Job])
+        cancellation.invokeOnCompletion { if (it != null) call.cancel() }
         calls.add(call)
         try {
             if (closed.get()) throw IOException("Core client is closed")
             call.awaitResponse().use { response ->
-                if (!response.isSuccessful) throw CoreApiException(response.code, path.first())
-                response.body?.byteStream()?.readBounded(MAX_PROFILE_BYTES)?.strictUtf8().orEmpty()
+                if (!response.isSuccessful) {
+                    throw if (failure == null) CoreApiException(response.code, path.first()) else {
+                        failure(response.code, response.body?.byteStream()?.readBounded(8192)?.strictUtf8().orEmpty())
+                    }
+                }
+                response.body?.byteStream()?.readBounded(maxBytes)?.strictUtf8().orEmpty()
             }
+        } catch (error: IOException) {
+            currentCoroutineContext().ensureActive()
+            throw error
         } finally {
             calls.remove(call)
+            cancellation.complete()
         }
     }
 

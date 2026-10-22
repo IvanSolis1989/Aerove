@@ -1,0 +1,77 @@
+{
+  "grammarOrigins": [
+    {
+      "sha256": "db6f17f15bc4f5e860a3b8fa6055a69720a53df845c8d5121cdc4f128c16291f",
+      "scope": "source.js",
+      "source": "https://github.com/microsoft/TypeScript-TmLanguage/commit/48f608692aa6d6ad7bd65b478187906c798234a8",
+      "file": "javascript.json"
+    },
+    {
+      "sha256": "d7238f1cc9033993b9816b0945cab4bb8ea108de0399663c551f28f913e94c70",
+      "scope": "source.json",
+      "source": "https://github.com/microsoft/vscode-JSON.tmLanguage/commit/9bd83f1c252b375e957203f21793316203f61f70",
+      "file": "json.json"
+    },
+    {
+      "sha256": "6e521c226b702f17fca01ee380479e77350ac754fc4bc127d997ab52c140bd1e",
+      "scope": "source.yaml.1.0",
+      "source": "https://github.com/RedCMD/YAML-Syntax-Highlighter/commit/0b50d9c47145df62c4461c4407698a24e8f1f3c2",
+      "file": "yaml-1.0.json"
+    },
+    {
+      "sha256": "577102ecafb5a6fe88b766ceed020c2cc32aa16f82556ae36385f23f7b834963",
+      "scope": "source.yaml.1.1",
+      "source": "https://github.com/RedCMD/YAML-Syntax-Highlighter/commit/dfd7e5f4f71f9695c5d8697ca57f81240165aa04",
+      "file": "yaml-1.1.json"
+    },
+    {
+      "sha256": "1e62af3f7ccccce7ed45b4ee4f3d8461b7e9c3bee42d40b0057934ba6dd62f80",
+      "scope": "source.yaml.1.2",
+      "source": "https://github.com/RedCMD/YAML-Syntax-Highlighter/commit/53d38bbc66b704803de54ffce5b251bf97211c60",
+      "file": "yaml-1.2.json"
+    },
+    {
+      "sha256": "4d2eb8e4139b82a610e4f02a0f663ebbb183d4d5e97b3f098a5a844f4efcf6b0",
+      "scope": "source.yaml.1.3",
+      "source": "https://github.com/RedCMD/YAML-Syntax-Highlighter/commit/274009903e20ac6dc37ba5763fb853744e28c9b2",
+      "file": "yaml-1.3.json"
+    },
+    {
+      "sha256": "b63b60dfef3237d9c51c7dfd2a488735ecc8e22fdb1a0e8fa8b34d2f77bf873e",
+      "scope": "source.yaml.embedded",
+      "source": "https://github.com/RedCMD/YAML-Syntax-Highlighter/commit/c42cf86959ba238dc8a825bdd07bed6f5e97c978",
+      "file": "yaml-embedded.json"
+    },
+    {
+      "sha256": "17f25b037d082408b3ac7af5bb53e94125cc1a47857a75da451d6ea4ac0602df",
+      "scope": "source.yaml",
+      "source": "https://github.com/RedCMD/YAML-Syntax-Highlighter/commit/c42cf86959ba238dc8a825bdd07bed6f5e97c978",
+      "file": "yaml.json"
+    }
+  ],
+  "fullReferenceHead": "65493e76512ed0b9f656048e6f889c97e79acadd",
+  "vscode": {
+    "license": "MIT",
+    "commit": "7d842fb85a0275a4a8e4d7e040d2625abbf7f084",
+    "repository": "https://github.com/microsoft/vscode",
+    "tag": "1.105.1"
+  },
+  "fullSchema": {
+    "path": "apps/aerove/lib/features/editor/clash_schema.dart",
+    "sha256": "05740d8a9e4bc97f381957d53c80c8e42e32d7124bd009718fba9874b7e563a9"
+  },
+  "sora": {
+    "license": "LGPL-2.1-or-later",
+    "coordinates": [
+      "io.github.rosemoe:editor:0.23.7",
+      "io.github.rosemoe:language-textmate:0.23.7"
+    ],
+    "repository": "https://github.com/Rosemoe/sora-editor",
+    "version": "0.23.7"
+  },
+  "font": {
+    "sha256": "a0bf60ef0f83c5ed4d7a75d45838548b1f6873372dfac88f71804491898d138f",
+    "license": "OFL-1.1",
+    "path": "apps/aerove/assets/fonts/JetBrainsMono-Regular.ttf"
+  }
+}

@@ -8,8 +8,13 @@ import dev.aerove.lite.MaterialTier
 import dev.aerove.lite.ProxyMode
 import dev.aerove.lite.normalizeAuroraColors
 import dev.aerove.lite.normalizeDashboardWidgetValues
+import dev.aerove.lite.normalizeThemeColors
 import dev.aerove.lite.normalized
+import dev.aerove.lite.rotateAuroraForDay as rotateAuroraSettingsForDay
+import dev.aerove.lite.shuffleAuroraWallpaper as shuffleAuroraSettings
 import java.io.File
+import java.time.ZonedDateTime
+import kotlin.random.Random
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -22,9 +27,37 @@ class LiteSettingsStore(privateDirectory: File) {
         val normalized = settings.normalized()
         validateSettings(normalized)
         require(!normalized.autoStart || vpnAuthorized) { "Boot auto-start requires an existing VPN authorization" }
+        persist(normalized)
+    }
+
+    suspend fun rotateAuroraForDay(
+        now: ZonedDateTime = ZonedDateTime.now(),
+        random: Random = Random.Default,
+    ): LiteSettings = updateAurora { rotateAuroraSettingsForDay(it, now, random) }
+
+    suspend fun shuffleAuroraWallpaper(
+        now: ZonedDateTime = ZonedDateTime.now(),
+        random: Random = Random.Default,
+    ): LiteSettings = updateAurora { shuffleAuroraSettings(it, now, random) }
+
+    private suspend fun updateAurora(update: (LiteSettings) -> LiteSettings): LiteSettings = storage.transaction {
+        val current = load()
+        val changed = update(current)
+        if (changed === current) current else persist(current.copy(
+            auroraSeed = changed.auroraSeed,
+            auroraRotationDay = changed.auroraRotationDay,
+        ))
+    }
+
+    private fun persist(normalized: LiteSettings): LiteSettings {
         val json = JSONObject().put("schema", 1)
             .put("material", normalized.material.name).put("aurora", normalized.aurora)
             .put("colorMode", normalized.colorMode.name).put("themeColor", normalized.themeColor)
+            .put("themeColors", JSONArray(normalized.themeColors)).put("followSystemColor", normalized.followSystemColor)
+            .put("editorFontSize", normalized.editorFontSize)
+            .put("editorLineWrap", normalized.editorLineWrap)
+            .put("serviceOrder", JSONArray(normalized.serviceOrder))
+            .put("disabledServices", JSONArray(normalized.disabledServices.sorted()))
             .put("mode", normalized.mode.name).put("ipv6", normalized.ipv6)
             .put("overrideDns", normalized.overrideDns).put("dnsServers", JSONArray(normalized.dnsServers))
             .put("appFilterMode", normalized.appFilterMode.name)
@@ -36,7 +69,7 @@ class LiteSettingsStore(privateDirectory: File) {
         val encoded = json.toString()
         require(encoded.toByteArray(Charsets.UTF_8).size <= 128 * 1024) { "Settings exceed storage limit" }
         storage.write("settings.json", encoded)
-        normalized
+        return normalized
     }
 
     private fun load(): LiteSettings {
@@ -51,11 +84,19 @@ class LiteSettingsStore(privateDirectory: File) {
         fun values(key: String): List<*>? = (json.opt(key) as? JSONArray)?.let { array ->
             (0 until array.length()).map { array.opt(it) }
         }
+        val themeColor = json.opt("themeColor")
+        require((themeColor is Int || themeColor is Long) && (themeColor as Number).toLong() in 0..0xFFFFFFFFL) {
+            "Invalid ARGB theme color"
+        }
+        val selectedColor = themeColor.toLong()
+        val themeColors = normalizeThemeColors(values("themeColors")).let { colors ->
+            if (!json.has("themeColors") && selectedColor !in colors) colors + selectedColor else colors
+        }
         return LiteSettings(
             material = MaterialTier.valueOf(json.getString("material")),
             aurora = json.getBoolean("aurora"),
             colorMode = ColorMode.valueOf(json.getString("colorMode")),
-            themeColor = json.getLong("themeColor"),
+            themeColor = selectedColor,
             mode = ProxyMode.valueOf(json.getString("mode")),
             ipv6 = json.getBoolean("ipv6"),
             overrideDns = json.optBoolean("overrideDns", false),
@@ -69,7 +110,17 @@ class LiteSettingsStore(privateDirectory: File) {
             auroraSeed = (json.opt("auroraSeed") as? Number)?.toLong() ?: defaults.auroraSeed,
             auroraRotationDay = (json.opt("auroraRotationDay") as? Number)?.toLong() ?: defaults.auroraRotationDay,
             dashboardWidgets = normalizeDashboardWidgetValues(values("dashboardWidgets")),
-        ).also(::validateSettings)
+            themeColors = themeColors,
+            followSystemColor = json.opt("followSystemColor") as? Boolean ?: defaults.followSystemColor,
+            editorFontSize = when (json.opt("editorFontSize")) {
+                18, 18L, "large" -> 18
+                20, 20L, "extraLarge" -> 20
+                else -> defaults.editorFontSize
+            },
+            editorLineWrap = json.opt("editorLineWrap") as? Boolean ?: defaults.editorLineWrap,
+            serviceOrder = values("serviceOrder")?.filterIsInstance<String>() ?: defaults.serviceOrder,
+            disabledServices = values("disabledServices")?.filterIsInstance<String>()?.toSet() ?: defaults.disabledServices,
+        ).normalized().also(::validateSettings)
     }
 }
 
