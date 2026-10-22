@@ -2,7 +2,7 @@
 apps/aerove/lib/**/generated/** -whitespace
 # Replayed patches retain diff context whitespace; vendored hashes use exact bytes.
 apps/aerove/core/patches/*.patch -text -whitespace
-apps/aerove-lite/native/upstream.patch -text -whitespace
+apps/aerove-lite/native/*.patch -text -whitespace
 apps/aerove-lite/third_party/material-color-utilities/src/**/*.java -text
 apps/aerove-lite/app/src/main/java/dev/aerove/lite/editor/assets/editor/licenses/JetBrainsMono-OFL.txt -text -whitespace
 .github/actions/flutter/action.yaml -text

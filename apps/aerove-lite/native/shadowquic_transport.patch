@@ -1,0 +1,87 @@
+--- a/clash-lib/src/proxy/shadowquic/mod.rs
++++ b/clash-lib/src/proxy/shadowquic/mod.rs
+@@ -1,5 +1,6 @@
+ use erased_serde::Serialize as ErasedSerialize;
+ use std::{collections::HashMap, fmt::Debug, io, net::SocketAddr, str::FromStr};
++use std::sync::Arc;
+ 
+ use async_trait::async_trait;
+ 
+@@ -40,20 +41,25 @@
+     opts: HandlerOptions,
+     ep: OnceCell<ShadowQuicClient>, /* Must be created after session since server
+                                      * addr needs to be resolved */
+-    conn: RwLock<Option<SQConn>>,
++    conn: Arc<RwLock<Option<SQConn>>>,
++    #[cfg(feature="aerove-mobile")]
++    scope:Option<crate::mobile::protocol_transport::Scope>,
++    #[cfg(feature="aerove-mobile")]
++    stop_task:std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+ }
+ impl Debug for Handler {
+     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+-        f.debug_struct("Handler").field("opts", &self.opts).finish()
++        f.debug_struct("Handler").field("name", &self.name).finish()
+     }
+ }
+ impl Handler {
+     pub fn new(name: String, opts: HandlerOptions) -> Self {
+-        Self {
+-            name,
+-            opts,
+-            ep: Default::default(),
+-            conn: Default::default(),
++        let conn=Arc::new(RwLock::new(None::<SQConn>));
++        #[cfg(feature="aerove-mobile")]
++        let scope=crate::mobile::protocol_transport::Scope::current();
++        Self {name,opts,ep:Default::default(),conn,
++            #[cfg(feature="aerove-mobile")] scope,
++            #[cfg(feature="aerove-mobile")] stop_task:Default::default(),
+         }
+     }
+ 
+@@ -97,6 +103,10 @@
+                     .map(|iface| config::Interface::Device(iface.name.clone()));
+                 let mut ep = ShadowQuicClient::new(cfg);
+                 ep.config.addr = addr.to_string();
++                #[cfg(feature="aerove-mobile")]
++                {let scope=self.scope.as_ref().ok_or_else(||io::Error::new(io::ErrorKind::PermissionDenied,"shadowquic has no runtime owner"))?;scope.check()?;
++                    let cancel=scope.cancel.clone();let connection=self.conn.clone();*self.stop_task.lock().unwrap()=Some(tokio::spawn(async move {cancel.cancelled().await;if let Some(conn)=connection.write().await.take(){shadowquic::quic::QuicConnection::close(&*conn,0,b"owning runtime stopped");}}));
++                    ep.socket_factory=Arc::new(crate::mobile::protocol_transport::ShadowSocket {scope:scope.clone(),remote:addr,interface:ep.config.socket_opt.bind_interface.clone(),mark:ep.config.socket_opt.fw_mark});}
+                 Ok(ep) as io::Result<ShadowQuicClient>
+             })
+             .await
+@@ -107,6 +117,8 @@
+         sess: &Session,
+         resolver: ThreadSafeDNSResolver,
+     ) -> io::Result<SQConn> {
++        #[cfg(feature="aerove-mobile")]
++        self.scope.as_ref().ok_or_else(||io::Error::new(io::ErrorKind::PermissionDenied,"shadowquic has no runtime owner"))?.check()?;
+         let ep = self.prepare_endpoint(sess, resolver).await?;
+         if let Some(x) = &*self.conn.read().await
+             && x.close_reason().is_none()
+@@ -114,7 +126,11 @@
+             return Ok(x.clone());
+         }
+         let mut conn = self.conn.write().await;
+-        let newconn = ep.get_conn().await.map_err(|x| {
++        #[cfg(feature="aerove-mobile")]
++        let connecting=tokio::select! {biased;_=self.scope.as_ref().unwrap().cancel.cancelled()=>return Err(io::Error::new(io::ErrorKind::Interrupted,"owning runtime stopped")),result=ep.get_conn()=>result};
++        #[cfg(not(feature="aerove-mobile"))]
++        let connecting=ep.get_conn().await;
++        let newconn = connecting.map_err(|x| {
+             io::Error::other(format!("can't open shadowquic connection due to:{x}"))
+         })?;
+         conn.replace(newconn.clone());
+@@ -637,3 +653,11 @@
+     crate::proxy::ProxyStream for shadowquic::squic::inbound::Unsplit<S, R>
+ {
+ }
++
++#[cfg(feature="aerove-mobile")]
++impl Drop for Handler {
++    fn drop(&mut self) {
++        if let Some(task)=self.stop_task.get_mut().unwrap().take(){task.abort();}
++        if let Ok(mut connection)=self.conn.try_write(){if let Some(conn)=connection.take(){shadowquic::quic::QuicConnection::close(&*conn,0,b"handler dropped");}}
++    }
++}

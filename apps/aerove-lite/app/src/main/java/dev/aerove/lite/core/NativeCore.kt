@@ -6,6 +6,8 @@ fun interface SocketProtector {
     fun protect(fd: Int): Boolean
 }
 
+fun interface ConnectionOwnerLookup { fun resolveConnectionOwner(protocol: Int, source: String, target: String): String? }
+
 object NativeCore {
     enum class State { Starting, Running, Failed, Exited }
     enum class RuntimeMode(val wireValue: String) { Tun("tun"), Proxy("proxy") }
@@ -18,6 +20,7 @@ object NativeCore {
         val tunReady: Boolean = false,
         val userListenersReady: Boolean = false,
         val listening: Boolean = false,
+        val coreReady: Boolean = false,
     )
 
     init {
@@ -43,6 +46,12 @@ object NativeCore {
     ): Long
 
     @JvmStatic
+    external fun startRuntimeParked(configPath: String, workingDir: String, runtimeMode: String, protector: SocketProtector?): Long
+
+    @JvmStatic external fun startRuntimeOwned(configPath: String, workingDir: String, runtimeMode: String, tunFd: Int,
+        protector: SocketProtector?, owner: ConnectionOwnerLookup?, initiallyParked: Boolean): Long
+
+    @JvmStatic
     fun status(handle: Long): Status {
         val value = JSONObject(snapshot(handle))
         return Status(
@@ -57,6 +66,7 @@ object NativeCore {
             tunReady = value.getBoolean("tunReady"),
             userListenersReady = value.getBoolean("userListenersReady"),
             listening = value.getBoolean("listening"),
+            coreReady = value.getBoolean("coreReady"),
         )
     }
 
@@ -67,6 +77,9 @@ object NativeCore {
         val activePorts: List<Int>,
         val coreEpoch: String,
         val onlyStatisticsProxy: Boolean,
+        val unifiedDelay: Boolean = true,
+        val tcpConcurrent: Boolean = true,
+        val findProcessMode: String = "strict",
     )
 
     private fun listenerStatus(value: String): ListenerStatus {
@@ -76,7 +89,7 @@ object NativeCore {
         val ports = data.getJSONArray("activePorts")
         return ListenerStatus(data.getBoolean("listening"), data.getBoolean("tunReady"),
             data.getBoolean("userListenersReady"), List(ports.length()) { ports.getInt(it) },
-            epoch, data.getBoolean("onlyStatisticsProxy"))
+            epoch, data.getBoolean("onlyStatisticsProxy"), data.getBoolean("unifiedDelay"), data.getBoolean("tcpConcurrent"), data.getString("findProcessMode").also { require(it in setOf("strict", "always", "off")) { "Invalid native process mode" } })
     }
 
     @JvmStatic fun park(handle: Long): ListenerStatus = listenerStatus(listenerCommand(handle, "park", -1, false))
@@ -86,6 +99,22 @@ object NativeCore {
     @JvmStatic fun setOnlyStatisticsProxy(handle: Long, enabled: Boolean) {
         listenerCommand(handle, "statistics", -1, enabled)
     }
+
+    data class UserControllerStatus(val enabled: Boolean, val address: String?, val authenticated: Boolean, val privateRoutesExcluded: Boolean, val coreEpoch: String)
+    private fun userControllerStatus(json: String): UserControllerStatus {
+        val value = JSONObject(json)
+        val epoch = value.getString("coreEpoch")
+        require(epoch.toULongOrNull()?.toString() == epoch) { "Invalid user controller epoch" }
+        return UserControllerStatus(value.getBoolean("enabled"), if (value.isNull("address")) null else value.getString("address"), value.getBoolean("authenticated"), value.getBoolean("privateRoutesExcluded"), epoch)
+    }
+    @JvmStatic fun configureUserController(handle: Long, enabled: Boolean, secret: String): UserControllerStatus = userControllerStatus(userControllerCommand(handle, false, enabled, secret))
+    @JvmStatic fun userControllerStatus(handle: Long): UserControllerStatus = userControllerStatus(userControllerCommand(handle, true, false, ""))
+    @JvmStatic private external fun userControllerCommand(handle: Long, read: Boolean, enabled: Boolean, secret: String): String
+    data class ProbeDialStatus(val unifiedDelay: Boolean, val tcpConcurrent: Boolean, val coreEpoch: String)
+    @JvmStatic fun probeDialStatus(handle: Long): ProbeDialStatus = listenerStatus(handle).let { ProbeDialStatus(it.unifiedDelay, it.tcpConcurrent, it.coreEpoch) }
+    @JvmStatic external fun invalidateProcessIdentity(handle: Long)
+    @JvmStatic external fun configureFindProcessMode(handle: Long, mode: String)
+    @JvmStatic external fun configureProbeDial(handle: Long, unifiedDelay: Boolean, tcpConcurrent: Boolean)
 
     @JvmStatic external fun updateNetworkDns(handle: Long, snapshotJson: String)
 

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use http::{HeaderMap, HeaderValue, header::USER_AGENT};
 use rustls::{client::{WebPkiServerVerifier,danger::{ServerCertVerifier,ServerCertVerified,HandshakeSignatureValid}}, pki_types::{CertificateDer,ServerName,UnixTime},DigitallySignedStruct,SignatureScheme};
 
-#[derive(Clone)]
+#[derive(Clone,PartialEq,Eq)]
 pub(crate) struct Policy { user_agent:HeaderValue, check_certificate:bool }
 impl Default for Policy {fn default()->Self{Self {user_agent:HeaderValue::from_static(crate::common::http::DEFAULT_USER_AGENT),check_certificate:true}}}
 impl Policy {

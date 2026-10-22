@@ -1,0 +1,416 @@
+--- a/clash-lib/src/app/remote_content_manager/mod.rs
++++ b/clash-lib/src/app/remote_content_manager/mod.rs
+@@ -13,7 +13,7 @@
+ use anyhow::Context;
+ use bytes::Bytes;
+ use chrono::{DateTime, Utc};
+-use futures::{FutureExt, StreamExt, stream::FuturesUnordered};
++use futures::{StreamExt, stream::FuturesUnordered};
+ use http_body_util::Empty;
+ use hyper::Request;
+ use hyper_util::rt::TokioIo;
+@@ -32,6 +32,52 @@
+ 
+ pub mod healthcheck;
+ pub mod providers;
++
++static UNIFIED_DELAY: AtomicBool = AtomicBool::new(true);
++
++pub fn set_unified_delay(value: bool) { UNIFIED_DELAY.store(value, Ordering::Release); }
++pub fn get_unified_delay() -> bool { UNIFIED_DELAY.load(Ordering::Acquire) }
++
++/// One connection owns both HEADs and the HTTP driver. Dropping this future closes it.
++pub async fn aerove_probe_head_exchange<S>(
++    stream: S, url: &str, unified: bool, start: tokio::time::Instant,
++    deadline: tokio::time::Instant,
++) -> std::io::Result<(Duration, Duration)>
++where S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static {
++    let uri: http::Uri = url.parse().map_err(std::io::Error::other)?;
++    let authority = uri.authority().ok_or_else(|| new_io_error("probe URL has no authority"))?;
++    let request = || Request::head(uri.path_and_query().map(|p| p.as_str()).unwrap_or("/"))
++        .header(hyper::header::HOST, authority.as_str())
++        .version(hyper::Version::HTTP_11)
++        .body(Empty::<Bytes>::new()).map_err(std::io::Error::other);
++    let (mut sender, connection) = tokio::time::timeout_at(
++        deadline, hyper::client::conn::http1::handshake(TokioIo::new(stream)),
++    ).await.map_err(|_| new_io_error("probe HTTP handshake timed out"))?
++        .map_err(std::io::Error::other)?;
++    let query = async {
++        let response = tokio::time::timeout_at(deadline, sender.send_request(request()?)).await
++            .map_err(|_| new_io_error("probe HEAD timed out"))?.map_err(std::io::Error::other)?;
++        drop(response);
++        let first = start.elapsed();
++        let selected = if unified {
++            let second = tokio::time::Instant::now();
++            match tokio::time::timeout_at(deadline, async {
++                sender.ready().await.map_err(std::io::Error::other)?;
++                sender.send_request(request()?).await.map_err(std::io::Error::other)
++            }).await {
++                Ok(Ok(response)) => { drop(response); second.elapsed() }
++                _ => first,
++            }
++        } else { first };
++        // Zero is the consumers' failure sentinel, including health-check history.
++        Ok((selected.max(Duration::from_millis(1)), start.elapsed().max(Duration::from_millis(1))))
++    };
++    tokio::pin!(query, connection);
++    tokio::select! {
++        result = &mut query => result,
++        _ = &mut connection => query.await,
++    }
++}
+ 
+ static GLOBAL_TRAFFIC_RATE_BPS: AtomicU64 = AtomicU64::new(0);
+ 
+@@ -905,8 +951,7 @@
+     }
+ 
+     #[instrument(skip(self, outbound))]
+-    /// returns (actual_http_round_trip_time,
+-    /// overall_round_trip_time_including_tls_handshake)
++    /// Returns (configured probe delay, overall time including warm-up/fallback).
+     pub async fn url_test(
+         &self,
+         outbound: AnyOutboundHandler,
+@@ -920,6 +965,7 @@
+         let timeout = timeout.unwrap_or(default_timeout);
+ 
+         let dns_resolver = self.dns_resolver.clone();
++        let unified = get_unified_delay();
+         let tester = async move {
+             let name = name_clone;
+ 
+@@ -953,8 +999,10 @@
+                 ..Default::default()
+             };
+ 
+-            let (stream, connect_delay) = tokio::time::timeout(
+-                timeout,
++            let started = tokio::time::Instant::now();
++            let deadline = started + timeout;
++            let (stream, connect_delay) = tokio::time::timeout_at(
++                deadline,
+                 TimedFuture::new(
+                     outbound.connect_stream(&sess, dns_resolver.clone()),
+                 ),
+@@ -977,118 +1025,24 @@
+                 }
+             };
+ 
+-            let req = Request::get(url)
+-                .header(hyper::header::HOST, host.as_str())
+-                .header("Connection", "Close")
+-                .version(hyper::Version::HTTP_11)
+-                .body(Empty::<Bytes>::new())
+-                .unwrap();
+-
+-            let mut tls_handshake_delay = None;
+-            let resp = match uri.scheme() {
++            match uri.scheme() {
+                 Some(scheme) if scheme == &http::uri::Scheme::HTTP => {
+-                    let io = TokioIo::new(stream);
+-                    let (mut sender, conn) = tokio::time::timeout(
+-                        timeout,
+-                        hyper::client::conn::http1::handshake(io),
+-                    )
+-                    .await
+-                    .map_err(|_| new_io_error("HTTP handshake timed out"))?
+-                    .map_err(|e| {
+-                        new_io_error(format!("failed to handshake: {e}"))
+-                    })?;
+-
+-                    tokio::task::spawn(async move {
+-                        if let Err(err) = conn.await {
+-                            warn!("HTTP connection error: {}", err);
+-                        }
+-                    });
+-
+-                    TimedFuture::new(sender.send_request(req).boxed())
++                    aerove_probe_head_exchange(stream, url, unified, started, deadline).await
+                 }
+                 Some(scheme) if scheme == &http::uri::Scheme::HTTPS => {
+                     let mut tls_config = rustls::ClientConfig::builder()
+-                        .with_root_certificates(GLOBAL_ROOT_STORE.clone())
+-                        .with_no_client_auth();
+-
++                        .with_root_certificates(GLOBAL_ROOT_STORE.clone()).with_no_client_auth();
+                     if std::env::var("SSLKEYLOGFILE").is_ok() {
+-                        debug!("Enabling TLS key logging");
+                         tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
+                     }
+-
+-                    let connector =
+-                        tokio_rustls::TlsConnector::from(Arc::new(tls_config));
+-
+-                    let (stream, delay) = tokio::time::timeout(
+-                        timeout,
+-                        TimedFuture::new(connector.connect(
+-                            host.try_into().expect("must be valid SNI"),
+-                            stream,
+-                        )),
+-                    )
+-                    .await?;
+-
+-                    let stream = stream?;
+-
+-                    let io = TokioIo::new(stream);
+-
+-                    let (mut sender, conn) = tokio::time::timeout(
+-                        timeout,
+-                        hyper::client::conn::http1::handshake(io),
+-                    )
+-                    .await
+-                    .map_err(|_| new_io_error("HTTPS handshake timed out"))?
+-                    .map_err(|e| {
+-                        new_io_error(format!("failed to handshake: {e}"))
+-                    })?;
+-
+-                    tokio::task::spawn(async move {
+-                        if let Err(err) = conn.await {
+-                            warn!("HTTP connection error: {}", err);
+-                        }
+-                    });
+-
+-                    tls_handshake_delay = Some(delay);
+-
+-                    TimedFuture::new(sender.send_request(req).boxed())
++                    let connector = tokio_rustls::TlsConnector::from(Arc::new(tls_config));
++                    let stream = tokio::time::timeout_at(deadline, connector.connect(
++                        host.try_into().map_err(std::io::Error::other)?, stream,
++                    )).await.map_err(|_| new_io_error("probe TLS timed out"))??;
++                    aerove_probe_head_exchange(stream, url, unified, started, deadline).await
+                 }
+-                _ => {
+-                    return Err(new_io_error(format!(
+-                        "invalid url: {url}: unsupported scheme"
+-                    )));
+-                }
+-            };
+-
+-            let delay = match tokio::time::timeout(timeout, resp).await {
+-                Ok((res, delay)) => match res {
+-                    Ok(res) => {
+-                        trace!(
+-                            delay = ?delay,
+-                            status = ?res.status(),
+-                            "success"
+-                        );
+-                        Ok(delay)
+-                    }
+-                    Err(e) => {
+-                        warn!(
+-                            e = ?e,
+-                            "failed"
+-                        );
+-                        Err(new_io_error(format!(
+-                            "urltest for proxy {name} failed: {e}"
+-                        )))
+-                    }
+-                },
+-                Err(_) => {
+-                    warn!("timed out");
+-                    Err(new_io_error(format!("timeout for {url}").as_str()))
+-                }
+-            }?;
+-
+-            Ok((
+-                delay,
+-                (connect_delay + tls_handshake_delay.unwrap_or_default() + delay),
+-            ))
++                _ => Err(new_io_error("unsupported probe scheme")),
++            }
+         };
+ 
+         let result = tester.await;
+--- a/clash-lib/src/proxy/utils/socket_helpers.rs
++++ b/clash-lib/src/proxy/utils/socket_helpers.rs
+@@ -146,128 +146,71 @@
+     result
+ }
+ 
+-/// Connects to one of the candidate endpoints using Happy Eyeballs v2 (RFC
+-/// 8305).
+-///
+-/// Addresses are sorted and interleaved (IPv6 first). The preferred address is
+-/// dialed immediately. If the first attempt does not connect within
+-/// [`HAPPY_EYEBALLS_DELAY`], subsequent candidates are dialed in parallel.
+-/// Whichever TCP connection succeeds first is returned immediately,
+-/// and the remaining in-flight attempts are aborted.
++static TCP_CONCURRENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
++
++pub fn set_tcp_concurrent(value: bool) {
++    TCP_CONCURRENT.store(value, std::sync::atomic::Ordering::Release);
++}
++pub fn get_tcp_concurrent() -> bool {
++    TCP_CONCURRENT.load(std::sync::atomic::Ordering::Acquire)
++}
++
++/// Parallel mode races all addresses. Serial mode walks each family in resolver
++/// order, while keeping dual-stack fallback alive (Standard's default no-preference).
++/// Futures are owned here, never spawned: winner, timeout and cancellation drop losers.
++pub async fn aerove_dial_candidates<T, F, Fut>(
++    endpoints: &[SocketAddr], concurrent: bool, dial: F,
++) -> std::io::Result<T>
++where
++    T: Send,
++    F: Fn(SocketAddr) -> Fut + Sync,
++    Fut: std::future::Future<Output = std::io::Result<T>> + Send,
++{
++    use futures::FutureExt;
++    let groups = if concurrent {
++        endpoints.iter().map(|addr| vec![*addr]).collect::<Vec<_>>()
++    } else {
++        vec![endpoints.iter().copied().filter(SocketAddr::is_ipv6).collect(),
++             endpoints.iter().copied().filter(SocketAddr::is_ipv4).collect()]
++    };
++    let mut attempts = FuturesUnordered::new();
++    for group in groups.into_iter().filter(|group| !group.is_empty()) {
++        let dial = &dial;
++        attempts.push(async move {
++            let mut errors = Vec::new();
++            for addr in group {
++                match dial(addr).await {
++                    Ok(stream) => return Ok(stream),
++                    Err(error) => errors.push(format!("{addr}: {error}")),
++                }
++            }
++            Err(std::io::Error::other(errors.join("; ")))
++        }.boxed());
++    }
++    let mut errors = Vec::new();
++    while let Some(result) = attempts.next().await {
++        match result {
++            Ok(stream) => return Ok(stream),
++            Err(error) => errors.push(error.to_string()),
++        }
++    }
++    Err(std::io::Error::other(if errors.is_empty() {
++        "no destination address provided".to_owned()
++    } else { errors.join("; ") }))
++}
++
++/// Shared by Direct and every DirectConnector-backed proxy transport. Literal
++/// single-address callers use the same protected socket path without a race.
+ #[instrument(skip(so_mark))]
+ pub async fn new_tcp_stream_happy_eyeballs(
+-    endpoints: &[SocketAddr],
+-    iface: Option<&OutboundInterface>,
++    endpoints: &[SocketAddr], iface: Option<&OutboundInterface>,
+     #[cfg(target_os = "linux")] so_mark: Option<u32>,
+ ) -> std::io::Result<TcpStream> {
+-    if endpoints.is_empty() {
+-        return Err(std::io::Error::other("no destination address provided"));
+-    }
+-    if endpoints.len() == 1 {
+-        return new_tcp_stream(
+-            endpoints[0],
+-            iface,
+-            #[cfg(target_os = "linux")]
+-            so_mark,
+-        )
+-        .await;
+-    }
+-
+-    async fn connect_candidate(
+-        addr: SocketAddr,
+-        iface: Option<OutboundInterface>,
+-        #[cfg(target_os = "linux")] so_mark: Option<u32>,
+-    ) -> (std::io::Result<TcpStream>, SocketAddr) {
+-        let res = new_tcp_stream(
+-            addr,
+-            iface.as_ref(),
+-            #[cfg(target_os = "linux")]
+-            so_mark,
+-        )
+-        .await;
+-        (res, addr)
+-    }
+-
+-    let sorted = sort_addrs_happy_eyeballs(endpoints);
+-    let mut candidate_idx = 0;
+-    let mut in_flight = FuturesUnordered::new();
+-    let mut last_error = None;
+-
+-    // Start dialing the first candidate immediately
+-    let first_addr = sorted[candidate_idx];
+-    candidate_idx += 1;
+-    in_flight.push(connect_candidate(
+-        first_addr,
+-        iface.cloned(),
+-        #[cfg(target_os = "linux")]
+-        so_mark,
+-    ));
+-
+-    let mut delay_timer = Some(Box::pin(tokio::time::sleep(HAPPY_EYEBALLS_DELAY)));
+-
+-    loop {
+-        tokio::select! {
+-            res = in_flight.next() => {
+-                match res {
+-                    Some((Ok(stream), addr)) => {
+-                        trace!(addr = %addr, "happy eyeballs: connection established");
+-                        return Ok(stream);
+-                    }
+-                    Some((Err(err), addr)) => {
+-                        trace!(addr = %addr, error = %err, "happy eyeballs: connection attempt failed");
+-                        last_error = Some(err);
+-                        // If no other connections are currently in flight and more candidates remain,
+-                        // start the next candidate immediately (RFC 8305 Section 5.2)
+-                        if in_flight.is_empty() && candidate_idx < sorted.len() {
+-                            let next_addr = sorted[candidate_idx];
+-                            candidate_idx += 1;
+-                            in_flight.push(connect_candidate(
+-                                next_addr,
+-                                iface.cloned(),
+-                                #[cfg(target_os = "linux")]
+-                                so_mark,
+-                            ));
+-                            delay_timer = if candidate_idx < sorted.len() {
+-                                Some(Box::pin(tokio::time::sleep(HAPPY_EYEBALLS_DELAY)))
+-                            } else {
+-                                None
+-                            };
+-                        }
+-                    }
+-                    None => {
+-                        if candidate_idx >= sorted.len() {
+-                            break;
+-                        }
+-                    }
+-                }
+-            }
+-
+-            _ = async {
+-                if let Some(ref mut timer) = delay_timer {
+-                    timer.as_mut().await
+-                } else {
+-                    futures::future::pending::<()>().await
+-                }
+-            }, if delay_timer.is_some() && candidate_idx < sorted.len() => {
+-                let next_addr = sorted[candidate_idx];
+-                candidate_idx += 1;
+-                in_flight.push(connect_candidate(
+-                    next_addr,
+-                    iface.cloned(),
+-                    #[cfg(target_os = "linux")]
+-                    so_mark,
+-                ));
+-                delay_timer = if candidate_idx < sorted.len() {
+-                    Some(Box::pin(tokio::time::sleep(HAPPY_EYEBALLS_DELAY)))
+-                } else {
+-                    None
+-                };
+-            }
+-        }
+-    }
+-
+-    Err(last_error
+-        .unwrap_or_else(|| std::io::Error::other("all connection attempts failed")))
++    let endpoints = sort_addrs_happy_eyeballs(endpoints);
++    let concurrent = get_tcp_concurrent();
++    aerove_dial_candidates(&endpoints, concurrent, |addr| new_tcp_stream(
++        addr, iface, #[cfg(target_os = "linux")] so_mark,
++    )).await
+ }
+ 
+ #[instrument(skip(so_mark))]

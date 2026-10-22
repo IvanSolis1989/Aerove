@@ -1,0 +1,181 @@
+{
+  "schema": 1,
+  "clash_rs_commit": "36eec77463d1243ede287bf6b7197e38237948d5",
+  "patch_sha256": "703ef11ee17e308e942a4d0834ed5b3c24f7b121ec45b3f3f43af0642148ccf4",
+  "packages": [
+    {
+      "name": "ts_control",
+      "version": "0.6.1",
+      "url": "https://static.crates.io/crates/ts_control/ts_control-0.6.1.crate",
+      "sha256": "cb2c3cf4680b02deb47a6c18d5d9b296fb496cc9546e4d76e594f5a24557d463"
+    },
+    {
+      "name": "ts_derp",
+      "version": "0.6.1",
+      "url": "https://static.crates.io/crates/ts_derp/ts_derp-0.6.1.crate",
+      "sha256": "2acde518e1296c20cb93242184c40b7af2731ca50a6744bab69cb2c66e24551e"
+    },
+    {
+      "name": "ts_netcheck",
+      "version": "0.6.1",
+      "url": "https://static.crates.io/crates/ts_netcheck/ts_netcheck-0.6.1.crate",
+      "sha256": "ea173af20572c6444019d6f8532e67e8fc31e1cac1cea94a76d7f7fce12af7ca"
+    },
+    {
+      "name": "ts_netmon",
+      "version": "0.6.1",
+      "url": "https://static.crates.io/crates/ts_netmon/ts_netmon-0.6.1.crate",
+      "sha256": "9db3f993efce5c30bd72dda4d9b2036945aa13ef160b2626d77b2f6adaf47fea"
+    },
+    {
+      "name": "ts_runtime",
+      "version": "0.6.1",
+      "url": "https://static.crates.io/crates/ts_runtime/ts_runtime-0.6.1.crate",
+      "sha256": "606b6d01cea87feffcd40efa6eed6ed77511d135f5807f198bc2adf96d7bbb68"
+    },
+    {
+      "name": "tailscale",
+      "version": "0.6.1",
+      "sha256": "7c41f9ac0c6e105ebcb5c368e8636d4926c28ec77aa000ddcc126df1fb527b2e",
+      "url": "https://static.crates.io/crates/tailscale/tailscale-0.6.1.crate",
+      "officialOrigin": "https://static.crates.io/crates/tailscale/tailscale-0.6.1.crate",
+      "lock": "fixed clash-rs36eec Cargo.lock"
+    }
+  ],
+  "files": [
+    {
+      "path": "tailscale-0.6.1/Cargo.toml",
+      "before_sha256": "02756fd7c28f266464181b970f34ec2002f87eb8bb2b96aa47e4b5157f9ce1b7",
+      "after_sha256": "3c91a4608e167876f88a50c091118182f59dfe2cee55e3ad4770dbda445ec785"
+    },
+    {
+      "path": "tailscale-0.6.1/src/config.rs",
+      "before_sha256": "90a416c3c2ee1c2627e04131058e3611eb87d935450922526963e65bf4a12600",
+      "after_sha256": "347f94f486b893e00f0a35eea4e9919df5d4eae1f0857abaaf4606301d79c584"
+    },
+    {
+      "path": "tailscale-0.6.1/src/lib.rs",
+      "before_sha256": "d4b2774e31389355280d43742078f7537d2397596d0fa6155a93d021d9bc248a",
+      "after_sha256": "b132603581d77fcc8ddf42edb5c8cd3e2c70f39674a95da7205b3e9cde1e2c92"
+    },
+    {
+      "path": "ts_control-0.6.1/Cargo.toml",
+      "before_sha256": "c9828574675c55ad236bc8806e758a68effdc8a27bed26c3aec1ae768f24bb24",
+      "after_sha256": "c51d2b3ccf326c93cb6a1eb70840dc98061f4d74ace9d8beee877382dd400e12"
+    },
+    {
+      "path": "ts_control-0.6.1/src/client/connect.rs",
+      "before_sha256": "58a4fade8a4012a8749f9c678e20d7cd658844b1b6c35a46b7d761d0f85ce142",
+      "after_sha256": "a701403c9bdbc535202570ccdeae3a165153489bc491fa3f70a7386412330793"
+    },
+    {
+      "path": "ts_control-0.6.1/src/client/mod.rs",
+      "before_sha256": "52df9fd1fcffb377faf1bb071fadda3775455d3cfaf0d1c822e9a8759c9da6b9",
+      "after_sha256": "396ecf03240acecdcf25646dae2ef027839e0ecbd5c6348243039c20c9dd69fe"
+    },
+    {
+      "path": "ts_control-0.6.1/src/control_dialer.rs",
+      "before_sha256": "8e48dc5e57e5a38349a408555bdec7d4c2f1b0ee2ccf063758f501afea8ee3e0",
+      "after_sha256": "932e24fc4adb30ff68e06068f2adf7d96e8a2a7e9b50e789101816a431757a07"
+    },
+    {
+      "path": "ts_derp-0.6.1/Cargo.toml",
+      "before_sha256": "6743a3877572c2b7c90b6746667e2cf806e0febfe17da277cfd0b488723fcc80",
+      "after_sha256": "ca3aeb8caf76c34e4d09d742936b6120e99ad543461bcd5edb4d7f180ca2386e"
+    },
+    {
+      "path": "ts_derp-0.6.1/src/client.rs",
+      "before_sha256": "8f61283371ad276c85e927a62b418c64b3c2005ddafa587f2955551b4c5496df",
+      "after_sha256": "1ac5b64d5861de4ced332503383614486fcd6974939055f15cbb10dc11a27cdb"
+    },
+    {
+      "path": "ts_derp-0.6.1/src/dial.rs",
+      "before_sha256": "9e733d6a1aba05e23f472f1bd74c5dff2503990289599d346f988154ef8790db",
+      "after_sha256": "77518a098502302c90c7b663f1edf046d5b8b4bd4aa6612c7ffaa3bbc4070816"
+    },
+    {
+      "path": "ts_netcheck-0.6.1/Cargo.toml",
+      "before_sha256": "b83870ba8aa4778c4cd18c2bfb50c98d325293d7b9aba2cbad381877d1384764",
+      "after_sha256": "b783d01af1cf3536323bcccb95ed0de1e5c49e588c1dcf4b00bfafdec1813f85"
+    },
+    {
+      "path": "ts_netcheck-0.6.1/src/derp_latency.rs",
+      "before_sha256": "cbde6ec0d03c97bb41e36e84783aeb5e437d4258c9f2ad315c7d2117471d8899",
+      "after_sha256": "8943a3df9222e8e0e55a8ca7b13bb16b48e671637dbb2ab238076c0a9efa39ef"
+    },
+    {
+      "path": "ts_netcheck-0.6.1/src/https.rs",
+      "before_sha256": "c9aface0dbc9846c444286a6071896909292434802b4c012f5b3b1e1078204a1",
+      "after_sha256": "3f80d8d515e5c19b6cd0ee26219c86aab878e66663790f85c53fd6152e22a42e"
+    },
+    {
+      "path": "ts_netcheck-0.6.1/src/stun.rs",
+      "before_sha256": "d030978944ea7b6ecae53e421a269c1203c78eab1c9822d1da1677ee9c3950d4",
+      "after_sha256": "4c90bf11bb10c5064c6fb49474db7d0299516b833264c541801fa8342d7ece83"
+    },
+    {
+      "path": "ts_runtime-0.6.1/Cargo.toml",
+      "before_sha256": "ad71ffa47ae6574c7f6c24e9790c6e4dff0fdc2b2cd62451d838af47aba9847b",
+      "after_sha256": "27f08598f4fe3e6f30f353582e0bb9201890524c55a86efdd21ef74bd90f47cd"
+    },
+    {
+      "path": "ts_runtime-0.6.1/src/control_runner.rs",
+      "before_sha256": "22c7a82867d494f628dd6860200878ddc80f2c59ca004cc3515eb9205ebc9689",
+      "after_sha256": "61513887c3efc83fbd02cffba6bda2ca476d541719ab75745f7eb1bf9a17f588"
+    },
+    {
+      "path": "ts_runtime-0.6.1/src/derp_latency.rs",
+      "before_sha256": "42a1d2e8693ee3f5552485479069a331cbac5dcc33d2a471d44444376776bcaa",
+      "after_sha256": "3f829311dc19809a86f7976f314b0cfabccf1ac6af15e708f639ddc00a271bd9"
+    },
+    {
+      "path": "ts_runtime-0.6.1/src/direct.rs",
+      "before_sha256": "edbc0a9fd839475de70508051dc31f1402a8251d8fd4d6ddc7de9b33fd17249c",
+      "after_sha256": "c68e9de82bc8200d060f793b9046e955064162a4e893b6f8fe08286214587ef9"
+    },
+    {
+      "path": "ts_runtime-0.6.1/src/env.rs",
+      "before_sha256": "5d5a3f7e171314273e8ee018896cb0c0ef6f9b93d9a787a02ebf9a6235edb7c7",
+      "after_sha256": "f6989df4746ea46443c9924f085adf0649d663d2ab2ff1729043428aaed94542"
+    },
+    {
+      "path": "ts_runtime-0.6.1/src/error.rs",
+      "before_sha256": "94b208da846cace65733731ffd2c438fb653a8e4435eb5526cb1400c207f1c1e",
+      "after_sha256": "ec7b51af05e07dff21cb21e47a72705f7522b86ad801a2d0bf4dd1f873eba8c8"
+    },
+    {
+      "path": "ts_runtime-0.6.1/src/lib.rs",
+      "before_sha256": "d23ba58415f750c9a2954b0372606700186dce8894f378768f98ba4b89c0cb1f",
+      "after_sha256": "8ed1f6c6274e957854a3b01195264b1eefa8cc52d5c98dd981c5467e5e517cab"
+    },
+    {
+      "path": "ts_runtime-0.6.1/src/multiderp/uniderp.rs",
+      "before_sha256": "2569508c696d60f57f891f18c10b4578e621e03e13ff51f22af8227f1e3e8ef4",
+      "after_sha256": "4ed8f58a0c62279f2429ec63daf4567cca1d604c18f23e469508276ed4075702"
+    },
+    {
+      "path": "ts_runtime-0.6.1/src/stunner.rs",
+      "before_sha256": "e4f542b2654918d66f2e1e40422a8e13c154d53bd1bba93e85d01eecb303b2d8",
+      "after_sha256": "7e8e4befc24726d0c67d41b99a0d8ba4e47fcb96906197b66d744b76a273b968"
+    },
+    {
+      "path": "ts_netmon-0.6.1/src/lib.rs",
+      "before_sha256": "cb2e4f56efb2f4d2db4a66f35dccb6d150cce36ec60d3d1d80137aa38a1d8e74",
+      "after_sha256": "2c629aa389ee5dca100c8458ce1fa5deb3fea1bf9f55a1ac0af914a65847b89e"
+    }
+  ],
+  "helper_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "3547ce690932fd0572b4ff71c58f1303431c4a9ee35a773bb681bbad35e6b450"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "a7c7b311c2ceb85423a9b051cd0a4eb7cac6e1f03201ef0a1dccf71a03eaa049"
+    },
+    {
+      "path": "tests/sockets.rs",
+      "sha256": "ffda302b49f1f4b4312fcc593cf69e3f4832c4278157018793cb721c01a10be0"
+    }
+  ]
+}

@@ -15,8 +15,15 @@ pub struct ListenerStatus {
     pub active_ports: Vec<u16>,
     pub core_epoch: String,
     pub only_statistics_proxy: bool,
+    pub unified_delay:bool,
+    pub tcp_concurrent:bool,
+    pub find_process_mode:&'static str,
 }
-enum Action { Park, Proxy, Tun(OwnedFd), Read, Statistics(bool), Http(String,bool), Dns(super::dns_network::NetworkDns) }
+#[derive(Debug,Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct UserControllerReceipt {#[serde(flatten)] pub controller:super::user_controller::Readback,pub core_epoch:String}
+
+enum Action { Park, Proxy, Tun(OwnedFd), Read, Statistics(bool), Http(String,bool), Dns(super::dns_network::NetworkDns), ProbeDial(bool,bool), Process(super::process_identity::FindProcessMode), InvalidateProcess, Controller(Option<(bool,String)>,std::sync::mpsc::Sender<UserControllerReceipt>) }
 pub(crate) struct Command { action: Action, reply: std::sync::mpsc::Sender<crate::Result<ListenerStatus>> }
 pub struct RuntimeControl {
     tx: mpsc::UnboundedSender<Command>,
@@ -43,6 +50,10 @@ impl RuntimeControl {
         if json.len()>131072{return Err(super::invalid("$.aerove-system-dns: snapshot exceeds limit"));}
         let snapshot:super::dns_network::NetworkDns=serde_json::from_str(&json).map_err(|_|super::invalid("$.aerove-system-dns: invalid network snapshot"))?;snapshot.validate()?;self.request(Action::Dns(snapshot))
     }
+    pub fn probe_dial(&self,unified:bool,concurrent:bool)->crate::Result<ListenerStatus>{self.request(Action::ProbeDial(unified,concurrent))}
+    pub fn invalidate_process_identity(&self)->crate::Result<ListenerStatus>{self.request(Action::InvalidateProcess)}
+    pub fn find_process_mode(&self,mode:&str)->crate::Result<ListenerStatus>{let mode=super::process_identity::FindProcessMode::parse(mode).map_err(|_|super::invalid("$.find-process-mode: expected strict, always or off"))?;self.request(Action::Process(mode))}
+    pub fn controller(&self,plan:Option<(bool,String)>)->crate::Result<UserControllerReceipt>{let (tx,rx)=std::sync::mpsc::channel();self.request(Action::Controller(plan,tx))?;rx.recv().map_err(|_|Error::Operation("user controller receipt closed".into()))}
     pub fn cached(&self)->Option<ListenerStatus>{self.state.lock().unwrap().clone()}
     pub(crate) fn running(&self,status:ListenerStatus){*self.state.lock().unwrap()=Some(status);}
     pub(crate) fn take(self:&Arc<Self>)->Receiver { Receiver { control:self.clone(),rx:self.receiver.lock().unwrap().take().expect("runtime control receiver already owned") } }
@@ -50,8 +61,8 @@ impl RuntimeControl {
 pub(crate) struct Receiver {control:Arc<RuntimeControl>,rx:mpsc::UnboundedReceiver<Command>}
 impl Receiver {
     pub(crate) async fn recv(&mut self) -> Option<Command> { self.rx.recv().await }
-    pub(crate) async fn handle(&mut self, command:Command, mode:RuntimeMode, components:Arc<RwLock<Arc<RuntimeComponents>>>, network:Arc<inbound::Owner>)->crate::Result<()> {
-        let result=execute(command.action,mode,components,network).await;
+    pub(crate) async fn handle(&mut self, command:Command, mode:RuntimeMode, components:Arc<RwLock<Arc<RuntimeComponents>>>, network:Arc<inbound::Owner>,user:Arc<super::user_controller::Owner>,global_state:Arc<tokio::sync::Mutex<crate::GlobalState>>)->crate::Result<()> {
+        let result=execute(command.action,mode,components,network,user,global_state).await;
         if let Ok(status)=&result { self.control.running(status.clone()); }
         let fatal=match &result {Err(Error::Operation(message)) if message.starts_with("listener operation failed:")=>Some(message.clone()),_=>None};
         let _=command.reply.send(result);
@@ -59,7 +70,11 @@ impl Receiver {
         Ok(())
     }
 }
-async fn execute(action:Action,mode:RuntimeMode,components:Arc<RwLock<Arc<RuntimeComponents>>>,network:Arc<inbound::Owner>)->crate::Result<ListenerStatus> {
+fn invalidate_identity(context:&super::Context)->crate::Result<()> {
+    let generation=context.network_generation.fetch_update(std::sync::atomic::Ordering::AcqRel,std::sync::atomic::Ordering::Acquire,|old|old.checked_add(1)).map_err(|_|Error::Operation("identity generation exhausted".into()))?+1;
+    if let Some(owner)=&context.process_owner {owner.set_network_generation(generation);}Ok(())
+}
+async fn execute(action:Action,mode:RuntimeMode,components:Arc<RwLock<Arc<RuntimeComponents>>>,network:Arc<inbound::Owner>,user:Arc<super::user_controller::Owner>,global_state:Arc<tokio::sync::Mutex<crate::GlobalState>>)->crate::Result<ListenerStatus> {
     let _serial=network.serial.lock().await;
     let context=super::context()?;
     if context.cancel.is_cancelled(){return Err(Error::Operation("session stopped".into()));}
@@ -67,12 +82,27 @@ async fn execute(action:Action,mode:RuntimeMode,components:Arc<RwLock<Arc<Runtim
     let resuming=matches!(&action,Action::Proxy|Action::Tun(_));
     match action {
         Action::Read=>{},
-        Action::Dns(snapshot)=>{*context.network_dns.write().unwrap()=Some(snapshot);},
+        Action::InvalidateProcess=>{let mutation=telemetry::route_mutation();invalidate_identity(&context)?;telemetry::structure_changed();drop(mutation);},
+        Action::Process(mode)=>{
+            let owner=context.process_owner.as_ref().ok_or_else(||super::invalid("process owner is unavailable"))?;
+            if owner.mode()!=mode {let mutation=telemetry::route_mutation();owner.set_mode(mode);telemetry::structure_changed();drop(mutation);}
+        },
+        Action::ProbeDial(unified,concurrent)=>{
+            if crate::app::remote_content_manager::get_unified_delay()!=unified||crate::proxy::utils::get_tcp_concurrent()!=concurrent {let mutation=telemetry::route_mutation();crate::app::remote_content_manager::set_unified_delay(unified);crate::proxy::utils::set_tcp_concurrent(concurrent);telemetry::structure_changed();drop(mutation);}
+        },
+        Action::Controller(plan,reply)=>{
+            let controller=if let Some((enabled,secret))=plan {user.configure(enabled,&secret,components.clone(),global_state).await?}else{user.readback().await?};
+            let status=readback(mode,&active,&network).await?;let _=reply.send(UserControllerReceipt {controller,core_epoch:status.core_epoch.clone()});return Ok(status);
+        },
+        Action::Dns(snapshot)=>{
+            let same=context.network_dns.read().unwrap().as_ref().is_some_and(|old|old.default_interface==snapshot.default_interface&&old.interfaces==snapshot.interfaces);
+            if !same {let mutation=telemetry::route_mutation();invalidate_identity(&context)?;*context.network_dns.write().unwrap()=Some(snapshot);telemetry::structure_changed();drop(mutation);}
+        },
         Action::Statistics(only)=>context.telemetry.set_only_statistics_proxy(only),
-        Action::Http(ua,check)=>context.telemetry.set_http_policy(super::http_policy::Policy::new(Some(&ua),check)?),
+        Action::Http(ua,check)=>{let policy=super::http_policy::Policy::new(Some(&ua),check)?;if *context.telemetry.http_policy()!=policy {let mutation=telemetry::route_mutation();context.telemetry.set_http_policy(policy);telemetry::structure_changed();drop(mutation);}},
         Action::Park=>{
             if !network.is_parked() {
-                let mutation=telemetry::route_mutation();
+                let mutation=telemetry::route_mutation();invalidate_identity(&context)?;
                 let operation=async {
                     active.inbound_manager.mobile_park().await?;
                     active.tun_runner.mobile_park().await?;
@@ -88,22 +118,14 @@ async fn execute(action:Action,mode:RuntimeMode,components:Arc<RwLock<Arc<Runtim
         Action::Proxy|Action::Tun(_)=>{
             let tun=match action {Action::Tun(fd) if mode==RuntimeMode::Tun=>Some(fd),Action::Proxy if mode==RuntimeMode::Proxy=>None,_=>return Err(super::invalid("runtimeMode: resume input does not match active runtime"))};
             if !network.is_parked(){return Err(super::invalid("listening: resume requires a parked runtime"));}
-            let mutation=telemetry::route_mutation();
+            let mutation=telemetry::route_mutation();invalidate_identity(&context)?;
             let operation=async {
                 if let Some(tun)=tun {
                     let device=unsafe {tun_rs::AsyncDevice::from_fd(tun.into_raw_fd())?};
                     active.tun_runner.mobile_attach(device).await?;
                 }
-                #[cfg(debug_assertions)]
-                eprintln!("[dns-hang] control DNS resume begin");
                 active.mobile_dns_listener.mobile_resume().await?;
-                #[cfg(debug_assertions)]
-                eprintln!("[dns-hang] control DNS resume complete");
-                #[cfg(debug_assertions)]
-                eprintln!("[dns-hang] control user resume begin");
                 network.resume_users(&active).await?;
-                #[cfg(debug_assertions)]
-                eprintln!("[dns-hang] control user resume complete");
                 Ok::<(),Error>(())
             };
             tokio::select! {
@@ -115,11 +137,7 @@ async fn execute(action:Action,mode:RuntimeMode,components:Arc<RwLock<Arc<Runtim
             telemetry::structure_changed();drop(mutation);
         },
     }
-    #[cfg(debug_assertions)]
-    eprintln!("[dns-hang] control readback begin");
     let status=readback(mode,&active,&network).await?;
-    #[cfg(debug_assertions)]
-    eprintln!("[dns-hang] control readback complete");
     if resuming&&!status.listening {return Err(Error::Operation("listener operation failed: readiness did not remain active".into()));}
     Ok(status)
 }
@@ -137,6 +155,6 @@ pub(crate) async fn readback(mode:RuntimeMode,active:&RuntimeComponents,network:
     let user_ready=active.mobile_dns_listener.mobile_is_ready()&&!network.is_parked()&&!listeners.is_empty()&&listeners.iter().all(|l|l.active);
     let tun_ready=active.tun_runner.mobile_is_ready();
     if telemetry::route_stamp().ok()!=Some(stamp) {continue;}
-    return Ok(ListenerStatus {listening:user_ready&&(mode==RuntimeMode::Proxy||tun_ready),tun_ready,user_listeners_ready:user_ready,active_ports:ports,core_epoch:stamp.0.to_string(),only_statistics_proxy:context.telemetry.only_statistics_proxy()});
+    return Ok(ListenerStatus {listening:user_ready&&(mode==RuntimeMode::Proxy||tun_ready),tun_ready,user_listeners_ready:user_ready,active_ports:ports,core_epoch:stamp.0.to_string(),only_statistics_proxy:context.telemetry.only_statistics_proxy(),unified_delay:crate::app::remote_content_manager::get_unified_delay(),tcp_concurrent:crate::proxy::utils::get_tcp_concurrent(),find_process_mode:context.process_owner.as_ref().map_or("off",|owner|owner.mode().wire())});
     }
 }

@@ -1,0 +1,226 @@
+--- a/clash-lib/src/config/internal/convert/tun.rs
++++ b/clash-lib/src/config/internal/convert/tun.rs
+@@ -6,6 +6,9 @@
+ pub fn convert(
+     before: Option<def::TunConfig>,
+ ) -> Result<config::TunConfig, crate::Error> {
++    if before.as_ref().and_then(|tun| tun.mtu).is_some_and(|mtu| mtu < 1280) {
++        return Err(Error::InvalidConfig("tun.mtu must be in 1280..65535".into()));
++    }
+     match before {
+         Some(t) => Ok(config::TunConfig {
+             enable: t.enable,
+--- a/clash-lib/src/proxy/tun/runner.rs
++++ b/clash-lib/src/proxy/tun/runner.rs
+@@ -44,6 +44,23 @@
+     task: StdMutex<Option<tokio::task::JoinHandle<Result<(), Error>>>>,
+ }
+ 
++/// Resolve the typed config before either supplied-FD or device-created setup.
++pub(crate) fn mtu_for_config(cfg: &TunConfig) -> Result<usize, Error> {
++    let mtu = cfg.mtu.map(usize::from).unwrap_or(if cfg!(windows) { 65535 } else { watfaq_netstack::DEFAULT_MTU });
++    watfaq_netstack::validate_mtu(mtu).map_err(|_| Error::InvalidConfig("tun.mtu must be in 1280..65535".into()))
++}
++
++/// Mobile tun-rs defaults to a ~4KiB buffer; never truncate a larger L3 frame.
++pub(crate) fn framed_device(tun: tun_rs::AsyncDevice, mtu: usize) -> Result<
++    tun_rs::async_framed::DeviceFramed<tun_rs::async_framed::BytesCodec>, Error,
++> {
++    watfaq_netstack::validate_mtu(mtu)?;
++    let mut framed = tun_rs::async_framed::DeviceFramed::new(tun, tun_rs::async_framed::BytesCodec::new());
++    framed.set_read_buffer_size(framed.read_buffer_size().max(mtu));
++    framed.set_write_buffer_size(framed.write_buffer_size().max(mtu));
++    Ok(framed)
++}
++
+ impl TunRunner {
+     pub fn new(
+         cfg: TunConfig,
+@@ -51,6 +68,7 @@
+         resolver: ThreadSafeDNSResolver,
+         cancellation_token: Option<CancellationToken>,
+     ) -> Result<TunRunner, Error> {
++        if cfg.enable { mtu_for_config(&cfg)?; }
+         Ok(Self {
+             #[cfg(feature = "aerove-mobile")]
+             mobile_cancel: StdMutex::new(None),
+@@ -108,6 +126,7 @@
+         ),
+         Error,
+     > {
++        let mtu = mtu_for_config(cfg)?;
+         let mut tun_init_config = TunInitializationConfig::default();
+         match Url::parse(&cfg.device_id) {
+             Ok(u) => match u.scheme() {
+@@ -194,13 +213,7 @@
+                 }
+ 
+                 let mut tun_builder = DeviceBuilder::new();
+-                tun_builder = tun_builder.name(&tun_name).mtu(
+-                    cfg.mtu.unwrap_or(if cfg!(windows) {
+-                        65535u16
+-                    } else {
+-                        1500u16
+-                    }),
+-                );
++                tun_builder = tun_builder.name(&tun_name).mtu(mtu as u16);
+ 
+                 if !tun_exist {
+                     debug!("setting tun ipv4 addr: {:?}", cfg.gateway);
+@@ -344,7 +357,7 @@
+             }
+         };
+ 
+-        let (stack, tcp_listener, udp_socket) = watfaq_netstack::NetStack::new();
++        let (stack, tcp_listener, udp_socket) = watfaq_netstack::NetStack::with_mtu(mtu)?;
+         Ok((tun, stack, tcp_listener, udp_socket))
+     }
+ }
+@@ -401,10 +414,7 @@
+             #[cfg(feature = "aerove-mobile")]
+             { mobile_ready.send_replace(true); crate::mobile::tun_ready(); }
+ 
+-            let framed = tun_rs::async_framed::DeviceFramed::new(
+-                tun,
+-                tun_rs::async_framed::BytesCodec::new(),
+-            );
++            let framed = framed_device(tun, mtu_for_config(&cfg)?)?;
+ 
+             let (mut tun_sink, mut tun_stream) = framed.split::<bytes::Bytes>();
+             let (mut stack_sink, mut stack_stream) = stack.split();
+--- a/clash-netstack/src/device.rs
++++ b/clash-netstack/src/device.rs
+@@ -20,19 +20,29 @@
+         tx_sender: mpsc::Sender<Packet>,
+         iface_notifier: mpsc::UnboundedSender<IfaceEvent<'static>>,
+     ) -> Self {
++        Self::with_mtu(tx_sender, iface_notifier, crate::DEFAULT_MTU)
++            .expect("default MTU is valid")
++    }
++
++    pub fn with_mtu(
++        tx_sender: mpsc::Sender<Packet>,
++        iface_notifier: mpsc::UnboundedSender<IfaceEvent<'static>>,
++        mtu: usize,
++    ) -> std::io::Result<Self> {
++        let mtu = crate::validate_mtu(mtu)?;
+         let mut capabilities = DeviceCapabilities::default();
+-        capabilities.max_transmission_unit = 1500;
++        capabilities.max_transmission_unit = mtu;
+         capabilities.medium = Medium::Ip;
+ 
+         let (rx_sender, rx_queue) = mpsc::unbounded_channel::<Packet>();
+ 
+-        Self {
++        Ok(Self {
+             rx_sender,
+             rx_queue,
+             tx_sender,
+             capabilities,
+             iface_notifier,
+-        }
++        })
+     }
+ 
+     pub fn create_injector(&self) -> mpsc::UnboundedSender<Packet> {
+--- a/clash-netstack/src/lib.rs
++++ b/clash-netstack/src/lib.rs
+@@ -7,6 +7,20 @@
+ mod tcp_stream;
+ mod udp_socket;
+ 
++/// L3 MTU defaults retained for callers of the original constructors.
++pub const DEFAULT_MTU: usize = 1500;
++pub const MIN_MTU: usize = 1280;
++pub const MAX_MTU: usize = 65535;
++
++/// Validate before allocating channels, spawning tasks or consuming a device.
++pub fn validate_mtu(mtu: usize) -> std::io::Result<usize> {
++    if !(MIN_MTU..=MAX_MTU).contains(&mtu) {
++        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput,
++            "tun.mtu must be in 1280..65535"));
++    }
++    Ok(mtu)
++}
++
+ pub use stack::{NetStack, Packet, StackSplitSink, StackSplitStream};
+ pub use tcp_listener::TcpListener;
+ pub use tcp_stream::TcpStream;
+--- a/clash-netstack/src/stack.rs
++++ b/clash-netstack/src/stack.rs
+@@ -101,6 +101,16 @@
+         crate::tcp_listener::TcpListener,
+         crate::udp_socket::UdpSocket,
+     ) {
++        Self::with_mtu(crate::DEFAULT_MTU).expect("default MTU is valid")
++    }
++
++    /// Create an IP stack whose TCP device advertises the actual TUN MTU.
++    pub fn with_mtu(mtu: usize) -> std::io::Result<(
++        Self,
++        crate::tcp_listener::TcpListener,
++        crate::udp_socket::UdpSocket,
++    )> {
++        let mtu = crate::validate_mtu(mtu)?;
+         let (tcp_packet_sender, tcp_packet_receiver) = mpsc::channel::<Packet>(4096);
+         // UDP uses a separate bounded channel.  UDP is inherently lossy so
+         // drop-on-full (via try_send) is correct; the bound prevents unbounded
+@@ -116,7 +126,7 @@
+         let udp_socket = UdpSocket::new(udp_outbound_stack, udp_packet_sender);
+         let (tcp_inbound_app, tcp_outbound_stack) =
+             mpsc::unbounded_channel::<Packet>();
+-        let tcp_listener = TcpListener::new(tcp_outbound_stack, tcp_packet_sender);
++        let tcp_listener = TcpListener::with_mtu(tcp_outbound_stack, tcp_packet_sender, mtu)?;
+ 
+         let stack = NetStack {
+             udp_inbound: udp_inbound_app,
+@@ -125,7 +135,7 @@
+             udp_outbound: udp_packet_receiver,
+         };
+ 
+-        (stack, tcp_listener, udp_socket)
++        Ok((stack, tcp_listener, udp_socket))
+     }
+ 
+     pub fn split(self) -> (StackSplitSink, StackSplitStream) {
+--- a/clash-netstack/src/tcp_listener.rs
++++ b/clash-netstack/src/tcp_listener.rs
+@@ -104,13 +104,23 @@
+         inbound: mpsc::UnboundedReceiver<Packet>,
+         outbound: mpsc::Sender<Packet>,
+     ) -> Self {
++        Self::with_mtu(inbound, outbound, crate::DEFAULT_MTU)
++            .expect("default MTU is valid")
++    }
++
++    pub fn with_mtu(
++        inbound: mpsc::UnboundedReceiver<Packet>,
++        outbound: mpsc::Sender<Packet>,
++        mtu: usize,
++    ) -> std::io::Result<Self> {
++        let mtu = crate::validate_mtu(mtu)?;
+         // the global bus that drives the iface polling
+         let (iface_notifier, iface_notifier_rx) = mpsc::unbounded_channel();
+ 
+         let mut config =
+             smoltcp::iface::Config::new(smoltcp::wire::HardwareAddress::Ip);
+         config.random_seed = rand::random();
+-        let mut device = NetstackDevice::new(outbound, iface_notifier.clone());
++        let mut device = NetstackDevice::with_mtu(outbound, iface_notifier.clone(), mtu)?;
+         let mut iface = smoltcp::iface::Interface::new(
+             config,
+             &mut device,
+@@ -156,11 +166,11 @@
+             }
+         });
+ 
+-        TcpListener {
++        Ok(TcpListener {
+             socket_stream,
+             task_handle,
+             socket_stream_waker,
+-        }
++        })
+     }
+ 
+     async fn poll_packets(

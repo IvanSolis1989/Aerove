@@ -86,16 +86,29 @@ impl Probe {
         let probe = self.clone();
         let services = self.clone();
         let route = self.clone();
+        let reset = self.clone();
         Router::new().route("/aerove/outbound", get(move |request: Request| {
             let probe = probe.clone();
             async move { probe.handle(request).await }
         })).route("/aerove/service-check", post(move |request: Request| {
             let probe = services.clone();
             async move { probe.services.handle(&probe, request).await }
+        })).route("/aerove/reset-connections", post(move |request: Request| {
+            let probe=reset.clone();async move {probe.reset_connections(request).await}
         })).route("/aerove/route", get(move |request: Request| {
             let probe = route.clone();
             async move { probe.route_snapshot(request).await }
         }))
+    }
+
+    async fn reset_connections(&self, request:Request)->Response {
+        if request.uri().query().is_some() {return failure(StatusCode::BAD_REQUEST,"no_parameters");}
+        let body=tokio::select! {biased;_=self.cancel.cancelled()=>return failure(StatusCode::SERVICE_UNAVAILABLE,"session_stopped"),result=tokio::time::timeout(Duration::from_secs(5),axum::body::to_bytes(request.into_body(),0))=>result};
+        match body {Ok(Ok(bytes)) if bytes.is_empty()=>{},_=>return failure(StatusCode::BAD_REQUEST,"no_body"),}
+        if self.cancel.is_cancelled(){return failure(StatusCode::SERVICE_UNAVAILABLE,"session_stopped");}
+        let components=self.components.read().unwrap().clone();
+        let result=tokio::select! {biased;_=self.cancel.cancelled()=>return failure(StatusCode::SERVICE_UNAVAILABLE,"session_stopped"),result=components.resolver.reset_connections()=>result};
+        match result {Ok(())=>StatusCode::NO_CONTENT.into_response(),Err(_)=>failure(StatusCode::BAD_GATEWAY,"dns_reset_failed")}
     }
 
     async fn route_snapshot(&self, request: Request) -> Response {
@@ -145,7 +158,10 @@ impl Probe {
     }
 
     async fn handle(&self, request: Request) -> Response {
-        if request.uri().query().is_some() { return failure(StatusCode::BAD_REQUEST, "no_parameters"); }
+        let force_direct=match request.uri().query(){None|Some("forceDirect=false")=>false,Some("forceDirect=true")=>true,_=>return failure(StatusCode::BAD_REQUEST,"invalid_parameters")};
+        let Ok(stamp)=super::telemetry::route_stamp() else{return failure(StatusCode::CONFLICT,"outbound_changed");};
+        let parked=super::context().ok().and_then(|c|c.network.clone()).is_some_and(|n|n.is_parked());
+        let direct=force_direct||parked;
         if self.cancel.is_cancelled() { return failure(StatusCode::SERVICE_UNAVAILABLE, "session_stopped"); }
         let Ok(_permit) = self.slot.try_acquire() else { return failure(StatusCode::TOO_MANY_REQUESTS, "outbound_busy"); };
         let components = self.components.read().unwrap().clone();
@@ -154,9 +170,15 @@ impl Probe {
             _ = self.cancel.cancelled() => return failure(StatusCode::SERVICE_UNAVAILABLE, "session_stopped"),
             result = tokio::time::timeout(self.timeout, async {
                 let mode = components.dispatcher.get_mode().await;
-                let info = self.race(components.dispatcher.clone()).await
+                let pin=if direct {
+                    let handler=components.outbound_manager.get_outbound(crate::config::internal::proxy::PROXY_DIRECT).await.ok_or((StatusCode::BAD_GATEWAY,"outbound_unavailable"))?;
+                    let resolver=Arc::new(crate::app::dns::SystemResolver::new(components.dns_resolver.ipv6()).map_err(|_|(StatusCode::BAD_GATEWAY,"outbound_unavailable"))?);
+                    Some(http_probe::PinnedRoute {handler,resolver:super::observations::resolver(resolver,super::observations::Origin::Direct)})
+                }else{None};
+                let info = self.race(components.dispatcher.clone(),pin).await
                     .map_err(|_| (StatusCode::BAD_GATEWAY, "outbound_unavailable"))?;
-                if !self.fresh(&components, mode, &info.chains).await {
+                if !self.fresh(&components, mode, &info.chains).await || super::telemetry::route_stamp().ok()!=Some(stamp)
+                    || super::context().ok().and_then(|c|c.network.clone()).is_some_and(|n|n.is_parked())!=parked {
                     return Err((StatusCode::CONFLICT, "outbound_changed"));
                 }
                 Ok(info)
@@ -164,7 +186,7 @@ impl Probe {
         };
         if self.cancel.is_cancelled() { return failure(StatusCode::SERVICE_UNAVAILABLE, "session_stopped"); }
         match answer {
-            Ok(Ok(info)) => ([(http::header::CACHE_CONTROL, "no-store")], axum::Json(info)).into_response(),
+            Ok(Ok(info)) => {let mut info=serde_json::to_value(info).expect("outbound info serializes");info["direct"]=json!(direct);info["coreEpoch"]=json!(stamp.0.to_string());([(http::header::CACHE_CONTROL,"no-store")],axum::Json(info)).into_response()},
             Ok(Err((status, code))) => failure(status, code),
             Err(_) => failure(StatusCode::GATEWAY_TIMEOUT, "outbound_timeout"),
         }
@@ -190,21 +212,21 @@ impl Probe {
         Arc::ptr_eq(components, &self.components.read().unwrap()) && !self.selecting(chains)
     }
 
-    async fn race(&self, dispatcher: Arc<Dispatcher>) -> io::Result<OutboundInfo> {
+    async fn race(&self, dispatcher: Arc<Dispatcher>,pin:Option<http_probe::PinnedRoute>) -> io::Result<OutboundInfo> {
         let mut sources = self.sources.iter();
         let mut pending = FuturesUnordered::new();
-        if let Some(source) = sources.next() { pending.push(fetch(dispatcher.clone(), source.clone())); }
+        if let Some(source) = sources.next() { pending.push(fetch(dispatcher.clone(), source.clone(),pin.clone())); }
         let stagger = tokio::time::sleep(STAGGER);
         tokio::pin!(stagger);
         while !pending.is_empty() {
             tokio::select! {
                 answer = pending.next() => {
                     if let Some(Ok(info)) = answer { return Ok(info); }
-                    if let Some(source) = sources.next() { pending.push(fetch(dispatcher.clone(), source.clone())); }
+                    if let Some(source) = sources.next() { pending.push(fetch(dispatcher.clone(), source.clone(),pin.clone())); }
                 }
                 _ = &mut stagger => {
                     if pending.len() < 3 && let Some(source) = sources.next() {
-                        pending.push(fetch(dispatcher.clone(), source.clone()));
+                        pending.push(fetch(dispatcher.clone(), source.clone(),pin.clone()));
                     }
                     stagger.as_mut().reset(tokio::time::Instant::now() + STAGGER);
                 }
@@ -234,19 +256,21 @@ fn failure(status: StatusCode, code: &str) -> Response {
     (status, [(http::header::CACHE_CONTROL, "no-store")], axum::Json(json!({"error": code}))).into_response()
 }
 
-async fn fetch(dispatcher: Arc<Dispatcher>, source: Source) -> io::Result<OutboundInfo> {
-    let (body, chains) = routed_http(dispatcher, &source.url).await?;
+async fn fetch(dispatcher: Arc<Dispatcher>, source: Source,pin:Option<http_probe::PinnedRoute>) -> io::Result<OutboundInfo> {
+    let (body, chains) = routed_http_with_pin(dispatcher, &source.url,pin).await?;
     let mut info = parse(source.format, &body)?;
     info.chains = chains;
     Ok(info)
 }
 
-async fn routed_http(dispatcher: Arc<Dispatcher>, url: &str) -> io::Result<(Vec<u8>, Vec<String>)> {
+#[cfg(feature="aerove-mobile-tests")]
+async fn routed_http(dispatcher:Arc<Dispatcher>,url:&str)->io::Result<(Vec<u8>,Vec<String>)>{routed_http_with_pin(dispatcher,url,None).await}
+async fn routed_http_with_pin(dispatcher: Arc<Dispatcher>, url: &str,pin:Option<http_probe::PinnedRoute>) -> io::Result<(Vec<u8>, Vec<String>)> {
     let mut request = http_probe::ProbeRequest::get(url, MAX_BODY, TIMEOUT);
     request.strict = true;
     request.no_redirect = true;
     request.headers.insert(http::header::ACCEPT, "application/json".parse().unwrap());
-    let result = http_probe::run_probe(dispatcher, None, request).await?;
+    let result = http_probe::run_probe(dispatcher, pin, request).await?;
     Ok((result.body, result.chains))
 }
 

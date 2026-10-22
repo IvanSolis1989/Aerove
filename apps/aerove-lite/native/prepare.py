@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import io
+import importlib.util
 import json
 from pathlib import Path, PurePosixPath
 import re
@@ -104,6 +105,79 @@ def apply_patch(directory: Path, patch: str) -> None:
         directory.joinpath(*path.parts).write_text("".join(result), encoding="utf-8", newline="\n")
 
 
+def prepare_dependency(name: str, version: str, checksum: str, patch_bytes: bytes) -> dict:
+    if not re.fullmatch(r"[a-zA-Z0-9_-]+", name) or not re.fullmatch(r"[0-9.]+", version):
+        raise ValueError("invalid pinned dependency identity")
+    cache = ROOT / ".upstream"
+    cache.mkdir(exist_ok=True)
+    blob = cache / f"{name}-{version}.crate"
+    if not blob.exists():
+        url = f"https://static.crates.io/crates/{name}/{name}-{version}.crate"
+        with urllib.request.urlopen(url, timeout=60) as response:
+            data = response.read()
+        if digest(data) != checksum:
+            raise ValueError(f"{name}: dependency archive SHA256 mismatch")
+        blob.write_bytes(data)
+    data = blob.read_bytes()
+    if digest(data) != checksum:
+        raise ValueError(f"{name}: dependency archive SHA256 mismatch")
+    expected = {"name": name, "version": version, "archiveSha256": checksum, "patchSha256": digest(patch_bytes)}
+    target = cache / name
+    marker = target / "AEROVE_PROVENANCE.json"
+    if marker.exists():
+        saved = json.loads(marker.read_text(encoding="utf-8"))
+        tree = saved.pop("treeSha256", None)
+        if saved == expected and tree == tree_digest(target):
+            return {**expected, "treeSha256": tree}
+    with tempfile.TemporaryDirectory(prefix=f"{name}-", dir=cache) as temporary:
+        staging = Path(temporary) / "source"
+        staging.mkdir()
+        extract(data, staging)
+        apply_patch(staging, patch_bytes.decode("utf-8"))
+        provenance = {**expected, "treeSha256": tree_digest(staging)}
+        (staging / "AEROVE_PROVENANCE.json").write_text(json.dumps(provenance, indent=2)+"\n", encoding="utf-8", newline="\n")
+        if target.exists():
+            if target.resolve().parent != cache.resolve() or target.name != name:
+                raise ValueError("dependency replacement escaped native cache")
+            shutil.rmtree(target)
+        shutil.move(str(staging), str(target))
+    return provenance
+
+
+def prepare_tailscale() -> dict:
+    adapter = ROOT / "dependency-protect"
+    manifest_bytes = (adapter / "manifest.json").read_bytes()
+    manifest = json.loads(manifest_bytes)
+    archive_cache = ROOT / ".upstream" / "dependency-archives"
+    archive_cache.mkdir(exist_ok=True)
+    for package in manifest["packages"]:
+        blob = archive_cache / f"{package['name']}-{package['version']}.crate"
+        if not blob.exists():
+            with urllib.request.urlopen(package["url"], timeout=60) as response:
+                data = response.read()
+            if digest(data) != package["sha256"]:
+                raise ValueError("locked Tailscale dependency archive SHA256 mismatch")
+            blob.write_bytes(data)
+    spec = importlib.util.spec_from_file_location("aerove_dependency_prepare", adapter / "prepare.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    cache = ROOT / ".upstream"
+    target = cache / "dependency-protect"
+    with tempfile.TemporaryDirectory(prefix="tailscale-", dir=cache) as temporary:
+        staging = Path(temporary) / "source"
+        module.prepare(staging, archive_cache)
+        tree = tree_digest(staging)
+        expected = {"manifestSha256": digest(manifest_bytes), "adapterSha256": digest((adapter / "prepare.py").read_bytes()), "treeSha256": tree}
+        if target.exists() and tree_digest(target) == tree:
+            return expected
+        if target.exists():
+            if target.resolve().parent != cache.resolve() or target.name != "dependency-protect":
+                raise ValueError("Tailscale dependency replacement escaped native cache")
+            shutil.rmtree(target)
+        shutil.move(str(staging), str(target))
+    return expected
+
+
 def prepare(archive: Path | None = None) -> Path:
     cache = ROOT / ".upstream"
     cache.mkdir(exist_ok=True)
@@ -120,6 +194,27 @@ def prepare(archive: Path | None = None) -> Path:
         raise ValueError("upstream archive SHA256 mismatch")
     patch = (ROOT / "upstream.patch").read_bytes()
     parity_patch = (ROOT / "parity.patch").read_bytes()
+    mtu_patch=(ROOT / "mtu.patch").read_bytes()
+    controller_patch=(ROOT / "controller.patch").read_bytes()
+    probe_dial_patch=(ROOT / "probe_dial.patch").read_bytes()
+    runtime_policy_patch=(ROOT / "runtime_policy.patch").read_bytes()
+    reset_connections_patch=(ROOT / "reset_connections.patch").read_bytes()
+    protocols_patch=(ROOT / "protocols.patch").read_bytes()
+    shadowquic_transport_patch=(ROOT / "shadowquic_transport.patch").read_bytes()
+    shadowquic_dependency_patch=(ROOT / "shadowquic-dependency.patch").read_bytes()
+    protocol_transport=(ROOT / "upstream/protocol_transport.rs").read_bytes()
+    process_identity=(ROOT / "upstream/process_identity.rs").read_bytes()
+    process_identity_tests=(ROOT / "upstream/process_identity_tests.rs").read_bytes()
+    process_identity_patch=(ROOT / "process_identity.patch").read_bytes()
+    process_policy_patch=(ROOT / "process_policy.patch").read_bytes()
+    dns_transaction_patch=(ROOT / "dns_transaction.patch").read_bytes()
+    tailscale_transport_patch=(ROOT / "tailscale_transport.patch").read_bytes()
+    tailscale_source=prepare_tailscale()
+    shadowquic_source=prepare_dependency("shadowquic","0.3.13","9ebb2a8146e287bdc7adf5b9bdd690495fa45b524458f0d1c26df73ca5d4ac57",shadowquic_dependency_patch)
+    user_controller=(ROOT / "upstream/user_controller.rs").read_bytes()
+    probe_dial_tests=(ROOT / "upstream/probe_dial_tests.rs").read_bytes()
+    mtu_tests=(ROOT / "upstream/mtu_tests.rs").read_bytes()
+    initial_park_tests = (ROOT / "upstream/initial_park_tests.rs").read_bytes()
     runtime_control = (ROOT / "upstream/runtime_control.rs").read_bytes()
     runtime_control_tests = (ROOT / "upstream/runtime_control_tests.rs").read_bytes()
     observation_patch = (ROOT / "newobs.patch").read_bytes()
@@ -144,8 +239,15 @@ def prepare(archive: Path | None = None) -> Path:
     inbound_tests = (ROOT / "upstream/inbound_tests.rs").read_bytes()
     runtime_mode_tests = (ROOT / "upstream/runtime_mode_tests.rs").read_bytes()
     provenance = {
+        "dependencies":{"shadowquic":shadowquic_source,"tailscale":tailscale_source},
+        "dnsTransactionPatchSha256":digest(dns_transaction_patch),
+        "processIdentitySha256":digest(process_identity),"processIdentityTestsSha256":digest(process_identity_tests),"processIdentityPatchSha256":digest(process_identity_patch),"processPolicyPatchSha256":digest(process_policy_patch),"tailscaleTransportPatchSha256":digest(tailscale_transport_patch),
+        "protocolsPatchSha256":digest(protocols_patch),"shadowquicTransportPatchSha256":digest(shadowquic_transport_patch),"protocolTransportSha256":digest(protocol_transport),
         "repository": "https://github.com/ibigbug/clash-rs",
         "tag": "v0.10.10", "commit": COMMIT, "archiveSha256": digest(data),
+        "controllerPatchSha256":digest(controller_patch),"probeDialPatchSha256":digest(probe_dial_patch),"runtimePolicyPatchSha256":digest(runtime_policy_patch),"resetConnectionsPatchSha256":digest(reset_connections_patch),"userControllerSha256":digest(user_controller),"probeDialTestsSha256":digest(probe_dial_tests),
+        "mtuPatchSha256":digest(mtu_patch),"mtuTestsSha256":digest(mtu_tests),
+        "initialParkTestsSha256":digest(initial_park_tests),
         "parityPatchSha256": digest(parity_patch), "runtimeControlSha256": digest(runtime_control), "runtimeControlTestsSha256": digest(runtime_control_tests),
         "observationPatchSha256": digest(observation_patch),
         "observationsSha256": digest(observations), "observationTestsSha256": digest(observation_tests),
@@ -178,10 +280,28 @@ def prepare(archive: Path | None = None) -> Path:
         apply_patch(staging, patch.decode("utf-8"))
         apply_patch(staging, observation_patch.decode("utf-8"))
         apply_patch(staging, parity_patch.decode("utf-8"))
+        apply_patch(staging, mtu_patch.decode("utf-8"))
+        apply_patch(staging, controller_patch.decode("utf-8"))
+        apply_patch(staging, probe_dial_patch.decode("utf-8"))
+        apply_patch(staging, runtime_policy_patch.decode("utf-8"))
+        apply_patch(staging, reset_connections_patch.decode("utf-8"))
+        apply_patch(staging, protocols_patch.decode("utf-8"))
+        apply_patch(staging, shadowquic_transport_patch.decode("utf-8"))
+        apply_patch(staging, tailscale_transport_patch.decode("utf-8"))
+        apply_patch(staging, process_policy_patch.decode("utf-8"))
+        apply_patch(staging, process_identity_patch.decode("utf-8"))
+        apply_patch(staging, dns_transaction_patch.decode("utf-8"))
         (staging / "clash-lib/src/mobile.rs").write_bytes(overlay)
         resource_target = staging / "clash-lib/src/mobile/resources.rs"
         resource_target.parent.mkdir(exist_ok=True)
         resource_target.write_bytes(resources)
+        (resource_target.parent / "protocol_transport.rs").write_bytes(protocol_transport)
+        (resource_target.parent / "process_identity.rs").write_bytes(process_identity)
+        (resource_target.parent / "process_identity_tests.rs").write_bytes(process_identity_tests)
+        (resource_target.parent / "user_controller.rs").write_bytes(user_controller)
+        (resource_target.parent / "probe_dial_tests.rs").write_bytes(probe_dial_tests)
+        (resource_target.parent / "mtu_tests.rs").write_bytes(mtu_tests)
+        (resource_target.parent / "initial_park_tests.rs").write_bytes(initial_park_tests)
         (resource_target.parent / "runtime_control.rs").write_bytes(runtime_control)
         (resource_target.parent / "runtime_control_tests.rs").write_bytes(runtime_control_tests)
         (resource_target.parent / "observations.rs").write_bytes(observations)

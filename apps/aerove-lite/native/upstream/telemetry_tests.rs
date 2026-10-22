@@ -281,7 +281,7 @@ pub(super) async fn websocket() {
     let next_cancel = CancellationToken::new();
     *crate::mobile::CONTEXT.write().unwrap() = Some(Arc::new(crate::mobile::Context {
         protector: first.protector.clone(), bootstrap: vec![], events: first.events.clone(),
-            network_dns:std::sync::RwLock::new(None),dns_enabled:false,dns_hijack_all:false,
+            mode:crate::mobile::RuntimeMode::Proxy,process_owner:None,network_generation:std::sync::atomic::AtomicU64::new(0),network_dns:std::sync::RwLock::new(None),dns_enabled:false,dns_hijack_all:false,
         logs: first.logs.clone(), level: first.level, cancel: next_cancel.clone(),
         telemetry: telemetry::Bus::new(next_cancel), network: None,
     }));

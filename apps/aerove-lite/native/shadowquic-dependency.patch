@@ -1,0 +1,26 @@
+--- a/src/shadowquic/outbound.rs
++++ b/src/shadowquic/outbound.rs
+@@ -41,7 +41,7 @@
+         }
+     }
+     pub async fn init_endpoint(&self) -> Result<EndClient, SError> {
+-        EndClient::new(&self.config).await
++        EndClient::new_with_socket_factory(&self.config,self.socket_factory.clone()).await
+     }
+ 
+     pub async fn get_conn(&self) -> Result<ShadowQuicConn, SError> {
+@@ -54,12 +54,8 @@
+             .unwrap_or_else(|| panic!("resolve quic addr faile: {}", self.config.addr));
+         let conn = self
+             .quic_end
+-            .get_or_init(|| async {
+-                self.init_endpoint()
+-                    .await
+-                    .expect("error during initialize quic endpoint")
+-            })
+-            .await
++            .get_or_try_init(|| self.init_endpoint())
++            .await?
+             .connect(addr, &self.config.server_name)
+             .await?;
+ 

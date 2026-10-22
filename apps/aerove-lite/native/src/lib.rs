@@ -38,31 +38,34 @@ struct Snapshot {
     tun_ready: bool,
     user_listeners_ready: bool,
     listening: bool,
+    core_ready:bool,
 }
 
 impl Snapshot {
     fn exited() -> Self {
         Self { state: State::Exited, error: None, api_address: None, runtime_mode: None,
-            tun_ready: false, user_listeners_ready: false, listening:false }
+            tun_ready: false, user_listeners_ready: false, listening:false,core_ready:false }
     }
 }
 
 struct Session {
     snapshot: Mutex<Snapshot>,
     control: Arc<clash_lib::mobile::runtime_control::RuntimeControl>,
+    initially_parked:bool,
     changed: Condvar,
     cancel: CancellationToken,
     worker: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl Session {
-    fn new(mode: RuntimeMode) -> Self {
+    fn new(mode: RuntimeMode,initially_parked:bool) -> Self {
         Self {
             control: clash_lib::mobile::runtime_control::RuntimeControl::new(),
             snapshot: Mutex::new(Snapshot {
                 state: State::Starting, error: None, api_address: None,
-                runtime_mode: Some(mode), tun_ready: false, user_listeners_ready: false, listening:false,
+                runtime_mode: Some(mode), tun_ready: false, user_listeners_ready: false, listening:false,core_ready:false,
             }),
+            initially_parked,
             changed: Condvar::new(),
             cancel: CancellationToken::new(),
             worker: Mutex::new(None),
@@ -72,13 +75,15 @@ impl Session {
     fn ready(&self, info: ReadyInfo) {
         let mut state = self.snapshot.lock().unwrap();
         if state.state == State::Starting && !self.cancel.is_cancelled()
-            && state.runtime_mode == Some(info.runtime_mode) && info.user_listeners_ready
-            && info.tun_ready == (info.runtime_mode == RuntimeMode::Tun) {
+            && state.runtime_mode == Some(info.runtime_mode)
+            && ((self.initially_parked&&!info.user_listeners_ready&&!info.tun_ready)
+                ||(!self.initially_parked&&info.user_listeners_ready&&info.tun_ready==(info.runtime_mode==RuntimeMode::Tun))) {
             state.state = State::Running;
             state.api_address = Some(info.address.to_string());
+            state.core_ready=true;
             state.tun_ready = info.tun_ready;
-            state.user_listeners_ready = true;
-            state.listening = true;
+            state.user_listeners_ready = info.user_listeners_ready;
+            state.listening = !self.initially_parked;
             self.changed.notify_all();
         }
     }
@@ -86,6 +91,7 @@ impl Session {
     fn finished(&self, result: Result<()>) {
         let mut state = self.snapshot.lock().unwrap();
         state.api_address = None;
+        state.core_ready=false;
         state.runtime_mode = None;
         state.tun_ready = false;
         state.user_listeners_ready = false;
@@ -155,13 +161,16 @@ fn start(
 }
 
 fn start_runtime(config_path: PathBuf, working_directory: PathBuf, input: RuntimeInput) -> Result<i64> {
+    start_runtime_owned(config_path,working_directory,input,None)
+}
+fn start_runtime_owned(config_path:PathBuf,working_directory:PathBuf,input:RuntimeInput,owner:Option<clash_lib::mobile::process_identity::Resolver>)->Result<i64> {
     let mut registry = registry().lock().unwrap();
     if registry.active.is_some() {
         bail!("previous core must complete stop and join before start");
     }
     let handle = registry.next_handle;
     let next = handle.checked_add(1).ok_or_else(|| anyhow!("core handles exhausted"))?;
-    let session = Arc::new(Session::new(input.mode()));
+    let session = Arc::new(Session::new(input.mode(),input.initially_parked()));
     let worker_session = session.clone();
     let worker = std::thread::Builder::new().name(format!("aerove-core-{handle}"))
         .spawn(move || {
@@ -172,9 +181,9 @@ fn start_runtime(config_path: PathBuf, working_directory: PathBuf, input: Runtim
                 }
                 let runtime = tokio::runtime::Builder::new_multi_thread()
                     .worker_threads(2).enable_all().build().context("create core runtime")?;
-                let result = runtime.block_on(clash_lib::mobile::run_runtime_control(
+                let result = runtime.block_on(clash_lib::mobile::run_runtime_identity(
                     source, working_directory, input,
-                    worker_session.cancel.clone(), worker_session.control.clone(),
+                    worker_session.cancel.clone(), worker_session.control.clone(),owner,
                     |info| worker_session.ready(info),
                 ));
                 // Dropping the instance runtime joins its workers and closes detached connection tasks.
@@ -277,6 +286,32 @@ impl JavaProtector {
     }
 }
 
+struct JavaConnectionOwner {vm:JavaVM,callback:Global<JObject<'static>>}
+impl JavaConnectionOwner {
+    fn resolve(&self,protocol:i32,source:std::net::SocketAddr,target:std::net::SocketAddr)->io::Result<clash_lib::mobile::process_identity::Identity> {
+        let result:jni::errors::Result<Option<String>>=self.vm.attach_current_thread(|env| {
+            let result=(|| {let source=env.new_string(source.to_string())?;let target=env.new_string(target.to_string())?;
+                let object=env.call_method(&self.callback,jni_str!("resolveConnectionOwner"),jni_sig!("(ILjava/lang/String;Ljava/lang/String;)Ljava/lang/String;"),&[JValue::Int(protocol),JValue::Object(source.as_ref()),JValue::Object(target.as_ref())])?.l()?;
+                if object.is_null(){Ok(None)}else{Ok(Some(env.cast_local::<JString>(object)?.try_to_string(env)?))}
+            })();
+            if env.exception_check(){env.exception_clear();return Err(jni::errors::Error::JavaException);}result
+        });
+        let json=result.map_err(|_|io::Error::other("connection owner callback failed"))?.ok_or_else(||io::Error::new(io::ErrorKind::NotFound,"connection owner unknown"))?;
+        decode_connection_owner(&json)
+    }
+}
+fn decode_connection_owner(json:&str)->io::Result<clash_lib::mobile::process_identity::Identity> {
+    let invalid=||io::Error::new(io::ErrorKind::InvalidData,"invalid connection owner receipt");
+    if json.len()>4096{return Err(invalid());}
+    let value:serde_json::Value=serde_json::from_str(json).map_err(|_|invalid())?;let object=value.as_object().ok_or_else(invalid)?;
+    if object.len()!=3{return Err(invalid());}
+    let uid=value.get("uid").and_then(serde_json::Value::as_u64).filter(|uid|*uid<=i32::MAX as u64).ok_or_else(invalid)?;
+    let process=value.get("process").and_then(serde_json::Value::as_str).ok_or_else(invalid)?;
+    let path=value.get("processPath").and_then(serde_json::Value::as_str).ok_or_else(invalid)?;
+    if process.len()>1024||path.len()>1024||process.chars().chain(path.chars()).any(char::is_control){return Err(invalid());}
+    Ok(clash_lib::mobile::process_identity::Identity {uid:uid as u32,process:process.into(),process_path:path.into()})
+}
+
 #[derive(Debug)]
 struct BridgeError(String);
 
@@ -323,6 +358,25 @@ pub extern "system" fn Java_dev_aerove_lite_core_NativeCore_start<'local>(
     }).resolve::<ThrowRuntimeExAndDefault>()
 }
 
+fn admit_parked(mode:&str,has_protector:bool)->Result<RuntimeMode>{
+    let mode=RuntimeMode::parse(mode)?;
+    if (mode==RuntimeMode::Tun)!=has_protector {bail!("protector: parked tun requires a VPN protector and parked proxy requires null");}Ok(mode)
+}
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_NativeCore_startRuntimeParked<'local>(
+    mut env:EnvUnowned<'local>,_class:JClass<'local>,config_path:JString<'local>,working_directory:JString<'local>,runtime_mode:JString<'local>,protector:JObject<'local>,
+)->i64 {
+    env.with_env(|env|->std::result::Result<i64,BridgeError>{
+        let mode=admit_parked(&runtime_mode.try_to_string(env)?,!protector.is_null()).map_err(bridge_error)?;
+        let config_path=PathBuf::from(config_path.try_to_string(env)?);let directory=PathBuf::from(working_directory.try_to_string(env)?);
+        let input=match mode {RuntimeMode::Proxy=>RuntimeInput::ParkedProxy,RuntimeMode::Tun=>{
+            let protector=JavaProtector {vm:env.get_java_vm()?,callback:env.new_global_ref(protector)?};
+            RuntimeInput::ParkedTun {protector:Arc::new(move|fd|protector.protect(fd))}
+        }};
+        start_runtime(config_path,directory,input).map_err(bridge_error)
+    }).resolve::<ThrowRuntimeExAndDefault>()
+}
+
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_aerove_lite_core_NativeCore_startRuntime<'local>(
     mut env: EnvUnowned<'local>, _class: JClass<'local>, config_path: JString<'local>,
@@ -344,6 +398,33 @@ pub extern "system" fn Java_dev_aerove_lite_core_NativeCore_startRuntime<'local>
     }).resolve::<ThrowRuntimeExAndDefault>()
 }
 
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_NativeCore_startRuntimeOwned<'local>(
+    mut env:EnvUnowned<'local>,_class:JClass<'local>,config_path:JString<'local>,working_directory:JString<'local>,runtime_mode:JString<'local>,tun_fd:i32,protector:JObject<'local>,owner:JObject<'local>,initially_parked:bool,
+)->i64 {
+    env.with_env(|env|->std::result::Result<i64,BridgeError>{
+        let mode_text=runtime_mode.try_to_string(env)?;
+        let mode=if initially_parked {if tun_fd!=-1{return Err(BridgeError("tunFd: initially parked runtime requires -1".into()));}admit_parked(&mode_text,!protector.is_null()).map_err(bridge_error)?}else{admit_runtime(&mode_text,tun_fd,!protector.is_null()).map_err(bridge_error)?};
+        if mode==RuntimeMode::Proxy&&!owner.is_null(){return Err(BridgeError("connectionOwner: proxy runtime requires null".into()));}
+        let resolver=if owner.is_null(){None}else{let callback=JavaConnectionOwner {vm:env.get_java_vm()?,callback:env.new_global_ref(owner)?};Some(Arc::new(move|protocol,source,target|callback.resolve(protocol,source,target)) as clash_lib::mobile::process_identity::Resolver)};
+        let input=match mode {
+            RuntimeMode::Proxy=>if initially_parked{RuntimeInput::ParkedProxy}else{RuntimeInput::Proxy},
+            RuntimeMode::Tun=>{let callback=JavaProtector {vm:env.get_java_vm()?,callback:env.new_global_ref(protector)?};let protect:clash_lib::mobile::Protector=Arc::new(move|fd|callback.protect(fd));if initially_parked{RuntimeInput::ParkedTun {protector:protect}}else{RuntimeInput::Tun {fd:duplicate_tun(tun_fd).map_err(bridge_error)?,protector:protect}}},
+        };
+        start_runtime_owned(PathBuf::from(config_path.try_to_string(env)?),PathBuf::from(working_directory.try_to_string(env)?),input,resolver).map_err(bridge_error)
+    }).resolve::<ThrowRuntimeExAndDefault>()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_NativeCore_configureFindProcessMode<'local>(mut env:EnvUnowned<'local>,_class:JClass<'local>,handle:i64,mode:JString<'local>){
+    env.with_env(|env|->std::result::Result<(),BridgeError>{let active=session(handle).map_err(bridge_error)?.ok_or_else(||BridgeError("core handle has exited".into()))?;if active.snapshot.lock().unwrap().state!=State::Running{return Err(BridgeError("core must be running".into()));}active.control.find_process_mode(&mode.try_to_string(env)?).map_err(|error|bridge_error(error.into()))?;Ok(())}).resolve::<ThrowRuntimeExAndDefault>()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_NativeCore_invalidateProcessIdentity<'local>(mut env:EnvUnowned<'local>,_class:JClass<'local>,handle:i64){
+    env.with_env(|_|->std::result::Result<(),BridgeError>{let active=session(handle).map_err(bridge_error)?.ok_or_else(||BridgeError("core handle has exited".into()))?;if active.snapshot.lock().unwrap().state!=State::Running{return Err(BridgeError("core must be running".into()));}active.control.invalidate_process_identity().map_err(|error|bridge_error(error.into()))?;Ok(())}).resolve::<ThrowRuntimeExAndDefault>()
+}
+
 fn listener_command(handle:i64,action:&str,tun_fd:i32,only:bool)->Result<clash_lib::mobile::runtime_control::ListenerStatus> {
     let session=session(handle)?.ok_or_else(||anyhow!("core handle has exited"))?;
     let status=session.snapshot.lock().unwrap().clone();
@@ -360,6 +441,24 @@ fn listener_command(handle:i64,action:&str,tun_fd:i32,only:bool)->Result<clash_l
         "statistics"=>session.control.statistics(only).map_err(Into::into),
         _=>bail!("runtimeMode: invalid listener command or resume input"),
     }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_NativeCore_configureProbeDial<'local>(mut env:EnvUnowned<'local>,_class:JClass<'local>,handle:i64,unified:jni::sys::jboolean,concurrent:jni::sys::jboolean){
+    env.with_env(|_env|->std::result::Result<(),BridgeError>{
+        let session=session(handle).map_err(bridge_error)?.ok_or_else(||BridgeError("core handle has exited".into()))?;
+        if session.snapshot.lock().unwrap().state!=State::Running{return Err(BridgeError("core must be running for probe and dial policy".into()));}
+        session.control.probe_dial(unified,concurrent).map_err(|error|bridge_error(error.into()))?;Ok(())
+    }).resolve::<ThrowRuntimeExAndDefault>()
+}
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_NativeCore_userControllerCommand<'local>(mut env:EnvUnowned<'local>,_class:JClass<'local>,handle:i64,read:jni::sys::jboolean,enabled:jni::sys::jboolean,secret:JString<'local>)->JString<'local>{
+    env.with_env(|env|->std::result::Result<JString<'local>,BridgeError>{
+        let session=session(handle).map_err(bridge_error)?.ok_or_else(||BridgeError("core handle has exited".into()))?;
+        if session.snapshot.lock().unwrap().state!=State::Running{return Err(BridgeError("core must be running for user controller".into()));}
+        let plan=if read {None}else{Some((enabled,secret.try_to_string(env)?))};let receipt=session.control.controller(plan).map_err(|error|bridge_error(error.into()))?;
+        let json=serde_json::to_string(&receipt).map_err(|_|BridgeError("user controller receipt could not be encoded".into()))?;Ok(env.new_string(json)?)
+    }).resolve::<ThrowRuntimeExAndDefault>()
 }
 
 #[unsafe(no_mangle)]
@@ -514,8 +613,14 @@ mod tests {
     }
 
     #[test]
+    fn connection_owner_receipts_reject_negative_fractional_overflow_and_unknown_fields() {
+        assert_eq!(decode_connection_owner(r#"{"uid":10042,"process":"dev.fixture","processPath":""}"#).unwrap().uid,10042);
+        for json in [r#"{"uid":-1,"process":"","processPath":""}"#,r#"{"uid":1.5,"process":"","processPath":""}"#,r#"{"uid":4294967295,"process":"","processPath":""}"#,r#"{"uid":1,"process":"x","processPath":"","extra":true}"#] {assert!(decode_connection_owner(json).is_err());}
+    }
+
+    #[test]
     fn late_ready_cannot_revive_a_cancelled_session() {
-        let session = Session::new(RuntimeMode::Tun);
+        let session = Session::new(RuntimeMode::Tun,false);
         session.cancel.cancel();
         session.ready(ReadyInfo { address: "127.0.0.1:1234".parse().unwrap(), runtime_mode: RuntimeMode::Tun,
             tun_ready: true, user_listeners_ready: true });
@@ -534,3 +639,26 @@ mod http_policy_tests;
 
 #[cfg(test)]
 mod dns_network_tests;
+
+#[cfg(test)]
+mod initial_park_tests;
+
+#[cfg(test)]
+mod mtu_tests;
+
+#[cfg(test)]
+mod outbound_direct_tests;
+
+#[cfg(test)]
+mod user_controller_tests;
+#[cfg(test)]
+mod probe_dial_tests;
+
+#[cfg(test)]
+mod reset_connections_tests;
+
+#[cfg(test)]
+mod process_identity_tests;
+
+#[cfg(test)]
+mod protocol_tests;

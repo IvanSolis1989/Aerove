@@ -2,5 +2,3 @@
 *.py text eol=lf
 *.toml text eol=lf
 *.lock text eol=lf
-*.patch text eol=lf
-upstream.patch whitespace=-blank-at-eol

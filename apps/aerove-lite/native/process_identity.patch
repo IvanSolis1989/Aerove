@@ -1,0 +1,163 @@
+--- a/clash-lib/src/app/api/handlers/provider.rs
++++ b/clash-lib/src/app/api/handlers/provider.rs
+@@ -386,6 +386,8 @@
+         country: None,
+         traffic_stats: None,
+         inbound_user: None,
++        #[cfg(feature = "aerove-mobile")]
++        process_identity: None,
+     };
+ 
+     axum::response::Json(MatchResponse {
+--- a/clash-lib/src/app/dispatcher/dispatcher_impl.rs
++++ b/clash-lib/src/app/dispatcher/dispatcher_impl.rs
+@@ -41,6 +41,8 @@
+     mode: Arc<RwLock<RunMode>>,
+     manager: Arc<Manager>,
+     tcp_buffer_size: usize,
++    #[cfg(feature = "aerove-mobile")]
++    process_owner: Option<Arc<crate::mobile::process_identity::Owner>>,
+ }
+ 
+ impl Debug for Dispatcher {
+@@ -65,6 +67,8 @@
+             mode: Arc::new(RwLock::new(mode)),
+             manager: statistics_manager,
+             tcp_buffer_size: tcp_buffer_size.unwrap_or(DEFAULT_BUFFER_SIZE),
++            #[cfg(feature = "aerove-mobile")]
++            process_owner: crate::mobile::process_owner(),
+         }
+     }
+ 
+@@ -111,6 +115,8 @@
+         #[cfg(feature = "aerove-mobile")]
+         route: Option<tokio::sync::oneshot::Sender<Vec<String>>>,
+     ) {
++        #[cfg(feature = "aerove-mobile")]
++        { let original = sess.destination.clone().try_into_socket_addr(); crate::mobile::process_identity::bind(&mut sess, &self.process_owner, original); }
+         let dest: SocksAddr =
+             match reverse_lookup(&self.resolver, &sess.destination).await {
+                 Some(dest) => dest,
+@@ -306,6 +312,8 @@
+         let (remote_receiver_w, mut remote_receiver_r) =
+             tokio::sync::mpsc::channel(256);
+ 
++        #[cfg(feature = "aerove-mobile")]
++        let process_owner = self.process_owner.clone();
+         let s = sess.clone();
+         let ss = sess.clone();
+         let t1 = tokio::spawn(async move {
+@@ -342,6 +350,8 @@
+                     .clone()
+                     .must_into_socket_addr()
+                     .to_canonical();
++                #[cfg(feature = "aerove-mobile")]
++                crate::mobile::process_identity::bind(&mut sess, &process_owner, packet.dst_addr.clone().try_into_socket_addr());
+                 sess.destination = dest.clone();
+                 sess.inbound_user = packet.inbound_user.clone();
+ 
+--- a/clash-lib/src/app/router/rules/process.rs
++++ b/clash-lib/src/app/router/rules/process.rs
+@@ -15,6 +15,13 @@
+ 
+ impl RuleMatcher for Process {
+     fn apply(&self, sess: &crate::session::Session) -> bool {
++        #[cfg(all(feature = "aerove-mobile", target_os = "android"))]
++        {
++            return sess.process_identity.as_ref().and_then(|flow| flow.identity()).is_some_and(|identity| {
++                let value = if self.name_only { &identity.process } else { &identity.process_path };
++                value.eq_ignore_ascii_case(&self.name)
++            });
++        }
+         #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+         {
+             use crate::session::Network;
+@@ -38,6 +45,7 @@
+             })
+         }
+         #[cfg(not(any(
++            all(feature = "aerove-mobile", target_os = "android"),
+             target_os = "linux",
+             target_os = "macos",
+             target_os = "windows"
+--- a/clash-lib/src/proxy/tuic/mod.rs
++++ b/clash-lib/src/proxy/tuic/mod.rs
+@@ -526,6 +526,8 @@
+             asn: None,
+             traffic_stats: None,
+             inbound_user: None,
++            #[cfg(feature = "aerove-mobile")]
++            process_identity: None,
+         };
+ 
+         let mut stream = handler.connect_stream(&session, resolver).await?;
+@@ -581,6 +583,8 @@
+             asn: None,
+             traffic_stats: None,
+             inbound_user: None,
++            #[cfg(feature = "aerove-mobile")]
++            process_identity: None,
+         };
+ 
+         let result = handler.connect_stream(&session, resolver).await;
+@@ -646,6 +650,8 @@
+             asn: None,
+             traffic_stats: None,
+             inbound_user: None,
++            #[cfg(feature = "aerove-mobile")]
++            process_identity: None,
+         };
+ 
+         let mut stream = handler.connect_stream(&session, resolver).await?;
+@@ -702,6 +708,8 @@
+             asn: None,
+             traffic_stats: None,
+             inbound_user: None,
++            #[cfg(feature = "aerove-mobile")]
++            process_identity: None,
+         };
+ 
+         let mut stream = handler.connect_stream(&session, resolver).await?;
+--- a/clash-lib/src/session.rs
++++ b/clash-lib/src/session.rs
+@@ -485,6 +485,9 @@
+     /// Set by the Shadowsocks inbound before dispatch; used for per-user
+     /// traffic attribution.
+     pub inbound_user: Option<String>,
++    #[cfg(feature = "aerove-mobile")]
++    #[serde(skip)]
++    pub process_identity: Option<std::sync::Arc<crate::mobile::process_identity::Flow>>,
+ }
+ 
+ impl Session {
+@@ -519,6 +522,12 @@
+         if let Some(ref user) = self.inbound_user {
+             rv.insert("inboundUser".to_string(), Box::new(user.clone()) as _);
+         }
++        #[cfg(feature = "aerove-mobile")]
++        if let Some(identity) = self.process_identity.as_ref().and_then(|flow| flow.known()) {
++            rv.insert("uid".to_string(), Box::new(identity.uid) as _);
++            rv.insert("process".to_string(), Box::new(identity.process.clone()) as _);
++            rv.insert("processPath".to_string(), Box::new(identity.process_path.clone()) as _);
++        }
+         rv
+     }
+ }
+@@ -537,6 +546,8 @@
+             asn: None,
+             traffic_stats: None,
+             inbound_user: None,
++            #[cfg(feature = "aerove-mobile")]
++            process_identity: None,
+         }
+     }
+ }
+@@ -586,6 +597,8 @@
+             asn: self.asn.clone(),
+             traffic_stats: self.traffic_stats.clone(),
+             inbound_user: self.inbound_user.clone(),
++            #[cfg(feature = "aerove-mobile")]
++            process_identity: self.process_identity.clone(),
+         }
+     }
+ }

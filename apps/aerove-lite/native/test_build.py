@@ -74,6 +74,23 @@ class SourcePreparationTest(unittest.TestCase):
             (root / "upstream").mkdir()
             (root / "parity.patch").write_text("--- a/clash-lib/src/lib.rs\n+++ b/clash-lib/src/lib.rs\n@@ -1 +1 @@\n-observed\n+parity\n")
             (root / "upstream/runtime_control.rs").write_bytes(b"runtime control\n")
+            (root / "mtu.patch").write_text("--- a/clash-lib/src/lib.rs\n+++ b/clash-lib/src/lib.rs\n@@ -1 +1 @@\n-parity\n+mtu\n")
+            (root / "upstream/mtu_tests.rs").write_bytes(b"mtu tests\n")
+            (root / "controller.patch").write_text("--- a/clash-lib/src/lib.rs\n+++ b/clash-lib/src/lib.rs\n@@ -1 +1 @@\n-mtu\n+controller\n")
+            (root / "probe_dial.patch").write_text("--- a/clash-lib/src/lib.rs\n+++ b/clash-lib/src/lib.rs\n@@ -1 +1 @@\n-controller\n+probe\n")
+            (root / "runtime_policy.patch").write_text("--- a/clash-lib/src/lib.rs\n+++ b/clash-lib/src/lib.rs\n@@ -1 +1 @@\n-probe\n+policy\n")
+            (root / "reset_connections.patch").write_text("--- a/clash-lib/src/lib.rs\n+++ b/clash-lib/src/lib.rs\n@@ -1 +1 @@\n-policy\n+reset\n")
+            (root / "protocols.patch").write_text("--- a/clash-lib/src/lib.rs\n+++ b/clash-lib/src/lib.rs\n@@ -1 +1 @@\n-reset\n+protocol\n")
+            (root / "shadowquic_transport.patch").write_text("--- a/clash-lib/src/lib.rs\n+++ b/clash-lib/src/lib.rs\n@@ -1 +1 @@\n-protocol\n+transport\n")
+            (root / "shadowquic-dependency.patch").write_bytes(b"dependency patch\n")
+            (root / "upstream/protocol_transport.rs").write_bytes(b"protocol transport\n")
+            for filename,before,after in [("tailscale_transport.patch","transport","ts"),("process_policy.patch","ts","processpolicy"),("process_identity.patch","processpolicy","process"),("dns_transaction.patch","process","dns")]:
+                (root/filename).write_text(f"--- a/clash-lib/src/lib.rs\n+++ b/clash-lib/src/lib.rs\n@@ -1 +1 @@\n-{before}\n+{after}\n")
+            (root/"upstream/process_identity.rs").write_bytes(b"process identity\n")
+            (root/"upstream/process_identity_tests.rs").write_bytes(b"process identity tests\n")
+            (root / "upstream/user_controller.rs").write_bytes(b"user controller\n")
+            (root / "upstream/probe_dial_tests.rs").write_bytes(b"probe dial tests\n")
+            (root / "upstream/initial_park_tests.rs").write_bytes(b"initial_park_tests\n")
             (root / "upstream/runtime_control_tests.rs").write_bytes(b"runtime control tests\n")
             (root / "newobs.patch").write_text("--- a/clash-lib/src/lib.rs\n+++ b/clash-lib/src/lib.rs\n@@ -1 +1 @@\n-patched\n+observed\n")
             (root / "upstream/observations.rs").write_bytes(b"observations\n")
@@ -101,9 +118,9 @@ class SourcePreparationTest(unittest.TestCase):
             blob = root / "source.tar.gz"
             blob.write_bytes(archive_bytes([("root/clash-lib/src/lib.rs", b"original\n"),
                 ("root/LICENSE", b"license"), ("root/NOTICE.md", b"notice")]))
-            with patch.object(prepare, "ROOT", root), patch.object(prepare, "ARCHIVE_SHA256", prepare.digest(blob.read_bytes())):
+            with patch.object(prepare, "ROOT", root), patch.object(prepare, "ARCHIVE_SHA256", prepare.digest(blob.read_bytes())), patch.object(prepare,"prepare_dependency",return_value={"fixture":"dependency"}), patch.object(prepare,"prepare_tailscale",return_value={"fixture":"tailscale"}):
                 target = prepare.prepare(blob)
-                self.assertEqual((target / "clash-lib/src/lib.rs").read_bytes(), b"parity\n")
+                self.assertEqual((target / "clash-lib/src/lib.rs").read_bytes(), b"dns\n")
                 self.assertEqual((target / "clash-lib/src/mobile.rs").read_bytes(), b"mobile\n")
                 self.assertEqual((target / "clash-lib/src/mobile/resources.rs").read_bytes(), b"resources\n")
                 self.assertEqual((target / "clash-lib/src/mobile/outbound.rs").read_bytes(), b"outbound\n")
@@ -115,6 +132,17 @@ class SourcePreparationTest(unittest.TestCase):
                 self.assertEqual((target / "NOTICE.md").read_bytes(), b"notice")
                 provenance = json.loads((target / "AEROVE_PROVENANCE.json").read_text())
                 self.assertEqual(provenance["commit"], prepare.COMMIT)
+                self.assertEqual((target / "clash-lib/src/mobile/initial_park_tests.rs").read_bytes(),b"initial_park_tests\n")
+                self.assertEqual((target / "clash-lib/src/mobile/mtu_tests.rs").read_bytes(),b"mtu tests\n")
+                self.assertEqual(provenance["mtuPatchSha256"],prepare.digest((root / "mtu.patch").read_bytes()))
+                self.assertEqual((target / "clash-lib/src/mobile/user_controller.rs").read_bytes(),b"user controller\n")
+                self.assertEqual((target / "clash-lib/src/mobile/probe_dial_tests.rs").read_bytes(),b"probe dial tests\n")
+                self.assertEqual(provenance["resetConnectionsPatchSha256"],prepare.digest((root / "reset_connections.patch").read_bytes()))
+                self.assertEqual(provenance["runtimePolicyPatchSha256"],prepare.digest((root / "runtime_policy.patch").read_bytes()))
+                self.assertEqual(provenance["controllerPatchSha256"],prepare.digest((root / "controller.patch").read_bytes()))
+                self.assertEqual(provenance["probeDialPatchSha256"],prepare.digest((root / "probe_dial.patch").read_bytes()))
+                self.assertEqual(provenance["mtuTestsSha256"],prepare.digest(b"mtu tests\n"))
+                self.assertEqual(provenance["initialParkTestsSha256"],prepare.digest(b"initial_park_tests\n"))
                 self.assertEqual(provenance["parityPatchSha256"], prepare.digest((root / "parity.patch").read_bytes()))
                 self.assertEqual((target / "clash-lib/src/mobile/runtime_control.rs").read_bytes(), b"runtime control\n")
                 self.assertEqual(provenance["observationPatchSha256"], prepare.digest((root / "newobs.patch").read_bytes()))
@@ -151,7 +179,7 @@ class SourcePreparationTest(unittest.TestCase):
                 prepare.prepare(blob)
                 (target / "clash-lib/src/lib.rs").write_text("tampered")
                 prepare.prepare(blob)
-                self.assertEqual((target / "clash-lib/src/lib.rs").read_bytes(), b"parity\n")
+                self.assertEqual((target / "clash-lib/src/lib.rs").read_bytes(), b"dns\n")
                 (root / "upstream/resources.rs").write_bytes(b"updated resources\n")
                 prepare.prepare(blob)
                 updated = json.loads((target / "AEROVE_PROVENANCE.json").read_text())
@@ -173,6 +201,57 @@ class SourcePreparationTest(unittest.TestCase):
                 updated = json.loads((target / "AEROVE_PROVENANCE.json").read_text())
                 self.assertEqual(updated["serviceRulesSha256"], prepare.digest(b"updated service rules\n"))
                 self.assertEqual((target / "clash-lib/src/mobile/service_rules.rs").read_bytes(), b"updated service rules\n")
+
+    def test_dependency_hash_exact_replay_and_cached_tamper_repair(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);cache=root/".upstream";cache.mkdir()
+            blob=archive_bytes([("dep/source.rs",b"original\n")]);(cache/"dep-1.0.crate").write_bytes(blob)
+            delta=b"--- a/source.rs\n+++ b/source.rs\n@@ -1 +1 @@\n-original\n+adapted\n"
+            with patch.object(prepare,"ROOT",root):
+                actual=prepare.prepare_dependency("dep","1.0",prepare.digest(blob),delta)
+                self.assertEqual((cache/"dep/source.rs").read_bytes(),b"adapted\n")
+                self.assertEqual(actual["archiveSha256"],prepare.digest(blob))
+                (cache/"dep/source.rs").write_bytes(b"tamper")
+                repaired=prepare.prepare_dependency("dep","1.0",prepare.digest(blob),delta)
+                self.assertEqual(repaired,actual)
+                self.assertEqual((cache/"dep/source.rs").read_bytes(),b"adapted\n")
+                with self.assertRaisesRegex(ValueError,"SHA256 mismatch"):
+                    prepare.prepare_dependency("dep","1.0","0"*64,delta)
+
+    def test_tailscale_clean_archive_cache_uses_all_official_manifest_urls(self):
+        manifest = json.loads((prepare.ROOT / "dependency-protect/manifest.json").read_text())
+        payloads = {}
+        for package in manifest["packages"]:
+            official = f"https://static.crates.io/crates/{package['name']}/{package['name']}-{package['version']}.crate"
+            payloads[official] = package["name"].encode("ascii")
+            package["sha256"] = prepare.digest(payloads[official])
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / ".upstream").mkdir()
+            adapter = root / "dependency-protect"
+            adapter.mkdir()
+            (adapter / "manifest.json").write_text(json.dumps(manifest))
+            # Isolate archive acquisition from the independently tested patch adapter.
+            (adapter / "prepare.py").write_text(
+                "def prepare(destination, archive_cache):\n"
+                "    destination.mkdir()\n"
+                "    (destination / 'prepared').write_bytes(b'prepared')\n"
+            )
+            with patch.object(prepare, "ROOT", root), patch.object(
+                prepare.urllib.request, "urlopen", side_effect=lambda url, timeout: io.BytesIO(payloads[url])
+            ) as fetch:
+                result = prepare.prepare_tailscale()
+            for package in manifest["packages"]:
+                official = f"https://static.crates.io/crates/{package['name']}/{package['name']}-{package['version']}.crate"
+                self.assertEqual(package["url"], official)
+                if "officialOrigin" in package:
+                    self.assertEqual(package["url"], package["officialOrigin"])
+            self.assertEqual(fetch.call_args_list, [unittest.mock.call(p["url"], timeout=60) for p in manifest["packages"]])
+            for package in manifest["packages"]:
+                blob = root / ".upstream/dependency-archives" / f"{package['name']}-{package['version']}.crate"
+                self.assertEqual(blob.read_bytes(), payloads[package["url"]])
+            self.assertEqual(result["manifestSha256"], prepare.digest((adapter / "manifest.json").read_bytes()))
+            self.assertTrue((root / ".upstream/dependency-protect/prepared").is_file())
 
     def test_prepare_rejects_wrong_archive_hash_before_extract(self):
         with tempfile.TemporaryDirectory() as temporary:

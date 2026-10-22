@@ -1,0 +1,120 @@
+--- a/clash-lib/src/app/api/runner.rs
++++ b/clash-lib/src/app/api/runner.rs
+@@ -119,40 +119,5 @@
+         let cancellation_token = self.cancellation_token.clone();
+         let handle = tokio::spawn(async move {
+-            let mut router = Router::new()
+-                .route("/", get(handlers::hello::handle))
+-                .route("/logs", get(handlers::log::handle))
+-                .route("/traffic", get(handlers::traffic::handle))
+-                .route("/user-stats", get(handlers::user_stats::handle))
+-                .route("/version", get(handlers::version::handle))
+-                .route("/memory", get(handlers::memory::handle))
+-                .route("/restart", post(handlers::restart::handle))
+-                .nest("/ws", websocket::routes(app_state.clone()))
+-                .nest(
+-                    "/configs",
+-                    handlers::config::routes(components.clone(), global_state),
+-                )
+-                .nest("/rules", handlers::rule::routes(components.clone()))
+-                .nest("/group", handlers::group::routes(components.clone()))
+-                .nest("/proxies", handlers::proxy::routes(components.clone()))
+-                .nest(
+-                    "/providers/proxies",
+-                    handlers::provider::routes(components.clone()),
+-                )
+-                .nest(
+-                    "/providers/rules",
+-                    handlers::provider::rule_routes(components.clone()),
+-                )
+-                .nest(
+-                    "/connections",
+-                    handlers::connection::routes(components.clone()),
+-                )
+-                .nest("/flows", handlers::flows::routes(components.clone()))
+-                .nest("/cache", handlers::cache::routes(components.clone()))
+-                .nest("/dns", handlers::dns::routes(components))
+-                .layer(middleware::from_fn(
+-                    middlewares::fix_json_content_type::fix_content_type,
+-                ))
+-                .route_layer(cors)
+-                .with_state(app_state.clone())
++            let mut router = shared_routes(components.clone(), global_state, app_state.clone(), cors)
+                 .layer(ServiceBuilder::new().layer(TraceLayer::new_for_http()));
+ 
+@@ -301,2 +266,65 @@
+     }
+ }
++
++
++// One normal API tree for private and user listeners; mobile private extensions stay in run_async.
++fn shared_routes(
++    components: Arc<RwLock<Arc<RuntimeComponents>>>,
++    global_state: Arc<Mutex<GlobalState>>,
++    app_state: Arc<AppState>,
++    cors: CorsLayer,
++) -> Router {
++    Router::new()
++        .route("/", get(handlers::hello::handle))
++        .route("/logs", get(handlers::log::handle))
++        .route("/traffic", get(handlers::traffic::handle))
++        .route("/user-stats", get(handlers::user_stats::handle))
++        .route("/version", get(handlers::version::handle))
++        .route("/memory", get(handlers::memory::handle))
++        .route("/restart", post(handlers::restart::handle))
++        .nest("/ws", websocket::routes(app_state.clone()))
++        .nest(
++            "/configs",
++            handlers::config::routes(components.clone(), global_state),
++        )
++        .nest("/rules", handlers::rule::routes(components.clone()))
++        .nest("/group", handlers::group::routes(components.clone()))
++        .nest("/proxies", handlers::proxy::routes(components.clone()))
++        .nest(
++            "/providers/proxies",
++            handlers::provider::routes(components.clone()),
++        )
++        .nest(
++            "/providers/rules",
++            handlers::provider::rule_routes(components.clone()),
++        )
++        .nest(
++            "/connections",
++            handlers::connection::routes(components.clone()),
++        )
++        .nest("/flows", handlers::flows::routes(components.clone()))
++        .nest("/cache", handlers::cache::routes(components.clone()))
++        .nest("/dns", handlers::dns::routes(components))
++        .layer(middleware::from_fn(
++            middlewares::fix_json_content_type::fix_content_type,
++        ))
++        .route_layer(cors)
++        .with_state(app_state)
++}
++
++#[cfg(feature = "aerove-mobile")]
++pub(crate) fn user_controller_router(
++    components: Arc<RwLock<Arc<RuntimeComponents>>>,
++    global_state: Arc<Mutex<GlobalState>>,
++    log_source: Sender<LogEvent>,
++) -> Router {
++    let state = Arc::new(AppState { log_source_tx: log_source, components: components.clone() });
++    let cors = CorsLayer::new()
++        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::PATCH])
++        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
++        .allow_private_network(true)
++        .allow_origin(Any);
++    // No private routes, generic URI TraceLayer, or token-logging WebSocket rewriter here.
++    shared_routes(components, global_state, state, cors)
++        .layer(middleware::from_fn(crate::mobile::guard_controller))
++}
+--- a/clash-lib/src/app/api/mod.rs
++++ b/clash-lib/src/app/api/mod.rs
+@@ -17,4 +17,7 @@
+ pub use runner::ApiRunner;
+ 
++#[cfg(feature = "aerove-mobile")]
++pub(crate) use runner::user_controller_router;
++
+ #[cfg(feature = "aerove-mobile-tests")]
+ pub(crate) use middlewares::auth::AuthMiddlewareLayer;

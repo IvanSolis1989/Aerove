@@ -1,0 +1,845 @@
+--- a/tailscale-0.6.1/Cargo.toml
++++ b/tailscale-0.6.1/Cargo.toml
+@@ -179,3 +179,7 @@
+ lto = true
+ split-debuginfo = "packed"
+ strip = true
++
++[dependencies.aerove-ts-underlay]
++version = "0.1.0"
++path = "../aerove-ts-underlay"
+--- a/tailscale-0.6.1/src/config.rs
++++ b/tailscale-0.6.1/src/config.rs
+@@ -10,6 +10,7 @@
+ 
+ /// Config for connecting to Tailscale.
+ pub struct Config {
++    pub underlay: aerove_ts_underlay::Underlay,
+     /// The cryptographic keys representing this node's identity.
+     pub key_state: PersistState,
+ 
+@@ -125,6 +126,7 @@
+ impl Default for Config {
+     fn default() -> Self {
+         Self {
++            underlay: Default::default(),
+             key_state: Default::default(),
+             client_name: None,
+             control_server_url: ts_control::DEFAULT_CONTROL_SERVER.clone(),
+--- a/tailscale-0.6.1/src/lib.rs
++++ b/tailscale-0.6.1/src/lib.rs
+@@ -128,6 +128,7 @@
+ 
+ #[doc(inline)]
+ pub use config::Config;
++pub use aerove_ts_underlay::{Underlay, Protector, Resolver};
+ #[doc(inline)]
+ pub use error::{Error, InternalErrorKind};
+ #[doc(inline)]
+@@ -150,6 +151,23 @@
+ pub struct Device {
+     runtime: ts_runtime::ActorRef<ts_runtime::Runtime>,
+     channel: Channel,
++    underlay: Underlay,
++    cancel_task: tokio::task::JoinHandle<()>,
++}
++
++struct DeviceStartup {
++    runtime: ts_runtime::ActorRef<ts_runtime::Runtime>,
++    underlay: Underlay,
++    cancel_task: Option<tokio::task::JoinHandle<()>>,
++}
++impl Drop for DeviceStartup {
++    fn drop(&mut self) {
++        if let Some(task) = self.cancel_task.take() {
++            self.underlay.cancel();
++            self.runtime.kill();
++            task.abort();
++        }
++    }
+ }
+ 
+ /// Whether this node is authorized to join the tailnet.
+@@ -189,13 +207,25 @@
+             "tailscale-rs is early software in active development, expect more bugs and missing features than usual."
+         );
+ 
++        config.underlay.check().map_err(|_| Error::Internal(InternalErrorKind::Actor))?;
++        let underlay = config.underlay.child();
+         let keys = (&config.key_state).into();
+         let rt = ts_runtime::Runtime::spawn(ts_runtime::Config {
++            underlay: underlay.clone(),
+             control_config: config.into(),
+             auth_key,
+             keys,
+         });
+ 
++        let actor = rt.clone();
++        let owner = underlay.clone();
++        let cancel_task = tokio::spawn(async move {
++            owner.cancelled().await;
++            actor.kill();
++            actor.wait_for_shutdown().await;
++        });
++        let mut startup_guard = DeviceStartup { runtime: rt.clone(), underlay: underlay.clone(), cancel_task: Some(cancel_task) };
++        let startup = tokio::time::timeout(Duration::from_secs(30), async {
+         rt.wait_for_startup_result()
+             .await
+             .map_err(ts_runtime::Error::from)?;
+@@ -205,10 +235,19 @@
+             .await
+             .map_err(ts_runtime::Error::from)?;
+ 
+-        Ok(Self {
+-            runtime: rt,
+-            channel,
+-        })
++        Ok::<_, Error>(channel)
++        }).await.unwrap_or(Err(Error::Timeout));
++        let channel = match startup {
++            Ok(channel) => channel,
++            Err(error) => {
++                underlay.cancel();
++                rt.kill();
++                let _ = startup_guard.cancel_task.as_mut().unwrap().await;
++                return Err(error);
++            }
++        };
++        let cancel_task = startup_guard.cancel_task.take().unwrap();
++        Ok(Self { runtime: rt, channel, underlay, cancel_task })
+     }
+ 
+     /// Report whether this node has been authorized to join the tailnet.
+@@ -325,7 +364,17 @@
+     /// down if it timed out, just more violently and with potential resource leaks.
+     ///
+     /// If `timeout` is `None`, then shutdown will never time-out.
+-    pub async fn shutdown(self, timeout: Option<Duration>) -> bool {
++    pub async fn shutdown(mut self, timeout: Option<Duration>) -> bool {
++        self.underlay.cancel();
++        if let Some(limit) = timeout {
++            if tokio::time::timeout(limit, &mut self.cancel_task).await.is_err() {
++                self.runtime.kill();
++                self.cancel_task.abort();
++                return false;
++            }
++        } else {
++            let _ = (&mut self.cancel_task).await;
++        }
+         match timeout {
+             Some(timeout) => {
+                 if tokio::time::timeout(timeout, async {
+@@ -349,6 +398,14 @@
+                 true
+             }
+         }
++    }
++}
++
++impl Drop for Device {
++    fn drop(&mut self) {
++        self.underlay.cancel();
++        self.runtime.kill();
++        self.cancel_task.abort();
+     }
+ }
+ 
+--- a/ts_control-0.6.1/Cargo.toml
++++ b/ts_control-0.6.1/Cargo.toml
+@@ -167,3 +167,7 @@
+ broken_intra_doc_links = "deny"
+ invalid_html_tags = "deny"
+ private_intra_doc_links = "deny"
++
++[dependencies.aerove-ts-underlay]
++version = "0.1.0"
++path = "../aerove-ts-underlay"
+--- a/ts_control-0.6.1/src/client/connect.rs
++++ b/ts_control-0.6.1/src/client/connect.rs
+@@ -68,6 +68,10 @@
+             ConnectionError::Internal(InternalErrorKind::Io)
+         }
+     }
++}
++
++impl From<std::io::Error> for ConnectionError {
++    fn from(error: std::io::Error) -> Self { Self::io_error("underlay", "connect", error) }
+ }
+ 
+ impl From<serde_json::Error> for ConnectionError {
+@@ -188,10 +192,19 @@
+ /// Connect an HTTP/1.1 client to the control server, using TLS for https://
+ /// URLs and plain TCP for http:// URLs.
+ async fn connect_h1(url: &Url) -> Result<ts_http_util::Http1<EmptyBody>, ConnectionError> {
++    connect_h1_with_underlay(url, &aerove_ts_underlay::Underlay::default()).await
++}
++
++async fn connect_h1_with_underlay(url: &Url, underlay: &aerove_ts_underlay::Underlay) -> Result<ts_http_util::Http1<EmptyBody>, ConnectionError> {
++    let host = url.host_str().ok_or(ConnectionError::Internal(InternalErrorKind::Http))?;
++    let port = url.port_or_known_default().ok_or(ConnectionError::Internal(InternalErrorKind::Http))?;
++    let stream = underlay.connect_host(host, port).await?;
+     if url.scheme() == "http" {
+-        Ok(ts_http_util::http1::connect_tcp(url).await?)
++        Ok(ts_http_util::http1::connect(stream).await?)
+     } else {
+-        Ok(ts_http_util::http1::connect_tls(url).await?)
++        let name = ts_tls_util::server_name(url).ok_or(ConnectionError::Internal(InternalErrorKind::Http))?;
++        let tls = ts_tls_util::connect(name, stream).await?;
++        Ok(ts_http_util::http1::connect(tls).await?)
+     }
+ }
+ 
+@@ -204,6 +217,10 @@
+ /// ONLY for integration testing, where it's not practical to issue valid certs.
+ #[tracing::instrument(skip_all, fields(%control_url), ret, err, level = "trace")]
+ pub async fn fetch_control_key(control_url: &Url) -> Result<MachinePublicKey, ConnectionError> {
++    fetch_control_key_with_underlay(control_url, &aerove_ts_underlay::Underlay::default()).await
++}
++
++pub async fn fetch_control_key_with_underlay(control_url: &Url, underlay: &aerove_ts_underlay::Underlay) -> Result<MachinePublicKey, ConnectionError> {
+     let mut key_url = control_url.join("/key")?;
+ 
+     #[cfg(not(feature = "insecure-keyfetch"))]
+@@ -217,7 +234,7 @@
+         .query_pairs_mut()
+         .extend_pairs([("v", CapabilityVersion::CURRENT.to_string())]);
+ 
+-    let client = connect_h1(&key_url).await?;
++    let client = connect_h1_with_underlay(&key_url, underlay).await?;
+     let response = client.get(&key_url, None).await?;
+     if !response.status().is_success() {
+         let status = response.status();
+--- a/ts_control-0.6.1/src/client/mod.rs
++++ b/ts_control-0.6.1/src/client/mod.rs
+@@ -13,7 +13,7 @@
+ mod register;
+ 
+ pub use connect::{
+-    CONTROL_PROTOCOL_VERSION, connect, fetch_control_key, read_challenge_packet, upgrade_ts2021,
++    CONTROL_PROTOCOL_VERSION, connect, fetch_control_key, fetch_control_key_with_underlay, read_challenge_packet, upgrade_ts2021,
+ };
+ pub use map_stream::{FilterUpdate, PeerUpdate, StateUpdate, map_stream, send_map_request};
+ pub use ping::handle_ping;
+--- a/ts_control-0.6.1/src/control_dialer.rs
++++ b/ts_control-0.6.1/src/control_dialer.rs
+@@ -1,9 +1,10 @@
+ use core::fmt::{Debug, Formatter};
+ use std::time::Instant;
++use aerove_ts_underlay::{TcpStream, Underlay};
+ 
+ use tokio::{
+     io::{AsyncRead, AsyncWrite},
+-    net::TcpStream,
++
+ };
+ use tokio_util::future::FutureExt;
+ use ts_bitset::BitsetDyn;
+@@ -15,6 +16,7 @@
+ 
+ /// Manages state for control dial plan and handles selection of successive dial candidates.
+ pub struct ControlDialer {
++    underlay: Underlay,
+     plan: DialPlan,
+     epoch: usize,
+     timestamp: Instant,
+@@ -24,6 +26,7 @@
+ impl Default for ControlDialer {
+     fn default() -> Self {
+         Self {
++            underlay: Underlay::default(),
+             plan: DialPlan::default(),
+             epoch: 0,
+             timestamp: Instant::now(),
+@@ -52,8 +55,9 @@
+ }
+ 
+ enum ControlTcpDialer<'a> {
+-    UseDns,
++    UseDns(Underlay),
+     Planned {
++        underlay: Underlay,
+         attempted: &'a mut ts_dynbitset::DynBitset,
+         candidate: &'a DialCandidate,
+         index: usize,
+@@ -63,7 +67,7 @@
+ impl Debug for ControlTcpDialer<'_> {
+     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+         match self {
+-            ControlTcpDialer::UseDns => write!(f, "TcpDialer::Dns"),
++            ControlTcpDialer::UseDns(_) => write!(f, "TcpDialer::Dns"),
+             ControlTcpDialer::Planned { candidate, .. } => match &candidate.mode {
+                 DialMode::Ip(ip) => f.debug_tuple("TcpDialer::Ip").field(ip).finish(),
+                 DialMode::Ace { ip: Some(ip), host } => f
+@@ -80,8 +84,9 @@
+ impl TcpDialer for ControlTcpDialer<'_> {
+     async fn dial(self, host: &str, port: u16) -> tokio::io::Result<TcpStream> {
+         match self {
+-            ControlTcpDialer::UseDns => TcpStream::connect(format!("{host}:{port}")).await,
++            ControlTcpDialer::UseDns(underlay) => underlay.connect_host(host, port).await,
+             ControlTcpDialer::Planned {
++                underlay,
+                 candidate,
+                 attempted: used,
+                 index,
+@@ -90,7 +95,7 @@
+ 
+                 match candidate.mode {
+                     DialMode::Ip(ip) => {
+-                        TcpStream::connect((ip, port))
++                        underlay.connect((ip, port).into())
+                             .timeout(candidate.timeout)
+                             .await?
+                     }
+@@ -104,6 +109,7 @@
+ }
+ 
+ impl ControlDialer {
++    pub fn with_underlay(underlay: Underlay) -> Self { Self { underlay, ..Default::default() } }
+     /// Update the stored dial plan with the new `plan`.
+     ///
+     /// Returns whether the dial plan changed. Resubmission of the same dial plan is
+@@ -137,7 +143,7 @@
+     /// drop the returned dialer without calling `dial`.
+     pub fn next_dialer(&mut self) -> impl TcpDialer + Debug {
+         match &self.plan {
+-            DialPlan::UseDns => ControlTcpDialer::UseDns,
++            DialPlan::UseDns => ControlTcpDialer::UseDns(self.underlay.clone()),
+             DialPlan::Plan(candidates) => {
+                 let mut selected_candidate: Option<(usize, usize, &DialCandidate)> = None;
+                 let now = Instant::now();
+@@ -169,11 +175,12 @@
+                         tracing::warn!(
+                             "no dialer candidates available: falling back to system dns"
+                         );
+-                        return ControlTcpDialer::UseDns;
++                        return ControlTcpDialer::UseDns(self.underlay.clone());
+                     }
+                 };
+ 
+                 ControlTcpDialer::Planned {
++                    underlay: self.underlay.clone(),
+                     candidate,
+                     index: i,
+                     attempted: &mut self.attempted_candidates,
+@@ -190,6 +197,7 @@
+         url: &Url,
+         machine_keys: &ts_keys::MachineKeyPair,
+     ) -> Result<Http2<BytesBody>, Error> {
++        let underlay = self.underlay.clone();
+         let next = self.next_dialer();
+         tracing::trace!(selected_control_dialer = ?next);
+ 
+@@ -208,7 +216,7 @@
+             "tcp connection to control"
+         );
+ 
+-        let client = complete_connection(url, machine_keys, conn).await?;
++        let client = complete_connection_with_underlay(url, machine_keys, conn, &underlay).await?;
+ 
+         Ok(client)
+     }
+@@ -227,6 +235,14 @@
+ where
+     Io: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+ {
++    complete_connection_with_underlay(url, machine_keys, stream, &Underlay::default()).await
++}
++
++pub async fn complete_connection_with_underlay<Io>(
++    url: &Url, machine_keys: &ts_keys::MachineKeyPair, stream: Io, underlay: &Underlay,
++) -> Result<Http2<BytesBody>, Error>
++where Io: AsyncRead + AsyncWrite + Send + Unpin + 'static,
++{
+     let h1_client = match url.scheme() {
+         "https" => {
+             let conn = ts_tls_util::connect(
+@@ -246,7 +262,7 @@
+             return Err(Error::InvalidUrl(url.clone()));
+         }
+     };
+-    let control_public_key = crate::client::fetch_control_key(url).await?;
++    let control_public_key = crate::client::fetch_control_key_with_underlay(url, underlay).await?;
+ 
+     let (handshake, init_msg) = ts_control_noise::Handshake::initialize(
+         &crate::client::CONTROL_PROTOCOL_VERSION,
+--- a/ts_derp-0.6.1/Cargo.toml
++++ b/ts_derp-0.6.1/Cargo.toml
+@@ -145,3 +145,7 @@
+ broken_intra_doc_links = "deny"
+ invalid_html_tags = "deny"
+ private_intra_doc_links = "deny"
++
++[dependencies.aerove-ts-underlay]
++version = "0.1.0"
++path = "../aerove-ts-underlay"
+--- a/ts_derp-0.6.1/src/client.rs
++++ b/ts_derp-0.6.1/src/client.rs
+@@ -33,8 +33,9 @@
+ #[tracing::instrument(skip_all, err)]
+ pub async fn connect<'c>(
+     region: impl IntoIterator<Item = &'c ServerConnInfo>,
++    underlay: &aerove_ts_underlay::Underlay,
+ ) -> Result<Option<DefaultIo>, Error> {
+-    let Some((conn, _, addr)) = crate::dial::dial_region_tls(region).await.unwrap() else {
++    let Some((conn, _, addr)) = crate::dial::dial_region_tls_with_underlay(region, underlay).await.map_err(|e| std::io::Error::other(e))? else {
+         return Ok(None);
+     };
+ 
+@@ -214,7 +215,14 @@
+         region: impl IntoIterator<Item = &'c ServerConnInfo>,
+         node_keypair: &NodeKeyPair,
+     ) -> Result<Self, Error> {
+-        let conn = connect(region).await?.unwrap();
++        Self::connect_with_underlay(region, node_keypair, &aerove_ts_underlay::Underlay::default()).await
++    }
++
++    pub async fn connect_with_underlay<'c>(
++        region: impl IntoIterator<Item = &'c ServerConnInfo>, node_keypair: &NodeKeyPair,
++        underlay: &aerove_ts_underlay::Underlay,
++    ) -> Result<Self, Error> {
++        let conn = connect(region, underlay).await?.ok_or_else(|| std::io::Error::other("no reachable protected DERP server"))?;
+ 
+         Client::handshake(conn, node_keypair).await
+     }
+--- a/ts_derp-0.6.1/src/dial.rs
++++ b/ts_derp-0.6.1/src/dial.rs
+@@ -2,10 +2,11 @@
+ 
+ use core::net::{IpAddr, SocketAddr};
+ use std::io;
++use aerove_ts_underlay::{TcpStream, Underlay};
+ 
+ use tokio::{
+     io::{AsyncRead, AsyncWrite},
+-    net::TcpStream,
++
+     task::JoinSet,
+ };
+ use ts_tls_util::ServerName;
+@@ -39,8 +40,9 @@
+ /// because they were not configured to be reachable (see the note in [`dial_region_tcp`]).
+ /// Currently, self-signed server certs are unsupported, so servers with that configuration
+ /// are filtered out of the server set.
+-pub async fn dial_region_tls<'c>(
+-    servers: impl IntoIterator<Item = &'c ServerConnInfo>,
++pub async fn dial_region_tls_with_underlay<'c>(
++    servers: impl IntoIterator<Item = &'c ServerConnInfo>,
++    underlay: &Underlay,
+ ) -> Result<
+     Option<(
+         impl AsyncRead + AsyncWrite + Unpin + Send + 'static,
+@@ -49,7 +51,7 @@
+     )>,
+     Error,
+ > {
+-    let Some((conn, server)) = dial_region_tcp(servers).await else {
++    let Some((conn, server)) = dial_region_tcp_with_underlay(servers, underlay).await else {
+         return Ok(None);
+     };
+     let remote_addr = conn.peer_addr()?;
+@@ -96,8 +98,9 @@
+ /// because they were not configured to be reachable (both ipv4/ipv6 disabled or stun_only).
+ /// As a temporary measure, a self-signed TLS certificate configuration also causes server
+ /// disablement, as this is unsupported.
+-pub async fn dial_region_tcp<'c>(
+-    servers: impl IntoIterator<Item = &'c ServerConnInfo>,
++pub async fn dial_region_tcp_with_underlay<'c>(
++    servers: impl IntoIterator<Item = &'c ServerConnInfo>,
++    underlay: &Underlay,
+ ) -> Option<(TcpStream, &'c ServerConnInfo)> {
+     for server in servers {
+         if server.stun_only {
+@@ -119,7 +122,7 @@
+ 
+         // InsecureForTests is allowed through -- TLS verification is skipped in dial_region_tls.
+ 
+-        match dial_server(server).await {
++        match dial_server_with_underlay(server, underlay).await {
+             Ok(Some(conn)) => {
+                 tracing::trace!(
+                     remote_addr = %conn.peer_addr().unwrap_or((core::net::Ipv4Addr::UNSPECIFIED, 0).into()),
+@@ -147,7 +150,7 @@
+ /// used.
+ ///
+ /// Returns `None` iff the server has both IPv4 and IPv6 configured as [`IpUsage::Disable`].
+-pub async fn dial_server(server: &ServerConnInfo) -> Result<Option<TcpStream>, Error> {
++pub async fn dial_server_with_underlay(server: &ServerConnInfo, underlay: &Underlay) -> Result<Option<TcpStream>, Error> {
+     let mut js = JoinSet::new();
+ 
+     // TODO(npry): respect ipv6 preference. The go client just adds a flat 200ms sleep to
+@@ -157,11 +160,13 @@
+         server.ipv4,
+         server.hostname.clone(),
+         server.https_port,
++        underlay.clone(),
+     ));
+     js.spawn(dial_by_ipusage(
+         server.ipv6,
+         server.hostname.clone(),
+         server.https_port,
++        underlay.clone(),
+     ));
+ 
+     let mut last_error = None;
+@@ -170,7 +175,10 @@
+         // A JoinError is either a cancellation (not the case by inspection) or a task panic.
+         // Hence, this unwrap just forwards the inner panic, which is the behavior we want here.
+         match task.unwrap() {
+-            Ok(Some(stream)) => return Ok(Some(stream)),
++            Ok(Some(stream)) => {
++                js.shutdown().await;
++                return Ok(Some(stream));
++            },
+             Ok(None) => {
+                 continue;
+             }
+@@ -193,14 +201,38 @@
+     ip: IpUsage<impl Into<IpAddr>>,
+     hostname: String,
+     port: u16,
++    underlay: Underlay,
+ ) -> io::Result<Option<TcpStream>> {
+     match ip {
+         IpUsage::Disable => Ok(None),
+         IpUsage::FixedAddr(ip) => {
+             let ip = ip.into();
+ 
+-            TcpStream::connect((ip, port)).await.map(Some)
+-        }
+-        IpUsage::UseDns => TcpStream::connect((hostname, port)).await.map(Some),
+-    }
+-}
++            underlay.connect((ip, port).into()).await.map(Some)
++        }
++        IpUsage::UseDns => underlay.connect_host(&hostname, port).await.map(Some),
++    }
++}
++
++pub async fn dial_region_tls<'c>(
++    servers: impl IntoIterator<Item = &'c ServerConnInfo>,
++) -> Result<
++    Option<(
++        impl AsyncRead + AsyncWrite + Unpin + Send + 'static,
++        &'c ServerConnInfo,
++        SocketAddr,
++    )>,
++    Error,
++> {
++    dial_region_tls_with_underlay(servers, &Underlay::default()).await
++}
++
++pub async fn dial_region_tcp<'c>(
++    servers: impl IntoIterator<Item = &'c ServerConnInfo>,
++) -> Option<(TcpStream, &'c ServerConnInfo)> {
++    dial_region_tcp_with_underlay(servers, &Underlay::default()).await
++}
++
++pub async fn dial_server(server: &ServerConnInfo) -> Result<Option<TcpStream>, Error> {
++    dial_server_with_underlay(server, &Underlay::default()).await
++}
+--- a/ts_netcheck-0.6.1/Cargo.toml
++++ b/ts_netcheck-0.6.1/Cargo.toml
+@@ -96,3 +96,7 @@
+ broken_intra_doc_links = "deny"
+ invalid_html_tags = "deny"
+ private_intra_doc_links = "deny"
++
++[dependencies.aerove-ts-underlay]
++version = "0.1.0"
++path = "../aerove-ts-underlay"
+--- a/ts_netcheck-0.6.1/src/derp_latency.rs
++++ b/ts_netcheck-0.6.1/src/derp_latency.rs
+@@ -6,7 +6,7 @@
+ use ts_derp::RegionId;
+ 
+ /// Configuration for probing derp map latency.
+-#[derive(Debug, Copy, Clone)]
++#[derive(Debug, Clone)]
+ pub struct Config {
+     /// The number of region probes that must succeed for the probe to end.
+     ///
+@@ -65,7 +65,7 @@
+         let servers = region.servers.clone();
+         let latency_map_key = format!("{id}-v4");
+ 
+-        let config = config.https;
++        let config = config.https.clone();
+ 
+         joinset.spawn(async move {
+             let sample_info = crate::measure_https_latency(&servers, config)
+--- a/ts_netcheck-0.6.1/src/https.rs
++++ b/ts_netcheck-0.6.1/src/https.rs
+@@ -56,8 +56,9 @@
+ }
+ 
+ /// Probe configuration.
+-#[derive(Debug, Copy, Clone)]
++#[derive(Debug, Clone)]
+ pub struct Config {
++    pub underlay: aerove_ts_underlay::Underlay,
+     /// The number of warmup probes discarded before an actual measurement.
+     pub n_warmup: usize,
+     /// The number of samples to take.
+@@ -86,6 +87,7 @@
+         // There's some jitter in subsequent samples, but we're not setting clocks off of this, so
+         // just do the one by default.
+         Self {
++            underlay: Default::default(),
+             n_warmup: 1,
+             n_samples: 1,
+             fail_on_status: true,
+@@ -120,7 +122,7 @@
+     let mut servers = servers.into_iter();
+ 
+     loop {
+-        let (conn, server, remote) = match ts_derp::dial::dial_region_tls(&mut servers).await {
++        let (conn, server, remote) = match ts_derp::dial::dial_region_tls_with_underlay(&mut servers, &config.underlay).await {
+             Ok(Some(x)) => x,
+             Ok(None) => {
+                 tracing::warn!("ran out of servers to dial");
+--- a/ts_netcheck-0.6.1/src/stun.rs
++++ b/ts_netcheck-0.6.1/src/stun.rs
+@@ -8,7 +8,8 @@
+     attributes::stun::{Fingerprint, Software, XorMappedAddress},
+     methods::BINDING,
+ };
+-use tokio::{net::UdpSocket, sync::oneshot};
++use tokio::sync::oneshot;
++use aerove_ts_underlay::{UdpSocket, Underlay};
+ 
+ /// Probes peer devices over STUN.
+ ///
+@@ -54,7 +55,11 @@
+     ///
+     /// This binds UDP sockets and spawns tasks.
+     pub async fn try_new() -> tokio::io::Result<Self> {
+-        let shared = Arc::new(Shared::try_new().await?);
++        Self::try_new_with_underlay(Underlay::default()).await
++    }
++
++    pub async fn try_new_with_underlay(underlay: Underlay) -> tokio::io::Result<Self> {
++        let shared = Arc::new(Shared::try_new(underlay).await?);
+ 
+         let mut tasks = tokio::task::JoinSet::new();
+         tasks.spawn({
+@@ -91,16 +96,16 @@
+ impl Shared {
+     const SOFTWARE: &str = "tailnode";
+ 
+-    async fn try_new() -> tokio::io::Result<Self> {
+-        let sockv6 = UdpSocket::bind("[::]:0")
+-            .await
+-            .inspect_err(|e| {
+-                tracing::error!(error = %e, "binding v6 socket");
+-            })
+-            .ok();
+-
++    async fn try_new(underlay: Underlay) -> tokio::io::Result<Self> {
++        let sockv6 = match underlay.bind("[::]:0".parse().unwrap()).await {
++            Ok(socket) => Some(socket),
++            Err(e) if matches!(e.kind(), std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Interrupted) => return Err(e),
++            Err(_) => None,
++        };
++
++        if let Err(e) = underlay.check() { return Err(e); }
+         Ok(Shared {
+-            sockv4: UdpSocket::bind("0.0.0.0:0").await?,
++            sockv4: underlay.bind("0.0.0.0:0".parse().unwrap()).await?,
+             sockv6,
+             in_flight: DashMap::new(),
+         })
+@@ -183,6 +188,7 @@
+             let who = match sock.recv_buf_from(&mut buf).await {
+                 Ok((_n, who)) => who,
+                 Err(e) => {
++                    if e.kind() == std::io::ErrorKind::Interrupted { break; }
+                     tracing::error!(error = %e, "stun recv");
+                     continue;
+                 }
+--- a/ts_runtime-0.6.1/Cargo.toml
++++ b/ts_runtime-0.6.1/Cargo.toml
+@@ -190,3 +190,7 @@
+ broken_intra_doc_links = "deny"
+ invalid_html_tags = "deny"
+ private_intra_doc_links = "deny"
++
++[dependencies.aerove-ts-underlay]
++version = "0.1.0"
++path = "../aerove-ts-underlay"
+--- a/ts_runtime-0.6.1/src/control_runner.rs
++++ b/ts_runtime-0.6.1/src/control_runner.rs
+@@ -500,7 +500,7 @@
+         env.register(None, &slf).await?;
+ 
+         Ok(Self {
+-            dialer: Default::default(),
++            dialer: ControlDialer::with_underlay(env.underlay.clone()),
+             env,
+         })
+     }
+--- a/ts_runtime-0.6.1/src/derp_latency.rs
++++ b/ts_runtime-0.6.1/src/derp_latency.rs
+@@ -45,7 +45,7 @@
+ 
+         tracing::trace!("new derp map: beginning measurement");
+ 
+-        let latencies = ts_netcheck::measure_derp_map(derp_map, &Default::default()).await;
++        let latencies = ts_netcheck::measure_derp_map(derp_map, &ts_netcheck::Config { https: ts_netcheck::https::Config { underlay: self.env.underlay.clone(), ..Default::default() }, ..Default::default() }).await;
+ 
+         tracing::trace!(?latencies, "measurement complete");
+ 
+--- a/ts_runtime-0.6.1/src/direct.rs
++++ b/ts_runtime-0.6.1/src/direct.rs
+@@ -35,7 +35,7 @@
+     actor::ActorRef,
+     message::{Context, Message, StreamMessage},
+ };
+-use tokio::net::UdpSocket;
++use aerove_ts_underlay::UdpSocket;
+ use tokio_stream::wrappers::UnboundedReceiverStream;
+ use ts_bart::RoutingTable;
+ use ts_control::{Endpoint, EndpointType};
+@@ -112,13 +112,17 @@
+             .ask::<DataplaneActor, _>(None, crate::dataplane::NewUnderlayTransport, true)
+             .await?;
+ 
+-        let sock4 = UdpSocket::bind("0.0.0.0:0").await.unwrap();
++        let sock4 = env.underlay.bind("0.0.0.0:0".parse().unwrap()).await?;
+         let sock4 = Arc::new(sock4);
+         tracing::debug!(transport_id = ?id, local_addr = %sock4.local_addr().unwrap(), "direct udp4 socket bound");
+ 
+         slf.attach_stream(udp_rx(sock4.clone()).boxed(), (), ());
+ 
+-        let sock6 = UdpSocket::bind("[::]:0").await.ok().map(Arc::new);
++        let sock6 = match env.underlay.bind("[::]:0".parse().unwrap()).await {
++            Ok(socket) => Some(Arc::new(socket)),
++            Err(e) if matches!(e.kind(), io::ErrorKind::PermissionDenied | io::ErrorKind::Interrupted) => return Err(e.into()),
++            Err(_) => None,
++        };
+         if let Some(sock6) = sock6.as_ref() {
+             tracing::debug!(transport_id = ?id, local_addr = %sock6.local_addr().unwrap(), "direct udp6 socket bound");
+             slf.attach_stream(udp_rx(sock6.clone()).boxed(), (), ());
+--- a/ts_runtime-0.6.1/src/env.rs
++++ b/ts_runtime-0.6.1/src/env.rs
+@@ -21,6 +21,7 @@
+ 
+ #[derive(Clone)]
+ pub struct Env {
++    pub underlay: aerove_ts_underlay::Underlay,
+     pub bus: ActorRef<RetainedBus>,
+     pub scheduler: ActorRef<Scheduler>,
+     pub registry: ActorRef<Registry>,
+@@ -29,12 +30,13 @@
+ }
+ 
+ impl Env {
+-    pub fn new(keys: ts_keys::NodeState) -> Self {
++    pub fn new(keys: ts_keys::NodeState, underlay: aerove_ts_underlay::Underlay) -> Self {
+         Self {
+             bus: RetainedBus::spawn_default(),
+             scheduler: Scheduler::spawn_default(),
+             registry: Registry::spawn_default(),
+             keys: Arc::new(keys),
++            underlay,
+         }
+     }
+ 
+--- a/ts_runtime-0.6.1/src/error.rs
++++ b/ts_runtime-0.6.1/src/error.rs
+@@ -80,6 +80,13 @@
+ }
+ 
+ impl core::error::Error for Error {}
++
++impl From<std::io::Error> for Error {
++    fn from(error: std::io::Error) -> Self {
++        tracing::error!(%error, "Tailscale underlay I/O failed");
++        Self { kind: ErrorKind::ReplyErr, message_ty: Some("Underlay"), target_actor: None }
++    }
++}
+ 
+ impl<M, E> From<SendError<M, E>> for Error {
+     fn from(err: SendError<M, E>) -> Self {
+--- a/ts_runtime-0.6.1/src/lib.rs
++++ b/ts_runtime-0.6.1/src/lib.rs
+@@ -47,6 +47,7 @@
+ /// Configuration for starting a [`Runtime`].
+ #[derive(Debug, Clone)]
+ pub struct Config {
++    pub underlay: aerove_ts_underlay::Underlay,
+     /// The control configuration to use.
+     pub control_config: ts_control::Config,
+     /// The auth key to use to connect to the control server.
+@@ -60,7 +61,7 @@
+     type Args = Config;
+ 
+     async fn on_start(config: Config, slf: ActorRef<Self>) -> Result<Self, Self::Error> {
+-        let env = Env::new(config.keys);
++        let env = Env::new(config.keys, config.underlay);
+ 
+         env.bus.link(&slf).await;
+         env.scheduler.link(&slf).await;
+--- a/ts_runtime-0.6.1/src/multiderp/uniderp.rs
++++ b/ts_runtime-0.6.1/src/multiderp/uniderp.rs
+@@ -102,6 +102,7 @@
+             home_derp_rx,
+             to_dataplane,
+             keys: args.env.keys.node_keys.clone(),
++            underlay: args.env.underlay.clone(),
+             from_dataplane: Arc::new(Mutex::new(from_dataplane)),
+         };
+ 
+@@ -226,6 +227,7 @@
+     from_dataplane: Arc<Mutex<Rx<ToUnderlay>>>,
+     peer_db: Arc<RwLock<Option<Arc<PeerDb>>>>,
+     keys: NodeKeyPair,
++    underlay: aerove_ts_underlay::Underlay,
+ }
+ 
+ impl Runner {
+@@ -269,7 +271,7 @@
+     ) -> Result<impl UnderlayTransport<Error = ts_derp::Error> + 'static, ts_derp::Error> {
+         tracing::trace!("establishing derp connection");
+ 
+-        let transport = ts_derp::DefaultClient::connect(&self.region.servers, &self.keys).await?;
++        let transport = ts_derp::DefaultClient::connect_with_underlay(&self.region.servers, &self.keys, &self.underlay).await?;
+ 
+         if let Some((info, pending)) = pending {
+             tracing::trace!("sending queued packet");
+--- a/ts_runtime-0.6.1/src/stunner.rs
++++ b/ts_runtime-0.6.1/src/stunner.rs
+@@ -65,7 +65,7 @@
+ 
+     async fn on_start(env: Self::Args, slf: ActorRef<Self>) -> Result<Self, Self::Error> {
+         // panicking in on_start is fine
+-        let stun = ts_netcheck::StunProber::try_new().await.unwrap();
++        let stun = ts_netcheck::StunProber::try_new_with_underlay(env.underlay.clone()).await?;
+         env.subscribe::<Arc<ts_control::StateUpdate>>(&slf).await?;
+ 
+         env.scheduler
+@@ -121,10 +121,10 @@
+                 let addr = match server.ipv4 {
+                     IpUsage::FixedAddr(a) => (a, stun_port).into(),
+                     IpUsage::UseDns => {
+-                        let addr = tokio::net::lookup_host((server.hostname.as_str(), stun_port))
++                        let addr = self.env.underlay.resolve(server.hostname.as_str(), stun_port)
+                             .await
+                             .ok()
+-                            .and_then(|mut x| x.next());
++                            .and_then(|x| x.into_iter().next());
+ 
+                         let Some(addr) = addr else {
+                             continue;
+--- a/ts_netmon-0.6.1/src/lib.rs
++++ b/ts_netmon-0.6.1/src/lib.rs
+@@ -14,7 +14,9 @@
+ 
+ pub use family::{Family, FamilyOrBoth};
+ pub use id::{InterfaceId, MonType};
+-pub use netmon::{BoxStream, Netmon, PlatformMon, platform_mon};
++pub use netmon::{BoxStream, Netmon, platform_mon};
++#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
++pub use netmon::PlatformMon;
+ 
+ /// An event produced by the network monitor.
+ #[derive(Debug, Clone, PartialEq, Eq)]

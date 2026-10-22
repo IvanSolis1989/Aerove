@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 anyhow = "1"
-clash-lib = { path = ".upstream/clash-rs/clash-lib", default-features = false, features = ["aerove-mobile", "tun", "ring", "shadowsocks", "tuic", "zero_copy"] }
+clash-lib = { path = ".upstream/clash-rs/clash-lib", default-features = false, features = ["aerove-mobile", "tun", "ring", "shadowsocks", "tuic", "zero_copy", "ssh", "wireguard", "shadowquic", "tailscale"] }
 jni = "=0.22.4"
 libc = "0.2"
 rquickjs = { version = "0.12", default-features = false }
@@ -25,6 +25,13 @@ clash-lib = { path = ".upstream/clash-rs/clash-lib", default-features = false, f
 tokio = { version = "1", features = ["test-util"] }
 
 [patch.crates-io]
+shadowquic = { path = ".upstream/shadowquic" }
+tailscale = { path = ".upstream/dependency-protect/tailscale-0.6.1" }
+ts_control = { path = ".upstream/dependency-protect/ts_control-0.6.1" }
+ts_derp = { path = ".upstream/dependency-protect/ts_derp-0.6.1" }
+ts_netcheck = { path = ".upstream/dependency-protect/ts_netcheck-0.6.1" }
+ts_netmon = { path = ".upstream/dependency-protect/ts_netmon-0.6.1" }
+ts_runtime = { path = ".upstream/dependency-protect/ts_runtime-0.6.1" }
 rustls = { git = "https://github.com/Watfaq/rustls.git", rev = "63d10d50f2308478f366f14f9f81e378f5911e3c" }
 tokio-rustls = { git = "https://github.com/Watfaq/tokio-rustls.git", rev = "b26e3e2b7a0161d505fd12d6e545b16463f1a45f" }
 

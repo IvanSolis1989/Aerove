@@ -1,0 +1,17 @@
+--- a/clash-lib/src/app/dns/server/handler.rs
++++ b/clash-lib/src/app/dns/server/handler.rs
+@@ -12,7 +12,13 @@
+     enhanced: bool,
+ ) -> Result<Message, watfaq_dns::DNSError> {
+     #[cfg(feature = "aerove-mobile")]
+-    { return crate::mobile::observations::app_dns(req, exchange_inner(resolver, req, enhanced)).await; }
++    {
++        let mut response=crate::mobile::observations::app_dns(req, exchange_inner(resolver, req, enhanced)).await?;
++        // Hickory validates its own random upstream transaction ID. The app-side
++        // TUN TCP/UDP exchange must retain the original caller's transaction ID.
++        response.metadata.id=req.metadata.id;
++        return Ok(response);
++    }
+     #[cfg(not(feature = "aerove-mobile"))]
+     exchange_inner(resolver, req, enhanced).await
+ }

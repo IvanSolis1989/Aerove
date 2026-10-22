@@ -39,8 +39,13 @@ pub(crate) async fn io(){
     plain.abort();tls.abort();let _=plain.await;let _=tls.await;
 }
 pub(crate) async fn typed(){
+    assert_eq!(parse("{}").unwrap().general.find_process_mode,"strict");assert_eq!(parse("find-process-mode: off").unwrap().general.find_process_mode,"off");assert!(parse("find-process-mode: invalid").is_err());
+
     let config=parse("global-ua: AEROVE-test/1\ncheck-certificate: false\n").unwrap();assert_eq!(config.general.global_ua.as_deref(),Some("AEROVE-test/1"));assert!(!config.general.check_certificate);
     assert!(parse("check-certificate: broken").is_err());assert!(parse("global-ua: ''").is_err());assert!(parse("global-ua: \"bad\\r\\nInjected: yes\"").is_err());
     assert!(parse("{}").unwrap().general.check_certificate);
+    let defaults=parse("{}").unwrap();assert!(defaults.general.unified_delay&&defaults.general.tcp_concurrent);
+    let policy=parse("unified-delay: false\ntcp-concurrent: false\n").unwrap();assert!(!policy.general.unified_delay&&!policy.general.tcp_concurrent);
+    assert!(parse("unified-delay: broken").is_err());assert!(parse("tcp-concurrent: broken").is_err());
     let data=parse(&format!("global-ua: '{}'", "x".repeat(4097))).err().unwrap().to_string();assert!(data.contains("global-ua")&&!data.contains(&"x".repeat(32)));
 }

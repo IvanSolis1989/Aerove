@@ -1,0 +1,31 @@
+--- a/clash-lib/src/config/def.rs
++++ b/clash-lib/src/config/def.rs
+@@ -400,6 +400,8 @@
+     /// Log level
+     /// Either `debug`, `info`, `warning`, `error` or `off`
+     pub log_level: LogLevel,
++    #[educe(Default = "strict")]
++    pub find_process_mode:String,
+     pub global_ua: Option<String>,
+     #[educe(Default = true)]
+     pub unified_delay:bool,
+--- a/clash-lib/src/config/internal/config.rs
++++ b/clash-lib/src/config/internal/config.rs
+@@ -86,6 +86,7 @@
+     pub controller: Controller,
+     pub mode: RunMode,
+     pub log_level: LogLevel,
++    pub find_process_mode:String,
+     pub global_ua: Option<String>,
+     pub unified_delay:bool,
+     pub tcp_concurrent:bool,
+--- a/clash-lib/src/config/internal/convert/general.rs
++++ b/clash-lib/src/config/internal/convert/general.rs
+@@ -26,6 +26,7 @@
+         },
+         mode: c.mode,
+         log_level: c.log_level,
++        find_process_mode:c.find_process_mode.clone(),
+         global_ua: c.global_ua.clone(),
+         unified_delay:c.unified_delay,
+         tcp_concurrent:c.tcp_concurrent,

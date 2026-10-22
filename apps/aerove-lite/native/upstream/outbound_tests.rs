@@ -22,6 +22,9 @@ mod route_tests;
 
 pub fn run(case: &str) {
     let _lock = LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    if case.starts_with("initial-park-") {
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(crate::mobile::initial_park_tests::run(case=="initial-park-tun",case=="initial-park-cancel"));return;
+    }
     if case.starts_with("dns-runtime-") {
         tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(crate::mobile::dns_network_tests::io(case=="dns-runtime-failure"));return;
     }
@@ -53,13 +56,20 @@ pub fn run(case: &str) {
             if deny.load(Ordering::SeqCst) { Err(io::ErrorKind::PermissionDenied.into()) } else { Ok(()) }
         }),
         bootstrap: vec![], events, logs, level: tracing::level_filters::LevelFilter::OFF,
-            network_dns:std::sync::RwLock::new(None),dns_enabled:false,dns_hijack_all:false,
+            mode:crate::mobile::RuntimeMode::Proxy,process_owner:None,network_generation:std::sync::atomic::AtomicU64::new(0),network_dns:std::sync::RwLock::new(None),dns_enabled:false,dns_hijack_all:false,
         cancel: cancel.clone(), telemetry: crate::mobile::telemetry::Bus::new(cancel), network: None,
     }));
     let _lease = super::super::ContextLease;
     crate::setup_default_crypto_provider();
+    crate::app::remote_content_manager::set_unified_delay(true);
+    crate::proxy::utils::set_tcp_concurrent(true);
     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
         match case {
+            case if case.starts_with("probe-")||case.starts_with("dial-")=>crate::mobile::probe_dial_tests::run(case).await,
+            "outbound-direct"=>forced_direct().await,
+            "reset-connections"=>reset_dns_connections().await,
+            "protocol-types"=>protocol_types().await,
+            "protocol-sockets"=>protocol_sockets(count,refused).await,
             "dns-typed"=>crate::mobile::dns_network_tests::typed().await,
             "rules-dump"=>crate::mobile::dns_network_tests::rules().await,
             "http-policy-io"=>crate::mobile::http_policy_tests::io().await,
@@ -388,4 +398,75 @@ async fn protection(count: Arc<AtomicUsize>, refused: Arc<AtomicBool>) {
     assert_eq!(server.accepted.load(Ordering::SeqCst), 0);
     assert_eq!(server.hits.load(Ordering::SeqCst), 0);
     components.stop_all().await;
+}
+
+async fn forced_direct(){
+    let direct=Fixture::new(response(&identity("8.8.8.8")),false,None).await;
+    let proxy=Fixture::new(response(&identity("9.9.9.9")),true,None).await;
+    let (components,_directory)=components(Some(proxy.address),"fixture-proxy").await;
+    components.dispatcher.set_mode(crate::config::def::RunMode::Rule).await;
+    let probe=probe(components.clone(),vec![direct.source()],Duration::from_secs(2));
+    for (path,expected,is_direct) in [("/aerove/outbound","9.9.9.9",false),("/aerove/outbound?forceDirect=true","8.8.8.8",true)] {
+        let reply=probe.handle(request(path)).await;assert_eq!(reply.status(),StatusCode::OK);let body=axum::body::to_bytes(reply.into_body(),MAX_BODY).await.unwrap();let value:Value=serde_json::from_slice(&body).unwrap();assert_eq!(value["ip"],expected);assert_eq!(value["direct"],is_direct);let epoch=value["coreEpoch"].as_str().unwrap();assert_eq!(epoch.parse::<u64>().unwrap().to_string(),epoch);
+        if is_direct {assert!(value["chains"].as_array().unwrap().iter().any(|v|v=="DIRECT"));assert!(!value["chains"].as_array().unwrap().iter().any(|v|v=="fixture-proxy"));}
+    }
+    assert_eq!(proxy.hits.load(Ordering::SeqCst),1);assert_eq!(direct.hits.load(Ordering::SeqCst),1);
+    for path in ["/aerove/outbound?forceDirect=1","/aerove/outbound?forceDirect=true&forceDirect=false","/aerove/outbound?other=true"]{assert_eq!(probe.handle(request(path)).await.status(),StatusCode::BAD_REQUEST);}
+    components.stop_all().await;
+}
+
+async fn reset_dns_connections() {
+    use hickory_proto::{op::{Message,Query},rr::{Name,RecordType}};
+    let dns=TcpListener::bind("127.0.0.1:0").await.unwrap();let dns_address=dns.local_addr().unwrap();
+    let accepted=Arc::new(AtomicUsize::new(0));let closed=Arc::new(AtomicUsize::new(0));let accepts=accepted.clone();let closes=closed.clone();
+    let dns_task=tokio::spawn(async move {let mut children=JoinSet::new();loop {tokio::select! {
+        result=dns.accept()=>{let (mut stream,_)=result.unwrap();accepts.fetch_add(1,Ordering::SeqCst);let closed=closes.clone();children.spawn(async move {loop {
+            let Ok(length)=stream.read_u16().await else {closed.fetch_add(1,Ordering::SeqCst);return;};let mut bytes=vec![0;length as usize];stream.read_exact(&mut bytes).await.unwrap();let query=Message::from_vec(&bytes).unwrap();let mut answer=Message::response(query.metadata.id,query.metadata.op_code);answer.queries=query.queries;answer.metadata.recursion_available=true;let bytes=answer.to_vec().unwrap();stream.write_u16(bytes.len() as u16).await.unwrap();stream.write_all(&bytes).await.unwrap();
+        }});},_=children.join_next(),if !children.is_empty()=>{},
+    }}});
+    let directory=tempfile::tempdir().unwrap();let config=crate::Config::Str(format!("mode: direct\nmmdb: null\nasn-mmdb: null\ngeosite: null\ndns: {{enable: true, nameserver: ['tcp://{dns_address}'], default-nameserver: ['tcp://{dns_address}']}}\nrules: ['MATCH,DIRECT']\n")).try_parse_strict().unwrap();let components=Arc::new(crate::create_components(directory.path().to_owned(),config).await.unwrap());
+    let echo=TcpListener::bind("127.0.0.1:0").await.unwrap();let target=echo.local_addr().unwrap();let echo_task=tokio::spawn(async move {let (mut stream,_)=echo.accept().await.unwrap();let mut byte=[0;1];while stream.read_exact(&mut byte).await.is_ok(){stream.write_all(&byte).await.unwrap();}});
+    let (mut application,inbound)=tokio::io::duplex(64);let dispatcher=components.dispatcher.clone();let user=tokio::spawn(async move {dispatcher.dispatch_stream(crate::session::Session {destination:crate::session::SocksAddr::Ip(target),..Default::default()},Box::new(inbound)).await;});
+    application.write_all(b"a").await.unwrap();let mut byte=[0;1];tokio::time::timeout(Duration::from_secs(3),application.read_exact(&mut byte)).await.unwrap().unwrap();assert_eq!(&byte,b"a");
+    let (mut dns_app,dns_input)=tokio::io::duplex(4096);let resolver=components.resolver.clone();let dns_bridge=tokio::spawn(crate::mobile::dns_network::tcp(dns_input,resolver));
+    let query=|host:&str|{let mut message=Message::query();message.metadata.id=91;let mut question=Query::new();question.set_name(Name::from_ascii(host).unwrap());question.set_query_type(RecordType::A);message.add_query(question);message};
+    dns_frame(&mut dns_app,&query("before-reset.test")).await;assert_eq!(accepted.load(Ordering::SeqCst),1);
+    let probe=Probe::new(Arc::new(RwLock::new(components.clone())),CancellationToken::new());assert_eq!(probe.reset_connections(request("/aerove/reset-connections")).await.status(),StatusCode::NO_CONTENT);
+    tokio::time::timeout(Duration::from_secs(3),async {while closed.load(Ordering::SeqCst)!=1 {tokio::task::yield_now().await;}}).await.unwrap();
+    application.write_all(b"b").await.unwrap();tokio::time::timeout(Duration::from_secs(3),application.read_exact(&mut byte)).await.unwrap().unwrap();assert_eq!(&byte,b"b");
+    dns_frame(&mut dns_app,&query("after-reset.test")).await;assert_eq!(accepted.load(Ordering::SeqCst),2);
+    assert_eq!(probe.reset_connections(request("/aerove/reset-connections?unknown=1")).await.status(),StatusCode::BAD_REQUEST);
+    let body=Request::builder().body(axum::body::Body::from("{}")).unwrap();assert_eq!(probe.reset_connections(body).await.status(),StatusCode::BAD_REQUEST);
+    probe.cancel.cancel();assert_eq!(probe.reset_connections(request("/aerove/reset-connections")).await.status(),StatusCode::SERVICE_UNAVAILABLE);
+    drop(dns_app);tokio::time::timeout(Duration::from_secs(3),dns_bridge).await.unwrap().unwrap();
+    drop(application);tokio::time::timeout(Duration::from_secs(3),user).await.unwrap().unwrap();echo_task.await.unwrap();components.resolver.reset_connections().await.unwrap();components.stop_all().await;dns_task.abort();let _=dns_task.await;
+}
+
+async fn protocol_types() {
+    use crate::config::internal::proxy::OutboundProxyProtocol;
+    let base="type: shadowquic\nname: sq\nserver: 127.0.0.1\nport: 443\n";
+    for extra in ["","sni: sq.test\nudp-over-stream: true\ncongestion-controller: new_reno\ndisable-mtu-discovery: true\n","server-name: sq.test\nover-stream: false\ncongestion-control: cubic\nmtu-discovery: false\n"] {
+        let proxy:Value=serde_yaml::from_str(&format!("{base}{extra}")).unwrap();crate::mobile::resources::check_proxy_fields(&proxy).unwrap();let parsed:OutboundProxyProtocol=serde_yaml::from_value(proxy).unwrap();
+        let OutboundProxyProtocol::ShadowQuic(options)=parsed else{panic!("wrong protocol")};let handler:crate::proxy::shadowquic::Handler=options.try_into().unwrap();let map=crate::proxy::PlainProxyAPIResponse::as_map(&handler).await;let map=serde_json::to_value(map).unwrap();assert_eq!(map["server-name"],if extra.is_empty(){"127.0.0.1"}else{"sq.test"});assert_eq!(map["username"],"");assert_eq!(map["password"],"");
+    }
+    for extra in ["server-name: a\nsni: a\n","over-stream: true\nudp-over-stream: true\n","mtu-discovery: true\ndisable-mtu-discovery: false\n","congestion-control: bbr\ncongestion-controller: bbr\n"] {let proxy:Value=serde_yaml::from_str(&format!("{base}{extra}")).unwrap();assert!(crate::mobile::resources::check_proxy_fields(&proxy).is_err());}
+    let key="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    for ipv6 in ["2001:db8::1","2001:db8::1/128"] {
+        let source=format!("type: wireguard\nname: wg\nserver: 127.0.0.1\nport: 51820\nip: 10.0.0.1\nipv6: '{ipv6}'\nprivate-key: {key}\npublic-key: {key}\nreserved-bits: [1,2,3]\n");let value:Value=serde_yaml::from_str(&source).unwrap();crate::mobile::resources::check_proxy_fields(&value).unwrap();let OutboundProxyProtocol::Wireguard(options)=serde_yaml::from_value(value).unwrap() else{panic!("wrong protocol")};let _handler:crate::proxy::wg::Handler=options.try_into().unwrap();
+    }
+    let bad=format!("type: wireguard\nname: wg\nserver: 127.0.0.1\nport: 51820\nip: 10.0.0.1\nipv6: bad-literal\nprivate-key: {key}\npublic-key: {key}\n");let value:Value=serde_yaml::from_str(&bad).unwrap();assert!(crate::mobile::resources::check_proxy_fields(&value).is_err());let OutboundProxyProtocol::Wireguard(options)=serde_yaml::from_value(value).unwrap() else{panic!("wrong protocol")};assert!(crate::proxy::wg::Handler::try_from(options).is_err());
+    let value:Value=serde_yaml::from_str("type: ssh\nname: ssh\nserver: 127.0.0.1\nport: 22\nusername: user\nhost-key-algorithms: [not-real]\n").unwrap();crate::mobile::resources::check_proxy_fields(&value).unwrap();let OutboundProxyProtocol::Ssh(options)=serde_yaml::from_value(value).unwrap() else{panic!("wrong protocol")};assert!(crate::proxy::ssh::Handler::try_from(options).is_err());
+    let value:Value=serde_yaml::from_str("type: tailscale\nname: ts\nephemeral: true\n").unwrap();crate::mobile::resources::check_proxy_fields(&value).unwrap();assert!(matches!(serde_yaml::from_value::<OutboundProxyProtocol>(value).unwrap(),OutboundProxyProtocol::Tailscale(_)));
+}
+async fn protocol_sockets(count:Arc<AtomicUsize>,refused:Arc<AtomicBool>) {
+    use shadowquic::utils::socket_opt::SocketFactory;
+    let receiver=tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();let remote=receiver.local_addr().unwrap();let scope=crate::mobile::protocol_transport::Scope::current().unwrap();let factory=crate::mobile::protocol_transport::ShadowSocket {scope:scope.clone(),remote,interface:None,mark:None};
+    let before=count.load(Ordering::SeqCst);let socket=factory.create_socket().await.unwrap();assert_eq!(count.load(Ordering::SeqCst),before+1);let socket=tokio::net::UdpSocket::from_std(std::net::UdpSocket::from(socket)).unwrap();socket.send_to(b"real-protected-sq-underlay",remote).await.unwrap();let mut bytes=[0;64];let (n,_)=tokio::time::timeout(Duration::from_secs(2),receiver.recv_from(&mut bytes)).await.unwrap().unwrap();assert_eq!(&bytes[..n],b"real-protected-sq-underlay");drop(socket);
+    refused.store(true,Ordering::SeqCst);assert!(factory.create_socket().await.is_err());refused.store(false,Ordering::SeqCst);assert!(tokio::time::timeout(Duration::from_millis(40),receiver.recv_from(&mut bytes)).await.is_err());
+    let config:shadowquic::config::ShadowQuicClientCfg=serde_yaml::from_str("addr: 127.0.0.1:443\nserver-name: localhost\nusername: ''\npassword: ''\n").unwrap();let mut client=shadowquic::shadowquic::outbound::ShadowQuicClient::new(config);client.socket_factory=Arc::new(factory);refused.store(true,Ordering::SeqCst);assert!(client.init_endpoint().await.is_err());refused.store(false,Ordering::SeqCst);
+    scope.cancel.cancel();let before=count.load(Ordering::SeqCst);assert!(scope.udp(remote).is_err());assert_eq!(count.load(Ordering::SeqCst),before);
+}
+
+async fn dns_frame(stream:&mut tokio::io::DuplexStream,query:&hickory_proto::op::Message){
+    tokio::time::timeout(Duration::from_secs(3),async {let bytes=query.to_vec().unwrap();stream.write_u16(bytes.len() as u16).await.unwrap();stream.write_all(&bytes).await.unwrap();let count=stream.read_u16().await.unwrap() as usize;let mut bytes=vec![0;count];stream.read_exact(&mut bytes).await.unwrap();let response=hickory_proto::op::Message::from_vec(&bytes).unwrap();assert_eq!(response.metadata.id,query.metadata.id);}).await.unwrap();
 }

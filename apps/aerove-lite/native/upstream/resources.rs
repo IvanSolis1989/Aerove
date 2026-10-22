@@ -232,8 +232,8 @@ pub(crate) fn rule_payload(bytes: &[u8], format: &str) -> Result<Vec<String>> {
     for (index, line) in payload.iter().enumerate() {
         ensure!(!line.is_empty() && line.len() <= 2048, "payload[{index}] is empty or exceeds 2048 bytes");
         let upper = line.to_ascii_uppercase();
-        ensure!(!["PROCESS-NAME,", "PROCESS-PATH,", "UID,", "IN-USER,"].iter().any(|key| upper.contains(key)),
-            "payload[{index}] requires unavailable Android process/UID attribution");
+        ensure!(!["PROCESS-NAME-REGEX,", "PROCESS-PATH-REGEX,", "PROCESS-NAME-WILDCARD,", "PROCESS-PATH-WILDCARD,", "UID,", "IN-USER,"].iter().any(|key| upper.contains(key)),
+            "payload[{index}] requires unavailable Android UID/user or process pattern matcher");
     }
     Ok(payload)
 }
@@ -293,8 +293,8 @@ fn reject_yaml_aliases(text: &str) -> Result<()> {
 
 pub(crate) fn check_classical_rule(rule: &str) -> crate::Result<()> {
     let upper = rule.to_ascii_uppercase();
-    if ["PROCESS-NAME,", "PROCESS-PATH,", "UID,", "IN-USER,"].iter().any(|token| upper.contains(token)) {
-        return Err(crate::Error::InvalidConfig("classical rule requires unavailable Android process/UID attribution".into()));
+    if ["PROCESS-NAME-REGEX,", "PROCESS-PATH-REGEX,", "PROCESS-NAME-WILDCARD,", "PROCESS-PATH-WILDCARD,", "UID,", "IN-USER,"].iter().any(|token| upper.contains(token)) {
+        return Err(crate::Error::InvalidConfig("classical rule requires unavailable Android UID/user or process pattern matcher".into()));
     }
     if upper.starts_with("RULE-SET,") {
         return Err(crate::Error::InvalidConfig("classical provider cannot nest RULE-SET references".into()));
@@ -315,6 +315,10 @@ pub(crate) fn check_proxy_fields(proxy: &Value) -> Result<()> {
     let kind = proxy.get("type").and_then(Value::as_str).context("missing proxy type")?;
     let fields = match kind {
         "direct" | "reject" => "",
+        "ssh" => "username password private-key private-key-passphrase host-key host-key-algorithms totp-opt",
+        "wireguard" => "private-key public-key pre-shared-key preshared-key mtu udp ip ipv6 remote-dns-resolve dns allowed-ips reserved-bits",
+        "shadowquic" => "password username server-name sni alpn initial-mtu congestion-control congestion-controller zero-rtt over-stream udp-over-stream min-mtu keep-alive-interval gso mtu-discovery disable-mtu-discovery",
+        "tailscale" => "state-dir auth-key hostname control-url client-name ephemeral",
         "ss" => "cipher password udp plugin plugin-opts",
         "socks5" => "username password tls sni skip-cert-verify udp",
         "anytls" => "password alpn sni skip-cert-verify udp tls-cert tls-key",
@@ -325,13 +329,27 @@ pub(crate) fn check_proxy_fields(proxy: &Value) -> Result<()> {
         "hysteria2" => "ports hop-interval hop_interval password obfs obfs-password alpn up down sni skip-cert-verify ca ca-str fingerprint udp-mtu disable-mtu-discovery cwnd tls-cert tls-key",
         _ => bail!("unsupported Android proxy type: {kind}"),
     };
-    let common = if matches!(kind, "direct" | "reject") { "type name" }
+    let common = if matches!(kind, "direct" | "reject" | "tailscale") { "type name" }
         else if kind == "hysteria2" { "type name server port" }
         else { "type name server port connect-via dialer-proxy" };
     check_keys(proxy, &format!("{common} {fields}"))?;
+    for (canonical,alias) in [("pre-shared-key","preshared-key"),("server-name","sni"),("over-stream","udp-over-stream"),("congestion-control","congestion-controller"),("mtu-discovery","disable-mtu-discovery")] {
+        if matches!(kind,"wireguard"|"shadowquic") {ensure!(proxy.get(canonical).is_none()||proxy.get(alias).is_none(),"conflicting options: {canonical} and {alias}");}
+    }
     if matches!(kind, "vmess" | "vless") {
         let uuid = proxy.get("uuid").and_then(Value::as_str).context("missing UUID string")?;
         uuid::Uuid::parse_str(uuid).with_context(|| format!("invalid {kind} UUID"))?;
+    }
+    if kind=="wireguard" {
+        for key in ["private-key","public-key","pre-shared-key","preshared-key"] {
+            if let Some(value)=proxy.get(key) {let value=value.as_str().with_context(||format!("{key} must be a string"))?;let mut decoded=base64::Engine::decode(&base64::engine::general_purpose::STANDARD,value).map_err(|_|anyhow::anyhow!("{key}: expected a base64 32-byte key"))?;let valid=decoded.len()==32;decoded.fill(0);ensure!(valid,"{key}: expected a base64 32-byte key");}
+            else {ensure!(!matches!(key,"private-key"|"public-key"),"missing {key}");}
+        }
+        for (key,v4) in [("ip",true),("ipv6",false)] {
+            if let Some(value)=proxy.get(key) {let value=value.as_str().with_context(||format!("{key} must be a literal address or CIDR"))?;let address=value.parse::<ipnet::IpNet>().map(|net|net.addr()).or_else(|_|value.parse::<IpAddr>()).map_err(|_|anyhow::anyhow!("{key}: invalid literal address or CIDR"))?;ensure!(address.is_ipv4()==v4,"{key}: wrong address family");}
+        }
+        if let Some(values)=proxy.get("reserved-bits") {let values=values.as_sequence().context("reserved-bits must be a sequence")?;ensure!(values.len()==3&&values.iter().all(|value|value.as_u64().is_some_and(|byte|byte<=255)),"reserved-bits: expected three bytes");}
+        for (field,cidr) in [("dns",false),("allowed-ips",true)] {if let Some(values)=proxy.get(field){for value in values.as_sequence().with_context(||format!("{field} must be a sequence"))? {let value=value.as_str().with_context(||format!("{field}: expected IP strings"))?;ensure!(if cidr{value.parse::<ipnet::IpNet>().is_ok()}else{value.parse::<IpAddr>().is_ok()},"{field}: invalid IP literal or CIDR");}}}
     }
     if kind == "ss" {
         let cipher = proxy.get("cipher").and_then(Value::as_str).context("missing SS cipher")?;

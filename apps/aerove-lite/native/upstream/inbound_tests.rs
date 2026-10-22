@@ -23,7 +23,7 @@ async fn start(source: &str) -> (Arc<RuntimeComponents>, Arc<Owner>, tokio::sync
     let owner = runtime(source, &config, controller(&config).unwrap(), old.cancel.clone()).unwrap();
     let (events, receiver) = tokio::sync::mpsc::unbounded_channel();
     *super::super::CONTEXT.write().unwrap() = Some(Arc::new(super::super::Context {
-        protector: old.protector.clone(), bootstrap: vec![], events, logs: old.logs.clone(), level: old.level,
+        protector: old.protector.clone(),mode:old.mode,process_owner:old.process_owner.clone(),network_generation:std::sync::atomic::AtomicU64::new(old.network_generation.load(std::sync::atomic::Ordering::Acquire)), bootstrap: vec![], events, logs: old.logs.clone(), level: old.level,
             network_dns:std::sync::RwLock::new(None),dns_enabled:false,dns_hijack_all:false,
         cancel: old.cancel.clone(), telemetry: old.telemetry.clone(), network: Some(owner.clone()),
     }));
@@ -195,7 +195,7 @@ pub(crate) async fn failure() {
     let old = super::super::context().unwrap();
     let (events, mut late) = tokio::sync::mpsc::unbounded_channel();
     *super::super::CONTEXT.write().unwrap() = Some(Arc::new(super::super::Context {
-        protector: old.protector.clone(), bootstrap: vec![], events, logs: old.logs.clone(), level: old.level,
+        protector: old.protector.clone(),mode:old.mode,process_owner:old.process_owner.clone(),network_generation:std::sync::atomic::AtomicU64::new(old.network_generation.load(std::sync::atomic::Ordering::Acquire)), bootstrap: vec![], events, logs: old.logs.clone(), level: old.level,
             network_dns:std::sync::RwLock::new(None),dns_enabled:false,dns_hijack_all:false,
         cancel: old.cancel.clone(), telemetry: old.telemetry.clone(), network: Some(owner),
     }));

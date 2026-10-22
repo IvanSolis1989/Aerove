@@ -1,0 +1,110 @@
+--- a/clash-lib/src/app/dns/mod.rs
++++ b/clash-lib/src/app/dns/mod.rs
+@@ -32,6 +32,9 @@
+ 
+ #[async_trait]
+ pub trait Client: Sync + Send + Debug {
++    /// Drop only DNS transport state; stateless clients have nothing to close.
++    async fn reset_connections(&self) -> anyhow::Result<()> { Ok(()) }
++
+     /// used to identify the client for logging
+     fn id(&self) -> String;
+     async fn exchange(&self, msg: &op::Message) -> anyhow::Result<op::Message>;
+@@ -115,6 +118,9 @@
+ 
+     fn kind(&self) -> ResolverKind;
+ 
++    /// Reset DNS transports without clearing caches or user proxy streams.
++    async fn reset_connections(&self) -> anyhow::Result<()> { Ok(()) }
++
+     /// Clear all in-memory caches (DNS response cache, reverse lookup cache).
+     /// Called under memory pressure to free RSS.  Default no-op for resolvers
+     /// that don't cache (e.g. SystemResolver).
+--- a/clash-lib/src/app/dns/dns_client.rs
++++ b/clash-lib/src/app/dns/dns_client.rs
+@@ -569,6 +569,18 @@
+ 
+ #[async_trait]
+ impl Client for DnsClient {
++    async fn reset_connections(&self) -> anyhow::Result<()> {
++        let mut inner = self.inner.write().await;
++        inner.c.take();
++        if let Some(background) = inner.bg_handle.take() {
++            background.abort();
++            if let Err(error) = background.await {
++                if !error.is_cancelled() { return Err(error.into()); }
++            }
++        }
++        Ok(())
++    }
++
+     fn id(&self) -> String {
+         format!("{}#{}:{}", self.net, self.host, self.port)
+     }
+@@ -622,7 +634,7 @@
+             .await
+             .c
+             .as_ref()
+-            .unwrap()
++            .ok_or_else(|| anyhow!("DNS connection reset during exchange"))?
+             .send(req)
+             .first_answer()
+             .await
+--- a/clash-lib/src/app/dns/resolver/enhanced.rs
++++ b/clash-lib/src/app/dns/resolver/enhanced.rs
+@@ -36,6 +36,7 @@
+     ipv6: AtomicBool,
+     hosts: Option<trie::StringTrie<net::IpAddr>>,
+     main: Vec<ThreadSafeDNSClient>,
++    default_resolver: Option<crate::dns::ThreadSafeDNSResolver>,
+ 
+     fallback: Option<Vec<ThreadSafeDNSClient>>,
+     fallback_domain_filters: Option<Vec<Box<dyn FallbackDomainFilter>>>,
+@@ -68,6 +69,7 @@
+             observation_sources: Default::default(),
+             ipv6: AtomicBool::new(false),
+             hosts: None,
++            default_resolver: None,
+             main: make_clients(
+                 vec![NameServer {
+                     net: DNSNetMode::Udp,
+@@ -114,6 +116,7 @@
+             observation_sources: Default::default(),
+             ipv6: AtomicBool::new(false),
+             hosts: None,
++            default_resolver: None,
+             main: make_clients(
+                 cfg.default_nameserver.clone(),
+                 None,
+@@ -202,6 +205,7 @@
+             )
+             .await,
+             hosts: cfg.hosts,
++            default_resolver: Some(default_resolver.clone()),
+             fallback: if !cfg.fallback.is_empty() {
+                 Some(
+                     make_clients(
+@@ -790,6 +794,23 @@
+         ResolverKind::Clash
+     }
+ 
++    async fn reset_connections(&self) -> anyhow::Result<()> {
++        let mut clients = self.main.clone();
++        if let Some(fallback) = &self.fallback { clients.extend(fallback.iter().cloned()); }
++        if let Some(proxy) = &self.proxy_resolver { clients.extend(proxy.iter().cloned()); }
++        if let Some(policy) = &self.policy {
++            policy.traverse(|_, values| { clients.extend(values.iter().cloned()); true });
++        }
++        let mut seen = std::collections::HashSet::new();
++        for client in clients {
++            if seen.insert(Arc::as_ptr(&client) as *const () as usize) {
++                client.reset_connections().await?;
++            }
++        }
++        if let Some(default) = &self.default_resolver { default.reset_connections().await?; }
++        Ok(())
++    }
++
+     /// Clear DNS caches under memory pressure.
+     /// - reverse_lookup_cache: cleared immediately (Arc<RwLock<LruCache>>)
+     /// - lru_cache: ResponseCache replaced with a clean instance.

@@ -1,0 +1,30 @@
+use super::*;
+use std::sync::atomic::{AtomicUsize,Ordering};
+use tokio::{net::{TcpListener,TcpStream},sync::oneshot};
+async fn status(control:Arc<runtime_control::RuntimeControl>)->runtime_control::ListenerStatus{tokio::task::spawn_blocking(move||control.status()).await.unwrap().unwrap()}
+async fn api(port:u16)->String{let mut stream=TcpStream::connect((std::net::Ipv4Addr::LOCALHOST,port)).await.unwrap();stream.write_all(b"GET /aerove/network HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer 0123456789abcdef0123456789abcdef\r\nConnection: close\r\n\r\n").await.unwrap();let mut body=String::new();tokio::time::timeout(Duration::from_secs(5),stream.read_to_string(&mut body)).await.unwrap().unwrap();body}
+pub async fn run(tun:bool,cancel_early:bool){
+    assert!(CONTEXT.read().unwrap().is_none());
+    let mut held:Vec<_>=(28000..49000).filter_map(|p|{let tcp=std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST,p)).ok()?;let udp=std::net::UdpSocket::bind((std::net::Ipv4Addr::LOCALHOST,p)).ok()?;Some((tcp,udp))}).take(3).collect();let ports:Vec<_>=held.iter().map(|(s,_)|s.local_addr().unwrap().port()).collect();drop(held.pop());
+    let source=format!("mode: direct\nmmdb: null\nasn-mmdb: null\ngeosite: null\ntun: {{enable: {tun}, dns-hijack: false}}\ndns: {{enable: true, listen: {{tcp: '127.0.0.1:{}', udp: '127.0.0.1:{}'}}, nameserver: ['127.0.0.1'], default-nameserver: ['127.0.0.1']}}\nmixed-port: {}\nallow-lan: false\nbind-address: 127.0.0.1\nexternal-controller: 127.0.0.1:{}\nsecret: '0123456789abcdef0123456789abcdef'\ncors-allow-origins: []\nrules: ['MATCH,DIRECT']\n",ports[1],ports[1],ports[0],ports[2]);
+    let calls=Arc::new(AtomicUsize::new(0));let counted=calls.clone();let input=if tun {RuntimeInput::ParkedTun {protector:Arc::new(move|_|{counted.fetch_add(1,Ordering::Relaxed);Ok(())})}}else{RuntimeInput::ParkedProxy};assert!(input.initially_parked());
+    let directory=tempfile::tempdir().unwrap();let path=directory.path().to_owned();let cancel=CancellationToken::new();let stop=cancel.clone();let control=runtime_control::RuntimeControl::new();let owned=control.clone();let (ready,rx)=oneshot::channel();if cancel_early {cancel.cancel();}let owner=tokio::spawn(run_runtime_control(source,path,input,stop,owned,move|info|{let _=ready.send(info);}));if cancel_early {tokio::time::timeout(Duration::from_secs(5),owner).await.unwrap().unwrap().unwrap();assert!(rx.await.is_err());assert_eq!(calls.load(Ordering::Relaxed),0);assert!(CONTEXT.read().unwrap().is_none());return;}let info=tokio::time::timeout(Duration::from_secs(5),rx).await.unwrap().unwrap();
+    assert_eq!(info.runtime_mode,if tun {RuntimeMode::Tun}else{RuntimeMode::Proxy});assert!(!info.tun_ready&&!info.user_listeners_ready);assert_eq!(calls.load(Ordering::Relaxed),0);
+    let parked=status(control.clone()).await;assert!(!parked.listening&&!parked.tun_ready&&!parked.user_listeners_ready&&parked.active_ports.is_empty());let response=api(ports[2]).await;assert!(response.starts_with("HTTP/1.1 200")&&response.contains("\"activePorts\":[]"));
+    let ctl=control.clone();let policy=tokio::task::spawn_blocking(move||ctl.probe_dial(false,false)).await.unwrap().unwrap();assert!(!policy.unified_delay&&!policy.tcp_concurrent);assert!(policy.core_epoch.parse::<u64>().unwrap()>parked.core_epoch.parse::<u64>().unwrap());
+    let policy=status(control.clone()).await;assert!(!policy.unified_delay&&!policy.tcp_concurrent);
+    let ctl=control.clone();tokio::task::spawn_blocking(move||ctl.probe_dial(true,true)).await.unwrap().unwrap();
+    assert_eq!(status(control.clone()).await.find_process_mode,"strict");
+    let ctl=control.clone();let process=tokio::task::spawn_blocking(move||ctl.find_process_mode("always")).await.unwrap().unwrap();assert_eq!(process.find_process_mode,"always");
+    let ctl=control.clone();let same=tokio::task::spawn_blocking(move||ctl.find_process_mode("always")).await.unwrap().unwrap();assert_eq!(same.core_epoch,process.core_epoch);
+    let ctl=control.clone();assert!(tokio::task::spawn_blocking(move||ctl.find_process_mode("invalid")).await.unwrap().is_err());assert_eq!(status(control.clone()).await.find_process_mode,"always");
+    let ctl=control.clone();let invalidated=tokio::task::spawn_blocking(move||ctl.invalidate_process_identity()).await.unwrap().unwrap();assert!(invalidated.core_epoch.parse::<u64>().unwrap()>process.core_epoch.parse::<u64>().unwrap());
+    let ctl=control.clone();tokio::task::spawn_blocking(move||ctl.find_process_mode("strict")).await.unwrap().unwrap();
+    if !tun {
+        drop(held);let ctl=control.clone();let resumed=tokio::task::spawn_blocking(move||ctl.resume_proxy()).await.unwrap().unwrap();assert!(resumed.listening&&resumed.user_listeners_ready&&!resumed.tun_ready);assert_eq!(resumed.active_ports,vec![ports[0]]);
+        let fixture=TcpListener::bind("127.0.0.1:0").await.unwrap();let target=fixture.local_addr().unwrap();let fixture_task=tokio::spawn(async move{let (mut stream,_)=fixture.accept().await.unwrap();let mut bytes=Vec::new();let mut byte=[0;1];while !bytes.ends_with(b"\r\n\r\n"){stream.read_exact(&mut byte).await.unwrap();bytes.push(byte[0]);}stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\nresumed").await.unwrap();});
+        let mut request=TcpStream::connect((std::net::Ipv4Addr::LOCALHOST,ports[0])).await.unwrap();request.write_all(format!("GET http://{target}/ HTTP/1.1\r\nHost: fixture.test\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();let mut body=String::new();tokio::time::timeout(Duration::from_secs(5),request.read_to_string(&mut body)).await.unwrap().unwrap();assert!(body.ends_with("resumed"));fixture_task.await.unwrap();
+    }
+    cancel.cancel();tokio::time::timeout(Duration::from_secs(5),owner).await.unwrap().unwrap().unwrap();let ctl=control.clone();assert!(tokio::task::spawn_blocking(move||ctl.resume_proxy()).await.unwrap().is_err());assert!(CONTEXT.read().unwrap().is_none());
+    assert!(TcpListener::bind((std::net::Ipv4Addr::LOCALHOST,ports[2])).await.is_ok());
+}

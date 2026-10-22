@@ -28,9 +28,11 @@ use crate::{
         logging::{EventCollector, LogEvent},
     },
     config::internal::proxy::OutboundProxyProtocol,
-    proxy::utils as socket_helpers,
     runner::Runner,
 };
+
+#[cfg(test)]
+use crate::proxy::utils as socket_helpers;
 
 pub type Protector = Arc<dyn Fn(RawFd) -> io::Result<()> + Send + Sync>;
 
@@ -48,11 +50,12 @@ impl RuntimeMode {
     }
 }
 
-pub enum RuntimeInput { Tun { fd: OwnedFd, protector: Protector }, Proxy }
+pub enum RuntimeInput { Tun { fd: OwnedFd, protector: Protector }, Proxy, ParkedTun { protector:Protector }, ParkedProxy }
 
 impl RuntimeInput {
+    pub fn initially_parked(&self)->bool{matches!(self,Self::ParkedTun {..}|Self::ParkedProxy)}
     pub fn mode(&self) -> RuntimeMode {
-        match self { Self::Tun { .. } => RuntimeMode::Tun, Self::Proxy => RuntimeMode::Proxy }
+        match self { Self::Tun { .. }|Self::ParkedTun { .. } => RuntimeMode::Tun, Self::Proxy|Self::ParkedProxy => RuntimeMode::Proxy }
     }
 }
 
@@ -78,8 +81,19 @@ pub mod resources;
 pub mod outbound;
 pub mod telemetry;
 pub mod runtime_control;
+pub mod user_controller;
+#[cfg(feature="aerove-mobile-tests")]
+pub mod probe_dial_tests;
+#[cfg(feature="aerove-mobile-tests")]
+pub mod mtu_tests;
+#[cfg(feature="aerove-mobile-tests")]
+pub mod initial_park_tests;
 pub mod http_policy;
 pub mod dns_network;
+pub mod protocol_transport;
+pub mod process_identity;
+#[cfg(feature="aerove-mobile-tests")]
+pub mod process_identity_tests;
 #[cfg(feature="aerove-mobile-tests")]
 pub mod dns_network_tests;
 #[cfg(feature="aerove-mobile-tests")]
@@ -105,6 +119,9 @@ enum Event {
 
 struct Context {
     protector: Protector,
+    mode:RuntimeMode,
+    process_owner:Option<Arc<process_identity::Owner>>,
+    network_generation:std::sync::atomic::AtomicU64,
     bootstrap: Vec<SocketAddr>,
     network_dns: RwLock<Option<dns_network::NetworkDns>>,
     dns_enabled:bool, dns_hijack_all:bool,
@@ -124,6 +141,15 @@ fn context() -> io::Result<Arc<Context>> {
         io::Error::new(io::ErrorKind::PermissionDenied, "no active mobile runtime")
     })
 }
+
+#[cfg(feature="tailscale")]
+pub(crate) fn tailscale_underlay()->Option<::tailscale::Underlay> {
+    let context=context().ok()?;let mode=context.mode;let cancel=context.cancel.clone();let protector=context.protector.clone();
+    let resolver: ::tailscale::Resolver=Arc::new(move|host,port| {let context=context.clone();Box::pin(async move {lookup_host_on(context,format!("{host}:{port}")).await.map(Iterator::collect)})});
+    Some(match mode {RuntimeMode::Tun=>::tailscale::Underlay::protected(protector,resolver,cancel),RuntimeMode::Proxy=>::tailscale::Underlay::platform(resolver,cancel)})
+}
+
+pub(crate) fn process_owner()->Option<Arc<process_identity::Owner>> {context().ok().and_then(|context|context.process_owner.clone())}
 
 struct ContextLease;
 
@@ -229,10 +255,10 @@ fn check_value(value: &Value, path: &str) -> Result<()> {
         Value::String(value) if path.starts_with("$.rules[")
             || path.contains(".payload[") => {
             let upper = value.to_ascii_uppercase();
-            if ["PROCESS-NAME,", "PROCESS-PATH,", "UID,", "IN-USER,"].iter()
+            if ["PROCESS-NAME-REGEX,", "PROCESS-PATH-REGEX,", "PROCESS-NAME-WILDCARD,", "PROCESS-PATH-WILDCARD,", "UID,", "IN-USER,"].iter()
                 .any(|token| upper.contains(token))
             {
-                return Err(invalid(format!("{path}: Android process/UID attribution is unavailable")));
+                return Err(invalid(format!("{path}: Android UID/user or process pattern matcher is unavailable")));
             }
         }
         _ => {}
@@ -265,6 +291,7 @@ fn parse(source: &str) -> Result<InternalConfig> {
     }
     let config=Config::Str(source.to_owned()).try_parse_strict()?;
     http_policy::Policy::new(config.general.global_ua.as_deref(),config.general.check_certificate)?;
+    process_identity::FindProcessMode::parse(&config.general.find_process_mode).map_err(|_|invalid("$.find-process-mode: expected strict, always or off"))?;
     if let Some(snapshot)=&config.general.aerove_system_dns {snapshot.validate()?;}
     Ok(config)
 }
@@ -310,11 +337,22 @@ pub async fn run_runtime_control(
     source:String, working_directory:PathBuf, input:RuntimeInput, cancel:CancellationToken,
     control:Arc<runtime_control::RuntimeControl>, ready:impl FnOnce(ReadyInfo),
 )->Result<()> {
+    run_runtime_identity(source,working_directory,input,cancel,control,None,ready).await
+}
+pub async fn run_runtime_identity(
+    source:String,working_directory:PathBuf,input:RuntimeInput,cancel:CancellationToken,
+    control:Arc<runtime_control::RuntimeControl>,resolver:Option<process_identity::Resolver>,ready:impl FnOnce(ReadyInfo),
+)->Result<()> {
     let mut commands=control.take();
     let mut config = parse(&source)?;
     let log_level = config.general.log_level;
     let http_policy=http_policy::Policy::new(config.general.global_ua.as_deref(),config.general.check_certificate)?;
+    crate::app::remote_content_manager::set_unified_delay(config.general.unified_delay);
+    crate::proxy::utils::set_tcp_concurrent(config.general.tcp_concurrent);
     let mode = input.mode();
+    let initially_parked=input.initially_parked();
+    if mode==RuntimeMode::Proxy&&resolver.is_some(){return Err(invalid("process owner resolver: proxy runtime requires null"));}
+    let process_mode=process_identity::FindProcessMode::parse(&config.general.find_process_mode).map_err(|_|invalid("$.find-process-mode: expected strict, always or off"))?;
     match mode {
         RuntimeMode::Tun if !config.tun.enable => {
             return Err(invalid("$.tun.enable: tun runtime requires true"));
@@ -325,8 +363,10 @@ pub async fn run_runtime_control(
     if mode==RuntimeMode::Tun&&config.tun.dns_hijack&&!config.dns.enable {return Err(invalid("$.tun.dns-hijack: requires dns.enable=true"));}
     let (tun, policy) = match input {
         RuntimeInput::Tun { fd, protector } => (Some(fd), SocketPolicy::Vpn(protector)),
-        RuntimeInput::Proxy => (None, SocketPolicy::PlatformDefault),
+        RuntimeInput::Proxy|RuntimeInput::ParkedProxy => (None, SocketPolicy::PlatformDefault),
+        RuntimeInput::ParkedTun {protector} => (None,SocketPolicy::Vpn(protector)),
     };
+    if initially_parked&&config.tun.device_id.starts_with("fd://"){return Err(invalid("$.tun.device-id: initially parked runtime owns no descriptor"));}
     let controller = config.general.controller.clone();
     let address = inbound::controller(&config)?;
     dns_network::validate_runtime(&config)?;
@@ -339,6 +379,7 @@ pub async fn run_runtime_control(
     let telemetry = telemetry::Bus::new(cancel.clone());
     telemetry.set_http_policy(http_policy);
     let network = inbound::runtime(&source, &config, address, cancel.clone())?;
+    network.set_parked(initially_parked);
     let mut inbound_ready = network.expected();
     {
         let mut active = CONTEXT.write().unwrap();
@@ -346,7 +387,7 @@ pub async fn run_runtime_control(
             return Err(Error::Operation("another mobile runtime is active".into()));
         }
         *active = Some(Arc::new(Context {
-            protector: policy.hook(), bootstrap, network_dns:RwLock::new(config.general.aerove_system_dns.clone()),dns_enabled:config.dns.enable,dns_hijack_all:config.tun.dns_hijack, events, logs: logs.clone(),
+            protector: policy.hook(),mode,network_generation:std::sync::atomic::AtomicU64::new(0),process_owner:Some(process_identity::Owner::new(resolver,cancel.clone(),process_mode)), bootstrap, network_dns:RwLock::new(config.general.aerove_system_dns.clone()),dns_enabled:config.dns.enable,dns_hijack_all:config.tun.dns_hijack, events, logs: logs.clone(),
             level: log_level.into(), cancel: cancel.clone(),
             telemetry: telemetry.clone(),
             network: Some(network.clone()),
@@ -378,12 +419,13 @@ pub async fn run_runtime_control(
         cwd: working_directory.to_string_lossy().into_owned(),
         config_path: None,
     }));
+    let user_controller=user_controller::Owner::new(cancel.clone());
     let shared_components=Arc::new(RwLock::new(components.clone()));
     let api = ApiRunner::new(controller, logs,
-        shared_components.clone(), global_state,
+        shared_components.clone(), global_state.clone(),
         working_directory.to_string_lossy().into_owned(), Some(cancel.child_token()));
     api.run_async();
-    components.start_all();
+    if !initially_parked {components.start_all();}
     let mut tun_ready = false;
     let mut api_address = None;
     let mut ready = Some(ready);
@@ -392,7 +434,7 @@ pub async fn run_runtime_control(
             biased;
             _ = cancel.cancelled() => break Ok(()),
             Some(command)=commands.recv()=> {
-                let operation=commands.handle(command,mode,shared_components.clone(),network.clone());
+                let operation=commands.handle(command,mode,shared_components.clone(),network.clone(),user_controller.clone(),global_state.clone());
                 tokio::pin!(operation);
                 let mut failure=None;
                 loop {
@@ -421,40 +463,48 @@ pub async fn run_runtime_control(
                 None => break Err(Error::Operation("core readiness channel closed".into())),
             }
         }
-        if (mode == RuntimeMode::Proxy || tun_ready) && inbound_ready.is_empty()
+        if (initially_parked||((mode == RuntimeMode::Proxy || tun_ready) && inbound_ready.is_empty()))
             && let Some(address) = api_address && ready.is_some() {
             let status=match runtime_control::readback(mode,&components,&network).await {Ok(status)=>status,Err(error)=>break Err(error)};
-            if !status.listening {continue;}
+            if !initially_parked&&!status.listening {continue;}
+            if initially_parked&&(status.listening||status.tun_ready||status.user_listeners_ready||!status.active_ports.is_empty()){break Err(invalid("initially parked runtime unexpectedly has active listeners"));}
             network.mark_ready();
             let tun_ready=status.tun_ready;
             let user_listeners_ready=status.user_listeners_ready;
             control.running(status);
-            tracing::info!("AEROVE mobile {mode:?}, user listeners and controller ready at {address}");
+            tracing::info!("AEROVE mobile {mode:?} private controller ready at {address}");
             ready.take().unwrap()(ReadyInfo { address, runtime_mode: mode, tun_ready, user_listeners_ready });
         }
     };
     cancel.cancel();
     api.shutdown();
+    let user_controller_result=user_controller.stop().await;
     let network_result = network.join().await;
     components.stop_all().await;
     let telemetry_result = telemetry.stop().await;
     api.join().await?;
     network_result?;
+    user_controller_result?;
     telemetry_result.map_err(|error| Error::Operation(format!("delay notification task: {error}")))?;
     result
 }
 
 pub(crate) async fn lookup_host(host_port: String) -> io::Result<std::vec::IntoIter<SocketAddr>> {
+    lookup_host_on(context()?,host_port).await
+}
+async fn lookup_host_on(context:Arc<Context>,host_port:String)->io::Result<std::vec::IntoIter<SocketAddr>> {
     let (host, port) = host_port.rsplit_once(':')
         .ok_or_else(|| io::Error::other("invalid bootstrap hostname"))?;
     let port: u16 = port.parse().map_err(io::Error::other)?;
-    let context = context()?;
+    if context.cancel.is_cancelled(){return Err(io::Error::new(io::ErrorKind::Interrupted,"owning runtime stopped"));}
+    if let Ok(ip)=host.trim_matches(['[',']']).parse::<IpAddr>() {return Ok(vec![SocketAddr::new(ip,port)].into_iter());}
+    let scope=protocol_transport::Scope {protector:context.protector.clone(),cancel:context.cancel.clone()};
     let mut addresses = Vec::new();
     let mut last_error = None;
     let servers=match context.network_dns.read().unwrap().as_ref(){Some(snapshot)=>snapshot.servers(None)?,None=>context.bootstrap.clone()};
     for record_type in [RecordType::A, RecordType::AAAA] {
         for server in &servers {
-            match query(host, record_type, *server).await {
+            match query_on(&scope,host, record_type, *server).await {
                 Ok(ips) => {
                     addresses.extend(ips.into_iter().map(|ip| SocketAddr::new(ip, port)));
                     break;
@@ -469,7 +519,11 @@ pub(crate) async fn lookup_host(host_port: String) -> io::Result<std::vec::IntoI
     Ok(addresses.into_iter())
 }
 
+#[cfg(test)]
 async fn query(host: &str, record_type: RecordType, server: SocketAddr) -> io::Result<Vec<IpAddr>> {
+    let scope=protocol_transport::Scope::current().ok_or_else(||io::Error::new(io::ErrorKind::PermissionDenied,"no owning runtime"))?;query_on(&scope,host,record_type,server).await
+}
+async fn query_on(scope:&protocol_transport::Scope,host:&str,record_type:RecordType,server:SocketAddr)->io::Result<Vec<IpAddr>> {
     let mut message = Message::query();
     message.metadata.id = rand::random();
     message.metadata.recursion_desired = true;
@@ -479,7 +533,7 @@ async fn query(host: &str, record_type: RecordType, server: SocketAddr) -> io::R
     message.add_query(question);
     let response = observations::dns_message(&message, async {
         observations::dns_source(server.to_string(), false);
-        tokio::time::timeout(Duration::from_secs(5), query_exchange(&message, server)).await
+        tokio::time::timeout(Duration::from_secs(5), query_exchange_on(scope,&message, server)).await
             .map_err(|e| io::Error::new(io::ErrorKind::TimedOut, e))?
     }).await?;
     Ok(response.answers.iter().filter_map(|record| match &record.data {
@@ -490,30 +544,25 @@ async fn query(host: &str, record_type: RecordType, server: SocketAddr) -> io::R
 }
 
 async fn query_exchange(message: &Message, server: SocketAddr) -> io::Result<Message> {
-    let bytes = message.to_vec().map_err(io::Error::other)?;
-    let socket = socket_helpers::new_udp_socket(None, None,
-        #[cfg(target_os = "linux")] None, Some(server)).await?;
-    socket.connect(server).await?;
-    socket.send(&bytes).await?;
-    let mut buffer = vec![0; 65535];
-    let count = socket.recv(&mut buffer).await?;
-    let mut response = Message::from_vec(&buffer[..count]).map_err(io::Error::other)?;
-    check_response(message, &response)?;
-    if response.metadata.truncation {
-        let mut stream = socket_helpers::new_tcp_stream(server, None,
-            #[cfg(target_os = "linux")] None).await?;
-        stream.write_u16(bytes.len() as u16).await?;
-        stream.write_all(&bytes).await?;
-        let count = stream.read_u16().await? as usize;
-        buffer.resize(count, 0);
-        stream.read_exact(&mut buffer).await?;
-        response = Message::from_vec(&buffer).map_err(io::Error::other)?;
-        check_response(message, &response)?;
+    let scope=protocol_transport::Scope::current().ok_or_else(||io::Error::new(io::ErrorKind::PermissionDenied,"no owning runtime"))?;query_exchange_on(&scope,message,server).await
+}
+async fn query_exchange_on(scope:&protocol_transport::Scope,message:&Message,server:SocketAddr)->io::Result<Message> {
+    let exchange=async {
+        let bytes=message.to_vec().map_err(io::Error::other)?;
+        let socket=scope.udp(server)?;let bind:SocketAddr=if server.is_ipv4(){"0.0.0.0:0".parse().unwrap()}else{"[::]:0".parse().unwrap()};socket.bind(&bind.into())?;
+        let socket=tokio::net::UdpSocket::from_std(std::net::UdpSocket::from(socket))?;
+        socket.connect(server).await?;scope.check()?;socket.send(&bytes).await?;
+        let mut buffer=vec![0;65535];let count=socket.recv(&mut buffer).await?;
+        let mut response=Message::from_vec(&buffer[..count]).map_err(io::Error::other)?;check_response(message,&response)?;
         if response.metadata.truncation {
-            return Err(io::Error::other("truncated TCP bootstrap response"));
+            let mut stream=scope.tcp(server).await?;stream.write_u16(bytes.len() as u16).await?;stream.write_all(&bytes).await?;
+            let count=stream.read_u16().await? as usize;buffer.resize(count,0);stream.read_exact(&mut buffer).await?;
+            response=Message::from_vec(&buffer).map_err(io::Error::other)?;check_response(message,&response)?;
+            if response.metadata.truncation {return Err(io::Error::other("truncated TCP bootstrap response"));}
         }
-    }
-    Ok(response)
+        Ok(response)
+    };
+    tokio::select!{biased;_=scope.cancel.cancelled()=>Err(io::Error::new(io::ErrorKind::Interrupted,"owning runtime stopped")),result=exchange=>result}
 }
 
 fn check_response(query: &Message, response: &Message) -> io::Result<()> {
@@ -545,7 +594,7 @@ mod tests {
         let (logs, _) = broadcast::channel(32);
         let cancel = CancellationToken::new();
         *CONTEXT.write().unwrap() = Some(Arc::new(Context {
-            protector, bootstrap: vec![], network_dns:RwLock::new(None),dns_enabled:false,dns_hijack_all:false, events, logs,
+            protector,mode:RuntimeMode::Tun,process_owner:None,network_generation:std::sync::atomic::AtomicU64::new(0), bootstrap: vec![], network_dns:RwLock::new(None),dns_enabled:false,dns_hijack_all:false, events, logs,
             level: tracing::level_filters::LevelFilter::TRACE,
             cancel: cancel.clone(), telemetry: telemetry::Bus::new(cancel), network: None,
         }));
@@ -555,7 +604,7 @@ mod tests {
     #[test]
     fn rejects_unknown_and_android_unavailable_capabilities() {
         for source in ["unknown-aerove-key: true", "sniffer: {enable: true}",
-            "rules: [\"PROCESS-NAME,app,DIRECT\"]", "dns: {nameserver: [system]}",
+            "rules: [\"UID,1000,DIRECT\"]", "dns: {nameserver: [system]}",
             "proxies: [{name: node, type: mieru, server: 127.0.0.1, port: 443}]",
             "proxies: [{name: node, type: direct, imaginary: true}]"]
         {
@@ -650,7 +699,7 @@ mod tests {
         let old = second_context.take().unwrap();
         let cancel = CancellationToken::new();
         *second_context = Some(Arc::new(Context {
-            protector: old.protector.clone(), bootstrap: vec![], events: old.events.clone(),
+            protector: old.protector.clone(),mode:old.mode,process_owner:old.process_owner.clone(),network_generation:std::sync::atomic::AtomicU64::new(old.network_generation.load(std::sync::atomic::Ordering::Acquire)), bootstrap: vec![], events: old.events.clone(),
             network_dns:std::sync::RwLock::new(None),dns_enabled:false,dns_hijack_all:false,
             logs, level: old.level, cancel: cancel.clone(), telemetry: telemetry::Bus::new(cancel), network: None,
         }));

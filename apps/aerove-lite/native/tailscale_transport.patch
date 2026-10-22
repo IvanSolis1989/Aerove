@@ -1,0 +1,57 @@
+--- a/clash-lib/src/proxy/tailscale/mod.rs
++++ b/clash-lib/src/proxy/tailscale/mod.rs
+@@ -46,6 +46,8 @@
+ pub struct Handler {
+     opts: HandlerOptions,
+     device: Mutex<Option<Arc<::tailscale::Device>>>,
++    #[cfg(feature="aerove-mobile")]
++    underlay:Option<::tailscale::Underlay>,
+ }
+ 
+ impl Debug for Handler {
+@@ -61,6 +63,8 @@
+         Self {
+             opts,
+             device: Mutex::new(None),
++            #[cfg(feature="aerove-mobile")]
++            underlay:crate::mobile::tailscale_underlay(),
+         }
+     }
+ 
+@@ -72,6 +76,10 @@
+     /// held in memory only; the device will register a fresh node on every
+     /// startup unless `ephemeral: true` is also set.
+     async fn get_device(&self) -> io::Result<Arc<::tailscale::Device>> {
++        #[cfg(feature="aerove-mobile")]
++        let underlay=self.underlay.as_ref().ok_or_else(||io::Error::new(io::ErrorKind::PermissionDenied,"tailscale has no owning runtime"))?;
++        #[cfg(feature="aerove-mobile")]
++        underlay.check()?;
+         let mut guard = self.device.lock().await;
+         if let Some(device) = guard.as_ref() {
+             return Ok(Arc::clone(device));
+@@ -108,6 +116,8 @@
+             key_state,
+             ..Default::default()
+         };
++        #[cfg(feature="aerove-mobile")]
++        {config.underlay=underlay.clone();}
+         config.client_name = Some(
+             self.opts
+                 .client_name
+@@ -123,15 +133,7 @@
+             })?;
+         }
+ 
+-        // tailscale-rs requires this env var as an acknowledgement that the
+-        // crate is experimental.  Set it on behalf of the user so they don't
+-        // need to configure it themselves.
+-        // SAFETY: single-threaded point inside a Mutex-guarded lazy-init block;
+-        // no other thread is reading or writing this variable concurrently.
+-        unsafe {
+-            std::env::set_var("TS_RS_EXPERIMENT", "this_is_unstable_software");
+-        }
+-
++        // Locked tailscale 0.6.1 removed the experiment environment gate.
+         let device = Arc::new(
+             ::tailscale::Device::new(&config, self.opts.auth_key.clone())
+                 .await

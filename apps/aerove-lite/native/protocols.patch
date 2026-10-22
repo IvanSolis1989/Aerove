@@ -1,0 +1,174 @@
+--- a/clash-lib/src/config/internal/proxy.rs
++++ b/clash-lib/src/config/internal/proxy.rs
+@@ -434,11 +434,14 @@
+     #[serde(flatten)]
+     pub common_opts: CommonConfigOptions,
+     /// jls password, must be the same as the server
++    #[serde(default)]
+     pub password: String,
+     /// jls username, must be the same as the server
++    #[serde(default)]
+     pub username: String,
+     /// server name, must be the same as the server jls_upstream
+     /// domain name
++    #[serde(default, alias = "sni")]
+     pub server_name: String,
+     /// alpn, default to "h3"
+     pub alpn: Option<Vec<String>>,
+@@ -446,11 +449,13 @@
+     /// 1400 is recommended for high packet loss network. default to be 1300
+     pub initial_mtu: Option<u16>,
+     /// congestion control, default to "bbr"
++    #[serde(default, alias = "congestion-controller", deserialize_with = "deserialize_sq_congestion")]
+     pub congestion_control: Option<SQCongestionControl>, // bbr, new-reno, cubic
+     /// set to true to enable zero rtt, default to true
+     pub zero_rtt: Option<bool>,
+     /// if true, use quic stream to send UDP, otherwise use quic datagram
+     /// extension, similar to native UDP in TUIC
++    #[serde(alias = "udp-over-stream")]
+     pub over_stream: Option<bool>,
+     /// minimum mtu, must be smaller than initial mtu, at least to be 1200.
+     /// 1400 is recommended for high packet loss network. default to be 1290
+@@ -465,6 +470,7 @@
+     /// initial mtu as fixed mtu. This is useful for network with stable MTU
+     /// and high packet loss.
+     pub mtu_discovery: Option<bool>,
++    pub disable_mtu_discovery: Option<bool>,
+ }
+ 
+ #[cfg(feature = "ssh")]
+@@ -962,3 +968,13 @@
+         assert!(msg.contains("column"), "expected column in message: {msg}");
+     }
+ }
++
++#[cfg(feature = "shadowquic")]
++fn deserialize_sq_congestion<'de,D:serde::Deserializer<'de>>(deserializer:D)->Result<Option<SQCongestionControl>,D::Error> {
++    use serde::Deserialize;
++    let value=Option::<serde_yaml::Value>::deserialize(deserializer)?;
++    value.map(|mut value| {
++        if value.as_str()==Some("new_reno") {value=serde_yaml::Value::String("new-reno".into());}
++        serde_yaml::from_value(value).map_err(serde::de::Error::custom)
++    }).transpose()
++}
+--- a/clash-lib/src/proxy/converters/shadowquic.rs
++++ b/clash-lib/src/proxy/converters/shadowquic.rs
+@@ -1,7 +1,7 @@
+ use shadowquic::config::{
+     default_alpn, default_blackhole_detection, default_congestion_control,
+-    default_gso, default_initial_mtu, default_keep_alive_interval, default_min_mtu,
+-    default_mtu_discovery, default_over_stream, default_zero_rtt,
++    default_gso, default_initial_mtu, default_min_mtu,
++    default_mtu_discovery,
+ };
+ 
+ use crate::{
+@@ -22,6 +22,7 @@
+     type Error = crate::Error;
+ 
+     fn try_from(s: &OutboundShadowQuic) -> Result<Self, Self::Error> {
++        if s.mtu_discovery.is_some() && s.disable_mtu_discovery.is_some() {return Err(crate::Error::InvalidConfig("shadowquic: conflicting mtu-discovery and disable-mtu-discovery".into()));}
+         Ok(Handler::new(
+             s.common_opts.name.clone(),
+             HandlerOptions {
+@@ -32,25 +33,25 @@
+                 .to_string(),
+                 password: s.password.clone(),
+                 username: s.username.clone(),
+-                server_name: s.server_name.clone(),
++                server_name: if s.server_name.is_empty() {s.common_opts.server.clone()} else {s.server_name.clone()},
+                 alpn: s.alpn.clone().unwrap_or(default_alpn()),
+                 initial_mtu: s.initial_mtu.unwrap_or(default_initial_mtu()),
+                 congestion_control: s
+                     .congestion_control
+                     .clone()
+                     .unwrap_or(default_congestion_control()),
+-                zero_rtt: s.zero_rtt.unwrap_or(default_zero_rtt()),
+-                over_stream: s.over_stream.unwrap_or(default_over_stream()),
++                zero_rtt: s.zero_rtt.unwrap_or(false),
++                over_stream: s.over_stream.unwrap_or(false),
+                 min_mtu: s.min_mtu.unwrap_or(default_min_mtu()),
+                 keep_alive_interval: s
+                     .keep_alive_interval
+-                    .unwrap_or(default_keep_alive_interval()),
++                    .unwrap_or(0),
+                 blackhole_detection: default_blackhole_detection(),
+ 
+                 protect_path: None,
+                 socket_opt: Default::default(),
+                 gso: s.gso.unwrap_or(default_gso()),
+-                mtu_discovery: s.mtu_discovery.unwrap_or(default_mtu_discovery()),
++                mtu_discovery: s.mtu_discovery.or(s.disable_mtu_discovery.map(|value|!value)).unwrap_or(default_mtu_discovery()),
+                 cipher_suite_preference: None,
+             },
+         ))
+--- a/clash-lib/src/proxy/converters/wireguard.rs
++++ b/clash-lib/src/proxy/converters/wireguard.rs
+@@ -29,41 +29,8 @@
+             },
+             server: s.common_opts.server.to_owned(),
+             port: s.common_opts.port,
+-            ip: s
+-                .ip
+-                .parse::<IpNet>()
+-                .map(|x| match x.addr() {
+-                    std::net::IpAddr::V4(v4) => Ok(v4),
+-                    std::net::IpAddr::V6(_) => Err(Error::InvalidConfig(
+-                        "invalid ip address: put an v4 address here".to_owned(),
+-                    )),
+-                })
+-                .map_err(|x| {
+-                    Error::InvalidConfig(format!(
+-                        "invalid ip address: {}, {}",
+-                        x, s.ip
+-                    ))
+-                })??,
+-            ipv6: s
+-                .ipv6
+-                .as_ref()
+-                .and_then(|x| {
+-                    x.parse::<IpNet>()
+-                        .map(|x| match x.addr() {
+-                            std::net::IpAddr::V4(_) => Err(Error::InvalidConfig(
+-                                "invalid ip address: put an v6 address here"
+-                                    .to_owned(),
+-                            )),
+-                            std::net::IpAddr::V6(v6) => Ok(v6),
+-                        })
+-                        .map_err(|e| {
+-                            Error::InvalidConfig(format!(
+-                                "invalid ipv6 address: {e}, {x}"
+-                            ))
+-                        })
+-                        .ok()
+-                })
+-                .transpose()?,
++            ip: match parse_address(&s.ip,"ip")? {std::net::IpAddr::V4(ip)=>ip,_=>return Err(Error::InvalidConfig("wireguard.ip: expected IPv4".into()))},
++            ipv6: s.ipv6.as_deref().map(|value|match parse_address(value,"ipv6")? {std::net::IpAddr::V6(ip)=>Ok(ip),_=>Err(Error::InvalidConfig("wireguard.ipv6: expected IPv6".into()))}).transpose()?,
+             private_key: s.private_key.to_owned(),
+             public_key: s.public_key.to_owned(),
+             pre_shared_key: s.pre_shared_key.as_ref().map(|x| x.to_owned()),
+@@ -77,3 +44,7 @@
+         Ok(h)
+     }
+ }
++
++fn parse_address(value:&str,field:&str)->Result<std::net::IpAddr,Error> {
++    value.parse::<IpNet>().map(|net|net.addr()).or_else(|_|value.parse::<std::net::IpAddr>()).map_err(|_|Error::InvalidConfig(format!("wireguard.{field}: invalid literal address or CIDR")))
++}
+--- a/clash-lib/src/proxy/converters/ssh.rs
++++ b/clash-lib/src/proxy/converters/ssh.rs
+@@ -52,12 +52,7 @@
+     type Error = crate::Error;
+ 
+     fn try_from(s: &OutboundSsh) -> Result<Self, Self::Error> {
+-        let host_key_algorithms = s.host_key_algorithms.clone().map(|algos| {
+-            algos
+-                .iter()
+-                .filter_map(|s| str_to_algo(s))
+-                .collect::<Vec<_>>()
+-        });
++        let host_key_algorithms = s.host_key_algorithms.as_ref().map(|algorithms| algorithms.iter().map(|algorithm|str_to_algo(algorithm).ok_or_else(||crate::Error::InvalidConfig("ssh.host-key-algorithms: unsupported algorithm".into()))).collect::<Result<Vec<_>,_>>()).transpose()?;
+         let totp: Option<Result<TOTP, Self::Error>> =
+             s.totp_opt.clone().map(|t| match t {
+                 crate::config::internal::proxy::TotpOption::OtpAuth(secret) => {
