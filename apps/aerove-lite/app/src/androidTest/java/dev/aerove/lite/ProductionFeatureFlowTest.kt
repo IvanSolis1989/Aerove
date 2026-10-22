@@ -62,7 +62,7 @@ class ProductionFeatureFlowTest {
                 "mode: direct\nrules:\n  - MATCH,DIRECT\n")
             profile = owned
             graph.profiles.select(owned.id)
-            graph.settings.save(LiteSettings(mode = ProxyMode.Direct, aurora = false, material = MaterialTier.Solid,
+            graph.settings.save(LiteSettings(mode = ProxyMode.Direct, aurora = false, material = MaterialTier.Solid, autoCheckUpdate = false,
                 dashboardWidgets = listOf(DashboardWidget.CurrentOutbound, DashboardWidget.MemoryInfo,
                     DashboardWidget.NetworkSpeed)), vpnAuthorized = true)
             val launched = ActivityScenario.launch(MainActivity::class.java)

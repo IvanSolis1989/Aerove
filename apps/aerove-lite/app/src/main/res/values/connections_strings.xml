@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="connections_find_keyword">Find process or proxy chain</string>
+    <string name="connections_refine">Showing up to 30 matches. Search to find another entry.</string>
+    <string name="connections_sort">Sort</string>
+    <string name="connections_filter">Filter</string>
+    <string name="connections_filter_hint">Match every selected process or proxy chain.</string>
+    <string name="connections_clear_filters">Clear filters</string>
+    <string name="connections_ascending">Ascending</string>
+    <string name="connections_descending">Descending</string>
+    <string name="connections_activity">Live activity</string>
+    <string name="connections_details">Connection details</string>
+    <string name="connections_ended">This connection has ended. Last observed details are shown.</string>
+    <string name="connections_unknown">Unavailable</string>
+    <string name="connections_id">Connection ID</string>
+    <string name="connections_started">Created at</string>
+    <string name="connections_inbound">Inbound type</string>
+    <string name="connections_process">Process</string>
+    <string name="connections_process_path">Process path</string>
+    <string name="connections_uid">UID</string>
+    <string name="connections_user">Inbound user</string>
+    <string name="connections_host">Host</string>
+    <string name="connections_source">Source</string>
+    <string name="connections_target">Destination</string>
+    <string name="connections_country">Country / region</string>
+    <string name="connections_asn">ASN organization</string>
+    <string name="connections_download_speed">Download speed</string>
+    <string name="connections_upload_speed">Upload speed</string>
+    <string name="connections_traffic">Total traffic</string>
+</resources>

@@ -38,6 +38,7 @@ private val Licenses = listOf(
 
 @Composable
 internal fun AboutScreen(padding: PaddingValues) {
+    val features = LocalLiteFeatures.current
     var selected by rememberSaveable { mutableStateOf<Int?>(null) }
     val entry = Licenses.firstOrNull { it.label == selected }
     BackHandler(entry != null) { selected = null }
@@ -51,6 +52,11 @@ internal fun AboutScreen(padding: PaddingValues) {
                     LiteText(stringResource(R.string.lite_version, BuildConfig.VERSION_NAME), style = LiteType.Label)
                     LiteText(stringResource(R.string.lite_about_detail), color = LocalLiteVisuals.current.secondaryInk)
                 }
+            }
+        }
+        item {
+            LitePane(Modifier.fillMaxWidth()) {
+                SettingsRow(stringResource(R.string.update_check), onClick = { features().updates.check() }) { LiteIcon(FullGlyphs.chevronForward) }
             }
         }
         item { SectionLabel(stringResource(R.string.lite_open_source)) }

@@ -70,7 +70,9 @@ class LiteDashboardMatrixTest {
                 val case = selected.value
                 if (case != null) key(case.number) {
                     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                        LiteApp(reference.copy(settings = case.settings), actions)
+                        IpQualityFixture(reference.copy(settings = case.settings)) {
+                            LiteApp(reference.copy(settings = case.settings), actions)
+                        }
                     }
                 }
             }
@@ -87,6 +89,7 @@ class LiteDashboardMatrixTest {
                 .put("phase", "Running is display data, not evidence of a running VPN")
                 .put("outbound", "198.51.100.8").put("countryCode", "SG").put("organization", "Example ISP")
                 .put("kind", "Residential").put("localAddress", "192.0.2.8").put("uptimeMillis", 0)
+                .put("quality", "fixed androidTest lookup; no provider request or real IP quality evidence")
                 .put("traffic", "zero upload/download rates and totals; no invented history"))
             .put("dataSha256", sha256(reference.toString())).put("locale", context.resources.configuration.locales.toLanguageTags())
             .put("composeAdvancePerAppearanceMillis", 400).put("layoutDirection", "LTR")

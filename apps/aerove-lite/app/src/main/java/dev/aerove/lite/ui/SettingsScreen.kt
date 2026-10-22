@@ -468,6 +468,15 @@ private object ThemeEditorGlyphs {
 @Composable
 internal fun GeneralScreen(state: LiteState, actions: LiteActions, padding: PaddingValues) {
     LazyColumn(state = LocalLiteListState.current, contentPadding = padding) {
+        item {
+            LitePane(Modifier.fillMaxWidth()) {
+                SettingsRow(stringResource(R.string.update_auto), stringResource(R.string.update_auto_detail)) {
+                    LiteSwitch(state.settings.autoCheckUpdate, stringResource(R.string.update_auto), {
+                        actions.changeSettings(state.settings.copy(autoCheckUpdate = it))
+                    }, state.busy.isEmpty())
+                }
+            }
+        }
         item { SectionLabel(stringResource(R.string.lite_background)) }
         item {
             LitePane(Modifier.fillMaxWidth()) {

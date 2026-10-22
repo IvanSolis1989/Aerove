@@ -227,21 +227,7 @@ class CoreApiClient(
     }
 
     private fun decodeConnections(value: JSONObject): List<ConnectionInfo> {
-        val rows = value.getJSONArray("connections")
-        return (0 until rows.length()).map { index ->
-            val row = rows.getJSONObject(index)
-            val metadata = row.getJSONObject("metadata")
-            val host = metadata.optString("host", "").ifBlank { metadata.getString("destinationIP") }
-            ConnectionInfo(
-                id = row.getString("id"),
-                destination = "$host:${metadata.get("destinationPort")}",
-                network = metadata.getString("network"),
-                rule = row.getString("rule"),
-                chains = strings(row.getJSONArray("chains")),
-                upload = unsigned(row, "upload"),
-                download = unsigned(row, "download"),
-            )
-        }
+        return dev.aerove.lite.connections.decodeConnectionSnapshot(value)
     }
 
     private suspend fun json(path: List<String>, query: Map<String, String> = emptyMap()): JSONObject =

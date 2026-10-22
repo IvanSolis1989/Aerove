@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="connections_find_keyword">查找进程或代理链</string>
+    <string name="connections_refine">最多显示 30 个匹配项，可搜索查找其他项。</string>
+    <string name="connections_sort">排序</string>
+    <string name="connections_filter">筛选</string>
+    <string name="connections_filter_hint">同时匹配所有选中的进程或代理链。</string>
+    <string name="connections_clear_filters">清除筛选</string>
+    <string name="connections_ascending">升序</string>
+    <string name="connections_descending">降序</string>
+    <string name="connections_activity">实时活动</string>
+    <string name="connections_details">连接详情</string>
+    <string name="connections_ended">此连接已结束。当前显示最后一次观测的详情。</string>
+    <string name="connections_unknown">无数据</string>
+    <string name="connections_id">连接 ID</string>
+    <string name="connections_started">创建时间</string>
+    <string name="connections_inbound">入站类型</string>
+    <string name="connections_process">进程</string>
+    <string name="connections_process_path">进程路径</string>
+    <string name="connections_uid">UID</string>
+    <string name="connections_user">入站用户</string>
+    <string name="connections_host">主机</string>
+    <string name="connections_source">源地址</string>
+    <string name="connections_target">目标地址</string>
+    <string name="connections_country">国家或地区</string>
+    <string name="connections_asn">ASN 组织</string>
+    <string name="connections_download_speed">下载速度</string>
+    <string name="connections_upload_speed">上传速度</string>
+    <string name="connections_traffic">总流量</string>
+</resources>

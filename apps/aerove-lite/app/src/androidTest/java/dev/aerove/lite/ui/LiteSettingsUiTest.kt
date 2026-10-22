@@ -100,7 +100,7 @@ class LiteSettingsUiTest {
         val identity = OutboundIdentity("198.51.100.8", "SG", "Example ISP", "Residential")
         val state = mutableStateOf(LiteState(phase = VpnPhase.Running, outboundIdentity = identity))
         val actions = UiTestActions {}
-        compose.replaceAppContent { LiteApp(state.value, actions) }
+        compose.replaceAppContent { IpQualityFixture(state.value) { LiteApp(state.value, actions) } }
         val refresh = compose.onNodeWithContentDescription(text(R.string.lite_outbound_refresh))
         refresh.performClick()
         compose.runOnUiThread {

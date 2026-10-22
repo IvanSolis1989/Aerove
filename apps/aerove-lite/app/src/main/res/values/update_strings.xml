@@ -1,0 +1,19 @@
+<resources>
+    <string name="update_check">Check for updates</string>
+    <string name="update_auto">Check for updates at startup</string>
+    <string name="update_auto_detail">Notify once when a new AEROVE Lite version is available</string>
+    <string name="update_checking">Checking AEROVE Lite releases…</string>
+    <string name="update_current">No newer compatible AEROVE Lite release is available</string>
+    <string name="update_available">A new AEROVE Lite version is available</string>
+    <string name="update_download">Download update</string>
+    <string name="update_downloading">Downloading and verifying update…</string>
+    <string name="update_ready">Verified update is ready to install</string>
+    <string name="update_install">Install update</string>
+    <string name="update_installing">Complete installation in Android</string>
+    <string name="update_failed">The update could not be checked, downloaded or verified. Try again.</string>
+    <string name="update_permission">Allow this app to install updates in Android settings, then try again.</string>
+    <string name="update_installer_failed">Android could not open the installer. The verified download is preserved.</string>
+    <string name="update_no_remind">Do not remind again</string>
+    <string name="update_close">Close</string>
+    <string name="update_notes_unavailable">Release notes are unavailable.</string>
+</resources>

@@ -30,6 +30,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -189,6 +190,9 @@ private fun OutboundStatusCard(state: LiteState, actions: LiteActions) {
     val running = state.phase == VpnPhase.Running
     val time = rememberDashboardTime(running)
     val identity = state.outboundIdentity
+    val qualityFactory = LocalLiteFeatures.current
+    val qualityFeature = if (identity != null || state.outboundLoading) remember(qualityFactory) { qualityFactory().ipQuality } else null
+    val qualityState = qualityFeature?.state?.collectAsState()?.value
     val busy = state.phase == VpnPhase.Starting || state.phase == VpnPhase.Stopping || state.busy.isNotEmpty()
     val enabled = !busy && (running || state.selectedProfile != null)
     val status = when (state.phase) {
@@ -211,19 +215,24 @@ private fun OutboundStatusCard(state: LiteState, actions: LiteActions) {
             Column(Modifier.weight(1f)) {
                 DashboardHeader(FullGlyphs.status, stringResource(R.string.lite_status), leading = { StatusChip(stringResource(status), running) })
                 Spacer(Modifier.height(12.dp))
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    CountryBubble(identity?.countryCode, state.outboundLoading, running, actions::refreshOutbound)
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        if (identity != null) LiteText(identity.address, style = LiteType.Title2, maxLines = 1)
-                        else if (state.outboundLoading) LiteText(stringResource(R.string.lite_outbound_loading), style = LiteType.Footnote, color = visuals.secondaryInk, maxLines = 2)
-                        else LiteText("—", style = LiteType.Title2)
-                        val kind = outboundKind(identity?.kind)
-                        if (kind != null) LitePane(corner = LiteCorner.Full, solidColor = dashboardTone()) {
-                            Box(Modifier.height(28.dp).padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
-                                LiteText(kind, style = LiteType.Caption.copy(fontWeight = FontWeight.SemiBold), color = visuals.secondaryInk, maxLines = 1)
-                            }
+                if (qualityFeature != null) IpQualityStatus(qualityFeature) { quality, open ->
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        CountryBubble(identity?.countryCode ?: quality.countryCode, state.outboundLoading || quality.loading, running, actions::refreshOutbound)
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            val shown = identity?.address ?: quality.ip?.takeIf { state.outboundLoading && quality.provisional }
+                            if (shown != null) LiteText(if (quality.hidden) "*****" else shown,
+                                Modifier.clickable(role = Role.Button, onClick = open), style = LiteType.Title2,
+                                color = qualityInk(quality.quality?.level), maxLines = 1)
+                            else if (state.outboundLoading) LiteText(stringResource(R.string.lite_outbound_loading), style = LiteType.Footnote, color = visuals.secondaryInk, maxLines = 2)
+                            else LiteText("—", style = LiteType.Title2)
+                            IpQualityChips(quality, open)
+                            if (quality.provisional) LiteText(stringResource(R.string.quality_provisional), style = LiteType.Caption,
+                                color = visuals.secondaryInk)
                         }
                     }
+                } else Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    CountryBubble(identity?.countryCode, state.outboundLoading, running, actions::refreshOutbound)
+                    LiteText("—", style = LiteType.Title2)
                 }
                 state.outboundError?.takeIf { it.isNotBlank() }?.let { error ->
                     Spacer(Modifier.height(8.dp))
@@ -232,7 +241,7 @@ private fun OutboundStatusCard(state: LiteState, actions: LiteActions) {
                 Spacer(Modifier.height(16.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                     StatusCell(stringResource(R.string.lite_uptime), if (running) formatUptime(state.uptimeMillis) else "—")
-                    StatusCell(stringResource(R.string.lite_organization), identity?.organization ?: "—", Modifier.weight(1f))
+                    StatusCell(stringResource(R.string.lite_organization), qualityState?.quality?.organization ?: "—", Modifier.weight(1f))
                 }
             }
             StartBubble(running, enabled, stringResource(if (running) R.string.action_disconnect else R.string.lite_connect), time,
@@ -420,15 +429,6 @@ private fun IntranetCard(address: String?) {
 
 @Composable
 private fun dashboardTone(): Color = MaterialTheme.colorScheme.fullBlock(LocalLiteVisuals.current.dark)
-
-@Composable
-private fun outboundKind(kind: String?): String? = when (kind?.lowercase(Locale.ROOT)) {
-    "residential" -> stringResource(R.string.lite_type_residential)
-    "mobile" -> stringResource(R.string.lite_type_mobile)
-    "business" -> stringResource(R.string.lite_type_business)
-    "hosting" -> stringResource(R.string.lite_type_hosting)
-    else -> null
-}
 
 private fun formatUptime(millis: Long): String {
     val seconds = millis.coerceAtLeast(0) / 1000

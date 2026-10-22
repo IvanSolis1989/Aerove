@@ -35,6 +35,7 @@ class LiteSettingsStoreTest {
             openLogs = true,
             serviceOrder = listOf("netflix") + serviceTargetIds.filterNot { it == "netflix" },
             disabledServices = setOf("google", "github"),
+            autoCheckUpdate = false,
         )
         assertEquals(settings, LiteSettingsStore(temporary.root).save(settings, vpnAuthorized = true))
         assertEquals(settings, LiteSettingsStore(temporary.root).read())

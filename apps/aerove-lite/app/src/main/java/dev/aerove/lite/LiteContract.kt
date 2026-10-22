@@ -81,6 +81,7 @@ data class LiteSettings(
     val editorLineWrap: Boolean = false,
     val serviceOrder: List<String> = serviceTargetIds.toList(),
     val disabledServices: Set<String> = emptySet(),
+    val autoCheckUpdate: Boolean = true,
 )
 
 val serviceTargetIds: List<String> = listOf("google", "github", "youtube", "chatgpt", "claude", "gemini",
@@ -165,8 +166,24 @@ data class ConnectionInfo(
     val network: String,
     val rule: String,
     val chains: List<String>,
-    val upload: Long,
-    val download: Long,
+    val upload: Long?,
+    val download: Long?,
+    val sourceIP: String? = null,
+    val sourcePort: Int? = null,
+    val destinationIP: String? = null,
+    val destinationPort: Int? = null,
+    val host: String? = null,
+    val startedAt: java.time.Instant? = null,
+    val inboundType: String? = null,
+    val process: String? = null,
+    val processPath: String? = null,
+    val uid: Long? = null,
+    val rulePayload: String? = null,
+    val country: String? = null,
+    val asn: String? = null,
+    val inboundUser: String? = null,
+    // Host snapshot receipt time, not the core's creation time; preserves idle samples in StateFlow.
+    val observedAtNanos: Long? = null,
 )
 data class Traffic(val uploadPerSecond: Long = 0, val downloadPerSecond: Long = 0, val upload: Long = 0, val download: Long = 0)
 data class LogLine(val time: Long, val level: String, val message: String)
@@ -198,6 +215,7 @@ data class LiteState(
     val message: String? = null,
     val diagnostics: DiagnosticsState = DiagnosticsState(),
     val updatingProfileIds: Set<String> = emptySet(),
+    val updatePromptVisible: Boolean = false,
 )
 
 interface LiteActions {

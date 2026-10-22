@@ -97,6 +97,8 @@ class ProfileListUiTest {
     }
 
     private val host: LiteFeatureHost get() = object : LiteFeatureHost {
+        override val ipQuality: dev.aerove.lite.ipquality.IpQualityFeature get() = error("Unused fixture quality")
+        override val updates: dev.aerove.lite.updates.UpdateFeature get() = error("Unused fixture updates")
         override val profileList: ProfileListFeature get() = feature
         override val backup: BackupFeature get() = error("Unused fixture backup")
         override fun editor(profileId: String, title: String, readOnly: Boolean): ProfileEditorSession = error("Unused fixture editor")

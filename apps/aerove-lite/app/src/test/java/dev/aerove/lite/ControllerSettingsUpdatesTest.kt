@@ -33,6 +33,31 @@ class ControllerSettingsUpdatesTest {
         assertEquals(1, fake.readCalls)
     }
 
+    @Test fun automaticUpdatePreferenceAndQueuedUserFieldsPreserveEachOtherInEitherOrder() = runTest {
+        for (preferenceFirst in listOf(true, false)) {
+            val fake = Harness()
+            fake.updates.load()
+            val baseline = fake.shown
+            val preference = baseline.copy(autoCheckUpdate = false)
+            val userFields = baseline.copy(colorStyle = ColorStyle.Soft, dnsServers = listOf("tls://8.8.8.8:853"))
+            val requests = if (preferenceFirst) listOf(preference, userFields) else listOf(userFields, preference)
+            fake.saveGate = CompletableDeferred()
+            val first = launch { fake.updates.save(baseline, requests[0]) }
+            runCurrent()
+            val second = launch { fake.updates.save(baseline, requests[1]) }
+            runCurrent()
+            assertEquals(1, fake.saveCalls)
+            fake.saveGate!!.complete(Unit)
+            first.join()
+            second.join()
+            assertEquals(baseline.copy(autoCheckUpdate = false, colorStyle = ColorStyle.Soft,
+                dnsServers = userFields.dnsServers), fake.disk)
+            assertEquals(fake.disk, fake.shown)
+            assertEquals(2, fake.saveCalls)
+            assertEquals(1, fake.readCalls)
+        }
+    }
+
     @Test fun acceptedUserDeltaCanChangeEveryCurrentContractField() = runTest {
         val fake = Harness()
         fake.updates.load()
@@ -47,7 +72,7 @@ class ControllerSettingsUpdatesTest {
             dashboardWidgets = listOf(DashboardWidget.MemoryInfo, DashboardWidget.CurrentOutbound),
             mode = ProxyMode.Direct, ipv6 = true, overrideDns = true,
             dnsServers = listOf("tls://8.8.8.8:853"), appFilterMode = AppFilterMode.Include,
-            packages = setOf("com.example.one"), autoStart = true, openLogs = true,
+            packages = setOf("com.example.one"), autoStart = true, autoCheckUpdate = false, openLogs = true,
         )
         fake.updates.save(baseline, requested)
         assertEquals(requested, fake.disk)
@@ -198,7 +223,7 @@ class ControllerSettingsUpdatesTest {
         val original = fake.shown
         fake.failSave = true
         try {
-            fake.updates.save(original, original.copy(autoStart = true))
+            fake.updates.save(original, original.copy(autoStart = true, autoCheckUpdate = false))
             fail("Expected authorization failure")
         } catch (expected: IllegalArgumentException) {
             assertEquals("VPN authorization", expected.message)
@@ -206,9 +231,12 @@ class ControllerSettingsUpdatesTest {
         assertEquals(1, fake.saveCalls)
         assertEquals(original, fake.disk)
         assertEquals(original, fake.shown)
+        assertEquals(listOf(false), fake.restartAllowed)
         fake.failSave = false
         fake.updates.save(original, original.copy(colorMode = ColorMode.Dark))
         assertEquals(ColorMode.Dark, fake.shown.colorMode)
+        assertTrue(fake.shown.autoCheckUpdate)
+        assertEquals(fake.disk, fake.shown)
     }
 
     private inner class Harness(initial: LiteSettings = LiteSettings(auroraRotationDay = 20261021L)) {

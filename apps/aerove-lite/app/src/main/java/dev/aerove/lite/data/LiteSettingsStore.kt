@@ -58,6 +58,7 @@ class LiteSettingsStore(privateDirectory: File) {
             .put("editorLineWrap", normalized.editorLineWrap)
             .put("serviceOrder", JSONArray(normalized.serviceOrder))
             .put("disabledServices", JSONArray(normalized.disabledServices.sorted()))
+            .put("autoCheckUpdate", normalized.autoCheckUpdate)
             .put("mode", normalized.mode.name).put("ipv6", normalized.ipv6)
             .put("overrideDns", normalized.overrideDns).put("dnsServers", JSONArray(normalized.dnsServers))
             .put("appFilterMode", normalized.appFilterMode.name)
@@ -120,8 +121,10 @@ class LiteSettingsStore(privateDirectory: File) {
             editorLineWrap = json.opt("editorLineWrap") as? Boolean ?: defaults.editorLineWrap,
             serviceOrder = values("serviceOrder")?.filterIsInstance<String>() ?: defaults.serviceOrder,
             disabledServices = values("disabledServices")?.filterIsInstance<String>()?.toSet() ?: defaults.disabledServices,
+            autoCheckUpdate = json.opt("autoCheckUpdate") as? Boolean ?: defaults.autoCheckUpdate,
         ).normalized().also(::validateSettings)
     }
+
 }
 
 private fun JSONObject.readColorStyle(default: ColorStyle): ColorStyle {

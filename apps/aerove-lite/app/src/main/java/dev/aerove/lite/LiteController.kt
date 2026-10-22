@@ -32,6 +32,16 @@ import dev.aerove.lite.vpn.LiteVpnService
 import dev.aerove.lite.platform.LocalNetworkMonitor
 import dev.aerove.lite.profiles.AndroidProfileDocuments
 import dev.aerove.lite.profiles.ProfileListFeature
+import dev.aerove.lite.ipquality.IpQualityFeature
+import dev.aerove.lite.ipquality.IpQualityHttp
+import dev.aerove.lite.ipquality.IpQualityStore
+import dev.aerove.lite.ipquality.lookupIpQuality
+import dev.aerove.lite.updates.AndroidUpdatePlatform
+import dev.aerove.lite.updates.AndroidUpdateVerifier
+import dev.aerove.lite.updates.UpdateFeature
+import dev.aerove.lite.updates.UpdateHttpClient
+import dev.aerove.lite.updates.UpdateRepository
+import java.io.File
 import java.io.IOException
 import java.time.Clock
 import java.time.Duration
@@ -102,6 +112,16 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
             })
     }
     override val profileList: ProfileListFeature get() = profileListOwner.value
+    private val ipQualityOwner = lazy {
+        val client = IpQualityHttp()
+        IpQualityFeature(viewModelScope, { lookupIpQuality(it, query = client::query) }, client::close,
+            IpQualityStore(File(application.filesDir, "ipquality/last-exit.json"))).also {
+            it.setForeground(visible.value.active)
+            it.bind(state.value.selectedProfile, state.value.phase == VpnPhase.Running, outbound.state.value.identity?.address,
+                outbound.state.value.identity?.countryCode)
+        }
+    }
+    override val ipQuality: IpQualityFeature get() = ipQualityOwner.value
     private data class DiagnosticsBinding(val endpoint: CoreEndpoint, val client: CoreApiClient,
         val generation: Long, val configuration: Long)
     private val diagnosticsRouteRead = Mutex()
@@ -122,6 +142,22 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         current = { state.value.settings },
         publish = ::applySavedSettings,
     )
+    private var settingsLoaded = false
+    private val updateOwner = lazy {
+        UpdateFeature(UpdateRepository(UpdateHttpClient(), File(application.cacheDir, "updates"), AndroidUpdateVerifier(application)),
+            AndroidUpdatePlatform(application, application.settings), viewModelScope,
+            onAutoCheckChanged = { enabled ->
+                withContext(Dispatchers.Main.immediate) {
+                    val baseline = state.value.settings
+                    settingsUpdates.save(baseline, baseline.copy(autoCheckUpdate = enabled))
+                }
+            }).also { feature ->
+            viewModelScope.launch {
+                feature.state.collect { update -> mutableState.update { it.copy(updatePromptVisible = update.shouldShowPrompt) } }
+            }
+        }
+    }
+    override val updates: UpdateFeature get() = updateOwner.value
     private val aurora: ControllerAuroraRotation = ControllerAuroraRotation(
         settings = { state.value.settings },
         onCheck = { now, eligible ->
@@ -163,10 +199,13 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
             outbound.state.collect { snapshot ->
                 mutableState.update { it.copy(outboundIdentity = snapshot.identity,
                     outboundLoading = snapshot.loading, outboundError = snapshot.error) }
+                bindIpQuality(snapshot.identity?.address)
             }
         }
         perform("load") {
             settingsUpdates.load()
+            settingsLoaded = true
+            autoCheckUpdates()
             reloadProfiles()
         }
         viewModelScope.launch {
@@ -270,9 +309,15 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
     fun setVisible(value: Boolean) {
         visible.update { it.changed(value) }
         outbound.setActive(value)
+        if (ipQualityOwner.isInitialized()) ipQualityOwner.value.setForeground(value)
         profileMaintenance.setForeground(value)
+        autoCheckUpdates()
         if (!value) bindDiagnostics(null)
         if (!value) currentSession?.close()
+    }
+
+    private fun autoCheckUpdates() {
+        if (settingsLoaded && visible.value.active) updates.autoCheckOnce()
     }
 
     fun initializeAurora(state: AuroraLifecycleState?) { aurora.initialize(state) }
@@ -290,6 +335,8 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
     override fun onCleared() {
         backup.close()
         if (profileListOwner.isInitialized()) profileListOwner.value.close()
+        if (ipQualityOwner.isInitialized()) ipQualityOwner.value.close()
+        if (updateOwner.isInitialized()) updateOwner.value.close()
         profileMaintenance.close()
         diagnostics.close()
         diagnosticsRouteJob?.cancel()
@@ -488,7 +535,10 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         }
     }
 
-    override fun refreshOutbound() { outbound.refresh() }
+    override fun refreshOutbound() {
+        outbound.refresh()
+        if (ipQualityOwner.isInitialized()) ipQualityOwner.value.retryIfFailed()
+    }
 
     override fun closeConnection(id: String) = perform("connection:$id") {
         val client = requireApi()
@@ -584,6 +634,12 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
             snapshotPicks ?: state.value.groups.routePicks()
         } else null
         outbound.bind(key, picks)
+        bindIpQuality(outbound.state.value.identity?.address)
+    }
+
+    private fun bindIpQuality(ip: String?) {
+        if (ipQualityOwner.isInitialized()) ipQualityOwner.value.bind(state.value.selectedProfile,
+            state.value.phase == VpnPhase.Running, ip, outbound.state.value.identity?.countryCode?.takeIf { ip != null })
     }
 
     private fun invalidateOutboundConfiguration() {
@@ -591,6 +647,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         bindDiagnostics(null)
         outboundBlockedEndpoint = application.vpn.value.endpoint
         outbound.bind(null)
+        bindIpQuality(null)
     }
 
     private fun reconnectSelected(id: String) {
@@ -851,6 +908,7 @@ private fun mergeSettingsChanges(baseline: LiteSettings, requested: LiteSettings
         packages = choose(baseline.packages, requested.packages, current.packages),
         autoStart = choose(baseline.autoStart, requested.autoStart, current.autoStart),
         openLogs = choose(baseline.openLogs, requested.openLogs, current.openLogs),
+        autoCheckUpdate = choose(baseline.autoCheckUpdate, requested.autoCheckUpdate, current.autoCheckUpdate),
         colorStyle = choose(baseline.colorStyle, requested.colorStyle, current.colorStyle),
         auroraColors = choose(baseline.auroraColors, requested.auroraColors, current.auroraColors),
         auroraSeed = choose(baseline.auroraSeed, requested.auroraSeed, current.auroraSeed),

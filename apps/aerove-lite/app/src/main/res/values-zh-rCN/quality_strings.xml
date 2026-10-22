@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="quality_title">出口 IP</string>
+    <string name="quality_short">质量</string>
+    <string name="quality_loading">查询中…</string>
+    <string name="quality_unknown">类型未知</string>
+    <string name="quality_failed">类型查询失败</string>
+    <string name="quality_retry">重新查询</string>
+    <string name="quality_copy">复制</string>
+    <string name="quality_detection_tip">依赖第三方 API，仅供参考</string>
+    <string name="quality_ip">IP 地址</string>
+    <string name="quality_level">等级</string>
+    <string name="quality_type">类型</string>
+    <string name="quality_flags">命中标记</string>
+    <string name="quality_organization">组织</string>
+    <string name="quality_asn">ASN</string>
+    <string name="quality_source">采用来源</string>
+    <string name="quality_residential">住宅</string>
+    <string name="quality_mobile">移动网络</string>
+    <string name="quality_business">商业</string>
+    <string name="quality_hosting">机房</string>
+    <string name="quality_good">优</string>
+    <string name="quality_normal">普通</string>
+    <string name="quality_risky">风险</string>
+    <string name="quality_proxy">代理</string>
+    <string name="quality_vpn">VPN</string>
+    <string name="quality_tor">Tor</string>
+    <string name="quality_abuser">滥用记录</string>
+    <string name="quality_none">无</string>
+    <string name="quality_hide_ip">隐藏 IP 地址</string>
+    <string name="quality_provisional">上次已确认出口，正在核验当前路由</string>
+    <string name="quality_cooldown">失败后自动查询冷却五分钟，可点“重新查询”立即重试。</string>
+    <string name="quality_source_no_type">未返回 IP 类型</string>
+    <string name="quality_source_timeout">超时</string>
+    <string name="quality_source_rate_limited">请求受限</string>
+    <string name="quality_source_failed">失败</string>
+    <string name="quality_source_mismatch">IP 地址不一致</string>
+    <string name="quality_save_failed">上次出口或隐私偏好保存失败</string>
+</resources>

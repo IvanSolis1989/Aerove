@@ -78,6 +78,7 @@ class DashboardLayoutUiTest {
     private fun launch(initial: LiteState) {
         state.value = initial
         compose.replaceAppContent {
+            IpQualityFixture(state.value) {
             CompositionLocalProvider(LocalLiteMotionOverride provides true) {
                 LiteTheme(state.value.settings) {
                     density = LocalDensity.current.density
@@ -110,6 +111,7 @@ class DashboardLayoutUiTest {
                         }
                     }
                 }
+            }
             }
         }
     }

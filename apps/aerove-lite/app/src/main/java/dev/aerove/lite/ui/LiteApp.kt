@@ -120,7 +120,7 @@ fun LiteApp(state: LiteState, actions: LiteActions) {
         val scanMounted = scanner.currentState || scanner.targetState
         var deleting by remember { mutableStateOf<ProfileSummary?>(null) }
         val appearanceOverlay = remember { LiteOverlayState() }
-        val covered = subscriptionEditor || deleting != null || state.message != null || appearanceOverlay.content != null
+        val covered = subscriptionEditor || deleting != null || state.message != null || appearanceOverlay.content != null || state.updatePromptVisible
         val modal = covered || scanMounted || editorProfile != null || dashboardEditing
         val lifecycle = LocalLifecycleOwner.current.lifecycle
         var resumed by remember(lifecycle) { mutableStateOf(lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) }
@@ -196,7 +196,7 @@ fun LiteApp(state: LiteState, actions: LiteActions) {
                         memoryInfoContent = { MemoryInfoPanel(state, actions) })
                 }
                 CompositionLocalProvider(LocalDiagnosticsForeground provides
-                    (resumed && !subscriptionEditor && deleting == null && state.message == null && !scanMounted && editorProfile == null && !dashboardEditing)) {
+                    (resumed && !subscriptionEditor && deleting == null && state.message == null && !state.updatePromptVisible && !scanMounted && editorProfile == null && !dashboardEditing)) {
                 val editing = editorProfile
                 if (dashboardEditing) {
                     Box(Modifier.fillMaxSize().safeDrawingPadding()) {
@@ -287,6 +287,7 @@ fun LiteApp(state: LiteState, actions: LiteActions) {
                             LiteButton(stringResource(R.string.lite_dismiss), actions::dismissMessage, Modifier.fillMaxWidth())
                         }
                     }
+                    if (state.updatePromptVisible) UpdateHost(features().updates)
                 }
             }
         }

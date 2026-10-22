@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="quality_title">Outbound IP</string>
+    <string name="quality_short">Quality</string>
+    <string name="quality_loading">Checking…</string>
+    <string name="quality_unknown">Unknown type</string>
+    <string name="quality_failed">Couldn’t determine the IP type</string>
+    <string name="quality_retry">Check again</string>
+    <string name="quality_copy">Copy</string>
+    <string name="quality_detection_tip">Relies on a third-party API; for reference only</string>
+    <string name="quality_ip">IP address</string>
+    <string name="quality_level">Level</string>
+    <string name="quality_type">Type</string>
+    <string name="quality_flags">Flags</string>
+    <string name="quality_organization">Organization</string>
+    <string name="quality_asn">ASN</string>
+    <string name="quality_source">Answered by</string>
+    <string name="quality_residential">Residential</string>
+    <string name="quality_mobile">Mobile network</string>
+    <string name="quality_business">Business</string>
+    <string name="quality_hosting">Data center</string>
+    <string name="quality_good">Good</string>
+    <string name="quality_normal">Normal</string>
+    <string name="quality_risky">Risky</string>
+    <string name="quality_proxy">Proxy</string>
+    <string name="quality_vpn">VPN</string>
+    <string name="quality_tor">Tor</string>
+    <string name="quality_abuser">Abuse history</string>
+    <string name="quality_none">None</string>
+    <string name="quality_hide_ip">Hide IP address</string>
+    <string name="quality_provisional">Last confirmed exit; checking the current route</string>
+    <string name="quality_cooldown">Automatic checks pause for five minutes after failure. Check again to retry now.</string>
+    <string name="quality_source_no_type">No IP type returned</string>
+    <string name="quality_source_timeout">Timed out</string>
+    <string name="quality_source_rate_limited">Rate limited</string>
+    <string name="quality_source_failed">Failed</string>
+    <string name="quality_source_mismatch">IP address mismatch</string>
+    <string name="quality_save_failed">Couldn’t save the last exit or privacy preference</string>
+</resources>
