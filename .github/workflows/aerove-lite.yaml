@@ -13,6 +13,11 @@ on:
         required: false
         type: boolean
         default: false
+      native_test_filter:
+        description: Optional Rust test-name prefix for native-only failure diagnosis; empty runs the full suite
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -48,6 +53,8 @@ jobs:
       - name: Initialize native lock and run host Rust tests
         if: ${{ inputs.native_preflight }}
         shell: bash
+        env:
+          NATIVE_TEST_FILTER: ${{ inputs.native_test_filter }}
         run: |
           evidence="$RUNNER_TEMP/lite-native-preflight"
           mkdir -p "$evidence"
@@ -65,11 +72,23 @@ jobs:
               'lockPresentBefore': lock.is_file(),
           }, indent=2))
           PY
-          set +e
-          python3 apps/aerove-lite/native/build.py --initialize-lock --test > "$evidence/native-test.log" 2>&1
-          command_status=$?
-          set -e
-          cat "$evidence/native-test.log"
+          if [[ -n "$NATIVE_TEST_FILTER" ]]; then
+            [[ "$NATIVE_TEST_FILTER" =~ ^[[:alnum:]_:]+$ ]] || exit 2
+            python3 apps/aerove-lite/native/build.py --initialize-lock --prepare-only
+            set +e
+            CARGO_TARGET_DIR="$GITHUB_WORKSPACE/apps/aerove-lite/native/target" RUST_BACKTRACE=1 \
+              timeout --signal=TERM --kill-after=10s 120s cargo test \
+              --manifest-path apps/aerove-lite/native/Cargo.toml --locked --lib "$NATIVE_TEST_FILTER" \
+              -- --test-threads=1 --nocapture 2>&1 | tee "$evidence/native-test.log"
+            command_status=${PIPESTATUS[0]}
+            set -e
+          else
+            set +e
+            timeout --signal=TERM --kill-after=10s 10m \
+              python3 apps/aerove-lite/native/build.py --initialize-lock --test 2>&1 | tee "$evidence/native-test.log"
+            command_status=${PIPESTATUS[0]}
+            set -e
+          fi
           python3 - "$command_status" <<'PY'
           import hashlib, json, os, sys
           from pathlib import Path
@@ -80,7 +99,10 @@ jobs:
           provenance = json.loads(provenance_path.read_text()) if provenance_path.is_file() else None
           result = {
               **before,
-              'command': 'python3 apps/aerove-lite/native/build.py --initialize-lock --test',
+              'command': ('timeout --signal=TERM --kill-after=10s 120s cargo test --manifest-path apps/aerove-lite/native/Cargo.toml --locked --lib '
+                          + os.environ['NATIVE_TEST_FILTER'] + ' -- --test-threads=1 --nocapture') if os.environ['NATIVE_TEST_FILTER'] else
+                         'timeout --signal=TERM --kill-after=10s 10m python3 apps/aerove-lite/native/build.py --initialize-lock --test',
+              'testSelection': os.environ['NATIVE_TEST_FILTER'] or 'full-suite',
               'commandLog': 'native-test.log',
               'commandExitCode': int(sys.argv[1]),
               'lockSha256After': hashlib.sha256(lock.read_bytes()).hexdigest() if lock.is_file() else None,
