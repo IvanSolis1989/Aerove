@@ -28,6 +28,8 @@ def check():
             errors.append(f'Unexpected public root file: {name}')
         elif len(parts) > 1 and parts[0] not in PUBLIC_DIRECTORIES:
             errors.append(f'Unexpected public root directory: {parts[0]}')
+        if parts[0] == 'apps' and len(parts) > 1 and parts[1] not in PRODUCTS:
+            errors.append(f'Unregistered product directory: {name}')
         if parts[0] == 'docs' and len(parts) > 1 and parts[1] not in {'README.md', 'CHANGELOG_Aerove.md'} and parts[1] not in DOC_AREAS:
             errors.append(f'Unclassified document: {name}')
     for name in ['apps/aerove/pubspec.yaml', 'apps/aerove-lite/settings.gradle.kts', 'docs/README.md',
