@@ -130,7 +130,7 @@ class SourcePreparationTest(unittest.TestCase):
                 self.assertEqual(provenance["inboundTestsSha256"], prepare.digest(b"inbound_tests\n"))
                 self.assertEqual((target / "clash-lib/src/mobile/inbound_tests.rs").read_bytes(), b"inbound_tests\n")
                 self.assertEqual(provenance["runtimeModeTestsSha256"], prepare.digest(b"runtime_mode_tests\n"))
-                self.assertEqual((target / "clash-lib/src/mobile/runtime_mode_tests.rs").read_bytes(), b"runtime_mode_tests\n")
+                self.assertEqual((target / "clash-lib/src/runtime_mode_tests.rs").read_bytes(), b"runtime_mode_tests\n")
                 self.assertEqual(provenance["treeSha256"], prepare.tree_digest(target))
                 prepare.prepare(blob)
                 (target / "clash-lib/src/lib.rs").write_text("tampered")

@@ -184,7 +184,7 @@ def prepare(archive: Path | None = None) -> Path:
         (resource_target.parent / "service_check_tests.rs").write_bytes(service_check_tests)
         (resource_target.parent / "inbound.rs").write_bytes(inbound)
         (resource_target.parent / "inbound_tests.rs").write_bytes(inbound_tests)
-        (resource_target.parent / "runtime_mode_tests.rs").write_bytes(runtime_mode_tests)
+        (staging / "clash-lib/src/runtime_mode_tests.rs").write_bytes(runtime_mode_tests)
         provenance["treeSha256"] = tree_digest(staging)
         (staging / "AEROVE_PROVENANCE.json").write_text(
             json.dumps(provenance, indent=2) + "\n", encoding="utf-8", newline="\n")
