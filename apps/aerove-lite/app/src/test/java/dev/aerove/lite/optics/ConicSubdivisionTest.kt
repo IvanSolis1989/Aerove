@@ -14,7 +14,7 @@ class ConicSubdivisionTest {
         assertEquals(arc.end, polyline.last())
         polyline.zipWithNext().forEach { (a, b) ->
             assertTrue(hypot(a.x, a.y) > 0.999999999)
-            val mid = (a + b) / 2
+            val mid = (a + b) / 2.0
             assertTrue(1 - hypot(mid.x, mid.y) <= 0.0001)
         }
     }

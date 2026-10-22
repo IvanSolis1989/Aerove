@@ -177,10 +177,10 @@ jobs:
               print('Verified cached MiSans font and license')
               sys.exit(0)
           first, last = 213458452, 227869191
-          request = urllib.request.Request(
-              'https://hyperos.mi.com/font-download/MiSans.zip',
-              headers={'Range': f'bytes={first}-{last}', 'User-Agent': 'Mozilla/5.0'})
-          for attempt in range(3):
+          for attempt, query in enumerate(('?download=1', '', '?fixture=4.009')):
+              request = urllib.request.Request(
+                  'https://hyperos.mi.com/font-download/MiSans.zip' + query,
+                  headers={'Range': f'bytes={first}-{last}', 'User-Agent': 'Mozilla/5.0'})
               try:
                   with urllib.request.urlopen(request, timeout=60) as response:
                       assert response.status == 206

@@ -200,10 +200,10 @@ void main() {
       'd',
     );
     expect(
-      RegExp(RegExp.escape(path)).allMatches(_read('site/index.html')),
+      RegExp(RegExp.escape(path)).allMatches(_read('../../website/index.html')),
       hasLength(2),
     );
-    expect(_read('site/assets/field.js'), contains(path));
+    expect(_read('../../website/assets/field.js'), contains(path));
   });
 
   test('store icon and TV banner retain their required dimensions', () async {
