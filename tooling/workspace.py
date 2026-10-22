@@ -49,6 +49,17 @@ def check():
             errors.append(f'Third-party source URL is not commit pinned: {source["path"]}')
     if listed != {path.resolve() for path in (vendor / 'src').rglob('*.java')}:
         errors.append('Third-party source closure differs from its manifest')
+    flutter = ROOT / '.github/actions/flutter'
+    installer = json.loads((flutter / 'SOURCES.json').read_text(encoding='utf-8'))
+    for source in installer['files']:
+        path = (flutter / source['path']).resolve()
+        if not path.is_relative_to(flutter.resolve()) or not path.is_file():
+            errors.append(f'Invalid Flutter installer source: {source["path"]}')
+        elif hashlib.sha256(path.read_bytes()).hexdigest() != source['sha256']:
+            errors.append(f'Flutter installer differs from its source manifest: {source["path"]}')
+    for action in re.findall(r'uses:\s+(\S+)', (flutter / 'action.yaml').read_text(encoding='utf-8')):
+        if not re.fullmatch(r'[\w.-]+/[\w./-]+@[0-9a-f]{40}', action):
+            errors.append(f'Flutter installer contains an unpinned nested action: {action}')
     from sync_update_feed import FEED, contents
     if not FEED.exists() or FEED.read_text(encoding='utf-8') != contents():
         errors.append('Compatibility update feed is stale; run python tooling/sync_update_feed.py')

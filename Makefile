@@ -12,4 +12,4 @@ full-analyze:
 	python tooling/workspace.py run aerove -- flutter analyze --no-fatal-infos
 
 lite-test:
-	python tooling/workspace.py run aerove-lite -- gradle :app:testDebugUnitTest
+	python tooling/workspace.py run aerove-lite -- gradle :app:testReleaseUnitTest

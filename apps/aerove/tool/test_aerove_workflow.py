@@ -27,12 +27,18 @@ def run_block(name):
 
 class WorkflowPolicyTest(unittest.TestCase):
     def test_all_active_actions_are_pinned_to_full_commits(self):
-        for path in WORKFLOWS.glob('*.yaml'):
+        paths = [*WORKFLOWS.glob('*.yaml'), *(ROOT / '.github/actions').rglob('action.yaml')]
+        for path in paths:
             contents = path.read_text(encoding='utf-8')
             uses = re.findall(r'^\s+(?:- )?uses:\s+(\S+)', contents, re.MULTILINE)
             with self.subTest(path=path):
                 self.assertTrue(uses)
                 for action in uses:
+                    if action.startswith('./'):
+                        local = (ROOT / action[2:]).resolve()
+                        self.assertTrue(local.is_relative_to(ROOT))
+                        self.assertTrue((local / 'action.yaml').is_file())
+                        continue
                     self.assertRegex(action, r'^[\w.-]+/[\w./-]+@[0-9a-f]{40}$')
 
     def test_official_source_and_real_go_resolution_precede_generated_tree_export(self):

@@ -119,6 +119,8 @@ expect_under 'the intl_utils localization class is skipped' "$repo/lib/l10n/l10n
 expect_under 'a vendored upstream file is skipped' "$repo/Clash.Meta/hub.go" "$(dense 20 4)"
 expect_under 'pinned material color source retains upstream comments' \
   "$repo/apps/aerove-lite/third_party/material-color-utilities/src/Cam16.java" "$(dense 20 4)"
+expect_under 'pinned Flutter composite retains upstream comments' \
+  "$repo/.github/actions/flutter/action.yaml" "$(dense 20 4)"
 expect_under 'a markdown file is skipped' "$repo/notes.md" "$(dense 20 4)"
 
 expect_over 'a dense change to a tracked file' "$repo/tracked.dart" "$(dense 8 24)"

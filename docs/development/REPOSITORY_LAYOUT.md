@@ -32,6 +32,7 @@ experiments/          可丢弃的原型，不能作为已发布功能
 - 正式文档中的图放 `docs/assets/`；应用运行资源留在产品工程。不能把测试生成的十二图当成手绘设计稿或真机性能结论。
 - 历史资料移入 `docs/archive/` 时保留来源与适用版本，并在索引注明已被哪份文件替代。仍在阻断发行的当前审计不得通过归档掩盖。
 - 停用的上游工作流位于 `tooling/archive/workflows/`，不放在 GitHub 自动发现目录。原有代码许可证和来源说明继续保留。
+- 当前 Flutter 安装 Action 的上游复用副本位于 `.github/actions/flutter/`：安装脚本保持原样，仅把嵌套缓存 Action 固定到完整 SHA，满足仓库安全策略；来源和适配后哈希由布局检查核对。
 
 唯一保留的旧文档地址是 `docs/CHANGELOG_Aerove.md`：已发行客户端会读取这个 raw URL。它由 `tooling/sync_update_feed.py` 从现行发行记录生成，禁止直接编辑；布局检查核对内容同步。新客户端读取新路径。此兼容入口有明确消费者，不是第二份权威文档。
 
@@ -46,7 +47,7 @@ GitHub 的 Workspace layout 工作流会持续检查入口、文档分类、本�
 ```sh
 python tooling/workspace.py check
 python tooling/workspace.py run aerove -- flutter analyze --no-fatal-infos
-python tooling/workspace.py run aerove-lite -- gradle :app:testDebugUnitTest
+python tooling/workspace.py run aerove-lite -- gradle :app:testReleaseUnitTest
 ```
 
 新增文档先在现有分类查找权威文件，优先更新。新增类别或根目录入口时同步修改文档索引、`tooling/workspace.py` 的布局检查及相关 CI 路径。禁止保留无维护价值的旧路径副本或通过符号链接伪装迁移完成。

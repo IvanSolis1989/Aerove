@@ -13,6 +13,13 @@ on:
       - '.agents/**/*.md'
       - 'apps/aerove-lite/**'
       - '.github/workflows/aerove-lite.yaml'
+      - '.github/workflows/workspace.yaml'
+      - '.github/workflows/pages.yaml'
+      - '.github/workflows/sync-upstream.yaml'
+      - '.github/actions/**'
+      - 'experiments/**'
+      - 'website/**'
+      - 'tooling/**'
   workflow_dispatch:
     inputs:
       prepare_sources:
@@ -48,7 +55,7 @@ env:
 
 jobs:
   reuse:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -77,7 +84,7 @@ jobs:
   verify:
     needs: reuse
     if: ${{ needs.reuse.outputs.run_id == '' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     outputs:
       generated_artifact_id: ${{ steps.generated.outputs.artifact-id }}
@@ -92,7 +99,7 @@ jobs:
         env:
           REPOSITORY: ${{ github.repository }}
         run: python3 tool/sync_fork_readme.py --root "$GITHUB_WORKSPACE" --repository "$REPOSITORY" --check
-      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+      - uses: ./.github/actions/flutter
         with:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -400,7 +407,7 @@ jobs:
   apk:
     if: ${{ github.event_name == 'push' || inputs.build_apk }}
     needs: verify
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     outputs:
       tag: ${{ steps.version.outputs.tag }}
@@ -421,7 +428,7 @@ jobs:
           git -C "$GITHUB_WORKSPACE" add -- apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
           test "$(git -C "$GITHUB_WORKSPACE" write-tree)" = "$(cat "$RUNNER_TEMP/xclash-generated/xclash-verified-tree.txt")"
           git -C "$GITHUB_WORKSPACE" restore --staged -- apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
-      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+      - uses: ./.github/actions/flutter
         with:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -537,7 +544,7 @@ jobs:
       (needs.reuse.outputs.run_id != '' ||
       (needs.verify.result == 'success' && needs.apk.result == 'success')) }}
     needs: [reuse, verify, apk]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write

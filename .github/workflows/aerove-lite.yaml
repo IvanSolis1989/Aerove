@@ -68,13 +68,24 @@ jobs:
         with:
           gradle-version: '9.6.0'
       - name: Kotlin data, lifecycle and UI compilation checks
+        id: kotlin_checks
         working-directory: apps/aerove-lite
-        run: gradle --no-daemon :app:testDebugUnitTest :app:lintDebug :app:compileReleaseAndroidTestKotlin
+        run: gradle --no-daemon :app:testReleaseUnitTest :app:lintRelease :app:compileReleaseAndroidTestKotlin
+      - name: Inspect Android tasks after verification failure
+        if: ${{ failure() && steps.kotlin_checks.outcome == 'failure' }}
+        timeout-minutes: 3
+        working-directory: apps/aerove-lite
+        shell: bash
+        run: |
+          mkdir -p app/build/reports
+          gradle --no-daemon :app:tasks --all 2>&1 | tee app/build/reports/gradle-tasks.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: AEROVE-Lite-Kotlin-verification
-          path: apps/aerove-lite/app/build/reports/
+          path: |
+            apps/aerove-lite/app/build/reports/
+            apps/aerove-lite/app/build/test-results/
           if-no-files-found: warn
   build:
     needs: [resolve, verify]

@@ -21,7 +21,7 @@ On Linux, after installing the target with `rustup target add aarch64-linux-andr
 ```sh
 python3 native/build.py --target aarch64-linux-android \
   --ndk "$ANDROID_SDK_ROOT/ndk/28.2.13676358" --output app/src/main/jniLibs
-gradle --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+gradle --no-daemon :app:testReleaseUnitTest :app:lintRelease :app:assembleDebug
 ```
 
 The first real bridge dependency resolution uses `python3 native/build.py --initialize-lock --prepare-only`. Commit
