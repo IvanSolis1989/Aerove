@@ -17,6 +17,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.core.app.ActivityOptionsCompat
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.aerove.lite.*
+import dev.aerove.lite.R
 import dev.aerove.lite.backup.BackupFeature
 import dev.aerove.lite.data.*
 import dev.aerove.lite.profiles.*

@@ -21,6 +21,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollToIndexAction
@@ -77,12 +78,12 @@ class FullAppearanceUiTest {
         compose.replaceAppContent { CompositionLocalProvider(LocalLiteMotionOverride provides true) { LiteApp(state.value, actions) } }
         openTheme()
         editFirstColor()
-        compose.onNodeWithTag("aurora-color-grid").performTouchInput { click(Offset(size.width * 0.46f, size.height * 0.55f)) }
+        compose.onNodeWithTag("aurora-color-grid").performTouchInput { click(Offset(width * 0.46f, height * 0.55f)) }
         compose.runOnUiThread { assertTrue(actions.settings.isEmpty()) }
         compose.onNodeWithText(text(R.string.lite_cancel)).performClick()
         compose.runOnUiThread { assertEquals(initial, state.value.settings); assertTrue(actions.settings.isEmpty()) }
         editFirstColor()
-        compose.onNodeWithTag("aurora-color-grid").performTouchInput { click(Offset(size.width * 0.46f, size.height * 0.55f)) }
+        compose.onNodeWithTag("aurora-color-grid").performTouchInput { click(Offset(width * 0.46f, height * 0.55f)) }
         compose.runOnUiThread { state.value = state.value.copy(settings = state.value.settings.copy(auroraSeed = 832838199)) }
         compose.onNodeWithText(text(R.string.lite_confirm)).performClick()
         compose.runOnUiThread {
