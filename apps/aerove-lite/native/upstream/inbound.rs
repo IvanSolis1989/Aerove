@@ -123,6 +123,7 @@ pub(crate) fn runtime(source: &str, config: &InternalConfig, controller: SocketA
     plan.validate(controller, config.general.ipv6)?;
     if plan.listeners() != config.listeners { return Err(super::invalid("$.listeners: runtime differs from governed network plan")); }
     Ok(Arc::new(Owner { controller, ipv6: config.general.ipv6, plan: RwLock::new(plan),
+        parked: AtomicBool::new(false),
         serial: Mutex::new(()), events: broadcast::channel(32).0, tasks: Mutex::new(JoinSet::new()),
         connections: Mutex::new(JoinSet::new()), cleanup: std::sync::Mutex::new(JoinSet::new()), running: AtomicBool::new(false), cancel }))
 }
@@ -131,7 +132,8 @@ pub(crate) struct Owner {
     controller: SocketAddr,
     ipv6: bool,
     plan: RwLock<Plan>,
-    serial: Mutex<()>,
+    pub(crate) serial: Mutex<()>,
+    parked: AtomicBool,
     events: broadcast::Sender<Bound>,
     tasks: Mutex<JoinSet<()>>,
     connections: Mutex<JoinSet<()>>,
@@ -141,6 +143,29 @@ pub(crate) struct Owner {
 }
 
 impl Owner {
+    pub(crate) fn is_parked(&self) -> bool { self.parked.load(Ordering::SeqCst) }
+    pub(crate) fn set_parked(&self, parked:bool) { self.parked.store(parked,Ordering::SeqCst); }
+    pub(crate) async fn close_connections(&self) -> crate::Result<()> {
+        let mut connections=self.connections.lock().await;
+        connections.abort_all();
+        while let Some(result)=connections.join_next().await {
+            if let Err(error)=result && !error.is_cancelled(){return Err(crate::Error::Operation(format!("connection park: {error}")));}
+        }
+        drop(connections);
+        loop {
+            let mut cleanup=std::mem::replace(&mut *self.cleanup.lock().unwrap(),JoinSet::new());
+            if cleanup.is_empty(){break;}
+            while let Some(result)=cleanup.join_next().await { result.map_err(|e|crate::Error::Operation(format!("datagram park: {e}")))?; }
+        }
+        Ok(())
+    }
+    pub(crate) async fn resume_users(&self,active:&RuntimeComponents)->crate::Result<()> {
+        let mut events=self.events.subscribe();let mut expected=self.expected();
+        active.inbound_manager.mobile_resume().await?;
+        let ready=async {while !expected.is_empty(){let bound=events.recv().await.map_err(|_|super::invalid("listener resume closed"))?;accept_ready(&mut expected,bound)?;}Ok::<(),crate::Error>(())};
+        tokio::time::timeout(Duration::from_secs(8),ready).await.map_err(|_|super::invalid("listener resume bind timed out"))??;
+        Ok(())
+    }
     pub(crate) fn expected(&self) -> HashMap<Identity, SocketAddr> { self.plan.read().unwrap().expected() }
     pub(crate) fn mark_ready(&self) { self.running.store(true, Ordering::SeqCst); }
 
@@ -169,6 +194,7 @@ impl Owner {
     async fn apply(&self, components: Arc<RwLock<Arc<RuntimeComponents>>>, request: Update) -> std::result::Result<Value, (StatusCode, &'static str)> {
         let _serial = self.serial.lock().await;
         if self.cancel.is_cancelled() { return Err((StatusCode::SERVICE_UNAVAILABLE, "session_stopped")); }
+        if self.is_parked() { return Err((StatusCode::CONFLICT, "listeners_parked")); }
         let stamp = super::telemetry::route_stamp().map_err(|_| (StatusCode::CONFLICT, "network_changed"))?;
         if Some(stamp.0) != request.epoch() { return Err((StatusCode::CONFLICT, "network_epoch_changed")); }
         let active = components.read().unwrap().clone();
@@ -213,7 +239,7 @@ impl Owner {
         let allow_lan = manager.get_allow_lan().await;
         let bind_address = manager.get_bind_address().await.0.to_string();
         let listeners = manager.get_listeners().await;
-        if self.cancel.is_cancelled() || super::telemetry::route_stamp().ok() != Some(stamp) || listeners.iter().any(|listener| !listener.active) {
+        if self.cancel.is_cancelled() || super::telemetry::route_stamp().ok() != Some(stamp) || (!self.is_parked() && listeners.iter().any(|listener| !listener.active)) {
             return Err((StatusCode::CONFLICT, "network_changed"));
         }
         let mut active_ports: Vec<_> = listeners.iter().filter(|listener| listener.active).map(|listener| listener.port).collect();

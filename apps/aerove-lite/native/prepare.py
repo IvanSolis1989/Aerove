@@ -119,6 +119,9 @@ def prepare(archive: Path | None = None) -> Path:
     if digest(data) != ARCHIVE_SHA256:
         raise ValueError("upstream archive SHA256 mismatch")
     patch = (ROOT / "upstream.patch").read_bytes()
+    parity_patch = (ROOT / "parity.patch").read_bytes()
+    runtime_control = (ROOT / "upstream/runtime_control.rs").read_bytes()
+    runtime_control_tests = (ROOT / "upstream/runtime_control_tests.rs").read_bytes()
     observation_patch = (ROOT / "newobs.patch").read_bytes()
     observations = (ROOT / "upstream/observations.rs").read_bytes()
     observation_tests = (ROOT / "upstream/observation_tests.rs").read_bytes()
@@ -130,6 +133,10 @@ def prepare(archive: Path | None = None) -> Path:
     telemetry = (ROOT / "upstream/telemetry.rs").read_bytes()
     telemetry_tests = (ROOT / "upstream/telemetry_tests.rs").read_bytes()
     http_probe = (ROOT / "upstream/http_probe.rs").read_bytes()
+    dns_network = (ROOT / "upstream/dns_network.rs").read_bytes()
+    dns_network_tests = (ROOT / "upstream/dns_network_tests.rs").read_bytes()
+    http_policy = (ROOT / "upstream/http_policy.rs").read_bytes()
+    http_policy_tests = (ROOT / "upstream/http_policy_tests.rs").read_bytes()
     service_check = (ROOT / "upstream/service_check.rs").read_bytes()
     service_rules = (ROOT / "upstream/service_rules.rs").read_bytes()
     service_check_tests = (ROOT / "upstream/service_check_tests.rs").read_bytes()
@@ -139,6 +146,7 @@ def prepare(archive: Path | None = None) -> Path:
     provenance = {
         "repository": "https://github.com/ibigbug/clash-rs",
         "tag": "v0.10.10", "commit": COMMIT, "archiveSha256": digest(data),
+        "parityPatchSha256": digest(parity_patch), "runtimeControlSha256": digest(runtime_control), "runtimeControlTestsSha256": digest(runtime_control_tests),
         "observationPatchSha256": digest(observation_patch),
         "observationsSha256": digest(observations), "observationTestsSha256": digest(observation_tests),
         "patchSha256": digest(patch), "mobileSha256": digest(overlay),
@@ -147,6 +155,8 @@ def prepare(archive: Path | None = None) -> Path:
         "outboundRouteTestsSha256": digest(outbound_route_tests),
         "telemetrySha256": digest(telemetry), "telemetryTestsSha256": digest(telemetry_tests),
         "httpProbeSha256": digest(http_probe),
+        "dnsNetworkSha256":digest(dns_network), "dnsNetworkTestsSha256":digest(dns_network_tests),
+        "httpPolicySha256": digest(http_policy), "httpPolicyTestsSha256": digest(http_policy_tests),
         "serviceCheckSha256": digest(service_check),
         "serviceRulesSha256": digest(service_rules),
         "serviceCheckTestsSha256": digest(service_check_tests),
@@ -167,10 +177,13 @@ def prepare(archive: Path | None = None) -> Path:
         extract(data, staging)
         apply_patch(staging, patch.decode("utf-8"))
         apply_patch(staging, observation_patch.decode("utf-8"))
+        apply_patch(staging, parity_patch.decode("utf-8"))
         (staging / "clash-lib/src/mobile.rs").write_bytes(overlay)
         resource_target = staging / "clash-lib/src/mobile/resources.rs"
         resource_target.parent.mkdir(exist_ok=True)
         resource_target.write_bytes(resources)
+        (resource_target.parent / "runtime_control.rs").write_bytes(runtime_control)
+        (resource_target.parent / "runtime_control_tests.rs").write_bytes(runtime_control_tests)
         (resource_target.parent / "observations.rs").write_bytes(observations)
         (resource_target.parent / "observation_tests.rs").write_bytes(observation_tests)
         (resource_target.parent / "outbound.rs").write_bytes(outbound)
@@ -179,6 +192,10 @@ def prepare(archive: Path | None = None) -> Path:
         (resource_target.parent / "telemetry.rs").write_bytes(telemetry)
         (resource_target.parent / "telemetry_tests.rs").write_bytes(telemetry_tests)
         (resource_target.parent / "http_probe.rs").write_bytes(http_probe)
+        (resource_target.parent / "dns_network.rs").write_bytes(dns_network)
+        (resource_target.parent / "dns_network_tests.rs").write_bytes(dns_network_tests)
+        (resource_target.parent / "http_policy.rs").write_bytes(http_policy)
+        (resource_target.parent / "http_policy_tests.rs").write_bytes(http_policy_tests)
         (resource_target.parent / "service_check.rs").write_bytes(service_check)
         (resource_target.parent / "service_rules.rs").write_bytes(service_rules)
         (resource_target.parent / "service_check_tests.rs").write_bytes(service_check_tests)

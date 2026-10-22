@@ -38,6 +38,8 @@ pub(crate) struct Bus {
     traffic: watch::Sender<Traffic>,
     groups: watch::Sender<u64>,
     cancel: CancellationToken,
+    statistics: Mutex<(bool, Traffic, Traffic)>,
+    http_policy: std::sync::RwLock<Arc<super::http_policy::Policy>>,
     log_level: Mutex<Option<tracing::level_filters::LevelFilter>>,
     delay: Mutex<Delay>,
     delay_updated: Notify,
@@ -84,6 +86,8 @@ impl Bus {
             traffic: watch::channel(Traffic::default()).0,
             groups: watch::channel(0).0,
             cancel,
+            http_policy: std::sync::RwLock::new(Arc::new(super::http_policy::Policy::default())),
+            statistics: Mutex::new((false,Traffic::default(),Traffic::default())),
             log_level: Mutex::new(None),
             delay: Mutex::new(Delay::default()),
             delay_updated: Notify::new(),
@@ -97,6 +101,17 @@ impl Bus {
 
     pub(crate) fn set_log_level(&self, level: tracing::level_filters::LevelFilter) { if !self.cancel.is_cancelled() { *self.log_level.lock().unwrap() = Some(level); } }
 
+    pub(crate) fn http_policy(&self)->Arc<super::http_policy::Policy> { self.http_policy.read().unwrap().clone() }
+    pub(crate) fn set_http_policy(&self,policy:super::http_policy::Policy) { *self.http_policy.write().unwrap()=Arc::new(policy); }
+    pub(crate) fn only_statistics_proxy(&self)->bool { self.statistics.lock().unwrap().0 }
+    pub(crate) fn set_only_statistics_proxy(&self,only:bool) {
+        let mut state=self.statistics.lock().unwrap();state.0=only;
+        let sample=if only {state.2}else{state.1};drop(state);self.publish(sample);
+    }
+    pub(crate) fn publish_statistics(&self,all:Traffic,proxy:Traffic) {
+        let mut state=self.statistics.lock().unwrap();state.1=all;state.2=proxy;
+        let sample=if state.0{proxy}else{all};drop(state);self.publish(sample);
+    }
     pub(crate) fn publish(&self, sample: Traffic) {
         if !self.cancel.is_cancelled() {
             let _ = self.traffic.send_replace(sample);

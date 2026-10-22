@@ -1,0 +1,948 @@
+--- a/clash-dns/src/handler.rs
++++ b/clash-dns/src/handler.rs
+@@ -208,10 +208,35 @@
+ where
+     X: DnsMessageExchanger + Sync + Send + Unpin + 'static,
+ {
++    get_dns_listener_impl(listen,exchanger,cwd,None).await.ok().flatten()
++}
++
++pub async fn get_dns_listener_checked<X>(
++    listen: DNSListenAddr,
++    exchanger: X,
++    cwd: &std::path::Path,
++    shutdown: impl Future<Output=()>+Send+'static,
++) -> Result<Option<futures::future::BoxFuture<'static, Result<(), DNSError>>>,DNSError>
++where
++    X: DnsMessageExchanger + Sync + Send + Unpin + 'static,
++{
++    get_dns_listener_impl(listen,exchanger,cwd,Some(Box::pin(shutdown))).await
++}
++
++async fn get_dns_listener_impl<X>(
++    listen: DNSListenAddr,
++    exchanger: X,
++    cwd: &std::path::Path,
++    shutdown:Option<futures::future::BoxFuture<'static,()>>,
++) -> Result<Option<futures::future::BoxFuture<'static, Result<(), DNSError>>>,DNSError>
++where
++    X: DnsMessageExchanger + Sync + Send + Unpin + 'static,
++{
+     let handler = DnsHandler { exchanger };
+     let mut s = Server::new(handler);
+ 
+     let mut has_server = false;
++    let mut failure=None;
+ 
+     if let Some(addr) = listen.udp {
+         has_server = UdpSocket::bind(addr)
+@@ -221,6 +246,7 @@
+                 s.register_socket(x);
+             })
+             .inspect_err(|x| {
++                failure=Some(x.to_string());
+                 error!("failed to listen UDP DNS server on {}: {}", addr, x);
+             })
+             .is_ok();
+@@ -233,6 +259,7 @@
+                 s.register_listener(x, DEFAULT_DNS_SERVER_TIMEOUT, 4096);
+             })
+             .inspect_err(|x| {
++                failure=Some(x.to_string());
+                 error!("failed to listen TCP DNS server on {}: {}", addr, x);
+             })
+             .is_ok();
+@@ -274,6 +301,7 @@
+                 Ok(())
+             })
+             .inspect_err(|x| {
++                failure=Some(x.to_string());
+                 error!("failed to listen DoH server on {}: {}", c.addr, x);
+             })
+             .is_ok();
+@@ -313,6 +341,7 @@
+                 Ok(())
+             })
+             .inspect_err(|x| {
++                failure=Some(x.to_string());
+                 error!("failed to listen DoT DNS server on {}: {}", c.addr, x);
+             })
+             .is_ok();
+@@ -354,24 +383,26 @@
+                 Ok(())
+             })
+             .inspect_err(|x| {
++                failure=Some(x.to_string());
+                 error!("failed to listen DoH3 DNS server on {}: {}", c.addr, x);
+             })
+             .is_ok();
+     }
+ 
+-    if !has_server {
+-        return None;
++    if shutdown.is_some() {if let Some(error)=failure {let _=s.shutdown_gracefully().await;return Err(DNSError::Io(new_io_error(format!("DNS listener bind: {error}"))));}}
++    if !has_server {return Ok(None);
+     }
+ 
+     let mut l = DnsListener { server: s };
+ 
+-    Some(Box::pin(async move {
++    Ok(Some(Box::pin(async move {
+         info!("starting DNS server");
+-        l.server.block_until_done().await.map_err(|x| {
+-            warn!("dns server error: {}", x);
+-            DNSError::Io(new_io_error(format!("dns server error: {x}")))
++        if let Some(shutdown)=shutdown {
++            tokio::select! {biased;_=shutdown=>l.server.shutdown_gracefully().await,res=l.server.block_until_done()=>res}
++        }else {l.server.block_until_done().await}.map_err(|x| {
++            warn!("dns server error: {}",x);DNSError::Io(new_io_error(format!("dns server error: {x}")))
+         })
+-    }))
++    })))
+ }
+ 
+ #[cfg(test)]
+--- a/clash-dns/src/lib.rs
++++ b/clash-dns/src/lib.rs
+@@ -10,7 +10,7 @@
+ mod tls;
+ mod utils;
+ 
+-pub use handler::{DNSError, get_dns_listener};
++pub use handler::{DNSError, get_dns_listener, get_dns_listener_checked};
+ 
+ #[derive(Debug, Deserialize, Clone)]
+ #[serde(rename_all = "kebab-case")]
+--- a/clash-lib/src/app/api/handlers/provider.rs
++++ b/clash-lib/src/app/api/handlers/provider.rs
+@@ -307,16 +307,32 @@
+     }
+ }
+ 
++#[derive(Deserialize)]
++#[serde(rename_all="camelCase",deny_unknown_fields)]
++struct RulePageQuery {offset:Option<usize>,limit:Option<usize>,core_epoch:Option<String>}
++
+ async fn get_rule_provider_rules(
+     State(state): State<RuleProviderState>,
+     Path(RuleProviderNamePath { provider_name }): Path<RuleProviderNamePath>,
++    Query(query):Query<RulePageQuery>,
+ ) -> impl IntoResponse {
+     match state.router().get_rule_providers().get(&provider_name) {
+         Some(p) => {
+-            let rules = p.list_rules(500).await;
+-            let mut res = HashMap::new();
+-            res.insert("rules", rules);
+-            axum::response::Json(res).into_response()
++            let offset=query.offset.unwrap_or(0);let limit=query.limit.unwrap_or(500);
++            if limit==0||limit>10000 {return (StatusCode::BAD_REQUEST,"limit must be 1..10000").into_response();}
++            #[cfg(feature="aerove-mobile")]
++            let stamp=match crate::mobile::telemetry::route_stamp(){Ok(stamp)=>stamp,Err(_)=>return (StatusCode::CONFLICT,"route mutation in progress").into_response()};
++            #[cfg(feature="aerove-mobile")]
++            if query.core_epoch.as_ref().is_some_and(|epoch|epoch!=&stamp.0.to_string()){return (StatusCode::CONFLICT,"stale coreEpoch").into_response();}
++            let page=p.rule_page(offset,limit).await;
++            #[cfg(feature="aerove-mobile")]
++            if crate::mobile::telemetry::route_stamp().ok()!=Some(stamp){return (StatusCode::CONFLICT,"route changed during rule dump").into_response();}
++            let mut result=serde_json::to_value(page).expect("rule page serializes");
++            #[cfg(feature="aerove-mobile")]
++            {result["coreEpoch"]=json!(stamp.0.to_string());}
++            #[cfg(not(feature="aerove-mobile"))]
++            {let _=&query.core_epoch;}
++            axum::response::Json(result).into_response()
+         }
+         None => (
+             StatusCode::NOT_FOUND,
+--- a/clash-lib/src/app/dispatcher/statistics_manager.rs
++++ b/clash-lib/src/app/dispatcher/statistics_manager.rs
+@@ -54,6 +54,9 @@
+ 
+ #[derive(Serialize, Default)]
+ pub struct TrackerInfo {
++    #[cfg(feature="aerove-mobile")]
++    #[serde(skip)]
++    proxy_traffic: std::sync::atomic::AtomicBool,
+     #[serde(rename = "id")]
+     pub uuid: uuid::Uuid,
+     #[serde(rename = "metadata")]
+@@ -90,6 +93,8 @@
+         if n == 0 {
+             return;
+         }
++        #[cfg(feature="aerove-mobile")]
++        if self.proxy_traffic.load(Ordering::Relaxed) { mgr.proxy_download_temp.fetch_add(n as u64,Ordering::Relaxed); mgr.proxy_download_total.fetch_add(n as u64,Ordering::Relaxed); }
+         mgr.push_downloaded(n);
+         self.download_total
+             .fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
+@@ -103,6 +108,8 @@
+         if n == 0 {
+             return;
+         }
++        #[cfg(feature="aerove-mobile")]
++        if self.proxy_traffic.load(Ordering::Relaxed) { mgr.proxy_upload_temp.fetch_add(n as u64,Ordering::Relaxed); mgr.proxy_upload_total.fetch_add(n as u64,Ordering::Relaxed); }
+         mgr.push_uploaded(n);
+         self.upload_total
+             .fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
+@@ -186,6 +193,21 @@
+ }
+ 
+ pub struct Manager {
++    #[cfg(feature="aerove-mobile")]
++    mobile_outbounds: RwLock<Option<Weak<crate::app::outbound::manager::OutboundManager>>>,
++    #[cfg(feature="aerove-mobile")]
++    proxy_upload_temp: AtomicU64,
++    #[cfg(feature="aerove-mobile")]
++    proxy_download_temp: AtomicU64,
++    #[cfg(feature="aerove-mobile")]
++    proxy_upload_blip: AtomicU64,
++    #[cfg(feature="aerove-mobile")]
++    proxy_download_blip: AtomicU64,
++    #[cfg(feature="aerove-mobile")]
++    proxy_upload_total: AtomicU64,
++    #[cfg(feature="aerove-mobile")]
++    proxy_download_total: AtomicU64,
++
+     #[cfg(feature = "aerove-mobile")]
+     observations: Option<Arc<crate::mobile::observations::Collector>>,
+     connections: Arc<Mutex<ConnectionMap>>,
+@@ -301,6 +323,21 @@
+         };
+ 
+         let v = Arc::new(Self {
++            #[cfg(feature="aerove-mobile")]
++            mobile_outbounds: RwLock::new(None),
++            #[cfg(feature="aerove-mobile")]
++            proxy_upload_temp: AtomicU64::new(0),
++            #[cfg(feature="aerove-mobile")]
++            proxy_download_temp: AtomicU64::new(0),
++            #[cfg(feature="aerove-mobile")]
++            proxy_upload_blip: AtomicU64::new(0),
++            #[cfg(feature="aerove-mobile")]
++            proxy_download_blip: AtomicU64::new(0),
++            #[cfg(feature="aerove-mobile")]
++            proxy_upload_total: AtomicU64::new(0),
++            #[cfg(feature="aerove-mobile")]
++            proxy_download_total: AtomicU64::new(0),
++
+             #[cfg(feature = "aerove-mobile")]
+             observations: crate::mobile::observations::source(),
+             connections: Arc::new(Mutex::new(HashMap::new())),
+@@ -355,6 +392,9 @@
+         *guard = Some(Arc::downgrade(&r));
+     }
+ 
++    #[cfg(feature="aerove-mobile")]
++    pub async fn set_mobile_outbounds(&self, outbounds: Weak<crate::app::outbound::manager::OutboundManager>) { *self.mobile_outbounds.write().await=Some(outbounds); }
++
+     pub async fn track(&self, item: Tracked, close_notify: Sender<()>) {
+         // Memory pressure check: reject NEW connections when over limit.
+         // Existing connections are kept alive (network stays up, just slower).
+@@ -378,6 +418,23 @@
+ 
+         #[cfg(feature = "aerove-mobile")]
+         let info = item.tracker_info();
++        #[cfg(feature="aerove-mobile")]
++        {
++            use crate::proxy::OutboundType;
++            let registry=self.mobile_outbounds.read().await.as_ref().and_then(|w|w.upgrade());
++            let mut direct=false;
++            if let Some(registry)=registry {
++                for name in info.proxy_chain_holder.snapshot().await {
++                    let Some(handler)=registry.get_outbound(&name).await else {direct=false;break;};
++                    match handler.proto() {
++                        OutboundType::Selector|OutboundType::UrlTest|OutboundType::Fallback|OutboundType::LoadBalance|OutboundType::Smart|OutboundType::Relay=>{},
++                        OutboundType::Direct=>direct=true,
++                        _=>{direct=false;break;},
++                    }
++                }
++            }
++            info.proxy_traffic.store(!direct,Ordering::Relaxed);
++        }
+         let mut connections = self.connections.lock().await;
+         connections.insert(item.id(), (item, Some(close_notify)));
+         drop(connections);
+@@ -584,6 +641,19 @@
+ 
+     #[allow(dead_code)]
+     pub fn reset_statistic(&self) {
++        #[cfg(feature="aerove-mobile")]
++        self.proxy_upload_temp.store(0,Ordering::Relaxed);
++        #[cfg(feature="aerove-mobile")]
++        self.proxy_download_temp.store(0,Ordering::Relaxed);
++        #[cfg(feature="aerove-mobile")]
++        self.proxy_upload_blip.store(0,Ordering::Relaxed);
++        #[cfg(feature="aerove-mobile")]
++        self.proxy_download_blip.store(0,Ordering::Relaxed);
++        #[cfg(feature="aerove-mobile")]
++        self.proxy_upload_total.store(0,Ordering::Relaxed);
++        #[cfg(feature="aerove-mobile")]
++        self.proxy_download_total.store(0,Ordering::Relaxed);
++
+         self.upload_temp.store(0, Ordering::Relaxed);
+         self.upload_blip.store(0, Ordering::Relaxed);
+         self.upload_total.store(0, Ordering::Relaxed);
+@@ -638,10 +708,15 @@
+             #[cfg(feature = "aerove-mobile")]
+             if let Some(bus) = &telemetry {
+                 let (up, down) = self.now();
+-                bus.publish(crate::mobile::telemetry::Traffic {
++                self.proxy_upload_blip.store(self.proxy_upload_temp.swap(0,Ordering::Relaxed),Ordering::Relaxed);
++                self.proxy_download_blip.store(self.proxy_download_temp.swap(0,Ordering::Relaxed),Ordering::Relaxed);
++                bus.publish_statistics(crate::mobile::telemetry::Traffic {
+                     up, down,
+                     upload_total: self.upload_total.load(Ordering::Relaxed),
+                     download_total: self.download_total.load(Ordering::Relaxed),
++                }, crate::mobile::telemetry::Traffic {
++                    up:self.proxy_upload_blip.load(Ordering::Relaxed),down:self.proxy_download_blip.load(Ordering::Relaxed),
++                    upload_total:self.proxy_upload_total.load(Ordering::Relaxed),download_total:self.proxy_download_total.load(Ordering::Relaxed),
+                 });
+             }
+ 
+--- a/clash-lib/src/app/dns/config.rs
++++ b/clash-lib/src/app/dns/config.rs
+@@ -12,7 +12,6 @@
+     net::{IpAddr, SocketAddr},
+     sync::Arc,
+ };
+-use tracing::warn;
+ use url::Url;
+ pub use watfaq_dns::{DNSListenAddr, DoH3Config, DoHConfig, DoTConfig};
+ 
+@@ -78,8 +77,10 @@
+             let mut server = server.clone();
+ 
+             if server == "system" {
+-                warn!("'system' is not supported as dns nameserver, skipping");
+-                continue;
++                #[cfg(feature="aerove-mobile")]
++                {nameservers.push(NameServer {net:DNSNetMode::System,host:url::Host::Domain("system".into()),port:0,interface:None,proxy:None});continue;}
++                #[cfg(not(feature="aerove-mobile"))]
++                {tracing::warn!("'system' is not supported as dns nameserver, skipping");continue;}
+             }
+ 
+             // If the server doesn't contain a scheme, assume it's a UDP
+--- a/clash-lib/src/app/dns/dns_client.rs
++++ b/clash-lib/src/app/dns/dns_client.rs
+@@ -43,6 +43,8 @@
+     DoT,
+     DoH,
+     Dhcp,
++    #[cfg(feature="aerove-mobile")]
++    System,
+ }
+ 
+ impl Display for DNSNetMode {
+@@ -53,6 +55,8 @@
+             Self::DoT => write!(f, "DoT"),
+             Self::DoH => write!(f, "DoH"),
+             Self::Dhcp => write!(f, "DHCP"),
++            #[cfg(feature="aerove-mobile")]
++            Self::System => write!(f,"SYSTEM"),
+         }
+     }
+ }
+@@ -345,6 +349,11 @@
+     pub async fn new_client(opts: Opts) -> anyhow::Result<ThreadSafeDNSClient> {
+         // TODO: use proxy to connect?
+ 
++        #[cfg(feature="aerove-mobile")]
++        if matches!(opts.net,DNSNetMode::System|DNSNetMode::Dhcp) {
++            let iface=if matches!(opts.net,DNSNetMode::System){None}else{Some(opts.host.to_string())};
++            return Ok(Arc::new(crate::mobile::dns_network::NetworkClient::new(iface)));
++        }
+         if matches!(opts.net, DNSNetMode::Dhcp) {
+             let host = opts.host.to_string();
+             return Ok(Arc::new(DhcpClient::new(&host, opts.fw_mark).await));
+@@ -487,6 +496,8 @@
+                 }))
+             }
+             DNSNetMode::Dhcp => unreachable!("."),
++            #[cfg(feature="aerove-mobile")]
++            DNSNetMode::System => unreachable!("."),
+         }
+     }
+ 
+--- a/clash-lib/src/app/dns/server/mod.rs
++++ b/clash-lib/src/app/dns/server/mod.rs
+@@ -37,6 +37,9 @@
+     cwd: std::path::PathBuf,
+ 
+     cancellation_token: tokio_util::sync::CancellationToken,
++    task:std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
++    child:std::sync::Mutex<Option<tokio_util::sync::CancellationToken>>,
++    ready:tokio::sync::watch::Sender<bool>,
+ }
+ 
+ impl DnsRunner {
+@@ -53,44 +56,41 @@
+             resolver,
+             cwd: cwd.to_path_buf(),
+             cancellation_token: cancellation_token.unwrap_or_default(),
++            task:std::sync::Mutex::new(None),child:std::sync::Mutex::new(None),ready:tokio::sync::watch::channel(false).0,
+         }
+     }
+ }
+ 
+ impl Runner for DnsRunner {
+     fn run_async(&self) {
+-        if !self.enable {
+-            info!("dns listener is disabled, skipping");
+-            return;
+-        }
+-
+-        let resolver = self.resolver.clone();
+-        let listen = self.listener.clone();
+-        let cwd = self.cwd.clone();
+-        let cancellation_token = self.cancellation_token.clone();
+-
+-        tokio::spawn(async move {
+-            let h = DnsMessageExchanger { resolver };
+-            let r = watfaq_dns::get_dns_listener(listen, h, &cwd).await;
+-            if let Some(r) = r {
+-                tokio::select! {
+-                    res = r => {
+-                        match res {
+-                            Ok(()) => {},
+-                            Err(err) => {
+-                                error!("dns listener error: {}", err);
+-                            }
+-                        }
+-                    },
+-                    _ = cancellation_token.cancelled() => {
+-                        info!("dns listener is closed");
+-
+-                    },
+-                }
+-            } else {
+-                info!("dns listener: no listen addresses configured, skipping");
+-            }
+-        });
++        let mut task=self.task.lock().unwrap();
++        if task.as_ref().is_some_and(|t|!t.is_finished()){return;}
++        let resolver=self.resolver.clone();let listen=self.listener.clone();let cwd=self.cwd.clone();let enabled=self.enable;
++        let cancellation_token=self.cancellation_token.child_token();*self.child.lock().unwrap()=Some(cancellation_token.clone());
++        let ready=self.ready.clone();
++        *task=Some(tokio::spawn(async move {
++            let operation=async {
++                if !enabled {cancellation_token.cancelled().await;return Ok::<(),watfaq_dns::DNSError>(());}
++                let h=DnsMessageExchanger {resolver};
++                #[cfg(feature="aerove-mobile")]
++                let listener=watfaq_dns::get_dns_listener_checked(listen,h,&cwd,cancellation_token.clone().cancelled_owned()).await?;
++                #[cfg(not(feature="aerove-mobile"))]
++                let listener=watfaq_dns::get_dns_listener(listen,h,&cwd).await;
++                ready.send_replace(true);
++                #[cfg(feature="aerove-mobile")]
++                crate::mobile::dns_ready();
++                if let Some(listener)=listener {listener.await?;if !cancellation_token.is_cancelled(){return Err(watfaq_dns::DNSError::Io(std::io::Error::other("DNS listener exited unexpectedly")));}}
++                else {cancellation_token.cancelled().await;}
++                Ok(())
++            };
++            if !enabled {ready.send_replace(true);#[cfg(feature="aerove-mobile")] crate::mobile::dns_ready();}
++            #[cfg(feature="aerove-mobile")]
++            let result={use futures::FutureExt;std::panic::AssertUnwindSafe(operation).catch_unwind().await.unwrap_or_else(|_|Err(watfaq_dns::DNSError::Io(std::io::Error::other("DNS listener panicked"))))};
++            #[cfg(not(feature="aerove-mobile"))]
++            let result=tokio::select!{biased;_=cancellation_token.cancelled()=>Ok(()),result=operation=>result};
++            ready.send_replace(false);
++            if let Err(error)=result {error!("dns listener error: {error}");#[cfg(feature="aerove-mobile")] crate::mobile::task_failed(format!("DNS listener: {error}"));}
++        }));
+     }
+ 
+     fn shutdown(&self) {
+@@ -99,6 +99,14 @@
+     }
+ 
+     fn join(&self) -> futures::future::BoxFuture<'_, Result<(), crate::Error>> {
+-        Box::pin(async move { Ok(()) })
++        let task=self.task.lock().unwrap().take();
++        Box::pin(async move {if let Some(task)=task {task.await.map_err(|e|crate::Error::Operation(format!("DNS listener task: {e}")))?;}Ok(())})
+     }
+ }
++
++#[cfg(feature="aerove-mobile")]
++impl DnsRunner {
++    pub(crate) fn mobile_is_ready(&self)->bool{*self.ready.borrow()}
++    pub(crate) async fn mobile_park(&self)->crate::Result<()>{if let Some(child)=self.child.lock().unwrap().take(){child.cancel();}self.join().await?;self.ready.send_replace(false);Ok(())}
++    pub(crate) async fn mobile_resume(&self)->crate::Result<()>{let mut ready=self.ready.subscribe();self.run_async();tokio::time::timeout(std::time::Duration::from_secs(8),ready.wait_for(|v|*v)).await.map_err(|_|crate::Error::Operation("DNS listener readiness timeout".into()))?.map_err(|_|crate::Error::Operation("DNS readiness closed".into()))?;Ok(())}
++}
+--- a/clash-lib/src/app/inbound/manager.rs
++++ b/clash-lib/src/app/inbound/manager.rs
+@@ -422,6 +422,24 @@
+     }
+ 
+     #[cfg(feature = "aerove-mobile")]
++    pub async fn mobile_park(&self) -> Result<(), crate::Error> {
++        self.mobile_join_start().await?;
++        let handles: Vec<_> = self.inbound_handlers.write().await.values_mut().filter_map(|entry| entry.handle.take()).collect();
++        for handle in &handles { handle.abort(); }
++        for handle in handles {
++            if let Err(error) = handle.await && !error.is_cancelled() { return Err(std::io::Error::other(error).into()); }
++        }
++        Ok(())
++    }
++
++    #[cfg(feature = "aerove-mobile")]
++    pub async fn mobile_resume(&self) -> Result<(), crate::Error> {
++        if self.cancellation_token.is_cancelled() || crate::mobile::inbound::is_stopping() { return Err(std::io::Error::from(std::io::ErrorKind::Interrupted).into()); }
++        self.run_async();
++        Ok(())
++    }
++
++    #[cfg(feature = "aerove-mobile")]
+     pub async fn mobile_replace(&self, listeners: HashSet<InboundOpts>, authenticator: ThreadSafeAuthenticator) -> Result<(), crate::Error> {
+         self.mobile_join_start().await?;
+         let handles: Vec<_> = self.inbound_handlers.write().await.drain()
+--- a/clash-lib/src/app/remote_content_manager/providers/http_vehicle.rs
++++ b/clash-lib/src/app/remote_content_manager/providers/http_vehicle.rs
+@@ -14,7 +14,6 @@
+ 
+ use std::io;
+ 
+-use crate::common::http::DEFAULT_USER_AGENT;
+ use http::Request;
+ use std::path::{Path, PathBuf};
+ 
+@@ -49,10 +48,6 @@
+ impl ProviderVehicle for Vehicle {
+     async fn read(&self) -> std::io::Result<Vec<u8>> {
+         let mut req = Request::default();
+-        req.headers_mut().insert(
+-            http::header::USER_AGENT,
+-            DEFAULT_USER_AGENT.parse().expect("must parse user agent"),
+-        );
+         *req.body_mut() = http_body_util::Empty::<bytes::Bytes>::new();
+         *req.uri_mut() = self.url.clone();
+         self.http_client
+--- a/clash-lib/src/app/remote_content_manager/providers/rule_provider/cidr_trie.rs
++++ b/clash-lib/src/app/remote_content_manager/providers/rule_provider/cidr_trie.rs
+@@ -41,3 +41,12 @@
+         }
+     }
+ }
++
++impl CidrTrie {
++    pub(crate) fn count(&self)->usize{self.v4.iter().count()+self.v6.iter().count()}
++    pub(crate) fn page(&self,offset:usize,limit:usize)->Vec<String>{
++        self.v4.iter().map(|(address,prefix,_)|(IpAddr::V4(address),prefix))
++            .chain(self.v6.iter().map(|(address,prefix,_)|(IpAddr::V6(address),prefix)))
++            .skip(offset).take(limit).map(|(address,prefix)|format!("{address}/{prefix}")).collect()
++    }
++}
+--- a/clash-lib/src/app/remote_content_manager/providers/rule_provider/provider.rs
++++ b/clash-lib/src/app/remote_content_manager/providers/rule_provider/provider.rs
+@@ -140,13 +140,23 @@
+         false
+     }
+ 
+-    pub fn list_rules(&self, limit: usize) -> Vec<String> {
+-        self.raw_rules.iter().take(limit).cloned().collect()
+-    }
+ }
+ 
+ struct Inner {
+     content: RuleContent,
++}
++
++#[derive(Serialize,Debug)]
++#[serde(rename_all="camelCase")]
++pub struct RulePage {pub rules:Vec<String>,pub rule_count:usize,pub offset:usize,pub next_offset:Option<usize>,pub complete:bool}
++impl RuleContent {
++    pub(crate) fn page(&self,offset:usize,limit:usize)->RulePage{
++        let mut count=0usize;let mut rules=Vec::new();
++        let mut visit=|rule:&str|{if count>=offset&&rules.len()<limit{rules.push(rule.to_owned());}count+=1;true};
++        match self {Self::Domain(set)=>set.traverse(|rule|visit(rule)),Self::Ipcidr(set)=>{let count=set.count();let rules=set.page(offset,limit);let next=offset.saturating_add(rules.len());return RulePage {rules,rule_count:count,offset,next_offset:(next<count).then_some(next),complete:next>=count};},Self::Classical(set)=>{for rule in &set.raw_rules{visit(rule);}}}
++        let next=offset.saturating_add(rules.len());let next_offset=if next<count {Some(next)}else{None};
++        RulePage {rules,rule_count:count,offset,next_offset,complete:next_offset.is_none()}
++    }
+ }
+ 
+ #[async_trait]
+@@ -154,13 +164,9 @@
+     fn search(&self, sess: &Session) -> bool;
+     fn behavior(&self) -> RuleSetBehavior;
+     fn format(&self) -> RuleSetFormat;
+-    /// Returns up to `limit` rules as strings. Only Classical providers return
+-    /// non-empty results; Domain/IPCIDR data structures don't support
+-    /// enumeration.
+-    async fn list_rules(&self, limit: usize) -> Vec<String> {
+-        let _ = limit;
+-        vec![]
+-    }
++    async fn list_rules(&self,limit:usize)->Vec<String> {self.rule_page(0,limit).await.rules}
++    async fn rule_page(&self,offset:usize,limit:usize)->RulePage;
++
+ }
+ 
+ pub type ThreadSafeRuleProvider = Arc<dyn RuleProvider + Send + Sync>;
+@@ -369,13 +375,7 @@
+         self.format
+     }
+ 
+-    async fn list_rules(&self, limit: usize) -> Vec<String> {
+-        let inner = self.inner.read().await;
+-        match &inner.content {
+-            RuleContent::Classical(fast) => fast.list_rules(limit),
+-            _ => vec![],
+-        }
+-    }
++    async fn rule_page(&self,offset:usize,limit:usize)->RulePage {self.inner.read().await.content.page(offset,limit)}
+ }
+ 
+ #[async_trait]
+@@ -477,6 +477,7 @@
+             m.insert("updatedAt".to_owned(), Box::new(fetcher.updated_at().await));
+         }
+ 
++        m.insert("ruleCount".to_owned(),Box::new(self.rule_page(0,0).await.rule_count));
+         m.insert("behavior".to_owned(), Box::new(self.behavior().to_string()));
+         m.insert("format".to_owned(), Box::new(self.format().to_string()));
+ 
+--- a/clash-lib/src/common/http/client.rs
++++ b/clash-lib/src/common/http/client.rs
+@@ -19,6 +19,8 @@
+ /// Not performant for lack of connection pooling, but useful for simple tasks.
+ #[derive(Clone)]
+ pub struct HttpClient {
++    #[cfg(feature="aerove-mobile")]
++    mobile_policy: Option<Arc<crate::mobile::telemetry::Bus>>,
+     dns_resolver: ThreadSafeDNSResolver,
+     outbounds: Option<OutboundHandlerRegistry>,
+     tls_config: Arc<rustls::ClientConfig>,
+@@ -39,6 +41,8 @@
+         }
+ 
+         Ok(HttpClient {
++            #[cfg(feature="aerove-mobile")]
++            mobile_policy: crate::mobile::telemetry::source(),
+             dns_resolver,
+             outbounds: bootstrap_outbounds,
+             tls_config: Arc::new(tls_config),
+@@ -55,6 +59,16 @@
+         <T as hyper::body::Body>::Data: Send,
+         <T as hyper::body::Body>::Error: std::error::Error + Send + Sync,
+     {
++        #[cfg(feature="aerove-mobile")]
++        let policy=match &self.mobile_policy {
++            Some(bus) if !bus.cancellation().is_cancelled()=>bus.http_policy(),
++            Some(_)=>return Err(std::io::ErrorKind::Interrupted.into()),
++            None=>Arc::new(crate::mobile::http_policy::Policy::default()),
++        };
++        #[cfg(feature="aerove-mobile")]
++        policy.apply_headers(req.headers_mut());
++        #[cfg(not(feature="aerove-mobile"))]
++        if !req.headers().contains_key(http::header::USER_AGENT) {req.headers_mut().insert(http::header::USER_AGENT,http::HeaderValue::from_static(super::DEFAULT_USER_AGENT));}
+         let uri = req.uri().clone();
+ 
+         let host = uri
+@@ -144,8 +158,11 @@
+                 sender.send_request(req).boxed()
+             }
+             Some(scheme) if scheme == &http::uri::Scheme::HTTPS => {
+-                let connector =
+-                    tokio_rustls::TlsConnector::from(self.tls_config.clone());
++                #[cfg(feature="aerove-mobile")]
++                let tls=policy.tls(self.tls_config.clone())?;
++                #[cfg(not(feature="aerove-mobile"))]
++                let tls=self.tls_config.clone();
++                let connector = tokio_rustls::TlsConnector::from(tls);
+ 
+                 let stream = tokio::time::timeout(
+                     self.timeout,
+--- a/clash-lib/src/common/succinct_set.rs
++++ b/clash-lib/src/common/succinct_set.rs
+@@ -138,7 +138,6 @@
+         get_bit(&self.leaves, node_id as isize)
+     }
+ 
+-    #[cfg(test)]
+     pub fn traverse<F>(&self, mut f: F)
+     where
+         F: FnMut(&String) -> bool,
+@@ -200,11 +199,11 @@
+         }
+     }
+ 
+-    #[cfg(test)]
+     fn keys<F>(&self, mut f: F)
+     where
+         F: FnMut(&String) -> bool,
+     {
++        if self.labels.is_empty()&&self.leaves.is_empty(){return;}
+         let mut current_key = vec![];
+ 
+         fn traverse<F>(
+--- a/clash-lib/src/common/utils.rs
++++ b/clash-lib/src/common/utils.rs
+@@ -2,7 +2,7 @@
+     Error,
+     common::{
+         errors::new_io_error,
+-        http::{ClashHTTPClientExt, DEFAULT_USER_AGENT, HttpClient},
++        http::{ClashHTTPClientExt, HttpClient},
+     },
+ };
+ use futures::StreamExt;
+@@ -135,7 +135,6 @@
+         let url_no_fragment = url.rsplit_once('#').map(|x| x.0).unwrap_or(&url);
+         let parsed_url = url_no_fragment.parse::<hyper::Uri>()?;
+         let mut req = http::Request::builder()
+-            .header(http::header::USER_AGENT, DEFAULT_USER_AGENT)
+             .uri(&parsed_url)
+             .method(http::Method::GET)
+             .body(Empty::<bytes::Bytes>::new())?;
+--- a/clash-lib/src/config/def.rs
++++ b/clash-lib/src/config/def.rs
+@@ -400,6 +400,10 @@
+     /// Log level
+     /// Either `debug`, `info`, `warning`, `error` or `off`
+     pub log_level: LogLevel,
++    pub global_ua: Option<String>,
++    pub aerove_system_dns: Option<NetworkDns>,
++    #[educe(Default = true)]
++    pub check_certificate: bool,
+     /// DNS client/server settings
+     pub dns: DNS,
+     /// Profile settings
+@@ -1652,3 +1656,11 @@
+         }
+     }
+ }
++
++/// Host-supplied physical-network DNS snapshot; never user DNS fallback.
++#[derive(Clone, Debug, Default, serde::Deserialize)]
++#[serde(rename_all="camelCase", deny_unknown_fields)]
++pub struct NetworkDns {
++    pub default_interface: Option<String>,
++    pub interfaces: std::collections::BTreeMap<String, Vec<String>>,
++}
+--- a/clash-lib/src/config/internal/config.rs
++++ b/clash-lib/src/config/internal/config.rs
+@@ -86,6 +86,9 @@
+     pub controller: Controller,
+     pub mode: RunMode,
+     pub log_level: LogLevel,
++    pub global_ua: Option<String>,
++    pub aerove_system_dns: Option<crate::config::def::NetworkDns>,
++    pub check_certificate: bool,
+     pub ipv6: bool,
+     pub interface: Option<Interface>,
+     pub routing_mask: Option<u32>,
+--- a/clash-lib/src/config/internal/convert/general.rs
++++ b/clash-lib/src/config/internal/convert/general.rs
+@@ -26,6 +26,9 @@
+         },
+         mode: c.mode,
+         log_level: c.log_level,
++        global_ua: c.global_ua.clone(),
++        aerove_system_dns: c.aerove_system_dns.clone(),
++        check_certificate: c.check_certificate,
+         ipv6: c.ipv6,
+         interface: c.interface.as_ref().map(|iface| {
+             if let Ok(addr) = iface.parse::<IpAddr>() {
+--- a/clash-lib/src/lib.rs
++++ b/clash-lib/src/lib.rs
+@@ -407,6 +407,8 @@
+     #[cfg(feature = "tun")]
+     pub tun_runner: Arc<tun::TunRunner>,
+     pub dns_listener: ArcRunner,
++    #[cfg(feature="aerove-mobile")]
++    pub mobile_dns_listener: Arc<dns::DnsRunner>,
+     pub inbound_manager: Arc<InboundManager>,
+     pub dns_listen: DNSListenAddr,
+     pub dns_enabled: bool,
+@@ -732,7 +734,7 @@
+     )?);
+ 
+     debug!("initializing dns listener");
+-    let dns_listener: ArcRunner = Arc::new(dns::DnsRunner::new(
++    let dns_listener = Arc::new(dns::DnsRunner::new(
+         dns_enable,
+         dns_listen.clone(),
+         dns_resolver.clone(),
+@@ -751,6 +753,8 @@
+         inbound_manager,
+         #[cfg(feature = "tun")]
+         tun_runner,
++        #[cfg(feature="aerove-mobile")]
++        mobile_dns_listener:dns_listener.clone(),
+         dns_listener,
+         dns_listen,
+         dns_enabled: dns_enable,
+--- a/clash-lib/src/proxy/tun/datagram.rs
++++ b/clash-lib/src/proxy/tun/datagram.rs
+@@ -17,7 +17,7 @@
+     dispatcher: Arc<Dispatcher>,
+     resolver: ThreadSafeDNSResolver,
+     so_mark: Option<u32>,
+-    dns_hijack: bool,
++    _dns_hijack: bool,
+ ) {
+     // tun i/o
+     // lr: app packets went into tun will be accessed from lr
+@@ -55,7 +55,7 @@
+         .await;
+ 
+     // dispatcher -> tun
+-    let fut1 = tokio::spawn(async move {
++    let fut1 = async move {
+         while let Some(pkt) = l_rx.recv().await {
+             trace!("tun <- dispatcher: {:?}", pkt);
+             if let Err(e) = ls
+@@ -72,10 +72,10 @@
+                 warn!("failed to send udp packet to netstack: {}", e);
+             }
+         }
+-    });
++    };
+ 
+     // tun -> dispatcher
+-    let fut2 = tokio::spawn(async move {
++    let fut2 = async move {
+         'read_packet: while let Some(watfaq_netstack::UdpPacket {
+             data,
+             local_addr,
+@@ -94,7 +94,11 @@
+ 
+             trace!("tun -> dispatcher: {:?}", pkt);
+ 
+-            if dns_hijack && pkt.dst_addr.port() == 53 {
++            #[cfg(feature="aerove-mobile")]
++            let hijack=crate::mobile::dns_network::hijack(remote_addr);
++            #[cfg(not(feature="aerove-mobile"))]
++            let hijack=_dns_hijack&&pkt.dst_addr.port()==53;
++            if hijack {
+                 trace!("got dns packet: {:?}, returning from Clash DNS server", pkt);
+ 
+                 match hickory_proto::op::Message::from_vec(&pkt.data) {
+@@ -176,7 +180,7 @@
+         }
+ 
+         closer.send(0).ok();
+-    });
++    };
+ 
+     debug!("tun UDP ready");
+ 
+--- a/clash-lib/src/proxy/tun/runner.rs
++++ b/clash-lib/src/proxy/tun/runner.rs
+@@ -32,6 +32,10 @@
+ }
+ 
+ pub struct TunRunner {
++    #[cfg(feature = "aerove-mobile")]
++    mobile_cancel: StdMutex<Option<CancellationToken>>,
++    #[cfg(feature = "aerove-mobile")]
++    mobile_ready: tokio::sync::watch::Sender<bool>,
+     cfg: TunConfig,
+     dispatcher: Arc<Dispatcher>,
+     resolver: ThreadSafeDNSResolver,
+@@ -48,6 +52,10 @@
+         cancellation_token: Option<CancellationToken>,
+     ) -> Result<TunRunner, Error> {
+         Ok(Self {
++            #[cfg(feature = "aerove-mobile")]
++            mobile_cancel: StdMutex::new(None),
++            #[cfg(feature = "aerove-mobile")]
++            mobile_ready: tokio::sync::watch::channel(false).0,
+             cfg,
+             dispatcher,
+             resolver,
+@@ -60,6 +68,32 @@
+     #[cfg(feature = "aerove-mobile")]
+     pub(crate) fn set_device(&self, device: tun_rs::AsyncDevice) {
+         *self.device.lock().unwrap() = Some(device);
++    }
++
++    #[cfg(feature = "aerove-mobile")]
++    pub(crate) fn mobile_is_ready(&self) -> bool { *self.mobile_ready.borrow() }
++
++    #[cfg(feature = "aerove-mobile")]
++    pub(crate) async fn mobile_park(&self) -> Result<(), Error> {
++        if let Some(cancel) = self.mobile_cancel.lock().unwrap().take() { cancel.cancel(); }
++        self.join().await?;
++        self.device.lock().unwrap().take();
++        self.mobile_ready.send_replace(false);
++        Ok(())
++    }
++
++    #[cfg(feature = "aerove-mobile")]
++    pub(crate) async fn mobile_attach(&self, device: tun_rs::AsyncDevice) -> Result<(), Error> {
++        if !self.cfg.enable || self.cancellation_token.is_cancelled() || self.task.lock().unwrap().is_some() {
++            return Err(Error::Operation("TUN attach requires a parked tun runtime".into()));
++        }
++        let mut ready = self.mobile_ready.subscribe();
++        self.set_device(device);
++        self.run_async();
++        tokio::time::timeout(std::time::Duration::from_secs(8), ready.wait_for(|value| *value)).await
++            .map_err(|_| Error::Operation("TUN attach readiness timed out".into()))?
++            .map_err(|_| Error::Operation("TUN attach readiness closed".into()))?;
++        Ok(())
+     }
+ 
+     async fn new_internal(
+@@ -327,7 +361,16 @@
+         let dispatcher = self.dispatcher.clone();
+         let resolver = self.resolver.clone();
+         let dns_hijack = self.cfg.dns_hijack;
++        #[cfg(feature = "aerove-mobile")]
++        let cancellation_token = {
++            let cancel = self.cancellation_token.child_token();
++            *self.mobile_cancel.lock().unwrap() = Some(cancel.clone());
++            cancel
++        };
++        #[cfg(not(feature = "aerove-mobile"))]
+         let cancellation_token = self.cancellation_token.clone();
++        #[cfg(feature = "aerove-mobile")]
++        let mobile_ready = self.mobile_ready.clone();
+ 
+         let device = self.device.lock().unwrap().take();
+         let task = tokio::spawn(async move {
+@@ -356,7 +399,7 @@
+                         }
+                     })?;
+             #[cfg(feature = "aerove-mobile")]
+-            crate::mobile::tun_ready();
++            { mobile_ready.send_replace(true); crate::mobile::tun_ready(); }
+ 
+             let framed = tun_rs::async_framed::DeviceFramed::new(
+                 tun,
+@@ -436,11 +479,15 @@
+                         stream.remote_addr()
+                     );
+ 
+-                    tokio::spawn(handle_inbound_stream(
+-                        stream,
+-                        dsp.clone(),
+-                        so_mark,
+-                    ));
++                    #[cfg(feature="aerove-mobile")]
++                    if crate::mobile::dns_network::hijack(stream.remote_addr()) {
++                        crate::mobile::inbound::spawn_connection(crate::mobile::dns_network::tcp(stream,resolver.clone())).await;continue;
++                    }
++                    let connection = handle_inbound_stream(stream, dsp.clone(), so_mark);
++                    #[cfg(feature = "aerove-mobile")]
++                    crate::mobile::inbound::spawn_connection(connection).await;
++                    #[cfg(not(feature = "aerove-mobile"))]
++                    tokio::spawn(connection);
+                 }
+ 
+                 Err(Error::Operation("tun stopped unexpectedly 2".to_string()))
+@@ -480,14 +527,18 @@
+             }
+         });
+         #[cfg(feature = "aerove-mobile")]
++        let mobile_ready = self.mobile_ready.clone();
++        #[cfg(feature = "aerove-mobile")]
+         let task = tokio::spawn(async move {
+-            match task.await {
++            let result = match task.await {
+                 Ok(result) => result,
+                 Err(error) => {
+                     crate::mobile::task_failed(format!("TUN task: {error}"));
+                     Err(Error::Operation(format!("TUN task: {error}")))
+                 }
+-            }
++            };
++            mobile_ready.send_replace(false);
++            result
+         });
+         *self.task.lock().unwrap() = Some(task);
+     }

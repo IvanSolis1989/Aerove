@@ -22,6 +22,14 @@ mod route_tests;
 
 pub fn run(case: &str) {
     let _lock = LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    if case.starts_with("dns-runtime-") {
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(crate::mobile::dns_network_tests::io(case=="dns-runtime-failure"));return;
+    }
+    if case.starts_with("control-") {
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
+            .block_on(crate::mobile::runtime_control_tests::run(case));
+        return;
+    }
     if case.starts_with("observations-") {
         tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
             .block_on(crate::mobile::observation_tests::run(case));
@@ -45,12 +53,17 @@ pub fn run(case: &str) {
             if deny.load(Ordering::SeqCst) { Err(io::ErrorKind::PermissionDenied.into()) } else { Ok(()) }
         }),
         bootstrap: vec![], events, logs, level: tracing::level_filters::LevelFilter::OFF,
+            network_dns:std::sync::RwLock::new(None),dns_enabled:false,dns_hijack_all:false,
         cancel: cancel.clone(), telemetry: crate::mobile::telemetry::Bus::new(cancel), network: None,
     }));
     let _lease = super::super::ContextLease;
     crate::setup_default_crypto_provider();
     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
         match case {
+            "dns-typed"=>crate::mobile::dns_network_tests::typed().await,
+            "rules-dump"=>crate::mobile::dns_network_tests::rules().await,
+            "http-policy-io"=>crate::mobile::http_policy_tests::io().await,
+            "http-policy-typed"=>crate::mobile::http_policy_tests::typed().await,
             "network-validation" => crate::mobile::inbound::regression::validation().await,
             "network-listeners" => crate::mobile::inbound::regression::listeners().await,
             "network-udp" => crate::mobile::inbound::regression::udp().await,

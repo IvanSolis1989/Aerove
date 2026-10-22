@@ -107,8 +107,9 @@ async fn round_trip(dispatcher: Arc<Dispatcher>, pin: Option<PinnedRoute>, reque
     let query = async {
         if https {
             let tls = rustls::ClientConfig::builder().with_root_certificates(GLOBAL_ROOT_STORE.clone()).with_no_client_auth();
+            let tls=super::http_policy::current().tls(Arc::new(tls))?;
             let name = rustls::pki_types::ServerName::try_from(host).map_err(io::Error::other)?;
-            let stream = tokio_rustls::TlsConnector::from(Arc::new(tls)).connect(name, stream).await?;
+            let stream = tokio_rustls::TlsConnector::from(tls).connect(name, stream).await?;
             exchange(stream, uri, request, start).await
         } else { exchange(stream, uri, request, start).await }
     };

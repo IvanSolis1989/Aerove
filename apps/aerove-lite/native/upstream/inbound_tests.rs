@@ -24,6 +24,7 @@ async fn start(source: &str) -> (Arc<RuntimeComponents>, Arc<Owner>, tokio::sync
     let (events, receiver) = tokio::sync::mpsc::unbounded_channel();
     *super::super::CONTEXT.write().unwrap() = Some(Arc::new(super::super::Context {
         protector: old.protector.clone(), bootstrap: vec![], events, logs: old.logs.clone(), level: old.level,
+            network_dns:std::sync::RwLock::new(None),dns_enabled:false,dns_hijack_all:false,
         cancel: old.cancel.clone(), telemetry: old.telemetry.clone(), network: Some(owner.clone()),
     }));
     let directory = tempfile::tempdir().unwrap();
@@ -195,6 +196,7 @@ pub(crate) async fn failure() {
     let (events, mut late) = tokio::sync::mpsc::unbounded_channel();
     *super::super::CONTEXT.write().unwrap() = Some(Arc::new(super::super::Context {
         protector: old.protector.clone(), bootstrap: vec![], events, logs: old.logs.clone(), level: old.level,
+            network_dns:std::sync::RwLock::new(None),dns_enabled:false,dns_hijack_all:false,
         cancel: old.cancel.clone(), telemetry: old.telemetry.clone(), network: Some(owner),
     }));
     assert!(signal.bound((Ipv4Addr::LOCALHOST, ports[0]).into()).is_err()); assert!(late.try_recv().is_err());

@@ -223,7 +223,7 @@ where F: std::future::Future<Output=Result<op::Message,E>>, E: std::fmt::Display
         Err(e)=>(vec![],String::new(),e.to_string()),
     };
     let trace = trace.lock().unwrap();
-    ticket.emit("dns",json!({"domain":q.name().to_ascii().trim_end_matches('.'),"type":q.query_type().to_string(),"initiator":ORIGIN.try_with(|o|o.name()).unwrap_or("Other"),"upstream":if result.is_ok(){trace.upstream.clone()}else{String::new()},"cached":trace.cached,"answers":answers,"rcode":rcode,"error":error,"delay":timer.elapsed().as_millis().min(u64::MAX as u128) as u64,"time":start}));
+    ticket.emit("dns",json!({"domain":q.name().to_ascii().trim_end_matches('.'),"type":q.query_type().to_string(),"initiator":ORIGIN.try_with(|o|*o).unwrap_or(Origin::Other).name(),"upstream":if result.is_ok(){trace.upstream.clone()}else{String::new()},"cached":trace.cached,"answers":answers,"rcode":rcode,"error":error,"delay":timer.elapsed().as_millis().min(u64::MAX as u128) as u64,"time":start}));
     result
 }
 
@@ -260,6 +260,6 @@ where F:std::future::Future<Output=Result<op::Message,E>>, E:std::fmt::Display {
 pub(crate) fn synthetic(host: &str, ip: std::net::IpAddr, start: (chrono::DateTime<chrono::Utc>, Instant)) {
     if TRACE.try_with(|_| ()).is_ok() { return; }
     if let Some(ticket) = source().and_then(|c|c.ticket()) {
-        ticket.emit("dns", json!({"domain":host,"type":if ip.is_ipv4(){"A"}else{"AAAA"},"initiator":ORIGIN.try_with(|o|o.name()).unwrap_or("Other"),"upstream":"","cached":false,"answers":[ip.to_string()],"rcode":"NOERROR","error":"","delay":start.1.elapsed().as_millis().min(u64::MAX as u128) as u64,"time":start.0}));
+        ticket.emit("dns", json!({"domain":host,"type":if ip.is_ipv4(){"A"}else{"AAAA"},"initiator":ORIGIN.try_with(|o|*o).unwrap_or(Origin::Other).name(),"upstream":"","cached":false,"answers":[ip.to_string()],"rcode":"NOERROR","error":"","delay":start.1.elapsed().as_millis().min(u64::MAX as u128) as u64,"time":start.0}));
     }
 }

@@ -77,6 +77,15 @@ pub struct ReadyInfo {
 pub mod resources;
 pub mod outbound;
 pub mod telemetry;
+pub mod runtime_control;
+pub mod http_policy;
+pub mod dns_network;
+#[cfg(feature="aerove-mobile-tests")]
+pub mod dns_network_tests;
+#[cfg(feature="aerove-mobile-tests")]
+pub mod http_policy_tests;
+#[cfg(feature = "aerove-mobile-tests")]
+pub mod runtime_control_tests;
 pub mod observations;
 #[cfg(feature = "aerove-mobile-tests")]
 pub mod observation_tests;
@@ -88,6 +97,7 @@ pub mod runtime_mode_tests;
 
 enum Event {
     TunReady,
+    DnsReady,
     ApiReady(SocketAddr),
     InboundReady(inbound::Bound),
     Failed(String),
@@ -96,6 +106,8 @@ enum Event {
 struct Context {
     protector: Protector,
     bootstrap: Vec<SocketAddr>,
+    network_dns: RwLock<Option<dns_network::NetworkDns>>,
+    dns_enabled:bool, dns_hijack_all:bool,
     events: mpsc::UnboundedSender<Event>,
     logs: broadcast::Sender<LogEvent>,
     level: tracing::level_filters::LevelFilter,
@@ -128,6 +140,8 @@ pub(crate) fn protect(fd: RawFd) -> io::Result<()> {
     }
     (context.protector)(fd).inspect_err(|error| task_failed(format!("protect: {error}")))
 }
+
+pub(crate) fn dns_ready(){if let Ok(context)=context(){let _=context.events.send(Event::DnsReady);}}
 
 pub(crate) fn tun_ready() {
     if let Ok(context) = context() {
@@ -179,11 +193,15 @@ pub(crate) async fn guard_controller(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     let path = request.uri().path();
-    if path == "/restart" || (path.starts_with("/configs")
-        && request.method() != http::Method::GET)
-    {
-        return (http::StatusCode::CONFLICT,
-            "VPN configuration changes require service-owned stop and recreate").into_response();
+    if matches!(path,"/configs"|"/configs/") && request.method()==http::Method::PATCH && request.uri().query().is_none() {
+        let (parts,body)=request.into_parts();
+        let body=match tokio::time::timeout(Duration::from_secs(5),axum::body::to_bytes(body,4096)).await {Ok(Ok(body))=>body,_=>return (http::StatusCode::BAD_REQUEST,"invalid config patch").into_response()};
+        let allowed=serde_json::from_slice::<serde_json::Value>(&body).ok().and_then(|v|v.as_object().map(|o|!o.is_empty()&&o.keys().all(|k|matches!(k.as_str(),"mode"|"log-level")))).unwrap_or(false);
+        if !allowed {return (http::StatusCode::CONFLICT,"config patch requires an owned endpoint").into_response();}
+        return next.run(axum::extract::Request::from_parts(parts,axum::body::Body::from(body))).await;
+    }
+    if path == "/restart" || (path.starts_with("/configs") && request.method() != http::Method::GET) {
+        return (http::StatusCode::CONFLICT,"config mutation requires an owned endpoint").into_response();
     }
     next.run(request).await
 }
@@ -217,11 +235,6 @@ fn check_value(value: &Value, path: &str) -> Result<()> {
                 return Err(invalid(format!("{path}: Android process/UID attribution is unavailable")));
             }
         }
-        Value::String(value) if path.starts_with("$.dns.") => {
-            if value == "system" || value.starts_with("dhcp://") {
-                return Err(invalid(format!("{path}: {value} has no protected Android resolver")));
-            }
-        }
         _ => {}
     }
     Ok(())
@@ -250,11 +263,14 @@ fn parse(source: &str) -> Result<InternalConfig> {
             }
         }
     }
-    Config::Str(source.to_owned()).try_parse_strict()
+    let config=Config::Str(source.to_owned()).try_parse_strict()?;
+    http_policy::Policy::new(config.general.global_ua.as_deref(),config.general.check_certificate)?;
+    if let Some(snapshot)=&config.general.aerove_system_dns {snapshot.validate()?;}
+    Ok(config)
 }
 
 fn bootstrap(config: &InternalConfig) -> Result<Vec<SocketAddr>> {
-    config.dns.default_nameserver.iter().map(|server| {
+    config.dns.default_nameserver.iter().filter(|server|!matches!(server.net,DNSNetMode::System|DNSNetMode::Dhcp)).map(|server| {
         if server.net != DNSNetMode::Udp || server.interface.is_some() || server.proxy.is_some() {
             return Err(invalid("dns.default-nameserver: bootstrap requires plain IP UDP addresses"));
         }
@@ -286,29 +302,42 @@ pub async fn run_runtime(
     cancel: CancellationToken,
     ready: impl FnOnce(ReadyInfo),
 ) -> Result<()> {
+    let control=runtime_control::RuntimeControl::new();
+    run_runtime_control(source,working_directory,input,cancel,control,ready).await
+}
+
+pub async fn run_runtime_control(
+    source:String, working_directory:PathBuf, input:RuntimeInput, cancel:CancellationToken,
+    control:Arc<runtime_control::RuntimeControl>, ready:impl FnOnce(ReadyInfo),
+)->Result<()> {
+    let mut commands=control.take();
     let mut config = parse(&source)?;
     let log_level = config.general.log_level;
+    let http_policy=http_policy::Policy::new(config.general.global_ua.as_deref(),config.general.check_certificate)?;
     let mode = input.mode();
     match mode {
-        RuntimeMode::Tun if !config.tun.enable || !config.tun.dns_hijack || !config.dns.enable => {
-            return Err(invalid("$.tun.enable/$.tun.dns-hijack/$.dns.enable: tun runtime requires all enabled"));
+        RuntimeMode::Tun if !config.tun.enable => {
+            return Err(invalid("$.tun.enable: tun runtime requires true"));
         },
         RuntimeMode::Proxy if config.tun.enable => return Err(invalid("$.tun.enable: proxy runtime requires false")),
         _ => {},
     }
+    if mode==RuntimeMode::Tun&&config.tun.dns_hijack&&!config.dns.enable {return Err(invalid("$.tun.dns-hijack: requires dns.enable=true"));}
     let (tun, policy) = match input {
         RuntimeInput::Tun { fd, protector } => (Some(fd), SocketPolicy::Vpn(protector)),
         RuntimeInput::Proxy => (None, SocketPolicy::PlatformDefault),
     };
     let controller = config.general.controller.clone();
     let address = inbound::controller(&config)?;
+    dns_network::validate_runtime(&config)?;
     let bootstrap = bootstrap(&config)?;
-    if bootstrap.is_empty() {
+    if bootstrap.is_empty()&&config.general.aerove_system_dns.is_none() {
         return Err(invalid("dns.default-nameserver must not be empty"));
     }
     let (events, mut receiver) = mpsc::unbounded_channel();
     let (logs, _) = broadcast::channel(512);
     let telemetry = telemetry::Bus::new(cancel.clone());
+    telemetry.set_http_policy(http_policy);
     let network = inbound::runtime(&source, &config, address, cancel.clone())?;
     let mut inbound_ready = network.expected();
     {
@@ -317,7 +346,7 @@ pub async fn run_runtime(
             return Err(Error::Operation("another mobile runtime is active".into()));
         }
         *active = Some(Arc::new(Context {
-            protector: policy.hook(), bootstrap, events, logs: logs.clone(),
+            protector: policy.hook(), bootstrap, network_dns:RwLock::new(config.general.aerove_system_dns.clone()),dns_enabled:config.dns.enable,dns_hijack_all:config.tun.dns_hijack, events, logs: logs.clone(),
             level: log_level.into(), cancel: cancel.clone(),
             telemetry: telemetry.clone(),
             network: Some(network.clone()),
@@ -338,6 +367,7 @@ pub async fn run_runtime(
         _ = cancel.cancelled() => return Ok(()),
         result = crate::create_components(working_directory.clone(), config) => Arc::new(result?),
     };
+    components.statistics_manager.set_mobile_outbounds(Arc::downgrade(&components.outbound_manager)).await;
     if let Some(tun) = tun { components.tun_runner.set_device(tun); }
     let (reload_tx, _reload_rx) = mpsc::channel(1);
     let global_state = Arc::new(Mutex::new(GlobalState {
@@ -348,8 +378,9 @@ pub async fn run_runtime(
         cwd: working_directory.to_string_lossy().into_owned(),
         config_path: None,
     }));
+    let shared_components=Arc::new(RwLock::new(components.clone()));
     let api = ApiRunner::new(controller, logs,
-        Arc::new(RwLock::new(components.clone())), global_state,
+        shared_components.clone(), global_state,
         working_directory.to_string_lossy().into_owned(), Some(cancel.child_token()));
     api.run_async();
     components.start_all();
@@ -360,8 +391,28 @@ pub async fn run_runtime(
         tokio::select! {
             biased;
             _ = cancel.cancelled() => break Ok(()),
+            Some(command)=commands.recv()=> {
+                let operation=commands.handle(command,mode,shared_components.clone(),network.clone());
+                tokio::pin!(operation);
+                let mut failure=None;
+                loop {
+                    tokio::select! {
+                        result=&mut operation=>{if failure.is_none() {failure=result.err();}break;},
+                        event=receiver.recv()=>match event {
+                            Some(Event::Failed(error))=>{failure=Some(Error::Operation(error));cancel.cancel();},
+                            Some(Event::TunReady)=>tun_ready=true,
+                            Some(Event::DnsReady)=>{},
+                            Some(Event::ApiReady(address))=>api_address=Some(address),
+                            Some(Event::InboundReady(_))=>{},
+                            None=>{failure=Some(Error::Operation("core event channel closed".into()));cancel.cancel();},
+                        }
+                    }
+                }
+                if let Some(error)=failure {break Err(error);}
+            },
             event = receiver.recv() => match event {
                 Some(Event::TunReady) => tun_ready = true,
+                Some(Event::DnsReady) => {},
                 Some(Event::ApiReady(address)) => api_address = Some(address),
                 Some(Event::InboundReady(bound)) => {
                     if ready.is_some() && let Err(error) = inbound::accept_ready(&mut inbound_ready, bound) { break Err(error); }
@@ -371,11 +422,15 @@ pub async fn run_runtime(
             }
         }
         if (mode == RuntimeMode::Proxy || tun_ready) && inbound_ready.is_empty()
-            && let Some(address) = api_address && let Some(ready) = ready.take() {
+            && let Some(address) = api_address && ready.is_some() {
+            let status=match runtime_control::readback(mode,&components,&network).await {Ok(status)=>status,Err(error)=>break Err(error)};
+            if !status.listening {continue;}
             network.mark_ready();
+            let tun_ready=status.tun_ready;
+            let user_listeners_ready=status.user_listeners_ready;
+            control.running(status);
             tracing::info!("AEROVE mobile {mode:?}, user listeners and controller ready at {address}");
-            ready(ReadyInfo { address, runtime_mode: mode, tun_ready: mode == RuntimeMode::Tun && tun_ready,
-                user_listeners_ready: true });
+            ready.take().unwrap()(ReadyInfo { address, runtime_mode: mode, tun_ready, user_listeners_ready });
         }
     };
     cancel.cancel();
@@ -396,8 +451,9 @@ pub(crate) async fn lookup_host(host_port: String) -> io::Result<std::vec::IntoI
     let context = context()?;
     let mut addresses = Vec::new();
     let mut last_error = None;
+    let servers=match context.network_dns.read().unwrap().as_ref(){Some(snapshot)=>snapshot.servers(None)?,None=>context.bootstrap.clone()};
     for record_type in [RecordType::A, RecordType::AAAA] {
-        for server in &context.bootstrap {
+        for server in &servers {
             match query(host, record_type, *server).await {
                 Ok(ips) => {
                     addresses.extend(ips.into_iter().map(|ip| SocketAddr::new(ip, port)));
@@ -483,7 +539,7 @@ mod tests {
         let (logs, _) = broadcast::channel(32);
         let cancel = CancellationToken::new();
         *CONTEXT.write().unwrap() = Some(Arc::new(Context {
-            protector, bootstrap: vec![], events, logs,
+            protector, bootstrap: vec![], network_dns:RwLock::new(None),dns_enabled:false,dns_hijack_all:false, events, logs,
             level: tracing::level_filters::LevelFilter::TRACE,
             cancel: cancel.clone(), telemetry: telemetry::Bus::new(cancel), network: None,
         }));
@@ -589,6 +645,7 @@ mod tests {
         let cancel = CancellationToken::new();
         *second_context = Some(Arc::new(Context {
             protector: old.protector.clone(), bootstrap: vec![], events: old.events.clone(),
+            network_dns:std::sync::RwLock::new(None),dns_enabled:false,dns_hijack_all:false,
             logs, level: old.level, cancel: cancel.clone(), telemetry: telemetry::Bus::new(cancel), network: None,
         }));
         drop(second_context);

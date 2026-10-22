@@ -37,17 +37,19 @@ struct Snapshot {
     runtime_mode: Option<RuntimeMode>,
     tun_ready: bool,
     user_listeners_ready: bool,
+    listening: bool,
 }
 
 impl Snapshot {
     fn exited() -> Self {
         Self { state: State::Exited, error: None, api_address: None, runtime_mode: None,
-            tun_ready: false, user_listeners_ready: false }
+            tun_ready: false, user_listeners_ready: false, listening:false }
     }
 }
 
 struct Session {
     snapshot: Mutex<Snapshot>,
+    control: Arc<clash_lib::mobile::runtime_control::RuntimeControl>,
     changed: Condvar,
     cancel: CancellationToken,
     worker: Mutex<Option<JoinHandle<()>>>,
@@ -56,9 +58,10 @@ struct Session {
 impl Session {
     fn new(mode: RuntimeMode) -> Self {
         Self {
+            control: clash_lib::mobile::runtime_control::RuntimeControl::new(),
             snapshot: Mutex::new(Snapshot {
                 state: State::Starting, error: None, api_address: None,
-                runtime_mode: Some(mode), tun_ready: false, user_listeners_ready: false,
+                runtime_mode: Some(mode), tun_ready: false, user_listeners_ready: false, listening:false,
             }),
             changed: Condvar::new(),
             cancel: CancellationToken::new(),
@@ -75,6 +78,7 @@ impl Session {
             state.api_address = Some(info.address.to_string());
             state.tun_ready = info.tun_ready;
             state.user_listeners_ready = true;
+            state.listening = true;
             self.changed.notify_all();
         }
     }
@@ -85,6 +89,7 @@ impl Session {
         state.runtime_mode = None;
         state.tun_ready = false;
         state.user_listeners_ready = false;
+        state.listening = false;
         match result {
             Err(error) => {
                 state.state = State::Failed;
@@ -167,9 +172,9 @@ fn start_runtime(config_path: PathBuf, working_directory: PathBuf, input: Runtim
                 }
                 let runtime = tokio::runtime::Builder::new_multi_thread()
                     .worker_threads(2).enable_all().build().context("create core runtime")?;
-                let result = runtime.block_on(clash_lib::mobile::run_runtime(
+                let result = runtime.block_on(clash_lib::mobile::run_runtime_control(
                     source, working_directory, input,
-                    worker_session.cancel.clone(),
+                    worker_session.cancel.clone(), worker_session.control.clone(),
                     |info| worker_session.ready(info),
                 ));
                 // Dropping the instance runtime joins its workers and closes detached connection tasks.
@@ -195,7 +200,13 @@ fn start_runtime(config_path: PathBuf, working_directory: PathBuf, input: Runtim
 
 fn snapshot(handle: i64) -> Result<Snapshot> {
     Ok(match session(handle)? {
-        Some(session) => session.snapshot.lock().unwrap().clone(),
+        Some(session) => {
+            let mut state=session.snapshot.lock().unwrap().clone();
+            if state.state==State::Running && let Some(listeners)=session.control.cached() {
+                state.tun_ready=listeners.tun_ready;state.user_listeners_ready=listeners.user_listeners_ready;state.listening=listeners.listening;
+            }
+            state
+        },
         None => Snapshot::exited(),
     })
 }
@@ -333,6 +344,56 @@ pub extern "system" fn Java_dev_aerove_lite_core_NativeCore_startRuntime<'local>
     }).resolve::<ThrowRuntimeExAndDefault>()
 }
 
+fn listener_command(handle:i64,action:&str,tun_fd:i32,only:bool)->Result<clash_lib::mobile::runtime_control::ListenerStatus> {
+    let session=session(handle)?.ok_or_else(||anyhow!("core handle has exited"))?;
+    let status=session.snapshot.lock().unwrap().clone();
+    if status.state!=State::Running {bail!("core must be running for listener control");}
+    if action!="attachTun" && tun_fd != -1 {bail!("tunFd: only attachTun accepts a descriptor");}
+    match action {
+        "park"=>session.control.park().map_err(Into::into),
+        "resumeProxy" if status.runtime_mode==Some(RuntimeMode::Proxy)=>session.control.resume_proxy().map_err(Into::into),
+        "attachTun" if status.runtime_mode==Some(RuntimeMode::Tun)=>{
+            if session.control.cached().is_none_or(|s|s.listening) {bail!("listening: attachTun requires a parked runtime");}
+            session.control.attach_tun(duplicate_tun(tun_fd)?).map_err(Into::into)
+        },
+        "read"=>session.control.status().map_err(Into::into),
+        "statistics"=>session.control.statistics(only).map_err(Into::into),
+        _=>bail!("runtimeMode: invalid listener command or resume input"),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_NativeCore_updateNetworkDns<'local>(mut env:EnvUnowned<'local>,_class:JClass<'local>,handle:i64,snapshot:JString<'local>){
+    env.with_env(|env|->std::result::Result<(),BridgeError>{
+        let session=session(handle).map_err(bridge_error)?.ok_or_else(||BridgeError("core handle has exited".into()))?;
+        if session.snapshot.lock().unwrap().state!=State::Running{return Err(BridgeError("core must be running for network DNS".into()));}
+        session.control.network_dns(snapshot.try_to_string(env)?).map_err(bridge_error)?;Ok(())
+    }).resolve::<ThrowRuntimeExAndDefault>()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_NativeCore_configureHttp<'local>(
+    mut env:EnvUnowned<'local>,_class:JClass<'local>,handle:i64,user_agent:JString<'local>,check_certificate:jni::sys::jboolean,
+){
+    env.with_env(|env|->std::result::Result<(),BridgeError>{
+        let session=session(handle).map_err(bridge_error)?.ok_or_else(||BridgeError("core handle has exited".into()))?;
+        if session.snapshot.lock().unwrap().state!=State::Running {return Err(BridgeError("core must be running for HTTP policy".into()));}
+        session.control.http(user_agent.try_to_string(env)?,check_certificate!=0).map_err(bridge_error)?;
+        Ok(())
+    }).resolve::<ThrowRuntimeExAndDefault>()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_NativeCore_listenerCommand<'local>(
+    mut env:EnvUnowned<'local>,_class:JClass<'local>,handle:i64,action:JString<'local>,tun_fd:i32,only_statistics_proxy:jni::sys::jboolean,
+)->JString<'local>{
+    env.with_env(|env|->std::result::Result<JString<'local>,BridgeError>{
+        let status=listener_command(handle,&action.try_to_string(env)?,tun_fd,only_statistics_proxy!=0).map_err(bridge_error)?;
+        let json=serde_json::to_string(&status).map_err(|e|BridgeError(e.to_string()))?;
+        Ok(env.new_string(json)?)
+    }).resolve::<ThrowRuntimeExAndDefault>()
+}
+
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_aerove_lite_core_NativeCore_snapshot<'local>(
     mut env: EnvUnowned<'local>, _class: JClass<'local>, handle: i64,
@@ -464,3 +525,12 @@ mod tests {
 
 #[cfg(test)]
 mod observation_tests;
+
+#[cfg(test)]
+mod runtime_control_tests;
+
+#[cfg(test)]
+mod http_policy_tests;
+
+#[cfg(test)]
+mod dns_network_tests;
