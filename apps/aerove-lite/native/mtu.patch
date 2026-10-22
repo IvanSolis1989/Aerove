@@ -90,7 +90,9 @@
              let (mut stack_sink, mut stack_stream) = stack.split();
 --- a/clash-netstack/src/device.rs
 +++ b/clash-netstack/src/device.rs
-@@ -20,19 +20,29 @@
+@@ -19,20 +19,31 @@
++    #[cfg(test)]
+     pub fn new(
          tx_sender: mpsc::Sender<Packet>,
          iface_notifier: mpsc::UnboundedSender<IfaceEvent<'static>>,
      ) -> Self {

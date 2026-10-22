@@ -110,7 +110,7 @@ def prepare(destination: Path, archive_cache: Path) -> dict[str, Path]:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(blob)
     paths["aerove-ts-underlay"] = helper
-    (destination / "source-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    (destination / "source-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
     return paths
 
 

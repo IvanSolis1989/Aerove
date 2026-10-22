@@ -21,10 +21,52 @@ pub fn udp_reuse_generation_and_off() {
     let bind = || owner.bind(17,"10.0.0.2:12000".parse().unwrap(),"1.1.1.1:443".parse().unwrap());
     let first=bind(); first.prefetch(); bind().prefetch(); assert_eq!(calls.load(Ordering::SeqCst),1);
     owner.set_mode(FindProcessMode::Off); assert!(first.identity().is_none());
-    owner.set_network_generation(2); owner.set_mode(FindProcessMode::Always);
+    owner.set_mode(FindProcessMode::Always);
     assert!(first.identity().is_some()); // Existing flow retains its original attribution.
     bind().prefetch(); assert_eq!(calls.load(Ordering::SeqCst),2);
     cancel.cancel(); assert!(bind().identity().is_none()); assert_eq!(calls.load(Ordering::SeqCst),2);
+}
+pub fn actual_mode_change_invalidates_pending_and_cached_udp() {
+    let calls=std::sync::Arc::new(AtomicUsize::new(0)); let count=calls.clone();
+    let owner=Owner::new(Some(std::sync::Arc::new(move |_,_,_| {
+        let uid=10000+count.fetch_add(1,Ordering::SeqCst) as u32;
+        Ok(Identity{uid,process:format!("uid.{uid}"),process_path:String::new()})
+    })),CancellationToken::new(),FindProcessMode::Always);
+    let bind=|| owner.bind(17,"10.0.0.2:12000".parse().unwrap(),"1.1.1.1:443".parse().unwrap());
+    let historical=bind(); assert_eq!(historical.identity().unwrap().uid,10000);
+    owner.set_mode(FindProcessMode::Off);
+    let pending_off=bind(); assert!(pending_off.identity().is_none());
+    assert_eq!(historical.known().unwrap().uid,10000);
+    assert_eq!(calls.load(Ordering::SeqCst),1);
+    owner.set_mode(FindProcessMode::Always);
+    assert!(pending_off.identity().is_none());
+    let current=bind(); assert!(!std::sync::Arc::ptr_eq(&current,&historical));
+    assert_eq!(current.identity().unwrap().uid,10001);
+    assert_eq!(historical.known().unwrap().uid,10000);
+    assert_eq!(historical.identity().unwrap().uid,10000);
+    assert_eq!(calls.load(Ordering::SeqCst),2);
+}
+pub fn mode_round_trip_rejects_inflight_receipt() {
+    let slot=std::sync::Arc::new(std::sync::Mutex::new(std::sync::Weak::<Owner>::new()));
+    let callback_slot=slot.clone(); let calls=std::sync::Arc::new(AtomicUsize::new(0)); let count=calls.clone();
+    let owner=Owner::new(Some(std::sync::Arc::new(move |_,_,_| {
+        let n=count.fetch_add(1,Ordering::SeqCst);
+        if n==0 { let owner=callback_slot.lock().unwrap().upgrade().unwrap(); owner.set_mode(FindProcessMode::Off); owner.set_mode(FindProcessMode::Always); }
+        Ok(Identity{uid:10000+n as u32,process:"fixture".into(),process_path:String::new()})
+    })),CancellationToken::new(),FindProcessMode::Always);
+    *slot.lock().unwrap()=std::sync::Arc::downgrade(&owner);
+    let bind=|| owner.bind(17,"10.0.0.2:12000".parse().unwrap(),"1.1.1.1:443".parse().unwrap());
+    let old=bind(); assert!(old.identity().is_none()); assert!(old.known().is_none());
+    assert_eq!(bind().identity().unwrap().uid,10001); assert_eq!(calls.load(Ordering::SeqCst),2);
+}
+pub fn same_mode_preserves_udp_and_pending_lookup() {
+    let (owner,calls,_)=fixture(FindProcessMode::Strict);
+    let first=owner.bind(17,"10.0.0.2:12000".parse().unwrap(),"1.1.1.1:443".parse().unwrap());
+    owner.set_mode(FindProcessMode::Strict);
+    let second=owner.bind(17,"10.0.0.2:12000".parse().unwrap(),"1.1.1.1:443".parse().unwrap());
+    assert!(std::sync::Arc::ptr_eq(&first,&second));
+    assert_eq!(second.identity().unwrap().uid,10042); owner.set_mode(FindProcessMode::Strict);
+    assert_eq!(first.identity().unwrap().uid,10042); assert_eq!(calls.load(Ordering::SeqCst),1);
 }
 pub fn unknown_is_not_root_and_parse_is_strict() {
     let owner=Owner::new(None,CancellationToken::new(),FindProcessMode::Always);

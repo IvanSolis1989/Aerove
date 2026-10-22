@@ -26,7 +26,7 @@ def digest(data: bytes) -> str:
 
 def tree_digest(directory: Path) -> str:
     hasher = hashlib.sha256()
-    for path in sorted(directory.rglob("*")):
+    for path in sorted(directory.rglob("*"), key=lambda path: path.relative_to(directory).parts):
         if path.is_symlink():
             raise ValueError("prepared source must not contain symlinks")
         if path.is_file() and path.name != "AEROVE_PROVENANCE.json":

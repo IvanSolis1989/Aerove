@@ -21,13 +21,20 @@ impl FindProcessMode {
 }
 type Key = (i32, SocketAddr, SocketAddr);
 struct Cached { flow: Arc<Flow>, last_active: std::time::Instant }
-struct Cache { generation: u64, entries: HashMap<Key, Cached> }
+struct Cache { generation: u64, mode_epoch: u64, entries: HashMap<Key, Cached> }
 pub struct Owner { resolver: Option<Resolver>, cancel: CancellationToken, mode: AtomicU8, cache: Mutex<Cache> }
 impl Owner {
     pub fn new(resolver: Option<Resolver>, cancel: CancellationToken, mode: FindProcessMode) -> Arc<Self> {
-        Arc::new(Self { resolver, cancel, mode: AtomicU8::new(mode as u8), cache: Mutex::new(Cache { generation: 0, entries: HashMap::new() }) })
+        Arc::new(Self { resolver, cancel, mode: AtomicU8::new(mode as u8), cache: Mutex::new(Cache { generation: 0, mode_epoch: 0, entries: HashMap::new() }) })
     }
-    pub fn set_mode(&self, mode: FindProcessMode) { self.mode.store(mode as u8, Ordering::Release); }
+    pub fn set_mode(&self, mode: FindProcessMode) {
+        let mut cache = self.cache.lock().unwrap();
+        if self.mode.load(Ordering::Acquire) != mode as u8 {
+            cache.mode_epoch = cache.mode_epoch.wrapping_add(1);
+            cache.entries.clear();
+            self.mode.store(mode as u8, Ordering::Release);
+        }
+    }
     pub fn mode(&self) -> FindProcessMode {
         match self.mode.load(Ordering::Acquire) {
             1 => FindProcessMode::Always,
@@ -42,6 +49,7 @@ impl Owner {
     pub fn bind(self: &Arc<Self>, protocol: i32, source: SocketAddr, destination: SocketAddr) -> Arc<Flow> {
         let mut cache = self.cache.lock().unwrap();
         let generation = cache.generation;
+        let mode_epoch = cache.mode_epoch;
         let key = (protocol, source, destination);
         let now = std::time::Instant::now();
         let timeout = std::time::Duration::from_secs(10); // Same idle interval as core UDP NAT.
@@ -54,7 +62,7 @@ impl Owner {
             }
             cache.entries.remove(&key);
         }
-        let flow = Arc::new(Flow { owner: Arc::downgrade(self), generation, key, result: OnceLock::new() });
+        let flow = Arc::new(Flow { owner: Arc::downgrade(self), generation, mode_epoch, key, result: OnceLock::new(), initializing: Mutex::new(()) });
         if protocol == 17 {
             // A full cache refuses attribution for new tuples instead of evicting active flows
             // and repeatedly calling Java on every packet of an adversarial UDP stream.
@@ -65,17 +73,28 @@ impl Owner {
         flow
     }
 }
-pub struct Flow { owner: std::sync::Weak<Owner>, generation: u64, key: Key, result: OnceLock<Option<Identity>> }
+pub struct Flow { owner: std::sync::Weak<Owner>, generation: u64, mode_epoch: u64, key: Key, result: OnceLock<Option<Identity>>, initializing: Mutex<()> }
 impl Flow {
     pub fn identity(&self) -> Option<&Identity> {
         let owner = self.owner.upgrade()?;
         if owner.cancel.is_cancelled() || owner.mode.load(Ordering::Acquire) == FindProcessMode::Off as u8 { return None; }
-        self.result.get_or_init(|| {
-            if owner.cache.lock().unwrap().generation != self.generation { return None; }
-            let identity = (owner.resolver.as_ref()?)(self.key.0, self.key.1, self.key.2).ok()?;
-            if owner.cancel.is_cancelled() || owner.cache.lock().unwrap().generation != self.generation { return None; }
-            Some(identity)
-        }).as_ref()
+        if let Some(result) = self.result.get() { return result.as_ref(); }
+        let _initializing = self.initializing.lock().unwrap();
+        if let Some(result) = self.result.get() { return result.as_ref(); }
+        {
+            let cache = owner.cache.lock().unwrap();
+            if cache.generation != self.generation || cache.mode_epoch != self.mode_epoch || owner.mode() == FindProcessMode::Off || owner.cancel.is_cancelled() {
+                let _ = self.result.set(None);
+                return None;
+            }
+        }
+        let resolved = owner.resolver.as_ref().and_then(|resolver| (resolver)(self.key.0, self.key.1, self.key.2).ok());
+        let cache = owner.cache.lock().unwrap();
+        let valid = cache.generation == self.generation && cache.mode_epoch == self.mode_epoch
+            && owner.mode() != FindProcessMode::Off && !owner.cancel.is_cancelled();
+        let _ = self.result.set(if valid { resolved } else { None });
+        drop(cache);
+        self.result.get().and_then(Option::as_ref)
     }
     pub fn known(&self) -> Option<&Identity> {
         if self.owner.upgrade()?.cancel.is_cancelled() { return None; }

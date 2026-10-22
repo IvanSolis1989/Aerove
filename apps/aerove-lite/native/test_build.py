@@ -26,6 +26,21 @@ def archive_bytes(entries):
 
 
 class SourcePreparationTest(unittest.TestCase):
+    def test_tree_digest_is_case_sensitive_and_root_independent(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as temporary:
+            first, second = Path(temporary) / "first", Path(temporary) / "second"
+            entries = [("a.rs", b"lower"), ("Z.rs", b"upper"), ("a-dir/z.rs", b"nested"), ("a-dir.rs", b"sibling")]
+            expected = hashlib.sha256()
+            for name, data in sorted(entries, key=lambda item: tuple(item[0].split("/"))):
+                expected.update(name.encode("utf-8")); expected.update(b"\0"); expected.update(hashlib.sha256(data).digest())
+            for root in (first, second):
+                for name, data in entries:
+                    target = root / name; target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(data)
+                self.assertEqual(prepare.tree_digest(root), expected.hexdigest())
+            (second / "Z.rs").write_bytes(b"changed")
+            self.assertNotEqual(prepare.tree_digest(first), prepare.tree_digest(second))
+
     def test_extract_preserves_contents(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
