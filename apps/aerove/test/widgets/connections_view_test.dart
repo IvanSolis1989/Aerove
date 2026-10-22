@@ -224,12 +224,24 @@ void main() {
 
     expect(readCount, 1);
 
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    for (final lifecycle in [
+      AppLifecycleState.inactive,
+      AppLifecycleState.hidden,
+      AppLifecycleState.paused,
+    ]) {
+      tester.binding.handleAppLifecycleStateChanged(lifecycle);
+    }
     await tester.pump(const Duration(seconds: 4));
 
     expect(readCount, 1);
 
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    for (final lifecycle in [
+      AppLifecycleState.hidden,
+      AppLifecycleState.inactive,
+      AppLifecycleState.resumed,
+    ]) {
+      tester.binding.handleAppLifecycleStateChanged(lifecycle);
+    }
     await tester.pump();
 
     expect(readCount, 2);
