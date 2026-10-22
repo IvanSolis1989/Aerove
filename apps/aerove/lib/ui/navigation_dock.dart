@@ -5,6 +5,7 @@ import 'package:fl_clash/ui/foreground_ink.dart';
 
 import 'package:fl_clash/ui/context.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
+import 'package:fl_clash/ui/inherited.dart';
 import 'package:fl_clash/ui/shape.dart';
 import 'package:fl_clash/ui/surface.dart';
 import 'package:fl_clash/ui/typography.dart';
@@ -169,6 +170,13 @@ class _Spring extends ChangeNotifier implements ValueListenable<double> {
   SpringDescription? _spring;
   double _now = 0;
   double _start = 0;
+  bool _motionEnabled = true;
+
+  set motionEnabled(bool enabled) {
+    if (_motionEnabled == enabled) return;
+    _motionEnabled = enabled;
+    if (!enabled) jumpTo(target);
+  }
 
   @override
   double get value => _value;
@@ -187,6 +195,10 @@ class _Spring extends ChangeNotifier implements ValueListenable<double> {
   }
 
   void springTo(double target, SpringDescription spring) {
+    if (!_motionEnabled) {
+      jumpTo(target);
+      return;
+    }
     _simulation = SpringSimulation(
       spring,
       _value,
@@ -231,6 +243,47 @@ class _Spring extends ChangeNotifier implements ValueListenable<double> {
   @override
   void dispose() {
     _ticker.dispose();
+    super.dispose();
+  }
+}
+
+mixin _NavigationMotion<T extends StatefulWidget> on State<T> {
+  late final AppLifecycleListener _lifecycle;
+  bool _foreground = true;
+  bool _ticking = true;
+  bool _pageActive = true;
+  bool _reduced = false;
+
+  bool get _motionActive => _foreground && _ticking && _pageActive;
+  bool get _motionAllowed => _motionActive && !_reduced;
+
+  void _motionChanged();
+
+  @override
+  void initState() {
+    super.initState();
+    final state = WidgetsBinding.instance.lifecycleState;
+    _foreground = state == null || state == AppLifecycleState.resumed;
+    _lifecycle = AppLifecycleListener(
+      onStateChange: (state) {
+        _foreground = state == AppLifecycleState.resumed;
+        _motionChanged();
+      },
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _ticking = TickerMode.valuesOf(context).enabled;
+    _pageActive = PageActivityScope.isActiveOf(context);
+    _reduced = MediaQuery.disableAnimationsOf(context);
+    _motionChanged();
+  }
+
+  @override
+  void dispose() {
+    _lifecycle.dispose();
     super.dispose();
   }
 }
@@ -359,7 +412,7 @@ class NavigationDock extends StatefulWidget {
 }
 
 class _NavigationDockState extends State<NavigationDock>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, _NavigationMotion {
   late final AnimationController _collapse = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 300),
@@ -368,12 +421,15 @@ class _NavigationDockState extends State<NavigationDock>
 
   void _syncCollapse() {
     final target = widget.collapsed ? 1.0 : 0.0;
-    if (MediaQuery.disableAnimationsOf(context)) {
+    if (!_motionAllowed) {
       _collapse.value = target;
     } else if (_collapse.value != target) {
       _collapse.animateTo(target, curve: Curves.easeInOutCubic);
     }
   }
+
+  @override
+  void _motionChanged() => _syncCollapse();
 
   @override
   void didChangeDependencies() {
@@ -575,7 +631,7 @@ abstract interface class ElasticPressHandle {
 }
 
 class _ElasticPressState extends State<ElasticPress>
-    with TickerProviderStateMixin
+    with TickerProviderStateMixin, _NavigationMotion
     implements ElasticPressHandle {
   late final _Spring _lift = _Spring(this, 0);
   late final _Spring _pullX = _Spring(this, 0);
@@ -584,6 +640,16 @@ class _ElasticPressState extends State<ElasticPress>
   int? _pointer;
   Offset _origin = Offset.zero;
   bool _releasing = false;
+
+  @override
+  void _motionChanged() {
+    for (final spring in [_lift, _pullX, _pullY]) {
+      spring.motionEnabled = _motionAllowed;
+      if (!_motionAllowed) spring.jumpTo(0);
+    }
+    if (!_motionActive) _pointer = null;
+    if (!_motionAllowed) _releasing = false;
+  }
 
   @override
   void initState() {
@@ -600,13 +666,15 @@ class _ElasticPressState extends State<ElasticPress>
   }
 
   void _swell(Offset origin) {
+    if (!_motionActive) return;
     _origin = origin;
     _releasing = false;
     _lift.springTo(1, _pressSpring);
   }
 
   void _handlePointerDown(PointerDownEvent event) {
-    if (!widget.enabled ||
+    if (!_motionActive ||
+        !widget.enabled ||
         _pointer != null ||
         event.buttons & kPrimaryButton == 0) {
       return;
@@ -676,7 +744,9 @@ class _ElasticPressState extends State<ElasticPress>
   }
 
   @override
-  void drag(Offset position) => _pullToward(_localOf(position));
+  void drag(Offset position) {
+    if (_motionActive) _pullToward(_localOf(position));
+  }
 
   @override
   void release() => _release();
@@ -857,7 +927,7 @@ class FloatingNavigationBar extends StatefulWidget {
 }
 
 class _FloatingNavigationBarState extends State<FloatingNavigationBar>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, _NavigationMotion {
   ({
     List<String> labels,
     TextStyle style,
@@ -923,6 +993,40 @@ class _FloatingNavigationBarState extends State<FloatingNavigationBar>
 
   int get _selectedIndex => widget.selectedIndex.clamp(0, _lastIndex);
 
+  @override
+  void _motionChanged() {
+    final springs = [
+      _lens,
+      _lift,
+      _hover,
+      _hoverShow,
+      _swell,
+      _stretch,
+      _jelly,
+      _glow,
+      _glowSpread,
+      ..._parallax,
+    ];
+    for (final spring in springs) {
+      spring.motionEnabled = _motionAllowed;
+    }
+    if (!_motionAllowed) {
+      _dropping = false;
+      _cursor = null;
+      _hoverAt.value = null;
+      _lens.jumpTo(_selectedIndex.toDouble());
+      for (final spring in springs.skip(1)) {
+        spring.jumpTo(0);
+      }
+    }
+    if (!_motionActive) {
+      _pointer = null;
+      _tracker = null;
+      _pressedIndex = null;
+      _dragging = false;
+    }
+  }
+
   ({double pitch, double lens, double inset}) get _layout => _dockLayout(
     context.size!.width - _barPadding * 2,
     widget.destinations.length,
@@ -946,6 +1050,7 @@ class _FloatingNavigationBarState extends State<FloatingNavigationBar>
   void didUpdateWidget(covariant FloatingNavigationBar oldWidget) {
     super.didUpdateWidget(oldWidget);
     _syncParallax();
+    _motionChanged();
     _leanContent();
     final rest = _lensRest;
     if (_pressedIndex == null && _lens.target != rest) {
@@ -973,6 +1078,10 @@ class _FloatingNavigationBarState extends State<FloatingNavigationBar>
   }
 
   void _wobble() {
+    if (!_motionAllowed) {
+      _jelly.jumpTo(0);
+      return;
+    }
     final velocity = _lens.velocity;
     final braking = math.max(0.0, -_lens.acceleration * velocity.sign);
     final target =
@@ -1001,7 +1110,7 @@ class _FloatingNavigationBarState extends State<FloatingNavigationBar>
       _parallax.removeLast().dispose();
     }
     while (_parallax.length < count) {
-      _parallax.add(_Spring(this, 0));
+      _parallax.add(_Spring(this, 0)..motionEnabled = _motionAllowed);
     }
   }
 
@@ -1099,7 +1208,7 @@ class _FloatingNavigationBarState extends State<FloatingNavigationBar>
   void _handleHover(PointerHoverEvent event) {
     // The engine synthesizes a hover before a touch lands, and the touch
     // pointer lingers until removed, so a tap would leave the highlight on.
-    if (event.kind == PointerDeviceKind.touch) {
+    if (!_motionActive || event.kind == PointerDeviceKind.touch) {
       return;
     }
     _cursor = event.localPosition;
@@ -1116,7 +1225,9 @@ class _FloatingNavigationBarState extends State<FloatingNavigationBar>
   }
 
   void _handlePointerDown(PointerDownEvent event) {
-    if (_pointer != null || event.buttons & kPrimaryButton == 0) {
+    if (!_motionActive ||
+        _pointer != null ||
+        event.buttons & kPrimaryButton == 0) {
       return;
     }
     _pointer = event.pointer;

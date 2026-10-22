@@ -27,6 +27,99 @@ import '../helpers/test_app.dart';
 Finder _glyph(Glyph glyph) => find.byGlyph(glyph);
 
 void main() {
+  for (final animation in TabAnimation.values) {
+    testWidgets('navigation motion gates settle the latest $animation intent', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(500, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final reduced = ValueNotifier(false);
+      addTearDown(reduced.dispose);
+      final labels = [
+        PageLabel.dashboard,
+        PageLabel.proxies,
+        PageLabel.profiles,
+        PageLabel.tools,
+      ];
+      final container = ProviderContainer(
+        overrides: [
+          navigationItemsStateProvider.overrideWithValue(
+            NavigationItemsState(
+              value: [
+                for (final label in labels)
+                  NavigationItem(
+                    glyph: AppGlyphs.dashboard,
+                    label: label,
+                    builder: (_) => Text('page:${label.name}'),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      globalState.container = container;
+      container.read(viewSizeProvider.notifier).value = const Size(500, 800);
+      container
+          .read(appSettingProvider.notifier)
+          .update((state) => state.copyWith(tabAnimation: animation));
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: TestApp(
+            includeNavigatorKey: false,
+            homeBuilder: (child) => ValueListenableBuilder<bool>(
+              valueListenable: reduced,
+              builder: (context, value, _) => MediaQuery(
+                data: MediaQuery.of(context).copyWith(disableAnimations: value),
+                child: child,
+              ),
+            ),
+            child: const HomePage(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final controller = tester
+          .widget<PageView>(find.byType(PageView))
+          .controller!;
+      final navigation = container.read(currentPageLabelProvider.notifier);
+      navigation.toPage(PageLabel.tools);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 60));
+      expect(controller.page, inExclusiveRange(2, 3));
+      reduced.value = true;
+      navigation.toPage(PageLabel.profiles);
+      await tester.pump();
+      expect(controller.page, 2);
+      navigation.toPage(PageLabel.proxies);
+      await tester.pump();
+      expect(controller.page, 1);
+      await tester.pump();
+      expect(tester.binding.transientCallbackCount, 0);
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      reduced.value = false;
+      await tester.pump();
+      navigation.toPage(PageLabel.tools);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 60));
+      container.read(appVisibleProvider.notifier).value = false;
+      await tester.pump();
+      expect(controller.page, 3);
+      navigation.toPage(PageLabel.dashboard);
+      await tester.pump();
+      expect(controller.page, 0);
+      container.read(appVisibleProvider.notifier).value = true;
+      await tester.pump();
+      await tester.pump();
+      expect(controller.page, 0);
+      expect(tester.binding.transientCallbackCount, 0);
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('home shell reveals independently enabled glass or wallpaper', (
     tester,
   ) async {

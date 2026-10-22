@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 
 import 'package:fl_clash/ui/foreground_ink.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
+import 'package:fl_clash/ui/inherited.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/navigation_dock.dart';
 import 'package:flutter/rendering.dart';
@@ -42,6 +43,7 @@ class _FixtureState extends State<_Fixture> {
   bool collapsed = false;
   bool reduced = false;
   bool ticking = true;
+  bool active = true;
   int selected = 0;
   int builds = 0;
   late List<String> labels = widget.labels;
@@ -63,9 +65,13 @@ class _FixtureState extends State<_Fixture> {
 
   void collapse(bool value) => setState(() => collapsed = value);
 
-  void reduceMotion() => setState(() => reduced = true);
+  void reduceMotion([bool value = true]) => setState(() => reduced = value);
 
   void tick(bool value) => setState(() => ticking = value);
+
+  void select(int value) => setState(() => selected = value);
+
+  void setActive(bool value) => setState(() => active = value);
 
   @override
   Widget build(BuildContext context) {
@@ -83,45 +89,55 @@ class _FixtureState extends State<_Fixture> {
           ).copyWith(disableAnimations: reduced, textScaler: scaler),
           child: TickerMode(
             enabled: ticking,
-            child: RepaintBoundary(
-              key: _scene,
-              child: LiquidGlassScope(
-                enabled: widget.glass,
-                quality: widget.quality,
-                child: LiquidGlassHost(
+            child: PageActivityScope(
+              isActive: active,
+              child: RepaintBoundary(
+                key: _scene,
+                child: LiquidGlassScope(
                   enabled: widget.glass,
-                  wallpaperOnly: true,
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      const Positioned.fill(
-                        child: LiquidGlassColorField(
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [Color(0xFFDAEAF3), Color(0xFFF2D9C8)],
+                  quality: widget.quality,
+                  child: LiquidGlassHost(
+                    enabled: widget.glass,
+                    wallpaperOnly: true,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        const Positioned.fill(
+                          child: LiquidGlassColorField(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    Color(0xFFDAEAF3),
+                                    Color(0xFFF2D9C8),
+                                  ],
+                                ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                      Align(
-                        alignment: Alignment.bottomCenter,
-                        child: NavigationDock(
-                          collapsed: collapsed,
-                          destinations: [
-                            for (var index = 0; index < labels.length; index++)
-                              NavigationDockDestination(
-                                glyph: _glyphs[index],
-                                label: labels[index],
-                              ),
-                          ],
-                          selectedIndex: selected,
-                          onSelected: (index) =>
-                              setState(() => selected = index),
+                        Align(
+                          alignment: Alignment.bottomCenter,
+                          child: NavigationDock(
+                            collapsed: collapsed,
+                            destinations: [
+                              for (
+                                var index = 0;
+                                index < labels.length;
+                                index++
+                              )
+                                NavigationDockDestination(
+                                  glyph: _glyphs[index],
+                                  label: labels[index],
+                                ),
+                            ],
+                            selectedIndex: selected,
+                            onSelected: (index) =>
+                                setState(() => selected = index),
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -215,6 +231,161 @@ Future<void> _pump(
 }
 
 void main() {
+  testWidgets('navigation motion gates stop lens and lifecycle springs', (
+    tester,
+  ) async {
+    final key = GlobalKey<_FixtureState>();
+    await _pump(tester, key, glass: false);
+    key.currentState!.select(2);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 60));
+    key.currentState!.reduceMotion();
+    await tester.pump();
+    final bar = _bar(tester);
+    expect(
+      _lens(tester).center.dx,
+      closeTo(tester.getCenter(_glyph(2).first).dx, 1e-6),
+    );
+    expect(_lens(tester).height, closeTo(bar.height - 8, 1e-6));
+    await tester.pump();
+    expect(tester.binding.transientCallbackCount, 0);
+    expect(tester.binding.hasScheduledFrame, isFalse);
+    key.currentState!.tick(false);
+    key.currentState!.select(0);
+    await tester.pump();
+    expect(
+      _lens(tester).center.dx,
+      closeTo(tester.getCenter(_glyph(0).first).dx, 1e-6),
+    );
+    key.currentState!.tick(true);
+    await tester.pump();
+    await tester.pump();
+    expect(tester.binding.hasScheduledFrame, isFalse);
+    key.currentState!.reduceMotion(false);
+    key.currentState!.select(1);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 60));
+    key.currentState!.setActive(false);
+    key.currentState!.select(2);
+    await tester.pump();
+    expect(
+      _lens(tester).center.dx,
+      closeTo(tester.getCenter(_glyph(2).first).dx, 1e-6),
+    );
+    key.currentState!.setActive(true);
+    await tester.pump();
+    await tester.pump();
+    expect(tester.binding.transientCallbackCount, 0);
+    expect(tester.binding.hasScheduledFrame, isFalse);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('navigation elastic press has no reduced-motion release tail', (
+    tester,
+  ) async {
+    const target = ValueKey('reducedElasticPress');
+    await tester.pumpWidget(
+      const TestApp(
+        child: MediaQuery(
+          data: MediaQueryData(disableAnimations: true),
+          child: Center(
+            child: ElasticPress(
+              child: ColoredBox(
+                key: target,
+                color: Colors.blue,
+                child: SizedBox(width: 100, height: 40),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    final box = tester.renderObject<RenderBox>(find.byKey(target));
+    final resting = Offset.zero & box.size;
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(target)),
+    );
+    await tester.pump();
+    expect(ElasticPress.paintBoundsOf(box).width, greaterThan(resting.width));
+    await gesture.moveBy(const Offset(16, 0));
+    await tester.pump();
+    expect(
+      ElasticPress.paintBoundsOf(box).center.dx,
+      greaterThan(resting.center.dx),
+    );
+    await gesture.up();
+    await tester.pump();
+    expect(ElasticPress.paintBoundsOf(box), resting);
+    await tester.pump();
+    expect(tester.binding.transientCallbackCount, 0);
+    expect(tester.binding.hasScheduledFrame, isFalse);
+  });
+
+  testWidgets('navigation reduced motion tracks drag and stops on release', (
+    tester,
+  ) async {
+    final key = GlobalKey<_FixtureState>();
+    await _pump(tester, key, glass: false);
+    key.currentState!.reduceMotion();
+    await tester.pump();
+    final bar = _bar(tester);
+    final start = Offset(tester.getCenter(_glyph(0).first).dx, bar.center.dy);
+    final end = Offset(tester.getCenter(_glyph(1).first).dx, bar.center.dy);
+    final gesture = await tester.startGesture(start);
+    await gesture.moveTo(end);
+    await tester.pump();
+    expect(_lens(tester).center.dx, closeTo(end.dx, 1e-6));
+    await gesture.up();
+    await tester.pump();
+    expect(key.currentState!.selected, 1);
+    expect(_lens(tester).center.dx, closeTo(end.dx, 1e-6));
+    expect(_lens(tester).height, closeTo(bar.height - 8, 1e-6));
+    await tester.pump();
+    expect(tester.binding.transientCallbackCount, 0);
+    expect(tester.binding.hasScheduledFrame, isFalse);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('navigation lifecycle inactivity settles the latest selection', (
+    tester,
+  ) async {
+    final key = GlobalKey<_FixtureState>();
+    addTearDown(
+      () => tester.binding.handleAppLifecycleStateChanged(
+        AppLifecycleState.resumed,
+      ),
+    );
+    await _pump(tester, key, glass: false);
+    key.currentState!.select(2);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 60));
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    expect(
+      _lens(tester).center.dx,
+      closeTo(tester.getCenter(_glyph(2).first).dx, 1e-6),
+    );
+    await tester.pump();
+    expect(tester.binding.transientCallbackCount, 0);
+    expect(tester.binding.hasScheduledFrame, isFalse);
+    final hiddenGesture = await tester.startGesture(
+      tester.getCenter(_glyph(0).first),
+    );
+    await hiddenGesture.moveTo(tester.getCenter(_glyph(1).first));
+    await hiddenGesture.up();
+    await tester.pump();
+    expect(key.currentState!.selected, 2);
+    expect(
+      _lens(tester).center.dx,
+      closeTo(tester.getCenter(_glyph(2).first).dx, 1e-6),
+    );
+    expect(tester.binding.transientCallbackCount, 0);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(tester.binding.transientCallbackCount, 0);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   setUpAll(() async {
     final font = FontLoader('DockMetrics')
       ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'));
