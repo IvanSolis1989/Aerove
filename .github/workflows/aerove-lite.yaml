@@ -76,20 +76,29 @@ jobs:
             [[ "$NATIVE_TEST_FILTER" =~ ^[[:alnum:]_:]+$ ]] || exit 2
             python3 apps/aerove-lite/native/build.py --initialize-lock --prepare-only
             set +e
-            CARGO_TARGET_DIR="$GITHUB_WORKSPACE/apps/aerove-lite/native/target" RUST_BACKTRACE=1 \
-              timeout --signal=TERM --kill-after=10s 120s cargo test \
-              --manifest-path apps/aerove-lite/native/Cargo.toml --locked --lib "$NATIVE_TEST_FILTER" \
-              -- --test-threads=1 --nocapture 2>&1 | tee "$evidence/native-test.log"
-            command_status=${PIPESTATUS[0]}
+            (cd apps/aerove-lite/native && \
+              CARGO_TARGET_DIR="$GITHUB_WORKSPACE/apps/aerove-lite/native/target" \
+              timeout --signal=TERM --kill-after=10s 8m cargo test --locked --lib --no-run) \
+              2>&1 | tee "$evidence/native-compile.log"
+            compile_status=${PIPESTATUS[0]}
+            command_status=$compile_status
+            if [[ "$compile_status" == 0 ]]; then
+              (cd apps/aerove-lite/native && \
+                CARGO_TARGET_DIR="$GITHUB_WORKSPACE/apps/aerove-lite/native/target" RUST_BACKTRACE=1 \
+                timeout --signal=TERM --kill-after=10s 120s cargo test --locked --lib "$NATIVE_TEST_FILTER" \
+                -- --test-threads=1 --nocapture) 2>&1 | tee "$evidence/native-test.log"
+              command_status=${PIPESTATUS[0]}
+            fi
             set -e
           else
+            compile_status=''
             set +e
             timeout --signal=TERM --kill-after=10s 10m \
               python3 apps/aerove-lite/native/build.py --initialize-lock --test 2>&1 | tee "$evidence/native-test.log"
             command_status=${PIPESTATUS[0]}
             set -e
           fi
-          python3 - "$command_status" <<'PY'
+          python3 - "$command_status" "$compile_status" <<'PY'
           import hashlib, json, os, sys
           from pathlib import Path
           evidence = Path(os.environ['RUNNER_TEMP']) / 'lite-native-preflight'
@@ -99,11 +108,16 @@ jobs:
           provenance = json.loads(provenance_path.read_text()) if provenance_path.is_file() else None
           result = {
               **before,
-              'command': ('timeout --signal=TERM --kill-after=10s 120s cargo test --manifest-path apps/aerove-lite/native/Cargo.toml --locked --lib '
+              'command': ('timeout --signal=TERM --kill-after=10s 120s cargo test --locked --lib '
                           + os.environ['NATIVE_TEST_FILTER'] + ' -- --test-threads=1 --nocapture') if os.environ['NATIVE_TEST_FILTER'] else
                          'timeout --signal=TERM --kill-after=10s 10m python3 apps/aerove-lite/native/build.py --initialize-lock --test',
               'testSelection': os.environ['NATIVE_TEST_FILTER'] or 'full-suite',
-              'commandLog': 'native-test.log',
+              'workingDirectory': 'apps/aerove-lite/native' if os.environ['NATIVE_TEST_FILTER'] else '.',
+              'compileCommand': 'timeout --signal=TERM --kill-after=10s 8m cargo test --locked --lib --no-run' if os.environ['NATIVE_TEST_FILTER'] else None,
+              'compileExitCode': int(sys.argv[2]) if sys.argv[2] else None,
+              'compileLog': 'native-compile.log' if os.environ['NATIVE_TEST_FILTER'] else None,
+              'commandStage': 'compile' if sys.argv[2] and int(sys.argv[2]) != 0 else 'test',
+              'commandLog': 'native-compile.log' if sys.argv[2] and int(sys.argv[2]) != 0 else 'native-test.log',
               'commandExitCode': int(sys.argv[1]),
               'lockSha256After': hashlib.sha256(lock.read_bytes()).hexdigest() if lock.is_file() else None,
               'lockChanged': (hashlib.sha256(lock.read_bytes()).hexdigest() if lock.is_file() else None) != before['lockSha256Before'],
