@@ -416,125 +416,352 @@
      task::JoinSet,
  };
  use ts_tls_util::ServerName;
-@@ -39,8 +40,9 @@
+@@ -39,6 +40,180 @@
  /// because they were not configured to be reachable (see the note in [`dial_region_tcp`]).
  /// Currently, self-signed server certs are unsupported, so servers with that configuration
  /// are filtered out of the server set.
--pub async fn dial_region_tls<'c>(
--    servers: impl IntoIterator<Item = &'c ServerConnInfo>,
-+pub async fn dial_region_tls_with_underlay<'c>(
-+    servers: impl IntoIterator<Item = &'c ServerConnInfo>,
++pub async fn dial_region_tls_with_underlay<'c, T: IntoIterator<Item = &'c ServerConnInfo>>(
++    servers: T,
 +    underlay: &Underlay,
- ) -> Result<
-     Option<(
-         impl AsyncRead + AsyncWrite + Unpin + Send + 'static,
-@@ -49,7 +51,7 @@
-     )>,
-     Error,
- > {
--    let Some((conn, server)) = dial_region_tcp(servers).await else {
++) -> Result<
++    Option<(
++        impl AsyncRead + AsyncWrite + Unpin + Send + 'static + use<T>,
++        &'c ServerConnInfo,
++        SocketAddr,
++    )>,
++    Error,
++> {
 +    let Some((conn, server)) = dial_region_tcp_with_underlay(servers, underlay).await else {
-         return Ok(None);
-     };
-     let remote_addr = conn.peer_addr()?;
-@@ -96,8 +98,9 @@
- /// because they were not configured to be reachable (both ipv4/ipv6 disabled or stun_only).
- /// As a temporary measure, a self-signed TLS certificate configuration also causes server
- /// disablement, as this is unsupported.
--pub async fn dial_region_tcp<'c>(
--    servers: impl IntoIterator<Item = &'c ServerConnInfo>,
++        return Ok(None);
++    };
++    let remote_addr = conn.peer_addr()?;
++
++    let tls_conn = match &server.tls_validation_config {
++        TlsValidationConfig::CommonName { common_name } => {
++            ts_tls_util::connect(
++                ServerName::try_from(common_name.clone()).map_err(|e| {
++                    tracing::error!(error = %e, "derp common name");
++                    Error::InvalidParam
++                })?,
++                conn,
++            )
++            .await?
++        }
++        #[cfg(feature = "insecure-for-tests")]
++        TlsValidationConfig::InsecureForTests => {
++            tracing::warn!(%server.hostname, "using insecure TLS for tests");
++
++            ts_tls_util::connect_insecure(
++                ServerName::try_from(server.hostname.clone()).map_err(|e| {
++                    tracing::error!(error = %e, "derp hostname");
++                    Error::InvalidParam
++                })?,
++                conn,
++            )
++            .await?
++        }
++        TlsValidationConfig::SelfSigned { .. } => {
++            // These should be filtered out in `dial_region_tcp`, so we want this to panic.
++            unimplemented!("self-signed derp server certs are currently unsupported");
++        }
++    };
++
++    Ok(Some((tls_conn, server, remote_addr)))
++}
++
++/// Attempt to establish a TCP connection to one of the listed servers.
++///
++/// The servers are attempted serially; both IPv4 and IPv6 connections are concurrently
++/// attempted for each server (if respectively enabled in the [`ServerConnInfo`]).
++///
++/// Returns `None` if no server could be dialed, whether due to encountered errors or
++/// because they were not configured to be reachable (both ipv4/ipv6 disabled or stun_only).
++/// As a temporary measure, a self-signed TLS certificate configuration also causes server
++/// disablement, as this is unsupported.
 +pub async fn dial_region_tcp_with_underlay<'c>(
 +    servers: impl IntoIterator<Item = &'c ServerConnInfo>,
 +    underlay: &Underlay,
- ) -> Option<(TcpStream, &'c ServerConnInfo)> {
-     for server in servers {
-         if server.stun_only {
-@@ -119,7 +122,7 @@
- 
-         // InsecureForTests is allowed through -- TLS verification is skipped in dial_region_tls.
- 
--        match dial_server(server).await {
++) -> Option<(TcpStream, &'c ServerConnInfo)> {
++    for server in servers {
++        if server.stun_only {
++            tracing::trace!(%server.hostname, "server is stun only, skip");
++            continue;
++        }
++
++        // TODO(npry): self-signed certs
++        if matches!(
++            server.tls_validation_config,
++            TlsValidationConfig::SelfSigned { .. }
++        ) {
++            tracing::warn!(
++                %server.hostname,
++                "self-signed derp server certs are currently unsupported, skipping server",
++            );
++            continue;
++        }
++
++        // InsecureForTests is allowed through -- TLS verification is skipped in dial_region_tls.
++
 +        match dial_server_with_underlay(server, underlay).await {
-             Ok(Some(conn)) => {
-                 tracing::trace!(
-                     remote_addr = %conn.peer_addr().unwrap_or((core::net::Ipv4Addr::UNSPECIFIED, 0).into()),
-@@ -147,7 +150,7 @@
- /// used.
- ///
- /// Returns `None` iff the server has both IPv4 and IPv6 configured as [`IpUsage::Disable`].
--pub async fn dial_server(server: &ServerConnInfo) -> Result<Option<TcpStream>, Error> {
++            Ok(Some(conn)) => {
++                tracing::trace!(
++                    remote_addr = %conn.peer_addr().unwrap_or((core::net::Ipv4Addr::UNSPECIFIED, 0).into()),
++                    %server.hostname,
++                    "derp tcp dial ok",
++                );
++                return Some((conn, server));
++            }
++            Ok(None) => {
++                continue;
++            }
++            Err(e) => {
++                tracing::error!(error = %e, %server.hostname, "failed tcp dialing server");
++                continue;
++            }
++        }
++    }
++
++    None
++}
++
++/// Attempt a TCP connection to a single server.
++///
++/// IPv4 and IPv6 connections are raced concurrently: the first one to establish wins and is
++/// used.
++///
++/// Returns `None` iff the server has both IPv4 and IPv6 configured as [`IpUsage::Disable`].
 +pub async fn dial_server_with_underlay(server: &ServerConnInfo, underlay: &Underlay) -> Result<Option<TcpStream>, Error> {
-     let mut js = JoinSet::new();
- 
-     // TODO(npry): respect ipv6 preference. The go client just adds a flat 200ms sleep to
-@@ -157,11 +160,13 @@
-         server.ipv4,
-         server.hostname.clone(),
-         server.https_port,
++    let mut js = JoinSet::new();
++
++    // TODO(npry): respect ipv6 preference. The go client just adds a flat 200ms sleep to
++    //  the ipv4 sample in this case.
++
++    js.spawn(dial_by_ipusage(
++        server.ipv4,
++        server.hostname.clone(),
++        server.https_port,
 +        underlay.clone(),
-     ));
-     js.spawn(dial_by_ipusage(
-         server.ipv6,
-         server.hostname.clone(),
-         server.https_port,
++    ));
++    js.spawn(dial_by_ipusage(
++        server.ipv6,
++        server.hostname.clone(),
++        server.https_port,
 +        underlay.clone(),
-     ));
- 
-     let mut last_error = None;
-@@ -170,7 +175,10 @@
-         // A JoinError is either a cancellation (not the case by inspection) or a task panic.
-         // Hence, this unwrap just forwards the inner panic, which is the behavior we want here.
-         match task.unwrap() {
--            Ok(Some(stream)) => return Ok(Some(stream)),
++    ));
++
++    let mut last_error = None;
++
++    while let Some(task) = js.join_next().await {
++        // A JoinError is either a cancellation (not the case by inspection) or a task panic.
++        // Hence, this unwrap just forwards the inner panic, which is the behavior we want here.
++        match task.unwrap() {
 +            Ok(Some(stream)) => {
 +                js.shutdown().await;
 +                return Ok(Some(stream));
 +            },
-             Ok(None) => {
-                 continue;
-             }
-@@ -193,14 +201,38 @@
-     ip: IpUsage<impl Into<IpAddr>>,
-     hostname: String,
-     port: u16,
++            Ok(None) => {
++                continue;
++            }
++            Err(e) => {
++                last_error = Some(e);
++                continue;
++            }
++        }
++    }
++
++    if let Some(e) = last_error {
++        Err(e.into())
++    } else {
++        Ok(None)
++    }
++}
++
++#[tracing::instrument(skip_all, level = "trace")]
++async fn dial_by_ipusage(
++    ip: IpUsage<impl Into<IpAddr>>,
++    hostname: String,
++    port: u16,
 +    underlay: Underlay,
- ) -> io::Result<Option<TcpStream>> {
-     match ip {
-         IpUsage::Disable => Ok(None),
-         IpUsage::FixedAddr(ip) => {
-             let ip = ip.into();
- 
--            TcpStream::connect((ip, port)).await.map(Some)
--        }
--        IpUsage::UseDns => TcpStream::connect((hostname, port)).await.map(Some),
--    }
--}
++) -> io::Result<Option<TcpStream>> {
++    match ip {
++        IpUsage::Disable => Ok(None),
++        IpUsage::FixedAddr(ip) => {
++            let ip = ip.into();
++
 +            underlay.connect((ip, port).into()).await.map(Some)
 +        }
 +        IpUsage::UseDns => underlay.connect_host(&hostname, port).await.map(Some),
 +    }
 +}
 +
-+pub async fn dial_region_tls<'c>(
-+    servers: impl IntoIterator<Item = &'c ServerConnInfo>,
-+) -> Result<
-+    Option<(
-+        impl AsyncRead + AsyncWrite + Unpin + Send + 'static,
-+        &'c ServerConnInfo,
-+        SocketAddr,
-+    )>,
-+    Error,
-+> {
+ pub async fn dial_region_tls<'c>(
+     servers: impl IntoIterator<Item = &'c ServerConnInfo>,
+ ) -> Result<
+@@ -49,158 +224,15 @@
+     )>,
+     Error,
+ > {
+-    let Some((conn, server)) = dial_region_tcp(servers).await else {
+-        return Ok(None);
+-    };
+-    let remote_addr = conn.peer_addr()?;
+-
+-    let tls_conn = match &server.tls_validation_config {
+-        TlsValidationConfig::CommonName { common_name } => {
+-            ts_tls_util::connect(
+-                ServerName::try_from(common_name.clone()).map_err(|e| {
+-                    tracing::error!(error = %e, "derp common name");
+-                    Error::InvalidParam
+-                })?,
+-                conn,
+-            )
+-            .await?
+-        }
+-        #[cfg(feature = "insecure-for-tests")]
+-        TlsValidationConfig::InsecureForTests => {
+-            tracing::warn!(%server.hostname, "using insecure TLS for tests");
+-
+-            ts_tls_util::connect_insecure(
+-                ServerName::try_from(server.hostname.clone()).map_err(|e| {
+-                    tracing::error!(error = %e, "derp hostname");
+-                    Error::InvalidParam
+-                })?,
+-                conn,
+-            )
+-            .await?
+-        }
+-        TlsValidationConfig::SelfSigned { .. } => {
+-            // These should be filtered out in `dial_region_tcp`, so we want this to panic.
+-            unimplemented!("self-signed derp server certs are currently unsupported");
+-        }
+-    };
+-
+-    Ok(Some((tls_conn, server, remote_addr)))
+-}
+-
+-/// Attempt to establish a TCP connection to one of the listed servers.
+-///
+-/// The servers are attempted serially; both IPv4 and IPv6 connections are concurrently
+-/// attempted for each server (if respectively enabled in the [`ServerConnInfo`]).
+-///
+-/// Returns `None` if no server could be dialed, whether due to encountered errors or
+-/// because they were not configured to be reachable (both ipv4/ipv6 disabled or stun_only).
+-/// As a temporary measure, a self-signed TLS certificate configuration also causes server
+-/// disablement, as this is unsupported.
 +    dial_region_tls_with_underlay(servers, &Underlay::default()).await
 +}
 +
-+pub async fn dial_region_tcp<'c>(
-+    servers: impl IntoIterator<Item = &'c ServerConnInfo>,
-+) -> Option<(TcpStream, &'c ServerConnInfo)> {
+ pub async fn dial_region_tcp<'c>(
+     servers: impl IntoIterator<Item = &'c ServerConnInfo>,
+ ) -> Option<(TcpStream, &'c ServerConnInfo)> {
+-    for server in servers {
+-        if server.stun_only {
+-            tracing::trace!(%server.hostname, "server is stun only, skip");
+-            continue;
+-        }
+-
+-        // TODO(npry): self-signed certs
+-        if matches!(
+-            server.tls_validation_config,
+-            TlsValidationConfig::SelfSigned { .. }
+-        ) {
+-            tracing::warn!(
+-                %server.hostname,
+-                "self-signed derp server certs are currently unsupported, skipping server",
+-            );
+-            continue;
+-        }
+-
+-        // InsecureForTests is allowed through -- TLS verification is skipped in dial_region_tls.
+-
+-        match dial_server(server).await {
+-            Ok(Some(conn)) => {
+-                tracing::trace!(
+-                    remote_addr = %conn.peer_addr().unwrap_or((core::net::Ipv4Addr::UNSPECIFIED, 0).into()),
+-                    %server.hostname,
+-                    "derp tcp dial ok",
+-                );
+-                return Some((conn, server));
+-            }
+-            Ok(None) => {
+-                continue;
+-            }
+-            Err(e) => {
+-                tracing::error!(error = %e, %server.hostname, "failed tcp dialing server");
+-                continue;
+-            }
+-        }
+-    }
+-
+-    None
+-}
+-
+-/// Attempt a TCP connection to a single server.
+-///
+-/// IPv4 and IPv6 connections are raced concurrently: the first one to establish wins and is
+-/// used.
+-///
+-/// Returns `None` iff the server has both IPv4 and IPv6 configured as [`IpUsage::Disable`].
 +    dial_region_tcp_with_underlay(servers, &Underlay::default()).await
 +}
 +
-+pub async fn dial_server(server: &ServerConnInfo) -> Result<Option<TcpStream>, Error> {
+ pub async fn dial_server(server: &ServerConnInfo) -> Result<Option<TcpStream>, Error> {
+-    let mut js = JoinSet::new();
+-
+-    // TODO(npry): respect ipv6 preference. The go client just adds a flat 200ms sleep to
+-    //  the ipv4 sample in this case.
+-
+-    js.spawn(dial_by_ipusage(
+-        server.ipv4,
+-        server.hostname.clone(),
+-        server.https_port,
+-    ));
+-    js.spawn(dial_by_ipusage(
+-        server.ipv6,
+-        server.hostname.clone(),
+-        server.https_port,
+-    ));
+-
+-    let mut last_error = None;
+-
+-    while let Some(task) = js.join_next().await {
+-        // A JoinError is either a cancellation (not the case by inspection) or a task panic.
+-        // Hence, this unwrap just forwards the inner panic, which is the behavior we want here.
+-        match task.unwrap() {
+-            Ok(Some(stream)) => return Ok(Some(stream)),
+-            Ok(None) => {
+-                continue;
+-            }
+-            Err(e) => {
+-                last_error = Some(e);
+-                continue;
+-            }
+-        }
+-    }
+-
+-    if let Some(e) = last_error {
+-        Err(e.into())
+-    } else {
+-        Ok(None)
+-    }
+-}
+-
+-#[tracing::instrument(skip_all, level = "trace")]
+-async fn dial_by_ipusage(
+-    ip: IpUsage<impl Into<IpAddr>>,
+-    hostname: String,
+-    port: u16,
+-) -> io::Result<Option<TcpStream>> {
+-    match ip {
+-        IpUsage::Disable => Ok(None),
+-        IpUsage::FixedAddr(ip) => {
+-            let ip = ip.into();
+-
+-            TcpStream::connect((ip, port)).await.map(Some)
+-        }
+-        IpUsage::UseDns => TcpStream::connect((hostname, port)).await.map(Some),
+-    }
+-}
 +    dial_server_with_underlay(server, &Underlay::default()).await
 +}
 --- a/ts_netcheck-0.6.1/Cargo.toml

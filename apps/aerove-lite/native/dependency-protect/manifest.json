@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "clash_rs_commit": "36eec77463d1243ede287bf6b7197e38237948d5",
-  "patch_sha256": "703ef11ee17e308e942a4d0834ed5b3c24f7b121ec45b3f3f43af0642148ccf4",
+  "patch_sha256": "a4c2f9d262435b35098914e3de7337016f8ec1954e21e1612b90822e2f40d9ea",
   "packages": [
     {
       "name": "ts_control",
@@ -91,7 +91,7 @@
     {
       "path": "ts_derp-0.6.1/src/dial.rs",
       "before_sha256": "9e733d6a1aba05e23f472f1bd74c5dff2503990289599d346f988154ef8790db",
-      "after_sha256": "77518a098502302c90c7b663f1edf046d5b8b4bd4aa6612c7ffaa3bbc4070816"
+      "after_sha256": "d730a1874f52c4c6804a73ee99b1177273fa9b644093a9ce1e7a0b2bda09b206"
     },
     {
       "path": "ts_netcheck-0.6.1/Cargo.toml",
