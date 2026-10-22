@@ -367,7 +367,7 @@ pub extern "system" fn Java_dev_aerove_lite_core_NativeCore_updateNetworkDns<'lo
     env.with_env(|env|->std::result::Result<(),BridgeError>{
         let session=session(handle).map_err(bridge_error)?.ok_or_else(||BridgeError("core handle has exited".into()))?;
         if session.snapshot.lock().unwrap().state!=State::Running{return Err(BridgeError("core must be running for network DNS".into()));}
-        session.control.network_dns(snapshot.try_to_string(env)?).map_err(bridge_error)?;Ok(())
+        session.control.network_dns(snapshot.try_to_string(env)?).map_err(|error|bridge_error(error.into()))?;Ok(())
     }).resolve::<ThrowRuntimeExAndDefault>()
 }
 
@@ -378,7 +378,7 @@ pub extern "system" fn Java_dev_aerove_lite_core_NativeCore_configureHttp<'local
     env.with_env(|env|->std::result::Result<(),BridgeError>{
         let session=session(handle).map_err(bridge_error)?.ok_or_else(||BridgeError("core handle has exited".into()))?;
         if session.snapshot.lock().unwrap().state!=State::Running {return Err(BridgeError("core must be running for HTTP policy".into()));}
-        session.control.http(user_agent.try_to_string(env)?,check_certificate!=0).map_err(bridge_error)?;
+        session.control.http(user_agent.try_to_string(env)?,check_certificate).map_err(|error|bridge_error(error.into()))?;
         Ok(())
     }).resolve::<ThrowRuntimeExAndDefault>()
 }
@@ -388,7 +388,7 @@ pub extern "system" fn Java_dev_aerove_lite_core_NativeCore_listenerCommand<'loc
     mut env:EnvUnowned<'local>,_class:JClass<'local>,handle:i64,action:JString<'local>,tun_fd:i32,only_statistics_proxy:jni::sys::jboolean,
 )->JString<'local>{
     env.with_env(|env|->std::result::Result<JString<'local>,BridgeError>{
-        let status=listener_command(handle,&action.try_to_string(env)?,tun_fd,only_statistics_proxy!=0).map_err(bridge_error)?;
+        let status=listener_command(handle,&action.try_to_string(env)?,tun_fd,only_statistics_proxy).map_err(bridge_error)?;
         let json=serde_json::to_string(&status).map_err(|e|BridgeError(e.to_string()))?;
         Ok(env.new_string(json)?)
     }).resolve::<ThrowRuntimeExAndDefault>()
