@@ -40,6 +40,9 @@ class ControllerSettingsUpdatesTest {
         val requested = LiteSettings(
             material = MaterialTier.Solid, aurora = false, colorMode = ColorMode.Dark,
             themeColor = 0xFF123456L, colorStyle = ColorStyle.Monochrome,
+            themeColors = listOf(0xFF123456L), followSystemColor = true,
+            editorFontSize = 20, editorLineWrap = true,
+            serviceOrder = serviceTargetIds.reversed(), disabledServices = setOf("netflix"),
             auroraColors = listOf(0xFF010203L), auroraSeed = 42L, auroraRotationDay = 20261231L,
             dashboardWidgets = listOf(DashboardWidget.MemoryInfo, DashboardWidget.CurrentOutbound),
             mode = ProxyMode.Direct, ipv6 = true, overrideDns = true,
@@ -77,7 +80,10 @@ class ControllerSettingsUpdatesTest {
         fake.rotateGate = CompletableDeferred()
         val rotation = launch { fake.updates.rotate(now) { true } }
         runCurrent()
-        val save = launch { fake.updates.save(baseline, baseline.copy(themeColor = 0xFF123456L)) }
+        val requested = baseline.copy(themeColor = 0xFF123456L,
+            themeColors = baseline.themeColors + 0xFF123456L,
+            serviceOrder = serviceTargetIds.reversed(), disabledServices = setOf("spotify"))
+        val save = launch { fake.updates.save(baseline, requested) }
         runCurrent()
         assertEquals(0, fake.saveCalls)
         fake.rotateGate!!.complete(Unit)
@@ -86,6 +92,9 @@ class ControllerSettingsUpdatesTest {
         assertNotEquals(baseline.auroraSeed, fake.shown.auroraSeed)
         assertEquals(20261022L, fake.shown.auroraRotationDay)
         assertEquals(0xFF123456L, fake.shown.themeColor)
+        assertEquals(requested.themeColors, fake.shown.themeColors)
+        assertEquals(requested.serviceOrder, fake.shown.serviceOrder)
+        assertEquals(requested.disabledServices, fake.shown.disabledServices)
         assertEquals(fake.disk, fake.shown)
         assertEquals(1, fake.rotateCalls)
         assertEquals(1, fake.saveCalls)
