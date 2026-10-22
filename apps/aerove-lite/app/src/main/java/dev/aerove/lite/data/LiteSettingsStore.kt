@@ -2,9 +2,13 @@ package dev.aerove.lite.data
 
 import dev.aerove.lite.AppFilterMode
 import dev.aerove.lite.ColorMode
+import dev.aerove.lite.ColorStyle
 import dev.aerove.lite.LiteSettings
 import dev.aerove.lite.MaterialTier
 import dev.aerove.lite.ProxyMode
+import dev.aerove.lite.normalizeAuroraColors
+import dev.aerove.lite.normalizeDashboardWidgetValues
+import dev.aerove.lite.normalized
 import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
@@ -14,29 +18,38 @@ class LiteSettingsStore(privateDirectory: File) {
 
     suspend fun read(): LiteSettings = storage.transaction { load() }
 
-    suspend fun save(settings: LiteSettings, vpnAuthorized: Boolean = false) = storage.transaction {
-        validateSettings(settings)
-        require(!settings.autoStart || vpnAuthorized) { "Boot auto-start requires an existing VPN authorization" }
+    suspend fun save(settings: LiteSettings, vpnAuthorized: Boolean = false): LiteSettings = storage.transaction {
+        val normalized = settings.normalized()
+        validateSettings(normalized)
+        require(!normalized.autoStart || vpnAuthorized) { "Boot auto-start requires an existing VPN authorization" }
         val json = JSONObject().put("schema", 1)
-            .put("material", settings.material.name).put("aurora", settings.aurora)
-            .put("colorMode", settings.colorMode.name).put("themeColor", settings.themeColor)
-            .put("mode", settings.mode.name).put("ipv6", settings.ipv6)
-            .put("overrideDns", settings.overrideDns).put("dnsServers", JSONArray(settings.dnsServers))
-            .put("appFilterMode", settings.appFilterMode.name)
-            .put("packages", JSONArray(settings.packages.sorted())).put("autoStart", settings.autoStart)
-            .put("openLogs", settings.openLogs)
+            .put("material", normalized.material.name).put("aurora", normalized.aurora)
+            .put("colorMode", normalized.colorMode.name).put("themeColor", normalized.themeColor)
+            .put("mode", normalized.mode.name).put("ipv6", normalized.ipv6)
+            .put("overrideDns", normalized.overrideDns).put("dnsServers", JSONArray(normalized.dnsServers))
+            .put("appFilterMode", normalized.appFilterMode.name)
+            .put("packages", JSONArray(normalized.packages.sorted())).put("autoStart", normalized.autoStart)
+            .put("openLogs", normalized.openLogs).put("colorStyle", normalized.colorStyle.wireName)
+            .put("auroraColors", JSONArray(normalized.auroraColors)).put("auroraSeed", normalized.auroraSeed)
+            .put("auroraRotationDay", normalized.auroraRotationDay)
+            .put("dashboardWidgets", JSONArray(normalized.dashboardWidgets.map { it.wireName }))
         val encoded = json.toString()
         require(encoded.toByteArray(Charsets.UTF_8).size <= 128 * 1024) { "Settings exceed storage limit" }
         storage.write("settings.json", encoded)
+        normalized
     }
 
     private fun load(): LiteSettings {
-        if (!storage.file("settings.json").exists()) return LiteSettings()
+        val defaults = LiteSettings()
+        if (!storage.file("settings.json").exists()) return defaults
         val json = JSONObject(storage.read("settings.json", 128 * 1024))
         require(json.getInt("schema") == 1) { "Unsupported settings version" }
         fun strings(key: String): List<String> {
             val values = json.getJSONArray(key)
             return (0 until values.length()).map { values.getString(it) }
+        }
+        fun values(key: String): List<*>? = (json.opt(key) as? JSONArray)?.let { array ->
+            (0 until array.length()).map { array.opt(it) }
         }
         return LiteSettings(
             material = MaterialTier.valueOf(json.getString("material")),
@@ -51,7 +64,23 @@ class LiteSettingsStore(privateDirectory: File) {
             packages = strings("packages").toSet(),
             autoStart = json.getBoolean("autoStart"),
             openLogs = json.optBoolean("openLogs", false),
+            colorStyle = json.readColorStyle(defaults.colorStyle),
+            auroraColors = normalizeAuroraColors(values("auroraColors")),
+            auroraSeed = (json.opt("auroraSeed") as? Number)?.toLong() ?: defaults.auroraSeed,
+            auroraRotationDay = (json.opt("auroraRotationDay") as? Number)?.toLong() ?: defaults.auroraRotationDay,
+            dashboardWidgets = normalizeDashboardWidgetValues(values("dashboardWidgets")),
         ).also(::validateSettings)
+    }
+}
+
+private fun JSONObject.readColorStyle(default: ColorStyle): ColorStyle {
+    val value = opt("colorStyle")
+    if (has("colorStyle") && isNull("colorStyle")) return default
+    ColorStyle.entries.firstOrNull { it.wireName == value }?.let { return it }
+    return when (opt("schemeVariant")) {
+        "monochrome" -> ColorStyle.Monochrome
+        "tonalSpot", "neutral" -> ColorStyle.Soft
+        else -> default
     }
 }
 

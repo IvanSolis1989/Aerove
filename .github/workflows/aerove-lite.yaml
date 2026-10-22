@@ -70,7 +70,7 @@ jobs:
       - name: Kotlin data, lifecycle and UI compilation checks
         id: kotlin_checks
         working-directory: apps/aerove-lite
-        run: gradle --no-daemon :app:testReleaseUnitTest :app:lintRelease :app:compileReleaseAndroidTestKotlin
+        run: gradle --no-daemon :app:testReleaseUnitTest :app:lintRelease :app:compileReleaseAndroidTestKotlin :app:minifyReleaseWithR8
       - name: Inspect Android tasks after verification failure
         if: ${{ failure() && steps.kotlin_checks.outcome == 'failure' }}
         timeout-minutes: 3

@@ -1,17 +1,22 @@
 package dev.aerove.lite.data
 
 import java.io.File
+import java.io.StringWriter
 import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.regex.Pattern
 import org.yaml.snakeyaml.DumperOptions
 import org.yaml.snakeyaml.LoaderOptions
-import org.yaml.snakeyaml.Yaml
+import org.yaml.snakeyaml.composer.Composer
 import org.yaml.snakeyaml.constructor.SafeConstructor
+import org.yaml.snakeyaml.emitter.Emitter
 import org.yaml.snakeyaml.error.MarkedYAMLException
 import org.yaml.snakeyaml.nodes.Tag
-import org.yaml.snakeyaml.representer.Representer
+import org.yaml.snakeyaml.parser.ParserImpl
+import org.yaml.snakeyaml.reader.StreamReader
+import org.yaml.snakeyaml.representer.LiteSafeRepresenter
 import org.yaml.snakeyaml.resolver.Resolver
+import org.yaml.snakeyaml.serializer.Serializer
 
 internal object ConfigYaml {
     fun parse(source: String, maxBytes: Int = MAX_PROFILE_BYTES): MutableMap<String, Any?> {
@@ -26,8 +31,12 @@ internal object ConfigYaml {
             codePointLimit = maxBytes
         }
         val value = try {
-            val dumper = DumperOptions()
-            Yaml(SafeConstructor(options), Representer(dumper), dumper, options, CoreResolver()).load<Any?>(source)
+            val constructor = SafeConstructor(options)
+            constructor.setAllowDuplicateKeys(options.isAllowDuplicateKeys)
+            constructor.setWarnOnDuplicateKeys(options.isWarnOnDuplicateKeys)
+            constructor.setWrappedToRootException(options.isWrappedToRootException)
+            constructor.setComposer(Composer(ParserImpl(StreamReader(source), options), CoreResolver(), options))
+            constructor.getSingleData(Any::class.java)
         } catch (failure: Exception) {
             val line = (failure as? MarkedYAMLException)?.problemMark?.line?.plus(1)
             throw ConfigValidationException(listOf(ConfigIssue("$", "Invalid YAML${line?.let { " at line $it" } ?: ""}")))
@@ -56,7 +65,18 @@ internal object ConfigYaml {
             ?: throw ConfigValidationException(listOf(ConfigIssue("$", "Expected one configuration mapping")))
     }
 
-    fun dump(value: Map<String, Any?>): String = Yaml().dump(value)
+    fun dump(value: Map<String, Any?>): String {
+        val writer = StringWriter()
+        val options = DumperOptions()
+        val serializer = Serializer(Emitter(writer, options), Resolver(), options, null)
+        serializer.open()
+        try {
+            serializer.serialize(LiteSafeRepresenter(options).represent(value))
+        } finally {
+            serializer.close()
+        }
+        return writer.toString()
+    }
 
     // SnakeYAML's YAML 1.1 resolver otherwise turns proxy names/passwords such as "on" into booleans.
     private class CoreResolver : Resolver() {

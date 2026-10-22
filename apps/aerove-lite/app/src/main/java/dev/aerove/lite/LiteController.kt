@@ -297,12 +297,12 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
 
     override fun changeSettings(settings: LiteSettings) = perform("settings") {
         val old = state.value.settings
-        application.settings.save(settings, VpnService.prepare(application) == null)
-        val restart = old.ipv6 != settings.ipv6 || old.overrideDns != settings.overrideDns ||
-            old.dnsServers != settings.dnsServers || old.appFilterMode != settings.appFilterMode ||
-            old.packages != settings.packages || old.mode != settings.mode
+        val saved = application.settings.save(settings, VpnService.prepare(application) == null)
+        val restart = old.ipv6 != saved.ipv6 || old.overrideDns != saved.overrideDns ||
+            old.dnsServers != saved.dnsServers || old.appFilterMode != saved.appFilterMode ||
+            old.packages != saved.packages || old.mode != saved.mode
         if (restart) invalidateOutboundConfiguration()
-        mutableState.update { it.copy(settings = settings) }
+        mutableState.update { it.copy(settings = saved) }
         if (state.value.phase == VpnPhase.Running || state.value.phase == VpnPhase.Starting) {
             if (restart) connect()
         }

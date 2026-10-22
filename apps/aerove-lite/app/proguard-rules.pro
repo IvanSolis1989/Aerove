@@ -12,6 +12,8 @@
 -keep class dev.aerove.lite.ui.FullGlyphs { *; }
 -keep enum dev.aerove.lite.MaterialTier { *; }
 -keep enum dev.aerove.lite.ColorMode { *; }
+-keep enum dev.aerove.lite.ColorStyle { *; }
+-keep enum dev.aerove.lite.DashboardWidget { *; }
 -keep enum dev.aerove.lite.ProxyMode { *; }
 -keep enum dev.aerove.lite.VpnPhase { *; }
 -keep enum dev.aerove.lite.AppFilterMode { *; }
@@ -29,6 +31,7 @@
 -keep class dev.aerove.lite.data.ProfileRepository { *; }
 -keep class dev.aerove.lite.data.ProfileSnapshot { *; }
 -keep class dev.aerove.lite.data.LiteSettingsStore { *; }
+-keep class dev.aerove.lite.data.ConfigYaml { *; }
 -keep class dev.aerove.lite.vpn.VpnSnapshot { *; }
 -keep class dev.aerove.lite.vpn.CoreEndpoint { *; }
 -keep,includedescriptorclasses class dev.aerove.lite.ui.LiteOpticsKt { *; }

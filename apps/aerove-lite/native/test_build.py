@@ -1,6 +1,7 @@
 import io
 import json
 from pathlib import Path
+import re
 import struct
 import sys
 import tarfile
@@ -142,6 +143,13 @@ class SourcePreparationTest(unittest.TestCase):
             prepare.apply_patch(root, (prepare.ROOT / "upstream.patch").read_text())
             self.assertIn("crate::mobile::protect", (root / "clash-lib/src/proxy/utils/socket_helpers.rs").read_text())
             self.assertIn("task.await", (root / "clash-lib/src/proxy/tun/runner.rs").read_text())
+            proxy = (root / "clash-lib/src/proxy/mod.rs").read_text()
+            tproxy_guard = re.search(r'(#\[cfg\([^\n]+\)\])\npub mod tproxy;', proxy)
+            self.assertIsNotNone(tproxy_guard)
+            tun = (root / "clash-lib/src/proxy/tun/mod.rs").read_text()
+            reexport_guard = re.search(r'(#\[cfg\([^\n]+\)\])[^\n]*\npub use datagram::TunDatagram;', tun)
+            self.assertIsNotNone(reexport_guard)
+            self.assertEqual(reexport_guard[1], tproxy_guard[1])
 
 
 def elf_header(machine):
