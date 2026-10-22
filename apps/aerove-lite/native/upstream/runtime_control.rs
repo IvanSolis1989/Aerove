@@ -94,8 +94,16 @@ async fn execute(action:Action,mode:RuntimeMode,components:Arc<RwLock<Arc<Runtim
                     let device=unsafe {tun_rs::AsyncDevice::from_fd(tun.into_raw_fd())?};
                     active.tun_runner.mobile_attach(device).await?;
                 }
+                #[cfg(debug_assertions)]
+                eprintln!("[dns-hang] control DNS resume begin");
                 active.mobile_dns_listener.mobile_resume().await?;
+                #[cfg(debug_assertions)]
+                eprintln!("[dns-hang] control DNS resume complete");
+                #[cfg(debug_assertions)]
+                eprintln!("[dns-hang] control user resume begin");
                 network.resume_users(&active).await?;
+                #[cfg(debug_assertions)]
+                eprintln!("[dns-hang] control user resume complete");
                 Ok::<(),Error>(())
             };
             tokio::select! {
@@ -107,7 +115,11 @@ async fn execute(action:Action,mode:RuntimeMode,components:Arc<RwLock<Arc<Runtim
             telemetry::structure_changed();drop(mutation);
         },
     }
+    #[cfg(debug_assertions)]
+    eprintln!("[dns-hang] control readback begin");
     let status=readback(mode,&active,&network).await?;
+    #[cfg(debug_assertions)]
+    eprintln!("[dns-hang] control readback complete");
     if resuming&&!status.listening {return Err(Error::Operation("listener operation failed: readiness did not remain active".into()));}
     Ok(status)
 }

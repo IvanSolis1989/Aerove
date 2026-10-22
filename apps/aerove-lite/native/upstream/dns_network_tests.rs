@@ -18,17 +18,39 @@ pub(crate) async fn typed(){
     let context=context().unwrap();*context.network_dns.write().unwrap()=Some(empty);assert!(dns_network::exchange(None,&question()).await.is_err());
 }
 pub(crate) async fn io(fail:bool){
+    eprintln!("[dns-hang] test begin fail={fail}");
     let upstream=UdpSocket::bind("127.0.0.1:0").await.unwrap();let upstream_address=upstream.local_addr().unwrap();let source_task=tokio::spawn(async move {let mut bytes=[0;4096];loop {let (n,peer)=upstream.recv_from(&mut bytes).await.unwrap();let message=Message::from_vec(&bytes[..n]).unwrap();upstream.send_to(&answer(&message).to_vec().unwrap(),peer).await.unwrap();}});
     let held:Vec<_>=(26000..49151).filter_map(|p|{let tcp=std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST,p)).ok()?;let udp=std::net::UdpSocket::bind((std::net::Ipv4Addr::LOCALHOST,p)).ok()?;Some((tcp,udp))}).take(3).collect();let ports:Vec<_>=held.iter().map(|(s,_)|s.local_addr().unwrap().port()).collect();drop(held);
     let source=format!("mode: direct\nmmdb: null\nasn-mmdb: null\ngeosite: null\ntun: {{enable: false}}\ndns: {{enable: true, listen: {{udp: '127.0.0.1:{}', tcp: '127.0.0.1:{}'}}, nameserver: ['udp://{upstream_address}'], default-nameserver: ['udp://{upstream_address}']}}\nmixed-port: {}\nallow-lan: false\nbind-address: 127.0.0.1\nexternal-controller: 127.0.0.1:{}\nsecret: '0123456789abcdef0123456789abcdef'\ncors-allow-origins: []\nrules: ['MATCH,DIRECT']\n",ports[2],ports[2],ports[0],ports[1]);
     let directory=tempfile::tempdir().unwrap();let cancel=CancellationToken::new();let stop=cancel.clone();let control=runtime_control::RuntimeControl::new();let owner_control=control.clone();let (ready,rx)=oneshot::channel();let owner=tokio::spawn(run_runtime_control(source,directory.path().to_owned(),RuntimeInput::Proxy,stop,owner_control,move|info|{let _=ready.send(info);}));tokio::time::timeout(Duration::from_secs(5),rx).await.unwrap().unwrap();
+    eprintln!("[dns-hang] owner ready");
+    eprintln!("[dns-hang] UDP1 begin");
     let message=question();let response=query_exchange(&message,format!("127.0.0.1:{}",ports[2]).parse().unwrap()).await.unwrap();assert_eq!(response.answers.len(),1);
+    eprintln!("[dns-hang] UDP1 complete");
+    eprintln!("[dns-hang] TCP begin");
     let mut stream=TcpStream::connect((std::net::Ipv4Addr::LOCALHOST,ports[2])).await.unwrap();let bytes=message.to_vec().unwrap();stream.write_u16(bytes.len() as u16).await.unwrap();stream.write_all(&bytes).await.unwrap();let n=stream.read_u16().await.unwrap() as usize;let mut bytes=vec![0;n];stream.read_exact(&mut bytes).await.unwrap();assert_eq!(Message::from_vec(&bytes).unwrap().answers.len(),1);drop(stream);
+    eprintln!("[dns-hang] TCP complete");
+    eprintln!("[dns-hang] park begin");
     let ctl=control.clone();let status=tokio::task::spawn_blocking(move||ctl.park()).await.unwrap().unwrap();assert!(!status.listening&&status.active_ports.is_empty());
+    eprintln!("[dns-hang] park complete");
     let tcp=TcpListener::bind((std::net::Ipv4Addr::LOCALHOST,ports[2])).await.unwrap();let udp=UdpSocket::bind((std::net::Ipv4Addr::LOCALHOST,ports[2])).await.unwrap();drop(tcp);
     if fail {let ctl=control.clone();assert!(tokio::task::spawn_blocking(move||ctl.resume_proxy()).await.unwrap().is_err());assert!(tokio::time::timeout(Duration::from_secs(5),owner).await.unwrap().unwrap().is_err());}
-    else {drop(udp);let ctl=control.clone();assert!(tokio::task::spawn_blocking(move||ctl.resume_proxy()).await.unwrap().unwrap().listening);let response=query_exchange(&message,format!("127.0.0.1:{}",ports[2]).parse().unwrap()).await.unwrap();assert_eq!(response.answers.len(),1);cancel.cancel();tokio::time::timeout(Duration::from_secs(5),owner).await.unwrap().unwrap().unwrap();}
+    else {
+        drop(udp);let ctl=control.clone();
+        eprintln!("[dns-hang] resume begin");
+        assert!(tokio::task::spawn_blocking(move||ctl.resume_proxy()).await.unwrap().unwrap().listening);
+        eprintln!("[dns-hang] resume complete");
+        eprintln!("[dns-hang] UDP2 begin");
+        let response=query_exchange(&message,format!("127.0.0.1:{}",ports[2]).parse().unwrap()).await.unwrap();assert_eq!(response.answers.len(),1);
+        eprintln!("[dns-hang] UDP2 complete");
+        eprintln!("[dns-hang] cancel begin");
+        cancel.cancel();
+        eprintln!("[dns-hang] cancel complete; owner join begin");
+        tokio::time::timeout(Duration::from_secs(5),owner).await.unwrap().unwrap().unwrap();
+        eprintln!("[dns-hang] owner join complete");
+    }
     source_task.abort();let _=source_task.await;assert!(TcpListener::bind((std::net::Ipv4Addr::LOCALHOST,ports[2])).await.is_ok());
+    eprintln!("[dns-hang] test end");
 }
 pub(crate) async fn rules(){
     let raw:Vec<_>=(0..1201).map(|i|format!("host{i}.example")).collect();let content=mobile_make_rules(RuleSetBehavior::Domain,raw.clone(),None,None).unwrap();let first=content.page(0,500);assert_eq!(first.rule_count,1201);assert_eq!(first.rules.len(),500);assert_eq!(first.next_offset,Some(500));assert!(!first.complete);let mut rows=first.rules;rows.extend(content.page(500,500).rules);let last=content.page(1000,500);assert!(last.complete);rows.extend(last.rules);rows.sort();let mut expected=raw;expected.sort();assert_eq!(rows,expected);
