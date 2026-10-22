@@ -1,5 +1,5 @@
 use super::*;
-use futures::{SinkExt, StreamExt};
+use futures::StreamExt;
 use serde_json::{Value, json};
 use tokio::{net::{TcpListener,TcpStream,UdpSocket},sync::oneshot};
 use tokio_tungstenite::{connect_async, tungstenite::client::IntoClientRequest};
@@ -102,7 +102,8 @@ async fn lease() {
     loop {let w=collector.window(generation,cursor,false).unwrap();let v=serde_json::to_value(w).unwrap();assert_eq!(v["dropped"],"101");let next=v["cursor"].as_str().unwrap().parse().unwrap();if next==cursor{break;}cursor=next;for e in v["events"].as_array().unwrap(){count+=1;request|=e["kind"]=="request";}}
     assert_eq!(count,3001);assert!(request);drop(lease);assert!(collector.ticket().is_none());let second=collector.lease();assert!(second.generation>generation);ticket.emit("dns",json!({"private":"late"}));let v=serde_json::to_value(collector.window(second.generation,0,false).unwrap()).unwrap();assert_eq!(v["cursor"],"0");assert_eq!(v["events"],json!([]));
     let current=collector.ticket().unwrap();
-    let info=crate::app::dispatcher::TrackerInfo { uuid:uuid::Uuid::new_v4(), upload_total:std::sync::atomic::AtomicU64::new(u64::MAX), ..Default::default() };
+    let info=crate::app::dispatcher::TrackerInfo { uuid:uuid::Uuid::new_v4(), ..Default::default() };
+    info.upload_total.store(u64::MAX,std::sync::atomic::Ordering::Relaxed);
     current.request(&info).await;
     current.traffic(&info,None); // unchanged counters do not generate work
     info.download_total.store(u64::MAX,std::sync::atomic::Ordering::Relaxed);
