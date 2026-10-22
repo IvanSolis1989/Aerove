@@ -30,15 +30,22 @@ class AndroidTunnelBackend(
     private val underlying: () -> Network?,
 ) : TunnelBackend {
     override suspend fun open(plan: VpnPlan): TunnelSession = withContext(Dispatchers.IO) {
-        val source = application.profiles.readConfig(plan.profileId)
-        val directory = File(application.filesDir, "runtime").apply { mkdirs() }
-        val port = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { it.localPort }
-        val secret = ByteArray(32).also(SecureRandom()::nextBytes).joinToString("") { "%02x".format(it) }
-        val endpoint = CoreEndpoint(port, secret)
-        val config = File(directory, "${UUID.randomUUID()}.yaml")
+        val lease = Any()
+        var acquired = false
+        var config: File? = null
         var tun: ParcelFileDescriptor? = null
         var handle: Long? = null
         try {
+            withTimeout(45_000) {
+                application.nativeLifecycle.lock(lease)
+                acquired = true
+            }
+            val source = application.profiles.readConfig(plan.profileId)
+            val directory = File(application.filesDir, "runtime").apply { mkdirs() }
+            val port = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { it.localPort }
+            val secret = ByteArray(32).also(SecureRandom()::nextBytes).joinToString("") { "%02x".format(it) }
+            val endpoint = CoreEndpoint(port, secret)
+            config = File(directory, "${UUID.randomUUID()}.yaml")
             val builder = service.Builder()
                 .setSession("AEROVE Lite")
                 .setMtu(1500)
@@ -67,11 +74,12 @@ class AndroidTunnelBackend(
             config.setReadable(false, false)
             config.setReadable(true, true)
             handle = NativeCore.start(config.path, directory.path, tun.fd, SocketProtector(service::protect))
-            Session(checkNotNull(handle), tun, config, endpoint, source, plan.profileId)
+            Session(checkNotNull(handle), tun, config, endpoint, source, plan.profileId, lease)
         } catch (failure: Throwable) {
             handle?.let(NativeCore::stop)
             tun?.close()
-            config.delete()
+            config?.delete()
+            if (acquired) application.nativeLifecycle.unlock(lease)
             throw failure
         }
     }
@@ -83,6 +91,7 @@ class AndroidTunnelBackend(
         override val endpoint: CoreEndpoint,
         private val source: String,
         private val profileId: String,
+        private val lease: Any,
     ) : TunnelSession {
         override suspend fun awaitReady() = withTimeout(45_000) {
             while (true) {
@@ -112,7 +121,8 @@ class AndroidTunnelBackend(
         override suspend fun stop() = withContext(Dispatchers.IO) {
             NativeCore.stop(handle)
             tun.close()
-            check(config.delete() || !config.exists()) { "Could not remove the stopped runtime configuration" }
+            if (!config.delete() && config.exists()) android.util.Log.w("AEROVE Lite", "Stopped runtime configuration cleanup failed")
+            application.nativeLifecycle.unlock(lease)
         }
     }
 

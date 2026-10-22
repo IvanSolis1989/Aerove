@@ -6,7 +6,9 @@ plugins {
 
 android {
     namespace = "dev.aerove.lite"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) { minorApiLevel = 0 }
+    }
 
     defaultConfig {
         applicationId = "dev.aerove.lite"

@@ -10,8 +10,10 @@ import dev.aerove.lite.vpn.VpnSnapshot
 import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
 
 class LiteApplication : Application() {
+    internal val nativeLifecycle = Mutex()
     val profiles by lazy {
         ProfileRepository(filesDir, CompatibilityValidator(NativeConfigValidator(NativeCore::validate), File(filesDir, "runtime")))
     }

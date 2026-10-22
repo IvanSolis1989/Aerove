@@ -58,7 +58,10 @@ jobs:
         with:
           packages: platform-tools
           log-accepted-android-sdk-licenses: false
-      - run: sdkmanager 'platforms;android-37' 'build-tools;37.0.0'
+          cmdline-tools-version: '16111833'
+      - run: |
+          sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
+          test -f "$ANDROID_SDK_ROOT/platforms/android-37.0/android.jar"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.6.0'
@@ -99,8 +102,11 @@ jobs:
         with:
           packages: platform-tools
           log-accepted-android-sdk-licenses: false
+          cmdline-tools-version: '16111833'
       - name: Install the pinned Android toolchain
-        run: sdkmanager 'platforms;android-37' 'build-tools;37.0.0' "ndk;$NDK_VERSION"
+        run: |
+          sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0' "ndk;$NDK_VERSION"
+          test -f "$ANDROID_SDK_ROOT/platforms/android-37.0/android.jar"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.6.0'

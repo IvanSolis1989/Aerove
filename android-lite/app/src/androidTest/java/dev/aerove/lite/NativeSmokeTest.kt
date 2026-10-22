@@ -9,6 +9,7 @@ import dev.aerove.lite.core.NativeCore
 import dev.aerove.lite.vpn.LiteVpnService
 import java.util.UUID
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertNotNull
@@ -55,12 +56,16 @@ class NativeSmokeTest {
             val endpoint = checkNotNull(graph.vpn.value.endpoint)
             val client = OkHttpClient()
             try {
-                client.newCall(Request.Builder().url("http://127.0.0.1:${endpoint.port}/connections")
-                    .header("Authorization", "Bearer ${endpoint.secret}").build()).execute().use {
-                    check(it.isSuccessful)
-                    val counters = JSONObject(checkNotNull(it.body).string())
-                    assertTrue("A response alone does not prove TUN interception", counters.getLong("uploadTotal") > 0)
-                    assertTrue(counters.getLong("downloadTotal") > 0)
+                withTimeout(5000) {
+                    while (true) {
+                        val counters = client.newCall(Request.Builder().url("http://127.0.0.1:${endpoint.port}/connections")
+                            .header("Authorization", "Bearer ${endpoint.secret}").build()).execute().use {
+                            check(it.isSuccessful)
+                            JSONObject(checkNotNull(it.body).string())
+                        }
+                        if (counters.getLong("uploadTotal") > 0 && counters.getLong("downloadTotal") > 0) break
+                        delay(100)
+                    }
                 }
             } finally {
                 client.connectionPool.evictAll()
