@@ -137,8 +137,9 @@ class LiteSettingsStoreTest {
         listOf("[]", "[1,2,3,true]", "[1,2,3,-1]", "[1,2,3,4294967296]", "[1.0]", "[\"1\"]", "[null]").forEach { encoded ->
             store.save(LiteSettings(auroraColors = listOf(0xFF010203L)))
             val file = File(temporary.root, "settings/settings.json")
-            val json = JSONObject(file.readText()).put("auroraColors", JSONArray(encoded))
-            file.writeText(json.toString())
+            val json = JSONObject(file.readText()).apply { remove("auroraColors") }.toString()
+            file.writeText("${json.dropLast(1)},\"auroraColors\":$encoded}")
+            assertTrue(encoded, file.readText().contains("\"auroraColors\":$encoded"))
             assertEquals(encoded, LiteSettings().auroraColors, store.read().auroraColors)
         }
     }
