@@ -717,7 +717,7 @@ class _EditProxyGroupViewState extends ConsumerState<EditProxyGroupView> {
     TextStyle? titleStyle,
     Widget? leading,
     Widget? trailing,
-    final VoidCallback? onPressed,
+    VoidCallback? onPressed,
     bool invalid = false,
   }) {
     return FormRow(
@@ -831,13 +831,11 @@ class _EditProxyGroupViewState extends ConsumerState<EditProxyGroupView> {
       title: context.appLocalizations.hashByInUser,
       leading: leading,
       onPressed: handleChangeHashKey,
-      trailing: GlassSwitch(
-        child: Switch(
-          value: value,
-          onChanged: (_) {
-            handleChangeHashKey();
-          },
-        ),
+      trailing: CommonSwitch(
+        value: value,
+        onChanged: (_) {
+          handleChangeHashKey();
+        },
       ),
     );
   }
@@ -962,13 +960,11 @@ class _EditProxyGroupViewState extends ConsumerState<EditProxyGroupView> {
       title: appLocalizations.hideFromList,
       leading: leading,
       onPressed: handleChangeHidden,
-      trailing: GlassSwitch(
-        child: Switch(
-          value: hidden ?? false,
-          onChanged: (_) {
-            handleChangeHidden();
-          },
-        ),
+      trailing: CommonSwitch(
+        value: hidden ?? false,
+        onChanged: (_) {
+          handleChangeHidden();
+        },
       ),
     );
   }
@@ -987,13 +983,11 @@ class _EditProxyGroupViewState extends ConsumerState<EditProxyGroupView> {
       title: appLocalizations.testWhenUsed,
       leading: leading,
       onPressed: handleChangeLazy,
-      trailing: GlassSwitch(
-        child: Switch(
-          value: value,
-          onChanged: (_) {
-            handleChangeLazy();
-          },
-        ),
+      trailing: CommonSwitch(
+        value: value,
+        onChanged: (_) {
+          handleChangeLazy();
+        },
       ),
     );
   }
@@ -1012,13 +1006,11 @@ class _EditProxyGroupViewState extends ConsumerState<EditProxyGroupView> {
       title: appLocalizations.disableUDP,
       leading: leading,
       onPressed: handleChangeDisableUDP,
-      trailing: GlassSwitch(
-        child: Switch(
-          value: disableUDP ?? false,
-          onChanged: (_) {
-            handleChangeDisableUDP();
-          },
-        ),
+      trailing: CommonSwitch(
+        value: disableUDP ?? false,
+        onChanged: (_) {
+          handleChangeDisableUDP();
+        },
       ),
     );
   }
@@ -1386,7 +1378,7 @@ class _EditProxyGroupViewState extends ConsumerState<EditProxyGroupView> {
           SliverPadding(
             padding: const EdgeInsets.symmetric(
               horizontal: 16,
-            ).copyWith(bottom: 20),
+            ).copyWith(bottom: 20 + context.bottomInset),
             sliver: SliverList.list(
               children: [
                 _buildOptions(emptyFallbackIssues: emptyFallbackIssues),

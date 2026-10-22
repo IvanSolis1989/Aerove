@@ -18,7 +18,7 @@ abstract class IpQuality with _$IpQuality {
     @Default(false) bool isAbuser,
   }) = _IpQuality;
 
-  factory IpQuality.fromJson(Map<String, dynamic> json) =>
+  factory IpQuality.fromJson(Map<String, Object?> json) =>
       _$IpQualityFromJson(json);
 }
 

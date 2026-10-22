@@ -55,7 +55,9 @@ Widget _app(
 );
 
 Finder get _panes => find.descendant(
-  of: find.byType(GlassSwitch),
+  of: find.byWidgetPredicate(
+    (widget) => widget is CommonSwitch || widget is GlassSwitch,
+  ),
   matching: find.byType(LiquidGlass),
 );
 Rect _thumb(WidgetTester tester) => tester.getRect(_panes.last);
@@ -127,7 +129,137 @@ void main() {
 
   for (final direction in TextDirection.values) {
     testWidgets(
-      'switch retains native tap drag keyboard semantics and pending value $direction',
+      'CommonSwitch keeps tap drag keyboard semantics and pending value $direction',
+      (tester) async {
+        final semantics = tester.ensureSemantics();
+        var value = false;
+        var enabled = true;
+        final changes = <bool>[];
+        late StateSetter rebuild;
+        final control = find.byType(CommonSwitch);
+        try {
+          await tester.pumpWidget(
+            StatefulBuilder(
+              builder: (_, update) {
+                rebuild = update;
+                return _app(
+                  CommonSwitch(
+                    value: value,
+                    onChanged: enabled ? changes.add : null,
+                  ),
+                  direction: direction,
+                );
+              },
+            ),
+          );
+          await tester.pumpAndSettle();
+          expect(_panes, findsNWidgets(2));
+          expect(tester.getSize(control).width, 60);
+          expect(tester.getSize(control).height, greaterThanOrEqualTo(40));
+          final before = _thumb(tester);
+          expect(
+            tester
+                .getSemantics(control)
+                .getSemanticsData()
+                .flagsCollection
+                .isToggled,
+            ui.Tristate.isFalse,
+          );
+          await tester.tap(control);
+          await tester.pumpAndSettle();
+          expect(changes, [true]);
+          expect(tester.widget<CommonSwitch>(control).value, isFalse);
+          expect(_thumb(tester), before);
+
+          final sign = direction == TextDirection.ltr ? 1.0 : -1.0;
+          final gesture = await tester.startGesture(before.center);
+          try {
+            await tester.pump(kPressTimeout);
+            await tester.pump(const Duration(milliseconds: 200));
+            expect(tester.widget<LiquidGlass>(_panes.first).pressed, isTrue);
+            expect(_thumb(tester).height, greaterThan(before.height));
+            await gesture.moveBy(Offset(sign * 24, 0));
+            await tester.pump();
+            await gesture.moveBy(Offset(sign * 4, 0));
+            await tester.pump();
+            final moved = (_thumb(tester).center.dx - before.center.dx) * sign;
+            expect(moved, greaterThan(0));
+            expect(moved, lessThan(20));
+            await gesture.moveBy(Offset(sign * 20, 0));
+          } finally {
+            await gesture.up();
+          }
+          await tester.pumpAndSettle();
+          expect(changes, [true, true]);
+          expect(_thumb(tester), before);
+          rebuild(() => value = true);
+          await tester.pumpAndSettle();
+          expect(
+            (_thumb(tester).center.dx - before.center.dx) * sign,
+            closeTo(20, 0.01),
+          );
+          expect(
+            tester
+                .getSemantics(control)
+                .getSemanticsData()
+                .flagsCollection
+                .isToggled,
+            ui.Tristate.isTrue,
+          );
+
+          await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+          await tester.pumpAndSettle();
+          final ring = tester.widget<DecoratedBox>(
+            find.descendant(
+              of: control,
+              matching: find.byWidgetPredicate(
+                (widget) =>
+                    widget is DecoratedBox &&
+                    widget.decoration is ShapeDecoration &&
+                    ((widget.decoration as ShapeDecoration).shape
+                                as OutlinedBorder)
+                            .side
+                            .width ==
+                        2,
+              ),
+            ),
+          );
+          final side =
+              ((ring.decoration as ShapeDecoration).shape as OutlinedBorder)
+                  .side;
+          expect(
+            side.color,
+            Theme.of(tester.element(control)).colorScheme.primary,
+          );
+          await tester.sendKeyEvent(LogicalKeyboardKey.space);
+          await tester.pumpAndSettle();
+          expect(changes.last, isFalse);
+
+          rebuild(() => enabled = false);
+          await tester.pumpAndSettle();
+          final count = changes.length;
+          await tester.tap(control, warnIfMissed: false);
+          await tester.pumpAndSettle();
+          expect(changes, hasLength(count));
+          expect(
+            tester
+                .getSemantics(control)
+                .getSemanticsData()
+                .flagsCollection
+                .isEnabled,
+            ui.Tristate.isFalse,
+          );
+          expect(tester.takeException(), isNull);
+        } finally {
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump();
+          semantics.dispose();
+        }
+      },
+    );
+
+    testWidgets(
+      'legacy wrapper retains native tap drag keyboard semantics and pending value $direction',
       (tester) async {
         final semantics = tester.ensureSemantics();
         final focus = FocusNode();
@@ -262,9 +394,7 @@ void main() {
         _app(
           LiquidGlassBody(
             child: GlassSurfaceScope(
-              child: GlassSwitch(
-                child: Switch(value: false, onChanged: (_) {}),
-              ),
+              child: CommonSwitch(value: false, onChanged: (_) {}),
             ),
           ),
           quality: quality,
@@ -274,15 +404,16 @@ void main() {
       await tester.pumpAndSettle();
       expect(_panes, findsNWidgets(2));
       for (final pane in tester.widgetList<LiquidGlass>(_panes)) {
-        expect(pane.style.tint.a, lessThan(0.25));
+        final style = pane.style.forQuality(quality);
+        expect(style.tint.a, lessThan(0.25));
         if (quality == LiquidGlassQuality.ultra) {
-          expect(pane.style.refraction, greaterThan(0));
-          expect(pane.style.bevel, greaterThan(0));
-          expect(pane.style.blur, 0);
+          expect(style.refraction, greaterThan(0));
+          expect(style.bevel, greaterThan(0));
+          expect(style.blur, 0);
         } else {
-          expect(pane.style.refraction, 0);
-          expect(pane.style.bevel, 0);
-          expect(pane.style.blur, greaterThanOrEqualTo(2.5));
+          expect(style.refraction, 0);
+          expect(style.bevel, 0);
+          expect(style.blur, greaterThanOrEqualTo(2.5));
         }
       }
       expect(tester.takeException(), isNull);
@@ -317,6 +448,34 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets('CommonSwitch keeps opaque parts in solid and high contrast', (
+    tester,
+  ) async {
+    for (final mode in [(false, false), (true, true)]) {
+      await tester.pumpWidget(
+        _app(
+          CommonSwitch(value: true, onChanged: (_) {}),
+          glass: mode.$1,
+          contrast: mode.$2,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(_panes, findsNothing);
+      final parts = tester.widgetList<DecoratedBox>(
+        find.descendant(
+          of: find.byType(CommonSwitch),
+          matching: find.byType(DecoratedBox),
+        ),
+      );
+      expect(parts, hasLength(2));
+      for (final part in parts) {
+        expect((part.decoration as ShapeDecoration).color!.a, 1);
+      }
+      expect(tester.takeException(), isNull);
+    }
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('a row on the page keeps the glass switch and its row action', (
     tester,
   ) async {
@@ -334,84 +493,88 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.byType(GlassSwitch), findsOneWidget);
+    expect(find.byType(CommonSwitch), findsOneWidget);
     expect(_panes, findsNWidgets(2));
     await tester.tap(find.text('LAN'));
     await tester.pumpAndSettle();
     expect(changes, [true]);
-    expect(tester.widget<Switch>(find.byType(Switch)).value, isFalse);
+    expect(
+      tester.widget<CommonSwitch>(find.byType(CommonSwitch)).value,
+      isFalse,
+    );
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
   });
 
-  testWidgets('hover reduced motion and explicit state colors stay scoped', (
-    tester,
-  ) async {
-    var value = false;
-    late StateSetter rebuild;
-    const icon = Icon(IconData(0x41), color: Colors.orange);
-    try {
-      await tester.pumpWidget(
-        StatefulBuilder(
-          builder: (_, update) {
-            rebuild = update;
-            return _app(
-              MediaQuery(
-                data: const MediaQueryData(disableAnimations: true),
-                child: GlassSwitch(
-                  child: Switch(
-                    value: value,
-                    onChanged: (_) {},
-                    padding: const EdgeInsetsDirectional.only(start: 8),
-                    thumbIcon: const WidgetStatePropertyAll(icon),
-                    trackColor: const WidgetStatePropertyAll(Colors.orange),
-                    thumbColor: const WidgetStatePropertyAll(Colors.orange),
-                    trackOutlineColor: const WidgetStatePropertyAll(
-                      Colors.orange,
+  testWidgets(
+    'legacy wrapper hover reduced motion and explicit state colors stay scoped',
+    (tester) async {
+      var value = false;
+      late StateSetter rebuild;
+      const icon = Icon(IconData(0x41), color: Colors.orange);
+      try {
+        await tester.pumpWidget(
+          StatefulBuilder(
+            builder: (_, update) {
+              rebuild = update;
+              return _app(
+                MediaQuery(
+                  data: const MediaQueryData(disableAnimations: true),
+                  child: GlassSwitch(
+                    child: Switch(
+                      value: value,
+                      onChanged: (_) {},
+                      padding: const EdgeInsetsDirectional.only(start: 8),
+                      thumbIcon: const WidgetStatePropertyAll(icon),
+                      trackColor: const WidgetStatePropertyAll(Colors.orange),
+                      thumbColor: const WidgetStatePropertyAll(Colors.orange),
+                      trackOutlineColor: const WidgetStatePropertyAll(
+                        Colors.orange,
+                      ),
+                      trackOutlineWidth: const WidgetStatePropertyAll(1),
                     ),
-                    trackOutlineWidth: const WidgetStatePropertyAll(1),
                   ),
                 ),
-              ),
-            );
-          },
-        ),
-      );
-      await tester.pumpAndSettle();
-      final before = _thumb(tester);
-      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
-      try {
-        await mouse.addPointer(location: Offset.zero);
-        await mouse.moveTo(tester.getCenter(find.byType(Switch)));
+              );
+            },
+          ),
+        );
+        await tester.pumpAndSettle();
+        final before = _thumb(tester);
+        final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+        try {
+          await mouse.addPointer(location: Offset.zero);
+          await mouse.moveTo(tester.getCenter(find.byType(Switch)));
+          await tester.pump();
+          expect(tester.widget<LiquidGlass>(_panes.first).pressed, isTrue);
+          await mouse.moveTo(Offset.zero);
+          await tester.pump();
+          expect(tester.widget<LiquidGlass>(_panes.first).pressed, isFalse);
+        } finally {
+          await mouse.removePointer();
+        }
+        rebuild(() => value = true);
         await tester.pump();
-        expect(tester.widget<LiquidGlass>(_panes.first).pressed, isTrue);
-        await mouse.moveTo(Offset.zero);
         await tester.pump();
-        expect(tester.widget<LiquidGlass>(_panes.first).pressed, isFalse);
+        expect(_thumb(tester).center.dx - before.center.dx, closeTo(20, 0.01));
+        final pane = tester.widget<LiquidGlass>(_panes.last);
+        final fill = _trackFill(tester)!;
+        for (final tint in [pane.style.tint, fill]) {
+          expect(tint.r, Colors.orange.r);
+          expect(tint.g, Colors.orange.g);
+          expect(tint.b, Colors.orange.b);
+          expect(tint.a, lessThan(1));
+        }
+        final ink = tester.widget<GlassInk>(find.byType(GlassInk));
+        expect(ink.source, Colors.orange);
+        expect(ink.role, GlassInkRole.icon);
+        expect(tester.takeException(), isNull);
       } finally {
-        await mouse.removePointer();
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
       }
-      rebuild(() => value = true);
-      await tester.pump();
-      await tester.pump();
-      expect(_thumb(tester).center.dx - before.center.dx, closeTo(20, 0.01));
-      final pane = tester.widget<LiquidGlass>(_panes.last);
-      final fill = _trackFill(tester)!;
-      for (final tint in [pane.style.tint, fill]) {
-        expect(tint.r, Colors.orange.r);
-        expect(tint.g, Colors.orange.g);
-        expect(tint.b, Colors.orange.b);
-        expect(tint.a, lessThan(1));
-      }
-      final ink = tester.widget<GlassInk>(find.byType(GlassInk));
-      expect(ink.source, Colors.orange);
-      expect(ink.role, GlassInkRole.icon);
-      expect(tester.takeException(), isNull);
-    } finally {
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pump();
-    }
-  });
+    },
+  );
 
   for (final brightness in Brightness.values) {
     for (final quality in LiquidGlassQuality.values) {
@@ -431,9 +594,7 @@ void main() {
               ]) {
                 await tester.pumpWidget(
                   _app(
-                    GlassSwitch(
-                      child: Switch(value: value, onChanged: (_) {}),
-                    ),
+                    CommonSwitch(value: value, onChanged: (_) {}),
                     brightness: brightness,
                     quality: quality,
                     background: color,
@@ -451,7 +612,7 @@ void main() {
               final thumb = _thumb(tester);
               final track = tester.getRect(_track);
               final colors = Theme.of(
-                tester.element(find.byType(Switch)),
+                tester.element(find.byType(CommonSwitch)),
               ).colorScheme;
               expect(
                 _trackFill(tester),

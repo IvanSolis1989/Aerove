@@ -244,7 +244,7 @@ class AppSidebarContainer extends ConsumerWidget {
     final navigationItems = navigationState.navigationItems;
     final viewMode = navigationState.viewMode;
     final currentIndex = navigationState.currentIndex;
-    final blur = ref.watch(windowBlurProvider);
+    final backdropOpacity = ref.watch(windowBlurProvider);
     final page = SurfaceLevel.page.colorOf(context.colorScheme);
     final chrome = context.colorScheme.chromeSurface;
     void onSelected(int index) {
@@ -255,7 +255,7 @@ class AppSidebarContainer extends ConsumerWidget {
     final isLtr = Directionality.of(context) == TextDirection.ltr;
     return Container(
       color:
-          blur ||
+          backdropOpacity != null ||
               LiquidGlassScope.of(context) ||
               AuroraAppearance.enabledOf(context)
           ? Colors.transparent
@@ -267,8 +267,8 @@ class AppSidebarContainer extends ConsumerWidget {
             child: Material(
               color: LiquidGlassScope.of(context)
                   ? Colors.transparent
-                  : blur
-                  ? chrome.withValues(alpha: kSidebarBlurOpacity)
+                  : backdropOpacity != null
+                  ? chrome.withValues(alpha: backdropOpacity)
                   : chrome,
               shape: BorderDirectional(end: Divider.createBorderSide(context)),
               child: MediaQuery.removePadding(

@@ -204,7 +204,7 @@ class _AddOrEditRuleViewState extends ConsumerState<_AddOrEditRuleView> {
     TextStyle? titleStyle,
     Widget? trailing,
     bool? invalid,
-    final VoidCallback? onPressed,
+    VoidCallback? onPressed,
   }) {
     return FormRow(
       invalid: invalid ?? false,
@@ -476,17 +476,15 @@ class _AddOrEditRuleViewState extends ConsumerState<_AddOrEditRuleView> {
     // The core turns no-resolve on with src, so the switch cannot disagree.
     return _buildItem(
       title: appLocalizations.noResolveHostname,
-      trailing: GlassSwitch(
-        child: Switch(
-          value: noResolve || src,
-          onChanged: src
-              ? null
-              : (value) {
-                  ref
-                      .read(ruleProvider.notifier)
-                      .update((state) => state.copyWith(noResolve: value));
-                },
-        ),
+      trailing: CommonSwitch(
+        value: noResolve || src,
+        onChanged: src
+            ? null
+            : (value) {
+                ref
+                    .read(ruleProvider.notifier)
+                    .update((state) => state.copyWith(noResolve: value));
+              },
       ),
     );
   }
@@ -495,15 +493,13 @@ class _AddOrEditRuleViewState extends ConsumerState<_AddOrEditRuleView> {
     final appLocalizations = context.appLocalizations;
     return _buildItem(
       title: appLocalizations.matchSourceIp,
-      trailing: GlassSwitch(
-        child: Switch(
-          value: src,
-          onChanged: (value) {
-            ref
-                .read(ruleProvider.notifier)
-                .update((state) => state.copyWith(src: value));
-          },
-        ),
+      trailing: CommonSwitch(
+        value: src,
+        onChanged: (value) {
+          ref
+              .read(ruleProvider.notifier)
+              .update((state) => state.copyWith(src: value));
+        },
       ),
     );
   }
@@ -542,9 +538,10 @@ class _AddOrEditRuleViewState extends ConsumerState<_AddOrEditRuleView> {
       confirmationAction: customSaveAction(context, onPressed: _handleSave),
       body: ListView(
         shrinkWrap: true,
-        padding: const EdgeInsets.symmetric(
-          horizontal: 16,
-        ).copyWith(bottom: 20, top: context.contentTopPadding),
+        padding: const EdgeInsets.symmetric(horizontal: 16).copyWith(
+          bottom: 20 + context.bottomInset,
+          top: context.contentTopPadding,
+        ),
         children: [
           generateSection(
             title: appLocalizations.basicInfo,

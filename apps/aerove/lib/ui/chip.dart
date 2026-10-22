@@ -1,5 +1,6 @@
 import 'package:fl_clash/ui/foreground_ink.dart';
-import 'package:fl_clash/ui/color.dart';
+import 'package:fl_clash/ui/button.dart';
+import 'package:fl_clash/ui/card.dart';
 import 'package:fl_clash/ui/context.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/measure.dart';
@@ -19,50 +20,37 @@ class CommonChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
-    final foregroundColor = colorScheme.onSurfaceVariant;
-    final content = Padding(
-      padding: EdgeInsets.only(
-        left: 8,
-        right: onDeleted != null ? 6 : 8,
-        top: 3,
-        bottom: 3,
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        spacing: 4,
-        children: [
-          Flexible(
-            child: GlassText(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AppTextStyle.caption1
-                  .of(context, emphasized: true)
-                  .copyWith(color: foregroundColor),
-            ),
-          ),
-          if (onDeleted != null)
-            InkWell(
-              onTap: onDeleted,
-              customBorder: AppShape.circle,
-              focusColor: colorScheme.primary.opacity30,
-              child: GlyphIcon(
-                AppGlyphs.close,
-                size: 14,
-                color: foregroundColor,
+    final deletable = onDeleted != null;
+    return SizedBox(
+      height: TonalButtonSize.section.button,
+      child: CommonCard(
+        shape: AppShape.full,
+        inert: !deletable,
+        padding: EdgeInsets.only(left: 16, right: deletable ? 12 : 16),
+        onPressed: onDeleted,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          spacing: 6,
+          children: [
+            Flexible(
+              child: GlassText(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppTextStyle.subheadline
+                    .of(context, emphasized: true)
+                    .copyWith(color: colorScheme.onSurface),
               ),
             ),
-        ],
+            if (deletable)
+              GlyphIcon(
+                AppGlyphs.close,
+                size: 16,
+                color: colorScheme.onSurfaceVariant,
+              ),
+          ],
+        ),
       ),
-    );
-    return Material(
-      color: LiquidGlassScope.surfaceColorOf(
-        context,
-        context.raisedSurfaceLevel.colorOf(colorScheme),
-      ),
-      shape: AppShape.sm,
-      clipBehavior: Clip.antiAlias,
-      child: content,
     );
   }
 }

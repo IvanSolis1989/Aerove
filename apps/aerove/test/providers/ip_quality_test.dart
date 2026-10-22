@@ -5,8 +5,10 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:fl_clash/common/exit_snapshot.dart';
+import 'package:drift/native.dart';
 import 'package:fl_clash/common/ip_quality.dart';
 import 'package:fl_clash/common/request.dart';
+import 'package:fl_clash/database/database.dart' as db;
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/app.dart';
@@ -17,6 +19,7 @@ import 'package:riverpod/riverpod.dart';
 
 const _ip = '203.0.113.9';
 const _cooldown = Duration(milliseconds: 200);
+const _maxAge = Duration(milliseconds: 200);
 
 class _Adapter implements HttpClientAdapter {
   _Adapter({required this.succeed});
@@ -69,23 +72,46 @@ class _PendingAdapter implements HttpClientAdapter {
   void close({bool force = false}) {}
 }
 
+const _saved = IpQuality(
+  ip: _ip,
+  source: IpQualitySource.proxyCheck,
+  type: IpType.hosting,
+);
+
 void main() {
   late HttpClientAdapter originalAdapter;
+  late db.Database testDatabase;
 
   setUp(() {
     originalAdapter = request.dio.httpClientAdapter;
+    testDatabase = db.Database(NativeDatabase.memory());
+    db.database = testDatabase;
   });
 
-  tearDown(() {
+  tearDown(() async {
     request.dio.httpClientAdapter = originalAdapter;
+    await testDatabase.close();
   });
 
-  ProviderContainer build(HttpClientAdapter adapter, {ExitSnapshot? lastExit}) {
+  Future<void> seed(Duration age) => testDatabase.ipQualities.put(
+    db.IpQualitiesCompanion.insert(
+      ip: _ip,
+      quality: _saved,
+      checkedAt: DateTime.now().subtract(age),
+    ),
+  );
+
+  ProviderContainer build(
+    HttpClientAdapter adapter, {
+    ExitSnapshot? lastExit,
+    Duration? maxAge,
+  }) {
     request.dio.httpClientAdapter = adapter;
     final container = ProviderContainer(
       overrides: [
         ipQualityFailureCooldownProvider.overrideWithValue(_cooldown),
         lastExitProvider.overrideWithBuild((_, _) => lastExit),
+        if (maxAge != null) ipQualityMaxAgeProvider.overrideWithValue(maxAge),
       ],
     );
     addTearDown(container.dispose);
@@ -230,5 +256,64 @@ void main() {
     await container.read(provider.future);
 
     expect(adapter.requests, sent * 2);
+  });
+
+  test('answers from a record an earlier run saved', () async {
+    await seed(const Duration(days: 1));
+    final adapter = _Adapter(succeed: true);
+    final container = build(adapter);
+    container.listen(provider, (_, _) {});
+
+    expect(await container.read(provider.future), _saved);
+    expect(adapter.requests, 0);
+  });
+
+  test('saves a lookup for the next run', () async {
+    final adapter = _Adapter(succeed: true);
+    final container = build(adapter);
+    container.listen(provider, (_, _) {});
+    final quality = await container.read(provider.future);
+
+    final saved = await testDatabase.ipQualitiesDao.fresh(
+      _ip,
+      const Duration(days: 3),
+    );
+    expect(saved?.quality, quality);
+  });
+
+  test('asks again once a saved record has expired', () async {
+    await seed(const Duration(days: 4));
+    final adapter = _Adapter(succeed: true);
+    final container = build(adapter);
+    container.listen(provider, (_, _) {});
+
+    expect((await container.read(provider.future)).type, IpType.residential);
+    expect(adapter.requests, greaterThan(0));
+  });
+
+  test('skips a saved record once invalidated', () async {
+    await seed(const Duration(days: 1));
+    final adapter = _Adapter(succeed: true);
+    final container = build(adapter);
+    container.listen(provider, (_, _) {});
+    await container.read(provider.future);
+
+    container.invalidate(provider);
+
+    expect((await container.read(provider.future)).type, IpType.residential);
+    expect(adapter.requests, greaterThan(0));
+  });
+
+  test('asks again when a shown result expires', () async {
+    final adapter = _Adapter(succeed: true);
+    final container = build(adapter, maxAge: _maxAge);
+    container.listen(provider, (_, _) {});
+    await container.read(provider.future);
+    final sent = adapter.requests;
+
+    await Future<void>.delayed(_maxAge * 2);
+    await container.read(provider.future);
+
+    expect(adapter.requests, greaterThan(sent));
   });
 }

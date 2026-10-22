@@ -55,7 +55,7 @@ class SheetToolBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
+    final bar = Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         dragHandle
@@ -65,6 +65,9 @@ class SheetToolBar extends StatelessWidget {
         const SizedBox(height: _trailing),
       ],
     );
+    return dragHandle
+        ? GestureDetector(behavior: HitTestBehavior.opaque, child: bar)
+        : bar;
   }
 }
 

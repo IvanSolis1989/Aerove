@@ -258,7 +258,7 @@ class ProxyGroupView extends ConsumerWidget {
         padding: EdgeInsets.only(
           left: 16,
           right: 16,
-          bottom: 16 + BottomInsetScope.of(context),
+          bottom: 16 + context.bottomInset,
         ),
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: columns,

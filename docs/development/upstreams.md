@@ -13,6 +13,12 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 产品版本、签名、更新地址、验收和发版由 Aerove 决定。上游发布是评估依赖更新的输入，不是跳过兼容性验证或自动发版的授权。借鉴代码仍须保留原始版权与许可证；独立维护不意味着重写历史或宣称全部代码原创。
 
+### FlClash 0.9.2 预览整合来源
+
+本次用户明确授权整合 `v0.9.2-pre.1`，固定提交为 [`7220961f`](https://github.com/chen08209/FlClash/commit/7220961f7c5e494df831ca196ab53ef08a17e926)，对应官方频道发行安装包引用的 [成功构建](https://github.com/chen08209/FlClash/actions/runs/39748575294)。该标签此前指向 `43d6bd78`，本轮重新核对提交与构建后使用当前固定来源；不把移动标签或 GitHub Release 页面是否存在单独作为源码已固定、安装包已发布的证据。
+
+整合保留普通双父提交及官方 Mihomo 来源，必要的 FlClash 移动适配进入可重放补丁并单独记录版权和源提交。Aerove 自行验证和发布预览，使用 prerelease 通道，保留稳定版 latest。
+
 GitHub 的 fork 网络关系单独处理，不是上述开发治理的前提。当前保留 `IvanSolis1989/Aerove` 地址、发布资产和升级入口。根据 [GitHub 官方脱离 fork 文档](https://docs.github.com/en/pull-requests/how-tos/work-with-forks/detaching-a-fork)，脱离会丢失 Star、议题、PR、Wiki 等仓库记录，且不可恢复关联；Git 提交历史会保留。不能把移除标记描述成无损操作，也不能直接删除重建仓库。真正执行前应列出保存、恢复和无法恢复的记录，以及发行地址、Secrets、工作流和客户端更新入口的影响，取得针对该具体结果的授权。
 
 ## 选择性参考

@@ -62,9 +62,10 @@ class CustomProvidersView extends ConsumerWidget {
           illustration: NullStatusIllustration.proxies,
         ),
         child: ListView(
-          padding: const EdgeInsets.symmetric(
-            horizontal: 16,
-          ).copyWith(top: context.contentTopPadding, bottom: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 16).copyWith(
+            top: context.contentTopPadding,
+            bottom: 16 + context.bottomInset,
+          ),
           children: [
             generateSection(
               title: appLocalizations.proxies,
@@ -458,9 +459,7 @@ class _ProxyProviderOptionsViewState
       title: option.label(context.appLocalizations),
       leading: leading,
       onPressed: () => onChanged(!value),
-      trailing: GlassSwitch(
-        child: Switch(value: value, onChanged: onChanged),
-      ),
+      trailing: CommonSwitch(value: value, onChanged: onChanged),
     );
   }
 
@@ -611,7 +610,7 @@ class _ProxyProviderOptionsViewState
           SliverPadding(
             padding: const EdgeInsets.symmetric(
               horizontal: 16,
-            ).copyWith(bottom: 20),
+            ).copyWith(bottom: 20 + context.bottomInset),
             sliver: SliverList.list(
               children: [
                 generateAnimatedSection(

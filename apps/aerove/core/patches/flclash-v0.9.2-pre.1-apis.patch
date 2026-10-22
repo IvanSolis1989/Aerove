@@ -1,0 +1,233 @@
+FlClash 0.9.2-pre.1 API compatibility on official Mihomo v1.19.33
+Source-Repository: https://github.com/chen08209/Clash.Meta
+Source-Revision: 86e56192ddd815e2094212531c48a364eb35659d
+ProxyMapping-Introduced-By: 86e56192ddd815e2094212531c48a364eb35659d
+ClearAll-Introduced-By: 6aeff178349cbbc89f1729d717a4eb8eba64a198
+Source-License: GNU General Public License, version 3 (repository LICENSE)
+Source-License-Blob: f288702d2fa16d3cdf0035b15a9fcbc552cd88e7
+Both added Go files retain the exact source bytes and upstream comments.
+This patch follows aerove-v1.19.33.patch; it does not replace that adaptation.
+
+diff --git a/adapter/provider/patch_mapping.go b/adapter/provider/patch_mapping.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..8d3614620cdb161536329a3c2462db9f7dda4f0e
+--- /dev/null
++++ b/adapter/provider/patch_mapping.go
+@@ -0,0 +1,126 @@
++package provider
++
++import (
++	"errors"
++	"fmt"
++	"os"
++	"slices"
++	"strings"
++
++	"github.com/metacubex/mihomo/common/convert"
++	"github.com/metacubex/mihomo/common/structure"
++	"github.com/metacubex/mihomo/common/yaml"
++	"github.com/metacubex/mihomo/component/age"
++	P "github.com/metacubex/mihomo/constant/provider"
++
++	"github.com/dlclark/regexp2"
++)
++
++// ProxyMapping returns the mapping pd, a proxy provider configured by mapping,
++// builds its proxy named name from, with the provider's dialer-proxy and
++// override applied, or nil when pd has no proxy of that name. It picks the
++// mapping the way NewProxiesParser does and must keep in step with it.
++func ProxyMapping(pd P.ProxyProvider, mapping map[string]any, name string) (map[string]any, error) {
++	decoder := structure.NewDecoder(structure.Option{TagName: "provider", WeaklyTypedInput: true})
++	schema := &proxyProviderSchema{}
++	if err := decoder.Decode(mapping, schema); err != nil {
++		return nil, err
++	}
++
++	var excludeTypes []string
++	if schema.ExcludeType != "" {
++		excludeTypes = strings.Split(schema.ExcludeType, "|")
++	}
++	var excludeFilterRegs []*regexp2.Regexp
++	if schema.ExcludeFilter != "" {
++		regs, err := compileFilters(schema.ExcludeFilter)
++		if err != nil {
++			return nil, err
++		}
++		excludeFilterRegs = regs
++	}
++	filterRegs, err := compileFilters(schema.Filter)
++	if err != nil {
++		return nil, err
++	}
++
++	buf, err := providerContent(pd, schema.Payload)
++	if err != nil {
++		return nil, err
++	}
++	if buf, err = age.DecryptBytes(buf, schema.AgeSecretKey); err != nil {
++		return nil, err
++	}
++	source := &ProxySchema{}
++	if err := yaml.Unmarshal(buf, source); err != nil {
++		proxies, err1 := convert.ConvertsV2Ray(buf)
++		if err1 != nil {
++			return nil, fmt.Errorf("%w, %w", err, err1)
++		}
++		source.Proxies = proxies
++	}
++
++	matches := func(reg *regexp2.Regexp, name string) bool {
++		mat, _ := reg.MatchString(name)
++		return mat
++	}
++	seen := map[string]struct{}{}
++	for _, filterReg := range filterRegs {
++		for _, proxy := range source.Proxies {
++			if len(excludeTypes) > 0 {
++				proxyType, ok := proxy["type"].(string)
++				if !ok || slices.ContainsFunc(excludeTypes, func(excluded string) bool {
++					return strings.EqualFold(proxyType, excluded)
++				}) {
++					continue
++				}
++			}
++			proxyName, ok := proxy["name"].(string)
++			if !ok || slices.ContainsFunc(excludeFilterRegs, func(reg *regexp2.Regexp) bool {
++				return matches(reg, proxyName)
++			}) {
++				continue
++			}
++			if schema.Filter != "" && !matches(filterReg, proxyName) {
++				continue
++			}
++			if _, ok := seen[proxyName]; ok {
++				continue
++			}
++			if schema.DialerProxy != "" {
++				proxy["dialer-proxy"] = schema.DialerProxy
++			}
++			if err := schema.Override.Apply(proxy); err != nil {
++				return nil, err
++			}
++			if proxy["name"] == name {
++				return proxy, nil
++			}
++			seen[proxyName] = struct{}{}
++		}
++	}
++	return nil, nil
++}
++
++func compileFilters(filter string) ([]*regexp2.Regexp, error) {
++	var regs []*regexp2.Regexp
++	for _, expr := range strings.Split(filter, "`") {
++		reg, err := regexp2.Compile(expr, regexp2.None)
++		if err != nil {
++			return nil, fmt.Errorf("invalid filter regex: %w", err)
++		}
++		regs = append(regs, reg)
++	}
++	return regs, nil
++}
++
++// A fetched provider keeps its payload until its vehicle's file loads.
++func providerContent(pd P.ProxyProvider, payload []map[string]any) ([]byte, error) {
++	if set, ok := pd.(*ProxySetProvider); ok {
++		buf, err := os.ReadFile(set.Vehicle().Path())
++		if !errors.Is(err, os.ErrNotExist) {
++			return buf, err
++		}
++	}
++	return yaml.Marshal(ProxySchema{Proxies: payload})
++}
+diff --git a/dns/patch_clear.go b/dns/patch_clear.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..1b3c961d549c1ee5354656e7570de2b14992a085
+--- /dev/null
++++ b/dns/patch_clear.go
+@@ -0,0 +1,85 @@
++package dns
++
++import (
++	"reflect"
++	"time"
++
++	"github.com/metacubex/mihomo/component/resolver"
++)
++
++// ClearAll forgets what the resolvers learned from the network: every cached
++// answer, default-nameserver's included, every client's connection, those only
++// a nameserver-policy uses included, and the nameservers the desktop system
++// resolver read. Upstream ClearCache and ResetConnection each reach only part
++// of that, and mihomo calls them on its own, so they are left as they are.
++func ClearAll() {
++	var pending []*Resolver
++	for _, r := range []resolver.Resolver{resolver.DefaultResolver, resolver.SystemResolver} {
++		if rs, ok := r.(Resolvers); ok {
++			pending = append(pending, rs.Resolver, rs.ProxyResolver, rs.DirectResolver)
++		}
++	}
++	visited := map[*Resolver]struct{}{}
++	reset := map[dnsClient]struct{}{}
++	for len(pending) > 0 {
++		r := pending[0]
++		pending = pending[1:]
++		if r == nil {
++			continue
++		}
++		if _, done := visited[r]; done {
++			continue
++		}
++		visited[r] = struct{}{}
++		if r.cache != nil {
++			r.cache.Clear()
++		}
++		for _, c := range r.clients() {
++			resetClientOnce(c, reset)
++		}
++		pending = append(pending, r.defaultResolver)
++	}
++	answeredBy.Clear()
++}
++
++// A policy type added upstream needs a case here, or its clients keep their
++// connections through ClearAll.
++func (r *Resolver) clients() []dnsClient {
++	clients := append(append([]dnsClient{}, r.main...), r.fallback...)
++	for _, p := range r.policy {
++		switch p := p.(type) {
++		case domainTriePolicy:
++			p.Foreach(func(_ string, policyClients []dnsClient) bool {
++				clients = append(clients, policyClients...)
++				return true
++			})
++		case domainMatcherPolicy:
++			clients = append(clients, p.dnsClients...)
++		}
++	}
++	return clients
++}
++
++// Policies share transports with each other and with main, and resetting one
++// twice could drop a connection a query has just opened.
++func resetClientOnce(c dnsClient, reset map[dnsClient]struct{}) {
++	for {
++		u, ok := c.(interface{ Unwrap() dnsClient })
++		if !ok {
++			break
++		}
++		c = u.Unwrap()
++	}
++	if reflect.TypeOf(c).Comparable() {
++		if _, done := reset[c]; done {
++			return
++		}
++		reset[c] = struct{}{}
++	}
++	if sc, ok := c.(*systemClient); ok {
++		sc.mu.Lock()
++		sc.lastFlush = time.Time{}
++		sc.mu.Unlock()
++	}
++	c.ResetConnection()
++}

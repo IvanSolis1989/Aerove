@@ -42,13 +42,15 @@ mixin CoreInterface {
 
   Future<Map<String, dynamic>> getProfileOutbounds(String path);
 
+  Future<Map<String, dynamic>?> getProxyDefinition(String name);
+
   Future<String> buildProfile(SetupBase base);
 
   Future<String> dumpRuleSet(String path);
 
   Future<RuleSetInfo> compileRuleSet(String name, {String url = ''});
 
-  Future<Delay?> asyncTestDelay(String url, String proxyName);
+  Future<Delay?> asyncTestDelay(String url, String proxyName, Duration timeout);
 
   Future<List<Delay>> getLatestDelays();
 
@@ -118,6 +120,8 @@ mixin CoreInterface {
   FutureOr<bool> closeConnections();
 
   FutureOr<bool> resetConnections();
+
+  FutureOr<bool> clearDnsCache();
 }
 
 abstract class CoreHandlerInterface with CoreInterface {
@@ -342,6 +346,14 @@ abstract class CoreHandlerInterface with CoreInterface {
   }
 
   @override
+  Future<Map<String, dynamic>?> getProxyDefinition(String name) {
+    return _invokeMethod<Map<String, dynamic>>(
+      method: CoreMethod.getProxyDefinition,
+      arguments: name,
+    );
+  }
+
+  @override
   Future<String> buildProfile(SetupBase base) async {
     final result = await _invokeMethod<String>(
       method: CoreMethod.buildProfile,
@@ -519,6 +531,11 @@ abstract class CoreHandlerInterface with CoreInterface {
   }
 
   @override
+  Future<bool> clearDnsCache() async {
+    return await _invokeMethod<bool>(method: CoreMethod.clearDnsCache) ?? false;
+  }
+
+  @override
   Future<bool> closeConnection(String id) async {
     return await _invokeMethod<bool>(
           method: CoreMethod.closeConnection,
@@ -599,10 +616,14 @@ abstract class CoreHandlerInterface with CoreInterface {
   Future<bool> adoptListener() => startListener();
 
   @override
-  Future<Delay?> asyncTestDelay(String url, String proxyName) async {
+  Future<Delay?> asyncTestDelay(
+    String url,
+    String proxyName,
+    Duration timeout,
+  ) async {
     final delayParams = {
       'proxy-name': proxyName,
-      'timeout': delayTestTimeoutDuration.inMilliseconds,
+      'timeout': timeout.inMilliseconds,
       'test-url': url,
     };
     final data = await _invokeMethod<Map<String, dynamic>>(

@@ -191,7 +191,7 @@ class _ProfilesGridState extends ConsumerState<_ProfilesGrid> {
     left: _horizontalPadding,
     right: _horizontalPadding,
     top: context.contentTopPadding,
-    bottom: 16 + BottomInsetScope.of(context),
+    bottom: 16 + context.bottomInset,
   );
 
   int _columnsFor(double width) => getProfilesColumns(
@@ -463,6 +463,18 @@ class ProfileItem extends ConsumerWidget {
                   _handleCopyLink(context);
                 },
               ),
+            if (isUrl)
+              CommonPopupMenuItem(
+                glyph: AppGlyphs.qrCode,
+                label: appLocalizations.qrcode,
+                onPressed: () {
+                  dialogs.showQrCode(
+                    title: profile.realLabel,
+                    data: profile.url,
+                    message: appLocalizations.shareQrcodeTip,
+                  );
+                },
+              ),
             CommonPopupMenuItem(
               glyph: AppGlyphs.export,
               label: appLocalizations.exportFile,
@@ -607,13 +619,16 @@ class _ReorderableProfilesSheetState
   Widget _buildItem(int index) {
     final position = ItemPosition.get(index, profiles.length);
     final profile = profiles[index];
-    return ItemPositionProvider(
+    return ReorderableDelayedDragStartListener(
       key: Key(profile.id.toString()),
-      position: position,
-      child: DecorationListItem(
-        contentPadding: const EdgeInsets.only(left: 16),
-        trailing: SortHandle(index: index),
-        title: GlassText(profile.realLabel),
+      index: index,
+      child: ItemPositionProvider(
+        position: position,
+        child: DecorationListItem(
+          contentPadding: const EdgeInsets.only(left: 16),
+          trailing: SortHandle(index: index),
+          title: GlassText(profile.realLabel),
+        ),
       ),
     );
   }
@@ -638,26 +653,24 @@ class _ReorderableProfilesSheetState
         onPressed: _handleSave,
         tooltip: context.appLocalizations.save,
       ),
-      body: Padding(
-        padding: const EdgeInsets.only(bottom: 32),
-        child: ReorderableListView.builder(
-          buildDefaultDragHandles: false,
-          padding: const EdgeInsets.symmetric(
-            horizontal: 16,
-          ).copyWith(top: context.contentTopPadding),
-          proxyDecorator: (child, index, animation) {
-            return commonProxyDecorator(_buildItem(index), index, animation);
-          },
-          onReorderItem: (oldIndex, newIndex) {
-            setState(() {
-              profiles = profiles.copyAndReorder(oldIndex, newIndex);
-            });
-          },
-          itemBuilder: (_, index) {
-            return _buildItem(index);
-          },
-          itemCount: profiles.length,
+      body: ReorderableListView.builder(
+        buildDefaultDragHandles: false,
+        padding: const EdgeInsets.symmetric(horizontal: 16).copyWith(
+          top: context.contentTopPadding,
+          bottom: 32 + context.bottomInset,
         ),
+        proxyDecorator: (child, index, animation) {
+          return commonProxyDecorator(_buildItem(index), index, animation);
+        },
+        onReorderItem: (oldIndex, newIndex) {
+          setState(() {
+            profiles = profiles.copyAndReorder(oldIndex, newIndex);
+          });
+        },
+        itemBuilder: (_, index) {
+          return _buildItem(index);
+        },
+        itemCount: profiles.length,
       ),
       title: appLocalizations.profilesSort,
     );

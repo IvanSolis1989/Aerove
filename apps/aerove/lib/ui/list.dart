@@ -1,6 +1,5 @@
 import 'dart:math' as math;
 
-import 'package:fl_clash/ui/switch.dart';
 import 'package:fl_clash/ui/foreground_ink.dart';
 
 import 'package:collection/collection.dart';
@@ -29,6 +28,7 @@ import 'popup.dart';
 import 'scaffold.dart';
 import 'sheet.dart';
 import 'sortable.dart';
+import 'switch.dart';
 
 part 'list_row_separator.dart';
 part 'list_selected.dart';
@@ -437,11 +437,9 @@ class ListItem<T> extends StatelessWidget {
               : () {
                   toggleAction.onChanged!(!toggleAction.value);
                 },
-          trailing: GlassSwitch(
-            child: Switch(
-              value: toggleAction.value,
-              onChanged: toggleAction.onChanged,
-            ),
+          trailing: CommonSwitch(
+            value: toggleAction.value,
+            onChanged: toggleAction.onChanged,
           ),
         );
       case _DefaultAction():
@@ -580,28 +578,45 @@ class ListFooter extends StatelessWidget {
   }
 }
 
+class ListSectionGap extends StatelessWidget {
+  const ListSectionGap({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(height: listHeaderPaddingOf(context).top);
+  }
+}
+
+/// A section's rows alone, for a group under a header its caller lays out.
+Widget generateGroup(Iterable<Widget> items) {
+  return CardGroup(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ...items.mapIndexed<Widget>(
+          (index, item) => ItemPositionProvider(
+            position: ItemPosition.get(index, items.length),
+            child: item,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
 Widget generateSection({
   String? title,
   required Iterable<Widget> items,
   List<IconButtonData> actions = const [],
   String? footer,
 }) {
-  final genItems = items.mapIndexed<Widget>(
-    (index, item) => ItemPositionProvider(
-      position: ItemPosition.get(index, items.length),
-      child: item,
-    ),
-  );
   return Column(
     children: [
-      if (items.isNotEmpty && title != null)
-        ListHeader(title: title, actions: actions),
-      CardGroup(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [...genItems],
-        ),
-      ),
+      if (items.isNotEmpty)
+        title != null
+            ? ListHeader(title: title, actions: actions)
+            : const ListSectionGap(),
+      generateGroup(items),
       if (items.isNotEmpty && footer != null) ListFooter(text: footer),
     ],
   );

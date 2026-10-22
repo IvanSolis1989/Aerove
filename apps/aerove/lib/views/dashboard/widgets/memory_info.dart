@@ -454,9 +454,10 @@ class _MemoryDetailSheetState extends ConsumerState<MemoryDetailSheet>
         ),
       ],
       body: ListView(
-        padding: const EdgeInsets.symmetric(
-          horizontal: 16,
-        ).copyWith(top: context.contentTopPadding, bottom: 20),
+        padding: const EdgeInsets.symmetric(horizontal: 16).copyWith(
+          top: context.contentTopPadding,
+          bottom: 20 + context.bottomInset,
+        ),
         children: [
           _MemoryOverview(snapshot: _snapshot),
           _MemorySection(
@@ -512,10 +513,7 @@ class _MemorySection extends StatelessWidget {
           curve: Easing.standard,
           child: FadeThroughBox(
             alignment: Alignment.topCenter,
-            child: KeyedSubtree(
-              key: contentKey,
-              child: generateSection(items: items),
-            ),
+            child: KeyedSubtree(key: contentKey, child: generateGroup(items)),
           ),
         ),
       ],

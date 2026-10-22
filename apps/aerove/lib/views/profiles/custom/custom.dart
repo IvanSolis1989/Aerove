@@ -52,8 +52,23 @@ Widget _sectionRow(
   return ListItem(
     leading: GlyphIcon(glyph),
     title: GlassText(title),
-    subtitle: state,
-    trailing: const GlyphIcon(AppGlyphs.chevronForward),
+    trailing: Row(
+      mainAxisSize: MainAxisSize.min,
+      spacing: 4,
+      children: [
+        Flexible(
+          child: DefaultTextStyle.merge(
+            style: context.listTitleStyle.copyWith(
+              color: context.colorScheme.onSurfaceVariant,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            child: state,
+          ),
+        ),
+        const GlyphIcon(AppGlyphs.chevronForward),
+      ],
+    ),
     onTap: () => _push(context, view),
   );
 }
@@ -315,7 +330,7 @@ class _CustomProfileViewState extends ConsumerState<CustomProfileView> {
                   SliverPadding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 16,
-                    ).copyWith(bottom: 24),
+                    ).copyWith(bottom: 24 + context.bottomInset),
                     sliver: SliverMainAxisGroup(
                       slivers: [
                         SliverToBoxAdapter(child: _overview),
@@ -516,9 +531,10 @@ class _MoreSectionsView extends ConsumerWidget {
     return CommonScaffold(
       title: appLocalizations.more,
       body: ListView(
-        padding: const EdgeInsets.symmetric(
-          horizontal: 16,
-        ).copyWith(top: context.contentTopPadding, bottom: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 16).copyWith(
+          top: context.contentTopPadding,
+          bottom: 16 + context.bottomInset,
+        ),
         children: [
           generateSection(
             items: [

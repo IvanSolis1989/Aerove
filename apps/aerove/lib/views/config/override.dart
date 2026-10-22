@@ -470,8 +470,8 @@ class OverrideView<K extends OverrideKey, M> extends ConsumerWidget {
       content: raw,
       schema: quickEdit.schema,
       readOnly: false,
-      onPop: (_, _, content) =>
-          _handleQuickEditPop(ref, quickEdit, content, raw),
+      onPop: (_, _, content) async =>
+          _handleQuickEditPop(ref, quickEdit, await content.readText(), raw),
     );
     return sheetNavigatorOf(context).push(
       context.isMobileView
@@ -582,9 +582,10 @@ class _OverrideList<K extends OverrideKey, M> extends ConsumerWidget {
     final keys = ref.watch(spec.target.select((state) => state.keys));
     final entries = spec.values.where(keys.contains);
     return ListView(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 16,
-      ).copyWith(top: context.contentTopPadding, bottom: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 16).copyWith(
+        top: context.contentTopPadding,
+        bottom: 16 + context.bottomInset,
+      ),
       children: [
         if (spec.target.issues case final issues?)
           CustomIssuesBanner(issues: ref.watch(issues)),

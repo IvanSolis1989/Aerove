@@ -81,11 +81,11 @@ class _GeometryWindowPort implements WindowPort {
   }
 
   @override
-  Future<bool> setBlur({
+  Future<double?> setBlur({
     required bool enabled,
     required Brightness brightness,
     required Color tint,
-  }) async => false;
+  }) async => null;
 
   @override
   Future<void> close() async {}

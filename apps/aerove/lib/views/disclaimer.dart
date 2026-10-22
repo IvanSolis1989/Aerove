@@ -127,9 +127,11 @@ class DisclaimerView extends StatelessWidget {
     final appLocalizations = context.appLocalizations;
     final terms = _buildTerms(appLocalizations);
     final body = _buildBody(
-      padding: const EdgeInsets.symmetric(
-        horizontal: _mobileGutter,
-      ).copyWith(top: context.contentTopPadding, bottom: 32),
+      padding: const EdgeInsets.symmetric(horizontal: _mobileGutter).copyWith(
+        top: context.contentTopPadding,
+        // Below the terms the consent bar takes the system bar itself.
+        bottom: 32 + (requireConsent ? 0 : context.bottomInset),
+      ),
       children: terms,
     );
     if (!requireConsent) {
@@ -571,17 +573,15 @@ class _RestateDialogState extends State<_RestateDialog> {
         tip: appLocalizations.disclaimerAcknowledgeTip,
         statement: statement,
         canConfirm: _acknowledged,
-        confirmation: generateSection(
-          items: [
-            ListItem.checkbox(
-              title: GlassText(appLocalizations.disclaimerAcknowledgeLabel),
-              value: _acknowledged,
-              onChanged: (value) {
-                setState(() => _acknowledged = value ?? false);
-              },
-            ),
-          ],
-        ),
+        confirmation: generateGroup([
+          ListItem.checkbox(
+            title: GlassText(appLocalizations.disclaimerAcknowledgeLabel),
+            value: _acknowledged,
+            onChanged: (value) {
+              setState(() => _acknowledged = value ?? false);
+            },
+          ),
+        ]),
       );
     }
     return ValueListenableBuilder<TextEditingValue>(
