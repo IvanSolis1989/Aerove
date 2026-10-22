@@ -3,27 +3,7 @@ name: Workspace layout
 on:
   push:
     branches: [main]
-    paths:
-      - 'AGENTS.md'
-      - 'README.md'
-      - '.agents/**'
-      - '.github/workflows/workspace.yaml'
-      - '.github/actions/**'
-      - 'docs/**'
-      - 'tooling/**'
-      - '.gitmodules'
-      - '.pre-commit-config.yaml'
   pull_request:
-    paths:
-      - 'AGENTS.md'
-      - 'README.md'
-      - '.agents/**'
-      - '.github/workflows/workspace.yaml'
-      - '.github/actions/**'
-      - 'docs/**'
-      - 'tooling/**'
-      - '.gitmodules'
-      - '.pre-commit-config.yaml'
   workflow_dispatch:
 
 permissions:

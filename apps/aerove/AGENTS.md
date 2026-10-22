@@ -8,7 +8,7 @@ merge target. Preserve licenses and provenance; read `../../docs/development/IND
 The full product tracks published stable releases from official MetaCubeX/mihomo directly, with pinned source and
 replayable adaptations in this repository. Lite uses clash-rs; neither core waits for a FlClash release.
 Shared UI, interaction and client functionality must stay identical in both products. Changes flow in both directions;
-only source-proven Rust-core capability gaps may be deferred. Follow `docs/shared/UI_CONTRACT.md` before UI work.
+only source-proven Rust-core capability gaps may be deferred. Follow `../../docs/shared/UI_CONTRACT.md` before UI work.
 
 ## 双产品开发契约
 

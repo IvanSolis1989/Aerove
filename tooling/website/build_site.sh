@@ -7,7 +7,7 @@ app="$root/apps/aerove"
 out="${1:-$root/tooling/website/.output}"
 
 if ! command -v node >/dev/null; then
-  echo "error: tool/render_site.mjs needs Node.js on PATH" >&2
+  echo "error: tooling/website/render_site.mjs needs Node.js on PATH" >&2
   exit 1
 fi
 
@@ -35,10 +35,20 @@ fi
 # The changelog comes from the released tag so the notes never run ahead of the
 # downloads; the working tree copy is only a fallback for local previews.
 if [[ -n "$tag" ]] && ! git -C "$root" rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-  git -C "$root" fetch -q --depth=1 origin "refs/tags/$tag:refs/tags/$tag" 2>/dev/null || true
+  git -C "$root" fetch -q --depth=1 origin "refs/tags/$tag:refs/tags/$tag"
 fi
-if [[ -n "$tag" ]] && git -C "$root" show "$tag:CHANGELOG.md" >"$out/CHANGELOG.md" 2>/dev/null; then
-  :
+if [[ -n "$tag" ]]; then
+  found=false
+  for path in docs/aerove/CHANGELOG.md docs/CHANGELOG_Aerove.md CHANGELOG.md; do
+    if git -C "$root" show "$tag:$path" >"$out/CHANGELOG.md" 2>/dev/null; then
+      found=true
+      break
+    fi
+  done
+  if [[ "$found" != true ]]; then
+    echo "error: released tag $tag has no recorded changelog" >&2
+    exit 1
+  fi
 else
   cp "$root/docs/aerove/CHANGELOG.md" "$out/CHANGELOG.md"
 fi
