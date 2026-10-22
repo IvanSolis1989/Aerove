@@ -9,6 +9,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -23,7 +24,6 @@ import kotlinx.coroutines.withContext
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
-import java.util.Locale
 
 @Composable
 internal fun ConnectionsScreen(state: LiteState, actions: LiteActions, padding: PaddingValues) {
@@ -151,8 +151,9 @@ private fun amount(bytes: Long?): String = bytes?.let(::formatBytes) ?: stringRe
 
 @Composable
 private fun ConnectionDetails(connection: ConnectionInfo) {
-    val formatter = remember(Locale.getDefault()) {
-        DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM).withLocale(Locale.getDefault()).withZone(ZoneId.systemDefault())
+    val locale = LocalLocale.current.platformLocale
+    val formatter = remember(locale) {
+        DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM).withLocale(locale).withZone(ZoneId.systemDefault())
     }
     val entries = listOf(
         R.string.connections_id to connection.id,
