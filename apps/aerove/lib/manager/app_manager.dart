@@ -13,6 +13,20 @@ import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+String? appEnvBannerMessage({
+  required bool safeMode,
+  required bool isDebug,
+  required String appEnv,
+}) {
+  if (safeMode) {
+    return 'SAFE MODE';
+  }
+  if (appEnv == 'stable' || !isDebug) {
+    return null;
+  }
+  return 'DEBUG';
+}
+
 class AppStateManager extends ConsumerStatefulWidget {
   final Widget child;
 
@@ -139,13 +153,11 @@ class AppEnvManager extends ConsumerWidget {
   const AppEnvManager({super.key, required this.child});
 
   String? _bannerMessage({required bool safeMode}) {
-    if (safeMode) {
-      return 'SAFE MODE';
-    }
-    if (!globalState.isPre) {
-      return null;
-    }
-    return kDebugMode ? 'DEBUG' : globalState.appEnv.toUpperCase();
+    return appEnvBannerMessage(
+      safeMode: safeMode,
+      isDebug: kDebugMode,
+      appEnv: globalState.appEnv,
+    );
   }
 
   @override

@@ -8,6 +8,49 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('release candidates do not carry an environment banner', () {
+    for (final appEnv in ['pre', 'beta', 'dev']) {
+      expect(
+        appEnvBannerMessage(
+          safeMode: false,
+          isDebug: false,
+          appEnv: appEnv,
+        ),
+        isNull,
+      );
+    }
+  });
+
+  test('stable builds carry no environment banner', () {
+    expect(
+      appEnvBannerMessage(
+        safeMode: false,
+        isDebug: false,
+        appEnv: 'stable',
+      ),
+      isNull,
+    );
+  });
+
+  test('debug environment banner and safe mode warning are preserved', () {
+    expect(
+      appEnvBannerMessage(
+        safeMode: false,
+        isDebug: true,
+        appEnv: 'beta',
+      ),
+      'DEBUG',
+    );
+    expect(
+      appEnvBannerMessage(
+        safeMode: true,
+        isDebug: false,
+        appEnv: 'beta',
+      ),
+      'SAFE MODE',
+    );
+  });
+
   setUpAll(() {
     globalState.appEnv = 'stable';
   });
