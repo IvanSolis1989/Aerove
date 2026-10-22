@@ -1,0 +1,31 @@
+[package]
+name = "aerove-core"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "GPL-3.0-only"
+
+[lib]
+name = "aerove_core"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+anyhow = "1"
+clash-lib = { path = ".upstream/clash-rs/clash-lib", default-features = false, features = ["aerove-mobile", "tun", "ring", "shadowsocks", "tuic", "zero_copy"] }
+jni = "=0.22.4"
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net"] }
+tokio-util = "0.7"
+
+[patch.crates-io]
+rustls = { git = "https://github.com/Watfaq/rustls.git", rev = "63d10d50f2308478f366f14f9f81e378f5911e3c" }
+tokio-rustls = { git = "https://github.com/Watfaq/tokio-rustls.git", rev = "b26e3e2b7a0161d505fd12d6e545b16463f1a45f" }
+
+[profile.release]
+opt-level = "z"
+codegen-units = 1
+lto = "thin"
+strip = "symbols"
+panic = "unwind"

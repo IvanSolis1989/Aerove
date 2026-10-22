@@ -1,0 +1,5 @@
+[env]
+RUSTC_BOOTSTRAP = "1"
+
+[build]
+rustflags = ["--cfg", "tokio_unstable"]

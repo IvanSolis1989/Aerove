@@ -1,0 +1,9 @@
+.gradle/
+.kotlin/
+**/build/
+**/target/
+local.properties
+app/src/main/jniLibs/
+native/.upstream/
+captures/
+**/__pycache__/

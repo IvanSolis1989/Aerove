@@ -1,0 +1,190 @@
+name: AEROVE Lite
+
+on:
+  push:
+    branches: [codex/aerove-independent-architecture]
+    paths:
+      - 'android-lite/**'
+      - '.github/workflows/aerove-lite.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aerove-lite-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUSTC_BOOTSTRAP: '1'
+  NDK_VERSION: '28.2.13676358'
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.99.0'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: android-lite/native -> target
+      - name: Resolve and check the real pinned bridge dependency lock
+        run: |
+          python3 android-lite/native/build.py --initialize-lock --prepare-only
+          git diff --exit-code -- android-lite/native/Cargo.lock
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AEROVE-Lite-resolved-lock
+          path: android-lite/native/Cargo.lock
+          if-no-files-found: error
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager 'platforms;android-37' 'build-tools;37.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+      - name: Kotlin data, lifecycle and UI compilation checks
+        working-directory: android-lite
+        run: gradle --no-daemon :app:testDebugUnitTest :app:lintDebug
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AEROVE-Lite-Kotlin-verification
+          path: android-lite/app/build/reports/
+          if-no-files-found: warn
+  build:
+    needs: [resolve, verify]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: arm64-v8a
+            target: aarch64-linux-android
+          - abi: x86_64
+            target: x86_64-linux-android
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Source preparation and APK inspector regression tests
+        run: |
+          python3 android-lite/native/test_build.py
+          python3 android-lite/tool/test_verify_apk.py
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install the pinned Android toolchain
+        run: sdkmanager 'platforms;android-37' 'build-tools;37.0.0' "ndk;$NDK_VERSION"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.99.0'
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: android-lite/native -> target
+          key: lite-${{ matrix.target }}
+      - name: Build the pinned Rust Android bridge
+        run: >-
+          python3 android-lite/native/build.py --target '${{ matrix.target }}'
+          --ndk "$ANDROID_SDK_ROOT/ndk/$NDK_VERSION"
+          --output android-lite/app/src/main/jniLibs
+      - name: Native lifecycle and parser tests
+        if: matrix.abi == 'arm64-v8a'
+        working-directory: android-lite/native
+        run: cargo test --lib --locked
+      - name: Development ARM64 APK
+        if: matrix.abi == 'arm64-v8a'
+        working-directory: android-lite
+        run: >-
+          gradle --no-daemon :app:assembleDebug
+          -PliteAbi=arm64-v8a -PsourceSha="$GITHUB_SHA"
+      - name: Emulator application and instrumentation APK
+        if: matrix.abi == 'x86_64'
+        working-directory: android-lite
+        run: >-
+          gradle --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest
+          -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA"
+      - name: Check the ARM64 APK and record its exact provenance
+        if: matrix.abi == 'arm64-v8a'
+        run: |
+          "$ANDROID_SDK_ROOT/build-tools/37.0.0/apksigner" verify --verbose --print-certs \
+            android-lite/app/build/outputs/apk/debug/app-debug.apk | tee "$RUNNER_TEMP/lite-signature.txt"
+          "$ANDROID_SDK_ROOT/build-tools/37.0.0/aapt" dump badging \
+            android-lite/app/build/outputs/apk/debug/app-debug.apk | tee "$RUNNER_TEMP/lite-badging.txt"
+          python3 android-lite/tool/verify_apk.py \
+            --apk android-lite/app/build/outputs/apk/debug/app-debug.apk \
+            --abi arm64-v8a --source "$GITHUB_SHA" --tree "$(git rev-parse HEAD^{tree})" \
+            --workflow "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --badging "$RUNNER_TEMP/lite-badging.txt" --signature "$RUNNER_TEMP/lite-signature.txt" \
+            --output "$RUNNER_TEMP/lite-artifact"
+      - uses: actions/upload-artifact@v4
+        if: matrix.abi == 'arm64-v8a'
+        with:
+          name: AEROVE-Lite-dev-arm64
+          path: ${{ runner.temp }}/lite-artifact/
+          if-no-files-found: error
+      - name: Enable KVM for the isolated test emulator
+        if: matrix.abi == 'x86_64'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Real API 33 native, TUN and graphics verification
+        if: matrix.abi == 'x86_64'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: false
+          script: |
+            python3 android-lite/tool/fixture_server.py > "$RUNNER_TEMP/lite-fixture.log" 2>&1 &
+            fixture_pid=$!
+            trap 'kill "$fixture_pid"' EXIT
+            adb install -r android-lite/app/build/outputs/apk/debug/app-debug.apk
+            adb shell appops set dev.aerove.lite.dev ACTIVATE_VPN allow
+            adb shell pm grant dev.aerove.lite.dev android.permission.POST_NOTIFICATIONS
+            gradle -p android-lite --no-daemon :app:connectedDebugAndroidTest -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" -Pandroid.testInstrumentationRunnerArguments.fixtureUrl=http://10.0.2.2:18080
+      - name: Preserve diagnostics
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/lite-diagnostics"
+          git status --short > "$RUNNER_TEMP/lite-diagnostics/git-status.txt"
+          git diff --binary > "$RUNNER_TEMP/lite-diagnostics/generated.patch"
+          adb logcat -d > "$RUNNER_TEMP/lite-diagnostics/logcat.txt" 2>&1 || true
+          adb pull /sdcard/Android/data/dev.aerove.lite.dev/files/captures "$RUNNER_TEMP/lite-diagnostics/" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AEROVE-Lite-diagnostics-${{ matrix.abi }}
+          path: |
+            android-lite/app/build/reports/
+            android-lite/app/build/outputs/androidTest-results/
+            android-lite/native/Cargo.lock
+            ${{ runner.temp }}/lite-diagnostics/
+            ${{ runner.temp }}/lite-fixture.log
+          if-no-files-found: warn
