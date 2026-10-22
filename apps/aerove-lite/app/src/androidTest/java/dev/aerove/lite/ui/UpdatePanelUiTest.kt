@@ -7,6 +7,7 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.aerove.lite.*
+import dev.aerove.lite.R
 import dev.aerove.lite.backup.BackupFeature
 import dev.aerove.lite.data.ProfileEditorSession
 import dev.aerove.lite.ipquality.IpQualityFeature

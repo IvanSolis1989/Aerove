@@ -119,3 +119,8 @@
 -keep,includedescriptorclasses interface dev.aerove.lite.updates.UpdatePlatform { *; }
 -keep,includedescriptorclasses interface dev.aerove.lite.updates.UpdateApkVerifier { *; }
 -keep,includedescriptorclasses class dev.aerove.lite.updates.UpdateRepository { *; }
+-keep class androidx.tracing.Trace {
+    public static void beginSection(java.lang.String);
+    public static void endSection();
+    public static void forceEnableAppTracing();
+}
