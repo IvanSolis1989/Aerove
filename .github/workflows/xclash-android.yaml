@@ -41,9 +41,40 @@ env:
   FLUTTER_VERSION: '3.47.6'
 
 jobs:
+  reuse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      run_id: ${{ steps.find.outputs.run_id }}
+      run_number: ${{ steps.find.outputs.run_number }}
+      artifact_id: ${{ steps.find.outputs.artifact_id }}
+      generated_artifact_id: ${{ steps.find.outputs.generated_artifact_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Find a successful build of this exact commit
+        id: find
+        if: >-
+          github.repository == 'IvanSolis1989/Aerove' && github.ref == 'refs/heads/main' &&
+          !inputs.prepare_sources && (github.event_name == 'push' || inputs.publish_release)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 tool/aerove_artifact.py find \
+            --repository "$GITHUB_REPOSITORY" --source "$GITHUB_SHA" \
+            --exclude-run "$GITHUB_RUN_ID" --output "$GITHUB_OUTPUT"
+
   verify:
+    needs: reuse
+    if: ${{ needs.reuse.outputs.run_id == '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    outputs:
+      generated_artifact_id: ${{ steps.generated.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -66,7 +97,7 @@ jobs:
       - name: Test repository commit hooks
         run: bash tool/hooks/test.sh
       - name: Test upstream version selection and release notes
-        run: python3 -m unittest tool.test_xclash_version tool.test_aerove_release_notes -v
+        run: python3 -m unittest tool.test_xclash_version tool.test_aerove_release_notes tool.test_aerove_artifact -v
       - name: Generate and format sources
         run: |
           cp pubspec.yaml "$RUNNER_TEMP/xclash-pubspec.yaml"
@@ -82,6 +113,7 @@ jobs:
           git write-tree > "$RUNNER_TEMP/xclash-verified-tree.txt"
           git restore --staged -- lib test core/*.go pubspec.lock
       - uses: actions/upload-artifact@v4
+        id: generated
         if: always()
         with:
           name: xclash-generated
@@ -360,6 +392,7 @@ jobs:
     timeout-minutes: 60
     outputs:
       tag: ${{ steps.version.outputs.tag }}
+      artifact_id: ${{ steps.apk_artifact.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -483,19 +516,27 @@ jobs:
             -Ptarget-platform=android-arm64 \
             -x :app:compileFlutterBuildDebug -x :app:copyFlutterAssetsDebug
       - uses: actions/upload-artifact@v4
+        id: apk_artifact
         with:
           name: Aerove-android-arm64
           path: dist/
 
   release:
     if: >-
-      github.repository == 'IvanSolis1989/Aerove' && github.ref == 'refs/heads/main' &&
-      !inputs.prepare_sources && (github.event_name == 'push' || inputs.publish_release)
-    needs: apk
+      ${{ !cancelled() && github.repository == 'IvanSolis1989/Aerove' &&
+      github.ref == 'refs/heads/main' && needs.reuse.result == 'success' && !inputs.prepare_sources &&
+      (github.event_name == 'push' || inputs.publish_release) &&
+      (needs.reuse.outputs.run_id != '' ||
+      (needs.verify.result == 'success' && needs.apk.result == 'success')) }}
+    needs: [reuse, verify, apk]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
+      actions: read
+    env:
+      BUILD_RUN_ID: ${{ needs.reuse.outputs.run_id || github.run_id }}
+      BUILD_RUN_NUMBER: ${{ needs.reuse.outputs.run_number || github.run_number }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -504,14 +545,36 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: Aerove-android-arm64
+          artifact-ids: ${{ needs.reuse.outputs.artifact_id || needs.apk.outputs.artifact_id }}
+          run-id: ${{ env.BUILD_RUN_ID }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
           path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.reuse.outputs.generated_artifact_id || needs.verify.outputs.generated_artifact_id }}
+          run-id: ${{ env.BUILD_RUN_ID }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/xclash-generated
+      - name: Verify original build identity and APK
+        run: |
+          python3 tool/aerove_artifact.py validate \
+            --directory dist --generated-directory "$RUNNER_TEMP/xclash-generated" \
+            --source "$GITHUB_SHA" --tree "$(git rev-parse 'HEAD^{tree}')" \
+            --repository "$GITHUB_REPOSITORY" --run-id "$BUILD_RUN_ID" \
+            --run-number "$BUILD_RUN_NUMBER" --metadata tool/upstream-version.json
+          build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          "$build_tools/apksigner" verify --print-certs dist/Aerove-android-arm64.apk
+          "$build_tools/aapt" dump badging dist/Aerove-android-arm64.apk > "$RUNNER_TEMP/promoted-badging.txt"
+          version=$(jq -r .version dist/BUILD_INFO.json)
+          grep -F "package: name='com.follow.clash.dev' versionCode='${version##*+}' versionName='${version%+*}'" "$RUNNER_TEMP/promoted-badging.txt"
       - name: Publish verified APK to Releases
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.apk.outputs.tag }}
         run: |
           set -euo pipefail
+          TAG="v$(jq -er .version dist/BUILD_INFO.json)"
           check_main_inputs() {
             git fetch --no-tags --recurse-submodules=no origin main
             main=$(git rev-parse FETCH_HEAD)
@@ -554,6 +617,12 @@ jobs:
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" \
             dist/Aerove-android-arm64.apk dist/SHA256SUMS dist/BUILD_INFO.json --clobber
           check_main_inputs
+          if test "$(jq -er .appEnv dist/BUILD_INFO.json)" = pre; then
+            release_flags=(--prerelease=true --latest=false)
+          else
+            release_flags=(--prerelease=false --latest)
+          fi
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
-            --notes-file "$RUNNER_TEMP/xclash-release.md" --draft=false --prerelease=false --latest
+            --notes-file "$RUNNER_TEMP/xclash-release.md" --draft=false "${release_flags[@]}"
+          printf 'Original build: https://github.com/%s/actions/runs/%s\n' "$GITHUB_REPOSITORY" "$BUILD_RUN_ID" >> "$GITHUB_STEP_SUMMARY"
           printf 'Published APK: https://github.com/%s/releases/tag/%s\n' "$GITHUB_REPOSITORY" "$TAG" >> "$GITHUB_STEP_SUMMARY"
