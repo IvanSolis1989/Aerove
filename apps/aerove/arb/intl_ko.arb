@@ -368,6 +368,7 @@
   "noData": "데이터 없음",
   "fontFamily": "글꼴",
   "installedFonts": "설치된 글꼴",
+  "bilingualSystemFonts": "중국어와 영어를 지원하는 시스템 글꼴",
   "toggle": "전환",
   "system": "시스템",
   "routeAddress": "라우팅 주소",

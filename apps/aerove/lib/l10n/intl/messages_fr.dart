@@ -428,6 +428,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "batteryOptimizationDesc": MessageLookupByLibrary.simpleMessage(
       "Ignorer l’optimisation de la batterie maintient l’app active en arrière-plan.",
     ),
+    "bilingualSystemFonts": MessageLookupByLibrary.simpleMessage(
+      "Polices système prenant en charge le chinois et l\'anglais",
+    ),
     "bind": MessageLookupByLibrary.simpleMessage("Lier"),
     "blacklistMode": MessageLookupByLibrary.simpleMessage("Mode liste noire"),
     "blockConnection": MessageLookupByLibrary.simpleMessage(
@@ -1039,9 +1042,10 @@ class MessageLookup extends MessageLookupByLibrary {
     "inputRuleContent": MessageLookupByLibrary.simpleMessage(
       "Saisissez le contenu de la règle",
     ),
-    "installedAppsPermissionDeniedMessage": MessageLookupByLibrary.simpleMessage(
-      "L’autorisation de la liste des apps a été refusée ; les apps installées ne peuvent donc pas être listées. Veuillez l’accorder manuellement dans les réglages du système.",
-    ),
+    "installedAppsPermissionDeniedMessage":
+        MessageLookupByLibrary.simpleMessage(
+          "L’autorisation de la liste des apps a été refusée ; les apps installées ne peuvent donc pas être listées. Veuillez l’accorder manuellement dans les réglages du système.",
+        ),
     "installedAppsPermissionDesc": MessageLookupByLibrary.simpleMessage(
       "Ce système masque la liste des apps installées tant que l’autorisation n’est pas accordée. Accordez-la pour configurer le proxy par app.",
     ),

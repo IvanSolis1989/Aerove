@@ -2975,6 +2975,16 @@ class AppLocalizations {
     );
   }
 
+  /// `System fonts supporting Chinese and English`
+  String get bilingualSystemFonts {
+    return Intl.message(
+      'System fonts supporting Chinese and English',
+      name: 'bilingualSystemFonts',
+      desc: '',
+      args: [],
+    );
+  }
+
   /// `Toggle`
   String get toggle {
     return Intl.message('Toggle', name: 'toggle', desc: '', args: []);
@@ -7887,8 +7897,7 @@ class AppLocalizations {
   String customImportDroppedSubRules(num count, Object label) {
     return Intl.plural(
       count,
-      one:
-          '1 SUB-RULE rule was dropped, since custom profiles do not support sub-rules',
+      one: '1 SUB-RULE rule was dropped, since custom profiles do not support sub-rules',
       other:
           '$label SUB-RULE rules were dropped, since custom profiles do not support sub-rules',
       name: 'customImportDroppedSubRules',

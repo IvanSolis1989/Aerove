@@ -906,9 +906,15 @@ class _FontFamilyItem extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final appLocalizations = context.appLocalizations;
     final colorScheme = context.colorScheme;
-    final fontFamily = ref.watch(
+    final selectedFont = ref.watch(
       themeSettingProvider.select((state) => state.fontFamily),
     );
+    final fontFamily = system.isAndroid
+        ? resolveSystemFontFamily(
+            selectedFont,
+            ref.watch(installedSystemFontsProvider).asData?.value,
+          )
+        : selectedFont;
     final preview = Padding(
       padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
       child: Row(

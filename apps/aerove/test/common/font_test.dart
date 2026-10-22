@@ -3,6 +3,17 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('Android resolves the OEM system alias instead of Material Roboto', () {
+    expect(appFontFamily(platform: TargetPlatform.android), 'sans-serif');
+    expect(
+      appFontFamily(
+        platform: TargetPlatform.android,
+        selected: 'Installed CJK',
+      ),
+      'Installed CJK',
+    );
+    expect(appFontFamily(platform: TargetPlatform.windows), isNull);
+  });
   List<String> fallback(
     TargetPlatform platform,
     List<Locale> locales, {
@@ -92,7 +103,7 @@ void main() {
       fallback(TargetPlatform.android, const [
         Locale('en'),
       ], fontFamily: 'serif'),
-      ['Roboto'],
+      ['sans-serif'],
     );
   });
 }

@@ -137,7 +137,7 @@ class _PresetSubtitle extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: AppTextStyle.footnote
                 .of(context)
-                .toJetBrainsMono
+                .toTabular
                 .copyWith(color: context.colorScheme.tertiary),
           ),
       ],

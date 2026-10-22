@@ -578,11 +578,7 @@ class _OutboundIpLine extends StatelessWidget {
     final line = Row(
       spacing: 4,
       children: [
-        if (flag != null)
-          GlassText(
-            flag.countryFlagEmoji,
-            style: style?.copyWith(fontFamily: FontFamily.twEmoji.value),
-          ),
+        if (flag != null) EmojiText(flag.countryFlagEmoji, style: style),
         if (ip != null)
           Flexible(
             child: IpQualityText(ip: ip.ip, style: style),

@@ -339,6 +339,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "batteryOptimizationDesc": MessageLookupByLibrary.simpleMessage(
       "배터리 최적화를 무시하면 앱이 백그라운드에서 계속 실행됩니다.",
     ),
+    "bilingualSystemFonts": MessageLookupByLibrary.simpleMessage(
+      "중국어와 영어를 지원하는 시스템 글꼴",
+    ),
     "bind": MessageLookupByLibrary.simpleMessage("연결"),
     "blacklistMode": MessageLookupByLibrary.simpleMessage("블랙리스트 모드"),
     "blockConnection": MessageLookupByLibrary.simpleMessage("연결 차단"),

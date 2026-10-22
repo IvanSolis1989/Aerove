@@ -1,3 +1,5 @@
+import '../helpers/system_test_font.dart';
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -57,12 +59,8 @@ void main() {
     if (Platform.environment['XCLASH_REQUIRE_IMPELLER'] == 'true') {
       expect(ui.ImageFilter.isShaderFilterSupported, isTrue);
     }
-    final font = FontLoader('ForegroundPreview')
-      ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'));
+    final font = FontLoader('ForegroundPreview')..addFont(loadSdkTestFont());
     await font.load();
-    final emoji = FontLoader('InkEmoji')
-      ..addFont(rootBundle.load('assets/fonts/Twemoji.Mozilla.ttf'));
-    await emoji.load();
     if (ui.ImageFilter.isShaderFilterSupported) {
       await GlassInk.prepare().timeout(const Duration(seconds: 30));
     }

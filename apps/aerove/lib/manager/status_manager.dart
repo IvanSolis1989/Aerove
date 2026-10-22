@@ -12,6 +12,7 @@ import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/ui.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/foundation.dart';
 
 const _actionMinDuration = Duration(seconds: 6);
 const _maxBufferedMessages = 8;
@@ -31,8 +32,10 @@ const _messageMinHeight = 52.0;
 
 class StatusManager extends ConsumerStatefulWidget {
   final Widget child;
+  @visibleForTesting
+  final Duration Function()? elapsed;
 
-  const StatusManager({super.key, required this.child});
+  const StatusManager({super.key, this.elapsed, required this.child});
 
   @override
   ConsumerState<StatusManager> createState() => StatusManagerState();
@@ -42,7 +45,48 @@ class StatusManagerState extends ConsumerState<StatusManager> {
   final _entriesNotifier = ValueNotifier<List<_MessageEntry>>([]);
   final _bufferMessages = Queue<CommonMessage>();
   final _activeTimers = <String, Timer>{};
+  final _deadlines = <String, Duration>{};
+  final _remaining = <String, Duration>{};
+  final _clock = Stopwatch();
+  late bool _foreground;
   String? _draggingId;
+
+  Duration get _elapsed => widget.elapsed?.call() ?? _clock.elapsed;
+
+  @override
+  void initState() {
+    super.initState();
+    _clock.start();
+    _foreground = ref.read(appVisibleProvider);
+    ref.listenManual(appVisibleProvider, (_, visible) {
+      if (_foreground == visible) {
+        return;
+      }
+      _foreground = visible;
+      if (!visible) {
+        final now = _elapsed;
+        for (final entry in _visibleEntries) {
+          final deadline = _deadlines[entry.id];
+          if (deadline != null) {
+            final remaining = deadline - now;
+            _remaining[entry.id] = remaining.isNegative
+                ? Duration.zero
+                : remaining;
+          }
+        }
+        for (final timer in _activeTimers.values) {
+          timer.cancel();
+        }
+        _activeTimers.clear();
+        _deadlines.clear();
+        _draggingId = null;
+        _entriesNotifier.value = _visibleEntries.toList(growable: false);
+        return;
+      }
+      _resumeTimers();
+      _processQueue();
+    });
+  }
 
   @override
   void dispose() {
@@ -50,6 +94,9 @@ class StatusManagerState extends ConsumerState<StatusManager> {
       timer.cancel();
     }
     _activeTimers.clear();
+    _deadlines.clear();
+    _remaining.clear();
+    _clock.stop();
     _bufferMessages.clear();
     _entriesNotifier.dispose();
     super.dispose();
@@ -129,7 +176,7 @@ class StatusManagerState extends ConsumerState<StatusManager> {
   }
 
   void _processQueue() {
-    if (_draggingId != null) {
+    if (!_foreground || _draggingId != null) {
       return;
     }
     while (_bufferMessages.isNotEmpty) {
@@ -162,12 +209,18 @@ class StatusManagerState extends ConsumerState<StatusManager> {
     _startTimer(message);
   }
 
-  void _startTimer(CommonMessage message) {
+  void _startTimer(CommonMessage message, {bool restart = true}) {
     _activeTimers.remove(message.id)?.cancel();
-    if (_draggingId != null) {
+    _deadlines.remove(message.id);
+    final remaining = restart
+        ? message.duration
+        : _remaining[message.id] ?? message.duration;
+    _remaining[message.id] = remaining;
+    if (!_foreground || _draggingId != null) {
       return;
     }
-    _activeTimers[message.id] = Timer(message.duration, () {
+    _deadlines[message.id] = _elapsed + remaining;
+    _activeTimers[message.id] = Timer(remaining, () {
       _hideMessage(message.id);
       _processQueue();
     });
@@ -175,6 +228,8 @@ class StatusManagerState extends ConsumerState<StatusManager> {
 
   void _hideMessage(String id, {bool swiped = false}) {
     _activeTimers.remove(id)?.cancel();
+    _deadlines.remove(id);
+    _remaining.remove(id);
     final entries = _entries;
     final index = entries.indexWhere((entry) => entry.id == id);
     if (index == -1 || !entries[index].visible) {
@@ -185,12 +240,13 @@ class StatusManagerState extends ConsumerState<StatusManager> {
   }
 
   void _cancelMessage(String id, {bool swiped = false}) {
-    if (_draggingId == id) {
+    final wasDragging = _draggingId == id;
+    if (wasDragging) {
       _draggingId = null;
     }
     _bufferMessages.removeWhere((message) => message.id == id);
     _hideMessage(id, swiped: swiped);
-    _resumeTimers();
+    _resumeTimers(restart: wasDragging);
     _processQueue();
   }
 
@@ -204,22 +260,26 @@ class StatusManagerState extends ConsumerState<StatusManager> {
         timer.cancel();
       }
       _activeTimers.clear();
+      _deadlines.clear();
+      for (final entry in _visibleEntries) {
+        _remaining[entry.id] = entry.message.duration;
+      }
       return;
     }
     if (_draggingId != id) {
       return;
     }
     _draggingId = null;
-    _resumeTimers();
+    _resumeTimers(restart: true);
     _processQueue();
   }
 
-  void _resumeTimers() {
+  void _resumeTimers({bool restart = false}) {
     for (final entry in _visibleEntries.toList()) {
       if (_activeTimers.containsKey(entry.id)) {
         continue;
       }
-      _startTimer(entry.message);
+      _startTimer(entry.message, restart: restart);
     }
   }
 
@@ -244,11 +304,18 @@ class StatusManagerState extends ConsumerState<StatusManager> {
         Consumer(
           builder: (_, ref, child) {
             final top = ref.watch(overlayTopOffsetProvider);
-            return Container(
-              margin: EdgeInsets.only(
-                top: top + MediaQuery.viewPaddingOf(context).top + 8,
+            final foreground = ref.watch(appVisibleProvider);
+            return Offstage(
+              offstage: !foreground,
+              child: TickerMode(
+                enabled: foreground,
+                child: Container(
+                  margin: EdgeInsets.only(
+                    top: top + MediaQuery.viewPaddingOf(context).top + 8,
+                  ),
+                  child: child,
+                ),
               ),
-              child: child,
             );
           },
           child: Align(
@@ -373,9 +440,21 @@ class _MessageTransitionState extends State<_MessageTransition>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _controller.value = widget.visible ? 1 : 0;
+    }
+  }
+
+  @override
   void didUpdateWidget(covariant _MessageTransition oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.visible == oldWidget.visible) {
+      return;
+    }
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _controller.value = widget.visible ? 1 : 0;
       return;
     }
     if (widget.visible) {
@@ -391,7 +470,15 @@ class _MessageTransitionState extends State<_MessageTransition>
 
   void _handleAnimationStatus(AnimationStatus status) {
     if (status == AnimationStatus.dismissed && !widget.visible) {
-      widget.onHidden();
+      if (MediaQuery.disableAnimationsOf(context)) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && !widget.visible) {
+            widget.onHidden();
+          }
+        });
+      } else {
+        widget.onHidden();
+      }
     }
   }
 
@@ -469,6 +556,16 @@ class _MessageCardState extends State<_MessageCard>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!TickerMode.of(context) || MediaQuery.disableAnimationsOf(context)) {
+      _drag.stop();
+      _drag.value = 0;
+      _leaving = false;
+    }
+  }
+
+  @override
   void dispose() {
     _drag.dispose();
     super.dispose();
@@ -500,11 +597,18 @@ class _MessageCardState extends State<_MessageCard>
     if (_width > 0 &&
         (flung || offset.abs() >= _width * _swipeDismissFraction)) {
       _leaving = true;
-      await _drag.animateTo(
-        offset.sign * math.max(_width, offset.abs()),
-        duration: _messageSwipeOutDuration,
-        curve: Curves.easeOut,
-      );
+      final reduced = MediaQuery.disableAnimationsOf(context);
+      try {
+        await _drag
+            .animateTo(
+              offset.sign * math.max(_width, offset.abs()),
+              duration: reduced ? Duration.zero : _messageSwipeOutDuration,
+              curve: Curves.easeOut,
+            )
+            .orCancel;
+      } on TickerCanceled {
+        return;
+      }
       if (mounted) {
         widget.onDismiss(_id, swiped: true);
       }
@@ -513,7 +617,9 @@ class _MessageCardState extends State<_MessageCard>
     widget.onDragging(_id, false);
     _drag.animateTo(
       0,
-      duration: _messageSwipeBackDuration,
+      duration: MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : _messageSwipeBackDuration,
       curve: Easing.emphasizedDecelerate,
     );
   }

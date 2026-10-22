@@ -1,5 +1,14 @@
 import 'package:material_ui/material_ui.dart';
 
+const desktopEmojiFontFamily = 'Twemoji';
+
+bool useDesktopEmojiFont(TargetPlatform platform) => switch (platform) {
+  TargetPlatform.windows ||
+  TargetPlatform.linux ||
+  TargetPlatform.macOS => true,
+  _ => false,
+};
+
 enum _HanVariant { simplified, traditional, japanese, korean }
 
 // The system fallback picks Han glyph forms by the UI locale, which draws
@@ -69,6 +78,9 @@ List<String> appFontFamilyFallback({
   required Iterable<Locale> locales,
   String? fontFamily,
 }) {
+  if (platform == TargetPlatform.android) {
+    return [if (fontFamily != null) 'sans-serif'];
+  }
   final base = Typography.material2021(platform: platform).black.bodyMedium!;
   return [
     if (fontFamily != null) ?base.fontFamily,
@@ -76,3 +88,6 @@ List<String> appFontFamilyFallback({
     ...?_hanFamilies[platform]?[_hanVariantOf(locales)],
   ];
 }
+
+String? appFontFamily({required TargetPlatform platform, String? selected}) =>
+    selected ?? (platform == TargetPlatform.android ? 'sans-serif' : null);

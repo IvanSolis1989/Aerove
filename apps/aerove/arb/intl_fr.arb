@@ -368,6 +368,7 @@
   "noData": "Aucune donnée",
   "fontFamily": "Police",
   "installedFonts": "Polices installées",
+  "bilingualSystemFonts": "Polices système prenant en charge le chinois et l'anglais",
   "toggle": "Basculer",
   "system": "Système",
   "routeAddress": "Adresses de route",

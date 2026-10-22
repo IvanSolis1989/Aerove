@@ -368,6 +368,7 @@
   "noData": "Sin datos",
   "fontFamily": "Familia de fuente",
   "installedFonts": "Fuentes instaladas",
+  "bilingualSystemFonts": "Fuentes del sistema compatibles con chino e inglés",
   "toggle": "Alternar",
   "system": "Sistema",
   "routeAddress": "Direcciones de ruta",

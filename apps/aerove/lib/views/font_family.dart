@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:collection';
 
 import 'package:fl_clash/common/common.dart';
@@ -30,43 +29,27 @@ final class _InstalledFont extends _FontChoice {
   int get hashCode => family.hashCode;
 }
 
-class FontFamilyView extends ConsumerStatefulWidget {
+class FontFamilyView extends ConsumerWidget {
   const FontFamilyView({super.key});
 
   @override
-  ConsumerState<FontFamilyView> createState() => _FontFamilyViewState();
-}
-
-class _FontFamilyViewState extends ConsumerState<FontFamilyView> {
-  List<_InstalledFont>? _installed;
-
-  @override
-  void initState() {
-    super.initState();
-    unawaited(_load());
-  }
-
-  Future<void> _load() async {
-    final families = await loadSystemFontFamilies();
-    if (mounted) {
-      setState(() => _installed = families.map(_InstalledFont.new).toList());
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final appLocalizations = context.appLocalizations;
-    final installed = _installed ?? const <_InstalledFont>[];
+    final families = ref.watch(installedSystemFontsProvider).asData?.value;
+    final installed =
+        families?.map(_InstalledFont.new).toList() ?? const <_InstalledFont>[];
     return SelectionSheet<_FontChoice>(
       title: appLocalizations.fontFamily,
-      loadingStatus: _installed == null
+      loadingStatus: families == null
           ? const NullStatus(illustration: NullStatusIllustration.fonts)
           : null,
       sections: [
         const SelectionSection(items: [_DefaultFont()]),
         if (installed.isNotEmpty)
           SelectionSection(
-            label: appLocalizations.installedFonts,
+            label: system.isAndroid
+                ? appLocalizations.bilingualSystemFonts
+                : appLocalizations.installedFonts,
             items: installed,
           ),
       ],
@@ -84,8 +67,9 @@ class _FontFamilyViewState extends ConsumerState<FontFamilyView> {
       selectedOf: (ref) => switch (ref.watch(
         themeSettingProvider.select((state) => state.fontFamily),
       )) {
-        final family? => _InstalledFont(family),
-        null => const _DefaultFont(),
+        final family? when installed.any((font) => font.family == family) =>
+          _InstalledFont(family),
+        _ => const _DefaultFont(),
       },
       onSelected: (choice) {
         final String? family;

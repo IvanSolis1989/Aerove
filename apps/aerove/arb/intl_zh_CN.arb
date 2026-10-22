@@ -368,6 +368,7 @@
   "noData": "暂无数据",
   "fontFamily": "字体",
   "installedFonts": "已安装字体",
+  "bilingualSystemFonts": "支持中英文的系统字体",
   "toggle": "切换",
   "system": "系统",
   "routeAddress": "路由地址",

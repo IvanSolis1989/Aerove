@@ -1,3 +1,5 @@
+import '../helpers/system_test_font.dart';
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -196,7 +198,7 @@ Future<List<Map<String, Object?>>> _measure(
           ? 'MiSans VF 4.009'
           : paragraph.text.style?.fontFamily == _androidFont
           ? 'AOSP Roboto 3.005'
-          : 'bundled JetBrainsMono Regular',
+          : 'Flutter SDK Roboto Regular',
       'fontSize': paragraph.text.style?.fontSize,
       'fontWeight': paragraph.text.style?.fontWeight?.value,
       'fontHeight': paragraph.text.style?.height,
@@ -436,8 +438,7 @@ Future<GlobalKey> _mountDashboard(
 void main() {
   setUpAll(() async {
     TestWidgetsFlutterBinding.ensureInitialized();
-    final font = FontLoader('DashboardBounds')
-      ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'));
+    final font = FontLoader('DashboardBounds')..addFont(loadSdkTestFont());
     await font.load();
     if (_androidFontPath case final path?) {
       final bytes = await File(path).readAsBytes();

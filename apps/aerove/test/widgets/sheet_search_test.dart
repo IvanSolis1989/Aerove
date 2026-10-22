@@ -1,3 +1,5 @@
+import '../helpers/system_test_font.dart';
+
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -14,8 +16,7 @@ import '../helpers/test_app.dart';
 
 void main() {
   setUpAll(() async {
-    final font = FontLoader('SheetSearchProbe')
-      ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'));
+    final font = FontLoader('SheetSearchProbe')..addFont(loadSdkTestFont());
     await font.load();
   });
 

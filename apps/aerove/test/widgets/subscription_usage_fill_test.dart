@@ -1,3 +1,5 @@
+import '../helpers/system_test_font.dart';
+
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -314,8 +316,7 @@ void main() {
   });
 
   setUpAll(() async {
-    final font = FontLoader('UsagePreview')
-      ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'));
+    final font = FontLoader('UsagePreview')..addFont(loadSdkTestFont());
     await font.load();
     if (ui.ImageFilter.isShaderFilterSupported) await GlassInk.prepare();
   });

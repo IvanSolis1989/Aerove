@@ -1,3 +1,5 @@
+import '../helpers/system_test_font.dart';
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -28,8 +30,7 @@ void main() {
     if (Platform.environment['XCLASH_REQUIRE_IMPELLER'] == 'true') {
       expect(ui.ImageFilter.isShaderFilterSupported, isTrue);
     }
-    final font = FontLoader('SettingsRouteProbe')
-      ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'));
+    final font = FontLoader('SettingsRouteProbe')..addFont(loadSdkTestFont());
     await font.load();
   });
   for (final brightness in Brightness.values) {

@@ -368,6 +368,7 @@
   "noData": "データがありません",
   "fontFamily": "フォント",
   "installedFonts": "インストール済みのフォント",
+  "bilingualSystemFonts": "中国語と英語に対応したシステムフォント",
   "toggle": "切り替え",
   "system": "システム",
   "routeAddress": "ルートアドレス",

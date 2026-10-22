@@ -36,6 +36,34 @@ export 'package:code_forge/code_forge.dart' show CodeForgeDocument;
 export 'package:fl_clash/features/editor/editor.dart'
     show EditorSchema, readRelaxed;
 
+@visibleForTesting
+({TextStyle text, TextStyle lineNumbers}) editorMonospaceStyles({
+  required TargetPlatform platform,
+  required double fontSize,
+  List<String> systemFallback = const [],
+}) {
+  final text = TextStyle(
+    fontSize: fontSize,
+    fontFamily: switch (platform) {
+      TargetPlatform.windows => 'Consolas',
+      TargetPlatform.macOS => 'Menlo',
+      _ => 'monospace',
+    },
+    fontFamilyFallback: [
+      if (useDesktopEmojiFont(platform)) desktopEmojiFontFamily,
+      if (platform == TargetPlatform.android) 'sans-serif',
+      ...systemFallback,
+    ],
+  );
+  return (
+    text: text,
+    lineNumbers: text.copyWith(
+      fontSize: 12,
+      fontFeatures: const [FontFeature.tabularFigures()],
+    ),
+  );
+}
+
 /// Whether `main` initialised `RustLib`, which a test that needs it missing
 /// cannot undo once another test in its isolate has.
 @visibleForTesting
@@ -755,24 +783,15 @@ class _CodeEditorState extends ConsumerState<_CodeEditor> {
       );
     }
     final appFont = AppTextStyle.footnote.of(context);
-    final textStyle = TextStyle(
+    final styles = editorMonospaceStyles(
+      platform: Theme.of(context).platform,
       fontSize: fontSize.value,
-      fontFamily: FontFamily.jetBrainsMono.value,
-      fontFamilyFallback: [
-        FontFamily.twEmoji.value,
-        ?appFont.fontFamily,
-        ...?appFont.fontFamilyFallback,
-      ],
+      systemFallback: appFont.fontFamilyFallback ?? const [],
     );
-    if (textStyle != _textStyle) {
-      _textStyle = textStyle;
+    if (styles.text != _textStyle) {
+      _textStyle = styles.text;
     }
-    _lineNumberStyle = TextStyle(
-      fontSize: 12,
-      fontFamily: appFont.fontFamily,
-      fontFamilyFallback: appFont.fontFamilyFallback,
-      fontFeatures: const [FontFeature.tabularFigures()],
-    );
+    _lineNumberStyle = styles.lineNumbers;
   }
 
   void _showClipboardWriteFailed() {

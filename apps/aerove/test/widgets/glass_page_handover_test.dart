@@ -1,3 +1,5 @@
+import '../helpers/system_test_font.dart';
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -92,9 +94,7 @@ void main() {
     if (Platform.environment['XCLASH_REQUIRE_IMPELLER'] == 'true') {
       expect(ui.ImageFilter.isShaderFilterSupported, isTrue);
     }
-    await (FontLoader('HandoverProbe')
-          ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf')))
-        .load();
+    await (FontLoader('HandoverProbe')..addFont(loadSdkTestFont())).load();
   });
 
   for (final brightness in Brightness.values) {

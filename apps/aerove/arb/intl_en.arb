@@ -368,6 +368,7 @@
   "noData": "No data",
   "fontFamily": "Font family",
   "installedFonts": "Installed fonts",
+  "bilingualSystemFonts": "System fonts supporting Chinese and English",
   "toggle": "Toggle",
   "system": "System",
   "routeAddress": "Route addresses",

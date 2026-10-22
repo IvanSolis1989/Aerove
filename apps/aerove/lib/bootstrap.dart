@@ -5,6 +5,7 @@ import 'package:dynamic_color/dynamic_color.dart';
 import 'package:fl_clash/common/boot_guard.dart';
 import 'package:fl_clash/common/boot_record.dart';
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/common/desktop_emoji.dart';
 import 'package:fl_clash/common/last_page.dart';
 import 'package:fl_clash/common/launch.dart';
 import 'package:fl_clash/common/migration.dart';
@@ -39,6 +40,7 @@ class Bootstrap {
   BootDecision _bootDecision = const BootDecision();
 
   Future<ProviderContainer> init(int version) async {
+    await loadDesktopEmojiFont();
     globalState.appEnv = const String.fromEnvironment(
       'APP_ENV',
       defaultValue: 'pre',

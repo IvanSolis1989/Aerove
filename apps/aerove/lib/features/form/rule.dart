@@ -113,9 +113,7 @@ class RuleItem extends StatelessWidget {
       title: Center(
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final labelStyle = DefaultTextStyle.of(
-              context,
-            ).style.toJetBrainsMono;
+            final labelStyle = DefaultTextStyle.of(context).style.toTabular;
             final actionWidth = globalState.measure
                 .computeTextSize(Text(rule.ruleAction.name, style: labelStyle))
                 .width;
@@ -154,7 +152,7 @@ class RuleItem extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                               style: AppTextStyle.subheadline
                                   .of(context)
-                                  .toJetBrainsMono
+                                  .toTabular
                                   .copyWith(
                                     color: checkResult.color == null
                                         ? null
@@ -205,7 +203,7 @@ class _RuleItemLabel extends StatelessWidget {
                 content,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: context.listSubtitleStyle.toJetBrainsMono.copyWith(
+                style: context.listSubtitleStyle.toTabular.copyWith(
                   color: style.color?.opacity60,
                 ),
               ),
@@ -236,7 +234,7 @@ class RuleStatusItem extends StatelessWidget {
           rule.rawValue,
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
-          style: AppTextStyle.subheadline.of(context).toJetBrainsMono,
+          style: AppTextStyle.subheadline.of(context).toTabular,
         ),
       ),
       trailing: CommonSwitch(value: status, onChanged: onChange),

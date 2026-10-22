@@ -1,3 +1,5 @@
+import '../helpers/system_test_font.dart';
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -206,9 +208,7 @@ Future<List<Map<String, Object?>>> _glyphRows(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(() async {
-    await (FontLoader(_font)
-          ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf')))
-        .load();
+    await (FontLoader(_font)..addFont(loadSdkTestFont())).load();
     final latinProbe = TextPainter(
       text: const TextSpan(
         text: 'Hg',
@@ -218,13 +218,10 @@ void main() {
     )..layout();
     expect(
       latinProbe.width,
-      closeTo(24, 0.1),
+      closeTo(25.4, 0.2),
       reason: 'The real font must replace Ahem',
     );
     latinProbe.dispose();
-    await (FontLoader(
-      'Twemoji',
-    )..addFont(rootBundle.load('assets/fonts/Twemoji.Mozilla.ttf'))).load();
     final cjk = File('/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc');
     if (cjk.existsSync()) {
       await (FontLoader(

@@ -1,3 +1,5 @@
+import '../helpers/system_test_font.dart';
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -45,9 +47,7 @@ void main() {
     if (Platform.environment['XCLASH_REQUIRE_IMPELLER'] == 'true') {
       expect(ui.ImageFilter.isShaderFilterSupported, isTrue);
     }
-    await (FontLoader('FirstFrameProbe')
-          ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf')))
-        .load();
+    await (FontLoader('FirstFrameProbe')..addFont(loadSdkTestFont())).load();
   });
   for (final animation in [TabAnimation.slide, TabAnimation.fade]) {
     for (final quality in [null, ...LiquidGlassQuality.values]) {

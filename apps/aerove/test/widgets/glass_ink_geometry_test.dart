@@ -1,3 +1,5 @@
+import '../helpers/system_test_font.dart';
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -19,8 +21,7 @@ import 'package:material_ui/material_ui.dart';
 
 void main() {
   setUpAll(() async {
-    final font = FontLoader('GeometryLatin')
-      ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'));
+    final font = FontLoader('GeometryLatin')..addFont(loadSdkTestFont());
     await font.load();
     final probe = TextPainter(
       text: const TextSpan(

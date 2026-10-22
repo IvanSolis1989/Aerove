@@ -1,3 +1,5 @@
+import '../helpers/system_test_font.dart';
+
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -387,8 +389,7 @@ void main() {
   });
 
   setUpAll(() async {
-    final font = FontLoader('DockMetrics')
-      ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'));
+    final font = FontLoader('DockMetrics')..addFont(loadSdkTestFont());
     await font.load();
     if (ui.ImageFilter.isShaderFilterSupported) await GlassInk.prepare();
   });
