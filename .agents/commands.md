@@ -1,12 +1,23 @@
 # Commands
 
+Paths and commands for the full product are relative to `apps/aerove/`; run its commands there.
+Repository governance and workflows remain at the repository root. See [workspace layout](../docs/development/REPOSITORY_LAYOUT.md).
+
 ## Building
 
-Update submodules first. The ClashMeta Go core lives in `core/Clash.Meta/`.
+Update submodules first. `core/Clash.Meta/` is the clean, pinned official Mihomo checkout; replayable Aerove adaptations
+are prepared offline into ignored `core/.mihomo/` using Python 3 and Git.
 
 ```bash
 git submodule update --init --recursive
+python3 tool/mihomo_source.py prepare
 ```
+
+On Windows use `python` in place of `python3`. The desktop Go build hook and Android `:core` task prepare this source
+automatically before fingerprinting/building. Direct `go test` or standalone source-parity tests need the same preparation
+first. `python3 tool/mihomo_source.py verify` checks the current prepared content without repairing it. Never edit either
+generated `.mihomo/` or the official checkout to maintain an adaptation: update the committed patch and metadata, then
+replay and validate the affected platform/configuration behavior.
 
 Full package build, including Go core, Flutter, and packaging, runs through `setup.dart`:
 
@@ -334,7 +345,7 @@ In the public repository every branch push runs the `dart` job; in the private
 The `dart` job performs these root-package checks in order:
 
 ```bash
-bash tool/hooks/test.sh
+bash tooling/hooks/test.sh
 flutter pub get
 dart format --output=none --set-exit-if-changed lib test tool plugins setup.dart
 flutter analyze --no-fatal-infos
@@ -343,7 +354,7 @@ flutter test --reporter expanded --coverage
 dart run tool/check_coverage.dart coverage/lcov.info 75
 ```
 
-`tool/hooks/` holds the scripts the git hooks run, and `tool/hooks/test.sh` runs every `*_test.sh` beside them, so a
+`tooling/hooks/` holds the scripts the git hooks run, and `tooling/hooks/test.sh` runs every `*_test.sh` beside them, so a
 new hook script needs only its test file next to it, not a workflow step.
 
 Run `flutter analyze` before committing; CI fails on anything it reports.
@@ -383,6 +394,6 @@ evict everything `dev` had saved. Release builds therefore start cold; branch ru
 ## Worktree Tooling
 
 ```bash
-bash tool/worktrees.sh list       # every worktree with owner tool and dirty/clean state
-bash tool/worktrees.sh prune      # remove clean worktrees; add --force to drop dirty ones too
+bash ../../tooling/worktrees.sh list       # every worktree with owner tool and dirty/clean state
+bash ../../tooling/worktrees.sh prune      # remove clean worktrees; add --force to drop dirty ones too
 ```

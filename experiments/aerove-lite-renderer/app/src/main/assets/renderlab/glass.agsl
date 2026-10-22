@@ -1,0 +1,68 @@
+uniform shader background;
+uniform float2 inputSize;
+uniform float4 pane;
+uniform float radius;
+uniform float4 optics;
+layout(color) uniform float4 tint;
+
+float distanceToShape(float2 position) {
+    float2 halfSize = (pane.zw - pane.xy) * 0.5;
+    float2 p = abs(position - (pane.xy + pane.zw) * 0.5);
+    float2 q = p - (halfSize - radius);
+    float2 outside = max(q, float2(0.0));
+    float2 squared = outside * outside;
+    return pow(dot(squared, squared), 0.25) - radius
+        + min(max(q.x, q.y), 0.0);
+}
+
+float2 normalToShape(float2 position) {
+    float2 p = position - (pane.xy + pane.zw) * 0.5;
+    float2 halfSize = (pane.zw - pane.xy) * 0.5;
+    float2 q = abs(p) - (halfSize - radius);
+    float2 outside = max(q, float2(0.0));
+    float2 gradient = outside * outside * outside * sign(p);
+    float magnitude = length(gradient);
+    if (magnitude > 0.0001) return gradient / magnitude;
+    return q.x > q.y ? float2(sign(p.x), 0.0) : float2(0.0, sign(p.y));
+}
+
+float4 readBackground(float2 position) {
+    return background.eval(clamp(position, float2(0.5), inputSize - 0.5));
+}
+
+half4 main(float2 position) {
+    float distance = distanceToShape(position);
+    float mask = 1.0 - smoothstep(-0.65, 0.65, distance);
+    if (mask <= 0.0) return half4(0.0);
+    float inset = max(-distance, 0.0);
+    float2 normal = normalToShape(position);
+    float halfMinor = min(pane.z - pane.x, pane.w - pane.y) * 0.5;
+    float bevel = max(min(optics.z, halfMinor * 0.5), 0.001);
+    float2 shift = float2(0.0);
+    if (optics.x < 0.0) {
+        shift = normal * -optics.x * smoothstep(0.0, bevel, inset)
+            * (1.0 - smoothstep(bevel, max(bevel + 0.01, halfMinor), inset));
+    } else if (optics.x > 0.0) {
+        float rise = 1.0 - clamp(inset / bevel, 0.0, 1.0);
+        float depth = min(optics.x, halfMinor)
+            * (1.0 - sqrt(max(1.0 - rise * rise, 0.0)));
+        shift = -normal * depth;
+    }
+    float4 base = readBackground(position + shift);
+    if (optics.y > 0.0) {
+        float parting = optics.y * 0.5
+            * (1.0 - smoothstep(bevel, bevel * 2.0, inset));
+        float2 part = normal.yx * parting;
+        float4 red = readBackground(position + shift + part);
+        float4 blue = readBackground(position + shift - part);
+        base = float4(red.r, base.g, blue.b, max(base.a, max(red.a, blue.a)));
+    }
+    float alpha = base.a + tint.a * (1.0 - base.a);
+    float3 color = base.rgb * (1.0 - tint.a) + tint.rgb * tint.a;
+    if (optics.w > 0.0) {
+        float rim = optics.w * normal.y * normal.y
+            * (1.0 - smoothstep(0.8, 3.5, inset));
+        color += max(float3(alpha) - color, float3(0.0)) * rim;
+    }
+    return half4(min(color, float3(alpha)) * mask, alpha * mask);
+}

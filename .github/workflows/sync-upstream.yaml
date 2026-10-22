@@ -1,331 +1,60 @@
-name: Sync upstream
+name: Review upstream reference
 
 on:
-  schedule:
-    - cron: '17 * * * *'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Published FlClash release tag to inspect; never merged automatically
+        type: string
+        required: true
 
 permissions:
   contents: read
 
-concurrency:
-  group: sync-upstream-main
-  cancel-in-progress: false
-
-env:
-  FLUTTER_VERSION: '3.47.6'
-  UPSTREAM_URL: https://github.com/chen08209/FlClash.git
-
 jobs:
-  validate:
-    if: github.repository == 'IvanSolis1989/Aerove' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
-    outputs:
-      changed: ${{ steps.merge.outputs.changed }}
-      base: ${{ steps.merge.outputs.base }}
-      upstream: ${{ steps.merge.outputs.upstream }}
-      candidate: ${{ steps.merge.outputs.candidate }}
-      tag: ${{ steps.merge.outputs.tag }}
-      sync_action: ${{ steps.merge.outputs.sync_action }}
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Checkout fork main
-        uses: actions/checkout@v4
-        with:
-          ref: main
-          fetch-depth: 0
-          persist-credentials: false
-          submodules: recursive
-
-      - name: Merge upstream without rewriting fork history
-        id: merge
-        run: |
-          set -euo pipefail
-          evidence="$RUNNER_TEMP/upstream-sync"
-          mkdir -p "$evidence"
-          git remote add upstream "$UPSTREAM_URL"
-          git fetch --no-tags --recurse-submodules=no upstream \
-            '+refs/heads/*:refs/remotes/upstream/*' \
-            '+refs/tags/v*:refs/upstream-tags/v*'
-          base=$(git rev-parse HEAD)
-          selection=$(python3 tool/xclash_version.py select-tag --repo .)
-          tag_ref=$(jq -er .tag_ref <<< "$selection")
-          tag=$(jq -er .tag <<< "$selection")
-          upstream=$(jq -er .source_commit <<< "$selection")
-          tag_commit=$(jq -er .tag_commit <<< "$selection")
-          source_branches=$(jq -c .source_branches <<< "$selection")
-          printf 'base=%s\nupstream=%s\ntag=%s\ntag_commit=%s\nsource_branches=%s\n' \
-            "$base" "$upstream" "$tag" "$tag_commit" "$source_branches" |
-            tee "$evidence/revisions.txt" >> "$GITHUB_OUTPUT"
-          pubspec_version=$(git show "$upstream:pubspec.yaml" |
-            python3 -c 'import sys; from tool.xclash_version import parse_pubspec_version; print(parse_pubspec_version(sys.stdin.read()))')
-          target_metadata="$RUNNER_TEMP/upstream-version.json"
-          metadata_args=()
-          while IFS= read -r branch; do
-            metadata_args+=(--source-branch "$branch")
-          done < <(jq -r '.source_branches[]' <<< "$selection")
-          python3 tool/xclash_version.py make-metadata \
-            --source-commit "$upstream" \
-            --tag-ref "$tag_ref" \
-            --tag-commit "$tag_commit" \
-            --pubspec-version "$pubspec_version" \
-            "${metadata_args[@]}" \
-            --output "$target_metadata"
-          if git merge-base --is-ancestor "$upstream" "$base"; then
-            upstream_in_base=true
-          else
-            upstream_in_base=false
-          fi
-          action=$(python3 tool/xclash_version.py sync-decision \
-            --current tool/upstream-version.json \
-            --target "$target_metadata" \
-            --upstream-in-base "$upstream_in_base")
-          printf 'sync_action=%s\n' "$action" | tee -a "$evidence/revisions.txt" >> "$GITHUB_OUTPUT"
-          printf 'tag=%s\nsync_action=%s\n' "$tag" "$action" >> "$GITHUB_OUTPUT"
-          if [[ "$action" == no_change ]]; then
-            echo 'changed=false' >> "$GITHUB_OUTPUT"
-            printf 'Selected upstream release tag `%s` is already recorded.\n' "$tag" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          if [[ "$action" == merge ]]; then
-            if ! git merge --no-ff --no-commit "$upstream" 2>&1 | tee "$evidence/merge.log"; then
-              git diff --name-only --diff-filter=U > "$evidence/conflicted-files.txt"
-              git diff --cc > "$evidence/merge-conflicts.patch"
-              if ! test -s "$evidence/conflicted-files.txt" ||
-                grep -vEx 'README\.md|README_en\.md|README_zh_CN\.md' "$evidence/conflicted-files.txt"; then
-                echo '::error::Upstream merge failed. Resolve the recorded conflicts manually; main was not updated.'
-                exit 1
-              fi
-            fi
-            git restore --source="$base" --staged --worktree -- README.md README_en.md
-            git rm -f --ignore-unmatch -- README_zh_CN.md
-            python3 tool/sync_fork_readme.py --repository "$GITHUB_REPOSITORY"
-            git add -- README.md README_en.md
-          fi
-          cp "$target_metadata" tool/upstream-version.json
-          git add -- tool/upstream-version.json
-          if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
-            git commit --no-edit
-          else
-            git commit -m "chore(sync): record upstream release metadata $tag"
-          fi
-          candidate=$(git rev-parse HEAD)
-          printf 'candidate=%s\n' "$candidate" | tee -a "$evidence/revisions.txt" >> "$GITHUB_OUTPUT"
-          git diff --name-status "$base" "$candidate" > "$evidence/changed-files.txt"
-          if ! git diff --quiet "$base" "$candidate" -- .github/workflows; then
-            echo '::error::The merge changes workflow files. GITHUB_TOKEN cannot grant workflows write permission; a maintainer must merge with suitable credentials.'
-            exit 1
-          fi
-          echo 'changed=true' >> "$GITHUB_OUTPUT"
-
-      - name: Setup Flutter
-        if: steps.merge.outputs.changed == 'true'
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-
-      - name: Install Rust toolchain
-        if: steps.merge.outputs.changed == 'true'
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust editor library build
-        if: steps.merge.outputs.changed == 'true'
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: plugins/rust_api/rust
-          cache-directories: .dart_tool/hooks_runner
-
-      - name: Validate merged UI and configuration
-        if: steps.merge.outputs.changed == 'true'
-        run: |
-          set -euo pipefail
-          evidence="$RUNNER_TEMP/upstream-sync"
-          cp pubspec.yaml "$RUNNER_TEMP/sync-pubspec.yaml"
-          trap 'cp "$RUNNER_TEMP/sync-pubspec.yaml" pubspec.yaml' EXIT
-          python3 -m unittest tool.test_xclash_version -v 2>&1 | tee "$evidence/version-tests.log"
-          flutter pub get 2>&1 | tee "$evidence/pub-get.log"
-          flutter analyze --no-fatal-infos 2>&1 | tee "$evidence/analyze.log"
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-          path = Path('pubspec.yaml')
-          text = path.read_text()
-          for package in ('setup',):
-              pattern = rf'(?m)^(    {package}:\s*\n      build_assets: )true(\s*)$'
-              text, count = re.subn(pattern, r'\g<1>false\2', text)
-              if count != 1:
-                  raise SystemExit(f'Expected exactly one enabled native hook for {package}')
-          path.write_text(text)
-          PY
-          flutter test --reporter expanded \
-            test/models/config_test.dart \
-            test/models/dns_override_test.dart \
-            test/common/request_test.dart \
-            test/common/xclash_defaults_test.dart \
-            test/common/aurora_test.dart \
-            test/common/helpers_test.dart \
-            test/common/task_dns_override_test.dart \
-            test/common/task_test.dart \
-            test/common/migration_test.dart \
-            test/providers/config_test.dart \
-            test/providers/profiles_action_test.dart \
-            test/providers/backup_action_test.dart \
-            test/providers/action_test.dart \
-            test/manager/theme_manager_test.dart \
-            test/views/theme_test.dart \
-            test/views/aurora_settings_test.dart \
-            test/views/dns_view_test.dart \
-            test/views/scripts_source_test.dart \
-            test/views/script_content_test.dart \
-            test/widgets/ \
-            test/l10n/ \
-            test/lint/ 2>&1 | tee "$evidence/tests.log"
-
-      - name: Package validated commit
-        if: steps.merge.outputs.changed == 'true'
-        env:
-          BASE: ${{ steps.merge.outputs.base }}
-          CANDIDATE: ${{ steps.merge.outputs.candidate }}
-        run: |
-          set -euo pipefail
-          git diff --exit-code
-          git diff --cached --exit-code
-          test "$(git rev-parse HEAD)" = "$CANDIDATE"
-          git branch sync-candidate "$CANDIDATE"
-          git bundle create "$RUNNER_TEMP/upstream-candidate.bundle" refs/heads/sync-candidate "^$BASE"
-          git bundle verify "$RUNNER_TEMP/upstream-candidate.bundle"
-
-      - name: Upload validated commit
-        if: steps.merge.outputs.changed == 'true' && success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: upstream-candidate
-          path: ${{ runner.temp }}/upstream-candidate.bundle
-          retention-days: 7
-          if-no-files-found: error
-
-      - name: Record final status
-        if: always()
-        run: |
-          evidence="$RUNNER_TEMP/upstream-sync"
-          mkdir -p "$evidence"
-          git status --short --branch > "$evidence/status.txt"
-          git log -5 --format=fuller > "$evidence/recent-history.txt"
-          git diff --stat > "$evidence/worktree-diff-stat.txt"
-          printf '## Upstream sync validation\n\nRun: %s/%s/actions/runs/%s\n\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> "$GITHUB_STEP_SUMMARY"
-          cat "$evidence/revisions.txt" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
-
-      - name: Upload sync evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: upstream-sync-validation
-          path: ${{ runner.temp }}/upstream-sync/
-          retention-days: 30
-          if-no-files-found: error
-
-  publish:
-    needs: validate
-    if: needs.validate.outputs.changed == 'true'
+  inspect:
+    if: github.repository == 'IvanSolis1989/Aerove'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions:
-      contents: write
-      actions: write
-    defaults:
-      run:
-        shell: bash
     steps:
-      - name: Checkout fork main
-        uses: actions/checkout@v4
-        with:
-          ref: main
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Download validated commit
-        uses: actions/download-artifact@v4
-        with:
-          name: upstream-candidate
-          path: ${{ runner.temp }}/upstream-sync/
-
-      - name: Publish only if main has not changed
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
-          BASE: ${{ needs.validate.outputs.base }}
-          UPSTREAM: ${{ needs.validate.outputs.upstream }}
-          CANDIDATE: ${{ needs.validate.outputs.candidate }}
-          SYNC_ACTION: ${{ needs.validate.outputs.sync_action }}
-          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
-          SYNC_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          evidence="$RUNNER_TEMP/upstream-sync"
-          auth=$(printf 'x-access-token:%s' "$SYNC_TOKEN" | base64 -w0)
-          echo "::add-mask::$auth"
-          exec > >(tee "$evidence/publish.log") 2>&1
-          for revision in "$BASE" "$UPSTREAM" "$CANDIDATE"; do
-            [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
-          done
-          git bundle verify "$evidence/upstream-candidate.bundle"
-          git fetch --recurse-submodules=no "$evidence/upstream-candidate.bundle" \
-            refs/heads/sync-candidate:refs/remotes/sync/candidate
-          test "$(git rev-parse refs/remotes/sync/candidate)" = "$CANDIDATE"
-          candidate_parents=$(git show -s --format=%P "$CANDIDATE")
-          if [[ "$SYNC_ACTION" == merge ]]; then
-            test "$candidate_parents" = "$BASE $UPSTREAM"
-          else
-            test "$SYNC_ACTION" = metadata_only
-            test "$candidate_parents" = "$BASE"
-          fi
-          git merge-base --is-ancestor "$BASE" "$CANDIDATE"
-          git diff --exit-code "$BASE" "$CANDIDATE" -- .github/workflows
-          current=$(git ls-remote --exit-code origin refs/heads/main | cut -f1)
-          printf 'base=%s\nupstream=%s\ncandidate=%s\nremote-main=%s\n' "$BASE" "$UPSTREAM" "$CANDIDATE" "$current" | tee "$evidence/revisions.txt"
-          if [[ "$current" != "$BASE" ]]; then
-            echo '::error::Fork main changed during validation. No push attempted; run sync again on the new main.'
-            exit 1
-          fi
-          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
-            push origin "$CANDIDATE:refs/heads/main"
-          actual=$(git ls-remote --exit-code origin refs/heads/main | cut -f1)
-          test "$actual" = "$CANDIDATE"
-          printf 'Recorded upstream release `%s` at `%s` in main as `%s`.\n' \
-            "$RELEASE_TAG" "$UPSTREAM" "$CANDIDATE" >> "$GITHUB_STEP_SUMMARY"
-          git diff --no-renames --name-only -z "$BASE" "$CANDIDATE" > "$evidence/apk-input-paths"
-          build_apk=false
-          while IFS= read -r -d '' path; do
-            case "$path" in
-              docs/*|snapshots/*|.agents/*.md) continue ;;
-              README*.md|AGENTS.md|CLAUDE.md|CHANGELOG.md)
-                if [[ "$path" != */* ]]; then continue; fi ;;
-            esac
-            build_apk=true
-            printf 'APK input changed: %q\n' "$path"
-            break
-          done < "$evidence/apk-input-paths"
-          if [[ "$build_apk" == false ]]; then
-            echo 'Only documentation changed; Android build and Release dispatch were skipped.' >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          GH_TOKEN="$SYNC_TOKEN" gh workflow run xclash-android.yaml \
-            --repo "$GITHUB_REPOSITORY" --ref main \
-            -f prepare_sources=false -f build_apk=true -f publish_release=true
-          printf 'Dispatched Aerove Android on main for validation, APK build and Release publication.\n' >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload publish evidence
-        if: always()
-        uses: actions/upload-artifact@v4
+          REFERENCE_TAG: ${{ inputs.tag }}
         with:
-          name: upstream-sync-publish
-          path: |
-            ${{ runner.temp }}/upstream-sync/publish.log
-            ${{ runner.temp }}/upstream-sync/revisions.txt
-          retention-days: 30
-          if-no-files-found: warn
+          script: |
+            const owner = 'chen08209';
+            const repo = 'FlClash';
+            const tag = process.env.REFERENCE_TAG;
+            const match = /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/.exec(tag);
+            if (!match || (match[1] && match[1].split('.').some(part => /^0\d+$/.test(part)))) {
+              throw new Error('An exact semantic release tag is required');
+            }
+            const {data: release} = await github.rest.repos.getReleaseByTag({owner, repo, tag});
+            if (release.draft || !release.published_at ||
+                !release.assets.some(asset => asset.state === 'uploaded' && asset.size > 0)) {
+              throw new Error('The reference must be a public release with downloadable assets');
+            }
+            let {data: ref} = await github.rest.git.getRef({owner, repo, ref: `tags/${tag}`});
+            let object = ref.object;
+            const seen = new Set();
+            while (object.type === 'tag') {
+              if (seen.has(object.sha) || seen.size >= 8) throw new Error('Invalid tag chain');
+              seen.add(object.sha);
+              const {data: annotated} = await github.rest.git.getTag({owner, repo, tag_sha: object.sha});
+              object = annotated.object;
+            }
+            if (object.type !== 'commit' || !/^[0-9a-f]{40}$/.test(object.sha)) {
+              throw new Error('The release tag must resolve to a full commit');
+            }
+            await core.summary
+              .addHeading('Upstream reference only')
+              .addLink(`${owner}/${repo} ${tag}`, release.html_url)
+              .addTable([
+                [{data: 'Source', header: true}, {data: 'Value', header: true}],
+                ['Commit', object.sha],
+                ['Published', release.published_at],
+                ['Channel', release.prerelease ? 'preview' : 'stable'],
+              ])
+              .addRaw('No source was merged, no branch was pushed, and no APK was built.')
+              .write();
+            core.setOutput('commit', object.sha);

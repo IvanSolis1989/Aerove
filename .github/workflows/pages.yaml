@@ -5,13 +5,13 @@ on:
     branches:
       - main
     paths:
-      - 'site/**'
-      - 'tool/build_site.sh'
-      - 'tool/render_site.mjs'
+      - 'website/**'
+      - 'tooling/website/build_site.sh'
+      - 'tooling/website/render_site.mjs'
       - '.github/workflows/pages.yaml'
   workflow_run:
     workflows:
-      - build
+      - Aerove Android
     types:
       - completed
   workflow_dispatch:
@@ -29,11 +29,11 @@ jobs:
   tag:
     # head_branch also names a branch push's branch, so only a tag at the built commit counts as a release.
     if: >-
-      github.repository == 'chen08209/FlClash' &&
+      github.repository == 'IvanSolis1989/Aerove' &&
       github.event_name == 'workflow_run' &&
       github.event.workflow_run.conclusion == 'success' &&
-      startsWith(github.event.workflow_run.head_branch, 'v') &&
-      !contains(github.event.workflow_run.head_branch, '-')
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     outputs:
       stable: ${{ steps.lookup.outputs.stable }}
@@ -41,18 +41,22 @@ jobs:
       - name: Look up the tag
         id: lookup
         env:
-          NAME: ${{ github.event.workflow_run.head_branch }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
           SHA: ${{ github.event.workflow_run.head_sha }}
           REMOTE: ${{ github.server_url }}/${{ github.repository }}
         run: |
-          if git ls-remote --tags "$REMOTE" "refs/tags/$NAME" "refs/tags/$NAME^{}" | grep -q "^$SHA"; then
+          release=$(gh api "repos/$REPOSITORY/releases/latest") || exit 0
+          NAME=$(jq -r 'select(.draft == false and .prerelease == false) | .tag_name' <<< "$release")
+          [[ "$NAME" =~ ^v[0-9] ]] || exit 0
+          if git ls-remote --tags "$REMOTE" "refs/tags/$NAME" "refs/tags/$NAME^{}" | grep -q "^$SHA[[:space:]]"; then
             echo 'stable=true' >> "$GITHUB_OUTPUT"
           fi
 
   deploy:
     needs: tag
     if: >-
-      github.repository == 'chen08209/FlClash' &&
+      github.repository == 'IvanSolis1989/Aerove' &&
       !cancelled() &&
       (github.event_name != 'workflow_run' || needs.tag.outputs.stable == 'true')
     runs-on: ubuntu-latest
@@ -61,21 +65,21 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Assemble site
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash tool/build_site.sh _site
+        run: bash tooling/website/build_site.sh _site
 
       - name: Configure Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
 
       - name: Upload
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
           path: _site
 
       - name: Deploy
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

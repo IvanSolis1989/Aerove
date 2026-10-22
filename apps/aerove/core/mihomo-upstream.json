@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "upstream": {
+    "url": "https://github.com/MetaCubeX/mihomo.git",
+    "version": "v1.19.33",
+    "commit": "3f27ef39f8c96bbfbc8b0b9bb10f5c9ef60149d8",
+    "tree": "9690917ec3c0c1f59a263452fa9ca91f4aa64b17"
+  },
+  "patches": [
+    {
+      "path": "core/patches/aerove-v1.19.33.patch",
+      "sha256": "31db33f2c26f9ede8aa275916a012508f8afa6a8fc1a447092948c1da7761ac0"
+    }
+  ],
+  "result_tree": "475c6d713b0139af47c70ba700e0708594825662",
+  "provenance": {
+    "preserved_merge": "109e5954c116b3814a2e3dbb414aff03f26a491b",
+    "adaptation_commits": [
+      "86a42fd8",
+      "8380d0e7"
+    ],
+    "common_ancestor": "88dcbf7f"
+  }
+}

@@ -32,8 +32,8 @@ migrate_working_dir/
 .packages
 .pub-cache/
 .pub/
-/build/
-/dist/
+/apps/aerove/build/
+/apps/aerove/dist/
 
 # Symbolication related
 app.*.symbols
@@ -45,36 +45,45 @@ app.*.map.json
 .claude/settings.local.json
 .claude/worktrees/
 
-# Documentation (generated/planning artifacts)
-docs/
+# Disposable local evidence is never part of maintained documentation.
+/scratch/
+/.local/
+/docs/.generated/
+/docs/.drafts/
 
 
 # Android Studio will place build artifacts here
-/android/app/debug
-/android/app/profile
-/android/app/release
-/android/**/.cxx
-/android/**/build
-/android/common/**/.**/
-/android/common/local.*
+/apps/aerove/android/app/debug
+/apps/aerove/android/app/profile
+/apps/aerove/android/app/release
+/apps/aerove/android/**/.cxx
+/apps/aerove/android/**/build
+/apps/aerove/android/common/**/.**/
+/apps/aerove/android/common/local.*
 # Left in place by builds from before the gomobile Core.
-/android/core/**/includes/
-/android/core/**/cmake-build-*/
-/android/core/**/jniLibs/
+/apps/aerove/android/core/**/includes/
+/apps/aerove/android/core/**/cmake-build-*/
+/apps/aerove/android/core/**/jniLibs/
 
 #FlClash
-/libclash/
-/android/app/src/main/jniLibs/
-/services/helper/target
-/macos/**/Package.resolved
-/macos/build/
-/env.json
-/core_sha256.json
-/plugins/rust_api/.claude/
+/apps/aerove/libclash/
+/apps/aerove/android/app/src/main/jniLibs/
+/apps/aerove/services/helper/target
+/apps/aerove/macos/**/Package.resolved
+/apps/aerove/macos/build/
+/apps/aerove/env.json
+/apps/aerove/core_sha256.json
+/apps/aerove/core/.mihomo/
+/apps/aerove/core/.mihomo.previous/
+/apps/aerove/core/.mihomo-*/
+/apps/aerove/core/.mihomo*.lock
+/apps/aerove/plugins/rust_api/.claude/
 /issue-triage/
 devtools_options.yaml
 
 # FVM Version Cache
 .fvm/
 .fvmrc
-/coverage/lcov.info
+/apps/aerove/coverage/lcov.info
+
+/tooling/website/.output/

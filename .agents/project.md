@@ -1,6 +1,31 @@
 # Project Context
 
-FlClash is a multi-platform proxy client based on ClashMeta (mihomo), built with Flutter. It supports Android, Windows, macOS, and Linux, using Material You from `material_ui` as the base with Apple's Human Interface interaction conventions layered on top.
+Paths and commands for the full product are relative to `apps/aerove/`; run its commands there.
+Repository governance and workflows remain at the repository root. See [workspace layout](../docs/development/REPOSITORY_LAYOUT.md).
+
+Aerove is an independently maintained proxy client with a historical FlClash codebase. The current implementation uses
+Flutter and a pinned Mihomo core on Android, Windows, macOS, and Linux. Material You from `material_ui` and the existing
+custom visual system remain the production baseline. AEROVE Lite is the separate Android-native/Rust product in
+`apps/aerove-lite/`, requiring Android 13 or later. Both products share this repository, with separate versions and release
+entries. Share specifications and test vectors, not platform runtimes; keep package identity, data and release feeds
+separate. All shared client features must be implemented and verified before release. Source-proven core capability
+exceptions belong in development records, not placeholder or disabled controls;
+unsupported imported configuration still requires an explicit compatibility error. Its icon uses a white background
+and black ribbon derived from the full product, without replacing the full product's icon.
+
+Both products must have identical shared UI, interaction and client functionality, including all future refinements in
+either direction. Only a capability proven unsupported by the pinned Rust core may be deferred. Incomplete client code,
+missing wrappers or a first-release deadline are not product exceptions. Follow `docs/shared/UI_CONTRACT.md`.
+
+The long-term Android objective is for the native product to replace the current Android application after measured
+energy efficiency, functionality, visual quality and reliability justify migration. Keep both products separate during
+development; preserve the existing stable app and desktop support. Rust/clash-rs is the current candidate, not proof of
+the most efficient core. Compare cores on the same native frontend and workload before making that claim.
+
+Product versions belong to Aerove, not to the latest FlClash tag. Upstream work is a reference and requires a scoped
+change, source attribution and product validation; never automatically merge it or resume the frozen 0.9.2 preview
+integration. Preserve existing licenses, signing identity and user data. See
+`docs/development/INDEPENDENCE.md` and `docs/development/upstreams.md` for ownership and migration boundaries.
 
 ## Version Notes
 
@@ -16,12 +41,9 @@ FlClash is a multi-platform proxy client based on ClashMeta (mihomo), built with
 
 ## Forked Dependencies
 
-One `pubspec.yaml` dependency is pinned to a fork by commit SHA. The fork lives
-under `chen08209`, the same account that owns this repository, so it is
-maintained in-house rather than tracked from a third party: advancing a pin is a
-local decision, and there is no external maintainer to wait on for the patch
-itself. What the fork still waits on is the *upstream* fix that would let the pin
-be dropped entirely, recorded below.
+One historical dependency in `pubspec.yaml` remains pinned to a chen08209 fork by commit SHA. It is an external
+dependency of this independently maintained repository. Preserve its source attribution and validate a scoped pin
+change against the recorded upstream blocker.
 
 Each entry records what the fork changes and what has to be true before it can go
 back to the published package, so a future upgrade does not have to rediscover it.

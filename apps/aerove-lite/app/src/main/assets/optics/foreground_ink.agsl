@@ -1,0 +1,81 @@
+uniform float2 uFieldSize;
+uniform float2 uOrigin;
+uniform float2 uAxisX;
+uniform float2 uAxisY;
+uniform float uStrength;
+uniform float uDark;
+uniform float uContrast;
+uniform float uAlpha;
+uniform float3 uSource;
+uniform float uUltra;
+uniform float uSubtle;
+uniform float4 uContrastBackground;
+uniform shader backdropField;
+uniform shader glyphs;
+float luminance(float3 c) {
+  float3 low = c / 12.92;
+  float3 high = pow((c + 0.055) / 1.055, float3(2.4));
+  return dot(mix(low, high, step(float3(0.04045), c)),
+             float3(0.2126, 0.7152, 0.0722));
+}
+float contrastOn(float3 ink, float backgroundLuminance) {
+  float x = luminance(ink);
+  return (max(x, backgroundLuminance) + 0.05) /
+         (min(x, backgroundLuminance) + 0.05);
+}
+float3 vivid(float3 c) {
+  float hi = max(c.r, max(c.g, c.b));
+  float lo = min(c.r, min(c.g, c.b));
+  float span = hi - lo;
+  if (span < 0.015) return c;
+  float3 hue = (c - lo) / span;
+  float saturation = min(mix(0.91, 0.92, uUltra),
+      span / max(hi, 0.001) * mix(2.65, 2.70, uUltra) + mix(0.17, 0.175, uUltra));
+  float peak = mix(0.94, 0.95, uUltra);
+  if (uDark < 0.5) {
+    hue = pow(hue, float3(mix(1.20, 1.22, uUltra)));
+    saturation = min(mix(0.98, 0.99, uUltra),
+        span / max(hi, 0.001) * mix(3.3, 3.45, uUltra) + mix(0.24, 0.26, uUltra));
+    peak = mix(0.985, 1.0, uUltra);
+  }
+  return mix(float3(peak), hue * peak, saturation);
+}
+float3 readable(float3 ink, float3 background, float backgroundLuminance, float alpha) {
+
+  float target = uContrast + (uDark < 0.5 && uContrast >= 4.7 ? 0.10 : 0.0);
+  float blackContrast = (backgroundLuminance + 0.05) / 0.05;
+  float whiteContrast = 1.05 / (backgroundLuminance + 0.05);
+  float3 pole = blackContrast > whiteContrast ? float3(0) : float3(1);
+  float low = 0.0, high = 1.0;
+  if (contrastOn(mix(background, ink, alpha), backgroundLuminance) >= target) return ink;
+  for (int i = 0; i < 8; i++) {
+    float mid = (low + high) * 0.5;
+    float3 testInk = mix(ink, pole, mid);
+    if (contrastOn(mix(background, testInk, alpha), backgroundLuminance) >= target) high = mid;
+    else low = mid;
+  }
+  return mix(ink, pole, high);
+}
+float4 main(float2 coord) {
+  float2 local = coord;
+  float2 position = uOrigin + uAxisX * local.x + uAxisY * local.y;
+  float3 field = backdropField.eval(clamp(position, float2(0.5), uFieldSize - 0.5)).rgb;
+  float3 background = mix(field, uContrastBackground.rgb, uContrastBackground.a);
+  float backgroundLuminance = luminance(background);
+  float3 colored = vivid(field);
+  float strength = uStrength;
+  if (uDark < 0.5) {
+    strength = mix(strength, 1.0, mix(0.14, 0.18, uUltra));
+  } else {
+    colored = readable(colored, background, backgroundLuminance, 1.0);
+    strength *= mix(0.99, 1.0, uUltra);
+  }
+  float3 ink = mix(uSource, colored, strength);
+  if (uSubtle > 0.5) {
+    float neutral = dot(ink, float3(0.2126, 0.7152, 0.0722));
+    ink = mix(float3(neutral), ink, 0.52) * mix(1.0, 0.84, uDark);
+  }
+  ink = readable(ink, background, backgroundLuminance, uAlpha);
+  float coverage = glyphs.eval(coord).a;
+  return float4(ink * coverage, coverage);
+}

@@ -1,10 +1,13 @@
 # Rules
 
+Paths and commands for the full product are relative to `apps/aerove/`; run its commands there.
+Repository governance and workflows remain at the repository root. See [workspace layout](../docs/development/REPOSITORY_LAYOUT.md).
+
 These are repository coding and testing conventions. Codex command permission rules belong in `.codex/rules/*.rules`; see `.agents/agent-config.md` before adding those.
 
 ## Dart and Flutter Style
 
-The lint set lives in `lint_options.yaml` at the repo root. The root `analysis_options.yaml` and every local plugin under
+The full product lint set lives in `apps/aerove/lint_options.yaml`. Its `analysis_options.yaml` and every local plugin under
 `plugins/*` include it, so application and plugin code are held to the same rules. Add or change a rule there, not in an
 individual `analysis_options.yaml`; those files carry only their own `analyzer.exclude` entries.
 
@@ -139,7 +142,7 @@ judgment, and it lives in the rules below and in review. Whether comments are to
 
 ### Density
 
-`tool/hooks/comment_density.sh` fails a file whose added lines are more than 5% standalone comment lines, ignoring
+`tooling/hooks/comment_density.sh` fails a file whose added lines are more than 5% standalone comment lines, ignoring
 diffs under 20 added lines so small edits are never caught. The number is calibrated on this repository's own history:
 healthy changes sit at or under 3.6%, while the core fix that prompted the gate ran 22.4%.
 
@@ -149,7 +152,9 @@ it is forked upstream code, not a house style.
 Three gates run the same script, and they do not have equal force. The `PostToolUse` hooks in `.claude/settings.json`
 and `.codex/config.toml` run after the tool and hand offending lines back as feedback; neither can undo the completed
 write. The `comment-density` pre-commit hook fails the commit, and it is the only hard gate that covers every tool.
-Behavior is pinned by `tool/hooks/comment_density_test.sh`, which CI runs through `tool/hooks/test.sh`.
+Behavior is pinned by `tooling/hooks/comment_density_test.sh`, which CI runs through `tooling/hooks/test.sh`.
+The pinned Lite Material Color Utilities closure retains upstream comments under `third_party/material-color-utilities/`;
+workspace checks validate its source manifest and hashes. First-party code does not belong in that directory.
 
 When a change genuinely warrants more, raise the ceiling for that run rather than working around it:
 `COMMENT_DENSITY_MAX=20 git commit`, or `SKIP=comment-density git commit` to step past it entirely.
@@ -175,11 +180,10 @@ leaving a repo-wide policy as a comment reaches only the reader of that one file
 
 ## Core API Safety
 
-- `core/Clash.Meta` is a fork of mihomo, and changes to it are budgeted for features, not repairs. Fixing a bug there is
-  low priority even when the bug is real and the fix is small: every patch is one more thing to carry across an upstream
-  rebase. Solve it on the FlClash side of the boundary and note the mihomo behaviour you are working around. Reach into
-  the submodule only for a feature that has nowhere else to live, or when the problem is one the FlClash patches
-  themselves introduced — and say which of the two it is in the commit message.
+- `core/Clash.Meta` is the pinned Mihomo dependency, not the owner of Aerove's product policy. Prefer a scoped adapter
+  fix when it preserves the intended behavior. A core repair or feature is justified by an Aerove requirement and a
+  regression test; record its source and the reason it belongs there. Never edit a dependency merely to follow an
+  upstream branch, or replace it before the platform and configuration contracts are verified.
 - Do not expose direct filesystem deletion APIs through Core or helper IPC; use
   a scope-specific cleanup API instead.
 - The desktop IPC socket in `plugins/rust_api` admits a Unix peer only when its effective uid is the app's own or root:
@@ -559,7 +563,7 @@ failure, disposal, and any timer boundary that changes visible state.
 ## Commit Messages
 
 Subjects follow Conventional Commits and are enforced by the `commit-msg` hook in `.pre-commit-config.yaml`, which runs
-`tool/hooks/commit_msg.sh`:
+`tooling/hooks/commit_msg.sh`:
 
 ```text
 <type>[(scope)][!]: <description>

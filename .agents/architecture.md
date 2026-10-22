@@ -1,8 +1,16 @@
 # Architecture
 
+Paths and commands for the full product are relative to `apps/aerove/`; run its commands there.
+Repository governance and workflows remain at the repository root. See [workspace layout](../docs/development/REPOSITORY_LAYOUT.md).
+
 ## Core Integration
 
 The Go proxy core in `core/` operates in two modes.
+
+Its dependency is official MetaCubeX/mihomo pinned by the `core/Clash.Meta` gitlink. `core/mihomo-upstream.json` records
+the published source and the ordered `core/patches/` series. `tool/mihomo_source.py` verifies that pin and prepares the
+adapted source into ignored `core/.mihomo/`; `core/go.mod` resolves Mihomo there. The official checkout stays clean.
+Preparation and cache reuse verify source contents against the expected Git tree; a stamp alone is not authority.
 
 Android lib mode:
 
@@ -74,7 +82,7 @@ stored as JSON in the `profiles.overrides` column, with every key available, and
 `_makeRealProfileTask` merges whatever it is handed; there is no on/off toggle, a picked key is the override.
 
 Each `*OverrideKey` names one Clash key, with `parent.field` paths for nested maps, and covers every yaml key of the
-matching mihomo raw struct; `test/models/{dns,ntp,sniffer}_override_test.dart` read `core/Clash.Meta/config/config.go`
+matching mihomo raw struct; `test/models/{dns,ntp,sniffer}_override_test.dart` read prepared `core/.mihomo/config/config.go`
 and fail when a core bump adds or drops one. `overrideJson` builds the fragment in model order and skips a key whose
 value is empty, so a key left without a value writes nothing: the core refuses an empty `nameserver` outright.
 `mergeDnsOverride` merges one level deep so a partial fallback filter keeps the profile's other filter keys; NTP spreads
@@ -1613,8 +1621,8 @@ Windows helper integrity/version check:
 Build configuration defaults live in `plugins/setup/setup_hooks/lib/src/options.dart` and can be overridden via the root
 `build_config.yaml`.
 
-`core_version` in `build_config.yaml` is the mihomo release tag the `core/Clash.Meta` fork is based on. Upstream injects
-its version only from its own CI, so the fork alone reports the placeholder `1.10.0` in `/version` and in protocol
+`core_version` in `build_config.yaml` is the official Mihomo release tag pinned in `core/mihomo-upstream.json`. Upstream injects
+its version only from its own CI, so a source build alone reports the placeholder `1.10.0` in `/version` and in protocol
 user agents; `GoBuilder` passes the value as `-X github.com/metacubex/mihomo/constant.Version=...` for every build,
 local and CI alike. Bump it whenever the submodule moves onto a new upstream release.
 

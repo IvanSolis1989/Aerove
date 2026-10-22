@@ -1,0 +1,37 @@
+name: Workspace layout
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'AGENTS.md'
+      - 'README.md'
+      - '.agents/**'
+      - '.github/workflows/workspace.yaml'
+      - 'docs/**'
+      - 'tooling/**'
+      - '.gitmodules'
+      - '.pre-commit-config.yaml'
+  pull_request:
+    paths:
+      - 'AGENTS.md'
+      - 'README.md'
+      - '.agents/**'
+      - '.github/workflows/workspace.yaml'
+      - 'docs/**'
+      - 'tooling/**'
+      - '.gitmodules'
+      - '.pre-commit-config.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  layout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: python3 tooling/workspace.py check
+      - run: bash tooling/hooks/test.sh

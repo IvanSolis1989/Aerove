@@ -1,0 +1,159 @@
+{
+  "version": "1.13.0",
+  "commit": "84c0e6d6d493fcf176d2099683245b78afbeb78d",
+  "files": [
+    {
+      "path": "src/dev/aerove/lite/ui/colorutilities/Cam16.java",
+      "source": "https://raw.githubusercontent.com/material-components/material-components-android/84c0e6d6d493fcf176d2099683245b78afbeb78d/lib/java/com/google/android/material/color/utilities/Cam16.java",
+      "sourceSha256": "3a99fd75796e0b72ad2aebd2a483c95a8661306c74f1523a9f921e91bc49e0eb",
+      "sha256": "6576359e311229c10d84aae3e8647fbaa0c4f7a61b200062346c787a7594b039",
+      "adaptation": "package relocation only",
+      "sourceAtTag": "https://raw.githubusercontent.com/material-components/material-components-android/1.13.0/lib/java/com/google/android/material/color/utilities/Cam16.java"
+    },
+    {
+      "path": "src/dev/aerove/lite/ui/colorutilities/ColorUtils.java",
+      "source": "https://raw.githubusercontent.com/material-components/material-components-android/84c0e6d6d493fcf176d2099683245b78afbeb78d/lib/java/com/google/android/material/color/utilities/ColorUtils.java",
+      "sourceSha256": "2f88a72b30599f70f6160b0a65402ce29ac2ac5db87b2a3fe744dd0eb998b4e7",
+      "sha256": "a2392dfa81c762022712c38b48a5308a0b9afb5ac1d347ab292c47591972d9a6",
+      "adaptation": "package relocation only",
+      "sourceAtTag": "https://raw.githubusercontent.com/material-components/material-components-android/1.13.0/lib/java/com/google/android/material/color/utilities/ColorUtils.java"
+    },
+    {
+      "path": "src/dev/aerove/lite/ui/colorutilities/Contrast.java",
+      "source": "https://raw.githubusercontent.com/material-components/material-components-android/84c0e6d6d493fcf176d2099683245b78afbeb78d/lib/java/com/google/android/material/color/utilities/Contrast.java",
+      "sourceSha256": "b1214d3968a12d7418966771db0f802c3b232373340469e7686aaf7faabafa7d",
+      "sha256": "1f339534d48cdf41b7d4f672793e79a61654ec5a124d12a4f83476d7b578595e",
+      "adaptation": "package relocation only",
+      "sourceAtTag": "https://raw.githubusercontent.com/material-components/material-components-android/1.13.0/lib/java/com/google/android/material/color/utilities/Contrast.java"
+    },
+    {
+      "path": "src/dev/aerove/lite/ui/colorutilities/ContrastCurve.java",
+      "source": "https://raw.githubusercontent.com/material-components/material-components-android/84c0e6d6d493fcf176d2099683245b78afbeb78d/lib/java/com/google/android/material/color/utilities/ContrastCurve.java",
+      "sourceSha256": "e90d1c120add5b94c890af91ff6eb66fb13902858e200432f92b5b87cb62344b",
+      "sha256": "f32b1b1b2cdca60787b2c71f756b13a024e4190563d331cb0c03a43f21a535ef",
+      "adaptation": "package relocation only",
+      "sourceAtTag": "https://raw.githubusercontent.com/material-components/material-components-android/1.13.0/lib/java/com/google/android/material/color/utilities/ContrastCurve.java"
+    },
+    {
+      "path": "src/dev/aerove/lite/ui/colorutilities/DislikeAnalyzer.java",
+      "source": "https://raw.githubusercontent.com/material-components/material-components-android/84c0e6d6d493fcf176d2099683245b78afbeb78d/lib/java/com/google/android/material/color/utilities/DislikeAnalyzer.java",
+      "sourceSha256": "5191494ccd241907a965936edc872f79490e2b7d52071a7f1cf53baa821085e3",
+      "sha256": "3d0b9eff0b1ac5f2c91efa9bd1e47efed2faa5e6658736a7b56f8c99294aa5c6",
+      "adaptation": "package relocation only",
+      "sourceAtTag": "https://raw.githubusercontent.com/material-components/material-components-android/1.13.0/lib/java/com/google/android/material/color/utilities/DislikeAnalyzer.java"
+    },
+    {
+      "path": "src/dev/aerove/lite/ui/colorutilities/DynamicColor.java",
+      "source": "https://raw.githubusercontent.com/material-components/material-components-android/84c0e6d6d493fcf176d2099683245b78afbeb78d/lib/java/com/google/android/material/color/utilities/DynamicColor.java",
+      "sourceSha256": "78532f7019e36772a76c625ea92c1c4ca8d488614ea246f98177cabb5dccbfc4",
+      "sha256": "456584386d9fe08a61fcd1ce833c161b57fbfa2f147762fcfeb0e03d92e70c58",
+      "adaptation": "package relocation; source-only errorprone annotations removed",
+      "sourceAtTag": "https://raw.githubusercontent.com/material-components/material-components-android/1.13.0/lib/java/com/google/android/material/color/utilities/DynamicColor.java"
+    },
+    {
+      "path": "src/dev/aerove/lite/ui/colorutilities/DynamicScheme.java",
+      "source": "https://raw.githubusercontent.com/material-components/material-components-android/84c0e6d6d493fcf176d2099683245b78afbeb78d/lib/java/com/google/android/material/color/utilities/DynamicScheme.java",
+      "sourceSha256": "d01e336bd06feec98bbe7fb15ea192e3d99823b5e6698a8d5654bcd497b8ccbc",
+      "sha256": "d894013e79710fe69a4888941c1695cb7be4f070d4969a324f1fdf963bd896e3",
+      "adaptation": "package relocation only",
+      "sourceAtTag": "https://raw.githubusercontent.com/material-components/material-components-android/1.13.0/lib/java/com/google/android/material/color/utilities/DynamicScheme.java"
+    },
+    {
+      "path": "src/dev/aerove/lite/ui/colorutilities/Hct.java",
+      "source": "https://raw.githubusercontent.com/material-components/material-components-android/84c0e6d6d493fcf176d2099683245b78afbeb78d/lib/java/com/google/android/material/color/utilities/Hct.java",
+      "sourceSha256": "370546c6a95f3ca420deea4b72baef8167530329b7ae523a9780783f1e36393d",
+      "sha256": "81502baf5a7767185832b7a8c27c86c41b0a6f9e94e038926e18fada41119a02",
+      "adaptation": "package relocation only",
+      "sourceAtTag": "https://raw.githubusercontent.com/material-components/material-components-android/1.13.0/lib/java/com/google/android/material/color/utilities/Hct.java"
+    },
+    {
+      "path": "src/dev/aerove/lite/ui/colorutilities/HctSolver.java",
+      "source": "https://raw.githubusercontent.com/material-components/material-components-android/84c0e6d6d493fcf176d2099683245b78afbeb78d/lib/java/com/google/android/material/color/utilities/HctSolver.java",
+      "sourceSha256": "5533a4a0fd908c113584492c6f3d798cf877c8fa9d7ec39e5386bdee4d86c354",
+      "sha256": "545b3b04a9fd8da5e1f77a6369d08417e673293345d9a861fd05bde774b92fbe",
+      "adaptation": "package relocation only",
+      "sourceAtTag": "https://raw.githubusercontent.com/material-components/material-components-android/1.13.0/lib/java/com/google/android/material/color/utilities/HctSolver.java"
+    },
+    {
+      "path": "src/dev/aerove/lite/ui/colorutilities/MaterialDynamicColors.java",
+      "source": "https://raw.githubusercontent.com/material-components/material-components-android/84c0e6d6d493fcf176d2099683245b78afbeb78d/lib/java/com/google/android/material/color/utilities/MaterialDynamicColors.java",
+      "sourceSha256": "573d2aea3387349d954986356e38aeaff057c2b2612e85a9bfa091e98dcb2c81",
+      "sha256": "2ee5b028c6176587fb3413fc3009096962a42e67f158ab38fdffb46dfea20429",
+      "adaptation": "package relocation only",
+      "sourceAtTag": "https://raw.githubusercontent.com/material-components/material-components-android/1.13.0/lib/java/com/google/android/material/color/utilities/MaterialDynamicColors.java"
+    },
+    {
+      "path": "src/dev/aerove/lite/ui/colorutilities/MathUtils.java",
+      "source": "https://raw.githubusercontent.com/material-components/material-components-android/84c0e6d6d493fcf176d2099683245b78afbeb78d/lib/java/com/google/android/material/color/utilities/MathUtils.java",
+      "sourceSha256": "e2e42acd52d0b79422e05e9b8a12587e11b4ec2db91e75f05b5647066e4d7cf3",
+      "sha256": "e52c70e01483ee24456e61d802091db80e1d41fe97e598ed327730e4766b8500",
+      "adaptation": "package relocation only",
+      "sourceAtTag": "https://raw.githubusercontent.com/material-components/material-components-android/1.13.0/lib/java/com/google/android/material/color/utilities/MathUtils.java"
+    },
+    {
+      "path": "src/dev/aerove/lite/ui/colorutilities/SchemeContent.java",
+      "source": "https://raw.githubusercontent.com/material-components/material-components-android/84c0e6d6d493fcf176d2099683245b78afbeb78d/lib/java/com/google/android/material/color/utilities/SchemeContent.java",
+      "sourceSha256": "a3d92547cd0018fef7827c6e4fdbd853cbb9c96da7867b3eccdd41f1ef901f90",
+      "sha256": "3ad1fb3f6cc78f3b7cbccf2725da543ba1be878a7892ed81c2e5d23adc52ea7f",
+      "adaptation": "package relocation only",
+      "sourceAtTag": "https://raw.githubusercontent.com/material-components/material-components-android/1.13.0/lib/java/com/google/android/material/color/utilities/SchemeContent.java"
+    },
+    {
+      "path": "src/dev/aerove/lite/ui/colorutilities/SchemeMonochrome.java",
+      "source": "https://raw.githubusercontent.com/material-components/material-components-android/84c0e6d6d493fcf176d2099683245b78afbeb78d/lib/java/com/google/android/material/color/utilities/SchemeMonochrome.java",
+      "sourceSha256": "f9fe6db5fce5ca7cb0d4f812484b1308fc9f4d844a839e4ae92cf6242e8ccba3",
+      "sha256": "77b23cb9629428911a3ee44d4d0a7cbf6dde8093d786cccf53af207a51f59010",
+      "adaptation": "package relocation only",
+      "sourceAtTag": "https://raw.githubusercontent.com/material-components/material-components-android/1.13.0/lib/java/com/google/android/material/color/utilities/SchemeMonochrome.java"
+    },
+    {
+      "path": "src/dev/aerove/lite/ui/colorutilities/TemperatureCache.java",
+      "source": "https://raw.githubusercontent.com/material-components/material-components-android/84c0e6d6d493fcf176d2099683245b78afbeb78d/lib/java/com/google/android/material/color/utilities/TemperatureCache.java",
+      "sourceSha256": "ba5609b62f9da311991a0266853c1f53cfb42dd2892c80fcb43216dfa4ece3d1",
+      "sha256": "d0c0c52df2700909c2f7c053fc9ae0832d559c17ba184193165bd08f66352fe7",
+      "adaptation": "package relocation only",
+      "sourceAtTag": "https://raw.githubusercontent.com/material-components/material-components-android/1.13.0/lib/java/com/google/android/material/color/utilities/TemperatureCache.java"
+    },
+    {
+      "path": "src/dev/aerove/lite/ui/colorutilities/TonalPalette.java",
+      "source": "https://raw.githubusercontent.com/material-components/material-components-android/84c0e6d6d493fcf176d2099683245b78afbeb78d/lib/java/com/google/android/material/color/utilities/TonalPalette.java",
+      "sourceSha256": "008fd1beda3d7a63f55bce7ac8b6e907db17d853b3423b59864de2f6761407ee",
+      "sha256": "37d1b2a38f29ddc83e82cf30b30bb15bfa66e43f96d1395d94bee8c38d2b7c96",
+      "adaptation": "package relocation only",
+      "sourceAtTag": "https://raw.githubusercontent.com/material-components/material-components-android/1.13.0/lib/java/com/google/android/material/color/utilities/TonalPalette.java"
+    },
+    {
+      "path": "src/dev/aerove/lite/ui/colorutilities/ToneDeltaPair.java",
+      "source": "https://raw.githubusercontent.com/material-components/material-components-android/84c0e6d6d493fcf176d2099683245b78afbeb78d/lib/java/com/google/android/material/color/utilities/ToneDeltaPair.java",
+      "sourceSha256": "6ad6a657926f05fc490579928b762dd04869e6cd980a99ece230c94f5cbb3ee1",
+      "sha256": "0dfcce6370afe149e6cf00d2eecb3731b69824f7746796d42e717cb9906d8307",
+      "adaptation": "package relocation only",
+      "sourceAtTag": "https://raw.githubusercontent.com/material-components/material-components-android/1.13.0/lib/java/com/google/android/material/color/utilities/ToneDeltaPair.java"
+    },
+    {
+      "path": "src/dev/aerove/lite/ui/colorutilities/TonePolarity.java",
+      "source": "https://raw.githubusercontent.com/material-components/material-components-android/84c0e6d6d493fcf176d2099683245b78afbeb78d/lib/java/com/google/android/material/color/utilities/TonePolarity.java",
+      "sourceSha256": "c5c0369f04777e0eb03d9f2bd86f90c6a8a2809271e09d867f34e96cddc74fc4",
+      "sha256": "bca0a7e34844372f379731f9b8df6862737615ea74ff8ee268dd3978ff693f75",
+      "adaptation": "package relocation only",
+      "sourceAtTag": "https://raw.githubusercontent.com/material-components/material-components-android/1.13.0/lib/java/com/google/android/material/color/utilities/TonePolarity.java"
+    },
+    {
+      "path": "src/dev/aerove/lite/ui/colorutilities/Variant.java",
+      "source": "https://raw.githubusercontent.com/material-components/material-components-android/84c0e6d6d493fcf176d2099683245b78afbeb78d/lib/java/com/google/android/material/color/utilities/Variant.java",
+      "sourceSha256": "d0b2f5f13a843002f69d427e914953ac827aca5a39b6b313c0ad4ba09eacc5da",
+      "sha256": "ec7845d90dc449ba641d6d63ddb56e59bd0b9433a942cf0be01804c8c018bef5",
+      "adaptation": "package relocation only",
+      "sourceAtTag": "https://raw.githubusercontent.com/material-components/material-components-android/1.13.0/lib/java/com/google/android/material/color/utilities/Variant.java"
+    },
+    {
+      "path": "src/dev/aerove/lite/ui/colorutilities/ViewingConditions.java",
+      "source": "https://raw.githubusercontent.com/material-components/material-components-android/84c0e6d6d493fcf176d2099683245b78afbeb78d/lib/java/com/google/android/material/color/utilities/ViewingConditions.java",
+      "sourceSha256": "aca602f1f7ae5fb18e4069eaef6c2febfd46d6f4f96e63045cd500d2555ecac5",
+      "sha256": "dd703c704cb31246cece72eaf823af008f4ed8830fd3f1fa2645741415584e97",
+      "adaptation": "package relocation only",
+      "sourceAtTag": "https://raw.githubusercontent.com/material-components/material-components-android/1.13.0/lib/java/com/google/android/material/color/utilities/ViewingConditions.java"
+    }
+  ],
+  "algorithmAdaptation": "None; byte restoration after reversing package relocation and source-only Error Prone annotation removal verified for all 19 classes"
+}

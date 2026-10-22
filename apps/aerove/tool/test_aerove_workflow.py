@@ -1,0 +1,152 @@
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import tempfile
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[3]
+WORKFLOWS = ROOT / '.github/workflows'
+FULL = (WORKFLOWS / 'xclash-android.yaml').read_text(encoding='utf-8')
+
+
+def run_block(name):
+    lines = FULL.splitlines()
+    start = lines.index(f'      - name: {name}')
+    start = next(index for index in range(start + 1, len(lines))
+                 if lines[index] == '        run: |') + 1
+    result = []
+    for line in lines[start:]:
+        if line and not line.startswith('          '):
+            break
+        result.append(line[10:])
+    return '\n'.join(result)
+
+
+class WorkflowPolicyTest(unittest.TestCase):
+    def test_all_active_actions_are_pinned_to_full_commits(self):
+        for path in WORKFLOWS.glob('*.yaml'):
+            contents = path.read_text(encoding='utf-8')
+            uses = re.findall(r'^\s+(?:- )?uses:\s+(\S+)', contents, re.MULTILINE)
+            with self.subTest(path=path):
+                self.assertTrue(uses)
+                for action in uses:
+                    self.assertRegex(action, r'^[\w.-]+/[\w./-]+@[0-9a-f]{40}$')
+
+    def test_official_source_and_real_go_resolution_precede_generated_tree_export(self):
+        generate = run_block('Generate and format sources')
+        prepare = generate.index('python3 tool/mihomo_source.py prepare')
+        tidy = generate.index('(cd core && go mod tidy)')
+        capture = generate.index('git -C "$GITHUB_WORKSPACE" diff --cached')
+        self.assertLess(prepare, tidy)
+        self.assertLess(tidy, capture)
+        core = run_block('Verify Core background telemetry')
+        self.assertIn('go test . -run UiTelemetry -count=2', core)
+        self.assertIn('\ngo test .', core)
+        self.assertEqual(FULL.count('flutter build apk '), 1)
+
+
+class GeneratedPatchGitTest(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix='aerove-workflow-')
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name) / 'repo'
+        self.root.mkdir()
+        self.product = self.root / 'apps/aerove'
+        self.runner = Path(temporary.name) / 'runner'
+        self.runner.mkdir()
+        self.environment = {
+            **os.environ, 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': os.devnull,
+            'GIT_AUTHOR_NAME': 'Offline Test', 'GIT_COMMITTER_NAME': 'Offline Test',
+            'GIT_AUTHOR_EMAIL': 'test@example.invalid',
+            'GIT_COMMITTER_EMAIL': 'test@example.invalid',
+            'GITHUB_WORKSPACE': self.root.as_posix(), 'RUNNER_TEMP': self.runner.as_posix(),
+            'GIT_TERMINAL_PROMPT': '0',
+        }
+        self.git('init', '-q')
+        self.git('config', 'core.autocrlf', 'false')
+        self.generated = (
+            'lib/example.g.dart', 'test/example_test.dart', 'core/main.go',
+            'core/go.mod', 'core/go.sum', 'pubspec.lock',
+        )
+        for relative in self.generated:
+            path = self.product / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('before\n', encoding='utf-8', newline='\n')
+        (self.root / 'shared-contract.txt').write_text('shared source\n', encoding='utf-8')
+        self.git('add', '--all')
+        self.git('-c', 'commit.gpgsign=false', 'commit', '-qm', 'workspace source')
+        git = Path(shutil.which('git')).resolve()
+        self.bash = git.parent.parent / 'bin/bash.exe' if os.name == 'nt' else shutil.which('bash')
+        self.assertTrue(self.bash and Path(self.bash).is_file(), 'Bash is required for workflow replay')
+
+    def git(self, *arguments):
+        completed = subprocess.run(
+            ['git', *arguments], cwd=self.root, env=self.environment,
+            capture_output=True, text=True, encoding='utf-8',
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return completed.stdout.strip()
+
+    def shell(self, script, success=True):
+        completed = subprocess.run(
+            [str(self.bash), '-e', '-o', 'pipefail', '-c', script],
+            cwd=self.product, env=self.environment, capture_output=True,
+            text=True, encoding='utf-8',
+        )
+        if success:
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+        else:
+            self.assertNotEqual(completed.returncode, 0, completed.stdout)
+
+    def capture(self):
+        for relative in self.generated:
+            (self.product / relative).write_text('after\n', encoding='utf-8', newline='\n')
+        commands = '\n'.join(line for line in run_block('Generate and format sources').splitlines()
+                             if line.startswith('git -C '))
+        self.assertEqual(len(commands.splitlines()), 4)
+        self.shell(commands)
+        bundle = self.runner / 'xclash-generated'
+        bundle.mkdir()
+        for name in ('xclash-generated.patch', 'xclash-verified-tree.txt'):
+            shutil.copyfile(self.runner / name, bundle / name)
+        return bundle
+
+    def test_generated_go_locks_and_code_replay_to_the_same_whole_repository_tree(self):
+        bundle = self.capture()
+        patch = (bundle / 'xclash-generated.patch').read_text(encoding='utf-8')
+        for relative in self.generated:
+            self.assertIn(f'diff --git a/apps/aerove/{relative} b/apps/aerove/{relative}', patch)
+        self.assertEqual(self.git('diff', '--cached', '--name-only'), '')
+        verified = (bundle / 'xclash-verified-tree.txt').read_text(encoding='ascii').strip()
+        self.assertNotEqual(verified, self.git('rev-parse', 'HEAD^{tree}'))
+        self.assertEqual(self.git('ls-tree', '--name-only', verified), 'apps\nshared-contract.txt')
+        self.git('restore', '--worktree', '--', 'apps/aerove')
+        self.shell(run_block('Apply verified generated sources'))
+        self.assertEqual(self.git('diff', '--cached', '--name-only'), '')
+        for relative in self.generated:
+            self.assertEqual((self.product / relative).read_text(encoding='utf-8'), 'after\n')
+        self.assertEqual((self.root / 'shared-contract.txt').read_text(encoding='utf-8'), 'shared source\n')
+
+    def test_replay_rejects_a_different_shared_root_tree(self):
+        self.capture()
+        self.git('restore', '--worktree', '--', 'apps/aerove')
+        (self.root / 'shared-contract.txt').write_text('different source\n', encoding='utf-8')
+        self.git('add', 'shared-contract.txt')
+        self.shell(run_block('Apply verified generated sources'), success=False)
+
+    def test_replay_rejects_an_omitted_go_lock_change(self):
+        bundle = self.capture()
+        self.git('restore', '--worktree', '--', 'apps/aerove')
+        patch = bundle / 'xclash-generated.patch'
+        sections = re.split(r'(?=^diff --git )', patch.read_text(encoding='utf-8'), flags=re.MULTILINE)
+        patch.write_text(''.join(section for section in sections
+                                 if not section.startswith('diff --git a/apps/aerove/core/go.sum ')),
+                         encoding='utf-8', newline='\n')
+        self.shell(run_block('Apply verified generated sources'), success=False)
+
+
+if __name__ == '__main__':
+    unittest.main()

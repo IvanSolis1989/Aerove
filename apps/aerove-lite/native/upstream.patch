@@ -1,0 +1,1068 @@
+--- a/clash-lib/Cargo.toml
++++ b/clash-lib/Cargo.toml
+@@ -5,6 +5,8 @@
+ edition = { workspace = true }
+ 
+ [features]
++aerove-mobile = ["tun"]
++aerove-mobile-tests = ["aerove-mobile"]
+ default = ["zero_copy", "aws-lc-rs", "dashboard"]
+ 
+ aws-lc-rs = [
+--- a/clash-lib/src/lib.rs
++++ b/clash-lib/src/lib.rs
+@@ -41,6 +41,8 @@
+ 
+ pub mod app;
+ pub mod config;
++#[cfg(feature = "aerove-mobile")]
++pub mod mobile;
+ 
+ mod common;
+ mod proxy;
+@@ -403,7 +405,7 @@
+     pub statistics_manager: Arc<StatisticsManager>,
+ 
+     #[cfg(feature = "tun")]
+-    pub tun_runner: ArcRunner,
++    pub tun_runner: Arc<tun::TunRunner>,
+     pub dns_listener: ArcRunner,
+     pub inbound_manager: Arc<InboundManager>,
+     pub dns_listen: DNSListenAddr,
+@@ -722,7 +724,7 @@
+     #[cfg(feature = "tun")]
+     debug!("initializing tun runner");
+     #[cfg(feature = "tun")]
+-    let tun_runner: ArcRunner = Arc::new(tun::TunRunner::new(
++    let tun_runner = Arc::new(tun::TunRunner::new(
+         config.tun,
+         dispatcher.clone(),
+         dns_resolver.clone(),
+--- a/clash-lib/src/proxy/utils/socket_helpers.rs
++++ b/clash-lib/src/proxy/utils/socket_helpers.rs
+@@ -63,6 +63,8 @@
+             socket2::Domain::IPV6,
+         ),
+     };
++    #[cfg(feature = "aerove-mobile")]
++    crate::mobile::protect(std::os::fd::AsRawFd::as_raw_fd(&socket))?;
+     debug!("created tcp socket");
+ 
+     if !cfg!(target_os = "android")
+@@ -305,6 +307,19 @@
+             socket2::Domain::IPV4,
+         ),
+     };
++    #[cfg(feature = "aerove-mobile")]
++    crate::mobile::protect(std::os::fd::AsRawFd::as_raw_fd(&socket))?;
++    #[cfg(target_os = "android")]
++    {
++        let wildcard = if family == socket2::Domain::IPV6 { "[::]:0" } else { "0.0.0.0:0" }
++            .parse::<SocketAddr>().unwrap();
++        let source = match src {
++            Some(source) if source.ip().is_unspecified() => SocketAddr::new(wildcard.ip(), source.port()),
++            Some(source) => source,
++            None => wildcard,
++        };
++        socket.bind(&source.into())?;
++    }
+     debug!("created udp socket");
+ 
+     if !cfg!(target_os = "android") {
+--- a/clash-lib/src/app/dns/resolver/system.rs
++++ b/clash-lib/src/app/dns/resolver/system.rs
+@@ -1,4 +1,8 @@
+ use std::sync::atomic::AtomicBool;
++#[cfg(feature = "aerove-mobile")]
++use crate::mobile::lookup_host;
++#[cfg(not(feature = "aerove-mobile"))]
++use tokio::net::lookup_host;
+ 
+ use crate::{
+     Error,
+@@ -34,7 +38,7 @@
+             return Ok(Some(ip));
+         }
+ 
+-        let response = tokio::net::lookup_host(format!("{host}:0"))
++        let response = lookup_host(format!("{host}:0"))
+             .await?
+             .filter_map(|x| {
+                 if self.ipv6() || x.is_ipv4() {
+@@ -60,7 +64,7 @@
+         if let Some(std::net::IpAddr::V4(ip)) = parse_ip_literal(host) {
+             return Ok(Some(ip));
+         }
+-        let response = tokio::net::lookup_host(format!("{host}:0"))
++        let response = lookup_host(format!("{host}:0"))
+             .await?
+             .filter_map(|ip| match ip.ip() {
+                 std::net::IpAddr::V4(ip) => Some(ip),
+@@ -81,7 +85,7 @@
+         if let Some(std::net::IpAddr::V6(ip)) = parse_ip_literal(host) {
+             return Ok(Some(ip));
+         }
+-        let response = tokio::net::lookup_host(format!("{host}:0"))
++        let response = lookup_host(format!("{host}:0"))
+             .await?
+             .filter_map(|x| match x.ip() {
+                 std::net::IpAddr::V6(ip) => Some(ip),
+@@ -99,7 +103,7 @@
+         if let Some(ip) = parse_ip_literal(host) {
+             return Ok(vec![ip]);
+         }
+-        let response = tokio::net::lookup_host(format!("{host}:0"))
++        let response = lookup_host(format!("{host}:0"))
+             .await?
+             .filter_map(|x| {
+                 if self.ipv6() || x.is_ipv4() {
+--- a/clash-lib/src/common/errors.rs
++++ b/clash-lib/src/common/errors.rs
+@@ -17,8 +17,13 @@
+ #[macro_export]
+ macro_rules! print_and_exit {
+     ($($arg:tt)*) => {{
+-        eprintln!($($arg)*);
+-        std::process::exit(1);
++        #[cfg(feature = "aerove-mobile")]
++        panic!($($arg)*);
++        #[cfg(not(feature = "aerove-mobile"))]
++        {
++            eprintln!($($arg)*);
++            std::process::exit(1);
++        }
+     }};
+ }
+ 
+--- a/clash-lib/src/app/api/tcp.rs
++++ b/clash-lib/src/app/api/tcp.rs
+@@ -50,6 +50,8 @@
+                 .to_string(),
+         ));
+     }
++    #[cfg(feature = "aerove-mobile")]
++    crate::mobile::api_ready(listener.local_addr()?);
+     let app = router.route_layer(AuthMiddlewareLayer::new(auth_secret));
+     let app = MapRequestLayer::new(rewrite_websocket_uri).layer(app);
+     axum::serve(listener, app.into_make_service())
+--- a/clash-lib/src/app/api/runner.rs
++++ b/clash-lib/src/app/api/runner.rs
+@@ -149,9 +149,15 @@
+                     middlewares::fix_json_content_type::fix_content_type,
+                 ))
+                 .route_layer(cors)
+-                .with_state(app_state)
++                .with_state(app_state.clone())
+                 .layer(ServiceBuilder::new().layer(TraceLayer::new_for_http()));
+ 
++            #[cfg(feature = "aerove-mobile")]
++            {
++                let probe = crate::mobile::outbound::Probe::new(app_state.components.clone(), cancellation_token.child_token());
++                router = router.merge(probe.routes()).merge(crate::mobile::telemetry::routes(cancellation_token.child_token())).layer(middleware::from_fn(move |request, next| probe.clone().guard(request, next)));
++                router = router.layer(middleware::from_fn(crate::mobile::guard_controller));
++            }
+             if let Some(external_ui) = controller_cfg
+                 .external_ui
+                 .filter(|path| !path.trim().is_empty())
+@@ -262,6 +268,14 @@
+             };
+             if let Err(e) = result {
+                 error!("API server failed to start, error: {}", e);
++                #[cfg(feature = "aerove-mobile")]
++                crate::mobile::task_failed(format!("API server: {e}"));
++            }
++        });
++        #[cfg(feature = "aerove-mobile")]
++        let handle = tokio::spawn(async move {
++            if let Err(error) = handle.await {
++                crate::mobile::task_failed(format!("API task: {error}"));
+             }
+         });
+         *self.task_handle.lock().unwrap() = Some(handle);
+@@ -276,7 +290,7 @@
+         Box::pin(async move {
+             let handle = self.task_handle.lock().unwrap().take();
+             if let Some(h) = handle {
+-                let _ = h.await;
++                h.await.map_err(|error| crate::Error::Operation(format!("API task: {error}")))?;
+             }
+             Ok(())
+         })
+--- a/clash-lib/src/proxy/tun/runner.rs
++++ b/clash-lib/src/proxy/tun/runner.rs
+@@ -1,4 +1,4 @@
+-use std::sync::Arc;
++use std::sync::{Arc, Mutex as StdMutex};
+ 
+ use futures::{FutureExt, SinkExt, StreamExt, future::BoxFuture};
+ use tokio_util::sync::CancellationToken;
+@@ -17,8 +17,10 @@
+ 
+ /// Maximum number of attempts to wait for a newly created TUN interface to
+ /// become visible via NetworkInterface::show().
++#[cfg(not(any(target_os = "ios", target_os = "android")))]
+ const TUN_VISIBILITY_MAX_ATTEMPTS: u32 = 40;
+ /// Interval in milliseconds between each visibility poll attempt.
++#[cfg(not(any(target_os = "ios", target_os = "android")))]
+ const TUN_VISIBILITY_POLL_INTERVAL_MS: u64 = 50;
+ 
+ #[derive(Default)]
+@@ -34,6 +36,8 @@
+     dispatcher: Arc<Dispatcher>,
+     resolver: ThreadSafeDNSResolver,
+     cancellation_token: CancellationToken,
++    device: StdMutex<Option<tun_rs::AsyncDevice>>,
++    task: StdMutex<Option<tokio::task::JoinHandle<Result<(), Error>>>>,
+ }
+ 
+ impl TunRunner {
+@@ -48,11 +52,19 @@
+             dispatcher,
+             resolver,
+             cancellation_token: cancellation_token.unwrap_or_default(),
++            device: StdMutex::new(None),
++            task: StdMutex::new(None),
+         })
+     }
+ 
++    #[cfg(feature = "aerove-mobile")]
++    pub(crate) fn set_device(&self, device: tun_rs::AsyncDevice) {
++        *self.device.lock().unwrap() = Some(device);
++    }
++
+     async fn new_internal(
+         cfg: &TunConfig,
++        supplied: Option<tun_rs::AsyncDevice>,
+     ) -> Result<
+         (
+             tun_rs::AsyncDevice,
+@@ -113,7 +125,9 @@
+             }
+         };
+ 
+-        let tun = if let Some(fd) = tun_init_config.fd {
++        let tun = if let Some(device) = supplied {
++            device
++        } else if let Some(fd) = tun_init_config.fd {
+             #[cfg(target_family = "unix")]
+             {
+                 info!("tun started with fd {}", fd);
+@@ -315,11 +329,15 @@
+         let dns_hijack = self.cfg.dns_hijack;
+         let cancellation_token = self.cancellation_token.clone();
+ 
+-        tokio::spawn(async move {
++        let device = self.device.lock().unwrap().take();
++        let task = tokio::spawn(async move {
+             let (tun, stack, mut tcp_listener, udp_socket) =
+-                TunRunner::new_internal(&cfg)
++                TunRunner::new_internal(&cfg, device)
+                     .await
+-                    .inspect_err(|e| match e {
++                    .inspect_err(|e| {
++                        #[cfg(feature = "aerove-mobile")]
++                        crate::mobile::task_failed(format!("TUN initialization: {e}"));
++                        match e {
+                         Error::Io(e) => {
+                             if e.kind() == std::io::ErrorKind::PermissionDenied {
+                                 error!(
+@@ -335,7 +353,10 @@
+                         _ => {
+                             error!("tun initialization error: {}", e);
+                         }
++                        }
+                     })?;
++            #[cfg(feature = "aerove-mobile")]
++            crate::mobile::tun_ready();
+ 
+             let framed = tun_rs::async_framed::DeviceFramed::new(
+                 tun,
+@@ -452,10 +473,23 @@
+                 }
+                 Err(e) => {
+                     error!("tun runner error: {}", e);
++                    #[cfg(feature = "aerove-mobile")]
++                    crate::mobile::task_failed(format!("TUN runner: {e}"));
+                     Err(e)
+                 }
+             }
+         });
++        #[cfg(feature = "aerove-mobile")]
++        let task = tokio::spawn(async move {
++            match task.await {
++                Ok(result) => result,
++                Err(error) => {
++                    crate::mobile::task_failed(format!("TUN task: {error}"));
++                    Err(Error::Operation(format!("TUN task: {error}")))
++                }
++            }
++        });
++        *self.task.lock().unwrap() = Some(task);
+     }
+ 
+     fn shutdown(&self) {
+@@ -470,6 +504,12 @@
+     }
+ 
+     fn join(&self) -> BoxFuture<'_, Result<(), Error>> {
+-        async move { Ok(()) }.boxed()
++        async move {
++            let task = self.task.lock().unwrap().take();
++            if let Some(task) = task {
++                task.await.map_err(|error| Error::Operation(format!("TUN task: {error}")))??;
++            }
++            Ok(())
++        }.boxed()
+     }
+ }
+--- a/clash-lib/src/app/remote_content_manager/providers/proxy_provider/proxy_set_provider.rs
++++ b/clash-lib/src/app/remote_content_manager/providers/proxy_provider/proxy_set_provider.rs
+@@ -45,6 +45,121 @@
+ struct ProviderScheme {
+     #[serde(rename = "proxies")]
+     proxies: Option<Vec<HashMap<String, Value>>>,
++}
++
++pub(crate) fn parse_proxy_set(input: &[u8], name: &str) -> anyhow::Result<Vec<AnyOutboundHandler>> {
++    let n = name.to_owned();
++                #[cfg(feature = "aerove-mobile")]
++                crate::mobile::resources::check_proxy_source(input)?;
++                let scheme: ProviderScheme =
++                    serde_yaml::from_slice(input).map_err(|x| {
++                        Error::InvalidConfig(format!(
++                            "proxy provider parse error {n}: {x}"
++                        ))
++                    })?;
++                let proxies = scheme.proxies;
++                match proxies {
++                    Some(proxies) => {
++                        let proxies = proxies
++                            .into_iter()
++                            .filter_map(|x| {
++                                match OutboundProxyProtocol::try_from(x) {
++                                    Ok(p) => Some(p),
++                                    Err(e) => {
++                                        warn!(
++                                            provider = n.as_str(),
++                                            "skipping proxy due to parse error: {e}"
++                                        );
++                                        None
++                                    }
++                                }
++                            })
++                            .map(|x| match x {
++                                OutboundProxyProtocol::Direct(d) => {
++                                    Ok(Arc::new(direct::Handler::new(&d.name)) as _)
++                                }
++                                OutboundProxyProtocol::Reject(r) => {
++                                    Ok(Arc::new(reject::Handler::new(&r.name)) as _)
++                                }
++                                #[cfg(feature = "shadowsocks")]
++                                OutboundProxyProtocol::Ss(s) => {
++                                    let h: shadowsocks::outbound::Handler =
++                                        s.try_into()?;
++                                    Ok(Arc::new(h) as _)
++                                }
++                                OutboundProxyProtocol::Socks5(s) => {
++                                    let h: socks::outbound::Handler =
++                                        s.try_into()?;
++                                    Ok(Arc::new(h) as _)
++                                }
++                                OutboundProxyProtocol::Anytls(anytls) => {
++                                    let h: anytls::Handler = anytls.try_into()?;
++                                    Ok(Arc::new(h) as _)
++                                }
++                                OutboundProxyProtocol::Trojan(tr) => {
++                                    let h: trojan::Handler = tr.try_into()?;
++                                    Ok(Arc::new(h) as _)
++                                }
++                                OutboundProxyProtocol::Vmess(vm) => {
++                                    let h: vmess::Handler = vm.try_into()?;
++                                    Ok(Arc::new(h) as _)
++                                }
++                                OutboundProxyProtocol::Vless(vl) => {
++                                    let h: vless::Handler = vl.try_into()?;
++                                    Ok(Arc::new(h) as _)
++                                }
++                                OutboundProxyProtocol::Hysteria2(h) => {
++                                    let h: hysteria2::Handler = h.try_into()?;
++                                    Ok(Arc::new(h) as _)
++                                }
++                                #[cfg(feature = "ssh")]
++                                OutboundProxyProtocol::Ssh(s) => {
++                                    let h: ssh::Handler = s.try_into()?;
++                                    Ok(Arc::new(h) as _)
++                                }
++                                #[cfg(feature = "wireguard")]
++                                OutboundProxyProtocol::Wireguard(wg) => {
++                                    let h: wg::Handler = wg.try_into()?;
++                                    Ok(Arc::new(h) as _)
++                                }
++                                #[cfg(feature = "onion")]
++                                OutboundProxyProtocol::Tor(tor) => {
++                                    let h: tor::Handler = tor.try_into()?;
++                                    Ok(Arc::new(h) as _)
++                                }
++                                #[cfg(feature = "tuic")]
++                                OutboundProxyProtocol::Tuic(tuic) => {
++                                    let h: tuic::Handler = tuic.try_into()?;
++                                    Ok(Arc::new(h) as _)
++                                }
++                                #[cfg(feature = "shadowquic")]
++                                OutboundProxyProtocol::ShadowQuic(sq) => {
++                                    let h: crate::proxy::shadowquic::Handler =
++                                        sq.try_into()?;
++                                    Ok(Arc::new(h) as _)
++                                }
++                                #[cfg(feature = "tailscale")]
++                                OutboundProxyProtocol::Tailscale(tscfg) => {
++                                    let h: tailscale::Handler = tscfg.try_into()?;
++                                    Ok(Arc::new(h) as _)
++                                }
++                            })
++                            .collect::<Result<Vec<_>, crate::Error>>();
++                        match proxies {
++                            Ok(proxies) => Ok(proxies),
++                            Err(e) => {
++                                warn!(
++                                    provider = n.as_str(),
++                                    "proxy provider failed to construct handler: \
++                                     {e}"
++                                );
++                                Err(e.into())
++                            }
++                        }
++                    }
++                    _ => Err(Error::InvalidConfig(format!("{n}: proxies is empty"))
++                        .into()),
++                }
+ }
+ 
+ struct Inner {
+@@ -142,6 +257,8 @@
+                         inner.proxies.clone_from(&input);
+                     }
+                     hc.update(input).await;
++                    #[cfg(feature = "aerove-mobile")]
++                    crate::mobile::telemetry::groups_changed();
+                     tokio::spawn(async move {
+                         hc.check(false).await;
+                     });
+@@ -150,119 +267,12 @@
+         );
+ 
+         let n = name.clone();
+-        let parser: ProxyParser = Box::new(
+-            move |input: &[u8]| -> anyhow::Result<Vec<AnyOutboundHandler>> {
+-                let scheme: ProviderScheme =
+-                    serde_yaml::from_slice(input).map_err(|x| {
+-                        Error::InvalidConfig(format!(
+-                            "proxy provider parse error {n}: {x}"
+-                        ))
+-                    })?;
+-                let proxies = scheme.proxies;
+-                match proxies {
+-                    Some(proxies) => {
+-                        let proxies = proxies
+-                            .into_iter()
+-                            .filter_map(|x| {
+-                                match OutboundProxyProtocol::try_from(x) {
+-                                    Ok(p) => Some(p),
+-                                    Err(e) => {
+-                                        warn!(
+-                                            provider = n.as_str(),
+-                                            "skipping proxy due to parse error: {e}"
+-                                        );
+-                                        None
+-                                    }
+-                                }
+-                            })
+-                            .map(|x| match x {
+-                                OutboundProxyProtocol::Direct(d) => {
+-                                    Ok(Arc::new(direct::Handler::new(&d.name)) as _)
+-                                }
+-                                OutboundProxyProtocol::Reject(r) => {
+-                                    Ok(Arc::new(reject::Handler::new(&r.name)) as _)
+-                                }
+-                                #[cfg(feature = "shadowsocks")]
+-                                OutboundProxyProtocol::Ss(s) => {
+-                                    let h: shadowsocks::outbound::Handler =
+-                                        s.try_into()?;
+-                                    Ok(Arc::new(h) as _)
+-                                }
+-                                OutboundProxyProtocol::Socks5(s) => {
+-                                    let h: socks::outbound::Handler =
+-                                        s.try_into()?;
+-                                    Ok(Arc::new(h) as _)
+-                                }
+-                                OutboundProxyProtocol::Anytls(anytls) => {
+-                                    let h: anytls::Handler = anytls.try_into()?;
+-                                    Ok(Arc::new(h) as _)
+-                                }
+-                                OutboundProxyProtocol::Trojan(tr) => {
+-                                    let h: trojan::Handler = tr.try_into()?;
+-                                    Ok(Arc::new(h) as _)
+-                                }
+-                                OutboundProxyProtocol::Vmess(vm) => {
+-                                    let h: vmess::Handler = vm.try_into()?;
+-                                    Ok(Arc::new(h) as _)
+-                                }
+-                                OutboundProxyProtocol::Vless(vl) => {
+-                                    let h: vless::Handler = vl.try_into()?;
+-                                    Ok(Arc::new(h) as _)
+-                                }
+-                                OutboundProxyProtocol::Hysteria2(h) => {
+-                                    let h: hysteria2::Handler = h.try_into()?;
+-                                    Ok(Arc::new(h) as _)
+-                                }
+-                                #[cfg(feature = "ssh")]
+-                                OutboundProxyProtocol::Ssh(s) => {
+-                                    let h: ssh::Handler = s.try_into()?;
+-                                    Ok(Arc::new(h) as _)
+-                                }
+-                                #[cfg(feature = "wireguard")]
+-                                OutboundProxyProtocol::Wireguard(wg) => {
+-                                    let h: wg::Handler = wg.try_into()?;
+-                                    Ok(Arc::new(h) as _)
+-                                }
+-                                #[cfg(feature = "onion")]
+-                                OutboundProxyProtocol::Tor(tor) => {
+-                                    let h: tor::Handler = tor.try_into()?;
+-                                    Ok(Arc::new(h) as _)
+-                                }
+-                                #[cfg(feature = "tuic")]
+-                                OutboundProxyProtocol::Tuic(tuic) => {
+-                                    let h: tuic::Handler = tuic.try_into()?;
+-                                    Ok(Arc::new(h) as _)
+-                                }
+-                                #[cfg(feature = "shadowquic")]
+-                                OutboundProxyProtocol::ShadowQuic(sq) => {
+-                                    let h: crate::proxy::shadowquic::Handler =
+-                                        sq.try_into()?;
+-                                    Ok(Arc::new(h) as _)
+-                                }
+-                                #[cfg(feature = "tailscale")]
+-                                OutboundProxyProtocol::Tailscale(tscfg) => {
+-                                    let h: tailscale::Handler = tscfg.try_into()?;
+-                                    Ok(Arc::new(h) as _)
+-                                }
+-                            })
+-                            .collect::<Result<Vec<_>, crate::Error>>();
+-                        match proxies {
+-                            Ok(proxies) => Ok(proxies),
+-                            Err(e) => {
+-                                warn!(
+-                                    provider = n.as_str(),
+-                                    "proxy provider failed to construct handler: \
+-                                     {e}"
+-                                );
+-                                Err(e.into())
+-                            }
+-                        }
+-                    }
+-                    _ => Err(Error::InvalidConfig(format!("{n}: proxies is empty"))
+-                        .into()),
+-                }
+-            },
+-        );
++        let parser: ProxyParser = Box::new(move |input| {
++            let result = parse_proxy_set(input, &n);
++            #[cfg(feature = "aerove-mobile")]
++            if let Err(error) = &result { crate::mobile::task_failed(format!("proxy provider {n}: {error}")); }
++            result
++        });
+ 
+         let fetcher = Fetcher::new(name, interval, vehicle, parser, Some(updater));
+         Ok(Self { fetcher, hc, inner })
+--- a/clash-lib/src/app/remote_content_manager/providers/rule_provider/mod.rs
++++ b/clash-lib/src/app/remote_content_manager/providers/rule_provider/mod.rs
+@@ -1,6 +1,10 @@
+ mod cidr_trie;
+ mod mrs;
+ mod provider;
++#[cfg(feature = "aerove-mobile")]
++pub(crate) use provider::{make_rules as mobile_make_rules, parse_classical_rule as mobile_parse_classical_rule};
++#[cfg(feature = "aerove-mobile")]
++pub(crate) use mrs::{rules_mrs_parse as mobile_rules_mrs_parse, range_to_cidrs as mobile_range_to_cidrs};
+ 
+ pub use provider::{
+     RuleProviderImpl, RuleSetBehavior, RuleSetFormat, ThreadSafeRuleProvider,
+--- a/clash-lib/src/app/remote_content_manager/providers/rule_provider/provider.rs
++++ b/clash-lib/src/app/remote_content_manager/providers/rule_provider/provider.rs
+@@ -229,6 +229,10 @@
+         let geodata_clone = geodata.clone();
+         let parser: RuleParser =
+             Box::new(move |input: &[u8]| -> anyhow::Result<RuleContent> {
++                #[cfg(feature = "aerove-mobile")]
++                if !matches!(current_format, RuleSetFormat::Mrs) {
++                    crate::mobile::resources::rule_payload(input, &current_format.to_string())?;
++                }
+                 match current_format {
+                     RuleSetFormat::Yaml => {
+                         let scheme: ProviderScheme = serde_yaml::from_slice(input)
+@@ -473,7 +477,7 @@
+ }
+ 
+ // --- make_rules is needed for Yaml and Text formats ---
+-fn make_rules(
++pub(crate) fn make_rules(
+     behavior: RuleSetBehavior,
+     rules: Vec<String>, // Input is Vec<String> for Yaml/Text
+     mmdb: Option<MmdbLookup>,
+@@ -496,7 +500,11 @@
+ fn make_domain_rules(rules: Vec<String>) -> Result<trie::StringTrie<bool>, Error> {
+     let mut trie = trie::StringTrie::new();
+     for rule in rules {
+-        trie.insert(&rule, Arc::new(true));
++        let inserted = trie.insert(&rule, Arc::new(true));
++        #[cfg(feature = "aerove-mobile")]
++        if !inserted { return Err(Error::InvalidConfig(format!("invalid domain payload: {rule}"))); }
++        #[cfg(not(feature = "aerove-mobile"))]
++        let _ = inserted;
+     }
+     Ok(trie)
+ }
+@@ -504,9 +512,27 @@
+ fn make_ip_cidr_rules(rules: Vec<String>) -> Result<CidrTrie, Error> {
+     let mut trie = CidrTrie::new();
+     for rule in rules {
+-        trie.insert(&rule);
++        let inserted = trie.insert(&rule);
++        #[cfg(feature = "aerove-mobile")]
++        if !inserted { return Err(Error::InvalidConfig(format!("invalid ipcidr payload: {rule}"))); }
++        #[cfg(not(feature = "aerove-mobile"))]
++        let _ = inserted;
+     }
+     Ok(trie)
++}
++
++pub(crate) fn parse_classical_rule(rule: &str) -> Result<RuleType, Error> {
++    #[cfg(feature = "aerove-mobile")]
++    crate::mobile::resources::check_classical_rule(rule)?;
++    let parts = rule.split(',').map(str::trim).collect::<Vec<&str>>();
++    match parts.as_slice() {
++            [proto, payload] => RuleType::new(proto, payload, "", None),
++            [proto, payload, params @ ..] => {
++                RuleType::new(proto, payload, "", Some(params.to_vec()))
++            }
++            _ => Err(Error::InvalidConfig(format!("invalid rule line: {rule}"))),
++    }
++
+ }
+ 
+ fn make_classical_rules(
+@@ -522,18 +548,7 @@
+     let mut other_rules = Vec::new();
+ 
+     for rule in rules {
+-        let parts = rule.split(',').map(str::trim).collect::<Vec<&str>>();
+-
+-        // the rule inside RULE-SET is slightly different from the rule in
+-        // config the target is always empty as it's held in the
+-        // RULE-SET container let's parse it manually
+-        let rule_type = match parts.as_slice() {
+-            [proto, payload] => RuleType::new(proto, payload, "", None),
+-            [proto, payload, params @ ..] => {
+-                RuleType::new(proto, payload, "", Some(params.to_vec()))
+-            }
+-            _ => Err(Error::InvalidConfig(format!("invalid rule line: {rule}"))),
+-        }?;
++        let rule_type = parse_classical_rule(&rule)?;
+ 
+         let options = rule_type.options();
+         match rule_type.kind() {
+--- a/clash-lib/src/app/remote_content_manager/providers/rule_provider/mrs.rs
++++ b/clash-lib/src/app/remote_content_manager/providers/rule_provider/mrs.rs
+@@ -51,9 +51,13 @@
+     expected_behavior: RuleSetBehavior,
+ ) -> Result<RuleContent> {
+     // 1. Decompress using Zstandard
+-    let cursor = Cursor::new(buf);
++    #[cfg(feature = "aerove-mobile")]
++    let expanded = crate::mobile::resources::bounded_mrs(buf, expected_behavior)?;
++    #[cfg(feature = "aerove-mobile")]
++    let mut reader = BufReader::new(Cursor::new(expanded));
++    #[cfg(not(feature = "aerove-mobile"))]
+     let mut reader = BufReader::new(
+-        zstd::Decoder::new(cursor).context("Failed to create zstd decoder")?,
++        zstd::Decoder::new(Cursor::new(buf)).context("Failed to create zstd decoder")?,
+     );
+ 
+     // --- Header Parsing ---
+@@ -250,7 +254,7 @@
+ 
+ /// Converts an inclusive IP address range [start, end] into a minimal list of
+ /// CIDR prefixes using an optimized algorithm.
+-fn range_to_cidrs(start: IpAddr, end: IpAddr) -> Result<Vec<IpNet>> {
++pub(crate) fn range_to_cidrs(start: IpAddr, end: IpAddr) -> Result<Vec<IpNet>> {
+     if start > end {
+         return Ok(Vec::new()); // Empty range
+     }
+--- a/clash-lib/src/common/geodata/mod.rs
++++ b/clash-lib/src/common/geodata/mod.rs
+@@ -1,5 +1,6 @@
+ use super::http::HttpClient;
+ use crate::{Error, common::utils::download};
++#[cfg(not(feature = "aerove-mobile"))]
+ use prost::Message;
+ use std::path::Path;
+ use tracing::{debug, info};
+@@ -8,6 +9,20 @@
+ 
+ pub(crate) mod geodata_proto {
+     include!(concat!(env!("OUT_DIR"), "/geodata.rs"));
++}
++
++fn decode_geosite(bytes: &[u8]) -> anyhow::Result<geodata_proto::GeoSiteList> {
++    #[cfg(feature = "aerove-mobile")]
++    { crate::mobile::resources::decode_geosite(bytes) }
++    #[cfg(not(feature = "aerove-mobile"))]
++    { Ok(geodata_proto::GeoSiteList::decode(bytes)?) }
++}
++
++async fn read_geosite(path: impl AsRef<Path>) -> Result<Vec<u8>, Error> {
++    #[cfg(feature = "aerove-mobile")]
++    { crate::mobile::resources::read_input(path.as_ref(), crate::mobile::resources::MAX_INPUT_BYTES).map_err(Into::into) }
++    #[cfg(not(feature = "aerove-mobile"))]
++    { Ok(tokio::fs::read(path).await?) }
+ }
+ 
+ pub struct GeoData {
+@@ -49,9 +64,9 @@
+                     Error::InvalidConfig(format!("geosite download failed: {x}"))
+                 })?;
+         }
+-        let bytes = tokio::fs::read(path).await?;
++        let bytes = read_geosite(path).await?;
+         let cache =
+-            geodata_proto::GeoSiteList::decode(bytes.as_slice()).map_err(|x| {
++            decode_geosite(&bytes).map_err(|x| {
+                 Error::InvalidConfig(format!("geosite decode failed: {x}"))
+             })?;
+         Ok(Self { cache })
+@@ -59,9 +74,9 @@
+ 
+     #[cfg(test)]
+     pub async fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
+-        let bytes = tokio::fs::read(path).await?;
++        let bytes = read_geosite(path).await?;
+         let cache =
+-            geodata_proto::GeoSiteList::decode(bytes.as_slice()).map_err(|x| {
++            decode_geosite(&bytes).map_err(|x| {
+                 Error::InvalidConfig(format!("geosite decode failed: {}", x))
+             })?;
+         Ok(Self { cache })
+--- a/clash-lib/src/common/mmdb.rs
++++ b/clash-lib/src/common/mmdb.rs
+@@ -13,6 +13,13 @@
+ pub static DEFAULT_COUNTRY_MMDB_DOWNLOAD_URL: &str =
+     "https://github.com/Loyalsoldier/geoip/releases/latest/download/Country.mmdb";
+ pub static DEFAULT_ASN_MMDB_DOWNLOAD_URL: &str = "https://git.io/GeoLite2-ASN.mmdb";
++
++fn open_mmdb(path: impl AsRef<Path>) -> anyhow::Result<maxminddb::Reader<Vec<u8>>> {
++    #[cfg(feature = "aerove-mobile")]
++    { crate::mobile::resources::load_mmdb_file(path.as_ref()) }
++    #[cfg(not(feature = "aerove-mobile"))]
++    { Ok(maxminddb::Reader::open_readfile(path)?) }
++}
+ 
+ pub struct Mmdb {
+     reader: maxminddb::Reader<Vec<u8>>,
+@@ -110,7 +117,7 @@
+                 })?;
+         }
+ 
+-        match maxminddb::Reader::open_readfile(&path) {
++        match open_mmdb(&path) {
+             Ok(r) => Ok(r),
+             Err(e) => {
+                 warn!(
+@@ -132,7 +139,7 @@
+                     .map_err(|x| {
+                         Error::InvalidConfig(format!("mmdb download failed: {x}"))
+                     })?;
+-                Ok(maxminddb::Reader::open_readfile(&path).map_err(|x| {
++                Ok(open_mmdb(&path).map_err(|x| {
+                     Error::InvalidConfig(format!(
+                         "cant open mmdb `{}`: {}",
+                         path.as_ref().to_string_lossy(),
+--- a/clash-lib/src/app/router/rules/geodata/mod.rs
++++ b/clash-lib/src/app/router/rules/geodata/mod.rs
+@@ -39,6 +39,11 @@
+     let attr_matcher = Box::new(AndAttrMatcher::from(attrs)) as _;
+ 
+     Some((not, code, attr_matcher))
++}
++
++#[cfg(feature = "aerove-mobile")]
++pub(crate) fn mobile_validate_domains(domains: Vec<crate::common::geodata::geodata_proto::Domain>) -> Result<(), Error> {
++    SuccinctMatcherGroup::try_new(domains, false).map(|_| ())
+ }
+ 
+ pub struct GeoSiteMatcher {
+--- a/clash-lib/src/app/api/mod.rs
++++ b/clash-lib/src/app/api/mod.rs
+@@ -16,6 +16,9 @@
+ 
+ pub use runner::ApiRunner;
+ 
++#[cfg(feature = "aerove-mobile-tests")]
++pub(crate) use middlewares::auth::AuthMiddlewareLayer;
++
+ pub struct AppState {
+     pub log_source_tx: Sender<LogEvent>,
+     pub components: Arc<RwLock<Arc<RuntimeComponents>>>,
+--- a/clash-lib/src/app/dispatcher/statistics_manager.rs
++++ b/clash-lib/src/app/dispatcher/statistics_manager.rs
+@@ -593,6 +593,8 @@
+     }
+ 
+     async fn kick_off(&self) {
++        #[cfg(feature = "aerove-mobile")]
++        let telemetry = crate::mobile::telemetry::source();
+         // Memory check runs every 5 seconds (not every 1s) to reduce CPU load.
+         // Traffic blip still updates every 1s.
+         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(1));
+@@ -607,6 +609,15 @@
+                 Ordering::Relaxed,
+             );
+             self.download_temp.store(0, Ordering::Relaxed);
++            #[cfg(feature = "aerove-mobile")]
++            if let Some(bus) = &telemetry {
++                let (up, down) = self.now();
++                bus.publish(crate::mobile::telemetry::Traffic {
++                    up, down,
++                    upload_total: self.upload_total.load(Ordering::Relaxed),
++                    download_total: self.download_total.load(Ordering::Relaxed),
++                });
++            }
+ 
+             // Memory pressure check every 5 seconds
+             mem_check_counter += 1;
+--- a/clash-lib/src/proxy/group/selector/mod.rs
++++ b/clash-lib/src/proxy/group/selector/mod.rs
+@@ -102,10 +102,11 @@
+     async fn select(&self, name: &str) -> Result<(), Error> {
+         let proxies = get_proxies_from_providers(&self.providers, false).await;
+         if proxies.iter().any(|x| x.name() == name) {
+-            self.current_selected_index.store(
+-                proxies.iter().position(|p| p.name() == name).unwrap() as u16,
+-                std::sync::atomic::Ordering::Relaxed,
+-            );
++            let index = proxies.iter().position(|p| p.name() == name).unwrap() as u16;
++            if self.current_selected_index.swap(index, std::sync::atomic::Ordering::Relaxed) != index {
++                #[cfg(feature = "aerove-mobile")]
++                crate::mobile::telemetry::groups_changed();
++            }
+             Ok(())
+         } else {
+             Err(Error::Operation(format!("proxy {name} not found")))
+--- a/clash-lib/src/proxy/group/urltest/mod.rs
++++ b/clash-lib/src/proxy/group/urltest/mod.rs
+@@ -273,6 +273,13 @@
+         }
+     }
+ 
++    fn set_fastest_index(&self, index: u16) {
++        if self.fastest_proxy_index.swap(index, Ordering::Relaxed) != index {
++            #[cfg(feature = "aerove-mobile")]
++            crate::mobile::telemetry::groups_changed();
++        }
++    }
++
+     pub(crate) fn record_failure(&self, name: &str) {
+         if let Ok(mut cb) = self.circuit_breaker.lock() {
+             let newly_tripped = cb.record_failure(name, Instant::now());
+@@ -341,12 +348,14 @@
+                 .enumerate()
+                 .find(|(_, p)| p.name() == locked_name)
+             {
+-                self.fastest_proxy_index
+-                    .store(idx as u16, Ordering::Relaxed);
++                self.set_fastest_index(idx as u16);
+                 self.force_switch.swap(false, Ordering::Relaxed);
+                 return Some(proxy.clone());
+             } else {
+-                *lock = None;
++                if lock.take().is_some() {
++                    #[cfg(feature = "aerove-mobile")]
++                    crate::mobile::telemetry::groups_changed();
++                }
+                 warn!(
+                     locked_name = locked_name,
+                     "manual_lock: node no longer exists, lock cleared"
+@@ -418,8 +427,7 @@
+                     from = %proxies[current_fastest_index].name(),
+                     "force_switch: manual test triggered, selecting fastest"
+                 );
+-                self.fastest_proxy_index
+-                    .store(fastest_index as u16, Ordering::Relaxed);
++                self.set_fastest_index(fastest_index as u16);
+                 // Reset adaptive state
+                 if let Ok(mut state) = self.adaptive_state.lock() {
+                     state.rounds_since_switch = 0;
+@@ -528,8 +536,7 @@
+             }
+         }
+ 
+-        self.fastest_proxy_index
+-            .store(selected_index as u16, Ordering::Relaxed);
++        self.set_fastest_index(selected_index as u16);
+ 
+         let selected = &proxies[selected_index];
+         let selected_delay = if selected_index == fastest_index {
+@@ -751,7 +758,10 @@
+                     || name.eq_ignore_ascii_case("default")))
+         {
+             if let Ok(mut lock) = self.manual_lock.lock() {
+-                *lock = None;
++                if lock.take().is_some() {
++                    #[cfg(feature = "aerove-mobile")]
++                    crate::mobile::telemetry::groups_changed();
++                }
+                 warn!("manual_lock: cleared, resuming auto mode");
+                 return Ok(());
+             } else {
+@@ -763,9 +773,12 @@
+             proxies.iter().enumerate().find(|(_, p)| p.name() == name)
+         {
+             if let Ok(mut lock) = self.manual_lock.lock() {
+-                *lock = Some(proxy.name().to_string());
+-                self.fastest_proxy_index
+-                    .store(idx as u16, Ordering::Relaxed);
++                if lock.as_deref() != Some(proxy.name()) {
++                    *lock = Some(proxy.name().to_string());
++                    #[cfg(feature = "aerove-mobile")]
++                    crate::mobile::telemetry::groups_changed();
++                }
++                self.set_fastest_index(idx as u16);
+                 warn!(node = name, "manual_lock: locked to node");
+                 Ok(())
+             } else {
+--- a/clash-lib/src/proxy/group/fallback/mod.rs
++++ b/clash-lib/src/proxy/group/fallback/mod.rs
+@@ -31,6 +31,8 @@
+     opts: HandlerOptions,
+     providers: Vec<ArcProxyProvider>,
+     proxy_manager: ProxyManager,
++    #[cfg(feature = "aerove-mobile")]
++    active: std::sync::Mutex<Option<String>>,
+ }
+ 
+ impl Debug for Handler {
+@@ -51,6 +53,8 @@
+             opts,
+             providers,
+             proxy_manager,
++            #[cfg(feature = "aerove-mobile")]
++            active: std::sync::Mutex::new(None),
+         }
+     }
+ 
+@@ -58,15 +62,29 @@
+         get_proxies_from_providers(&self.providers, touch).await
+     }
+ 
++    fn selected(&self, proxy: Option<AnyOutboundHandler>) -> Option<AnyOutboundHandler> {
++        #[cfg(feature = "aerove-mobile")]
++        {
++            let next = proxy.as_ref().map(|proxy| proxy.name());
++            let mut active = self.active.lock().unwrap();
++            if active.as_deref() != next {
++                let previously_selected = active.is_some();
++                *active = next.map(str::to_owned);
++                if previously_selected { crate::mobile::telemetry::groups_changed(); }
++            }
++        }
++        proxy
++    }
++
+     async fn find_alive_proxy(&self, touch: bool) -> Option<AnyOutboundHandler> {
+         let proxies = self.get_proxies(touch).await;
+         for proxy in proxies.iter() {
+             if self.proxy_manager.alive(proxy.name()).await {
+                 debug!("`{}` fallback to `{}`", self.name(), proxy.name());
+-                return Some(proxy.clone());
++                return self.selected(Some(proxy.clone()));
+             }
+         }
+-        proxies.first().cloned()
++        self.selected(proxies.first().cloned())
+     }
+ }
+ 
+--- a/clash-lib/src/app/dispatcher/dispatcher_impl.rs
++++ b/clash-lib/src/app/dispatcher/dispatcher_impl.rs
+@@ -78,11 +78,31 @@
+         *self.mode.read().await
+     }
+-
++
+-    #[instrument(skip(self, sess, lhs))]
+     pub async fn dispatch_stream(
++        &self,
++        sess: Session,
++        lhs: Box<dyn ProxyStream>,
++    ) {
++        self.dispatch_stream_inner(sess, lhs, #[cfg(feature = "aerove-mobile")] None).await;
++    }
++
++    #[cfg(feature = "aerove-mobile")]
++    pub async fn dispatch_probe_stream(
++        &self,
++        sess: Session,
++        lhs: Box<dyn ProxyStream>,
++        route: tokio::sync::oneshot::Sender<Vec<String>>,
++    ) {
++        self.dispatch_stream_inner(sess, lhs, Some(route)).await;
++    }
++
++    #[instrument(skip_all)]
++    async fn dispatch_stream_inner(
+         &self,
+         mut sess: Session,
+         mut lhs: Box<dyn ProxyStream>,
++        #[cfg(feature = "aerove-mobile")]
++        route: Option<tokio::sync::oneshot::Sender<Vec<String>>>,
+     ) {
+         let dest: SocksAddr =
+             match reverse_lookup(&self.resolver, &sess.destination).await {
+@@ -131,6 +151,10 @@
+             .await
+         {
+             Ok(mut rhs) => {
++                #[cfg(feature = "aerove-mobile")]
++                if let Some(route) = route {
++                    let _ = route.send(rhs.chain().snapshot().await);
++                }
+                 debug!("remote connection established {}", sess);
+                 rhs.install_tracking(
+                     self.manager.clone(),
+--- a/clash-lib/src/app/remote_content_manager/mod.rs
++++ b/clash-lib/src/app/remote_content_manager/mod.rs
+@@ -361,6 +361,10 @@
+         history: Option<DelayHistory>,
+     ) {
+         let mut state = self.proxy_state.write().await;
++        #[cfg(feature = "aerove-mobile")]
++        let delay_changed = history.is_some();
++        #[cfg(feature = "aerove-mobile")]
++        let alive_changed = state.get(name).map(|entry| entry.alive.load(Ordering::Relaxed)).unwrap_or(true) != alive;
+         let entry = state.entry(name.to_owned()).or_default();
+         entry.alive.store(alive, Ordering::Relaxed);
+         // Reset consecutive failures on success
+@@ -372,7 +376,14 @@
+             if entry.delay_history.len() > 10 {
+                 entry.delay_history.pop_front();
+             }
++        }
++        drop(state);
++        #[cfg(feature = "aerove-mobile")]
++        if delay_changed {
++            crate::mobile::telemetry::delay_changed();
++        } else if alive_changed {
++            crate::mobile::telemetry::groups_changed();
+         }
+     }
+ 
+     #[cfg(test)]

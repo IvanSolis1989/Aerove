@@ -1,2 +1,6 @@
 # freezed emits lines of trailing spaces, and generated code is never edited by hand.
-lib/**/generated/** -whitespace
+apps/aerove/lib/**/generated/** -whitespace
+# Replayed patches retain diff context whitespace; vendored hashes use exact bytes.
+apps/aerove/core/patches/*.patch -text -whitespace
+apps/aerove-lite/native/upstream.patch -text -whitespace
+apps/aerove-lite/third_party/material-color-utilities/src/**/*.java -text

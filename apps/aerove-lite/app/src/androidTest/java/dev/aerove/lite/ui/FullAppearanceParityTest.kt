@@ -1,0 +1,61 @@
+package dev.aerove.lite.ui
+
+import androidx.compose.ui.graphics.toArgb
+import dev.aerove.lite.ui.colorutilities.Hct
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class FullAppearanceParityTest {
+    @Test
+    fun motionMatchesFullSourceGoldenPoses() {
+        val motion = FullAuroraMotion(832838199)
+        val golden = arrayOf(
+            doubleArrayOf(0.0, 4.739799584346775, -3.5765689743074005, -18.430129919413606),
+            doubleArrayOf(2.0, 4.860840862640008, 7.7716651819280065, -10.753262087413878),
+            doubleArrayOf(5.0, 5.031947763559606, 25.100219194938262, 3.3405496007086675),
+        )
+        for ((seconds, angle, x, y) in golden) {
+            val pose = motion.at((seconds * 1_000_000).toLong(), 390.0, 844.0)
+            assertEquals(angle, pose.angle, 1e-10)
+            assertEquals(x, pose.x, 1e-10)
+            assertEquals(y, pose.y, 1e-10)
+            assertEquals(1065.5201878294001, pose.side, 1e-9)
+        }
+    }
+
+    @Test
+    fun seededPaletteKeepsFullToneAndChromaBudgets() {
+        for (seed in listOf(0xffffff00, 0xffd8c0c3, 0xff03a9f4, 0xffe91e63)) for (dark in listOf(false, true)) {
+            val colors = fullColorScheme(seed.toInt(), dark, false)
+            for (surface in listOf(colors.surfaceDim, colors.surfaceContainerLowest, colors.surfaceContainerLow, colors.surfaceContainer, colors.surfaceContainerHigh, colors.surfaceContainerHighest)) {
+                assertTrue("Full neutral surface cap", Hct.fromInt(surface.toArgb()).chroma <= 3.1)
+            }
+            for (paper in listOf(colors.surface, colors.surfaceBright)) assertTrue(Hct.fromInt(paper.toArgb()).chroma <= if (dark) 3.1 else 1.6)
+            assertEquals(if (dark) 30.0 else 90.0, Hct.fromInt(colors.primaryContainer.toArgb()).tone, 1.0)
+            val tone = Hct.fromInt(seed.toInt()).tone.let { if (dark) (it + 3).coerceIn(50.0, 75.0) else it.coerceIn(35.0, 60.0) }
+            assertEquals(tone, Hct.fromInt(colors.primary.toArgb()).tone, 0.6)
+            assertEquals(colors.signature(), fullColorScheme(seed.toInt(), dark, false).signature())
+        }
+        for (dark in listOf(false, true)) assertEquals(fullColorScheme(0xff007aff.toInt(), dark, true).signature(), fullColorScheme(0xffe91e63.toInt(), dark, true).signature())
+    }
+
+    @Test
+    fun auroraUsesFullFixedTessellationAndReadableLightField() {
+        val light = fullAuroraMesh(FullAuroraSeed, FullAuroraColors, false)
+        assertEquals(65 * 97, light.colors.size)
+        assertEquals(65 * 97 * 2, FullAuroraMesh.positions.size)
+        assertEquals(64 * 96 * 6, FullAuroraMesh.indices.size)
+        assertTrue(light === fullAuroraMesh(FullAuroraSeed, FullAuroraColors, false))
+        for (argb in light.colors) {
+            fun linear(channel: Int): Double { val value = channel / 255.0; return if (value <= 0.04045) value / 12.92 else Math.pow((value + 0.055) / 1.055, 2.4) }
+            val luminance = 0.2126 * linear(argb ushr 16 and 255) + 0.7152 * linear(argb ushr 8 and 255) + 0.0722 * linear(argb and 255)
+            assertTrue("Full 0.74 field after nearest 8-bit channel quantization", luminance >= 0.74 - 1.2 / (1.055 * 255))
+        }
+        val dark = fullAuroraMesh(FullAuroraSeed, FullAuroraColors, true)
+        assertTrue(!light.colors.contentEquals(dark.colors))
+        assertTrue(!dark.colors.contentEquals(fullAuroraMesh(FullAuroraSeed + 1, FullAuroraColors, true).colors))
+    }
+}
+
+private fun androidx.compose.material3.ColorScheme.signature(): List<Int> = listOf(primary, onPrimary, primaryContainer, onPrimaryContainer, secondary, tertiary, surface, surfaceBright, surfaceDim, surfaceContainer, surfaceContainerHighest, onSurface, onSurfaceVariant, outline, outlineVariant).map { it.toArgb() }

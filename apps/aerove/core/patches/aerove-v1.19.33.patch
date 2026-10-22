@@ -1,0 +1,2194 @@
+diff --git a/adapter/adapter.go b/adapter/adapter.go
+index 422232b3362db9afc6fac34450f9b254178b33c8..9cd4fa01a3407645de29315b8eecb04891c179ee 100644
+--- a/adapter/adapter.go
++++ b/adapter/adapter.go
+@@ -167,6 +167,10 @@ func (p *Proxy) URLTest(ctx context.Context, url string, expectedStatus utils.In
+ 	var satisfied bool
+ 
+ 	defer func() {
++		if UrlTestHook != nil {
++			UrlTestHook(url, p.Name(), t, ctx.Err() != nil)
++		}
++
+ 		alive := err == nil
+ 		record := C.DelayHistory{Time: time.Now()}
+ 		if alive {
+diff --git a/adapter/outbound/direct.go b/adapter/outbound/direct.go
+index 1e2b2ef70c8e9c70903fa9eb11ddfa58303e4844..a204647f37e58ae74ed593c1075f6288d1c234fb 100644
+--- a/adapter/outbound/direct.go
++++ b/adapter/outbound/direct.go
+@@ -27,7 +27,7 @@ func (d *Direct) DialContext(ctx context.Context, metadata *C.Metadata) (C.Conn,
+ 	}
+ 	opts := d.DialOptions()
+ 	opts = append(opts, dialer.WithResolver(resolver.DirectHostResolver))
+-	c, err := dialer.DialContext(ctx, "tcp", metadata.RemoteAddress(), opts...)
++	c, err := dialer.DialContext(resolver.WithInitiator(ctx, resolver.InitiatorDirect), "tcp", metadata.RemoteAddress(), opts...)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -51,7 +51,7 @@ func (d *Direct) ListenPacketContext(ctx context.Context, metadata *C.Metadata)
+ 
+ func (d *Direct) ResolveUDP(ctx context.Context, metadata *C.Metadata) error {
+ 	if (!metadata.Resolved() || resolver.DirectHostResolver != resolver.DefaultResolver) && metadata.Host != "" {
+-		ip, err := resolveIPWithResolver(ctx, metadata.Host, d.prefer, resolver.DirectHostResolver)
++		ip, err := resolveIPWithResolver(resolver.WithInitiator(ctx, resolver.InitiatorDirect), metadata.Host, d.prefer, resolver.DirectHostResolver)
+ 		if err != nil {
+ 			return fmt.Errorf("can't resolve ip: %w", err)
+ 		}
+diff --git a/adapter/outbound/util.go b/adapter/outbound/util.go
+index 41bc30565cfde909a0c2d8ceead25b8cbe8107c5..73bac0e8a6c0f5182e7c9084e3073b169f15a10f 100644
+--- a/adapter/outbound/util.go
++++ b/adapter/outbound/util.go
+@@ -51,7 +51,7 @@ func resolveUDPAddr(ctx context.Context, network, address string, prefer C.DNSPr
+ 		return nil, err
+ 	}
+ 
+-	ip, err := resolveIPWithResolver(ctx, host, prefer, resolver.ProxyServerHostResolver)
++	ip, err := resolveIPWithResolver(resolver.WithInitiator(ctx, resolver.InitiatorProxy), host, prefer, resolver.ProxyServerHostResolver)
+ 
+ 	if err != nil {
+ 		return nil, err
+diff --git a/adapter/outboundgroup/fallback.go b/adapter/outboundgroup/fallback.go
+index 98aaf20a9d98522da3086e39064128ff5c89440e..d6f61348844ca88c64bd017a8bb8255dfadfe8a6 100644
+--- a/adapter/outboundgroup/fallback.go
++++ b/adapter/outboundgroup/fallback.go
+@@ -173,6 +173,7 @@ func NewFallback(option GroupCommonOption, fallbackOption FallbackOption, emptyF
+ 			MaxFailedTimes: option.MaxFailedTimes,
+ 			EmptyFallback:  emptyFallback,
+ 			Providers:      providers,
++			UsePosition:    option.UsePosition,
+ 		}),
+ 		disableUDP:     option.DisableUDP,
+ 		testUrl:        option.URL,
+diff --git a/adapter/outboundgroup/groupbase.go b/adapter/outboundgroup/groupbase.go
+index eed45e0d610ed46b23edfadb25022b440eeb4f38..27900604d1eb056054bafad9a3fb0d58d35bf3aa 100644
+--- a/adapter/outboundgroup/groupbase.go
++++ b/adapter/outboundgroup/groupbase.go
+@@ -34,6 +34,7 @@ type GroupBase struct {
+ 	testTimeout       int
+ 	maxFailedTimes    int
+ 	emptyFallback     C.Proxy
++	usePosition       map[string]int
+ 
+ 	// for GetProxies
+ 	getProxiesMutex  sync.Mutex
+@@ -53,6 +54,7 @@ type GroupBaseOption struct {
+ 	MaxFailedTimes int
+ 	EmptyFallback  C.Proxy
+ 	Providers      []P.ProxyProvider
++	UsePosition    map[string]int
+ }
+ 
+ func NewGroupBase(opt GroupBaseOption) *GroupBase {
+@@ -89,6 +91,7 @@ func NewGroupBase(opt GroupBaseOption) *GroupBase {
+ 		testTimeout:       opt.TestTimeout,
+ 		maxFailedTimes:    opt.MaxFailedTimes,
+ 		emptyFallback:     opt.EmptyFallback,
++		usePosition:       opt.UsePosition,
+ 	}
+ 
+ 	if gb.testTimeout == 0 {
+@@ -137,15 +140,15 @@ func (gb *GroupBase) GetProxies(touch bool) []C.Proxy {
+ 		return gb.providerProxies
+ 	}
+ 
+-	var proxies []C.Proxy
++	parts := make([][]C.Proxy, len(gb.providers))
+ 	if len(gb.filterRegs) == 0 {
+-		for _, pd := range gb.providers {
+-			proxies = append(proxies, pd.Proxies()...)
++		for i, pd := range gb.providers {
++			parts[i] = pd.Proxies()
+ 		}
+ 	} else {
+-		for _, pd := range gb.providers {
++		for i, pd := range gb.providers {
+ 			if pd.VehicleType() == P.Compatible { // compatible provider unneeded filter
+-				proxies = append(proxies, pd.Proxies()...)
++				parts[i] = pd.Proxies()
+ 				continue
+ 			}
+ 
+@@ -162,9 +165,10 @@ func (gb *GroupBase) GetProxies(touch bool) []C.Proxy {
+ 					}
+ 				}
+ 			}
+-			proxies = append(proxies, newProxies...)
++			parts[i] = newProxies
+ 		}
+ 	}
++	proxies := gb.joinProviderProxies(parts)
+ 
+ 	// Multiple filers means that proxies are sorted in the order in which the filers appear.
+ 	// Although the filter has been performed once in the previous process,
+diff --git a/adapter/outboundgroup/loadbalance.go b/adapter/outboundgroup/loadbalance.go
+index e6439042fb2e5b9526145c3379421dee4694a9c8..aa2d41e4699e085ddfa217d999cf319727c971b9 100644
+--- a/adapter/outboundgroup/loadbalance.go
++++ b/adapter/outboundgroup/loadbalance.go
+@@ -319,6 +319,7 @@ func NewLoadBalance(option GroupCommonOption, loadBalanceOption LoadBalanceOptio
+ 			MaxFailedTimes: option.MaxFailedTimes,
+ 			EmptyFallback:  emptyFallback,
+ 			Providers:      providers,
++			UsePosition:    option.UsePosition,
+ 		}),
+ 		strategyFn:     strategyFn,
+ 		disableUDP:     option.DisableUDP,
+diff --git a/adapter/outboundgroup/parser.go b/adapter/outboundgroup/parser.go
+index e97f8da04b9f321e0a637837beabc1b3749d3b63..139ad5170aecb64cfaa33b43b0cd54111f871356 100644
+--- a/adapter/outboundgroup/parser.go
++++ b/adapter/outboundgroup/parser.go
+@@ -43,6 +43,8 @@ type GroupCommonOption struct {
+ 	IncludeAllProviders bool     `group:"include-all-providers,omitempty"`
+ 	Hidden              bool     `group:"hidden,omitempty"`
+ 	Icon                string   `group:"icon,omitempty"`
++
++	UsePosition map[string]int `group:"use-position,omitempty"`
+ }
+ 
+ func ParseProxyGroup(config map[string]any, proxyMap map[string]C.Proxy, providersMap map[string]P.ProxyProvider, AllProxies []string, AllProviders []string) (ProxyGroup, error) {
+diff --git a/adapter/outboundgroup/patch.go b/adapter/outboundgroup/patch.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..98d185b8da2f1f911aa7977253a5ac8038074022
+--- /dev/null
++++ b/adapter/outboundgroup/patch.go
+@@ -0,0 +1,50 @@
++package outboundgroup
++
++import (
++	C "github.com/metacubex/mihomo/constant"
++	P "github.com/metacubex/mihomo/constant/provider"
++)
++
++// joinProviderProxies puts a `use` provider named in use-position after that
++// many of the group's own proxies, which otherwise all come first.
++func (gb *GroupBase) joinProviderProxies(parts [][]C.Proxy) []C.Proxy {
++	own := -1
++	if len(gb.usePosition) != 0 {
++		for i, pd := range gb.providers {
++			if pd.VehicleType() == P.Compatible {
++				own = i
++				break
++			}
++		}
++	}
++
++	var proxies []C.Proxy
++	if own < 0 {
++		for _, part := range parts {
++			proxies = append(proxies, part...)
++		}
++		return proxies
++	}
++
++	named := parts[own]
++	before := make([][]C.Proxy, len(named)+1)
++	for i, pd := range gb.providers {
++		if i == own {
++			continue
++		}
++		position, ok := gb.usePosition[pd.Name()]
++		if !ok || position > len(named) {
++			position = len(named)
++		} else if position < 0 {
++			position = 0
++		}
++		before[position] = append(before[position], parts[i]...)
++	}
++	for i, part := range before {
++		proxies = append(proxies, part...)
++		if i < len(named) {
++			proxies = append(proxies, named[i])
++		}
++	}
++	return proxies
++}
+diff --git a/adapter/outboundgroup/patch_test.go b/adapter/outboundgroup/patch_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..ad38e4a5d28bd8ae6fb23ddc362adaeb9b220a45
+--- /dev/null
++++ b/adapter/outboundgroup/patch_test.go
+@@ -0,0 +1,102 @@
++package outboundgroup
++
++import (
++	"testing"
++
++	"github.com/metacubex/mihomo/adapter"
++	"github.com/metacubex/mihomo/adapter/outbound"
++	C "github.com/metacubex/mihomo/constant"
++	P "github.com/metacubex/mihomo/constant/provider"
++
++	"github.com/stretchr/testify/require"
++)
++
++type fakeProvider struct {
++	P.ProxyProvider
++	name    string
++	proxies []C.Proxy
++}
++
++func (f *fakeProvider) Name() string               { return f.name }
++func (f *fakeProvider) VehicleType() P.VehicleType { return P.File }
++func (f *fakeProvider) Proxies() []C.Proxy         { return f.proxies }
++func (f *fakeProvider) Version() uint32            { return 1 }
++func (f *fakeProvider) Touch()                     {}
++func (f *fakeProvider) HealthCheckURL() string     { return "" }
++
++func namedProxy(name string) C.Proxy {
++	return adapter.NewProxy(outbound.NewDirectWithOption(outbound.DirectOption{Name: name}))
++}
++
++func parseMembers(t *testing.T, group map[string]any) []string {
++	t.Helper()
++	proxyMap := map[string]C.Proxy{}
++	for _, name := range []string{"COMPATIBLE", "A", "B"} {
++		proxyMap[name] = namedProxy(name)
++	}
++	providersMap := map[string]P.ProxyProvider{
++		"p1": &fakeProvider{name: "p1", proxies: []C.Proxy{namedProxy("p1-hk"), namedProxy("p1-us")}},
++		"p2": &fakeProvider{name: "p2", proxies: []C.Proxy{namedProxy("p2-hk")}},
++	}
++	config := map[string]any{
++		"name":    "Group",
++		"type":    "select",
++		"proxies": []any{"A", "B"},
++		"use":     []any{"p1", "p2"},
++	}
++	for key, value := range group {
++		config[key] = value
++	}
++	parsed, err := ParseProxyGroup(config, proxyMap, providersMap, nil, nil)
++	require.NoError(t, err)
++	var names []string
++	for _, proxy := range parsed.Proxies() {
++		names = append(names, proxy.Name())
++	}
++	return names
++}
++
++func TestUsePositionListsProvidersBetweenProxies(t *testing.T) {
++	for _, tc := range []struct {
++		name  string
++		group map[string]any
++		want  []string
++	}{
++		{
++			name: "upstream order without use-position",
++			want: []string{"A", "B", "p1-hk", "p1-us", "p2-hk"},
++		},
++		{
++			name:  "each provider after as many proxies as it names",
++			group: map[string]any{"use-position": map[string]any{"p1": 1, "p2": 0}},
++			want:  []string{"p2-hk", "A", "p1-hk", "p1-us", "B"},
++		},
++		{
++			name:  "providers sharing a position keep the order of use",
++			group: map[string]any{"use-position": map[string]any{"p2": 1, "p1": 1}},
++			want:  []string{"A", "p1-hk", "p1-us", "p2-hk", "B"},
++		},
++		{
++			name:  "a missing, stale or out of range position goes last",
++			group: map[string]any{"use-position": map[string]any{"p1": 9, "p3": 0}},
++			want:  []string{"A", "B", "p1-hk", "p1-us", "p2-hk"},
++		},
++		{
++			name:  "a negative position goes first",
++			group: map[string]any{"use-position": map[string]any{"p2": -1}},
++			want:  []string{"p2-hk", "A", "B", "p1-hk", "p1-us"},
++		},
++		{
++			name: "a filter still reaches only the providers",
++			group: map[string]any{
++				"use-position": map[string]any{"p1": 1},
++				"filter":       "hk",
++			},
++			want: []string{"A", "p1-hk", "B", "p2-hk"},
++		},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			require.Equal(t, tc.want, parseMembers(t, tc.group))
++		})
++	}
++}
+diff --git a/adapter/outboundgroup/selector.go b/adapter/outboundgroup/selector.go
+index 2fea75032ab6b2ea0959d7515eb3501105b0a7fb..0e0e318a3516686e5f6689ba5c2ec12bcfd688b5 100644
+--- a/adapter/outboundgroup/selector.go
++++ b/adapter/outboundgroup/selector.go
+@@ -133,6 +133,7 @@ func NewSelector(option GroupCommonOption, selectorOption SelectorOption, emptyF
+ 			MaxFailedTimes: option.MaxFailedTimes,
+ 			EmptyFallback:  emptyFallback,
+ 			Providers:      providers,
++			UsePosition:    option.UsePosition,
+ 		}),
+ 		selected:   selectorOption.DefaultSelected,
+ 		disableUDP: option.DisableUDP,
+diff --git a/adapter/outboundgroup/urltest.go b/adapter/outboundgroup/urltest.go
+index 64e4def0dea6076b1f364a596bc1ca41e41fc404..35bc687ef195e3e72a42ce8d4c3bbbea916347b4 100644
+--- a/adapter/outboundgroup/urltest.go
++++ b/adapter/outboundgroup/urltest.go
+@@ -209,6 +209,7 @@ func NewURLTest(option GroupCommonOption, urlTestOption URLTestOption, emptyFall
+ 			MaxFailedTimes: option.MaxFailedTimes,
+ 			EmptyFallback:  emptyFallback,
+ 			Providers:      providers,
++			UsePosition:    option.UsePosition,
+ 		}),
+ 		fastSingle:     singledo.NewSingle[C.Proxy](time.Second * 10),
+ 		disableUDP:     option.DisableUDP,
+diff --git a/adapter/patch.go b/adapter/patch.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..f946f31a11198a504bb949008ad8195a6d12247c
+--- /dev/null
++++ b/adapter/patch.go
+@@ -0,0 +1,7 @@
++package adapter
++
++// timedOut follows hub/route's getProxyDelay, which answers 504 rather than 503
++// once the test's context is done.
++type UrlTestCheck func(url string, name string, delay uint16, timedOut bool)
++
++var UrlTestHook UrlTestCheck
+diff --git a/adapter/provider/patch.go b/adapter/provider/patch.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..1f3306a62b3626f372a4b821994a2cd24c137630
+--- /dev/null
++++ b/adapter/provider/patch.go
+@@ -0,0 +1,5 @@
++package provider
++
++func (pp *proxySetProvider) GetSubscriptionInfo() *SubscriptionInfo {
++	return pp.subscriptionInfo
++}
+diff --git a/component/dialer/dialer.go b/component/dialer/dialer.go
+index 6a05c8bc1e5f6af0a185698a6233be1a9d310e52..24ab67f13f88e00e7e7799e31d53186ee4db70fe 100644
+--- a/component/dialer/dialer.go
++++ b/component/dialer/dialer.go
+@@ -385,6 +385,7 @@ func parseAddr(ctx context.Context, network, address string, preferResolver reso
+ 
+ 	if preferResolver == nil {
+ 		preferResolver = resolver.ProxyServerHostResolver
++		ctx = resolver.WithInitiator(ctx, resolver.InitiatorProxy)
+ 	}
+ 
+ 	var ips []netip.Addr
+diff --git a/component/http/http.go b/component/http/http.go
+index af6ffeaa45ca52e69e7237493e6a1438e87964fc..a0f882377db7f67c6c966be6dcccafd5edaba89c 100644
+--- a/component/http/http.go
++++ b/component/http/http.go
+@@ -66,6 +66,7 @@ func HttpRequest(ctx context.Context, url, method string, header map[string][]st
+ 	if err != nil {
+ 		return nil, err
+ 	}
++	applyTLSConfigHook(opt.caOption, tlsConfig)
+ 
+ 	transport := &http.Transport{
+ 		// from http.DefaultTransport
+diff --git a/component/http/patch.go b/component/http/patch.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..1e19364fe1eba90f7b092a54873f6bc594298e2b
+--- /dev/null
++++ b/component/http/patch.go
+@@ -0,0 +1,15 @@
++package http
++
++import (
++	"github.com/metacubex/mihomo/component/ca"
++
++	"github.com/metacubex/tls"
++)
++
++var TLSConfigHook func(tlsConfig *tls.Config)
++
++func applyTLSConfigHook(caOption ca.Option, tlsConfig *tls.Config) {
++	if TLSConfigHook != nil && caOption == (ca.Option{}) {
++		TLSConfigHook(tlsConfig)
++	}
++}
+diff --git a/component/loopback/detector.go b/component/loopback/detector.go
+index 59d16ca8a49bfd2620207ec1980a011b89ab42fe..02f71373b4ea5fa895841f9119813be571fc07a3 100644
+--- a/component/loopback/detector.go
++++ b/component/loopback/detector.go
+@@ -17,7 +17,7 @@ import (
+ var disableLoopBackDetector, _ = strconv.ParseBool(os.Getenv("DISABLE_LOOPBACK_DETECTOR"))
+ 
+ func init() {
+-	if features.CMFA {
++	if features.Android {
+ 		disableLoopBackDetector = true
+ 	}
+ }
+diff --git a/component/process/process.go b/component/process/process.go
+index 464f5a79bc445a904ee5711fc159f76622607e53..8b758b91c8e397de65e79c74aaf834b9cb3a25cb 100644
+--- a/component/process/process.go
++++ b/component/process/process.go
+@@ -22,12 +22,10 @@ func FindProcessName(network string, srcIP netip.Addr, srcPort int) (uint32, str
+ 	return findProcessName(network, srcIP, srcPort)
+ }
+ 
+-// PackageNameResolver
+-// never change type traits because it's used in CMFA
+ type PackageNameResolver func(metadata *C.Metadata) (string, error)
+ 
+ // DefaultPackageNameResolver
+-// never change type traits because it's used in CMFA
++// never change type traits because it's used in CFMA
+ var DefaultPackageNameResolver PackageNameResolver
+ 
+ func FindPackageName(metadata *C.Metadata) (string, error) {
+diff --git a/component/proxydialer/byname.go b/component/proxydialer/byname.go
+index 74fe644c134807ebfd861679e8347f06696bec16..6c2575bebac8ae09e10d1bcbb44b87376330d6a2 100644
+--- a/component/proxydialer/byname.go
++++ b/component/proxydialer/byname.go
+@@ -20,6 +20,10 @@ type byNameProxyDialer struct {
+ }
+ 
+ func (d byNameProxyDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
++	ctx, err := enterDial(ctx, d.proxyName, address)
++	if err != nil {
++		return nil, err
++	}
+ 	tunnel, _ := d.tunnel.(Tunnel)
+ 	if tunnel == nil {
+ 		return nil, fmt.Errorf("tunnel is invalid, must be proxydialer.Tunnel, but got: %T", d.tunnel)
+@@ -33,6 +37,10 @@ func (d byNameProxyDialer) DialContext(ctx context.Context, network, address str
+ }
+ 
+ func (d byNameProxyDialer) ListenPacket(ctx context.Context, network, address string, rAddrPort netip.AddrPort) (net.PacketConn, error) {
++	ctx, err := enterDial(ctx, d.proxyName, rAddrPort.String())
++	if err != nil {
++		return nil, err
++	}
+ 	tunnel, _ := d.tunnel.(Tunnel)
+ 	if tunnel == nil {
+ 		return nil, fmt.Errorf("tunnel is invalid, must be proxydialer.Tunnel, but got: %T", d.tunnel)
+diff --git a/component/proxydialer/patch.go b/component/proxydialer/patch.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..2bc301f70072f243e8c59180056583c05be863c2
+--- /dev/null
++++ b/component/proxydialer/patch.go
+@@ -0,0 +1,37 @@
++package proxydialer
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"slices"
++)
++
++// A dialer-proxy can lead back to its own proxy through a group, and the dial
++// then recurses until the stack overflows and takes the process with it. A
++// dialer asked again for the same address within one dial is such a loop, so
++// that dial fails instead.
++var ErrDialerLoop = errors.New("dialer-proxy loop")
++
++type LoopNotify func(proxyName string)
++
++var DefaultLoopNotify LoopNotify
++
++type dialStep struct {
++	proxyName string
++	address   string
++}
++
++type dialStepsKey struct{}
++
++func enterDial(ctx context.Context, proxyName, address string) (context.Context, error) {
++	steps, _ := ctx.Value(dialStepsKey{}).([]dialStep)
++	step := dialStep{proxyName: proxyName, address: address}
++	if slices.Contains(steps, step) {
++		if notify := DefaultLoopNotify; notify != nil {
++			notify(proxyName)
++		}
++		return ctx, fmt.Errorf("%w: dialing %s through %s comes back to it", ErrDialerLoop, address, proxyName)
++	}
++	return context.WithValue(ctx, dialStepsKey{}, append(slices.Clip(steps), step)), nil
++}
+diff --git a/component/proxydialer/patch_test.go b/component/proxydialer/patch_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..b483378dfb795a5da3d78dd599a0c297718f024b
+--- /dev/null
++++ b/component/proxydialer/patch_test.go
+@@ -0,0 +1,75 @@
++package proxydialer
++
++import (
++	"context"
++	"errors"
++	"net/netip"
++	"slices"
++	"testing"
++
++	C "github.com/metacubex/mihomo/constant"
++)
++
++type loopTunnel struct {
++	C.Tunnel
++	proxies map[string]C.Proxy
++}
++
++func (t *loopTunnel) Proxies() map[string]C.Proxy {
++	return t.proxies
++}
++
++// Dials its server through dialer, as a proxy whose dialer-proxy is a group
++// that picked the proxy itself.
++type loopProxy struct {
++	C.Proxy
++	dialer C.Dialer
++}
++
++func (p loopProxy) DialContext(ctx context.Context, _ *C.Metadata) (C.Conn, error) {
++	_, err := p.dialer.DialContext(ctx, "tcp", "server.example:443")
++	return nil, err
++}
++
++func (p loopProxy) ListenPacketContext(ctx context.Context, _ *C.Metadata) (C.PacketConn, error) {
++	_, err := p.dialer.ListenPacket(ctx, "udp", "", netip.MustParseAddrPort("192.0.2.1:443"))
++	return nil, err
++}
++
++func TestByNameDialerFailsADialThatComesBackToIt(t *testing.T) {
++	tunnel := &loopTunnel{proxies: map[string]C.Proxy{}}
++	dialer := NewByName("Front", tunnel)
++	tunnel.proxies["Front"] = loopProxy{dialer: dialer}
++	var notified []string
++	DefaultLoopNotify = func(proxyName string) {
++		notified = append(notified, proxyName)
++	}
++	t.Cleanup(func() { DefaultLoopNotify = nil })
++
++	if _, err := dialer.DialContext(context.Background(), "tcp", "server.example:443"); !errors.Is(err, ErrDialerLoop) {
++		t.Errorf("DialContext: got %v, want %v", err, ErrDialerLoop)
++	}
++	if _, err := dialer.ListenPacket(context.Background(), "udp", "", netip.MustParseAddrPort("192.0.2.1:443")); !errors.Is(err, ErrDialerLoop) {
++		t.Errorf("ListenPacket: got %v, want %v", err, ErrDialerLoop)
++	}
++	if !slices.Equal(notified, []string{"Front", "Front"}) {
++		t.Errorf("notified %q, want Front twice", notified)
++	}
++}
++
++func TestEnterDialAllowsTheSameDialerForAnotherAddress(t *testing.T) {
++	ctx, err := enterDial(context.Background(), "Front", "a.example:443")
++	if err != nil {
++		t.Fatal(err)
++	}
++	ctx, err = enterDial(ctx, "Front", "b.example:443")
++	if err != nil {
++		t.Fatalf("another address: %v", err)
++	}
++	if _, err := enterDial(ctx, "Back", "a.example:443"); err != nil {
++		t.Fatalf("another dialer: %v", err)
++	}
++	if _, err := enterDial(ctx, "Front", "a.example:443"); !errors.Is(err, ErrDialerLoop) {
++		t.Fatalf("got %v, want %v", err, ErrDialerLoop)
++	}
++}
+diff --git a/component/resolver/patch.go b/component/resolver/patch.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..a0a94b4064d78b9d40e477acc149ba8265ba90fd
+--- /dev/null
++++ b/component/resolver/patch.go
+@@ -0,0 +1,22 @@
++package resolver
++
++import "context"
++
++const (
++	InitiatorApp    = "app"
++	InitiatorRule   = "rule"
++	InitiatorDirect = "direct"
++	InitiatorProxy  = "proxy"
++	InitiatorOther  = "other"
++)
++
++type initiatorKey struct{}
++
++func WithInitiator(ctx context.Context, initiator string) context.Context {
++	return context.WithValue(ctx, initiatorKey{}, initiator)
++}
++
++func InitiatorFrom(ctx context.Context) string {
++	initiator, _ := ctx.Value(initiatorKey{}).(string)
++	return initiator
++}
+diff --git a/component/resource/fetcher.go b/component/resource/fetcher.go
+index 464af2e702a2fbd174d96f4316cc7f9e598a2236..6d671c815861e83d8e404522acf6a7953d019cd7 100644
+--- a/component/resource/fetcher.go
++++ b/component/resource/fetcher.go
+@@ -236,7 +236,7 @@ func (f *Fetcher[V]) updateCallback(path string) {
+ func (f *Fetcher[V]) updateWithLog() {
+ 	_, same, err := f.Update()
+ 	if err != nil {
+-		log.Errorln("[Provider] %s pull error: %s", f.Name(), err.Error())
++		log.Warnln("[Provider] %s pull error: %s", f.Name(), err.Error())
+ 		return
+ 	}
+ 
+diff --git a/component/updater/patch.go b/component/updater/patch.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..02096ab45f44f09f092ebc8414bee48c3e5bc756
+--- /dev/null
++++ b/component/updater/patch.go
+@@ -0,0 +1,53 @@
++package updater
++
++import (
++	"context"
++	"sync"
++
++	"github.com/metacubex/mihomo/log"
++)
++
++var (
++	GeoUpdateHook func(geoType string, updating bool, skipped bool, updateErr error)
++)
++
++func sendGeoUpdateStatus(geoType string, updating bool, skipped bool, updateErr error) {
++	if GeoUpdateHook != nil {
++		GeoUpdateHook(geoType, updating, skipped, updateErr)
++	}
++}
++
++var (
++	geoUpdateMutex  sync.Mutex
++	geoUpdateCancel context.CancelFunc
++)
++
++func StopGeoUpdater() {
++	geoUpdateMutex.Lock()
++	defer geoUpdateMutex.Unlock()
++	stopGeoUpdater()
++}
++
++func stopGeoUpdater() {
++	if geoUpdateCancel == nil {
++		return
++	}
++	geoUpdateCancel()
++	geoUpdateCancel = nil
++}
++
++func RegisterGeoUpdaterWithCancel() {
++	geoUpdateMutex.Lock()
++	defer geoUpdateMutex.Unlock()
++
++	stopGeoUpdater()
++
++	if updateInterval <= 0 {
++		log.Infoln("[GEO] Invalid update interval: %d", updateInterval)
++		return
++	}
++
++	ctx, cancel := context.WithCancel(context.Background())
++	geoUpdateCancel = cancel
++	registerGeoUpdater(ctx)
++}
+diff --git a/component/updater/update_geo.go b/component/updater/update_geo.go
+index 63e6d1501266ee90be4698c9c2d096320186af61..229833859f0806c427fb877dc0ea9542b7a92dfb 100644
+--- a/component/updater/update_geo.go
++++ b/component/updater/update_geo.go
+@@ -45,6 +45,10 @@ func SetGeoUpdateInterval(newGeoUpdateInterval int) {
+ }
+ 
+ func UpdateMMDB() (err error) {
++	sendGeoUpdateStatus("MMDB", true, false, nil)
++	var skipped bool
++	defer func() { sendGeoUpdateStatus("MMDB", false, skipped, err) }()
++
+ 	vehicle := resource.NewHTTPVehicle(geodata.MmdbUrl(), C.Path.MMDB(), "", nil, defaultHttpTimeout, 0)
+ 	var oldHash utils.HashType
+ 	if buf, err := os.ReadFile(vehicle.Path()); err == nil {
+@@ -55,6 +59,8 @@ func UpdateMMDB() (err error) {
+ 		return fmt.Errorf("can't download MMDB database file: %w", err)
+ 	}
+ 	if oldHash.Equal(hash) { // same hash, ignored
++		skipped = true
++		_ = os.Chtimes(vehicle.Path(), time.Now(), time.Now())
+ 		return nil
+ 	}
+ 	if len(data) == 0 {
+@@ -76,6 +82,10 @@ func UpdateMMDB() (err error) {
+ }
+ 
+ func UpdateASN() (err error) {
++	sendGeoUpdateStatus("ASN", true, false, nil)
++	var skipped bool
++	defer func() { sendGeoUpdateStatus("ASN", false, skipped, err) }()
++
+ 	vehicle := resource.NewHTTPVehicle(geodata.ASNUrl(), C.Path.ASN(), "", nil, defaultHttpTimeout, 0)
+ 	var oldHash utils.HashType
+ 	if buf, err := os.ReadFile(vehicle.Path()); err == nil {
+@@ -86,6 +96,8 @@ func UpdateASN() (err error) {
+ 		return fmt.Errorf("can't download ASN database file: %w", err)
+ 	}
+ 	if oldHash.Equal(hash) { // same hash, ignored
++		skipped = true
++		_ = os.Chtimes(vehicle.Path(), time.Now(), time.Now())
+ 		return nil
+ 	}
+ 	if len(data) == 0 {
+@@ -107,6 +119,10 @@ func UpdateASN() (err error) {
+ }
+ 
+ func UpdateGeoIp() (err error) {
++	sendGeoUpdateStatus("GEOIP", true, false, nil)
++	var skipped bool
++	defer func() { sendGeoUpdateStatus("GEOIP", false, skipped, err) }()
++
+ 	geoLoader, err := geodata.GetGeoDataLoader("standard")
+ 
+ 	vehicle := resource.NewHTTPVehicle(geodata.GeoIpUrl(), C.Path.GeoIP(), "", nil, defaultHttpTimeout, 0)
+@@ -119,6 +135,8 @@ func UpdateGeoIp() (err error) {
+ 		return fmt.Errorf("can't download GeoIP database file: %w", err)
+ 	}
+ 	if oldHash.Equal(hash) { // same hash, ignored
++		skipped = true
++		_ = os.Chtimes(vehicle.Path(), time.Now(), time.Now())
+ 		return nil
+ 	}
+ 	if len(data) == 0 {
+@@ -137,6 +155,10 @@ func UpdateGeoIp() (err error) {
+ }
+ 
+ func UpdateGeoSite() (err error) {
++	sendGeoUpdateStatus("GEOSITE", true, false, nil)
++	var skipped bool
++	defer func() { sendGeoUpdateStatus("GEOSITE", false, skipped, err) }()
++
+ 	geoLoader, err := geodata.GetGeoDataLoader("standard")
+ 
+ 	vehicle := resource.NewHTTPVehicle(geodata.GeoSiteUrl(), C.Path.GeoSite(), "", nil, defaultHttpTimeout, 0)
+@@ -149,6 +171,8 @@ func UpdateGeoSite() (err error) {
+ 		return fmt.Errorf("can't download GeoSite database file: %w", err)
+ 	}
+ 	if oldHash.Equal(hash) { // same hash, ignored
++		skipped = true
++		_ = os.Chtimes(vehicle.Path(), time.Now(), time.Now())
+ 		return nil
+ 	}
+ 	if len(data) == 0 {
+@@ -205,7 +229,7 @@ func UpdateGeoDatabases() error {
+ 	log.Infoln("[GEO] Updating GEO database")
+ 
+ 	if err := updateGeoDatabases(); err != nil {
+-		log.Errorln("[GEO] update GEO database error: %s", err.Error())
++		log.Infoln("[GEO] update GEO database error: %s", err.Error())
+ 		return err
+ 	}
+ 
+@@ -232,8 +256,12 @@ func getUpdateTime() (time time.Time, err error) {
+ }
+ 
+ func RegisterGeoUpdater() {
++	registerGeoUpdater(context.Background())
++}
++
++func registerGeoUpdater(ctx context.Context) {
+ 	if updateInterval <= 0 {
+-		log.Errorln("[GEO] Invalid update interval: %d", updateInterval)
++		log.Infoln("[GEO] Invalid update interval: %d", updateInterval)
+ 		return
+ 	}
+ 
+@@ -243,7 +271,7 @@ func RegisterGeoUpdater() {
+ 
+ 		lastUpdate, err := getUpdateTime()
+ 		if err != nil {
+-			log.Errorln("[GEO] Get GEO database update time error: %s", err.Error())
++			log.Infoln("[GEO] Get GEO database update time error: %s", err.Error())
+ 			return
+ 		}
+ 
+@@ -251,15 +279,21 @@ func RegisterGeoUpdater() {
+ 		if lastUpdate.Add(time.Duration(updateInterval) * time.Hour).Before(time.Now()) {
+ 			log.Infoln("[GEO] Database has not been updated for %v, update now", time.Duration(updateInterval)*time.Hour)
+ 			if err := UpdateGeoDatabases(); err != nil {
+-				log.Errorln("[GEO] Failed to update GEO database: %s", err.Error())
++				log.Infoln("[GEO] Failed to update GEO database: %s", err.Error())
+ 				return
+ 			}
+ 		}
+ 
+-		for range ticker.C {
+-			log.Infoln("[GEO] updating database every %d hours", updateInterval)
+-			if err := UpdateGeoDatabases(); err != nil {
+-				log.Errorln("[GEO] Failed to update GEO database: %s", err.Error())
++		for {
++			select {
++			case <-ctx.Done():
++				log.Infoln("[GEO] Geo updater stopped")
++				return
++			case <-ticker.C:
++				log.Infoln("[GEO] updating database every %d hours", updateInterval)
++				if err := UpdateGeoDatabases(); err != nil {
++					log.Infoln("[GEO] Failed to update GEO database: %s", err.Error())
++				}
+ 			}
+ 		}
+ 	}()
+diff --git a/config/config.go b/config/config.go
+index cc8c1016703c21f502cfb4151f5f0131bbb3be81..bd4ef131734768a5e39a802297443e6607a50ea0 100644
+--- a/config/config.go
++++ b/config/config.go
+@@ -995,6 +995,7 @@ func parseProxies(cfg *RawConfig) (proxies map[string]C.Proxy, providersMap map[
+ 		return nil, nil, err
+ 	}
+ 
++	SetProxyNameList(proxyList)
+ 	return proxies, providersMap, nil
+ }
+ 
+diff --git a/config/patch.go b/config/patch.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..01c415ab732bdd2b92accec1e69411a6fcf7d957
+--- /dev/null
++++ b/config/patch.go
+@@ -0,0 +1,20 @@
++package config
++
++import "sync"
++
++var (
++	proxyNameList   []string
++	proxyNameListMu sync.RWMutex
++)
++
++func GetProxyNameList() []string {
++	proxyNameListMu.RLock()
++	defer proxyNameListMu.RUnlock()
++	return proxyNameList
++}
++
++func SetProxyNameList(list []string) {
++	proxyNameListMu.Lock()
++	defer proxyNameListMu.Unlock()
++	proxyNameList = list
++}
+diff --git a/constant/adapters.go b/constant/adapters.go
+index 9b0b70ce4948bded42b902b471039b9c643ff522..ffb1f2a7f72b6cd5876e948e61169af23fc7ea58 100644
+--- a/constant/adapters.go
++++ b/constant/adapters.go
+@@ -62,9 +62,10 @@ const (
+ 	DefaultUDPTimeout = dialer.DefaultUDPTimeout
+ 	DefaultDropTime   = 12 * DefaultTCPTimeout
+ 	DefaultTLSTimeout = DefaultTCPTimeout
+-	DefaultTestURL    = "https://www.gstatic.com/generate_204"
+ )
+ 
++var DefaultTestURL = "https://www.gstatic.com/generate_204"
++
+ var ErrNotSupport = errors.New("no support")
+ 
+ type Connection interface {
+diff --git a/constant/features/android.go b/constant/features/android.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..c1174f0804f63870aac82efef8432038c2e63673
+--- /dev/null
++++ b/constant/features/android.go
+@@ -0,0 +1,5 @@
++//go:build android
++
++package features
++
++const Android = true
+diff --git a/constant/features/android_stub.go b/constant/features/android_stub.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..282493e7c759f07766d541e1bd00cb9414575137
+--- /dev/null
++++ b/constant/features/android_stub.go
+@@ -0,0 +1,5 @@
++//go:build !android
++
++package features
++
++const Android = false
+diff --git a/constant/features/cmfa.go b/constant/features/cmfa.go
+deleted file mode 100644
+index 9a81d82ffe5c9e016a8aeba434e30ed6c2606250..0000000000000000000000000000000000000000
+--- a/constant/features/cmfa.go
++++ /dev/null
+@@ -1,5 +0,0 @@
+-//go:build cmfa
+-
+-package features
+-
+-const CMFA = true
+diff --git a/constant/features/cmfa_stub.go b/constant/features/cmfa_stub.go
+deleted file mode 100644
+index f7ef082741045fbabbaf5cac9cea78a94a51079e..0000000000000000000000000000000000000000
+--- a/constant/features/cmfa_stub.go
++++ /dev/null
+@@ -1,5 +0,0 @@
+-//go:build !cmfa
+-
+-package features
+-
+-const CMFA = false
+diff --git a/constant/features/tags.go b/constant/features/tags.go
+index bf27c2488488f010e5a81926a80811f821f0d58b..4c90ac28404f33de927eaee95df6b0b6430c1006 100644
+--- a/constant/features/tags.go
++++ b/constant/features/tags.go
+@@ -1,9 +1,6 @@
+ package features
+ 
+ func Tags() (tags []string) {
+-	if CMFA {
+-		tags = append(tags, "cmfa")
+-	}
+ 	if WithLowMemory {
+ 		tags = append(tags, "with_low_memory")
+ 	}
+diff --git a/constant/path.go b/constant/path.go
+index f2463a4a235e7c10f24aaeb6ebadb1430b14d245..590928d0b6cfc523da73c582dd6015f121b6781a 100644
+--- a/constant/path.go
++++ b/constant/path.go
+@@ -86,7 +86,7 @@ func (p *path) Resolve(path string) string {
+ 
+ // IsSafePath return true if path is a subpath of homedir (or in the SAFE_PATHS environment variable)
+ func (p *path) IsSafePath(path string) bool {
+-	if p.allowUnsafePath || features.CMFA {
++	if p.allowUnsafePath || features.Android {
+ 		return true
+ 	}
+ 	path = p.Resolve(path)
+@@ -135,7 +135,8 @@ func (p *path) MMDB() string {
+ 		} else {
+ 			if strings.EqualFold(fi.Name(), "Country.mmdb") ||
+ 				strings.EqualFold(fi.Name(), "geoip.db") ||
+-				strings.EqualFold(fi.Name(), "geoip.metadb") {
++				strings.EqualFold(fi.Name(), "geoip.metadb") ||
++				strings.EqualFold(fi.Name(), "GEOIP.metadb") {
+ 				GeoipName = fi.Name()
+ 				return P.Join(p.homeDir, fi.Name())
+ 			}
+@@ -200,7 +201,8 @@ func (p *path) GeoIP() string {
+ 			// 目录则直接跳过
+ 			continue
+ 		} else {
+-			if strings.EqualFold(fi.Name(), "GeoIP.dat") {
++			if strings.EqualFold(fi.Name(), "GeoIP.dat") ||
++				strings.EqualFold(fi.Name(), "GEOIP.dat") {
+ 				GeoipName = fi.Name()
+ 				return P.Join(p.homeDir, fi.Name())
+ 			}
+@@ -219,7 +221,8 @@ func (p *path) GeoSite() string {
+ 			// 目录则直接跳过
+ 			continue
+ 		} else {
+-			if strings.EqualFold(fi.Name(), "GeoSite.dat") {
++			if strings.EqualFold(fi.Name(), "GeoSite.dat") ||
++				strings.EqualFold(fi.Name(), "GEOSITE.dat") {
+ 				GeositeName = fi.Name()
+ 				return P.Join(p.homeDir, fi.Name())
+ 			}
+diff --git a/dns/patch.go b/dns/patch.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..5ae0adf8c17ee1d946bbe08451efc8dc0c0db907
+--- /dev/null
++++ b/dns/patch.go
+@@ -0,0 +1,125 @@
++package dns
++
++import (
++	"context"
++	"fmt"
++	"sync"
++	"time"
++
++	"github.com/metacubex/mihomo/common/lru"
++	"github.com/metacubex/mihomo/component/resolver"
++	icontext "github.com/metacubex/mihomo/context"
++
++	D "github.com/miekg/dns"
++)
++
++type QueryRecord struct {
++	Question  D.Question
++	Msg       *D.Msg
++	Initiator string
++	Upstream  string
++	Cached    bool
++	Start     time.Time
++	Err       error
++}
++
++type QueryNotify func(record QueryRecord)
++
++var DefaultQueryNotify QueryNotify
++
++// Queries from apps reach the resolver through withResolver, which passes the
++// DNSContext that Service.ServeMsg created as the context itself.
++func queryInitiator(ctx context.Context) string {
++	if initiator := resolver.InitiatorFrom(ctx); initiator != "" {
++		return initiator
++	}
++	if _, ok := ctx.(*icontext.DNSContext); ok {
++		return resolver.InitiatorApp
++	}
++	return resolver.InitiatorOther
++}
++
++// A cached answer keeps no trace of the upstream that gave it, so that is
++// remembered per resolver and question when the exchange finishes.
++var answeredBy = lru.New[string, string](lru.WithSize[string, string](4096))
++
++func answeredByKey(r *Resolver, q D.Question) string {
++	return fmt.Sprintf("%p %s", r, q.String())
++}
++
++func (r *Resolver) traceCacheHit(ctx context.Context, q D.Question, msg *D.Msg) {
++	notify := DefaultQueryNotify
++	if notify == nil {
++		return
++	}
++	upstream, _ := answeredBy.Get(answeredByKey(r, q))
++	notify(QueryRecord{
++		Question:  q,
++		Msg:       msg,
++		Initiator: queryInitiator(ctx),
++		Upstream:  upstream,
++		Cached:    true,
++		Start:     time.Now(),
++	})
++}
++
++type exchangeTrace struct {
++	notify    QueryNotify
++	resolver  *Resolver
++	question  D.Question
++	initiator string
++	start     time.Time
++
++	mu        sync.Mutex
++	upstreams map[*D.Msg]string
++}
++
++type exchangeTraceKey struct{}
++
++func (r *Resolver) traceExchange(ctx context.Context, q D.Question, initiator string) (context.Context, *exchangeTrace) {
++	notify := DefaultQueryNotify
++	if notify == nil {
++		return ctx, nil
++	}
++	trace := &exchangeTrace{
++		notify:    notify,
++		resolver:  r,
++		question:  q,
++		initiator: initiator,
++		start:     time.Now(),
++		upstreams: map[*D.Msg]string{},
++	}
++	return context.WithValue(ctx, exchangeTraceKey{}, trace), trace
++}
++
++func traceAnswer(ctx context.Context, msg *D.Msg, upstream string) {
++	trace, _ := ctx.Value(exchangeTraceKey{}).(*exchangeTrace)
++	if trace == nil || msg == nil {
++		return
++	}
++	trace.mu.Lock()
++	trace.upstreams[msg] = upstream
++	trace.mu.Unlock()
++}
++
++func (t *exchangeTrace) finish(msg *D.Msg, err error) {
++	if t == nil {
++		return
++	}
++	record := QueryRecord{
++		Question:  t.question,
++		Msg:       msg,
++		Initiator: t.initiator,
++		Start:     t.start,
++		Err:       err,
++	}
++	if err == nil {
++		t.mu.Lock()
++		record.Upstream = t.upstreams[msg]
++		t.mu.Unlock()
++		if record.Upstream != "" {
++			answeredBy.Set(answeredByKey(t.resolver, t.question), record.Upstream)
++		}
++	}
++	t.notify(record)
++}
+diff --git a/dns/patch_android.go b/dns/patch_android.go
+index cad718b6930ba627f261b51c2fcf5c43621f8ce9..138e95d57bfda8d853d9b817f3c43e56dd5e08f4 100644
+--- a/dns/patch_android.go
++++ b/dns/patch_android.go
+@@ -1,4 +1,4 @@
+-//go:build android && cmfa
++//go:build android
+ 
+ package dns
+ 
+diff --git a/dns/patch_test.go b/dns/patch_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..d440dc74817064621689c36c57152b778a82f416
+--- /dev/null
++++ b/dns/patch_test.go
+@@ -0,0 +1,234 @@
++package dns
++
++import (
++	"context"
++	"errors"
++	"net"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/metacubex/mihomo/component/resolver"
++	icontext "github.com/metacubex/mihomo/context"
++
++	D "github.com/miekg/dns"
++)
++
++type answeringClient struct {
++	address string
++	ip      string
++}
++
++func (c *answeringClient) ExchangeContext(_ context.Context, m *D.Msg) (*D.Msg, error) {
++	reply := new(D.Msg)
++	reply.SetReply(m)
++	reply.Answer = []D.RR{&D.A{
++		Hdr: D.RR_Header{Name: m.Question[0].Name, Rrtype: D.TypeA, Class: D.ClassINET, Ttl: 60},
++		A:   net.ParseIP(c.ip).To4(),
++	}}
++	return reply, nil
++}
++
++func (c *answeringClient) Address() string { return c.address }
++
++func (c *answeringClient) ResetConnection() {}
++
++func recordQueries(t *testing.T) func() []QueryRecord {
++	t.Helper()
++	var mu sync.Mutex
++	var records []QueryRecord
++	previous := DefaultQueryNotify
++	DefaultQueryNotify = func(record QueryRecord) {
++		mu.Lock()
++		records = append(records, record)
++		mu.Unlock()
++	}
++	t.Cleanup(func() { DefaultQueryNotify = previous })
++	return func() []QueryRecord {
++		mu.Lock()
++		defer mu.Unlock()
++		return append([]QueryRecord(nil), records...)
++	}
++}
++
++type failingClient struct{}
++
++func (failingClient) ExchangeContext(context.Context, *D.Msg) (*D.Msg, error) {
++	return nil, errors.New("upstream unreachable")
++}
++
++func (failingClient) Address() string { return "udp://192.0.2.99:53" }
++
++func (failingClient) ResetConnection() {}
++
++func waitForRecords(t *testing.T, records func() []QueryRecord, want int) []QueryRecord {
++	t.Helper()
++	deadline := time.Now().Add(2 * time.Second)
++	for {
++		got := records()
++		if len(got) >= want || time.Now().After(deadline) {
++			if len(got) != want {
++				t.Fatalf("recorded %d queries, want %d: %+v", len(got), want, got)
++			}
++			return got
++		}
++		time.Sleep(10 * time.Millisecond)
++	}
++}
++
++func newAnsweringResolver(address string) *Resolver {
++	return &Resolver{
++		main:  []dnsClient{&answeringClient{address: address, ip: "198.51.100.7"}},
++		cache: Config{}.newCache(),
++	}
++}
++
++func TestLookupReportsInitiatorUpstreamAndCacheHit(t *testing.T) {
++	records := recordQueries(t)
++	r := newAnsweringResolver("udp://192.0.2.53:53")
++	ctx := resolver.WithInitiator(context.Background(), resolver.InitiatorDirect)
++
++	for i := 0; i < 2; i++ {
++		if _, err := r.LookupIPv4(ctx, "direct.example"); err != nil {
++			t.Fatal(err)
++		}
++	}
++
++	got := records()
++	if len(got) != 2 {
++		t.Fatalf("recorded %d queries, want 2", len(got))
++	}
++	for i, wantCached := range []bool{false, true} {
++		record := got[i]
++		if record.Initiator != resolver.InitiatorDirect || record.Upstream != "udp://192.0.2.53:53" || record.Cached != wantCached {
++			t.Errorf("query %d = initiator %q, upstream %q, cached %v", i, record.Initiator, record.Upstream, record.Cached)
++		}
++		if record.Question.Name != "direct.example." || record.Err != nil || record.Msg == nil {
++			t.Errorf("query %d = %+v", i, record)
++		}
++	}
++}
++
++func TestUnlabeledQueryIsOther(t *testing.T) {
++	records := recordQueries(t)
++	r := newAnsweringResolver("https://dns.example/dns-query")
++	query := new(D.Msg)
++	query.SetQuestion("ech.example.", D.TypeHTTPS)
++
++	if _, err := r.ExchangeContext(context.Background(), query); err != nil {
++		t.Fatal(err)
++	}
++
++	got := records()
++	if len(got) != 1 || got[0].Initiator != resolver.InitiatorOther || got[0].Question.Qtype != D.TypeHTTPS {
++		t.Fatalf("records = %+v", got)
++	}
++}
++
++func TestFailedExchangeDropsThePreviousUpstream(t *testing.T) {
++	records := recordQueries(t)
++	r := newAnsweringResolver("udp://192.0.2.53:53")
++	if _, err := r.LookupIPv4(context.Background(), "flaky.example"); err != nil {
++		t.Fatal(err)
++	}
++	r.main = []dnsClient{failingClient{}}
++	r.cache = Config{}.newCache()
++
++	if _, err := r.LookupIPv4(context.Background(), "flaky.example"); err == nil {
++		t.Fatal("lookup through a failing upstream succeeded")
++	}
++
++	// A failed exchange is retried once in the background, as its own exchange.
++	got := waitForRecords(t, records, 3)
++	for _, record := range got[1:] {
++		if record.Err == nil || record.Upstream != "" {
++			t.Fatalf("records = %+v", got)
++		}
++	}
++}
++
++type blockingClient struct {
++	answeringClient
++	entered chan struct{}
++	release chan struct{}
++}
++
++func (c *blockingClient) ExchangeContext(ctx context.Context, m *D.Msg) (*D.Msg, error) {
++	c.entered <- struct{}{}
++	<-c.release
++	return c.answeringClient.ExchangeContext(ctx, m)
++}
++
++func TestCallersSharingAnExchangeRecordItOnce(t *testing.T) {
++	records := recordQueries(t)
++	client := &blockingClient{
++		answeringClient: answeringClient{address: "udp://192.0.2.53:53", ip: "198.51.100.7"},
++		entered:         make(chan struct{}, 1),
++		release:         make(chan struct{}),
++	}
++	r := &Resolver{main: []dnsClient{client}, cache: Config{}.newCache()}
++
++	var wg sync.WaitGroup
++	lookup := func() {
++		defer wg.Done()
++		if _, err := r.LookupIPv4(context.Background(), "shared.example"); err != nil {
++			t.Error(err)
++		}
++	}
++	wg.Add(2)
++	go lookup()
++	<-client.entered
++	go lookup()
++	time.Sleep(50 * time.Millisecond)
++	close(client.release)
++	wg.Wait()
++
++	exchanges := 0
++	for _, record := range records() {
++		if !record.Cached {
++			exchanges++
++		}
++	}
++	if exchanges != 1 {
++		t.Fatalf("recorded %d exchanges, want 1: %+v", exchanges, records())
++	}
++}
++
++func TestServeMsgReportsTheAppQueryOnce(t *testing.T) {
++	records := recordQueries(t)
++	r := newAnsweringResolver("tls://192.0.2.1:853")
++	service := &Service{handler: withResolver(r, true)}
++	query := new(D.Msg)
++	query.SetQuestion("app.example.", D.TypeA)
++
++	if _, err := service.ServeMsg(context.Background(), query); err != nil {
++		t.Fatal(err)
++	}
++
++	got := records()
++	if len(got) != 1 {
++		t.Fatalf("recorded %d queries, want only the app query", len(got))
++	}
++	record := got[0]
++	if record.Initiator != resolver.InitiatorApp || record.Upstream != "tls://192.0.2.1:853" || record.Cached {
++		t.Fatalf("record = initiator %q, upstream %q, cached %v", record.Initiator, record.Upstream, record.Cached)
++	}
++}
++
++func TestAnswersThatSkipTheResolverAreNotRecorded(t *testing.T) {
++	records := recordQueries(t)
++	service := &Service{handler: func(ctx *icontext.DNSContext, m *D.Msg) (*D.Msg, error) {
++		ctx.SetType(icontext.DNSTypeFakeIP)
++		return handleMsgWithEmptyAnswer(m), nil
++	}}
++	query := new(D.Msg)
++	query.SetQuestion("fake.example.", D.TypeA)
++
++	if _, err := service.ServeMsg(context.Background(), query); err != nil {
++		t.Fatal(err)
++	}
++
++	if got := records(); len(got) != 0 {
++		t.Fatalf("records = %+v", got)
++	}
++}
+diff --git a/dns/resolver.go b/dns/resolver.go
+index b8742f244cb8bde878eaaf18260ee58568eac222..32fbb3d1cffb5e3bda1058f68ad7404a0a17cb3c 100644
+--- a/dns/resolver.go
++++ b/dns/resolver.go
+@@ -169,6 +169,7 @@ func (r *Resolver) ExchangeContext(ctx context.Context, m *D.Msg) (msg *D.Msg, e
+ 	msg, expireTime, hit := getMsgFromCache(r.cache, q)
+ 	if hit {
+ 		log.Debugln("[DNS] cache hit %s --> %s, expire at %s", domain, msgToLogString(msg), expireTime.Format("2006-01-02 15:04:05"))
++		r.traceCacheHit(ctx, q, msg)
+ 		now := time.Now()
+ 		if expireTime.Before(now) {
+ 			setMsgTTL(msg, uint32(1)) // Continue fetch
+@@ -188,9 +189,11 @@ func (r *Resolver) exchangeWithoutCache(ctx context.Context, m *D.Msg) (msg *D.M
+ 
+ 	retryNum := 0
+ 	retryMax := 3
++	initiator := queryInitiator(ctx)
+ 	fn := func() (result *D.Msg, err error) {
+ 		ctx, cancel := context.WithTimeout(context.Background(), resolver.DefaultDNSTimeout) // reset timeout in singleflight
+ 		defer cancel()
++		ctx, trace := r.traceExchange(ctx, q, initiator)
+ 		cache := false
+ 
+ 		defer func() {
+@@ -205,6 +208,7 @@ func (r *Resolver) exchangeWithoutCache(ctx context.Context, m *D.Msg) (msg *D.M
+ 				putMsgToCache(r.cache, q, result)
+ 			}
+ 		}()
++		defer func() { trace.finish(result, err) }()
+ 
+ 		isIPReq := isIPRequest(q)
+ 		if isIPReq {
+diff --git a/dns/system_common.go b/dns/system_common.go
+index e6dabdcfff1411b8115c3f50b1fbcda5826a6ec1..78c4a86f28131474ff27801e21d1165aa18ab081 100644
+--- a/dns/system_common.go
++++ b/dns/system_common.go
+@@ -1,4 +1,4 @@
+-//go:build !(android && cmfa)
++//go:build !android
+ 
+ package dns
+ 
+diff --git a/dns/util.go b/dns/util.go
+index 0a0c6e48a08864a0c694faeb6b8d9cbac1a9e665..71dcaf06f1b51d98d0d9f6f6c901e876db3535da 100644
+--- a/dns/util.go
++++ b/dns/util.go
+@@ -421,6 +421,7 @@ func batchExchange(ctx context.Context, clients []dnsClient, m *D.Msg) (msg *D.M
+ 	for _, client := range clients {
+ 		if _, isRCodeClient := client.(rcodeClient); isRCodeClient {
+ 			msg, err = client.ExchangeContext(ctx, m)
++			traceAnswer(ctx, msg, client.Address())
+ 			return msg, false, err
+ 		}
+ 		client := client // shadow define client to ensure the value captured by the closure will not be changed in the next loop
+@@ -435,6 +436,7 @@ func batchExchange(ctx context.Context, clients []dnsClient, m *D.Msg) (msg *D.M
+ 				return nil, errors.New("server failure: " + D.RcodeToString[m.Rcode])
+ 			}
+ 			log.Debugln("[DNS] %s --> %s from %s", domain, msgToLogString(m), client.Address())
++			traceAnswer(ctx, m, client.Address())
+ 			return m, nil
+ 		})
+ 	}
+diff --git a/hub/executor/executor.go b/hub/executor/executor.go
+index 796face2f1b9eb498035ce8d2cf72e62ea5a0b0c..dc7c66b9376f67135e1d33becc4b54d6bf619422 100644
+--- a/hub/executor/executor.go
++++ b/hub/executor/executor.go
+@@ -104,8 +104,8 @@ func ApplyConfig(cfg *config.Config, force bool) {
+ 	updateGeneral(cfg.General, true)
+ 	updateDNS(cfg.DNS, cfg.General.IPv6)
+ 	updateNTP(cfg.NTP) // initialize NTP after DNS because an NTP server may be a hostname.
+-	updateListeners(cfg.General, cfg.Listeners, force)
+-	updateTun(cfg.General) // tun should not care "force"
++	//updateListeners(cfg.General, cfg.Listeners, force)
++	//updateTun(cfg.General) // tun should not care "force"
+ 	updateIPTables(cfg)
+ 	updateTunnels(cfg.Tunnels)
+ 
+@@ -328,13 +328,17 @@ func loadProvider[T P.Provider](providers map[string]T) {
+ 			switch pv.Type() {
+ 			case P.Proxy:
+ 				{
+-					log.Errorln("initial proxy provider %s error: %v", name, err)
++					log.Warnln("initial proxy provider %s error: %v", name, err)
+ 				}
+ 			case P.Rule:
+ 				{
+-					log.Errorln("initial rule provider %s error: %v", name, err)
++					log.Warnln("initial rule provider %s error: %v", name, err)
+ 				}
+ 			}
++		} else {
++			if DefaultProviderLoadedHook != nil {
++				DefaultProviderLoadedHook(name)
++			}
+ 		}
+ 	}
+ 
+@@ -349,7 +353,6 @@ func loadProvider[T P.Provider](providers map[string]T) {
+ 			load(pv)
+ 		}()
+ 	}
+-	wg.Wait()
+ }
+ 
+ func updateSniffer(snifferConfig *sniffer.Config) {
+diff --git a/hub/executor/patch.go b/hub/executor/patch.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..1cbbbbc0c0a06cad673a607d1ffb8ed06f6dfc4c
+--- /dev/null
++++ b/hub/executor/patch.go
+@@ -0,0 +1,5 @@
++package executor
++
++type ProviderLoadedHook func(providerName string)
++
++var DefaultProviderLoadedHook ProviderLoadedHook
+diff --git a/hub/route/patch_android.go b/hub/route/patch_android.go
+index 5eba2796467ff3bb339f16618de057394b5f0f97..4b6dcf25acb9bf0983b0b89973ca0497bc359360 100644
+--- a/hub/route/patch_android.go
++++ b/hub/route/patch_android.go
+@@ -1,4 +1,4 @@
+-//go:build android && cmfa
++//go:build android
+ 
+ package route
+ 
+diff --git a/hub/route/server.go b/hub/route/server.go
+index 6d37d4802bfe4e5caef8fc224479a1225c38ab8e..b1659cd085d278193a94ed860e3bfd9a8721d95e 100644
+--- a/hub/route/server.go
++++ b/hub/route/server.go
+@@ -181,9 +181,7 @@ func start(cfg *Config) {
+ 			Handler: router(cfg.IsDebug, cfg.Secret, cfg.DohServer, cfg.Cors),
+ 		}
+ 		httpServer = server
+-		if err = server.Serve(l); err != nil {
+-			log.Errorln("External controller serve error: %s", err)
+-		}
++		_ = server.Serve(l)
+ 	}
+ }
+ 
+diff --git a/listener/http/patch_android.go b/listener/http/patch_android.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..a763c95e853b15d73008bdbeb2bb253beef7cf03
+--- /dev/null
++++ b/listener/http/patch_android.go
+@@ -0,0 +1,9 @@
++//go:build android
++
++package http
++
++import "net"
++
++func (l *Listener) Listener() net.Listener {
++	return l.listener
++}
+diff --git a/listener/listener.go b/listener/listener.go
+index 3a0a8aad415dc078529a86417048522796fd2a3d..ececbc41fd6bf11788a88b30399e0c0fbc75ec03 100644
+--- a/listener/listener.go
++++ b/listener/listener.go
+@@ -512,10 +512,8 @@ func ReCreateTun(tunConf LC.Tun, tunnel C.Tunnel) {
+ 		}
+ 	}()
+ 
+-	if tunConf.Equal(LastTunConf) {
+-		if tunLister != nil { // some default value in dialer maybe changed when config reload, reset at here
+-			tunLister.OnReload()
+-		}
++	if tunLister != nil && tunConf.Equal(LastTunConf) {
++		tunLister.OnReload()
+ 		return
+ 	}
+ 
+diff --git a/listener/patch.go b/listener/patch.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..6ab5aa1182cb5c87f6716b754c7981286c9e7c04
+--- /dev/null
++++ b/listener/patch.go
+@@ -0,0 +1,74 @@
++package listener
++
++func StopListener() {
++
++	if socksListener != nil {
++		_ = socksListener.Close()
++		socksListener = nil
++	}
++
++	if socksUDPListener != nil {
++		_ = socksUDPListener.Close()
++		socksUDPListener = nil
++	}
++
++	if httpListener != nil {
++		_ = httpListener.Close()
++		httpListener = nil
++	}
++
++	if redirListener != nil {
++		_ = redirListener.Close()
++		redirListener = nil
++	}
++
++	if redirUDPListener != nil {
++		_ = redirUDPListener.Close()
++		redirUDPListener = nil
++	}
++
++	if tproxyListener != nil {
++		_ = tproxyListener.Close()
++		tproxyListener = nil
++	}
++
++	if tproxyUDPListener != nil {
++		_ = tproxyUDPListener.Close()
++		tproxyUDPListener = nil
++	}
++
++	if mixedListener != nil {
++		_ = mixedListener.Close()
++		mixedListener = nil
++	}
++
++	if mixedUDPLister != nil {
++		_ = mixedUDPLister.Close()
++		mixedUDPLister = nil
++	}
++
++	if tunLister != nil {
++		_ = tunLister.Close()
++		tunLister = nil
++	}
++
++	if shadowSocksListener != nil {
++		_ = shadowSocksListener.Close()
++		shadowSocksListener = nil
++	}
++
++	if shadowSocksListener != nil {
++		_ = shadowSocksListener.Close()
++		shadowSocksListener = nil
++	}
++
++	if vmessListener != nil {
++		_ = vmessListener.Close()
++		vmessListener = nil
++	}
++
++	if tuicListener != nil {
++		_ = tuicListener.Close()
++		tuicListener = nil
++	}
++}
+diff --git a/listener/sing_tun/server.go b/listener/sing_tun/server.go
+index 5415b25e38530f0eeecacc08ff857350a991ec5f..3373a464ba95fb00c80e1bddb2eedacc6652701d 100644
+--- a/listener/sing_tun/server.go
++++ b/listener/sing_tun/server.go
+@@ -477,12 +477,6 @@ func New(options LC.Tun, tunnel C.Tunnel, additions ...inbound.Addition) (l *Lis
+ 		}
+ 
+ 	}
+-
+-	err = l.buildAndroidRules(&tunOptions)
+-	if err != nil {
+-		err = E.Cause(err, "build android rules")
+-		return
+-	}
+ 	tunIf, err := tunNew(tunOptions)
+ 	if err != nil {
+ 		err = E.Cause(err, "configure tun interface")
+diff --git a/listener/sing_tun/server_android.go b/listener/sing_tun/server_android.go
+index f180bd3051b96bec9e241468fca3388b56aa6c20..71ac263590efb8a8eafbe22ab85d45bc138ac864 100644
+--- a/listener/sing_tun/server_android.go
++++ b/listener/sing_tun/server_android.go
+@@ -1,77 +1,11 @@
+-//go:build android && !cmfa
++//go:build android
+ 
+ package sing_tun
+ 
+ import (
+-	"errors"
+-	"sync"
+-
+-	"github.com/metacubex/mihomo/component/process"
+-	"github.com/metacubex/mihomo/constant"
+-	"github.com/metacubex/mihomo/constant/features"
+-	"github.com/metacubex/mihomo/log"
+-
+-	"github.com/metacubex/sing-tun"
+-)
+-
+-type packageManagerCallback struct{}
+-
+-func (cb *packageManagerCallback) OnPackagesUpdated(packageCount int, sharedCount int) {}
+-
+-func newPackageManager() (tun.PackageManager, error) {
+-	packageManager, err := tun.NewPackageManager(tun.PackageManagerOptions{
+-		Callback: &packageManagerCallback{},
+-		Logger:   log.SingLogger,
+-	})
+-	if err != nil {
+-		return nil, err
+-	}
+-	err = packageManager.Start()
+-	if err != nil {
+-		return nil, err
+-	}
+-	return packageManager, nil
+-}
+-
+-var (
+-	globalPM tun.PackageManager
+-	pmOnce   sync.Once
+-	pmErr    error
++	tun "github.com/metacubex/sing-tun"
+ )
+ 
+-func getPackageManager() (tun.PackageManager, error) {
+-	pmOnce.Do(func() {
+-		globalPM, pmErr = newPackageManager()
+-	})
+-	return globalPM, pmErr
+-}
+-
+ func (l *Listener) buildAndroidRules(tunOptions *tun.Options) error {
+-	packageManager, err := getPackageManager()
+-	if err != nil {
+-		return err
+-	}
+-	tunOptions.BuildAndroidRules(packageManager, l.handler)
+ 	return nil
+ }
+-
+-func findPackageName(metadata *constant.Metadata) (string, error) {
+-	packageManager, err := getPackageManager()
+-	if err != nil {
+-		return "", err
+-	}
+-	uid := metadata.Uid
+-	if sharedPackage, loaded := packageManager.SharedPackageByID(uid % 100000); loaded {
+-		return sharedPackage, nil
+-	}
+-	if packageName, loaded := packageManager.PackageByID(uid % 100000); loaded {
+-		return packageName, nil
+-	}
+-	return "", errors.New("package not found")
+-}
+-
+-func init() {
+-	if !features.CMFA {
+-		process.DefaultPackageNameResolver = findPackageName
+-	}
+-}
+diff --git a/listener/sing_tun/server_notandroid.go b/listener/sing_tun/server_notandroid.go
+deleted file mode 100644
+index e393d4ca0dacfaa371e6d5bad654009493009716..0000000000000000000000000000000000000000
+--- a/listener/sing_tun/server_notandroid.go
++++ /dev/null
+@@ -1,11 +0,0 @@
+-//go:build !android || cmfa
+-
+-package sing_tun
+-
+-import (
+-	tun "github.com/metacubex/sing-tun"
+-)
+-
+-func (l *Listener) buildAndroidRules(tunOptions *tun.Options) error {
+-	return nil
+-}
+diff --git a/rules/provider/patch_android.go b/rules/provider/patch_android.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..a45b9c52c6d0495c203a8147d544e3701fb1c37a
+--- /dev/null
++++ b/rules/provider/patch_android.go
+@@ -0,0 +1,17 @@
++//go:build android
++
++package provider
++
++import "time"
++
++var (
++	suspended bool
++)
++
++type UpdatableProvider interface {
++	UpdatedAt() time.Time
++}
++
++func Suspend(s bool) {
++	suspended = s
++}
+diff --git a/tunnel/patch.go b/tunnel/patch.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..e54f72f94b492c5cd161f60cea212a4c4dedbb34
+--- /dev/null
++++ b/tunnel/patch.go
+@@ -0,0 +1,112 @@
++package tunnel
++
++import (
++	"sync"
++
++	C "github.com/metacubex/mihomo/constant"
++	P "github.com/metacubex/mihomo/constant/provider"
++	"github.com/metacubex/mihomo/tunnel/statistic"
++)
++
++func init() {
++	statistic.IsDirect = func(name string) bool {
++		proxy, ok := AllProxies()[name]
++		return ok && proxy.Type() == C.Direct
++	}
++}
++
++var (
++	allProxiesMu sync.Mutex
++	// Published copy-on-write: a rebuild installs a new map rather than writing
++	// to one a caller may still be reading.
++	allProxies map[string]C.Proxy
++	// Provider version the cache was built from, per provider name.
++	allProxiesVersions map[string]uint32
++)
++
++// AllProxies returns every proxy the tunnel can route to — the ones the config
++// declared plus the ones its providers carry — keyed by name. The result is
++// shared and must not be modified.
++//
++// The answer is cached because rebuilding it costs one entry per proxy, which
++// on a large subscription is megabytes of garbage per call. Only two things
++// invalidate it: an apply replacing the maps, which calls invalidateAllProxies,
++// and a provider swapping its list, which bumps its own Version.
++func AllProxies() map[string]C.Proxy {
++	// configMux before allProxiesMu, never the other way round: UpdateProxies
++	// takes them in that order.
++	configMux.RLock()
++	defer configMux.RUnlock()
++
++	allProxiesMu.Lock()
++	defer allProxiesMu.Unlock()
++
++	currentProviders := providers
++	if allProxies != nil && allProxiesUpToDate(currentProviders) {
++		return allProxies
++	}
++
++	rebuilt := make(map[string]C.Proxy)
++	for name, proxy := range proxies {
++		rebuilt[name] = proxy
++	}
++	versions := make(map[string]uint32, len(currentProviders))
++	for name, p := range currentProviders {
++		// Version before proxies. The other order can stamp a version newer
++		// than the list that was read, and the cache never recovers.
++		versions[name] = p.Version()
++		for _, proxy := range p.Proxies() {
++			rebuilt[proxy.Name()] = proxy
++		}
++	}
++
++	allProxies = rebuilt
++	allProxiesVersions = versions
++	return allProxies
++}
++
++func allProxiesUpToDate(currentProviders map[string]P.ProxyProvider) bool {
++	if len(currentProviders) != len(allProxiesVersions) {
++		return false
++	}
++	for name, p := range currentProviders {
++		version, tracked := allProxiesVersions[name]
++		if !tracked || version != p.Version() {
++			return false
++		}
++	}
++	return true
++}
++
++// InvalidateAllProxies drops the cache for a host that would rather pay for one
++// rebuild than keep the map resident. Correctness never needs it: the cache is
++// the last reference to the proxies a provider already replaced, and it holds
++// them until a read that may not come while the host's proxy view is closed.
++func InvalidateAllProxies() {
++	invalidateAllProxies()
++}
++
++// invalidateAllProxies drops the cache. UpdateProxies calls it because an apply
++// replaces both maps outright, which no provider version can report.
++func invalidateAllProxies() {
++	allProxiesMu.Lock()
++	defer allProxiesMu.Unlock()
++	allProxies = nil
++	allProxiesVersions = nil
++}
++
++// ProvidersSnapshot returns the proxy providers the tunnel holds, read under
++// the lock an apply installs them with — Providers() takes none. The maps are
++// never written in place, so the result stays valid after the lock is dropped.
++func ProvidersSnapshot() map[string]P.ProxyProvider {
++	configMux.RLock()
++	defer configMux.RUnlock()
++	return providers
++}
++
++// RuleProvidersSnapshot is ProvidersSnapshot for rule providers.
++func RuleProvidersSnapshot() map[string]P.RuleProvider {
++	configMux.RLock()
++	defer configMux.RUnlock()
++	return ruleProviders
++}
+diff --git a/tunnel/statistic/manager.go b/tunnel/statistic/manager.go
+index c69746dbcbac1d8fb1cc7f22e7bd538a3e62385c..eeb3cd4fc8969a92eac8432353be236f0fd466c2 100644
+--- a/tunnel/statistic/manager.go
++++ b/tunnel/statistic/manager.go
+@@ -26,18 +26,27 @@ func init() {
+ }
+ 
+ type Manager struct {
+-	connections   xsync.Map[string, Tracker]
+-	uploadTemp    atomic.Int64
+-	downloadTemp  atomic.Int64
+-	uploadBlip    atomic.Int64
+-	downloadBlip  atomic.Int64
+-	uploadTotal   atomic.Int64
+-	downloadTotal atomic.Int64
+-	pid           int32
+-	memory        uint64
++	connections        xsync.Map[string, Tracker]
++	uploadTemp         atomic.Int64
++	downloadTemp       atomic.Int64
++	uploadBlip         atomic.Int64
++	downloadBlip       atomic.Int64
++	uploadTotal        atomic.Int64
++	downloadTotal      atomic.Int64
++	proxyUploadTemp    atomic.Int64
++	proxyDownloadTemp  atomic.Int64
++	proxyUploadBlip    atomic.Int64
++	proxyDownloadBlip  atomic.Int64
++	proxyUploadTotal   atomic.Int64
++	proxyDownloadTotal atomic.Int64
++	pid                int32
++	memory             uint64
+ }
+ 
+ func (m *Manager) Join(c Tracker) {
++	if DefaultRequestNotify != nil {
++		DefaultRequestNotify(c)
++	}
+ 	m.connections.Store(c.ID(), c)
+ }
+ 
+@@ -58,12 +67,20 @@ func (m *Manager) Range(f func(c Tracker) bool) {
+ 	})
+ }
+ 
+-func (m *Manager) PushUploaded(size int64) {
++func (m *Manager) PushUploaded(direct bool, size int64) {
++	if !direct {
++		m.proxyUploadTemp.Add(size)
++		m.proxyUploadTotal.Add(size)
++	}
+ 	m.uploadTemp.Add(size)
+ 	m.uploadTotal.Add(size)
+ }
+ 
+-func (m *Manager) PushDownloaded(size int64) {
++func (m *Manager) PushDownloaded(direct bool, size int64) {
++	if !direct {
++		m.proxyDownloadTemp.Add(size)
++		m.proxyDownloadTotal.Add(size)
++	}
+ 	m.downloadTemp.Add(size)
+ 	m.downloadTotal.Add(size)
+ }
+@@ -110,6 +127,14 @@ func (m *Manager) ResetStatistic() {
+ 	m.downloadTemp.Store(0)
+ 	m.downloadBlip.Store(0)
+ 	m.downloadTotal.Store(0)
++
++	m.proxyUploadTemp.Store(0)
++	m.proxyUploadBlip.Store(0)
++	m.proxyUploadTotal.Store(0)
++	m.proxyDownloadTemp.Store(0)
++	m.proxyDownloadBlip.Store(0)
++	m.proxyDownloadTotal.Store(0)
++
+ }
+ 
+ func (m *Manager) handle() {
+@@ -118,6 +143,8 @@ func (m *Manager) handle() {
+ 	for range ticker.C {
+ 		m.uploadBlip.Store(m.uploadTemp.Swap(0))
+ 		m.downloadBlip.Store(m.downloadTemp.Swap(0))
++		m.proxyUploadBlip.Store(m.proxyUploadTemp.Swap(0))
++		m.proxyDownloadBlip.Store(m.proxyDownloadTemp.Swap(0))
+ 	}
+ }
+ 
+diff --git a/tunnel/statistic/patch.go b/tunnel/statistic/patch.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..e3e11f37fa6d8b1b1baf81b250b9922ff8ff42f8
+--- /dev/null
++++ b/tunnel/statistic/patch.go
+@@ -0,0 +1,24 @@
++package statistic
++
++type RequestNotify func(c Tracker)
++
++var DefaultRequestNotify RequestNotify
++
++// IsDirect reports whether the named outbound reaches the destination without
++// a proxy. A direct proxy may carry any name, so the tunnel, which knows each
++// proxy's type, replaces this name check.
++var IsDirect = func(name string) bool { return name == "DIRECT" }
++
++func (m *Manager) TotalTraffic(onlyProxy bool) (up, down int64) {
++	if onlyProxy {
++		return m.proxyUploadTotal.Load(), m.proxyDownloadTotal.Load()
++	}
++	return m.uploadTotal.Load(), m.downloadTotal.Load()
++}
++
++func (m *Manager) NowTraffic(onlyProxy bool) (up, down int64) {
++	if onlyProxy {
++		return m.proxyUploadBlip.Load(), m.proxyDownloadBlip.Load()
++	}
++	return m.uploadBlip.Load(), m.downloadBlip.Load()
++}
+diff --git a/tunnel/statistic/patch_android.go b/tunnel/statistic/patch_android.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..1c4b43b05965b129a86e9f2223c445c723e4c642
+--- /dev/null
++++ b/tunnel/statistic/patch_android.go
+@@ -0,0 +1,3 @@
++//go:build android
++
++package statistic
+diff --git a/tunnel/statistic/tracker.go b/tunnel/statistic/tracker.go
+index 2fbb1cf9e350605e47c2ebf478ac6ab0f4ebf472..78a53c8cd31f77b27a43e472ff36edcb102422af 100644
+--- a/tunnel/statistic/tracker.go
++++ b/tunnel/statistic/tracker.go
+@@ -39,6 +39,7 @@ type tcpTracker struct {
+ 	manager *Manager
+ 
+ 	pushToManager bool `json:"-"`
++	direct        bool `json:"-"`
+ }
+ 
+ func (tt *tcpTracker) ID() string {
+@@ -53,7 +54,7 @@ func (tt *tcpTracker) Read(b []byte) (int, error) {
+ 	n, err := tt.Conn.Read(b)
+ 	download := int64(n)
+ 	if tt.pushToManager {
+-		tt.manager.PushDownloaded(download)
++		tt.manager.PushDownloaded(tt.direct, download)
+ 	}
+ 	tt.DownloadTotal.Add(download)
+ 	return n, err
+@@ -63,7 +64,7 @@ func (tt *tcpTracker) ReadBuffer(buffer *buf.Buffer) (err error) {
+ 	err = tt.Conn.ReadBuffer(buffer)
+ 	download := int64(buffer.Len())
+ 	if tt.pushToManager {
+-		tt.manager.PushDownloaded(download)
++		tt.manager.PushDownloaded(tt.direct, download)
+ 	}
+ 	tt.DownloadTotal.Add(download)
+ 	return
+@@ -72,7 +73,7 @@ func (tt *tcpTracker) ReadBuffer(buffer *buf.Buffer) (err error) {
+ func (tt *tcpTracker) UnwrapReader() (io.Reader, []N.CountFunc) {
+ 	return tt.Conn, []N.CountFunc{func(download int64) {
+ 		if tt.pushToManager {
+-			tt.manager.PushDownloaded(download)
++			tt.manager.PushDownloaded(tt.direct, download)
+ 		}
+ 		tt.DownloadTotal.Add(download)
+ 	}}
+@@ -82,7 +83,7 @@ func (tt *tcpTracker) Write(b []byte) (int, error) {
+ 	n, err := tt.Conn.Write(b)
+ 	upload := int64(n)
+ 	if tt.pushToManager {
+-		tt.manager.PushUploaded(upload)
++		tt.manager.PushUploaded(tt.direct, upload)
+ 	}
+ 	tt.UploadTotal.Add(upload)
+ 	return n, err
+@@ -92,7 +93,7 @@ func (tt *tcpTracker) WriteBuffer(buffer *buf.Buffer) (err error) {
+ 	upload := int64(buffer.Len())
+ 	err = tt.Conn.WriteBuffer(buffer)
+ 	if tt.pushToManager {
+-		tt.manager.PushUploaded(upload)
++		tt.manager.PushUploaded(tt.direct, upload)
+ 	}
+ 	tt.UploadTotal.Add(upload)
+ 	return
+@@ -101,7 +102,7 @@ func (tt *tcpTracker) WriteBuffer(buffer *buf.Buffer) (err error) {
+ func (tt *tcpTracker) UnwrapWriter() (io.Writer, []N.CountFunc) {
+ 	return tt.Conn, []N.CountFunc{func(upload int64) {
+ 		if tt.pushToManager {
+-			tt.manager.PushUploaded(upload)
++			tt.manager.PushUploaded(tt.direct, upload)
+ 		}
+ 		tt.UploadTotal.Add(upload)
+ 	}}
+@@ -119,7 +120,7 @@ func (tt *tcpTracker) Upstream() any {
+ func NewTCPTracker(conn C.Conn, manager *Manager, metadata *C.Metadata, rule C.Rule, uploadTotal int64, downloadTotal int64, pushToManager bool) *tcpTracker {
+ 	metadata.RemoteDst = conn.RemoteDestination()
+ 
+-	t := &tcpTracker{
++	tt := &tcpTracker{
+ 		Conn:    conn,
+ 		manager: manager,
+ 		TrackerInfo: &TrackerInfo{
+@@ -133,24 +134,25 @@ func NewTCPTracker(conn C.Conn, manager *Manager, metadata *C.Metadata, rule C.R
+ 			DownloadTotal: atomic.NewInt64(downloadTotal),
+ 		},
+ 		pushToManager: pushToManager,
++		direct:        IsDirect(conn.Chains().Last()),
+ 	}
+ 
+ 	if pushToManager {
+ 		if uploadTotal > 0 {
+-			manager.PushUploaded(uploadTotal)
++			manager.PushUploaded(tt.direct, uploadTotal)
+ 		}
+ 		if downloadTotal > 0 {
+-			manager.PushDownloaded(downloadTotal)
++			manager.PushDownloaded(tt.direct, downloadTotal)
+ 		}
+ 	}
+ 
+ 	if rule != nil {
+-		t.TrackerInfo.Rule = rule.RuleType().String()
+-		t.TrackerInfo.RulePayload = rule.Payload()
++		tt.TrackerInfo.Rule = rule.RuleType().String()
++		tt.TrackerInfo.RulePayload = rule.Payload()
+ 	}
+ 
+-	manager.Join(t)
+-	return t
++	manager.Join(tt)
++	return tt
+ }
+ 
+ type udpTracker struct {
+@@ -159,6 +161,7 @@ type udpTracker struct {
+ 	manager *Manager
+ 
+ 	pushToManager bool `json:"-"`
++	direct        bool `json:"-"`
+ }
+ 
+ func (ut *udpTracker) ID() string {
+@@ -173,7 +176,7 @@ func (ut *udpTracker) ReadFrom(b []byte) (int, net.Addr, error) {
+ 	n, addr, err := ut.PacketConn.ReadFrom(b)
+ 	download := int64(n)
+ 	if ut.pushToManager {
+-		ut.manager.PushDownloaded(download)
++		ut.manager.PushDownloaded(ut.direct, download)
+ 	}
+ 	ut.DownloadTotal.Add(download)
+ 	return n, addr, err
+@@ -183,7 +186,7 @@ func (ut *udpTracker) WaitReadFrom() (data []byte, put func(), addr net.Addr, er
+ 	data, put, addr, err = ut.PacketConn.WaitReadFrom()
+ 	download := int64(len(data))
+ 	if ut.pushToManager {
+-		ut.manager.PushDownloaded(download)
++		ut.manager.PushDownloaded(ut.direct, download)
+ 	}
+ 	ut.DownloadTotal.Add(download)
+ 	return
+@@ -193,7 +196,7 @@ func (ut *udpTracker) WriteTo(b []byte, addr net.Addr) (int, error) {
+ 	n, err := ut.PacketConn.WriteTo(b, addr)
+ 	upload := int64(n)
+ 	if ut.pushToManager {
+-		ut.manager.PushUploaded(upload)
++		ut.manager.PushUploaded(ut.direct, upload)
+ 	}
+ 	ut.UploadTotal.Add(upload)
+ 	return n, err
+@@ -225,14 +228,15 @@ func NewUDPTracker(conn C.PacketConn, manager *Manager, metadata *C.Metadata, ru
+ 			DownloadTotal: atomic.NewInt64(downloadTotal),
+ 		},
+ 		pushToManager: pushToManager,
++		direct:        IsDirect(conn.Chains().Last()),
+ 	}
+ 
+ 	if pushToManager {
+ 		if uploadTotal > 0 {
+-			manager.PushUploaded(uploadTotal)
++			manager.PushUploaded(ut.direct, uploadTotal)
+ 		}
+ 		if downloadTotal > 0 {
+-			manager.PushDownloaded(downloadTotal)
++			manager.PushDownloaded(ut.direct, downloadTotal)
+ 		}
+ 	}
+ 
+diff --git a/tunnel/tunnel.go b/tunnel/tunnel.go
+index 86dbc14ae428ba7927dd2dc3ab52d78f0ddb1e87..92afa7066da57ebdfd9477337f3c7b5000c9d1cf 100644
+--- a/tunnel/tunnel.go
++++ b/tunnel/tunnel.go
+@@ -231,6 +231,7 @@ func UpdateProxies(newProxies map[string]C.Proxy, newProviders map[string]P.Prox
+ 	configMux.Lock()
+ 	proxies = newProxies
+ 	providers = newProviders
++	invalidateAllProxies()
+ 	configMux.Unlock()
+ }
+ 
+@@ -336,7 +337,7 @@ func resolveMetadata(metadata *C.Metadata) (proxy C.Proxy, rule C.Rule, err erro
+ 	helper := C.RuleMatchHelper{
+ 		ResolveIP: func() {
+ 			if !resolved && metadata.Host != "" && !metadata.Resolved() {
+-				ctx, cancel := context.WithTimeout(context.Background(), resolver.DefaultDNSTimeout)
++				ctx, cancel := context.WithTimeout(resolver.WithInitiator(context.Background(), resolver.InitiatorRule), resolver.DefaultDNSTimeout)
+ 				defer cancel()
+ 				ip, err := resolver.ResolveIP(ctx, metadata.Host)
+ 				if err != nil {
+@@ -351,7 +352,7 @@ func resolveMetadata(metadata *C.Metadata) (proxy C.Proxy, rule C.Rule, err erro
+ 		FindProcess: func() {
+ 			if attemptProcessLookup {
+ 				attemptProcessLookup = false
+-				if !features.CMFA {
++				if !features.Android {
+ 					// normal check for process
+ 					uid, path, err := process.FindProcessName(metadata.NetWork.String(), metadata.SrcIP, int(metadata.SrcPort))
+ 					if err != nil {

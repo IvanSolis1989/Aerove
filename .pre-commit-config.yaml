@@ -9,18 +9,18 @@ repos:
         stages: [pre-commit]
       - id: comment-density
         name: comment density
-        entry: tool/hooks/comment_density.sh
+        entry: tooling/hooks/comment_density.sh
         language: system
         files: \.(dart|kt|kts|swift|go|rs|java|cpp|cc|h|hpp|gradle|ya?ml)$
         stages: [pre-commit]
       - id: flutter-analyze
         name: flutter analyze (pre-push)
-        entry: flutter analyze --no-fatal-infos
+        entry: python tooling/workspace.py run aerove -- flutter analyze --no-fatal-infos
         language: system
         pass_filenames: false
         stages: [pre-push]
       - id: commit-msg-format
         name: conventional commit message
-        entry: tool/hooks/commit_msg.sh
+        entry: tooling/hooks/commit_msg.sh
         language: system
         stages: [commit-msg]
