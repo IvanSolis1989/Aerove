@@ -172,6 +172,55 @@ jobs:
         run: >-
           gradle --no-daemon :app:assembleRelease :app:assembleReleaseAndroidTest
           -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA"
+      - name: Preserve the built x86 runtime contract
+        if: ${{ !cancelled() && matrix.abi == 'x86_64' && steps.emulator_apks.outcome == 'success' }}
+        working-directory: apps/aerove-lite
+        run: |
+          diagnostic_root="$RUNNER_TEMP/lite-runtime-diagnostics"
+          mkdir -p "$diagnostic_root/apks" "$diagnostic_root/dependencies"
+          cp app/build/outputs/apk/release/app-release.apk "$diagnostic_root/apks/"
+          cp app/build/outputs/apk/androidTest/release/app-release-androidTest.apk "$diagnostic_root/apks/"
+          for variant in release releaseAndroidTest; do
+            for report in mapping.txt usage.txt seeds.txt configuration.txt; do
+              original="app/build/outputs/mapping/$variant/$report"
+              if [ -f "$original" ]; then
+                mkdir -p "$diagnostic_root/mapping/$variant"
+                cp "$original" "$diagnostic_root/mapping/$variant/"
+              fi
+            done
+          done
+          for configuration in releaseRuntimeClasspath releaseAndroidTestRuntimeClasspath; do
+            if gradle --no-daemon :app:dependencies --configuration "$configuration" \
+                -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" \
+                > "$diagnostic_root/dependencies/$configuration.stdout.txt" \
+                2> "$diagnostic_root/dependencies/$configuration.stderr.txt"; then
+              query_exit=0
+            else
+              query_exit=$?
+            fi
+            printf '%s\n' "$query_exit" > "$diagnostic_root/dependencies/$configuration.exit.txt"
+          done
+          python3 - <<'PY'
+          import hashlib, json, os, subprocess
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'lite-runtime-diagnostics'
+          files = sorted(path for path in root.rglob('*') if path.is_file())
+          manifest = [{'path': path.relative_to(root).as_posix(), 'bytes': path.stat().st_size,
+                       'sha256': hashlib.sha256(path.read_bytes()).hexdigest()} for path in files]
+          (root / 'SHA256SUMS').write_text(''.join(f"{item['sha256']}  {item['path']}\n" for item in manifest))
+          source = {'sourceRevision': os.environ['GITHUB_SHA'],
+                    'sourceTree': subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], text=True).strip(),
+                    'workflowRun': os.environ['GITHUB_RUN_ID'], 'runAttempt': os.environ['GITHUB_RUN_ATTEMPT'],
+                    'abi': 'x86_64', 'prebuiltApks': True, 'files': manifest}
+          (root / 'source-manifest.json').write_text(json.dumps(source, indent=2) + '\n')
+          PY
+      - name: Upload the built x86 runtime contract
+        if: ${{ !cancelled() && matrix.abi == 'x86_64' && steps.emulator_apks.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: AEROVE-Lite-runtime-contract
+          path: ${{ runner.temp }}/lite-runtime-diagnostics/
+          if-no-files-found: error
       - name: Check the ARM64 APK and record its exact provenance
         if: matrix.abi == 'arm64-v8a'
         run: |
