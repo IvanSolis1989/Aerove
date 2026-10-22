@@ -101,7 +101,12 @@ class ControllerSettingsRestoreTest {
         val error = runCatching { owner.updates.restore({ atomicDomainRestore(root) {
             store.save(initial.copy(locale = "ru")); throw failure
         } }) { hook = true } }.exceptionOrNull()
-        assertSame(failure, error); assertFalse(hook)
+        assertEquals(failure.javaClass, error?.javaClass)
+        assertEquals(failure.message, error?.message)
+        // Debug stack recovery copies IOException and keeps the original as its cause.
+        val original = if (error?.stackTrace?.any { it.className == "_COROUTINE._BOUNDARY" } == true)
+            error.cause else error
+        assertSame(failure, original); assertFalse(hook)
         assertEquals("en", LiteSettingsStore(root).read().locale)
         assertEquals("en", store.changes.value!!.locale)
         assertEquals("en", owner.shown.locale)
