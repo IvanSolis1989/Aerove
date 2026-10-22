@@ -18,6 +18,11 @@ on:
         required: false
         type: string
         default: ''
+      native_test_serial:
+        description: Run native-only host tests with one thread to diagnose shared fixture interference
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -55,6 +60,7 @@ jobs:
         shell: bash
         env:
           NATIVE_TEST_FILTER: ${{ inputs.native_test_filter }}
+          NATIVE_TEST_SERIAL: ${{ inputs.native_test_serial }}
           RUST_TEST_NOCAPTURE: '1'
           RUST_BACKTRACE: '1'
         run: |
@@ -94,6 +100,7 @@ jobs:
             set -e
           else
             compile_status=''
+            if [[ "$NATIVE_TEST_SERIAL" == true ]]; then export RUST_TEST_THREADS=1; fi
             set +e
             timeout --signal=TERM --kill-after=10s 10m \
               python3 apps/aerove-lite/native/build.py --initialize-lock --test 2>&1 | tee "$evidence/native-test.log"
@@ -114,6 +121,7 @@ jobs:
                           + os.environ['NATIVE_TEST_FILTER'] + ' -- --test-threads=1 --nocapture') if os.environ['NATIVE_TEST_FILTER'] else
                          'timeout --signal=TERM --kill-after=10s 10m python3 apps/aerove-lite/native/build.py --initialize-lock --test',
               'testSelection': os.environ['NATIVE_TEST_FILTER'] or 'full-suite',
+              'testThreads': 1 if os.environ['NATIVE_TEST_FILTER'] or os.environ['NATIVE_TEST_SERIAL'] == 'true' else 'default',
               'workingDirectory': 'apps/aerove-lite/native' if os.environ['NATIVE_TEST_FILTER'] else '.',
               'compileCommand': 'timeout --signal=TERM --kill-after=10s 8m cargo test --locked --lib --no-run' if os.environ['NATIVE_TEST_FILTER'] else None,
               'compileExitCode': int(sys.argv[2]) if sys.argv[2] else None,
