@@ -55,6 +55,8 @@ jobs:
         shell: bash
         env:
           NATIVE_TEST_FILTER: ${{ inputs.native_test_filter }}
+          RUST_TEST_NOCAPTURE: '1'
+          RUST_BACKTRACE: '1'
         run: |
           evidence="$RUNNER_TEMP/lite-native-preflight"
           mkdir -p "$evidence"

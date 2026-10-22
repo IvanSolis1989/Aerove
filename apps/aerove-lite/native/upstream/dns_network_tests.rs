@@ -4,6 +4,12 @@ use crate::app::remote_content_manager::providers::rule_provider::{mobile_make_r
 fn question()->Message {let mut message=Message::query();message.metadata.id=91;let mut query=Query::new();query.set_name(Name::from_str_relaxed("native-dns.test").unwrap());query.set_query_type(RecordType::A);message.add_query(query);message}
 fn answer(message:&Message)->Message{let mut result=Message::response(message.metadata.id,message.metadata.op_code);result.queries=message.queries.clone();result.add_answer(hickory_proto::rr::Record::from_rdata(message.queries[0].name().clone(),60,RData::A(hickory_proto::rr::rdata::A("192.0.2.81".parse().unwrap()))));result}
 pub(crate) async fn typed(){
+    let original=question();assert!(!original.queries[0].name().is_fqdn());let wire=Message::from_vec(&answer(&original).to_vec().unwrap()).unwrap();assert!(wire.queries[0].name().is_fqdn());check_response(&original,&wire).unwrap();
+    let mut wrong=wire.clone();wrong.queries[0].set_query_type(RecordType::AAAA);assert!(check_response(&original,&wrong).is_err());
+    let mut wrong=wire.clone();wrong.queries[0].set_name(Name::from_str_relaxed("other.test.").unwrap());assert!(check_response(&original,&wrong).is_err());
+    let mut wrong=wire.clone();wrong.queries[0].set_query_class(hickory_proto::rr::DNSClass::CH);assert!(check_response(&original,&wrong).is_err());
+    let mut wrong=wire.clone();wrong.metadata.id=wrong.metadata.id.wrapping_add(1);assert!(check_response(&original,&wrong).is_err());
+
     let snapshot:dns_network::NetworkDns=serde_json::from_str(r#"{"defaultInterface":"wlan0","interfaces":{"wlan0":["192.0.2.53","fe80::1%wlan0"]}}"#).unwrap();snapshot.validate().unwrap();assert!(snapshot.servers(Some("missing0")).is_err());
     for json in [r#"{"defaultInterface":"absent","interfaces":{}}"#,r#"{"defaultInterface":null,"interfaces":{"wlan0":["0.0.0.0"]}}"#,r#"{"defaultInterface":null,"interfaces":{"wlan0":["fe80::1%other0"]}}"#,r#"{"defaultInterface":null,"interfaces":{"wlan0":["1.2.3.4%wlan0"]}}"#] {assert!(serde_json::from_str::<dns_network::NetworkDns>(json).unwrap().validate().is_err());}
     assert!(serde_json::from_str::<dns_network::NetworkDns>(r#"{"defaultInterface":null,"interfaces":{"wlan0":["resolver.test"]}}"#).unwrap().validate().is_err());

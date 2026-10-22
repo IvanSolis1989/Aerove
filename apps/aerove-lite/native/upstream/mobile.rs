@@ -519,7 +519,13 @@ async fn query_exchange(message: &Message, server: SocketAddr) -> io::Result<Mes
 fn check_response(query: &Message, response: &Message) -> io::Result<()> {
     if response.metadata.id != query.metadata.id
         || response.metadata.message_type != MessageType::Response
-        || response.queries != query.queries
+        || response.queries.len() != query.queries.len()
+        || response.queries.iter().zip(&query.queries).any(|(response,query)| {
+            // FQDN-ness is an in-memory Name flag, absent from the DNS wire format.
+            let mut response=response.clone();response.name.set_fqdn(true);
+            let mut query=query.clone();query.name.set_fqdn(true);
+            response!=query
+        })
         || !matches!(response.metadata.response_code, ResponseCode::NoError | ResponseCode::NXDomain)
     {
         return Err(io::Error::other("invalid bootstrap DNS response"));
