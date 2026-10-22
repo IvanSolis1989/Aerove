@@ -4,9 +4,13 @@
 
 分支差异以记录的 FlClash `v0.9.1`（`8d4f9744948751f1273fe871e1d05276fac09b0e`）为基线。代理协议、核心路由、VPN 授权和监控数据等上游已有能力，不列为 Aerove 独创功能。
 
-## 待发布
+## 0.10.0-beta.1+2026102208 — 已发布预览版
 
-### 标准版 0.10.0-beta.1 候选
+发布于 **2026-10-23 03:29:45（日本时间）**：[Release](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.10.0-beta.1%2B2026102208)。发布源码为 [`9ba6a466`](https://github.com/IvanSolis1989/Aerove/commit/9ba6a4668e914795b7aec8b393ea57f611b6bd69)，对应 [原构建 #8](https://github.com/IvanSolis1989/Aerove/actions/runs/39822529350) 与 [main 推广 #9](https://github.com/IvanSolis1989/Aerove/actions/runs/39831757267)。main 复用该成功构建的原始 APK，验证及编译作业按设计跳过；正式下载的三个资产与原产物逐字节相同，版本、签名与 `BUILD_INFO.json` 的原始源码及构建记录保持一致。
+
+本版本为预览版，不覆盖稳定版 latest；稳定版仍为 `0.9.1+2026102203`。
+
+### 标准版与客户端整合
 
 - 产品号按标准版新增功能选择 `0.10.0-beta.1`，与 Lite 的独立版本分别维护，不再跟随 FlClash 或内核版本；历史来源与原始构建身份继续保留。
 - 按固定 FlClash `v0.9.2-pre.1` 源码 `7220961f` 整合客户端更新；保留 Aerove 品牌、三档材质与灵动极光，标准版内核仍使用官方 Mihomo v1.19.33 固定源码及可重放适配。
