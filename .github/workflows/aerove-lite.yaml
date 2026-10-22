@@ -39,6 +39,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: apps/aerove-lite/native -> target
+          cache-on-failure: ${{ inputs.native_preflight }}
       - name: Resolve and check the real pinned bridge dependency lock
         if: ${{ !inputs.native_preflight }}
         run: |

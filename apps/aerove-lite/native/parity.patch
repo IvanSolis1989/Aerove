@@ -160,7 +160,7 @@
  pub struct TrackerInfo {
 +    #[cfg(feature="aerove-mobile")]
 +    #[serde(skip)]
-+    proxy_traffic: std::sync::atomic::AtomicBool,
++    pub(crate) proxy_traffic: std::sync::atomic::AtomicBool,
      #[serde(rename = "id")]
      pub uuid: uuid::Uuid,
      #[serde(rename = "metadata")]
