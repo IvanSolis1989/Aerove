@@ -211,7 +211,7 @@ void main() {
       await tester.tap(find.text('Living Aurora'));
       await tester.pumpAndSettle();
       expect(find.byType(AuroraSettings), findsOneWidget);
-      expect(swatch(0xFFFF9500), findsNothing);
+      expect(swatch(0xFFFF8D28), findsNothing);
       expect(find.text('Color style'), findsNothing);
       expect(find.byTooltip('Reset'), findsNothing);
       expect(readTheme().primaryColor, saved.primaryColor);
@@ -225,10 +225,10 @@ void main() {
       expect(readTheme(), saved);
       expect(find.byType(AuroraSettings), findsNothing);
       expect(find.text('Color style'), findsOneWidget);
-      await tester.ensureVisible(swatch(0xFFFF9500));
-      await tester.tap(swatch(0xFFFF9500));
+      await tester.ensureVisible(swatch(0xFFFF8D28));
+      await tester.tap(swatch(0xFFFF8D28));
       await tester.pumpAndSettle();
-      expect(readTheme().primaryColor, 0xFFFF9500);
+      expect(readTheme().primaryColor, 0xFFFF8D28);
       expect(readTheme().auroraSeed, saved.auroraSeed);
     });
 
@@ -381,19 +381,35 @@ void main() {
   });
 
   group('sidebar blur', () {
-    testWidgets('starts off, with a working toggle on supported platforms', (
+    test('restores the default and explicit saved choices', () {
+      expect(ThemeProps.fromJson({}).sidebarBlur, isTrue);
+      for (final enabled in [false, true]) {
+        final restored = ThemeProps.fromJson({'sidebarBlur': enabled});
+        expect(restored.sidebarBlur, enabled);
+        expect(
+          ThemeProps.fromJson(jsonDecode(jsonEncode(restored))).sidebarBlur,
+          enabled,
+        );
+      }
+    });
+
+    testWidgets('starts on, with a working toggle on supported platforms', (
       tester,
     ) async {
       await pumpThemeView(tester);
       final toggle = find.text('Background blur');
 
-      expect(readTheme().sidebarBlur, isFalse);
+      expect(readTheme().sidebarBlur, isTrue);
       if (!Platform.isMacOS && !Platform.isWindows) {
         expect(toggle, findsNothing);
         return;
       }
 
+      await revealThemeSetting(tester, toggle);
       expect(toggle, findsOneWidget);
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(readTheme().sidebarBlur, isFalse);
       await tester.tap(toggle);
       await tester.pumpAndSettle();
       expect(readTheme().sidebarBlur, isTrue);

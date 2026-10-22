@@ -311,10 +311,8 @@ void main() {
                                                       controller: controller,
                                                       padding: EdgeInsets.only(
                                                         top: sheetAppBarHeight,
-                                                        bottom:
-                                                            BottomInsetScope.of(
-                                                              bodyContext,
-                                                            ),
+                                                        bottom: bodyContext
+                                                            .bottomInset,
                                                       ),
                                                       itemCount: 60,
                                                       itemExtent: 40,

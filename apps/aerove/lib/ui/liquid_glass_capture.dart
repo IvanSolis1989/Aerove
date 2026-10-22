@@ -527,6 +527,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     _replayedPanes = 0;
     _skippedPanes = 0;
     final found = <_Behind>[];
+    final panes = <_LiquidGlassLayer>{};
     final coverage = <_GlassCoverage>[];
     _field = null;
     _gather(
@@ -536,6 +537,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
       Matrix4.identity(),
       [],
       found,
+      panes,
       coverage,
       _GlassVisibility(bounds, 1 / devicePixelRatio),
     );
@@ -551,7 +553,6 @@ class _LiquidGlassHostLayer extends ContainerLayer {
             toHost: source?.$2 ?? viewport!.$2,
             staticSource: source != null,
           );
-    final panes = {for (final entry in found) entry.pane};
     for (final pane in _panes.difference(panes)) {
       pane._trimCapture();
     }
@@ -724,6 +725,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     Matrix4 rootToHost,
     List<ContainerLayer> chain,
     List<_Behind> found,
+    Set<_LiquidGlassLayer> panes,
     List<_GlassCoverage> coverage,
     _GlassVisibility visibility,
   ) {
@@ -735,6 +737,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     for (Layer? child = layer.firstChild; child != null;) {
       switch (child) {
         case final _LiquidGlassLayer pane:
+          panes.add(pane);
           pane._setSimpleBlur(quality == LiquidGlassQuality.standard);
           if (!visibility.shows(pane.rect, toHost)) {
             _skippedPanes++;
@@ -780,6 +783,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
             offscreen ? toHost : rootToHost,
             chain,
             found,
+            panes,
             coverage,
             visibility.through(container, transform),
           );
