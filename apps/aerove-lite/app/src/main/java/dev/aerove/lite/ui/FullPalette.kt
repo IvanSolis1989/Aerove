@@ -3,6 +3,7 @@ package dev.aerove.lite.ui
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.Color
 import dev.aerove.lite.ColorStyle
 import dev.aerove.lite.ui.colorutilities.DynamicColor
@@ -16,14 +17,14 @@ import dev.aerove.lite.ui.colorutilities.TonalPalette
 import kotlin.math.min
 
 // apps/aerove/lib/ui/color.dart and aurora.dart; MCU is package-isolated at the pinned 1.13.0 source.
-internal fun fullColorScheme(seedArgb: Int, dark: Boolean, aurora: Boolean, style: ColorStyle = ColorStyle.Vivid): ColorScheme {
-    val key = FullPaletteKey(if (aurora) 0xff808080.toInt() else seedArgb, dark, if (aurora) ColorStyle.Monochrome else style)
+internal fun fullColorScheme(seedArgb: Int, dark: Boolean, aurora: Boolean, style: ColorStyle = ColorStyle.Vivid, pureBlack: Boolean = false): ColorScheme {
+    val key = FullPaletteKey(if (aurora) 0xff808080.toInt() else seedArgb, dark, if (aurora) ColorStyle.Monochrome else style, pureBlack && dark)
     return synchronized(fullPalettes) {
-        fullPalettes.getOrPut(key) { buildFullColorScheme(seedArgb, dark, aurora, style) }
+        fullPalettes.getOrPut(key) { buildFullColorScheme(seedArgb, dark, aurora, style).let { if (pureBlack && dark) it.withPureBlackSurfaces() else it } }
     }
 }
 
-private data class FullPaletteKey(val seed: Int, val dark: Boolean, val style: ColorStyle)
+private data class FullPaletteKey(val seed: Int, val dark: Boolean, val style: ColorStyle, val pureBlack: Boolean)
 private const val DarkOnSurfaceTone = 97
 private const val DarkCardTone = 15.0
 private const val DarkBlockTone = 21.0
@@ -88,3 +89,16 @@ internal fun ColorScheme.fullBlock(dark: Boolean): Color = if (dark) surfaceCont
 
 internal fun fullHctChroma(argb: Int): Double = Hct.fromInt(argb).chroma
 internal fun fullNeutralTone(argb: Int): Int = Hct.from(0.0, 0.0, Hct.fromInt(argb).tone).toInt()
+
+// Standard color.dart lowers each surface by the original surface HCT tone.
+internal fun ColorScheme.withPureBlackSurfaces(): ColorScheme {
+    val shift = Hct.fromInt(surface.toArgb()).tone
+    fun lower(color: Color): Color {
+        val hct = Hct.fromInt(color.toArgb())
+        return Color(Hct.from(hct.hue, hct.chroma, (hct.tone - shift).coerceAtLeast(0.0)).toInt())
+    }
+    return copy(surface = Color.Black, surfaceDim = Color.Black, surfaceContainerLowest = Color.Black,
+        surfaceContainerLow = lower(surfaceContainerLow), surfaceContainer = lower(surfaceContainer),
+        surfaceContainerHigh = lower(surfaceContainerHigh), surfaceContainerHighest = lower(surfaceContainerHighest),
+        surfaceBright = lower(surfaceBright), background = Color.Black)
+}

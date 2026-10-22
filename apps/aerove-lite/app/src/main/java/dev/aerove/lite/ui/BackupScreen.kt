@@ -297,7 +297,7 @@ private fun BackupPasswordField(value: String, change: (String) -> Unit, enabled
         LitePane(Modifier.fillMaxWidth(), corner = LiteCorner.Control) {
             BasicTextField(value, change,
                 Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp).padding(14.dp).semantics { contentDescription = label },
-                enabled = enabled, singleLine = true, textStyle = LiteType.Body.copy(color = visuals.ink),
+                enabled = enabled, singleLine = true, textStyle = LiteType.Body.copy(color = visuals.ink, fontFamily = LocalLiteFontFamily.current),
                 cursorBrush = SolidColor(visuals.primary), visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, keyboardType = KeyboardType.Password))
         }

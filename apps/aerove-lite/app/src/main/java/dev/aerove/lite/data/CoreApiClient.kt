@@ -9,10 +9,16 @@ import dev.aerove.lite.ProxyNode
 import dev.aerove.lite.Traffic
 import dev.aerove.lite.telemetry.CoreTelemetry
 import dev.aerove.lite.telemetry.OutboundAnswer
+import dev.aerove.lite.networksettings.NetworkSettings
+import dev.aerove.lite.networksettings.planNetwork
+import dev.aerove.lite.networksettings.networkApplyBody
+import dev.aerove.lite.networksettings.decodeNetworkReceipt
+import dev.aerove.lite.networksettings.verifyNetworkReadback
 import java.io.Closeable
 import java.io.IOException
 import java.net.Proxy
 import java.util.Locale
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -128,6 +134,29 @@ class CoreApiClient(
 
     suspend fun routeSnapshot(): RouteSnapshot = withContext(Dispatchers.Default) {
         decodeRouteSnapshot(request(listOf("aerove", "route")))
+    }
+
+    suspend fun applyNetwork(settings: NetworkSettings, ipv6: Boolean): Unit = withContext(Dispatchers.Default) {
+        val plan = planNetwork(settings, endpoint.port, ipv6)
+        repeat(2) { attempt ->
+            currentCoroutineContext().ensureActive()
+            val before = routeSnapshot().coreEpoch
+            currentCoroutineContext().ensureActive()
+            val requestId = UUID.randomUUID().toString()
+            val receipt = try {
+                request(listOf("aerove", "network"), "POST", networkApplyBody(requestId, before, plan),
+                    budgetMillis = 10_000, maxBytes = 4096)
+            } catch (failure: CoreApiException) {
+                currentCoroutineContext().ensureActive()
+                if (failure.statusCode == 409 && attempt == 0) return@repeat
+                throw failure
+            }
+            currentCoroutineContext().ensureActive()
+            val appliedEpoch = decodeNetworkReceipt(receipt, requestId, before)
+            val actual = request(listOf("aerove", "network"), budgetMillis = 10_000, maxBytes = 4096)
+            verifyNetworkReadback(actual, appliedEpoch, plan)
+            return@withContext
+        }
     }
 
     suspend fun outboundIdentity(): OutboundIdentity = decodeOutbound(json(listOf("aerove", "outbound")))

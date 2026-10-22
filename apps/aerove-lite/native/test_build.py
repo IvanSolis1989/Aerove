@@ -83,6 +83,8 @@ class SourcePreparationTest(unittest.TestCase):
             (root / "upstream/service_check.rs").write_bytes(b"service_check\n")
             (root / "upstream/service_rules.rs").write_bytes(b"service_rules\n")
             (root / "upstream/service_check_tests.rs").write_bytes(b"service_check_tests\n")
+            (root / "upstream/inbound.rs").write_bytes(b"inbound\n")
+            (root / "upstream/inbound_tests.rs").write_bytes(b"inbound_tests\n")
             (root / "upstream.patch").write_text(
                 "--- a/clash-lib/src/lib.rs\n+++ b/clash-lib/src/lib.rs\n@@ -1 +1 @@\n-original\n+patched\n")
             blob = root / "source.tar.gz"
@@ -116,6 +118,10 @@ class SourcePreparationTest(unittest.TestCase):
                 self.assertEqual((target / "clash-lib/src/mobile/service_rules.rs").read_bytes(), b"service_rules\n")
                 self.assertEqual(provenance["serviceCheckTestsSha256"], prepare.digest(b"service_check_tests\n"))
                 self.assertEqual((target / "clash-lib/src/mobile/service_check_tests.rs").read_bytes(), b"service_check_tests\n")
+                self.assertEqual(provenance["inboundSha256"], prepare.digest(b"inbound\n"))
+                self.assertEqual((target / "clash-lib/src/mobile/inbound.rs").read_bytes(), b"inbound\n")
+                self.assertEqual(provenance["inboundTestsSha256"], prepare.digest(b"inbound_tests\n"))
+                self.assertEqual((target / "clash-lib/src/mobile/inbound_tests.rs").read_bytes(), b"inbound_tests\n")
                 self.assertEqual(provenance["treeSha256"], prepare.tree_digest(target))
                 prepare.prepare(blob)
                 (target / "clash-lib/src/lib.rs").write_text("tampered")

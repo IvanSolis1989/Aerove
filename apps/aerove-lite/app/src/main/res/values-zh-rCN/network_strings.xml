@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="network_retry">重试</string>
+    <string name="network_restart">重启 VPN</string>
+    <string name="network_restart_detail">已保存的网络选项需要重启 VPN 后生效。</string>
+    <string name="network_title">网络</string>
+    <string name="network_vpn">VPN</string>
+    <string name="network_system_proxy">系统代理</string>
+    <string name="network_allow_bypass">允许绕过 VPN</string>
+    <string name="network_bypass_domains">绕过的域名</string>
+    <string name="network_inbound">入站</string>
+    <string name="network_ports">端口</string>
+    <string name="network_allow_lan">允许局域网连接</string>
+    <string name="network_authentication">身份验证</string>
+    <string name="network_credentials">账号与密码</string>
+    <string name="network_mixed_port">混合端口</string>
+    <string name="network_http_port">HTTP 端口</string>
+    <string name="network_socks_port">SOCKS 端口</string>
+    <string name="network_username">账号</string>
+    <string name="network_password">密码</string>
+    <string name="network_bypass_entries">每行一个域名模式</string>
+    <string name="network_save">保存</string>
+    <string name="network_cancel">取消</string>
+    <string name="network_save_failed">设置保存失败，已保留当前输入。</string>
+    <string name="network_port_detail">使用 1024 至 49151 范围内互不重复的端口。可选 HTTP 或 SOCKS 端口设为 0 时关闭。</string>
+    <string name="network_authenticated_proxy_detail">Android 系统代理无法携带凭据；开启身份验证后，连接继续通过 VPN 隧道转发。</string>
+    <string name="network_port_conflict">此端口已被另一监听占用。</string>
+    <string name="network_port_range">请输入 1024 至 49151 之间的有效端口；可选端口可设为 0。</string>
+    <string name="network_account_required">账号不能为空。</string>
+    <string name="network_socks_length">SOCKS 凭据不能超过 255 个 UTF-8 字节。</string>
+    <string name="network_credential_length">账号或密码超过长度限制。</string>
+    <string name="network_domain_length">域名模式不能超过 512 个字符。</string>
+    <string name="network_invalid_value">请输入不含控制字符的有效值。</string>
+    <string name="network_field_issue">%1$s：%2$s</string>
+</resources>

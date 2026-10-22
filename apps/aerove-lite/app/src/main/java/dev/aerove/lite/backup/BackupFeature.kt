@@ -122,15 +122,18 @@ class BackupFeature internal constructor(
     private val platform: BackupPlatform,
     scope: CoroutineScope,
     private val onRestored: suspend () -> Unit,
+    private val restoreTransaction: suspend (suspend () -> Unit, suspend () -> Unit) -> Unit = { write, refresh -> write(); refresh() },
     private val remoteFactory: (WebDavBackupConfig) -> BackupRemote,
 ) : BackupActions, Closeable {
-    constructor(application: LiteApplication, scope: CoroutineScope, onRestored: suspend () -> Unit) : this(
+    constructor(application: LiteApplication, scope: CoroutineScope, onRestored: suspend () -> Unit,
+        restoreTransaction: suspend (suspend () -> Unit, suspend () -> Unit) -> Unit = { write, refresh -> write(); refresh() }) : this(
         BackupRepository(application.filesDir, application.profiles, application.settings),
-        AndroidBackupPlatform(application), scope, onRestored,
+        AndroidBackupPlatform(application), scope, onRestored, restoreTransaction,
     )
 
     private constructor(repository: BackupRepository, platform: AndroidBackupPlatform, scope: CoroutineScope,
-        onRestored: suspend () -> Unit) : this(repository, platform, scope, onRestored,
+        onRestored: suspend () -> Unit,
+        restoreTransaction: suspend (suspend () -> Unit, suspend () -> Unit) -> Unit) : this(repository, platform, scope, onRestored, restoreTransaction,
         { config -> HttpBackupRemote(WebDavBackupClient(config, platform.http)) })
 
     private val owner = SupervisorJob(scope.coroutineContext[Job])
@@ -288,7 +291,8 @@ class BackupFeature internal constructor(
             try { execute(action) }
             catch (cancelled: CancellationException) {
                 if (!closed) {
-                    if (action == Action.Load) problem(BackupNoticeCode.LoadFailed, Action.Load)
+                    if (refreshRequired) problem(BackupNoticeCode.RefreshAfterRestoreFailed, Action.Refresh)
+                    else if (action == Action.Load) problem(BackupNoticeCode.LoadFailed, Action.Load)
                     else notice(BackupNoticeCode.Cancelled)
                 }
             }
@@ -343,10 +347,11 @@ class BackupFeature internal constructor(
             }
             is Action.RestoreLocal -> {
                 val authorized = withContext(Dispatchers.IO) { platform.vpnAuthorized() }
-                withContext(Dispatchers.IO) { platform.readDocument(action.reference) { input ->
-                    repository.restore(input, action.options.scope, action.options.strategy, authorized)
-                } }
-                refreshAfterRestore()
+                restoreAndRefresh {
+                    withContext(Dispatchers.IO) { platform.readDocument(action.reference) { input ->
+                        repository.restore(input, action.options.scope, action.options.strategy, authorized)
+                    } }
+                }
             }
             is Action.Upload -> temporary { file ->
                 repository.createBackup(file)
@@ -360,15 +365,16 @@ class BackupFeature internal constructor(
                 remote().download(file, action.name)
                 progress(BackupProgress.Restoring)
                 val authorized = withContext(Dispatchers.IO) { platform.vpnAuthorized() }
-                withContext(Dispatchers.IO) { file.inputStream().use { repository.restore(it, action.options.scope, action.options.strategy, authorized) } }
-                refreshAfterRestore()
+                restoreAndRefresh {
+                    withContext(Dispatchers.IO) { file.inputStream().use { repository.restore(it, action.options.scope, action.options.strategy, authorized) } }
+                }
             }
             is Action.Delete -> {
                 remote().delete(action.name)
                 publish { it.copy(remoteFiles = it.remoteFiles.filterNot { file -> file.name == action.name }) }
                 notice(BackupNoticeCode.Deleted)
             }
-            Action.Refresh -> refreshAfterRestore()
+            Action.Refresh -> restoreAndRefresh {}
             is Action.Cleanup -> {
                 if (!withContext(Dispatchers.IO) { platform.deleteCreatedDocument(action.reference) }) throw PartialDocumentFailure(action.reference)
                 synchronized(gate) {
@@ -412,6 +418,20 @@ class BackupFeature internal constructor(
         }
     }
 
+    private suspend fun restoreAndRefresh(write: suspend () -> Unit) {
+        var restored = false
+        try {
+            restoreTransaction({
+                write()
+                restored = true
+                synchronized(gate) { if (!closed) refreshRequired = true }
+            }, ::refreshAfterRestore)
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (failure: Exception) {
+            if (!restored) throw failure
+            problem(BackupNoticeCode.RefreshAfterRestoreFailed, Action.Refresh)
+        }
+    }
     private suspend fun refreshAfterRestore() {
         synchronized(gate) { refreshRequired = true }
         progress(BackupProgress.Refreshing)

@@ -32,6 +32,7 @@ internal class UiTestActions(private val onSettings: (LiteSettings) -> Unit) : L
     override fun loadInstalledApps() { events += "loadInstalledApps" }
     override fun clearLogs() { events += "clearLogs" }
     override fun refreshOutbound() { events += "refreshOutbound" }
+    override fun retryNetworkSettings() { events += "retryNetworkSettings" }
     override fun refreshServiceChecks() { events += "refreshServiceChecks" }
     override fun refreshServiceCheck(id: String) { events += "refreshServiceCheck:$id" }
     override fun setServiceTelemetryTargets(ids: Set<String>) { serviceTelemetry += ids.toSet() }

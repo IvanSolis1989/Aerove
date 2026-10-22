@@ -55,12 +55,14 @@ class BackupFeatureTest {
         return Data(root, profiles, settings, BackupRepository(root, profiles, settings))
     }
 
-    private fun session(data: Data = data(), restored: suspend () -> Unit = {}): Session {
+    private fun session(data: Data = data(),
+        restoreTransaction: suspend (suspend () -> Unit, suspend () -> Unit) -> Unit = { write, refresh -> write(); refresh() },
+        restored: suspend () -> Unit = {}): Session {
         val platform = Documents(temporary.newFolder())
         val remote = Remote()
         val parent = SupervisorJob()
         val factories = AtomicInteger()
-        val feature = BackupFeature(data.backups, platform, CoroutineScope(parent + Dispatchers.Default), restored) {
+        val feature = BackupFeature(data.backups, platform, CoroutineScope(parent + Dispatchers.Default), restored, restoreTransaction) {
             factories.incrementAndGet(); remote
         }
         return Session(data, platform, remote, parent, feature, factories).also(sessions::add)
@@ -304,6 +306,27 @@ class BackupFeatureTest {
         assertEquals(2, callbacks)
         assertEquals(1, session.platform.reads)
         assertEquals(ids, session.data.profiles.list().map { it.id })
+        assertEquals(BackupNoticeCode.Restored, session.feature.state.value.notice!!.code)
+    }
+
+    @Test fun transactionReloadFailureRetriesRefreshWithoutReplayingTheCommittedArchive() = runBlocking<Unit> {
+        var transactions = 0
+        var refreshes = 0
+        val session = session(restoreTransaction = { write, refresh ->
+            write()
+            if (++transactions == 1) throw IOException("reload-fixture")
+            refresh()
+        }, restored = { refreshes++ })
+        session.open()
+        session.feature.confirm(session.chooseRestore(sourceArchive()).id); session.feature.idle()
+        val ids = session.data.profiles.list().map { it.id }
+        assertEquals(BackupNoticeCode.RefreshAfterRestoreFailed, session.feature.state.value.notice!!.code)
+        assertEquals(0, refreshes)
+        session.feature.retry(); session.feature.idle()
+        assertEquals(2, transactions)
+        assertEquals(1, session.platform.reads)
+        assertEquals(ids, session.data.profiles.list().map { it.id })
+        assertEquals(1, refreshes)
         assertEquals(BackupNoticeCode.Restored, session.feature.state.value.notice!!.code)
     }
 

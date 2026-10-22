@@ -1,5 +1,8 @@
 package dev.aerove.lite
 
+import dev.aerove.lite.networksettings.NetworkSettings
+import dev.aerove.lite.localization.canonicalLocale
+
 enum class MaterialTier { Solid, Frosted, Clear }
 enum class ColorMode { System, Light, Dark }
 enum class ProxyMode { Rule, Global, Direct }
@@ -82,6 +85,12 @@ data class LiteSettings(
     val serviceOrder: List<String> = serviceTargetIds.toList(),
     val disabledServices: Set<String> = emptySet(),
     val autoCheckUpdate: Boolean = true,
+    val network: NetworkSettings = NetworkSettings(),
+    val fontFamily: String? = null,
+    val textScaleEnabled: Boolean = false,
+    val textScale: Float = 1f,
+    val pureBlack: Boolean = false,
+    val locale: String? = null,
 )
 
 val serviceTargetIds: List<String> = listOf("google", "github", "youtube", "chatgpt", "claude", "gemini",
@@ -140,6 +149,10 @@ fun LiteSettings.normalized(): LiteSettings {
         packages = packages.toSet(),
         serviceOrder = (serviceOrder.filter { it in serviceTargetIds } + serviceTargetIds).distinct(),
         disabledServices = disabledServices.filterTo(linkedSetOf()) { it in serviceTargetIds },
+        network = network.snapshot(),
+        fontFamily = fontFamily?.trim()?.takeIf(String::isNotEmpty),
+        locale = canonicalLocale(locale),
+        textScale = if (textScale.isFinite()) textScale.coerceIn(0.8f, 1.4f) else 1f,
     )
 }
 
@@ -216,6 +229,8 @@ data class LiteState(
     val diagnostics: DiagnosticsState = DiagnosticsState(),
     val updatingProfileIds: Set<String> = emptySet(),
     val updatePromptVisible: Boolean = false,
+    val networkRestartRequired: Boolean = false,
+    val networkError: String? = null,
 )
 
 interface LiteActions {
@@ -231,6 +246,7 @@ interface LiteActions {
     fun selectProxy(group: String, proxy: String)
     fun testGroup(group: String)
     fun refreshOutbound()
+    fun retryNetworkSettings()
     fun refreshServiceChecks()
     fun refreshServiceCheck(id: String)
     fun setServiceTelemetryTargets(ids: Set<String>)

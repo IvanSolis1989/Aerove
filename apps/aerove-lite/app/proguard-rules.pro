@@ -119,6 +119,19 @@
 -keep,includedescriptorclasses interface dev.aerove.lite.updates.UpdatePlatform { *; }
 -keep,includedescriptorclasses interface dev.aerove.lite.updates.UpdateApkVerifier { *; }
 -keep,includedescriptorclasses class dev.aerove.lite.updates.UpdateRepository { *; }
+-keep,includedescriptorclasses class dev.aerove.lite.networksettings.NetworkSettings { *; }
+-keep,includedescriptorclasses class dev.aerove.lite.networksettings.UserProxyPorts { *; }
+-keep,includedescriptorclasses class dev.aerove.lite.networksettings.ProxyAuthentication { *; }
+-keep,includedescriptorclasses class dev.aerove.lite.networksettings.EffectiveVpnNetworkOptions { *; }
+-keep,includedescriptorclasses class dev.aerove.lite.networksettings.VpnProxyPlan { *; }
+-keep,includedescriptorclasses class dev.aerove.lite.networksettings.NetworkRuntimePlanKt {
+    public static dev.aerove.lite.networksettings.EffectiveVpnNetworkOptions effectiveVpnNetworkOptions(dev.aerove.lite.networksettings.NetworkSettings);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.presentation.SystemFontCatalog { *; }
+-keep,includedescriptorclasses class dev.aerove.lite.editor.EditorPalette { *; }
+-keep,includedescriptorclasses class dev.aerove.lite.editor.EditorPreferences { *; }
+-keep enum dev.aerove.lite.editor.EditorFontSize { *; }
+-keep enum dev.aerove.lite.localization.LocaleChoice { *; }
 -keep class androidx.tracing.Trace {
     public static void beginSection(java.lang.String);
     public static void endSection();

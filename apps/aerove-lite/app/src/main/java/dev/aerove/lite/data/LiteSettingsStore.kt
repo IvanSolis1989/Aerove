@@ -10,18 +10,24 @@ import dev.aerove.lite.normalizeAuroraColors
 import dev.aerove.lite.normalizeDashboardWidgetValues
 import dev.aerove.lite.normalizeThemeColors
 import dev.aerove.lite.normalized
+import dev.aerove.lite.networksettings.NetworkSettingsJson
+import dev.aerove.lite.networksettings.requireValid
 import dev.aerove.lite.rotateAuroraForDay as rotateAuroraSettingsForDay
 import dev.aerove.lite.shuffleAuroraWallpaper as shuffleAuroraSettings
 import java.io.File
 import java.time.ZonedDateTime
 import kotlin.random.Random
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
 
 class LiteSettingsStore(privateDirectory: File) {
     private val storage = PrivateStorage(File(privateDirectory, "settings"))
+    private val savedSettings = MutableStateFlow<LiteSettings?>(null)
+    val changes = savedSettings.asStateFlow()
 
-    suspend fun read(): LiteSettings = storage.transaction { load() }
+    suspend fun read(): LiteSettings = storage.transaction { load().also { savedSettings.value = it } }
 
     suspend fun save(settings: LiteSettings, vpnAuthorized: Boolean = false): LiteSettings = storage.transaction {
         val normalized = settings.normalized()
@@ -59,6 +65,12 @@ class LiteSettingsStore(privateDirectory: File) {
             .put("serviceOrder", JSONArray(normalized.serviceOrder))
             .put("disabledServices", JSONArray(normalized.disabledServices.sorted()))
             .put("autoCheckUpdate", normalized.autoCheckUpdate)
+            .put("network", NetworkSettingsJson.encode(normalized.network))
+            .put("fontFamily", normalized.fontFamily ?: JSONObject.NULL)
+            .put("textScaleEnabled", normalized.textScaleEnabled)
+            .put("textScale", normalized.textScale.toDouble())
+            .put("pureBlack", normalized.pureBlack)
+            .put("locale", normalized.locale ?: JSONObject.NULL)
             .put("mode", normalized.mode.name).put("ipv6", normalized.ipv6)
             .put("overrideDns", normalized.overrideDns).put("dnsServers", JSONArray(normalized.dnsServers))
             .put("appFilterMode", normalized.appFilterMode.name)
@@ -70,6 +82,7 @@ class LiteSettingsStore(privateDirectory: File) {
         val encoded = json.toString()
         require(encoded.toByteArray(Charsets.UTF_8).size <= 128 * 1024) { "Settings exceed storage limit" }
         storage.write("settings.json", encoded)
+        savedSettings.value = normalized
         return normalized
     }
 
@@ -122,9 +135,32 @@ class LiteSettingsStore(privateDirectory: File) {
             serviceOrder = values("serviceOrder")?.filterIsInstance<String>() ?: defaults.serviceOrder,
             disabledServices = values("disabledServices")?.filterIsInstance<String>()?.toSet() ?: defaults.disabledServices,
             autoCheckUpdate = json.opt("autoCheckUpdate") as? Boolean ?: defaults.autoCheckUpdate,
+            network = NetworkSettingsJson.decode(if (json.has("network")) json.get("network") else null),
+            fontFamily = if (!json.has("fontFamily") || json.isNull("fontFamily")) null else {
+                require(json.get("fontFamily") is String) { "Invalid font family" }
+                json.getString("fontFamily")
+            },
+            textScaleEnabled = json.readOptionalBoolean("textScaleEnabled", defaults.textScaleEnabled),
+            textScale = if (json.has("textScale")) {
+                val scale = json.get("textScale")
+                require(scale is Number && scale.toFloat().isFinite()) { "Invalid text scale" }
+                scale.toFloat()
+            } else defaults.textScale,
+            pureBlack = json.readOptionalBoolean("pureBlack", defaults.pureBlack),
+            locale = if (!json.has("locale") || json.isNull("locale")) null else {
+                require(json.get("locale") is String) { "Invalid application locale" }
+                json.getString("locale")
+            },
         ).normalized().also(::validateSettings)
     }
 
+}
+
+private fun JSONObject.readOptionalBoolean(key: String, default: Boolean): Boolean {
+    if (!has(key)) return default
+    val value = get(key)
+    require(value is Boolean) { "Invalid $key setting" }
+    return value
 }
 
 private fun JSONObject.readColorStyle(default: ColorStyle): ColorStyle {
@@ -139,6 +175,10 @@ private fun JSONObject.readColorStyle(default: ColorStyle): ColorStyle {
 }
 
 internal fun validateSettings(settings: LiteSettings) {
+    settings.network.requireValid()
+    require(settings.fontFamily == null || (settings.fontFamily.length <= 256 && settings.fontFamily.none { it.isISOControl() })) {
+        "Invalid font family"
+    }
     require(settings.themeColor in 0..0xffffffffL) { "Invalid ARGB theme color" }
     require(settings.dnsServers.isNotEmpty() && settings.dnsServers.size <= 32) { "Set at least one DNS server" }
     settings.dnsServers.forEach(::validateDnsServer)

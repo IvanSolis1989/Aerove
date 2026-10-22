@@ -2,6 +2,10 @@ package dev.aerove.lite.data
 
 import dev.aerove.lite.LiteSettings
 import dev.aerove.lite.ProxyMode
+import dev.aerove.lite.networksettings.NetworkSettings
+import dev.aerove.lite.networksettings.NetworkSettingsException
+import dev.aerove.lite.networksettings.ProxyAuthentication
+import dev.aerove.lite.networksettings.UserProxyPorts
 import java.io.File
 import org.junit.Assert.*
 import org.junit.Rule
@@ -30,7 +34,8 @@ class RuntimeConfigComposerTest {
         assertEquals("127.0.0.1:49152", result["external-controller"])
         assertEquals(secret, result["secret"])
         assertEquals(false, result["allow-lan"])
-        listOf("external-ui", "external-controller-unix", "http_port", "mixed-port", "port", "socks-port", "redir-port", "tproxy-port").forEach {
+        assertEquals(7890, result["mixed-port"])
+        listOf("external-ui", "external-controller-unix", "http_port", "port", "socks-port", "redir-port", "tproxy-port").forEach {
             assertFalse("$it must be absent (port zero still creates a listener)", result.containsKey(it))
         }
         val tun = result["tun"] as Map<*, *>
@@ -41,6 +46,36 @@ class RuntimeConfigComposerTest {
         assertEquals(true, tun["dns-hijack"])
         assertFalse(tun.containsKey("device"))
         assertFalse(tun.containsKey("gateway-v6"))
+    }
+
+    @Test fun governedUserInboundsAndAuthenticationNeverReplacePrivateController() {
+        val network = NetworkSettings(allowLan = true, ports = UserProxyPorts(7890, 7891, 7892),
+            authentication = ProxyAuthentication(true, "alice", "password:with:colons"))
+        val result = ConfigYaml.parse(compose("""
+            port: 9091
+            socks-port: 9092
+            mixed-port: 9093
+            authentication: [imported:password]
+            bind-address: 192.0.2.1
+            external-controller: 0.0.0.0:9090
+            secret: imported-secret
+            cors-allow-origins: ['*']
+        """.trimIndent(), LiteSettings(network = network, ipv6 = true)))
+        assertEquals(7890, result["mixed-port"]); assertEquals(7891, result["port"]); assertEquals(7892, result["socks-port"])
+        assertEquals(true, result["allow-lan"]); assertEquals("::", result["bind-address"])
+        assertEquals(listOf("alice:password:with:colons"), result["authentication"])
+        assertEquals("127.0.0.1:49152", result["external-controller"]); assertEquals(secret, result["secret"])
+        assertEquals(emptyList<String>(), result["cors-allow-origins"])
+    }
+
+    @Test fun privatePortCollisionAndInvalidUserPortsFailBeforeRuntimeOutput() {
+        assertThrows(NetworkSettingsException::class.java) {
+            RuntimeConfigComposer(temporary.root).compose("{}", LiteSettings(), 42, 7890, secret)
+        }
+        assertThrows(NetworkSettingsException::class.java) {
+            compose("{}", LiteSettings(network = NetworkSettings(ports = UserProxyPorts(7890, 7890))))
+        }
+        assertTrue(temporary.root.listFiles()!!.isEmpty())
     }
 
     @Test fun userDnsServerOverridePreservesOtherDnsPolicies() {
@@ -108,7 +143,8 @@ class RuntimeConfigComposerTest {
         assertThrows(IllegalArgumentException::class.java) {
             compose("rule-providers: {remote: {type: http, path: ../outside.mrs}}")
         }
-        assertThrows(IllegalArgumentException::class.java) { compose("geosite: /data/local/tmp/outside.dat") }
+        val outside = File(temporary.root, "outside.dat").canonicalPath.replace('\\', '/')
+        assertThrows(IllegalArgumentException::class.java) { compose("geosite: '$outside'") }
         val result = ConfigYaml.parse(compose("geosite: geo.dat"))
         assertEquals(File(temporary.root, "resources/geo.dat").canonicalPath, result["geosite"])
     }

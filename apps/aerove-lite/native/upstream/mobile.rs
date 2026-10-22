@@ -37,10 +37,12 @@ pub type Protector = Arc<dyn Fn(RawFd) -> io::Result<()> + Send + Sync>;
 pub mod resources;
 pub mod outbound;
 pub mod telemetry;
+pub mod inbound;
 
 enum Event {
     TunReady,
     ApiReady(SocketAddr),
+    InboundReady(inbound::Bound),
     Failed(String),
 }
 
@@ -52,6 +54,7 @@ struct Context {
     level: tracing::level_filters::LevelFilter,
     cancel: CancellationToken,
     telemetry: Arc<telemetry::Bus>,
+    network: Option<Arc<inbound::Owner>>,
 }
 
 static CONTEXT: RwLock<Option<Arc<Context>>> = RwLock::new(None);
@@ -185,6 +188,7 @@ fn parse(source: &str) -> Result<InternalConfig> {
         .map_err(|error| invalid(error.to_string()))?;
     value.apply_merge().map_err(|error| invalid(error.to_string()))?;
     check_value(&value, "$")?;
+    inbound::check_source(&value)?;
     if let Some(proxies) = value.get("proxies").and_then(Value::as_sequence) {
         for (index, proxy) in proxies.iter().enumerate() {
             resources::check_proxy_fields(proxy)
@@ -227,18 +231,8 @@ pub async fn run(
     if !config.tun.enable || !config.tun.dns_hijack || !config.dns.enable {
         return Err(invalid("runtime requires TUN, dns-hijack and DNS enabled"));
     }
-    if !config.listeners.is_empty() || !config.inbound_providers.is_empty() {
-        return Err(invalid("runtime cannot create additional inbound listeners"));
-    }
     let controller = config.general.controller.clone();
-    let address: SocketAddr = controller.external_controller.as_deref()
-        .ok_or_else(|| invalid("runtime requires external-controller"))?
-        .parse().map_err(|_| invalid("external-controller must be a loopback IP:port"))?;
-    if !address.ip().is_loopback() || controller.external_controller_ipc.is_some()
-        || controller.secret.as_deref().unwrap_or("").is_empty()
-    {
-        return Err(invalid("runtime controller requires loopback TCP and a secret"));
-    }
+    let address = inbound::controller(&config)?;
     let bootstrap = bootstrap(&config)?;
     if bootstrap.is_empty() {
         return Err(invalid("dns.default-nameserver must not be empty"));
@@ -246,6 +240,8 @@ pub async fn run(
     let (events, mut receiver) = mpsc::unbounded_channel();
     let (logs, _) = broadcast::channel(512);
     let telemetry = telemetry::Bus::new(cancel.clone());
+    let network = inbound::runtime(&source, &config, address, cancel.clone())?;
+    let mut inbound_ready = network.expected();
     {
         let mut active = CONTEXT.write().unwrap();
         if active.is_some() {
@@ -255,6 +251,7 @@ pub async fn run(
             protector, bootstrap, events, logs: logs.clone(),
             level: config.general.log_level.into(), cancel: cancel.clone(),
             telemetry: telemetry.clone(),
+            network: Some(network.clone()),
         }));
     }
     let _lease = ContextLease;
@@ -292,20 +289,26 @@ pub async fn run(
             event = receiver.recv() => match event {
                 Some(Event::TunReady) => tun_ready = true,
                 Some(Event::ApiReady(address)) => api_address = Some(address),
+                Some(Event::InboundReady(bound)) => {
+                    if ready.is_some() && let Err(error) = inbound::accept_ready(&mut inbound_ready, bound) { break Err(error); }
+                },
                 Some(Event::Failed(error)) => break Err(Error::Operation(error)),
                 None => break Err(Error::Operation("core readiness channel closed".into())),
             }
         }
-        if tun_ready && let Some(address) = api_address && let Some(ready) = ready.take() {
-            tracing::info!("AEROVE mobile TUN and controller ready at {address}");
+        if tun_ready && inbound_ready.is_empty() && let Some(address) = api_address && let Some(ready) = ready.take() {
+            network.mark_ready();
+            tracing::info!("AEROVE mobile TUN, user listeners and controller ready at {address}");
             ready(address);
         }
     };
     cancel.cancel();
     api.shutdown();
+    let network_result = network.join().await;
     components.stop_all().await;
     let telemetry_result = telemetry.stop().await;
     api.join().await?;
+    network_result?;
     telemetry_result.map_err(|error| Error::Operation(format!("delay notification task: {error}")))?;
     result
 }
@@ -398,7 +401,7 @@ mod tests {
         *CONTEXT.write().unwrap() = Some(Arc::new(Context {
             protector, bootstrap: vec![], events, logs,
             level: tracing::level_filters::LevelFilter::TRACE,
-            cancel: cancel.clone(), telemetry: telemetry::Bus::new(cancel),
+            cancel: cancel.clone(), telemetry: telemetry::Bus::new(cancel), network: None,
         }));
         (ContextLease, receiver)
     }
@@ -502,7 +505,7 @@ mod tests {
         let cancel = CancellationToken::new();
         *second_context = Some(Arc::new(Context {
             protector: old.protector.clone(), bootstrap: vec![], events: old.events.clone(),
-            logs, level: old.level, cancel: cancel.clone(), telemetry: telemetry::Bus::new(cancel),
+            logs, level: old.level, cancel: cancel.clone(), telemetry: telemetry::Bus::new(cancel), network: None,
         }));
         drop(second_context);
         tracing::info!("aerove second session");

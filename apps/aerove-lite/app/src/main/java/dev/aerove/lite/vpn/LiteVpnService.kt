@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.Network
@@ -18,6 +19,9 @@ import dev.aerove.lite.LiteApplication
 import dev.aerove.lite.MainActivity
 import dev.aerove.lite.R
 import dev.aerove.lite.VpnPhase
+import dev.aerove.lite.data.ControlEndpoint
+import dev.aerove.lite.data.CoreApiClient
+import dev.aerove.lite.networksettings.NetworkRuntimeCoordinator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -25,13 +29,18 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 class LiteVpnService : VpnService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val coreScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var coordinator: VpnCoordinator
+    private lateinit var networkRuntime: NetworkRuntimeCoordinator
     private lateinit var connectivity: ConnectivityManager
     private val graph get() = application as LiteApplication
     private var intentGeneration = 0L
@@ -41,6 +50,9 @@ class LiteVpnService : VpnService() {
     private var networkKey: String? = null
     private val physicalNetworks = linkedSetOf<Network>()
     private var callbackRegistered = false
+    private val notificationUpdates = VpnNotificationUpdates({ phase ->
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(phase))
+    }, ::createChannel)
     private val callback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             physicalNetworks += network
@@ -59,26 +71,51 @@ class LiteVpnService : VpnService() {
         owner = graph.registerVpnOwner()
         createChannel()
         startForeground(NOTIFICATION_ID, notification(VpnPhase.Starting))
+        notificationUpdates.started(VpnPhase.Starting, resources.configuration.locales.toLanguageTags())
         connectivity = getSystemService(ConnectivityManager::class.java)
-        coordinator = VpnCoordinator(coreScope, AndroidTunnelBackend(this, graph) { network })
+        networkRuntime = NetworkRuntimeCoordinator(coreScope, { endpoint, settings, ipv6 ->
+            CoreApiClient(ControlEndpoint(endpoint.port, endpoint.secret)).use { client -> client.applyNetwork(settings, ipv6) }
+        }, { status -> coordinator.recordNetworkStatus(status) })
+        coordinator = VpnCoordinator(coreScope, AndroidTunnelBackend(this, graph) { network }, networkRuntime::detachAndJoin,
+            latestSavedSettings = { graph.settings.changes.value })
         val request = NetworkRequest.Builder().addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build()
         connectivity.registerNetworkCallback(request, callback, Handler(Looper.getMainLooper()))
         callbackRegistered = true
         scope.launch {
-            coordinator.state.collectLatest { snapshot ->
+            graph.settings.changes.filterNotNull().collect { settings -> networkRuntime.settings(settings.network, settings.ipv6) }
+        }
+        scope.launch {
+            coordinator.state.collect { snapshot ->
+                networkRuntime.bind(snapshot.endpoint.takeIf { snapshot.phase == VpnPhase.Running },
+                    snapshot.initialNetwork, snapshot.initialIpv6, snapshot.appliedNetwork, snapshot.appliedIpv6)
                 graph.publishVpn(owner, snapshot)
-                getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(snapshot.phase))
+                notificationUpdates.phase(snapshot.phase)
                 if (snapshot.phase == VpnPhase.Stopped && lastPlan == null && intentGeneration > 0) {
-                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    removeNotification()
                     stopSelf()
                 }
-                if (snapshot.phase == VpnPhase.Running) lastPlan?.let { refreshResources(it, snapshot) }
             }
+        }
+        scope.launch {
+            coordinator.state.map { snapshot -> snapshot.endpoint.takeIf { snapshot.phase == VpnPhase.Running } }
+                .distinctUntilChanged().collectLatest { endpoint ->
+                    if (endpoint != null) lastPlan?.let { refreshResources(it, endpoint) }
+                }
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_RETRY_NETWORK) {
+            if (wasRequested(this)) {
+                networkRuntime.retry()
+                return START_STICKY
+            } else {
+                removeNotification()
+                stopSelf(startId)
+            }
+            return START_NOT_STICKY
+        }
         val generation = ++intentGeneration
         if (intent?.action == ACTION_STOP) {
             requested(false)
@@ -106,7 +143,7 @@ class LiteVpnService : VpnService() {
                     graph.publishVpn(owner, VpnSnapshot(VpnPhase.Failed, error = failure.message))
                     requested(false)
                     lastPlan = null
-                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    removeNotification()
                     stopSelf(startId)
                 }
             }
@@ -138,15 +175,15 @@ class LiteVpnService : VpnService() {
         scope.launch {
             coordinator.state.first { it.phase == VpnPhase.Stopped }
             if (lastPlan == null) {
-                stopForeground(STOP_FOREGROUND_REMOVE)
+                removeNotification()
                 stopSelf(startId)
             }
         }
     }
 
-    private suspend fun refreshResources(plan: VpnPlan, running: VpnSnapshot) {
+    private suspend fun refreshResources(plan: VpnPlan, endpoint: CoreEndpoint) {
         var retry = 60_000L
-        fun current() = lastPlan == plan && coordinator.state.value.endpoint === running.endpoint
+        fun current() = lastPlan == plan && coordinator.state.value.endpoint === endpoint
         while (current()) {
             try {
                 val prepared = graph.profiles.prepareForStart(plan.profileId)
@@ -163,7 +200,7 @@ class LiteVpnService : VpnService() {
                 throw cancelled
             } catch (failure: Exception) {
                 if (!current()) return
-                graph.publishVpn(owner, running.copy(error = failure.message ?: failure.javaClass.simpleName))
+                coordinator.recordResourceError(endpoint, failure.message ?: failure.javaClass.simpleName)
                 delay(retry)
                 retry = (retry * 2).coerceAtMost(900_000)
             }
@@ -178,11 +215,22 @@ class LiteVpnService : VpnService() {
         super.onRevoke()
     }
 
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (::coordinator.isInitialized) notificationUpdates.configurationChanged(
+            resources.configuration.locales.toLanguageTags(), coordinator.state.value.phase)
+    }
+
     override fun onDestroy() {
+        notificationUpdates.close()
         if (callbackRegistered) connectivity.unregisterNetworkCallback(callback)
         scope.launch {
             try {
-                coordinator.close()
+                try {
+                    coordinator.close()
+                } finally {
+                    networkRuntime.close()
+                }
                 val snapshot = coordinator.state.value
                 graph.publishVpn(owner, if (snapshot.phase == VpnPhase.Failed) snapshot else VpnSnapshot())
             } finally {
@@ -194,9 +242,16 @@ class LiteVpnService : VpnService() {
     }
 
     private fun createChannel() {
-        val channel = NotificationChannel(CHANNEL, getString(R.string.vpn_channel_name), NotificationManager.IMPORTANCE_LOW)
-        channel.setShowBadge(false)
-        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+        val manager = getSystemService(NotificationManager::class.java)
+        val channel = manager.getNotificationChannel(CHANNEL) ?: NotificationChannel(CHANNEL,
+            getString(R.string.vpn_channel_name), NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) }
+        channel.name = getString(R.string.vpn_channel_name)
+        manager.createNotificationChannel(channel)
+    }
+
+    private fun removeNotification() {
+        notificationUpdates.withdraw()
+        stopForeground(STOP_FOREGROUND_REMOVE)
     }
 
     private fun notification(phase: VpnPhase): Notification {
@@ -222,6 +277,7 @@ class LiteVpnService : VpnService() {
     companion object {
         const val ACTION_START = "dev.aerove.lite.START"
         const val ACTION_STOP = "dev.aerove.lite.STOP"
+        const val ACTION_RETRY_NETWORK = "dev.aerove.lite.RETRY_NETWORK"
         private const val CHANNEL = "aerove-lite-vpn"
         private const val NOTIFICATION_ID = 1
         private const val PREFERENCES = "vpn-intent"
@@ -229,4 +285,38 @@ class LiteVpnService : VpnService() {
         fun wasRequested(context: Context): Boolean =
             context.getSharedPreferences(PREFERENCES, MODE_PRIVATE).getBoolean("requested", false)
     }
+}
+
+internal class VpnNotificationUpdates(
+    private val publish: (VpnPhase) -> Unit,
+    private val refreshChannel: () -> Unit,
+) {
+    private var posted = false
+    private var closed = false
+    private var lastPhase: VpnPhase? = null
+    private var locales: String? = null
+
+    fun started(phase: VpnPhase, languageTags: String) {
+        if (closed) return
+        posted = true
+        lastPhase = phase
+        locales = languageTags
+    }
+
+    fun phase(phase: VpnPhase) {
+        if (!posted || closed || lastPhase == phase) return
+        lastPhase = phase
+        publish(phase)
+    }
+
+    fun configurationChanged(languageTags: String, currentPhase: VpnPhase) {
+        if (!posted || closed || locales == languageTags) return
+        locales = languageTags
+        lastPhase = currentPhase
+        refreshChannel()
+        publish(currentPhase)
+    }
+
+    fun withdraw() { posted = false; lastPhase = null }
+    fun close() { closed = true; withdraw() }
 }

@@ -64,7 +64,6 @@ internal class EditorDocumentController(
     private var darkTheme: Boolean? = null
     private var completionJob: Job? = null
     private var query = EditorQuery()
-    private var appliedPreferences: EditorPreferences? = null
     private val undoDocuments = ArrayDeque<Content>()
     private val redoDocuments = ArrayDeque<Content>()
     private var nativeRedosBeforeBulk = 0
@@ -147,10 +146,12 @@ internal class EditorDocumentController(
     fun style(palette: EditorPalette, preferences: EditorPreferences) {
         view?.let { editor ->
             palette.apply(editor.colorScheme)
-            if (appliedPreferences?.fontSize != preferences.fontSize) editor.setTextSize(preferences.fontSize.sp)
+            // CodeForge uses raw logical editor sizes, independently of app/system text scaling.
+            val textPixels = android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_DIP,
+                preferences.fontSize.sp, context.resources.displayMetrics)
+            if (editor.textSizePx != textPixels) editor.setTextSizePx(textPixels)
             if (editor.isWordwrap != preferences.lineWrap) editor.setWordwrap(preferences.lineWrap)
             editor.typefaceLineNumber = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.NORMAL)
-            appliedPreferences = preferences
         }
     }
 

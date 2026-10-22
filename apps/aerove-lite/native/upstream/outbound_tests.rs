@@ -30,12 +30,18 @@ pub fn run(case: &str) {
             if deny.load(Ordering::SeqCst) { Err(io::ErrorKind::PermissionDenied.into()) } else { Ok(()) }
         }),
         bootstrap: vec![], events, logs, level: tracing::level_filters::LevelFilter::OFF,
-        cancel: cancel.clone(), telemetry: crate::mobile::telemetry::Bus::new(cancel),
+        cancel: cancel.clone(), telemetry: crate::mobile::telemetry::Bus::new(cancel), network: None,
     }));
     let _lease = super::super::ContextLease;
     crate::setup_default_crypto_provider();
     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
         match case {
+            "network-validation" => crate::mobile::inbound::regression::validation().await,
+            "network-listeners" => crate::mobile::inbound::regression::listeners().await,
+            "network-udp" => crate::mobile::inbound::regression::udp().await,
+            "network-failure" => crate::mobile::inbound::regression::failure().await,
+            "network-update" => crate::mobile::inbound::regression::update().await,
+            "network-cancellation" => crate::mobile::inbound::regression::cancellation().await,
             "route-snapshot" => service_check_tests::route_snapshot().await,
             "service-targets" => service_check_tests::targets().await,
             "service-statuses" => service_check_tests::statuses().await,

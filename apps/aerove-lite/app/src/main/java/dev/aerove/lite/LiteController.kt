@@ -41,6 +41,10 @@ import dev.aerove.lite.updates.AndroidUpdateVerifier
 import dev.aerove.lite.updates.UpdateFeature
 import dev.aerove.lite.updates.UpdateHttpClient
 import dev.aerove.lite.updates.UpdateRepository
+import dev.aerove.lite.networksettings.NetworkSettings
+import dev.aerove.lite.networksettings.effectiveVpnNetworkOptions
+import dev.aerove.lite.localization.AndroidLocaleCoordinator
+import dev.aerove.lite.vpn.VpnSnapshot
 import java.io.File
 import java.io.IOException
 import java.time.Clock
@@ -77,7 +81,10 @@ import kotlinx.coroutines.withContext
 class LiteController(private val application: LiteApplication) : ViewModel(), LiteActions, LiteFeatureHost {
     private val mutableState = MutableStateFlow(LiteState())
     val state = mutableState.asStateFlow()
-    override val backup = BackupFeature(application, viewModelScope, ::reloadRestoredData)
+    override val backup = BackupFeature(application, viewModelScope, ::reloadRestoredData,
+        restoreTransaction = { write, refresh ->
+            settingsUpdates.restore(write) { localeOwner.value.restoreSaved(); refresh() }
+        })
     private var openedEditor: Pair<Triple<String, String, Boolean>, ProfileEditorSession>? = null
     private val profileLinks = ProfileLinkDecoder()
     private val visible = MutableStateFlow(TelemetryVisibility())
@@ -143,6 +150,13 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         publish = ::applySavedSettings,
     )
     private var settingsLoaded = false
+    private val localeOwner = lazy {
+        AndroidLocaleCoordinator(application, application.settings.changes, viewModelScope,
+            onPlatformChoice = { tag ->
+                val baseline = state.value.settings
+                settingsUpdates.save(baseline, baseline.copy(locale = tag))
+            }, onError = { showMessage(application.getString(R.string.editor_error)) })
+    }
     private val updateOwner = lazy {
         UpdateFeature(UpdateRepository(UpdateHttpClient(), File(application.cacheDir, "updates"), AndroidUpdateVerifier(application)),
             AndroidUpdatePlatform(application, application.settings), viewModelScope,
@@ -205,13 +219,15 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         perform("load") {
             settingsUpdates.load()
             settingsLoaded = true
+            localeOwner.value.foreground()
             autoCheckUpdates()
             reloadProfiles()
         }
         viewModelScope.launch {
             application.vpn.collect { snapshot ->
                 currentSession?.takeUnless { it.current }?.close()
-                mutableState.update { it.copy(phase = snapshot.phase, message = snapshot.error ?: it.message) }
+                mutableState.update { it.copy(phase = snapshot.phase, message = snapshot.error ?: it.message,
+                    networkRestartRequired = requiresNetworkRestart(it.settings, snapshot), networkError = snapshot.networkError) }
                 if (outboundGroupEndpoint !== snapshot.endpoint) outboundGroupEndpoint = null
                 if (snapshot.endpoint != null && outboundBlockedEndpoint !== snapshot.endpoint) outboundBlockedEndpoint = null
                 bindOutbound()
@@ -312,6 +328,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         if (ipQualityOwner.isInitialized()) ipQualityOwner.value.setForeground(value)
         profileMaintenance.setForeground(value)
         autoCheckUpdates()
+        if (value) localeOwner.value.foreground()
         if (!value) bindDiagnostics(null)
         if (!value) currentSession?.close()
     }
@@ -337,6 +354,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         if (profileListOwner.isInitialized()) profileListOwner.value.close()
         if (ipQualityOwner.isInitialized()) ipQualityOwner.value.close()
         if (updateOwner.isInitialized()) updateOwner.value.close()
+        if (localeOwner.isInitialized()) localeOwner.value.close()
         profileMaintenance.close()
         diagnostics.close()
         diagnosticsRouteJob?.cancel()
@@ -540,6 +558,12 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         if (ipQualityOwner.isInitialized()) ipQualityOwner.value.retryIfFailed()
     }
 
+    override fun retryNetworkSettings() {
+        if (application.vpn.value.phase == VpnPhase.Running) {
+            application.startService(Intent(application, LiteVpnService::class.java).setAction(LiteVpnService.ACTION_RETRY_NETWORK))
+        }
+    }
+
     override fun closeConnection(id: String) = perform("connection:$id") {
         val client = requireApi()
         client.closeConnection(id)
@@ -568,7 +592,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
             old.dnsServers != saved.dnsServers || old.appFilterMode != saved.appFilterMode ||
             old.packages != saved.packages || old.mode != saved.mode
         if (allowRestart && restart) invalidateOutboundConfiguration()
-        mutableState.update { it.copy(settings = saved) }
+        mutableState.update { it.copy(settings = saved, networkRestartRequired = requiresNetworkRestart(saved, application.vpn.value)) }
         diagnostics.settings(saved)
         if (allowRestart && restart && state.value.phase in setOf(VpnPhase.Running, VpnPhase.Starting)) connect()
         if (old.aurora != saved.aurora) checkAuroraTime()
@@ -615,7 +639,6 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
     }
 
     private suspend fun reloadRestoredData() {
-        settingsUpdates.reload()
         reloadProfiles()
         invalidateOutboundConfiguration()
         checkAuroraTime()
@@ -818,6 +841,35 @@ internal class ControllerSettingsUpdates(
     private var latest: LiteSettings? = null
     private var deferredWallpaper = false
     private var closed = false
+    private val intentGate = Any()
+    private var generation = 0L
+    private var restoring = 0
+
+    private fun intent(): Long? = synchronized(intentGate) { generation.takeIf { restoring == 0 } }
+    private fun currentIntent(token: Long): Boolean = synchronized(intentGate) { restoring == 0 && token == generation }
+
+    suspend fun restore(write: suspend () -> Unit, afterLoaded: suspend () -> Unit) {
+        synchronized(intentGate) { generation++; restoring++ }
+        try {
+            mutex.withLock {
+                check(!closed) { "Settings owner is closed" }
+                try {
+                    write()
+                    latest = null
+                    deferredWallpaper = false
+                    publishVisible(loadLatest(), false)
+                    afterLoaded()
+                } catch (failure: Throwable) {
+                    latest = null
+                    withContext(NonCancellable) {
+                        try { publishVisible(loadLatest(), false) }
+                        catch (recovery: Throwable) { failure.addSuppressed(recovery) }
+                    }
+                    throw failure
+                }
+            }
+        } finally { synchronized(intentGate) { generation++; restoring-- } }
+    }
 
     suspend fun load(): Unit = mutex.withLock {
         if (!closed) publishVisible(loadLatest(), false)
@@ -830,37 +882,46 @@ internal class ControllerSettingsUpdates(
         publishVisible(loadLatest(), false)
     }
 
-    suspend fun save(baseline: LiteSettings, requested: LiteSettings): Unit = mutex.withLock {
-        if (closed) return@withLock
-        val settings = mergeSettingsChanges(baseline, requested, loadLatest())
-        val saved = commit { saveSettings(settings) }
-        if (baseline.auroraSeed != requested.auroraSeed || baseline.auroraRotationDay != requested.auroraRotationDay) {
-            deferredWallpaper = false
-        }
-        publishVisible(saved, true)
-    }
-
-    suspend fun shuffle(): Unit = mutex.withLock {
-        if (closed || !loadLatest().aurora) return@withLock
-        val saved = commit { shuffleSettings() }
-        deferredWallpaper = false
-        publishVisible(saved, false)
-    }
-
-    suspend fun rotate(now: ZonedDateTime, eligible: () -> Boolean): Unit = mutex.withLock {
-        if (closed || !eligible()) return@withLock
-        val settings = loadLatest()
-        if (!settings.aurora || closed || !eligible()) return@withLock
-        val due = auroraRotationDayOf(now) > settings.auroraRotationDay
-        val saved = if (due) commit { rotateSettings(now) } else settings
-        if (closed) return@withLock
-        if (eligible()) {
-            if (due || deferredWallpaper) {
+    suspend fun save(baseline: LiteSettings, requested: LiteSettings) {
+        val token = intent() ?: return
+        mutex.withLock {
+            if (closed || !currentIntent(token)) return@withLock
+            val settings = mergeSettingsChanges(baseline, requested, loadLatest())
+            val saved = commit { saveSettings(settings) }
+            if (baseline.auroraSeed != requested.auroraSeed || baseline.auroraRotationDay != requested.auroraRotationDay) {
                 deferredWallpaper = false
-                publishVisible(saved, false)
             }
-        } else if (saved.auroraSeed != current().auroraSeed || saved.auroraRotationDay != current().auroraRotationDay) {
-            deferredWallpaper = true
+            publishVisible(saved, true)
+        }
+    }
+
+    suspend fun shuffle() {
+        val token = intent() ?: return
+        mutex.withLock {
+            if (closed || !currentIntent(token) || !loadLatest().aurora) return@withLock
+            val saved = commit { shuffleSettings() }
+            deferredWallpaper = false
+            publishVisible(saved, false)
+        }
+    }
+
+    suspend fun rotate(now: ZonedDateTime, eligible: () -> Boolean) {
+        val token = intent() ?: return
+        mutex.withLock {
+            if (closed || !currentIntent(token) || !eligible()) return@withLock
+            val settings = loadLatest()
+            if (!settings.aurora || closed || !eligible()) return@withLock
+            val due = auroraRotationDayOf(now) > settings.auroraRotationDay
+            val saved = if (due) commit { rotateSettings(now) } else settings
+            if (closed) return@withLock
+            if (eligible()) {
+                if (due || deferredWallpaper) {
+                    deferredWallpaper = false
+                    publishVisible(saved, false)
+                }
+            } else if (saved.auroraSeed != current().auroraSeed || saved.auroraRotationDay != current().auroraRotationDay) {
+                deferredWallpaper = true
+            }
         }
     }
 
@@ -909,6 +970,12 @@ private fun mergeSettingsChanges(baseline: LiteSettings, requested: LiteSettings
         autoStart = choose(baseline.autoStart, requested.autoStart, current.autoStart),
         openLogs = choose(baseline.openLogs, requested.openLogs, current.openLogs),
         autoCheckUpdate = choose(baseline.autoCheckUpdate, requested.autoCheckUpdate, current.autoCheckUpdate),
+        network = mergeNetworkChanges(baseline.network, requested.network, current.network),
+        fontFamily = choose(baseline.fontFamily, requested.fontFamily, current.fontFamily),
+        textScaleEnabled = choose(baseline.textScaleEnabled, requested.textScaleEnabled, current.textScaleEnabled),
+        textScale = choose(baseline.textScale, requested.textScale, current.textScale),
+        pureBlack = choose(baseline.pureBlack, requested.pureBlack, current.pureBlack),
+        locale = choose(baseline.locale, requested.locale, current.locale),
         colorStyle = choose(baseline.colorStyle, requested.colorStyle, current.colorStyle),
         auroraColors = choose(baseline.auroraColors, requested.auroraColors, current.auroraColors),
         auroraSeed = choose(baseline.auroraSeed, requested.auroraSeed, current.auroraSeed),
@@ -918,3 +985,20 @@ private fun mergeSettingsChanges(baseline: LiteSettings, requested: LiteSettings
         disabledServices = choose(baseline.disabledServices, requested.disabledServices, current.disabledServices),
     )
 }
+
+private fun mergeNetworkChanges(baseline: NetworkSettings, requested: NetworkSettings, current: NetworkSettings): NetworkSettings {
+    fun <T> choose(before: T, after: T, latest: T): T = if (after == before) latest else after
+    return current.copy(
+        systemProxy = choose(baseline.systemProxy, requested.systemProxy, current.systemProxy),
+        allowBypass = choose(baseline.allowBypass, requested.allowBypass, current.allowBypass),
+        bypassDomains = choose(baseline.bypassDomains, requested.bypassDomains, current.bypassDomains),
+        ports = choose(baseline.ports, requested.ports, current.ports),
+        allowLan = choose(baseline.allowLan, requested.allowLan, current.allowLan),
+        authentication = choose(baseline.authentication, requested.authentication, current.authentication),
+    )
+}
+
+private fun requiresNetworkRestart(settings: LiteSettings, snapshot: VpnSnapshot): Boolean =
+    snapshot.phase == VpnPhase.Running && snapshot.initialNetwork?.let {
+        effectiveVpnNetworkOptions(it) != effectiveVpnNetworkOptions(settings.network)
+    } == true

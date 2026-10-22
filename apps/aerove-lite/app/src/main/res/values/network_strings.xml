@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="network_retry">Retry</string>
+    <string name="network_restart">Restart VPN</string>
+    <string name="network_restart_detail">Saved network options require a VPN restart to take effect.</string>
+    <string name="network_title">Network</string>
+    <string name="network_vpn">VPN</string>
+    <string name="network_system_proxy">System proxy</string>
+    <string name="network_allow_bypass">Allow bypass</string>
+    <string name="network_bypass_domains">Bypass domains</string>
+    <string name="network_inbound">Inbound</string>
+    <string name="network_ports">Ports</string>
+    <string name="network_allow_lan">Allow LAN access</string>
+    <string name="network_authentication">Authentication</string>
+    <string name="network_credentials">Account and password</string>
+    <string name="network_mixed_port">Mixed port</string>
+    <string name="network_http_port">HTTP port</string>
+    <string name="network_socks_port">SOCKS port</string>
+    <string name="network_username">Account</string>
+    <string name="network_password">Password</string>
+    <string name="network_bypass_entries">One domain pattern per line</string>
+    <string name="network_save">Save</string>
+    <string name="network_cancel">Cancel</string>
+    <string name="network_save_failed">Settings could not be saved. Your draft is retained.</string>
+    <string name="network_port_detail">Use distinct ports from 1024 to 49151. Set optional HTTP or SOCKS ports to 0 to disable them.</string>
+    <string name="network_authenticated_proxy_detail">Android system proxy cannot carry credentials. Authenticated connections continue through the VPN tunnel.</string>
+    <string name="network_port_conflict">This port is already used by another listener.</string>
+    <string name="network_port_range">Enter a valid port from 1024 to 49151; optional ports may be 0.</string>
+    <string name="network_account_required">An account is required.</string>
+    <string name="network_socks_length">SOCKS credentials must fit within 255 UTF-8 bytes.</string>
+    <string name="network_credential_length">The account or password exceeds its length limit.</string>
+    <string name="network_domain_length">Domain patterns must not exceed 512 characters.</string>
+    <string name="network_invalid_value">Enter a valid value without control characters.</string>
+    <string name="network_field_issue">%1$s: %2$s</string>
+</resources>

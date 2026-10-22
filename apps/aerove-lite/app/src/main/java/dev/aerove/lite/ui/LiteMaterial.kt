@@ -27,6 +27,12 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
+import dev.aerove.lite.presentation.effectiveTextScale
+import dev.aerove.lite.presentation.presentationOpaque
+import dev.aerove.lite.presentation.effectiveAurora
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -86,6 +92,7 @@ internal data class LiteVisuals(
 internal val LocalLiteVisuals = staticCompositionLocalOf<LiteVisuals> { error("LiteTheme is missing") }
 internal val LocalLiteBackdrop = staticCompositionLocalOf<Backdrop> { error("Backdrop source is missing") }
 internal val LocalLiteInkBackdrop = staticCompositionLocalOf<Backdrop?> { null }
+internal val LocalLiteFontFamily = staticCompositionLocalOf<FontFamily> { FontFamily.Default }
 internal val LocalLiteHighContrast = staticCompositionLocalOf { false }
 
 @Composable
@@ -107,13 +114,24 @@ internal fun LiteTheme(settings: LiteSettings, content: @Composable () -> Unit) 
         ColorMode.Light -> false
         ColorMode.Dark -> true
     }
+    val resolver = LocalContext.current.applicationContext.contentResolver
+    val highContrast = remember(resolver) { mutableStateOf(android.provider.Settings.Secure.getInt(resolver, "high_text_contrast_enabled", 0) != 0) }
+    val opaque = presentationOpaque(settings.pureBlack, dark, highContrast.value)
+    val aurora = effectiveAurora(settings.aurora, settings.pureBlack, dark, highContrast.value)
     val systemColor = rememberSystemThemeColor(dark)
     val seed = if (settings.followSystemColor) systemColor else settings.themeColor
-    val colors = remember(seed, dark, settings.aurora, settings.colorStyle) {
-        fullColorScheme(seed.toInt(), dark, settings.aurora, settings.colorStyle)
+    val colors = remember(seed, dark, aurora, settings.colorStyle, settings.pureBlack) {
+        fullColorScheme(seed.toInt(), dark, aurora, settings.colorStyle, settings.pureBlack)
     }
+    val family = remember(settings.fontFamily) {
+        settings.fontFamily?.takeIf { it.isNotBlank() }?.let {
+            FontFamily(android.graphics.Typeface.create(it, android.graphics.Typeface.NORMAL))
+        } ?: FontFamily.Default
+    }
+    val density = LocalDensity.current
+    val scaledDensity = Density(density.density, effectiveTextScale(density.fontScale, settings.textScaleEnabled, settings.textScale))
     val reducedMotion = rememberLiteReducedMotion()
-    val visuals = LiteVisuals(settings.material, settings.aurora, dark, colors.primary, colors.fullPage(dark), colors.fullCard(dark), colors.onSurface, colors.onSurfaceVariant)
+    val visuals = LiteVisuals(if (opaque) MaterialTier.Solid else settings.material, aurora, dark, colors.primary, colors.fullPage(dark), colors.fullCard(dark), colors.onSurface, colors.onSurfaceVariant)
     val view = LocalView.current
     val activity = remember(view) { view.context.activityOrNull() }
     SideEffect {
@@ -130,8 +148,6 @@ internal fun LiteTheme(settings: LiteSettings, content: @Composable () -> Unit) 
             }
         }
     }
-    val resolver = LocalContext.current.applicationContext.contentResolver
-    val highContrast = remember(resolver) { mutableStateOf(android.provider.Settings.Secure.getInt(resolver, "high_text_contrast_enabled", 0) != 0) }
     DisposableEffect(resolver) {
         val observer = object : android.database.ContentObserver(android.os.Handler(android.os.Looper.getMainLooper())) {
             override fun onChange(selfChange: Boolean) {
@@ -141,15 +157,15 @@ internal fun LiteTheme(settings: LiteSettings, content: @Composable () -> Unit) 
         resolver.registerContentObserver(android.provider.Settings.Secure.getUriFor("high_text_contrast_enabled"), false, observer)
         onDispose { resolver.unregisterContentObserver(observer) }
     }
-    CompositionLocalProvider(LocalLiteVisuals provides visuals, LocalLiteHighContrast provides highContrast.value, LocalLiteReducedMotion provides reducedMotion) {
+    CompositionLocalProvider(LocalDensity provides scaledDensity, LocalLiteFontFamily provides family, LocalLiteVisuals provides visuals, LocalLiteHighContrast provides highContrast.value, LocalLiteReducedMotion provides reducedMotion) {
         MaterialTheme(
             colorScheme = colors,
             typography = Typography(
-                bodyLarge = LiteType.Body,
-                bodyMedium = LiteType.Label,
-                labelLarge = LiteType.Label,
-                headlineLarge = LiteType.Title,
-                titleLarge = LiteType.Headline,
+                bodyLarge = LiteType.Body.copy(fontFamily = family),
+                bodyMedium = LiteType.Label.copy(fontFamily = family),
+                labelLarge = LiteType.Label.copy(fontFamily = family),
+                headlineLarge = LiteType.Title.copy(fontFamily = family),
+                titleLarge = LiteType.Headline.copy(fontFamily = family),
             ),
             content = content,
         )

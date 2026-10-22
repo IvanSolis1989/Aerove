@@ -1,6 +1,9 @@
 package dev.aerove.lite
 
 import java.time.ZonedDateTime
+import dev.aerove.lite.networksettings.NetworkSettings
+import dev.aerove.lite.networksettings.ProxyAuthentication
+import dev.aerove.lite.networksettings.UserProxyPorts
 import kotlin.random.Random
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -73,11 +76,112 @@ class ControllerSettingsUpdatesTest {
             mode = ProxyMode.Direct, ipv6 = true, overrideDns = true,
             dnsServers = listOf("tls://8.8.8.8:853"), appFilterMode = AppFilterMode.Include,
             packages = setOf("com.example.one"), autoStart = true, autoCheckUpdate = false, openLogs = true,
+            network = NetworkSettings(systemProxy = false, allowBypass = false, bypassDomains = listOf("*.example"),
+                ports = UserProxyPorts(7900, 7901, 7902), allowLan = true,
+                authentication = ProxyAuthentication(true, "account", "password")),
+            fontFamily = "custom-font", textScaleEnabled = true, textScale = 1.2f, pureBlack = true,
         )
         fake.updates.save(baseline, requested)
         assertEquals(requested, fake.disk)
         assertEquals(requested, fake.shown)
         assertTrue(fake.restartAllowed.last())
+    }
+
+    @Test fun queuedNetworkSectionsPreserveIndependentFieldsInEitherOrder() = runTest {
+        for (portsFirst in listOf(true, false)) {
+            val fake = Harness()
+            fake.updates.load()
+            val baseline = fake.shown
+            val ports = baseline.network.copy(ports = UserProxyPorts(7900, 7901, 7902), allowLan = true)
+            val policy = baseline.network.copy(systemProxy = false, allowBypass = false, bypassDomains = listOf("*.example"),
+                authentication = ProxyAuthentication(true, "account", "password"))
+            val requests = if (portsFirst) listOf(ports, policy) else listOf(policy, ports)
+            fake.saveGate = CompletableDeferred()
+            val first = launch { fake.updates.save(baseline, baseline.copy(network = requests[0])) }
+            runCurrent()
+            val second = launch { fake.updates.save(baseline, baseline.copy(network = requests[1])) }
+            runCurrent()
+            assertEquals(1, fake.saveCalls)
+            fake.saveGate!!.complete(Unit)
+            first.join(); second.join()
+            assertEquals(baseline.copy(network = policy.copy(ports = ports.ports, allowLan = true)), fake.disk)
+            assertEquals(fake.disk, fake.shown)
+            assertEquals(2, fake.saveCalls)
+        }
+    }
+
+    @Test fun queuedNetworkAndPresentationSavesPreserveSystemLocaleRestorationInEitherOrder() = runTest {
+        for (localeFirst in listOf(true, false)) {
+            val initial = LiteSettings(locale = "zh_CN", auroraRotationDay = 20261021L)
+            val fake = Harness(initial)
+            fake.updates.load()
+            val baseline = fake.shown
+            val network = baseline.copy(network = baseline.network.copy(ports = UserProxyPorts(7900, 7901)))
+            val presentationAndSystemLocale = baseline.copy(
+                fontFamily = "custom-font", textScaleEnabled = true, textScale = 1.2f, pureBlack = true, locale = null,
+            )
+            val requests = if (localeFirst) listOf(presentationAndSystemLocale, network)
+                else listOf(network, presentationAndSystemLocale)
+            fake.saveGate = CompletableDeferred()
+            val first = launch { fake.updates.save(baseline, requests[0]) }
+            runCurrent()
+            val second = launch { fake.updates.save(baseline, requests[1]) }
+            runCurrent()
+            assertEquals(1, fake.saveCalls)
+            fake.saveGate!!.complete(Unit)
+            first.join(); second.join()
+            assertNull(fake.disk.locale)
+            assertEquals(UserProxyPorts(7900, 7901), fake.disk.network.ports)
+            assertEquals("custom-font", fake.disk.fontFamily)
+            assertTrue(fake.disk.textScaleEnabled)
+            assertEquals(1.2f, fake.disk.textScale)
+            assertTrue(fake.disk.pureBlack)
+            assertEquals(fake.disk, fake.shown)
+            assertEquals(2, fake.saveCalls)
+        }
+    }
+
+    @Test fun portsAndAuthenticationEachRemainOneUserTransaction() = runTest {
+        val fake = Harness()
+        fake.updates.load()
+        val baseline = fake.shown
+        val firstNetwork = baseline.network.copy(ports = UserProxyPorts(7900, 7901),
+            authentication = ProxyAuthentication(true, "first", "first-password"))
+        val latestNetwork = baseline.network.copy(ports = UserProxyPorts(socks = 7902),
+            authentication = ProxyAuthentication(false, "dormant", "saved-password"))
+        fake.saveGate = CompletableDeferred()
+        val first = launch { fake.updates.save(baseline, baseline.copy(network = firstNetwork)) }
+        runCurrent()
+        val latest = launch { fake.updates.save(baseline, baseline.copy(network = latestNetwork)) }
+        runCurrent()
+        fake.saveGate!!.complete(Unit)
+        first.join(); latest.join()
+        assertEquals(baseline.copy(network = latestNetwork), fake.disk)
+        assertEquals(fake.disk, fake.shown)
+        assertEquals(2, fake.saveCalls)
+    }
+
+    @Test fun presentationSaveBetweenNetworkEditsKeepsAllAcceptedFields() = runTest {
+        val fake = Harness()
+        fake.updates.load()
+        val baseline = fake.shown
+        val ports = UserProxyPorts(7900, 7901, 7902)
+        fake.saveGate = CompletableDeferred()
+        val first = launch { fake.updates.save(baseline, baseline.copy(network = baseline.network.copy(ports = ports))) }
+        runCurrent()
+        val appearance = launch { fake.updates.save(baseline, baseline.copy(fontFamily = "custom-font",
+            textScaleEnabled = true, textScale = 1.2f, pureBlack = true)) }
+        runCurrent()
+        val last = launch { fake.updates.save(baseline, baseline.copy(network = baseline.network.copy(allowLan = true))) }
+        runCurrent()
+        assertEquals(1, fake.saveCalls)
+        fake.saveGate!!.complete(Unit)
+        first.join(); appearance.join(); last.join()
+        assertEquals(baseline.copy(network = baseline.network.copy(ports = ports, allowLan = true),
+            fontFamily = "custom-font", textScaleEnabled = true, textScale = 1.2f, pureBlack = true), fake.disk)
+        assertEquals(fake.disk, fake.shown)
+        assertEquals(3, fake.saveCalls)
+        assertEquals(1, fake.readCalls)
     }
 
     @Test fun queuedAutomaticCheckSkipsStoreWhenBackgroundEligibilityExpires() = runTest {

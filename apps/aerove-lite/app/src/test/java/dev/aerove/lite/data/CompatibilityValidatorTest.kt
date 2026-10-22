@@ -28,6 +28,28 @@ class CompatibilityValidatorTest {
         assertEquals(1, nativeCalls)
     }
 
+    @Test fun userHttpSocksMixedLanAndAuthenticationReachNativeWithoutBeingStripped() {
+        val source = """
+            port: 7891
+            socks-port: 7892
+            mixed-port: 7890
+            authentication: ['alice:password:with:colon']
+            allow-lan: true
+            bind-address: '::'
+            rules: ['MATCH,DIRECT']
+        """.trimIndent()
+        validator.validate(source)
+        assertEquals(listOf(source), nativeSources)
+    }
+
+    @Test fun androidNativeHandlerLimitsAreSpecificToEnabledRedirAndTproxyPorts() {
+        rejected("redir-port: 7893", "$.redir-port")
+        rejected("tproxy-port: 7894", "$.tproxy-port")
+        assertEquals(0, nativeCalls)
+        validator.validate("redir-port: 0\ntproxy-port: 0\nmixed-port: 7890")
+        assertEquals(1, nativeCalls)
+    }
+
     @Test fun nativeErrorsAreNotConvertedToSuccess() {
         val realFailure = CompatibilityValidator(NativeConfigValidator { "$.proxies[0].uuid: invalid UUID" })
         val failure = assertThrows(ConfigValidationException::class.java) {

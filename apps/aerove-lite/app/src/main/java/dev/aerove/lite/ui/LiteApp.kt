@@ -85,6 +85,7 @@ internal enum class DetailPage(@StringRes val label: Int) {
     Theme(R.string.lite_theme), General(R.string.lite_general), Connections(R.string.lite_tab_connections),
     Dns(R.string.lite_dns), Apps(R.string.lite_app_filter), Logs(R.string.lite_logs), About(R.string.lite_about),
     Backup(R.string.backup_title),
+    Network(R.string.network_title), FontFamily(R.string.presentation_font_family),
 }
 
 private val PageScrollSaver = mapSaver<MutableMap<String, LazyListState>>(
@@ -162,7 +163,8 @@ fun LiteApp(state: LiteState, actions: LiteActions) {
         val scrolls = rememberSaveable(saver = PageScrollSaver) { mutableMapOf<String, LazyListState>() }
         val pageKey = if (dashboardEditing) "dashboard-editor" else editorProfile?.let { "editor:$it:$editorReadOnly" } ?: detail?.name ?: activeTab.name
         val motionActivity = rememberAuroraMotionActivity(pageKey)
-        val phase = rememberAuroraPhase(state.settings.aurora && !covered && !scanMounted, activity = motionActivity)
+        val effectiveAurora = LocalLiteVisuals.current.aurora
+        val phase = rememberAuroraPhase(effectiveAurora && !covered && !scanMounted, activity = motionActivity)
         val scroll = scrolls.getOrPut(pageKey) { LazyListState() }
         val dockScroll = remember(scroll, density.density) {
             object : NestedScrollConnection {
@@ -182,9 +184,10 @@ fun LiteApp(state: LiteState, actions: LiteActions) {
                 }
             }
         }
-        BackHandler(detail != null && !modal) { detail = null }
+        val closeDetail = { detail = if (detail == DetailPage.FontFamily) DetailPage.Theme else null }
+        BackHandler(detail != null && !modal, onBack = closeDetail)
         BackHandler(activeTab != MainTab.Home && detail == null && !modal) { tab = MainTab.Home }
-        Box(Modifier.fillMaxSize().auroraMotionActivity(motionActivity, state.settings.aurora)) {
+        Box(Modifier.fillMaxSize().auroraMotionActivity(motionActivity, effectiveAurora)) {
             Box(Modifier.fillMaxSize().layerBackdrop(wallpaper)) {
                 LiteWallpaper(phase, Modifier.fillMaxSize(), state.settings.auroraColors, state.settings.auroraSeed)
             }
@@ -220,7 +223,8 @@ fun LiteApp(state: LiteState, actions: LiteActions) {
                     val padding = PaddingValues(start = 16.dp, end = 16.dp, top = topInset + LiteMetrics.PageToolbar, bottom = 20.dp + dockInset)
                     pages.SaveableStateProvider(pageKey) {
                         when (detail) {
-                            DetailPage.Theme -> SettingsScreen(state, actions, padding)
+                            DetailPage.Theme -> SettingsScreen(state, actions, padding, onFontFamily = { detail = DetailPage.FontFamily })
+                            DetailPage.FontFamily -> FontFamilyScreen(state, actions, padding)
                             DetailPage.General -> GeneralScreen(state, actions, padding)
                             DetailPage.Connections -> ConnectionsScreen(state, actions, padding)
                             DetailPage.Dns -> DnsScreen(state, actions, padding)
@@ -228,13 +232,17 @@ fun LiteApp(state: LiteState, actions: LiteActions) {
                             DetailPage.Logs -> LogsScreen(state, actions, padding)
                             DetailPage.About -> AboutScreen(padding)
                             DetailPage.Backup -> BackupScreen(features().backup, padding)
+                            DetailPage.Network -> NetworkSettingsScreen(state.settings.network, "settings" in state.busy, padding,
+                                { actions.changeSettings(state.settings.copy(network = it)) }, error = state.networkError,
+                                restartRequired = state.networkRestartRequired, onRestart = actions::connect,
+                                onRetry = if (state.phase == dev.aerove.lite.VpnPhase.Running) actions::retryNetworkSettings else null)
                             null -> when (activeTab) {
                                 MainTab.Home -> OverviewScreen(state.settings, padding, cardContent)
                                 MainTab.Proxies -> ProxiesScreen(state, actions, padding)
                                 MainTab.Profiles -> ProfilesScreen(state, actions, padding,
                                     { importInput = ""; subscriptionEditor = true }, { deleting = it },
                                     { profile, preview -> editorTitle = profile.name; editorReadOnly = preview; editorProfile = profile.id })
-                                MainTab.Tools -> ToolsScreen(state, padding) { detail = it }
+                                MainTab.Tools -> ToolsScreen(state, actions, padding) { detail = it }
                             }
                         }
                     }
@@ -243,7 +251,7 @@ fun LiteApp(state: LiteState, actions: LiteActions) {
                     LitePageHeader(
                         title = stringResource(detail?.label ?: activeTab.label), topInset = topInset, scroll = scroll,
                         modifier = Modifier.align(Alignment.TopCenter).then(if (modal) Modifier.clearAndSetSemantics {} else Modifier),
-                        back = if (detail != null) ({ detail = null }) else null,
+                        back = if (detail != null) closeDetail else null,
                         backLabel = stringResource(R.string.lite_back),
                     ) {
                         if (detail == null && activeTab == MainTab.Home) DashboardEditAction { dashboardEditing = true }

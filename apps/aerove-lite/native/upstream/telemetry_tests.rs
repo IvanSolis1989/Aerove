@@ -282,7 +282,7 @@ pub(super) async fn websocket() {
     *crate::mobile::CONTEXT.write().unwrap() = Some(Arc::new(crate::mobile::Context {
         protector: first.protector.clone(), bootstrap: vec![], events: first.events.clone(),
         logs: first.logs.clone(), level: first.level, cancel: next_cancel.clone(),
-        telemetry: telemetry::Bus::new(next_cancel),
+        telemetry: telemetry::Bus::new(next_cancel), network: None,
     }));
     telemetry::source().unwrap().publish(Traffic { up: 999, ..Default::default() });
     telemetry::groups_changed();

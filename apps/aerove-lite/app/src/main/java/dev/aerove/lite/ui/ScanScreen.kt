@@ -296,7 +296,7 @@ private fun ScanFrame(invalid: Boolean, running: Boolean, torch: @Composable () 
                 .semantics { liveRegion = LiveRegionMode.Polite },
             color = if (invalid) MaterialTheme.colorScheme.error else Color.White,
             textAlign = TextAlign.Center,
-            style = LiteType.Callout,
+            style = LiteType.Callout.copy(fontFamily = LocalLiteFontFamily.current),
             maxLines = 2,
         )
         Box(Modifier.align(Alignment.TopStart).offset(layout.torch.left.dp, layout.torch.top.dp)) { torch() }

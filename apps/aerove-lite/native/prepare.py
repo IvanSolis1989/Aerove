@@ -130,6 +130,8 @@ def prepare(archive: Path | None = None) -> Path:
     service_check = (ROOT / "upstream/service_check.rs").read_bytes()
     service_rules = (ROOT / "upstream/service_rules.rs").read_bytes()
     service_check_tests = (ROOT / "upstream/service_check_tests.rs").read_bytes()
+    inbound = (ROOT / "upstream/inbound.rs").read_bytes()
+    inbound_tests = (ROOT / "upstream/inbound_tests.rs").read_bytes()
     provenance = {
         "repository": "https://github.com/ibigbug/clash-rs",
         "tag": "v0.10.10", "commit": COMMIT, "archiveSha256": digest(data),
@@ -142,6 +144,7 @@ def prepare(archive: Path | None = None) -> Path:
         "serviceCheckSha256": digest(service_check),
         "serviceRulesSha256": digest(service_rules),
         "serviceCheckTestsSha256": digest(service_check_tests),
+        "inboundSha256": digest(inbound), "inboundTestsSha256": digest(inbound_tests),
     }
     target = cache / "clash-rs"
     marker = target / "AEROVE_PROVENANCE.json"
@@ -169,6 +172,8 @@ def prepare(archive: Path | None = None) -> Path:
         (resource_target.parent / "service_check.rs").write_bytes(service_check)
         (resource_target.parent / "service_rules.rs").write_bytes(service_rules)
         (resource_target.parent / "service_check_tests.rs").write_bytes(service_check_tests)
+        (resource_target.parent / "inbound.rs").write_bytes(inbound)
+        (resource_target.parent / "inbound_tests.rs").write_bytes(inbound_tests)
         provenance["treeSha256"] = tree_digest(staging)
         (staging / "AEROVE_PROVENANCE.json").write_text(
             json.dumps(provenance, indent=2) + "\n", encoding="utf-8", newline="\n")

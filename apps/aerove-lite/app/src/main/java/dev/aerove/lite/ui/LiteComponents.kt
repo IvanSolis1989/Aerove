@@ -83,7 +83,7 @@ internal fun LiteText(
         else -> AeroveInkRole.Body
     }
     val hasEmoji = text.codePoints().anyMatch { it in 0x1F000..0x1FAFF || it in 0x2600..0x27BF }
-    Text(text, if (hasEmoji) modifier else modifier.liteInk(color, role), color = color, style = style, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
+    Text(text, if (hasEmoji) modifier else modifier.liteInk(color, role), color = color, style = style.copy(fontFamily = style.fontFamily ?: LocalLiteFontFamily.current), maxLines = maxLines, overflow = TextOverflow.Ellipsis)
 }
 
 @Composable
@@ -272,7 +272,7 @@ internal fun LiteField(
                     .semantics { contentDescription = label }.liteInk(visuals.ink, AeroveInkRole.Body),
                 enabled = enabled,
                 singleLine = singleLine,
-                textStyle = LiteType.Body.copy(color = visuals.ink),
+                textStyle = LiteType.Body.copy(color = visuals.ink, fontFamily = LocalLiteFontFamily.current),
                 cursorBrush = SolidColor(visuals.primary),
                 keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, keyboardType = keyboardType),
             )

@@ -121,6 +121,10 @@ class CompatibilityValidator(
         UNSUPPORTED_TOP.forEach { key ->
             if (root[key] != null) issue("$.$key", "This capability is not available in Android Lite")
         }
+        listOf("redir-port", "tproxy-port").forEach { key ->
+            if (root[key] != null && root[key] != 0) issue("$.$key",
+                "clash-rs $CORE_VERSION has no Android native handler for $key (fixed network_listener target_os=linux only)")
+        }
         listOf("mmdb-download-url", "asn-mmdb-download-url", "geosite-download-url").forEach { key ->
             if (root[key] != null && (!managed || bundleDirectory != null)) {
                 issue("$.$key", "Resource downloads require the complete bundle preparation path")

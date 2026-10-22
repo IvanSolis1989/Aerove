@@ -91,7 +91,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 @Composable
-internal fun SettingsScreen(state: LiteState, actions: LiteActions, padding: PaddingValues) {
+internal fun SettingsScreen(state: LiteState, actions: LiteActions, padding: PaddingValues, onFontFamily: (() -> Unit)? = null) {
     val enabled = state.busy.isEmpty()
     LazyColumn(state = LocalLiteListState.current, contentPadding = padding, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { SectionLabel(stringResource(R.string.lite_appearance)) }
@@ -122,6 +122,7 @@ internal fun SettingsScreen(state: LiteState, actions: LiteActions, padding: Pad
                 }
             }
         }
+        item { DisplayPreferencesSection(state, actions, onFontFamily) }
         if (state.settings.aurora) item { AuroraSettings(state, actions) }
         else {
             item { ThemePresetControls(state, actions, enabled) }
@@ -319,7 +320,7 @@ private fun ThemeHexField(value: String, onChanged: (String) -> Unit, modifier: 
         Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             LiteText("#", color = visuals.secondaryInk)
             BasicTextField(value, onChanged, Modifier.weight(1f).semantics { contentDescription = label }, enabled = enabled,
-                singleLine = true, textStyle = LiteType.Body.copy(color = visuals.ink, fontFeatureSettings = "tnum"),
+                singleLine = true, textStyle = LiteType.Body.copy(color = visuals.ink, fontFeatureSettings = "tnum", fontFamily = LocalLiteFontFamily.current),
                 cursorBrush = SolidColor(visuals.primary), interactionSource = interaction,
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, autoCorrectEnabled = false))
         }

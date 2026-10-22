@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="locale_language">Language</string>
+    <string name="locale_default">Default</string>
+    <string name="locale_en">English</string>
+    <string name="locale_es">Spanish</string>
+    <string name="locale_fr">French</string>
+    <string name="locale_ja">Japanese</string>
+    <string name="locale_ko">Korean</string>
+    <string name="locale_ru">Russian</string>
+    <string name="locale_zh_cn">Simplified Chinese</string>
+</resources>

@@ -8,10 +8,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import dev.aerove.lite.LiteState
+import dev.aerove.lite.LiteActions
 import dev.aerove.lite.R
 
 @Composable
-internal fun ToolsScreen(state: LiteState, padding: PaddingValues, open: (DetailPage) -> Unit) {
+internal fun ToolsScreen(state: LiteState, actions: LiteActions, padding: PaddingValues, open: (DetailPage) -> Unit) {
     LazyColumn(state = LocalLiteListState.current, contentPadding = padding) {
         item { SectionLabel(stringResource(R.string.lite_more)) }
         item {
@@ -27,7 +28,9 @@ internal fun ToolsScreen(state: LiteState, padding: PaddingValues, open: (Detail
             LitePane(Modifier.fillMaxWidth()) {
                 Column {
                     ToolRow(R.string.lite_theme, FullGlyphs.paintbrush) { open(DetailPage.Theme) }
+                    LanguagePreferenceRow(state, actions)
                     ToolRow(R.string.lite_app_filter, FullGlyphs.appsList) { open(DetailPage.Apps) }
+                    ToolRow(R.string.network_title, FullGlyphs.proxies) { open(DetailPage.Network) }
                     SettingsRow(stringResource(R.string.lite_dns), if (state.settings.overrideDns) state.settings.dnsServers.joinToString(", ") else stringResource(R.string.lite_dns_follow_profile), FullGlyphs.dns, { open(DetailPage.Dns) }) {
                         LiteIcon(FullGlyphs.chevronForward)
                     }

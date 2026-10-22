@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="locale_language">语言</string>
+    <string name="locale_default">默认</string>
+    <string name="locale_en">英语</string>
+    <string name="locale_es">西班牙语</string>
+    <string name="locale_fr">法语</string>
+    <string name="locale_ja">日语</string>
+    <string name="locale_ko">韩语</string>
+    <string name="locale_ru">俄语</string>
+    <string name="locale_zh_cn">中文简体</string>
+</resources>

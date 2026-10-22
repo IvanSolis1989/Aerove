@@ -170,7 +170,7 @@
 +            #[cfg(feature = "aerove-mobile")]
 +            {
 +                let probe = crate::mobile::outbound::Probe::new(app_state.components.clone(), cancellation_token.child_token());
-+                router = router.merge(probe.routes()).merge(crate::mobile::telemetry::routes(cancellation_token.child_token())).layer(middleware::from_fn(move |request, next| probe.clone().guard(request, next)));
++                router = router.merge(probe.routes()).merge(crate::mobile::inbound::routes(app_state.components.clone())).merge(crate::mobile::telemetry::routes(cancellation_token.child_token())).layer(middleware::from_fn(move |request, next| probe.clone().guard(request, next)));
 +                router = router.layer(middleware::from_fn(crate::mobile::guard_controller));
 +            }
              if let Some(external_ui) = controller_cfg
@@ -1122,6 +1122,85 @@
                  debug!("remote connection established {}", sess);
                  rhs.install_tracking(
                      self.manager.clone(),
+@@ -236,7 +267,16 @@
+         sess: Session,
+         udp_inbound: AnyInboundDatagram,
+     ) -> tokio::sync::oneshot::Sender<u8> {
+-        let outbound_handle_guard = TimeoutUdpSessionManager::new();
++        self.dispatch_datagram_owned(sess, udp_inbound).await.0
++    }
++
++    pub async fn dispatch_datagram_owned(
++        &self,
++        sess: Session,
++        udp_inbound: AnyInboundDatagram,
++    ) -> (tokio::sync::oneshot::Sender<u8>, tokio::task::JoinHandle<()>) {
++        let outbound_handle_guard = Arc::new(TimeoutUdpSessionManager::new());
++        let cleanup_sessions = outbound_handle_guard.clone();
+ 
+         let router = self.router.clone();
+         let outbound_manager = self.outbound_manager.clone();
+@@ -517,17 +557,20 @@
+ 
+         let (close_sender, close_receiver) = tokio::sync::oneshot::channel::<u8>();
+ 
+-        tokio::spawn(async move {
+-            if close_receiver.await.is_ok() {
++        let cleanup = tokio::spawn(async move {
++            let closed = close_receiver.await.is_ok();
++            if !closed { error!("UDP close signal dropped!"); }
++            if closed || cfg!(feature = "aerove-mobile") {
+                 trace!("UDP close signal for {} received", s);
+                 t1.abort();
+                 t2.abort();
+-            } else {
+-                error!("UDP close signal dropped!");
++                let _ = t1.await;
++                let _ = t2.await;
++                cleanup_sessions.stop().await;
+             }
+         });
+ 
+-        close_sender
++        (close_sender, cleanup)
+     }
+ }
+ 
+@@ -596,13 +639,13 @@
+ struct TimeoutUdpSessionManager {
+     map: Arc<RwLock<OutboundHandleMap>>,
+ 
+-    cleaner: Option<JoinHandle<()>>,
++    cleaner: std::sync::Mutex<Option<JoinHandle<()>>>,
+ }
+ 
+ impl Drop for TimeoutUdpSessionManager {
+     fn drop(&mut self) {
+         trace!("dropping timeout udp session manager");
+-        if let Some(x) = self.cleaner.take() {
++        if let Some(x) = self.cleaner.get_mut().unwrap().take() {
+             x.abort()
+         }
+     }
+@@ -648,8 +691,16 @@
+         Self {
+             map,
+ 
+-            cleaner: Some(cleaner),
+-        }
++            cleaner: std::sync::Mutex::new(Some(cleaner)),
++        }
++    }
++
++    async fn stop(&self) {
++        let cleaner = self.cleaner.lock().unwrap().take();
++        if let Some(cleaner) = cleaner { cleaner.abort(); let _ = cleaner.await; }
++        let handles: Vec<_> = self.map.write().await.0.drain().map(|(_, value)| value.rw_handle).collect();
++        for handle in &handles { handle.abort(); }
++        for handle in handles { let _ = handle.await; }
+     }
+ 
+     async fn insert(
 --- a/clash-lib/src/app/remote_content_manager/mod.rs
 +++ b/clash-lib/src/app/remote_content_manager/mod.rs
 @@ -361,6 +361,10 @@
@@ -1135,7 +1214,7 @@
          let entry = state.entry(name.to_owned()).or_default();
          entry.alive.store(alive, Ordering::Relaxed);
          // Reset consecutive failures on success
-@@ -372,5 +376,12 @@
+@@ -372,6 +376,13 @@
              if entry.delay_history.len() > 10 {
                  entry.delay_history.pop_front();
              }
@@ -1148,3 +1227,315 @@
 +            crate::mobile::telemetry::groups_changed();
          }
      }
+ 
+--- a/clash-lib/src/proxy/http/inbound/mod.rs
++++ b/clash-lib/src/proxy/http/inbound/mod.rs
+@@ -60,7 +60,11 @@
+     }
+ 
+     async fn listen_tcp(&self) -> std::io::Result<()> {
++        #[cfg(feature = "aerove-mobile")]
++        let ready = crate::mobile::inbound::ready_signal(crate::mobile::inbound::Kind::Http, self.addr.port())?;
+         let listener = try_create_dualstack_tcplistener(self.addr)?;
++        #[cfg(feature = "aerove-mobile")]
++        ready.bound(listener.local_addr()?)?;
+ 
+         loop {
+             let (socket, _) = match listener.accept().await {
+@@ -100,7 +104,7 @@
+             let dispatcher = self.dispatcher.clone();
+             let author = self.authenticator.clone();
+             let fw_mark = self.fw_mark;
+-            tokio::spawn(async move {
++            let connection = async move {
+                 proxy::handle(
+                     TokioIo::new(Box::new(socket)),
+                     src_addr,
+@@ -109,7 +113,11 @@
+                     fw_mark,
+                 )
+                 .await
+-            });
++            };
++                    #[cfg(feature = "aerove-mobile")]
++                    crate::mobile::inbound::spawn_connection(connection).await;
++                    #[cfg(not(feature = "aerove-mobile"))]
++                    tokio::spawn(connection);
+         }
+     }
+ 
+--- a/clash-lib/src/proxy/socks/inbound/mod.rs
++++ b/clash-lib/src/proxy/socks/inbound/mod.rs
+@@ -62,7 +62,11 @@
+     }
+ 
+     async fn listen_tcp(&self) -> std::io::Result<()> {
++        #[cfg(feature = "aerove-mobile")]
++        let ready = crate::mobile::inbound::ready_signal(crate::mobile::inbound::Kind::Socks, self.addr.port())?;
+         let listener = try_create_dualstack_tcplistener(self.addr)?;
++        #[cfg(feature = "aerove-mobile")]
++        ready.bound(listener.local_addr()?)?;
+ 
+         loop {
+             let (socket, _) = match listener.accept().await {
+@@ -110,9 +114,13 @@
+             let dispatcher = self.dispatcher.clone();
+             let authenticator = self.authenticator.clone();
+ 
+-            tokio::spawn(async move {
++            let connection = async move {
+                 handle_tcp(&mut sess, socket, dispatcher, authenticator).await
+-            });
++            };
++                    #[cfg(feature = "aerove-mobile")]
++                    crate::mobile::inbound::spawn_connection(connection).await;
++                    #[cfg(not(feature = "aerove-mobile"))]
++                    tokio::spawn(connection);
+         }
+     }
+ 
+--- a/clash-lib/src/proxy/mixed/mod.rs
++++ b/clash-lib/src/proxy/mixed/mod.rs
+@@ -55,7 +55,11 @@
+     }
+ 
+     async fn listen_tcp(&self) -> std::io::Result<()> {
++        #[cfg(feature = "aerove-mobile")]
++        let ready = crate::mobile::inbound::ready_signal(crate::mobile::inbound::Kind::Mixed, self.addr.port())?;
+         let listener = try_create_dualstack_tcplistener(self.addr)?;
++        #[cfg(feature = "aerove-mobile")]
++        ready.bound(listener.local_addr()?)?;
+ 
+         loop {
+             let (socket, _) = match listener.accept().await {
+@@ -119,7 +123,7 @@
+                         ..Default::default()
+                     };
+ 
+-                    tokio::spawn(async move {
++                    let connection = async move {
+                         socks::inbound::handle_tcp(
+                             &mut sess,
+                             socket,
+@@ -127,14 +131,18 @@
+                             authenticator,
+                         )
+                         .await
+-                    });
++                    };
++                    #[cfg(feature = "aerove-mobile")]
++                    crate::mobile::inbound::spawn_connection(connection).await;
++                    #[cfg(not(feature = "aerove-mobile"))]
++                    tokio::spawn(connection);
+                 }
+ 
+                 _ => {
+                     let src = src_addr;
+                     let dispatcher = dispatcher.clone();
+                     let authenticator = authenticator.clone();
+-                    tokio::spawn(async move {
++                    let connection = async move {
+                         http::handle_http(
+                             TokioIo::new(Box::new(socket) as _),
+                             src,
+@@ -143,7 +151,11 @@
+                             fw_mark,
+                         )
+                         .await;
+-                    });
++                    };
++                    #[cfg(feature = "aerove-mobile")]
++                    crate::mobile::inbound::spawn_connection(connection).await;
++                    #[cfg(not(feature = "aerove-mobile"))]
++                    tokio::spawn(connection);
+                 }
+             }
+         }
+--- a/clash-lib/src/app/inbound/manager.rs
++++ b/clash-lib/src/app/inbound/manager.rs
+@@ -77,7 +77,12 @@
+ 
+ pub struct InboundManager {
+     dispatcher: Arc<Dispatcher>,
++    #[cfg(not(feature = "aerove-mobile"))]
+     authenticator: ThreadSafeAuthenticator,
++    #[cfg(feature = "aerove-mobile")]
++    authenticator: std::sync::RwLock<ThreadSafeAuthenticator>,
++    #[cfg(feature = "aerove-mobile")]
++    mobile_start: std::sync::Mutex<Option<JoinHandle<()>>>,
+     dns_resolver: Option<ThreadSafeDNSResolver>,
+ 
+     /// Inbound options for each inbound type -> listening Task
+@@ -97,11 +102,11 @@
+     fn run_async(&self) {
+         let inbound_handlers = self.inbound_handlers.clone();
+         let dispatcher = self.dispatcher.clone();
+-        let authenticator = self.authenticator.clone();
++        let authenticator = self.authenticator();
+         let cancellation_token = self.cancellation_token.clone();
+         let dns_resolver = self.dns_resolver.clone();
+ 
+-        tokio::spawn(async move {
++        let setup = async move {
+             Self::start_all_listeners(
+                 dispatcher,
+                 authenticator,
+@@ -110,7 +115,14 @@
+                 dns_resolver,
+             )
+             .await;
+-        });
++        };
++        #[cfg(feature = "aerove-mobile")]
++        {
++            let task = tokio::spawn(crate::mobile::inbound::startup(setup));
++            *self.mobile_start.lock().unwrap() = Some(task);
++        }
++        #[cfg(not(feature = "aerove-mobile"))]
++        tokio::spawn(setup);
+     }
+ 
+     fn shutdown(&self) {
+@@ -118,7 +130,11 @@
+     }
+ 
+     fn join(&self) -> BoxFuture<'_, Result<(), crate::Error>> {
+-        Box::pin(async move { self.join_all_listeners().await })
++        Box::pin(async move {
++            #[cfg(feature = "aerove-mobile")]
++            self.mobile_join_start().await?;
++            self.join_all_listeners().await
++        })
+     }
+ }
+ impl InboundManager {
+@@ -147,7 +163,12 @@
+             provider_handles: Arc::new(RwLock::new(HashMap::new())),
+             inbound_providers: Arc::new(RwLock::new(HashMap::new())),
+             dispatcher,
++            #[cfg(not(feature = "aerove-mobile"))]
+             authenticator,
++            #[cfg(feature = "aerove-mobile")]
++            authenticator: std::sync::RwLock::new(authenticator),
++            #[cfg(feature = "aerove-mobile")]
++            mobile_start: std::sync::Mutex::new(None),
+             dns_resolver,
+             cancellation_token: cancellation_token.unwrap_or_default(),
+         }
+@@ -200,7 +221,7 @@
+ 
+             let provider_handles = self.provider_handles.clone();
+             let dispatcher = self.dispatcher.clone();
+-            let authenticator = self.authenticator.clone();
++            let authenticator = self.authenticator();
+             let cancellation_token = self.cancellation_token.clone();
+             let provider_name = name.clone();
+             let dns_resolver = dns_resolver.clone();
+@@ -383,6 +404,43 @@
+         }
+     }
+ 
++    fn authenticator(&self) -> ThreadSafeAuthenticator {
++        #[cfg(feature = "aerove-mobile")]
++        { self.authenticator.read().unwrap().clone() }
++        #[cfg(not(feature = "aerove-mobile"))]
++        { self.authenticator.clone() }
++    }
++
++    #[cfg(feature = "aerove-mobile")]
++    pub fn mobile_authentication_enabled(&self) -> bool { self.authenticator().enabled() }
++
++    #[cfg(feature = "aerove-mobile")]
++    async fn mobile_join_start(&self) -> Result<(), crate::Error> {
++        let task = self.mobile_start.lock().unwrap().take();
++        if let Some(task) = task { task.await.map_err(|error| std::io::Error::other(error))?; }
++        Ok(())
++    }
++
++    #[cfg(feature = "aerove-mobile")]
++    pub async fn mobile_replace(&self, listeners: HashSet<InboundOpts>, authenticator: ThreadSafeAuthenticator) -> Result<(), crate::Error> {
++        self.mobile_join_start().await?;
++        let handles: Vec<_> = self.inbound_handlers.write().await.drain()
++            .filter_map(|(_, entry)| entry.handle).collect();
++        for handle in &handles { handle.abort(); }
++        let mut join_error = None;
++        for handle in handles {
++            if let Err(error) = handle.await && !error.is_cancelled() { join_error = Some(error); }
++        }
++        if let Some(error) = join_error { return Err(std::io::Error::other(error).into()); }
++        if self.cancellation_token.is_cancelled() || crate::mobile::inbound::is_stopping() {
++            return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "user listeners stopped").into());
++        }
++        *self.authenticator.write().unwrap() = authenticator;
++        *self.inbound_handlers.write().await = listeners.into_iter().map(|opts| (opts, StaticHandleEntry { handle: None, users_tx: None })).collect();
++        self.run_async();
++        Ok(())
++    }
++
+     async fn start_all_listeners(
+         dispatcher: Arc<Dispatcher>,
+         authenticator: ThreadSafeAuthenticator,
+@@ -391,6 +449,7 @@
+         dns_resolver: Option<ThreadSafeDNSResolver>,
+     ) {
+         for (opts, entry) in inbound_handlers.write().await.iter_mut() {
++            if cancellation_token.is_cancelled() { break; }
+             let cancellation_token = cancellation_token.clone();
+             let name = opts.common_opts().name.clone();
+ 
+@@ -427,6 +486,9 @@
+             )
+             .map(|r| {
+                 tokio::spawn(async move {
++                    #[cfg(feature = "aerove-mobile")]
++                    crate::mobile::inbound::listen(name, r, cancellation_token).await;
++                    #[cfg(not(feature = "aerove-mobile"))]
+                     tokio::select! {
+                         _ = futures::future::join_all(r) => {
+                             warn!("Inbound handler {} has exited", name);
+@@ -437,6 +499,8 @@
+                     }
+                 })
+             });
++            #[cfg(feature = "aerove-mobile")]
++            if entry.handle.is_none() { crate::mobile::task_failed("planned user listener has no platform handler"); }
+         }
+     }
+ 
+@@ -505,7 +569,7 @@
+ 
+         let inbound_handlers = self.inbound_handlers.clone();
+         let dispatcher = self.dispatcher.clone();
+-        let authenticator = self.authenticator.clone();
++        let authenticator = self.authenticator();
+         let cancellation_token = self.cancellation_token.clone();
+         let dns_resolver = self.dns_resolver.clone();
+         Self::start_all_listeners(
+--- a/clash-lib/src/proxy/socks/inbound/stream.rs
++++ b/clash-lib/src/proxy/socks/inbound/stream.rs
+@@ -194,12 +194,23 @@
+ 
+             let dispatcher_cloned = dispatcher.clone();
+ 
+-            tokio::spawn(async move {
++            let association = async move {
++                #[cfg(feature = "aerove-mobile")]
++                let (handle, cleanup) = dispatcher_cloned
++                    .dispatch_datagram_owned(sess, Box::new(InboundUdp::new(framed)))
++                    .await;
++                #[cfg(feature = "aerove-mobile")]
++                crate::mobile::inbound::track_cleanup(cleanup);
++                #[cfg(not(feature = "aerove-mobile"))]
+                 let handle = dispatcher_cloned
+                     .dispatch_datagram(sess, Box::new(InboundUdp::new(framed)))
+                     .await;
+                 close_listener.await.ok();
+                 handle.send(0).ok();
+-            });
++            };
++            #[cfg(feature = "aerove-mobile")]
++            crate::mobile::inbound::track_cleanup(tokio::spawn(association));
++            #[cfg(not(feature = "aerove-mobile"))]
++            tokio::spawn(association);
+ 
+             s.write_all(&buf[..]).await?;

@@ -1,6 +1,7 @@
 package dev.aerove.lite.data
 
 import dev.aerove.lite.LiteSettings
+import dev.aerove.lite.networksettings.planNetwork
 import java.io.File
 import java.util.Locale
 
@@ -23,6 +24,7 @@ class RuntimeConfigComposer(privateDirectory: File) {
         require(tunFd >= 0) { "Invalid TUN descriptor" }
         val endpoint = ControlEndpoint(port, secret)
         validateSettings(settings)
+        val network = planNetwork(settings.network, endpoint.port, settings.ipv6)
         val root = ConfigYaml.parse(source)
         listOf("listeners", "inbound-providers").forEach {
             if (root[it] != null) throw ConfigValidationException(listOf(ConfigIssue("$.$it", "Additional inbounds are not supported in Lite")))
@@ -32,9 +34,7 @@ class RuntimeConfigComposer(privateDirectory: File) {
         listOf("port", "socks-port", "mixed-port", "redir-port", "tproxy-port").forEach(root::remove)
         root["external-controller"] = "127.0.0.1:${endpoint.port}"
         root["secret"] = endpoint.secret
-        root["allow-lan"] = false
-        root["bind-address"] = "127.0.0.1"
-        root["authentication"] = emptyList<String>()
+        root.putAll(network.userConfigFields())
         root["cors-allow-origins"] = emptyList<String>()
         root["mode"] = settings.mode.name.lowercase(Locale.ROOT)
         root["ipv6"] = settings.ipv6

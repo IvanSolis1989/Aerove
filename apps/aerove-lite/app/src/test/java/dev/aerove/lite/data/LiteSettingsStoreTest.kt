@@ -1,8 +1,18 @@
 package dev.aerove.lite.data
 
 import dev.aerove.lite.*
+import dev.aerove.lite.networksettings.NetworkSettings
+import dev.aerove.lite.networksettings.NetworkSettingsException
+import dev.aerove.lite.networksettings.ProxyAuthentication
+import dev.aerove.lite.networksettings.UserProxyPorts
 import java.io.File
+import java.io.IOException
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -43,6 +53,48 @@ class LiteSettingsStoreTest {
 
     @Test fun missingFileUsesDefaults() = runBlocking<Unit> {
         assertEquals(LiteSettings(), LiteSettingsStore(temporary.root).read())
+    }
+
+    @Test fun localeAliasesCanonicalizeAcrossWriteAndReadAndNullKeepsSystemChoice() = runBlocking<Unit> {
+        for (input in listOf("zh-Hans-CN", "zh_CN")) {
+            val expected = LiteSettings(locale = "zh_CN")
+            val store = LiteSettingsStore(temporary.root)
+            assertEquals(expected, store.save(LiteSettings(locale = input)))
+            val file = File(temporary.root, "settings/settings.json")
+            assertEquals("zh_CN", JSONObject(file.readText()).getString("locale"))
+            assertEquals(expected, LiteSettingsStore(temporary.root).read())
+        }
+
+        val systemChoice = LiteSettingsStore(temporary.root).save(LiteSettings(locale = null))
+        assertNull(systemChoice.locale)
+        assertTrue(JSONObject(File(temporary.root, "settings/settings.json").readText()).isNull("locale"))
+        assertNull(LiteSettingsStore(temporary.root).read().locale)
+    }
+
+    @Test fun legacyMissingLocaleReadsAsSystemWithoutRewritingSettings() = runBlocking<Unit> {
+        val store = LiteSettingsStore(temporary.root)
+        store.save(LiteSettings(locale = "zh_CN"))
+        val file = File(temporary.root, "settings/settings.json")
+        file.writeText(JSONObject(file.readText()).apply { remove("locale") }.toString())
+        val originalBytes = file.readBytes()
+
+        val reopened = LiteSettingsStore(temporary.root)
+        assertNull(reopened.read().locale)
+        assertArrayEquals(originalBytes, file.readBytes())
+    }
+
+    @Test fun malformedPresentLocaleRejectsReadWithoutPublishingOrRewriting() = runBlocking<Unit> {
+        val store = LiteSettingsStore(temporary.root)
+        val saved = store.save(LiteSettings(locale = "zh_CN"))
+        val file = File(temporary.root, "settings/settings.json")
+        val original = JSONObject(file.readText())
+        for ((label, invalid) in listOf("number" to 42, "object" to JSONObject("{}"))) {
+            val corrupted = JSONObject(original.toString()).put("locale", invalid).toString()
+            file.writeText(corrupted)
+            assertThrows(label, IllegalArgumentException::class.java) { runBlocking { store.read() } }
+            assertEquals(saved, store.changes.value)
+            assertEquals(corrupted, file.readText())
+        }
     }
 
     @Test fun oldSchemaOnePreservesExplicitThemeChoicesWhileAddingNewDefaults() = runBlocking<Unit> {
@@ -262,5 +314,94 @@ class LiteSettingsStoreTest {
         file.writeText("{broken")
         assertThrows(org.json.JSONException::class.java) { runBlocking { store.read() } }
         assertEquals("{broken", file.readText())
+    }
+
+    @Test fun networkAndPresentationRoundTripExactlyThroughNewStore() = runBlocking<Unit> {
+        val input = LiteSettings(fontFamily = "  custom-font  ", textScaleEnabled = true, textScale = 1.23f, pureBlack = true,
+            network = NetworkSettings(systemProxy = false, allowBypass = false, bypassDomains = listOf("*.example", "localhost"),
+                ports = UserProxyPorts(7900, 7901, 7902), allowLan = true,
+                authentication = ProxyAuthentication(true, "account", "password:with-colon")))
+        val expected = input.copy(fontFamily = "custom-font")
+        val saved = LiteSettingsStore(temporary.root).save(input)
+        assertEquals(expected, saved)
+        val reopened = LiteSettingsStore(temporary.root)
+        assertNull(reopened.changes.value)
+        assertEquals(expected, reopened.read())
+        assertEquals(expected, reopened.changes.value)
+        val json = JSONObject(File(temporary.root, "settings/settings.json").readText())
+        assertEquals("custom-font", json.getString("fontFamily"))
+        assertEquals(expected.textScale, json.getDouble("textScale").toFloat())
+        assertTrue(json.getBoolean("textScaleEnabled"))
+        assertTrue(json.getBoolean("pureBlack"))
+        assertEquals(7902, json.getJSONObject("network").getJSONObject("ports").getInt("socks"))
+    }
+
+    @Test fun absentNetworkAndPresentationMembersUseDefaultsWithoutRewriting() = runBlocking<Unit> {
+        val original = LiteSettings(mode = ProxyMode.Direct, fontFamily = "custom-font", textScaleEnabled = true,
+            textScale = 1.2f, pureBlack = true, network = NetworkSettings(allowLan = true, ports = UserProxyPorts(7900)))
+        LiteSettingsStore(temporary.root).save(original)
+        val file = File(temporary.root, "settings/settings.json")
+        file.writeText(JSONObject(file.readText()).apply {
+            listOf("network", "fontFamily", "textScaleEnabled", "textScale", "pureBlack").forEach(::remove)
+        }.toString())
+        val before = file.readBytes()
+        val reopened = LiteSettingsStore(temporary.root)
+        val expected = original.copy(network = NetworkSettings(), fontFamily = null, textScaleEnabled = false,
+            textScale = 1f, pureBlack = false)
+        assertEquals(expected, reopened.read())
+        assertEquals(expected, reopened.changes.value)
+        assertArrayEquals(before, file.readBytes())
+    }
+
+    @Test fun malformedPresentNetworkAndPresentationNeverPublishDefaults() = runBlocking<Unit> {
+        val store = LiteSettingsStore(temporary.root)
+        val good = store.save(LiteSettings(fontFamily = "custom-font", pureBlack = true,
+            network = NetworkSettings(allowLan = true)))
+        val file = File(temporary.root, "settings/settings.json")
+        val original = file.readText()
+        file.writeText(JSONObject(original).put("network", JSONObject.NULL).toString())
+        assertThrows(NetworkSettingsException::class.java) { runBlocking { store.read() } }
+        assertEquals(good, store.changes.value)
+        for ((field, invalid) in listOf("fontFamily" to 12, "textScaleEnabled" to 1,
+            "textScale" to "1.2", "pureBlack" to JSONObject.NULL)) {
+            val corrupted = JSONObject(original).put(field, invalid).toString()
+            file.writeText(corrupted)
+            assertThrows(field, IllegalArgumentException::class.java) { runBlocking { store.read() } }
+            assertEquals(field, good, store.changes.value)
+            assertEquals(corrupted, file.readText())
+        }
+    }
+
+    @Test fun changesPublishOnlySuccessfulReadsAndAtomicSaves() = runBlocking<Unit> {
+        val store = LiteSettingsStore(temporary.root)
+        val events = mutableListOf<LiteSettings?>()
+        val observation = launch(start = CoroutineStart.UNDISPATCHED) { store.changes.collect { events += it } }
+        try {
+            assertEquals(listOf<LiteSettings?>(null), events)
+            val initial = store.read()
+            yield()
+            assertEquals(listOf(null, initial), events)
+            val requested = initial.copy(fontFamily = "custom-font", textScaleEnabled = true, textScale = 1.2f,
+                pureBlack = true, locale = "zh_CN", network = initial.network.copy(ports = UserProxyPorts(7900)))
+            assertThrows(IllegalArgumentException::class.java) { runBlocking { store.save(requested.copy(autoStart = true)) } }
+            yield()
+            assertEquals(listOf(null, initial), events)
+            val file = File(temporary.root, "settings/settings.json")
+            assertTrue(file.mkdirs())
+            val obstruction = File(file, "occupied").apply { writeText("block atomic file replacement") }
+            assertThrows(IOException::class.java) { runBlocking { store.save(requested) } }
+            yield()
+            assertEquals(initial, store.changes.value)
+            assertEquals(listOf(null, initial), events)
+            assertTrue(obstruction.delete())
+            assertTrue(file.delete())
+            val saved = store.save(requested)
+            yield()
+            assertEquals(requested, saved)
+            assertEquals(listOf(null, initial, saved), events)
+            assertEquals(saved, LiteSettingsStore(temporary.root).read())
+        } finally {
+            observation.cancelAndJoin()
+        }
     }
 }

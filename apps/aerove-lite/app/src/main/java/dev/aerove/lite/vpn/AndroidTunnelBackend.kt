@@ -14,6 +14,11 @@ import dev.aerove.lite.data.ProfileConflictException
 import dev.aerove.lite.data.PreparedProfile
 import dev.aerove.lite.data.ProfileLease
 import dev.aerove.lite.data.RuntimeConfigComposer
+import dev.aerove.lite.networksettings.applyVpnNetworkPolicy
+import dev.aerove.lite.networksettings.planNetwork
+import dev.aerove.lite.networksettings.BoundControlPort
+import dev.aerove.lite.networksettings.NetworkRuntimePlan
+import dev.aerove.lite.networksettings.selectPrivateControlPort
 import java.io.File
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -48,8 +53,15 @@ class AndroidTunnelBackend(
             profileLease = application.profiles.retain(prepared)
             val runtime = File(application.filesDir, "runtime").apply { mkdirs() }
             val directory = File(runtime, "profiles/${prepared.profileId}").apply { check(isDirectory || mkdirs()) }
-            val port = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { it.localPort }
+            val port = selectTunnelControlPort(plan) {
+                val socket = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+                object : BoundControlPort {
+                    override val port: Int get() = socket.localPort
+                    override fun close() = socket.close()
+                }
+            }
             val secret = ByteArray(32).also(SecureRandom()::nextBytes).joinToString("") { "%02x".format(it) }
+            val network = vpnBuilderNetworkPlan(plan, port)
             config = File(directory, "${UUID.randomUUID()}.yaml")
             val builder = service.Builder()
                 .setSession("AEROVE Lite")
@@ -62,7 +74,8 @@ class AndroidTunnelBackend(
                 .setConfigureIntent(PendingIntent.getActivity(
                     service, 0, Intent(service, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
                 ))
-            if (plan.settings.ipv6) {
+            applyVpnNetworkPolicy(builder, network)
+            if (vpnBuilderIpv6(plan)) {
                 builder.addAddress("fdfe:dcba:9876::1", 126)
                     .addDnsServer("fdfe:dcba:9876::2").addRoute("::", 0)
             }
@@ -167,4 +180,36 @@ class AndroidTunnelBackend(
             client.dispatcher.executorService.shutdown()
         }
     }
+}
+
+internal fun vpnBuilderIpv6(plan: VpnPlan): Boolean = plan.vpnIpv6 ?: plan.settings.ipv6
+
+/** Core settings may advance while a previously established Builder policy must stay fixed. */
+internal fun vpnBuilderNetworkPlan(plan: VpnPlan, controlPort: Int): NetworkRuntimePlan =
+    planNetwork(plan.vpnNetwork ?: plan.settings.network, controlPort, vpnBuilderIpv6(plan))
+
+internal fun selectTunnelControlPort(plan: VpnPlan, bind: () -> BoundControlPort): Int {
+    val current = plan.settings.network.ports.let { setOf(it.mixed, it.http, it.socks) - 0 }
+    val baseline = (plan.vpnNetwork ?: plan.settings.network).ports.let { setOf(it.mixed, it.http, it.socks) - 0 }
+    val additional = baseline - current
+    val held = mutableListOf<BoundControlPort>()
+    fun bindOutsideBaseline(): BoundControlPort {
+        repeat(additional.size + 1) {
+            val reservation = bind()
+            if (reservation.port !in additional) return reservation
+            held += reservation
+        }
+        error("Could not reserve a private controller port distinct from the running VPN policy")
+    }
+    var selected: Int? = null
+    var failure: Throwable? = null
+    try { selected = selectPrivateControlPort(plan.settings.network, ::bindOutsideBaseline) }
+    catch (error: Throwable) { failure = error }
+    for (reservation in held.asReversed()) {
+        try { reservation.close() } catch (error: Exception) {
+            if (failure == null) failure = error else failure.addSuppressed(error)
+        }
+    }
+    failure?.let { throw it }
+    return checkNotNull(selected)
 }
