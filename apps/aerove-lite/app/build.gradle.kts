@@ -109,6 +109,6 @@ dependencies {
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:core:1.6.1")
-    androidTestImplementation("com.google.errorprone:error_prone_annotations:2.51.0")
+    androidTestImplementation("com.google.errorprone:error_prone_annotations:2.38.0")
     androidTestImplementation("org.jetbrains.compose.ui:ui-test-junit4:1.12.0")
 }
