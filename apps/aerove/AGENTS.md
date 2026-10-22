@@ -1,23 +1,18 @@
-# AGENTS.md
+# AEROVE 标准版 instructions
 
 This file is the entry point for AI coding agents working in this repository. Keep it small: detailed guidance lives under
 `.agents/`, and discoverable repo skills live under `.agents/skills/*/SKILL.md`.
 
 Aerove owns its product direction and releases. FlClash is a historical source and optional reference, not an automatic
 merge target. Preserve licenses and provenance; read `../../docs/development/INDEPENDENCE.md` for migration work.
-The full product tracks published stable releases from official MetaCubeX/mihomo directly, with pinned source and
+The Standard edition tracks published stable releases from official MetaCubeX/mihomo directly, with pinned source and
 replayable adaptations in this repository. Lite uses clash-rs; neither core waits for a FlClash release.
 Shared UI, interaction and client functionality must stay identical in both products. Changes flow in both directions;
 only source-proven Rust-core capability gaps may be deferred. Follow `../../docs/shared/UI_CONTRACT.md` before UI work.
 
-## 双产品开发契约
-
-- Aerove 与 AEROVE Lite 的共同界面、交互和客户端功能必须完全一致；任一版调整字体、布局、材质、动画、状态或功能时，必须双向同步和核对。
-- 只有固定 Rust 核心源码证明确实不支持的能力才可暂缓。尚未移植、缺少包装/API、首版工期和框架差异都不能作为发行例外；这些属于交付阻断。
-- 核心能力例外仅记入开发文档，APP 不提供占位、灰置或“尚未实现”入口；不兼容配置必须明确指出字段及原因，不能静默忽略。
-- 同功能的刷新频率、数据抓取次数、缓存、订阅合并和前后台暂停规则须与完整版对齐，禁止额外轮询、重复请求或无效重绘。实现方式可以不同，不能用功能或画质减少宣称能效提升。
-- 共同改动须对照两版源码、数据流和实际状态/交互；截图或同时修改两个文件不能单独证明一致。复用未受影响的验证，不重复无收益检查。
-- 启动页背景必须铺满窗口及系统栏：完整版为黑底亮飘带，Lite 为白底黑飘带；浅深色系统主题均不得露出图标底色方块。
+Read the binding contract in [root AGENTS.md](../../AGENTS.md), the detailed
+[shared specification](../../docs/shared/UI_CONTRACT.md) and [independent version rules](../../docs/development/VERSIONING.md).
+Both products keep independent versions; shared UI, client functionality and collection policies remain synchronized.
 
 ## Start Here
 

@@ -8,7 +8,7 @@ apps/
   aerove-lite/        原生 Android + clash-rs，包含 Android 工程、Rust 桥接和产品测试
 docs/
   shared/             两版共同遵守的 UI、功能、性能及验收契约
-  aerove/             完整版说明、默认值、网络行为、发行记录
+  aerove/             标准版说明、默认值、网络行为、发行记录
   aerove-lite/        Lite 说明与固定 Rust 内核能力依据
   development/        架构治理、构建维护、上游来源和本归档规则
   research/           技术调研与审计结论，不替代生产规格或验证结果
@@ -53,7 +53,7 @@ experiments/          可丢弃的原型，不能作为已发布功能
 
 ## 工作目录与变更规则
 
-完整版命令在 `apps/aerove/` 执行；Lite 命令在 `apps/aerove-lite/` 执行。GitHub Actions 的 checkout、artifact、cache 路径相对仓库根目录；`run` 的工作目录由各产品工作流显式指定。
+标准版命令在 `apps/aerove/` 执行；Lite 命令在 `apps/aerove-lite/` 执行。GitHub Actions 的 checkout、artifact、cache 路径相对仓库根目录；`run` 的工作目录由各产品工作流显式指定。
 
 GitHub 的 Workspace layout 工作流会持续检查入口、文档分类、本地链接及旧客户端兼容更新流，防止后续重新散落。
 
