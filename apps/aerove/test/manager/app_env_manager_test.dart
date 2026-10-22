@@ -11,11 +11,7 @@ void main() {
   test('release candidates do not carry an environment banner', () {
     for (final appEnv in ['pre', 'beta', 'dev']) {
       expect(
-        appEnvBannerMessage(
-          safeMode: false,
-          isDebug: false,
-          appEnv: appEnv,
-        ),
+        appEnvBannerMessage(safeMode: false, isDebug: false, appEnv: appEnv),
         isNull,
       );
     }
@@ -23,30 +19,18 @@ void main() {
 
   test('stable builds carry no environment banner', () {
     expect(
-      appEnvBannerMessage(
-        safeMode: false,
-        isDebug: false,
-        appEnv: 'stable',
-      ),
+      appEnvBannerMessage(safeMode: false, isDebug: false, appEnv: 'stable'),
       isNull,
     );
   });
 
   test('debug environment banner and safe mode warning are preserved', () {
     expect(
-      appEnvBannerMessage(
-        safeMode: false,
-        isDebug: true,
-        appEnv: 'beta',
-      ),
+      appEnvBannerMessage(safeMode: false, isDebug: true, appEnv: 'beta'),
       'DEBUG',
     );
     expect(
-      appEnvBannerMessage(
-        safeMode: true,
-        isDebug: false,
-        appEnv: 'beta',
-      ),
+      appEnvBannerMessage(safeMode: true, isDebug: false, appEnv: 'beta'),
       'SAFE MODE',
     );
   });
