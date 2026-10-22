@@ -48,7 +48,26 @@ def verify_identity(badging, signature, product, channel):
         raise ValueError("Unexpected package identity or version")
     if not re.search(r"^sdkVersion:'33'$", badging, re.MULTILINE):
         raise ValueError("Unexpected minimum SDK")
-    signer = re.findall(r"^Signer #[0-9]+ certificate SHA-256 digest: ([0-9a-f]{64})$", signature, re.MULTILINE)
+    lines = signature.splitlines()
+    legacy_signers = re.findall(r"^Signer #[0-9]+ certificate SHA-256 digest: ([0-9a-f]{64})$", signature, re.MULTILINE)
+    modern_signers = re.findall(r"^V2 Signer: certificate SHA-256 digest: ([0-9a-f]{64})$", signature, re.MULTILINE)
+    signer_digest_lines = [line for line in lines if "Signer" in line and "certificate SHA-256 digest:" in line]
+    modern_markers = any(
+        line == "Verifies" or line.startswith("Verified using ") or line.startswith("Number of signers:")
+        or line.startswith("V2 Signer:")
+        for line in lines
+    )
+    if modern_markers:
+        verifies = [line for line in lines if line == "Verifies"]
+        v2_status = [line for line in lines if line.startswith("Verified using v2 scheme ")]
+        signer_counts = [line for line in lines if line.startswith("Number of signers:")]
+        if (len(verifies) != 1 or len(v2_status) != 1
+                or v2_status[0] != "Verified using v2 scheme (APK Signature Scheme v2): true"
+                or len(signer_counts) != 1 or signer_counts[0] != "Number of signers: 1"):
+            raise ValueError("Unexpected or ambiguous verified signing certificate")
+    signer = legacy_signers + modern_signers
+    if len(signer_digest_lines) != len(signer) or len(signer) != 1:
+        raise ValueError("Unexpected or ambiguous verified signing certificate")
     if len(signer) != 1 or (channel != "development" and signer[0] != product["signerSha256"]):
         raise ValueError("Unexpected or ambiguous verified signing certificate")
     return {"application_id": expected_id, "version": expected_version,

@@ -70,6 +70,49 @@ class ApkInspectionTests(unittest.TestCase):
             module.verify_identity(self.badging(), "Signer #1 certificate SHA-256 digest: " + "b" * 64,
                 self.product(), "preview")
 
+    def test_build_tools_37_verified_v2_signer_format_is_accepted(self):
+        digest = "09f9e021ddac36ead015d27e073b673e79fdf4e02605c402a505781963b1a4d8"
+        signature = "\n".join((
+            "Verifies",
+            "Verified using v1 scheme (JAR signing): false",
+            "Verified using v2 scheme (APK Signature Scheme v2): true",
+            "Verified using v3 scheme (APK Signature Scheme v3): false",
+            "Verified using v3.1 scheme (APK Signature Scheme v3.1): false",
+            "Verified using v3.2 scheme (APK Signature Scheme v3.2): false",
+            "Verified using v4 scheme (APK Signature Scheme v4): false",
+            "Number of signers: 1",
+            f"V2 Signer: certificate SHA-256 digest: {digest}",
+        ))
+        product = {**self.product(), "signerSha256": digest}
+        result = module.verify_identity(self.badging(), signature, product, "preview")
+        self.assertEqual(result["signer_sha256"], digest)
+
+    def test_build_tools_37_rejects_wrong_certificate_and_ambiguous_output(self):
+        digest = "09f9e021ddac36ead015d27e073b673e79fdf4e02605c402a505781963b1a4d8"
+        prefix = "Verifies\nVerified using v2 scheme (APK Signature Scheme v2): true\n"
+        signer = f"V2 Signer: certificate SHA-256 digest: {digest}"
+        product = {**self.product(), "signerSha256": digest}
+        wrong_certificate = prefix + "Number of signers: 1\n" + signer.replace(digest, "b" * 64)
+        with self.assertRaisesRegex(ValueError, "signing certificate"):
+            module.verify_identity(self.badging(), wrong_certificate, product, "preview")
+        for incomplete in (
+            signer,
+            "Verifies\n" + signer,
+            prefix + signer,
+            "Number of signers: 1\n" + signer,
+        ):
+            with self.subTest(signature=incomplete), self.assertRaisesRegex(ValueError, "signing certificate"):
+                module.verify_identity(self.badging(), incomplete, product, "preview")
+        for signature in (
+            prefix + "Number of signers: 2\n" + signer,
+            prefix + "Number of signers: 1\n" + signer + "\n" + signer,
+            prefix + "Number of signers: 1\n" + signer + "\nSigner #1 certificate SHA-256 digest: " + digest,
+            prefix.replace("true", "false") + "Number of signers: 1\n" + signer,
+            prefix + "Number of signers: 1\n" + signer + "\nVerifies",
+        ):
+            with self.subTest(signature=signature), self.assertRaisesRegex(ValueError, "signing certificate"):
+                module.verify_identity(self.badging(), signature, product, "preview")
+
     def test_preview_rejects_debug_package_and_old_version(self):
         signature = "Signer #1 certificate SHA-256 digest: " + "a" * 64
         for package, version in (("dev.aerove.lite.dev", "0.1.0-beta.1+debug"), ("dev.aerove.lite", "0.1.0-dev.1")):
