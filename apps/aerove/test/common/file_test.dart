@@ -4,6 +4,21 @@ import 'package:fl_clash/common/common.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart';
 
+class _ConcurrentlyDeletedFile extends Fake implements File {
+  _ConcurrentlyDeletedFile(this.file);
+
+  final File file;
+
+  @override
+  Future<bool> exists() => file.exists();
+
+  @override
+  Future<FileSystemEntity> delete({bool recursive = false}) async {
+    file.deleteSync();
+    return file.delete(recursive: recursive);
+  }
+}
+
 void main() {
   late Directory root;
 
@@ -15,6 +30,24 @@ void main() {
     if (root.existsSync()) {
       root.deleteSync(recursive: true);
     }
+  });
+
+  group('safeDelete', () {
+    test('accepts a file removed by another cleanup before deletion', () async {
+      final file = File(join(root.path, 'cache.mrs'))..writeAsStringSync('mrs');
+
+      await expectLater(_ConcurrentlyDeletedFile(file).safeDelete(), completes);
+
+      expect(file.existsSync(), isFalse);
+    });
+
+    test('preserves errors other than a missing path', () async {
+      File(join(root.path, 'cache.mrs')).writeAsStringSync('mrs');
+
+      await expectLater(root.safeDelete(), throwsA(isA<FileSystemException>()));
+
+      expect(root.existsSync(), isTrue);
+    });
   });
 
   group('safeDeletePath', () {

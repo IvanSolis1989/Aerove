@@ -581,7 +581,22 @@ void main() {
 
       expect(await testDatabase.clashProvidersDao.query().get(), isEmpty);
       expect(File(await saved.path).existsSync(), isFalse);
+      expect(File(await saved.compiledPath).existsSync(), isFalse);
       expect(setup.forced, [true]);
+    });
+
+    test('finishes discarding a deleted download before returning', () async {
+      final source = File(await saved.path);
+      final cache = File(await saved.compiledPath);
+      action().delProvider(saved);
+      await pumpEventQueue();
+
+      compileGate!.complete();
+      await updating;
+
+      expect(source.existsSync(), isFalse);
+      expect(cache.existsSync(), isFalse);
+      expect(container.read(clashProvidersProvider).value, isEmpty);
     });
 
     test('keeps its new name', () async {
@@ -605,6 +620,26 @@ void main() {
 
       expect((await stored(remote.id)).url, moved.url);
       expect(File(await saved.path).existsSync(), isFalse);
+    });
+
+    test('keeps the cache downloaded for its replacement url', () async {
+      final moved = saved.copyWith(url: 'https://example.com/moved.list');
+      container.read(clashProvidersProvider.notifier).put(moved);
+      await pumpEventQueue();
+      final gate = compileGate!;
+      compileGate = null;
+      await action().putProvider(moved, previous: saved);
+      final source = File(await moved.path);
+      final cache = File(await moved.compiledPath);
+
+      gate.complete();
+      await updating;
+
+      expect(source.readAsStringSync(), 'downloaded');
+      expect(cache.readAsStringSync(), 'mrs of downloaded');
+      expect((await stored(remote.id)).url, moved.url);
+      expect(File(await saved.path).existsSync(), isFalse);
+      expect(File(await saved.compiledPath).existsSync(), isFalse);
     });
   });
 

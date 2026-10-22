@@ -69,10 +69,11 @@ extension FileExt on File {
 
 extension FileSystemEntityExt on FileSystemEntity {
   Future<void> safeDelete({bool recursive = false}) async {
-    if (!await exists()) {
+    try {
+      await delete(recursive: recursive);
+    } on PathNotFoundException {
       return;
     }
-    await delete(recursive: recursive);
   }
 }
 
