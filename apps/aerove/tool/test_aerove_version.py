@@ -16,6 +16,20 @@ SCRIPT = Path(__file__).with_name('aerove_version.py')
 
 
 class ProductVersionTest(unittest.TestCase):
+    def test_standard_beta_uses_the_original_run_number_for_the_build_code(self):
+        pubspec = 'version: 0.10.0-beta.1+2026102201\n'
+        self.assertEqual(
+            version.resolve_product_version(pubspec, 5),
+            {
+                'name': '0.10.0-beta.1', 'number': 2026102205,
+                'tag': 'v0.10.0-beta.1+2026102205', 'app_env': 'pre',
+            },
+        )
+        self.assertEqual(
+            version.resolve_product_version(pubspec, 150)['number'],
+            2026102350,
+        )
+
     def test_product_version_has_no_added_brand_suffix(self):
         self.assertEqual(
             version.resolve_product_version('version: 1.2.3+2026102201\n', 149),
@@ -236,6 +250,34 @@ class ReleasePlanGitTest(unittest.TestCase):
             with self.subTest(tag=tag):
                 self.assertEqual(self.plan(), original)
         self.assertEqual(upstream.select_reachable_release(self.repo)['version'], '50.0.0-pre.1')
+
+    def test_standard_beta_keeps_upstream_preview_identity_separate(self):
+        (self.repo / 'pubspec.yaml').write_text(
+            'version: 0.9.2+2026102201\n', encoding='utf-8',
+        )
+        preview = self.commit('upstream preview fixture')
+        self.git('update-ref', 'refs/upstream-tags/v0.9.2-pre.1', preview)
+        self.metadata = upstream.make_metadata(
+            source_commit=preview, tag_ref='refs/upstream-tags/v0.9.2-pre.1',
+            tag_commit=preview, source_branches=['v0.9.2-pre.1'],
+            pubspec_version='0.9.2+2026102201',
+        )
+        self.save_metadata()
+        (self.repo / 'pubspec.yaml').write_text(
+            'version: 0.10.0-beta.1+2026102201\n', encoding='utf-8',
+        )
+        self.head = self.commit('standard independent beta fixture')
+        plan = self.plan(run_number=5)
+        self.assertEqual(plan['name'], '0.10.0-beta.1')
+        self.assertEqual(plan['tag'], 'v0.10.0-beta.1+2026102205')
+        self.assertEqual(plan['number'], 2026102205)
+        self.assertEqual(plan['app_env'], 'pre')
+        self.assertEqual(plan['upstream_tag'], 'v0.9.2-pre.1')
+        self.assertEqual(plan['upstream_pubspec_version'], '0.9.2+2026102201')
+        self.assertEqual(plan['upstream_source_commit'], preview)
+        self.assertEqual(plan['upstream_tag_commit'], preview)
+        self.assertEqual(plan['upstream_pubspec_source_commit'], preview)
+        self.assertEqual(plan['upstream_source_branches'], ['v0.9.2-pre.1'])
 
     def test_pinned_provenance_needs_no_mutable_upstream_refs_or_network(self):
         original = self.plan()

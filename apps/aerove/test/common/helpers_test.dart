@@ -191,6 +191,15 @@ void main() {
       expect(compareVersions('v0.10.0-pre.1-X', '0.9.1-X'), greaterThan(0));
     });
 
+    test('orders the independent standard beta against installed releases', () {
+      const beta = 'v0.10.0-beta.1+2026102205';
+      expect(compareVersions(beta, '0.9.1-X+2026101839'), greaterThan(0));
+      expect(compareVersions(beta, '0.9.2-pre.1+2026102205'), greaterThan(0));
+      expect(compareVersions(beta, '0.10.0-beta.1+2026102205'), 0);
+      expect(compareVersions(beta, '0.10.0-beta.2+2026102206'), lessThan(0));
+      expect(compareVersions(beta, '0.10.0+2026102201'), lessThan(0));
+    });
+
     test('rejects malformed versions and nonnumeric build numbers', () {
       for (final version in ['1.2.3-pre..4-X', '1.2.3+build', '1.2.3+1+2']) {
         expect(() => compareVersions(version, '1.2.3'), throwsFormatException);

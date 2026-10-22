@@ -1836,7 +1836,7 @@ table. `lib/common/window.dart` and `lib/manager/window_manager.dart` are the on
   `should-terminate`) and `applicationShouldHandleReopen` (emits `activate`); `MainFlutterWindow` calls
   `hiddenWindowAtLaunch()` so the first `order` keeps the window hidden until Dart shows it.
 - Window effects (`transparent`, `blur`, `acrylic`, `mica`, `glass`) are capability-gated by `isEffectSupported`; the
-  Flutter content must paint a translucent background for them to show. `ThemeProps.sidebarBlur` (off by default)
+  Flutter content must paint a translucent background for them to show. `ThemeProps.sidebarBlur` (on by default)
   drives them, taking the material the same release's system apps give their sidebars: `Window.setBlur` tries
   `glass` then `blur` on macOS (Liquid Glass on 26+, the `.sidebar` vibrancy before) and `mica`, `acrylic`, then
   `blur` on Windows (Mica on 11, acrylic from 10 1803, the plain accent blur before), and caches only a successful
@@ -1847,8 +1847,8 @@ table. `lib/common/window.dart` and `lib/manager/window_manager.dart` are the on
   behind the window while the content beside it keeps the theme's; the Windows 10 accent effects also take the same
   tint natively, as they draw nothing without one. Glass, the macOS vibrancy and Mica each go opaque on their own
   where the system does (an inactive window, Reduce Transparency, transparency effects off).
-- Releases stored `sidebarBlur: true` while the toggle was hidden, so upgrade 4 in `lib/common/migration.dart` turns it
-  off once. With blur off, `WindowManager` still sends its request at startup: the macOS plugin installs its
+- Aerove preserves the user's stored `sidebarBlur` choice during upgrades; the reference project's force-off migration
+  is not applied. With blur off, `WindowManager` still sends its request at startup: the macOS plugin installs its
   effect view in `ensureInitialized` and leaves it active until the first `setEffect`, so the `none` request is what
   makes the window opaque and parks the effect view.
 
