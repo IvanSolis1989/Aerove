@@ -166,6 +166,7 @@ jobs:
           gradle --no-daemon :app:assembleRelease
           -PliteAbi=arm64-v8a -PsourceSha="$GITHUB_SHA"
       - name: Emulator application and instrumentation APK
+        id: emulator_apks
         if: matrix.abi == 'x86_64'
         working-directory: apps/aerove-lite
         run: >-
@@ -196,7 +197,8 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: Real API 33 native, TUN and graphics verification
+      - name: Real API 33 dashboard matrix
+        id: dashboard_matrix
         if: matrix.abi == 'x86_64'
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
@@ -206,7 +208,25 @@ jobs:
           profile: pixel_6
           disable-animations: false
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          script: bash apps/aerove-lite/tool/emulator_acceptance.sh
+          script: bash apps/aerove-lite/tool/emulator_acceptance.sh matrix
+      - name: Preserve the first Android dashboard captures
+        if: ${{ !cancelled() && matrix.abi == 'x86_64' && (steps.dashboard_matrix.outcome == 'success' || steps.dashboard_matrix.outcome == 'failure') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: AEROVE-Lite-dashboard-matrix
+          path: ${{ runner.temp }}/lite-diagnostics/matrix/
+          if-no-files-found: error
+      - name: Real API 33 remaining native, TUN and graphics verification
+        if: ${{ !cancelled() && matrix.abi == 'x86_64' && steps.emulator_apks.outcome == 'success' && (steps.dashboard_matrix.outcome == 'success' || steps.dashboard_matrix.outcome == 'failure') }}
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 33
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: bash apps/aerove-lite/tool/emulator_acceptance.sh remaining
       - name: Preserve diagnostics
         if: always()
         run: |
