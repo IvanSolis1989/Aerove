@@ -26,6 +26,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -89,11 +90,12 @@ internal val LocalLiteHighContrast = staticCompositionLocalOf { false }
 
 @Composable
 internal fun rememberSystemThemeColor(dark: Boolean): Long {
-    val context = LocalContext.current
+    val resources = LocalResources.current
+    val theme = LocalContext.current.theme
     val configuration = LocalConfiguration.current
-    return remember(context, configuration, dark) {
+    return remember(resources, theme, configuration, dark) {
         runCatching {
-            context.getColor(if (dark) android.R.color.system_accent1_200 else android.R.color.system_accent1_600).toLong() and 0xffffffffL
+            resources.getColor(if (dark) android.R.color.system_accent1_200 else android.R.color.system_accent1_600, theme).toLong() and 0xffffffffL
         }.getOrDefault(FullDefaultThemeColor)
     }
 }
