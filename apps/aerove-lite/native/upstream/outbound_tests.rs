@@ -32,6 +32,7 @@ pub fn run(case: &str) {
     crate::setup_default_crypto_provider();
     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
         match case {
+            "http-fixture" => http_fixture().await,
             "routing" => routing(count).await,
             "auth" => auth(count).await,
             "bounds" => bounds().await,
@@ -110,7 +111,7 @@ impl Fixture {
                                 request.push(byte[0]);
                                 assert!(request.len() < 4096);
                             }
-                            assert!(request.starts_with(b"GET /"));
+                            let response = fixture_response(&request, &response);
                             seen.fetch_add(1, Ordering::SeqCst);
                             if let Some(gate) = gate {
                                 tokio::select! {
@@ -122,7 +123,7 @@ impl Fixture {
                                     }
                                 }
                             }
-                            let _ = stream.write_all(&response).await;
+                            let _ = stream.write_all(response).await;
                         });
                     }
                     result = clients.join_next(), if !clients.is_empty() => { result.unwrap().unwrap(); }
@@ -136,6 +137,46 @@ impl Fixture {
         tokio::time::timeout(Duration::from_secs(2), async {
             while self.hits.load(Ordering::SeqCst) < hits { tokio::time::sleep(Duration::from_millis(1)).await; }
         }).await.unwrap();
+    }
+}
+
+fn fixture_response<'a>(request: &[u8], response: &'a [u8]) -> &'a [u8] {
+    let request = std::str::from_utf8(request).unwrap();
+    let line = request.split("\r\n").next().unwrap();
+    let parts = line.split(' ').collect::<Vec<_>>();
+    assert_eq!(parts.len(), 3, "invalid request line: {line}");
+    assert!(matches!(parts[0], "GET" | "HEAD"), "unexpected method: {line}");
+    let uri = parts[1].parse::<http::Uri>().unwrap();
+    assert_eq!(uri.path_and_query().map(|path| path.as_str()), Some("/"), "unexpected target: {line}");
+    assert!(matches!(parts[2], "HTTP/1.0" | "HTTP/1.1"), "unexpected version: {line}");
+    if parts[0] == "HEAD" {
+        let end = response.windows(4).position(|bytes| bytes == b"\r\n\r\n").unwrap() + 4;
+        &response[..end]
+    } else {
+        response
+    }
+}
+
+async fn http_fixture() {
+    let body = "fixture body";
+    let expected = response(body);
+    let server = Fixture::new(expected.clone(), false, None).await;
+    for target in ["/".to_owned(), server.source().url] {
+        for method in ["GET", "HEAD"] {
+            let mut stream = tokio::net::TcpStream::connect(server.address).await.unwrap();
+            let request = format!("{method} {target} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n", server.address);
+            stream.write_all(request.as_bytes()).await.unwrap();
+            let mut received = Vec::new();
+            tokio::time::timeout(Duration::from_secs(2), stream.read_to_end(&mut received)).await.unwrap().unwrap();
+            let length = if method == "HEAD" { expected.len() - body.len() } else { expected.len() };
+            assert_eq!(received.as_slice(), &expected[..length]);
+        }
+    }
+    assert_eq!(server.hits.load(Ordering::SeqCst), 4);
+    for request in [b"POST / HTTP/1.1\r\n\r\n".as_slice(), b"GET /other HTTP/1.1\r\n\r\n",
+        b"HEAD /?query HTTP/1.1\r\n\r\n", b"GET http://example.com/other HTTP/1.1\r\n\r\n"]
+    {
+        assert!(std::panic::catch_unwind(|| fixture_response(request, &expected)).is_err());
     }
 }
 

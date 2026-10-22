@@ -1,4 +1,9 @@
 #[test]
+fn outbound_http_fixture_checks_methods_and_targets_and_sends_no_head_body() {
+    clash_lib::mobile::outbound::regression::run("http-fixture");
+}
+
+#[test]
 fn outbound_uses_the_applied_direct_rule_and_global_selection() {
     clash_lib::mobile::outbound::regression::run("routing");
 }

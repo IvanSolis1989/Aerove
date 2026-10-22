@@ -100,6 +100,26 @@ fn proxy_provider_constructs_real_handlers_and_checks_all_nested_options() {
     assert_eq!(fs::read_to_string(files.0.join("nodes.yaml")).unwrap(), good);
 }
 
+#[test]
+fn proxy_provider_validates_lazy_protocol_uuids_before_accepting_any_nodes() {
+    let files = Files::new();
+    for kind in ["vless", "vmess"] {
+        let options = if kind == "vmess" { ", alterId: 0" } else { "" };
+        for uuid in ["e780a527-1160-441b-ab6e-e2c2b6127e1b", "e780a5271160441bab6ee2c2b6127e1b"] {
+            let yaml = format!("proxies: [{{name: node, type: {kind}, server: example.com, port: 443, uuid: '{uuid}'{options}}}]");
+            let path = files.file("valid-uuid.yaml", &yaml);
+            validate_resource("proxy-provider", &path, "", "yaml").unwrap();
+        }
+        for uuid in ["bad", "", "e780a527-1160-441b-ab6e-e2c2b6127e1z"] {
+            let yaml = format!("proxies: [{{name: valid, type: direct}}, {{name: broken, type: {kind}, server: example.com, port: 443, uuid: '{uuid}'{options}}}]");
+            let path = files.file("invalid-uuid.yaml", &yaml);
+            let error = validate_resource("proxy-provider", &path, "", "yaml").unwrap_err();
+            assert!(format!("{error:#}").contains(&format!("invalid {kind} UUID")), "{error:#}");
+            assert!(clash_lib::mobile::validate(&yaml).is_err(), "accepted {yaml}");
+        }
+    }
+}
+
 fn zstd_raw(bytes: &[u8]) -> Vec<u8> {
     assert!(bytes.len() < 256);
     let mut frame = vec![0x28, 0xb5, 0x2f, 0xfd, 0x20, bytes.len() as u8];

@@ -329,6 +329,10 @@ pub(crate) fn check_proxy_fields(proxy: &Value) -> Result<()> {
         else if kind == "hysteria2" { "type name server port" }
         else { "type name server port connect-via dialer-proxy" };
     check_keys(proxy, &format!("{common} {fields}"))?;
+    if matches!(kind, "vmess" | "vless") {
+        let uuid = proxy.get("uuid").and_then(Value::as_str).context("missing UUID string")?;
+        uuid::Uuid::parse_str(uuid).with_context(|| format!("invalid {kind} UUID"))?;
+    }
     if kind == "ss" {
         let cipher = proxy.get("cipher").and_then(Value::as_str).context("missing SS cipher")?;
         #[cfg(feature = "shadowsocks")]
