@@ -28,9 +28,12 @@ def product_version(path):
         raise ValueError("Incomplete Lite version identity")
     if product["applicationId"] != "dev.aerove.lite" or product["channel"] != "preview":
         raise ValueError("Unexpected Lite release channel or application identity")
-    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+-beta\.[1-9][0-9]*", product["version"]):
+    if not re.fullmatch(
+        r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+        r"-(?:alpha|beta|rc)\.[1-9][0-9]*", product["version"],
+    ):
         raise ValueError("Invalid Lite preview version")
-    if not product["versionCode"].isdigit() or not 0 < int(product["versionCode"]) < 2_100_000_000:
+    if not re.fullmatch(r"[1-9][0-9]*", product["versionCode"]) or int(product["versionCode"]) > 2_100_000_000:
         raise ValueError("Invalid Android version code")
     if not re.fullmatch(r"[0-9a-f]{64}", product["signerSha256"]):
         raise ValueError("Invalid Lite signing identity")

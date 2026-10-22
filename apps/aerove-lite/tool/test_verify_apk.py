@@ -16,8 +16,54 @@ class ApkInspectionTests(unittest.TestCase):
         return {"applicationId": "dev.aerove.lite", "version": "0.1.0-beta.1", "versionCode": "1",
             "channel": "preview", "signerSha256": "a" * 64}
 
-    def badging(self, package="dev.aerove.lite", version="0.1.0-beta.1", sdk=33):
-        return f"package: name='{package}' versionCode='1' versionName='{version}'\nsdkVersion:'{sdk}'\n"
+    def badging(self, package="dev.aerove.lite", version="0.1.0-beta.1", sdk=33, version_code="1"):
+        return f"package: name='{package}' versionCode='{version_code}' versionName='{version}'\nsdkVersion:'{sdk}'\n"
+
+    def read_product(self, **changes):
+        product = {**self.product(), **changes}
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "version.properties"
+            path.write_text("".join(f"{key}={value}\n" for key, value in product.items()), encoding="utf-8")
+            return module.product_version(path)
+
+    def test_preview_accepts_independent_alpha_beta_and_rc_versions(self):
+        for version in ("0.0.0-alpha.1", "0.1.0-beta.1", "1.23.45-alpha.2", "0.10.0-rc.11"):
+            with self.subTest(version=version):
+                self.assertEqual(self.read_product(version=version)["version"], version)
+
+    def test_preview_rejects_noncanonical_and_nonpreview_versions(self):
+        for version in (
+            "00.1.0-beta.1", "0.01.0-beta.1", "0.1.00-beta.1",
+            "0.1-beta.1", "0.1.0", "0.1.0-dev.1", "0.1.0-pre.1",
+            "0.1.0-alpha.0", "0.1.0-beta.01", "0.1.0-rc.-1",
+            "0.1.0-beta.1.2", "0.1.0-beta.1+debug", "0.1.0-beta.١", "０.1.0-beta.1",
+        ):
+            with self.subTest(version=version), self.assertRaisesRegex(ValueError, "preview version"):
+                self.read_product(version=version)
+
+    def test_version_code_accepts_both_positive_range_boundaries(self):
+        for code in ("1", "2100000000"):
+            with self.subTest(code=code):
+                self.assertEqual(self.read_product(versionCode=code)["versionCode"], code)
+
+    def test_version_code_rejects_noncanonical_ascii_and_out_of_range_values(self):
+        for code in ("", "0", "-1", "+1", "01", "1.0", "١", "１", "1_000", " 1", "1 ", "2100000001"):
+            with self.subTest(code=code), self.assertRaisesRegex(ValueError, "version code"):
+                self.read_product(versionCode=code)
+
+    def test_stable_channel_remains_outside_this_preview_validator(self):
+        with self.assertRaisesRegex(ValueError, "release channel"):
+            self.read_product(channel="stable", version="0.1.0")
+
+    def test_preview_stage_and_code_match_the_apk_exactly(self):
+        signature = "Signer #1 certificate SHA-256 digest: " + "a" * 64
+        for version in ("0.1.0-alpha.1", "0.1.0-beta.2", "0.1.0-rc.3"):
+            with self.subTest(version=version):
+                product = self.read_product(version=version, versionCode="2100000000")
+                result = module.verify_identity(
+                    self.badging(version=version, version_code="2100000000"), signature, product, "preview")
+                self.assertEqual(result["version"], version)
+                self.assertEqual(result["version_code"], 2100000000)
 
     def test_preview_rejects_other_signing_certificate(self):
         with self.assertRaisesRegex(ValueError, "signing certificate"):
