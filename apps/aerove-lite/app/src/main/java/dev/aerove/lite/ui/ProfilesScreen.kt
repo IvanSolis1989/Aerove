@@ -36,6 +36,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.LayoutDirection
@@ -62,6 +64,7 @@ internal fun ProfilesScreen(state: LiteState, actions: LiteActions, padding: Pad
     deleteProfile: (ProfileSummary) -> Unit, editProfile: (ProfileSummary, Boolean) -> Unit) {
     val overlay = LocalLiteOverlay.current
     val current by rememberUpdatedState(state)
+    val listUi = rememberProfileListUi(state)
     LazyColumn(state = LocalLiteListState.current, contentPadding = padding, verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -69,6 +72,7 @@ internal fun ProfilesScreen(state: LiteState, actions: LiteActions, padding: Pad
                 LiteButton(stringResource(R.string.lite_add_subscription), addSubscription, Modifier.weight(1f), FullGlyphs.add, enabled = state.busy.isEmpty())
             }
         }
+        if (state.profiles.isNotEmpty()) item("profile-list-actions") { ProfileListToolbar(listUi, state) }
         if (state.profiles.isEmpty()) item {
             EmptyContent(stringResource(R.string.lite_no_profiles), stringResource(R.string.lite_no_profiles_detail), FullGlyphs.profiles)
         }
@@ -80,12 +84,13 @@ internal fun ProfilesScreen(state: LiteState, actions: LiteActions, padding: Pad
             LitePane(
                 Modifier.fillMaxWidth().testTag("profile-${profile.id}").onGloballyPositioned { bounds = it.boundsInWindow() }
                     .semantics { this.selected = selected; role = Role.RadioButton }
-                    .combinedClickable(enabled = state.busy.isEmpty(), onClick = { actions.selectProfile(profile.id) }, onLongClick = {
+                    .combinedClickable(enabled = state.busy.isEmpty() && !listUi.state.busy, onClick = { actions.selectProfile(profile.id) }, onLongClick = {
                         overlay.content = { ProfileContextMenu(bounds, profile, overlay::dismiss,
                             { editProfile(profile, false) }, { editProfile(profile, true) },
                             { actions.updateProfile(profile.id) }, { deleteProfile(profile) },
                             { overlay.content = { ProfileProperties(current, actions, profile.id, overlay::dismiss) } },
-                            { overlay.content = { ProfileSubscriptionDetails(current, profile.id, overlay::dismiss) } }) }
+                            { overlay.content = { ProfileSubscriptionDetails(current, profile.id, overlay::dismiss) } },
+                            { listUi.copy(profile) }, { listUi.export(profile.id) }, { listUi.replace(profile) }) }
                     }),
                 selected = selected,
             ) {
@@ -174,7 +179,7 @@ internal fun SubscriptionEditor(state: LiteState, actions: LiteActions, onDismis
 @Composable
 private fun ProfileContextMenu(anchor: Rect, profile: ProfileSummary, dismiss: () -> Unit,
     edit: () -> Unit, preview: () -> Unit, update: () -> Unit, delete: () -> Unit,
-    properties: () -> Unit, usage: () -> Unit) {
+    properties: () -> Unit, usage: () -> Unit, copy: () -> Unit, export: () -> Unit, replace: () -> Unit) {
     BackHandler(onBack = dismiss)
     val density = LocalDensity.current
     val visuals = LocalLiteVisuals.current
@@ -182,17 +187,21 @@ private fun ProfileContextMenu(anchor: Rect, profile: ProfileSummary, dismiss: (
     BoxWithConstraints(Modifier.fillMaxSize().background(colors.scrim.copy(alpha = 0.32f)).clickable(onClick = dismiss)) {
         val width = minOf(300.dp, maxWidth - 32.dp)
         val left = with(density) { anchor.left.toDp() }.coerceIn(16.dp, maxOf(16.dp, maxWidth - width - 16.dp))
-        val top = with(density) { anchor.top.toDp() }.coerceIn(16.dp, maxOf(16.dp, maxHeight - 372.dp))
+        val top = with(density) { anchor.top.toDp() }.coerceIn(16.dp, maxOf(16.dp, maxHeight - 540.dp))
+        val availableHeight = maxHeight - top - 16.dp
         val fill = if (visuals.dark) colors.surfaceContainerHigh else colors.surfaceBright
         LitePane(Modifier.offset(left, top).width(width).pointerInput(Unit) { detectTapGestures {} }, corner = LiteCorner.Control,
             solidColor = fill, glassStyle = dev.aerove.lite.optics.AeroveGlassStyle.menu(fill.copy(alpha = 0.24f).opticsColor()),
             rim = LiteGlassRim.menu(visuals.dark), shadows = fullMenuShadows(visuals.dark)) {
-            Column {
+            Column(Modifier.heightIn(max = availableHeight).verticalScroll(androidx.compose.foundation.rememberScrollState())) {
                 SettingsRow(stringResource(R.string.profile_properties), onClick = { dismiss(); properties() })
                 if (profile.subscriptionUserInfo != null) SettingsRow(stringResource(R.string.profile_subscription_info), onClick = { dismiss(); usage() })
                 SettingsRow(stringResource(R.string.integration_source_editor), onClick = { dismiss(); edit() })
                 SettingsRow(stringResource(R.string.integration_runtime_preview), onClick = { dismiss(); preview() })
                 if (profile.url != null) SettingsRow(stringResource(R.string.lite_refresh), onClick = { dismiss(); update() })
+                if (profile.url != null) SettingsRow(stringResource(R.string.profile_list_copy_url), onClick = { dismiss(); copy() })
+                SettingsRow(stringResource(R.string.profile_list_export), onClick = { dismiss(); export() })
+                SettingsRow(stringResource(R.string.profile_list_replace), onClick = { dismiss(); replace() })
                 SettingsRow(stringResource(R.string.lite_delete), onClick = { dismiss(); delete() })
             }
         }

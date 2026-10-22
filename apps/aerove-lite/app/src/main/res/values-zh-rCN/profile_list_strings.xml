@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="profile_list_update_all">全部更新</string>
+    <string name="profile_list_cancel">取消更新</string>
+    <string name="profile_list_sort">配置排序</string>
+    <string name="profile_list_copy_url">复制链接</string>
+    <string name="profile_list_copied">复制成功</string>
+    <string name="profile_list_export">导出文件</string>
+    <string name="profile_list_replace">替换文件</string>
+    <string name="profile_list_replace_auto_prompt">此订阅已开启自动更新，替换文件时是否关闭自动更新？</string>
+    <string name="profile_list_disable_auto">关闭自动更新</string>
+    <string name="profile_list_keep_auto">保留自动更新</string>
+    <string name="profile_list_updating">正在更新配置…</string>
+    <string name="profile_list_reordering">正在保存配置顺序…</string>
+    <string name="profile_list_exporting">正在导出配置…</string>
+    <string name="profile_list_replacing">正在替换配置…</string>
+    <string name="profile_list_updated">配置更新完成</string>
+    <string name="profile_list_reordered">配置顺序已保存</string>
+    <string name="profile_list_exported">配置已导出</string>
+    <string name="profile_list_replaced">配置文件已替换</string>
+    <string name="profile_list_cancelled">已取消</string>
+    <string name="profile_list_failed">操作失败</string>
+    <string name="profile_list_partial_document">导出文件未能完成或移除，请检查所选保存位置。</string>
+    <string name="profile_list_batch_summary">已更新：%1$d · 已跳过：%2$d · 失败：%3$d</string>
+    <string name="profile_list_move_up">上移</string>
+    <string name="profile_list_move_down">下移</string>
+</resources>

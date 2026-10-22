@@ -30,6 +30,8 @@ import dev.aerove.lite.telemetry.routePicks
 import dev.aerove.lite.vpn.CoreEndpoint
 import dev.aerove.lite.vpn.LiteVpnService
 import dev.aerove.lite.platform.LocalNetworkMonitor
+import dev.aerove.lite.profiles.AndroidProfileDocuments
+import dev.aerove.lite.profiles.ProfileListFeature
 import java.io.IOException
 import java.time.Clock
 import java.time.Duration
@@ -85,6 +87,21 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
                 }
             }
         }, onAutomaticError = { _, error -> viewModelScope.launch { report(error) } })
+    private val profileListOwner = lazy {
+        ProfileListFeature(application.profiles, profileMaintenance, viewModelScope,
+            AndroidProfileDocuments(application.contentResolver),
+            onChanged = { withContext(Dispatchers.Main.immediate) { reloadProfiles() } },
+            onReplaced = { profile, isCurrent ->
+                withContext(Dispatchers.Main.immediate) {
+                    if (application.profiles.isCurrentSource(profile.id, profile.sourceIdentity) && isCurrent() &&
+                        state.value.selectedProfile == profile.id) {
+                        invalidateOutboundConfiguration()
+                        reconnectSelected(profile.id)
+                    }
+                }
+            })
+    }
+    override val profileList: ProfileListFeature get() = profileListOwner.value
     private data class DiagnosticsBinding(val endpoint: CoreEndpoint, val client: CoreApiClient,
         val generation: Long, val configuration: Long)
     private val diagnosticsRouteRead = Mutex()
@@ -272,6 +289,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
 
     override fun onCleared() {
         backup.close()
+        if (profileListOwner.isInitialized()) profileListOwner.value.close()
         profileMaintenance.close()
         diagnostics.close()
         diagnosticsRouteJob?.cancel()

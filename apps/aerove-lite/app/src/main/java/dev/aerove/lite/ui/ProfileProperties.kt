@@ -123,7 +123,7 @@ internal fun profileExpiration(usage: ProfileSubscriptionUsage): String = when {
 }
 
 @Composable
-private fun ProfileMaintenanceSheet(title: String, close: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+internal fun ProfileMaintenanceSheet(title: String, close: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     var entered by remember { mutableStateOf(false) }
     var closing by remember { mutableStateOf(false) }
     val reduced = LocalLiteReducedMotion.current

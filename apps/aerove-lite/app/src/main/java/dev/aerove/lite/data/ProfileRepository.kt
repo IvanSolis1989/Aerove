@@ -15,6 +15,8 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
+data class ProfileDocumentSnapshot(val profile: ProfileSummary, val revision: String, val yaml: String)
+
 class ProfileRepository(
     privateDirectory: File,
     private val validator: ProfileValidator,
@@ -98,9 +100,43 @@ class ProfileRepository(
         return replace(id, yaml, revision, replaceSource = true)
     }
 
+    suspend fun documentSnapshot(id: String): ProfileDocumentSnapshot = storage.transaction {
+        load().entry(id).let { ProfileDocumentSnapshot(it.summary, it.current, storage.read(it.current)) }
+    }
+
+    suspend fun replaceDocument(expected: ProfileDocumentSnapshot, input: InputStream,
+        disableAutoUpdate: Boolean = false, isCurrent: () -> Boolean = { true }): ProfileSummary {
+        storage.transaction {
+            val latest = load().entry(expected.profile.id)
+            if (latest.current != expected.revision) throw ProfileConflictException(expected.profile.id)
+            if (latest.summary.sourceIdentity != expected.profile.sourceIdentity || !isCurrent()) {
+                throw CancellationException("Profile source changed")
+            }
+        }
+        val yaml = withContext(Dispatchers.IO) { input.readBounded(MAX_PROFILE_BYTES).strictUtf8() }
+        return replace(expected.profile.id, yaml, expected.revision, expected.profile.sourceIdentity,
+            replaceSource = true, commitGuard = isCurrent, disableAutoUpdate = disableAutoUpdate)
+    }
+
+    /** Save a stale editor's order against current entries; deletions stay deleted and new imports remain appended. */
+    suspend fun reorder(ids: List<String>, isCurrent: () -> Boolean = { true }): ProfileSnapshot = storage.transaction {
+        require(ids.size <= 1000 && ids.distinct().size == ids.size) { "Invalid profile order" }
+        val index = load()
+        val latest = index.entries.associateBy { it.summary.id }
+        val requested = ids.toSet()
+        val entries = ids.mapNotNull(latest::get) + index.entries.filterNot { it.summary.id in requested }
+        val updated = index.copy(entries = entries)
+        currentCoroutineContext().ensureActive()
+        if (!isCurrent()) throw CancellationException("Profile order superseded")
+        save(updated)
+        ProfileSnapshot(entries.map { it.summary }, updated.selected)
+    }
+
     private suspend fun replace(id: String, yaml: String, expectedRevision: String,
         expectedSource: String? = null, request: ProfileMaintenanceRequest? = null,
-        download: SubscriptionDownloader.Download? = null, replaceSource: Boolean = false): ProfileSummary {
+        download: SubscriptionDownloader.Download? = null, replaceSource: Boolean = false,
+        commitGuard: () -> Boolean = { true }, disableAutoUpdate: Boolean = false): ProfileSummary {
+        if (!commitGuard()) throw CancellationException("Profile operation superseded")
         val bundle = prepareBundle(id, yaml)
         var committed = false
         try { return storage.transaction {
@@ -110,9 +146,11 @@ class ProfileRepository(
             if (expectedSource != null && old.summary.sourceIdentity != expectedSource) throw CancellationException("Profile source changed")
             currentCoroutineContext().ensureActive()
             checkRequest(old.summary, request)
+            if (!commitGuard()) throw CancellationException("Profile operation superseded")
             val timestamp = clock()
             val updated = old.copy(
                 summary = old.summary.copy(updatedAt = timestamp,
+                    autoUpdate = if (disableAutoUpdate) false else old.summary.autoUpdate,
                     sourceIdentity = if (replaceSource) UUID.randomUUID().toString() else old.summary.sourceIdentity,
                     lastSuccessfulUpdateAt = if (download != null) timestamp else if (replaceSource) null else old.summary.lastSuccessfulUpdateAt,
                     subscriptionUserInfo = if (download != null) download.subscriptionUserInfo else if (replaceSource) null else old.summary.subscriptionUserInfo,
@@ -124,6 +162,7 @@ class ProfileRepository(
                 nextRefreshAt = bundle?.nextRefreshAt,
             )
             checkRequest(old.summary, request)
+            if (!commitGuard()) throw CancellationException("Profile operation superseded")
             currentCoroutineContext().ensureActive()
             save(index.copy(entries = index.entries.map { if (it.summary.id == id) updated else it }))
             committed = true

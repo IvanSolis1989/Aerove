@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="profile_list_update_all">Update all</string>
+    <string name="profile_list_cancel">Cancel update</string>
+    <string name="profile_list_sort">Sort profiles</string>
+    <string name="profile_list_copy_url">Copy link</string>
+    <string name="profile_list_copied">Copied</string>
+    <string name="profile_list_export">Export file</string>
+    <string name="profile_list_replace">Replace file</string>
+    <string name="profile_list_replace_auto_prompt">This subscription has automatic updates enabled. Disable automatic updates when replacing its file?</string>
+    <string name="profile_list_disable_auto">Disable automatic updates</string>
+    <string name="profile_list_keep_auto">Keep automatic updates</string>
+    <string name="profile_list_updating">Updating profiles…</string>
+    <string name="profile_list_reordering">Saving profile order…</string>
+    <string name="profile_list_exporting">Exporting profile…</string>
+    <string name="profile_list_replacing">Replacing profile…</string>
+    <string name="profile_list_updated">Profile updates finished</string>
+    <string name="profile_list_reordered">Profile order saved</string>
+    <string name="profile_list_exported">Profile exported</string>
+    <string name="profile_list_replaced">Profile file replaced</string>
+    <string name="profile_list_cancelled">Cancelled</string>
+    <string name="profile_list_failed">Operation failed</string>
+    <string name="profile_list_partial_document">The exported document could not be completed or removed. Check the selected destination.</string>
+    <string name="profile_list_batch_summary">Updated: %1$d · Skipped: %2$d · Failed: %3$d</string>
+    <string name="profile_list_move_up">Move up</string>
+    <string name="profile_list_move_down">Move down</string>
+</resources>
