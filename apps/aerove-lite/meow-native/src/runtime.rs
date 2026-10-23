@@ -1,5 +1,4 @@
 use axum::{Json, Router, extract::State, http::{HeaderMap, StatusCode}, routing::get};
-use hyper_util::{rt::TokioIo, service::TowerToHyperService};
 use meow_tunnel::Tunnel;
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -188,10 +187,9 @@ impl Session {
         };
         if self.cancel.is_cancelled() { return Ok(()); }
         let tunnel = Tunnel::new_with_slot(config.dns.resolver_slot.clone());
-        tunnel.set_dialer_registry(config.provider_dialer_registry);
+        tunnel.set_dialer_registry(config.provider_dialer_registry.clone());
         tunnel.set_mode(config.general.mode);
         tunnel.set_connection_notes(config.general.connection_notes);
-        tunnel.update_routing(config.proxies, config.rules, config.dialer_registry);
         let api = TcpListener::bind(options.private_api).await
             .map_err(|_| Failure::new("privateApiBindFailed"))?;
         let mixed = TcpListener::bind(options.mixed).await
@@ -199,9 +197,15 @@ impl Session {
         let api_addr = api.local_addr().map_err(|_| Failure::new("privateApiAddressFailed"))?;
         let mixed_addr = mixed.local_addr().map_err(|_| Failure::new("mixedAddressFailed"))?;
         if self.cancel.is_cancelled() { return Ok(()); }
+        let aerove_router = Router::new().route("/aerove/runtime", get(api_snapshot))
+            .with_state(ApiState { session: Arc::downgrade(self), secret: options.secret.clone() });
+        let core_api = crate::api::CoreApi::assemble(&config, tunnel.clone(), mixed_addr,
+            &options.secret, None, aerove_router);
+        let core_api = core_api.map_err(|error| Failure::new(error.0))?;
+        core_api.install_log_sink().map_err(|error| Failure::new(error.0))?;
+        tunnel.update_routing(config.proxies, config.rules, config.dialer_registry);
         *self.tunnel.lock() = Some(tunnel.clone());
-        let router = Router::new().route("/aerove/runtime", get(api_snapshot))
-            .with_state(ApiState { session: Arc::downgrade(self), secret: options.secret });
+        let router = core_api.private_router();
         self.state.send_modify(|s| {
             s.phase = Phase::Running; s.api_address = Some(api_addr); s.mixed_address = Some(mixed_addr);
             s.api_ready = true; s.user_listeners_ready = true;
@@ -216,11 +220,7 @@ impl Session {
                 }
                 accepted = api.accept(), if children.len() < MAX_CONNECTIONS => {
                     let (stream, _) = match accepted { Ok(s) => s, Err(_) => break Err(Failure::new("privateApiAcceptFailed")) };
-                    let service = TowerToHyperService::new(router.clone());
-                    children.spawn(async move {
-                        let _ = hyper::server::conn::http1::Builder::new().keep_alive(false)
-                            .serve_connection(TokioIo::new(stream), service).await;
-                    });
+                    children.spawn(crate::api::serve_connection(stream, router.clone()));
                 }
                 accepted = mixed.accept(), if children.len() < MAX_CONNECTIONS => {
                     let (stream, peer) = match accepted { Ok(s) => s, Err(_) => break Err(Failure::new("mixedAcceptFailed")) };
@@ -234,10 +234,12 @@ impl Session {
         };
         drop(api);
         drop(mixed);
+        core_api.cancel();
         tunnel.statistics().close_all_connections();
         tunnel.close_all_udp_sessions();
         children.abort_all();
         while children.join_next().await.is_some() {}
+        core_api.join().await;
         outcome
     }
 }
@@ -274,7 +276,7 @@ fn validate_candidate(yaml: &str) -> Result<(), Failure> {
     // This isolated candidate does not admit features whose task owners are not migrated yet.
     for key in map.keys() {
         let key = key.as_str().ok_or_else(|| Failure::new("invalidConfig"))?;
-        if !["mode", "rules", "dns", "ipv6", "strict", "hosts", "connection-notes", "authentication"].contains(&key) {
+        if !["mode", "rules", "dns", "ipv6", "strict", "hosts", "connection-notes", "authentication", "log-level"].contains(&key) {
             return Err(Failure::field(key));
         }
     }

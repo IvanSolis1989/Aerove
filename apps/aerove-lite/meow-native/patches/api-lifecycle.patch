@@ -1,0 +1,322 @@
+--- a/crates/meow-api/Cargo.toml
++++ b/crates/meow-api/Cargo.toml
+@@ -21,6 +21,7 @@
+ meow-rules = { workspace = true }
+ meow-listener = { workspace = true, default-features = false, optional = true }
+ tokio = { workspace = true }
++tokio-util = { workspace = true, features = ["rt"] }
+ axum = { workspace = true }
+ tower = { workspace = true }
+ tower-http = { workspace = true }
+--- a/crates/meow-api/src/lib.rs
++++ b/crates/meow-api/src/lib.rs
+@@ -3,6 +3,7 @@
+ //! Runtime control of proxies, rules, connections, config, traffic, and DNS,
+ //! plus the built-in web dashboard.
+ 
++pub mod lifecycle;
+ pub mod log_stream;
+ mod logbook;
+ pub mod routes;
+--- /dev/null
++++ b/crates/meow-api/src/lifecycle.rs
+@@ -0,0 +1,83 @@
++//! Runtime-scoped API tasks; upgrades acquire their lease before Axum spawns.
++use axum::{extract::ws::{WebSocket, WebSocketUpgrade}, http::StatusCode, response::{IntoResponse, Response}};
++use parking_lot::Mutex;
++use std::{future::Future, sync::Arc};
++use tokio_util::{sync::CancellationToken, task::{TaskTracker, TaskTrackerToken}};
++
++#[derive(Clone)]
++pub struct ApiLifecycle(Arc<Inner>);
++
++struct Inner {
++    admission: Mutex<bool>,
++    cancel: CancellationToken,
++    tasks: TaskTracker,
++}
++
++impl Default for ApiLifecycle {
++    fn default() -> Self {
++        Self(Arc::new(Inner {
++            admission: Mutex::new(true),
++            cancel: CancellationToken::new(),
++            tasks: TaskTracker::new(),
++        }))
++    }
++}
++
++impl ApiLifecycle {
++    fn lease(&self) -> Option<TaskTrackerToken> {
++        let open = self.0.admission.lock();
++        if !*open { return None; }
++        Some(self.0.tasks.token())
++    }
++
++    pub fn on_upgrade<F, Fut>(&self, ws: WebSocketUpgrade, callback: F) -> Response
++    where
++        F: FnOnce(WebSocket) -> Fut + Send + 'static,
++        Fut: Future<Output = ()> + Send + 'static,
++    {
++        let Some(lease) = self.lease() else {
++            return StatusCode::SERVICE_UNAVAILABLE.into_response();
++        };
++        let cancel = self.0.cancel.clone();
++        ws.on_upgrade(move |socket| async move {
++            let _lease = lease;
++            tokio::select! {
++                biased;
++                _ = cancel.cancelled() => {},
++                _ = callback(socket) => {},
++            }
++        })
++    }
++
++    pub fn spawn<F>(&self, task: F)
++    where F: Future<Output = ()> + Send + 'static {
++        let Some(lease) = self.lease() else { return; };
++        let cancel = self.0.cancel.clone();
++        tokio::spawn(async move {
++            let _lease = lease;
++            tokio::select! {
++                biased;
++                _ = cancel.cancelled() => {},
++                _ = task => {},
++            }
++        });
++    }
++
++    pub fn cancel(&self) {
++        let mut open = self.0.admission.lock();
++        *open = false;
++        self.0.cancel.cancel();
++        self.0.tasks.close();
++    }
++
++    pub async fn join(&self) {
++        self.0.tasks.wait().await;
++    }
++
++    pub async fn shutdown(&self) {
++        self.cancel();
++        self.join().await;
++    }
++
++    pub fn active_tasks(&self) -> usize { self.0.tasks.len() }
++}
+--- a/crates/meow-api/src/log_stream.rs
++++ b/crates/meow-api/src/log_stream.rs
+@@ -85,6 +85,10 @@
+         event: &tracing::Event<'_>,
+         _ctx: tracing_subscriber::layer::Context<'_, S>,
+     ) {
++        // Tokio can clone this waker while holding the same broadcast tail lock.
++        if event.metadata().target() == "tokio::task::waker" {
++            return;
++        }
+         // The broadcast sender exists for the process lifetime, but most
+         // deployments have no active /logs consumer. Avoid formatting fields,
+         // reading the clock, and constructing a heap-backed message when there
+--- a/crates/meow-api/src/routes.rs
++++ b/crates/meow-api/src/routes.rs
+@@ -61,6 +61,8 @@
+ #[derive(Default)]
+ pub struct TrafficFeed {
+     sender: std::sync::Mutex<Option<broadcast::Sender<Arc<str>>>>,
++    memory_sender: std::sync::Mutex<Option<broadcast::Sender<Arc<str>>>>,
++    pub lifecycle: crate::lifecycle::ApiLifecycle,
+ }
+ 
+ pub struct AppState {
+@@ -649,13 +651,16 @@
+     State(state): State<Arc<AppState>>,
+     Query(params): Query<ConnectionsParams>,
+     MaybeWebSocket(ws): MaybeWebSocket,
++    connection_scope: Option<axum::Extension<crate::lifecycle::ApiLifecycle>>,
+ ) -> Response {
+     let Some(interval_ms) = parse_connections_interval(params.interval.as_deref()) else {
+         return msg_err(StatusCode::BAD_REQUEST, "Body invalid");
+     };
+ 
+     if let Some(ws) = ws {
+-        return ws.on_upgrade(move |mut socket| async move {
++        let scope = connection_scope.map(|axum::Extension(scope)| scope)
++            .unwrap_or_else(|| state.traffic_feed.lifecycle.clone());
++        return scope.on_upgrade(ws, move |mut socket| async move {
+             if socket
+                 .send(Message::Text(connections_json(&state).await.into()))
+                 .await
+@@ -976,8 +981,9 @@
+     // the first frame's instantaneous rate.
+     state.tunnel.statistics().sample_traffic();
+ 
++    let lifecycle = state.traffic_feed.lifecycle.clone();
+     let state = Arc::clone(state);
+-    tokio::spawn(async move {
++    lifecycle.spawn(async move {
+         let mut ticker = tokio::time::interval(Duration::from_secs(1));
+         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+         ticker.tick().await;
+@@ -1005,10 +1011,13 @@
+ async fn get_traffic(
+     State(state): State<Arc<AppState>>,
+     MaybeWebSocket(ws): MaybeWebSocket,
++    connection_scope: Option<axum::Extension<crate::lifecycle::ApiLifecycle>>,
+ ) -> Response {
+     let feed = subscribe_traffic_feed(&state);
+     if let Some(ws) = ws {
+-        return ws.on_upgrade(move |mut socket| async move {
++        let scope = connection_scope.map(|axum::Extension(scope)| scope)
++            .unwrap_or_else(|| state.traffic_feed.lifecycle.clone());
++        return scope.on_upgrade(ws, move |mut socket| async move {
+             let mut feed = feed;
+             loop {
+                 let frame = match feed.recv().await {
+@@ -3763,6 +3772,7 @@
+     State(state): State<Arc<AppState>>,
+     Query(params): Query<LogsParams>,
+     MaybeWebSocket(ws): MaybeWebSocket,
++    connection_scope: Option<axum::Extension<crate::lifecycle::ApiLifecycle>>,
+ ) -> Response {
+     let level = match parse_requested_log_level(params.level.as_deref()) {
+         Ok(level) => level,
+@@ -3771,9 +3781,18 @@
+     let structured = params.format.as_deref() == Some("structured");
+     let mut rx = state.log_tx.subscribe();
+     if let Some(ws) = ws {
+-        return ws.on_upgrade(move |mut socket| async move {
++        let scope = connection_scope.map(|axum::Extension(scope)| scope)
++            .unwrap_or_else(|| state.traffic_feed.lifecycle.clone());
++        return scope.on_upgrade(ws, move |mut socket| async move {
+             loop {
+-                match rx.recv().await {
++                let message = tokio::select! {
++                    message = rx.recv() => message,
++                    incoming = socket.recv() => {
++                        if matches!(incoming, None | Some(Err(_)) | Some(Ok(Message::Close(_)))) { break; }
++                        continue;
++                    }
++                };
++                match message {
+                     Ok(msg) if msg.level >= level => {
+                         if socket
+                             .send(Message::Text(log_json(&msg, structured).into()))
+@@ -3817,32 +3836,33 @@
+ 
+ // upstream: hub/route/memory.go
+ //
+-// One process-wide sampler task reads RSS + limit and serialises the JSON
++// One runtime-scoped sampler task reads RSS + limit and serialises the JSON
+ // frame once per tick; every connected socket forwards the shared string
+ // (audit M8 — previously each socket sampled and serialised independently,
+ // per-socket per-tick). The sampler starts with the first subscriber and
+ // exits once the last socket disconnects, so an idle API server pays nothing.
+ // Model: the log websocket's single-serialisation broadcast fan-out.
+-static MEMORY_FEED: std::sync::Mutex<Option<broadcast::Sender<Arc<str>>>> =
+-    std::sync::Mutex::new(None);
+-
+-fn subscribe_memory_feed() -> broadcast::Receiver<Arc<str>> {
+-    let mut guard = MEMORY_FEED.lock().expect("memory feed lock poisoned");
++fn subscribe_memory_feed(state: &Arc<AppState>) -> broadcast::Receiver<Arc<str>> {
++    let mut guard = state.traffic_feed.memory_sender.lock().expect("memory feed lock poisoned");
+     if let Some(tx) = guard.as_ref() {
+         // Sampler still alive (it clears the slot under this lock on exit).
+         return tx.subscribe();
+     }
+     let (tx, rx) = broadcast::channel(2);
+     *guard = Some(tx.clone());
+-    tokio::spawn(async move {
++    drop(guard);
++    let lifecycle = state.traffic_feed.lifecycle.clone();
++    let state = Arc::clone(state);
++    lifecycle.spawn(async move {
+         let mut interval = tokio::time::interval(Duration::from_secs(1));
++        interval.tick().await;
+         loop {
+             interval.tick().await;
+             if tx.receiver_count() == 0 {
+                 // Re-check under the lock so a subscriber arriving right now
+                 // either sees the live sender or a cleared slot — never a
+                 // sender whose sampler has already exited.
+-                let mut guard = MEMORY_FEED.lock().expect("memory feed lock poisoned");
++                let mut guard = state.traffic_feed.memory_sender.lock().expect("memory feed lock poisoned");
+                 if tx.receiver_count() == 0 {
+                     *guard = None;
+                     break;
+@@ -3858,12 +3878,17 @@
+ }
+ 
+ async fn get_memory(
+-    State(_state): State<Arc<AppState>>,
++    State(state): State<Arc<AppState>>,
+     MaybeWebSocket(ws): MaybeWebSocket,
++    connection_scope: Option<axum::Extension<crate::lifecycle::ApiLifecycle>>,
+ ) -> Response {
+-    let first: Arc<str> = Arc::from("{\"inuse\":0,\"oslimit\":0}");
++    let inuse = read_rss_bytes().await;
++    let oslimit = read_os_memory_limit().await;
++    let first: Arc<str> = Arc::from(format!("{{\"inuse\":{inuse},\"oslimit\":{oslimit}}}"));
+     if let Some(ws) = ws {
+-        return ws.on_upgrade(move |mut socket| async move {
++        let scope = connection_scope.map(|axum::Extension(scope)| scope)
++            .unwrap_or_else(|| state.traffic_feed.lifecycle.clone());
++        return scope.on_upgrade(ws, move |mut socket| async move {
+             if socket
+                 .send(Message::Text(first.as_ref().into()))
+                 .await
+@@ -3871,7 +3896,7 @@
+             {
+                 return;
+             }
+-            let mut feed = subscribe_memory_feed();
++            let mut feed = subscribe_memory_feed(&state);
+             loop {
+                 let msg = match feed.recv().await {
+                     Ok(msg) => msg,
+@@ -3889,33 +3914,19 @@
+         });
+     }
+ 
+-    let feed = subscribe_memory_feed();
+-    let stream = futures::stream::unfold((Some(first), feed), |(first, mut feed)| async move {
+-        if let Some(first) = first {
+-            return Some((
+-                Ok::<String, std::convert::Infallible>(format!("{first}\n")),
+-                (None, feed),
+-            ));
+-        }
+-        loop {
+-            match feed.recv().await {
+-                Ok(msg) => {
+-                    return Some((
+-                        Ok::<String, std::convert::Infallible>(format!("{msg}\n")),
+-                        (None, feed),
+-                    ));
+-                }
+-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+-                Err(broadcast::error::RecvError::Closed) => return None,
+-            }
+-        }
+-    });
+-    Response::builder()
+-        .header(header::CONTENT_TYPE, "application/json")
+-        .body(Body::from_stream(stream))
+-        .expect("valid memory stream response")
+-}
+-
++    ([(header::CONTENT_TYPE, "application/json")], first.as_ref().to_owned()).into_response()
++}
++
++#[cfg(target_os = "android")]
++async fn read_rss_bytes() -> u64 {
++    let Ok(status) = tokio::fs::read_to_string("/proc/self/status").await else { return 0; };
++    status.lines().find_map(|line| {
++        let kb = line.strip_prefix("VmRSS:")?.split_whitespace().next()?.parse::<u64>().ok()?;
++        kb.checked_mul(1024)
++    }).unwrap_or(0)
++}
++
++#[cfg(not(target_os = "android"))]
+ async fn read_rss_bytes() -> u64 {
+     tokio::task::spawn_blocking(|| {
+         use sysinfo::{Pid, ProcessesToUpdate, System};

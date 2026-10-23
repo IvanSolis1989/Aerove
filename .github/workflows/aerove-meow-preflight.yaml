@@ -31,6 +31,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       bootstrap: ${{ steps.plan.outputs.bootstrap }}
+      resolve: ${{ steps.plan.outputs.resolve }}
       android: ${{ steps.plan.outputs.android }}
       proof: ${{ steps.plan.outputs.proof }}
     steps:
@@ -49,24 +50,14 @@ jobs:
           python3 - <<'PY'
           import json, os, re
           from pathlib import Path
-          # MEOW_PLAN_BEGIN
-          def decide_plan(lock_present, archive_hash, event, phase, initialize):
-              pinned=isinstance(archive_hash,str) and re.fullmatch('[0-9a-f]{64}',archive_hash) is not None
-              if event not in ('push','workflow_dispatch') or phase not in ('','host','android'):
-                  raise ValueError('Unsupported explicit preflight request')
-              if lock_present and pinned:
-                  if initialize:raise ValueError('Bootstrap cannot replace an existing committed lock')
-                  android=event=='push' or phase=='android'
-                  return dict(bootstrap=False,android=android,proof='host-android' if android else 'host-only')
-              if lock_present or archive_hash is not None:
-                  raise ValueError('Commit both the resolved lock and exact archive hash before locked preflight')
-              if phase=='android':raise ValueError('Android requires a committed lock and archive hash')
-              if event!='push' and not initialize:raise ValueError('First manual host bootstrap requires initialize_lock')
-              return dict(bootstrap=True,android=False,proof='bootstrap-host-only')
-          # MEOW_PLAN_END
+          import sys
+          sys.path.insert(0,'apps/aerove-lite/meow-native')
+          from build_policy import decide_plan, load_policy
           root=Path('apps/aerove-lite/meow-native')
+          policy=load_policy(root)
           plan=decide_plan((root/'Cargo.lock').is_file(),json.loads((root/'source.json').read_text())['archiveSha256'],
-              os.environ['EVENT_NAME'],os.environ['REQUESTED_PHASE'],os.environ['INITIALIZE_LOCK']=='true')
+              os.environ['EVENT_NAME'],os.environ['REQUESTED_PHASE'],os.environ['INITIALIZE_LOCK']=='true',
+              resolve_requested=bool(policy and policy['resolveLock']))
           with open(os.environ['GITHUB_OUTPUT'],'a') as output:
               for key,value in plan.items():output.write(f'{key}={str(value).lower()}\n')
           print(json.dumps(plan,sort_keys=True))
@@ -104,6 +95,7 @@ jobs:
         env:
           INITIALIZE_LOCK: ${{ needs.plan.outputs.bootstrap }}
           REQUESTED_PROOF: ${{ needs.plan.outputs.proof }}
+          RESOLVE_LOCK: ${{ needs.plan.outputs.resolve }}
         run: |
           set -euo pipefail
           python3 - <<'PY' 2>&1 | tee "$RUNNER_TEMP/meow-host-command.log"
@@ -113,6 +105,7 @@ jobs:
           initial=os.environ['INITIALIZE_LOCK']=='true'
           command=['python3',str(root/'build.py')]
           if initial:command.append('--initialize-lock')
+          if os.environ['RESOLVE_LOCK']=='true':command.append('--resolve-lock')
           try:
               subprocess.run(command,check=True)
           finally:
@@ -132,7 +125,7 @@ jobs:
           evidence="$RUNNER_TEMP/meow-host-evidence"
           mkdir -p "$evidence"
           cp "$root/source.json" "$root/Cargo.toml" "$root/rust-toolchain.toml" "$evidence/"
-          for file in Cargo.lock build/host-receipt.json .upstream/meow-rs/AEROVE_SOURCE_PROVENANCE.json; do
+          for file in Cargo.lock build-policy.json source-metadata/api-lifecycle.json patches/api-lifecycle.patch build/host-receipt.json build/lock-before-resolution.lock build/metadata.stdout.json build/metadata.stderr.log .upstream/meow-rs/AEROVE_SOURCE_PROVENANCE.json; do
             if [ -f "$root/$file" ]; then cp "$root/$file" "$evidence/"; fi
           done
           if [ -f "$RUNNER_TEMP/meow-host-command.log" ]; then cp "$RUNNER_TEMP/meow-host-command.log" "$evidence/"; fi
@@ -219,7 +212,7 @@ jobs:
           test "$HOST_RESULT" = success
           case "$PROOF:$ANDROID_REQUIRED:$ANDROID_RESULT" in
             host-android:true:success) ;;
-            bootstrap-host-only:false:skipped|host-only:false:skipped) ;;
+            bootstrap-host-only:false:skipped|host-only:false:skipped|resolve-host-only:false:skipped) ;;
             *) echo 'Planned Meow proof failed or has an unexpected skipped leg' >&2; exit 1 ;;
           esac
           printf 'Accepted Meow preflight proof: %s\n' "$PROOF" >> "$GITHUB_STEP_SUMMARY"

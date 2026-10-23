@@ -9,6 +9,7 @@ import tarfile
 import tempfile
 import urllib.request
 from verify_source import ROOT, sha, source_spec, verify
+from build_policy import load_policy, apply_patch, owned_file, digest
 
 MAX_ARCHIVE = 64*1024*1024
 MAX_EXPANDED = 128*1024*1024
@@ -39,13 +40,13 @@ def extract(archive, destination):
             target.chmod(0o755 if member.mode & 0o111 else 0o644)
 
 
-def prepare(archive=None, allow_archive_bootstrap=False):
+def prepare_raw(archive=None, allow_archive_bootstrap=False, separate=False):
     spec=source_spec();owned_root=ROOT.resolve();cache=owned_root/'.upstream'
     if cache.is_symlink() or cache.resolve()!=owned_root/'.upstream':raise ValueError('Unsafe upstream cache directory')
     cache.mkdir(exist_ok=True)
     if not spec['archiveSha256'] and not allow_archive_bootstrap:raise ValueError('Archive hash requires an explicit first CI bootstrap')
-    target=cache/'meow-rs'
-    if target.is_symlink() or target.parent.resolve()!=cache.resolve():raise ValueError('Unsafe prepared source directory')
+    target=cache/('meow-rs-raw' if separate else 'meow-rs')
+    if target.is_symlink() or target.parent.resolve()!=cache.resolve() or target.resolve()!=cache/target.name:raise ValueError('Unsafe prepared source directory')
     if target.exists():
         try:
             result=verify(target,spec)
@@ -73,7 +74,7 @@ def prepare(archive=None, allow_archive_bootstrap=False):
             result=verify(candidate,spec);result['archiveSha256']=sha(blob);result['archiveHashBootstrapped']=spec['archiveSha256'] is None
             (candidate/'AEROVE_SOURCE_PROVENANCE.json').write_text(json.dumps(result,indent=2)+'\n')
             if target.exists():
-                if cache.is_symlink() or cache.resolve()!=owned_root/'.upstream' or target.is_symlink() or target.resolve()!=cache/'meow-rs':
+                if cache.is_symlink() or cache.resolve()!=owned_root/'.upstream' or target.is_symlink() or target.resolve()!=cache/('meow-rs-raw' if separate else 'meow-rs'):
                     raise ValueError('Unsafe prepared source cleanup directory')
                 shutil.rmtree(target)
             candidate.replace(target)
@@ -81,6 +82,43 @@ def prepare(archive=None, allow_archive_bootstrap=False):
         # A failed owned download must not poison the next cache restore; caller archives are never deleted.
         if archive is None:blob.unlink(missing_ok=True)
         raise
+    return target
+
+def prepare(archive=None, allow_archive_bootstrap=False):
+    policy=load_policy(ROOT)
+    raw=prepare_raw(archive,allow_archive_bootstrap,separate=policy is not None)
+    if policy is None:return raw
+    spec=source_spec();metadata=policy['overlayMetadata'];raw_result=verify(raw,spec)
+    if raw_result['fileManifestSha256']!=metadata['rawFileManifestSha256']:
+        raise ValueError('Overlay raw source manifest mismatch')
+    expected=dict(spec['files'])
+    for name,change in metadata['changes'].items():
+        if expected.get(name)!=change['beforeSha256'] or (change['beforeSha256'] is None and name in expected):
+            raise ValueError('Overlay changes do not match fixed raw source')
+        expected[name]=change['afterSha256']
+    if expected!=metadata['files']:raise ValueError('Overlay changes alter undeclared source bytes')
+    adapted_spec=dict(spec,files=expected)
+    identity=dict(rawFileManifestSha256=raw_result['fileManifestSha256'],overlaySha256=policy['overlaySha256'],patchSha256=metadata['patchSha256'])
+    cache=ROOT.resolve()/'.upstream';target=cache/'meow-rs'
+    if cache.is_symlink() or cache.resolve()!=ROOT.resolve()/'.upstream' or target.is_symlink() or target.resolve()!=cache/'meow-rs':
+        raise ValueError('Unsafe adapted source directory')
+    if target.exists():
+        try:
+            result=verify(target,adapted_spec);marker=json.loads((target/'AEROVE_SOURCE_PROVENANCE.json').read_text())
+            if all(marker.get(k)==v for k,v in dict(result,**identity,archiveSha256=spec['archiveSha256']).items()):return target
+        except (ValueError,KeyError,OSError):pass
+    with tempfile.TemporaryDirectory(prefix='adapt-',dir=cache) as temporary:
+        candidate=Path(temporary)/'source';shutil.copytree(raw,candidate)
+        apply_patch(candidate,owned_file(ROOT,metadata['patch']).read_bytes(),metadata['changes'])
+        result=verify(candidate,adapted_spec)
+        if result['fileManifestSha256']!=metadata['adaptedFileManifestSha256']:raise ValueError('Adapted source manifest mismatch')
+        result.update(identity,archiveSha256=json.loads((raw/'AEROVE_SOURCE_PROVENANCE.json').read_text())['archiveSha256'],archiveHashBootstrapped=False)
+        (candidate/'AEROVE_SOURCE_PROVENANCE.json').write_text(json.dumps(result,indent=2)+'\n')
+        if target.exists():
+            if cache.is_symlink() or cache.resolve()!=ROOT.resolve()/'.upstream' or target.is_symlink() or target.resolve()!=cache/'meow-rs':
+                raise ValueError('Unsafe adapted source cleanup directory')
+            shutil.rmtree(target)
+        candidate.replace(target)
     return target
 
 if __name__=='__main__':
