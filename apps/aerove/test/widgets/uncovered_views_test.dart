@@ -20,6 +20,7 @@ import 'package:fl_clash/views/profiles/extend/standard.dart';
 import 'package:fl_clash/views/proxies/proxies.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -241,6 +242,15 @@ void main() {
   });
 
   testWidgets('about view renders version and link sections', (tester) async {
+    const channel = MethodChannel('plugins.flutter.io/url_launcher');
+    final launches = <MethodCall>[];
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      launches.add(call);
+      return true;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
     final container = _containerFor(tester);
 
     await tester.pumpWidget(
@@ -252,7 +262,15 @@ void main() {
     await tester.pump();
 
     expect(find.byType(AboutView), findsOneWidget);
-    expect(find.text('Telegram'), findsOneWidget);
+    final l10n = AppLocalizations.current;
+    expect(find.text(l10n.aboutTelegramChannel), findsOneWidget);
+    expect(find.text(l10n.aboutTelegramGroup), findsOneWidget);
+    expect(find.text('t.me/IvanSolis89'), findsOneWidget);
+    expect(find.text('t.me/Olympus_Habitue'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text(l10n.aboutTelegramChannel)).dy,
+      lessThan(tester.getTopLeft(find.text(l10n.aboutTelegramGroup)).dy),
+    );
     final hero = find.byWidgetPredicate(
       (widget) => widget.runtimeType.toString() == '_AboutHero',
     );
@@ -261,6 +279,25 @@ void main() {
       tester.getRect(find.byType(AppBar)).bottom + 12,
     );
     expect(tester.takeException(), null);
+
+    for (final link in [
+      (title: l10n.aboutTelegramChannel, url: 'https://t.me/IvanSolis89'),
+      (title: l10n.aboutTelegramGroup, url: 'https://t.me/Olympus_Habitue'),
+    ]) {
+      await tester.ensureVisible(find.text(link.title));
+      await tester.tap(find.text(link.title));
+      await tester.pumpAndSettle();
+      expect(find.text(link.url, findRichText: true), findsOneWidget);
+      await tester.tap(find.text(l10n.go));
+      await tester.pumpAndSettle();
+    }
+    expect(
+      launches.map((call) => call.arguments['url']),
+      orderedEquals([
+        'https://t.me/IvanSolis89',
+        'https://t.me/Olympus_Habitue',
+      ]),
+    );
 
     final scrollables = find.byType(Scrollable);
     if (scrollables.evaluate().isNotEmpty) {
