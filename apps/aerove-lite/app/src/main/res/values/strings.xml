@@ -124,6 +124,8 @@
     <string name="lite_log_level">Level</string>
     <string name="lite_about">About</string>
     <string name="lite_about_detail">Android native client</string>
+    <string name="telegram_channel">Telegram channel</string>
+    <string name="telegram_group">Telegram group</string>
     <string name="lite_importing">Importing…</string>
     <string name="lite_updating">Updating…</string>
     <string name="lite_busy">Working…</string>

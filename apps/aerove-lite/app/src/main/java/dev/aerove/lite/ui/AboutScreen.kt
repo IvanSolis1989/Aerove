@@ -81,6 +81,18 @@ internal fun AboutScreen(padding: PaddingValues, onDeveloperUnlocked: () -> Unit
                     onClick = { uriHandler.openUri("https://github.com/IvanSolis1989/Aerove/blob/main/docs/development/upstreams.md#开源来源与鸣谢") }) { LiteIcon(FullGlyphs.chevronForward) }
             }
         }
+        item {
+            LitePane(Modifier.fillMaxWidth()) {
+                SettingsRow(stringResource(R.string.telegram_channel), subtitle = "t.me/IvanSolis89",
+                    onClick = { uriHandler.openUri("https://t.me/IvanSolis89") }) { LiteIcon(FullGlyphs.chevronForward) }
+            }
+        }
+        item {
+            LitePane(Modifier.fillMaxWidth()) {
+                SettingsRow(stringResource(R.string.telegram_group), subtitle = "t.me/Olympus_Habitue",
+                    onClick = { uriHandler.openUri("https://t.me/Olympus_Habitue") }) { LiteIcon(FullGlyphs.chevronForward) }
+            }
+        }
         item { SectionLabel(stringResource(R.string.lite_open_source)) }
         items(Licenses, key = { it.label }) { license ->
             LitePane(Modifier.fillMaxWidth()) {

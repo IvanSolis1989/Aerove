@@ -124,6 +124,8 @@
     <string name="lite_log_level">级别</string>
     <string name="lite_about">关于</string>
     <string name="lite_about_detail">Android 原生客户端</string>
+    <string name="telegram_channel">Telegram 频道</string>
+    <string name="telegram_group">Telegram 群组</string>
     <string name="lite_importing">正在导入…</string>
     <string name="lite_updating">正在更新…</string>
     <string name="lite_busy">正在处理…</string>

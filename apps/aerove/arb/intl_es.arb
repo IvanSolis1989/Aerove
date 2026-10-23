@@ -984,5 +984,7 @@
   "preferred": "Preferido",
   "addToLocalProxies": "Añadir a proxies locales",
   "addedToLocalProxies": "{name} añadido a proxies locales",
-  "alreadyInLocalProxies": "{name} ya está en proxies locales"
+  "alreadyInLocalProxies": "{name} ya está en proxies locales",
+  "aboutTelegramChannel": "Canal de Telegram",
+  "aboutTelegramGroup": "Grupo de Telegram"
 }
