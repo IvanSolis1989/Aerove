@@ -1,6 +1,7 @@
 #![cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 use aerove_meow_core::{network_context::NetworkContext, physical_dns::{PhysicalResolver, selected_servers}, runtime_plan::PhysicalDns};
 use hickory_proto::{op::{Message, MessageType, OpCode}, rr::{RData, Record, RecordType, rdata::{A, AAAA}}};
+use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
 use meow_common::{HostResolver, socket_protect::{self, SocketProtector}};
 use std::{collections::BTreeMap, io, net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr}, os::fd::RawFd, sync::{Arc, atomic::{AtomicUsize, Ordering}}, time::Duration};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, UdpSocket}, sync::oneshot, time::timeout};
