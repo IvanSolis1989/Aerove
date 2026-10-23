@@ -1563,3 +1563,44 @@
  
          // Only rewrite if the path doesn't already have /ws prefix
          // Check for exact "/ws" or starts with "/ws/" to avoid matching
+--- a/clash-lib/src/app/api/websocket.rs
++++ b/clash-lib/src/app/api/websocket.rs
+@@ -134,15 +134,27 @@
+     })
+ }
+ 
++#[cfg(debug_assertions)]
++fn log_handshake_stage(stage: &str) {
++    eprintln!("[logs-handshake] {stage}");
++    let _ = std::io::Write::flush(&mut std::io::stderr());
++}
++
+ pub async fn log(
+     ws: WebSocketUpgrade,
+     State(state): State<Arc<AppState>>,
+ ) -> impl IntoResponse {
+-    ws.on_failed_upgrade(move |e| {
++    #[cfg(debug_assertions)]
++    log_handshake_stage("handler-enter");
++    let response = ws.on_failed_upgrade(move |e| {
+         warn!("ws upgrade error: {}", e);
+     })
+     .on_upgrade(move |mut socket| async move {
++        #[cfg(debug_assertions)]
++        log_handshake_stage("upgrade-callback-before-subscribe");
+         let mut rx = state.log_source_tx.subscribe();
++        #[cfg(debug_assertions)]
++        log_handshake_stage("subscribe-returned");
+         while let Ok(evt) = rx.recv().await {
+             let res = match serde_json::to_string(&evt) {
+                 Ok(s) => s,
+@@ -157,5 +169,8 @@
+                 break;
+             }
+         }
+-    })
++    });
++    #[cfg(debug_assertions)]
++    log_handshake_stage("response-built");
++    response
+ }
