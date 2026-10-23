@@ -109,6 +109,9 @@ class LiquidGlassHost extends StatelessWidget {
   })?
   debugLastCacheTrim;
 
+  @visibleForTesting
+  static int get debugHeldCaptures => _LiquidGlassLayer._capturesHeld;
+
   @override
   Widget build(BuildContext context) {
     return _LiquidGlassHostBox(
@@ -486,6 +489,8 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     }());
   }
 
+  var _panes = <_LiquidGlassLayer>{};
+
   @override
   void addToScene(ui.SceneBuilder builder) {
     if (!_suspended) {
@@ -497,6 +502,10 @@ class _LiquidGlassHostLayer extends ContainerLayer {
 
   @override
   void dispose() {
+    for (final pane in _panes) {
+      pane._trimCapture();
+    }
+    _panes = {};
     for (final atlas in _atlases) {
       atlas.image.dispose();
     }
@@ -509,8 +518,6 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     super.dispose();
   }
 
-  /// A pane over one painted before it in the same root sits a level above
-  /// it, and reads a capture with that one drawn as glass.
   void _capture() {
     if (_trimBeforeCapture) {
       _trimCaches(all: true, preserveModal: true, reason: 'pressure-frame');
@@ -520,6 +527,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     _replayedPanes = 0;
     _skippedPanes = 0;
     final found = <_Behind>[];
+    final panes = <_LiquidGlassLayer>{};
     final coverage = <_GlassCoverage>[];
     _field = null;
     _gather(
@@ -529,6 +537,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
       Matrix4.identity(),
       [],
       found,
+      panes,
       coverage,
       _GlassVisibility(bounds, 1 / devicePixelRatio),
     );
@@ -544,6 +553,10 @@ class _LiquidGlassHostLayer extends ContainerLayer {
             toHost: source?.$2 ?? viewport!.$2,
             staticSource: source != null,
           );
+    for (final pane in _panes.difference(panes)) {
+      pane._trimCapture();
+    }
+    _panes = panes;
     final placed = <_Behind>[];
     for (final (index, entry) in found.indexed) {
       if (!entry.pane.contentBackdrop) entry.wallpaper = wallpaper;
@@ -606,9 +619,11 @@ class _LiquidGlassHostLayer extends ContainerLayer {
         levels = math.max(levels, entry.level + 1);
         continue;
       }
+      final group = entry.pane.group;
       for (final before in placed.take(index)) {
         if ((identical(entry.root, this) ||
                 before.ancestors.contains(entry.root)) &&
+            (group == null || !identical(before.pane.group, group)) &&
             before.visibleBounds.overlaps(entry.reach)) {
           entry.level = math.max(entry.level, before.level + 1);
         }
@@ -710,6 +725,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     Matrix4 rootToHost,
     List<ContainerLayer> chain,
     List<_Behind> found,
+    Set<_LiquidGlassLayer> panes,
     List<_GlassCoverage> coverage,
     _GlassVisibility visibility,
   ) {
@@ -721,6 +737,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     for (Layer? child = layer.firstChild; child != null;) {
       switch (child) {
         case final _LiquidGlassLayer pane:
+          panes.add(pane);
           pane._setSimpleBlur(quality == LiquidGlassQuality.standard);
           if (!visibility.shows(pane.rect, toHost)) {
             _skippedPanes++;
@@ -766,6 +783,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
             offscreen ? toHost : rootToHost,
             chain,
             found,
+            panes,
             coverage,
             visibility.through(container, transform),
           );

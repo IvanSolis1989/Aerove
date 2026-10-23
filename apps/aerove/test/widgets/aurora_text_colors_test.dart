@@ -1,3 +1,5 @@
+import '../helpers/system_test_font.dart';
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -32,8 +34,7 @@ void main() {
       version: 'test',
       buildNumber: '1',
     );
-    final font = FontLoader('AuroraColorsFont')
-      ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'));
+    final font = FontLoader('AuroraColorsFont')..addFont(loadSdkTestFont());
     await font.load();
     if (ui.ImageFilter.isShaderFilterSupported) await GlassInk.prepare();
   });

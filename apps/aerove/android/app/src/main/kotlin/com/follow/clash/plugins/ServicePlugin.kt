@@ -5,6 +5,7 @@ import com.follow.clash.ServiceState
 import com.follow.clash.common.Components
 import com.follow.clash.core.Core
 import com.follow.clash.models.SharedState
+import com.follow.clash.service.NetworkObserver
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -76,7 +77,10 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private fun initialize(result: MethodChannel.Result) {
         scope.launch(Dispatchers.Main.immediate) {
             coreLoaded.await()
-                .mapCatching { ServiceController.setEventListener(eventListener).getOrThrow() }
+                .mapCatching {
+                    NetworkObserver.start()
+                    ServiceController.setEventListener(eventListener).getOrThrow()
+                }
                 .onSuccess { result.success("") }
                 .onFailure { error -> result.success(error.message.orEmpty()) }
         }

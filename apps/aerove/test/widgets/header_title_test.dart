@@ -1,3 +1,5 @@
+import '../helpers/system_test_font.dart';
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -21,8 +23,7 @@ void main() {
     if (Platform.environment['XCLASH_REQUIRE_IMPELLER'] == 'true') {
       expect(ui.ImageFilter.isShaderFilterSupported, isTrue);
     }
-    final loader = FontLoader('PageTitleProbe')
-      ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'));
+    final loader = FontLoader('PageTitleProbe')..addFont(loadSdkTestFont());
     await loader.load();
   });
 

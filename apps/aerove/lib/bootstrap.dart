@@ -5,6 +5,7 @@ import 'package:dynamic_color/dynamic_color.dart';
 import 'package:fl_clash/common/boot_guard.dart';
 import 'package:fl_clash/common/boot_record.dart';
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/common/desktop_emoji.dart';
 import 'package:fl_clash/common/last_page.dart';
 import 'package:fl_clash/common/launch.dart';
 import 'package:fl_clash/common/migration.dart';
@@ -39,6 +40,7 @@ class Bootstrap {
   BootDecision _bootDecision = const BootDecision();
 
   Future<ProviderContainer> init(int version) async {
+    await loadDesktopEmojiFont();
     globalState.appEnv = const String.fromEnvironment(
       'APP_ENV',
       defaultValue: 'pre',
@@ -250,6 +252,12 @@ class Bootstrap {
     await _container.read(systemActionProvider.notifier).handleExit(false);
   }
 
+  /// Unattended desktop installs, such as a container nobody watches, accept
+  /// up front: the core only starts after the disclaimer is accepted.
+  bool get _isDisclaimerAcceptedByEnvironment =>
+      system.isDesktop &&
+      Platform.environment['FLCLASH_ACCEPT_DISCLAIMER'] == '1';
+
   /// Android's exit only finishes the activity, so Dart keeps running after
   /// [SystemAction.handleExit] returns and must not go on to start the app.
   Future<bool> _handlerDisclaimer() async {
@@ -259,9 +267,11 @@ class Bootstrap {
     if (acceptedVersion >= disclaimerVersion) {
       return true;
     }
-    final isDisclaimerAccepted = await requestDisclaimerConsent(
-      showGlassIntroduction: acceptedVersion == 0,
-    );
+    final isDisclaimerAccepted =
+        _isDisclaimerAcceptedByEnvironment ||
+        await requestDisclaimerConsent(
+          showGlassIntroduction: acceptedVersion == 0,
+        );
     if (!isDisclaimerAccepted) {
       await _container.read(systemActionProvider.notifier).handleExit();
       return false;

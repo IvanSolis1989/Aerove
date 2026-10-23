@@ -39,24 +39,27 @@ final _appThemes = <Brightness, ({Object inputs, ThemeData theme})>{};
 
 ThemeData watchAppTheme(WidgetRef ref, Brightness brightness) {
   final locale = ref.watch(appSettingProvider.select((state) => state.locale));
-  final themeSetting = ref.watch(
-    themeSettingProvider.select(
-      (state) => (fontFamily: state.fontFamily, pureBlack: state.pureBlack),
-    ),
+  final selectedFont = ref.watch(
+    themeSettingProvider.select((state) => state.fontFamily),
   );
+  final fontFamily = system.isAndroid
+      ? resolveSystemFontFamily(
+          selectedFont,
+          ref.watch(installedSystemFontsProvider).asData?.value,
+        )
+      : selectedFont;
   final colorScheme = ref.watch(genColorSchemeProvider(brightness));
-  final plainDark = brightness == Brightness.dark && themeSetting.pureBlack
-      ? ref.watch(genColorSchemeProvider(brightness, pureBlack: false))
-      : null;
   final locales = [
     ?getLocaleForString(locale),
     ...WidgetsBinding.instance.platformDispatcher.locales,
   ];
   final inputs = (
     platform: defaultTargetPlatform,
-    themeSetting: themeSetting,
+    fontFamily: appFontFamily(
+      platform: defaultTargetPlatform,
+      selected: fontFamily,
+    ),
     colorScheme: colorScheme,
-    plainDark: plainDark,
     locales: locales.join(','),
   );
   if (_appThemes[brightness] case (
@@ -75,29 +78,55 @@ ThemeData watchAppTheme(WidgetRef ref, Brightness brightness) {
       selectionColor: colorScheme.primary.withValues(alpha: 0.3),
       selectionHandleColor: colorScheme.primary,
     ),
-    fontFamily: themeSetting.fontFamily,
+    fontFamily: inputs.fontFamily,
     fontFamilyFallback: appFontFamilyFallback(
       platform: defaultTargetPlatform,
       locales: locales,
-      fontFamily: themeSetting.fontFamily,
+      fontFamily: fontFamily,
     ),
     extensions: [
       if (brightness == Brightness.dark)
-        ElevatedColorScheme(
-          // Plain dark is pure black a level up, with the seed's tint that a
-          // lift from black would lose.
-          plainDark ?? colorScheme.elevated,
-        ),
+        ElevatedColorScheme(colorScheme.elevated),
     ],
   ).withAppShapes.withAppSurfaces.withAppTypography;
   _appThemes[brightness] = (inputs: inputs, theme: theme);
   return theme;
 }
 
-class ThemeManager extends ConsumerWidget {
+class ThemeManager extends ConsumerStatefulWidget {
   final Widget child;
 
   const ThemeManager({super.key, required this.child});
+
+  @override
+  ConsumerState<ThemeManager> createState() => _ThemeManagerState();
+}
+
+class _ThemeManagerState extends ConsumerState<ThemeManager>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (system.isAndroid && state == AppLifecycleState.resumed) {
+      ref.invalidate(installedSystemFontsProvider);
+    }
+  }
+
+  @override
+  void didChangeLocales(List<Locale>? locales) {
+    if (system.isAndroid) ref.invalidate(installedSystemFontsProvider);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
 
   Widget _buildSystemUi(Widget child) {
     if (!system.isAndroid) {
@@ -116,7 +145,9 @@ class ThemeManager extends ConsumerWidget {
             systemNavigationBarIconBrightness: iconBrightness,
             systemNavigationBarColor: Colors.transparent,
             systemNavigationBarDividerColor: Colors.transparent,
-            systemNavigationBarContrastEnforced: false,
+            // Pages scroll under the navigation bar. Android scrims only a
+            // three-button bar for it; the gesture handle stays clear.
+            systemNavigationBarContrastEnforced: true,
           ),
           sized: false,
           child: child,
@@ -126,7 +157,7 @@ class ThemeManager extends ConsumerWidget {
   }
 
   @override
-  Widget build(BuildContext context, ref) {
+  Widget build(BuildContext context) {
     final textScale = ref.read(
       themeSettingProvider.select((state) => state.textScale),
     );
@@ -152,7 +183,7 @@ class ThemeManager extends ConsumerWidget {
                   .updateViewSize(
                     Size(constraints.maxWidth, constraints.maxHeight),
                   );
-              return _buildSystemUi(child);
+              return _buildSystemUi(widget.child);
             },
           ),
         ),

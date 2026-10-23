@@ -1,3 +1,5 @@
+import '../helpers/system_test_font.dart';
+
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -14,8 +16,7 @@ import '../helpers/test_app.dart';
 
 void main() {
   setUpAll(() async {
-    final font = FontLoader('SheetSearchProbe')
-      ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'));
+    final font = FontLoader('SheetSearchProbe')..addFont(loadSdkTestFont());
     await font.load();
   });
 
@@ -61,7 +62,7 @@ void main() {
     expect(find.text('title'), findsOneWidget);
   });
 
-  testWidgets('a docked field leaves the close button at the trailing end', (
+  testWidgets('a docked field leaves the close button at the leading edge', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -80,7 +81,7 @@ void main() {
     expect(close, findsOneWidget);
     final rect = tester.getRect(bar);
     expect(rect.width, 600);
-    expect(tester.getCenter(close).dx, greaterThan(rect.center.dx));
+    expect(tester.getCenter(close).dx, lessThan(rect.center.dx));
   });
 
   testWidgets('a page and a side sheet keep the bar button', (tester) async {
@@ -311,10 +312,8 @@ void main() {
                                                       controller: controller,
                                                       padding: EdgeInsets.only(
                                                         top: sheetAppBarHeight,
-                                                        bottom:
-                                                            BottomInsetScope.of(
-                                                              bodyContext,
-                                                            ),
+                                                        bottom: bodyContext
+                                                            .bottomInset,
                                                       ),
                                                       itemCount: 60,
                                                       itemExtent: 40,

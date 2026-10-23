@@ -192,7 +192,11 @@ Object? _readTabAnimation(Map<dynamic, dynamic> json, String key) {
   if (json.containsKey(key)) {
     return json[key];
   }
-  return json['isAnimateToPage'] == false ? TabAnimation.fade.name : null;
+  return switch (json['isAnimateToPage']) {
+    true => TabAnimation.slide.name,
+    false => TabAnimation.fade.name,
+    _ => null,
+  };
 }
 
 Object? _readUserAgents(Map<dynamic, dynamic> json, String key) {
@@ -233,7 +237,8 @@ abstract class AppSettingProps with _$AppSettingProps {
     @Default(false) bool openLogs,
     @Default(true) bool closeConnections,
     @Default(defaultTestUrl) String testUrl,
-    @Default(TabAnimation.slide)
+    @Default(defaultDelayTestTimeout) int delayTestTimeout,
+    @Default(TabAnimation.fade)
     @JsonKey(readValue: _readTabAnimation)
     TabAnimation tabAnimation,
     @Default(true) bool floatingNavigationBar,
@@ -247,6 +252,7 @@ abstract class AppSettingProps with _$AppSettingProps {
     @Default(false) bool developerMode,
     @Default(RestoreStrategy.compatible) RestoreStrategy restoreStrategy,
     @Default(true) bool showTrayTitle,
+    @Default(true) bool monochromeTrayIcon,
     @Default(true) bool checkCertificate,
     @Default(defaultUserAgents)
     @JsonKey(readValue: _readUserAgents)
@@ -531,6 +537,9 @@ abstract class Config with _$Config {
       return Config(
         themeProps: defaultThemeProps,
         hotKeyActions: defaultHotKeyActions,
+        appSettingProps: AppSettingProps(
+          dashboardWidgets: defaultDashboardWidgets,
+        ),
       );
     }
     return Config.fromJson(json);

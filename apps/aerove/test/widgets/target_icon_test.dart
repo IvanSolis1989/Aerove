@@ -64,9 +64,6 @@ void main() {
     tester.view.physicalSize = const Size(360, 120);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    final font = FontLoader('Twemoji')
-      ..addFont(rootBundle.load('assets/fonts/Twemoji.Mozilla.ttf'));
-    await tester.runAsync(font.load);
     if (ui.ImageFilter.isShaderFilterSupported) {
       await tester.runAsync(GlassInk.prepare);
     }

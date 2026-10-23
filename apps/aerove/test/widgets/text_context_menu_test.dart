@@ -135,13 +135,16 @@ void _expectSolidPlatter(WidgetTester tester) {
   expect(card.glass, isNull);
   expect(card.fill, fill);
   expect(fill.a, 1);
-  expect(
-    tester.renderObject(_platter),
-    paints
-      ..rsuperellipse()
-      ..rsuperellipse()
-      ..path(color: fill),
-  );
+  expect(card.shadows, menuShadows(colorScheme));
+  final expectedPaint = paints;
+  for (final shadow in card.shadows) {
+    expectedPaint.rsuperellipse(
+      color: shadow.color,
+      hasMaskFilter: shadow.toPaint().maskFilter != null,
+    );
+  }
+  expectedPaint.path(color: fill);
+  expect(tester.renderObject(_platter), expectedPaint);
 }
 
 Widget _textField() => SizedBox(

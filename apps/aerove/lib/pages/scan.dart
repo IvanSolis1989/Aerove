@@ -65,8 +65,10 @@ class _ScanPageState extends ConsumerState<ScanPage>
 
   StreamSubscription<BarcodeCapture>? _subscription;
   Timer? _invalidHintTimer;
+  Future<void>? _starting;
   bool _disableAnimations = false;
-  bool _completed = false;
+  bool _leaving = false;
+  bool _holdsLastFrame = false;
   bool _picking = false;
   bool _restartAfterSettings = false;
 
@@ -88,13 +90,17 @@ class _ScanPageState extends ConsumerState<ScanPage>
     _syncEffect();
   }
 
-  // Android binds the camera on the platform thread, which the UI shares.
+  // Android binds and unbinds the camera on the platform thread, which the UI
+  // shares, so the camera runs only between the route's transitions.
   @override
   void didSettleRoute() {
     unawaited(_start());
   }
 
   void _syncEffect() {
+    if (_leaving) {
+      return;
+    }
     if (_disableAnimations || !_controller.value.isRunning) {
       _effectController.reset();
     } else if (!_effectController.isAnimating) {
@@ -106,11 +112,12 @@ class _ScanPageState extends ConsumerState<ScanPage>
   // the first start is still pending, and a second `start` would throw.
   Future<void> _start() async {
     final state = _controller.value;
-    if (_completed || !routeSettled || state.isStarting || state.isRunning) {
+    if (_leaving || !routeSettled || state.isStarting || state.isRunning) {
       return;
     }
+    final starting = _starting = _controller.start();
     try {
-      await _controller.start();
+      await starting;
     } on MobileScannerException catch (error) {
       if (mounted) {
         commonPrint.log(
@@ -118,11 +125,41 @@ class _ScanPageState extends ConsumerState<ScanPage>
           logLevel: LogLevel.warning,
         );
       }
+    } finally {
+      if (identical(_starting, starting)) {
+        _starting = null;
+      }
     }
   }
 
+  // Pausing, unlike stopping, keeps the preview's last frame.
+  Future<void> _release() async {
+    _leaving = true;
+    _effectController.stop();
+    unawaited(_subscription?.cancel());
+    _subscription = null;
+    await _starting;
+    _holdsLastFrame = _controller.value.isRunning;
+    try {
+      await _controller.pause();
+    } on Exception catch (error) {
+      commonPrint.log(
+        'Failed to pause the scanner: ${compactError(error)}',
+        logLevel: LogLevel.warning,
+      );
+    }
+  }
+
+  Future<bool> _handlePop(BuildContext context) async {
+    if (_leaving) {
+      return false;
+    }
+    await _release();
+    return true;
+  }
+
   void _handleCapture(BarcodeCapture capture) {
-    if (_completed || !mounted || capture.barcodes.isEmpty) {
+    if (_leaving || !mounted || capture.barcodes.isEmpty) {
       return;
     }
     final url = profileUrlFromQrCodes(
@@ -132,7 +169,7 @@ class _ScanPageState extends ConsumerState<ScanPage>
       _showInvalidHint();
       return;
     }
-    _complete(url);
+    unawaited(_leave(url));
   }
 
   void _handleDetectError(Object error) {
@@ -152,28 +189,34 @@ class _ScanPageState extends ConsumerState<ScanPage>
 
   // `pop` takes the top route, which is another one once this page is closing
   // or a dialog covers it, and a closing page stays mounted until it is gone.
-  void _complete(String url) {
-    if (ModalRoute.isCurrentOf(context) == false) {
+  Future<void> _leave([String? url]) async {
+    if (_leaving || ModalRoute.isCurrentOf(context) == false) {
       return;
     }
-    _completed = true;
-    unawaited(_subscription?.cancel());
-    _subscription = null;
-    Navigator.of(context).pop<String>(url);
+    await _release();
+    if (mounted && ModalRoute.isCurrentOf(context) != false) {
+      Navigator.of(context).pop<String>(url);
+    }
   }
 
   Future<void> _pickFromAlbum() async {
-    if (_picking || _completed) {
+    if (_picking || _leaving) {
       return;
     }
     _picking = true;
+    final String? url;
     try {
-      final url = await globalState.safeRun(picker.pickerConfigQRCode);
-      if (url != null && mounted && !_completed) {
-        _complete(url);
-      }
+      url = await globalState.safeRun<String?>(picker.pickerConfigQRCode);
     } finally {
       _picking = false;
+    }
+    if (!mounted || _leaving) {
+      return;
+    }
+    if (url != null) {
+      await _leave(url);
+    } else {
+      await _start();
     }
   }
 
@@ -191,6 +234,9 @@ class _ScanPageState extends ConsumerState<ScanPage>
       case AppLifecycleState.paused:
         return;
       case AppLifecycleState.resumed:
+        if (_picking) {
+          return;
+        }
         // Retrying a denied permission on every resume would reopen the
         // system dialog as soon as the user dismisses it.
         final denied =
@@ -232,11 +278,16 @@ class _ScanPageState extends ConsumerState<ScanPage>
               child: AnnotatedRegion<SystemUiOverlayStyle>(
                 value: _systemUiOverlayStyleOf(theme.brightness),
                 sized: false,
-                child: _buildPage(
-                  context,
-                  theme: theme,
-                  failed: failed,
-                  glass: glass,
+                child: CommonPopScope(
+                  onPop: scanner.isRunning || scanner.isStarting
+                      ? _handlePop
+                      : null,
+                  child: _buildPage(
+                    context,
+                    theme: theme,
+                    failed: failed,
+                    glass: glass,
+                  ),
                 ),
               ),
             ),
@@ -287,7 +338,12 @@ class _ScanPageState extends ConsumerState<ScanPage>
                 child: ValueListenableBuilder<MobileScannerState>(
                   valueListenable: _controller,
                   builder: (context, state, _) => AnimatedOpacity(
-                    opacity: state.isRunning || state.error != null ? 0 : 1,
+                    opacity:
+                        state.isRunning ||
+                            state.error != null ||
+                            _holdsLastFrame
+                        ? 0
+                        : 1,
                     duration: _disableAnimations || !state.isRunning
                         ? Duration.zero
                         : _previewRevealDuration,
@@ -330,9 +386,7 @@ class _ScanPageState extends ConsumerState<ScanPage>
                             data: IconButtonData(
                               glyph: AppGlyphs.close,
                               tooltip: appLocalizations.close,
-                              onPressed: () {
-                                Navigator.of(context).pop();
-                              },
+                              onPressed: _leave,
                             ),
                           ),
                         ),

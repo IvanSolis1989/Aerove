@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:fl_clash/common/common.dart';
@@ -34,7 +33,7 @@ class _EditProfileViewState extends ConsumerState<EditProfileView> {
   late final TextEditingController _ageSecretKeyController;
   late final TextEditingController _autoUpdateDurationController;
   late bool _autoUpdate;
-  String? _rawText;
+  Uint8List? _editedData;
   bool _attempted = false;
   final _fileInfoNotifier = ValueNotifier<FileInfo?>(null);
   late SetupAction _setupAction;
@@ -187,7 +186,7 @@ class _EditProfileViewState extends ConsumerState<EditProfileView> {
     });
   }
 
-  Future<void> _handleSaveEdit(BuildContext context, String data) async {
+  Future<void> _handleSaveEdit(BuildContext context, Uint8List data) async {
     final message = await globalState.safeRun<String>(() async {
       final message = await ref
           .read(profilesActionProvider.notifier)
@@ -212,37 +211,42 @@ class _EditProfileViewState extends ConsumerState<EditProfileView> {
     final title = widget.profile.label.takeFirstValid([
       widget.profile.id.toString(),
     ]);
+    final editedData = _editedData;
     final editorPage = EditorPage(
       title: title,
-      load: () async => _rawText ??=
-          await readTextFileTask(
-            await appPath.getProfilePath(widget.profile.id.toString()),
-          ) ??
-          '',
-      onSave: (context, _, content) => _handleSaveEdit(context, content),
-      onPop: (context, _, content) async {
-        if (content == _rawText) {
-          return true;
+      load: () async => editedData != null
+          ? CodeForgeDocument.fromUtf8(editedData)
+          : openEditorFile(
+              await appPath.getProfilePath(widget.profile.id.toString()),
+            ),
+      onSave: (context, _, content) async {
+        final data = await content.readBytes();
+        if (context.mounted) {
+          await _handleSaveEdit(context, data);
         }
+      },
+      onPop: (context, _, content) async {
         final res = await dialogs.showMessage(
           title: title,
           message: TextSpan(text: context.appLocalizations.hasCacheChange),
         );
-        if (res == true && context.mounted) {
-          unawaited(_handleSaveEdit(context, content));
-        } else {
+        if (res != true || !context.mounted) {
           return true;
+        }
+        final data = await content.readBytes();
+        if (context.mounted) {
+          unawaited(_handleSaveEdit(context, data));
         }
         return false;
       },
     );
-    final data = await BaseNavigator.push<String>(context, editorPage);
+    final data = await BaseNavigator.push<Uint8List>(context, editorPage);
     if (data == null || !mounted) {
       return;
     }
-    _rawText = data;
+    _editedData = data;
     setState(() {
-      _fileData = Uint8List.fromList(utf8.encode(data));
+      _fileData = data;
     });
     _fileInfoNotifier.value = _fileInfoNotifier.value?.copyWith(
       size: _fileData?.length ?? 0,
@@ -320,8 +324,9 @@ class _EditProfileViewState extends ConsumerState<EditProfileView> {
             FormRow(
               title: appLocalizations.autoUpdate,
               onPressed: () => _setAutoUpdate(!_autoUpdate),
-              trailing: GlassSwitch(
-                child: Switch(value: _autoUpdate, onChanged: _setAutoUpdate),
+              trailing: CommonSwitch(
+                value: _autoUpdate,
+                onChanged: _setAutoUpdate,
               ),
             ),
             if (_autoUpdate)
@@ -332,10 +337,14 @@ class _EditProfileViewState extends ConsumerState<EditProfileView> {
               ),
           ],
         ),
-      _ProfileFileItem(
-        fileInfoNotifier: _fileInfoNotifier,
-        onEdit: _editProfileFile,
-        onUpload: _uploadProfileFile,
+      generateSection(
+        items: [
+          _ProfileFileItem(
+            fileInfoNotifier: _fileInfoNotifier,
+            onEdit: _editProfileFile,
+            onUpload: _uploadProfileFile,
+          ),
+        ],
       ),
     ];
     return FocusTraversalGroup(
@@ -359,11 +368,11 @@ class _EditProfileViewState extends ConsumerState<EditProfileView> {
               builder: (context) => ListView(
                 padding: const EdgeInsets.symmetric(horizontal: 16).copyWith(
                   top: context.contentTopPadding,
-                  bottom: BottomInsetScope.of(context) + 16,
+                  bottom: context.bottomInset + 16,
                 ),
                 children: [
                   ErrorBanner(message: issue?.message),
-                  ...sections.separated(const SizedBox(height: 24)),
+                  ...sections,
                 ],
               ),
             ),
@@ -571,26 +580,23 @@ class _ProfileFileItem extends StatelessWidget {
           alignment: Alignment.centerLeft,
           child: fileInfo == null
               ? Container()
-              : ItemPositionProvider(
-                  position: ItemPosition.startAndEnd,
-                  child: ContextMenuRegion(
-                    menuItems: _menuItems(context),
-                    child: DecorationListItem(
-                      contentPadding: const EdgeInsets.only(left: 16),
-                      title: GlassText(appLocalizations.profile),
-                      subtitle: _buildSubtitle(context, fileInfo),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          GlassText(
-                            fileInfo.size.traffic.show,
-                            style: context.listCaptionStyle,
-                          ),
-                          const DisclosureIndicator(),
-                        ],
-                      ),
-                      onPressed: onEdit,
+              : ContextMenuRegion(
+                  menuItems: _menuItems(context),
+                  child: DecorationListItem(
+                    contentPadding: const EdgeInsets.only(left: 16),
+                    title: GlassText(appLocalizations.profile),
+                    subtitle: _buildSubtitle(context, fileInfo),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        GlassText(
+                          fileInfo.size.traffic.show,
+                          style: context.listCaptionStyle,
+                        ),
+                        const DisclosureIndicator(),
+                      ],
                     ),
+                    onPressed: onEdit,
                   ),
                 ),
         );

@@ -7,7 +7,7 @@ import 'package:fl_clash/views/dashboard/layout.dart';
 import 'package:fl_clash/views/dashboard/widgets/card.dart';
 import 'package:fl_clash/views/dashboard/widgets/network_takeover.dart';
 import 'package:fl_clash/widgets/widgets.dart';
-import 'package:flutter/rendering.dart';
+import 'package:flutter/gestures.dart' show kPressTimeout;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -87,7 +87,7 @@ void main() {
   }
 
   Finder switchOf(_RowCase testCase) =>
-      find.byType(Switch).at(testCase.name == 'TUN' ? 1 : 0);
+      find.byType(DashboardSwitch).at(testCase.name == 'TUN' ? 1 : 0);
 
   for (final testCase in _rowCases) {
     testWidgets('the ${testCase.name} switch flips its setting both ways', (
@@ -96,17 +96,30 @@ void main() {
       await pumpCard(tester, testCase.card);
 
       expect(find.byType(LiquidGlass), findsNothing);
-      final track = tester.widget<Switch>(switchOf(testCase)).trackColor!;
-      expect(track.resolve({})!.a, 1);
-      expect(track.resolve({WidgetState.selected})!.a, 1);
+      final track =
+          tester
+                  .widget<DecoratedBox>(
+                    find
+                        .descendant(
+                          of: switchOf(testCase),
+                          matching: find.byType(DecoratedBox),
+                        )
+                        .first,
+                  )
+                  .decoration
+              as ShapeDecoration;
+      expect(track.color!.a, 1);
       expect(testCase.read(container), testCase.initial);
-      expect(tester.widget<Switch>(switchOf(testCase)).value, testCase.initial);
+      expect(
+        tester.widget<DashboardSwitch>(switchOf(testCase)).value,
+        testCase.initial,
+      );
 
       await tester.tap(switchOf(testCase));
       await tester.pumpAndSettle();
       expect(testCase.read(container), !testCase.initial);
       expect(
-        tester.widget<Switch>(switchOf(testCase)).value,
+        tester.widget<DashboardSwitch>(switchOf(testCase)).value,
         !testCase.initial,
       );
 
@@ -131,7 +144,7 @@ void main() {
   for (final quality in LiquidGlassQuality.values) {
     for (final testCase in _rowCases) {
       testWidgets('${testCase.name} uses ${quality.name} glass '
-          'glass and swells under a press', (tester) async {
+          'and its thumb swells under a press', (tester) async {
         await pumpCard(
           tester,
           LiquidGlassScope(
@@ -167,17 +180,26 @@ void main() {
         );
         expect((pane.clipper! as ShapeBorderClipper).shape, cardGlass.shape);
         expect(
-          find.ancestor(of: toggle, matching: find.byType(GlassSwitch)),
+          find.descendant(of: toggle, matching: find.byType(CommonSwitch)),
           findsOneWidget,
         );
-        for (final control in find.byType(GlassSwitch).evaluate()) {
-          expect(
-            find.descendant(
-              of: find.byWidget(control.widget),
-              matching: find.byType(LiquidGlass),
-            ),
-            findsNWidgets(2),
+        for (final control in find.byType(CommonSwitch).evaluate()) {
+          final panes = find.descendant(
+            of: find.byWidget(control.widget),
+            matching: find.byType(LiquidGlass),
           );
+          expect(panes, findsNWidgets(2));
+          for (final pane in tester.widgetList<LiquidGlass>(panes)) {
+            final style = pane.style.forQuality(quality);
+            expect(style.tint.a, lessThan(1));
+            expect(
+              style.refraction,
+              quality == LiquidGlassQuality.standard ? 0 : greaterThan(0),
+            );
+            if (quality == LiquidGlassQuality.standard) {
+              expect(style.rim, 0);
+            }
+          }
         }
         final containers = tester.widgetList<Container>(
           find.descendant(
@@ -191,21 +213,19 @@ void main() {
             expect(decoration.color!.a, lessThan(1));
           }
         }
-        final track = tester.widget<Switch>(toggle).trackColor!;
-        expect(track.resolve({})!.a, lessThan(1));
-        expect(track.resolve({WidgetState.selected})!.a, lessThan(1));
-
-        final press = find.ancestor(
+        final parts = find.descendant(
           of: toggle,
-          matching: find.byType(ElasticPress),
+          matching: find.byType(LiquidGlass),
         );
-        final gesture = await tester.startGesture(tester.getCenter(toggle));
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 100));
         expect(
-          tester.renderObject<RenderProxyBox>(press).child!.debugLayer,
-          isA<TransformLayer>(),
+          tester.widget<LiquidGlass>(parts.first).style.tint.a,
+          lessThan(1),
         );
+        final rest = tester.getSize(parts.last);
+        final gesture = await tester.startGesture(tester.getCenter(toggle));
+        await tester.pump(kPressTimeout);
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(tester.getSize(parts.last).height, greaterThan(rest.height));
         await gesture.up();
         await tester.pumpAndSettle();
         expect(testCase.read(container), !testCase.initial);
@@ -263,7 +283,7 @@ void main() {
 
     await pumpTile(160);
     expect(find.byType(ShapeBadge), findsNothing);
-    expect(find.byType(Switch), findsOneWidget);
+    expect(find.byType(DashboardSwitch), findsOneWidget);
     expect(
       tester.getTopLeft(find.text('System proxy')).dx,
       dashboardCardPadding(DashboardDensity.compact).left,

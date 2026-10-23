@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:fl_clash/ui/color.dart';
 import 'package:fl_clash/ui/context.dart';
 import 'package:fl_clash/ui/shape.dart';
 import 'package:fl_clash/ui/surface.dart';
@@ -125,6 +126,17 @@ class GlassSurfaceScope extends InheritedWidget {
       enabled != oldWidget.enabled || grouped != oldWidget.grouped;
 }
 
+/// Keeps the panes below on one level, as iOS's GlassEffectContainer does.
+class LiquidGlassGroup extends InheritedWidget {
+  const LiquidGlassGroup({super.key, required super.child});
+
+  static Object? _of(BuildContext context) =>
+      context.getElementForInheritedWidgetOfExactType<LiquidGlassGroup>();
+
+  @override
+  bool updateShouldNotify(LiquidGlassGroup oldWidget) => false;
+}
+
 /// Lengths are dp. The shader shrinks [bevel] and [refraction] to fit a pane
 /// too small for them, so that a button bends in proportion to the dock.
 @immutable
@@ -207,7 +219,8 @@ class LiquidGlassStyle {
     final dark = colorScheme.brightness == Brightness.dark;
     return dark
         ? LiquidGlassStyle(
-            tint: colorScheme.surfaceContainerHighest.withValues(alpha: 0.24),
+            tint: _darkGlassTint(colorScheme).withValues(alpha: 0.24),
+            contrast: -0.53,
             blur: 12,
             rim: 0,
           )
@@ -437,23 +450,36 @@ class LiquidGlassStyle {
         );
 }
 
-/// An iOS 27 menu's or alert's, measured over white.
-List<BoxShadow> glassMenuShadows(ColorScheme colorScheme, [double depth = 1]) {
+const _darkGlassTintOverCard = 7.0;
+
+final _darkGlassTints = <Color, Color>{};
+
+Color _darkGlassTint(ColorScheme colorScheme) {
+  final card = colorScheme.surfaceContainer;
+  if (_darkGlassTints.length > 8) {
+    _darkGlassTints.clear();
+  }
+  return _darkGlassTints.putIfAbsent(
+    card,
+    () => card.shiftTone(_darkGlassTintOverCard),
+  );
+}
+
+/// An iOS 27 menu's or alert's, measured over white below, above and beside
+/// it: one wide shadow, glass or not.
+List<BoxShadow> menuShadows(ColorScheme colorScheme, [double depth = 1]) {
   final strength = colorScheme.brightness == Brightness.dark ? 1.5 : 1.0;
-  final alpha = strength * depth;
   return [
     BoxShadow(
-      color: colorScheme.shadow.withValues(alpha: 0.09 * alpha),
-      blurRadius: 16.5,
-      offset: const Offset(0, 4),
-    ),
-    BoxShadow(
-      color: colorScheme.shadow.withValues(alpha: 0.045 * alpha),
-      blurRadius: 42,
+      color: colorScheme.shadow.withValues(alpha: 0.118 * strength * depth),
+      blurRadius: 29,
       offset: const Offset(0, 8),
     ),
   ];
 }
+
+List<BoxShadow> glassMenuShadows(ColorScheme colorScheme, [double depth = 1]) =>
+    menuShadows(colorScheme, depth);
 
 Color glassFillOf(ColorScheme colorScheme) =>
     (colorScheme.brightness == Brightness.dark ? Colors.white : Colors.black)
@@ -667,6 +693,7 @@ class LiquidGlass extends StatelessWidget {
   const LiquidGlass({
     super.key,
     required this.style,
+    this.borderRadius,
     this.clipper,
     this.shadows = const [],
     this.pressed = false,
@@ -677,6 +704,9 @@ class LiquidGlass extends StatelessWidget {
   });
 
   final LiquidGlassStyle style;
+
+  /// Rounds each corner on its own in place of the pill.
+  final BorderRadius? borderRadius;
 
   /// Shapes the pane to its path in place of the pill. The glass bends
   /// to the path by how far it reaches from the pane's center in each
@@ -727,12 +757,15 @@ class LiquidGlass extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final group = LiquidGlassGroup._of(context);
     final quality = LiquidGlassScope.qualityOf(context);
     final resolvedStyle = style.forQuality(quality);
     final resolvedRim = quality == LiquidGlassQuality.ultra ? rim : null;
     if (glow case final glow?) {
       return _LiquidGlassPane(
+        group: group,
         style: resolvedStyle,
+        borderRadius: borderRadius,
         clipper: clipper,
         shadows: shadows,
         press: 0,
@@ -748,7 +781,9 @@ class LiquidGlass extends StatelessWidget {
       duration: context.motionDuration(pressed ? _glowIn : _glowOut),
       curve: Curves.easeOut,
       builder: (context, press, child) => _LiquidGlassPane(
+        group: group,
         style: resolvedStyle,
+        borderRadius: borderRadius,
         clipper: clipper,
         shadows: shadows,
         press: press,
@@ -765,7 +800,9 @@ class LiquidGlass extends StatelessWidget {
 
 class _LiquidGlassPane extends SingleChildRenderObjectWidget {
   const _LiquidGlassPane({
+    required this.group,
     required this.style,
+    required this.borderRadius,
     required this.clipper,
     required this.shadows,
     required this.press,
@@ -776,7 +813,9 @@ class _LiquidGlassPane extends SingleChildRenderObjectWidget {
     super.child,
   });
 
+  final Object? group;
   final LiquidGlassStyle style;
+  final BorderRadius? borderRadius;
   final CustomClipper<Path>? clipper;
   final List<BoxShadow> shadows;
   final double press;
@@ -788,7 +827,9 @@ class _LiquidGlassPane extends SingleChildRenderObjectWidget {
   @override
   _RenderLiquidGlass createRenderObject(BuildContext context) {
     return _RenderLiquidGlass(
+      group: group,
       style: style,
+      borderRadius: borderRadius,
       clipper: clipper,
       shadows: shadows,
       press: press,
@@ -805,7 +846,9 @@ class _LiquidGlassPane extends SingleChildRenderObjectWidget {
     _RenderLiquidGlass renderObject,
   ) {
     renderObject
+      ..group = group
       ..style = style
+      ..borderRadius = borderRadius
       ..clipper = clipper
       ..shadows = shadows
       ..press = press
@@ -818,7 +861,9 @@ class _LiquidGlassPane extends SingleChildRenderObjectWidget {
 
 class _RenderLiquidGlass extends RenderProxyBox {
   _RenderLiquidGlass({
+    required Object? group,
     required LiquidGlassStyle style,
+    required BorderRadius? borderRadius,
     required CustomClipper<Path>? clipper,
     required List<BoxShadow> shadows,
     required double press,
@@ -826,7 +871,9 @@ class _RenderLiquidGlass extends RenderProxyBox {
     required LiquidGlassGlow? glow,
     required bool contentBackdrop,
     required LiquidGlassRim? rim,
-  }) : _style = style,
+  }) : _group = group,
+       _borderRadius = borderRadius,
+       _style = style,
        _clipper = clipper,
        _shadows = shadows,
        _press = press,
@@ -840,6 +887,15 @@ class _RenderLiquidGlass extends RenderProxyBox {
   set contentBackdrop(bool value) {
     if (_contentBackdrop == value) return;
     _contentBackdrop = value;
+    markNeedsPaint();
+  }
+
+  Object? _group;
+  set group(Object? value) {
+    if (identical(value, _group)) {
+      return;
+    }
+    _group = value;
     markNeedsPaint();
   }
 
@@ -859,6 +915,15 @@ class _RenderLiquidGlass extends RenderProxyBox {
     }
     _rim = value;
     markNeedsPaint();
+  }
+
+  BorderRadius? _borderRadius;
+  set borderRadius(BorderRadius? value) {
+    if (value == _borderRadius) {
+      return;
+    }
+    _borderRadius = value;
+    _reclip();
   }
 
   CustomClipper<Path>? _clipper;
@@ -966,7 +1031,9 @@ class _RenderLiquidGlass extends RenderProxyBox {
 
   LiquidGlassShape get _currentShape {
     if (_shape == null || _shapeSize != size) {
-      _shape = LiquidGlassShape.fromClipper(_clipper, size);
+      _shape = _clipper == null && _borderRadius != null
+          ? LiquidGlassCorners(_borderRadius!)
+          : LiquidGlassShape.fromClipper(_clipper, size);
       _shapeSize = size;
     }
     return _shape!;
@@ -986,6 +1053,7 @@ class _RenderLiquidGlass extends RenderProxyBox {
         shadows: _shadows,
         rim: _rim,
         contentBackdrop: _contentBackdrop,
+        group: _group,
         glow:
             _glow ??
             LiquidGlassGlow(
@@ -1070,6 +1138,7 @@ class LiquidGlassPane {
     Rect? hold,
     LiquidGlassRim? rim,
     bool contentBackdrop = false,
+    Object? group,
   }) {
     final pane = _layer.layer ??= _LiquidGlassLayer();
     assert(rim == null || shape is LiquidGlassCorners);
@@ -1112,7 +1181,8 @@ class LiquidGlassPane {
       ..glow = glow
       ..hold = hold
       ..rim = rim
-      ..contentBackdrop = contentBackdrop;
+      ..contentBackdrop = contentBackdrop
+      ..group = group;
     context.addLayer(pane);
     if (hold != null) {
       _paintShadows(context.canvas, rect, pane.corners, shadows);
@@ -1252,6 +1322,7 @@ class _LiquidGlassDecorationLayer extends OffsetLayer {
 
 class _LiquidGlassLayer extends Layer {
   static int _skipped = 0;
+  static int _capturesHeld = 0;
 
   ui.FragmentProgram? program;
   Rect rect = Rect.zero;
@@ -1271,6 +1342,7 @@ class _LiquidGlassLayer extends Layer {
     _simpleBlur = value;
   }
 
+  Object? group;
   _Placement? _held;
 
   ui.Picture? _frost;
@@ -1372,8 +1444,7 @@ class _LiquidGlassLayer extends Layer {
     if (_showingFrozen) return;
     final recorder = ui.PictureRecorder();
     Canvas(recorder).drawPicture(_frozenPicture!);
-    _captured?.dispose();
-    _captured = recorder.endRecording();
+    _hold(recorder.endRecording());
     _captureKey = null;
     _showingFrozen = true;
   }
@@ -1445,7 +1516,7 @@ class _LiquidGlassLayer extends Layer {
     _capturedPass = pass;
     final recorder = ui.PictureRecorder();
     _paintPlain(Canvas(recorder), style);
-    _captured = recorder.endRecording();
+    _hold(recorder.endRecording());
     _capturedRect = rect;
     _plainKey = key;
   }
@@ -1488,8 +1559,7 @@ class _LiquidGlassLayer extends Layer {
           ? null
           : Path.combine(PathOperation.difference, plain, priority),
     );
-    _captured?.dispose();
-    _captured = recorder.endRecording();
+    _hold(recorder.endRecording());
     _capturedRect = rect;
     _captureKey = null;
     _showingFrozen = false;
@@ -1518,7 +1588,6 @@ class _LiquidGlassLayer extends Layer {
     _frost?.dispose();
     _thawCaptured();
     _dropCaptured();
-    _captureShader?.dispose();
     super.dispose();
   }
 
@@ -1710,8 +1779,7 @@ class _LiquidGlassLayer extends Layer {
       }
       paintLive(canvas);
     }
-    _captured?.dispose();
-    _captured = recorder.endRecording();
+    _hold(recorder.endRecording());
     _capturedRect = rect;
     _captureKey = (atlas, outline, blendMode, program, uniforms, coverageKey);
   }
@@ -1907,8 +1975,6 @@ class _LiquidGlassLayer extends Layer {
   void _trimCapture({bool preserveFrozen = false}) {
     if (!preserveFrozen) _thawCaptured();
     _dropCaptured();
-    _captureShader?.dispose();
-    _captureShader = null;
     _held = null;
     _capturedPass = -1;
   }
@@ -1918,12 +1984,21 @@ class _LiquidGlassLayer extends Layer {
     _plainKey = null;
     _showingFrozen = false;
     _featherBands.clear();
-    _captured?.dispose();
-    _captured = null;
+    _hold(null);
     _freezeBody?.dispose();
     _freezeBody = null;
     _capturedRect = Rect.zero;
     _captureKey = null;
+    _captureShader?.dispose();
+    _captureShader = null;
+  }
+
+  void _hold(ui.Picture? captured) {
+    if ((captured == null) != (_captured == null)) {
+      _capturesHeld += captured == null ? -1 : 1;
+    }
+    _captured?.dispose();
+    _captured = captured;
   }
 
   ui.Picture _paintFrost() {

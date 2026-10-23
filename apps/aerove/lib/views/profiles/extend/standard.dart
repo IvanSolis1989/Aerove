@@ -279,7 +279,7 @@ class _MatchTargetItem extends ConsumerWidget {
         matchTarget ?? appLocalizations.followProfile,
         style: AppTextStyle.subheadline
             .of(context)
-            .toJetBrainsMono
+            .toTabular
             .copyWith(
               color: invalid
                   ? context.colorScheme.error
@@ -391,7 +391,7 @@ class _EditGlobalAddedRulesState extends ConsumerState<_EditGlobalAddedRules> {
                   ),
                 ),
                 SliverToBoxAdapter(
-                  child: SizedBox(height: 12 + BottomInsetScope.of(context)),
+                  child: SizedBox(height: 12 + context.bottomInset),
                 ),
               ],
             ),

@@ -1,3 +1,5 @@
+import '../helpers/system_test_font.dart';
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -190,8 +192,7 @@ Future<List<Color>> _shot(
 
 void main() {
   setUpAll(() async {
-    final font = FontLoader('DisclaimerProbe')
-      ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'));
+    final font = FontLoader('DisclaimerProbe')..addFont(loadSdkTestFont());
     await font.load();
     if (Platform.environment['XCLASH_REQUIRE_IMPELLER'] == 'true') {
       expect(ui.ImageFilter.isShaderFilterSupported, isTrue);

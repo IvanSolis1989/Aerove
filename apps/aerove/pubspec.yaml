@@ -1,7 +1,7 @@
 name: fl_clash
 description: A multi-platform proxy client based on ClashMeta, simple and easy to use, open-source and ad-free.
 publish_to: 'none'
-version: 0.9.1+2026101702
+version: 0.10.0-beta.5+2026102201
 environment:
   sdk: '>=3.10.0 <4.0.0'
 
@@ -75,6 +75,7 @@ dependencies:
     path: plugins/rust_api
   setup:
     path: plugins/setup
+  qr: ^4.0.0
 dev_dependencies:
   fake_async: 1.3.3
   flutter_test:
@@ -97,13 +98,14 @@ flutter:
   uses-material-design: true
   assets:
     - assets/data/
-    - assets/fonts/
+    - path: assets/fonts/Twemoji.Mozilla.ttf
+      platforms: [ linux, macos, windows ]
     - assets/images/
     - assets/images/avatar/
     - assets/images/services/
     - core/Clash.Meta/component/ca/ca-certificates.crt
     - path: assets/images/tray/unix/
-      platforms: [ linux ]
+      platforms: [ linux, macos ]
     - path: assets/images/tray/macos/
       platforms: [ macos ]
     - path: assets/images/tray/windows/
@@ -111,13 +113,6 @@ flutter:
   shaders:
     - shaders/liquid_glass.frag
     - shaders/foreground_ink.frag
-  fonts:
-    - family: JetBrainsMono
-      fonts:
-        - asset: assets/fonts/JetBrainsMono-Regular.ttf
-    - family: Twemoji
-      fonts:
-        - asset: assets/fonts/Twemoji.Mozilla.ttf
 flutter_intl:
   enabled: true
   class_name: AppLocalizations

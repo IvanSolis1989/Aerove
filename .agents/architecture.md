@@ -3,6 +3,17 @@
 Paths and commands for the full product are relative to `apps/aerove/`; run its commands there.
 Repository governance and workflows remain at the repository root. See [workspace layout](../docs/development/REPOSITORY_LAYOUT.md).
 
+## Reference merge invariants
+
+Aerove retains its established dashboard defaults, including the nine visible Android cards. All cards remain editable; a reference
+upstream's simplified initial layout must not silently replace Aerove's layout or the Lite contract. Reference upgrades
+preserve stored sidebar-blur choices. System-color preset changes use the independent local migration sequence.
+
+Manual delay options are milliseconds; the RPC guard outlasts both queueing and the longest probe. Route probes settle
+for 1500 ms to coalesce neighbouring one-second Core pick polls; a start's proxied/listener/TUN changes coalesce for
+300 ms. Grouped glass captures composite earlier groups while layers in one group read the same base. A retained pane
+can hold its last atlas after leaving the tree, so host disposal trims its tracked panes as well as host-owned images.
+
 ## Core Integration
 
 The Go proxy core in `core/` operates in two modes.
@@ -28,7 +39,7 @@ Android lib mode:
   event listener on main. `${packageName}/core` is handled on a serial background
   task queue and answered from the Core's goroutine, an event batch is encoded on the Core's thread and only sent on
   the main one, `ForceGC` (called from `onLowMemory`/`onTrimMemory`) collects on its own goroutine, and
-  `NetworkObserveModule` refreshes DNS on its own looper.
+  `NetworkObserver` refreshes DNS on its own looper.
 - `lib/core/lib.dart` (`CoreLib`) implements the shared Core interface, gates method calls on its connection completer,
   initializes and synchronizes Android shared state, and closes the native service path exactly once.
 - Because Core is in the application process on Android, application RSS already includes Core memory.
@@ -210,20 +221,20 @@ shows the mode picker and text field only on desktop.
 
 ### Network Settings
 
-Every `Tun` field is written over the profile's `tun` section and hot-applied through `tunSchema`, and the other keys of
-that section keep the profile's value; `test/models/tun_test.dart` keeps the model, `RawTun` and `tunSchema` in step.
-Beyond what FlClash always managed, `Tun` carries only the keys worth tuning: `mtu`, the mips stack's
-`congestion-controller`, and `strict-route` where sing-tun enforces it (Linux and Windows).
+`Tun` holds what Android's VPN service starts from: the switch, device and stack, `mtu`, the mips stack's
+`congestion-controller` and the route lists. The desktop TUN takes only `Tun.coreJson` from it, written over the
+profile's `tun` section and patched on every update through `tunSchema`; MTU, congestion control, strict route and the
+route lists reach it as TUN override keys (see DNS, NTP and Sniffer Overrides). `test/models/tun_test.dart` keeps every
+`Tun` key within mihomo's `RawTun` and `coreJson` equal to the keys of `tunSchema`.
 
-Routing is the same on every platform: `route-address` (empty routes everything), `route-exclude-address`, and
-`NetworkProps.bypassPrivateRoute`, which adds `privateRouteAddress` to the exclusions in `Tun.getRealTun`. Desktop hands
-both lists to sing-tun. VpnService can only add routes before Android 13, so `Tun.vpnRouteAddress` cuts the exclusions
-out of the routes with `subtractCidrs` and lists every family it routes; `VpnService.addRoutes` routes everything only
-for an empty list. A config saved with the old `routeMode` keeps its choice: `bypassPrivate`, which ignored the route
-list, loads with the flag on and the list cleared, and `config` with the flag off. Others were left out on purpose: no stack in the vendored sing-tun reads `endpoint-independent-nat`, the
-default mips stack ignores `udp-timeout`, and the rest are platform plumbing few users need. Android builds its TUN from
-the VpnService descriptor in `core/tun/tun.go`, so only MTU and the congestion controller reach it, through `VpnOptions`
-and the `options` argument of `startTUN`; the VpnService builder takes the same MTU.
+`NetworkProps.bypassPrivateRoute` adds `privateRouteAddress` to the excluded routes, through `TunExt.excludedRoutes` on
+Android and `_makeRealProfileTask` on desktop. VpnService can only add routes before Android 13, so
+`Tun.vpnRouteAddress` cuts the exclusions out of the routes with `subtractCidrs` and lists every family it routes;
+`VpnService.addRoutes` routes everything only for an empty list. A config saved with the old `routeMode` keeps its
+choice: `bypassPrivate`, which ignored the route list, loads with the flag on and the list cleared, and `config` with
+the flag off. No stack in the vendored sing-tun reads `endpoint-independent-nat`, so it is not offered. Android builds
+its TUN from the VpnService descriptor in `core/tun/tun.go`, so only MTU and the congestion controller reach it,
+through `VpnOptions` and the `options` argument of `startTun`; the VpnService builder takes the same MTU.
 
 The TUN fields start at mihomo's own defaults, and a saved zero MTU or empty congestion controller, which mihomo reads
 as those defaults, decodes to them. The outbound rows are plain settings written over every profile, and changing one
@@ -312,7 +323,7 @@ Android deliberately keeps Flutter requests optimistic and the native layer auth
   `notificationParams`. A start asks for notification permission only for the proxy.
 - The Core listens exactly while `runtime` is set: a successful start ends in `Core.startListener()` and every path
   that clears `runtime` calls `Core.stopListener()`. Both return at once when the Core is already there, which is the
-  usual case, since `startTUN`/`stopTun` and Flutter's own `startListener`/`stopListener` got there first. They matter
+  usual case, since `startTun`/`stopTun` and Flutter's own `startListener`/`stopListener` got there first. They matter
   when nothing else does: a proxy-only run stopped from the tile used to keep the mixed port open with nothing
   reported as running. A start closes after itself the same way: Flutter's `startListener` and the native `quickSetup`
   both open the ports before any service exists, so a start that ends without a `runtime`, refused or cancelled, stops
@@ -332,6 +343,10 @@ Quick Settings, notification, revoke, and Always-on VPN paths converge on the sa
   because only Flutter can apply the current profile. Without Flutter, native code claims the intent, restores
   `SharedState` from preferences, runs `quickSetup`, checks VPN permission, and runs the start; claiming first is what
   makes a second action during the setup toggle that start off instead of racing a second setup against it.
+- An engine that attaches to a run the service already has, started that way or outliving the last engine, adopts it:
+  `SetupAction.initStatus` restores the md5 of the config.yaml the Core last accepted and pushes the profile only when it
+  now builds differently. Pushing the same config again rebuilds every proxy group, and mihomo keeps a url-test group's
+  unmeasured pick for ten seconds, so the dashboard's exit and service checks ran a second time once it moved.
 - A stop never needs Flutter. `handleStopAction()` stops the service natively whether or not an engine is attached, so
   the tile, the notification action and a revoke work even when Flutter's own idea of the state is wrong.
 - Whenever the run ends without Flutter having asked for it (a start that failed, a native stop, a revoke, a lost
@@ -494,18 +509,22 @@ failure shows at once, a stop cancels it, and a failure still standing when it e
 ## Route Consistency
 
 A probe result on the dashboard — the exit IP, a node's exit IP, a service check — either describes the route in
-force or is being asked again. The full design is `docs/plans/probe-route-consistency.md`; the mechanism has three
-parts.
+force or is being asked again. The mechanism has three parts.
 
 - The Core is the source of truth for the route. `core/route.go` keeps a structural epoch (advanced by a config
-  apply, a mode or IPv6 switch, any proxy provider whose version changed, and any rule set that loaded new content,
-  whether the user or its own interval updated it) and a `picks` map from each Selector, URLTest and Fallback group
+  apply, a mode or IPv6 switch, any proxy provider whose version changed, any rule set that loaded new content,
+  whether the user or its own interval updated it, and a start: the listeners coming up and, on Android, the TUN
+  after them) and a `picks` map from each Selector, URLTest and Fallback group
   to what it resolves to right now, versioned on every change. `handleChangeProxy` re-reads the picks under
   `selectMu` and answers `ChangeProxyResult{changed}`, so the connection reset only runs when the pick moved. A
   health check moving a URLTest pick has no mihomo hook, so the picks are polled every second while the host watches
   (`watchRoute(true)`) and the listeners are up; the same poll notices a provider or rule set that updated in the
   background. Every probe answer carries the counters it started under; `routeChanged` publishes the state whenever
-  it differs from the last read.
+  it differs from the last read. A start moves the epoch because `isStartProvider` flips before the Core is told,
+  so the probes sent at the tap leave ahead of the TUN routes and over DNS connections `handleStartListener` resets,
+  and an Android start acknowledges before the VPN exists. Outbound IP lookups are cancelled by the first lookup
+  under a newer epoch, which frees their probe slots; lookups under one epoch are left alone, since the routed
+  target while stopped and a pinned `DIRECT` send the same request.
 - `routeTrackerProvider` in `lib/providers/route_state.dart` merges that with the host's side: `proxied` (running and
   not suspended), a host epoch that a connectivity event moves, and `synced`, which is false until `watchRoute` has
   returned a snapshot and again after a Core disconnect. Nothing is fresh while unsynced, so a cache never judges
@@ -518,8 +537,15 @@ parts.
   in. A widget `watch`es the target it shows and `unwatch`es on the way out; only watched targets are probed, one
   request in flight per target. An answer is stamped with the Core's counters and the host state at launch, and
   `RouteState.isFresh` walks its chain against the picks, so a selection change only invalidates results that went
-  through the changed group while an epoch change invalidates everything. A stale watched entry is asked again at
-  once; an unwatched one is dropped. Nothing launches while the app is hidden: what falls due waits for it to be shown.
+  through the changed group while an epoch change invalidates everything. A stale watched entry shows as checking at
+  once and is asked again once the route has settled, so asking at each step does not spend a probe on every route
+  but the last. A move (`RouteState.hasMovedSince`: the Core epoch, the host epoch or `proxied`) waits
+  `probeMoveSettleDuration`, since a start moves it three times within about 150 ms (`proxied`, then the listeners,
+  then the Android TUN) and the user is watching for the new address. A re-pick alone waits `probeSettleDuration`,
+  past the next pick poll, because groups rebuilt together re-pick on neighbouring polls; a move during that wait cuts
+  it short. A newly watched target, a
+  `refresh` and a resumed retry do not wait; an unwatched stale entry is dropped. Nothing launches while the app is
+  hidden: what falls due waits for it to be shown.
   Failures wait for `retry`, `refresh`, or the app resuming (`markResumed`), and
   a service check that timed out is a failure that still shows its status. `refresh` is the user's own request and
   runs for unwatched targets too: the service sheet reads the cache and never watches its rows, because one service
@@ -527,8 +553,10 @@ parts.
 
 `ipQuality(ip)` in `lib/providers/ip_quality.dart` is keyed by the outbound IP found, so a route change reaches it as
 a new IP and an unchanged IP reuses the result. A lookup races its sources the way the IP check does and takes the
-first one that determines a type. A success is kept for the session with `ref.keepAlive()`; a failure is not cached,
-and Riverpod's automatic retry is off because a retry after an HTTP 429 spends the same per-outbound-IP quota again.
+first one that determines a type. A success is saved to the `IpQualities` table and answers for that IP, across
+restarts, until `ipQualityMaxAge` (three days) has passed; a shown result is asked again when it expires,
+and invalidating the provider (the sheet's check again) skips the saved record. A failure is not saved, and Riverpod's
+automatic retry is off because a retry after an HTTP 429 spends the same per-outbound-IP quota again.
 
 ## UI Layer
 
@@ -622,8 +650,8 @@ the bar and never folds, and only a form sheet moves it to its foot (Forms). Bar
 select all included; the one text button is the custom profile's Import, a filled button whose `CommonPopupBox` opens
 the import menu. Actions on a multi-selection, such as delete and select all, go into
 `selectionActions` instead: the bar keeps them in sight as one button group that takes a single slot beside the search
-or clear button, so they never fold. A sheet's close button leads its bar when the bar has actions, except beside a
-primary action: then the two end the bar as one button group, as the proxies sheet's delay test and close do.
+or clear button, so they never fold. A sheet's close button always leads its bar, whatever actions follow, as SwiftUI
+places a close in `.cancellationAction`; a pushed page puts its back button there instead.
 
 Actions on what the page edits as a whole, such as renaming the custom profile or viewing its final config, go into
 `titleMenuItems` rather than the bar: the title shows a chevron and opens them, as an iOS document's title menu does.
@@ -705,9 +733,11 @@ pressed last over the neighbours it swells past. `lib/ui/liquid_glass.dart` hold
   alerts, toasts, headers, dock and sidebar all resolve through `LiquidGlassStyle.forQuality`; a missing
   `LiquidGlassBody` marker cannot accidentally restore refraction. Independent rim decorations obey the same tier.
 - A pane over one painted before it in the same root reads a second image, a level up, with the first drawn in as
-  glass. Over means within 2.5 sigmas of its frost and as far as it bends, where a pane takes under 1% of what it
-  reads, rather than the 3 sigmas and 2 dp its slot holds: the bar's buttons stand 8 dp apart, inside the slot of the
-  overflow button, which went up a level and cost a second image every frame content moved under the bar. A pane's
+  glass, unless both stand in one `LiquidGlassGroup`: as iOS's GlassEffectContainer keeps glass from sampling glass,
+  the later one there reads what lies under the first, on the same level. Over means within 2.5 sigmas of its frost
+  and as far as it bends, where a pane takes under 1% of what it reads, rather than the 3 sigmas and 2 dp its slot
+  holds: the bar's buttons stand 8 dp apart, inside the slot of the overflow button, which went up a level and cost a
+  second image every frame content moved under the bar. A pane's
   root is the host or its nearest ancestor that draws offscreen: as a backdrop filter would there, it
   sees only that ancestor's content, without the ancestor's own effect, and replaces what it covers. A
   `LiquidGlassFade` is no root: as Core Animation fades a layer, its panes still read what lies behind it and fade with
@@ -717,7 +747,9 @@ pressed last over the neighbours it swells past. `lib/ui/liquid_glass.dart` hold
   from the last image rather than drawn and blurred again, and a slot without frost is a band of its own: dragging
   the lens redraws only its copy's slot, not the dock's haze or the buttons' frost. Not on Skia: an image there keeps
   what it was drawn from as long as it lives, so each capture copied from the last would hold every one before it,
-  and memory grows by a capture a frame. The dark line along the rim darkens the blurred capture there rather than the
+  and memory grows by a capture a frame. A pane gives up its capture, picture and shader both, once it lies out of
+  the host's reach or leaves the tree, as under a route that covers it, which keeps it alive while it is not drawn: the
+  shader holds the image it last sampled. The dark line along the rim darkens the blurred capture there rather than the
   sharp backdrop, a pixel or two wide.
 - Measured on an Android emulator rendering in software (SwiftShader, 1080×2400 at density 420), as raster-thread time a
   frame counting the captures that FrameTiming's raster span leaves out, median of three runs, each capture against
@@ -726,8 +758,8 @@ pressed last over the neighbours it swells past. `lib/ui/liquid_glass.dart` hold
   closing it 41, 1 and 3; dragging the dock's lens 39, 38 and 42. One pixel adds about half what three do while
   content scrolls, and about as much while a page switches, where the capture's size is not what costs, or while the
   lens moves, which both capture at full resolution. Three was measured before a menu's capture was held to eight
-  screen pixels to one, and two, which glass uses, has not been timed. Ultra, which read the backdrop under each pane,
-  added 27 to 61 ms to the same frames and was dropped. A software renderer weighs passes and texture reads unlike a
+  screen pixels to one, and two, which glass uses, has not been timed. Reading the backdrop under each pane
+  instead adds 27 to 61 ms to the same frames. A software renderer weighs passes and texture reads unlike a
   phone's GPU, so the figures rank the captures rather than price them; no phone has measured them. A still screen
   draws no frames.
 - Rendered under `flutter test --enable-impeller` at density 3, against a capture with a sigma over three pixels, one
@@ -796,9 +828,10 @@ pressed last over the neighbours it swells past. `lib/ui/liquid_glass.dart` hold
   bars' rim: as iOS 27 draws it around both, measured in the simulator, the dark
   line lies just outside the glass, darkest along the sides, and the highlight is light added to the glass, brightest
   at the middle of the top and bottom, about half as bright where a corner begins, a fifth where it ends and gone
-  down the sides, fading over about 5 dp inward; a menu's line is lighter than an alert's. A glass menu and a glass alert cast iOS 27's shadow as
-  measured over white, a deep one under a wide one, half again as dark in dark mode, where a solid menu keeps its
-  softer one.
+  down the sides, fading over about 5 dp inward; a menu's line is lighter than an alert's. A menu, glass or solid,
+  and a glass alert cast iOS 27's shadow (`menuShadows`) as measured over white below, above and beside them: a
+  single wide one set 8 dp down, half again as dark in dark mode. Two blurs of different widths read as a band around
+  the card.
 - The optics bend with a circular bevel whose width and depth shrink to fit a small pane, so the rim shows the content
   squeezed and mirrored. The materials are iOS 27's as codenameone/CodenameOne#5906 fitted them (`pill` for the dock,
   `regular` for buttons): the backdrop passes through as `offset + scale * saturated backdrop`, the tint at
@@ -851,7 +884,9 @@ opening; one opened at a point (a context menu) has no control to return into an
 A sub menu is a `PopupMenuCard` laid out once at full size. One spring (`_unfold` in `lib/ui/popup.dart`) moves
 its surface and clip from the item that opened it to its bounds, recedes the parent, and reveals the items, so a fold
 caught mid-unfold turns back with the speed it had. The parent's item hides under the sub menu's header, which draws
-it again, and the sub menu is removed only once it stands on that item.
+it again, and the sub menu is removed only once it stands on that item. A popup closed with a sub menu open returns
+that sub menu alone, as iOS does: the platter starts from its card (`_PopupSurface`) and the levels below drop out,
+since bare glass cards would show the parent's rows through the sub menu.
 
 A `CommonPopupBox` opens on its button's pointer down, as an iOS menu that is a button's primary action does, and the
 press carries on into the menu. `_PopupPressRecognizer` claims the pointer then, so the button's own tap and its
@@ -861,7 +896,7 @@ pointer's moves and release keep reaching the button, so the box hands them on (
 `ElasticPress` around it. The menu follows them only once they leave the slop, since it covers the button and a press
 let go where it went down would pick what now lies under it, and drives its own `ElasticPress` with them through
 `ElasticPress.maybeOf`. The box tells a disabled button by the `onTap` of its first `InkResponse`, and holds the popup's
-`anchorShift`, since it opens before the button's `onPressed` would run.
+`placement`, since it opens before the button's `onPressed` would run.
 
 The menu stands in an `ElasticPress` of its own with `pullPastEdges`: it swells under a press and stretches only toward
 a finger that strays past it, so sliding over the items or scrolling leaves it in place. A press on a row belongs to the
@@ -896,12 +931,15 @@ fades in place rather than offer the same way out twice, as iOS hides its back b
 ends the mode. A list that is one section of its page, as the custom profile's proxy groups are, keeps its own
 `SortModeScope` around its rows and its toggle in its header and leaves the page bar alone, back button included; its
 header keeps adding while it sorts, and a system back ends its mode before it leaves the page. Each row sits in a
-`SortableItem`, which reads the scope: while it sorts `DecorationListItem` drops its tap and context menu, and
-`SortableTrailing` springs a `SortHandle` in from the row's trailing edge while the trailing it replaces shrinks away.
-The motion is painted, not built, and the row relayouts only while the two widths differ, since every row on screen
-animates at once. A page that only reorders, such as the profiles sort sheet or a group's members, shows its
-`SortHandle`s without a mode. A handle drags on press, and with focus a select key lifts its row for the up and down
-keys to move through the enclosing `SliverReorderableList`'s own `onReorderItem`, which is how a remote sorts.
+`SortableItem`, which reads the scope: while it sorts `DecorationListItem` drops its tap and context menu, a long press
+anywhere on the row drags it, and `SortableTrailing` springs a `SortHandle` in from the row's trailing edge while the
+trailing it replaces shrinks away. The motion is painted, not built, and the row relayouts only while the two widths
+differ, since every row on screen animates at once. A page that only reorders, such as the profiles sort sheet or a
+group's members, shows its `SortHandle`s without a mode. Every drag waits for a long press, with a mouse too and on the
+dashboard's edit mode as well, so a swipe that starts on a row or its handle scrolls; a handle only marks the row, which
+carries the `ReorderableDelayedDragStartListener` itself, so a long press anywhere on the row lifts it. With focus a
+select key lifts a handle's row for the up and down keys to move through the enclosing `SliverReorderableList`'s own
+`onReorderItem`, which is how a remote sorts.
 
 ## Quick Edit
 
@@ -960,6 +998,9 @@ one sentence per setting that names it. A section header carries its title and a
 centered on the title. Every header stands as tall as one with a button, 6 dp clear of the group below, so headers
 match whether or not they carry actions. A group with a selection swaps them
 for delete and select all, never a text button. `generateSection` is the only section builder, and a sheet lays its groups inside the 16 dp inset the pages use.
+Every section keeps the same space above it, `ListSectionGap`, title or not, with its title standing in that space: the
+first section of a page sits that far below the bar, and sections are never spaced where they are placed.
+`generateGroup` gives the rows alone, for a group under a header its caller lays out, such as an `InfoHeader`.
 
 A row that opens a page, `ListItem.open` or `ListItem.next`, ends in `AppGlyphs.chevronForward` unless it passes its own
 `trailing`, as iOS settings rows do. A row that opens a dialog in place, `ListItem.input`, has no chevron. A setting
@@ -1083,10 +1124,15 @@ held back until the route settles slides in as an empty page and pops in once th
 than the frames a load costs. What a transition must not carry is work that repeats on every refresh or every frame.
 
 - Loads start as the widget mounts, never behind `whenRouteSettled`. `CommonTargetIcon` and `PackageIcon` show what is
-  already in memory at once and load the rest right away; the editor reads its file and mounts CodeForge as soon as the
-  content is in. An icon still loading leaves a blank slot of its size and shows its fallback only once the load ends
+  already in memory at once and load the rest right away; the editor has Rust open its file as it mounts, so the text
+  itself never passes through the UI isolate. An icon still loading leaves a blank slot of its size and shows its
+  fallback only once the load ends
   without an image, so a grid of placeholders is never painted only to be replaced. `whenRouteSettled`
   (`lib/ui/navigator.dart`) is left for sequencing navigation, such as opening a page once the sheet above it is gone.
+- The editor is the one view that arrives after the motion. `EditorPage` keeps the document it opened until its route
+  has settled and only then mounts CodeForge, showing a spinner only if the file is still being read: the mount lays
+  out, folds and highlights a screen of text in one frame, which a phone cannot fit in a transition frame whatever the
+  file's size.
 - A live feed holds its refreshes while its page moves and replays the latest once it is still, so a list does not
   re-rank, reorder or grow under a transition. `RouteMotionHoldMixin` (`lib/ui/route_motion_hold.dart`) holds them
   while `isRouteMoving`: the page's route or a sheet carrying it is pushed, popped or dragged, a page is pushed over it,
@@ -1355,6 +1401,7 @@ Tables:
 - `IconRecords` (`icon_records`)
 - `IconSets` (`icon_sets`)
 - `ClashProviders` (`clash_providers`)
+- `IpQualities` (`ip_qualities`): a cache of IP quality lookups that backups carry and a restore never reads.
 
 `Profiles.type` is `file`, `url` or `custom`, fixed when the profile is created. A rule belongs to whoever its
 `profile_id` names: no profile makes it global, a file or url profile's rules are what its standard extension adds, and
@@ -1675,7 +1722,9 @@ NDK version stands in for the hook's cache.
 - `proxy`: system proxy configuration. On Windows the package installer and uninstaller kill the app, and then run
   `FlClash.exe --clear-stale-proxy`, the installer once the new files are in place; the runner hands it to the plugin
   before any engine starts, and it turns off only a proxy still set to FlClash's `127.0.0.1:<port>` with nothing
-  listening on that port.
+  listening on that port. In the app `SystemProxyQueue` sets the system proxy when the Core starts with it on, and
+  stops it on a stop or exit only when this run set it, since a stop also clears a proxy, PAC or auto-detect setting
+  someone else made. Nothing is stored, so a launch leaves alone the proxy a crashed run left.
 - `rust_api`: runtime Flutter Rust Bridge FFI package built through Native Assets. See below.
 - `tray`: system tray for Linux, macOS and Windows. Written for FlClash; replaced the `tray_manager` fork.
 - `window`: desktop window control for Linux, macOS and Windows. Written for FlClash; replaced the
@@ -1689,9 +1738,15 @@ NDK version stands in for the hook's cache.
 concern into `lib/code_forge/controller/` extensions. `CodeForge` builds `_CodeFieldRenderer`, whose painting, layout,
 folding, caret, gutter and pointer code sit in `lib/code_forge/code_area/` part files.
 
-- `loadText` builds a document of 128K characters or more on a Rust worker thread (`RopeBridge.createInBackground`),
-  so a large file does not stall the frame it arrives in; `EditorView` loads through it, and a later `text =` or
-  `loadText` supersedes one still building.
+- A document arrives as a `CodeForgeDocument`, which `load` swaps in as a copy of its rope that costs nothing to make.
+  `openFile` reads the file, checks it is UTF-8 and turns CRLF into LF on a Rust worker thread; `fromText` encodes a
+  string of 128K UTF-16 code units or more in an isolate first. Bytes past 256 KiB go over in pieces through
+  `RopeUpload`, since the Dart side copies all a call carries in one go. `EditorPage` drops a document that a later one
+  supersedes while it builds.
+- A text that long is never held as a Dart string. `isModified` compares the rope with a copy of the one loaded inside
+  Rust; `readBytes` and `readText` copy it out off the UI isolate; find searches, and replace-all rewrites, a byte copy
+  in an isolate, keeps the matches packed in an `Int32List`, and records replace-all as one `DocumentOperation` that
+  swaps whole ropes. `EditorPage` hands its callbacks an `EditorContent` to read the text from for the same reason.
 - Rust counts offsets in Unicode scalars and Flutter in UTF-16 code units. Convert at the boundary with
   `text_offsets.dart`; a mixed-up offset only shows up with astral characters such as emoji, so tests use them.
 - The renderer learns what changed from `takeChange()`, whose `lines` (first line, lines removed, lines inserted) let it
@@ -1722,18 +1777,27 @@ folding, caret, gutter and pointer code sit in `lib/code_forge/code_area/` part 
   neither repaints nor follows it.
 - A line's fold comes from the renderer's `_computeFoldRangeForLine` up to 10000 lines and from `compute_all` in
   `rust_api`'s `editor/folds.rs` past that, and the two must find the same ranges; `folding_test.dart` compares them on
-  one document. A folded range, and the folded ranges inside it that it folds again when it opens, outlive an edit
+  one document. The per-line pass reads the lines below a line in batches that grow as it goes: one call into the
+  rope per line spends a frame on a key heading thousands of lines. A folded range, and the folded ranges inside it
+  that it folds again when it opens, outlive an edit
   only while the text still gives that range. An edit reports the lines it changed, not where in them, so a fold
   heading a line inside an edit that changes the line count is opened rather than guessed at; `replaceText`, which
-  find's replace-all uses, rewrites only the span that differs to keep that to the lines between its matches.
+  find's replace-all uses on a shorter text, rewrites only the span that differs to keep that to the lines between its
+  matches.
 - The caret never rests on a line a fold hides: folding over it moves it to the heading line, the keyboard steps over
   the fold, and a caret put there any other way opens it.
 - The controller reaches the mounted editor only through the `CodeForgeView` it attaches, which the editor's state
   implements by forwarding to its renderer.
 - FlClash supplies the suggestion popup, context menu and scrollbar; the package has no built-in versions of them.
+  It also passes the vertical scroll controller, `sheetScrollController`, so the editor in a sheet grows and closes
+  the sheet as a list does.
+- `Rope` keeps its length and line count between its own `insert` and `delete`, which every edit goes through, so
+  `core` is only for Rust calls that read.
 - Tests live in `test/plugins/code_forge/` at the repository root and need the `rust_api` library.
 - `isMobile` comes from `Platform`, so host tests never reach the touch branches (selection handles, long press,
   magnifier); check those on an Android emulator.
+- A touch drag that moves the selection (a handle, the gutter, a long press that moves on) is won by
+  `_SelectionDragHold`: the scroll views stand aside for it, and a sheet or route around the editor would take it.
 
 ## window Plugin
 
@@ -1771,19 +1835,22 @@ table. `lib/common/window.dart` and `lib/manager/window_manager.dart` are the on
 - macOS: `WindowPlugin.instance` is reached from `AppDelegate` for `applicationShouldTerminate` (emits
   `should-terminate`) and `applicationShouldHandleReopen` (emits `activate`); `MainFlutterWindow` calls
   `hiddenWindowAtLaunch()` so the first `order` keeps the window hidden until Dart shows it.
-- Window effects (`transparent`, `blur`, `acrylic`, `mica`) are capability-gated by `isEffectSupported`; the Flutter
-  content must paint a translucent background for them to show. `ThemeProps.sidebarBlur` (on by default) drives
-  them: `Window.setBlur` picks `blur` on macOS and `acrylic` (or `blur`) on Windows and caches only a successful
-  probe, so a platform that answered unsupported is asked again the next time blur is turned on. `WindowManager` reapplies it
-  whenever the setting or the app brightness changes and records the outcome in `windowBlurProvider`, and only the
-  sidebar and the caption strip paint translucently while it is on. On macOS the sidebar paints fully transparent
-  and the effect view follows the window's active state, which is the flutter_acrylic `TransparentMacOSSidebar`
-  look; Windows keeps a 50% tint because the accent effects blur too little for the rail to stay readable.
-- Sidebar blur is soft-disabled: `feature.sidebarBlur` (`lib/common/feature.dart`) is off unless the build passes
-  `--dart-define=FEATURE_SIDEBAR_BLUR=true`. While it is off the theme page hides the toggle and
-  `windowBlurRequestProvider` asks for no effect whatever `ThemeProps.sidebarBlur` holds. `WindowManager` still sends
-  that request at startup: the macOS plugin installs its effect view in `ensureInitialized` and leaves it active until
-  the first `setEffect`, so the `none` request is what makes the window opaque and parks the effect view.
+- Window effects (`transparent`, `blur`, `acrylic`, `mica`, `glass`) are capability-gated by `isEffectSupported`; the
+  Flutter content must paint a translucent background for them to show. `ThemeProps.sidebarBlur` (on by default)
+  drives them, taking the material the same release's system apps give their sidebars: `Window.setBlur` tries
+  `glass` then `blur` on macOS (Liquid Glass on 26+, the `.sidebar` vibrancy before) and `mica`, `acrylic`, then
+  `blur` on Windows (Mica on 11, acrylic from 10 1803, the plain accent blur before), and caches only a successful
+  probe, so a platform that answered unsupported is asked again the next time blur is turned on. Linux draws none,
+  as GNOME and KDE draw opaque sidebars. `WindowManager` reapplies it whenever the setting or the app brightness
+  changes and records in `windowBlurProvider` how opaque the sidebar and caption strip keep their own color over the
+  backdrop, null while there is none. Every material keeps that color at 50%, or the rail takes the hue of whatever lies
+  behind the window while the content beside it keeps the theme's; the Windows 10 accent effects also take the same
+  tint natively, as they draw nothing without one. Glass, the macOS vibrancy and Mica each go opaque on their own
+  where the system does (an inactive window, Reduce Transparency, transparency effects off).
+- Aerove preserves the user's stored `sidebarBlur` choice during upgrades; the reference project's force-off migration
+  is not applied. With blur off, `WindowManager` still sends its request at startup: the macOS plugin installs its
+  effect view in `ensureInitialized` and leaves it active until the first `setEffect`, so the `none` request is what
+  makes the window opaque and parks the effect view.
 
 ## rust_api Crate Layout
 
@@ -1810,8 +1877,8 @@ the singleton entry point: `RustLib.init()` runs before any call and `RustLib.di
   thread of its own and holds no global state, so I/O is event-driven on every platform and closing or dropping the
   handle releases the socket. It serves one peer at a time; a second one waits in the backlog.
 - `script/` runs profile override scripts on QuickJS through `rquickjs`.
-- `editor/` backs `plugins/code_forge`: a `ropey` buffer, fold ranges and bracket matching, indent guides for the
-  viewport, and completion words. `api/editor.rs` exposes the buffer as the opaque `RopeBridge`; the selection
+- `editor/` backs `plugins/code_forge`: a `ropey` buffer that opens files and UTF-8 bytes and compares and copies its
+  text itself, fold ranges and bracket matching, indent guides for the viewport, and completion words. `api/editor.rs` exposes the buffer as the opaque `RopeBridge`; the selection
   stays in Dart. Only the editor imports this module, through `lib/editor.dart`, so `lib/rust_api.dart` keeps its
   generic names such as `GuideBlock` out of app code.
 - `hotkey/` registers desktop global shortcuts through `global-hotkey`: `keys` maps Flutter USB HID usages to key

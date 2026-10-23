@@ -21,6 +21,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/scheduler.dart';
 
+import 'builder.dart';
 import 'button.dart';
 import 'chip.dart';
 import 'dialog.dart';
@@ -217,15 +218,6 @@ class CommonScaffoldState extends State<CommonScaffold> {
     return _appBarState.value.searchState?.query != null;
   }
 
-  bool get _hasActions {
-    return widget.canSort ||
-        widget.primaryAction != null ||
-        widget.iconActions.isNotEmpty ||
-        widget.confirmationAction != null ||
-        widget.menuItems.isNotEmpty ||
-        widget.actions?.isNotEmpty == true;
-  }
-
   @override
   void initState() {
     super.initState();
@@ -394,16 +386,18 @@ class CommonScaffoldState extends State<CommonScaffold> {
   void addKeyword(String keyword) {
     final isContains = _keywordsNotifier.value.contains(keyword);
     if (isContains) return;
-    final keywords = List<String>.from(_keywordsNotifier.value)..add(keyword);
-    _keywordsNotifier.value = keywords;
+    _setKeywords(List<String>.from(_keywordsNotifier.value)..add(keyword));
   }
 
   void _deleteKeyword(String keyword) {
     final isContains = _keywordsNotifier.value.contains(keyword);
     if (!isContains) return;
-    final keywords = List<String>.from(_keywordsNotifier.value)
-      ..remove(keyword);
+    _setKeywords(List<String>.from(_keywordsNotifier.value)..remove(keyword));
+  }
+
+  void _setKeywords(List<String> keywords) {
     _keywordsNotifier.value = keywords;
+    widget.onKeywordsUpdate?.call(keywords);
   }
 
   Widget _buildDockedSearch(AppBarSearchState searchState) {
@@ -543,7 +537,7 @@ class CommonScaffoldState extends State<CommonScaffold> {
       );
     }
     if (pop != null) {
-      return pop.asSuffix || pop.atFoot
+      return pop.atFoot
           ? null
           : _buildSheetPopButton(backAction, useCloseIcon: pop.useCloseIcon);
     }
@@ -603,7 +597,6 @@ class CommonScaffoldState extends State<CommonScaffold> {
   List<Widget> _buildActions(
     bool hasSearch,
     IconButtonData? primaryAction,
-    VoidCallback? backAction,
     _SheetForm form,
   ) {
     if (_sorting) {
@@ -621,7 +614,6 @@ class CommonScaffoldState extends State<CommonScaffold> {
       ], edge: AppBarActionEdge.container);
     }
     final localizations = UiLocalizations.of(context);
-    final pop = form.pop;
     final lead = _isSearch
         ? IconButtonData(
             glyph: AppGlyphs.close,
@@ -643,9 +635,7 @@ class CommonScaffoldState extends State<CommonScaffold> {
     final selectionSingles = selection.skip(_maxGroupedActions);
     final selectionCount =
         (selection.isEmpty ? 0 : 1) + selectionSingles.length;
-    final popAsSuffix = !_isSearch && pop?.asSuffix == true;
-    final pairedPrimary = popAsSuffix ? primaryAction : null;
-    final atFoot = pop?.atFoot == true;
+    final atFoot = form.pop?.atFoot == true;
     final fold = _isSearch
         ? _foldBarActions(
             hasLead: true,
@@ -654,7 +644,7 @@ class CommonScaffoldState extends State<CommonScaffold> {
           )
         : _foldBarActions(
             hasLead: lead != null,
-            primary: pairedPrimary == null ? primaryAction : null,
+            primary: primaryAction,
             foldPrimary: widget.foldPrimaryAction,
             icons: [
               if (widget.canSort)
@@ -666,10 +656,7 @@ class CommonScaffoldState extends State<CommonScaffold> {
               ...widget.iconActions,
             ],
             confirmation: atFoot ? null : widget.confirmationAction,
-            widgetCount:
-                widgets.length +
-                selectionCount +
-                (pairedPrimary == null ? 0 : 1),
+            widgetCount: widgets.length + selectionCount,
             menuItems: widget.menuItems,
           );
     final shown = [?lead, ...fold.shown];
@@ -700,20 +687,6 @@ class CommonScaffoldState extends State<CommonScaffold> {
       for (final action in widgets) ElasticPress(child: action),
       if (fold.overflow.isNotEmpty)
         ElasticPress(child: _OverflowMenuButton(items: fold.overflow)),
-      if (pairedPrimary != null)
-        TonalButtonGroup(
-          children: [
-            AppBarActionButton(data: pairedPrimary),
-            _buildSheetPopButton(backAction, useCloseIcon: pop!.useCloseIcon),
-          ],
-        )
-      else if (popAsSuffix)
-        ElasticPress(
-          child: _buildSheetPopButton(
-            backAction,
-            useCloseIcon: pop!.useCloseIcon,
-          ),
-        ),
     ], edge: AppBarActionEdge.container);
   }
 
@@ -828,7 +801,6 @@ class CommonScaffoldState extends State<CommonScaffold> {
                     for (final action in _buildActions(
                       state.searchState != null,
                       widget.primaryAction,
-                      backAction,
                       form,
                     ))
                       FadeTransition(opacity: uncovered, child: action),
@@ -860,8 +832,6 @@ class CommonScaffoldState extends State<CommonScaffold> {
     final form = _SheetForm.of(
       context,
       searchState: widget.searchState,
-      hasActions: _hasActions,
-      hasPrimaryAction: widget.primaryAction != null,
       hasConfirmationAction: widget.confirmationAction != null,
     );
     final isCompact = form.isCompact;
@@ -888,14 +858,10 @@ class CommonScaffoldState extends State<CommonScaffold> {
     final body = LiquidGlassBody(
       child: SafeArea(
         top: !barFloats,
+        bottom: false,
         child: ValueListenableBuilder(
           valueListenable: _keywordsNotifier,
           builder: (context, keywords, _) {
-            if (widget.onKeywordsUpdate != null) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                widget.onKeywordsUpdate!(keywords);
-              });
-            }
             final hasKeywords = keywords.isNotEmpty;
             final barInset = MediaQuery.paddingOf(context).top;
             final overlap = barFloats
@@ -903,59 +869,41 @@ class CommonScaffoldState extends State<CommonScaffold> {
                 : isCompact
                 ? sheetAppBarHeight
                 : 0.0;
+            // A wrapper toggled with the strip would remount the body.
             final content = Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: hugsContent ? MainAxisSize.min : MainAxisSize.max,
               children: [
-                if (hasKeywords) ...[
-                  SizedBox(height: barInset),
+                if (hasKeywords)
                   Padding(
-                    padding: EdgeInsets.only(
-                      left: 16,
-                      right: 16,
-                      top: isCompact ? sheetAppBarHeight : 16,
-                      bottom: 16,
-                    ),
-                    child: Wrap(
-                      runSpacing: 8,
-                      spacing: 8,
-                      children: [
-                        for (final keyword in keywords)
-                          CommonChip(
-                            label: keyword,
-                            onDeleted: () {
-                              _deleteKeyword(keyword);
-                            },
-                          ),
-                      ],
+                    padding: EdgeInsets.only(top: overlap + 4, bottom: 16),
+                    child: _KeywordStrip(
+                      keywords: keywords,
+                      onDeleted: _deleteKeyword,
                     ),
                   ),
-                ],
                 Flexible(
                   fit: hugsContent ? FlexFit.loose : FlexFit.tight,
-                  child: hasKeywords
-                      ? MediaQuery.removePadding(
-                          context: context,
-                          removeTop: true,
-                          child: FloatingBarScope(
-                            inset: 0,
-                            child: sortableBody,
-                          ),
-                        )
-                      : sortableBody,
+                  child: MediaQuery.removePadding(
+                    context: context,
+                    removeTop: hasKeywords,
+                    child: FloatingBarScope(
+                      inset: hasKeywords ? 0 : overlap,
+                      child: sortableBody,
+                    ),
+                  ),
                 ),
               ],
             );
-            final scoped = FloatingBarScope(
-              inset: overlap,
-              child: overlap > 0
-                  ? _FocusClearOfBar(inset: overlap, child: content)
-                  : content,
+            return TopInsetScope(
+              inset: hasKeywords ? 0 : TopInsetScope.of(context),
+              child: FloatingBarScope(
+                inset: overlap,
+                child: overlap > 0
+                    ? _FocusClearOfBar(inset: overlap, child: content)
+                    : content,
+              ),
             );
-            if (keywords.isEmpty) {
-              return scoped;
-            }
-            return TopInsetScope(inset: 0, child: scoped);
           },
         ),
       ),
@@ -1044,6 +992,43 @@ class AppBarClearance extends StatelessWidget {
         context: context,
         removeTop: true,
         child: FloatingBarScope(inset: 0, child: child),
+      ),
+    );
+  }
+}
+
+class _KeywordStrip extends StatelessWidget {
+  const _KeywordStrip({required this.keywords, required this.onDeleted});
+
+  final List<String> keywords;
+  final ValueChanged<String> onDeleted;
+
+  static const _inset = 16.0;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: TonalButtonSize.section.button,
+      child: WidthBuilder(
+        builder: (_, width) => ListView.separated(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: _inset),
+          itemCount: keywords.length,
+          separatorBuilder: (_, _) => const SizedBox(width: 8),
+          itemBuilder: (_, index) {
+            final keyword = keywords[index];
+            return ConstrainedBox(
+              key: ValueKey(keyword),
+              constraints: BoxConstraints(
+                maxWidth: math.max(0, width - 2 * _inset),
+              ),
+              child: CommonChip(
+                label: keyword,
+                onDeleted: () => onDeleted(keyword),
+              ),
+            );
+          },
+        ),
       ),
     );
   }
@@ -1271,8 +1256,6 @@ class _SheetForm {
   factory _SheetForm.of(
     BuildContext context, {
     required AppBarSearchState? searchState,
-    required bool hasActions,
-    required bool hasPrimaryAction,
     required bool hasConfirmationAction,
   }) {
     final provider = SheetProvider.of(context);
@@ -1287,9 +1270,6 @@ class _SheetForm {
           : _SheetPop.of(
               context,
               provider,
-              // A bottom sheet docks its search at its foot, not in the bar.
-              hasActions: hasActions || searchState != null && !isCompact,
-              hasPrimaryAction: hasPrimaryAction,
               hasConfirmationAction:
                   hasConfirmationAction && searchState == null,
             ),
@@ -1305,19 +1285,14 @@ class _SheetForm {
 }
 
 /// How a sheet's own pop button reads: [useCloseIcon] where it dismisses the
-/// sheet, and [asSuffix] where it ends the bar, alone or with a primary action.
+/// sheet. It leads the bar wherever it is, as SwiftUI places a close in
+/// `.cancellationAction`, unless [atFoot] turns it into a form's cancel.
 class _SheetPop {
-  const _SheetPop({
-    required this.useCloseIcon,
-    required this.asSuffix,
-    required this.atFoot,
-  });
+  const _SheetPop({required this.useCloseIcon, required this.atFoot});
 
   factory _SheetPop.of(
     BuildContext context,
     SheetProvider provider, {
-    required bool hasActions,
-    required bool hasPrimaryAction,
     required bool hasConfirmationAction,
   }) {
     final useCloseIcon =
@@ -1327,15 +1302,10 @@ class _SheetPop {
         useCloseIcon &&
         hasConfirmationAction &&
         provider.type == SheetType.formSheet;
-    return _SheetPop(
-      useCloseIcon: useCloseIcon,
-      asSuffix: !atFoot && useCloseIcon && (!hasActions || hasPrimaryAction),
-      atFoot: atFoot,
-    );
+    return _SheetPop(useCloseIcon: useCloseIcon, atFoot: atFoot);
   }
 
   final bool useCloseIcon;
-  final bool asSuffix;
   final bool atFoot;
 }
 

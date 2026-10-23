@@ -27,6 +27,7 @@ import 'package:riverpod/riverpod.dart';
 import 'package:yaml/yaml.dart';
 
 import '../helpers/app_paths.dart';
+import '../helpers/preferences.dart';
 import '../helpers/test_profiles.dart';
 
 class _MockCoreHandlerInterface extends Mock implements CoreHandlerInterface {}
@@ -784,6 +785,27 @@ void main() {
       expect(action.coreRunningCalls, isEmpty);
       expect(action.applyProfileCalls, 1);
     });
+
+    test(
+      'a persisted md5 cannot replace the Core applied setup record',
+      () async {
+        final lastConfigMd5 = globalState.lastConfigMd5;
+        addTearDown(() => globalState.lastConfigMd5 = lastConfigMd5);
+        globalState.lastConfigMd5 = null;
+        await mockPreferences({appliedConfigMd5Key: 'running'});
+        action.serviceRunTime = (
+          startedAt: DateTime.now().subtract(const Duration(minutes: 1)),
+          vpnOptions: null,
+        );
+
+        await action.initStatus();
+
+        expect(action.coreRunningCalls, [true]);
+        expect(action.appliedForce, [true]);
+        expect(globalState.lastConfigMd5, isNull);
+        expect(container.read(isStartProvider), isTrue);
+      },
+    );
   });
 
   group('requestAdmin', () {
@@ -1352,6 +1374,45 @@ void main() {
       // Queued behind the rebuild: one that outlasts the pump would compare
       // against the md5 tearDown resets and push into a disposed container.
       await setupAction.applyProfile();
+    });
+
+    test('a config the Core already runs is not pushed again, while the start '
+        'riding on it still opens the listeners', () async {
+      final profile = Profile.normal(label: 'p');
+      final core = _MockCoreHandlerInterface();
+      when(
+        () => core.getProfileBase(any()),
+      ).thenAnswer((_) async => const ProfileBase(config: {}, digest: 'd'));
+      when(() => core.setupConfig(any())).thenAnswer((_) async => '');
+      final scoped = ProviderContainer(
+        overrides: [
+          profilesProvider.overrideWith(() => TestProfiles([profile])),
+          currentProfileIdProvider.overrideWithBuild((_, _) => profile.id),
+          setupStateProvider.overrideWith(
+            (_, _) => nullProfileSetupState.copyWith(profileId: profile.id),
+          ),
+          coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
+          setupActionProvider.overrideWith(SetupAction.new),
+        ],
+      );
+      addTearDown(scoped.dispose);
+      final setupAction = scoped.read(setupActionProvider.notifier);
+      await setupAction.applyProfile(force: true);
+      final counts = globalState.lastConfigCounts;
+      expect(counts, isNotNull);
+      globalState.lastConfigCounts = null;
+
+      var listenersOpened = false;
+      final applied = await setupAction.applyProfile(
+        preloadInvoke: () async {
+          listenersOpened = true;
+        },
+      );
+
+      expect(applied, isTrue);
+      expect(listenersOpened, isTrue);
+      expect(globalState.lastConfigCounts, counts);
+      verify(() => core.setupConfig(any())).called(1);
     });
 
     test('a config the Core rejected is pushed again once reverted, and the '

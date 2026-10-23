@@ -672,6 +672,13 @@ void main() {
     ProviderScope.containerOf(tester.element(find.byType(ServiceStatusCard)))
         .read(routeTrackerProvider.notifier)
         .applySnapshot(const RouteSnapshot(coreEpoch: 2, picksVersion: 1));
+    await tester.pump();
+    await tester.pump(
+      probeMoveSettleDuration - const Duration(milliseconds: 1),
+    );
+    expect(asked, ['google']);
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(asked, ['google', 'google']);
     await tester.pumpAndSettle();
 
     expect(asked, ['google', 'google']);
@@ -782,7 +789,7 @@ void main() {
 
   Finder switchOf(ServiceTarget target) => find.descendant(
     of: find.widgetWithText(DecorationListItem, target.label),
-    matching: find.byType(Switch),
+    matching: find.byType(CommonSwitch),
   );
 
   testWidgets('the tile and the sheet follow the saved order', (tester) async {
@@ -897,11 +904,11 @@ void main() {
     await openManage(tester);
 
     expect(
-      tester.widget<Switch>(switchOf(ServiceTarget.google)).onChanged,
+      tester.widget<CommonSwitch>(switchOf(ServiceTarget.google)).onChanged,
       isNull,
     );
     expect(
-      tester.widget<Switch>(switchOf(ServiceTarget.github)).onChanged,
+      tester.widget<CommonSwitch>(switchOf(ServiceTarget.github)).onChanged,
       isNotNull,
     );
   });
@@ -1028,7 +1035,7 @@ void main() {
 
     setStarted(tester, true);
     await tester.pump();
-    await tester.pump(commonDuration);
+    await tester.pump(probeSettleDuration);
     expect(checkPhase(tester), ProbePhase.failed);
     expect(find.text('Check failed'), findsNothing);
     expect(find.byType(SkeletonText), findsWidgets);
@@ -1037,7 +1044,7 @@ void main() {
     containerOf(tester)
         .read(routeTrackerProvider.notifier)
         .applySnapshot(const RouteSnapshot(coreEpoch: 2, picksVersion: 1));
-    await tester.pump();
+    await tester.pump(probeSettleDuration);
     await tester.pump(commonDuration);
     expect(find.text('Available'), findsOneWidget);
     expect(find.byType(SkeletonText), findsNothing);
@@ -1085,12 +1092,12 @@ void main() {
 
     setStarted(tester, true);
     await tester.pump();
-    await tester.pump(commonDuration);
+    await tester.pump(probeSettleDuration);
     expect(checkPhase(tester), ProbePhase.failed);
     expect(find.text('Check failed'), findsNothing);
 
     setStarted(tester, false);
-    await tester.pump();
+    await tester.pump(probeSettleDuration);
     await tester.pump(commonDuration);
     expect(find.text('Check failed'), findsOneWidget);
   });

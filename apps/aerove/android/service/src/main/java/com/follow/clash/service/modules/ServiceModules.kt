@@ -30,7 +30,6 @@ internal class ServiceModules(
         val nextScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val nextModules = listOfNotNull(
             if (foreground) NotificationModule(service, nextScope) else null,
-            NetworkObserveModule(service),
         )
         val startedModules = mutableListOf<ServiceModule>()
 

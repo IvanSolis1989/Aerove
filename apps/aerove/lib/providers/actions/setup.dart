@@ -966,6 +966,7 @@ class SetupAction extends _$SetupAction {
         await _refreshRecord(inputs, realProfile);
       }
       _appliedInputs = inputs;
+      globalState.lastConfigCounts = realProfile.counts;
       if (preloadInvoke != null) {
         await _runSurfaced(preloadInvoke);
       }
@@ -982,6 +983,7 @@ class SetupAction extends _$SetupAction {
     if (system.isAndroid) {
       await ref.read(vpnOptionsProvider.future);
       await preferences.saveShareState(ref.read(sharedStateProvider));
+      await preferences.saveAppliedConfigMd5(null);
     }
     // Recaptured so _start's catch can roll back after safeRun swallows it.
     (Object, StackTrace)? handoffFailure;
@@ -1017,6 +1019,9 @@ class SetupAction extends _$SetupAction {
         globalState.lastConfigCounts =
             realProfile?.counts ?? configCountsOf(const {});
         _appliedInputs = inputs;
+        if (system.isAndroid) {
+          await preferences.saveAppliedConfigMd5(yamlMd5);
+        }
         await onUpdated?.call();
       },
       silence: true,

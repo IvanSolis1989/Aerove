@@ -1,8 +1,10 @@
-import 'package:fl_clash/ui/foreground_ink.dart';
 import 'package:emoji_regex/emoji_regex.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
+import 'package:fl_clash/ui/foreground_ink.dart';
 import 'package:fl_clash/ui/measure.dart';
-import 'package:fl_clash/ui/text_style.dart';
 import 'package:material_ui/material_ui.dart';
+
+import 'font.dart';
 
 final _emojiPattern = emojiRegex();
 
@@ -69,6 +71,9 @@ class EmojiText extends StatelessWidget {
 
   /// The spans [EmojiText] lays [text] out in, emoji in their own font.
   static TextSpan spanOf(String text, TextStyle? style) {
+    if (!useDesktopEmojiFont(defaultTargetPlatform)) {
+      return TextSpan(text: text, style: style);
+    }
     final List<TextSpan> spans = [];
     final matches = _emojiPattern.allMatches(text);
 
@@ -86,7 +91,7 @@ class EmojiText extends StatelessWidget {
         TextSpan(
           text: match.group(0),
           style: (style ?? const TextStyle()).copyWith(
-            fontFamily: FontFamily.twEmoji.value,
+            fontFamily: desktopEmojiFontFamily,
           ),
         ),
       );
@@ -133,7 +138,35 @@ class EmojiText extends StatelessWidget {
 
 /// One emoji, such as a flag, scaled so its picture covers a [size] square.
 class EmojiCover extends StatelessWidget {
-  const EmojiCover(this.emoji, {super.key, required this.size});
+  const EmojiCover(this.emoji, {super.key, required this.size, this.platform});
+
+  final String emoji;
+  final double size;
+  final TargetPlatform? platform;
+
+  @override
+  Widget build(BuildContext context) {
+    if (useDesktopEmojiFont(platform ?? defaultTargetPlatform)) {
+      return _DesktopEmojiCover(emoji, size: size);
+    }
+    return SizedBox.square(
+      dimension: size,
+      child: FittedBox(
+        fit: BoxFit.cover,
+        child: MediaQuery.withNoTextScaling(
+          child: EmojiText(
+            emoji,
+            maxLines: 1,
+            style: const TextStyle(inherit: false, fontSize: 32, height: 1),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DesktopEmojiCover extends StatelessWidget {
+  const _DesktopEmojiCover(this.emoji, {required this.size});
 
   static const _twemojiUnitsPerEm = 1024.0;
   static const _twemojiFlagAdvance = 1275.0;
@@ -184,7 +217,7 @@ class EmojiCover extends StatelessWidget {
                     maxLines: 1,
                     style: TextStyle(
                       inherit: false,
-                      fontFamily: FontFamily.twEmoji.value,
+                      fontFamily: desktopEmojiFontFamily,
                       fontSize: fontSize,
                       height: lineBaseline.ceilToDouble() / lineBaseline,
                       leadingDistribution: TextLeadingDistribution.proportional,

@@ -283,7 +283,7 @@ class _RecordTableBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final glass = LiquidGlassScope.of(context);
-    final bottomInset = BottomInsetScope.of(context);
+    final bottomInset = context.bottomInset;
     return Padding(
       padding: glass
           ? EdgeInsets.fromLTRB(
@@ -302,9 +302,13 @@ class _RecordTableBody extends StatelessWidget {
             inset: glass
                 ? _recordTableMargin
                 : (TopInsetScope.of(context) ?? 0),
-            child: BottomInsetScope(
-              inset: glass ? 0 : bottomInset,
-              child: child,
+            child: MediaQuery.removePadding(
+              context: context,
+              removeBottom: true,
+              child: BottomInsetScope(
+                inset: glass ? 0 : bottomInset,
+                child: child,
+              ),
             ),
           ),
         ),

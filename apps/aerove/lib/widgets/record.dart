@@ -174,7 +174,7 @@ class RecordArrow extends StatelessWidget {
   Widget build(BuildContext context) {
     return GlassText(
       '→',
-      style: RecordTextStyles.of(context).secondary.toJetBrainsMono,
+      style: RecordTextStyles.of(context).secondary.toTabular,
     );
   }
 }

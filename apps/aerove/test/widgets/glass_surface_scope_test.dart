@@ -29,7 +29,7 @@ final _controls = [
   find.byType(FilledButton),
   find.byType(TonalButton),
   find.byType(TonalButtonGroup),
-  find.byType(GlassSwitch),
+  find.byType(CommonSwitch),
   find.byType(GlassSlider),
   find.byType(SegmentedControl<int>),
 ];
@@ -259,7 +259,7 @@ void main() {
             final switches = find
                 .descendant(
                   of: control,
-                  matching: find.byType(GlassSwitch),
+                  matching: find.byType(CommonSwitch),
                   matchRoot: true,
                 )
                 .evaluate()
@@ -305,7 +305,7 @@ void main() {
               _panesIn(
                 find.byElementPredicate((e) => e == element),
               ).evaluate().length,
-              lessThanOrEqualTo(element.widget is GlassSwitch ? 2 : 1),
+              lessThanOrEqualTo(element.widget is CommonSwitch ? 2 : 1),
               reason: '${element.widget.runtimeType}',
             );
           }
@@ -545,12 +545,16 @@ void main() {
       final row = tester.element(find.text('Option 1'));
       expect(GlassSurfaceScope.of(row), isFalse);
       expect(Theme.of(row).textButtonTheme.style?.backgroundBuilder, isNull);
-      Element? parent;
-      tester.element(find.byType(Switch)).visitAncestorElements((element) {
-        parent = element;
-        return false;
-      });
-      expect(parent!.widget, isA<GlassSwitch>());
+      final toggle = find.byType(CommonSwitch);
+      expect(toggle, findsOneWidget);
+      expect(tester.widget<CommonSwitch>(toggle).value, isTrue);
+      final parts = tester.widgetList<DecoratedBox>(
+        find.descendant(of: toggle, matching: find.byType(DecoratedBox)),
+      );
+      expect(parts, hasLength(2));
+      for (final part in parts) {
+        expect((part.decoration as ShapeDecoration).color!.a, 1);
+      }
       final control = tester.widget<Container>(
         find
             .descendant(

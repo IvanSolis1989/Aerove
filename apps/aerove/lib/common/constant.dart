@@ -51,14 +51,20 @@ double systemTextScaleOf(BuildContext context) {
 
 /// How long the Core may spend on one delay test. It spends this twice in the
 /// worst case - once queueing for a slot, once on the probe itself - so the
-/// guard below has to outlast twice this value.
-const delayTestTimeoutDuration = Duration(seconds: 8);
+/// guard below has to outlast twice the longest option.
+const delayTestTimeoutOptions = [500, 1000, 2000, 5000, 8000];
+
+const defaultDelayTestTimeout = 8000;
 
 const delayTestGuardDuration = Duration(seconds: 30);
 
 const delayTimedOutValue = -1;
 
 const probeTimeoutDuration = Duration(seconds: 10);
+
+const probeSettleDuration = Duration(milliseconds: 1500);
+
+const probeMoveSettleDuration = Duration(milliseconds: 300);
 
 const downloadTimeoutDuration = Duration(seconds: 20);
 
@@ -91,9 +97,6 @@ const ASN = 'ASN.mmdb';
 const GEOIP = 'GEOIP.dat';
 const GEOSITE = 'GEOSITE.dat';
 
-/// The macOS sidebar material is the finished look; the Windows accent
-/// effects need a tint over them to keep the rail readable.
-final double kSidebarBlurOpacity = system.isMacOS ? 0 : 0.5;
 final double kHeaderHeight = getWindowHeaderHeight(
   isDesktop: system.isDesktop,
   isMacOS: system.isMacOS,
@@ -111,6 +114,7 @@ const bootRecordKey = 'boot_record';
 const lastPageLabelKey = 'last_page_label';
 const promptedUpdateTagKey = 'prompted_update_tag';
 const exitSnapshotKey = 'exit_snapshot';
+const appliedConfigMd5Key = 'applied_config_md5';
 const defaultSystemDnsFallback = '223.5.5.5';
 const repository = 'IvanSolis1989/Aerove';
 const maxMobileWidth = 600;
@@ -168,10 +172,10 @@ const trafficSampleLength = 30;
 // Apple's system colors, in the order of the macOS accent colors.
 const defaultPrimaryColors = [
   defaultPrimaryColor,
-  0xFFAF52DE,
+  0xFFCB30E0,
   0xFFFF2D55,
-  0xFFFF3B30,
-  0xFFFF9500,
+  0xFFFF383C,
+  0xFFFF8D28,
   0xFFFFCC00,
   0xFF34C759,
   0xFF8E8E93,

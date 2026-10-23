@@ -5,13 +5,26 @@ import 'dart:isolate';
 import 'package:ffi/ffi.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:win32/win32.dart' show GUID;
 
 import 'print.dart';
 
 @visibleForTesting
 Future<List<String>> Function() systemFontFamiliesReader = () =>
-    Isolate.run(_readSystemFontFamilies);
+    Platform.isAndroid
+    ? const MethodChannel('com.follow.clash/fonts')
+          .invokeListMethod<String>('list')
+          .then((value) => sortFontFamilies(value ?? const []))
+    : Isolate.run(_readSystemFontFamilies);
+
+final installedSystemFontsProvider = FutureProvider<List<String>>(
+  (ref) => loadSystemFontFamilies(),
+);
+
+String? resolveSystemFontFamily(String? selected, List<String>? installed) =>
+    installed?.contains(selected) == true ? selected : null;
 
 /// The font families the engine resolves by name on this host, each listed
 /// through the API the engine itself matches names against.
@@ -29,9 +42,6 @@ List<String> _readSystemFontFamilies() {
     'macos' => _coreTextFamilies(),
     'windows' => _directWriteFamilies(),
     'linux' => _fontconfigFamilies(),
-    'android' => androidFontFamilies(
-      File('/system/etc/fonts.xml').readAsStringSync(),
-    ),
     _ => const <String>[],
   });
 }
@@ -49,14 +59,6 @@ List<String> sortFontFamilies(Iterable<String> families) {
   return unique.values.toList()
     ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
 }
-
-@visibleForTesting
-List<String> androidFontFamilies(String fontsXml) => [
-  for (final match in RegExp(
-    r'<family\b[^>]*\bname="([^"]+)"',
-  ).allMatches(fontsXml))
-    match.group(1)!,
-];
 
 final class _CFRange extends Struct {
   @IntPtr()

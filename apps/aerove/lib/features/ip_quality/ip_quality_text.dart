@@ -25,7 +25,7 @@ class IpQualityText extends ConsumerWidget {
     final color = quality?.level.color(context);
     var style = this.style;
     if (hideIp) {
-      style = (style ?? const TextStyle()).toJetBrainsMono;
+      style = (style ?? const TextStyle()).toTabular;
     }
     if (color != null) {
       style = (style ?? const TextStyle()).copyWith(color: color);

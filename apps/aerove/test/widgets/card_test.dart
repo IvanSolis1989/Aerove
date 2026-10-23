@@ -127,16 +127,14 @@ void main() {
                       key: captureKey,
                       child: SizedBox(
                         width: 400,
-                        child: generateSection(
-                          items: [
-                            for (var index = 0; index < 3; index++)
-                              DecorationListItem(
-                                title: Text('Row $index'),
-                                isSelected: index == 1,
-                                onPressed: () => taps++,
-                              ),
-                          ],
-                        ),
+                        child: generateGroup([
+                          for (var index = 0; index < 3; index++)
+                            DecorationListItem(
+                              title: Text('Row $index'),
+                              isSelected: index == 1,
+                              onPressed: () => taps++,
+                            ),
+                        ]),
                       ),
                     ),
                   ),

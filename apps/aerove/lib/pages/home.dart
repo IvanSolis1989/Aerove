@@ -21,28 +21,31 @@ class HomePage extends ConsumerWidget {
     if (!hasViewSize) {
       return const SizedBox.shrink();
     }
-    return HomeBackScopeContainer(
-      child: AppSidebarContainer(
-        child: _HomeShell(
-          child: Consumer(
-            builder: (_, ref, _) {
-              final navigationItems = ref
-                  .watch(currentNavigationItemsStateProvider)
-                  .value;
-              final isMobile = ref.watch(isMobileViewProvider);
-              return _HomePageView(
-                navigationItems: navigationItems,
-                pageBuilder: (_, index) {
-                  final navigationItem = navigationItems[index];
-                  return _NavigationPage(
-                    key: ValueKey(navigationItem.label),
-                    item: navigationItem,
-                    isMobile: isMobile,
-                    view: navigationItem.builder(context),
-                  );
-                },
-              );
-            },
+    return TickerMode(
+      enabled: ref.watch(appVisibleProvider),
+      child: HomeBackScopeContainer(
+        child: AppSidebarContainer(
+          child: _HomeShell(
+            child: Consumer(
+              builder: (_, ref, _) {
+                final navigationItems = ref
+                    .watch(currentNavigationItemsStateProvider)
+                    .value;
+                final isMobile = ref.watch(isMobileViewProvider);
+                return _HomePageView(
+                  navigationItems: navigationItems,
+                  pageBuilder: (_, index) {
+                    final navigationItem = navigationItems[index];
+                    return _NavigationPage(
+                      key: ValueKey(navigationItem.label),
+                      item: navigationItem,
+                      isMobile: isMobile,
+                      view: navigationItem.builder(context),
+                    );
+                  },
+                );
+              },
+            ),
           ),
         ),
       ),
@@ -303,6 +306,7 @@ class _HomePageViewState extends ConsumerState<_HomePageView> {
 
   List<int>? _order;
   int _slide = 0;
+  bool _animationsAllowed = true;
 
   @override
   void initState() {
@@ -313,6 +317,21 @@ class _HomePageViewState extends ConsumerState<_HomePageView> {
         _toPage(next);
       }
     });
+    ref.listenManual(appVisibleProvider, (_, visible) {
+      if (!visible) _toPage(ref.read(currentPageLabelProvider), true);
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _animationsAllowed =
+        !MediaQuery.disableAnimationsOf(context) &&
+        TickerMode.valuesOf(context).enabled &&
+        PageActivityScope.isActiveOf(context);
+    if (!_animationsAllowed) {
+      _toPage(ref.read(currentPageLabelProvider), true);
+    }
   }
 
   @override
@@ -346,7 +365,7 @@ class _HomePageViewState extends ConsumerState<_HomePageView> {
       return;
     }
     final index = _indexOf(pageLabel);
-    if (index == -1) {
+    if (index == -1 || !_pageController.hasClients) {
       return;
     }
     final tabAnimation = ref.read(appSettingProvider).tabAnimation;
@@ -360,7 +379,10 @@ class _HomePageViewState extends ConsumerState<_HomePageView> {
       setState(() => _order = null);
       _pageController.jumpToPage(current);
     }
-    if (!isMobile || ignoreAnimateTo) {
+    if (!isMobile ||
+        ignoreAnimateTo ||
+        !_animationsAllowed ||
+        !ref.read(appVisibleProvider)) {
       _pageController.jumpToPage(index);
       return;
     }

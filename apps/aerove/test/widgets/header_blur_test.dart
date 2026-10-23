@@ -1,3 +1,5 @@
+import '../helpers/system_test_font.dart';
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -30,8 +32,7 @@ void main() {
         reason: 'The Impeller job must not silently use Skia.',
       );
     }
-    final font = FontLoader('HeaderProbe')
-      ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'));
+    final font = FontLoader('HeaderProbe')..addFont(loadSdkTestFont());
     await font.load();
     if (ui.ImageFilter.isShaderFilterSupported) {
       await ui.FragmentProgram.fromAsset('shaders/liquid_glass.frag');

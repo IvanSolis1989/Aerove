@@ -38,6 +38,15 @@ class CommonAction extends _$CommonAction {
         .update((state) => state.copyWith(showTrayTitle: !state.showTrayTitle));
   }
 
+  void updateMonochromeTrayIcon() {
+    ref
+        .read(appSettingProvider.notifier)
+        .update(
+          (state) =>
+              state.copyWith(monochromeTrayIcon: !state.monochromeTrayIcon),
+        );
+  }
+
   void updateMode() {
     ref.read(patchClashConfigProvider.notifier).update((state) {
       final index = Mode.values.indexWhere((item) => item == state.mode);
@@ -202,7 +211,7 @@ class CommonAction extends _$CommonAction {
                 );
               } else {
                 final opened = await launchUrl(
-                  Uri.parse('https://github.com/$repository/releases/latest'),
+                  standardReleasePage(data),
                   mode: LaunchMode.externalApplication,
                 );
                 if (!opened) {

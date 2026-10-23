@@ -26,6 +26,78 @@ def run_block(name):
 
 
 class WorkflowPolicyTest(unittest.TestCase):
+    def test_composite_font_action_keeps_timeout_on_workflow_callers(self):
+        font = (ROOT / '.github/actions/aerove-test-font/action.yaml').read_text(encoding='utf-8')
+        self.assertNotIn('timeout-minutes:', font)
+        callers = re.findall(
+            r'- uses: \./\.github/actions/aerove-test-font\n(.*?)(?=\n      - |\n  [a-z]|\Z)',
+            FULL, re.DOTALL,
+        )
+        self.assertEqual(len(callers), 4)
+        for caller in callers:
+            self.assertIn('timeout-minutes: 10', caller)
+
+    def test_host_cache_miss_and_nonexact_match_stop_before_the_native_tests(self):
+        git = Path(shutil.which('git')).resolve()
+        bash = git.parent.parent / 'bin/bash.exe' if os.name == 'nt' else shutil.which('bash')
+        script = run_block('Require exact producer host Rust cache')
+        for hit in ['', 'false']:
+            with self.subTest(cache_hit=hit):
+                result = subprocess.run(
+                    [str(bash), '-e', '-o', 'pipefail', '-c', script],
+                    cwd=ROOT / 'apps/aerove', env={**os.environ, 'HOST_RUST_CACHE_HIT': hit},
+                    capture_output=True, text=True,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('Rebuild the native producer', result.stdout)
+
+    def test_parallel_consumers_share_one_preparation_and_an_explicit_success_gate(self):
+        def job(name):
+            match = re.search(rf'(?ms)^  {name}:\n(.*?)(?=^  [a-z][a-z_-]*:|\Z)', FULL)
+            self.assertIsNotNone(match, name)
+            return match[1]
+
+        self.assertEqual(FULL.count('dart run build_runner build'), 1)
+        self.assertIn('needs: reuse', job('prep'))
+        self.assertIn("needs.reuse.outputs.run_id == ''", job('prep'))
+        self.assertIn('needs: prep', job('apk'))
+        self.assertNotIn('needs: verify', job('apk'))
+        self.assertIn("always() && needs.prep.result != 'skipped'", job('verify'))
+        self.assertIn('needs: [prep, static, render, native, regressions]', job('verify'))
+        self.assertIn('CI_VERIFY_NEEDS: ${{ toJSON(needs) }}', job('verify'))
+        self.assertIn('python3 tool/ci_verify.py gate', job('verify'))
+        self.assertIn('needs: [reuse, verify, apk]', job('release'))
+        self.assertIn("needs.verify.result == 'success' && needs.apk.result == 'success'", job('release'))
+        self.assertIn('needs.reuse.outputs.run_id || github.run_id', job('release'))
+        self.assertIn('hooks_runner/shared/rust_api', job('native'))
+        self.assertIn('hooks_runner/shared/rust_api', job('apk'))
+        self.assertIn('tool/ci_verify.py host-assets --record', job('native'))
+        native_consumers = job('regressions')
+        self.assertIn('id: host_rust_cache', native_consumers)
+        self.assertIn('fail-on-cache-miss: true', native_consumers)
+        self.assertIn('steps.host_rust_cache.outputs.cache-hit', native_consumers)
+        self.assertIn('tool/ci_verify.py host-assets', native_consumers)
+        self.assertLess(native_consumers.index('Require exact producer host Rust cache'),
+                        native_consumers.index('Run preserved verification combination'))
+        self.assertIn('-aerove-rust-host-v2-', job('native'))
+        self.assertIn('-aerove-rust-host-v2-', native_consumers)
+
+    def test_matrix_consumers_restore_caches_and_keep_performance_on_its_own_runner(self):
+        for name in ['render', 'regressions']:
+            match = re.search(rf'(?ms)^  {name}:\n(.*?)(?=^  [a-z][a-z_-]*:|\Z)', FULL)
+            contents = match[1]
+            self.assertIn('runs-on: ubuntu-24.04', contents)
+            self.assertIn('cache-read-only: true', contents)
+            self.assertIn('fromJSON(needs.prep.outputs.', contents)
+            self.assertIn('tool/ci_verify.py run', contents)
+            self.assertNotIn('uses: actions/cache@', contents)
+        action = (ROOT / '.github/actions/flutter/action.yaml').read_text(encoding='utf-8')
+        self.assertIn("inputs.cache-read-only != 'true'", action)
+        self.assertIn('uses: actions/cache/restore@', action)
+        font = (ROOT / '.github/actions/aerove-test-font/action.yaml').read_text(encoding='utf-8')
+        self.assertIn("inputs.save-cache == 'true'", font)
+        self.assertIn('hashlib.sha256(path.read_bytes()).hexdigest() == expected', font)
+
     def test_all_active_actions_are_pinned_to_full_commits(self):
         paths = [*WORKFLOWS.glob('*.yaml'), *(ROOT / '.github/actions').rglob('action.yaml')]
         for path in paths:

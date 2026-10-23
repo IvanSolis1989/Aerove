@@ -157,7 +157,7 @@ class _LogsViewState extends ConsumerState<LogsView>
                     controller: _scrollController,
                     padding: EdgeInsets.only(
                       top: context.contentTopPadding,
-                      bottom: 16 + BottomInsetScope.of(context),
+                      bottom: 16 + context.bottomInset,
                     ),
                     itemCount: logs.length,
                     extentEstimation: recordListExtentEstimation,
@@ -256,7 +256,7 @@ class _LogBody extends StatelessWidget {
           const TextSpan(text: '\n'),
           if (route.rule.isNotEmpty) ...[
             TextSpan(text: route.rule, style: styles.secondary),
-            TextSpan(text: ' \u2192 ', style: styles.secondary.toJetBrainsMono),
+            TextSpan(text: ' \u2192 ', style: styles.secondary.toTabular),
           ],
           TextSpan(
             text: route.proxy,

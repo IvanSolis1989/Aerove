@@ -63,7 +63,7 @@ class ClashProvidersAction extends _$ClashProvidersAction {
       if (before != null &&
           (latest == null || latest.fileName != before.fileName)) {
         if (latest?.fileName != compiled.fileName) {
-          unawaited(_clearCache(compiled));
+          await _clearCache(compiled);
         }
         return latest ?? compiled;
       }
@@ -83,7 +83,7 @@ class ClashProvidersAction extends _$ClashProvidersAction {
       ref.read(clashProvidersProvider.notifier).put(next);
       checkUpdateCurrent(isCurrent);
       if (previous != null && previous.fileName != next.fileName) {
-        unawaited(_clearCache(previous));
+        await _clearCache(previous);
       }
       final apply = applyIfReferenced(
         ProviderKind.rule,

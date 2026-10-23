@@ -158,10 +158,10 @@ class CoreController {
     return _interface.decodeShareLinks(lines);
   }
 
-  Future<String> validateConfigWithData(String data) async {
+  Future<String> validateConfigWithData(List<int> data) async {
     final path = await appPath.tempFilePath;
     final file = File(path);
-    await file.safeWriteAsString(data);
+    await file.safeWriteAsBytes(data);
     final res = await _interface.validateConfig(path);
     await File(path).safeDelete();
     return res;
@@ -240,6 +240,10 @@ class CoreController {
     await _interface.resetConnections();
   }
 
+  Future<bool> clearDnsCache() async {
+    return _interface.clearDnsCache();
+  }
+
   Future<List<ExternalProvider>> getExternalProviders() async {
     return _interface.getExternalProviders();
   }
@@ -286,8 +290,12 @@ class CoreController {
 
   Future<bool> adoptListener() => _interface.adoptListener();
 
-  Future<Delay?> getDelay(String url, String proxyName) async {
-    return _interface.asyncTestDelay(url, proxyName);
+  Future<Delay?> getDelay(
+    String url,
+    String proxyName,
+    Duration timeout,
+  ) async {
+    return _interface.asyncTestDelay(url, proxyName, timeout);
   }
 
   Future<List<Delay>> getLatestDelays() => _interface.getLatestDelays();
@@ -310,6 +318,10 @@ class CoreController {
     return _interface.getProfileOutbounds(
       await appPath.getProfilePath(id.toString()),
     );
+  }
+
+  Future<Map<String, dynamic>?> getProxyDefinition(String name) {
+    return _interface.getProxyDefinition(name);
   }
 
   Future<String> buildProfile(SetupBase base) async {

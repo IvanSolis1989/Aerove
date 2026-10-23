@@ -40,6 +40,18 @@ class _HostAdapter implements HttpClientAdapter {
   void close({bool force = false}) {}
 }
 
+Map<String, dynamic> releaseFixture(String tag) => {
+  'tag_name': tag,
+  'body': '- notes',
+  'assets': [
+    {
+      'name': 'Aerove-android-arm64.apk',
+      'browser_download_url':
+          'https://github.com/$repository/releases/download/$tag/Aerove-android-arm64.apk',
+    },
+  ],
+};
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -71,71 +83,219 @@ void main() {
     );
   });
 
-  group('latestRelease', () {
-    Request requestAnswering(Map<String, ResponseBody Function()> byHost) {
-      return Request()..dio.httpClientAdapter = _HostAdapter(byHost);
-    }
-
-    test('reads the release from the API', () async {
-      Uri? requested;
-      final request = requestAnswering({
-        'api.github.com': () => ResponseBody.fromString(
-          '{"tag_name":"v1.2.3","body":"notes"}',
-          200,
-          headers: {
-            Headers.contentTypeHeader: [Headers.jsonContentType],
-          },
-        ),
-      });
+  group('publishedReleases', () {
+    test('requests all channels from the paginated list endpoint', () async {
+      final pages = <int>[];
+      final request = Request();
       request.dio.interceptors.add(
         InterceptorsWrapper(
           onRequest: (options, handler) {
-            requested = options.uri;
-            handler.next(options);
+            expect(options.uri.path, '/repos/$repository/releases');
+            expect(options.queryParameters['per_page'], 100);
+            final page = options.queryParameters['page'] as int;
+            pages.add(page);
+            handler.resolve(
+              Response(
+                requestOptions: options,
+                data: page == 1
+                    ? List.generate(100, (_) => {'tag_name': 'lite-v1.0.0+1'})
+                    : [releaseFixture('v1.0.0-beta.10+3')],
+              ),
+            );
           },
         ),
       );
-
-      expect(await request.latestRelease(), {
-        'tag_name': 'v1.2.3',
-        'body': 'notes',
-      });
-      expect(
-        requested,
-        Uri.parse(
-          'https://api.github.com/repos/IvanSolis1989/Aerove/releases/latest',
-        ),
-      );
+      addTearDown(() => request.dio.close(force: true));
+      expect((await request.publishedReleases()).length, 101);
+      expect(pages, [1, 2]);
     });
 
     test(
-      'falls back to the release page when the API is rate limited',
+      'API failure never consults stable latest or reports current',
       () async {
-        final request = requestAnswering({
-          'api.github.com': () => ResponseBody.fromString('{}', 403),
-          'github.com': () => ResponseBody.fromString(
-            '',
-            302,
-            headers: {
-              HttpHeaders.locationHeader: [
-                'https://github.com/owner/repo/releases/tag/v1.2.4',
-              ],
+        globalState.packageInfo = PackageInfo(
+          appName: 'Aerove',
+          packageName: 'com.follow.clash',
+          version: '0.9.2-beta.4',
+          buildNumber: '2026102301',
+        );
+        final hosts = <String>[];
+        final request = Request()
+          ..dio.httpClientAdapter = _HostAdapter({
+            'api.github.com': () => ResponseBody.fromString('{}', 403),
+          });
+        request.dio.interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              hosts.add(options.uri.host);
+              handler.next(options);
             },
           ),
-        });
-
-        expect(await request.latestRelease(), {'tag_name': 'v1.2.4'});
+        );
+        addTearDown(() => request.dio.close(force: true));
+        await expectLater(
+          request.checkForUpdate(),
+          throwsA(isA<DioException>()),
+        );
+        expect(hosts, ['api.github.com']);
       },
     );
 
-    test('fails instead of answering when neither endpoint does', () async {
-      final request = requestAnswering({
-        'api.github.com': () => ResponseBody.fromString('{}', 403),
-        'github.com': () => ResponseBody.fromString('', 503),
-      });
+    test(
+      'a truncated scan is an error even with a usable earlier page',
+      () async {
+        final request = Request();
+        var calls = 0;
+        request.dio.interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              calls++;
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: List.generate(
+                    100,
+                    (_) => releaseFixture('v1.0.0-beta.10+3'),
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+        addTearDown(() => request.dio.close(force: true));
+        await expectLater(request.publishedReleases(), throwsStateError);
+        expect(calls, 5);
+      },
+    );
+  });
 
-      await expectLater(request.latestRelease(), throwsA(isA<DioException>()));
+  group('all-channel update selection', () {
+    test('published beta4 encoded tag and historical XClash assets remain valid', () {
+      const tag = 'v0.10.0-beta.4+2026102220';
+      final row = releaseFixture(tag);
+      (row['assets'] as List).first['browser_download_url'] =
+          'https://github.com/$repository/releases/download/v0.10.0-beta.4%2B2026102220/Aerove-android-arm64.apk';
+      row['html_url'] =
+          'https://github.com/$repository/releases/tag/v0.10.0-beta.4%2B2026102220';
+      expect(
+        selectStandardUpdate(
+          [row],
+          version: '0.10.0-beta.1',
+          buildNumber: 2026102208,
+          androidAbis: ['arm64-v8a'],
+        )?['tag_name'],
+        tag,
+      );
+      expect(standardReleasePage(row).toString(), row['html_url']);
+      final old = releaseFixture('v0.9.1-X+2026101741');
+      (old['assets'] as List).first['name'] = 'XClash-android-arm64.apk';
+      (old['assets'] as List).first['browser_download_url'] =
+          'https://github.com/$repository/releases/download/v0.9.1-X%2B2026101741/XClash-android-arm64.apk';
+      expect(
+        selectStandardUpdate(
+          [old],
+          version: '0.9.1-X',
+          buildNumber: 2026101737,
+          androidAbis: ['arm64-v8a'],
+        )?['tag_name'],
+        old['tag_name'],
+      );
     });
+    test('old stable latest cannot hide a newer beta in the list', () {
+      final rows = [
+        releaseFixture('v0.9.1+1'),
+        releaseFixture('v0.9.2-beta.2+3'),
+        releaseFixture('v0.9.2-beta.10+4'),
+      ];
+      expect(
+        selectStandardUpdate(
+          rows,
+          version: '0.9.2-beta.1',
+          buildNumber: 2,
+          androidAbis: ['arm64-v8a'],
+        )?['tag_name'],
+        'v0.9.2-beta.10+4',
+      );
+    });
+    test(
+      'RC and stable order, equal semver higher build and no code rollback',
+      () {
+        for (final (tag, expected) in [
+          ('v0.9.2-rc.1+3', true),
+          ('v0.9.2+3', true),
+          ('v0.9.2-beta.2+3', true),
+          ('v0.9.2-beta.2+2', false),
+          ('v0.9.2-beta.10+1', false),
+          ('v0.9.1+9', false),
+          ('v0.9.3+0', false),
+          ('v0.9.3+2100000001', false),
+        ]) {
+          expect(
+            selectStandardUpdate(
+                  [releaseFixture(tag)],
+                  version: '0.9.2-beta.2',
+                  buildNumber: 2,
+                  androidAbis: ['arm64-v8a'],
+                ) !=
+                null,
+            expected,
+            reason: tag,
+          );
+        }
+        expect(
+          selectStandardUpdate(
+            [releaseFixture('v0.9.2-rc.99+9')],
+            version: '0.9.2',
+            buildNumber: 2,
+            androidAbis: ['arm64-v8a'],
+          ),
+          isNull,
+        );
+      },
+    );
+    test('drafts, Lite, invalid tags and wrong assets are excluded', () {
+      final good = releaseFixture('v0.9.2-beta.10+4');
+      final foreign = releaseFixture('v99.0.0+99');
+      (foreign['assets'] as List).first['browser_download_url'] =
+          'https://github.com/other/repo/releases/download/v99.0.0+99/Aerove-android-arm64.apk';
+      final lite = releaseFixture('v98.0.0+98');
+      (lite['assets'] as List).first['name'] = 'AEROVE-Lite-android-arm64.apk';
+      expect(
+        selectStandardUpdate(
+          [
+            {...releaseFixture('v97.0.0+97'), 'draft': true},
+            releaseFixture('lite-v99.0.0+99'),
+            releaseFixture('invalid'),
+            foreign,
+            lite,
+            good,
+          ],
+          version: '0.9.2-beta.1',
+          buildNumber: 2,
+          androidAbis: ['arm64-v8a'],
+        ),
+        equals(good),
+      );
+    });
+    test(
+      'desktop opens the selected page and never latest or a foreign URL',
+      () {
+        final row = releaseFixture('v0.9.2-beta.10+4');
+        final exact =
+            'https://github.com/$repository/releases/tag/v0.9.2-beta.10+4';
+        expect(
+          standardReleasePage({...row, 'html_url': exact}).toString(),
+          exact,
+        );
+        expect(
+          standardReleasePage({
+            ...row,
+            'html_url': 'https://evil.test/latest',
+          }).toString(),
+          exact,
+        );
+      },
+    );
   });
 
   group('checkForUpdate', () {
@@ -152,17 +312,20 @@ void main() {
         final assets = [
           {
             'name': 'Aerove-android-arm64.apk',
-            'browser_download_url': 'https://github.com/a.apk',
+            'browser_download_url':
+                'https://github.com/$repository/releases/download/$tag/Aerove-android-arm64.apk',
           },
         ];
         final request = Request()
           ..dio.httpClientAdapter = _HostAdapter({
             'api.github.com': () => ResponseBody.fromString(
-              jsonEncode({
-                'tag_name': tag,
-                'body': '# Aerove Android\n模板',
-                'assets': assets,
-              }),
+              jsonEncode([
+                {
+                  ...releaseFixture(tag),
+                  'body': '# Aerove Android\n模板',
+                  'assets': assets,
+                },
+              ]),
               200,
               headers: {
                 Headers.contentTypeHeader: [Headers.jsonContentType],
@@ -195,7 +358,7 @@ void main() {
           buildNumber: '2026101804',
         );
         final release = {
-          'tag_name': 'v0.9.1-X+2026101815',
+          ...releaseFixture('v0.9.1-X+2026101815'),
           'body': '# Aerove Android\n模板',
         };
         for (final response in [
@@ -205,7 +368,7 @@ void main() {
           final request = Request()
             ..dio.httpClientAdapter = _HostAdapter({
               'api.github.com': () => ResponseBody.fromString(
-                jsonEncode(release),
+                jsonEncode([release]),
                 200,
                 headers: {
                   Headers.contentTypeHeader: [Headers.jsonContentType],
@@ -289,11 +452,11 @@ void main() {
           version: installedVersion,
           buildNumber: '2026101402',
         );
-        final release = <String, dynamic>{'tag_name': tag};
+        final release = releaseFixture(tag);
         final request = Request()
           ..dio.httpClientAdapter = _HostAdapter({
             'api.github.com': () => ResponseBody.fromString(
-              jsonEncode(release),
+              jsonEncode([release]),
               200,
               headers: {
                 Headers.contentTypeHeader: [Headers.jsonContentType],

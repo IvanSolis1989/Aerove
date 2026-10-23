@@ -1,3 +1,5 @@
+import '../../helpers/system_test_font.dart';
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -68,8 +70,7 @@ Finder _memoryAppInks() => find.descendant(
 
 void main() {
   setUpAll(() async {
-    final font = FontLoader('DashboardForeground')
-      ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'));
+    final font = FontLoader('DashboardForeground')..addFont(loadSdkTestFont());
     await font.load();
     if (Platform.environment['XCLASH_REQUIRE_IMPELLER'] == 'true') {
       expect(ui.ImageFilter.isShaderFilterSupported, isTrue);

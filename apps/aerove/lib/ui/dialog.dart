@@ -503,7 +503,7 @@ class CommonDialog extends StatelessWidget {
               child: GlassPlatter(
                 style: LiquidGlassStyle.alert(colorScheme),
                 rim: LiquidGlassRim.alert(colorScheme),
-                shadows: glassMenuShadows(colorScheme),
+                shadows: menuShadows(colorScheme),
                 child: dialog,
               ),
             )

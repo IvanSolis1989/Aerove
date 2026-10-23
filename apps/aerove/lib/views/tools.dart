@@ -100,8 +100,8 @@ class _ToolViewState extends ConsumerState<ToolsView> {
           padding: EdgeInsets.only(
             left: 16,
             right: 16,
-            top: context.appBarInset,
-            bottom: 20 + BottomInsetScope.of(context),
+            top: context.contentTopPadding,
+            bottom: 20 + context.bottomInset,
           ),
         ),
       ),

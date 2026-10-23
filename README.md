@@ -21,7 +21,7 @@ Lite 仅可暂缓固定 Rust 内核确实不支持的能力，未完成移植不
 - [标准版与 Lite 独立版本规则](docs/development/VERSIONING.md)
 - [AEROVE 更新记录](docs/aerove/CHANGELOG.md)
 - [仓库目录与归档规则](docs/development/REPOSITORY_LAYOUT.md)
-- [开发命令](.agents/commands.md) · [贡献约束](AGENTS.md)
+- [开发命令](.agents/commands.md) · [贡献约束](AGENTS.md) · [开源来源与鸣谢](docs/development/upstreams.md)
 
 根目录只保留项目入口。应用源码在 `apps/`，当前文档在 `docs/`，仓库工具在 `tooling/`，原型在 `experiments/`。
 原安装包的构建、来源和签名信息随发行资产保留；仓库独立重建不改变已验证安装包。

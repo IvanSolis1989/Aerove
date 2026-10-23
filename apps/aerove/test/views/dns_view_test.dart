@@ -219,7 +219,7 @@ void main() {
     await tester.pump();
 
     expect(find.text('IPv6'), findsOneWidget);
-    await tester.tap(find.byType(Switch).last);
+    await tester.tap(find.byType(CommonSwitch).last);
     await tester.pump();
     expect(config().dns.ipv6, isTrue);
 
@@ -516,7 +516,11 @@ void main() {
       expect(editor.onSave, isNull);
 
       final context = tester.element(find.byType(EditorPage));
-      final popped = await editor.onPop!(context, 'DNS', 'listen: :53');
+      final popped = await editor.onPop!(
+        context,
+        'DNS',
+        const EditorContent.text('listen: :53'),
+      );
       expect(popped, isTrue);
       expect(overrides().dnsOverrideKeys, {DnsOverrideKey.listen});
       expect(overrides().dns.listen, ':53');
@@ -529,7 +533,12 @@ void main() {
       final editor = await openQuickEdit(tester);
       final context = tester.element(find.byType(EditorPage));
 
-      final popped = editor.onPop!(context, 'DNS', 'bogus: 1');
+      final popped = editor.onPop!(
+        context,
+        'DNS',
+        const EditorContent.text('bogus: 1'),
+      );
+      await tester.pump();
       await tester.pump();
       expect(
         find.textContaining(currentAppLocalizations.discardChanges),

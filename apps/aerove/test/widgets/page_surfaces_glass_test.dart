@@ -261,7 +261,7 @@ void main() {
     });
 
     for (final enable in [false, true]) {
-      testWidgets('the access banner is one pane, enabled $enable '
+      testWidgets('the access footer is one pane, enabled $enable '
           '${_name(glass)}', (tester) async {
         await _pump(
           tester,
@@ -283,54 +283,85 @@ void main() {
             );
           },
         );
-        final banner = find.byType(MaterialBanner);
-        expect(banner, findsOneWidget);
-        final background = tester
-            .widget<MaterialBanner>(banner)
-            .backgroundColor!;
-        expect(background.a, _glassOn(glass) ? 0 : 1);
-        if (!_glassOn(glass)) {
+        final footer = find.byType(FloatingFootBar);
+        expect(footer, findsOneWidget);
+        final statusType = tester
+            .widget<FloatingFootBar>(footer)
+            .bar
+            .runtimeType;
+        final status = find.descendant(
+          of: footer,
+          matching: find.byWidgetPredicate(
+            (widget) => widget.runtimeType == statusType,
+          ),
+        );
+        final scheme = Theme.of(tester.element(status)).colorScheme;
+        void expectFooterPane() {
+          final pane = find.ancestor(
+            of: status,
+            matching: find.byType(LiquidGlass),
+          );
+          expect(pane, _glassOn(glass) ? findsOneWidget : findsNothing);
           expect(
-            find.ancestor(of: banner, matching: find.byType(CardGroup)),
+            find.descendant(of: status, matching: find.byType(LiquidGlass)),
             findsNothing,
           );
-        } else if (enable) {
-          _expectOneCardPane(tester, banner, glass);
-        } else {
-          _expectWashCard(tester, banner, glass);
-          expect(
-            find.descendant(
-              of: find.widgetWithText(TonalButton, 'Turn on'),
-              matching: find.byType(LiquidGlass),
-            ),
-            findsOneWidget,
-          );
-        }
-        if (enable) {
-          final scheme = Theme.of(tester.element(banner)).colorScheme;
-          for (final label in [find.text('Selected'), find.text('0')]) {
-            expect(label, findsOneWidget);
+          final fills = _fillsBetween(tester, status, footer);
+          if (_glassOn(glass)) {
+            expect(fills.where((fill) => fill.color.a > 0), isEmpty);
+            final bounds = tester.getRect(pane);
+            expect(_panes.where((rect) => _covers(bounds, rect)), [
+              rectMoreOrLessEquals(bounds, epsilon: 0.5),
+            ]);
+          } else {
             expect(
-              find.descendant(of: label, matching: find.byType(GlassInk)),
-              findsNothing,
+              fills.first.color,
+              SurfaceLevel.floatingOf(scheme).colorOf(scheme),
             );
-            expect(
-              GlassForeground.colorsInk(
-                tester.element(label),
-                scheme.onPrimary,
-              ),
-              isFalse,
-            );
-            expect(tester.widget<Text>(label).style?.color, scheme.onPrimary);
+            expect(fills.first.color.a, 1);
           }
-          final chip = tester.widget<Card>(
-            find.ancestor(
-              of: find.text('Selected'),
-              matching: find.byType(Card),
-            ),
-          );
-          expect(chip.color, scheme.primary);
         }
+
+        expectFooterPane();
+        expect(
+          globalState.container.read(accessControlStateProvider).enable,
+          enable,
+        );
+        if (!enable) {
+          expect(find.byType(TonalChip), findsNothing);
+          await tester.tap(find.widgetWithText(TonalButton, 'Turn on'));
+          await tester.pumpAndSettle();
+          expect(
+            globalState.container.read(accessControlStateProvider).enable,
+            isTrue,
+          );
+          expectFooterPane();
+        }
+        final chipFinder = find.descendant(
+          of: status,
+          matching: find.byType(TonalChip),
+        );
+        final localizations = tester.element(status).appLocalizations;
+        expect(
+          tester.widget<TonalChip>(chipFinder).label,
+          localizations.accessControlSelectedCount(0),
+        );
+        await tester.tap(find.text('Chat'));
+        await tester.pumpAndSettle();
+        expect(
+          globalState.container.read(accessControlStateProvider).currentList,
+          ['com.example.chat'],
+        );
+        final chip = tester.widget<TonalChip>(chipFinder);
+        expect(chip.label, localizations.accessControlSelectedCount(1));
+        expect(chip.color, scheme.primary.opacity15);
+        expect(chip.foregroundColor, scheme.primary);
+        final material = find.descendant(
+          of: chipFinder,
+          matching: find.byType(Material),
+        );
+        expect(tester.widget<Material>(material).color, chip.color);
+        expectFooterPane();
         expect(tester.takeException(), isNull);
       });
     }

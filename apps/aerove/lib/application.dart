@@ -236,6 +236,14 @@ class ApplicationState extends ConsumerState<Application> {
     final hasVpn = results.contains(ConnectivityResult.vpn);
     if (_preHasVpn == hasVpn) {
       ref.read(routeTrackerProvider.notifier).bumpHostEpoch();
+      // Android's NetworkObserver tells the Core about a new network itself.
+      if (system.isDesktop) {
+        debouncer.call(
+          FunctionTag.clearDnsCache,
+          ref.read(coreActionProvider.notifier).clearDnsCacheOnNetworkChange,
+          duration: const Duration(milliseconds: 200),
+        );
+      }
     }
     _preHasVpn = hasVpn;
   }
