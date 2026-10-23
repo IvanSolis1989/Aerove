@@ -754,7 +754,10 @@ mod cleanup_ack_tests {
         release.send(()).unwrap();
         let returned = timeout(Duration::from_secs(5),starting).await.unwrap().unwrap().unwrap();
         assert!(Arc::ptr_eq(&owner,&returned));
-        let failure = timeout(Duration::from_secs(5),owner.ready()).await.unwrap().unwrap_err();
+        let failure = match timeout(Duration::from_secs(5),owner.ready()).await.unwrap() {
+            Err(cause) => cause,
+            Ok(_) => panic!("managed DPA unexpectedly became ready"),
+        };
         let detail = failure.get_ref().unwrap().downcast_ref::<crate::runtime::Failure>().unwrap();
         assert_eq!(detail.code,"managedDialerProxyGraphNotIntegrated");
         assert_eq!(detail.field.as_deref(),Some("proxies.dialer-proxy"));

@@ -162,7 +162,11 @@ async fn managed_dialer_failure_preserves_field_reason_through_ready_terminal_an
         let owner=session.owned_runtime().unwrap();assert!(owner.cleanup_confirmed());
         let status=owner.status();assert_eq!(status.state,"Failed");
         let message=failure.to_string();assert_eq!(status.error.as_deref(),Some(message.as_str()));
-        assert_eq!(timeout(Duration::from_secs(5),owner.ready()).await.unwrap().unwrap_err().to_string(),failure.to_string());
+        let owner_failure = match timeout(Duration::from_secs(5),owner.ready()).await.unwrap() {
+            Err(cause) => cause,
+            Ok(_) => panic!("managed DPA unexpectedly became ready"),
+        };
+        assert_eq!(owner_failure.to_string(),failure.to_string());
         assert_eq!(timeout(Duration::from_secs(5),session.exited()).await.unwrap().unwrap_err(),failure);
         let terminal=timeout(Duration::from_secs(5),session.stop()).await.unwrap().unwrap();
         assert_eq!(terminal.phase,Phase::Failed);assert_eq!(terminal.failure.as_ref(),Some(&failure));
