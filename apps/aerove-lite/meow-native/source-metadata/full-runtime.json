@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "patch": "patches/full-runtime.patch",
-  "patchSha256": "3c64f1581832bdeb70d108569cd7ef71a429e8bc596577946dd49376b2954a84",
+  "patchSha256": "c1527ebca1c5e34803f9cb6aa2374df2af9ed808d90981140749924c1f2c401f",
   "rawFileManifestSha256": "a1948157edb77700f6f9152f3467907fb6a050c66cd153edfe98295bbf56e550",
-  "adaptedFileManifestSha256": "9fba025e808ee104e12df6845abffde0f1b9c817ff75e0c4f125f44180d6ef79",
+  "adaptedFileManifestSha256": "0c4311464536facd1837c75fe5f12622a416da74ae292fe9e3b9ad89d7175189",
   "changes": {
     "crates/meow-api/Cargo.toml": {
       "beforeSha256": "9c85af582fabee22cfe407c41dab38849eb70350034bcb1484bd0dc26d840d3b",
@@ -27,15 +27,19 @@
     },
     "crates/meow-common/Cargo.toml": {
       "beforeSha256": "563038bd1e9e4e22b0aa79399d44674844818e8e7a595dca4130b693605d8cc7",
-      "afterSha256": "685353f28626466e6ca99b3170cba1fe129f781209bf20a0ee096ba49bc09078"
+      "afterSha256": "3c0001a2e6a48e7b9031699c46251da676916cf7e0596a961ba548898d82be86"
     },
     "crates/meow-common/src/adapter.rs": {
       "beforeSha256": "eaaf4339eaf4be5da718ce7e17a85215e23f58d74c41c702f281bdf8e89d2485",
-      "afterSha256": "61bba6b01f81e09faf25f55644d50760b407687e1278d2368185b2a229a82437"
+      "afterSha256": "3b07bd2d22e6a9977e7997f95c3747583ada13e968210581ea7a6311bf40b84a"
     },
     "crates/meow-common/src/lib.rs": {
       "beforeSha256": "380810c10943937c467e1caae02d7057e73b13f5546636dde2694f7184824e25",
-      "afterSha256": "72daaf9d87b6a716ef2c51ae2612ebb0b98287d7cc6d68f5083ee20075df0d7f"
+      "afterSha256": "0d6f81600067eed1d930415627259462eb2a206491de572409291c2467ab6c35"
+    },
+    "crates/meow-common/src/probe_policy.rs": {
+      "beforeSha256": null,
+      "afterSha256": "a07e8c03db43700b365e05260281148d158b54cd9a489e69391a35f1106ecac8"
     },
     "crates/meow-common/src/request_policy.rs": {
       "beforeSha256": null,
@@ -43,7 +47,11 @@
     },
     "crates/meow-common/src/socket_protect.rs": {
       "beforeSha256": "2ee6da8d086f0260ffdbe777c47e90b97932a9a085ca7dc3d3f235cec6ab8739",
-      "afterSha256": "ac3c385c107926e63c0915464adb309fdb1222946edaea20793b423d10d3ca39"
+      "afterSha256": "fd9bca1ea5c87cc2917500dab92194095507889c21bf122e231456d79279ecdb"
+    },
+    "crates/meow-common/src/transport_tasks.rs": {
+      "beforeSha256": null,
+      "afterSha256": "ed4d0a104189ee6a68eb217e9290e0ed28fa94312787f590e766b6604ee5d4bb"
     },
     "crates/meow-config/src/dns_parser.rs": {
       "beforeSha256": "841c68fa46bf17687ebaffc3b9034f4a15cbef22078edb2b7b9f6c8f8444e0d3",
@@ -55,7 +63,7 @@
     },
     "crates/meow-config/src/lib.rs": {
       "beforeSha256": "9490de648857f9e26be6f8f2cff054996fe755ff52e2b51ee8eeca8e3b1339ec",
-      "afterSha256": "6ec2346222c31e5375a30391ab947e0baf2300f3c2abd02ae74c513e481b0c7f"
+      "afterSha256": "d3cbf91521e02c12abcfab961740f0bc9f4a6f313aa5ef1fbcedb48308c852b4"
     },
     "crates/meow-config/src/offline_validation.rs": {
       "beforeSha256": null,
@@ -67,7 +75,7 @@
     },
     "crates/meow-config/src/owned_load.rs": {
       "beforeSha256": null,
-      "afterSha256": "472611a891e6df23ee471b0f195dc93c13efd44d42aeced886f4c848c62e3e42"
+      "afterSha256": "7f2a37ebd26c22d5b43e6f3dced2ea616493ab80be3a7c211c54c104a52499c0"
     },
     "crates/meow-config/src/provider_events.rs": {
       "beforeSha256": null,
@@ -119,7 +127,7 @@
     },
     "crates/meow-listener/src/owned_ingress.rs": {
       "beforeSha256": null,
-      "afterSha256": "b832ef9a11b7e9e6ed803531b1a90972323f6ca83f090b3049fd346c50f9d9f9"
+      "afterSha256": "055d0d7fe7cb66c7cb819b016209e5eebed41a73026ff351c90415b3dfdada21"
     },
     "crates/meow-listener/src/socks5_udp.rs": {
       "beforeSha256": "14c4b91d592ce3fc38b3c193118d8238f251b491e2824c11adc0d50d26712fd0",
@@ -137,17 +145,29 @@
       "beforeSha256": "1592278ab5fe6f38150f50228afb3db1be906c97a9d8343db801204cf573459e",
       "afterSha256": "14eaff9b12ed3e81a9491f1772af1139b2c66115215bad7792b40106d2425d50"
     },
+    "crates/meow-proxy/Cargo.toml": {
+      "beforeSha256": "e0bfc18c5b4da15eb237b1e34c872987933c776ee4782eede63c51da3e5cea3b",
+      "afterSha256": "c9681b9edf31fdb12c08927e670de511966aeb5ba3a369513a31c4cf89b9b436"
+    },
     "crates/meow-proxy/src/anytls_adapter.rs": {
       "beforeSha256": "ee13aa62b089fa7092e5c9e403ca36315fd5fdedf1f0408b04ca29c2423af985",
       "afterSha256": "d6b3549b3ab0ba9a5b09c75ce9b8b42bbb76365006ef2e01c940738bdfa8ec68"
     },
+    "crates/meow-proxy/src/direct.rs": {
+      "beforeSha256": "6b4abfbec64f4a73d24ddacddd60a0643de6ccf4882aa33a9329397b207557be",
+      "afterSha256": "091c5d32b183fdd81adc1c6f92f0502ebd4cb7649c49339776936ead8699fcc5"
+    },
     "crates/meow-proxy/src/group/fallback.rs": {
       "beforeSha256": "d3df2c2df6a21eae06e6af10e901e93650fbc8df2ea85dd9d2525b07b9cf058e",
-      "afterSha256": "52be13c8a330c5b679ca65d302cf963f23985ba5bac29602e282d79ddbeec266"
+      "afterSha256": "9074f4cec581450dcc84eb6646423126d540b26f68dfcbe3902f4a1adc9ce25b"
     },
     "crates/meow-proxy/src/group/selector.rs": {
       "beforeSha256": "24f559b08bdda85037d6d583238ea8b0cab257302285f77abdd60e66c41c35ba",
-      "afterSha256": "14be58999c7c717a8a09e8c8a66f40c82e88cf55d6af0f5d0c90792300756a48"
+      "afterSha256": "d14fa64f6a3bf8c4443f6bae5ef15b0bf18aa098504a23a33ede752f0dca22d6"
+    },
+    "crates/meow-proxy/src/group/selector_store.rs": {
+      "beforeSha256": "700688860d9201b43bd5de8fc7130c76631df2b79ebf6c8e7fa2dbb7f66a0a3c",
+      "afterSha256": "097be322657fa174e7087db5fad179f7cb0a63fb3818838f40dc92ace9175f91"
     },
     "crates/meow-proxy/src/group/urltest.rs": {
       "beforeSha256": "fb146b9a6498ca8cbb97726009da15746dd0e0dfb3c8448bf6d84253e495e3ed",
@@ -155,7 +175,19 @@
     },
     "crates/meow-proxy/src/health.rs": {
       "beforeSha256": "22d4a3f776a840343ac35c9dec188c1ae755b12789cb5d06bd7ff0bb9378191c",
-      "afterSha256": "59ef9bb4b4fbdb5c224d49a87d77fda970308920835b855b87e72b8a85dc7e0c"
+      "afterSha256": "6c9690eec1214d6ff5da5f0a39d083713fcd28ecc45e89ac890b4b29d09ac1c4"
+    },
+    "crates/meow-proxy/src/lib.rs": {
+      "beforeSha256": "e8c3533bff1f79e9e7496c3ba073f207047678063fa4bdfc49e165c6070444ef",
+      "afterSha256": "a88383d7bf28ddec0b138c33f695b173c0dd2c5082e83715334981814b1d4114"
+    },
+    "crates/meow-proxy/src/probe_head.rs": {
+      "beforeSha256": null,
+      "afterSha256": "e3450452c6726018a3d1f42bb10a8a1393b5f95975ce86031b7f23c53746c963"
+    },
+    "crates/meow-proxy/src/socks5_adapter.rs": {
+      "beforeSha256": "417e9f90a9e841488098f09005463e80db6d6dd767dd084a11ac3da499c305eb",
+      "afterSha256": "adf7e4810e81eab1c6a72f49b30db9f81223bd528aa321c19f6b7d31ecbbad80"
     },
     "crates/meow-rules/src/geosite_dat.rs": {
       "beforeSha256": "2030237d31fba36dcfa53eb410fde1887a041ee66ce7251e3ea0b09101eaf289",
@@ -168,6 +200,10 @@
     "crates/meow-rules/src/rule_set.rs": {
       "beforeSha256": "9b5120e61f2286b55ac1e69db6886864ab0dec52877ec7dcfdb9ca2b0bbff8b3",
       "afterSha256": "7fbd8267abbdbe9cc960290a86626adb252757056f00350b8d98c57fee95ed30"
+    },
+    "crates/meow-tunnel/src/health_check.rs": {
+      "beforeSha256": "c2afdac0ea1fe2ffc2c8e42b828e35d2aa1aff263fbe7c3ff9d121c4dc06b100",
+      "afterSha256": "95817ae26db7718015fd94044b0f3d4490ca27de2031d8e622aea31f133a4be3"
     }
   },
   "files": {
@@ -399,7 +435,7 @@
     "crates/meow-app/build.rs": "40d54404667f789e325557edced19afe4e194a33dd71a332b3ccc1a959607fc6",
     "crates/meow-app/Cargo.toml": "e0c2fb40daa78074be358e20fd45d8e543295ab4bbb2c855424f4a759988767f",
     "crates/meow-bench/Cargo.toml": "f4849553b59464b8a790d9406c68882e7bdefdf69503a06ad8565df7eb91650a",
-    "crates/meow-common/Cargo.toml": "685353f28626466e6ca99b3170cba1fe129f781209bf20a0ee096ba49bc09078",
+    "crates/meow-common/Cargo.toml": "3c0001a2e6a48e7b9031699c46251da676916cf7e0596a961ba548898d82be86",
     "crates/meow-config/Cargo.toml": "3d77227af716af7bfda247974fa28744a19f156b97bc87a2a0b35bb3061d6f1e",
     "crates/meow-dns/Cargo.toml": "f2c08ef71bfe890284a78e49281059481cd03912b06f47d942e0638fe023445e",
     "crates/meow-listener/build.rs": "85636f505480b6e4d90effa3a10d52b4c9885972d212694c787a70052baeb430",
@@ -408,7 +444,7 @@
     "crates/meow-lwip/Cargo.toml": "7b5ddc656ca9d9fee7883022b679f25b3ccd05ead4dd5b96cccd5bf55e9bfd90",
     "crates/meow-lwip/COPYING": "ef4aac92e05e87cd1cdc140870ed52206ba03d4a7fe46c1e11d7ffa6c87d252b",
     "crates/meow-lwip/README.md": "69d30deb7213b7ff8d8632281583f1c87670a60e60a5128367def22fd3db1e0c",
-    "crates/meow-proxy/Cargo.toml": "e0bfc18c5b4da15eb237b1e34c872987933c776ee4782eede63c51da3e5cea3b",
+    "crates/meow-proxy/Cargo.toml": "c9681b9edf31fdb12c08927e670de511966aeb5ba3a369513a31c4cf89b9b436",
     "crates/meow-rules/Cargo.toml": "16ee713fb8c04ddbf667aaae72674ff2b1923fd54af18470e12e0bbd55acd86e",
     "crates/meow-transport/Cargo.toml": "1a38bdb22b7aa5d66bb1e5afa5c93e9197d22d2e2a88e0078524f31288a13ef0",
     "crates/meow-trie/Cargo.toml": "c915f91ffd522c2d086c163890b30abb41adf65f58c4a6d7ee05ed8142e153cd",
@@ -416,7 +452,7 @@
     "crates/meow-tunnel/benches/rules_bench.rs": "8890fcd2831bf8460f6373dee79f0af487e568deb9b96b25a1ab7a4fe5e4e3ae",
     "crates/meow-tunnel/benches/stats_bench.rs": "2bb218bbb7cf7ff840e470913708f33e4333ba2b5b244685642da131bfc893f6",
     "crates/meow-tunnel/benches/udp_bench.rs": "93d63348570edb53b39ac731bd98eb34bd622fa289bb52686fa3693e38473c76",
-    "crates/meow-tunnel/src/health_check.rs": "c2afdac0ea1fe2ffc2c8e42b828e35d2aa1aff263fbe7c3ff9d121c4dc06b100",
+    "crates/meow-tunnel/src/health_check.rs": "95817ae26db7718015fd94044b0f3d4490ca27de2031d8e622aea31f133a4be3",
     "crates/meow-tunnel/src/lib.rs": "e3b5f4f3d867696e9245336b54034979c75da703854c1f872ab3037708ca67ad",
     "crates/meow-tunnel/src/match_engine.rs": "011df47ef8cab31e60090cd72ebfff029560f0e31ff6fcd0a7f0459098a3c39c",
     "crates/meow-tunnel/src/relay.rs": "3e90433f50df3c40eef4b084c7963a3b49b41cb13625e97a9cf9e9a3bfc6cdc6",
@@ -550,21 +586,21 @@
     "crates/meow-proxy/src/aead.rs": "636dda5ad5b6e887e15d8280d7ff8e2281ae0345f3c55603ed0b33cc045ccbe2",
     "crates/meow-proxy/src/anytls_adapter.rs": "d6b3549b3ab0ba9a5b09c75ce9b8b42bbb76365006ef2e01c940738bdfa8ec68",
     "crates/meow-proxy/src/dialer.rs": "7a68cc1e046f5ea15587edaec325e402370e98a355f4d27f5ac949c009f62771",
-    "crates/meow-proxy/src/direct.rs": "6b4abfbec64f4a73d24ddacddd60a0643de6ccf4882aa33a9329397b207557be",
+    "crates/meow-proxy/src/direct.rs": "091c5d32b183fdd81adc1c6f92f0502ebd4cb7649c49339776936ead8699fcc5",
     "crates/meow-proxy/src/ech_tls_tunnel.rs": "3deaaba91bcf82f08496ac92689128ddcce939ae96c4640f6bd243a1f504076f",
     "crates/meow-proxy/src/gost_plugin.rs": "fcae9e9263539848a5b05928f4f94b29552ef5dcd9182838014d3a4c3b9eb5d6",
-    "crates/meow-proxy/src/health.rs": "59ef9bb4b4fbdb5c224d49a87d77fda970308920835b855b87e72b8a85dc7e0c",
+    "crates/meow-proxy/src/health.rs": "6c9690eec1214d6ff5da5f0a39d083713fcd28ecc45e89ac890b4b29d09ac1c4",
     "crates/meow-proxy/src/http_adapter.rs": "99899db277531756ae2e3052b4c74a6d893b1df5999b629d565032e99d7cd0a2",
     "crates/meow-proxy/src/hysteria2_adapter.rs": "c9d5b63aa85aab136b49440cb0eb3da63f42fa8ff1215531f512b52f344d4985",
     "crates/meow-proxy/src/jls_plugin.rs": "ab8691cdb634db41aaf83d002f59ca3e008d79dc78bf8723a514a0b55f95b775",
     "crates/meow-proxy/src/kcptun_plugin.rs": "18ad20b7f964e88ce6364cbeeda92ec47f21b95d1e7e5c24dfb5c99b76adfeca",
-    "crates/meow-proxy/src/lib.rs": "e8c3533bff1f79e9e7496c3ba073f207047678063fa4bdfc49e165c6070444ef",
+    "crates/meow-proxy/src/lib.rs": "a88383d7bf28ddec0b138c33f695b173c0dd2c5082e83715334981814b1d4114",
     "crates/meow-proxy/src/plugin_util.rs": "4c6bc9f95528e642cc3a75c5f0796f6fcefc3859fdcbd8aeebe40b1d3757e328",
     "crates/meow-proxy/src/reject.rs": "d7265779098793fc1a0ac5c5d3cbd45c34245df3504e6d71671a2604a902c2ff",
     "crates/meow-proxy/src/restls_plugin.rs": "1079d842bd9fa39ea26826a91b890fce8e326eb7e44657328f31b5ecea7c4a35",
     "crates/meow-proxy/src/shadowsocks_adapter.rs": "2a23b70e2fa8cdc3f5b021b68dafef1b241d0465bcae5fa18766e281de37a18b",
     "crates/meow-proxy/src/shadow_tls_plugin.rs": "770839c1bfc1c55c3d94a954d0bb9dacd1a15b0366c53c9edcf522287b43687d",
-    "crates/meow-proxy/src/socks5_adapter.rs": "417e9f90a9e841488098f09005463e80db6d6dd767dd084a11ac3da499c305eb",
+    "crates/meow-proxy/src/socks5_adapter.rs": "adf7e4810e81eab1c6a72f49b30db9f81223bd528aa321c19f6b7d31ecbbad80",
     "crates/meow-proxy/src/stream_conn.rs": "02f505e907e203c1933898e129720e8a466826437909ab6ff942700a5d7fb0cc",
     "crates/meow-proxy/src/tasked_duplex.rs": "5acd20630682e0158cab839a6c5c073aca1787e44b2b5c0e2d6d9d2db51c618b",
     "crates/meow-proxy/src/transport_chain.rs": "7efee42d2a41fa64d1d736685231fa05853f5a4b60b50533fedd856620948034",
@@ -596,13 +632,13 @@
     "crates/meow-proxy/tests/support/kcptun-server/main.go": "54e2e1b8ce522ce0a3ad7910ca6fe5d5d465fa43be12f6f076bec765e1b97bc5",
     "crates/meow-proxy/src/group/dialer_proxy.rs": "24c55a6ae440a20018c6a3b32ba107bee1941f896a2fb828d42d6c4b6f09fb6e",
     "crates/meow-proxy/src/group/dial_timeout_tests.rs": "6f4c3106955ecf223bab0676af8301409230f787fd8c7a07bc968813b26bbc49",
-    "crates/meow-proxy/src/group/fallback.rs": "52be13c8a330c5b679ca65d302cf963f23985ba5bac29602e282d79ddbeec266",
+    "crates/meow-proxy/src/group/fallback.rs": "9074f4cec581450dcc84eb6646423126d540b26f68dfcbe3902f4a1adc9ce25b",
     "crates/meow-proxy/src/group/front_hop_tests.rs": "b6ddfc8f3f95d06c7ea25f3706f075417c5a1faefe8ab8650150fe1d5ea2e021",
     "crates/meow-proxy/src/group/load_balance.rs": "6d5da616d2d818e84bdf989063b83a538b194e00d579e1b445cdcb7b49e38682",
     "crates/meow-proxy/src/group/mod.rs": "e8e7596bbd4d81c58c599eb6a2429d46720225b963453ccef41f2f44c1b5308e",
     "crates/meow-proxy/src/group/relay.rs": "f0713371e7a11160022d3746d2d6eeb2e362a3a7bed1811119f69240957b0076",
-    "crates/meow-proxy/src/group/selector.rs": "14be58999c7c717a8a09e8c8a66f40c82e88cf55d6af0f5d0c90792300756a48",
-    "crates/meow-proxy/src/group/selector_store.rs": "700688860d9201b43bd5de8fc7130c76631df2b79ebf6c8e7fa2dbb7f66a0a3c",
+    "crates/meow-proxy/src/group/selector.rs": "d14fa64f6a3bf8c4443f6bae5ef15b0bf18aa098504a23a33ede752f0dca22d6",
+    "crates/meow-proxy/src/group/selector_store.rs": "097be322657fa174e7087db5fad179f7cb0a63fb3818838f40dc92ace9175f91",
     "crates/meow-proxy/src/group/test_support.rs": "a692c00efbeaaf8f7ae86ef20a0519f0a2cb3f4d5db49868150746e21b5d93ba",
     "crates/meow-proxy/src/group/urltest.rs": "30a0105a020fba2f3cee4d1e6825696ba216c64de82694b81059fde7cd43f094",
     "crates/meow-proxy/src/hysteria2/auth.rs": "06fb967f7680d7b9d06b503c85a9491b21384792728f9174186abea38d6f7f5e",
@@ -887,6 +923,7 @@
     "crates/meow-listener/src/http_proxy.rs": "e1e6dd4f3e68d37f78ef1ff8625881e7ee98d0fc879306e557cce10d0229a4ac",
     "crates/meow-listener/src/lib.rs": "258725229279abff1326b05fca101bd71bd52d672c598ee9ff7f126d1404d699",
     "crates/meow-listener/src/mixed.rs": "dc30076788932cb8d821cea5060f7404dee48f7e65c9240f095db7331d02f393",
+    "crates/meow-listener/src/owned_ingress.rs": "055d0d7fe7cb66c7cb819b016209e5eebed41a73026ff351c90415b3dfdada21",
     "crates/meow-listener/src/shadowsocks.rs": "f160ec795c5b592bacb0eab7155745aa5625c3fa82bf8a3d375922bb7060252a",
     "crates/meow-listener/src/sniffer.rs": "5a115ffa33103584dc3ac1ae66203177baa9638243b16ab0955eb13745f7db2c",
     "crates/meow-listener/src/socks5.rs": "a479145f9607f5d9a3c859137c878284bf80db6fa00b63ed72b5c70aa3255aac",
@@ -938,11 +975,16 @@
     "crates/meow-config/src/external_ui.rs": "e97b5df73a24748862405c7efea5f686ca404f171af460daa2f29432de18453b",
     "crates/meow-config/src/geodata.rs": "039b0ef9470cd61e346cd3ab213a547252d5fde7675a2322979f2b96edbafa52",
     "crates/meow-config/src/internal_http.rs": "4bd5a72d556bd00b0f2dc85d63c8ed729d1006ee3d78d2aee4c348e9fcd29c9d",
-    "crates/meow-config/src/lib.rs": "6ec2346222c31e5375a30391ab947e0baf2300f3c2abd02ae74c513e481b0c7f",
+    "crates/meow-config/src/lib.rs": "d3cbf91521e02c12abcfab961740f0bc9f4a6f313aa5ef1fbcedb48308c852b4",
+    "crates/meow-config/src/offline_validation.rs": "02cae41e5e46b6d68115aba32f571d9e7b35b02cf3090efd3c4d59fc5630ee79",
+    "crates/meow-config/src/owned_dns_tests.rs": "26f14292e971a1b7c117469105119fc1ff8ec4a0194946716e082c5c07a0c6b4",
+    "crates/meow-config/src/owned_load.rs": "7f2a37ebd26c22d5b43e6f3dced2ea616493ab80be3a7c211c54c104a52499c0",
+    "crates/meow-config/src/provider_events.rs": "f8f90ba8a834e748cea21ebf1436aa82a94d149310473fdcceed22f1aa8f57b3",
     "crates/meow-config/src/proxy_parser.rs": "68ec68e9207bf9198902bdca3d64c8b06c22d4f34c9696f0333deaade01c1e3b",
     "crates/meow-config/src/proxy_provider.rs": "e8e8b9ede5e5285f235582936413c9fba3e94cc35f3f0fa59bf09a68973b610b",
     "crates/meow-config/src/proxy_provider_refresh.rs": "3d4045e92836456c99404ffc947a7de7f89a762f043b096db88719592d9a7005",
     "crates/meow-config/src/raw.rs": "4bcb90da02d20a7a9655699ad598e15c04694590c62b549cf132dfdad2525bfb",
+    "crates/meow-config/src/rule_pages.rs": "b7272602516df3993bc96972b9711110339b7fc190661a42f034b0c52cbb9fa3",
     "crates/meow-config/src/rule_parser.rs": "2929e7231203aeaa8923ec85567249cb37d001903b0ba23f9529d8df5ceec61a",
     "crates/meow-config/src/rule_provider.rs": "637123ac33ba97b75084b3a9e0bec09e873139cdab8181314a5e4de2c7a2ffbf",
     "crates/meow-config/src/rule_provider_refresh.rs": "6344453cf6894ffb210012ee9b0ec0635417586b5aa1057d23deeae0117d3010",
@@ -961,7 +1003,7 @@
     "crates/meow-config/tests/tun_config_test.rs": "94eeabff181748ceb7ffd8b0172ae9c351dcad58ba7c31c6c65b4ecc3b00316f",
     "crates/meow-config/tests/vless_config_test.rs": "a233cd40ff131f72de1bcbba72de9264b29062a985210d0270a33ba6a55bdedd",
     "crates/meow-config/tests/fixtures/memleak_regression_direct.yaml": "10ae136730c16b0407a60ec4e2569ce74b37c1b01e19c696b775983ee59dffa8",
-    "crates/meow-common/src/adapter.rs": "61bba6b01f81e09faf25f55644d50760b407687e1278d2368185b2a229a82437",
+    "crates/meow-common/src/adapter.rs": "3b07bd2d22e6a9977e7997f95c3747583ada13e968210581ea7a6311bf40b84a",
     "crates/meow-common/src/adapter_type.rs": "4fdcf6a964b93c7a5f0f7e1d50dd15b2447b8cf2dcd7bb5fa5e45e69dfc87f5e",
     "crates/meow-common/src/atomic.rs": "f2ddb36848fd0a7a1340ae31835026ca8b1e9bc95c5791f31e71f4a220fd80dc",
     "crates/meow-common/src/auth.rs": "dd71711887253453d2c8be55a7623711a1501d63867aa5dba9ca1caf5a48471f",
@@ -975,14 +1017,15 @@
     "crates/meow-common/src/fs_util.rs": "40e676068b39614c218ecf343ab2c052836e598677f074635beff86ab797f74d",
     "crates/meow-common/src/health_check.rs": "df788437d6dc1cd977114d87c133367d120a9e0a214ef86cd1a96fc0c84854b3",
     "crates/meow-common/src/home_dir.rs": "38c0b40b8706dc0f813918110898271dc56c116b88bee8552dc106b896d8b70b",
-    "crates/meow-common/src/lib.rs": "72daaf9d87b6a716ef2c51ae2612ebb0b98287d7cc6d68f5083ee20075df0d7f",
+    "crates/meow-common/src/lib.rs": "0d6f81600067eed1d930415627259462eb2a206491de572409291c2467ab6c35",
     "crates/meow-common/src/metadata.rs": "be2b3658a5df7ababfc30c574c2ca439408f54491732b6f52be49d7e52f0ed72",
     "crates/meow-common/src/network.rs": "9a6ec78560b1173b05901f18968b4009af2ab40f4d174b690828df67504adf63",
     "crates/meow-common/src/outbound_iface.rs": "a6c72837a2f9e2397bfc9b580d55fd6d8a401593a48d27ccfdf96b3099f98545",
     "crates/meow-common/src/process_lookup.rs": "285ce017d79edecc14c0d82452bd810fad12647780c68471324e60b2760620f1",
     "crates/meow-common/src/replay_window.rs": "d96b7c60432f2cd5ba6f36f3446d7c9e60a73af49901b88c735ba4347ac2cfee",
+    "crates/meow-common/src/request_policy.rs": "fca145730091622db24cd82197e7b6ac82b35b00ee5899718229fcbc9f05f937",
     "crates/meow-common/src/rule.rs": "d2c299b10ecf1a959ce6756ee8c5d899b1d09dda2e5342b85f3662d0014aa78f",
-    "crates/meow-common/src/socket_protect.rs": "ac3c385c107926e63c0915464adb309fdb1222946edaea20793b423d10d3ca39",
+    "crates/meow-common/src/socket_protect.rs": "fd9bca1ea5c87cc2917500dab92194095507889c21bf122e231456d79279ecdb",
     "crates/meow-common/src/traffic.rs": "5bed66039e3b837e35e0755b56844e322861451ae92e01ba6b673200e3f48cc4",
     "crates/meow-common/src/tunnel_mode.rs": "3eb8e9cef0e827e5ced5d7aaa210195122de137ce22c59d6da84927da0b18924",
     "crates/meow-common/tests/common_test.rs": "b004b6adf1a650f31eb405b81868a2621e2f3e2e116fb32bcde8a1ac17544df0",
@@ -1025,6 +1068,7 @@
     "crates/meow-app/tests/fixtures/realworld_clash_meta.yaml": "69c92eccd2d28c408f1e4dafddd36cd38b2393da169716089ee90643fc4322d6",
     "crates/meow-app/tests/fixtures/realworld_clash_meta_verbatim.yaml": "eb3baab79d7168c6693d22aa2b0e12c3d456763eb4835f000eb1ceddd98ccfb7",
     "crates/meow-api/src/lib.rs": "73b79375f85db7cb3d7481b3ac1b8a0c6c942c334719ed28a5d600626a474ce0",
+    "crates/meow-api/src/lifecycle.rs": "b8c077ca5235260c15ab8c902eac1c3297ef8ab280def447af4dd55f6758e0db",
     "crates/meow-api/src/logbook.rs": "35f9708b9520ae8ff7389de3c404c079915793c8fc255644c1c4c438039880d6",
     "crates/meow-api/src/log_stream.rs": "3d648a3743402e06af52a0bc93a5661b6b0d3f21a4964af096d3ca5fdc6b8561",
     "crates/meow-api/src/routes.rs": "a720a829933644698d28a02d293bb77bbe1e53e93e0dd1ba943df0d8d7b7c40e",
@@ -1239,13 +1283,8 @@
     ".claude/skills/i-impeccable/scripts/detector/engines/static-html/detect-html.mjs": "6a1160d43b7e7380d16c5aeb6ddc571c98807f3ab1995bc6dd2e42973ce470c2",
     ".claude/skills/i-impeccable/scripts/detector/engines/visual/screenshot-contrast.mjs": "b4520b3f001079bd175bf20d46c5197b1b8ec5fb98fdf72c50a24c0b6598ee99",
     ".claude/skills/i-impeccable/scripts/detector/browser/injected/index.mjs": "c15e13202c56f85f7ef87b1e2d5954149bdfd5b8b25f9b8aca8e6f1530bcf57d",
-    "crates/meow-api/src/lifecycle.rs": "b8c077ca5235260c15ab8c902eac1c3297ef8ab280def447af4dd55f6758e0db",
-    "crates/meow-config/src/owned_dns_tests.rs": "26f14292e971a1b7c117469105119fc1ff8ec4a0194946716e082c5c07a0c6b4",
-    "crates/meow-config/src/owned_load.rs": "472611a891e6df23ee471b0f195dc93c13efd44d42aeced886f4c848c62e3e42",
-    "crates/meow-config/src/provider_events.rs": "f8f90ba8a834e748cea21ebf1436aa82a94d149310473fdcceed22f1aa8f57b3",
-    "crates/meow-listener/src/owned_ingress.rs": "b832ef9a11b7e9e6ed803531b1a90972323f6ca83f090b3049fd346c50f9d9f9",
-    "crates/meow-config/src/rule_pages.rs": "b7272602516df3993bc96972b9711110339b7fc190661a42f034b0c52cbb9fa3",
-    "crates/meow-config/src/offline_validation.rs": "02cae41e5e46b6d68115aba32f571d9e7b35b02cf3090efd3c4d59fc5630ee79",
-    "crates/meow-common/src/request_policy.rs": "fca145730091622db24cd82197e7b6ac82b35b00ee5899718229fcbc9f05f937"
+    "crates/meow-common/src/transport_tasks.rs": "ed4d0a104189ee6a68eb217e9290e0ed28fa94312787f590e766b6604ee5d4bb",
+    "crates/meow-common/src/probe_policy.rs": "a07e8c03db43700b365e05260281148d158b54cd9a489e69391a35f1106ecac8",
+    "crates/meow-proxy/src/probe_head.rs": "e3450452c6726018a3d1f42bb10a8a1393b5f95975ce86031b7f23c53746c963"
   }
 }

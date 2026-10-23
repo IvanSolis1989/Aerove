@@ -241,7 +241,7 @@ class ApkInspectionTests(unittest.TestCase):
     def test_packaged_core_requires_await_exit_runtime_export(self):
         symbol = "Java_dev_aerove_lite_core_MeowNativeCore_awaitExit"
         self.assertIn(symbol, module.CORE_JNI_SYMBOLS)
-        self.assertEqual(18, len(module.CORE_JNI_SYMBOLS))
+        self.assertEqual(19, len(module.CORE_JNI_SYMBOLS))
         with tempfile.TemporaryDirectory() as temp:
             apk = self.make_apk(temp)
             self.assertEqual("arm64-v8a", self.verify(apk, "arm64-v8a")["abi"])
@@ -257,7 +257,7 @@ class ApkInspectionTests(unittest.TestCase):
     def test_packaged_core_requires_listener_command_runtime_export(self):
         symbol = "Java_dev_aerove_lite_core_MeowNativeCore_listenerCommand"
         self.assertIn(symbol, module.CORE_JNI_SYMBOLS)
-        self.assertEqual(18, len(module.CORE_JNI_SYMBOLS))
+        self.assertEqual(19, len(module.CORE_JNI_SYMBOLS))
         with tempfile.TemporaryDirectory() as temp:
             apk = self.make_apk(temp)
             self.assertEqual("arm64-v8a", self.verify(apk, "arm64-v8a")["abi"])
@@ -272,11 +272,11 @@ class ApkInspectionTests(unittest.TestCase):
 
     def test_packaged_core_requires_all_frozen_runtime_and_script_exports(self):
         runtime = ("startOwned", "status", "listenerStatus", "awaitReady", "stop", "awaitExit", "listenerCommand",
-            "configurePolicies", "policyStatus", "capabilities", "validate", "inspectRuleSet", "dumpRuleSet", "validateResource")
+            "configurePolicies", "policyStatus", "capabilities", "validate", "inspectRuleSet", "dumpRuleSet", "validateResource", "hostPolicyCommand")
         expected = tuple("Java_dev_aerove_lite_core_MeowNativeCore_" + name for name in runtime) + tuple(
             "Java_dev_aerove_lite_overrides_NativeScriptEngine_native" + name for name in ("Begin", "Evaluate", "Cancel", "Release"))
         self.assertEqual(expected, module.CORE_JNI_SYMBOLS)
-        self.assertEqual(18, len(set(expected)))
+        self.assertEqual(19, len(set(expected)))
         with tempfile.TemporaryDirectory() as temp:
             apk = self.make_apk(temp)
             self.assertEqual("arm64-v8a", self.verify(apk, "arm64-v8a")["abi"])

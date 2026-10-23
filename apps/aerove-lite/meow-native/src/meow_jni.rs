@@ -215,6 +215,19 @@ pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_policyStatus<'lo
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_hostPolicyCommand<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, handle: i64,
+    request: JString<'local>) -> JString<'local> {
+    env.with_env(|env| -> Result<JString<'local>, BridgeError> {
+        let session = session(handle)?;
+        if session.snapshot().phase != Phase::Running { return Err(failure(&session, "runtimeNotReady")); }
+        let owner = session.owned_runtime().ok_or_else(|| BridgeError("runtimeNotReady".into()))?;
+        let request = request.try_to_string(env)?;
+        let receipt = executor()?.block_on(owner.host_policy_command(request))?;
+        Ok(env.new_string(receipt)?)
+    }).resolve::<ThrowRuntimeExAndDefault>()
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_capabilities<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>) -> JString<'local> {
     env.with_env(|env| -> Result<JString<'local>, BridgeError> {
         let json = executor()?.block_on(crate::capabilities::json())?;

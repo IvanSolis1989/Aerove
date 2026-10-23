@@ -376,7 +376,15 @@
  #[derive(Serialize)]
 --- a/crates/meow-common/Cargo.toml
 +++ b/crates/meow-common/Cargo.toml
-@@ -31,6 +31,7 @@
+@@ -9,6 +9,7 @@
+ homepage.workspace = true
+ 
+ [dependencies]
++futures = { workspace = true }
+ tokio = { workspace = true }
+ serde = { workspace = true }
+ smol_str = { workspace = true }
+@@ -31,6 +32,7 @@
  ], optional = true }
  
  [features]
@@ -386,24 +394,253 @@
  logbook = ["dep:rusqlite"]
 --- a/crates/meow-common/src/adapter.rs
 +++ b/crates/meow-common/src/adapter.rs
-@@ -231,6 +231,9 @@
+@@ -52,10 +52,16 @@
+ /// Per-adapter liveness + rolling delay history. Owned by every concrete
+ /// adapter and accessed via [`ProxyAdapter::health`]. Writers use interior
+ /// mutability so the trait method can return `&ProxyHealth`.
++#[derive(Clone, Copy)]
++pub enum HealthUpdate { Alive(bool), Delay(u16) }
++pub trait HealthObserver: Send + Sync {
++    fn commit(&self, health: &ProxyHealth, update: HealthUpdate);
++}
+ pub struct ProxyHealth {
+     alive: AtomicBool,
+     history: RwLock<VecDeque<DelayHistory>>,
+     max_history: usize,
++    observer: RwLock<Option<Arc<dyn HealthObserver>>>,
+ }
+ 
+ impl ProxyHealth {
+@@ -64,6 +70,7 @@
+             alive: AtomicBool::new(true),
+             history: RwLock::new(VecDeque::new()),
+             max_history: 10,
++            observer: RwLock::new(None),
+         }
+     }
+ 
+@@ -71,9 +78,25 @@
+         self.alive.load(Ordering::Relaxed)
+     }
+ 
+-    pub fn set_alive(&self, alive: bool) {
+-        self.alive.store(alive, Ordering::Relaxed);
+-    }
++    pub fn observe(&self, observer: Arc<dyn HealthObserver>) -> bool {
++        let mut slot = self.observer.write().unwrap_or_else(std::sync::PoisonError::into_inner);
++        if slot.is_some() { return false; }
++        *slot = Some(observer); true
++    }
++    pub fn observed(&self) -> bool {
++        self.observer.read().unwrap_or_else(std::sync::PoisonError::into_inner).is_some()
++    }
++    pub fn apply_committed(&self, update: HealthUpdate) {
++        match update {
++            HealthUpdate::Alive(alive) => self.alive.store(alive, Ordering::Relaxed),
++            HealthUpdate::Delay(delay) => self.record_delay_committed(delay),
++        }
++    }
++    fn publish(&self, update: HealthUpdate) {
++        let observer = self.observer.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
++        match observer { Some(observer) => observer.commit(self, update), None => self.apply_committed(update) }
++    }
++    pub fn set_alive(&self, alive: bool) { self.publish(HealthUpdate::Alive(alive)); }
+ 
+     pub fn last_delay(&self) -> u16 {
+         self.history
+@@ -92,7 +115,8 @@
+             .collect()
+     }
+ 
+-    pub fn record_delay(&self, delay: u16) {
++    pub fn record_delay(&self, delay: u16) { self.publish(HealthUpdate::Delay(delay)); }
++    fn record_delay_committed(&self, delay: u16) {
+         let mut history = self
+             .history
+             .write()
+@@ -231,6 +255,14 @@
  pub trait ProxySelection: Send + Sync {
      /// Validate and select a member by name.
      async fn set(&self, name: &str) -> Result<()>;
 +
 +    async fn prepare(&self, name: &str) -> Result<Option<(Arc<dyn Proxy>, u16)>>;
 +    fn commit(&self, name: &str, health: Option<(Arc<dyn Proxy>, u16)>) -> Result<()>;
++    fn commit_memory(&self, _name: &str) -> Result<()> {
++        Err(crate::error::MeowError::NotSupported("owned selection commit".into()))
++    }
++    fn flush_selection(&self) -> Option<Box<dyn FnOnce() + Send>> { None }
++    fn reconcile_health(&self) {}
  
      /// Set or clear a selection without validation. This mirrors mihomo's
      /// `SelectAble.ForceSet` and is used to unfix automatic groups before a
 --- a/crates/meow-common/src/lib.rs
 +++ b/crates/meow-common/src/lib.rs
-@@ -79,3 +79,5 @@
+@@ -31,6 +31,7 @@
+ pub mod network;
+ pub mod outbound_iface;
+ pub mod process_lookup;
++pub mod probe_policy;
+ pub mod replay_window;
+ pub mod rule;
+ pub mod sniffer;
+@@ -79,3 +80,7 @@
  
  pub mod health_check;
  pub use health_check::HealthCheckSpec;
 +
 +pub mod request_policy;
++
++pub mod transport_tasks;
+--- /dev/null
++++ b/crates/meow-common/src/probe_policy.rs
+@@ -0,0 +1,147 @@
++use serde::{Deserialize, Serialize};
++use std::{future::Future, io, net::SocketAddr, pin::Pin, sync::Arc};
++use futures::{stream::FuturesUnordered, StreamExt};
++
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase", deny_unknown_fields)]
++pub struct ProbePolicy { pub unified_delay: bool, pub tcp_concurrent: bool }
++impl Default for ProbePolicy {
++    fn default() -> Self { Self { unified_delay: true, tcp_concurrent: true } }
++}
++pub trait ProbeSource: Send + Sync {
++    fn snapshot(&self) -> io::Result<Arc<ProbePolicy>>;
++    fn enter(&self) -> io::Result<Box<dyn Send>> { Ok(Box::new(())) }
++    fn cancelled(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
++}
++#[derive(Clone)]
++pub struct ProbeScope { source: Arc<dyn ProbeSource> }
++#[derive(Clone)]
++pub struct ProbeSnapshot { pub policy: Arc<ProbePolicy>, owner: ProbeScope }
++tokio::task_local! { static OWNER: ProbeScope; static OPERATION: ProbeSnapshot; }
++impl ProbeScope {
++    pub fn new(source: Arc<dyn ProbeSource>) -> Self { Self { source } }
++    pub fn capture() -> Option<Self> { OWNER.try_with(Clone::clone).ok() }
++    pub async fn scope<F: Future>(&self, work: F) -> F::Output { OWNER.scope(self.clone(), work).await }
++    pub async fn run_owned<F: Future>(&self, work: F) -> io::Result<F::Output> {
++        let _lease = self.source.enter()?;
++        self.scope(async { tokio::select! { biased;
++            _ = self.source.cancelled() => Err(io::Error::from(io::ErrorKind::Interrupted)),
++            result = work => Ok(result),
++        }}).await
++    }
++    pub fn snapshot(&self) -> io::Result<ProbeSnapshot> {
++        Ok(ProbeSnapshot { policy: self.source.snapshot()?, owner: self.clone() })
++    }
++}
++impl ProbeSnapshot {
++    pub fn lease(&self) -> io::Result<Box<dyn Send>> { self.owner.source.enter() }
++    pub async fn scope<F: Future>(&self, work: F) -> F::Output {
++        self.owner.scope(OPERATION.scope(self.clone(), work)).await
++    }
++    pub async fn run<T>(&self, work: impl Future<Output = io::Result<T>>) -> io::Result<T> {
++        let _lease = self.lease()?;
++        self.scope(async {
++            tokio::select! { biased;
++                _ = self.owner.source.cancelled() => Err(io::Error::from(io::ErrorKind::Interrupted)),
++                result = work => result,
++            }
++        }).await
++    }
++    pub async fn cancelled(&self) { self.owner.source.cancelled().await; }
++}
++pub fn capture() -> io::Result<Option<ProbeSnapshot>> {
++    if let Ok(snapshot) = OPERATION.try_with(Clone::clone) {
++        snapshot.owner.source.snapshot()?;
++        return Ok(Some(snapshot));
++    }
++    ProbeScope::capture().map(|scope| scope.snapshot()).transpose()
++}
++
++pub async fn dial_candidates<T, E, F, Fut>(addresses: &[SocketAddr], concurrent: bool, dial: F)
++    -> Result<T, Vec<E>>
++where T: Send, E: Send, F: Fn(SocketAddr) -> Fut + Sync, Fut: Future<Output = Result<T, E>> + Send {
++    let groups = if concurrent { addresses.iter().map(|address| vec![*address]).collect::<Vec<_>>() }
++        else { vec![addresses.iter().copied().filter(SocketAddr::is_ipv6).collect(),
++                    addresses.iter().copied().filter(SocketAddr::is_ipv4).collect()] };
++    let mut attempts = FuturesUnordered::new();
++    for group in groups.into_iter().filter(|group| !group.is_empty()) {
++        let dial = &dial;
++        attempts.push(async move {
++            let mut errors = Vec::new();
++            for address in group {
++                match dial(address).await { Ok(stream) => return Ok(stream), Err(error) => errors.push(error) }
++            }
++            Err(errors)
++        });
++    }
++    let mut errors = Vec::new();
++    while let Some(result) = attempts.next().await {
++        match result { Ok(stream) => return Ok(stream), Err(group) => errors.extend(group) }
++    }
++    Err(errors)
++}
++
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::sync::{Mutex, atomic::{AtomicUsize, Ordering}};
++    struct Active(Arc<AtomicUsize>);
++    impl Drop for Active { fn drop(&mut self) { self.0.fetch_sub(1, Ordering::SeqCst); } }
++    fn addresses() -> Vec<SocketAddr> { vec!["127.0.0.1:1".parse().unwrap(), "127.0.0.1:2".parse().unwrap()] }
++    #[tokio::test]
++    async fn concurrent_starts_every_candidate_and_drops_loser_before_return() {
++        let active = Arc::new(AtomicUsize::new(0));
++        let entered = Arc::new(AtomicUsize::new(0));
++        let result = dial_candidates(&addresses(), true, |address| {
++            let active = active.clone(); let entered = entered.clone();
++            async move {
++                active.fetch_add(1, Ordering::SeqCst); entered.fetch_add(1, Ordering::SeqCst);
++                let _guard = Active(active);
++                if address.port() == 1 { std::future::pending::<()>().await; }
++                Ok::<_, io::Error>(address.port())
++            }
++        }).await.unwrap();
++        assert_eq!(result, 2); assert_eq!(entered.load(Ordering::SeqCst), 2);
++        assert_eq!(active.load(Ordering::SeqCst), 0);
++    }
++    #[tokio::test]
++    async fn serial_walks_each_family_in_resolver_order_and_retains_all_failures() {
++        let order = Mutex::new(Vec::new());
++        let errors = dial_candidates(&addresses(), false, |address| {
++            order.lock().unwrap().push(address.port());
++            async move { Err::<(), _>(address.port()) }
++        }).await.unwrap_err();
++        assert_eq!(*order.lock().unwrap(), vec![1, 2]); assert_eq!(errors, vec![1, 2]);
++        let both = vec!["[::1]:1".parse().unwrap(), "127.0.0.1:2".parse().unwrap()];
++        let result = dial_candidates(&both, false, |address| async move {
++            if address.is_ipv6() { std::future::pending::<()>().await; }
++            Ok::<_, io::Error>(address.port())
++        }).await.unwrap();
++        assert_eq!(result, 2);
++    }
++    #[tokio::test]
++    async fn dropping_dial_future_joins_owned_attempts_without_a_spawned_task() {
++        let active = Arc::new(AtomicUsize::new(0));
++        let endpoints = addresses();
++        let work = dial_candidates(&endpoints, true, |_| {
++            let active = active.clone();
++            async move {
++                active.fetch_add(1, Ordering::SeqCst); let _guard = Active(active);
++                std::future::pending::<Result<(), io::Error>>().await
++            }
++        });
++        assert!(tokio::time::timeout(std::time::Duration::from_millis(10), work).await.is_err());
++        assert_eq!(active.load(Ordering::SeqCst), 0);
++    }
++    #[tokio::test]
++    async fn selected_candidate_uses_real_tcp_stream_and_nonwinner_socket_is_not_retained() {
++        let origin = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let endpoint = origin.local_addr().unwrap();
++        let stream = dial_candidates(&[endpoint], true, tokio::net::TcpStream::connect).await.unwrap();
++        let (mut peer, _) = origin.accept().await.unwrap(); drop(stream);
++        let mut byte = [0u8; 1];
++        use tokio::io::AsyncReadExt;
++        assert_eq!(tokio::time::timeout(std::time::Duration::from_secs(1), peer.read(&mut byte)).await.unwrap().unwrap(), 0);
++    }
++}
 --- /dev/null
 +++ b/crates/meow-common/src/request_policy.rs
 @@ -0,0 +1,43 @@
@@ -560,7 +797,29 @@
      {
          if android::socket_protector().is_some() {
              tracing::warn!(
-@@ -492,7 +543,7 @@
+@@ -445,6 +496,21 @@
+ /// IP literals short-circuit inside `resolve_addrs` — no resolver hook is
+ /// consulted, but the protector still applies to the literal dial.
+ pub async fn connect_tcp_host(host: &str, port: u16) -> io::Result<TcpStream> {
++    let captured = crate::probe_policy::capture()?;
++    if let Some(snapshot) = captured {
++        return snapshot.run(async {
++            let addrs = resolve_addrs(host, port).await?;
++            match crate::probe_policy::dial_candidates(&addrs, snapshot.policy.tcp_concurrent, connect_tcp).await {
++                Ok(stream) => Ok(stream),
++                Err(errors) => {
++                    sys_cache_evict(host);
++                    let mut preferred = None;
++                    for error in errors { preferred = crate::MeowError::prefer_errno_io(preferred, error); }
++                    Err(preferred.unwrap_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no destination address")))
++                }
++            }
++        }).await;
++    }
+     let addrs = resolve_addrs(host, port).await?;
+     let mut last_err: Option<io::Error> = None;
+     for addr in &addrs {
+@@ -492,7 +558,7 @@
  /// `SocketProtector` (if any) to the socket fd before `bind()`. On every
  /// other target this is equivalent to [`UdpSocket::bind`].
  pub async fn bind_udp<A: ToSocketAddrs>(local: A) -> io::Result<UdpSocket> {
@@ -569,6 +828,46 @@
      {
          if let Some(p) = android::socket_protector() {
              let resolved = tokio::net::lookup_host(local)
+--- /dev/null
++++ b/crates/meow-common/src/transport_tasks.rs
+@@ -0,0 +1,37 @@
++use std::{cell::RefCell, future::Future, io, pin::Pin, sync::Arc};
++use tokio::task::AbortHandle;
++
++pub type Work = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
++pub trait TransportTaskContext: Send + Sync {
++    fn spawn(&self, work: Work) -> io::Result<AbortHandle>;
++}
++
++#[derive(Clone)]
++pub struct TransportScope(Arc<dyn TransportTaskContext>);
++tokio::task_local! { static CURRENT: TransportScope; }
++thread_local! { static BLOCKING: RefCell<Option<TransportScope>> = const { RefCell::new(None) }; }
++
++impl TransportScope {
++    pub fn new(context: Arc<dyn TransportTaskContext>) -> Self { Self(context) }
++    pub fn current() -> Option<Self> {
++        CURRENT.try_with(Clone::clone).ok().or_else(|| BLOCKING.with(|slot| slot.borrow().clone()))
++    }
++    pub async fn scope<F: Future>(&self, work: F) -> F::Output { CURRENT.scope(self.clone(), work).await }
++    pub fn run_blocking<T>(&self, work: impl FnOnce() -> T) -> T {
++        struct Restore(Option<TransportScope>);
++        impl Drop for Restore {
++            fn drop(&mut self) { let retired = BLOCKING.with(|slot| slot.replace(self.0.take())); drop(retired); }
++        }
++        let _restore = Restore(BLOCKING.with(|slot| slot.replace(Some(self.clone()))));
++        work()
++    }
++}
++
++pub fn spawn(work: Work) -> io::Result<AbortHandle> {
++    if let Some(scope) = TransportScope::current() { return scope.0.spawn(work); }
++    #[cfg(all(feature = "aerove-android-runtime", any(target_os = "linux", target_os = "android", target_os = "macos")))]
++    if crate::socket_protect::NetworkScope::current().is_some() {
++        return Err(io::Error::other("capturedTransportOwnerMissing"));
++    }
++    Ok(tokio::spawn(work).abort_handle())
++}
 --- a/crates/meow-config/src/dns_parser.rs
 +++ b/crates/meow-config/src/dns_parser.rs
 @@ -45,8 +45,12 @@
@@ -762,13 +1061,15 @@
      // Pre-resolve any DNS-sourced ECH configs into inline base64 so the
      // sync `parse_proxy` path that follows can stay sync. Failures warn
      // and leave the map unchanged — except the `enable: true` with no
-@@ -7771,3 +7821,6 @@
+@@ -7771,3 +7821,8 @@
          );
      }
  }
 +
 +#[cfg(test)]
 +mod owned_dns_tests;
++
++pub use meow_proxy::{health::probe_without_record as probe_leaf_without_record, DialerProxyAdapter as ChainedProxyAdapter};
 --- /dev/null
 +++ b/crates/meow-config/src/offline_validation.rs
 @@ -0,0 +1,164 @@
@@ -1072,7 +1373,7 @@
 +}
 --- /dev/null
 +++ b/crates/meow-config/src/owned_load.rs
-@@ -0,0 +1,292 @@
+@@ -0,0 +1,303 @@
 +use parking_lot::Mutex;
 +use std::{cell::RefCell, collections::HashMap, future::Future, pin::Pin, sync::{Arc, atomic::{AtomicU64, Ordering}}};
 +use tokio::{sync::Notify, task::{AbortHandle, JoinHandle}};
@@ -1177,6 +1478,26 @@
 +        jobs.tasks.insert(id, None);
 +        Some(Lease { owner: self.clone(), id })
 +    }
++    pub fn spawn_owned<F>(self: &Arc<Self>, work: F) -> Result<JoinHandle<F::Output>, &'static str>
++    where F: Future + Send + 'static, F::Output: Send + 'static {
++        let Some(lease) = self.lease() else { return Err("ownedLoadScopeClosed"); };
++        let id = lease.id;
++        let wrapped = wrap_with(self.clone(), work);
++        let task = tokio::spawn(async move { let _lease = lease; wrapped.await });
++        let mut jobs = self.jobs.lock();
++        if jobs.closed { task.abort(); }
++        if let Some(slot) = jobs.tasks.get_mut(&id) { *slot = Some(task.abort_handle()); }
++        Ok(task)
++    }
++    pub fn spawn_blocking_owned<F, R>(self: &Arc<Self>, work: F) -> Result<JoinHandle<R>, &'static str>
++    where F: FnOnce() -> R + Send + 'static, R: Send + 'static {
++        let lease = self.lease().ok_or("ownedLoadScopeClosed")?;
++        let owner = self.clone();
++        Ok(tokio::task::spawn_blocking(move || {
++            let _lease = lease;
++            blocking_with(owner, work)
++        }))
++    }
 +    pub fn cancel(&self) {
 +        let mut jobs = self.jobs.lock();
 +        jobs.closed = true;
@@ -1203,16 +1524,7 @@
 +pub(crate) fn spawn<F>(work: F) -> JoinHandle<F::Output>
 +where F: Future + Send + 'static, F::Output: Send + 'static {
 +    let Some(owner) = OwnedLoadScope::current() else { return tokio::spawn(work); };
-+    let Some(lease) = owner.lease() else {
-+        return tokio::spawn(async { panic!("ownedLoadScopeClosed") });
-+    };
-+    let id = lease.id;
-+    let wrapped = wrap_with(owner.clone(), work);
-+    let task = tokio::spawn(async move { let _lease = lease; wrapped.await });
-+    let mut jobs = owner.jobs.lock();
-+    if jobs.closed { task.abort(); }
-+    if let Some(slot) = jobs.tasks.get_mut(&id) { *slot = Some(task.abort_handle()); }
-+    task
++    owner.spawn_owned(work).unwrap_or_else(|_| tokio::spawn(async { panic!("ownedLoadScopeClosed") }))
 +}
 +
 +fn blocking_with<F, R>(owner: Arc<OwnedLoadScope>, work: F) -> R
@@ -2785,7 +3097,7 @@
  
 --- /dev/null
 +++ b/crates/meow-listener/src/owned_ingress.rs
-@@ -0,0 +1,50 @@
+@@ -0,0 +1,52 @@
 +// SPDX-License-Identifier: GPL-3.0-only
 +use meow_common::socket_protect::NetworkScope;
 +use parking_lot::Mutex;
@@ -2815,6 +3127,7 @@
 +            panic!("inbound owner closed");
 +        }
 +        let context = NetworkScope::current().expect("owned ingress requires captured network");
++        let transport = meow_common::transport_tasks::TransportScope::current();
 +        let id = gate.next; gate.next = id.checked_add(1).expect("inbound task identity exhausted");
 +        let token = self.tracker.token();
 +        let registration = Registration { owner: Arc::downgrade(self), id };
@@ -2822,7 +3135,8 @@
 +        let task = tokio::spawn(async move {
 +            let _registration = registration;
 +            let _token = token;
-+            owner.scope(context.scope(work)).await
++            let captured = owner.scope(context.scope(work));
++            match transport { Some(transport) => transport.scope(captured).await, None => captured.await }
 +        });
 +        gate.tasks.insert(id, task.abort_handle());
 +        task
@@ -2939,6 +3253,18 @@
          let stack = NetStack {
              ingress: PollSender::new(parts.ingress_tx),
              egress_rx: parts.egress_rx,
+--- a/crates/meow-proxy/Cargo.toml
++++ b/crates/meow-proxy/Cargo.toml
+@@ -70,6 +70,9 @@
+ kcptun = ["ss", "mux", "dep:tokio-util", "meow-transport/kcptun"]
+ 
+ [dependencies]
++hyper = { version = "=1.12.0", features = ["client", "http1"] }
++hyper-util = { version = "=0.1.21", features = ["tokio"] }
++http-body-util = "=0.1.5"
+ meow-common = { workspace = true }
+ meow-dns = { workspace = true }
+ meow-transport = { workspace = true, features = ["tls", "ws"] }
 --- a/crates/meow-proxy/src/anytls_adapter.rs
 +++ b/crates/meow-proxy/src/anytls_adapter.rs
 @@ -40,7 +40,7 @@
@@ -3072,9 +3398,46 @@
  
      async fn test_session() -> (Arc<Session>, DuplexStream) {
          let (io, peer) = tokio::io::duplex(64);
+--- a/crates/meow-proxy/src/direct.rs
++++ b/crates/meow-proxy/src/direct.rs
+@@ -333,6 +333,25 @@
+     }
+ 
+     async fn dial_tcp(&self, metadata: &Metadata) -> Result<Box<dyn ProxyConn>> {
++        if let Some(snapshot) = meow_common::probe_policy::capture().map_err(MeowError::Io)? {
++            let result = snapshot.run(async {
++                let destinations = self.resolve_targets(metadata).await.map_err(|error| match error {
++                    MeowError::Io(error) => error,
++                    error => std::io::Error::other(error),
++                })?;
++                meow_common::probe_policy::dial_candidates(&destinations, snapshot.policy.tcp_concurrent, |destination| async move {
++                    apply_connect_timeout(connect_with_mark(destination, self.routing_mark), self.connect_timeout, destination).await
++                }).await.map_err(|errors| {
++                    let mut preferred = None;
++                    for error in errors { preferred = MeowError::prefer_errno(preferred, error); }
++                    match preferred.unwrap_or_else(|| MeowError::Proxy("direct: no reachable address".into())) {
++                        MeowError::Io(error) => error,
++                        error => std::io::Error::other(error),
++                    }
++                })
++            }).await.map_err(MeowError::Io)?;
++            return Ok(Box::new(DirectConn(result)));
++        }
+         let dests = self.resolve_targets(metadata).await?;
+         let mut last_err = None;
+ 
 --- a/crates/meow-proxy/src/group/fallback.rs
 +++ b/crates/meow-proxy/src/group/fallback.rs
-@@ -343,6 +343,25 @@
+@@ -120,7 +120,7 @@
+             }
+             // Upstream clears a stale fallback pin in memory when it is
+             // observed dead, but leaves the persistent cache untouched.
+-            *self.fixed.write() = None;
++            if !self.health.observed() { *self.fixed.write() = None; }
+         }
+         let mut fallback: Option<Arc<dyn Proxy>> = None;
+         for p in &self.static_proxies {
+@@ -343,6 +343,40 @@
          Ok(())
      }
  
@@ -3097,12 +3460,27 @@
 +        self.force_set(Some(name));
 +        Ok(())
 +    }
++    fn commit_memory(&self, name: &str) -> Result<()> {
++        self.find_member(name).ok_or_else(|| MeowError::Proxy("proxy not exist".into()))?;
++        *self.fixed.write() = Some(SmolStr::from(name));
++        if let Some(store) = &self.store { store.set_memory(&self.name, name); }
++        Ok(())
++    }
++    fn flush_selection(&self) -> Option<Box<dyn FnOnce() + Send>> {
++        self.store.clone().map(|store| Box::new(move || store.flush()) as Box<dyn FnOnce() + Send>)
++    }
++    fn reconcile_health(&self) {
++        let name = self.fixed.read().clone();
++        if name.is_some_and(|name| !self.find_member(&name).is_some_and(|proxy| proxy.alive_for_url(&self.test_url))) {
++            *self.fixed.write() = None;
++        }
++    }
      fn force_set(&self, name: Option<&str>) {
          *self.fixed.write() = name.map(SmolStr::from);
          if let Some(store) = &self.store {
 --- a/crates/meow-proxy/src/group/selector.rs
 +++ b/crates/meow-proxy/src/group/selector.rs
-@@ -272,6 +272,12 @@
+@@ -272,6 +272,21 @@
          }
      }
  
@@ -3112,9 +3490,44 @@
 +    fn commit(&self, name: &str, _health: Option<(Arc<dyn Proxy>, u16)>) -> Result<()> {
 +        if self.select(name) { Ok(()) } else { Err(MeowError::Proxy("proxy not exist".into())) }
 +    }
++    fn commit_memory(&self, name: &str) -> Result<()> {
++        if !self.contains_name(name) { return Err(MeowError::Proxy("proxy not exist".into())); }
++        *self.selected.write() = Some(SmolStr::from(name));
++        if let Some(store) = &self.store { store.set_memory(&self.name, name); }
++        Ok(())
++    }
++    fn flush_selection(&self) -> Option<Box<dyn FnOnce() + Send>> {
++        self.store.clone().map(|store| Box::new(move || store.flush()) as Box<dyn FnOnce() + Send>)
++    }
      fn force_set(&self, name: Option<&str>) {
          // SelectorGroup is a manual-pick group with no automatic fallback.
          // Clearing (None) is intentionally a no-op — a selector without a
+--- a/crates/meow-proxy/src/group/selector_store.rs
++++ b/crates/meow-proxy/src/group/selector_store.rs
+@@ -80,15 +80,22 @@
+     /// errors only warn — losing the persistence side-channel must never
+     /// fail the user's selection.
+     pub fn set(&self, group: &str, selected: &str) {
++        if self.set_memory(group, selected) { self.flush(); }
++    }
++    pub fn set_memory(&self, group: &str, selected: &str) -> bool {
+         use std::sync::atomic::Ordering::Relaxed;
+         {
+             let mut g = self.map.lock();
+             if g.get(group).is_some_and(|v| v == selected) && !self.dirty.load(Relaxed) {
+-                return;
++                return false;
+             }
+             g.insert(group.to_string(), selected.to_string());
+             self.dirty.store(true, Relaxed);
+         }
++        true
++    }
++    pub fn flush(&self) {
++        use std::sync::atomic::Ordering::Relaxed;
+         // Serialize writers and take the snapshot *inside* the write lock:
+         // the rename that lands last then always carries the newest
+         // committed map — without this, a slow writer holding an older
 --- a/crates/meow-proxy/src/group/urltest.rs
 +++ b/crates/meow-proxy/src/group/urltest.rs
 @@ -459,6 +459,14 @@
@@ -3134,21 +3547,295 @@
          if let Some(store) = &self.store {
 --- a/crates/meow-proxy/src/health.rs
 +++ b/crates/meow-proxy/src/health.rs
-@@ -101,6 +101,14 @@
-             Err(UrlTestError::Timeout)
-         }
+@@ -55,6 +55,11 @@
+     expected: Option<&str>,
+     timeout: Duration,
+ ) -> Result<u16, UrlTestError> {
++    match meow_common::probe_policy::capture() {
++        Ok(Some(snapshot)) => return crate::probe_head::run(adapter, url, expected, timeout, snapshot).await,
++        Err(_) => return Err(UrlTestError::Transport("probe owner closed".into())),
++        Ok(None) => {}
++    }
+     let Some(parsed) = ParsedUrl::parse(url) else {
+         return Err(UrlTestError::Transport(format!("invalid url: {url}")));
+     };
+@@ -103,6 +108,14 @@
      }
-+}
-+
+ }
+ 
 +pub async fn probe_without_record(
 +    proxy: &Arc<dyn Proxy>, url: &str, expected: Option<&str>, timeout: Duration,
 +) -> Result<u16, UrlTestError> {
 +    let _permit = global_delay_probe_limiter().acquire().await
 +        .expect("global delay probe semaphore is never closed");
 +    url_test(proxy.as_ref(), url, expected, timeout).await
++}
++
+ /// Probe a proxy and record the result in its [`ProxyHealth`].
+ ///
+ /// On success the measured delay (ms) is recorded; on any failure `0` is
+@@ -119,6 +132,7 @@
+         .expect("global delay probe semaphore is never closed");
+     let adapter: &dyn ProxyAdapter = proxy.as_ref();
+     let result = url_test(adapter, url, expected, timeout).await;
++    if meow_common::probe_policy::capture().is_err() { return result; }
+     match &result {
+         Ok(d) => proxy.health().record_delay(*d),
+         Err(_) => proxy.health().record_delay(0),
+@@ -858,7 +872,7 @@
+ 
+ /// Parse an `expected` query-param value into inclusive status-code ranges.
+ /// Empty / `None` defaults to `[200..=299]`, matching upstream.
+-fn parse_expected(spec: Option<&str>) -> Result<Vec<(u16, u16)>, String> {
++pub(crate) fn parse_expected(spec: Option<&str>) -> Result<Vec<(u16, u16)>, String> {
+     let s = spec.unwrap_or("").trim();
+     if s.is_empty() {
+         return Ok(vec![(200, 299)]);
+--- a/crates/meow-proxy/src/lib.rs
++++ b/crates/meow-proxy/src/lib.rs
+@@ -204,3 +204,5 @@
+         other => meow_common::MeowError::Proxy(other.to_string()),
+     }
+ }
++
++mod probe_head;
+--- /dev/null
++++ b/crates/meow-proxy/src/probe_head.rs
+@@ -0,0 +1,192 @@
++use bytes::Bytes;
++use http_body_util::Empty;
++use hyper::{Request, StatusCode};
++use hyper_util::rt::TokioIo;
++use meow_common::{Metadata, ProxyAdapter, probe_policy::ProbeSnapshot};
++use meow_transport::{Transport as _, tls::{TlsConfig, TlsLayer}};
++use std::{io, time::Duration};
++use tokio::io::{AsyncRead, AsyncWrite};
++use tokio::time::Instant;
++use crate::health::UrlTestError;
++
++pub(crate) async fn run(adapter: &dyn ProxyAdapter, url: &str, expected: Option<&str>,
++    timeout: Duration, snapshot: ProbeSnapshot) -> Result<u16, UrlTestError> {
++    let _lease = snapshot.lease().map_err(|_| UrlTestError::Transport("probe owner closed".into()))?;
++    let uri: hyper::Uri = url.parse().map_err(|_| UrlTestError::Transport("invalid probe URL".into()))?;
++    let scheme = uri.scheme_str().unwrap_or("");
++    if !matches!(scheme, "http" | "https") || uri.authority().is_none() {
++        return Err(UrlTestError::Transport("invalid probe URL".into()));
++    }
++    let host = uri.host().ok_or_else(|| UrlTestError::Transport("missing probe host".into()))?;
++    let metadata = Metadata { network: meow_common::Network::Tcp, conn_type: meow_common::ConnType::Tunnel,
++        host: host.into(), dst_port: uri.port_u16().unwrap_or(if scheme == "https" {443} else {80}), ..Default::default() };
++    let ranges = if expected.is_none_or(|value| value.trim().is_empty()) { vec![(100, 599)] }
++        else { crate::health::parse_expected(expected).map_err(UrlTestError::Transport)? };
++    let start = Instant::now();
++    let deadline = start + timeout;
++    let measured = snapshot.scope(async {
++        let stream = adapter.dial_tcp(&metadata).await.map_err(io::Error::other)?;
++        if scheme == "https" {
++            let tls = TlsLayer::new(&TlsConfig::new(host.to_owned())).map_err(io::Error::other)?;
++            let stream = tls.connect(Box::new(stream)).await.map_err(io::Error::other)?;
++            exchange(stream, &uri, &ranges, snapshot.policy.unified_delay, start, deadline).await
++        } else { exchange(stream, &uri, &ranges, snapshot.policy.unified_delay, start, deadline).await }
++    });
++    tokio::pin!(measured);
++    tokio::select! { biased;
++        _ = snapshot.cancelled() => Err(UrlTestError::Transport("probe owner closed".into())),
++        result = &mut measured => result.map_err(|error| UrlTestError::Transport(error.to_string())),
++        _ = tokio::time::sleep_until(deadline) => Err(UrlTestError::Timeout),
++    }
++}
++
++pub(crate) async fn exchange<S>(stream: S, uri: &hyper::Uri, ranges: &[(u16, u16)], unified: bool,
++    start: Instant, deadline: Instant) -> io::Result<u16>
++where S: AsyncRead + AsyncWrite + Unpin + Send + 'static {
++    let request = || Request::head(uri.path_and_query().map_or("/", |path| path.as_str()))
++        .header(hyper::header::HOST, uri.authority().ok_or_else(|| io::Error::other("missing probe authority"))?.as_str())
++        .body(Empty::<Bytes>::new()).map_err(io::Error::other);
++    let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream)).await.map_err(io::Error::other)?;
++    let query = async {
++        let first_response = sender.send_request(request()?).await.map_err(io::Error::other)?;
++        let mut status = first_response.status();
++        drop(first_response);
++        let first = start.elapsed();
++        let mut measured = first;
++        if unified {
++            let second = Instant::now();
++            match tokio::time::timeout_at(deadline, async {
++                sender.ready().await.map_err(io::Error::other)?;
++                sender.send_request(request()?).await.map_err(io::Error::other)
++            }).await {
++                Ok(Ok(response)) => { status = response.status(); drop(response); measured = second.elapsed(); }
++                _ => {}
++            }
++        }
++        if !accepted(status, ranges) { return Err(io::Error::other("unexpected probe status")); }
++        Ok(measured.as_millis().min(u16::MAX as u128).max(1) as u16)
++    };
++    tokio::pin!(query, connection);
++    tokio::select! { biased;
++        result = &mut query => result,
++        _ = &mut connection => query.await,
++    }
++}
++fn accepted(status: StatusCode, ranges: &[(u16,u16)]) -> bool {
++    ranges.iter().any(|(low, high)| *low <= status.as_u16() && status.as_u16() <= *high)
++}
++
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpListener};
++    async fn peer() -> (tokio::net::TcpStream, tokio::net::TcpStream, hyper::Uri) {
++        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let address = listener.local_addr().unwrap();
++        let client = tokio::net::TcpStream::connect(address).await.unwrap();
++        let (server, _) = listener.accept().await.unwrap();
++        (client, server, format!("http://{address}/probe?x=1").parse().unwrap())
++    }
++    async fn head(peer: &mut tokio::net::TcpStream) {
++        let mut bytes = Vec::new(); let mut byte = [0u8; 1];
++        while !bytes.ends_with(b"\r\n\r\n") {
++            assert_eq!(peer.read(&mut byte).await.unwrap(), 1); bytes.push(byte[0]);
++            assert!(bytes.len() < 4096);
++        }
++        assert!(bytes.starts_with(b"HEAD /probe?x=1 HTTP/1.1\r\n"));
++    }
++    async fn eof(peer: &mut tokio::net::TcpStream) {
++        let mut byte = [0u8; 1];
++        assert_eq!(tokio::time::timeout(Duration::from_secs(1), peer.read(&mut byte)).await.unwrap().unwrap(), 0);
++    }
++    #[tokio::test]
++    async fn unified_uses_two_heads_on_same_connection_and_second_status() {
++        let (client, mut server, uri) = peer().await;
++        let origin = tokio::spawn(async move {
++            head(&mut server).await;
++            server.write_all(b"HTTP/1.1 500 First\r\nContent-Length: 0\r\n\r\n").await.unwrap();
++            head(&mut server).await;
++            server.write_all(b"HTTP/1.1 204 Final\r\n\r\n").await.unwrap(); eof(&mut server).await;
++        });
++        let now = Instant::now();
++        assert!(exchange(client, &uri, &[(204,204)], true, now, now + Duration::from_secs(1)).await.unwrap() >= 1);
++        origin.await.unwrap();
++    }
++    #[tokio::test]
++    async fn disabled_unified_issues_only_first_head_and_closes_driver() {
++        let (client, mut server, uri) = peer().await;
++        let origin = tokio::spawn(async move {
++            head(&mut server).await;
++            server.write_all(b"HTTP/1.1 204 First\r\n\r\n").await.unwrap(); eof(&mut server).await;
++        });
++        let now = Instant::now();
++        exchange(client, &uri, &[(204,204)], false, now, now + Duration::from_secs(1)).await.unwrap();
++        origin.await.unwrap();
++    }
++    #[tokio::test]
++    async fn second_transport_failure_preserves_the_successful_first_head() {
++        let (client, mut server, uri) = peer().await;
++        let origin = tokio::spawn(async move {
++            head(&mut server).await;
++            server.write_all(b"HTTP/1.1 204 First\r\n\r\n").await.unwrap();
++            head(&mut server).await;
++            server.write_all(b"invalid HTTP\r\n\r\n").await.unwrap(); eof(&mut server).await;
++        });
++        let now = Instant::now();
++        exchange(client, &uri, &[(204,204)], true, now, now + Duration::from_secs(1)).await.unwrap();
++        origin.await.unwrap();
++    }
++    #[tokio::test]
++    async fn second_head_deadline_keeps_first_measurement_and_closes_connection() {
++        let (client, mut server, uri) = peer().await;
++        let origin = tokio::spawn(async move {
++            head(&mut server).await;
++            server.write_all(b"HTTP/1.1 204 First\r\n\r\n").await.unwrap();
++            head(&mut server).await; eof(&mut server).await;
++        });
++        let now = Instant::now();
++        exchange(client, &uri, &[(204,204)], true, now, now + Duration::from_millis(100)).await.unwrap();
++        origin.await.unwrap();
++    }
++    struct MutableSource {
++        policy: parking_lot::RwLock<std::sync::Arc<meow_common::probe_policy::ProbePolicy>>,
++    }
++    impl meow_common::probe_policy::ProbeSource for MutableSource {
++        fn snapshot(&self) -> io::Result<std::sync::Arc<meow_common::probe_policy::ProbePolicy>> { Ok(self.policy.read().clone()) }
++        fn cancelled(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output=()> + Send + '_>> { Box::pin(std::future::pending()) }
++    }
++    #[tokio::test]
++    async fn hot_policy_changes_the_real_next_probe_but_not_the_captured_inflight_probe() {
++        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let url = format!("http://{}/probe?x=1", listener.local_addr().unwrap());
++        let source = std::sync::Arc::new(MutableSource { policy: parking_lot::RwLock::new(std::sync::Arc::new(Default::default())) });
++        let scope = meow_common::probe_policy::ProbeScope::new(source.clone());
++        let changing = source.clone();
++        let origin = tokio::spawn(async move {
++            let (mut first, _) = listener.accept().await.unwrap();
++            head(&mut first).await;
++            *changing.policy.write() = std::sync::Arc::new(meow_common::probe_policy::ProbePolicy { unified_delay: false, tcp_concurrent: false });
++            first.write_all(b"HTTP/1.1 204 First\r\n\r\n").await.unwrap();
++            head(&mut first).await;
++            first.write_all(b"HTTP/1.1 204 Second\r\n\r\n").await.unwrap(); eof(&mut first).await;
++            let (mut next, _) = listener.accept().await.unwrap(); head(&mut next).await;
++            next.write_all(b"HTTP/1.1 204 Next\r\n\r\n").await.unwrap(); eof(&mut next).await;
++        });
++        let adapter = crate::direct::DirectAdapter::new();
++        scope.scope(crate::health::url_test(&adapter, &url, Some("204"), Duration::from_secs(1))).await.unwrap();
++        scope.scope(crate::health::url_test(&adapter, &url, Some("204"), Duration::from_secs(1))).await.unwrap();
++        origin.await.unwrap();
++    }
++    #[tokio::test]
++    async fn cancelled_first_head_drops_driver_and_reaches_natural_peer_eof() {
++        let (client, mut server, uri) = peer().await;
++        let (started, arrived) = tokio::sync::oneshot::channel();
++        let origin = tokio::spawn(async move { head(&mut server).await; let _ = started.send(()); eof(&mut server).await; });
++        let now = Instant::now();
++        let mut work = Box::pin(exchange(client, &uri, &[(204,204)], true, now, now + Duration::from_secs(1)));
++        tokio::select! { _ = arrived => {}, result = &mut work => panic!("unexpected response: {result:?}") }
++        drop(work);
++        origin.await.unwrap();
++    }
++}
+--- a/crates/meow-proxy/src/socks5_adapter.rs
++++ b/crates/meow-proxy/src/socks5_adapter.rs
+@@ -782,7 +782,7 @@
+                 transport: Socks5UdpTransport::Chained(conn),
+                 relay: bound,
+                 write_target,
+-                _control: ControlGuard::spawn(control),
++                _control: ControlGuard::spawn(control)?,
+             }));
+         }
+ 
+@@ -799,7 +799,7 @@
+             transport: Socks5UdpTransport::Raw(socket),
+             relay: UdpTarget::Addr(relay_addr),
+             write_target,
+-            _control: ControlGuard::spawn(control),
++            _control: ControlGuard::spawn(control)?,
+         }))
+     }
+ 
+@@ -845,8 +845,8 @@
+ struct ControlGuard(tokio::task::AbortHandle);
+ 
+ impl ControlGuard {
+-    fn spawn(control: Box<dyn meow_transport::Stream>) -> Self {
+-        let handle = tokio::spawn(async move {
++    fn spawn(control: Box<dyn meow_transport::Stream>) -> Result<Self> {
++        let handle = meow_common::transport_tasks::spawn(Box::pin(async move {
+             let mut control = control;
+             let mut sink = [0u8; 16];
+             // Block until the proxy closes the control conn (or we're aborted).
+@@ -856,8 +856,8 @@
+                     Ok(_) => {} // ignore unexpected control-channel bytes
+                 }
+             }
+-        });
+-        ControlGuard(handle.abort_handle())
++        })).map_err(MeowError::Io)?;
++        Ok(ControlGuard(handle))
+     }
  }
  
- /// Probe a proxy and record the result in its [`ProxyHealth`].
 --- a/crates/meow-rules/src/geosite_dat.rs
 +++ b/crates/meow-rules/src/geosite_dat.rs
 @@ -58,6 +58,8 @@
@@ -3507,3 +4194,14 @@
 +        assert_eq!(builder.build().len(), 1);
 +    }
 +}
+--- a/crates/meow-tunnel/src/health_check.rs
++++ b/crates/meow-tunnel/src/health_check.rs
+@@ -66,7 +66,7 @@
+     !lazy || (generation != 0 && generation != last_probed_generation)
+ }
+ 
+-async fn run_health_check_loop(inner: Weak<TunnelInner>, spec: HealthCheckSpec) {
++pub async fn run_health_check_loop(inner: Weak<TunnelInner>, spec: HealthCheckSpec) {
+     // `interval(Duration::ZERO)` panics — extract clamps 0→300, but a
+     // spec constructed directly (embedders) must not kill the task.
+     // The ceiling matters too: `PUT /configs?force=true` persists a raw

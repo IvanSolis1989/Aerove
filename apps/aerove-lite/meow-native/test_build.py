@@ -353,11 +353,11 @@ class AndroidRecipeTests(unittest.TestCase):
             with mock.patch.object(build.subprocess,'check_output',side_effect=[' LOAD 0 0 0 0 0 R E 0x4000\n','NEEDED libc.so',symbols.replace('DEFAULT 1','DEFAULT UND')]),self.assertRaisesRegex(ValueError,'JNI symbols'):build.verify_elf(path,62,'readelf',build.SCRIPT_JNI_SYMBOLS,diagnostics)
             self.assertIn('DEFAULT UND',diagnostics.read_text())
 
-    def test_complete_owned_runtime_requires_all_fourteen_defined_runtime_and_four_script_jni_symbols(self):
+    def test_complete_owned_runtime_requires_all_fifteen_defined_runtime_and_four_script_jni_symbols(self):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'lib.so';header=bytearray(20);header[:6]=b'\x7fELF\x02\x01';header[16:18]=(3).to_bytes(2,'little');header[18:20]=(62).to_bytes(2,'little');path.write_bytes(header)
             required=build.SCRIPT_JNI_SYMBOLS+build.RUNTIME_JNI_SYMBOLS
-            self.assertEqual(18,len(set(required)))
+            self.assertEqual(19,len(set(required)))
             self.assertIn('Java_dev_aerove_lite_core_MeowNativeCore_awaitExit',required)
             symbols='\n'.join(' 1: 00000123 42 FUNC GLOBAL DEFAULT 1 '+name for name in required)
             with mock.patch.object(build.subprocess,'check_output',side_effect=[' LOAD 0 0 0 0 0 R E 0x4000\n','NEEDED libc.so',symbols]):build.verify_elf(path,62,'readelf',required)

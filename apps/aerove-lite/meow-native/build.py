@@ -16,7 +16,7 @@ from verify_source import ROOT, sha, verify
 
 TARGETS={'aarch64-linux-android':('arm64-v8a',183),'x86_64-linux-android':('x86_64',62)}
 SCRIPT_JNI_SYMBOLS=['Java_dev_aerove_lite_overrides_NativeScriptEngine_native'+name for name in ['Begin','Evaluate','Cancel','Release']]
-RUNTIME_JNI_SYMBOLS=['Java_dev_aerove_lite_core_MeowNativeCore_'+name for name in ['startOwned','status','listenerStatus','awaitReady','stop','awaitExit','listenerCommand','configurePolicies','policyStatus','capabilities','validate','inspectRuleSet','dumpRuleSet','validateResource']]
+RUNTIME_JNI_SYMBOLS=['Java_dev_aerove_lite_core_MeowNativeCore_'+name for name in ['startOwned','status','listenerStatus','awaitReady','stop','awaitExit','listenerCommand','configurePolicies','policyStatus','capabilities','validate','inspectRuleSet','dumpRuleSet','validateResource','hostPolicyCommand']]
 
 def run(command, environment, capture=False):
     return subprocess.run(command,cwd=ROOT,env=environment,check=True,text=True,stdout=subprocess.PIPE if capture else None).stdout

@@ -17,7 +17,8 @@ CORE_LIBRARY = "libaerove_meow_core.so"
 MEOW_ROOT = Path(__file__).resolve().parents[1] / "meow-native"
 CORE_JNI_SYMBOLS = tuple("Java_dev_aerove_lite_core_MeowNativeCore_" + name for name in
     ("startOwned", "status", "listenerStatus", "awaitReady", "stop", "awaitExit", "listenerCommand",
-     "configurePolicies", "policyStatus", "capabilities", "validate", "inspectRuleSet", "dumpRuleSet", "validateResource")) + tuple(
+     "configurePolicies", "policyStatus", "capabilities", "validate", "inspectRuleSet", "dumpRuleSet", "validateResource",
+     "hostPolicyCommand")) + tuple(
     "Java_dev_aerove_lite_overrides_NativeScriptEngine_native" + name for name in
     ("Begin", "Evaluate", "Cancel", "Release"))
 

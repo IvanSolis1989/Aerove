@@ -19,6 +19,7 @@ object MeowNativeCore {
     @JvmStatic external fun capabilities(): String
     @JvmStatic external fun configurePolicies(handle: Long, requestJson: String): String
     @JvmStatic external fun policyStatus(handle: Long): String
+    @JvmStatic external fun hostPolicyCommand(handle: Long, requestJson: String): String
 
     // Offline conversion only: null means valid; diagnostics preserve native parser errors.
     @JvmStatic external fun validate(config: String): String?

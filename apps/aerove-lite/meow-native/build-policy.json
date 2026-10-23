@@ -1,15 +1,18 @@
 {
   "schema": 1,
   "manifestSha256": "34e742d365f22608296caec8975b4cbd5f9346357df30a405aee458e196251c9",
-  "resolveLock": false,
+  "resolveLock": true,
   "expectedLockBeforeSha256": "333699a851d7ae548145740d7c9fdf9f93009eb322c333fefd5414ffdcca4eef",
   "targets": [
     "lib",
     "api_lifecycle",
     "config_validation",
     "control_plane",
+    "general_groups",
+    "host_policy_runtime",
     "offline_scope",
     "owned_runtime",
+    "owned_spawn",
     "packet_fd",
     "physical_dns",
     "provider_events",
@@ -18,9 +21,11 @@
     "proxy_runtime",
     "request_policy",
     "resource_roots",
+    "runtime_transports",
+    "transport_tasks",
     "tun_driver"
   ],
   "overlay": "source-metadata/full-runtime.json",
-  "overlaySha256": "5bcba533513fc0e792cfeed7f7d0e39a917b9d423729b6d6d2275c4b31a8728d",
+  "overlaySha256": "869ce70718cb1c07f0bfd910ce40197f5ee776989e1a6e65631caa5cd0da8a8d",
   "featureBoundary": "capabilities-no-default"
 }

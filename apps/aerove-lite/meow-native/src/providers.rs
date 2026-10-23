@@ -47,6 +47,9 @@ pub struct ProviderLoaded {
 struct SourceReceipt { revision: u64, changed: bool }
 pub(crate) struct PlaneState {
     pub core_epoch: u64, pub revision: u64, pub closed: bool,
+    pub(crate) groups_sequence: u64,
+    pub(crate) selection_serial: u64,
+    pub(crate) selection_intents: BTreeMap<String, u64>,
     active: bool,
     live: BTreeMap<ProviderKey, u64>,
     admitted: BTreeMap<ProviderKey, u64>,
@@ -68,7 +71,7 @@ impl ControlPlane {
         if epoch == 0 { return Err("invalidCoreEpoch"); }
         let (events, _) = broadcast::channel(1024);
         Ok(Arc::new_cyclic(|this| Self { gate: Mutex::new(PlaneState {
-            core_epoch: epoch, revision: 0, closed: false, active: false, live: BTreeMap::new(), admitted: BTreeMap::new(),
+            core_epoch: epoch, revision: 0, closed: false, groups_sequence: 0, selection_serial: 0, selection_intents: BTreeMap::new(), active: false, live: BTreeMap::new(), admitted: BTreeMap::new(),
             sources: BTreeMap::new(), busy: BTreeSet::new(), emitting: BTreeSet::new(), pending: BTreeMap::new(), sequence: 0,
         }), cancel, this: this.clone(), changed: Notify::new(), events }))
     }
