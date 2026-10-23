@@ -252,16 +252,32 @@ async fn frame(client: &mut Client) -> Value {
 
 pub(super) async fn websocket() {
     use tokio_tungstenite::{connect_async, tungstenite::{Error, client::IntoClientRequest}};
+    use axum::ServiceExt;
+    use tower::{Layer, util::MapRequestLayer};
+    for (uri, expected) in [
+        ("/aerove/telemetry", "/aerove/telemetry"),
+        ("/aerove/telemetry?observations=true", "/aerove/telemetry?observations=true"),
+        ("/logs?level=debug", "/ws/logs?level=debug"),
+        ("/aerove/telemetry/other", "/ws/aerove/telemetry/other"),
+    ] {
+        let request = http::Request::builder().uri(uri).header("Upgrade", "websocket")
+            .header("Connection", "Upgrade").header(http::header::AUTHORIZATION, "Bearer session-secret")
+            .body(axum::body::Body::empty()).unwrap();
+        let request = crate::app::api::rewrite_websocket_uri(request);
+        assert_eq!(request.uri().to_string(), expected);
+        assert_eq!(request.headers()[http::header::AUTHORIZATION], "Bearer session-secret");
+    }
     let first = crate::mobile::context().unwrap();
     let bus = telemetry::source().unwrap();
     let cancel = CancellationToken::new();
-    let router = telemetry::routes(cancel.clone())
-        .route_layer(crate::app::api::AuthMiddlewareLayer::new("session-secret".into()));
+    let router = MapRequestLayer::new(crate::app::api::rewrite_websocket_uri).layer(
+        telemetry::routes(cancel.clone())
+            .route_layer(crate::app::api::AuthMiddlewareLayer::new("session-secret".into())));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("ws://{}/aerove/telemetry", listener.local_addr().unwrap());
     let stop = cancel.clone();
     let server = tokio::spawn(async move {
-        axum::serve(listener, router).with_graceful_shutdown(stop.cancelled_owned()).await.unwrap();
+        axum::serve(listener, router.into_make_service()).with_graceful_shutdown(stop.cancelled_owned()).await.unwrap();
     });
     for token in [None, Some("Bearer old-session-secret")] {
         let mut request = url.clone().into_client_request().unwrap();

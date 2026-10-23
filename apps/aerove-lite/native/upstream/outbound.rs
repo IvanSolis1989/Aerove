@@ -177,7 +177,7 @@ impl Probe {
                 }else{None};
                 let info = self.race(components.dispatcher.clone(),pin).await
                     .map_err(|_| (StatusCode::BAD_GATEWAY, "outbound_unavailable"))?;
-                if !self.fresh(&components, mode, &info.chains).await || super::telemetry::route_stamp().ok()!=Some(stamp)
+                if !self.fresh(&components, mode, &info.chains).await || super::telemetry::route_stamp().ok().map(|current| current.0)!=Some(stamp.0)
                     || super::context().ok().and_then(|c|c.network.clone()).is_some_and(|n|n.is_parked())!=parked {
                     return Err((StatusCode::CONFLICT, "outbound_changed"));
                 }

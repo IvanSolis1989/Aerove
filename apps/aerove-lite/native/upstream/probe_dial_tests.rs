@@ -126,7 +126,7 @@ async fn dial(case: &str) {
 
 async fn history() {
     use crate::{app::{dns::SystemResolver, remote_content_manager::{ProxyManager, healthcheck::HealthCheck,
-        providers::proxy_provider::{PlainProvider, ArcProxyProvider}}}, proxy::{AnyOutboundHandler, direct, group::selector}};
+        providers::proxy_provider::{PlainProvider, ArcProxyProvider}}}, proxy::{AnyOutboundHandler, group::selector}};
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let url = format!("http://{}/generate_204", listener.local_addr().unwrap());
     let requests = Arc::new(AtomicUsize::new(0));
@@ -150,7 +150,11 @@ async fn history() {
     let _restore = Restore(original);
     crate::app::remote_content_manager::set_unified_delay(true);
     let manager = ProxyManager::new(Arc::new(SystemResolver::new(true).unwrap()), None);
-    let node: AnyOutboundHandler = Arc::new(direct::Handler::new("probe-node"));
+    let configured = serde_yaml::from_str("{type: direct, name: probe-node}").unwrap();
+    let node = crate::app::outbound::manager::OutboundManager::load_plain_outbounds(vec![configured]).pop().unwrap();
+    assert_eq!(node.name(), "probe-node");
+    let builtin = serde_yaml::from_str("{type: direct, name: DIRECT}").unwrap();
+    assert_eq!(crate::app::outbound::manager::OutboundManager::load_plain_outbounds(vec![builtin]).pop().unwrap().name(), "DIRECT");
     let first = manager.url_test(node.clone(), &url, Some(Duration::from_secs(2))).await.unwrap();
     assert_eq!(manager.last_delay("probe-node").await, Some(first.0));
     let history = serde_json::to_value(manager.delay_history("probe-node").await).unwrap();

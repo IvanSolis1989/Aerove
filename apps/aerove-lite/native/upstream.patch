@@ -860,13 +860,15 @@
  pub struct GeoSiteMatcher {
 --- a/clash-lib/src/app/api/mod.rs
 +++ b/clash-lib/src/app/api/mod.rs
-@@ -16,6 +16,9 @@
+@@ -16,6 +16,11 @@
  
  pub use runner::ApiRunner;
  
 +#[cfg(feature = "aerove-mobile-tests")]
 +pub(crate) use middlewares::auth::AuthMiddlewareLayer;
 +
++#[cfg(feature = "aerove-mobile-tests")]
++pub(crate) use middlewares::websocket_uri_rewrite::rewrite_websocket_uri;
  pub struct AppState {
      pub log_source_tx: Sender<LogEvent>,
      pub components: Arc<RwLock<Arc<RuntimeComponents>>>,
@@ -1550,3 +1552,14 @@
          };
          // TODO: make inactivity_timeout configurable
          let config = client::Config {
+--- a/clash-lib/src/app/api/middlewares/websocket_uri_rewrite.rs
++++ b/clash-lib/src/app/api/middlewares/websocket_uri_rewrite.rs
+@@ -13,6 +13,8 @@
+     if is_request_websocket(req.headers()) {
+         let original_uri = req.uri().clone();
+         let path = original_uri.path();
++        #[cfg(feature = "aerove-mobile")]
++        if path == "/aerove/telemetry" { return req; }
+ 
+         // Only rewrite if the path doesn't already have /ws prefix
+         // Check for exact "/ws" or starts with "/ws/" to avoid matching
