@@ -224,7 +224,18 @@
          let result = tester.await;
 --- a/clash-lib/src/proxy/utils/socket_helpers.rs
 +++ b/clash-lib/src/proxy/utils/socket_helpers.rs
-@@ -146,128 +146,71 @@
+@@ -91,10 +91,6 @@
+     )
+     .await?
+ }
+-
+-/// Default connection attempt delay for Happy Eyeballs v2 (RFC 8305 Section
+-/// 5.2).
+-pub const HAPPY_EYEBALLS_DELAY: Duration = Duration::from_millis(200);
+ 
+ /// Sorts socket addresses according to RFC 8305 Section 5 (Happy Eyeballs v2).
+ ///
+@@ -146,128 +142,71 @@
      result
  }
  

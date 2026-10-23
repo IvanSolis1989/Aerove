@@ -34,6 +34,12 @@ Read this entry point, then the applicable product instructions. The Standard ed
 详细规格只有一份：[双向实现与功能契约](docs/shared/UI_CONTRACT.md)、[外观参数](docs/shared/appearance.md)、
 [验收边界](docs/shared/ACCEPTANCE.md)。调研、产品文档和子目录规则不得放宽本契约；未完成项如实记录，不能以改文档代替实现。
 
+## 提交说明语言
+
+- 提交标题和正文优先使用中文，简明说明实际变更及原因。
+- 保留 Conventional Commits 的类型和可选作用域等必要格式，例如 `fix(lite): 修复核心接口不一致`；代码符号、路径、SHA 和机器读取字段沿用原文。
+- `Changelog:` 等发布工具字段继续遵守对应格式与语言要求；普通提交说明仍优先中文。
+
 ## Safe implementation and delivery
 
 - Preserve uncommitted work, collaborator ownership, licenses, signing identities and user data. Never reset, broadly
