@@ -294,7 +294,7 @@ async fn boundary(State(policy): State<Boundary>, mut request: Request, next: Ne
         && bool::from(p.ct_eq(policy.secret.as_bytes())));
     if !authorized { return StatusCode::UNAUTHORIZED.into_response(); }
     // Authentication has completed at the outer boundary; only this internal hop uses its token.
-    request.headers_mut().insert(header::AUTHORIZATION, policy.authorization);
+    request.headers_mut().insert(header::AUTHORIZATION, policy.authorization.clone());
     let origin = request.headers().contains_key(header::ORIGIN);
     let mut response = if public_control_route(request.method(), request.uri().path()) {
         public_control(&policy, request).await

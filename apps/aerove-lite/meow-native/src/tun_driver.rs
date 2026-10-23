@@ -247,7 +247,7 @@ async fn default_udp<H: PacketHandler + ?Sized>(handler: Arc<H>, socket: Box<lwi
     cancel: CancellationToken, network: NetworkContext) -> io::Result<()> {
     let (writer, mut reader) = socket.split();
     let (reply_tx, mut replies) = mpsc::channel::<(Vec<u8>, SocketAddr, SocketAddr)>(64);
-    let mut tasks = JoinSet::new();
+    let mut tasks = JoinSet::<io::Result<()>>::new();
     let outcome = AssertUnwindSafe(async { loop { tokio::select! { biased;
         _ = cancel.cancelled() => break Ok(()),
         joined = tasks.join_next(), if !tasks.is_empty() => {
