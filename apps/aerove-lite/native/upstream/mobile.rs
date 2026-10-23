@@ -241,13 +241,81 @@ impl<S: tracing::Subscriber> Layer<S> for LogSource {
         event: &tracing::Event<'_>,
         scope: tracing_subscriber::layer::Context<'_, S>,
     ) {
+        // Tokio emits these synchronously while holding the broadcast tail lock.
+        if event.metadata().target() == "tokio::task::waker" { return; }
         if let Ok(context) = context()
-            && context.logs.receiver_count() > 0
             && *event.metadata().level() <= context.telemetry.log_level().unwrap_or(context.level)
+            && context.logs.receiver_count() > 0
         {
             EventCollector::new(vec![context.logs.clone()]).on_event(event, scope);
         }
     }
+}
+
+
+#[cfg(feature = "aerove-mobile-tests")]
+pub fn log_source_keeps_application_events_without_waker_lock_reentry(trace: bool) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct WakerClones(Arc<AtomicUsize>);
+    impl<S: tracing::Subscriber> Layer<S> for WakerClones {
+        fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
+            struct Operation<'a>(&'a AtomicUsize);
+            impl tracing::field::Visit for Operation<'_> {
+                fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {}
+                fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+                    if field.name() == "op" && value == "waker.clone" { self.0.fetch_add(1, Ordering::SeqCst); }
+                }
+            }
+            if event.metadata().target() == "tokio::task::waker" { event.record(&mut Operation(&self.0)); }
+        }
+    }
+    outbound::regression::with_runtime_lock(|| {
+        assert!(CONTEXT.read().unwrap().is_none());
+        let clones = Arc::new(AtomicUsize::new(0));
+        let subscriber = tracing_subscriber::registry().with(WakerClones(clones.clone())).with(LogSource);
+        let (events, _) = mpsc::unbounded_channel();
+        let (logs, _) = broadcast::channel(8);
+        let cancel = CancellationToken::new();
+        let telemetry = telemetry::Bus::new(cancel.clone());
+        if trace { telemetry.set_log_level(tracing::level_filters::LevelFilter::TRACE); }
+        *CONTEXT.write().unwrap() = Some(Arc::new(Context {
+            protector: Arc::new(|_| Ok(())), mode: RuntimeMode::Proxy, process_owner: None,
+            network_generation: std::sync::atomic::AtomicU64::new(0), bootstrap: vec![],
+            network_dns: RwLock::new(None), dns_enabled: false, dns_hijack_all: false,
+            events, logs: logs.clone(), level: tracing::level_filters::LevelFilter::WARN,
+            cancel, telemetry, network: None,
+        }));
+        let lease = ContextLease;
+        tracing::subscriber::with_default(subscriber, || {
+            tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+                let mut receiver = logs.subscribe();
+                let entered = Arc::new(tokio::sync::Notify::new());
+                let polling = entered.clone();
+                let waiting = tokio::spawn(async move { polling.notify_one(); receiver.recv().await.unwrap() });
+                entered.notified().await;
+                assert!(clones.load(Ordering::SeqCst) > 0, "real Tokio broadcast waiter did not clone an instrumented task waker");
+                tracing::warn!(target: "aerove::log_source_regression", "application-warning");
+                let warning = tokio::time::timeout(Duration::from_secs(2), waiting).await.unwrap().unwrap();
+                assert!(matches!(warning.level, crate::def::LogLevel::Warning));
+                assert!(warning.msg.contains("application-warning"));
+                let mut application = logs.subscribe();
+                tracing::trace!(target: "tokio::task::waker", op = "waker.clone");
+                assert!(matches!(application.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
+                tracing::trace!(target: "aerove::log_source_regression", "application-trace");
+                if trace {
+                    let event = application.try_recv().unwrap();
+                    assert!(matches!(event.level, crate::def::LogLevel::Trace));
+                    assert!(event.msg.contains("application-trace"));
+                } else {
+                    assert!(matches!(application.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
+                }
+                tracing::warn!(target: "aerove::log_source_regression", "application-warning-after-trace");
+                assert!(application.try_recv().unwrap().msg.contains("application-warning-after-trace"));
+            });
+        });
+        drop(lease);
+        assert!(CONTEXT.read().unwrap().is_none());
+    });
 }
 
 fn setup_logging() -> Result<()> {

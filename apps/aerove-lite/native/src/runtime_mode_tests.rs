@@ -103,3 +103,13 @@ fn proxy_registry_requires_join_before_successor_and_stale_ready_cannot_revive_o
 fn context_lease_releases_global_write_lock_before_context_destructors() {
     clash_lib::mobile::context_lease_destructors_run_after_global_unlock();
 }
+
+#[test]
+fn log_source_warn_waiter_avoids_internal_waker_reentry() {
+    clash_lib::mobile::log_source_keeps_application_events_without_waker_lock_reentry(false);
+}
+
+#[test]
+fn log_source_trace_waiter_preserves_application_trace_without_internal_waker_reentry() {
+    clash_lib::mobile::log_source_keeps_application_events_without_waker_lock_reentry(true);
+}
