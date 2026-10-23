@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "manifestSha256": "451c2d6177d8281b0e817fb152f21dd333e47cd94e77cfcb37a6cdab1fc634ac",
-  "resolveLock": true,
-  "expectedLockBeforeSha256": "43bdf037119e38b89eea35164dcd4499879bbc4f4cfe4beb844cf1c82bde9664",
+  "resolveLock": false,
+  "expectedLockBeforeSha256": "25d1a5c991670f7157b9a5c8bf9876bf625efbde33720edf176f27ebcd791226",
   "targets": [
     "lib",
     "proxy_runtime",
