@@ -1,0 +1,20 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="age_batch_mode">Пакетный ввод</string>
+    <string name="age_cancel">Отмена</string>
+    <string name="age_cancelled">Отменено</string>
+    <string name="age_continue">Продолжить</string>
+    <string name="age_decrypt_failed">Не удалось расшифровать. Проверьте ключ и повторите попытку.</string>
+    <string name="age_failed">Сбой</string>
+    <string name="age_import">Импорт</string>
+    <string name="age_import_failed">Не удалось импортировать некоторые профили.</string>
+    <string name="age_import_title">Импорт профилей</string>
+    <string name="age_name">Название</string>
+    <string name="age_queued">В очереди</string>
+    <string name="age_running">Импорт…</string>
+    <string name="age_secret_label">Секретный ключ</string>
+    <string name="age_secret_title">Секретный ключ age</string>
+    <string name="age_succeeded">Импортировано</string>
+    <string name="age_url">URL</string>
+    <string name="age_urls">Список URL</string>
+</resources>

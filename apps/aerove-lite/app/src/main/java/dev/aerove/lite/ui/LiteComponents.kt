@@ -1,6 +1,10 @@
 package dev.aerove.lite.ui
 
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FiniteAnimationSpec
+import androidx.compose.animation.core.spring
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
@@ -46,6 +50,16 @@ import dev.aerove.lite.MaterialTier
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
+
+@Composable
+internal fun rememberLiteMotionValue(target: Float, spec: FiniteAnimationSpec<Float>): State<Float> {
+    val moving = !LocalLiteReducedMotion.current && LocalLitePageActive.current
+    val value = remember { Animatable(target) }
+    LaunchedEffect(target, moving, spec) {
+        if (moving && value.value != target) value.animateTo(target, spec) else value.snapTo(target)
+    }
+    return value.asState()
+}
 
 @Composable
 private fun Modifier.liteInk(source: Color, role: AeroveInkRole): Modifier {
@@ -147,7 +161,7 @@ internal fun LiteIconButton(
     val header = LocalLiteHeaderProgress.current
     val interaction = remember { MutableInteractionSource() }
     val size = if (header != null) 44.dp else 36.dp
-    val opacity by animateFloatAsState(header ?: 1f, tween(200, easing = CubicBezierEasing(0f, 0f, 0.58f, 1f)), label = "headerButtonGlass")
+    val opacity by rememberLiteMotionValue(header ?: 1f, tween(200, easing = CubicBezierEasing(0f, 0f, 0.58f, 1f)))
     Box(
         modifier.size(size).alpha(if (enabled) 1f else 0.38f)
             .semantics { contentDescription = label }
@@ -203,7 +217,7 @@ internal fun LiteSwitch(checked: Boolean, label: String, onCheckedChange: (Boole
     val inactive = if (visuals.material == MaterialTier.Frosted) 0.13f else 0.06f
     val trackTint = (if (checked) visuals.primary else visuals.ink).copy(alpha = if (!enabled) 0.03f else if (checked) 0.18f else inactive)
     val thumbTint = visuals.surface.copy(alpha = if (enabled) 0.08f else 0.03f)
-    val position by animateFloatAsState(if (checked) 1f else 0f, label = "switchPosition")
+    val position by rememberLiteMotionValue(if (checked) 1f else 0f, spring())
     Box(
         Modifier.size(60.dp, 48.dp).alpha(if (enabled || visuals.material != MaterialTier.Solid) 1f else 0.48f)
             .semantics { contentDescription = label }

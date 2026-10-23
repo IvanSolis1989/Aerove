@@ -13,6 +13,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 data class IpQualityState(
     val ip: String? = null, val quality: IpQuality? = null, val loading: Boolean = false,
@@ -31,6 +34,8 @@ class IpQualityFeature(
     private val readSaved: suspend () -> SavedIpQuality = { withContext(Dispatchers.IO) { store?.read() ?: SavedIpQuality() } },
 ) : Closeable {
     private val scope = CoroutineScope(parent.coroutineContext + SupervisorJob(parent.coroutineContext[Job]))
+    private val maintenanceContext = parent.coroutineContext.minusKey(Job)
+    private val maintenance = Mutex()
     private val mutableState = MutableStateFlow(IpQualityState(hidden = store != null))
     val state = mutableState.asStateFlow()
     private data class Failure(val failures: List<IpQualityFailure>, val expires: Long)
@@ -44,20 +49,29 @@ class IpQualityFeature(
     private var foreground = false
     private var observers = 0
     private var loaded = store == null
-    private var closed = false
+    @Volatile private var closed = false
     private var hidden = store != null
     private var task: Job? = null
-    private var run = 0L
+    @Volatile private var run = 0L
     private var saveGeneration = 0L
+    @Volatile private var maintenanceGeneration = 0L
+    @Volatile private var quiesced = false
+    private var loadJob: Job? = null
 
-    init {
-        if (store != null) scope.launch {
-            val saved = readSaved()
-            hidden = saved.hidden
-            last = saved.lastExit
-            loaded = true
-            rememberConfirmed()
-            update()
+    init { loadSaved() }
+
+    private fun loadSaved() {
+        if (store != null && !loaded && loadJob?.isActive != true) {
+            val token = maintenanceGeneration
+            loadJob = scope.launch {
+                val saved = readSaved()
+                if (closed || quiesced || token != maintenanceGeneration) return@launch
+                hidden = saved.hidden
+                last = saved.lastExit
+                loaded = true
+                rememberConfirmed()
+                update()
+            }
         }
     }
 
@@ -71,7 +85,7 @@ class IpQualityFeature(
         this.proxied = proxied
         this.confirmedIp = confirmedIp
         confirmedCountry = countryCode
-        if (loaded) rememberConfirmed()
+        if (loaded && !quiesced) rememberConfirmed()
         update()
     }
 
@@ -98,7 +112,7 @@ class IpQualityFeature(
     }
 
     fun retry() {
-        if (closed || task != null) return
+        if (closed || quiesced || task != null) return
         confirmedIp?.let { successes.remove(it); failures.remove(it) }
         update()
     }
@@ -106,7 +120,7 @@ class IpQualityFeature(
     fun retryIfFailed() { if (confirmedIp in failures) retry() }
 
     fun setHidden(value: Boolean) {
-        if (closed || !loaded || hidden == value) return
+        if (closed || quiesced || !loaded || hidden == value) return
         hidden = value
         if (value) last = null
         persist()
@@ -123,7 +137,7 @@ class IpQualityFeature(
     }
 
     private fun update() {
-        if (closed) return
+        if (closed || quiesced) return
         val ip = confirmedIp
         val cached = ip?.let(successes::get)
         val failure = ip?.let(failures::get)
@@ -145,14 +159,14 @@ class IpQualityFeature(
             try {
                 val value = lookup(ip)
                 require(value.ip == ip)
-                if (token != run || closed || confirmedIp != ip || !foreground || observers == 0) return@launch
+                if (token != run || closed || quiesced || confirmedIp != ip || !foreground || observers == 0) return@launch
                 successes[ip] = value
                 task = null
                 rememberConfirmed()
                 update()
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {
-                if (token != run || closed || confirmedIp != ip) return@launch
+                if (token != run || closed || quiesced || confirmedIp != ip) return@launch
                 val rows = (failure as? IpQualityLookupException)?.failures.orEmpty()
                 failures[ip] = Failure(rows, now() + 5 * 60_000)
                 task = null
@@ -167,13 +181,58 @@ class IpQualityFeature(
     private fun cancelTask() { run++; task?.cancel(); task = null }
 
     private fun persist() {
+        if (closed || quiesced) return
         val snapshot = SavedIpQuality(hidden, last)
         val generation = ++saveGeneration
+        val epoch = maintenanceGeneration
         val storage = store ?: return
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
             try { withContext(NonCancellable + Dispatchers.IO) { storage.write(snapshot, generation) } }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { mutableState.value = mutableState.value.copy(persistenceError = true) }
+            catch (_: Exception) {
+                if (!closed && !quiesced && epoch == maintenanceGeneration) mutableState.value = mutableState.value.copy(persistenceError = true)
+            }
+        }
+    }
+
+    suspend fun quiesce() = withContext(NonCancellable + maintenanceContext) {
+        maintenance.withLock { quiesceOwned() }
+    }
+
+    private suspend fun quiesceOwned() {
+        quiesced = true
+        maintenanceGeneration++
+        cancelTask()
+        val children = scope.coroutineContext[Job]!!.children.toList()
+        children.forEach { it.cancel() }
+        children.joinAll()
+        loadJob = null
+        mutableState.value = mutableState.value.copy(loading = false)
+    }
+
+    suspend fun resumeAfterMaintenance() = withContext(NonCancellable + maintenanceContext) {
+        maintenance.withLock {
+            check(!closed && scope.coroutineContext[Job]!!.isActive) { "IP quality owner must be replaced after clear" }
+            quiesced = false
+            if (!loaded) loadSaved() else { rememberConfirmed(); update() }
+        }
+    }
+
+    /** Secondary cleanup after the primary domain commits. Failure stays terminal and propagates. */
+    suspend fun clearUserState(): Unit = withContext(NonCancellable + maintenanceContext) {
+        maintenance.withLock {
+            quiesceOwned()
+            val wasClosed = closed
+            closed = true
+            scope.cancel()
+            successes.clear(); failures.clear(); last = null; profile = null
+            confirmedIp = null; confirmedCountry = null
+            mutableState.value = IpQualityState()
+            var failure: Throwable? = null
+            if (!wasClosed) try { closeLookup() } catch (error: Throwable) { failure = error }
+            try { withContext(Dispatchers.IO) { store?.clearUserState() } }
+            catch (error: Throwable) { if (failure == null) failure = error else failure.addSuppressed(error) }
+            failure?.let { throw it }
         }
     }
 

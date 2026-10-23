@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="dns_preferences_title">DNS</string>
+    <string name="dns_preferences_hosts">Hosts</string>
+    <string name="dns_preferences_scope">选择要覆写的字段，其他字段继承配置来源。</string>
+    <string name="dns_preferences_hosts_detail">将这些 Hosts 映射合并到所有配置，同名映射使用保存的 IP 地址。</string>
+    <string name="dns_preferences_inherit">继承</string>
+    <string name="dns_preferences_overridden">已覆写</string>
+    <string name="dns_preferences_override">覆写此字段</string>
+    <string name="dns_preferences_entry">条目 %1$d</string>
+    <string name="dns_preferences_domain">域名 %1$d</string>
+    <string name="dns_preferences_target">目标 %1$d</string>
+    <string name="dns_preferences_count">%1$d 项映射</string>
+    <string name="dns_preferences_add">添加</string>
+    <string name="dns_preferences_remove">删除</string>
+    <string name="dns_preferences_move_up">上移</string>
+    <string name="dns_preferences_move_down">下移</string>
+    <string name="dns_preferences_cancel">取消</string>
+    <string name="dns_preferences_save">保存</string>
+    <string name="dns_preferences_invalid">请检查字段：%1$s</string>
+    <string name="dns_preferences_unsupported">当前内核不支持 %1$s 的此项值。</string>
+    <string name="dns_preferences_enabled">启用 DNS</string>
+    <string name="dns_preferences_listen">监听地址</string>
+    <string name="dns_preferences_use_hosts">使用 Hosts</string>
+    <string name="dns_preferences_ipv6">IPv6</string>
+    <string name="dns_preferences_respect_rules">遵循规则</string>
+    <string name="dns_preferences_mode">DNS 模式</string>
+    <string name="dns_preferences_range">Fake-IP 范围</string>
+    <string name="dns_preferences_filter">Fake-IP 过滤</string>
+    <string name="dns_preferences_bootstrap">默认 DNS 服务器</string>
+    <string name="dns_preferences_policy">DNS 服务器策略</string>
+    <string name="dns_preferences_nameservers">DNS 服务器</string>
+    <string name="dns_preferences_fallback">备用 DNS 服务器</string>
+    <string name="dns_preferences_proxy_servers">代理节点 DNS 服务器</string>
+    <string name="dns_preferences_geoip">GeoIP 过滤</string>
+    <string name="dns_preferences_country">GeoIP 国家代码</string>
+    <string name="dns_preferences_cidrs">备用 IP-CIDR 过滤</string>
+    <string name="dns_preferences_domains">备用域名过滤</string>
+    <string name="dns_preferences_save_failed">保存失败，请重试。</string>
+</resources>

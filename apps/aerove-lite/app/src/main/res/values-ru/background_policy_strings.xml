@@ -1,0 +1,31 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="background_add">Добавить SSID</string>
+    <string name="background_authorize">Разрешить</string>
+    <string name="background_authorized">Разрешено</string>
+    <string name="background_auto_run">Запускать при открытии приложения</string>
+    <string name="background_battery">Игнорировать оптимизацию батареи</string>
+    <string name="background_cancel">Отмена</string>
+    <string name="background_close_connections">Закрытие соединений при переключении прокси</string>
+    <string name="background_delete">Удалить выбранное</string>
+    <string name="background_description">Автоматический запуск применяется при открытии приложения. Закрытие соединения применяется при смене выбранного прокси.</string>
+    <string name="background_edit">Изменить SSID</string>
+    <string name="background_empty">Нет исключенных сетей Wi-Fi</string>
+    <string name="background_excluded">Исключенные сети Wi-Fi</string>
+    <string name="background_excluded_description">В исключенной сети Wi-Fi приостановите прослушиватель, сохраняя намерение работать. Возобновить работу после выхода из сети.</string>
+    <string name="background_hidden">Скрыть из последних приложений</string>
+    <string name="background_invalid">Введите уникальный SSID, содержащий 1–32 байта UTF-8.</string>
+    <string name="background_location">Разрешение на геолокацию</string>
+    <string name="background_minimize">Сворачивать при выходе</string>
+    <string name="background_move_down">Двигаться вниз</string>
+    <string name="background_move_up">Вверх</string>
+    <string name="background_on_demand">По условию</string>
+    <string name="background_permission_description">Разрешите точный доступ к геопозиции и доступ к геопозиции в фоновом режиме, а также включите геолокацию на устройстве, чтобы определять Wi-Fi в фоне. Проверьте ограничения фоновой работы в системных настройках.</string>
+    <string name="background_prerequisites">Предварительные условия</string>
+    <string name="background_proxy_statistics">Учитывать только трафик прокси</string>
+    <string name="background_save">Сохранить</string>
+    <string name="background_select_all">Выбрать всё</string>
+    <string name="background_ssid">SSID</string>
+    <string name="background_title">Запуск и фоновая работа</string>
+    <string name="background_notification_stop">Кнопка остановки в уведомлении</string>
+</resources>

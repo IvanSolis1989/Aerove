@@ -1,13 +1,513 @@
 name: AEROVE Lite
+permissions:
+  contents: read
+concurrency:
+  group: aerove-lite-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  RUSTC_BOOTSTRAP: '1'
+  NDK_VERSION: 28.2.13676358
+jobs:
+  resolve:
+    if: ${{ !inputs.publish_release }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+      with:
+        toolchain: 1.99.0
+    - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+      with:
+        workspaces: apps/aerove-lite/native -> target
+        cache-on-failure: ${{ inputs.native_preflight }}
+        cache-workspace-crates: true
+        cache-directories: apps/aerove-lite/native/.upstream
+    - name: Stable lock and host production regression
+      if: ${{ !inputs.native_preflight }}
+      run: |-
+        python3 apps/aerove-lite/native/build.py --initialize-lock --prepare-only
+        git diff --exit-code -- apps/aerove-lite/native/Cargo.lock
 
-on:
+        python3 apps/aerove-lite/native/reference_resources.py --download --output "$RUNNER_TEMP/geosite.dat"
+        python3 apps/aerove-lite/native/build.py --test --test-geosite "$RUNNER_TEMP/geosite.dat"
+        git diff --exit-code -- apps/aerove-lite/native/Cargo.lock
+    - name: Ensure GDB is available for requested native stack capture
+      if: ${{ inputs.native_preflight && inputs.native_test_stacks }}
+      timeout-minutes: 5
+      shell: bash
+      run: |-
+        set -euo pipefail
+        if ! command -v gdb >/dev/null 2>&1; then
+          sudo -n env DEBIAN_FRONTEND=noninteractive \
+            timeout --signal=TERM --kill-after=10s 90s \
+            apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 \
+            -o Acquire::https::Timeout=20 update
+          sudo -n env DEBIAN_FRONTEND=noninteractive \
+            timeout --signal=TERM --kill-after=10s 150s \
+            apt-get -o DPkg::Lock::Timeout=30 -o Acquire::Retries=1 \
+            -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 \
+            install --yes --no-install-recommends gdb
+        fi
+        command -v gdb
+        timeout --signal=TERM --kill-after=5s 10s \
+          gdb -nx -nh --batch -ex 'show version' -ex quit
+    - name: Initialize native lock and run host Rust tests
+      if: ${{ inputs.native_preflight }}
+      shell: bash
+      env:
+        NATIVE_TEST_FILTER: ${{ inputs.native_test_filter }}
+        NATIVE_TEST_SERIAL: ${{ inputs.native_test_serial }}
+        NATIVE_TEST_STACKS: ${{ inputs.native_test_stacks }}
+        NATIVE_UNDERLAY_TESTS: ${{ inputs.native_underlay_tests }}
+        RUST_TEST_NOCAPTURE: '1'
+        RUST_BACKTRACE: '1'
+      run: |
+        evidence="$RUNNER_TEMP/lite-native-preflight"
+        mkdir -p "$evidence"
+        python3 - <<'PY' > "$evidence/before.json"
+        import hashlib, json, subprocess
+        from pathlib import Path
+        root = Path('apps/aerove-lite/native')
+        lock = root / 'Cargo.lock'
+        source_lock = subprocess.check_output(['git', 'show', 'HEAD:apps/aerove-lite/native/Cargo.lock'])
+        print(json.dumps({
+            'sourceSha': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+            'sourceTree': subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], text=True).strip(),
+            'lockSha256Before': hashlib.sha256(lock.read_bytes()).hexdigest() if lock.is_file() else None,
+            'lockSha256AtSource': hashlib.sha256(source_lock).hexdigest(),
+            'lockPresentBefore': lock.is_file(),
+        }, indent=2))
+        PY
+        if [[ "$NATIVE_TEST_STACKS" == true && -z "$NATIVE_TEST_FILTER" ]]; then
+          echo 'Stack diagnosis requires an explicit host-test filter.' >&2
+          exit 2
+        fi
+        if [[ "$NATIVE_UNDERLAY_TESTS" == true ]]; then
+          if [[ -n "$NATIVE_TEST_FILTER" || "$NATIVE_TEST_STACKS" == true ]]; then
+            echo 'Underlay tests require no core filter or stack capture.' >&2
+            exit 2
+          fi
+          python3 apps/aerove-lite/native/build.py --initialize-lock --prepare-only
+          cp apps/aerove-lite/native/Cargo.lock "$evidence/underlay-Cargo.lock.before"
+          set +e
+          (cd apps/aerove-lite/native && \
+            CARGO_TARGET_DIR="$GITHUB_WORKSPACE/apps/aerove-lite/native/target" \
+            timeout --signal=TERM --kill-after=10s 8m cargo test --locked --offline --manifest-path Cargo.toml \
+            -p aerove-ts-underlay@0.1.0 --test sockets --no-run) 2>&1 | tee "$evidence/native-compile.log"
+          compile_status=${PIPESTATUS[0]}
+          command_status=$compile_status
+          if [[ "$compile_status" == 0 ]]; then
+            (cd apps/aerove-lite/native && \
+              CARGO_TARGET_DIR="$GITHUB_WORKSPACE/apps/aerove-lite/native/target" RUST_BACKTRACE=1 \
+              timeout --signal=TERM --kill-after=10s 120s cargo test --locked --offline --manifest-path Cargo.toml \
+              -p aerove-ts-underlay@0.1.0 --test sockets -- --test-threads=1 --nocapture) 2>&1 | tee "$evidence/native-test.log"
+            command_status=${PIPESTATUS[0]}
+          fi
+          set -e
+        elif [[ -n "$NATIVE_TEST_FILTER" ]]; then
+          [[ "$NATIVE_TEST_FILTER" =~ ^[[:alnum:]_:]+$ ]] || exit 2
+          python3 apps/aerove-lite/native/build.py --initialize-lock --prepare-only
+          set +e
+          (cd apps/aerove-lite/native && \
+            CARGO_TARGET_DIR="$GITHUB_WORKSPACE/apps/aerove-lite/native/target" \
+            timeout --signal=TERM --kill-after=10s 8m cargo test --locked --lib --no-run) \
+            2>&1 | tee "$evidence/native-compile.log"
+          compile_status=${PIPESTATUS[0]}
+          command_status=$compile_status
+          if [[ "$compile_status" == 0 ]]; then
+            stack_monitor=''
+            if [[ "$NATIVE_TEST_STACKS" == true ]]; then
+              python3 apps/aerove-lite/tooling/capture_native_stacks.py \
+                --target-dir "$GITHUB_WORKSPACE/apps/aerove-lite/native/target" \
+                --evidence-dir "$evidence/stacks" --filter "$NATIVE_TEST_FILTER" \
+                > "$evidence/stack-monitor.log" 2>&1 &
+              stack_monitor=$!
+            fi
+            (cd apps/aerove-lite/native && \
+              CARGO_TARGET_DIR="$GITHUB_WORKSPACE/apps/aerove-lite/native/target" RUST_BACKTRACE=1 \
+              timeout --signal=TERM --kill-after=10s 120s cargo test --locked --lib "$NATIVE_TEST_FILTER" \
+              -- --test-threads=1 --nocapture) 2>&1 | tee "$evidence/native-test.log"
+            command_status=${PIPESTATUS[0]}
+            if [[ -n "$stack_monitor" ]]; then
+              kill -TERM "$stack_monitor" 2>/dev/null || true
+              wait "$stack_monitor" || true
+            fi
+          fi
+          set -e
+        else
+          compile_status=''
+          if [[ "$NATIVE_TEST_SERIAL" == true ]]; then export RUST_TEST_THREADS=1; fi
+          set +e
+          timeout --signal=TERM --kill-after=10s 10m \
+            python3 apps/aerove-lite/native/build.py --initialize-lock --test 2>&1 | tee "$evidence/native-test.log"
+          command_status=${PIPESTATUS[0]}
+          set -e
+        fi
+        python3 - "$command_status" "$compile_status" <<'PY'
+        import hashlib, json, os, re, sys
+        from pathlib import Path
+        evidence = Path(os.environ['RUNNER_TEMP']) / 'lite-native-preflight'
+        before = json.loads((evidence / 'before.json').read_text())
+        lock = Path('apps/aerove-lite/native/Cargo.lock')
+        provenance_path = Path('apps/aerove-lite/native/.upstream/clash-rs/AEROVE_PROVENANCE.json')
+        provenance = json.loads(provenance_path.read_text()) if provenance_path.is_file() else None
+        underlay = os.environ['NATIVE_UNDERLAY_TESTS'] == 'true'
+        selected = underlay or bool(os.environ['NATIVE_TEST_FILTER'])
+        underlay_command = 'cargo test --locked --offline --manifest-path Cargo.toml -p aerove-ts-underlay@0.1.0 --test sockets'
+        result = {
+            **before,
+            'command': ('timeout --signal=TERM --kill-after=10s 120s ' + underlay_command + ' -- --test-threads=1 --nocapture') if underlay else ('timeout --signal=TERM --kill-after=10s 120s cargo test --locked --lib '
+                        + os.environ['NATIVE_TEST_FILTER'] + ' -- --test-threads=1 --nocapture') if os.environ['NATIVE_TEST_FILTER'] else
+                       'timeout --signal=TERM --kill-after=10s 10m python3 apps/aerove-lite/native/build.py --initialize-lock --test',
+            'testSelection': 'aerove-ts-underlay@0.1.0::sockets' if underlay else os.environ['NATIVE_TEST_FILTER'] or 'full-suite',
+            'underlayTestsRequested': underlay,
+            'expectedUnderlayTests': 7 if underlay else None,
+            'stackCaptureRequested': os.environ['NATIVE_TEST_STACKS'] == 'true',
+            'stackCaptureMetadata': 'stacks/capture.json' if (evidence / 'stacks/capture.json').is_file() else None,
+            'testThreads': 1 if selected or os.environ['NATIVE_TEST_SERIAL'] == 'true' else 'default',
+            'workingDirectory': 'apps/aerove-lite/native' if selected else '.',
+            'compileCommand': ('timeout --signal=TERM --kill-after=10s 8m ' + underlay_command + ' --no-run') if underlay else 'timeout --signal=TERM --kill-after=10s 8m cargo test --locked --lib --no-run' if os.environ['NATIVE_TEST_FILTER'] else None,
+            'compileExitCode': int(sys.argv[2]) if sys.argv[2] else None,
+            'compileLog': 'native-compile.log' if selected else None,
+            'commandStage': 'compile' if sys.argv[2] and int(sys.argv[2]) != 0 else 'test',
+            'commandLog': 'native-compile.log' if sys.argv[2] and int(sys.argv[2]) != 0 else 'native-test.log',
+            'commandExitCode': int(sys.argv[1]),
+            'lockSha256After': hashlib.sha256(lock.read_bytes()).hexdigest() if lock.is_file() else None,
+            'lockChanged': (hashlib.sha256(lock.read_bytes()).hexdigest() if lock.is_file() else None) != before['lockSha256Before'],
+            'stableLockGate': 'not-run-in-native-preflight',
+            'preparedSourceProvenance': provenance,
+        }
+        validation_error = None
+        if underlay and result['commandExitCode'] == 0:
+            helper = Path('apps/aerove-lite/native/.upstream/dependency-protect/aerove-ts-underlay')
+            test_source = helper / 'tests/sockets.rs'
+            names = re.findall(r'#\[tokio::test\]\s+async fn (\w+)\(', test_source.read_text())
+            log = re.sub(r'\x1b\[[0-9;]*m', '', (evidence / 'native-test.log').read_text())
+            passed = [name for name in names if re.search(r'^test ' + re.escape(name) + r' \.\.\. ok\s*$', log, re.MULTILINE)]
+            lock_unchanged = lock.read_bytes() == (evidence / 'underlay-Cargo.lock.before').read_bytes()
+            helper_lock_created = (helper / 'Cargo.lock').exists()
+            complete = bool(re.search(r'^test result: ok\. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;', log, re.MULTILINE))
+            if len(names) != 7 or len(passed) != 7 or not complete or not lock_unchanged or helper_lock_created:
+                validation_error = 'Underlay tests did not prove seven named passes with the unchanged root lock.'
+            result['underlayTestReceipt'] = {'expectedTests': names, 'passedTests': passed, 'rootLockUnchanged': lock_unchanged, 'helperLockCreated': helper_lock_created, 'testSourceSha256': hashlib.sha256(test_source.read_bytes()).hexdigest()}
+        result['validationError'] = validation_error
+        (evidence / 'after.json').write_text(json.dumps(result, indent=2) + '\n')
+        if result['lockChanged']:
+            print('::notice::Native preflight generated or changed Cargo.lock; this does not pass the normal stable-lock gate.')
+        with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+            summary.write('Native-only preflight completed. The normal stable Cargo.lock diff gate and Android verification/APK gates were not run.\n')
+            summary.write(f"Cargo.lock changed during lock initialization: {result['lockChanged']}\n")
+        sys.exit(1 if validation_error else int(sys.argv[1]))
+        PY
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      if: ${{ always() && !inputs.native_preflight }}
+      with:
+        name: AEROVE-Lite-resolved-lock
+        path: apps/aerove-lite/native/Cargo.lock
+        if-no-files-found: error
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      if: ${{ always() && inputs.native_preflight }}
+      with:
+        name: AEROVE-Lite-native-preflight
+        path: |
+          apps/aerove-lite/native/Cargo.lock
+          ${{ runner.temp }}/lite-native-preflight/
+        if-no-files-found: warn
+  verify:
+    if: ${{ !inputs.native_preflight && !inputs.publish_release }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - name: Source preparation and APK inspector regression tests
+      run: |-
+        python3 apps/aerove-lite/native/test_build.py
+        python3 apps/aerove-lite/tool/test_verify_apk.py
+        python3 apps/aerove-lite/tool/test_lite_release.py
+
+        python3 apps/aerove-lite/tool/test_ci_artifacts.py
+    - name: Check workspace layout
+      run: python3 tooling/workspace.py check
+    - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+      with:
+        distribution: temurin
+        java-version: '17'
+    - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+      with:
+        packages: platform-tools
+        log-accepted-android-sdk-licenses: false
+        cmdline-tools-version: '16111833'
+    - run: |
+        sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
+        test -f "$ANDROID_SDK_ROOT/platforms/android-37.0/android.jar"
+    - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+      with:
+        gradle-version: 9.6.0
+        cache-read-only: false
+    - name: Kotlin data, lifecycle and UI compilation checks
+      id: kotlin_checks
+      working-directory: apps/aerove-lite
+      run: gradle --no-daemon :app:testReleaseUnitTest :app:lintRelease :app:compileReleaseAndroidTestKotlin :app:minifyReleaseWithR8
+    - name: Inspect Android tasks after verification failure
+      if: ${{ failure() && steps.kotlin_checks.outcome == 'failure' }}
+      timeout-minutes: 3
+      working-directory: apps/aerove-lite
+      shell: bash
+      run: |
+        mkdir -p app/build/reports
+        gradle --no-daemon :app:tasks --all 2>&1 | tee app/build/reports/gradle-tasks.txt
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      if: always()
+      with:
+        name: AEROVE-Lite-Kotlin-verification
+        path: |
+          apps/aerove-lite/app/build/reports/
+          apps/aerove-lite/app/build/test-results/
+        if-no-files-found: warn
+  reuse:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      run_id: ${{ steps.select.outputs.run_id }}
+      run_number: ${{ steps.select.outputs.run_number }}
+      run_attempt: ${{ steps.select.outputs.run_attempt }}
+      artifact_ids: ${{ steps.select.outputs.artifact_ids }}
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - name: Select the exact successful acceptance run
+      id: select
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: python3 apps/aerove-lite/tool/lite_release.py select --source "$GITHUB_SHA" --current-run "$GITHUB_RUN_ID" --outputs "$GITHUB_OUTPUT"
+  release:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight && needs.reuse.result == 'success' }}
+    needs:
+    - reuse
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ACCEPTANCE_RUN: ${{ needs.reuse.outputs.run_id }}
+      ACCEPTANCE_NUMBER: ${{ needs.reuse.outputs.run_number }}
+      ACCEPTANCE_ATTEMPT: ${{ needs.reuse.outputs.run_attempt }}
+      ARTIFACT_IDS: ${{ needs.reuse.outputs.artifact_ids }}
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+      with:
+        distribution: temurin
+        java-version: '17'
+    - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+      with:
+        packages: platform-tools
+        log-accepted-android-sdk-licenses: false
+        cmdline-tools-version: '16111833'
+    - name: Install the pinned APK signature reader
+      run: |
+        sdkmanager 'build-tools;37.0.0'
+        test -x "$ANDROID_SDK_ROOT/build-tools/37.0.0/apksigner"
+    - name: Download only selected immutable acceptance artifact IDs
+      shell: bash
+      run: |
+        set -euo pipefail
+        root="$RUNNER_TEMP/lite-promotion"
+        mkdir -p "$root"
+        python3 - <<'PY' > "$root/artifact-ids.json"
+        import json, os
+        value = json.loads(os.environ['ARTIFACT_IDS'])
+        expected = {'arm', 'helper', 'x86', 'matrix'}
+        if set(value) != expected or any(not isinstance(v, int) or v < 1 for v in value.values()):
+            raise SystemExit('Selected acceptance artifact IDs are incomplete')
+        print(json.dumps(value))
+        PY
+        for key in arm helper x86 matrix; do
+          artifact_id=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$root/artifact-ids.json" "$key")
+          python3 apps/aerove-lite/tool/lite_release.py extract --artifact-id "$artifact_id" --destination "$root/$key"
+        done
+        "$ANDROID_SDK_ROOT/build-tools/37.0.0/apksigner" verify --verbose --print-certs \
+          "$root/arm/AEROVE-Lite-android-arm64.apk" > "$root/arm-signature.txt"
+        "$ANDROID_SDK_ROOT/build-tools/37.0.0/aapt" dump badging "$root/arm/AEROVE-Lite-android-arm64.apk" > "$root/arm-badging.txt"
+        "$ANDROID_SDK_ROOT/build-tools/37.0.0/apksigner" verify --verbose --print-certs \
+          "$root/x86/apks/app-release.apk" > "$root/x86-signature.txt"
+        "$ANDROID_SDK_ROOT/build-tools/37.0.0/aapt" dump badging "$root/x86/apks/app-release.apk" > "$root/x86-badging.txt"
+    - name: Verify exact source, ABI contracts, native receipts and twelve Android captures
+      run: |
+        python3 apps/aerove-lite/tool/lite_release.py validate \
+          --arm "$RUNNER_TEMP/lite-promotion/arm" --helper "$RUNNER_TEMP/lite-promotion/helper" \
+          --runtime "$RUNNER_TEMP/lite-promotion/x86" --matrix "$RUNNER_TEMP/lite-promotion/matrix" \
+          --source "$GITHUB_SHA" --tree "$(git rev-parse HEAD^{tree})" \
+          --run "$ACCEPTANCE_RUN" --attempt "$ACCEPTANCE_ATTEMPT" --number "$ACCEPTANCE_NUMBER" \
+          --helper-source apps/aerove-lite/regexp2 \
+          --arm-badging "$RUNNER_TEMP/lite-promotion/arm-badging.txt" \
+          --arm-signature "$RUNNER_TEMP/lite-promotion/arm-signature.txt" \
+          --x86-badging "$RUNNER_TEMP/lite-promotion/x86-badging.txt" \
+          --x86-signature "$RUNNER_TEMP/lite-promotion/x86-signature.txt" \
+          --output "$RUNNER_TEMP/lite-promotion/validated.json"
+    - name: Render source-bound release notes
+      run: |
+        info="$RUNNER_TEMP/lite-promotion/arm/BUILD_INFO.json"
+        tag=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("lite-v"+str(d["version"])+"+"+str(d["version_code"]))' "$info")
+        python3 apps/aerove-lite/tool/lite_release.py previous-changelog \
+          --output "$RUNNER_TEMP/lite-promotion/previous-changelog.md" --target-tag "$tag"
+        python3 apps/aerove-lite/tool/lite_release_notes.py --tag "$tag" --build-info "$info" \
+          --source-changelog docs/aerove-lite/CHANGELOG.md --acceptance-run "$ACCEPTANCE_RUN" \
+          --acceptance-attempt "$ACCEPTANCE_ATTEMPT" \
+          --previous-changelog "$RUNNER_TEMP/lite-promotion/previous-changelog.md" \
+          --output "$RUNNER_TEMP/lite-promotion/notes.md"
+    - name: Create or resume a matching draft, upload originals and read them back
+      run: |
+        python3 apps/aerove-lite/tool/lite_release.py publish \
+          --directory "$RUNNER_TEMP/lite-promotion/arm" \
+          --validated "$RUNNER_TEMP/lite-promotion/validated.json" \
+          --notes "$RUNNER_TEMP/lite-promotion/notes.md" \
+          --source "$GITHUB_SHA" --run "$ACCEPTANCE_RUN" --attempt "$ACCEPTANCE_ATTEMPT" \
+          --number "$ACCEPTANCE_NUMBER"
+  build_arm:
+    name: build (arm64-v8a)
+    if: ${{ !inputs.native_preflight && !inputs.publish_release }}
+    uses: ./.github/workflows/aerove-lite-build.yaml
+    with:
+      abi: arm64-v8a
+      target: aarch64-linux-android
+    secrets: inherit
+    permissions:
+      contents: read
+      actions: read
+  build_x86:
+    name: build (x86_64)
+    if: ${{ !inputs.native_preflight && !inputs.publish_release }}
+    uses: ./.github/workflows/aerove-lite-build.yaml
+    with:
+      abi: x86_64
+      target: x86_64-linux-android
+    secrets: inherit
+    permissions:
+      contents: read
+      actions: read
+  acceptance:
+    if: ${{ !inputs.native_preflight && !inputs.publish_release }}
+    needs:
+    - build_x86
+    strategy:
+      fail-fast: false
+      matrix:
+        phase:
+        - matrix
+        - remaining
+    name: acceptance (${{ matrix.phase }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+      with:
+        distribution: temurin
+        java-version: '17'
+    - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+      with:
+        packages: platform-tools
+        log-accepted-android-sdk-licenses: false
+        cmdline-tools-version: '16111833'
+    - name: Fetch exact prebuilt x86 runtime
+      run: python3 apps/aerove-lite/tool/ci_artifacts.py runtime --name "AEROVE-Lite-runtime-contract-attempt-${GITHUB_RUN_ATTEMPT}" --destination "$RUNNER_TEMP/lite-runtime-input"
+    - name: Enable KVM for the isolated test emulator
+      run: |
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
+    - name: Real API 33 ${{ matrix.phase }} verification
+      uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+      with:
+        api-level: 33
+        arch: x86_64
+        target: google_apis
+        profile: pixel_6
+        disable-animations: false
+        emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+        script: bash apps/aerove-lite/tool/emulator_acceptance.sh ${{ matrix.phase }}
+    - name: Preserve the first Android dashboard captures
+      if: ${{ always() && matrix.phase == 'matrix' }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: AEROVE-Lite-dashboard-matrix-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/lite-diagnostics/matrix/
+        if-no-files-found: error
+    - name: Preserve diagnostics
+      if: always()
+      run: |
+        mkdir -p "$RUNNER_TEMP/lite-diagnostics"
+        git status --short > "$RUNNER_TEMP/lite-diagnostics/git-status.txt"
+        git diff --binary > "$RUNNER_TEMP/lite-diagnostics/generated.patch"
+        if timeout 5s adb get-state > /dev/null 2>&1; then
+          timeout 15s adb logcat -d > "$RUNNER_TEMP/lite-diagnostics/logcat.txt" 2>&1 || true
+          timeout 30s adb pull /sdcard/Android/data/dev.aerove.lite/files/captures "$RUNNER_TEMP/lite-diagnostics/" || true
+        fi
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      if: always()
+      with:
+        name: AEROVE-Lite-diagnostics-${{ matrix.phase }}-attempt-${{ github.run_attempt }}
+        path: |
+          apps/aerove-lite/app/build/reports/
+          apps/aerove-lite/app/build/outputs/androidTest-results/
+          apps/aerove-lite/native/Cargo.lock
+          ${{ runner.temp }}/lite-diagnostics/
+          ${{ runner.temp }}/lite-fixture.log
+        if-no-files-found: warn
+  accepted:
+    if: ${{ always() && !inputs.native_preflight && !inputs.publish_release }}
+    needs:
+    - resolve
+    - verify
+    - build_arm
+    - build_x86
+    - acceptance
+    runs-on: ubuntu-24.04
+    steps:
+    - name: All exact-source acceptance gates passed
+      env:
+        RESULTS: ${{ toJSON(needs) }}
+      run: python3 -c 'import json,os; results=json.loads(os.environ["RESULTS"]); assert all(x["result"]=="success" for x in results.values()), results'
+'on':
   push:
-    branches: [codex/aerove-independent-architecture]
+    branches:
+    - codex/aerove-independent-architecture
     paths:
-      - 'apps/aerove-lite/**'
-      - '.github/workflows/aerove-lite.yaml'
+    - apps/aerove-lite/**
+    - .github/workflows/aerove-lite.yaml
+    - '!apps/aerove-lite/**/*.md'
+    - .github/workflows/aerove-lite-build.yaml
   workflow_dispatch:
     inputs:
+      publish_release:
+        description: Promote a fully accepted Lite artifact for this exact main commit; never rebuild
+        required: false
+        type: boolean
+        default: false
       native_preflight:
         description: Resolve the native Cargo lock and run host Rust tests only; skip Android verification and APK builds
         required: false
@@ -33,473 +533,3 @@ on:
         required: false
         type: boolean
         default: false
-
-permissions:
-  contents: read
-
-concurrency:
-  group: aerove-lite-${{ github.ref }}
-  cancel-in-progress: false
-
-env:
-  RUSTC_BOOTSTRAP: '1'
-  NDK_VERSION: '28.2.13676358'
-
-jobs:
-  resolve:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-        with:
-          toolchain: '1.99.0'
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
-        with:
-          workspaces: apps/aerove-lite/native -> target
-          cache-on-failure: ${{ inputs.native_preflight }}
-      - name: Resolve and check the real pinned bridge dependency lock
-        if: ${{ !inputs.native_preflight }}
-        run: |
-          python3 apps/aerove-lite/native/build.py --initialize-lock --prepare-only
-          git diff --exit-code -- apps/aerove-lite/native/Cargo.lock
-      - name: Ensure GDB is available for requested native stack capture
-        if: ${{ inputs.native_preflight && inputs.native_test_stacks }}
-        timeout-minutes: 5
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! command -v gdb >/dev/null 2>&1; then
-            sudo -n env DEBIAN_FRONTEND=noninteractive \
-              timeout --signal=TERM --kill-after=10s 90s \
-              apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 \
-              -o Acquire::https::Timeout=20 update
-            sudo -n env DEBIAN_FRONTEND=noninteractive \
-              timeout --signal=TERM --kill-after=10s 150s \
-              apt-get -o DPkg::Lock::Timeout=30 -o Acquire::Retries=1 \
-              -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 \
-              install --yes --no-install-recommends gdb
-          fi
-          command -v gdb
-          timeout --signal=TERM --kill-after=5s 10s \
-            gdb -nx -nh --batch -ex 'show version' -ex quit
-      - name: Initialize native lock and run host Rust tests
-        if: ${{ inputs.native_preflight }}
-        shell: bash
-        env:
-          NATIVE_TEST_FILTER: ${{ inputs.native_test_filter }}
-          NATIVE_TEST_SERIAL: ${{ inputs.native_test_serial }}
-          NATIVE_TEST_STACKS: ${{ inputs.native_test_stacks }}
-          NATIVE_UNDERLAY_TESTS: ${{ inputs.native_underlay_tests }}
-          RUST_TEST_NOCAPTURE: '1'
-          RUST_BACKTRACE: '1'
-        run: |
-          evidence="$RUNNER_TEMP/lite-native-preflight"
-          mkdir -p "$evidence"
-          python3 - <<'PY' > "$evidence/before.json"
-          import hashlib, json, subprocess
-          from pathlib import Path
-          root = Path('apps/aerove-lite/native')
-          lock = root / 'Cargo.lock'
-          source_lock = subprocess.check_output(['git', 'show', 'HEAD:apps/aerove-lite/native/Cargo.lock'])
-          print(json.dumps({
-              'sourceSha': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
-              'sourceTree': subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], text=True).strip(),
-              'lockSha256Before': hashlib.sha256(lock.read_bytes()).hexdigest() if lock.is_file() else None,
-              'lockSha256AtSource': hashlib.sha256(source_lock).hexdigest(),
-              'lockPresentBefore': lock.is_file(),
-          }, indent=2))
-          PY
-          if [[ "$NATIVE_TEST_STACKS" == true && -z "$NATIVE_TEST_FILTER" ]]; then
-            echo 'Stack diagnosis requires an explicit host-test filter.' >&2
-            exit 2
-          fi
-          if [[ "$NATIVE_UNDERLAY_TESTS" == true ]]; then
-            if [[ -n "$NATIVE_TEST_FILTER" || "$NATIVE_TEST_STACKS" == true ]]; then
-              echo 'Underlay tests require no core filter or stack capture.' >&2
-              exit 2
-            fi
-            python3 apps/aerove-lite/native/build.py --initialize-lock --prepare-only
-            cp apps/aerove-lite/native/Cargo.lock "$evidence/underlay-Cargo.lock.before"
-            set +e
-            (cd apps/aerove-lite/native && \
-              CARGO_TARGET_DIR="$GITHUB_WORKSPACE/apps/aerove-lite/native/target" \
-              timeout --signal=TERM --kill-after=10s 8m cargo test --locked --offline --manifest-path Cargo.toml \
-              -p aerove-ts-underlay@0.1.0 --test sockets --no-run) 2>&1 | tee "$evidence/native-compile.log"
-            compile_status=${PIPESTATUS[0]}
-            command_status=$compile_status
-            if [[ "$compile_status" == 0 ]]; then
-              (cd apps/aerove-lite/native && \
-                CARGO_TARGET_DIR="$GITHUB_WORKSPACE/apps/aerove-lite/native/target" RUST_BACKTRACE=1 \
-                timeout --signal=TERM --kill-after=10s 120s cargo test --locked --offline --manifest-path Cargo.toml \
-                -p aerove-ts-underlay@0.1.0 --test sockets -- --test-threads=1 --nocapture) 2>&1 | tee "$evidence/native-test.log"
-              command_status=${PIPESTATUS[0]}
-            fi
-            set -e
-          elif [[ -n "$NATIVE_TEST_FILTER" ]]; then
-            [[ "$NATIVE_TEST_FILTER" =~ ^[[:alnum:]_:]+$ ]] || exit 2
-            python3 apps/aerove-lite/native/build.py --initialize-lock --prepare-only
-            set +e
-            (cd apps/aerove-lite/native && \
-              CARGO_TARGET_DIR="$GITHUB_WORKSPACE/apps/aerove-lite/native/target" \
-              timeout --signal=TERM --kill-after=10s 8m cargo test --locked --lib --no-run) \
-              2>&1 | tee "$evidence/native-compile.log"
-            compile_status=${PIPESTATUS[0]}
-            command_status=$compile_status
-            if [[ "$compile_status" == 0 ]]; then
-              stack_monitor=''
-              if [[ "$NATIVE_TEST_STACKS" == true ]]; then
-                python3 apps/aerove-lite/tooling/capture_native_stacks.py \
-                  --target-dir "$GITHUB_WORKSPACE/apps/aerove-lite/native/target" \
-                  --evidence-dir "$evidence/stacks" --filter "$NATIVE_TEST_FILTER" \
-                  > "$evidence/stack-monitor.log" 2>&1 &
-                stack_monitor=$!
-              fi
-              (cd apps/aerove-lite/native && \
-                CARGO_TARGET_DIR="$GITHUB_WORKSPACE/apps/aerove-lite/native/target" RUST_BACKTRACE=1 \
-                timeout --signal=TERM --kill-after=10s 120s cargo test --locked --lib "$NATIVE_TEST_FILTER" \
-                -- --test-threads=1 --nocapture) 2>&1 | tee "$evidence/native-test.log"
-              command_status=${PIPESTATUS[0]}
-              if [[ -n "$stack_monitor" ]]; then
-                kill -TERM "$stack_monitor" 2>/dev/null || true
-                wait "$stack_monitor" || true
-              fi
-            fi
-            set -e
-          else
-            compile_status=''
-            if [[ "$NATIVE_TEST_SERIAL" == true ]]; then export RUST_TEST_THREADS=1; fi
-            set +e
-            timeout --signal=TERM --kill-after=10s 10m \
-              python3 apps/aerove-lite/native/build.py --initialize-lock --test 2>&1 | tee "$evidence/native-test.log"
-            command_status=${PIPESTATUS[0]}
-            set -e
-          fi
-          python3 - "$command_status" "$compile_status" <<'PY'
-          import hashlib, json, os, re, sys
-          from pathlib import Path
-          evidence = Path(os.environ['RUNNER_TEMP']) / 'lite-native-preflight'
-          before = json.loads((evidence / 'before.json').read_text())
-          lock = Path('apps/aerove-lite/native/Cargo.lock')
-          provenance_path = Path('apps/aerove-lite/native/.upstream/clash-rs/AEROVE_PROVENANCE.json')
-          provenance = json.loads(provenance_path.read_text()) if provenance_path.is_file() else None
-          underlay = os.environ['NATIVE_UNDERLAY_TESTS'] == 'true'
-          selected = underlay or bool(os.environ['NATIVE_TEST_FILTER'])
-          underlay_command = 'cargo test --locked --offline --manifest-path Cargo.toml -p aerove-ts-underlay@0.1.0 --test sockets'
-          result = {
-              **before,
-              'command': ('timeout --signal=TERM --kill-after=10s 120s ' + underlay_command + ' -- --test-threads=1 --nocapture') if underlay else ('timeout --signal=TERM --kill-after=10s 120s cargo test --locked --lib '
-                          + os.environ['NATIVE_TEST_FILTER'] + ' -- --test-threads=1 --nocapture') if os.environ['NATIVE_TEST_FILTER'] else
-                         'timeout --signal=TERM --kill-after=10s 10m python3 apps/aerove-lite/native/build.py --initialize-lock --test',
-              'testSelection': 'aerove-ts-underlay@0.1.0::sockets' if underlay else os.environ['NATIVE_TEST_FILTER'] or 'full-suite',
-              'underlayTestsRequested': underlay,
-              'expectedUnderlayTests': 7 if underlay else None,
-              'stackCaptureRequested': os.environ['NATIVE_TEST_STACKS'] == 'true',
-              'stackCaptureMetadata': 'stacks/capture.json' if (evidence / 'stacks/capture.json').is_file() else None,
-              'testThreads': 1 if selected or os.environ['NATIVE_TEST_SERIAL'] == 'true' else 'default',
-              'workingDirectory': 'apps/aerove-lite/native' if selected else '.',
-              'compileCommand': ('timeout --signal=TERM --kill-after=10s 8m ' + underlay_command + ' --no-run') if underlay else 'timeout --signal=TERM --kill-after=10s 8m cargo test --locked --lib --no-run' if os.environ['NATIVE_TEST_FILTER'] else None,
-              'compileExitCode': int(sys.argv[2]) if sys.argv[2] else None,
-              'compileLog': 'native-compile.log' if selected else None,
-              'commandStage': 'compile' if sys.argv[2] and int(sys.argv[2]) != 0 else 'test',
-              'commandLog': 'native-compile.log' if sys.argv[2] and int(sys.argv[2]) != 0 else 'native-test.log',
-              'commandExitCode': int(sys.argv[1]),
-              'lockSha256After': hashlib.sha256(lock.read_bytes()).hexdigest() if lock.is_file() else None,
-              'lockChanged': (hashlib.sha256(lock.read_bytes()).hexdigest() if lock.is_file() else None) != before['lockSha256Before'],
-              'stableLockGate': 'not-run-in-native-preflight',
-              'preparedSourceProvenance': provenance,
-          }
-          validation_error = None
-          if underlay and result['commandExitCode'] == 0:
-              helper = Path('apps/aerove-lite/native/.upstream/dependency-protect/aerove-ts-underlay')
-              test_source = helper / 'tests/sockets.rs'
-              names = re.findall(r'#\[tokio::test\]\s+async fn (\w+)\(', test_source.read_text())
-              log = re.sub(r'\x1b\[[0-9;]*m', '', (evidence / 'native-test.log').read_text())
-              passed = [name for name in names if re.search(r'^test ' + re.escape(name) + r' \.\.\. ok\s*$', log, re.MULTILINE)]
-              lock_unchanged = lock.read_bytes() == (evidence / 'underlay-Cargo.lock.before').read_bytes()
-              helper_lock_created = (helper / 'Cargo.lock').exists()
-              complete = bool(re.search(r'^test result: ok\. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;', log, re.MULTILINE))
-              if len(names) != 7 or len(passed) != 7 or not complete or not lock_unchanged or helper_lock_created:
-                  validation_error = 'Underlay tests did not prove seven named passes with the unchanged root lock.'
-              result['underlayTestReceipt'] = {'expectedTests': names, 'passedTests': passed, 'rootLockUnchanged': lock_unchanged, 'helperLockCreated': helper_lock_created, 'testSourceSha256': hashlib.sha256(test_source.read_bytes()).hexdigest()}
-          result['validationError'] = validation_error
-          (evidence / 'after.json').write_text(json.dumps(result, indent=2) + '\n')
-          if result['lockChanged']:
-              print('::notice::Native preflight generated or changed Cargo.lock; this does not pass the normal stable-lock gate.')
-          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
-              summary.write('Native-only preflight completed. The normal stable Cargo.lock diff gate and Android verification/APK gates were not run.\n')
-              summary.write(f"Cargo.lock changed during lock initialization: {result['lockChanged']}\n")
-          sys.exit(1 if validation_error else int(sys.argv[1]))
-          PY
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: ${{ always() && !inputs.native_preflight }}
-        with:
-          name: AEROVE-Lite-resolved-lock
-          path: apps/aerove-lite/native/Cargo.lock
-          if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: ${{ always() && inputs.native_preflight }}
-        with:
-          name: AEROVE-Lite-native-preflight
-          path: |
-            apps/aerove-lite/native/Cargo.lock
-            ${{ runner.temp }}/lite-native-preflight/
-          if-no-files-found: warn
-  verify:
-    if: ${{ !inputs.native_preflight }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - name: Check workspace layout
-        run: python3 tooling/workspace.py check
-      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
-        with:
-          packages: platform-tools
-          log-accepted-android-sdk-licenses: false
-          cmdline-tools-version: '16111833'
-      - run: |
-          sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
-          test -f "$ANDROID_SDK_ROOT/platforms/android-37.0/android.jar"
-      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
-        with:
-          gradle-version: '9.6.0'
-      - name: Kotlin data, lifecycle and UI compilation checks
-        id: kotlin_checks
-        working-directory: apps/aerove-lite
-        run: gradle --no-daemon :app:testReleaseUnitTest :app:lintRelease :app:compileReleaseAndroidTestKotlin :app:minifyReleaseWithR8
-      - name: Inspect Android tasks after verification failure
-        if: ${{ failure() && steps.kotlin_checks.outcome == 'failure' }}
-        timeout-minutes: 3
-        working-directory: apps/aerove-lite
-        shell: bash
-        run: |
-          mkdir -p app/build/reports
-          gradle --no-daemon :app:tasks --all 2>&1 | tee app/build/reports/gradle-tasks.txt
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always()
-        with:
-          name: AEROVE-Lite-Kotlin-verification
-          path: |
-            apps/aerove-lite/app/build/reports/
-            apps/aerove-lite/app/build/test-results/
-          if-no-files-found: warn
-  build:
-    if: ${{ !inputs.native_preflight }}
-    needs: [resolve, verify]
-    env:
-      AEROVE_LITE_KEYSTORE_PASSWORD: ${{ secrets.AEROVE_LITE_KEYSTORE_PASSWORD }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - abi: arm64-v8a
-            target: aarch64-linux-android
-          - abi: x86_64
-            target: x86_64-linux-android
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - name: Source preparation and APK inspector regression tests
-        run: |
-          python3 apps/aerove-lite/native/test_build.py
-          python3 apps/aerove-lite/tool/test_verify_apk.py
-      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
-        with:
-          packages: platform-tools
-          log-accepted-android-sdk-licenses: false
-          cmdline-tools-version: '16111833'
-      - name: Install the pinned Android toolchain
-        run: |
-          sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0' "ndk;$NDK_VERSION"
-          test -f "$ANDROID_SDK_ROOT/platforms/android-37.0/android.jar"
-      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
-        with:
-          gradle-version: '9.6.0'
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-        with:
-          toolchain: '1.99.0'
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
-        with:
-          workspaces: apps/aerove-lite/native -> target
-          key: lite-${{ matrix.target }}
-      - name: Build the pinned Rust Android bridge
-        run: >-
-          python3 apps/aerove-lite/native/build.py --target '${{ matrix.target }}'
-          --ndk "$ANDROID_SDK_ROOT/ndk/$NDK_VERSION"
-          --output apps/aerove-lite/app/src/main/jniLibs
-      - name: Native lifecycle and production GeoSite regression
-        if: matrix.abi == 'arm64-v8a'
-        run: |
-          python3 apps/aerove-lite/native/reference_resources.py --download --output "$RUNNER_TEMP/geosite.dat"
-          python3 apps/aerove-lite/native/build.py --test --test-geosite "$RUNNER_TEMP/geosite.dat"
-      - name: Prepare the independent Lite release signing identity
-        env:
-          KEYSTORE_BASE64: ${{ secrets.AEROVE_LITE_KEYSTORE }}
-        run: |
-          python3 - <<'PY'
-          import base64, os
-          from pathlib import Path
-          encoded = os.environ['KEYSTORE_BASE64']
-          if not encoded or not os.environ['AEROVE_LITE_KEYSTORE_PASSWORD']:
-              raise SystemExit('The independent Lite signing secrets are required')
-          target = Path(os.environ['RUNNER_TEMP']) / 'aerove-lite.p12'
-          target.write_bytes(base64.b64decode(encoded, validate=True))
-          target.chmod(0o600)
-          with open(os.environ['GITHUB_ENV'], 'a') as output:
-              output.write(f'AEROVE_LITE_KEYSTORE_PATH={target}\n')
-          PY
-      - name: Signed preview ARM64 APK
-        if: matrix.abi == 'arm64-v8a'
-        working-directory: apps/aerove-lite
-        run: >-
-          gradle --no-daemon :app:assembleRelease
-          -PliteAbi=arm64-v8a -PsourceSha="$GITHUB_SHA"
-      - name: Emulator application and instrumentation APK
-        id: emulator_apks
-        if: matrix.abi == 'x86_64'
-        working-directory: apps/aerove-lite
-        run: >-
-          gradle --no-daemon :app:assembleRelease :app:assembleReleaseAndroidTest
-          -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA"
-      - name: Preserve the built x86 runtime contract
-        if: ${{ !cancelled() && matrix.abi == 'x86_64' && steps.emulator_apks.outcome == 'success' }}
-        working-directory: apps/aerove-lite
-        run: |
-          diagnostic_root="$RUNNER_TEMP/lite-runtime-diagnostics"
-          mkdir -p "$diagnostic_root/apks" "$diagnostic_root/dependencies"
-          cp app/build/outputs/apk/release/app-release.apk "$diagnostic_root/apks/"
-          cp app/build/outputs/apk/androidTest/release/app-release-androidTest.apk "$diagnostic_root/apks/"
-          for variant in release releaseAndroidTest; do
-            for report in mapping.txt usage.txt seeds.txt configuration.txt; do
-              original="app/build/outputs/mapping/$variant/$report"
-              if [ -f "$original" ]; then
-                mkdir -p "$diagnostic_root/mapping/$variant"
-                cp "$original" "$diagnostic_root/mapping/$variant/"
-              fi
-            done
-          done
-          for configuration in releaseRuntimeClasspath releaseAndroidTestRuntimeClasspath; do
-            if gradle --no-daemon :app:dependencies --configuration "$configuration" \
-                -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" \
-                > "$diagnostic_root/dependencies/$configuration.stdout.txt" \
-                2> "$diagnostic_root/dependencies/$configuration.stderr.txt"; then
-              query_exit=0
-            else
-              query_exit=$?
-            fi
-            printf '%s\n' "$query_exit" > "$diagnostic_root/dependencies/$configuration.exit.txt"
-          done
-          python3 - <<'PY'
-          import hashlib, json, os, subprocess
-          from pathlib import Path
-          root = Path(os.environ['RUNNER_TEMP']) / 'lite-runtime-diagnostics'
-          files = sorted(path for path in root.rglob('*') if path.is_file())
-          manifest = [{'path': path.relative_to(root).as_posix(), 'bytes': path.stat().st_size,
-                       'sha256': hashlib.sha256(path.read_bytes()).hexdigest()} for path in files]
-          (root / 'SHA256SUMS').write_text(''.join(f"{item['sha256']}  {item['path']}\n" for item in manifest))
-          source = {'sourceRevision': os.environ['GITHUB_SHA'],
-                    'sourceTree': subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], text=True).strip(),
-                    'workflowRun': os.environ['GITHUB_RUN_ID'], 'runAttempt': os.environ['GITHUB_RUN_ATTEMPT'],
-                    'abi': 'x86_64', 'prebuiltApks': True, 'files': manifest}
-          (root / 'source-manifest.json').write_text(json.dumps(source, indent=2) + '\n')
-          PY
-      - name: Upload the built x86 runtime contract
-        if: ${{ !cancelled() && matrix.abi == 'x86_64' && steps.emulator_apks.outcome == 'success' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: AEROVE-Lite-runtime-contract
-          path: ${{ runner.temp }}/lite-runtime-diagnostics/
-          if-no-files-found: error
-      - name: Check the ARM64 APK and record its exact provenance
-        if: matrix.abi == 'arm64-v8a'
-        run: |
-          "$ANDROID_SDK_ROOT/build-tools/37.0.0/apksigner" verify --verbose --print-certs \
-            apps/aerove-lite/app/build/outputs/apk/release/app-release.apk | tee "$RUNNER_TEMP/lite-signature.txt"
-          "$ANDROID_SDK_ROOT/build-tools/37.0.0/aapt" dump badging \
-            apps/aerove-lite/app/build/outputs/apk/release/app-release.apk | tee "$RUNNER_TEMP/lite-badging.txt"
-          python3 apps/aerove-lite/tool/verify_apk.py \
-            --apk apps/aerove-lite/app/build/outputs/apk/release/app-release.apk --channel preview \
-            --abi arm64-v8a --source "$GITHUB_SHA" --tree "$(git rev-parse HEAD^{tree})" \
-            --workflow "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            --badging "$RUNNER_TEMP/lite-badging.txt" --signature "$RUNNER_TEMP/lite-signature.txt" \
-            --output "$RUNNER_TEMP/lite-artifact"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: matrix.abi == 'arm64-v8a'
-        with:
-          name: AEROVE-Lite-preview-arm64
-          path: ${{ runner.temp }}/lite-artifact/
-          if-no-files-found: error
-      - name: Enable KVM for the isolated test emulator
-        if: matrix.abi == 'x86_64'
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-      - name: Real API 33 dashboard matrix
-        id: dashboard_matrix
-        if: matrix.abi == 'x86_64'
-        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
-        with:
-          api-level: 33
-          arch: x86_64
-          target: google_apis
-          profile: pixel_6
-          disable-animations: false
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          script: bash apps/aerove-lite/tool/emulator_acceptance.sh matrix
-      - name: Preserve the first Android dashboard captures
-        if: ${{ !cancelled() && matrix.abi == 'x86_64' && (steps.dashboard_matrix.outcome == 'success' || steps.dashboard_matrix.outcome == 'failure') }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: AEROVE-Lite-dashboard-matrix
-          path: ${{ runner.temp }}/lite-diagnostics/matrix/
-          if-no-files-found: error
-      - name: Real API 33 remaining native, TUN and graphics verification
-        if: ${{ !cancelled() && matrix.abi == 'x86_64' && steps.emulator_apks.outcome == 'success' && (steps.dashboard_matrix.outcome == 'success' || steps.dashboard_matrix.outcome == 'failure') }}
-        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
-        with:
-          api-level: 33
-          arch: x86_64
-          target: google_apis
-          profile: pixel_6
-          disable-animations: false
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          script: bash apps/aerove-lite/tool/emulator_acceptance.sh remaining
-      - name: Preserve diagnostics
-        if: always()
-        run: |
-          mkdir -p "$RUNNER_TEMP/lite-diagnostics"
-          git status --short > "$RUNNER_TEMP/lite-diagnostics/git-status.txt"
-          git diff --binary > "$RUNNER_TEMP/lite-diagnostics/generated.patch"
-          if timeout 5s adb get-state > /dev/null 2>&1; then
-            timeout 15s adb logcat -d > "$RUNNER_TEMP/lite-diagnostics/logcat.txt" 2>&1 || true
-            timeout 30s adb pull /sdcard/Android/data/dev.aerove.lite/files/captures "$RUNNER_TEMP/lite-diagnostics/" || true
-          fi
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always()
-        with:
-          name: AEROVE-Lite-diagnostics-${{ matrix.abi }}
-          path: |
-            apps/aerove-lite/app/build/reports/
-            apps/aerove-lite/app/build/outputs/androidTest-results/
-            apps/aerove-lite/native/Cargo.lock
-            ${{ runner.temp }}/lite-diagnostics/
-            ${{ runner.temp }}/lite-fixture.log
-          if-no-files-found: warn

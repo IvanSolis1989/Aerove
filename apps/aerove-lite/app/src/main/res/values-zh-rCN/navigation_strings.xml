@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="navigation_bar_style">底栏</string>
+    <string name="navigation_floating">悬浮</string>
+    <string name="navigation_docked">固定</string>
+    <string name="navigation_tab_animation">选项卡动画</string>
+    <string name="navigation_slide">滑动</string>
+    <string name="navigation_fade">淡入</string>
+</resources>

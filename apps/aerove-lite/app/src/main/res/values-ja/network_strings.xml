@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="network_tun">"TUN"</string>
+    <string name="network_mtu">"MTU"</string>
+    <string name="network_mtu_range">"1280～65535 の整数を入力してください。"</string>
+    <string name="network_dns_hijacking">"DNSハイジャック"</string>
+    <string name="network_bypass_private_route">"プライベートアドレスをバイパス"</string>
+    <string name="network_route_addresses">"ルートアドレス"</string>
+    <string name="network_route_exclusions">"ルート除外アドレス"</string>
+    <string name="network_route_count">"ルート %1$d 件"</string>
+    <string name="network_route_entry">"ルート %1$d"</string>
+    <string name="network_add_route">"ルートを追加"</string>
+    <string name="network_remove_route">"削除"</string>
+    <string name="network_move_route_up">"上へ移動"</string>
+    <string name="network_move_route_down">"下へ移動"</string>
+    <string name="network_invalid_cidr">"ルート %1$d の CIDR を確認してください。"</string>
+</resources>

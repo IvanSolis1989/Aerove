@@ -50,6 +50,7 @@ class UpdatePanelUiTest {
             override suspend fun automaticEnabled() = automatic
             override suspend fun promptedTag() = prompted
             override suspend fun savePromptedTag(tag: String) { prompted = tag }
+            override suspend fun resetPromptedTag(): Unit = error("Prompt reset is unused in the update prompt UI fixture")
             override suspend fun canInstall() = false
             override suspend fun installUri(file: File) = error("No install in UI prompt test")
         }
@@ -57,6 +58,25 @@ class UpdatePanelUiTest {
     }
     private val host get() = object : LiteFeatureHost {
         override val updates: UpdateFeature get() = feature
+        override val groupIcons: dev.aerove.lite.images.GroupIconLoader get() = error("Unused update fixture group icons")
+        override val resourceManagement: dev.aerove.lite.resources.ResourceManagementSession get() = error("Unused update fixture resource management")
+        override val profileProperties: dev.aerove.lite.integration.ProfilePropertiesAccess get() = error("Unused update fixture properties")
+        override val profileImports: dev.aerove.lite.integration.ProfileImportWorkspace get() = error("Unused update fixture imports")
+        override val globalResources: dev.aerove.lite.integration.GlobalResourceWorkspace get() = error("Unused update fixture global resources")
+        override val resources: dev.aerove.lite.integration.ResourcePageWorkspace get() = error("Unused update fixture resources")
+        override val profileDetails: dev.aerove.lite.integration.ProfileDetailWorkspace get() = error("Unused update fixture profile details")
+        override val overrides: dev.aerove.lite.integration.OverrideWorkspace get() = error("Unused update fixture override workspace")
+        override val proxyPresentation: dev.aerove.lite.integration.ProxyPresentationWorkspace get() = error("Unused update fixture proxy presentation")
+        override val appAccess: dev.aerove.lite.appaccess.AppAccessFeature get() = error("Unused update fixture application access")
+        override fun closeAppAccess() = Unit
+        override val maintenance: dev.aerove.lite.maintenance.MaintenanceFeature get() = error("Unused update fixture maintenance")
+        override fun developerLogsTest(): Unit = error("Unused update fixture developer logs action")
+        override fun developerMessageTest(): Unit = error("Unused update fixture developer message action")
+        override val observability: dev.aerove.lite.observability.ObservabilityFeature get() = error("Unused fixture observability")
+        override suspend fun createProfileBuilder(name: String): dev.aerove.lite.profilebuilder.ProfileBuilderSession = error("Unused fixture profile builder creation")
+        override fun profileBuilder(profileId: String): dev.aerove.lite.profilebuilder.ProfileBuilderSession = error("Unused fixture profile builder")
+        override suspend fun profileBuilderResources(): dev.aerove.lite.profilebuilder.BuilderResources = error("Unused fixture profile builder resources")
+        override fun closeProfileBuilder(): Unit = error("Unused fixture close profile builder")
         override val backup: BackupFeature get() = error("Unused fixture backup")
         override val profileList: ProfileListFeature get() = error("Unused fixture profiles")
         override val ipQuality: IpQualityFeature get() = error("Unused fixture quality")

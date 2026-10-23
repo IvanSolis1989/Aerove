@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="integration_advanced_configuration">Configuration avancée</string>
+    <string name="integration_extend">Extension</string>
+    <string name="integration_suspended">Suspendu…</string>
+    <string name="integration_external_profile_confirm">Créer un profil à partir de %1$s ?</string>
+    <string name="integration_notifications_required">Autorisez les notifications pour démarrer le service proxy.</string>
+    <string name="integration_unified_delay">Délai unifié</string>
+    <string name="integration_tcp_concurrent">TCP simultané</string>
+    <string name="integration_add_profile">Ajouter un profil</string>
+    <string name="integration_find_process">Recherche de processus</string>
+</resources>

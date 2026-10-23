@@ -1,0 +1,12 @@
+--- a/regexp.go
++++ b/regexp.go
+@@ -34,6 +34,9 @@
+ 	// (DefaultMatchTimeout) causes all time out checking to be
+ 	// suppressed.
+ 	MatchTimeout time.Duration
++
++	// Aerove adapter: operational cancellation; nil preserves upstream behavior.
++	CancelCheck func() error
+ 
+ 	// read-only after Compile
+ 	pattern string       // as passed to Compile

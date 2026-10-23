@@ -1,0 +1,40 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="dns_preferences_add">Добавить</string>
+    <string name="dns_preferences_bootstrap">Серверы имен по умолчанию</string>
+    <string name="dns_preferences_cancel">Отмена</string>
+    <string name="dns_preferences_cidrs">Резервный фильтр IP-CIDR</string>
+    <string name="dns_preferences_count">Сопоставлений: %1$d</string>
+    <string name="dns_preferences_country">GeoIP код страны</string>
+    <string name="dns_preferences_domain">Домен %1$d</string>
+    <string name="dns_preferences_domains">Резервный фильтр доменов</string>
+    <string name="dns_preferences_enabled">Включить DNS</string>
+    <string name="dns_preferences_entry">Запись %1$d</string>
+    <string name="dns_preferences_fallback">Резервные серверы имен</string>
+    <string name="dns_preferences_filter">Фильтр Fake-IP</string>
+    <string name="dns_preferences_geoip">Фильтр GeoIP</string>
+    <string name="dns_preferences_hosts">Хозяева</string>
+    <string name="dns_preferences_hosts_detail">Объедините эти сопоставления хостов с каждым профилем; совпадающие имена используют сохраненный IP-адрес.</string>
+    <string name="dns_preferences_inherit">Наследовать</string>
+    <string name="dns_preferences_invalid">Проверьте поле: %1$s</string>
+    <string name="dns_preferences_ipv6">IPv6</string>
+    <string name="dns_preferences_listen">Прослушать адрес</string>
+    <string name="dns_preferences_mode">Режим DNS</string>
+    <string name="dns_preferences_move_down">Двигаться вниз</string>
+    <string name="dns_preferences_move_up">Вверх</string>
+    <string name="dns_preferences_nameservers">Серверы имен</string>
+    <string name="dns_preferences_overridden">Перезапись</string>
+    <string name="dns_preferences_override">Переопределить это поле</string>
+    <string name="dns_preferences_policy">Политика сервера имен</string>
+    <string name="dns_preferences_proxy_servers">Серверы имен прокси-серверов</string>
+    <string name="dns_preferences_range">Диапазон Fake-IP</string>
+    <string name="dns_preferences_remove">Убрать</string>
+    <string name="dns_preferences_respect_rules">Соблюдать правила</string>
+    <string name="dns_preferences_save">Сохранить</string>
+    <string name="dns_preferences_save_failed">Не удалось сохранить. Пожалуйста, попробуйте еще раз.</string>
+    <string name="dns_preferences_scope">Выберите поля для переопределения; другие поля следуют за источником профиля.</string>
+    <string name="dns_preferences_target">Цель %1$d</string>
+    <string name="dns_preferences_title">DNS</string>
+    <string name="dns_preferences_unsupported">Это ядро не поддерживает значение %1$s.</string>
+    <string name="dns_preferences_use_hosts">Использовать hosts</string>
+</resources>

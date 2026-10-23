@@ -122,6 +122,7 @@ internal fun SettingsScreen(state: LiteState, actions: LiteActions, padding: Pad
                 }
             }
         }
+        item { NavigationPreferencesSection(state.settings, enabled, actions::changeSettings) }
         item { DisplayPreferencesSection(state, actions, onFontFamily) }
         if (state.settings.aurora) item { AuroraSettings(state, actions) }
         else {
@@ -467,8 +468,26 @@ private object ThemeEditorGlyphs {
 }
 
 @Composable
-internal fun GeneralScreen(state: LiteState, actions: LiteActions, padding: PaddingValues) {
+internal fun GeneralScreen(state: LiteState, actions: LiteActions, padding: PaddingValues, onUserAgents: () -> Unit = {}, onHosts: () -> Unit = {}, onOnDemand: () -> Unit = {}) {
     LazyColumn(state = LocalLiteListState.current, contentPadding = padding) {
+        item { RequestPreferencesSection(state.settings.requests, state.busy.isEmpty(), { actions.changeSettings(state.settings.copy(requests = it)) }, onUserAgents) }
+        item { LitePane(Modifier.fillMaxWidth()) { Column {
+            SettingsRow(stringResource(R.string.integration_unified_delay)) {
+                LiteSwitch(state.settings.unifiedDelay, stringResource(R.string.integration_unified_delay),
+                    { actions.changeSettings(state.settings.copy(unifiedDelay = it)) }, state.busy.isEmpty())
+            }
+            SettingsRow(stringResource(R.string.integration_tcp_concurrent)) {
+                LiteSwitch(state.settings.tcpConcurrent, stringResource(R.string.integration_tcp_concurrent),
+                    { actions.changeSettings(state.settings.copy(tcpConcurrent = it)) }, state.busy.isEmpty())
+            }
+            SettingsRow(stringResource(R.string.integration_find_process)) {
+                LiteSwitch(state.settings.findProcessMode == dev.aerove.lite.FindProcessMode.Always,
+                    stringResource(R.string.integration_find_process), { enabled ->
+                        actions.changeSettings(state.settings.copy(findProcessMode = if (enabled)
+                            dev.aerove.lite.FindProcessMode.Always else dev.aerove.lite.FindProcessMode.Off))
+                    }, state.busy.isEmpty())
+            }
+        } } }
         item {
             LitePane(Modifier.fillMaxWidth()) {
                 SettingsRow(stringResource(R.string.update_auto), stringResource(R.string.update_auto_detail)) {
@@ -478,14 +497,20 @@ internal fun GeneralScreen(state: LiteState, actions: LiteActions, padding: Padd
                 }
             }
         }
-        item { SectionLabel(stringResource(R.string.lite_background)) }
         item {
-            LitePane(Modifier.fillMaxWidth()) {
-                SettingsRow(stringResource(R.string.lite_auto_start), stringResource(R.string.lite_auto_start_detail)) {
-                    LiteSwitch(state.settings.autoStart, stringResource(R.string.lite_auto_start), { actions.changeSettings(state.settings.copy(autoStart = it)) }, state.busy.isEmpty())
+            LitePane(Modifier.fillMaxWidth()) { Column {
+                SettingsRow(stringResource(R.string.lite_ipv6)) {
+                    LiteSwitch(state.settings.ipv6, stringResource(R.string.lite_ipv6),
+                        { actions.changeSettings(state.settings.copy(ipv6 = it)) }, state.busy.isEmpty())
                 }
-            }
+                SettingsRow(stringResource(R.string.dns_preferences_hosts), onClick = onHosts) { LiteIcon(FullGlyphs.chevronForward) }
+            } }
         }
+        item { ExternalControllerSection(state.settings.externalController, state.busy.isNotEmpty(), state.settingsError,
+            onChanged = { actions.changeSettings(state.settings.copy(externalController = it)) }) }
+        item { BackgroundPolicySection(state.settings.backgroundPolicy, state.busy.isEmpty(),
+            { actions.changeSettings(state.settings.copy(backgroundPolicy = it, autoStart = it.autoRun)) }, onOnDemand,
+            showStopAction = !state.settings.network.vpnEnabled) }
         item {
             LitePane(Modifier.fillMaxWidth()) {
                 SettingsRow(stringResource(R.string.lite_open_logs), stringResource(R.string.lite_open_logs_detail)) {

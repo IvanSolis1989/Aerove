@@ -1,0 +1,41 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="builder_add">Добавить</string>
+    <string name="builder_add_field">Добавить поле</string>
+    <string name="builder_close">Закрыть</string>
+    <string name="builder_delete">Удалить</string>
+    <string name="builder_discard">Отменить изменения</string>
+    <string name="builder_down">Двигаться вниз</string>
+    <string name="builder_duplicate">Дублировать</string>
+    <string name="builder_edit">Редактировать</string>
+    <string name="builder_empty">Нет товаров</string>
+    <string name="builder_field_name">Имя поля</string>
+    <string name="builder_filters">Фильтры</string>
+    <string name="builder_groups">Прокси-группы</string>
+    <string name="builder_icon_sets">Наборы значков</string>
+    <string name="builder_import_file">Импортировать файл</string>
+    <string name="builder_import_url">Импортировать URL-адрес</string>
+    <string name="builder_name">Название</string>
+    <string name="builder_payload">Значение совпадения</string>
+    <string name="builder_proxies">Прокси</string>
+    <string name="builder_proxy_providers">Провайдеры прокси</string>
+    <string name="builder_redo">Повторить</string>
+    <string name="builder_references">Используется в: %1$s</string>
+    <string name="builder_regex">Регулярное выражение</string>
+    <string name="builder_remove_field">Удалить %1$s</string>
+    <string name="builder_replacement">Замените ссылки на</string>
+    <string name="builder_retry">Повторить</string>
+    <string name="builder_rule_providers">Провайдеры правил</string>
+    <string name="builder_rules">Правила</string>
+    <string name="builder_save">Сохранить</string>
+    <string name="builder_select">Выбрать</string>
+    <string name="builder_selected">Выбрано</string>
+    <string name="builder_sort">Сортировка</string>
+    <string name="builder_sync">Синхронизация</string>
+    <string name="builder_target">Цель</string>
+    <string name="builder_title">Пользовательский профиль</string>
+    <string name="builder_type">Тип</string>
+    <string name="builder_undo">Отменить</string>
+    <string name="builder_unsaved">Сохранить изменения?</string>
+    <string name="builder_up">Вверх</string>
+</resources>

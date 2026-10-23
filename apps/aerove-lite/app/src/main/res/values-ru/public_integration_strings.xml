@@ -1,0 +1,12 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="integration_advanced_configuration">Расширенная конфигурация</string>
+    <string name="integration_extend">Расширить</string>
+    <string name="integration_external_profile_confirm">Создать профиль из %1$s?</string>
+    <string name="integration_notifications_required">Разрешите уведомления, чтобы запускать прокси-службу.</string>
+    <string name="integration_suspended">Приостановлено…</string>
+    <string name="integration_unified_delay">Единая задержка</string>
+    <string name="integration_tcp_concurrent">Параллельный TCP</string>
+    <string name="integration_add_profile">Добавить профиль</string>
+    <string name="integration_find_process">Поиск процесса</string>
+</resources>

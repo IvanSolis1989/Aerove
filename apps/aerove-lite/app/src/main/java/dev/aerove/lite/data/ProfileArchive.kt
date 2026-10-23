@@ -32,6 +32,11 @@ internal object ProfileArchive {
         return File(destination, "config.yaml").inputStream().use { it.readBounded(MAX_PROFILE_BYTES).strictUtf8() }
     }
 
+    suspend fun extractBytes(input: InputStream, archive: File, destination: File): ByteArray {
+        extractFiles(input, archive, destination, Limits(rootBytes = dev.aerove.lite.profilesource.MAX_CIPHERTEXT_BYTES.toLong()))
+        return File(destination, "config.yaml").inputStream().use { it.readBounded(dev.aerove.lite.profilesource.MAX_CIPHERTEXT_BYTES) }
+    }
+
     internal suspend fun extractFiles(input: InputStream, archive: File, destination: File, limits: Limits = Limits()) {
         check(archive.parentFile!!.isDirectory || archive.parentFile!!.mkdirs())
         check(destination.mkdirs()) { "ZIP staging directory already exists or cannot be created" }
@@ -71,7 +76,8 @@ internal object ProfileArchive {
                     require(meta.size <= limit) { "ZIP entry exceeds $limit bytes" }
                     zip.getInputStream(entry).use { stream ->
                         val checked = CheckedInputStream(stream, CRC32())
-                        val digest = copyResource(checked, file, limit)
+                        val digest = if (meta.name.startsWith("library/resources/") && meta.size == 0L)
+                            copyLocalRuleResource(checked, file, limit) else copyResource(checked, file, limit)
                         require(digest.bytes == meta.size && checked.checksum.value == meta.crc) { "ZIP entry size/CRC mismatch" }
                     }
                 }
@@ -133,3 +139,22 @@ internal object ProfileArchive {
 
     private data class Entry(val name: String, val size: Long, val crc: Long)
 }
+
+internal data class ProfileProxyGroupUi(val current: String?, val unfolded: Set<String>)
+
+internal fun org.json.JSONObject.readProxyGroupUi(): ProfileProxyGroupUi {
+    val current = if (!has("currentProxyGroup") || isNull("currentProxyGroup")) null
+        else get("currentProxyGroup").also { require(it is String) { "Invalid current proxy group" } } as String
+    val unfolded = if (!has("unfoldedProxyGroups")) emptySet() else {
+        val values = get("unfoldedProxyGroups")
+        require(values is org.json.JSONArray) { "Invalid unfolded proxy groups" }
+        (0 until values.length()).map { index ->
+            values.get(index).also { require(it is String) { "Invalid unfolded proxy group" } } as String
+        }.toSet()
+    }
+    return ProfileProxyGroupUi(current, unfolded)
+}
+
+internal fun org.json.JSONObject.putProxyGroupUi(current: String?, unfolded: Set<String>): org.json.JSONObject =
+    put("currentProxyGroup", current ?: org.json.JSONObject.NULL)
+        .put("unfoldedProxyGroups", org.json.JSONArray(unfolded.sorted()))

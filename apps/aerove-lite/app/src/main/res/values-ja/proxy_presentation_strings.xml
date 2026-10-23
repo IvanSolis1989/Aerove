@@ -1,0 +1,5 @@
+<resources>
+    <string name="proxy_presentation_scroll_to_selected">選択項目へスクロール</string>
+    <string name="proxy_presentation_clear_search">検索をクリア</string>
+    <string name="proxy_presentation_delay_failed">失敗</string>
+</resources>

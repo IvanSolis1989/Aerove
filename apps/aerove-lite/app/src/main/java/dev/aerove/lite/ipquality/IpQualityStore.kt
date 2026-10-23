@@ -5,6 +5,7 @@ import dev.aerove.lite.data.strictUtf8
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.nio.file.LinkOption
 import org.json.JSONObject
 
 data class LastQualityExit(val profileId: String, val proxied: Boolean, val ip: String, val quality: IpQuality? = null,
@@ -13,6 +14,7 @@ data class SavedIpQuality(val hidden: Boolean = false, val lastExit: LastQuality
 
 class IpQualityStore(private val file: File) {
     private var revision = -1L
+    private var cleared = false
 
     @Synchronized fun read(): SavedIpQuality = try {
         if (!file.isFile) SavedIpQuality() else {
@@ -31,7 +33,7 @@ class IpQualityStore(private val file: File) {
     } catch (_: Exception) { SavedIpQuality() }
 
     @Synchronized fun write(value: SavedIpQuality, generation: Long) {
-        if (generation < revision) return
+        if (cleared || generation < revision) return
         val json = JSONObject().put("hidden", value.hidden)
         value.lastExit?.takeUnless { value.hidden }?.let { exit ->
             val raw = JSONObject().put("profileId", exit.profileId).put("proxied", exit.proxied).put("ip", exit.ip)
@@ -46,6 +48,19 @@ class IpQualityStore(private val file: File) {
             Files.move(temporary.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
             revision = generation
         } finally { temporary.delete() }
+    }
+
+    /** Terminal for this store instance; deletes only its known JSON and atomic-write temporary. */
+    @Synchronized fun clearUserState() {
+        cleared = true
+        val parent = checkNotNull(file.absoluteFile.parentFile) { "Invalid IP quality state path" }
+        check(!Files.isSymbolicLink(parent.toPath())) { "IP quality directory was redirected" }
+        val targets = listOf(file.absoluteFile, File(parent, "${file.name}.tmp"))
+        targets.forEach { target ->
+            check(!Files.isDirectory(target.toPath(), LinkOption.NOFOLLOW_LINKS)) { "IP quality state is not a file" }
+            Files.deleteIfExists(target.toPath())
+        }
+        check(targets.none { Files.exists(it.toPath(), LinkOption.NOFOLLOW_LINKS) }) { "IP quality state cleanup did not complete" }
     }
 
     private fun encodeQuality(value: IpQuality) = JSONObject().put("ip", value.ip).put("source", value.source.name)

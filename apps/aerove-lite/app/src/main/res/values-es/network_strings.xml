@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="network_tun">TUN</string>
+    <string name="network_dns_hijacking">Secuestro de DNS</string>
+    <string name="network_route_addresses">Direcciones de ruta</string>
+    <string name="network_remove_route">Quitar</string>
+    <string name="network_mtu">MTU</string>
+    <string name="network_mtu_range">Introduce un número entero de 1280 a 65535.</string>
+    <string name="network_bypass_private_route">Omitir redes privadas</string>
+    <string name="network_route_exclusions">Direcciones de ruta excluidas</string>
+    <string name="network_route_count">%1$d rutas</string>
+    <string name="network_route_entry">Ruta %1$d</string>
+    <string name="network_add_route">Añadir ruta</string>
+    <string name="network_move_route_up">Subir</string>
+    <string name="network_move_route_down">Bajar</string>
+    <string name="network_invalid_cidr">Comprueba el CIDR de la ruta %1$d.</string>
+</resources>

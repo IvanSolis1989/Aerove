@@ -1,0 +1,18 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="global_resources_back">Назад</string>
+    <string name="global_resources_cancel">Отмена</string>
+    <string name="global_resources_delete_confirm">Удалить %1$s? Профили, ссылающиеся на него, нужно будет обновить.</string>
+    <string name="global_resources_done">Готово</string>
+    <string name="global_resources_local">Локально</string>
+    <string name="global_resources_options">Опции</string>
+    <string name="global_resources_preview">Предпросмотр</string>
+    <string name="global_resources_quick_edit">Быстрое редактирование</string>
+    <string name="global_resources_remote">Удалённо</string>
+    <string name="global_resources_replaced_confirm">Будут удалены следующие узлы: %1$s. Продолжить?</string>
+    <string name="global_resources_scratch">С нуля</string>
+    <string name="global_resources_search">Поиск</string>
+    <string name="global_resources_select_all">Выбрать всё</string>
+    <string name="global_resources_title">Ресурсы пользовательских профилей</string>
+    <string name="global_resources_url">URL</string>
+</resources>

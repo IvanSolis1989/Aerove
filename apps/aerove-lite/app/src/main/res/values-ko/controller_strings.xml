@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="controller_external">"외부 컨트롤러"</string>
+    <string name="controller_secret">"외부 컨트롤러 시크릿"</string>
+    <string name="controller_save">"저장"</string>
+    <string name="controller_cancel">"취소"</string>
+    <string name="controller_invalid_secret">"1~512자의 시크릿을 입력하세요."</string>
+    <string name="controller_save_failed">"설정을 저장할 수 없습니다."</string>
+</resources>

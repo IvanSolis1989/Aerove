@@ -1,6 +1,7 @@
 package dev.aerove.lite.updates
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.content.FileProvider
@@ -43,6 +44,7 @@ interface UpdatePlatform {
     suspend fun automaticEnabled(): Boolean
     suspend fun promptedTag(): String?
     suspend fun savePromptedTag(tag: String)
+    suspend fun resetPromptedTag()
     suspend fun canInstall(): Boolean
     suspend fun installUri(file: File): String
     val packageName: String
@@ -50,6 +52,8 @@ interface UpdatePlatform {
 
 class AndroidUpdatePlatform(private val context: Context, private val settings: LiteSettingsStore) : UpdatePlatform {
     private val preferences = context.getSharedPreferences("lite-update-prompts", Context.MODE_PRIVATE)
+    private val promptGate = Any()
+    private var promptsCleared = false
     override val packageName: String get() = context.packageName
     override suspend fun identity(): UpdateIdentity = withContext(Dispatchers.IO) {
         val info = context.packageManager.getPackageInfo(context.packageName, PackageManager.PackageInfoFlags.of(0))
@@ -57,7 +61,26 @@ class AndroidUpdatePlatform(private val context: Context, private val settings: 
     }
     override suspend fun automaticEnabled(): Boolean = settings.read().autoCheckUpdate
     override suspend fun promptedTag(): String? = preferences.getString("tag", null)
-    override suspend fun savePromptedTag(tag: String) { check(preferences.edit().putString("tag", tag).commit()) { "Cannot save update prompt" } }
+    override suspend fun savePromptedTag(tag: String) = synchronized(promptGate) {
+        check(!promptsCleared) { "Update prompt owner was cleared" }
+        check(preferences.edit().putString("tag", tag).commit()) { "Cannot save update prompt" }
+    }
+    override suspend fun resetPromptedTag() = withContext(Dispatchers.IO) { synchronized(promptGate) {
+        promptsCleared = true
+        clearUpdatePromptTag(preferences)
+    } }
     override suspend fun canInstall(): Boolean = context.packageManager.canRequestPackageInstalls()
     override suspend fun installUri(file: File): String = FileProvider.getUriForFile(context, "${context.packageName}.updates", file).toString()
+
+    companion object {
+        /** Application factory fallback only when no UpdateFeature has ever been initialized. */
+        suspend fun clearUserState(context: Context) = withContext(Dispatchers.IO) {
+            clearUpdatePromptTag(context.getSharedPreferences("lite-update-prompts", Context.MODE_PRIVATE))
+        }
+    }
+}
+
+internal fun clearUpdatePromptTag(preferences: SharedPreferences) {
+    check(preferences.edit().remove("tag").commit()) { "Cannot clear update prompt" }
+    check(!preferences.contains("tag")) { "Update prompt cleanup did not complete" }
 }

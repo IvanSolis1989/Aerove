@@ -221,9 +221,9 @@
     <string name="network_field_issue">%1$s: %2$s</string>
     <string name="presentation_font_family">글꼴</string>
     <string name="presentation_font_default">기본값</string>
-    <string name="presentation_fonts_installed">설치된 시스템 글꼴</string>
+    <string name="presentation_fonts_installed">중국어와 영어를 지원하는 시스템 글꼴</string>
     <string name="presentation_fonts_loading">시스템 글꼴 로드 중…</string>
-    <string name="presentation_fonts_empty">이름이 있는 시스템 글꼴을 찾을 수 없습니다</string>
+    <string name="presentation_fonts_empty">중국어와 영어를 모두 지원하는 시스템 글꼴이 없습니다</string>
     <string name="presentation_fonts_error">시스템 글꼴을 읽을 수 없습니다</string>
     <string name="presentation_retry">다시 시도</string>
     <string name="presentation_font_preview">AEROVE · 다람쥐 헌 쳇바퀴 0123456789</string>
@@ -553,4 +553,11 @@
     <string name="locale_ko">한국어</string>
     <string name="locale_ru">러시아어</string>
     <string name="locale_zh_cn">중국어 간체</string>
+    <string name="navigation_bar_style">하단 바</string>
+    <string name="navigation_floating">플로팅</string>
+    <string name="navigation_docked">고정</string>
+    <string name="navigation_tab_animation">탭 애니메이션</string>
+    <string name="navigation_slide">슬라이드</string>
+    <string name="navigation_fade">페이드</string>
+    <string name="network_vpn_enabled">VPN 사용</string>
 </resources>

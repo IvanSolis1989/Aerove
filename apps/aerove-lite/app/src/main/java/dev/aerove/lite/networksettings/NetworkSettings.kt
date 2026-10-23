@@ -22,6 +22,12 @@ data class NetworkSettings(
     val ports: UserProxyPorts = UserProxyPorts(),
     val allowLan: Boolean = false,
     val authentication: ProxyAuthentication = ProxyAuthentication(),
+    val vpnEnabled: Boolean = true,
+    val dnsHijacking: Boolean = false,
+    val mtu: Int = 9000,
+    val bypassPrivateRoute: Boolean = true,
+    val routeAddress: List<String> = emptyList(),
+    val routeExcludeAddress: List<String> = emptyList(),
 ) {
     /** Matches Standard's enable action; existing credentials are preserved across off/on. */
     fun withAuthenticationEnabled(enabled: Boolean, random: SecureRandom = SecureRandom()): NetworkSettings {
@@ -33,11 +39,13 @@ data class NetworkSettings(
         return copy(authentication = value)
     }
 
-    fun snapshot(): NetworkSettings = copy(bypassDomains = bypassDomains.toList())
+    fun snapshot(): NetworkSettings = copy(bypassDomains = bypassDomains.toList(), routeAddress = routeAddress.toList(),
+        routeExcludeAddress = routeExcludeAddress.toList())
 }
 
 enum class NetworkIssueCode { Type, UnknownField, Version, PortRange, PortConflict, EmptyAccount, InvalidAccount,
-    CredentialControl, CredentialLength, SocksCredentialLength, EmptyDomain, DomainLength, DomainControl, Size }
+    CredentialControl, CredentialLength, SocksCredentialLength, EmptyDomain, DomainLength, DomainControl, Size,
+    MtuRange, InvalidCidr, UnsupportedCore }
 
 data class NetworkIssue(val field: String, val code: NetworkIssueCode)
 
@@ -46,6 +54,10 @@ class NetworkSettingsException(val issues: List<NetworkIssue>) : IllegalArgument
 )
 
 fun validateNetworkSettings(settings: NetworkSettings): List<NetworkIssue> = buildList {
+    if (settings.mtu !in 1280..65535) add(NetworkIssue("network.mtu", NetworkIssueCode.MtuRange))
+    listOf("routeAddress" to settings.routeAddress, "routeExcludeAddress" to settings.routeExcludeAddress).forEach { (field, routes) ->
+        routes.forEachIndexed { index, route -> if (!validateRouteCidr(route)) add(NetworkIssue("network.$field[$index]", NetworkIssueCode.InvalidCidr)) }
+    }
     val ports = linkedMapOf("mixed" to settings.ports.mixed, "http" to settings.ports.http, "socks" to settings.ports.socks)
     ports.forEach { (field, port) ->
         if (port !in 1024..49151 && !(field != "mixed" && port == 0))

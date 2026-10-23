@@ -25,15 +25,19 @@ internal fun NetworkSettingsScreen(settings: NetworkSettings, busy: Boolean, pad
     onChanged: (NetworkSettings) -> Unit, error: String? = null,
     restartRequired: Boolean = false, onRestart: (() -> Unit)? = null, onRetry: (() -> Unit)? = null) {
     var editor by rememberSaveable { mutableStateOf<NetworkEditor?>(null) }
+    var tunEditor by rememberSaveable { mutableStateOf<NetworkTunEditor?>(null) }
     val current by rememberUpdatedState(settings)
     val currentBusy by rememberUpdatedState(busy)
     val currentError by rememberUpdatedState(error)
     val change by rememberUpdatedState(onChanged)
     val overlay = LocalLiteOverlay.current
     val owned = remember(overlay) { arrayOf<(@Composable () -> Unit)?>(null) }
-    LaunchedEffect(editor) {
+    LaunchedEffect(editor, tunEditor) {
         val kind = editor
-        val content: (@Composable () -> Unit)? = kind?.let { ({
+        val tunKind = tunEditor
+        val content: (@Composable () -> Unit)? = if (tunKind != null) ({
+            NetworkTunEditorForm(tunKind, current, currentBusy, currentError, change) { tunEditor = null }
+        }) else kind?.let { ({
             NetworkEditorForm(kind, current, currentBusy, currentError, change) { editor = null }
         }) }
         if (content != null) { owned[0] = content; overlay.content = content }
@@ -51,19 +55,14 @@ internal fun NetworkSettingsScreen(settings: NetworkSettings, busy: Boolean, pad
                 }
             }
         }
-        if (restartRequired && onRestart != null) item {
-            LitePane(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    LiteText(stringResource(R.string.network_restart_detail), style = LiteType.Caption)
-                    LiteButton(stringResource(R.string.network_restart), onRestart,
-                        Modifier.fillMaxWidth().testTag("network-restart"), enabled = !busy)
-                }
-            }
-        }
         item { SectionLabel(stringResource(R.string.network_vpn)) }
         item {
             LitePane(Modifier.fillMaxWidth()) {
                 Column {
+                    SettingsRow(stringResource(R.string.network_vpn_enabled)) {
+                        LiteSwitch(settings.vpnEnabled, stringResource(R.string.network_vpn_enabled),
+                            { change(current.copy(vpnEnabled = it)) }, !busy)
+                    }
                     SettingsRow(stringResource(R.string.network_system_proxy)) {
                         LiteSwitch(settings.systemProxy, stringResource(R.string.network_system_proxy),
                             { change(current.copy(systemProxy = it)) }, !busy)
@@ -72,8 +71,29 @@ internal fun NetworkSettingsScreen(settings: NetworkSettings, busy: Boolean, pad
                         LiteSwitch(settings.allowBypass, stringResource(R.string.network_allow_bypass),
                             { change(current.copy(allowBypass = it)) }, !busy)
                     }
+                    SettingsRow(stringResource(R.string.network_dns_hijacking)) {
+                        LiteSwitch(settings.dnsHijacking, stringResource(R.string.network_dns_hijacking),
+                            { change(current.copy(dnsHijacking = it)) }, !busy)
+                    }
                     SettingsRow(stringResource(R.string.network_bypass_domains), settings.bypassDomains.joinToString(", "),
                         onClick = if (busy) null else ({ editor = NetworkEditor.Bypass })) { LiteIcon(FullGlyphs.chevronForward) }
+                }
+            }
+        }
+        item { SectionLabel(stringResource(R.string.network_tun)) }
+        item {
+            LitePane(Modifier.fillMaxWidth()) {
+                Column {
+                    SettingsRow(stringResource(R.string.network_mtu), settings.mtu.toString(),
+                        onClick = if (busy) null else ({ tunEditor = NetworkTunEditor.Mtu })) { LiteIcon(FullGlyphs.chevronForward) }
+                    SettingsRow(stringResource(R.string.network_bypass_private_route)) {
+                        LiteSwitch(settings.bypassPrivateRoute, stringResource(R.string.network_bypass_private_route),
+                            { change(current.copy(bypassPrivateRoute = it)) }, !busy)
+                    }
+                    SettingsRow(stringResource(R.string.network_route_addresses), stringResource(R.string.network_route_count, settings.routeAddress.size),
+                        onClick = if (busy) null else ({ tunEditor = NetworkTunEditor.Routes })) { LiteIcon(FullGlyphs.chevronForward) }
+                    SettingsRow(stringResource(R.string.network_route_exclusions), stringResource(R.string.network_route_count, settings.routeExcludeAddress.size),
+                        onClick = if (busy) null else ({ tunEditor = NetworkTunEditor.ExcludedRoutes })) { LiteIcon(FullGlyphs.chevronForward) }
                 }
             }
         }

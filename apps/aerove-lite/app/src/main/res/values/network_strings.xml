@@ -5,6 +5,7 @@
     <string name="network_restart_detail">Saved network options require a VPN restart to take effect.</string>
     <string name="network_title">Network</string>
     <string name="network_vpn">VPN</string>
+    <string name="network_vpn_enabled">Enable VPN</string>
     <string name="network_system_proxy">System proxy</string>
     <string name="network_allow_bypass">Allow bypass</string>
     <string name="network_bypass_domains">Bypass domains</string>
@@ -32,4 +33,18 @@
     <string name="network_domain_length">Domain patterns must not exceed 512 characters.</string>
     <string name="network_invalid_value">Enter a valid value without control characters.</string>
     <string name="network_field_issue">%1$s: %2$s</string>
+    <string name="network_tun">TUN</string>
+    <string name="network_mtu">MTU</string>
+    <string name="network_mtu_range">Enter an integer from 1280 to 65535.</string>
+    <string name="network_dns_hijacking">DNS hijacking</string>
+    <string name="network_bypass_private_route">Bypass private networks</string>
+    <string name="network_route_addresses">Route addresses</string>
+    <string name="network_route_exclusions">Excluded route addresses</string>
+    <string name="network_route_count">%1$d routes</string>
+    <string name="network_route_entry">Route %1$d</string>
+    <string name="network_add_route">Add route</string>
+    <string name="network_remove_route">Remove</string>
+    <string name="network_move_route_up">Move up</string>
+    <string name="network_move_route_down">Move down</string>
+    <string name="network_invalid_cidr">Check CIDR at route %1$d.</string>
 </resources>

@@ -19,7 +19,7 @@ internal fun verifyNetworkReadback(source: String, epoch: ULong, plan: NetworkRu
     networkWire("Core network readback did not match the applied listeners") {
         val root = JSONObject(source)
         require(root.networkKeys() == setOf("coreEpoch", "network", "activePorts"))
-        require(canonicalEpoch(root.opt("coreEpoch")) == epoch)
+        require(canonicalEpoch(root.opt("coreEpoch")) >= epoch)
         val actual = root.getJSONObject("network")
         require(actual.networkKeys() == setOf("mixed-port", "port", "socks-port", "allow-lan", "bind-address", "authEnabled"))
         val expected = plan.userConfigFields()

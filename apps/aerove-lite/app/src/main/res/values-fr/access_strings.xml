@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="access_tip">Astuce</string>
+    <string name="access_select_all">Tout sélectionner</string>
+    <string name="access_deselect_all">Tout désélectionner</string>
+    <string name="access_save_changes">Enregistrer les modifications ?</string>
+    <string name="access_save">Enregistrer</string>
+    <string name="access_cancel">Annuler</string>
+    <string name="access_search">Rechercher</string>
+    <string name="access_settings">Paramètres</string>
+    <string name="access_permission_required">Autorisation de la liste des apps requise</string>
+    <string name="access_permission_description">Ce système masque la liste des apps installées tant que l’autorisation n’est pas accordée. Accordez-la pour configurer le proxy par app.</string>
+    <string name="access_authorize">Autoriser</string>
+    <string name="access_no_data">Aucune donnée</string>
+    <string name="access_allow_description">Seules les apps sélectionnées passent par le VPN</string>
+    <string name="access_exclude_description">Les apps sélectionnées sont exclues du VPN</string>
+    <string name="access_disabled_description">Le contrôle d’accès des apps est désactivé</string>
+    <string name="access_turn_on">Activer</string>
+    <string name="access_turn_off">Désactiver</string>
+    <string name="access_actions">Action</string>
+    <string name="access_back">Retour</string>
+    <string name="access_mode">Mode</string>
+    <string name="access_include">Mode liste blanche</string>
+    <string name="access_exclude">Mode liste noire</string>
+    <string name="access_sort">Trier</string>
+    <string name="access_default">Par défaut</string>
+    <string name="access_name">Nom</string>
+    <string name="access_time">Heure</string>
+    <string name="access_source">Source</string>
+    <string name="access_system_apps">Apps système</string>
+    <string name="access_no_internet">Apps sans réseau</string>
+    <string name="access_smart">Sélection intelligente</string>
+    <string name="access_clipboard_export">Exporter vers le presse-papiers</string>
+    <string name="access_clipboard_import">Importer depuis le presse-papiers</string>
+    <string name="access_loading">Chargement…</string>
+    <string name="access_discard">Abandonner</string>
+    <string name="access_selected">%1$d sélectionnées</string>
+    <string name="access_load_failed">Impossible de charger les apps installées.</string>
+    <string name="access_save_failed">Impossible d’enregistrer les paramètres d’accès des apps.</string>
+    <string name="access_classification_failed">Impossible de terminer la sélection intelligente.</string>
+    <string name="access_invalid_clipboard">Le presse-papiers doit contenir un nom de paquet valide par ligne.</string>
+    <string name="access_copied">Copié dans le presse-papiers</string>
+</resources>

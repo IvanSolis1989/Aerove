@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="global_resources_back">Atrás</string>
+    <string name="global_resources_cancel">Cancelar</string>
+    <string name="global_resources_delete_confirm">¿Eliminar %1$s? Será necesario actualizar los perfiles que usen estos recursos.</string>
+    <string name="global_resources_done">Hecho</string>
+    <string name="global_resources_local">Local</string>
+    <string name="global_resources_options">Opciones</string>
+    <string name="global_resources_preview">Vista previa</string>
+    <string name="global_resources_quick_edit">Edición rápida</string>
+    <string name="global_resources_remote">Remoto</string>
+    <string name="global_resources_replaced_confirm">Se eliminarán estos nodos: %1$s. ¿Continuar?</string>
+    <string name="global_resources_scratch">Empezar desde cero</string>
+    <string name="global_resources_search">Buscar</string>
+    <string name="global_resources_select_all">Seleccionar todo</string>
+    <string name="global_resources_title">Recursos de perfil personalizado</string>
+    <string name="global_resources_url">URL</string>
+</resources>

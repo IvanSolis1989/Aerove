@@ -19,6 +19,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasClickAction
@@ -169,8 +170,8 @@ class DashboardLayoutUiTest {
         compose.onNode(hasText(context.getString(R.string.lite_mode_global)) and hasClickAction()).performClick().assertIsSelected()
         assertEquals(ProxyMode.Global, state.value.settings.mode)
         scroll(DashboardWidget.VpnButton)
-        compose.onNodeWithContentDescription(context.getString(R.string.lite_vpn)).assertIsOff().performClick().assertIsOff()
-        assertEquals(1, actions.events.count { it == "connect" })
+        compose.onNodeWithContentDescription(context.getString(R.string.lite_vpn)).assertIsOn().performClick().assertIsOff()
+        assertEquals(0, actions.events.count { it == "connect" || it == "disconnect" })
         tapCard(DashboardWidget.Profiles)
         assertEquals(1, profilesOpened)
         scroll(DashboardWidget.ProxyGroups)

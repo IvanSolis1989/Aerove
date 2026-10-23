@@ -30,6 +30,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import dev.aerove.lite.ui.colorutilities.TonalPalette
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
@@ -98,6 +100,7 @@ internal fun DashboardCard(
     openProxies: () -> Unit,
     serviceStatusContent: @Composable () -> Unit,
     memoryInfoContent: @Composable () -> Unit,
+    openProfileDetails: () -> Unit = openProfiles,
 ) {
     when (widget) {
         DashboardWidget.CurrentOutbound -> OutboundStatusCard(state, actions)
@@ -106,7 +109,7 @@ internal fun DashboardCard(
         DashboardWidget.VpnButton -> DashboardVpnCard(state, actions)
         DashboardWidget.IntranetIp -> IntranetCard(state.localAddress)
         DashboardWidget.ServiceStatus -> serviceStatusContent()
-        DashboardWidget.Profiles -> ProfilesCard(state, actions, openProfiles)
+        DashboardWidget.Profiles -> ProfilesCard(state, actions, openProfiles, openProfileDetails)
         DashboardWidget.ProxyGroups -> ProxyGroupsCard(state, openProxies)
         DashboardWidget.ConnectionStats -> ConnectionStatsCard(state, openConnections)
         DashboardWidget.MemoryInfo -> memoryInfoContent()
@@ -124,12 +127,12 @@ private val DashboardEditGlyph = LiteGlyph(listOf(
 ))
 
 @Composable
-private fun ProfilesCard(state: LiteState, actions: LiteActions, openProfiles: () -> Unit) {
+private fun ProfilesCard(state: LiteState, actions: LiteActions, openProfiles: () -> Unit, openDetails: () -> Unit) {
     val profile = state.profiles.firstOrNull { it.id == state.selectedProfile }
     if (profile == null) EmptyContent(stringResource(R.string.lite_profile_required), stringResource(R.string.lite_profile_required_detail), FullGlyphs.profiles) {
         LiteButton(stringResource(R.string.lite_import), actions::importFile, Modifier.fillMaxWidth(), FullGlyphs.importFile, enabled = state.busy.isEmpty())
         LiteButton(stringResource(R.string.lite_tab_profiles), openProfiles, Modifier.fillMaxWidth())
-    } else DashboardPane(Modifier.clickable(role = Role.Button, onClick = openProfiles)) {
+    } else DashboardPane(Modifier.clickable(role = Role.Button, onClick = openDetails)) {
         DashboardHeader(FullGlyphs.profiles, stringResource(R.string.lite_tab_profiles))
         Spacer(Modifier.height(12.dp))
         LiteText(profile.name, style = LiteType.Headline, maxLines = 1)
@@ -188,7 +191,8 @@ private fun DashboardHeader(icon: LiteGlyph, title: String, leading: @Composable
 private fun OutboundStatusCard(state: LiteState, actions: LiteActions) {
     val visuals = LocalLiteVisuals.current
     val running = state.phase == VpnPhase.Running
-    val time = rememberDashboardTime(running)
+    val suspended = running && state.suspended
+    val time = rememberDashboardTime(running && !suspended)
     val identity = state.outboundIdentity
     val qualityFactory = LocalLiteFeatures.current
     val qualityFeature = if (identity != null || state.outboundLoading) remember(qualityFactory) { qualityFactory().ipQuality } else null
@@ -196,7 +200,7 @@ private fun OutboundStatusCard(state: LiteState, actions: LiteActions) {
     val busy = state.phase == VpnPhase.Starting || state.phase == VpnPhase.Stopping || state.busy.isNotEmpty()
     val enabled = !busy && (running || state.selectedProfile != null)
     val status = when (state.phase) {
-        VpnPhase.Running -> R.string.lite_running
+        VpnPhase.Running -> if (suspended) R.string.integration_suspended else R.string.lite_running
         VpnPhase.Starting -> R.string.lite_connecting
         VpnPhase.Stopping -> R.string.lite_disconnecting
         VpnPhase.Failed -> R.string.lite_failed
@@ -213,7 +217,7 @@ private fun OutboundStatusCard(state: LiteState, actions: LiteActions) {
         CompositionLocalProvider(LocalLiteBackdrop provides controlsSource) {
         Row(Modifier.padding(start = 20.dp, top = 18.dp, end = 16.dp, bottom = 18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Column(Modifier.weight(1f)) {
-                DashboardHeader(FullGlyphs.status, stringResource(R.string.lite_status), leading = { StatusChip(stringResource(status), running) })
+                DashboardHeader(FullGlyphs.status, stringResource(R.string.lite_status), leading = { StatusChip(stringResource(status), running, suspended) })
                 Spacer(Modifier.height(12.dp))
                 if (qualityFeature != null) IpQualityStatus(qualityFeature) { quality, open ->
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -234,6 +238,10 @@ private fun OutboundStatusCard(state: LiteState, actions: LiteActions) {
                     CountryBubble(identity?.countryCode, state.outboundLoading, running, actions::refreshOutbound)
                     LiteText("—", style = LiteType.Title2)
                 }
+                state.listenerError?.takeIf { it.isNotBlank() }?.let { error ->
+                    Spacer(Modifier.height(8.dp))
+                    LiteText(error, style = LiteType.Caption, color = MaterialTheme.colorScheme.error, maxLines = 2)
+                }
                 state.outboundError?.takeIf { it.isNotBlank() }?.let { error ->
                     Spacer(Modifier.height(8.dp))
                     LiteText(error, style = LiteType.Caption, color = MaterialTheme.colorScheme.error, maxLines = 2)
@@ -244,18 +252,21 @@ private fun OutboundStatusCard(state: LiteState, actions: LiteActions) {
                     StatusCell(stringResource(R.string.lite_organization), qualityState?.quality?.organization ?: "—", Modifier.weight(1f))
                 }
             }
-            StartBubble(running, enabled, stringResource(if (running) R.string.action_disconnect else R.string.lite_connect), time,
-                if (running) actions::disconnect else actions::connect)
+            StartBubble(running, enabled, stringResource(if (suspended) R.string.integration_suspended else if (running) R.string.action_disconnect else R.string.lite_connect), time,
+                if (running) actions::disconnect else actions::connect, suspended)
         }
         }
     }
 }
 
 @Composable
-private fun StatusChip(label: String, running: Boolean) {
+private fun StatusChip(label: String, running: Boolean, suspended: Boolean = false) {
     val visuals = LocalLiteVisuals.current
-    val ink = if (running) { if (visuals.dark) Color(0xFF86EB81) else Color(0xFF125919) } else visuals.secondaryInk
-    LitePane(corner = LiteCorner.Full, solidColor = if (running) { if (visuals.dark) Color(0xFF123719) else Color(0xFF9AF692) } else dashboardTone(),
+    val warning = remember { TonalPalette.fromInt(0xffff9800.toInt()) }
+    val ink = if (suspended) Color(warning.tone(if (visuals.dark) 90 else 30))
+        else if (running) { if (visuals.dark) Color(0xFF86EB81) else Color(0xFF125919) } else visuals.secondaryInk
+    LitePane(corner = LiteCorner.Full, solidColor = if (suspended) Color(warning.tone(if (visuals.dark) 30 else 90))
+        else if (running) { if (visuals.dark) Color(0xFF123719) else Color(0xFF9AF692) } else dashboardTone(),
         glassTint = ink.copy(alpha = if (running) 0.12f else 0.06f)) {
         Row(Modifier.height(24.dp).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             if (running) LiteText("•", style = LiteType.Caption, color = ink)
@@ -297,8 +308,9 @@ private fun StatusCell(label: String, value: String, modifier: Modifier = Modifi
     }
 }
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-private fun StartBubble(running: Boolean, enabled: Boolean, label: String, time: State<Float>, onClick: () -> Unit) {
+private fun StartBubble(running: Boolean, enabled: Boolean, label: String, time: State<Float>, onClick: () -> Unit, suspended: Boolean = false) {
     val visuals = LocalLiteVisuals.current
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -306,8 +318,18 @@ private fun StartBubble(running: Boolean, enabled: Boolean, label: String, time:
     val press by animateFloatAsState(if (pressed) 1f else 0f, tween(if (pressed) 120 else 500), label = "startPress")
     val clock = time.value
     val outline = remember(progress, clock, press) { DashboardBubbleOutline(progress, clock, 0.55f * progress, press + progress * (1 - progress) * 2.4f) }
-    val glyph = remember(progress) { FullGlyphs.playPause(progress) }
+    val glyph = remember(progress, suspended) { if (suspended) SuspendedWifiGlyph else FullGlyphs.playPause(progress) }
     val solid = if (visuals.aurora) { if (visuals.dark) Color.White else Color.Black } else visuals.primary
+    val tooltipState = androidx.compose.material3.rememberTooltipState()
+    val pageActive = LocalLitePageActive.current
+    LaunchedEffect(pageActive) { if (!pageActive) tooltipState.dismiss() }
+    androidx.compose.material3.TooltipBox(
+        positionProvider = androidx.compose.material3.TooltipDefaults.rememberPlainTooltipPositionProvider(),
+        state = tooltipState, enableUserInput = pageActive,
+        tooltip = { LitePane(corner = LiteCorner.Control, solidColor = MaterialTheme.colorScheme.inverseSurface) {
+            LiteText(label, Modifier.padding(horizontal = 12.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.inverseOnSurface)
+        } },
+    ) {
     LitePane(
         Modifier.size(88.dp).alpha(if (enabled) 1f else 0.48f).semantics { contentDescription = label }
             .clickable(interactionSource = interaction, indication = null, enabled = enabled, role = Role.Button, onClick = onClick),
@@ -318,6 +340,7 @@ private fun StartBubble(running: Boolean, enabled: Boolean, label: String, time:
     ) {
         val foreground = if (enabled && visuals.material == MaterialTier.Solid) { if (solid == Color.White) Color.Black else Color.White } else visuals.secondaryInk
         LiteIcon(glyph, Modifier.align(Alignment.Center), foreground, fill = 1f, size = 88.dp * 0.34f)
+    }
     }
 }
 
@@ -396,21 +419,22 @@ private fun OutboundModeCard(state: LiteState, actions: LiteActions) {
 
 @Composable
 private fun DashboardVpnCard(state: LiteState, actions: LiteActions) {
-    val running = state.phase == VpnPhase.Running
-    val enabled = state.phase != VpnPhase.Starting && state.phase != VpnPhase.Stopping && state.busy.isEmpty() && (running || state.selectedProfile != null)
+    val vpnEnabled = state.settings.network.vpnEnabled
+    val enabled = state.phase != VpnPhase.Starting && state.phase != VpnPhase.Stopping && state.busy.isEmpty()
     val visuals = LocalLiteVisuals.current
     LitePane(Modifier.fillMaxWidth().testTag("dashboard-vpn"), corner = LiteCorner.Dashboard,
         glassTint = if (visuals.material == MaterialTier.Frosted) visuals.ink.copy(alpha = 0.06f) else Color.Transparent,
         shadows = if (visuals.material == MaterialTier.Solid) fullDashboardShadows(visuals.dark) else emptyList()) {
         Row(Modifier.fillMaxWidth().heightIn(min = 80.dp).padding(horizontal = 20.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            LitePane(Modifier.size(48.dp), corner = LiteCorner.Full, solidColor = if (running && visuals.material == MaterialTier.Solid) visuals.primary else dashboardTone()) {
-                LiteIcon(FullGlyphs.vpn, Modifier.align(Alignment.Center), if (running && visuals.material == MaterialTier.Solid) Color.White else visuals.secondaryInk, size = 22.dp)
+            LitePane(Modifier.size(48.dp), corner = LiteCorner.Full, solidColor = if (vpnEnabled && visuals.material == MaterialTier.Solid) visuals.primary else dashboardTone()) {
+                LiteIcon(FullGlyphs.vpn, Modifier.align(Alignment.Center), if (vpnEnabled && visuals.material == MaterialTier.Solid) Color.White else visuals.secondaryInk, size = 22.dp)
             }
             Column(Modifier.weight(1f)) {
                 LiteText(stringResource(R.string.lite_vpn), style = LiteType.Callout.copy(fontWeight = FontWeight.SemiBold))
-                LiteText(stringResource(if (running) R.string.lite_enabled else R.string.lite_disabled), style = LiteType.Footnote, color = visuals.secondaryInk)
+                LiteText(stringResource(if (vpnEnabled) R.string.lite_enabled else R.string.lite_disabled), style = LiteType.Footnote, color = visuals.secondaryInk)
             }
-            LiteSwitch(running, stringResource(R.string.lite_vpn), { if (it) actions.connect() else actions.disconnect() }, enabled)
+            LiteSwitch(vpnEnabled, stringResource(R.string.lite_vpn),
+                { actions.changeSettings(state.settings.copy(network = state.settings.network.copy(vpnEnabled = it))) }, enabled)
         }
     }
 }
@@ -441,3 +465,11 @@ internal fun proxyModeLabel(mode: ProxyMode): String = stringResource(when (mode
     ProxyMode.Global -> R.string.lite_mode_global
     ProxyMode.Direct -> R.string.lite_mode_direct
 })
+
+private val SuspendedWifiGlyph = LiteGlyph(listOf(
+    glyphPath("M3.32 9.56 A13.5 13.5 0 0 1 6.15 7.73", role = LiteGlyphRole.Line),
+    glyphPath("M10.75 6.46 A13.5 13.5 0 0 1 20.68 9.56", role = LiteGlyphRole.Line),
+    glyphPath("M6.54 13.39 A8.5 8.5 0 0 1 10.56 11.52", role = LiteGlyphRole.Line),
+    glyphPath("M15.27 12.05 A8.5 8.5 0 0 1 17.46 13.39", role = LiteGlyphRole.Line),
+    glyphCircle(12, 18.6, 1.7, role = LiteGlyphRole.Line, solid = true),
+    glyphPolyline(listOf(vertex(4.5, 3), vertex(20.5, 19)), role = LiteGlyphRole.Line)))

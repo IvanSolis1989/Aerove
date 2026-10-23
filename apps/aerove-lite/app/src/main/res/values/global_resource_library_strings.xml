@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="global_resources_title">Custom profile resources</string>
+    <string name="global_resources_search">Search</string>
+    <string name="global_resources_back">Back</string>
+    <string name="global_resources_select_all">Select all</string>
+    <string name="global_resources_done">Done</string>
+    <string name="global_resources_options">Options</string>
+    <string name="global_resources_preview">Preview</string>
+    <string name="global_resources_quick_edit">Quick edit</string>
+    <string name="global_resources_scratch">Start from scratch</string>
+    <string name="global_resources_url">URL</string>
+    <string name="global_resources_local">Local</string>
+    <string name="global_resources_remote">Remote</string>
+    <string name="global_resources_delete_confirm">Delete %1$s? Referencing profiles will need to be updated.</string>
+    <string name="global_resources_replaced_confirm">These nodes will be removed: %1$s. Continue?</string>
+    <string name="global_resources_cancel">Cancel</string>
+</resources>

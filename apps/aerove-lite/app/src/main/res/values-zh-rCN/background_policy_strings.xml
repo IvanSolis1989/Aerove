@@ -1,0 +1,31 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="background_title">启动与后台</string>
+    <string name="background_auto_run">打开应用时自动运行</string>
+    <string name="background_on_demand">按需运行</string>
+    <string name="background_minimize">退出时最小化</string>
+    <string name="background_hidden">从最近任务隐藏</string>
+    <string name="background_close_connections">切换代理时关闭连接</string>
+    <string name="background_proxy_statistics">仅统计代理流量</string>
+    <string name="background_description">自动运行在打开应用时生效。关闭连接在切换所选代理时生效。</string>
+    <string name="background_prerequisites">前置条件</string>
+    <string name="background_location">定位权限</string>
+    <string name="background_battery">忽略电池优化</string>
+    <string name="background_authorized">已授权</string>
+    <string name="background_authorize">前往授权</string>
+    <string name="background_permission_description">允许精确定位和后台定位，并开启设备定位，才能在后台识别 Wi-Fi。请在系统设置中检查电池限制。</string>
+    <string name="background_excluded">排除的 Wi-Fi 网络</string>
+    <string name="background_add">添加 SSID</string>
+    <string name="background_select_all">全选</string>
+    <string name="background_delete">删除所选</string>
+    <string name="background_empty">暂无排除的 Wi-Fi 网络</string>
+    <string name="background_move_up">上移</string>
+    <string name="background_move_down">下移</string>
+    <string name="background_excluded_description">连接排除的 Wi-Fi 时暂停监听并保留运行意图；离开该网络后恢复。</string>
+    <string name="background_edit">编辑 SSID</string>
+    <string name="background_ssid">SSID</string>
+    <string name="background_invalid">请输入不重复且长度为 1–32 个 UTF-8 字节的 SSID。</string>
+    <string name="background_save">保存</string>
+    <string name="background_cancel">取消</string>
+    <string name="background_notification_stop">显示通知停止按钮</string>
+</resources>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="profile_qr_menu">Code QR</string>
+    <string name="profile_qr_too_long">Ce lien est trop long pour un code QR. Utilisez Copier le lien.</string>
+    <string name="profile_qr_share_tip">Scannez avec AEROVE sur un autre appareil pour importer ce profil.</string>
+    <string name="profile_qr_loading">Génération du code QR</string>
+</resources>

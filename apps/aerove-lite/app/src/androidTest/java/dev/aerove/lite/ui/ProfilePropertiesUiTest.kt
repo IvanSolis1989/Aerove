@@ -14,15 +14,45 @@ import org.junit.Test
 class ProfilePropertiesUiTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
-    private val initial = ProfileSummary("profile-fixture", "Original", "https://example.invalid/sub", 0,
+    private var initial = ProfileSummary("profile-fixture", "Original", "https://example.invalid/sub", 0,
         subscriptionUserInfo = "upload=1048576; download=1048576; total=4194304; expire=1700000000")
     private val state = mutableStateOf(LiteState(settings = LiteSettings(material = MaterialTier.Solid, aurora = false),
         profiles = listOf(initial)))
     private val actions = UiTestActions { state.value = state.value.copy(settings = it) }
 
+    private lateinit var directory: java.io.File
+    private lateinit var repository: dev.aerove.lite.data.ProfileRepository
+    private lateinit var maintenance: dev.aerove.lite.data.ProfileMaintenanceFacade
+    private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate)
+    private lateinit var access: dev.aerove.lite.integration.ProfilePropertiesAccess
+
+    @org.junit.Before fun preparePrivateRepository() {
+        directory = java.io.File(context.cacheDir, "profile-properties-${java.util.UUID.randomUUID()}")
+        repository = dev.aerove.lite.data.ProfileRepository(directory, dev.aerove.lite.data.ProfileValidator {})
+        initial = kotlinx.coroutines.runBlocking { repository.importText("Original", "rules: [MATCH,DIRECT]", "https://example.invalid/sub") }
+        initial = initial.copy(subscriptionUserInfo = "upload=1048576; download=1048576; total=4194304; expire=1700000000")
+        state.value = state.value.copy(profiles = listOf(initial))
+        maintenance = dev.aerove.lite.data.ProfileMaintenanceFacade(repository, scope)
+        access = dev.aerove.lite.integration.RepositoryProfilePropertiesAccess(repository, maintenance, { true }, {
+            state.value = state.value.copy(profiles = repository.list())
+        })
+    }
+
+    @org.junit.After fun disposePrivateRepository() {
+        maintenance.close()
+        scope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+        directory.deleteRecursively()
+    }
+
     private fun launch() {
         compose.replaceAppContent {
-            CompositionLocalProvider(LocalLiteMotionOverride provides true) { LiteApp(state.value, actions) }
+            IpQualityFixture(state.value) {
+                val base = LocalLiteFeatures.current()
+                val host = androidx.compose.runtime.remember(base) { object : LiteFeatureHost by base {
+                    override val profileProperties = access
+                } }
+                CompositionLocalProvider(LocalLiteMotionOverride provides true, LocalLiteFeatures provides { host }) { LiteApp(state.value, actions) }
+            }
         }
         compose.onNodeWithText(context.getString(R.string.lite_tab_profiles)).performClick()
     }
@@ -30,6 +60,7 @@ class ProfilePropertiesUiTest {
     private fun openProperties() {
         compose.onNodeWithTag("profile-${initial.id}").performTouchInput { longClick() }
         compose.onNodeWithText(context.getString(R.string.profile_properties)).performClick()
+        compose.waitUntil(3000) { compose.onAllNodesWithTag("profile-property-save").fetchSemanticsNodes().any { androidx.compose.ui.semantics.SemanticsProperties.Disabled !in it.config } }
     }
 
     @Test fun rootPropertiesValidatesMinutesAndClosesOnlyAfterThePersistedMetadataReadBack() {
@@ -42,25 +73,28 @@ class ProfilePropertiesUiTest {
         assertTrue(actions.events.none { it.startsWith("updateProfileMetadata:") })
         compose.onNodeWithContentDescription(context.getString(R.string.profile_update_minutes)).performTextReplacement("5")
         compose.onNodeWithTag("profile-property-save").performScrollTo().performClick()
-        assertTrue(actions.events.contains("updateProfileMetadata:${initial.id}:Changed:${initial.url}:true:300000"))
-        compose.onNodeWithTag("profile-property-save").assertExists()
-        compose.runOnUiThread { state.value = state.value.copy(busy = setOf("profile:${initial.id}")) }
-        compose.runOnUiThread {
-            state.value = state.value.copy(profiles = listOf(initial.copy(name = "Changed", updateIntervalMillis = 300_000)), busy = emptySet())
-        }
+        compose.waitUntil(3000) { state.value.profiles.first().name == "Changed" }
         compose.onNodeWithTag("profile-property-save").assertDoesNotExist()
+        val persisted = kotlinx.coroutines.runBlocking { dev.aerove.lite.data.ProfileRepository(directory, dev.aerove.lite.data.ProfileValidator {}).profileSummary(initial.id) }
+        assertEquals("Changed", persisted?.name)
+        assertEquals(300_000L, persisted?.updateIntervalMillis)
         compose.onNodeWithText("Changed").assertIsDisplayed()
     }
 
     @Test fun rootFailedSavePreservesTheInputAndCancelUpdateRemainsUsableWhileBusy() {
+        val real = access
+        access = object : dev.aerove.lite.integration.ProfilePropertiesAccess by real {
+            override suspend fun save(expected: dev.aerove.lite.data.ProfileDocumentSnapshot, name: String, url: String?, autoUpdate: Boolean,
+                intervalMillis: Long, secret: dev.aerove.lite.profilesource.AgeSecret?, replaceSecret: Boolean): ProfileSummary {
+                throw java.io.IOException("fixture storage failure")
+            }
+        }
         launch()
         openProperties()
         compose.onNodeWithContentDescription(context.getString(R.string.profile_name)).performTextReplacement("Draft survives")
         compose.onNodeWithTag("profile-property-save").performScrollTo().performClick()
-        compose.runOnUiThread { state.value = state.value.copy(busy = setOf("profile:${initial.id}")) }
-        compose.runOnUiThread { state.value = state.value.copy(busy = emptySet(), message = "fixture: disk failure") }
-        compose.onNodeWithText(context.getString(R.string.lite_dismiss)).performClick()
-        compose.runOnUiThread { state.value = state.value.copy(message = null) }
+        compose.onNodeWithTag("profile-property-error").assertExists()
+        assertEquals("Original", kotlinx.coroutines.runBlocking { repository.profileSummary(initial.id)?.name })
         compose.onNodeWithContentDescription(context.getString(R.string.profile_name)).assertTextEquals("Draft survives")
         compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
         compose.runOnUiThread { state.value = state.value.copy(busy = setOf("profile:${initial.id}"), updatingProfileIds = setOf(initial.id)) }

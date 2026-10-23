@@ -1,0 +1,14 @@
+<resources>
+    <string name="requests_title">请求与更新</string>
+    <string name="requests_user_agent">用户代理</string>
+    <string name="requests_default">默认</string>
+    <string name="requests_certificate">检查证书</string>
+    <string name="requests_add">添加</string>
+    <string name="requests_edit">编辑</string>
+    <string name="requests_delete">删除</string>
+    <string name="requests_move_up">上移</string>
+    <string name="requests_move_down">下移</string>
+    <string name="requests_save">保存</string>
+    <string name="requests_invalid">请输入唯一的用户代理（可打印 ASCII，最多 1024 字符）。</string>
+    <string name="requests_delete_confirm">删除此用户代理？所选条目将恢复默认。</string>
+</resources>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="integration_advanced_configuration">"詳細設定"</string>
+    <string name="integration_extend">"拡張"</string>
+    <string name="integration_suspended">"一時停止中…"</string>
+    <string name="integration_external_profile_confirm">"%1$s からプロファイルを作成しますか？"</string>
+    <string name="integration_notifications_required">"プロキシサービスを開始するには通知を許可してください。"</string>
+    <string name="integration_unified_delay">"統一遅延"</string>
+    <string name="integration_tcp_concurrent">"TCP同時接続"</string>
+    <string name="integration_add_profile">"プロファイルを追加"</string>
+    <string name="integration_find_process">プロセス検出</string>
+</resources>

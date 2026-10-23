@@ -61,7 +61,9 @@ import java.net.URI
 
 @Composable
 internal fun ProfilesScreen(state: LiteState, actions: LiteActions, padding: PaddingValues, addSubscription: () -> Unit,
-    deleteProfile: (ProfileSummary) -> Unit, editProfile: (ProfileSummary, Boolean) -> Unit) {
+    deleteProfile: (ProfileSummary) -> Unit, editProfile: (ProfileSummary, Boolean) -> Unit,
+    buildProfile: ((ProfileSummary) -> Unit)? = null, createProfile: (() -> Unit)? = null,
+    extendProfile: ((ProfileSummary) -> Unit)? = null) {
     val overlay = LocalLiteOverlay.current
     val current by rememberUpdatedState(state)
     val listUi = rememberProfileListUi(state)
@@ -71,6 +73,9 @@ internal fun ProfilesScreen(state: LiteState, actions: LiteActions, padding: Pad
                 LiteButton(stringResource(R.string.lite_import), actions::importFile, Modifier.weight(1f), FullGlyphs.importFile, enabled = state.busy.isEmpty())
                 LiteButton(stringResource(R.string.lite_add_subscription), addSubscription, Modifier.weight(1f), FullGlyphs.add, enabled = state.busy.isEmpty())
             }
+        }
+        if (createProfile != null) item("create-custom-profile") {
+            LiteButton(stringResource(R.string.builder_title), createProfile, Modifier.fillMaxWidth().testTag("profile-create-custom"), FullGlyphs.add, enabled = state.busy.isEmpty())
         }
         if (state.profiles.isNotEmpty()) item("profile-list-actions") { ProfileListToolbar(listUi, state) }
         if (state.profiles.isEmpty()) item {
@@ -90,7 +95,10 @@ internal fun ProfilesScreen(state: LiteState, actions: LiteActions, padding: Pad
                             { actions.updateProfile(profile.id) }, { deleteProfile(profile) },
                             { overlay.content = { ProfileProperties(current, actions, profile.id, overlay::dismiss) } },
                             { overlay.content = { ProfileSubscriptionDetails(current, profile.id, overlay::dismiss) } },
-                            { listUi.copy(profile) }, { listUi.export(profile.id) }, { listUi.replace(profile) }) }
+                            { listUi.copy(profile) }, { listUi.export(profile.id) }, { listUi.replace(profile) },
+                            buildProfile?.let { build -> { build(profile) } },
+                            if (!profile.custom) extendProfile?.let { extend -> { extend(profile) } } else null,
+                            if (profile.url != null) ({ val id = profile.id; overlay.content = { ProfileShareQr(current.profiles.firstOrNull { it.id == id }, overlay::dismiss) } }) else null) }
                     }),
                 selected = selected,
             ) {
@@ -179,7 +187,8 @@ internal fun SubscriptionEditor(state: LiteState, actions: LiteActions, onDismis
 @Composable
 private fun ProfileContextMenu(anchor: Rect, profile: ProfileSummary, dismiss: () -> Unit,
     edit: () -> Unit, preview: () -> Unit, update: () -> Unit, delete: () -> Unit,
-    properties: () -> Unit, usage: () -> Unit, copy: () -> Unit, export: () -> Unit, replace: () -> Unit) {
+    properties: () -> Unit, usage: () -> Unit, copy: () -> Unit, export: () -> Unit, replace: () -> Unit,
+    builder: (() -> Unit)? = null, extend: (() -> Unit)? = null, shareQr: (() -> Unit)? = null) {
     BackHandler(onBack = dismiss)
     val density = LocalDensity.current
     val visuals = LocalLiteVisuals.current
@@ -196,9 +205,12 @@ private fun ProfileContextMenu(anchor: Rect, profile: ProfileSummary, dismiss: (
             Column(Modifier.heightIn(max = availableHeight).verticalScroll(androidx.compose.foundation.rememberScrollState())) {
                 SettingsRow(stringResource(R.string.profile_properties), onClick = { dismiss(); properties() })
                 if (profile.subscriptionUserInfo != null) SettingsRow(stringResource(R.string.profile_subscription_info), onClick = { dismiss(); usage() })
+                if (extend != null) SettingsRow(stringResource(R.string.integration_extend), onClick = { dismiss(); extend() })
+                if (builder != null) SettingsRow(stringResource(R.string.builder_title), onClick = { dismiss(); builder() })
                 SettingsRow(stringResource(R.string.integration_source_editor), onClick = { dismiss(); edit() })
                 SettingsRow(stringResource(R.string.integration_runtime_preview), onClick = { dismiss(); preview() })
                 if (profile.url != null) SettingsRow(stringResource(R.string.lite_refresh), onClick = { dismiss(); update() })
+                if (shareQr != null) SettingsRow(stringResource(R.string.profile_qr_menu), onClick = { dismiss(); shareQr() })
                 if (profile.url != null) SettingsRow(stringResource(R.string.profile_list_copy_url), onClick = { dismiss(); copy() })
                 SettingsRow(stringResource(R.string.profile_list_export), onClick = { dismiss(); export() })
                 SettingsRow(stringResource(R.string.profile_list_replace), onClick = { dismiss(); replace() })

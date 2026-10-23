@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="requests_title">"요청 및 업데이트"</string>
+    <string name="requests_user_agent">"User-Agent"</string>
+    <string name="requests_default">"기본값"</string>
+    <string name="requests_certificate">"인증서 확인"</string>
+    <string name="requests_add">"추가"</string>
+    <string name="requests_edit">"편집"</string>
+    <string name="requests_delete">"삭제"</string>
+    <string name="requests_move_up">"위로 이동"</string>
+    <string name="requests_move_down">"아래로 이동"</string>
+    <string name="requests_save">"저장"</string>
+    <string name="requests_invalid">"중복되지 않는 User-Agent를 입력하세요(인쇄 가능한 ASCII, 최대 1024자)."</string>
+    <string name="requests_delete_confirm">"이 User-Agent를 삭제할까요? 선택한 항목은 기본값으로 돌아갑니다."</string>
+</resources>

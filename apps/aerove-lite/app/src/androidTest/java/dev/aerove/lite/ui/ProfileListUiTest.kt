@@ -15,6 +15,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.core.app.ActivityOptionsCompat
+import androidx.lifecycle.Lifecycle
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.aerove.lite.*
 import dev.aerove.lite.R
@@ -57,6 +58,17 @@ class ProfileListUiTest {
     private var blockNetwork = false
     private val networkStarted = CountDownLatch(1)
     private val releaseNetwork = CountDownLatch(1)
+    private val historyOwner = lazy {
+        dev.aerove.lite.observability.ObservabilityFeature(scope,
+            dev.aerove.lite.observability.AndroidHistoryDocuments(context.contentResolver)) {
+            throw IOException("No running core in the profile-list fixture")
+        }
+    }
+    private var builder: Pair<String, dev.aerove.lite.profilebuilder.ProfileBuilderSession>? = null
+    private val overrideOwner = lazy {
+        dev.aerove.lite.integration.OverrideWorkspace(dev.aerove.lite.overrides.OverrideRepository(directory),
+            SubscriptionDownloader(), scope, onChanged = { _, _ -> })
+    }
 
     private class PickerRegistry : ActivityResultRegistry(), ActivityResultRegistryOwner {
         override val activityResultRegistry: ActivityResultRegistry get() = this
@@ -98,9 +110,33 @@ class ProfileListUiTest {
 
     private val host: LiteFeatureHost get() = object : LiteFeatureHost {
         override val ipQuality: dev.aerove.lite.ipquality.IpQualityFeature get() = error("Unused fixture quality")
+        override val groupIcons: dev.aerove.lite.images.GroupIconLoader get() = error("Unused profile-list fixture group icons")
+        override val resourceManagement: dev.aerove.lite.resources.ResourceManagementSession get() = error("Unused profile-list fixture resource management")
+        override val profileProperties: dev.aerove.lite.integration.ProfilePropertiesAccess get() = error("Unused profile-list fixture properties")
+        override val profileImports: dev.aerove.lite.integration.ProfileImportWorkspace get() = error("Unused profile-list fixture imports")
+        override val globalResources: dev.aerove.lite.integration.GlobalResourceWorkspace get() = error("Unused profile-list fixture global resources")
+        override val resources: dev.aerove.lite.integration.ResourcePageWorkspace get() = error("Unused profile-list fixture resources")
+        override val profileDetails: dev.aerove.lite.integration.ProfileDetailWorkspace get() = error("Unused profile-list fixture profile details")
         override val updates: dev.aerove.lite.updates.UpdateFeature get() = error("Unused fixture updates")
         override val profileList: ProfileListFeature get() = feature
         override val backup: BackupFeature get() = error("Unused fixture backup")
+        override val observability get() = historyOwner.value
+        override val overrides get() = overrideOwner.value
+        override val proxyPresentation: dev.aerove.lite.integration.ProxyPresentationWorkspace get() = error("Unused profile-list fixture proxy presentation")
+        override val appAccess: dev.aerove.lite.appaccess.AppAccessFeature get() = error("Unused profile-list fixture app access")
+        override fun closeAppAccess() = Unit
+        override val maintenance: dev.aerove.lite.maintenance.MaintenanceFeature get() = error("Unused profile-list fixture maintenance")
+        override fun developerLogsTest(): Unit = error("Unused profile-list fixture developer logs")
+        override fun developerMessageTest(): Unit = error("Unused profile-list fixture developer messages")
+        override suspend fun createProfileBuilder(name: String) =
+            dev.aerove.lite.profilebuilder.ProfileBuilderSession.create(repository, name).also { builder = it.profileId to it }
+        override fun profileBuilder(profileId: String): dev.aerove.lite.profilebuilder.ProfileBuilderSession {
+            builder?.takeIf { it.first == profileId }?.let { return it.second }
+            return dev.aerove.lite.profilebuilder.ProfileBuilderSession(repository, profileId).also { builder = profileId to it }
+        }
+        override suspend fun profileBuilderResources() =
+            dev.aerove.lite.profilebuilder.BuilderResourceLibrary(directory).snapshot().resources
+        override fun closeProfileBuilder() { builder?.second?.cancel(); builder = null }
         override fun editor(profileId: String, title: String, readOnly: Boolean): ProfileEditorSession = error("Unused fixture editor")
         override fun closeEditor() = Unit
         override fun editorSaved(profileId: String) = Unit
@@ -111,6 +147,9 @@ class ProfileListUiTest {
         releaseNetwork.countDown()
         feature.close()
         maintenance.close()
+        builder?.second?.cancel()
+        if (historyOwner.isInitialized()) historyOwner.value.close()
+        if (overrideOwner.isInitialized()) overrideOwner.value.close()
         scope.cancel()
         directory.deleteRecursively()
     }
@@ -163,6 +202,55 @@ class ProfileListUiTest {
         compose.runOnUiThread { registry.complete(uri) }
         compose.waitUntil { feature.state.value.notice == ProfileListNotice.Exported && !feature.state.value.busy }
         assertArrayEquals(yaml.toByteArray(), documents[uri.toString()])
+    }
+
+    @Test fun retainedInactiveProfilePageRejectsLatePickerIntentAndCleansAnAlreadyLaunchedCreate() {
+        launch()
+        menu(first, R.string.profile_list_export)
+        compose.waitUntil { registry.requests.size == 1 }
+        compose.onNodeWithText(context.getString(R.string.lite_tab_home)).performClick()
+        compose.waitUntil { feature.state.value.document == null && !feature.state.value.busy }
+        val abandoned = Uri.parse("content://profile-list-fixture/abandoned")
+        documents[abandoned.toString()] = byteArrayOf()
+        compose.runOnUiThread { registry.complete(abandoned) }
+        compose.waitUntil { !documents.containsKey(abandoned.toString()) }
+        compose.runOnUiThread { feature.requestReplacement(first.id) }
+        compose.waitUntil { feature.state.value.notice == ProfileListNotice.Cancelled && !feature.state.value.busy }
+        assertEquals(1, registry.requests.size)
+        assertEquals(yaml, runBlocking(Dispatchers.IO) { repository.readConfig(first.id) })
+        compose.onNodeWithText(context.getString(R.string.lite_tab_profiles)).performClick()
+        compose.waitForIdle()
+        assertEquals(1, registry.requests.size)
+    }
+
+    @Test fun activityStoppedForSystemPickerPreservesTheDispatchedDocumentAndItsValidResult() {
+        launch()
+        menu(first, R.string.profile_list_export)
+        compose.waitUntil { registry.requests.size == 1 }
+        val id = feature.state.value.document!!.id
+        compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+        assertEquals(id, feature.state.value.document?.id)
+        assertTrue(feature.state.value.document!!.dispatched)
+        compose.activityRule.scenario.moveToState(Lifecycle.State.STARTED)
+        val uri = Uri.parse("content://profile-list-fixture/paused-picker")
+        InstrumentationRegistry.getInstrumentation().runOnMainSync { registry.complete(uri) }
+        compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        compose.waitUntil { feature.state.value.notice == ProfileListNotice.Exported && !feature.state.value.busy }
+        assertEquals(1, registry.requests.size)
+        assertArrayEquals(yaml.toByteArray(), documents[uri.toString()])
+    }
+
+    @Test fun leavingTheRetainedProfilePageDoesNotCancelAnAuthorizedManualBatch() {
+        launch()
+        blockNetwork = true
+        compose.onNodeWithTag("profile-list-update-all").performClick()
+        compose.waitUntil { networkStarted.count == 0L }
+        compose.onNodeWithText(context.getString(R.string.lite_tab_home)).performClick()
+        assertEquals(ProfileListProgress.Updating, feature.state.value.progress)
+        releaseNetwork.countDown()
+        compose.waitUntil { feature.state.value.notice == ProfileListNotice.Updated && !feature.state.value.busy }
+        assertEquals(1, feature.state.value.batch?.failures?.size)
+        assertEquals(yaml, runBlocking(Dispatchers.IO) { repository.readConfig(remote.id) })
     }
 
     @Test fun rootReplacementPromptsForAutomaticUpdatesAndReadsTheValidatedSavedDocument() {

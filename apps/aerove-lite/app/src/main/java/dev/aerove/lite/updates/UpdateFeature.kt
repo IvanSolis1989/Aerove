@@ -5,8 +5,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
@@ -36,6 +41,7 @@ class UpdateFeature(
     private val owner = SupervisorJob(scope.coroutineContext[Job])
     private val jobs = CoroutineScope(scope.coroutineContext + owner + Dispatchers.IO)
     private val gate = Any()
+    private val maintenance = Mutex()
     private val mutableState = MutableStateFlow(UpdateState())
     val state = mutableState.asStateFlow()
     private var worker: Job? = null
@@ -44,9 +50,10 @@ class UpdateFeature(
     private var generation = 0L
     private var serial = 0L
     private var ready: VerifiedUpdate? = null
+    private var quiesced = false
 
     fun autoCheckOnce() = synchronized(gate) {
-        if (once || closed) return@synchronized
+        if (once || closed || quiesced) return@synchronized
         once = true
         check(automatic = true)
     }
@@ -87,12 +94,13 @@ class UpdateFeature(
 
     fun platformLaunched(id: Long): Boolean = synchronized(gate) {
         val request = state.value.installRequest
-        if (closed || request?.id != id || request.dispatched) false else {
+        if (closed || quiesced || request?.id != id || request.dispatched) false else {
             mutableState.value = state.value.copy(installRequest = request.copy(dispatched = true), phase = UpdatePhase.Installing)
             true
         }
     }
     fun platformResult(id: Long) = synchronized(gate) {
+        if (closed || quiesced) return@synchronized
         val request = state.value.installRequest?.takeIf { it.id == id && it.dispatched } ?: return@synchronized
         mutableState.value = state.value.copy(installRequest = null, phase = UpdatePhase.Ready)
         if (request.kind == UpdateInstallKind.UnknownSources) start { token ->
@@ -101,6 +109,7 @@ class UpdateFeature(
         }
     }
     fun platformLaunchFailed(id: Long) = synchronized(gate) {
+        if (closed || quiesced) return@synchronized
         if (state.value.installRequest?.id == id) mutableState.value = state.value.copy(installRequest = null,
             phase = UpdatePhase.Ready, error = "installer")
     }
@@ -109,10 +118,12 @@ class UpdateFeature(
         publish(token) { it.copy(visible = false, automaticPrompt = false) }
     }
     fun dismiss() = synchronized(gate) {
+        if (closed || quiesced) return@synchronized
         if (state.value.busy || state.value.installRequest != null) return@synchronized
         mutableState.value = state.value.copy(visible = false)
     }
     fun cancel() = synchronized(gate) {
+        if (closed || quiesced) return@synchronized
         generation++
         worker?.cancel()
         worker = null
@@ -120,7 +131,7 @@ class UpdateFeature(
             if (ready != null && ready?.release?.tag == state.value.release?.tag) UpdatePhase.Ready else UpdatePhase.Idle)
     }
 
-    private fun current(token: Long): Boolean = !closed && generation == token && owner.isActive
+    private fun current(token: Long): Boolean = !closed && !quiesced && generation == token && owner.isActive
     private fun publish(token: Long, transform: (UpdateState) -> UpdateState) = synchronized(gate) {
         if (current(token)) {
             val next = transform(state.value)
@@ -129,7 +140,7 @@ class UpdateFeature(
         }
     }
     private fun start(quiet: Boolean = false, action: suspend (Long) -> Unit): Unit = synchronized(gate) {
-        if (closed || worker?.isCompleted == false || state.value.installRequest != null) return@synchronized
+        if (closed || quiesced || worker?.isCompleted == false || state.value.installRequest != null) return@synchronized
         val token = ++generation
         val task = jobs.launch(start = CoroutineStart.LAZY) {
             try { action(token) }
@@ -139,6 +150,51 @@ class UpdateFeature(
         }
         worker = task
         task.start()
+    }
+
+    suspend fun quiesce() = withContext(NonCancellable) { maintenance.withLock { quiesceOwned() } }
+
+    private suspend fun quiesceOwned() {
+        val pending = synchronized(gate) {
+            quiesced = true
+            generation++
+            worker = null
+            mutableState.value = state.value.copy(visible = false, installRequest = null,
+                phase = if (ready != null) UpdatePhase.Ready else UpdatePhase.Idle)
+            owner.children.toList()
+        }
+        pending.forEach { it.cancel() }
+        pending.joinAll()
+    }
+
+    suspend fun resumeAfterMaintenance() = withContext(NonCancellable) {
+        maintenance.withLock { synchronized(gate) {
+            check(!closed && owner.isActive) { "Update owner must be replaced after clear" }
+            quiesced = false
+        } }
+    }
+
+    /** Secondary cleanup after primary commit: terminal even if cleanup fails; errors propagate. */
+    suspend fun clearUserState(): Unit = withContext(NonCancellable) {
+        maintenance.withLock {
+            quiesceOwned()
+            val wasClosed = synchronized(gate) {
+                val previous = closed
+                closed = true; generation++; owner.cancel(); ready = null
+                mutableState.value = UpdateState()
+                previous
+            }
+            var failure: Throwable? = null
+            suspend fun attempt(action: suspend () -> Unit) {
+                try { action() } catch (error: Throwable) {
+                    if (failure == null) failure = error else failure!!.addSuppressed(error)
+                }
+            }
+            attempt { platform.resetPromptedTag() }
+            attempt { repository.clearUserState() }
+            if (!wasClosed) attempt { repository.close() }
+            failure?.let { throw it }
+        }
     }
     override fun close() = synchronized(gate) {
         if (!closed) { closed = true; generation++; owner.cancel(); repository.close(); ready = null; mutableState.value = UpdateState() }

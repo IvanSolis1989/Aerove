@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="integration_import_line_error">第 %1$d 行无法导入。</string>
+    <string name="integration_import_skipped">已跳过现有订阅：%1$d</string>
+</resources>

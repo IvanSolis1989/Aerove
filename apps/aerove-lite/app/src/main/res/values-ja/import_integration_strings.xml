@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="integration_import_line_error">"%1$d 行目をインポートできませんでした。"</string>
+    <string name="integration_import_skipped">"既存のためスキップしたサブスクリプション: %1$d"</string>
+</resources>

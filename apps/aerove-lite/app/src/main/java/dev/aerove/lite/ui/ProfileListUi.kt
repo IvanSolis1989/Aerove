@@ -94,15 +94,28 @@ internal fun rememberProfileListUi(state: LiteState): ProfileListUiBinding {
 @Composable
 private fun ProfileDocumentHost(feature: ProfileListFeature) {
     val state by feature.state.collectAsState()
+    val active = LocalLitePageActive.current
+    val currentActive by rememberUpdatedState(active)
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    var resumed by remember(lifecycle) { mutableStateOf(lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) }
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, _ -> resumed = lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
     var createId by rememberSaveable { mutableLongStateOf(0L) }
     var openId by rememberSaveable { mutableLongStateOf(0L) }
     val create = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/yaml")) { uri ->
+        if (!currentActive) feature.screenDetached()
         feature.documentResult(createId, uri?.toString()); createId = 0L
     }
     val open = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (!currentActive) feature.screenDetached()
         feature.documentResult(openId, uri?.toString()); openId = 0L
     }
-    LaunchedEffect(feature, state.document?.id) {
+    LaunchedEffect(feature, active, resumed, state.document?.id) {
+        if (!active) { feature.screenDetached(); return@LaunchedEffect }
+        if (!resumed || !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return@LaunchedEffect
         val request = state.document ?: return@LaunchedEffect
         if (!request.dispatched && (createId != 0L || openId != 0L)) {
             feature.documentLaunchFailed(request.id)

@@ -2,9 +2,9 @@
 <resources>
     <string name="presentation_font_family">Font family</string>
     <string name="presentation_font_default">Default</string>
-    <string name="presentation_fonts_installed">Installed system fonts</string>
+    <string name="presentation_fonts_installed">System fonts supporting Chinese and English</string>
     <string name="presentation_fonts_loading">Loading system fonts…</string>
-    <string name="presentation_fonts_empty">No named system fonts found</string>
+    <string name="presentation_fonts_empty">No available system fonts support both Chinese and English</string>
     <string name="presentation_fonts_error">Unable to read system fonts</string>
     <string name="presentation_retry">Retry</string>
     <string name="presentation_font_preview">AEROVE · The quick brown fox 0123456789</string>

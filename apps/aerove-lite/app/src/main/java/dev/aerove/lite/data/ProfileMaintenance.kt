@@ -7,6 +7,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -38,6 +42,9 @@ class ProfileMaintenanceRequest internal constructor(
     val sourceIdentity: String,
     val isCurrent: () -> Boolean,
 ) {
+    internal var acceptCommittedSource: ((String) -> ProfileMaintenanceRequest)? = null
+    internal fun committedSource(identity: String): ProfileMaintenanceRequest =
+        checkNotNull(acceptCommittedSource) { "This update cannot replace its source identity" }(identity)
     override fun toString(): String = "ProfileMaintenanceRequest(profileId=$profileId)"
 }
 
@@ -67,6 +74,9 @@ class ProfileMaintenance(
     private val checkIntervalMillis: Long = 20 * 60 * 1000L,
 ) : AutoCloseable {
     private val lock = Any()
+    private val quiesceGate = Mutex()
+    private var maintenancePaused = false
+    private var draining = false
     private val lifetime = SupervisorJob(ownerScope.coroutineContext[Job])
     private val scope = CoroutineScope(ownerScope.coroutineContext + lifetime + dispatcher)
     private val rows = linkedMapOf<String, Row>()
@@ -91,7 +101,8 @@ class ProfileMaintenance(
         var flight: Flight? = null
     }
 
-    private class Flight(val row: Row, val policy: ProfileMaintenancePolicy, val epoch: Long, var manual: Boolean) {
+    private class Flight(val row: Row, var policy: ProfileMaintenancePolicy, val epoch: Long, var manual: Boolean,
+        val operation: (suspend (ProfileMaintenanceRequest) -> Long)? = null) {
         val result = CompletableDeferred<ProfileMaintenanceResult>()
         var valid = true
         var outcome: ProfileMaintenanceResult = ProfileMaintenanceResult.Cancelled
@@ -129,13 +140,50 @@ class ProfileMaintenance(
         startScan(regular = false)
     }
 
+    suspend fun quiesce() {
+        val caller = currentCoroutineContext()[Job]
+        withContext(NonCancellable) {
+            quiesceGate.withLock {
+                val jobs = synchronized(lock) {
+                    maintenancePaused = true
+                    draining = true
+                    foreground = false
+                    generation++
+                    due = due || scan != null
+                    val children = lifetime.children.toList()
+                    val flights = rows.values.mapNotNull { it.flight }
+                    rows.values.forEach { row -> row.epoch++; row.flight?.valid = false }
+                    val all = (children + flights.map { it.job } + listOfNotNull(scan, timer)).distinct()
+                    scan = null
+                    timer = null
+                    flights.forEach { it.result.complete(ProfileMaintenanceResult.Cancelled) }
+                    all
+                }
+                try {
+                    check(caller !in jobs) { "An updater cannot quiesce itself" }
+                    jobs.forEach { it.cancel() }
+                    jobs.joinAll()
+                } finally { synchronized(lock) { draining = false } }
+            }
+        }
+    }
+
+    fun resumeAfterMaintenance(foreground: Boolean) {
+        synchronized(lock) {
+            if (closed || !lifetime.isActive) return
+            check(!draining) { "Profile maintenance is still draining" }
+            maintenancePaused = false
+        }
+        setForeground(foreground)
+    }
+
     fun setForeground(value: Boolean) {
         val cancel = mutableListOf<Job>()
         val flights = mutableListOf<Flight>()
         var regular = false
         var dirty = false
         synchronized(lock) {
-            if (closed || !lifetime.isActive || (started && foreground == value)) return
+            if (closed || !lifetime.isActive || maintenancePaused || (started && foreground == value)) return
             val first = !started
             started = true
             foreground = value
@@ -180,6 +228,15 @@ class ProfileMaintenance(
     suspend fun refresh(profileId: String): ProfileMaintenanceResult = acquire(profileId, manual = true)?.result?.await()
         ?: ProfileMaintenanceResult.Unavailable
 
+    internal suspend fun executeCandidate(profileId: String, operation: suspend (ProfileMaintenanceRequest) -> Long): ProfileMaintenanceResult {
+        val flight = acquire(profileId, manual = true, operation = operation) ?: return ProfileMaintenanceResult.Unavailable
+        return try { flight.result.await() } catch (cancelled: CancellationException) {
+            synchronized(lock) { flight.valid = false }
+            flight.job.cancel()
+            throw cancelled
+        } finally { withContext(NonCancellable) { flight.job.join() } }
+    }
+
     fun cancel(profileId: String) {
         val flight = synchronized(lock) {
             val row = rows[profileId] ?: return
@@ -196,27 +253,32 @@ class ProfileMaintenance(
 
     private fun automatic(policy: ProfileMaintenancePolicy): Boolean = policy.isSubscription && policy.autoUpdate
 
-    private fun current(flight: Flight): Boolean = !closed && lifetime.isActive && flight.valid &&
+    private fun current(flight: Flight): Boolean = !closed && !maintenancePaused && lifetime.isActive && flight.valid &&
         flight.row.epoch == flight.epoch && flight.row.policy?.sourceIdentity == flight.policy.sourceIdentity &&
         (foreground || flight.manual)
 
-    private fun acquire(profileId: String, manual: Boolean, regular: Boolean = false, expectedGeneration: Long? = null): Flight? {
+    private fun acquire(profileId: String, manual: Boolean, regular: Boolean = false, expectedGeneration: Long? = null,
+        operation: (suspend (ProfileMaintenanceRequest) -> Long)? = null): Flight? {
         var launch: Job? = null
+        var superseded: Flight? = null
         val flight = synchronized(lock) {
-            if (closed || !lifetime.isActive) return null
+            if (closed || !lifetime.isActive || maintenancePaused) return null
             val row = rows[profileId] ?: return null
-            val policy = row.policy?.takeIf { it.isSubscription } ?: return null
+            val policy = row.policy?.takeIf { it.isSubscription || operation != null } ?: return null
             if (!manual) {
                 if (!foreground || !automatic(policy) || generation != expectedGeneration) return null
                 val last = listOfNotNull(policy.lastUpdatedAtMillis, row.receipt).maxOrNull()
                 if (!row.invalidated && (!regular || (last != null && addTime(last, policy.intervalMillis) >= now()))) return null
             }
             row.flight?.takeIf { it.valid && !it.result.isCompleted }?.let {
+                if (operation != null) { it.valid = false; superseded = it }
+                else {
                 if (manual) it.manual = true
                 row.invalidated = false
                 return@synchronized it
+                }
             }
-            val created = Flight(row, policy, row.epoch, manual)
+            val created = Flight(row, policy, row.epoch, manual, operation)
             created.job = scope.launch(start = CoroutineStart.LAZY) { runFlight(created) }
             if (!created.job.isActive && created.job.isCancelled) return null
             row.active++
@@ -227,6 +289,7 @@ class ProfileMaintenance(
             launch = created.job
             created
         }
+        superseded?.let { cancelFlights(listOf(it)) }
         launch?.start()
         return flight
     }
@@ -235,10 +298,18 @@ class ProfileMaintenance(
         try {
             flight.row.gate.withLock {
                 if (!synchronized(lock) { current(flight) }) return@withLock
-                val request = ProfileMaintenanceRequest(flight.policy.id, flight.policy.sourceIdentity) {
+                fun request(): ProfileMaintenanceRequest = ProfileMaintenanceRequest(flight.policy.id, flight.policy.sourceIdentity) {
                     synchronized(lock) { current(flight) }
-                }
-                val timestamp = update(request)
+                }.also { value -> value.acceptCommittedSource = { identity ->
+                    synchronized(lock) {
+                        if (!current(flight)) throw CancellationException("Candidate update superseded")
+                        flight.policy = flight.policy.copy(sourceIdentity = identity)
+                        flight.row.policy = flight.row.policy?.copy(sourceIdentity = identity)
+                    }
+                    request()
+                } }
+                val request = request()
+                val timestamp = (flight.operation ?: update)(request)
                 require(timestamp >= 0) { "Update callback returned an invalid timestamp" }
                 synchronized(lock) {
                     if (current(flight)) {
@@ -277,7 +348,7 @@ class ProfileMaintenance(
     private fun startScan(regular: Boolean) {
         var launch: Job? = null
         synchronized(lock) {
-            if (closed || !lifetime.isActive || !foreground) return
+            if (closed || !lifetime.isActive || maintenancePaused || !foreground) return
             if (scan != null) {
                 if (regular) due = true
                 return
@@ -291,7 +362,7 @@ class ProfileMaintenance(
             lateinit var job: Job
             job = scope.launch(start = CoroutineStart.LAZY) {
                 for (id in ids) {
-                    if (!synchronized(lock) { !closed && foreground && generation == epoch }) break
+                    if (!synchronized(lock) { !closed && !maintenancePaused && foreground && generation == epoch }) break
                     acquire(id, manual = false, regular = regular, expectedGeneration = epoch)?.result?.await()
                 }
             }
@@ -301,7 +372,7 @@ class ProfileMaintenance(
                 var dirty = false
                 synchronized(lock) {
                     if (scan === job) scan = null
-                    if (!closed && foreground) {
+                    if (!closed && !maintenancePaused && foreground) {
                         if (regular && generation == epoch && !due) dueAt = addTime(now(), checkIntervalMillis)
                         again = due
                         dirty = rows.values.any { it.invalidated && it.policy?.let(::automatic) == true }
@@ -316,14 +387,14 @@ class ProfileMaintenance(
 
     private fun schedule() {
         val job = synchronized(lock) {
-            if (closed || !lifetime.isActive || !foreground || scan != null || timer != null) return
+            if (closed || !lifetime.isActive || maintenancePaused || !foreground || scan != null || timer != null) return
             val deadline = dueAt ?: addTime(now(), checkIntervalMillis).also { dueAt = it }
             val remaining = (deadline - now()).coerceIn(0, checkIntervalMillis)
             lateinit var created: Job
             created = scope.launch(start = CoroutineStart.LAZY) {
                 waitMillis(remaining)
                 val valid = synchronized(lock) {
-                    if (timer !== created) false else { timer = null; !closed && foreground }
+                    if (timer !== created) false else { timer = null; !closed && !maintenancePaused && foreground }
                 }
                 if (valid) startScan(regular = true)
             }
@@ -344,6 +415,7 @@ class ProfileMaintenance(
         synchronized(lock) {
             if (closed) return
             closed = true
+            maintenancePaused = true
             foreground = false
             generation++
             timer?.let(jobs::add)

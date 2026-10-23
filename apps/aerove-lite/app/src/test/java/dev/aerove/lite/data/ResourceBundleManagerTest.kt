@@ -275,4 +275,96 @@ class ResourceBundleManagerTest {
         assertThrows(IllegalArgumentException::class.java) { runBlocking { repo.retain(first) } }
         assertEquals(2, File(runtime, "resources/bundles/$id").listFiles()!!.size)
     }
-}
+    @Test fun resourceEditorRejectsStaleContentAndSourceLineageWithoutLosingNewPayload() = runBlocking<Unit> {
+        val repo = repository()
+        server.enqueue(payload("+.original.example"))
+        val id = repo.importText("Main", ruleSource()).id
+        val opened = repo.resourceEditSnapshot(id, "$.rule-providers.remote")
+        repo.sideLoadResource(id, opened.key, "payload: ['+.new.example']".byteInputStream())
+        val newer = repo.resourceEditSnapshot(id, opened.key)
+        val indexBefore = index().readBytes()
+        assertThrows(ProfileConflictException::class.java) { runBlocking {
+            repo.replaceResource(opened, "payload: ['+.stale.example']".byteInputStream())
+        } }
+        assertArrayEquals(indexBefore, index().readBytes())
+        assertArrayEquals(newer.bytes, repository().resourceEditSnapshot(id, opened.key).bytes)
+        repo.replace(id, ruleSource() + "\nlog-level: debug")
+        val changed = repo.documentSnapshot(id)
+        assertThrows(ProfileConflictException::class.java) { runBlocking {
+            repo.replaceResource(newer, "payload: ['+.stale.example']".byteInputStream())
+        } }
+        assertEquals(changed, repo.documentSnapshot(id))
+        assertArrayEquals(newer.bytes, repo.resourceEditSnapshot(id, opened.key).bytes)
+    }
+
+    @Test fun resourceEditorSuccessReadsBackManifestAndKeepsLeasedGeneration() = runBlocking<Unit> {
+        val repo = repository()
+        server.enqueue(payload("+.original.example"))
+        val id = repo.importText("Main", ruleSource()).id
+        val old = repo.prepare(id)
+        val lease = repo.retain(old)
+        val oldFile = File(provider(old)["path"] as String)
+        val oldBytes = oldFile.readBytes()
+        try {
+            val opened = repo.resourceEditSnapshot(id, "$.rule-providers.remote")
+            val replacement = "payload: ['+.edited.example']"
+            val applied = repo.replaceResource(opened, replacement.byteInputStream())
+            val fresh = repository().resourceEditSnapshot(id, opened.key)
+            assertEquals(replacement, fresh.bytes.toString(Charsets.UTF_8))
+            assertNotEquals(opened.generation, fresh.generation)
+            assertEquals(applied.generation, fresh.generation)
+            val manifest = JSONObject(File(applied.resourceDirectory!!, "manifest.json").readText())
+            assertEquals(fresh.contentSha256, manifest.getJSONArray("records").getJSONObject(0).getString("sha256"))
+            assertEquals(sha256(replacement), fresh.contentSha256)
+            assertArrayEquals(oldBytes, oldFile.readBytes())
+            assertEquals(old.source, repo.readConfig(id))
+        } finally { repo.release(lease) }
+    }
+
+    @Test fun resourceEditorCancellationRestoreAndNativeFailurePreserveCommittedContent() = runBlocking<Unit> {
+        val repo = repository()
+        server.enqueue(payload("+.original.example"))
+        val id = repo.importText("Main", ruleSource()).id
+        val opened = repo.resourceEditSnapshot(id, "$.rule-providers.remote")
+        val before = index().readBytes()
+        val cancelledInput = object : java.io.InputStream() {
+            override fun read(): Int = throw CancellationException("Editor cancelled")
+        }
+        assertThrows(CancellationException::class.java) { runBlocking { repo.replaceResource(opened, cancelledInput) } }
+        assertArrayEquals(before, index().readBytes())
+        assertArrayEquals(opened.bytes, repo.resourceEditSnapshot(id, opened.key).bytes)
+        rejectResources = true
+        assertThrows(ConfigValidationException::class.java) { runBlocking {
+            repo.replaceResource(opened, "payload: ['+.rejected.example']".byteInputStream())
+        } }
+        rejectResources = false
+        assertArrayEquals(before, index().readBytes())
+        assertArrayEquals(opened.bytes, repo.resourceEditSnapshot(id, opened.key).bytes)
+        val archive = java.nio.file.Files.createTempFile("aerove-editor-restore-", ".zip").toFile()
+        val backups = BackupRepository(temporary.root, repo, LiteSettingsStore(temporary.root))
+        try {
+            backups.createBackup(archive)
+            server.enqueue(payload("+.original.example"))
+            archive.inputStream().use { backups.restore(it, strategy = BackupRestoreStrategy.Override) }
+        } finally { archive.delete() }
+        assertTrue(runCatching { repo.replaceResource(opened, "payload: ['+.late.example']".byteInputStream()) }.isFailure)
+        val restored = repository().list().single()
+        assertArrayEquals(opened.bytes, repo.resourceEditSnapshot(restored.id, opened.key).bytes)
+    }    @Test fun resourceEditorRejectsDerivedProxyProviderAndOffersOnlyOriginalSource() = runBlocking<Unit> {
+        val repo = repository()
+        val source = """
+            proxy-providers:
+              remote: {type: http, url: '${server.url("/proxies")}', path: providers/cache.yaml}
+            proxy-groups: [{name: Auto, type: select, use: [remote]}]
+            rules: ['MATCH,Auto']
+        """.trimIndent()
+        server.enqueue(MockResponse().setBody("proxies: [{name: node, type: socks5, server: node.example, port: 1080}]"))
+        val id = repo.importText("Proxies", source).id
+        val original = repo.resourceEditSnapshot(id, "$.proxy-providers.remote")
+        assertTrue(original.bytes.toString(Charsets.UTF_8).contains("node.example"))
+        val before = index().readBytes()
+        assertThrows(IllegalArgumentException::class.java) { runBlocking {
+            repo.resourceEditSnapshot(id, "$.proxy-providers.remote.prepared")
+        } }
+        assertArrayEquals(before, index().readBytes())
+    }}

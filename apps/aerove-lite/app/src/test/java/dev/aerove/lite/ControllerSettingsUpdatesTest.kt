@@ -4,6 +4,7 @@ import java.time.ZonedDateTime
 import dev.aerove.lite.networksettings.NetworkSettings
 import dev.aerove.lite.networksettings.ProxyAuthentication
 import dev.aerove.lite.networksettings.UserProxyPorts
+import dev.aerove.lite.navigation.TabAnimation
 import kotlin.random.Random
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -80,6 +81,7 @@ class ControllerSettingsUpdatesTest {
                 ports = UserProxyPorts(7900, 7901, 7902), allowLan = true,
                 authentication = ProxyAuthentication(true, "account", "password")),
             fontFamily = "custom-font", textScaleEnabled = true, textScale = 1.2f, pureBlack = true,
+            floatingNavigationBar = false, tabAnimation = TabAnimation.Slide,
         )
         fake.updates.save(baseline, requested)
         assertEquals(requested, fake.disk)
@@ -139,6 +141,50 @@ class ControllerSettingsUpdatesTest {
             assertEquals(fake.disk, fake.shown)
             assertEquals(2, fake.saveCalls)
         }
+    }
+
+    @Test fun queuedNavigationAndNetworkEditsPreserveEachOtherInEitherOrder() = runTest {
+        for (navigationFirst in listOf(true, false)) {
+            val fake = Harness()
+            fake.updates.load()
+            val baseline = fake.shown
+            val navigation = baseline.copy(floatingNavigationBar = false, tabAnimation = TabAnimation.Slide)
+            val network = baseline.copy(network = baseline.network.copy(vpnEnabled = true,
+                ports = UserProxyPorts(http = 7900)))
+            val requests = if (navigationFirst) listOf(navigation, network) else listOf(network, navigation)
+            fake.saveGate = CompletableDeferred()
+            val first = launch { fake.updates.save(baseline, requests[0]) }
+            runCurrent()
+            val second = launch { fake.updates.save(baseline, requests[1]) }
+            runCurrent()
+            assertEquals(1, fake.saveCalls)
+            fake.saveGate!!.complete(Unit)
+            first.join(); second.join()
+            assertFalse(fake.disk.floatingNavigationBar)
+            assertEquals(TabAnimation.Slide, fake.disk.tabAnimation)
+            assertTrue(fake.disk.network.vpnEnabled)
+            assertEquals(7900, fake.disk.network.ports.http)
+            assertEquals(fake.disk, fake.shown)
+            assertEquals(2, fake.saveCalls)
+        }
+    }
+
+    @Test fun onlyCoreConfigurationDifferencesRequireCoreReconfiguration() {
+        val baseline = LiteSettings()
+        val builderOnlyChanges = listOf(
+            baseline.copy(appFilterMode = AppFilterMode.Include, packages = setOf("dev.example.app")),
+            baseline.copy(network = baseline.network.copy(vpnEnabled = true, systemProxy = false,
+                allowBypass = false, bypassDomains = listOf("*.example"), ports = UserProxyPorts(7900, 7901, 7902),
+                allowLan = true, authentication = ProxyAuthentication(true, "user", "secret"))),
+        )
+        builderOnlyChanges.forEach { changed ->
+            assertFalse(requiresCoreReconfiguration(baseline, changed))
+        }
+
+        assertTrue(requiresCoreReconfiguration(baseline, baseline.copy(mode = ProxyMode.Direct)))
+        assertTrue(requiresCoreReconfiguration(baseline, baseline.copy(ipv6 = !baseline.ipv6)))
+        assertTrue(requiresCoreReconfiguration(baseline, baseline.copy(overrideDns = !baseline.overrideDns)))
+        assertTrue(requiresCoreReconfiguration(baseline, baseline.copy(dnsServers = listOf("tls://8.8.8.8:853"))))
     }
 
     @Test fun portsAndAuthenticationEachRemainOneUserTransaction() = runTest {

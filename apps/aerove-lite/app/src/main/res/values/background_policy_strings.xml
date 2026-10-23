@@ -1,0 +1,31 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="background_title">Startup and background</string>
+    <string name="background_auto_run">Run when the app opens</string>
+    <string name="background_on_demand">On demand</string>
+    <string name="background_minimize">Minimize on exit</string>
+    <string name="background_hidden">Hide from recent apps</string>
+    <string name="background_close_connections">Close connections when switching proxies</string>
+    <string name="background_proxy_statistics">Only count proxy traffic</string>
+    <string name="background_description">Automatic run applies when opening the app. Connection closing applies when changing the selected proxy.</string>
+    <string name="background_prerequisites">Prerequisites</string>
+    <string name="background_location">Location permission</string>
+    <string name="background_battery">Ignore battery optimization</string>
+    <string name="background_authorized">Authorized</string>
+    <string name="background_authorize">Authorize</string>
+    <string name="background_permission_description">Allow precise location and background location, and enable device location to identify Wi-Fi in the background. Review battery restrictions in system settings.</string>
+    <string name="background_excluded">Excluded Wi-Fi networks</string>
+    <string name="background_add">Add SSID</string>
+    <string name="background_select_all">Select all</string>
+    <string name="background_delete">Delete selected</string>
+    <string name="background_empty">No excluded Wi-Fi networks</string>
+    <string name="background_move_up">Move up</string>
+    <string name="background_move_down">Move down</string>
+    <string name="background_excluded_description">On an excluded Wi-Fi network, pause the listener while retaining your running intent. Resume after leaving the network.</string>
+    <string name="background_edit">Edit SSID</string>
+    <string name="background_ssid">SSID</string>
+    <string name="background_invalid">Enter a unique SSID containing 1–32 UTF-8 bytes.</string>
+    <string name="background_save">Save</string>
+    <string name="background_cancel">Cancel</string>
+    <string name="background_notification_stop">Show stop action in notification</string>
+</resources>

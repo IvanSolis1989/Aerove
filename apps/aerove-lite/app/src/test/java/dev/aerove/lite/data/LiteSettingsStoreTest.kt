@@ -5,6 +5,7 @@ import dev.aerove.lite.networksettings.NetworkSettings
 import dev.aerove.lite.networksettings.NetworkSettingsException
 import dev.aerove.lite.networksettings.ProxyAuthentication
 import dev.aerove.lite.networksettings.UserProxyPorts
+import dev.aerove.lite.navigation.TabAnimation
 import java.io.File
 import java.io.IOException
 import kotlinx.coroutines.CoroutineStart
@@ -279,6 +280,14 @@ class LiteSettingsStoreTest {
         assertFalse(store.read().autoStart)
     }
 
+    @Test fun proxyAutostartDoesNotRequireVpnAuthorization() = runBlocking<Unit> {
+        val store = LiteSettingsStore(temporary.root)
+        val saved = store.save(LiteSettings(autoStart = true, network = LiteSettings().network.copy(vpnEnabled = false)))
+        assertTrue(saved.autoStart)
+        assertFalse(saved.network.vpnEnabled)
+        assertEquals(saved, LiteSettingsStore(temporary.root).read())
+    }
+
     @Test fun oldSettingsWithoutLogFlagKeepLoggingDisabled() = runBlocking<Unit> {
         val store = LiteSettingsStore(temporary.root)
         store.save(LiteSettings(openLogs = true))
@@ -318,6 +327,7 @@ class LiteSettingsStoreTest {
 
     @Test fun networkAndPresentationRoundTripExactlyThroughNewStore() = runBlocking<Unit> {
         val input = LiteSettings(fontFamily = "  custom-font  ", textScaleEnabled = true, textScale = 1.23f, pureBlack = true,
+            floatingNavigationBar = false, tabAnimation = TabAnimation.Slide,
             network = NetworkSettings(systemProxy = false, allowBypass = false, bypassDomains = listOf("*.example", "localhost"),
                 ports = UserProxyPorts(7900, 7901, 7902), allowLan = true,
                 authentication = ProxyAuthentication(true, "account", "password:with-colon")))
@@ -330,6 +340,8 @@ class LiteSettingsStoreTest {
         assertEquals(expected, reopened.changes.value)
         val json = JSONObject(File(temporary.root, "settings/settings.json").readText())
         assertEquals("custom-font", json.getString("fontFamily"))
+        assertFalse(json.getBoolean("floatingNavigationBar"))
+        assertEquals("slide", json.getString("tabAnimation"))
         assertEquals(expected.textScale, json.getDouble("textScale").toFloat())
         assertTrue(json.getBoolean("textScaleEnabled"))
         assertTrue(json.getBoolean("pureBlack"))
@@ -338,16 +350,18 @@ class LiteSettingsStoreTest {
 
     @Test fun absentNetworkAndPresentationMembersUseDefaultsWithoutRewriting() = runBlocking<Unit> {
         val original = LiteSettings(mode = ProxyMode.Direct, fontFamily = "custom-font", textScaleEnabled = true,
-            textScale = 1.2f, pureBlack = true, network = NetworkSettings(allowLan = true, ports = UserProxyPorts(7900)))
+            textScale = 1.2f, pureBlack = true, floatingNavigationBar = false,
+            tabAnimation = TabAnimation.Slide, network = NetworkSettings(allowLan = true, ports = UserProxyPorts(7900)))
         LiteSettingsStore(temporary.root).save(original)
         val file = File(temporary.root, "settings/settings.json")
         file.writeText(JSONObject(file.readText()).apply {
-            listOf("network", "fontFamily", "textScaleEnabled", "textScale", "pureBlack").forEach(::remove)
+            listOf("network", "fontFamily", "textScaleEnabled", "textScale", "pureBlack",
+                "floatingNavigationBar", "tabAnimation").forEach(::remove)
         }.toString())
         val before = file.readBytes()
         val reopened = LiteSettingsStore(temporary.root)
         val expected = original.copy(network = NetworkSettings(), fontFamily = null, textScaleEnabled = false,
-            textScale = 1f, pureBlack = false)
+            textScale = 1f, pureBlack = false, floatingNavigationBar = true, tabAnimation = TabAnimation.Fade)
         assertEquals(expected, reopened.read())
         assertEquals(expected, reopened.changes.value)
         assertArrayEquals(before, file.readBytes())
@@ -356,6 +370,7 @@ class LiteSettingsStoreTest {
     @Test fun malformedPresentNetworkAndPresentationNeverPublishDefaults() = runBlocking<Unit> {
         val store = LiteSettingsStore(temporary.root)
         val good = store.save(LiteSettings(fontFamily = "custom-font", pureBlack = true,
+            floatingNavigationBar = false,
             network = NetworkSettings(allowLan = true)))
         val file = File(temporary.root, "settings/settings.json")
         val original = file.readText()
@@ -369,6 +384,30 @@ class LiteSettingsStoreTest {
             assertThrows(field, IllegalArgumentException::class.java) { runBlocking { store.read() } }
             assertEquals(field, good, store.changes.value)
             assertEquals(corrupted, file.readText())
+        }
+        val invalidBoolean = JSONObject(original).put("floatingNavigationBar", "false").toString()
+        file.writeText(invalidBoolean)
+        assertThrows("floatingNavigationBar", IllegalArgumentException::class.java) { runBlocking { store.read() } }
+        assertEquals(good, store.changes.value)
+        assertEquals(invalidBoolean, file.readText())
+
+        for ((field, invalid) in listOf("tabAnimation" to "future-animation", "tabAnimation" to JSONObject.NULL)) {
+            val corrupted = JSONObject(original).put(field, invalid).toString()
+            file.writeText(corrupted)
+            assertThrows(field, IllegalArgumentException::class.java) { runBlocking { store.read() } }
+            assertEquals(field, good, store.changes.value)
+            assertEquals(field, corrupted, file.readText())
+        }
+    }
+
+    @Test fun bothTabAnimationsUseStableWireNamesAndRoundTrip() = runBlocking<Unit> {
+        val store = LiteSettingsStore(temporary.root)
+        for (animation in TabAnimation.entries) {
+            val saved = store.save(LiteSettings(tabAnimation = animation))
+            val json = JSONObject(File(temporary.root, "settings/settings.json").readText())
+            assertEquals(animation.wireName, json.getString("tabAnimation"))
+            assertEquals(animation, saved.tabAnimation)
+            assertEquals(animation, LiteSettingsStore(temporary.root).read().tabAnimation)
         }
     }
 

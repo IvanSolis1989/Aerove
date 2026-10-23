@@ -1,0 +1,8 @@
+<resources>
+    <string name="controller_external">External controller</string>
+    <string name="controller_secret">External controller secret</string>
+    <string name="controller_save">Save</string>
+    <string name="controller_cancel">Cancel</string>
+    <string name="controller_invalid_secret">Enter a secret of 1–512 characters.</string>
+    <string name="controller_save_failed">Could not save settings.</string>
+</resources>

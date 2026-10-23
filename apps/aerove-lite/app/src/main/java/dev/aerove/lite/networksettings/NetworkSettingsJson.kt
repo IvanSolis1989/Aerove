@@ -9,7 +9,9 @@ object NetworkSettingsJson {
 
     fun encode(settings: NetworkSettings): JSONObject {
         val value = settings.snapshot().requireValid()
-        return JSONObject().put("version", 1).put("systemProxy", value.systemProxy).put("allowBypass", value.allowBypass)
+        return JSONObject().put("version", 1).put("vpnEnabled", value.vpnEnabled).put("systemProxy", value.systemProxy).put("allowBypass", value.allowBypass)
+            .put("dnsHijacking", value.dnsHijacking).put("mtu", value.mtu).put("bypassPrivateRoute", value.bypassPrivateRoute)
+            .put("routeAddress", JSONArray(value.routeAddress)).put("routeExcludeAddress", JSONArray(value.routeExcludeAddress))
             .put("bypassDomains", JSONArray(value.bypassDomains)).put("allowLan", value.allowLan)
             .put("ports", JSONObject().put("mixed", value.ports.mixed).put("http", value.ports.http).put("socks", value.ports.socks))
             .put("authentication", JSONObject().put("enabled", value.authentication.enabled)
@@ -22,7 +24,9 @@ object NetworkSettingsJson {
         if (member == null) return NetworkSettings()
         val root = member as? JSONObject ?: issue("network", NetworkIssueCode.Type)
         checkSize(root)
-        root.only(setOf("version", "systemProxy", "allowBypass", "bypassDomains", "allowLan", "ports", "authentication"), "network")
+        if (root.has("tunStack")) issue("network.tunStack", NetworkIssueCode.UnsupportedCore)
+        root.only(setOf("version", "vpnEnabled", "systemProxy", "allowBypass", "bypassDomains", "allowLan", "ports", "authentication",
+            "dnsHijacking", "mtu", "bypassPrivateRoute", "routeAddress", "routeExcludeAddress"), "network")
         if (root.integer("version", 1, "network") != 1) issue("network.version", NetworkIssueCode.Version)
         val defaults = NetworkSettings()
         val ports = root.member("ports", "network")
@@ -35,6 +39,12 @@ object NetworkSettingsJson {
                 ?: issue("network.bypassDomains[$index]", NetworkIssueCode.Type) }
         }
         return NetworkSettings(
+            vpnEnabled = root.boolean("vpnEnabled", defaults.vpnEnabled, "network"),
+            dnsHijacking = root.boolean("dnsHijacking", defaults.dnsHijacking, "network"),
+            mtu = root.integer("mtu", defaults.mtu, "network", NetworkIssueCode.MtuRange),
+            bypassPrivateRoute = root.boolean("bypassPrivateRoute", defaults.bypassPrivateRoute, "network"),
+            routeAddress = root.strings("routeAddress", emptyList(), "network"),
+            routeExcludeAddress = root.strings("routeExcludeAddress", emptyList(), "network"),
             systemProxy = root.boolean("systemProxy", defaults.systemProxy, "network"),
             allowBypass = root.boolean("allowBypass", defaults.allowBypass, "network"),
             bypassDomains = domains,
@@ -58,12 +68,17 @@ object NetworkSettingsJson {
         if (!has(key)) default else get(key) as? Boolean ?: issue("$path.$key", NetworkIssueCode.Type)
     private fun JSONObject.string(key: String, default: String, path: String): String =
         if (!has(key)) default else get(key) as? String ?: issue("$path.$key", NetworkIssueCode.Type)
-    private fun JSONObject.integer(key: String, default: Int, path: String): Int {
+    private fun JSONObject.strings(key: String, default: List<String>, path: String): List<String> {
+        if (!has(key)) return default
+        val values = get(key) as? JSONArray ?: issue("$path.$key", NetworkIssueCode.Type)
+        return (0 until values.length()).map { index -> values.get(index) as? String ?: issue("$path.$key[$index]", NetworkIssueCode.Type) }
+    }
+    private fun JSONObject.integer(key: String, default: Int, path: String, rangeCode: NetworkIssueCode = NetworkIssueCode.PortRange): Int {
         if (!has(key)) return default
         val raw = get(key)
         if (raw !is Int && raw !is Long) issue("$path.$key", NetworkIssueCode.Type)
         val number = (raw as Number).toLong()
-        if (number !in Int.MIN_VALUE..Int.MAX_VALUE) issue("$path.$key", NetworkIssueCode.PortRange)
+        if (number !in Int.MIN_VALUE..Int.MAX_VALUE) issue("$path.$key", rangeCode)
         return number.toInt()
     }
     private fun issue(field: String, code: NetworkIssueCode): Nothing = throw NetworkSettingsException(listOf(NetworkIssue(field, code)))

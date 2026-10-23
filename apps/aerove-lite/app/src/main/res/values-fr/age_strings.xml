@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="age_secret_title">Clé secrète age</string>
+    <string name="age_cancel">Annuler</string>
+    <string name="age_name">Nom</string>
+    <string name="age_url">URL</string>
+    <string name="age_failed">Échec</string>
+    <string name="age_import">Importer</string>
+    <string name="age_secret_label">Clé secrète</string>
+    <string name="age_continue">Continuer</string>
+    <string name="age_decrypt_failed">Échec du déchiffrement. Vérifiez la clé et réessayez.</string>
+    <string name="age_import_title">Importer des profils</string>
+    <string name="age_batch_mode">Saisie par lots</string>
+    <string name="age_urls">URL</string>
+    <string name="age_import_failed">Certains profils n’ont pas pu être importés.</string>
+    <string name="age_queued">En attente</string>
+    <string name="age_running">Importation</string>
+    <string name="age_succeeded">Importé</string>
+    <string name="age_cancelled">Annulé</string>
+</resources>

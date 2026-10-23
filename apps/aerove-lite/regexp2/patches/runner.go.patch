@@ -1,0 +1,12 @@
+--- a/runner.go
++++ b/runner.go
+@@ -1559,6 +1559,9 @@
+ }
+ 
+ func (r *runner) checkTimeout() error {
++	if r.re.CancelCheck != nil {
++		if err := r.re.CancelCheck(); err != nil { return err }
++	}
+ 	if r.ignoreTimeout || !r.deadline.reached() {
+ 		return nil
+ 	}

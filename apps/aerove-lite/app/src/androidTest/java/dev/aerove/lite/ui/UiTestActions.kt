@@ -2,13 +2,18 @@ package dev.aerove.lite.ui
 
 import dev.aerove.lite.LiteActions
 import dev.aerove.lite.LiteSettings
+import dev.aerove.lite.observability.HistoryTableChange
 
-internal class UiTestActions(private val onSettings: (LiteSettings) -> Unit) : LiteActions {
+internal class UiTestActions(private val onSettings: (LiteSettings) -> Unit,
+    initialSettings: LiteSettings) : LiteActions {
+    constructor(onSettings: (LiteSettings) -> Unit) : this(onSettings, LiteSettings())
     val events = mutableListOf<String>()
     val settings = mutableListOf<LiteSettings>()
     val connectionTelemetry = mutableListOf<Boolean>()
     val memoryTelemetry = mutableListOf<Boolean>()
+    val providerTelemetry = mutableListOf<Boolean>()
     val serviceTelemetry = mutableListOf<Set<String>>()
+    private var currentSettings = initialSettings
     override fun connect() { events += "connect" }
     override fun disconnect() { events += "disconnect" }
     override fun importFile() { events += "importFile" }
@@ -25,9 +30,17 @@ internal class UiTestActions(private val onSettings: (LiteSettings) -> Unit) : L
     override fun closeConnection(id: String) { events += "closeConnection:$id" }
     override fun closeAllConnections() { events += "closeAllConnections" }
     override fun changeSettings(settings: LiteSettings) {
+        currentSettings = settings
         this.settings += settings
         events += "changeSettings"
         onSettings(settings)
+    }
+    override fun changeHistoryTable(change: HistoryTableChange) {
+        val updated = currentSettings.copy(historyTables = currentSettings.historyTables.apply(change))
+        currentSettings = updated
+        settings += updated
+        events += "changeHistoryTable"
+        onSettings(updated)
     }
     override fun loadInstalledApps() { events += "loadInstalledApps" }
     override fun clearLogs() { events += "clearLogs" }
@@ -36,8 +49,15 @@ internal class UiTestActions(private val onSettings: (LiteSettings) -> Unit) : L
     override fun refreshServiceChecks() { events += "refreshServiceChecks" }
     override fun refreshServiceCheck(id: String) { events += "refreshServiceCheck:$id" }
     override fun setServiceTelemetryTargets(ids: Set<String>) { serviceTelemetry += ids.toSet() }
+    override fun setProviderTelemetryActive(active: Boolean) { providerTelemetry += active }
     override fun setMemoryTelemetryActive(active: Boolean) { memoryTelemetry += active }
     override fun shuffleAurora() { events += "shuffleAurora" }
     override fun setConnectionTelemetryActive(active: Boolean) { connectionTelemetry += active }
     override fun dismissMessage() { events += "dismissMessage" }
+    override fun requestOnDemandLocation(): Unit = error("Unused UI fixture on-demand location request")
+    override fun requestBatteryExemption(): Unit = error("Unused UI fixture battery exemption request")
+    override fun authorizeApplications(): Unit = error("Unused UI fixture application authorization")
+    override fun acceptExternalProfile(): Unit = error("Unused UI fixture external profile acceptance")
+    override fun dismissExternalProfile(): Unit = error("Unused UI fixture external profile dismissal")
+    override fun declineDisclaimer(): Unit = error("Unused UI fixture disclaimer decline")
 }

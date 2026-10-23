@@ -21,6 +21,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.withContext
 
 enum class ProfileDocumentKind { Create, Open }
@@ -68,6 +69,10 @@ class ProfileListFeature(
     private var pending: ProfileDocumentSnapshot? = null
     private var disableAutoUpdate = false
     private val retiredCreates = linkedSetOf<Long>()
+    private val ownedJobs = linkedMapOf<Job, Boolean>()
+    private val deferredCreates = linkedSetOf<String>()
+    private var maintenancePaused = false
+    private var quiescing = 0
 
     fun updateAll() = start(ProfileListProgress.Updating) { token ->
         val ids = maintenance.reload().profiles.map { it.id }
@@ -123,9 +128,10 @@ class ProfileListFeature(
 
     private fun pick(id: String, kind: ProfileDocumentKind, disable: Boolean) = start(
         if (kind == ProfileDocumentKind.Create) ProfileListProgress.Exporting else ProfileListProgress.Replacing,
-    ) { _ ->
+    ) { token ->
         val snapshot = repository.documentSnapshot(id)
         synchronized(gate) {
+            if (!current(token)) return@synchronized
             pending = snapshot
             disableAutoUpdate = disable
             worker = null
@@ -136,14 +142,14 @@ class ProfileListFeature(
 
     fun documentLaunched(id: Long): Boolean = synchronized(gate) {
         val request = state.value.document
-        if (closed || request?.id != id || request.dispatched) false else {
+        if (closed || maintenancePaused || request?.id != id || request.dispatched) false else {
             publish { it.copy(document = request.copy(dispatched = true)) }
             true
         }
     }
 
     fun documentLaunchFailed(id: Long) = synchronized(gate) {
-        if (state.value.document?.id == id) {
+        if (!maintenancePaused && !closed && state.value.document?.id == id) {
             pending = null
             publish { it.copy(document = null, notice = ProfileListNotice.Failed, error = "Document picker unavailable") }
         }
@@ -151,11 +157,13 @@ class ProfileListFeature(
 
     fun documentResult(id: Long, reference: String?) = synchronized(gate) {
         if (retiredCreates.remove(id)) {
-            if (reference != null) jobs.launch(NonCancellable) { cleanupCreated(reference) }
+            if (reference != null) {
+                if (maintenancePaused && !closed) deferredCreates += reference else launchCleanup(reference)
+            }
             return@synchronized
         }
         val request = state.value.document?.takeIf { it.id == id && it.dispatched } ?: return@synchronized
-        if (closed) return@synchronized
+        if (closed || maintenancePaused) return@synchronized
         val snapshot = pending ?: return@synchronized
         pending = null
         publish { it.copy(document = null) }
@@ -219,6 +227,42 @@ class ProfileListFeature(
         if (state.value.document != null || state.value.progress in setOf(ProfileListProgress.Exporting, ProfileListProgress.Replacing)) cancel()
     }
 
+    /** Stops owned work before reset/restore touches the repository; ordinary navigation does not call this. */
+    suspend fun quiesce() {
+        synchronized(gate) { maintenancePaused = true; quiescing++; cancel() }
+        try {
+            withContext(NonCancellable) {
+                while (true) {
+                    val active = synchronized(gate) { ownedJobs.toList() }
+                    if (active.isEmpty()) break
+                    active.forEach { (task, cancellable) -> if (cancellable) task.cancel() }
+                    active.map { it.first }.joinAll()
+                }
+            }
+        } finally { synchronized(gate) { quiescing-- } }
+    }
+
+    fun resumeAfterMaintenance() = synchronized(gate) {
+        if (closed || quiescing != 0) return@synchronized
+        maintenancePaused = false
+        val cleanups = deferredCreates.toList()
+        deferredCreates.clear()
+        cleanups.forEach(::launchCleanup)
+    }
+
+    private fun track(task: Job, cancellable: Boolean = true): Job {
+        ownedJobs[task] = cancellable
+        task.invokeOnCompletion { synchronized(gate) { ownedJobs.remove(task) } }
+        return task
+    }
+
+    private fun launchCleanup(reference: String) {
+        val task = track(jobs.launch(NonCancellable, start = CoroutineStart.LAZY) {
+            withContext(NonCancellable) { cleanupCreated(reference) }
+        }, cancellable = false)
+        task.start()
+    }
+
     private fun retireDocument() {
         state.value.document?.takeIf { it.kind == ProfileDocumentKind.Create && it.dispatched }?.let {
             retiredCreates += it.id
@@ -228,13 +272,13 @@ class ProfileListFeature(
 
     fun dismissNotice() { publish { it.copy(notice = null, error = null, batch = null) } }
 
-    private fun current(token: Long): Boolean = synchronized(gate) { !closed && epoch == token && owner.isActive }
+    private fun current(token: Long): Boolean = synchronized(gate) { !closed && !maintenancePaused && epoch == token && owner.isActive }
     private fun publish(change: (ProfileListState) -> ProfileListState) = synchronized(gate) {
         if (!closed) mutableState.value = change(mutableState.value)
     }
 
     private fun start(progress: ProfileListProgress, action: suspend (Long) -> Unit) = synchronized(gate) {
-        if (closed || worker?.isCompleted == false || state.value.document != null) return@synchronized
+        if (closed || maintenancePaused || worker?.isCompleted == false || state.value.document != null) return@synchronized
         val token = ++epoch
         publish { it.copy(progress = progress, notice = null, error = null) }
         val task = jobs.launch(start = CoroutineStart.LAZY) {
@@ -244,7 +288,7 @@ class ProfileListFeature(
                 if (it.notice == ProfileListNotice.PartialDocument) it.notice else ProfileListNotice.Failed) } }
             finally { if (current(token)) publish { it.copy(progress = null, activeProfileIds = emptySet()) } }
         }
-        worker = task
+        worker = track(task)
         task.start()
     }
 
@@ -256,6 +300,9 @@ class ProfileListFeature(
             pending = null
             owner.cancel()
             mutableState.value = ProfileListState()
+            val cleanups = deferredCreates.toList()
+            deferredCreates.clear()
+            cleanups.forEach(::launchCleanup)
         }
     }
 }

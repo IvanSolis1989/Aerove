@@ -48,7 +48,7 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 | [tokio-rs/tokio](https://github.com/tokio-rs/tokio) | `1.53.1`（Cargo.lock固定registry crate校验值；tag `tokio-1.53.1`） | Lite Rust异步运行时直接依赖；本轮另只读核对 `broadcast` subscribe/receiver_count/send 行为以追踪WebSocket日志握手；未复制Tokio实现或新增依赖 | MIT；`apps/aerove-lite/native/Cargo.toml`、`Cargo.lock`、[固定版本 LICENSE](https://github.com/tokio-rs/tokio/blob/tokio-1.53.1/LICENSE)、[broadcast.rs](https://docs.rs/tokio/1.53.1/src/tokio/sync/broadcast.rs.html) |
 | [tokio-rs/axum](https://github.com/tokio-rs/axum) | `axum-v0.8.9` | 本轮只读核对 `ws.rs` 的 WebSocket upgrade/callback 顺序，以及 `routing/nest.md` 的末尾斜杠匹配语义，修正测试请求路径；未复制源码或新增依赖 | MIT；[`axum/Cargo.toml`](https://github.com/tokio-rs/axum/blob/axum-v0.8.9/axum/Cargo.toml) 声明许可，[固定版本 LICENSE](https://github.com/tokio-rs/axum/blob/axum-v0.8.9/axum/LICENSE)、[ws.rs](https://github.com/tokio-rs/axum/blob/axum-v0.8.9/axum/src/extract/ws.rs)、[nest.md](https://github.com/tokio-rs/axum/blob/axum-v0.8.9/axum/src/docs/routing/nest.md) |
 | [rust-lang/rust](https://github.com/rust-lang/rust) | `1.91.0` | 只读核验标准库 `RwLock::set` 在锁外析构旧值的行为；不复制标准库代码 | MIT OR Apache-2.0；来源为固定版本 `library/std/src/sync/poison/rwlock.rs`，本轮native资源实现记录 |
-| [IvanSolis1989/Smart-Config-Kit](https://github.com/IvanSolis1989/Smart-Config-Kit) | `28b86e2e991cde8bc2fa71b874e807c622f2b096` | 参考分类 Issue Forms、MiMo Flash 首轮 / Pro 追问、过滤与失败处理的设计；按 AEROVE 双产品诊断需求重新实现表单、只分析的评论机器人和限量源码上下文。未复制配置规则、提示词或自动补丁/PR 实现。 | 未复制或分发其代码；固定 revision 的 Issue Forms 与分析流程只读对照 |
+| [Smart-Config-Kit](https://github.com/IvanSolis1989/Smart-Config-Kit) | `28b86e2e991cde8bc2fa71b874e807c622f2b096` | 分类 Issue Forms、MiMo Flash 首轮与 Pro 追问、过滤/失败只读模式作为流程参考；本产品重新实现，没有复制规则/提示词或自动PR | 未复制或分发其代码；上游 `.github/ISSUE_TEMPLATE`、固定revision，本仓库只读流程对照 |
 | [tun-rs/tun-rs](https://github.com/tun-rs/tun-rs) | `d0f764c135a34ad92360462f89a40b59f373cc06` | Lite clash-rs核心能力审计中，只读核对Unix异步设备/已打开fd保护边界；未新增独立依赖 | MIT；`docs/aerove-lite/core/clash-rs-audit.md` |
 | [Arc-blroth/memory-stats](https://github.com/Arc-blroth/memory-stats) | `431e74654c27ec38a6f7d19c186bec42c2a938b8` | Lite核心审计中只读核对内存统计实现；未新增依赖 | MIT；`docs/aerove-lite/core/clash-rs-audit.md` |
 | [meow-rs/meow-rs](https://github.com/meow-rs/meow-rs) | 审计文档固定链接；未将其release作为产品来源 | 只读评估Rust代理核心公开基准及Android DNS反馈；没有采用其内核或实现 | GPL-3.0；`docs/research/android-core-decision.md` |
@@ -86,12 +86,6 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 | Android 图形库与 Flutter | 两版呈现基础 | 固定依赖并保持共同视觉、交互、功能和刷新策略；框架差异不构成删减理由 |
 
 产品版本、签名、更新地址、验收和发版由 Aerove 决定。上游发布是评估依赖更新的输入，不是跳过兼容性验证或自动发版的授权。借鉴代码仍须保留原始版权与许可证；独立维护不意味着重写历史或宣称全部代码原创。
-
-### FlClash 0.9.2 预览整合来源
-
-本次用户明确授权整合 `v0.9.2-pre.1`，固定提交为 [`7220961f`](https://github.com/chen08209/FlClash/commit/7220961f7c5e494df831ca196ab53ef08a17e926)，对应官方频道发行安装包引用的 [成功构建](https://github.com/chen08209/FlClash/actions/runs/39748575294)。该标签此前指向 `43d6bd78`，本轮重新核对提交与构建后使用当前固定来源；不把移动标签或 GitHub Release 页面是否存在单独作为源码已固定、安装包已发布的证据。
-
-整合保留普通双父提交及官方 Mihomo 来源，必要的 FlClash 移动适配进入可重放补丁并单独记录版权和源提交。Aerove 自行验证和发布预览，使用 prerelease 通道，保留稳定版 latest。
 
 GitHub 的 fork 网络关系单独处理，不是上述开发治理的前提。当前保留 `IvanSolis1989/Aerove` 地址、发布资产和升级入口。根据 [GitHub 官方脱离 fork 文档](https://docs.github.com/en/pull-requests/how-tos/work-with-forks/detaching-a-fork)，脱离会丢失 Star、议题、PR、Wiki 等仓库记录，且不可恢复关联；Git 提交历史会保留。不能把移除标记描述成无损操作，也不能直接删除重建仓库。真正执行前应列出保存、恢复和无法恢复的记录，以及发行地址、Secrets、工作流和客户端更新入口的影响，取得针对该具体结果的授权。
 

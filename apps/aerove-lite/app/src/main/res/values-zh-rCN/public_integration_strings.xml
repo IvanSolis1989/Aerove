@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="integration_advanced_configuration">进阶配置</string>
+    <string name="integration_extend">扩展</string>
+    <string name="integration_suspended">挂起中…</string>
+    <string name="integration_external_profile_confirm">是否要通过 %1$s 创建配置？</string>
+    <string name="integration_notifications_required">请允许通知权限以启动代理服务。</string>
+    <string name="integration_unified_delay">统一延迟</string>
+    <string name="integration_tcp_concurrent">TCP并发</string>
+    <string name="integration_add_profile">添加配置</string>
+    <string name="integration_find_process">查找进程</string>
+</resources>

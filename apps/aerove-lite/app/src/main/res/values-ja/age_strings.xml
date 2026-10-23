@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="age_secret_title">"age 秘密鍵"</string>
+    <string name="age_secret_label">"秘密鍵"</string>
+    <string name="age_continue">"続行"</string>
+    <string name="age_cancel">"キャンセル"</string>
+    <string name="age_decrypt_failed">"復号に失敗しました。鍵を確認して再試行してください。"</string>
+    <string name="age_import_title">"プロファイルをインポート"</string>
+    <string name="age_batch_mode">"一括入力"</string>
+    <string name="age_name">"名前"</string>
+    <string name="age_urls">"URL 一覧"</string>
+    <string name="age_url">"URL"</string>
+    <string name="age_import_failed">"一部のプロファイルをインポートできませんでした。"</string>
+    <string name="age_queued">"待機中"</string>
+    <string name="age_running">"インポート中"</string>
+    <string name="age_succeeded">"インポート済み"</string>
+    <string name="age_failed">"失敗"</string>
+    <string name="age_cancelled">"キャンセルしました"</string>
+    <string name="age_import">"インポート"</string>
+</resources>

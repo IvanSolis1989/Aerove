@@ -1,0 +1,31 @@
+{
+  "standardSource": "D:\\GitHub\\FLClash\\apps\\aerove\\core\\Clash.Meta\\component\\age\\age.go",
+  "standardSourceSha256": "90aa5d7fcacb8113c2efca4523ec920bf7acdd0434c0d8b01c05e03e21f9fe51",
+  "engine": "github.com/metacubex/age@v0.0.0-20260603010618-28d156b4ea78",
+  "files": [
+    {
+      "name": "hybrid.age",
+      "sha256": "4aca9995b6396755d6a491619b9873724318b0384273a7364cc471a46ccb3840"
+    },
+    {
+      "name": "hybrid.identity",
+      "sha256": "130e07d2ea2d6bf52c94f522a2fc24ae30da5bcf132bc86dc55dbd238dabc6e5"
+    },
+    {
+      "name": "profile.yaml",
+      "sha256": "2af8e03178106ba8108892af5d477e74cedb5be118606626388b148bdd68097b"
+    },
+    {
+      "name": "wrong.identity",
+      "sha256": "72fde04c17c35e5701e0a1e315658fec8551858729f8d6ff4c56eccafb78fae8"
+    },
+    {
+      "name": "x25519.age",
+      "sha256": "7b8b37ea59e1185796a08381405a5c520fde8f68d0d82d907451041c337f3c7c"
+    },
+    {
+      "name": "x25519.identity",
+      "sha256": "49a1313f61aa2cf02e62982cd2e68d7e2bf2089da40a764842dc64584596801b"
+    }
+  ]
+}

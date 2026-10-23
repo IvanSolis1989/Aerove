@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="builder_close">"닫기"</string>
+    <string name="builder_save">"저장"</string>
+    <string name="builder_retry">"다시 시도"</string>
+    <string name="builder_add">"추가"</string>
+    <string name="builder_sort">"정렬"</string>
+    <string name="builder_delete">"삭제"</string>
+    <string name="builder_empty">"항목 없음"</string>
+    <string name="builder_up">"위로 이동"</string>
+    <string name="builder_down">"아래로 이동"</string>
+    <string name="builder_selected">"선택됨"</string>
+    <string name="builder_unsaved">"변경 사항을 저장하시겠습니까?"</string>
+    <string name="builder_discard">"변경 사항 버리기"</string>
+    <string name="builder_edit">"편집"</string>
+    <string name="builder_select">"선택"</string>
+    <string name="builder_duplicate">"복사"</string>
+    <string name="builder_name">"이름"</string>
+    <string name="builder_references">"참조 위치: %1$s"</string>
+    <string name="builder_replacement">"참조를 다음으로 교체"</string>
+    <string name="builder_proxies">"프록시"</string>
+    <string name="builder_groups">"프록시 그룹"</string>
+    <string name="builder_rules">"규칙"</string>
+    <string name="builder_proxy_providers">"프록시 공급자"</string>
+    <string name="builder_rule_providers">"규칙 공급자"</string>
+    <string name="builder_type">"유형"</string>
+    <string name="builder_payload">"일치 값"</string>
+    <string name="builder_target">"대상"</string>
+    <string name="builder_remove_field">"%1$s 제거"</string>
+    <string name="builder_add_field">"필드 추가"</string>
+    <string name="builder_field_name">"필드 이름"</string>
+    <string name="builder_filters">"필터"</string>
+    <string name="builder_icon_sets">"아이콘 세트"</string>
+    <string name="builder_import_url">"URL에서 가져오기"</string>
+    <string name="builder_import_file">"파일 가져오기"</string>
+    <string name="builder_regex">"정규식"</string>
+    <string name="builder_sync">"동기화"</string>
+    <string name="builder_title">"사용자 지정 프로필"</string>
+    <string name="builder_undo">"실행 취소"</string>
+    <string name="builder_redo">"다시 실행"</string>
+</resources>

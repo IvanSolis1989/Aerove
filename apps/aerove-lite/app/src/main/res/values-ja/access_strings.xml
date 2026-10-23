@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="access_tip">"ヒント"</string>
+    <string name="access_select_all">"すべて選択"</string>
+    <string name="access_deselect_all">"すべて選択解除"</string>
+    <string name="access_save_changes">"変更を保存しますか？"</string>
+    <string name="access_save">"保存"</string>
+    <string name="access_cancel">"キャンセル"</string>
+    <string name="access_search">"検索"</string>
+    <string name="access_settings">"設定"</string>
+    <string name="access_permission_required">"アプリ一覧の権限が必要です"</string>
+    <string name="access_permission_description">"このシステムでは、許可するまでインストール済みアプリの一覧が提供されません。許可すると、アプリごとのプロキシを設定できます。"</string>
+    <string name="access_authorize">"許可"</string>
+    <string name="access_no_data">"データがありません"</string>
+    <string name="access_allow_description">"選択したアプリのみVPNを経由します"</string>
+    <string name="access_exclude_description">"選択したアプリはVPNから除外されます"</string>
+    <string name="access_disabled_description">"アプリアクセス制御は無効です"</string>
+    <string name="access_turn_on">"オンにする"</string>
+    <string name="access_turn_off">"オフにする"</string>
+    <string name="access_actions">"アクション"</string>
+    <string name="access_back">"戻る"</string>
+    <string name="access_mode">"モード"</string>
+    <string name="access_include">"ホワイトリストモード"</string>
+    <string name="access_exclude">"ブラックリストモード"</string>
+    <string name="access_sort">"並べ替え"</string>
+    <string name="access_default">"デフォルト"</string>
+    <string name="access_name">"名前"</string>
+    <string name="access_time">"時刻"</string>
+    <string name="access_source">"ソース"</string>
+    <string name="access_system_apps">"システムアプリ"</string>
+    <string name="access_no_internet">"ネットワーク不使用アプリ"</string>
+    <string name="access_smart">"スマート選択"</string>
+    <string name="access_clipboard_export">"クリップボードへエクスポート"</string>
+    <string name="access_clipboard_import">"クリップボードからインポート"</string>
+    <string name="access_discard">"保存しない"</string>
+    <string name="access_loading">"読み込み中…"</string>
+    <string name="access_selected">"%1$d 件選択済み"</string>
+    <string name="access_load_failed">"インストール済みアプリを読み込めませんでした。"</string>
+    <string name="access_save_failed">"アプリのアクセス設定を保存できませんでした。"</string>
+    <string name="access_classification_failed">"スマート選択を完了できませんでした。"</string>
+    <string name="access_invalid_clipboard">"クリップボードには、1 行に 1 つの有効なパッケージ名を指定してください。"</string>
+    <string name="access_copied">"クリップボードにコピーしました"</string>
+</resources>

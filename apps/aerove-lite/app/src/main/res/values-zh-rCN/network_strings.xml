@@ -5,6 +5,7 @@
     <string name="network_restart_detail">已保存的网络选项需要重启 VPN 后生效。</string>
     <string name="network_title">网络</string>
     <string name="network_vpn">VPN</string>
+    <string name="network_vpn_enabled">启用 VPN</string>
     <string name="network_system_proxy">系统代理</string>
     <string name="network_allow_bypass">允许绕过 VPN</string>
     <string name="network_bypass_domains">绕过的域名</string>
@@ -32,4 +33,18 @@
     <string name="network_domain_length">域名模式不能超过 512 个字符。</string>
     <string name="network_invalid_value">请输入不含控制字符的有效值。</string>
     <string name="network_field_issue">%1$s：%2$s</string>
+    <string name="network_tun">TUN</string>
+    <string name="network_mtu">MTU</string>
+    <string name="network_mtu_range">请输入 1280 至 65535 的整数。</string>
+    <string name="network_dns_hijacking">DNS 劫持</string>
+    <string name="network_bypass_private_route">绕过私有网络</string>
+    <string name="network_route_addresses">路由地址</string>
+    <string name="network_route_exclusions">排除路由地址</string>
+    <string name="network_route_count">%1$d 条路由</string>
+    <string name="network_route_entry">路由 %1$d</string>
+    <string name="network_add_route">添加路由</string>
+    <string name="network_remove_route">删除</string>
+    <string name="network_move_route_up">上移</string>
+    <string name="network_move_route_down">下移</string>
+    <string name="network_invalid_cidr">请检查第 %1$d 条路由的 CIDR。</string>
 </resources>

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="access_tip">Consejo</string>
+    <string name="access_select_all">Seleccionar todo</string>
+    <string name="access_deselect_all">Deseleccionar todo</string>
+    <string name="access_save_changes">¿Guardar los cambios?</string>
+    <string name="access_save">Guardar</string>
+    <string name="access_cancel">Cancelar</string>
+    <string name="access_search">Buscar</string>
+    <string name="access_settings">Ajustes</string>
+    <string name="access_permission_required">Se requiere permiso de lista de apps</string>
+    <string name="access_permission_description">Este sistema oculta la lista de apps instaladas hasta que se concede el permiso. Autorízalo para configurar el proxy por app.</string>
+    <string name="access_authorize">Autorizar</string>
+    <string name="access_no_data">Sin datos</string>
+    <string name="access_allow_description">Solo las apps seleccionadas usan la VPN</string>
+    <string name="access_exclude_description">Las apps seleccionadas quedan excluidas de la VPN</string>
+    <string name="access_disabled_description">El control de acceso de apps está desactivado</string>
+    <string name="access_turn_on">Activar</string>
+    <string name="access_turn_off">Desactivar</string>
+    <string name="access_actions">Acción</string>
+    <string name="access_back">Atrás</string>
+    <string name="access_mode">Modo</string>
+    <string name="access_include">Modo lista blanca</string>
+    <string name="access_exclude">Modo lista negra</string>
+    <string name="access_sort">Ordenar</string>
+    <string name="access_default">Predeterminado</string>
+    <string name="access_name">Nombre</string>
+    <string name="access_time">Hora</string>
+    <string name="access_source">Origen</string>
+    <string name="access_system_apps">Apps del sistema</string>
+    <string name="access_no_internet">Apps sin red</string>
+    <string name="access_smart">Selección inteligente</string>
+    <string name="access_clipboard_export">Exportar al portapapeles</string>
+    <string name="access_clipboard_import">Importar desde el portapapeles</string>
+    <string name="access_loading">Cargando…</string>
+    <string name="access_discard">Descartar</string>
+    <string name="access_selected">%1$d seleccionadas</string>
+    <string name="access_load_failed">No se pudieron cargar las apps instaladas.</string>
+    <string name="access_save_failed">No se pudieron guardar los ajustes de acceso de las apps.</string>
+    <string name="access_classification_failed">No se pudo completar la selección inteligente.</string>
+    <string name="access_invalid_clipboard">El portapapeles debe contener un nombre de paquete válido por línea.</string>
+    <string name="access_copied">Copiado al portapapeles</string>
+</resources>

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="override_content">Contenido</string>
+    <string name="override_edit_rule">Editar regla</string>
+    <string name="override_match_source">Coincidir con IP de origen</string>
+    <string name="override_select_all">Seleccionar todo</string>
+    <string name="override_done">Hecho</string>
+    <string name="override_rule_type">Tipo de regla</string>
+    <string name="override_rule_target">Política</string>
+    <string name="override_no_resolve">No resolver nombres de host</string>
+    <string name="override_content_required">El contenido de la regla es obligatorio.</string>
+    <string name="override_target_required">Se requiere una política.</string>
+    <string name="override_network_error">La red debe ser tcp o udp.</string>
+    <string name="override_range_error">Introduce números no negativos o rangos válidos.</string>
+    <string name="override_dscp_error">El DSCP debe estar en el rango 0–63.</string>
+    <string name="override_payload_error">El contenido de la regla debe ocupar una sola línea.</string>
+    <string name="override_select_rule">Seleccionar la regla %1$d</string>
+    <string name="override_delete_rules_confirm">¿Eliminar las %1$d reglas seleccionadas?</string>
+    <string name="override_search">Buscar reglas</string>
+    <string name="override_drag_item">Arrastrar para reordenar %1$s</string>
+    <string name="override_deselect_rule">Deseleccionar la regla %1$d</string>
+</resources>

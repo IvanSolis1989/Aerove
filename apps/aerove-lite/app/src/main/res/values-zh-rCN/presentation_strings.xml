@@ -2,9 +2,9 @@
 <resources>
     <string name="presentation_font_family">字体</string>
     <string name="presentation_font_default">默认</string>
-    <string name="presentation_fonts_installed">已安装的系统字体</string>
+    <string name="presentation_fonts_installed">支持中英文的系统字体</string>
     <string name="presentation_fonts_loading">正在读取系统字体…</string>
-    <string name="presentation_fonts_empty">未找到具名系统字体</string>
+    <string name="presentation_fonts_empty">没有同时支持中英文的可用系统字体</string>
     <string name="presentation_fonts_error">无法读取系统字体</string>
     <string name="presentation_retry">重试</string>
     <string name="presentation_font_preview">AEROVE · 春风拂面，轻盈自在 0123456789</string>

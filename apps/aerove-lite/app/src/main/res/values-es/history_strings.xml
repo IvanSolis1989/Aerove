@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="history_error">Error</string>
+    <string name="history_request_details">Detalles de la solicitud</string>
+    <string name="history_dns_details">Detalles de la consulta DNS</string>
+    <string name="history_resize_column">Ajustar el ancho de la columna %1$s. Toca dos veces para restablecer los anchos.</string>
+</resources>

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="profile_qr_loading">Создание QR-кода</string>
+    <string name="profile_qr_menu">QR-код</string>
+    <string name="profile_qr_share_tip">Отсканируйте QR-код с помощью AEROVE на другом устройстве, чтобы импортировать этот профиль.</string>
+    <string name="profile_qr_too_long">Ссылка слишком длинная для QR-кода. Используйте «Копировать ссылку».</string>
+</resources>

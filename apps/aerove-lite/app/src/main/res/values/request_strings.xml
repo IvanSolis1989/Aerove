@@ -1,0 +1,14 @@
+<resources>
+    <string name="requests_title">Requests and updates</string>
+    <string name="requests_user_agent">User-Agent</string>
+    <string name="requests_default">Default</string>
+    <string name="requests_certificate">Check certificates</string>
+    <string name="requests_add">Add</string>
+    <string name="requests_edit">Edit</string>
+    <string name="requests_delete">Delete</string>
+    <string name="requests_move_up">Move up</string>
+    <string name="requests_move_down">Move down</string>
+    <string name="requests_save">Save</string>
+    <string name="requests_invalid">Enter a unique User-Agent (printable ASCII, up to 1024 characters).</string>
+    <string name="requests_delete_confirm">Delete this User-Agent? The selected entry will return to Default.</string>
+</resources>

@@ -253,7 +253,10 @@ class ProfileLinkDecoder(private val limits: ProfileLinkLimits = ProfileLinkLimi
         return Address(uri, ProfileLinkQuery(uri.rawQuery, limits), canonicalHost, port, user, name, hopping)
     }
 
-    private fun decodeShare(value: String, scheme: String): MutableMap<String, Any?> {
+    private fun decodeShare(original: String, scheme: String): MutableMap<String, Any?> {
+        // Share fragments are display labels; URI's host and query validation must remain strict.
+        val fragment = original.indexOf('#')
+        val value = if (fragment < 0) original else original.substring(0, fragment + 1) + original.substring(fragment + 1).replace(" ", "%20")
         when (scheme) {
             "hysteria", "ssr", "mierus" -> unsupported("$.scheme", "No ${if (scheme == "mierus") "mieru" else scheme} variant in config/internal/proxy.rs::OutboundProxyProtocol")
             "hysteria2+realm", "hy2+realm" -> unsupported("$.realm-opts", "No realm rendezvous in OutboundHysteria2 or its runtime")

@@ -1,0 +1,31 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="background_title">"시작 및 백그라운드"</string>
+    <string name="background_auto_run">"앱을 열 때 실행"</string>
+    <string name="background_on_demand">"필요 시 실행"</string>
+    <string name="background_minimize">"종료 시 최소화"</string>
+    <string name="background_hidden">"최근 작업에서 숨기기"</string>
+    <string name="background_close_connections">"프록시 전환 시 연결 닫기"</string>
+    <string name="background_proxy_statistics">"프록시 트래픽만 집계"</string>
+    <string name="background_description">"자동 실행은 앱을 열 때 적용됩니다. 연결 닫기는 선택한 프록시를 변경할 때 적용됩니다."</string>
+    <string name="background_prerequisites">"사전 요건"</string>
+    <string name="background_location">"위치 권한"</string>
+    <string name="background_battery">"배터리 최적화 무시"</string>
+    <string name="background_authorized">"허용됨"</string>
+    <string name="background_authorize">"허용"</string>
+    <string name="background_permission_description">"백그라운드에서 Wi-Fi를 식별하려면 정확한 위치와 백그라운드 위치 권한을 허용하고 기기 위치를 켜세요. 시스템 설정에서 배터리 제한을 확인하세요."</string>
+    <string name="background_excluded">"제외할 Wi-Fi 네트워크"</string>
+    <string name="background_add">"SSID 추가"</string>
+    <string name="background_select_all">"모두 선택"</string>
+    <string name="background_delete">"선택 항목 삭제"</string>
+    <string name="background_empty">"제외할 Wi-Fi 네트워크 없음"</string>
+    <string name="background_move_up">"위로 이동"</string>
+    <string name="background_move_down">"아래로 이동"</string>
+    <string name="background_excluded_description">"제외한 Wi-Fi에서는 실행 의도를 유지한 채 리스너를 일시 중지합니다. 해당 네트워크를 벗어나면 다시 시작합니다."</string>
+    <string name="background_edit">"SSID 편집"</string>
+    <string name="background_ssid">"SSID"</string>
+    <string name="background_invalid">"중복되지 않는 SSID를 UTF-8 기준 1~32바이트로 입력하세요."</string>
+    <string name="background_save">"저장"</string>
+    <string name="background_cancel">"취소"</string>
+    <string name="background_notification_stop">"알림에 중지 버튼 표시"</string>
+</resources>

@@ -1,0 +1,43 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="access_actions">"Действие"</string>
+    <string name="access_allow_description">"Только выбранные приложения используют VPN"</string>
+    <string name="access_authorize">"Предоставить разрешение"</string>
+    <string name="access_back">"Назад"</string>
+    <string name="access_cancel">"Отмена"</string>
+    <string name="access_classification_failed">"Не удалось выполнить интеллектуальный выбор."</string>
+    <string name="access_clipboard_export">"Скопировать в буфер обмена"</string>
+    <string name="access_clipboard_import">"Импортировать из буфера обмена"</string>
+    <string name="access_copied">"Скопировано в буфер обмена"</string>
+    <string name="access_default">"По умолчанию"</string>
+    <string name="access_deselect_all">"Снять выделение со всех"</string>
+    <string name="access_disabled_description">"Контроль доступа приложений отключён"</string>
+    <string name="access_discard">"Не сохранять"</string>
+    <string name="access_exclude">"Режим чёрного списка"</string>
+    <string name="access_exclude_description">"Выбранные приложения не будут использовать VPN"</string>
+    <string name="access_include">"Режим белого списка"</string>
+    <string name="access_invalid_clipboard">"Буфер обмена должен содержать по одному допустимому имени пакета в каждой строке."</string>
+    <string name="access_load_failed">"Не удалось загрузить установленные приложения."</string>
+    <string name="access_loading">"Загрузка…"</string>
+    <string name="access_mode">"Режим"</string>
+    <string name="access_name">"Название"</string>
+    <string name="access_no_data">"Нет данных"</string>
+    <string name="access_no_internet">"Приложения без доступа к сети"</string>
+    <string name="access_permission_description">"Система скрывает список установленных приложений, пока не будет предоставлено разрешение. Разрешите доступ, чтобы настроить прокси для отдельных приложений."</string>
+    <string name="access_permission_required">"Требуется разрешение на доступ к списку приложений"</string>
+    <string name="access_save">"Сохранить"</string>
+    <string name="access_save_changes">"Сохранить изменения?"</string>
+    <string name="access_save_failed">"Не удалось сохранить настройки доступа приложений."</string>
+    <string name="access_search">"Поиск"</string>
+    <string name="access_select_all">"Выбрать все"</string>
+    <string name="access_selected">"Выбрано: %1$d"</string>
+    <string name="access_settings">"Настройки"</string>
+    <string name="access_smart">"Интеллектуальный выбор"</string>
+    <string name="access_sort">"Сортировка"</string>
+    <string name="access_source">"Источник"</string>
+    <string name="access_system_apps">"Системные приложения"</string>
+    <string name="access_time">"Время"</string>
+    <string name="access_tip">"Совет"</string>
+    <string name="access_turn_off">"Выключить"</string>
+    <string name="access_turn_on">"Включить"</string>
+</resources>

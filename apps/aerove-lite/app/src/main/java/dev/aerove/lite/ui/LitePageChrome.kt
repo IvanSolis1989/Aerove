@@ -47,6 +47,7 @@ internal fun LitePageHeader(
     modifier: Modifier = Modifier,
     back: (() -> Unit)? = null,
     backLabel: String,
+    toolbarContent: (@Composable () -> Unit)? = null,
     actions: @Composable () -> Unit = {},
 ) {
     val density = LocalDensity.current.density
@@ -63,9 +64,11 @@ internal fun LitePageHeader(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(if (back == null) 8.dp else 6.dp),
         ) {
+            if (toolbarContent != null) toolbarContent() else {
             if (back != null) LiteIconButton(backLabel, FullGlyphs.arrowBack, back)
             LiteText(title, Modifier.weight(1f), style = if (back == null) LiteType.Title else LiteType.Headline, maxLines = 1)
             actions()
+            }
         }
         }
     }

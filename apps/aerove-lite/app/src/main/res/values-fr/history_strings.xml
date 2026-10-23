@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="history_error">Erreur</string>
+    <string name="history_request_details">Détails de la requête</string>
+    <string name="history_dns_details">Détails de la requête DNS</string>
+    <string name="history_resize_column">Redimensionner la colonne %1$s. Appuyez deux fois pour réinitialiser les largeurs.</string>
+</resources>

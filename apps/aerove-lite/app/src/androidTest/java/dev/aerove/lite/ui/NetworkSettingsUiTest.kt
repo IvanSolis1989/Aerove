@@ -81,4 +81,40 @@ class NetworkSettingsUiTest {
         assertEquals("127.0.0.1", actual.host); assertEquals(7890, actual.port)
         assertEquals(proxy.exclusions, actual.exclusionList.toList())
     }
+
+    @Test fun vpnPreferenceSavesWhileStoppedWithoutConnectingAndWaitsForReadback() {
+        open()
+        val toggle = compose.onNodeWithContentDescription(context.getString(R.string.network_vpn_enabled))
+        toggle.assertIsOn().performClick()
+        assertFalse(requested.single().network.vpnEnabled)
+        assertTrue(actions.events.none { it == "connect" || it == "disconnect" })
+        toggle.assertIsOn()
+        compose.runOnUiThread { state.value = state.value.copy(settings = requested.single()) }
+        toggle.assertIsOff()
+    }
+
+    @Test fun runningVpnPreferenceOnlySavesUntilExplicitRestartTap() {
+        compose.runOnUiThread { state.value = state.value.copy(phase = VpnPhase.Running) }
+        open()
+        compose.onNodeWithContentDescription(context.getString(R.string.network_vpn_enabled)).performClick()
+        assertFalse(requested.single().network.vpnEnabled)
+        assertTrue(actions.events.none { it == "connect" || it == "disconnect" })
+        compose.runOnUiThread { state.value = state.value.copy(settings = requested.single(), networkRestartRequired = true) }
+        compose.onNodeWithTag("global-network-restart-action").performClick()
+        assertEquals(listOf("connect"), actions.events.filter { it == "connect" || it == "disconnect" })
+    }
+
+    @Test fun dashboardVpnCardControlsSavedPreferenceWithoutRequiringAProfile() {
+        compose.runOnUiThread { state.value = state.value.copy(settings = state.value.settings.copy(
+            dashboardWidgets = listOf(DashboardWidget.VpnButton))) }
+        compose.replaceAppContent {
+            CompositionLocalProvider(LocalLiteMotionOverride provides true) { LiteApp(state.value, actions) }
+        }
+        compose.onNodeWithTag("dashboard-vpn").assertExists()
+        compose.onNodeWithContentDescription(context.getString(R.string.lite_vpn)).performClick()
+        assertFalse(requested.single().network.vpnEnabled)
+        assertTrue(actions.events.none { it == "connect" || it == "disconnect" })
+        compose.runOnUiThread { state.value = state.value.copy(settings = requested.single()) }
+        compose.onNodeWithContentDescription(context.getString(R.string.lite_vpn)).assertIsOff()
+    }
 }

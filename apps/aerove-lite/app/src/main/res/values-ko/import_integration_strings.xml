@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="integration_import_line_error">"%1$d번째 줄을 가져올 수 없습니다."</string>
+    <string name="integration_import_skipped">"기존 구독을 건너뜀: %1$d"</string>
+</resources>

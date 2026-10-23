@@ -11,6 +11,12 @@ val product = Properties().apply {
 }
 val releaseKeystore = providers.environmentVariable("AEROVE_LITE_KEYSTORE_PATH")
 val releasePassword = providers.environmentVariable("AEROVE_LITE_KEYSTORE_PASSWORD")
+val clientHelperLicenseDirectory = layout.buildDirectory.dir("generated/clientHelperLicenses")
+val prepareClientHelperLicenses = tasks.register<Sync>("prepareClientHelperLicenses") {
+    from(rootProject.file("regexp2/licenses")) { into("licenses/client-helper") }
+    from(rootProject.file("regexp2/dependencies.json")) { into("licenses/client-helper") }
+    into(clientHelperLicenseDirectory)
+}
 
 android {
     namespace = "dev.aerove.lite"
@@ -39,8 +45,12 @@ android {
     }
     sourceSets.getByName("main").java.srcDir("../third_party/material-color-utilities/src")
     sourceSets.getByName("main").assets.srcDir("src/main/java/dev/aerove/lite/editor/assets")
+    sourceSets.getByName("main").assets.srcDir(clientHelperLicenseDirectory)
     testOptions { unitTests.isReturnDefaultValues = true }
-    packaging { jniLibs.useLegacyPackaging = false }
+    packaging {
+        jniLibs.useLegacyPackaging = false
+        jniLibs.keepDebugSymbols += setOf("**/libaerove_filter_helper.so", "**/libaerove_filter_jni.so")
+    }
     testBuildType = "release"
     signingConfigs {
         create("liteRelease") {
@@ -78,8 +88,27 @@ val verifyNativeCore = tasks.register("verifyNativeCore") {
             (header[18].toInt() and 0xff) == machine && header[19].toInt() == 0) { "Wrong Rust core ELF ABI" }
     }
 }
+val verifyClientHelper = tasks.register("verifyClientHelper") {
+    val abi = providers.gradleProperty("liteAbi").getOrElse("arm64-v8a")
+    val libraries = listOf("libaerove_filter_helper.so", "libaerove_filter_jni.so")
+        .map { layout.projectDirectory.file("src/main/jniLibs/$abi/$it") }
+    inputs.files(libraries)
+    doLast {
+        check(abi in setOf("arm64-v8a", "x86_64")) { "Unsupported client helper ABI: $abi" }
+        val machine = if (abi == "arm64-v8a") 183 else 62
+        libraries.forEach { library ->
+            check(library.asFile.isFile) { "Build the isolated client helper before packaging: ${library.asFile.name}" }
+            val header = library.asFile.inputStream().use { it.readNBytes(20) }
+            check(header.size == 20 && header.sliceArray(0..5).contentEquals(byteArrayOf(0x7f, 0x45, 0x4c, 0x46, 2, 1)) &&
+                (header[18].toInt() and 0xff) == machine && header[19].toInt() == 0) { "Wrong client helper ELF ABI" }
+        }
+    }
+}
 tasks.matching { it.name.startsWith("merge") && it.name.endsWith("NativeLibs") }.configureEach {
-    dependsOn(verifyNativeCore)
+    dependsOn(verifyNativeCore, verifyClientHelper)
+}
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
+    dependsOn(prepareClientHelperLicenses)
 }
 
 dependencies {
@@ -95,6 +124,7 @@ dependencies {
     implementation("io.github.kyant0:backdrop:2.0.1")
     implementation("io.github.kyant0:shapes:1.2.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.caverock:androidsvg-aar:1.4")
     implementation("org.yaml:snakeyaml:2.4")
     implementation("androidx.camera:camera-camera2:1.5.3")
     implementation("androidx.camera:camera-lifecycle:1.5.3")
@@ -106,6 +136,7 @@ dependencies {
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("org.json:json:20250517")
+    androidTestImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:core:1.6.1")

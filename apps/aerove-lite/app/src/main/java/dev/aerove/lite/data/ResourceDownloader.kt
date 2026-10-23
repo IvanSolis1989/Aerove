@@ -13,30 +13,39 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import dev.aerove.lite.requests.RequestPolicySource
+import dev.aerove.lite.requests.forDownload
+import dev.aerove.lite.requests.DownloadCancellation
 
-internal data class ResourceDigest(val sha256: String, val bytes: Long)
+internal data class ResourceDigest(val sha256: String, val bytes: Long, val subscriptionUserInfo: String? = null, val sourceUpdatedAt: Long? = null)
 
-class ResourceDownloader(client: OkHttpClient = OkHttpClient()) {
+class ResourceDownloader(client: OkHttpClient, private val source: RequestPolicySource) {
+    constructor(client: OkHttpClient = OkHttpClient()) : this(client, RequestPolicySource.secureDefaults)
+    constructor(source: RequestPolicySource) : this(OkHttpClient(), source)
     private val http = client.newBuilder()
         .proxy(Proxy.NO_PROXY)
         .followRedirects(false)
         .followSslRedirects(false)
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
-        .callTimeout(180, TimeUnit.SECONDS)
+        .callTimeout(20, TimeUnit.SECONDS)
         .build()
 
-    internal suspend fun download(url: String, destination: File, limit: Long): ResourceDigest = withTimeout(180_000) {
+    internal suspend fun download(url: String, destination: File, limit: Long): ResourceDigest = withTimeout(20_000) {
         withContext(Dispatchers.IO) { downloadBounded(url, destination, limit) }
     }
 
     private suspend fun downloadBounded(url: String, destination: File, limit: Long): ResourceDigest {
+        val preferences = source.snapshot()
+        val scoped = http.forDownload(preferences)
         var target = SubscriptionDownloader.parseUrl(url)
+        val cancellation = DownloadCancellation(currentCoroutineContext())
+        try {
         repeat(6) { redirect ->
             currentCoroutineContext().ensureActive()
-            val request = Request.Builder().url(target).header("User-Agent", "AEROVE-Lite")
+            val request = Request.Builder().url(target).header("User-Agent", preferences.globalUserAgent ?: source.defaultUserAgent)
                 .header("Accept", "application/octet-stream,application/yaml,text/plain").build()
-            http.newCall(request).awaitResponse().use { response ->
+            cancellation.track(scoped.newCall(request)).awaitResponse().use { response ->
                 if (response.code in setOf(301, 302, 303, 307, 308)) {
                     if (redirect == 5) throw IOException("Resource redirect limit exceeded")
                     val next = response.header("Location")?.let(target::resolve)
@@ -49,12 +58,20 @@ class ResourceDownloader(client: OkHttpClient = OkHttpClient()) {
                     val body = response.body ?: throw IOException("Resource response is empty")
                     if (body.contentLength() > limit) throw IOException("Resource exceeds $limit bytes")
                     return body.byteStream().use { input ->
-                        copyResource(input, destination, limit)
+                        copyResource(input, destination, limit).copy(subscriptionUserInfo =
+                            dev.aerove.lite.resources.ResourceSubscriptionInfo.parse(response.header("Subscription-Userinfo"))?.header())
                     }
                 }
             }
         }
         throw IOException("Resource redirect limit exceeded")
+        } catch (failure: IOException) {
+            currentCoroutineContext().ensureActive()
+            throw failure
+        } finally {
+            cancellation.close()
+            if (scoped !== http) scoped.connectionPool.evictAll()
+        }
     }
 }
 

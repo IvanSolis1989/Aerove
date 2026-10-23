@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="dns_preferences_title">"DNS"</string>
+    <string name="dns_preferences_hosts">"Hosts"</string>
+    <string name="dns_preferences_scope">"덮어쓸 필드를 선택하세요. 다른 필드는 원본 프로필을 따릅니다."</string>
+    <string name="dns_preferences_hosts_detail">"이 Hosts 매핑을 모든 프로필에 병합합니다. 이름이 일치하면 저장된 IP 주소를 사용합니다."</string>
+    <string name="dns_preferences_inherit">"상속"</string>
+    <string name="dns_preferences_overridden">"덮어쓰기"</string>
+    <string name="dns_preferences_override">"이 필드 덮어쓰기"</string>
+    <string name="dns_preferences_entry">"항목 %1$d"</string>
+    <string name="dns_preferences_domain">"도메인 %1$d"</string>
+    <string name="dns_preferences_target">"대상 %1$d"</string>
+    <string name="dns_preferences_count">"매핑 %1$d개"</string>
+    <string name="dns_preferences_add">"추가"</string>
+    <string name="dns_preferences_remove">"제거"</string>
+    <string name="dns_preferences_move_up">"위로 이동"</string>
+    <string name="dns_preferences_move_down">"아래로 이동"</string>
+    <string name="dns_preferences_cancel">"취소"</string>
+    <string name="dns_preferences_save">"저장"</string>
+    <string name="dns_preferences_invalid">"필드를 확인하세요: %1$s"</string>
+    <string name="dns_preferences_unsupported">"이 코어는 %1$s의 이 값을 지원하지 않습니다."</string>
+    <string name="dns_preferences_enabled">"DNS 활성화"</string>
+    <string name="dns_preferences_listen">"수신 주소"</string>
+    <string name="dns_preferences_use_hosts">"hosts 사용"</string>
+    <string name="dns_preferences_ipv6">"IPv6"</string>
+    <string name="dns_preferences_respect_rules">"규칙 준수"</string>
+    <string name="dns_preferences_mode">"DNS 모드"</string>
+    <string name="dns_preferences_range">"Fake-IP 범위"</string>
+    <string name="dns_preferences_filter">"Fake-IP 필터"</string>
+    <string name="dns_preferences_bootstrap">"기본 DNS 서버"</string>
+    <string name="dns_preferences_policy">"DNS 서버 정책"</string>
+    <string name="dns_preferences_nameservers">"DNS 서버"</string>
+    <string name="dns_preferences_fallback">"보조 DNS 서버"</string>
+    <string name="dns_preferences_proxy_servers">"프록시 서버용 DNS 서버"</string>
+    <string name="dns_preferences_geoip">"GeoIP 필터"</string>
+    <string name="dns_preferences_country">"GeoIP 국가 코드"</string>
+    <string name="dns_preferences_cidrs">"보조 IP-CIDR 필터"</string>
+    <string name="dns_preferences_domains">"보조 도메인 필터"</string>
+    <string name="dns_preferences_save_failed">"저장할 수 없습니다. 다시 시도하세요."</string>
+</resources>

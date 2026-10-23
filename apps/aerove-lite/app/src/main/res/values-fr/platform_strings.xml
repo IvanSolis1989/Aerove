@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="platform_action_start">Démarrer</string>
+    <string name="platform_action_stop">Arrêter</string>
+    <string name="platform_action_toggle">Basculer</string>
+    <string name="platform_tile_label">AEROVE Lite</string>
+    <string name="platform_action_start_long">Démarrer AEROVE Lite</string>
+    <string name="platform_action_stop_long">Arrêter AEROVE Lite</string>
+    <string name="platform_action_toggle_long">Basculer AEROVE Lite</string>
+    <string name="platform_external_link_invalid">Ce lien de configuration est invalide.</string>
+</resources>

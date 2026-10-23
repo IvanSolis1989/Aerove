@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="global_resources_title">自定义配置资源</string>
+    <string name="global_resources_search">搜索</string>
+    <string name="global_resources_back">返回</string>
+    <string name="global_resources_select_all">全选</string>
+    <string name="global_resources_done">完成</string>
+    <string name="global_resources_options">选项</string>
+    <string name="global_resources_preview">预览</string>
+    <string name="global_resources_quick_edit">快速编辑</string>
+    <string name="global_resources_scratch">从空白开始</string>
+    <string name="global_resources_url">链接</string>
+    <string name="global_resources_local">本地</string>
+    <string name="global_resources_remote">远程</string>
+    <string name="global_resources_delete_confirm">删除 %1$s？引用这些资源的配置需要更新。</string>
+    <string name="global_resources_replaced_confirm">以下节点将被移除：%1$s。是否继续？</string>
+    <string name="global_resources_cancel">取消</string>
+</resources>

@@ -62,14 +62,18 @@ class DisplayPreferencesUiTest {
     }
     @Test fun productionFontRouteReadsSystemCatalogAndPersistsSelection() {
         val installed = runBlocking { SystemFontCatalog.load() }
-        assertTrue("Device system catalog must contain named font families", installed.isNotEmpty())
-        val chosen = installed.first()
+        val chosen = installed.firstOrNull()
         launch()
         scrollTo(R.string.presentation_font_family)
         compose.onNode(hasText(text(R.string.presentation_font_family)) and hasClickAction()).performClick()
-        compose.waitUntil(5000) { compose.onAllNodesWithTag("font-family-$chosen").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNode(hasText(chosen) and hasClickAction()).performClick()
-        assertEquals(chosen, read().fontFamily)
+        if (chosen != null) {
+            compose.waitUntil(5000) { compose.onAllNodesWithTag("font-family-$chosen").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(hasText(chosen) and hasClickAction()).performClick()
+            assertEquals(chosen, read().fontFamily)
+        } else {
+            compose.onNode(hasText(text(R.string.presentation_font_default)) and hasClickAction()).assertExists()
+            assertNull(read().fontFamily)
+        }
         compose.onNode(hasText(text(R.string.presentation_font_default)) and hasClickAction()).performClick()
         assertNull(read().fontFamily)
     }

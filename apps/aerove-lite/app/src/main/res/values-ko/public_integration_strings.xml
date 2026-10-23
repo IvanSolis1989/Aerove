@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="integration_advanced_configuration">"고급 구성"</string>
+    <string name="integration_extend">"확장"</string>
+    <string name="integration_suspended">"일시 중지됨…"</string>
+    <string name="integration_external_profile_confirm">"%1$s에서 프로필을 만드시겠습니까?"</string>
+    <string name="integration_notifications_required">"프록시 서비스를 시작하려면 알림을 허용하세요."</string>
+    <string name="integration_unified_delay">"통합 지연"</string>
+    <string name="integration_tcp_concurrent">"TCP 동시 연결"</string>
+    <string name="integration_add_profile">"프로필 추가"</string>
+    <string name="integration_find_process">프로세스 찾기</string>
+</resources>

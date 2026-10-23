@@ -20,10 +20,12 @@ test -f "$app_apk"
 test -f "$test_apk"
 sha256sum "$app_apk" "$test_apk" > "$diagnostics/APK_SHA256SUMS"
 python3 - "$diagnostics/SOURCE.json" "$phase" "$test_timeout_msec" <<'PY'
-import json, os, sys
+import json, os, subprocess, sys
 from pathlib import Path
 Path(sys.argv[1]).write_text(json.dumps({"sourceRevision": os.environ["GITHUB_SHA"],
-    "workflowRun": os.environ.get("GITHUB_RUN_ID"), "phase": sys.argv[2],
+    "sourceTree": subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], text=True).strip(),
+    "workflowRun": os.environ.get("GITHUB_RUN_ID"), "runNumber": int(os.environ["GITHUB_RUN_NUMBER"]),
+    "runAttempt": int(os.environ["GITHUB_RUN_ATTEMPT"]), "phase": sys.argv[2],
     "testTimeoutMillis": int(sys.argv[3]),
     "deviceKind": "CI-emulator", "rendererBackend": "SwiftShader-indirect",
     "prebuiltApks": True, "performanceEvidence": False}, indent=2), encoding="utf-8")
@@ -31,9 +33,24 @@ PY
 python3 apps/aerove-lite/tool/fixture_server.py > "$diagnostics/fixture.log" 2>&1 &
 fixture_pid=$!
 
+host_snapshot() {
+    date -u '+%Y-%m-%dT%H:%M:%SZ'
+    free -m
+    df -h "$RUNNER_TEMP"
+    pgrep -af '/emulator/qemu|qemu-system|/emulator/emulator' || true
+    for events in /sys/fs/cgroup/memory.events /sys/fs/cgroup/memory/memory.failcnt; do
+        if [[ -r "$events" ]]; then printf '%s\n' "$events"; cat "$events"; fi
+    done
+}
+host_snapshot > "$diagnostics/host-before.txt" 2>&1 || true
+
 finish() {
     result=$?
     trap - EXIT
+    if [[ "$result" != 0 ]]; then
+        host_snapshot > "$diagnostics/host-after-failure.txt" 2>&1 || true
+        timeout 5s sudo -n dmesg --ctime --level=err,warn > "$diagnostics/host-kernel.txt" 2>&1 || true
+    fi
     timeout 15s adb logcat -d > "$diagnostics/logcat.txt" 2>&1 || true
     pull_status=0
     timeout 60s adb pull /sdcard/Android/data/dev.aerove.lite/files/captures "$diagnostics/" || pull_status=$?

@@ -31,6 +31,8 @@ import dev.aerove.lite.ProfileSummary
 import dev.aerove.lite.R
 import java.net.URI
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.ensureActive
 
 private data class ProfileMetadataDraft(val name: String, val url: String?, val autoUpdate: Boolean, val interval: Long) {
     fun matches(profile: ProfileSummary) = name == profile.name && url == profile.url &&
@@ -41,62 +43,88 @@ internal fun formatProfileUsed(usage: ProfileSubscriptionUsage): String =
     if (usage.used.bitLength() < 63) formatBytes(usage.used.toLong()) else "${usage.used} B"
 
 @Composable
-internal fun ProfileProperties(state: LiteState, actions: LiteActions, id: String, close: () -> Unit) {
+internal fun ProfileProperties(state: LiteState, actions: LiteActions, id: String, close: () -> Unit,
+    access: dev.aerove.lite.integration.ProfilePropertiesAccess = LocalLiteFeatures.current().profileProperties) {
     val profile = state.profiles.firstOrNull { it.id == id }
     if (profile == null) { LaunchedEffect(id) { close() }; return }
-    var name by rememberSaveable(id) { mutableStateOf(profile.name) }
-    var url by rememberSaveable(id) { mutableStateOf(profile.url.orEmpty()) }
-    var auto by rememberSaveable(id) { mutableStateOf(profile.autoUpdate) }
-    var minutes by rememberSaveable(id) { mutableStateOf((profile.updateIntervalMillis / 60_000).toString()) }
-    var attempted by rememberSaveable(id) { mutableStateOf(false) }
-    var submitted by remember(id) { mutableStateOf<ProfileMetadataDraft?>(null) }
-    var observedBusy by remember(id) { mutableStateOf(false) }
-    var failure by remember(id) { mutableStateOf<String?>(null) }
-    val busy = "profile:$id" in state.busy
+    var loaded by remember(id, access) { mutableStateOf<dev.aerove.lite.integration.PrivateProfileProperties?>(null) }
+    var name by remember(id) { mutableStateOf(profile.name) }
+    var url by remember(id) { mutableStateOf(profile.url.orEmpty()) }
+    var auto by remember(id) { mutableStateOf(profile.autoUpdate) }
+    var minutes by remember(id) { mutableStateOf((profile.updateIntervalMillis / 60_000).toString()) }
+    var key by remember(id) { mutableStateOf("") }
+    var loading by remember(id) { mutableStateOf(true) }
+    var saving by remember(id) { mutableStateOf(false) }
+    var failed by remember(id) { mutableStateOf(false) }
+    var attempted by remember(id) { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(id, access) {
+        try {
+            val value = access.load(id)
+            try {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                loaded = value
+                name = value.document.profile.name
+                url = value.document.profile.url.orEmpty()
+                auto = value.document.profile.autoUpdate
+                minutes = (value.document.profile.updateIntervalMillis / 60_000).toString()
+                value.secret?.copyBytes()?.let { bytes ->
+                    try { key = bytes.toString(Charsets.UTF_8) } finally { bytes.fill(0) }
+                }
+            } catch (failure: Throwable) { value.close(); throw failure }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (_: Exception) { failed = true }
+        finally { loading = false }
+    }
+    DisposableEffect(id, access) { onDispose { loaded?.close(); loaded = null; key = "" } }
+    val busy = loading || saving || "profile:$id" in state.busy
     val interval = profileIntervalMillis(minutes)
+    val remote = loaded?.document?.profile?.url != null
     val validUrl = runCatching { URI(url.trim()).let { it.scheme.lowercase() in setOf("http", "https") && !it.host.isNullOrBlank() } }.getOrDefault(false)
     val issue = when {
         name.isBlank() -> R.string.profile_name_required
-        profile.url != null && !validUrl -> R.string.profile_url_invalid
-        profile.url != null && auto && interval == null -> R.string.profile_interval_invalid
+        remote && !validUrl -> R.string.profile_url_invalid
+        remote && auto && interval == null -> R.string.profile_interval_invalid
         else -> null
     }
-    LaunchedEffect(profile, busy, state.message, submitted) {
-        val wanted = submitted ?: return@LaunchedEffect
-        if (busy) observedBusy = true
-        if (wanted.matches(profile) && !busy) { submitted = null; close() }
-        else if (!busy && (observedBusy || state.message != null)) {
-            failure = state.message
-            submitted = null
-            observedBusy = false
-        }
-    }
     ProfileMaintenanceSheet(stringResource(R.string.profile_properties), close) {
-        LiteField(name, { name = it; failure = null }, stringResource(R.string.profile_name), Modifier.testTag("profile-property-name"), enabled = !busy && submitted == null)
-        if (profile.url != null) {
-            LiteField(url, { url = it; failure = null }, stringResource(R.string.lite_subscription_url), Modifier.testTag("profile-property-url"), keyboardType = KeyboardType.Uri, enabled = !busy && submitted == null)
+        LiteField(name, { name = it; failed = false }, stringResource(R.string.profile_name), Modifier.testTag("profile-property-name"), enabled = !busy)
+        if (remote) {
+            LiteField(url, { url = it; failed = false }, stringResource(R.string.lite_subscription_url), Modifier.testTag("profile-property-url"), keyboardType = KeyboardType.Uri, enabled = !busy)
             SettingsRow(stringResource(R.string.profile_auto_update), trailing = {
-                LiteSwitch(auto, stringResource(R.string.profile_auto_update), { auto = it }, enabled = !busy && submitted == null)
+                LiteSwitch(auto, stringResource(R.string.profile_auto_update), { auto = it }, enabled = !busy)
             })
-            if (auto) LiteField(minutes, { minutes = it; failure = null }, stringResource(R.string.profile_update_minutes),
-                Modifier.testTag("profile-property-interval"), keyboardType = KeyboardType.Number, enabled = !busy && submitted == null)
+            if (auto) LiteField(minutes, { minutes = it; failed = false }, stringResource(R.string.profile_update_minutes),
+                Modifier.testTag("profile-property-interval"), keyboardType = KeyboardType.Number, enabled = !busy)
         }
+        AgeIdentityField(key, { key = it; failed = false }, enabled = !busy)
         if (attempted && issue != null) LiteText(stringResource(issue), color = MaterialTheme.colorScheme.error)
-        failure?.let { LiteText(it, color = MaterialTheme.colorScheme.error) }
+        if (failed) LiteText(stringResource(R.string.editor_error), Modifier.testTag("profile-property-error"), color = MaterialTheme.colorScheme.error)
         LiteButton(stringResource(R.string.profile_save), {
             attempted = true
+            val original = loaded ?: return@LiteButton
             if (issue == null) {
-                val draft = ProfileMetadataDraft(name.trim(), if (profile.url == null) null else url.trim(), auto,
-                    interval ?: profile.updateIntervalMillis)
-                if (draft.matches(profile)) close()
+                val bytes = key.trim().toByteArray(Charsets.UTF_8)
+                val before = original.secret?.copyBytes()
+                val replace = try { !bytes.contentEquals(before ?: byteArrayOf()) } finally { before?.fill(0) }
+                val secret = try { if (bytes.isEmpty()) null else dev.aerove.lite.profilesource.AgeSecret(bytes) } finally { bytes.fill(0) }
+                val draft = ProfileMetadataDraft(name.trim(), if (remote) url.trim() else null, auto,
+                    interval ?: original.document.profile.updateIntervalMillis)
+                if (!replace && draft.matches(original.document.profile)) { secret?.close(); close() }
                 else {
-                    failure = null
-                    observedBusy = false
-                    submitted = draft
-                    actions.updateProfileMetadata(id, draft.name, draft.url, draft.autoUpdate, draft.interval)
+                    saving = true
+                    failed = false
+                    scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                        try {
+                            access.save(original.document, draft.name, draft.url, draft.autoUpdate, draft.interval, secret, replace)
+                            close()
+                        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                        catch (_: Exception) { failed = true }
+                        finally { secret?.close(); saving = false }
+                    }
                 }
             }
-        }, Modifier.fillMaxWidth().testTag("profile-property-save"), selected = true, enabled = !busy && submitted == null)
+        }, Modifier.fillMaxWidth().testTag("profile-property-save"), selected = true, enabled = !busy && loaded != null)
     }
 }
 

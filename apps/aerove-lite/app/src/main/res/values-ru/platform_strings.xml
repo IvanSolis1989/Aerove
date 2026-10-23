@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="platform_action_start">Старт</string>
+    <string name="platform_action_start_long">Запустить AEROVE Lite</string>
+    <string name="platform_action_stop">Стоп</string>
+    <string name="platform_action_stop_long">Остановить AEROVE Lite</string>
+    <string name="platform_action_toggle">Переключить</string>
+    <string name="platform_action_toggle_long">Переключить подключение AEROVE Lite</string>
+    <string name="platform_external_link_invalid">Ссылка на конфигурацию недействительна.</string>
+    <string name="platform_tile_label">AEROVE Lite</string>
+</resources>

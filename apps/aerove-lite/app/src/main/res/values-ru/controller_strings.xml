@@ -1,0 +1,9 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="controller_cancel">Отмена</string>
+    <string name="controller_external">Внешний контроллер</string>
+    <string name="controller_invalid_secret">Введите секрет длиной от 1 до 512 символов.</string>
+    <string name="controller_save">Сохранить</string>
+    <string name="controller_save_failed">Не удалось сохранить настройки.</string>
+    <string name="controller_secret">Секрет внешнего контроллера</string>
+</resources>

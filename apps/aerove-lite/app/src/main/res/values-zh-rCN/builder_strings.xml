@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="builder_close">关闭</string>
+    <string name="builder_save">保存</string>
+    <string name="builder_retry">重试</string>
+    <string name="builder_add">添加</string>
+    <string name="builder_sort">排序</string>
+    <string name="builder_delete">删除</string>
+    <string name="builder_empty">暂无项目</string>
+    <string name="builder_up">上移</string>
+    <string name="builder_down">下移</string>
+    <string name="builder_selected">已选择</string>
+    <string name="builder_unsaved">保存更改？</string>
+    <string name="builder_discard">放弃更改</string>
+    <string name="builder_edit">编辑</string>
+    <string name="builder_select">选择</string>
+    <string name="builder_duplicate">复制</string>
+    <string name="builder_name">名称</string>
+    <string name="builder_references">引用位置：%1$s</string>
+    <string name="builder_replacement">将引用替换为</string>
+    <string name="builder_proxies">节点</string>
+    <string name="builder_groups">策略组</string>
+    <string name="builder_rules">规则</string>
+    <string name="builder_proxy_providers">节点提供者</string>
+    <string name="builder_rule_providers">规则提供者</string>
+    <string name="builder_type">类型</string>
+    <string name="builder_payload">匹配内容</string>
+    <string name="builder_target">目标策略</string>
+    <string name="builder_remove_field">移除 %1$s</string>
+    <string name="builder_add_field">添加选项</string>
+    <string name="builder_field_name">字段名称</string>
+    <string name="builder_filters">筛选器</string>
+    <string name="builder_icon_sets">图标集</string>
+    <string name="builder_import_url">链接导入</string>
+    <string name="builder_import_file">文件导入</string>
+    <string name="builder_regex">正则表达式</string>
+    <string name="builder_sync">同步</string>
+    <string name="builder_title">自定义配置</string>
+    <string name="builder_undo">撤销</string>
+    <string name="builder_redo">重做</string>
+</resources>

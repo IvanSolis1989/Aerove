@@ -1,0 +1,10 @@
+<resources>
+    <string name="platform_tile_label">AEROVE Lite</string>
+    <string name="platform_action_start">Start</string>
+    <string name="platform_action_start_long">Start AEROVE Lite</string>
+    <string name="platform_action_stop">Stop</string>
+    <string name="platform_action_stop_long">Stop AEROVE Lite</string>
+    <string name="platform_action_toggle">Toggle</string>
+    <string name="platform_action_toggle_long">Toggle AEROVE Lite</string>
+    <string name="platform_external_link_invalid">This configuration link is invalid.</string>
+</resources>

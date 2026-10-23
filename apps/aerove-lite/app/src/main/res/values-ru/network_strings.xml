@@ -1,0 +1,17 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="network_add_route">Добавить маршрут</string>
+    <string name="network_bypass_private_route">Обходить частные сети</string>
+    <string name="network_dns_hijacking">Перехват DNS</string>
+    <string name="network_invalid_cidr">Проверьте CIDR в маршруте %1$d.</string>
+    <string name="network_move_route_down">Переместить вниз</string>
+    <string name="network_move_route_up">Переместить вверх</string>
+    <string name="network_mtu">MTU</string>
+    <string name="network_mtu_range">Введите целое число от 1280 до 65535.</string>
+    <string name="network_remove_route">Удалить</string>
+    <string name="network_route_addresses">Адреса маршрутов</string>
+    <string name="network_route_count">Маршрутов: %1$d</string>
+    <string name="network_route_entry">Маршрут %1$d</string>
+    <string name="network_route_exclusions">Исключённые адреса маршрутов</string>
+    <string name="network_tun">TUN</string>
+</resources>

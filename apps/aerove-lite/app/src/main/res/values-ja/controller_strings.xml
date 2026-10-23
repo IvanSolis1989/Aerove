@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="controller_external">"外部コントローラー"</string>
+    <string name="controller_secret">"外部コントローラーのシークレット"</string>
+    <string name="controller_save">"保存"</string>
+    <string name="controller_cancel">"キャンセル"</string>
+    <string name="controller_invalid_secret">"1～512 文字のシークレットを入力してください。"</string>
+    <string name="controller_save_failed">"設定を保存できませんでした。"</string>
+</resources>

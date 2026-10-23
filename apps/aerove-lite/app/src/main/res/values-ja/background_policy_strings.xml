@@ -1,0 +1,31 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="background_title">"起動とバックグラウンド"</string>
+    <string name="background_auto_run">"アプリを開いたときに実行"</string>
+    <string name="background_on_demand">"オンデマンド"</string>
+    <string name="background_minimize">"終了時に最小化"</string>
+    <string name="background_hidden">"最近のタスクから隠す"</string>
+    <string name="background_close_connections">"プロキシ切り替え時に接続を閉じる"</string>
+    <string name="background_proxy_statistics">"プロキシトラフィックのみ集計"</string>
+    <string name="background_description">"自動実行はアプリを開いたときに適用されます。接続の終了は、選択したプロキシの変更時に適用されます。"</string>
+    <string name="background_prerequisites">"前提条件"</string>
+    <string name="background_location">"位置情報の権限"</string>
+    <string name="background_battery">"電池の最適化を無視"</string>
+    <string name="background_authorized">"許可済み"</string>
+    <string name="background_authorize">"許可"</string>
+    <string name="background_permission_description">"バックグラウンドで Wi-Fi を識別するには、正確な位置情報とバックグラウンドでの位置情報の権限を許可し、デバイスの位置情報をオンにしてください。システム設定でバッテリーの制限を確認してください。"</string>
+    <string name="background_excluded">"除外する Wi-Fi ネットワーク"</string>
+    <string name="background_add">"SSIDを追加"</string>
+    <string name="background_select_all">"すべて選択"</string>
+    <string name="background_delete">"選択項目を削除"</string>
+    <string name="background_empty">"除外する Wi-Fi ネットワークはありません"</string>
+    <string name="background_move_up">"上へ移動"</string>
+    <string name="background_move_down">"下へ移動"</string>
+    <string name="background_excluded_description">"除外した Wi-Fi では、実行する意図を保持したままリスナーを一時停止します。そのネットワークを離れると再開します。"</string>
+    <string name="background_edit">"SSIDを編集"</string>
+    <string name="background_ssid">"SSID"</string>
+    <string name="background_invalid">"重複しない SSID を UTF-8 で 1～32 バイトの範囲で入力してください。"</string>
+    <string name="background_save">"保存"</string>
+    <string name="background_cancel">"キャンセル"</string>
+    <string name="background_notification_stop">"通知に停止ボタンを表示"</string>
+</resources>

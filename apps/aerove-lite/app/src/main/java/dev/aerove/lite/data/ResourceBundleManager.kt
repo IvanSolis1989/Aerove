@@ -17,6 +17,12 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import org.json.JSONArray
 import org.json.JSONObject
+import dev.aerove.lite.resources.ManagedRuleResource
+import dev.aerove.lite.resources.ResourceManagementRuleCache
+import dev.aerove.lite.resources.LibraryRuleSource
+import dev.aerove.lite.resources.CachedLibraryRule
+import dev.aerove.lite.resources.LibraryCacheRestore
+import dev.aerove.lite.dnssettings.validateDnsOutboundReferences
 
 internal data class ResourceBundle(
     val generation: String,
@@ -24,6 +30,9 @@ internal data class ResourceBundle(
     val sourceSha256: String,
     val yaml: String,
     val nextRefreshAt: Long?,
+    val compiledInputSha256: String = sourceSha256,
+    val policyFingerprint: String = "",
+    val sourcePolicyFingerprint: String = policyFingerprint,
 )
 
 class ResourceBundleManager(
@@ -32,9 +41,36 @@ class ResourceBundleManager(
     private val native: NativeResourceValidator,
     private val downloader: ResourceDownloader = ResourceDownloader(),
     private val clock: () -> Long = System::currentTimeMillis,
+    private val offlineRules: NativeRulePayloadInspector? = null,
 ) {
+    constructor(runtimeDirectory: File, validator: CompatibilityValidator, native: NativeResourceValidator,
+        downloader: ResourceDownloader, clock: () -> Long) : this(runtimeDirectory, validator, native, downloader, clock, null)
     private val root = File(runtimeDirectory, "resources").canonicalFile
     private val state = states.computeIfAbsent(root.path) { BundleState() }
+    private val library by lazy { ResourceManagementRuleCache(File(root, "library"), validator, native, downloader, clock, offlineRules) }
+
+    internal suspend fun storeGlobalRule(name: String, url: String, localId: String?, source: File, digest: ResourceDigest,
+        inspection: RulePayloadInspection): ManagedRuleResource = library.storePrepared(name, url, localId, source, digest, inspection)
+
+    internal suspend fun <T> withGlobalRule(name: String, url: String, behavior: String, format: String, localId: String?,
+        action: suspend (ManagedRuleResource, File) -> T): T = library.withPayload(name, url, behavior, format, localId, action)
+
+    internal suspend fun pruneUnreferencedLocalRules(retainedIds: Set<String>) = library.pruneLocal(retainedIds)
+
+    suspend fun syncLibraryRule(name: String, url: String, behavior: String, format: String): ManagedRuleResource =
+        library.sync(name, url, behavior, format)
+
+    suspend fun libraryRule(name: String, url: String, behavior: String, format: String): ManagedRuleResource? =
+        library.snapshot(name, url, behavior, format)
+
+    suspend fun <T> withLibraryRulesSnapshot(sources: List<LibraryRuleSource>, action: suspend (List<CachedLibraryRule>) -> T): T =
+        library.withSnapshot(sources, action)
+
+    suspend fun importLibraryRule(resource: ManagedRuleResource, input: InputStream): ManagedRuleResource =
+        library.withRestoreTransaction { it.importResource(resource, input) }
+
+    suspend fun <T> withLibraryRestoreTransaction(invalidateInFlight: Boolean = false, action: suspend (LibraryCacheRestore) -> T): T =
+        library.withRestoreTransaction(invalidateInFlight, action)
 
     suspend fun importLocal(profileId: String, path: String, input: InputStream) = withContext(Dispatchers.IO) {
         checkIdentifier(profileId)
@@ -50,14 +86,17 @@ class ResourceBundleManager(
         }
     }
 
-    internal suspend fun prepare(profileId: String, source: String): ResourceBundle = state.preparation.withPermit {
+    internal suspend fun prepare(profileId: String, source: String, previous: ResourceBundle? = null,
+        refreshKeys: Set<String>? = null, logicalOriginalSource: String = source,
+        policyFingerprint: String = "", geoUrls: Map<String, String> = emptyMap()): ResourceBundle = state.preparation.withPermit {
+        require(policyFingerprint.isEmpty() || policyFingerprint.matches(Regex("[0-9a-f]{64}"))) { "Invalid source policy fingerprint" }
         checkIdentifier(profileId)
         val generation = UUID.randomUUID().toString()
         val identity = "$profileId/$generation"
         synchronized(state) { state.candidates.add(identity) }
         var completed = false
         try {
-            val bundle = withContext(Dispatchers.IO) { build(profileId, source, generation) }
+            val bundle = withContext(Dispatchers.IO) { build(profileId, source, generation, previous, refreshKeys, logicalOriginalSource, policyFingerprint, geoUrls) }
             completed = true
             bundle
         } finally {
@@ -72,7 +111,9 @@ class ResourceBundleManager(
         }
     }
 
-    private suspend fun build(profileId: String, source: String, generation: String): ResourceBundle {
+    private suspend fun build(profileId: String, source: String, generation: String,
+        previous: ResourceBundle?, refreshKeys: Set<String>?, logicalOriginalSource: String, policyFingerprint: String,
+        geoUrls: Map<String, String>): ResourceBundle {
         checkIdentifier(profileId)
         validator.validateManagedSource(source)
         val profileRoot = File(root, "bundles/$profileId").apply { mkdirs() }
@@ -81,6 +122,12 @@ class ResourceBundleManager(
         val assets = File(candidate, "assets").apply { check(mkdir()) }
         val rootConfig = ConfigYaml.parse(source)
         val records = mutableListOf<Record>()
+        val previousManifest = if (previous != null && refreshKeys != null)
+            JSONObject(PrivateStorage(previous.directory).read("manifest.json", 1024 * 1024)) else null
+        val reusable = if (previousManifest != null) {
+            val rows = previousManifest.getJSONArray("records")
+            (0 until rows.length()).map { rows.getJSONObject(it) }.associateBy { it.getString("key") }
+        } else emptyMap()
         var total = 0L
         val ruleLines = mutableListOf<String>()
         (rootConfig["rules"] as? List<*>)?.filterIsInstance<String>()?.let(ruleLines::addAll)
@@ -96,16 +143,36 @@ class ResourceBundleManager(
         ): Record {
             currentCoroutineContext().ensureActive()
             val location = url ?: localPath ?: throw problem(key, "A resource URL or relative local file is required")
-            if (localPath != null) localFile(profileId, localPath)
-            val identity = sha256(JSONArray(listOf(key, kind, location, behavior, format)).toString())
+            val globalLocalId = if (kind == "ruleset" && url == null) globalRuleLocalId(localPath) else null
+            if (localPath != null && globalLocalId == null) localFile(profileId, localPath)
+            val identity = materializedSourceIdentity(key, kind, location, behavior, format)
             val file = File(assets, "$identity.bin")
             val limit = when (kind) {
                 "proxy-provider", "source-proxy" -> MAX_PROFILE_BYTES.toLong()
                 "ruleset" -> if (format == "mrs") MAX_MRS_BYTES else MAX_RULE_BYTES
                 else -> MAX_GEO_BYTES
             }
+            val override = overridePath(key, identity).takeIf { localFile(profileId, it).isFile }
+            val forced = key in refreshKeys.orEmpty() || "*" in refreshKeys.orEmpty()
+            val sharedKind = kind in setOf("ruleset", "mmdb", "geosite")
+            val libraryAtPreparation = if ((url != null || globalLocalId != null) && sharedKind)
+                library.snapshot(key, url ?: "", behavior, format, kind, globalLocalId) else null
+            val effectiveFormat = libraryAtPreparation?.runtimeFormat ?: format
+            val cached = reusable[key]?.takeIf { !forced && it.getString("sourceSha256") == identity &&
+                (it.optString("sharedCacheBaselineSha", it.getString("sha256")) == (libraryAtPreparation?.sha256 ?: "") ||
+                    libraryAtPreparation == null || libraryAtPreparation.sha256 == it.getString("sha256")) }
             val digest = try {
-                if (url != null) downloader.download(url, file, limit)
+                if (cached != null) {
+                    val original = privateResource(checkNotNull(previous).directory, cached.getString("file"))
+                    original.inputStream().use { if (globalLocalId != null) copyLocalRuleResource(it, file, limit) else copyResource(it, file, limit) }.also {
+                        require(it.sha256 == cached.getString("sha256")) { "Resource cache content changed" }
+                    }
+                } else if (override != null) localFile(profileId, override).inputStream().use { copyResource(it, file, limit) }
+                else if (url != null || globalLocalId != null) {
+                    val shared = if (sharedKind && (!forced || libraryAtPreparation?.runtimeFormat != null || globalLocalId != null))
+                        library.copyInto(key, url ?: "", behavior, format, file, limit, kind, globalLocalId) else null
+                    shared ?: if (globalLocalId != null) throw problem(key, "Global rule payload is missing") else downloader.download(checkNotNull(url), file, limit)
+                }
                 else {
                     val original = localFile(profileId, checkNotNull(localPath))
                     if (!original.isFile) throw problem(key, "Local resource is missing; import $localPath for this profile")
@@ -120,7 +187,10 @@ class ResourceBundleManager(
             }
             total += digest.bytes
             if (total > MAX_BUNDLE_BYTES || records.size >= MAX_RESOURCES) throw problem(key, "Resource bundle limit exceeded")
-            val record = Record(key, kind, identity, digest.sha256, digest.bytes, "assets/${file.name}", behavior, format, url, localPath, interval)
+            val record = Record(key, kind, identity, digest.sha256, digest.bytes, "assets/${file.name}", behavior, effectiveFormat, url,
+                override ?: localPath, interval, cached?.optLong("updatedAt", previousManifest?.getLong("createdAt") ?: clock()) ?: digest.sourceUpdatedAt ?: clock(),
+                if (cached != null && !cached.isNull("subscriptionUserInfo")) cached.getString("subscriptionUserInfo") else digest.subscriptionUserInfo, override != null,
+                if ((url != null || globalLocalId != null) && sharedKind) libraryAtPreparation?.sha256 ?: "" else null, format, globalLocalId)
             records += record
             return record
         }
@@ -131,7 +201,7 @@ class ResourceBundleManager(
             val filename = "$identity.yaml"
             PrivateStorage(assets).write(filename, content)
             val record = Record(key, kind, identity, sha256(content), content.toByteArray(Charsets.UTF_8).size.toLong(),
-                "assets/$filename", behavior, format, null, null, 0)
+                "assets/$filename", behavior, format, null, null, 0, clock())
             records += record
             total += record.bytes
             return record
@@ -169,9 +239,9 @@ class ResourceBundleManager(
                         behavior, format, seconds,
                     )
                     val payloadFile = File(candidate, record.file)
-                    if (rule && format != "mrs") {
+                    if (rule && record.format != "mrs") {
                         val text = payloadFile.inputStream().use { it.readBounded(MAX_RULE_BYTES.toInt()).strictUtf8() }
-                        val lines = if (format == "yaml") yamlRuleLines(text, key) else if (format == "text") {
+                        val lines = if (record.format == "yaml") yamlRuleLines(text, key) else if (record.format == "text") {
                             text.lineSequence().map(String::trim).filter {
                                 it.isNotEmpty() && !it.startsWith('#') && !it.startsWith("//")
                             }.toList()
@@ -196,7 +266,7 @@ class ResourceBundleManager(
                     }
                     provider["type"] = "file"
                     provider.remove("url")
-                    if (rule) provider["path"] = finalPath(record)
+                    if (rule) { provider["path"] = finalPath(record); provider["format"] = record.format }
                     provider["interval"] = 0
                 }
             }
@@ -208,9 +278,9 @@ class ResourceBundleManager(
                 (!fallback.isNullOrEmpty() && fallbackFilter?.get("geoip") != false)
             val needsSite = ruleLines.any { GEOSITE.containsMatchIn(it) }
             val geo = listOf(
-                Triple("mmdb", needsCountry, DEFAULT_COUNTRY_URL),
-                Triple("asn-mmdb", ruleLines.any { ASN.containsMatchIn(it) }, DEFAULT_ASN_URL),
-                Triple("geosite", needsSite, DEFAULT_GEOSITE_URL),
+                Triple("mmdb", needsCountry, geoUrls["mmdb"] ?: DEFAULT_COUNTRY_URL),
+                Triple("asn-mmdb", ruleLines.any { ASN.containsMatchIn(it) }, geoUrls["asn-mmdb"] ?: DEFAULT_ASN_URL),
+                Triple("geosite", needsSite, geoUrls["geosite"] ?: DEFAULT_GEOSITE_URL),
             )
             geo.forEach { (key, needed, defaultUrl) ->
                 if (needed || rootConfig[key] != null || rootConfig["$key-download-url"] != null) {
@@ -239,15 +309,20 @@ class ResourceBundleManager(
             if (total > MAX_BUNDLE_BYTES || records.size > MAX_RESOURCES) throw problem("$", "Resource bundle limit exceeded")
             val prepared = ConfigYaml.dump(rootConfig)
             val store = PrivateStorage(candidate)
+            store.write("input.yaml", source)
             store.write("config.yaml", prepared)
             val now = clock()
             val next = records.filter { it.interval > 0 }.minOfOrNull { now + it.interval * 1000 }
+            val recordJson = JSONArray(records.map { it.toJson() })
+            val effectiveFingerprint = resourcePolicyFingerprint(policyFingerprint, recordJson, actual = true)
             val manifest = JSONObject().put("schema", 1).put("profileId", profileId)
                 .put("coreVersion", CompatibilityValidator.CORE_VERSION)
-                .put("generation", generation).put("sourceSha256", sha256(source))
+                .put("generation", generation).put("sourceSha256", sha256(logicalOriginalSource))
+                .put("compiledInputSha256", sha256(source)).put("policyFingerprint", effectiveFingerprint)
+                .put("sourcePolicyFingerprint", policyFingerprint)
                 .put("configSha256", sha256(prepared)).put("createdAt", now)
                 .put("nextRefreshAt", next ?: JSONObject.NULL)
-                .put("records", JSONArray(records.map { it.toJson() }))
+                .put("records", recordJson)
             store.write("manifest.json", manifest.toString())
             currentCoroutineContext().ensureActive()
             Files.move(candidate.toPath(), destination.toPath(), StandardCopyOption.ATOMIC_MOVE)
@@ -261,13 +336,18 @@ class ResourceBundleManager(
                         }
                     }
                 }
+                val providerNames = records.filter { it.kind in setOf("proxy-provider", "source-proxy") }.flatMap { record ->
+                    val nodes = ConfigYaml.parse(privateResource(destination, record.file).readText())["proxies"] as? List<*> ?: emptyList<Any?>()
+                    nodes.mapNotNull { ((it as? Map<*, *>)?.get("name") as? String) }
+                }.toSet()
+                validateDnsOutboundReferences(rootConfig, providerNames)
                 validator.validatePrepared(prepared, destination)
                 currentCoroutineContext().ensureActive()
             } catch (failure: Throwable) {
                 removeBundle(destination)
                 throw failure
             }
-            ResourceBundle(generation, destination, sha256(source), prepared, next)
+            ResourceBundle(generation, destination, sha256(logicalOriginalSource), prepared, next, sha256(source), effectiveFingerprint, policyFingerprint)
         } catch (failure: Throwable) {
             removeBundle(candidate)
             throw failure
@@ -286,6 +366,16 @@ class ResourceBundleManager(
             manifest.getString("generation") == generation && manifest.getString("sourceSha256") == sha256(source)) {
             "Resource bundle does not match this profile revision"
         }
+        val compiledInputSha = manifest.optString("compiledInputSha256", manifest.getString("sourceSha256"))
+        val policyFingerprint = manifest.optString("policyFingerprint", "")
+        require(compiledInputSha.matches(Regex("[0-9a-f]{64}")) &&
+            (policyFingerprint.isEmpty() || policyFingerprint.matches(Regex("[0-9a-f]{64}")))) { "Invalid resource source lineage" }
+        if (manifest.has("compiledInputSha256")) {
+            val input = storage.file("input.yaml")
+            require(input.isFile && !Files.isSymbolicLink(input.toPath()) && input.length() <= MAX_PROFILE_BYTES && sha256(input) == compiledInputSha) {
+                "Compiled resource input changed"
+            }
+        }
         val records = manifest.getJSONArray("records")
         for (i in 0 until records.length()) {
             val record = records.getJSONObject(i)
@@ -298,7 +388,34 @@ class ResourceBundleManager(
         require(sha256(yaml) == manifest.getString("configSha256")) { "Prepared configuration changed" }
         validator.validatePrepared(yaml, directory)
         ResourceBundle(generation, directory, sha256(source), yaml,
-            if (manifest.isNull("nextRefreshAt")) null else manifest.getLong("nextRefreshAt"))
+            if (manifest.isNull("nextRefreshAt")) null else manifest.getLong("nextRefreshAt"), compiledInputSha, policyFingerprint,
+            manifest.optString("sourcePolicyFingerprint", policyFingerprint))
+    }
+
+    internal suspend fun currentPolicyFingerprint(bundle: ResourceBundle, sourcePolicy: String): String {
+        val manifest = JSONObject(PrivateStorage(bundle.directory).read("manifest.json", 1024 * 1024))
+        return resourcePolicyFingerprint(sourcePolicy, manifest.getJSONArray("records"), actual = false)
+    }
+
+    private suspend fun resourcePolicyFingerprint(sourcePolicy: String, records: JSONArray, actual: Boolean): String {
+        val values = mutableListOf<List<String>>()
+        for (index in 0 until records.length()) {
+            val record = records.getJSONObject(index)
+            val kind = record.getString("kind")
+            val localId = if (record.isNull("globalLocalId")) null else record.getString("globalLocalId")
+            if (kind !in setOf("ruleset", "mmdb", "geosite") || (record.isNull("url") && localId == null)) continue
+            val url = if (record.isNull("url")) "" else record.getString("url")
+            val cache = if (record.optBoolean("localOverride", false)) null else
+                library.snapshot(record.getString("key"), url, record.getString("behavior"), record.optString("sourceFormat", record.getString("format")), kind, localId)
+            val hash = record.getString("sha256")
+            val baseline = if (record.isNull("sharedCacheBaselineSha")) hash else record.getString("sharedCacheBaselineSha")
+            if (actual && !record.optBoolean("localOverride", false))
+                require((cache?.sha256 ?: "") == baseline || (baseline == hash && cache == null)) { "Shared resource changed during preparation" }
+            val effective = if (actual || cache == null || cache.sha256 == baseline) hash else cache.sha256
+            values += listOf(kind, url, record.getString("behavior"), record.getString("format"), effective)
+        }
+        if (values.isEmpty() && sourcePolicy.isEmpty()) return ""
+        return sha256(JSONArray(listOf(sourcePolicy, values.sortedBy { it.joinToString("\u0000") })).toString())
     }
 
     internal suspend fun discard(profileId: String, generation: String) = withContext(Dispatchers.IO) {
@@ -315,7 +432,11 @@ class ResourceBundleManager(
         if (profileId in state.importing) state.committedImports.add(profileId)
     }
 
-    internal suspend fun <T> importArchive(profileId: String, input: InputStream, accept: suspend (String) -> T): T {
+    internal suspend fun <T> importArchive(profileId: String, input: InputStream, accept: suspend (String) -> T): T =
+        importArchiveDecoded(profileId, input, { it.strictUtf8() }, accept)
+
+    internal suspend fun <T> importArchiveDecoded(profileId: String, input: InputStream,
+        decode: suspend (ByteArray) -> String, accept: suspend (String) -> T): T {
         checkIdentifier(profileId)
         synchronized(state) { check(state.importing.add(profileId)) }
         val staging = File(root, "imports/.pending-$profileId")
@@ -324,7 +445,10 @@ class ResourceBundleManager(
         var completed = false
         try {
             val source = withContext(Dispatchers.IO) {
-                val yaml = ProfileArchive.extract(input, archive, staging)
+                val bytes = ProfileArchive.extractBytes(input, archive, staging)
+                val yaml = try { decode(bytes) } finally { bytes.fill(0) }
+                require(yaml.toByteArray(Charsets.UTF_8).size <= MAX_PROFILE_BYTES) { "Profile is too large" }
+                PrivateStorage(staging).write("config.yaml", yaml)
                 Files.move(staging.toPath(), destination.toPath(), StandardCopyOption.ATOMIC_MOVE)
                 yaml
             }
@@ -345,6 +469,33 @@ class ResourceBundleManager(
                 }
             }
         }
+    }
+
+    internal suspend fun maintenanceCacheInventory(): Pair<Long, String> = library.withRestoreTransaction {
+        var bytes = 0L
+        val indices = mutableListOf<String>()
+        val context = currentCoroutineContext()
+        listOf("bundles", "imports", "archives", "library").forEach { name ->
+            val directory = File(root, name)
+            require(!Files.isSymbolicLink(directory.toPath())) { "Unsafe resource cache directory" }
+            if (directory.isDirectory) Files.walk(directory.toPath()).use { paths ->
+                paths.forEach { path ->
+                    context.ensureActive()
+                    if (!Files.isSymbolicLink(path) && Files.isRegularFile(path)) {
+                        bytes = Math.addExact(bytes, Files.size(path))
+                        if (name == "library" && path.parent == directory.toPath() &&
+                            path.fileName.toString().matches(Regex("[0-9a-f]{64}\\.json"))) {
+                            indices.add("${path.fileName}:${sha256(path.toFile())}")
+                        }
+                    }
+                }
+            }
+        }
+        bytes to sha256(indices.sorted().joinToString("\n"))
+    }
+
+    internal fun requireMaintenanceIdle() = synchronized(state) {
+        check(state.importing.isEmpty() && state.candidates.isEmpty()) { "Resource preparation is still active" }
     }
 
     internal fun prune(retained: Map<String, Set<String>>, importProfiles: Set<String>) = synchronized(state) {
@@ -373,6 +524,85 @@ class ResourceBundleManager(
 
     private fun localFile(profileId: String, path: String): File = privateResource(File(root, "imports/$profileId"), path)
 
+    /** The caller owns the profile domain transaction, including its generation CAS. */
+    internal suspend fun <T> withResourceOverride(profileId: String, keys: Set<String>?, input: InputStream? = null,
+        sourceId: String? = null,
+        accept: suspend () -> T): T = withContext(Dispatchers.IO) {
+        checkIdentifier(profileId)
+        require(input == null || keys?.size == 1)
+        val directory = localFile(profileId, ".overrides/sentinel").parentFile!!.apply { mkdirs() }
+        val targets = if (input != null) keys!!.map { localFile(profileId, overridePath(it, checkNotNull(sourceId))) }
+            else directory.listFiles().orEmpty().filter { file -> file.extension == "bin" &&
+                (keys == null || keys.any { file.name.startsWith("${sha256(it)}-") }) }
+        val backups = targets.filter(File::isFile).associateWith { File(directory, ".previous-${UUID.randomUUID()}") }
+        val moved = mutableSetOf<File>()
+        var writing = false
+        var success = false
+        try {
+            backups.forEach { (target, backup) ->
+                Files.move(target.toPath(), backup.toPath(), StandardCopyOption.ATOMIC_MOVE)
+                moved += target
+            }
+            if (input != null) { writing = true; input.use { copyResource(it, targets.single(), MAX_GEO_BYTES) } }
+            val value = accept()
+            success = true
+            value
+        } finally {
+            withContext(NonCancellable) {
+                if (!success) {
+                    if (writing) targets.forEach { it.delete() }
+                    backups.forEach { (target, backup) ->
+                        if (target in moved) Files.move(backup.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+                    }
+                }
+                backups.values.forEach { it.delete() }
+            }
+        }
+    }
+
+    /** Profiles-only restore keeps imported bytes private to each new profile, without mutating shared indexes. */
+    internal fun localizeLibraryPayloads(source: String, payloads: List<CachedLibraryRule>, geoUrls: Map<String, String>): Map<String, File> {
+        val config = ConfigYaml.parse(source)
+        val result = linkedMapOf<String, File>()
+        fun bind(key: String, kind: String, url: String, behavior: String = "", format: String = "") {
+            val value = payloads.firstOrNull { it.resource.let { item -> item.kind == kind && item.url == url && item.behavior == behavior && item.format == format } } ?: return
+            result[overridePath(key, materializedSourceIdentity(key, kind, url, behavior, format))] = value.file
+        }
+        val lines = mutableListOf<String>()
+        (config["rules"] as? List<*>)?.filterIsInstance<String>()?.let(lines::addAll)
+        (config["rule-providers"] as? Map<*, *>)?.forEach { (name, raw) ->
+            val provider = raw as? Map<*, *> ?: return@forEach
+            val url = provider["url"] as? String ?: return@forEach
+            if (provider["type"] != "http") return@forEach
+            val behavior = provider["behavior"] as? String ?: "domain"
+            val format = provider["format"] as? String ?: "yaml"
+            bind("$.rule-providers.$name", "ruleset", url, behavior, format)
+            payloads.firstOrNull { it.resource.kind == "ruleset" && it.resource.url == url && it.resource.behavior == behavior && it.resource.format == format }
+                ?.takeIf { format != "mrs" }?.let { lines += it.file.inputStream().use { input -> input.readBounded(MAX_RULE_BYTES.toInt()).strictUtf8() } }
+        }
+        val dns = config["dns"] as? Map<*, *>
+        val fallback = dns?.get("fallback") as? List<*>
+        val filter = dns?.get("fallback-filter") as? Map<*, *>
+        listOf(Triple("mmdb", lines.any { GEOIP.containsMatchIn(it) } || (!fallback.isNullOrEmpty() && filter?.get("geoip") != false), DEFAULT_COUNTRY_URL),
+            Triple("asn-mmdb", lines.any { ASN.containsMatchIn(it) }, DEFAULT_ASN_URL),
+            Triple("geosite", lines.any { GEOSITE.containsMatchIn(it) }, DEFAULT_GEOSITE_URL)).forEach { (key, needed, defaultUrl) ->
+            if (needed || config["$key-download-url"] != null) {
+                val url = config["$key-download-url"] as? String ?: geoUrls[key] ?: defaultUrl
+                bind("$.$key", if (key == "geosite") "geosite" else "mmdb", url)
+            }
+        }
+        return result
+    }
+
+    private fun materializedSourceIdentity(key: String, kind: String, location: String, behavior: String, format: String): String =
+        sha256(JSONArray(listOf(key, kind, location, behavior, format)).toString())
+
+    private fun overridePath(key: String, sourceId: String): String {
+        require(key.startsWith("$.") && key.length <= 2048) { "Invalid resource key" }
+        require(sourceId.matches(Regex("[0-9a-f]{64}"))) { "Invalid resource source identity" }
+        return ".overrides/${sha256(key)}-$sourceId.bin"
+    }
+
     private fun yamlRuleLines(text: String, path: String): List<String> {
         val content = ConfigYaml.parse(text, MAX_RULE_BYTES.toInt())
         if (content.keys != setOf("payload")) throw problem(path, "Ruleset YAML must contain only payload; no fields are ignored")
@@ -398,11 +628,19 @@ class ResourceBundleManager(
     private data class Record(
         val key: String, val kind: String, val sourceId: String, val sha256: String, val bytes: Long,
         val file: String, val behavior: String, val format: String, val url: String?, val localPath: String?, val interval: Long,
+        val updatedAt: Long,
+        val subscriptionUserInfo: String? = null,
+        val localOverride: Boolean = false,
+        val sharedCacheBaselineSha: String? = null,
+        val sourceFormat: String = format,
+        val globalLocalId: String? = null,
     ) {
         fun toJson(): JSONObject = JSONObject().put("key", key).put("kind", kind).put("sourceSha256", sourceId)
             .put("sha256", sha256).put("bytes", bytes).put("file", file).put("behavior", behavior)
             .put("format", format).put("url", url ?: JSONObject.NULL).put("localPath", localPath ?: JSONObject.NULL)
-            .put("interval", interval)
+            .put("interval", interval).put("updatedAt", updatedAt).put("subscriptionUserInfo", subscriptionUserInfo ?: JSONObject.NULL)
+            .put("localOverride", localOverride).put("sharedCacheBaselineSha", sharedCacheBaselineSha ?: JSONObject.NULL)
+            .put("sourceFormat", sourceFormat).put("globalLocalId", globalLocalId ?: JSONObject.NULL)
     }
 
     companion object {
@@ -429,4 +667,14 @@ class ResourceBundleManager(
             else -> "invalid resource request"
         }
     }
+}
+
+/** Preserve an actually empty local source without inventing a newline; ordinary downloads stay strict. */
+internal suspend fun copyLocalRuleResource(input: InputStream, destination: File, limit: Long): ResourceDigest {
+    currentCoroutineContext().ensureActive()
+    val first = input.read()
+    if (first >= 0) return copyResource(java.io.SequenceInputStream(java.io.ByteArrayInputStream(byteArrayOf(first.toByte())), input), destination, limit)
+    require(!destination.exists()) { "Immutable resource already exists" }
+    java.io.FileOutputStream(destination).use { it.fd.sync() }
+    return ResourceDigest(sha256(""), 0)
 }

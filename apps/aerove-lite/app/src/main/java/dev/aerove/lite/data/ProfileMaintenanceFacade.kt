@@ -4,6 +4,8 @@ import dev.aerove.lite.ProfileSummary
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.CancellationException
+import dev.aerove.lite.profilesource.AgeSecret
 
 /** Retained by the controller; UI visibility changes never recreate the scheduler. */
 class ProfileMaintenanceFacade(
@@ -43,6 +45,36 @@ class ProfileMaintenanceFacade(
         reload()
         return summary
     }
+
+    /** Borrows the caller's handle, copies it before suspension, and joins this exact flight before releasing the copy. */
+    suspend fun editCandidate(expected: ProfileDocumentSnapshot, name: String, url: String?, autoUpdate: Boolean,
+        intervalMillis: Long, secret: AgeSecret? = null, replaceSecret: Boolean = false): ProfileSummary {
+        val owned = if (replaceSecret && secret != null) secret.copyBytes().let { bytes ->
+            try { AgeSecret(bytes) } finally { bytes.fill(0) }
+        } else null
+        try {
+            reload()
+            var saved: ProfileSummary? = null
+            val result = maintenance.executeCandidate(expected.profile.id) { request ->
+                val summary = repository.editCandidate(expected, name, url, autoUpdate, intervalMillis, owned, replaceSecret, request)
+                val callbackRequest = if (summary.sourceIdentity != request.sourceIdentity) request.committedSource(summary.sourceIdentity) else request
+                reload()
+                if (summary.sourceIdentity != expected.profile.sourceIdentity && callbackRequest.isCurrent() &&
+                    repository.isCurrentSource(summary.id, callbackRequest.sourceIdentity)) onUpdated(summary, callbackRequest)
+                saved = summary
+                summary.lastSuccessfulUpdateAt ?: summary.updatedAt
+            }
+            return when (result) {
+                is ProfileMaintenanceResult.Updated -> checkNotNull(saved)
+                is ProfileMaintenanceResult.Failed -> throw result.error
+                ProfileMaintenanceResult.Cancelled -> throw CancellationException("Candidate profile update cancelled")
+                ProfileMaintenanceResult.Unavailable -> error("Profile maintenance is unavailable")
+            }
+        } finally { owned?.close() }
+    }
+
+    suspend fun quiesce() = maintenance.quiesce()
+    fun resumeAfterMaintenance(foreground: Boolean) = maintenance.resumeAfterMaintenance(foreground)
 
     fun setForeground(value: Boolean) = maintenance.setForeground(value)
     fun checkDue() = maintenance.checkDue()

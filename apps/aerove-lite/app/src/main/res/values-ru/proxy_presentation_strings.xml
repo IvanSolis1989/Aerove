@@ -1,0 +1,5 @@
+<resources>
+    <string name="proxy_presentation_scroll_to_selected">Прокрутить к выбранному</string>
+    <string name="proxy_presentation_clear_search">Очистить поиск</string>
+    <string name="proxy_presentation_delay_failed">Сбой</string>
+</resources>

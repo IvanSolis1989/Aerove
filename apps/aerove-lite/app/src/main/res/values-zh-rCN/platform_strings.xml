@@ -1,0 +1,10 @@
+<resources>
+    <string name="platform_tile_label">AEROVE Lite</string>
+    <string name="platform_action_start">启动</string>
+    <string name="platform_action_start_long">启动 AEROVE Lite</string>
+    <string name="platform_action_stop">停止</string>
+    <string name="platform_action_stop_long">停止 AEROVE Lite</string>
+    <string name="platform_action_toggle">切换</string>
+    <string name="platform_action_toggle_long">切换 AEROVE Lite 连接</string>
+    <string name="platform_external_link_invalid">配置链接无效。</string>
+</resources>

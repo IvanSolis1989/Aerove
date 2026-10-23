@@ -2,12 +2,16 @@ package dev.aerove.lite
 
 import dev.aerove.lite.networksettings.NetworkSettings
 import dev.aerove.lite.localization.canonicalLocale
+import dev.aerove.lite.navigation.TabAnimation
+import dev.aerove.lite.requests.RequestPreferences
+import dev.aerove.lite.proxies.ProxyPresentationPreferences
 
 enum class MaterialTier { Solid, Frosted, Clear }
 enum class ColorMode { System, Light, Dark }
 enum class ProxyMode { Rule, Global, Direct }
 enum class VpnPhase { Stopped, Starting, Running, Stopping, Failed }
 enum class AppFilterMode { All, Include, Exclude }
+enum class FindProcessMode(val wireName: String) { Strict("strict"), Always("always"), Off("off") }
 
 enum class ColorStyle(val wireName: String) {
     Vivid("vivid"), Tinted("tinted"), Soft("soft"), Monochrome("monochrome"),
@@ -91,6 +95,25 @@ data class LiteSettings(
     val textScale: Float = 1f,
     val pureBlack: Boolean = false,
     val locale: String? = null,
+    val floatingNavigationBar: Boolean = true,
+    val tabAnimation: TabAnimation = TabAnimation.Fade,
+    val requests: RequestPreferences = RequestPreferences(),
+    val proxyPresentation: ProxyPresentationPreferences = ProxyPresentationPreferences(),
+    val dnsPreferences: dev.aerove.lite.dnssettings.DnsPreferences = dev.aerove.lite.dnssettings.DnsPreferences(),
+    val geoResources: dev.aerove.lite.resources.GeoResourcePreferences = dev.aerove.lite.resources.GeoResourcePreferences(),
+    val historyTables: dev.aerove.lite.observability.HistoryTablePreferences = dev.aerove.lite.observability.HistoryTablePreferences(),
+    val backgroundPolicy: dev.aerove.lite.backgroundpolicy.BackgroundPolicyPreferences = dev.aerove.lite.backgroundpolicy.BackgroundPolicyPreferences(autoRun = autoStart),
+    val appAccess: dev.aerove.lite.appaccess.AppAccessPreferences = dev.aerove.lite.appaccess.AppAccessPreferences(
+        enabled = appFilterMode != AppFilterMode.All,
+        mode = if (appFilterMode == AppFilterMode.Include) dev.aerove.lite.appaccess.AppAccessMode.Include else dev.aerove.lite.appaccess.AppAccessMode.Exclude,
+        includePackages = if (appFilterMode == AppFilterMode.Include) packages else emptySet(),
+        excludePackages = if (appFilterMode == AppFilterMode.Exclude) packages else emptySet()),
+    val developerMode: Boolean = false,
+    val acceptedDisclaimerVersion: Int = 0,
+    val unifiedDelay: Boolean = true,
+    val tcpConcurrent: Boolean = true,
+    val externalController: dev.aerove.lite.controllerprefs.ExternalControllerPreferences = dev.aerove.lite.controllerprefs.ExternalControllerPreferences(),
+    val findProcessMode: FindProcessMode = FindProcessMode.Always,
 )
 
 val serviceTargetIds: List<String> = listOf("google", "github", "youtube", "chatgpt", "claude", "gemini",
@@ -150,6 +173,11 @@ fun LiteSettings.normalized(): LiteSettings {
         serviceOrder = (serviceOrder.filter { it in serviceTargetIds } + serviceTargetIds).distinct(),
         disabledServices = disabledServices.filterTo(linkedSetOf()) { it in serviceTargetIds },
         network = network.snapshot(),
+        requests = requests.copy(userAgents = requests.userAgents.toList()),
+        dnsPreferences = dnsPreferences.snapshot(),
+        geoResources = geoResources.copy(urls = geoResources.urls.toMap()),
+        backgroundPolicy = backgroundPolicy.copy(excludeSSIDs = backgroundPolicy.excludeSSIDs.toList()),
+        appAccess = appAccess.copy(includePackages = appAccess.includePackages.toSet(), excludePackages = appAccess.excludePackages.toSet()),
         fontFamily = fontFamily?.trim()?.takeIf(String::isNotEmpty),
         locale = canonicalLocale(locale),
         textScale = if (textScale.isFinite()) textScale.coerceIn(0.8f, 1.4f) else 1f,
@@ -169,6 +197,9 @@ data class ProfileSummary(
     val sourceIdentity: String = "",
     val subscriptionUserInfo: String? = null,
     val contentDisposition: String? = null,
+    val custom: Boolean = false,
+    val currentProxyGroup: String? = null,
+    val unfoldedProxyGroups: Set<String> = emptySet(),
 )
 
 data class ProxyNode(val name: String, val type: String, val delayMillis: Int? = null)
@@ -225,12 +256,22 @@ data class LiteState(
     val logs: List<LogLine> = emptyList(),
     val installedApps: List<InstalledApp> = emptyList(),
     val busy: Set<String> = emptySet(),
+    val settingsError: Boolean = false,
     val message: String? = null,
     val diagnostics: DiagnosticsState = DiagnosticsState(),
     val updatingProfileIds: Set<String> = emptySet(),
     val updatePromptVisible: Boolean = false,
     val networkRestartRequired: Boolean = false,
     val networkError: String? = null,
+    val listening: Boolean = false,
+    val suspended: Boolean = false,
+    val listenerError: String? = null,
+    val initialized: Boolean = false,
+    val locationGranted: Boolean = false,
+    val batteryIgnored: Boolean = false,
+    val externalProfile: String? = null,
+    val profileImportVisible: Boolean = false,
+    val profileImportKeyPrompt: Boolean = false,
 )
 
 interface LiteActions {
@@ -250,13 +291,21 @@ interface LiteActions {
     fun refreshServiceChecks()
     fun refreshServiceCheck(id: String)
     fun setServiceTelemetryTargets(ids: Set<String>)
+    fun setProviderTelemetryActive(active: Boolean)
     fun setMemoryTelemetryActive(active: Boolean)
     fun setConnectionTelemetryActive(active: Boolean)
     fun closeConnection(id: String)
     fun closeAllConnections()
     fun shuffleAurora()
     fun changeSettings(settings: LiteSettings)
+    fun changeHistoryTable(change: dev.aerove.lite.observability.HistoryTableChange)
     fun loadInstalledApps()
     fun clearLogs()
     fun dismissMessage()
+    fun requestOnDemandLocation()
+    fun requestBatteryExemption()
+    fun authorizeApplications()
+    fun acceptExternalProfile()
+    fun dismissExternalProfile()
+    fun declineDisclaimer()
 }

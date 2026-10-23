@@ -29,6 +29,17 @@ class ProfileLinkDecoderTest {
         return result
     }
 
+    @Test fun rawSpacesAreAllowedOnlyInShareDisplayFragment() {
+        val link = "ss://${b64("aes-128-gcm:pw")}@node.example:443"
+        assertEquals("Node One", nodes(decode("$link#Node One")).single()["name"])
+        assertEquals("Node One", nodes(decode("$link#Node%20One")).single()["name"])
+        rejected(link.replace("node.example", "node example") + "#Node One")
+        rejected("$link?plugin=v2ray plugin#Node One")
+        rejected("$link#Node\tOne")
+        rejected("https://node.example:443#Node One", code = ProfileLinkErrorCode.INVALID_URL)
+        rejected("unknown://node.example:443#Node One", code = ProfileLinkErrorCode.UNSUPPORTED_SCHEME)
+    }
+
     @Test fun fullBatchOrderCombinesAllSharesAtTheirFirstPosition() {
         val result = decode("https://one.example/a", "ss://${b64("aes-128-gcm:p")}@a.example:443#A",
             "https://two.example/b", "trojan://pass@b.example:443#B")

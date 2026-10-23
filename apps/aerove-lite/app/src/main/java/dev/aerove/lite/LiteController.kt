@@ -42,9 +42,10 @@ import dev.aerove.lite.updates.UpdateFeature
 import dev.aerove.lite.updates.UpdateHttpClient
 import dev.aerove.lite.updates.UpdateRepository
 import dev.aerove.lite.networksettings.NetworkSettings
-import dev.aerove.lite.networksettings.effectiveVpnNetworkOptions
+import dev.aerove.lite.vpn.requiresVpnRestart
 import dev.aerove.lite.localization.AndroidLocaleCoordinator
 import dev.aerove.lite.vpn.VpnSnapshot
+import dev.aerove.lite.integration.withAppAccess
 import java.io.File
 import java.io.IOException
 import java.time.Clock
@@ -52,6 +53,8 @@ import java.time.Duration
 import java.time.ZonedDateTime
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -72,20 +75,318 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.supervisorScope
-import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
 class LiteController(private val application: LiteApplication) : ViewModel(), LiteActions, LiteFeatureHost {
+    val notices = dev.aerove.lite.notices.ClientNotices()
+    override fun developerMessageTest() {
+        if (!state.value.settings.developerMode || application.maintenanceActive) return
+        dev.aerove.lite.notices.NoticeLevel.entries.forEach { level ->
+            notices.post("${level.wireName}: ${application.getString(R.string.maintenance_message_test_tip)}", level)
+        }
+    }
+    override fun developerLogsTest() = perform("developer-logs") {
+        check(state.value.settings.developerMode) { "Developer mode is disabled" }
+        val epoch = application.startIntentEpoch()
+        val lines = withContext(Dispatchers.Default) {
+            dev.aerove.lite.maintenance.developerLogSamples().map { LogLine(System.currentTimeMillis(), "info", it) }
+        }
+        observability.appendLocalLogs(lines) { !application.maintenanceActive && application.startIntentEpoch() == epoch && state.value.settings.developerMode }
+    }
     private val mutableState = MutableStateFlow(LiteState())
     val state = mutableState.asStateFlow()
     override val backup = BackupFeature(application, viewModelScope, ::reloadRestoredData,
-        restoreTransaction = { write, refresh ->
-            settingsUpdates.restore(write) { localeOwner.value.restoreSaved(); refresh() }
+        restoreTransaction = { write, refresh -> restoreWithRuntime(write, refresh) })
+    private val workJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
+    private val sourceApplyOwner = lazy {
+        dev.aerove.lite.integration.CoalescedSourceApply(viewModelScope, { !application.maintenanceActive }, { current ->
+            val id = state.value.selectedProfile
+            if (id == null) dev.aerove.lite.resources.ResourceApplyReceipt(null)
+            else applyPreparedResource(application.profiles.prepare(id), current)
+        }, ::report)
+    }
+    private fun resourceRuntimeApply(current: () -> Boolean = { true }): dev.aerove.lite.integration.ResourceRuntimeApply {
+        val startIntent = application.startIntentEpoch()
+        return dev.aerove.lite.integration.ResourceRuntimeApply(application.vpn, { state.value.selectedProfile },
+            application.profiles::prepare, {
+                invalidateOutboundConfiguration()
+                ContextCompat.startForegroundService(application, Intent(application, LiteVpnService::class.java)
+                    .setAction(LiteVpnService.ACTION_RECONFIGURE))
+            }, { endpoint ->
+                CoreApiClient(ControlEndpoint(endpoint.port, endpoint.secret)).use { it.routeSnapshot() }
+            }, { current() && !application.maintenanceActive && startIntent == application.startIntentEpoch() })
+    }
+    private suspend fun applyPreparedResource(prepared: dev.aerove.lite.data.PreparedProfile,
+        current: () -> Boolean = { true }): dev.aerove.lite.resources.ResourceApplyReceipt = resourceRuntimeApply(current).apply(prepared)
+    private suspend fun applyManagedResource(prepared: dev.aerove.lite.data.PreparedProfile): dev.aerove.lite.resources.ResourceApplyReceipt {
+        val readback = resourceRuntimeApply()
+        return readback.verifyReceipt(prepared, sourceApplyOwner.value.requestAndAwait())
+    }
+    private val resourceRepository by lazy { dev.aerove.lite.resources.ResourceManagementRepository(application.profiles, offlineRules = application.rulePayloadInspector) }
+    private val resourceManagementOwner = lazy {
+        dev.aerove.lite.resources.ResourceManagementSession(resourceRepository,
+            viewModelScope, apply = {}, library = application.resourceLibrary,
+            onLibraryChanged = { sourceApplyOwner.value.requestAndAwait() }, geoCatalog = application.geoResourceCatalog,
+            applyWithReceipt = { applyManagedResource(it) })
+    }
+    override val groupIcons: dev.aerove.lite.images.GroupIconLoader get() = application.groupIcons
+    override val resourceManagement get() = resourceManagementOwner.value
+    private val globalResourcesOwner = lazy {
+        dev.aerove.lite.integration.GlobalResourceWorkspace(application.builderResourceLibrary, application.profiles,
+            application.globalRulePayloads, { yaml -> withContext(Dispatchers.Default) { dev.aerove.lite.core.NativeCore.validate(yaml) } },
+            { sourceApplyOwner.value.request() })
+    }
+    override val globalResources get() = globalResourcesOwner.value
+
+
+    private val overrideOwner = lazy {
+        dev.aerove.lite.integration.OverrideWorkspace(application.overrideRepository, application.subscriptionDownloader,
+            viewModelScope, { !application.maintenanceActive }) { before, after ->
+            withContext(Dispatchers.Main.immediate) {
+                val id = state.value.selectedProfile
+                if (id != null && state.value.profiles.firstOrNull { it.id == id }?.custom != true &&
+                    dev.aerove.lite.overrides.overridePolicyFingerprint(before, id) != dev.aerove.lite.overrides.overridePolicyFingerprint(after, id)) {
+                    requestSourceReapply()
+                }
+            }
+        }
+    }
+    override val overrides get() = overrideOwner.value
+    private val resourcesOwner = lazy {
+        val maintenance = dev.aerove.lite.resources.ResourceManagementMaintenance(application.geoResourceCatalog,
+            application.resourceLibrary, overrides.scripts, { state.value.settings.geoResources },
+            { sourceApplyOwner.value.requestAndAwait(); Unit })
+        dev.aerove.lite.integration.ResourcePageWorkspace(resourceManagement, overrides.scripts, maintenance, resourceRepository,
+            viewModelScope, { state.value.selectedProfile }, { !application.maintenanceActive },
+            { application.vpn.value.endpoint != null }, ::report)
+    }
+    override val resources get() = resourcesOwner.value
+    private var providerTelemetryRequested = false
+    private val profileDetailsOwner = lazy {
+        dev.aerove.lite.integration.ProfileDetailWorkspace(application.profiles, resourceRepository, viewModelScope,
+            { state.value.profiles.firstOrNull { it.id == state.value.selectedProfile } }, { application.vpn.value.endpoint },
+            { !application.maintenanceActive }, ::applyManagedResource,
+            { withContext(Dispatchers.Main.immediate) { invalidateOutboundConfiguration() } }, application::startIntentEpoch,
+            { id -> application.overrideRepository.snapshot().profiles.firstOrNull { it.profileId == id }?.mode
+                ?: dev.aerove.lite.overrides.OverrideMode.Standard },
+            dev.aerove.lite.integration.ProfileDetailResources(application.profiles, resourceRepository, application.builderResourceLibrary, application.globalRulePayloads)).also { it.foreground(visible.value.active); it.telemetryActive(providerTelemetryRequested) }
+    }
+    override val profileDetails get() = profileDetailsOwner.value
+
+    private var resourceMaintenanceEndpoint: CoreEndpoint? = null
+    private fun visibleResourceMaintenance() {
+        if (!settingsLoaded || !visible.value.active || application.maintenanceActive) return
+        val generation = visible.value.generation
+        val endpoint = application.vpn.value.endpoint
+        resources.updateIfDue { visible.value.active && visible.value.generation == generation &&
+            !application.maintenanceActive && application.vpn.value.endpoint === endpoint }
+    }
+
+    @Volatile private var maintenanceRevision: String? = null
+    private val maintenanceOwner = lazy {
+        dev.aerove.lite.maintenance.MaintenanceFeature(viewModelScope, object : dev.aerove.lite.maintenance.MaintenanceBackend {
+            private var resetCommitted = false
+            override suspend fun inspect(): dev.aerove.lite.maintenance.MaintenanceInventory = withContext(Dispatchers.IO) {
+                application.profiles.inspectMaintenance().let {
+                    maintenanceRevision = it.revision
+                    dev.aerove.lite.maintenance.MaintenanceInventory(it.revision, it.profiles, it.retainedFiles, it.cacheBytes)
+                }
+            }
+            override suspend fun <T> exclusive(operation: dev.aerove.lite.maintenance.MaintenanceOperation, action: suspend () -> T): T {
+                var result: T? = null
+                val clearing = operation == dev.aerove.lite.maintenance.MaintenanceOperation.ClearAllData
+                resetCommitted = false
+                try {
+                    restoreWithRuntime({ result = action() }, ::reloadRestoredData, resumeAfterSuccess = !clearing, restoreLocale = clearing)
+                    if (clearing && resetCommitted) checkNotNull(exitAfterStop) { "Application exit owner is unavailable" }.invoke()
+                    @Suppress("UNCHECKED_CAST")
+                    return result as T
+                } catch (failure: Throwable) {
+                    if (resetCommitted) withContext(NonCancellable + Dispatchers.Main.immediate) {
+                        try {
+                            settingsUpdates.reload()
+                            reloadProfiles()
+                            android.widget.Toast.makeText(application, application.getString(R.string.maintenance_failed), android.widget.Toast.LENGTH_LONG).show()
+                            checkNotNull(exitAfterStop) { "Application exit owner is unavailable" }.invoke()
+                        } catch (exitFailure: Throwable) { failure.addSuppressed(exitFailure) }
+                    }
+                    throw failure
+                }
+            }
+            override suspend fun pruneCache(): Unit = withContext(Dispatchers.IO) {
+                application.profiles.pruneCache(maintenanceRevision)
+                Unit
+            }
+            override suspend fun clearAppDataAndExit() = withContext(NonCancellable) {
+                val result = withContext(Dispatchers.IO) {
+                    application.profiles.resetUserData(maintenanceRevision) { application.settings.reset() }
+                }
+                resetCommitted = true
+                var failure = if (result.cleanupComplete) null else checkNotNull(result.cleanupFailure) { "User data reset cleanup did not finish" }
+                suspend fun cleanup(action: suspend () -> Unit) {
+                    try { action() } catch (next: Throwable) {
+                        if (failure == null) failure = next else failure!!.addSuppressed(next)
+                    }
+                }
+                withContext(NonCancellable) {
+                    cleanup { if (ipQualityOwner.isInitialized()) ipQualityOwner.value.clearUserState()
+                        else withContext(Dispatchers.IO) { IpQualityStore(File(application.filesDir, "ipquality/last-exit.json")).clearUserState() } }
+                    if (updateOwner.isInitialized()) cleanup { updateOwner.value.clearUserState() } else {
+                        cleanup { dev.aerove.lite.updates.AndroidUpdatePlatform.clearUserState(application) }
+                        cleanup { withContext(Dispatchers.IO) { UpdateRepository.clearCachedUserState(File(application.cacheDir, "updates")) } }
+                    }
+                    cleanup { LiteVpnService.clearUserState(application) }
+                    cleanup { application.closeGroupIcons() }
+                }
+                failure?.let { throw it }
+                Unit
+            }
         })
+    }
+    override val maintenance get() = maintenanceOwner.value
+    private var openedAppAccess: dev.aerove.lite.appaccess.AppAccessFeature? = null
+    override val appAccess: dev.aerove.lite.appaccess.AppAccessFeature
+        get() = openedAppAccess ?: dev.aerove.lite.appaccess.AppAccessFeature(viewModelScope,
+            state.value.settings.appAccess, dev.aerove.lite.appaccess.AndroidApplicationLoader(application)) { preferences ->
+            check(!application.maintenanceActive) { "Maintenance is active" }
+            val saved = settingsUpdates.update(false) { latest ->
+                latest.withAppAccess(preferences)
+            }
+            check(application.settings.read() == saved) { "Application preferences readback changed" }
+        }.also { openedAppAccess = it }
+    override fun closeAppAccess() { openedAppAccess?.close(); openedAppAccess = null }
+    var onDemandLocationRequest: (() -> Unit)? = null
+    var batteryExemptionRequest: (() -> Unit)? = null
+    var applicationsAuthorization: (() -> Unit)? = null
+    var exitAfterStop: (() -> Unit)? = null
+    private var pendingExternalInput: String? = null
+    private var externalOfferJob: Job? = null
+    private var externalOfferGeneration = 0L
+    private val platformEntryGate = dev.aerove.lite.integration.PlatformEntryGate()
+    private val vpnAuthorizations = dev.aerove.lite.integration.VpnAuthorizationIntents(::currentStartRequest)
+    fun offerVpnAuthorization(token: Long, settings: LiteSettings? = null) = vpnAuthorizations.offer(token, settings, state.value.settings)
+    fun applyAuthorizedSettings(request: dev.aerove.lite.integration.VpnAuthorizationRequest) {
+        val wanted = request.settings ?: return
+        if (currentStartRequest(request.token)) queueSettings {
+            settingsUpdates.save(checkNotNull(request.baseline), wanted)
+        }
+    }
+    fun nextVpnAuthorization() = vpnAuthorizations.next()
+    fun completeVpnAuthorization(granted: Boolean) = vpnAuthorizations.complete(granted)
+    fun cancelSettingsAuthorization() = vpnAuthorizations.cancelSettings()
+    private var startIntentEpoch = 0L
+    private var lastPlatformPermissions: Pair<Boolean, Boolean>? = null
+    fun acceptPlatformRequest(id: String): Boolean {
+        return platformEntryGate.acceptRequest(id)
+    }
+    fun beginStartRequest(): Long { startIntentEpoch = application.startIntentEpoch(); return platformEntryGate.beginStart() }
+    fun currentStartRequest(token: Long): Boolean = platformEntryGate.currentStart(token) &&
+        startIntentEpoch == application.startIntentEpoch() && !application.maintenanceActive
+    fun consumeAutoRun(): Boolean = state.value.let { platformEntryGate.consumeAutoRun(it.initialized,
+        it.settings.acceptedDisclaimerVersion >= dev.aerove.lite.maintenance.CURRENT_DISCLAIMER_VERSION,
+        it.settings.backgroundPolicy.autoRun, it.selectedProfile != null, application.vpn.value.phase == VpnPhase.Stopped) }
+    fun stopFromPlatform() { platformEntryGate.suppressAutoRun(); disconnect() }
+    fun refreshPlatformPermissions() {
+        val fine = ContextCompat.checkSelfPermission(application, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val background = ContextCompat.checkSelfPermission(application, android.Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val location = application.getSystemService(android.location.LocationManager::class.java).isLocationEnabled
+        val battery = application.getSystemService(android.os.PowerManager::class.java).isIgnoringBatteryOptimizations(application.packageName)
+        val actual = (fine && background && location) to battery
+        val changed = lastPlatformPermissions?.let { it != actual } == true
+        lastPlatformPermissions = actual
+        mutableState.update { it.copy(locationGranted = actual.first, batteryIgnored = actual.second) }
+        openedAppAccess?.reload()
+        if (changed && LiteVpnService.wasRequested(application)) application.startService(Intent(application, LiteVpnService::class.java).setAction(LiteVpnService.ACTION_REFRESH_POLICY))
+    }
+    fun exitApplication(onStopped: () -> Unit) {
+        if (application.maintenanceActive) return
+        viewModelScope.launch {
+            try {
+                application.withMaintenance {
+                    application.invalidatePendingStarts()
+                    if (sourceApplyOwner.isInitialized()) sourceApplyOwner.value.quiesce()
+                    externalOfferJob?.cancelAndJoin()
+                    dismissExternalProfile()
+                    if (ipQualityOwner.isInitialized()) ipQualityOwner.value.quiesce()
+                    if (updateOwner.isInitialized()) updateOwner.value.quiesce()
+                    profileMaintenance.quiesce()
+                    if (profileImportsOwner.isInitialized()) profileImportsOwner.value.quiesce()
+                    if (profileListOwner.isInitialized()) profileListOwner.value.quiesce()
+                    workJobs.values.toList().forEach { it.cancelAndJoin() }
+                    if (profileDetailsOwner.isInitialized()) profileDetailsOwner.value.quiesce()
+                    if (resourcesOwner.isInitialized()) resourcesOwner.value.quiesce()
+                    if (overrideOwner.isInitialized()) overrideOwner.value.quiesce()
+                    if (proxyPresentationOwner.isInitialized()) proxyPresentationOwner.value.quiesce()
+                    if (globalResourcesOwner.isInitialized()) globalResourcesOwner.value.quiesce()
+                    if (resourceManagementOwner.isInitialized()) resourceManagementOwner.value.quiesce()
+                    settingsUpdates.awaitIdle()
+                    val context = application.stopForMaintenance()
+                    application.resumeAfterMaintenance(context, null, null, false)
+                }
+                onStopped()
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { report(failure) }
+        }
+    }
+    fun offerExternalProfile(input: String) {
+        if (application.maintenanceActive) return
+        externalOfferJob?.cancel()
+        val generation = ++externalOfferGeneration
+        externalOfferJob = viewModelScope.launch {
+            try {
+                val decoded = profileLinks.decode(input)
+                val entry = decoded.entries.singleOrNull() as? ProfileLinkEntry.Subscription
+                require(decoded.errors.isEmpty() && entry != null) { application.getString(R.string.platform_external_link_invalid) }
+                if (generation != externalOfferGeneration || application.maintenanceActive) return@launch
+                // Standard's platform link handler imports the approved URL, not unrelated install-link query metadata.
+                pendingExternalInput = entry.url
+                mutableState.update { it.copy(externalProfile = entry.url) }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { if (generation == externalOfferGeneration) showMessage(application.getString(R.string.platform_external_link_invalid)) }
+        }
+    }
+    override fun acceptExternalProfile() {
+        if (application.maintenanceActive || workJobs.containsKey("import")) return
+        val input = pendingExternalInput ?: return
+        dismissExternalProfile()
+        importProfileText("", input)
+    }
+    override fun dismissExternalProfile() {
+        externalOfferGeneration++; externalOfferJob?.cancel()
+        pendingExternalInput = null; mutableState.update { it.copy(externalProfile = null) }
+    }
+    fun pendingExternalProfile(): String? = pendingExternalInput
+    override fun requestOnDemandLocation() { onDemandLocationRequest?.invoke() }
+    override fun requestBatteryExemption() { batteryExemptionRequest?.invoke() }
+    override fun authorizeApplications() { applicationsAuthorization?.invoke() }
+    override fun declineDisclaimer() { exitAfterStop?.let(::exitApplication) }
+    private var openedBuilder: Pair<String, dev.aerove.lite.profilebuilder.ProfileBuilderSession>? = null
     private var openedEditor: Pair<Triple<String, String, Boolean>, ProfileEditorSession>? = null
+    private val proxyPresentationOwner = lazy {
+        dev.aerove.lite.integration.ProxyPresentationWorkspace(viewModelScope,
+            { state.value.settings.proxyPresentation }, application.profiles::updateProxyGroupUi,
+            { saved -> mutableState.update { current -> current.copy(profiles = current.profiles.map {
+                if (it.id == saved.id) it.copy(currentProxyGroup = saved.currentProxyGroup,
+                    unfoldedProxyGroups = saved.unfoldedProxyGroups) else it
+            }) } }, { !application.maintenanceActive }).also {
+            it.profile(state.value.profiles.find { row -> row.id == state.value.selectedProfile })
+            it.groups(state.value.groups)
+            bindProxyPresentation(it)
+        }
+    }
+    override val proxyPresentation get() = proxyPresentationOwner.value
+    private fun bindProxyPresentation(owner: dev.aerove.lite.integration.ProxyPresentationWorkspace) {
+        val endpoint = application.vpn.value.endpoint
+        val client = api
+        val read: (suspend () -> String)? = endpoint?.configuration?.let { config -> suspend { config.read() } }
+        owner.bind(client, endpoint?.configuration?.profileId, client, read) {
+            api === client && visible.value.active && application.vpn.value.endpoint === endpoint &&
+                !application.maintenanceActive
+        }
+    }
+
     private val profileLinks = ProfileLinkDecoder()
     private val visible = MutableStateFlow(TelemetryVisibility())
     private val connectionTelemetryActive = MutableStateFlow(false)
@@ -129,6 +430,31 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         }
     }
     override val ipQuality: IpQualityFeature get() = ipQualityOwner.value
+    private var observationRuntime: CoreEndpoint? = null
+    private var observationToken = 0L
+    private val observabilityOwner = lazy {
+        dev.aerove.lite.observability.ObservabilityFeature(viewModelScope,
+            dev.aerove.lite.observability.AndroidHistoryDocuments(application.contentResolver), clearDnsCache = {
+                val client = requireApi()
+                val endpoint = application.vpn.value.endpoint
+                val token = observationToken
+                client.clearDnsCache()
+                check(api === client && application.vpn.value.endpoint === endpoint && observationToken == token && visible.value.active) {
+                    application.getString(R.string.error_api_unavailable)
+                }
+            }).also {
+            it.lease(dev.aerove.lite.observability.HistoryKind.Requests)
+            it.setForeground(visible.value.active)
+            it.bindSession(observationRuntime?.let { observationToken })
+        }
+    }
+    override val observability get() = observabilityOwner.value
+    private fun bindObservability(endpoint: CoreEndpoint?) {
+        if (observationRuntime === endpoint) return
+        observationRuntime = endpoint
+        observationToken++
+        if (observabilityOwner.isInitialized()) observabilityOwner.value.bindSession(endpoint?.let { observationToken })
+    }
     private data class DiagnosticsBinding(val endpoint: CoreEndpoint, val client: CoreApiClient,
         val generation: Long, val configuration: Long)
     private val diagnosticsRouteRead = Mutex()
@@ -193,12 +519,12 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         },
     )
     private data class OutboundKey(val endpoint: CoreEndpoint, val profileId: String, val mode: ProxyMode,
-        val configuration: Long)
+        val configuration: Long, val proxied: Boolean)
     private var outboundConfiguration = 0L
     private var outboundBlockedEndpoint: CoreEndpoint? = null
     private var outboundGroupEndpoint: CoreEndpoint? = null
     private val outbound = OutboundProbe<OutboundKey>(viewModelScope, { key ->
-        CoreApiClient(ControlEndpoint(key.endpoint.port, key.endpoint.secret)).use { it.outboundProbe() }
+        CoreApiClient(ControlEndpoint(key.endpoint.port, key.endpoint.secret)).use { it.outboundProbe(forceDirect = !key.proxied) }
     }, { it == outboundKey() })
     var filePicker: (() -> Unit)? = null
 
@@ -222,12 +548,24 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
             localeOwner.value.foreground()
             autoCheckUpdates()
             reloadProfiles()
+            mutableState.update { it.copy(initialized = true) }
+            visibleResourceMaintenance()
+            refreshPlatformPermissions()
+            LiteVpnService.consumeStartupFailure(application)?.let(::showMessage)
         }
         viewModelScope.launch {
             application.vpn.collect { snapshot ->
+                if (resourceMaintenanceEndpoint !== snapshot.endpoint) {
+                    resourceMaintenanceEndpoint = snapshot.endpoint
+                    if (profileDetailsOwner.isInitialized()) profileDetailsOwner.value.endpointChanged()
+                    if (resourcesOwner.isInitialized()) resourcesOwner.value.pauseAutomatic()
+                    if (snapshot.endpoint != null) visibleResourceMaintenance()
+                }
+                bindObservability(snapshot.endpoint)
                 currentSession?.takeUnless { it.current }?.close()
                 mutableState.update { it.copy(phase = snapshot.phase, message = snapshot.error ?: it.message,
-                    networkRestartRequired = requiresNetworkRestart(it.settings, snapshot), networkError = snapshot.networkError) }
+                    networkRestartRequired = requiresNetworkRestart(it.settings, snapshot), networkError = snapshot.networkError,
+                    listening = snapshot.listening, suspended = snapshot.suspended, listenerError = snapshot.listenerError) }
                 if (outboundGroupEndpoint !== snapshot.endpoint) outboundGroupEndpoint = null
                 if (snapshot.endpoint != null && outboundBlockedEndpoint !== snapshot.endpoint) outboundBlockedEndpoint = null
                 bindOutbound()
@@ -257,14 +595,18 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
             sessionBindings(visible, application.vpn.map { it.endpoint })
                 .collectLatest { binding ->
                     api = null
+                    if (proxyPresentationOwner.isInitialized()) bindProxyPresentation(proxyPresentationOwner.value)
                     bindDiagnostics(null)
                     mutableState.update { it.copy(groups = emptyList(), connections = emptyList(), traffic = Traffic()) }
                     outboundGroupEndpoint = null
                     outbound.awaitingGroups()
                     if (binding == null) return@collectLatest
                     val (endpoint, generation) = binding
+                    bindObservability(endpoint)
+                    val historyToken = observationToken
                     val client = CoreApiClient(ControlEndpoint(endpoint.port, endpoint.secret))
                     api = client
+                    if (proxyPresentationOwner.isInitialized()) bindProxyPresentation(proxyPresentationOwner.value)
                     bindDiagnostics(DiagnosticsBinding(endpoint, client, generation, outboundConfiguration))
                     try {
                         supervisorScope {
@@ -279,6 +621,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
                                     report(failure)
                                 }, { snapshot ->
                                     mutableState.update { it.copy(groups = snapshot) }
+                                    if (proxyPresentationOwner.isInitialized()) proxyPresentationOwner.value.groups(snapshot)
                                     outboundGroupEndpoint = endpoint
                                     val picks = snapshot.routePicks()
                                     bindOutbound(picks)
@@ -289,11 +632,14 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
                                     client.logs().flowOn(Dispatchers.Default)
                                 }, ::report) { line ->
                                     if (state.value.settings.openLogs) {
-                                        mutableState.update { it.copy(logs = (it.logs + line).takeLast(2000)) }
+                                        observability.acceptLog(historyToken, line)
                                     }
                                 }
+                                session.launch("observation-demand") { observability.observationsEnabled.collect { client.setTelemetryObservations(it) } }
                                 session.observe("telemetry", flowOf(true), client::telemetry, ::report) { event ->
                                     when (event) {
+                                        is CoreTelemetry.ProvidersLoaded -> profileDetails.providersLoaded(endpoint,event)
+                                        is CoreTelemetry.Observations -> observability.acceptWindow(historyToken, event.value)
                                         is CoreTelemetry.TrafficSample -> mutableState.update { it.copy(traffic = event.value) }
                                         is CoreTelemetry.GroupsChanged -> if (groups.changed(event.revision)) {
                                             diagnostics.awaitingRoute()
@@ -314,7 +660,10 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
                             }
                         }
                     } finally {
-                        if (api === client) api = null
+                        if (api === client) {
+                            api = null
+                            if (proxyPresentationOwner.isInitialized()) bindProxyPresentation(proxyPresentationOwner.value)
+                        }
                         if (diagnosticsBinding?.client === client) bindDiagnostics(null)
                         client.close()
                     }
@@ -324,11 +673,15 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
 
     fun setVisible(value: Boolean) {
         visible.update { it.changed(value) }
+        if (profileDetailsOwner.isInitialized()) profileDetailsOwner.value.foreground(value)
         outbound.setActive(value)
+        if (observabilityOwner.isInitialized()) observabilityOwner.value.setForeground(value)
         if (ipQualityOwner.isInitialized()) ipQualityOwner.value.setForeground(value)
         profileMaintenance.setForeground(value)
         autoCheckUpdates()
-        if (value) localeOwner.value.foreground()
+        if (value) { localeOwner.value.foreground(); visibleResourceMaintenance() }
+        else if (resourcesOwner.isInitialized()) resourcesOwner.value.pauseAutomatic()
+        if (!value && proxyPresentationOwner.isInitialized()) proxyPresentationOwner.value.active(false)
         if (!value) bindDiagnostics(null)
         if (!value) currentSession?.close()
     }
@@ -351,22 +704,42 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
 
     override fun onCleared() {
         backup.close()
+        if (profileDetailsOwner.isInitialized()) profileDetailsOwner.value.close()
+        if (resourcesOwner.isInitialized()) resourcesOwner.value.close()
+        if (globalResourcesOwner.isInitialized()) globalResourcesOwner.value.close()
+        if (resourceManagementOwner.isInitialized()) resourceManagementOwner.value.close()
+        if (proxyPresentationOwner.isInitialized()) proxyPresentationOwner.value.close()
+        if (observabilityOwner.isInitialized()) observabilityOwner.value.close()
         if (profileListOwner.isInitialized()) profileListOwner.value.close()
         if (ipQualityOwner.isInitialized()) ipQualityOwner.value.close()
         if (updateOwner.isInitialized()) updateOwner.value.close()
         if (localeOwner.isInitialized()) localeOwner.value.close()
         profileMaintenance.close()
+        if (profileImportsOwner.isInitialized()) profileImportsOwner.value.close()
         diagnostics.close()
         diagnosticsRouteJob?.cancel()
         outbound.close()
         openedEditor = null
+        closeAppAccess()
+        if (sourceApplyOwner.isInitialized()) sourceApplyOwner.value.close()
+        if (overrideOwner.isInitialized()) overrideOwner.value.close()
+        if (maintenanceOwner.isInitialized()) maintenanceOwner.value.close()
+        notices.close()
         aurora.dispose()
         auroraCheckJob?.cancel()
         settingsUpdates.close()
         filePicker = null
+        onDemandLocationRequest = null
+        batteryExemptionRequest = null
+        applicationsAuthorization = null
+        exitAfterStop = null
         super.onCleared()
     }
 
+    override fun setProviderTelemetryActive(active: Boolean) {
+        providerTelemetryRequested=active
+        if (profileDetailsOwner.isInitialized()) profileDetailsOwner.value.telemetryActive(active)
+    }
     override fun setConnectionTelemetryActive(active: Boolean) { connectionTelemetryActive.value = active }
     override fun setMemoryTelemetryActive(active: Boolean) { diagnostics.memory(active) }
     override fun setServiceTelemetryTargets(ids: Set<String>) { diagnostics.watch(ids) }
@@ -380,7 +753,8 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
     }
 
     override fun connect() {
-        if (VpnService.prepare(application) != null) {
+        if (application.maintenanceActive) return
+        if (state.value.settings.network.vpnEnabled && VpnService.prepare(application) != null) {
             showMessage(application.getString(R.string.error_vpn_permission))
             return
         }
@@ -393,10 +767,32 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
     }
 
     override fun disconnect() {
+        platformEntryGate.cancelStart()
+        application.invalidatePendingStarts()
+        if (sourceApplyOwner.isInitialized()) sourceApplyOwner.value.cancelPending()
         application.startService(Intent(application, LiteVpnService::class.java).setAction(LiteVpnService.ACTION_STOP))
     }
 
     override fun importFile() { filePicker?.invoke() }
+
+    override suspend fun createProfileBuilder(name: String): dev.aerove.lite.profilebuilder.ProfileBuilderSession {
+        check(!application.maintenanceActive) { "Maintenance is active" }
+        val session = withContext(Dispatchers.Default) {
+            dev.aerove.lite.profilebuilder.ProfileBuilderSession.create(application.profiles, name)
+        }
+        openedBuilder = session.profileId to session
+        return session
+    }
+
+    override fun profileBuilder(profileId: String): dev.aerove.lite.profilebuilder.ProfileBuilderSession {
+        openedBuilder?.takeIf { it.first == profileId }?.let { return it.second }
+        return dev.aerove.lite.profilebuilder.ProfileBuilderSession(application.profiles, profileId).also {
+            openedBuilder = profileId to it
+        }
+    }
+
+    override suspend fun profileBuilderResources() = application.builderResourceLibrary.snapshot().resources
+    override fun closeProfileBuilder() { openedBuilder = null }
 
     override fun editor(profileId: String, title: String, readOnly: Boolean): ProfileEditorSession {
         val key = Triple(profileId, title, readOnly)
@@ -429,25 +825,20 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         reconnectSelected(profileId)
     }
 
-    override fun importProfileText(name: String, input: String) = perform("import") {
-        val existing = application.profiles.snapshot().profiles.mapTo(mutableSetOf()) { it.name }
-        val batch = profileLinks.decode(input, existing)
-        val failures = batch.errors.map { "${it.source.inputIndex + 1}:${it.source.line} ${it.field}: ${it.reason}" }.toMutableList()
-        for (entry in batch.entries) {
-            try {
-                val title = name.trim().takeIf { it.isNotEmpty() && batch.entries.size == 1 } ?: entry.name
-                when (entry) {
-                    is ProfileLinkEntry.Subscription -> application.profiles.addSubscription(title, entry.url)
-                    is ProfileLinkEntry.Inline -> application.profiles.importText(title, entry.config)
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failure: Exception) {
-                failures += failure.message ?: failure.javaClass.simpleName
-            }
-        }
-        reloadProfiles()
-        if (failures.isNotEmpty()) showMessage(failures.joinToString("\n"))
+    private val profileImportsOwner = lazy {
+        dev.aerove.lite.integration.ProfileImportWorkspace(viewModelScope, application.profiles,
+            { !application.maintenanceActive }, { reloadProfiles() },
+            { prompt -> mutableState.update { it.copy(profileImportKeyPrompt = prompt) } },
+            { mutableState.update { it.copy(profileImportVisible = false) } },
+            { issues -> notices.post(if (issues.isEmpty()) application.getString(R.string.age_import_failed)
+                else issues.joinToString("\n") { "${it.path}: ${it.reason}" }, dev.aerove.lite.notices.NoticeLevel.Error) })
+    }
+    override val profileImports get() = profileImportsOwner.value
+
+    override fun importProfileText(name: String, input: String) {
+        if (application.maintenanceActive) return
+        mutableState.update { it.copy(profileImportVisible = true) }
+        profileImports.single(dev.aerove.lite.profilesource.NamedProfileInput(name, input))
     }
 
     fun importFile(uri: Uri) = perform("import") {
@@ -456,17 +847,18 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
                 if (cursor.moveToFirst()) cursor.getString(0) else null
             } ?: application.getString(R.string.default_profile_name)
         }
-        val input = withContext(Dispatchers.IO) {
-            checkNotNull(application.contentResolver.openInputStream(uri)) { application.getString(R.string.error_read_file) }
+        profileImports.importFile(name) {
+            var opened: java.io.InputStream? = null
+            try {
+                withContext(Dispatchers.IO) {
+                    checkNotNull(application.contentResolver.openInputStream(uri)) { application.getString(R.string.error_read_file) }
+                        .also { opened = it }
+                }.also { opened = null }
+            } catch (failure: Throwable) { opened?.close(); throw failure }
         }
-        application.profiles.importFile(name, input)
-        reloadProfiles()
     }
 
-    override fun addSubscription(name: String, url: String) = perform("import") {
-        application.profiles.addSubscription(name, url)
-        reloadProfiles()
-    }
+    override fun addSubscription(name: String, url: String) = importProfileText(name, url)
 
     override fun updateProfile(id: String) = perform("profile:$id") {
         when (val result = profileMaintenance.refresh(id)) {
@@ -479,15 +871,14 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
 
     override fun updateProfileMetadata(id: String, name: String, url: String?, autoUpdate: Boolean,
         intervalMillis: Long) = perform("profile:$id") {
-        val before = state.value.profiles.firstOrNull { it.id == id }
-        val saved = profileMaintenance.editMetadata(id, name, url, autoUpdate, intervalMillis)
+        val expected = application.profiles.documentSnapshot(id)
+        profileMaintenance.editCandidate(expected, name, url, autoUpdate, intervalMillis)
         reloadProfiles()
-        if (before?.url != saved.url && saved.url != null) {
-            when (val result = profileMaintenance.refresh(id)) {
-                is ProfileMaintenanceResult.Failed -> report(result.error)
-                else -> Unit
-            }
-        }
+    }
+
+    override val profileProperties: dev.aerove.lite.integration.ProfilePropertiesAccess by lazy {
+        dev.aerove.lite.integration.RepositoryProfilePropertiesAccess(application.profiles, profileMaintenance,
+            { !application.maintenanceActive }, { reloadProfiles() })
     }
 
     override fun selectProfile(id: String) = perform("profile:$id") {
@@ -508,50 +899,28 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
 
     override fun selectProxy(group: String, proxy: String) = perform("group:$group") {
         val client = requireApi()
+        val changed = state.value.groups.firstOrNull { it.name == group }?.selected != proxy
         val selection = outbound.beginSelection()
         diagnostics.awaitingRoute()
         var succeeded = false
         try {
             client.select(group, proxy)
             succeeded = true
+            if (changed) try {
+                if (state.value.settings.backgroundPolicy.closeConnections) client.closeAllConnections()
+                else client.resetConnections()
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) {
+                observability.appendLocalLogs(listOf(LogLine(System.currentTimeMillis(), "warning",
+                    "changeProxy($group -> $proxy) connection reset failed: ${failure.message}"))) { !application.maintenanceActive }
+            }
         } finally {
             outbound.endSelection(selection, group, proxy, succeeded)
             synchronizeDiagnosticsRoute()
         }
     }
 
-    override fun testGroup(group: String) {
-        val session = currentSession
-        val client = api
-        if (session == null || client == null || !session.current) {
-            showMessage(application.getString(R.string.error_api_unavailable))
-            return
-        }
-        val nodes = state.value.groups.firstOrNull { it.name == group }?.nodes ?: return
-        performInSession("group:$group", session) {
-            val limit = Semaphore(4)
-            coroutineScope {
-                nodes.map { node -> async {
-                    limit.withPermit {
-                        val measured = try {
-                            client.delay(node.name)
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (_: IOException) {
-                            -1
-                        }
-                        session.accept {
-                            mutableState.update { state -> state.copy(groups = state.groups.map { current ->
-                                if (current.name != group) current else current.copy(nodes = current.nodes.map {
-                                    if (it.name == node.name) it.copy(delayMillis = measured) else it
-                                })
-                            }) }
-                        }
-                    }
-                } }.awaitAll()
-            }
-        }
-    }
+    override fun testGroup(group: String) { proxyPresentation.testGroup(group, "") }
 
     override fun refreshOutbound() {
         outbound.refresh()
@@ -580,6 +949,9 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
 
     override fun shuffleAurora() = queueSettings { settingsUpdates.shuffle() }
 
+    override fun changeHistoryTable(change: dev.aerove.lite.observability.HistoryTableChange) =
+        queueSettings { settingsUpdates.historyTable(change) }
+
     override fun changeSettings(settings: LiteSettings) {
         val baseline = state.value.settings
         val requested = settings.normalized()
@@ -588,27 +960,29 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
 
     private fun applySavedSettings(saved: LiteSettings, allowRestart: Boolean) {
         val old = state.value.settings
-        val restart = old.ipv6 != saved.ipv6 || old.overrideDns != saved.overrideDns ||
-            old.dnsServers != saved.dnsServers || old.appFilterMode != saved.appFilterMode ||
-            old.packages != saved.packages || old.mode != saved.mode
+        val restart = requiresCoreReconfiguration(old, saved)
         if (allowRestart && restart) invalidateOutboundConfiguration()
         mutableState.update { it.copy(settings = saved, networkRestartRequired = requiresNetworkRestart(saved, application.vpn.value)) }
         diagnostics.settings(saved)
-        if (allowRestart && restart && state.value.phase in setOf(VpnPhase.Running, VpnPhase.Starting)) connect()
+        if (allowRestart && !old.developerMode && saved.developerMode) notices.post(application.getString(R.string.maintenance_developer_mode_enable_tip), dev.aerove.lite.notices.NoticeLevel.Success)
+        if (allowRestart && restart && state.value.phase in setOf(VpnPhase.Running, VpnPhase.Starting)) {
+            ContextCompat.startForegroundService(application, Intent(application, LiteVpnService::class.java)
+                .setAction(LiteVpnService.ACTION_RECONFIGURE))
+        }
         if (old.aurora != saved.aurora) checkAuroraTime()
     }
 
     private fun queueSettings(action: suspend () -> Unit) {
-        if (!viewModelScope.isActive) return
+        if (!viewModelScope.isActive || application.maintenanceActive) return
         settingsRequests++
-        mutableState.update { it.copy(busy = it.busy + "settings") }
+        mutableState.update { it.copy(busy = it.busy + "settings", settingsError = false) }
         viewModelScope.launch {
             try {
                 action()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
-                if (viewModelScope.isActive) report(failure)
+                if (viewModelScope.isActive) { mutableState.update { it.copy(settingsError = true) }; report(failure) }
             } finally {
                 settingsRequests--
                 if (settingsRequests == 0) mutableState.update { it.copy(busy = it.busy - "settings") }
@@ -635,7 +1009,87 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
     private suspend fun reloadProfiles() {
         val snapshot = profileMaintenance.reload()
         mutableState.update { it.copy(profiles = snapshot.profiles, selectedProfile = snapshot.selectedId) }
+        if (profileDetailsOwner.isInitialized()) profileDetailsOwner.value.endpointChanged()
+        if (proxyPresentationOwner.isInitialized()) proxyPresentationOwner.value.profile(snapshot.profiles.find { it.id == snapshot.selectedId })
         bindOutbound()
+    }
+
+    private suspend fun restoreWithRuntime(write: suspend () -> Unit, refresh: suspend () -> Unit,
+        resumeAfterSuccess: Boolean = true, restoreLocale: Boolean = true) {
+        var maintenanceMayResume = false
+        try { application.withMaintenance {
+            application.invalidatePendingStarts()
+            if (sourceApplyOwner.isInitialized()) sourceApplyOwner.value.quiesce()
+            externalOfferJob?.cancelAndJoin()
+            dismissExternalProfile()
+            val continuation = dev.aerove.lite.integration.RestoreRuntimeOwner(
+                stop = {
+                    if (ipQualityOwner.isInitialized()) ipQualityOwner.value.quiesce()
+                    if (updateOwner.isInitialized()) updateOwner.value.quiesce()
+                    profileMaintenance.quiesce()
+                    if (profileImportsOwner.isInitialized()) profileImportsOwner.value.quiesce()
+                    if (profileListOwner.isInitialized()) profileListOwner.value.quiesce()
+                    workJobs.values.toList().forEach { it.cancelAndJoin() }
+                    if (profileDetailsOwner.isInitialized()) profileDetailsOwner.value.quiesce()
+                    if (resourcesOwner.isInitialized()) resourcesOwner.value.quiesce()
+                    if (overrideOwner.isInitialized()) overrideOwner.value.quiesce()
+                    if (proxyPresentationOwner.isInitialized()) proxyPresentationOwner.value.quiesce()
+                    if (globalResourcesOwner.isInitialized()) globalResourcesOwner.value.quiesce()
+                    if (resourceManagementOwner.isInitialized()) resourceManagementOwner.value.quiesce()
+                    application.stopForMaintenance()
+                },
+                capture = { stopped ->
+                    val settings = application.settings.read()
+                    val id = stopped.previousPlan?.profileId
+                    dev.aerove.lite.integration.RestoreRuntimeBaseline(
+                        dev.aerove.lite.integration.RestoreRuntimeTarget(id, settings),
+                        id?.let { application.profiles.documentSnapshot(it) },
+                    )
+                },
+                target = {
+                    val actual = application.profiles.snapshot()
+                    dev.aerove.lite.integration.RestoreRuntimeTarget(actual.selectedId, application.settings.read())
+                },
+                resume = { stopped, target, resume ->
+                    application.resumeAfterMaintenance(stopped, target?.profileId, target?.settings, resume && target?.profileId != null)
+                },
+                resumeAfterSuccess = resumeAfterSuccess,
+                rollbackSafe = { failure, baseline ->
+                    (dev.aerove.lite.data.rollbackVerified(failure) &&
+                        application.settings.read() == baseline.target.settings &&
+                        (baseline.document?.let { original ->
+                            application.profiles.documentSnapshot(original.profile.id) == original
+                        } ?: (baseline.target.profileId == null))).also { maintenanceMayResume = it }
+                },
+            )
+            continuation.execute { beforeWrite, afterLoad ->
+                    settingsUpdates.restore({
+                        beforeWrite()
+                        application.builderResourceLibrary.invalidateRemoteRefreshes()
+                        application.settings.deferPublication { write() }
+                    }) {
+                        if (restoreLocale) localeOwner.value.restoreSaved()
+                        refresh()
+                        afterLoad()
+                    }
+            }
+            maintenanceMayResume = resumeAfterSuccess
+        } } finally {
+            if (maintenanceMayResume) {
+                if (ipQualityOwner.isInitialized()) ipQualityOwner.value.resumeAfterMaintenance()
+                if (updateOwner.isInitialized()) updateOwner.value.resumeAfterMaintenance()
+                if (proxyPresentationOwner.isInitialized()) proxyPresentationOwner.value.resumeAfterMaintenance()
+                if (globalResourcesOwner.isInitialized()) globalResourcesOwner.value.resumeAfterMaintenance()
+                if (resourceManagementOwner.isInitialized()) resourceManagementOwner.value.resumeAfterMaintenance()
+                if (sourceApplyOwner.isInitialized()) sourceApplyOwner.value.resumeAfterMaintenance()
+                profileMaintenance.resumeAfterMaintenance(visible.value.active && !application.maintenanceActive)
+                if (profileListOwner.isInitialized()) profileListOwner.value.resumeAfterMaintenance()
+                if (profileImportsOwner.isInitialized()) profileImportsOwner.value.resumeAfterMaintenance()
+                if (overrideOwner.isInitialized()) overrideOwner.value.resumeAfterMaintenance()
+                if (resourcesOwner.isInitialized()) resourcesOwner.value.resumeAfterMaintenance()
+                if (profileDetailsOwner.isInitialized()) profileDetailsOwner.value.resumeAfterMaintenance()
+            }
+        }
     }
 
     private suspend fun reloadRestoredData() {
@@ -648,7 +1102,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         val endpoint = application.vpn.value.endpoint ?: return null
         if (outboundBlockedEndpoint === endpoint) return null
         return OutboundKey(endpoint, state.value.selectedProfile ?: return null, state.value.settings.mode,
-            outboundConfiguration)
+            outboundConfiguration, application.vpn.value.let { it.phase == VpnPhase.Running && it.listening && !it.suspended })
     }
 
     private fun bindOutbound(snapshotPicks: Map<String, String>? = null) {
@@ -673,8 +1127,14 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         bindIpQuality(null)
     }
 
+    private fun requestSourceReapply() { sourceApplyOwner.value.request() }
+
     private fun reconnectSelected(id: String) {
-        if (state.value.selectedProfile == id && state.value.phase in setOf(VpnPhase.Running, VpnPhase.Starting)) connect()
+        if (!application.maintenanceActive && state.value.selectedProfile == id &&
+            state.value.phase in setOf(VpnPhase.Running, VpnPhase.Starting)) {
+            ContextCompat.startForegroundService(application, Intent(application, LiteVpnService::class.java)
+                .setAction(LiteVpnService.ACTION_RECONFIGURE))
+        }
     }
 
     private fun diagnosticsBindingCurrent(binding: DiagnosticsBinding): Boolean =
@@ -747,19 +1207,19 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
     }
 
     private fun perform(key: String, action: suspend () -> Unit) {
-        if (key in state.value.busy) return
-        mutableState.update { it.copy(busy = it.busy + key) }
-        viewModelScope.launch {
-            try {
-                action()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failure: Exception) {
-                report(failure)
-            } finally {
+        if (application.maintenanceActive || workJobs.containsKey(key)) return
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            try { action() }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { report(failure) }
+            finally {
+                workJobs.remove(key)
                 mutableState.update { it.copy(busy = it.busy - key) }
             }
         }
+        if (workJobs.putIfAbsent(key, job) != null) { job.cancel(); return }
+        mutableState.update { it.copy(busy = it.busy + key) }
+        job.start()
     }
 
     private fun report(failure: Throwable) { showMessage(failure.message ?: failure.javaClass.simpleName) }
@@ -874,6 +1334,7 @@ internal class ControllerSettingsUpdates(
     suspend fun load(): Unit = mutex.withLock {
         if (!closed) publishVisible(loadLatest(), false)
     }
+    suspend fun awaitIdle(): Unit = mutex.withLock { check(!closed) { "Settings owner is closed" } }
 
     suspend fun reload(): Unit = mutex.withLock {
         if (closed) return@withLock
@@ -891,6 +1352,26 @@ internal class ControllerSettingsUpdates(
             if (baseline.auroraSeed != requested.auroraSeed || baseline.auroraRotationDay != requested.auroraRotationDay) {
                 deferredWallpaper = false
             }
+            publishVisible(saved, true)
+        }
+    }
+
+    suspend fun update(restart: Boolean = true, transform: (LiteSettings) -> LiteSettings): LiteSettings {
+        val token = checkNotNull(intent()) { "Settings restore is active" }
+        return mutex.withLock {
+            check(!closed && currentIntent(token)) { "Settings intent was superseded" }
+            val saved = commit { saveSettings(transform(loadLatest())) }
+            publishVisible(saved, restart)
+            saved
+        }
+    }
+
+    suspend fun historyTable(change: dev.aerove.lite.observability.HistoryTableChange) {
+        val token = intent() ?: return
+        mutex.withLock {
+            if (closed || !currentIntent(token)) return@withLock
+            val settings = loadLatest()
+            val saved = commit { saveSettings(settings.copy(historyTables = settings.historyTables.apply(change))) }
             publishVisible(saved, true)
         }
     }
@@ -969,13 +1450,66 @@ private fun mergeSettingsChanges(baseline: LiteSettings, requested: LiteSettings
         packages = choose(baseline.packages, requested.packages, current.packages),
         autoStart = choose(baseline.autoStart, requested.autoStart, current.autoStart),
         openLogs = choose(baseline.openLogs, requested.openLogs, current.openLogs),
+        developerMode = choose(baseline.developerMode, requested.developerMode, current.developerMode),
+        acceptedDisclaimerVersion = choose(baseline.acceptedDisclaimerVersion, requested.acceptedDisclaimerVersion, current.acceptedDisclaimerVersion),
+        unifiedDelay = choose(baseline.unifiedDelay, requested.unifiedDelay, current.unifiedDelay),
+        tcpConcurrent = choose(baseline.tcpConcurrent, requested.tcpConcurrent, current.tcpConcurrent),
+        findProcessMode = choose(baseline.findProcessMode, requested.findProcessMode, current.findProcessMode),
+        externalController = current.externalController.copy(
+            enabled = choose(baseline.externalController.enabled, requested.externalController.enabled, current.externalController.enabled),
+            secret = choose(baseline.externalController.secret, requested.externalController.secret, current.externalController.secret),
+        ),
         autoCheckUpdate = choose(baseline.autoCheckUpdate, requested.autoCheckUpdate, current.autoCheckUpdate),
         network = mergeNetworkChanges(baseline.network, requested.network, current.network),
+        requests = current.requests.copy(
+            globalUserAgent = choose(baseline.requests.globalUserAgent, requested.requests.globalUserAgent, current.requests.globalUserAgent),
+            userAgents = choose(baseline.requests.userAgents, requested.requests.userAgents, current.requests.userAgents),
+            checkCertificate = choose(baseline.requests.checkCertificate, requested.requests.checkCertificate, current.requests.checkCertificate),
+        ),
+        historyTables = dev.aerove.lite.observability.mergeHistoryTables(baseline.historyTables, requested.historyTables, current.historyTables),
+        appAccess = current.appAccess.copy(
+            enabled = choose(baseline.appAccess.enabled, requested.appAccess.enabled, current.appAccess.enabled),
+            mode = choose(baseline.appAccess.mode, requested.appAccess.mode, current.appAccess.mode),
+            includePackages = choose(baseline.appAccess.includePackages, requested.appAccess.includePackages, current.appAccess.includePackages),
+            excludePackages = choose(baseline.appAccess.excludePackages, requested.appAccess.excludePackages, current.appAccess.excludePackages),
+            sort = choose(baseline.appAccess.sort, requested.appAccess.sort, current.appAccess.sort),
+            hideSystem = choose(baseline.appAccess.hideSystem, requested.appAccess.hideSystem, current.appAccess.hideSystem),
+            hideNoInternet = choose(baseline.appAccess.hideNoInternet, requested.appAccess.hideNoInternet, current.appAccess.hideNoInternet),
+        ),
+        dnsPreferences = mergeDnsPreferences(baseline.dnsPreferences, requested.dnsPreferences, current.dnsPreferences),
+        geoResources = current.geoResources.copy(
+            autoUpdate = choose(baseline.geoResources.autoUpdate, requested.geoResources.autoUpdate, current.geoResources.autoUpdate),
+            intervalHours = choose(baseline.geoResources.intervalHours, requested.geoResources.intervalHours, current.geoResources.intervalHours),
+            urls = dev.aerove.lite.resources.GeoResourceKind.entries.associateWith { kind ->
+                choose(baseline.geoResources.urls.getValue(kind), requested.geoResources.urls.getValue(kind), current.geoResources.urls.getValue(kind))
+            },
+        ),
+        backgroundPolicy = current.backgroundPolicy.copy(
+            autoRun = choose(baseline.backgroundPolicy.autoRun, requested.backgroundPolicy.autoRun, current.backgroundPolicy.autoRun),
+            minimizeOnExit = choose(baseline.backgroundPolicy.minimizeOnExit, requested.backgroundPolicy.minimizeOnExit, current.backgroundPolicy.minimizeOnExit),
+            hidden = choose(baseline.backgroundPolicy.hidden, requested.backgroundPolicy.hidden, current.backgroundPolicy.hidden),
+            onlyStatisticsProxy = choose(baseline.backgroundPolicy.onlyStatisticsProxy, requested.backgroundPolicy.onlyStatisticsProxy, current.backgroundPolicy.onlyStatisticsProxy),
+            closeConnections = choose(baseline.backgroundPolicy.closeConnections, requested.backgroundPolicy.closeConnections, current.backgroundPolicy.closeConnections),
+            excludeSSIDs = choose(baseline.backgroundPolicy.excludeSSIDs, requested.backgroundPolicy.excludeSSIDs, current.backgroundPolicy.excludeSSIDs),
+            showNotificationStopAction = choose(baseline.backgroundPolicy.showNotificationStopAction, requested.backgroundPolicy.showNotificationStopAction, current.backgroundPolicy.showNotificationStopAction),
+        ),
+        proxyPresentation = current.proxyPresentation.copy(
+            type = choose(baseline.proxyPresentation.type, requested.proxyPresentation.type, current.proxyPresentation.type),
+            sort = choose(baseline.proxyPresentation.sort, requested.proxyPresentation.sort, current.proxyPresentation.sort),
+            layout = choose(baseline.proxyPresentation.layout, requested.proxyPresentation.layout, current.proxyPresentation.layout),
+            iconStyle = choose(baseline.proxyPresentation.iconStyle, requested.proxyPresentation.iconStyle, current.proxyPresentation.iconStyle),
+            cardType = choose(baseline.proxyPresentation.cardType, requested.proxyPresentation.cardType, current.proxyPresentation.cardType),
+            hideTimeoutProxies = choose(baseline.proxyPresentation.hideTimeoutProxies, requested.proxyPresentation.hideTimeoutProxies, current.proxyPresentation.hideTimeoutProxies),
+            testUrl = choose(baseline.proxyPresentation.testUrl, requested.proxyPresentation.testUrl, current.proxyPresentation.testUrl),
+            timeoutMillis = choose(baseline.proxyPresentation.timeoutMillis, requested.proxyPresentation.timeoutMillis, current.proxyPresentation.timeoutMillis),
+        ),
         fontFamily = choose(baseline.fontFamily, requested.fontFamily, current.fontFamily),
         textScaleEnabled = choose(baseline.textScaleEnabled, requested.textScaleEnabled, current.textScaleEnabled),
         textScale = choose(baseline.textScale, requested.textScale, current.textScale),
         pureBlack = choose(baseline.pureBlack, requested.pureBlack, current.pureBlack),
         locale = choose(baseline.locale, requested.locale, current.locale),
+        floatingNavigationBar = choose(baseline.floatingNavigationBar, requested.floatingNavigationBar, current.floatingNavigationBar),
+        tabAnimation = choose(baseline.tabAnimation, requested.tabAnimation, current.tabAnimation),
         colorStyle = choose(baseline.colorStyle, requested.colorStyle, current.colorStyle),
         auroraColors = choose(baseline.auroraColors, requested.auroraColors, current.auroraColors),
         auroraSeed = choose(baseline.auroraSeed, requested.auroraSeed, current.auroraSeed),
@@ -995,10 +1529,33 @@ private fun mergeNetworkChanges(baseline: NetworkSettings, requested: NetworkSet
         ports = choose(baseline.ports, requested.ports, current.ports),
         allowLan = choose(baseline.allowLan, requested.allowLan, current.allowLan),
         authentication = choose(baseline.authentication, requested.authentication, current.authentication),
+        vpnEnabled = choose(baseline.vpnEnabled, requested.vpnEnabled, current.vpnEnabled),
+        dnsHijacking = choose(baseline.dnsHijacking, requested.dnsHijacking, current.dnsHijacking),
+        mtu = choose(baseline.mtu, requested.mtu, current.mtu),
+        bypassPrivateRoute = choose(baseline.bypassPrivateRoute, requested.bypassPrivateRoute, current.bypassPrivateRoute),
+        routeAddress = choose(baseline.routeAddress, requested.routeAddress, current.routeAddress),
+        routeExcludeAddress = choose(baseline.routeExcludeAddress, requested.routeExcludeAddress, current.routeExcludeAddress),
     )
 }
 
+internal fun requiresCoreReconfiguration(before: LiteSettings, after: LiteSettings): Boolean =
+    before.ipv6 != after.ipv6 || before.overrideDns != after.overrideDns ||
+        before.dnsServers != after.dnsServers || before.mode != after.mode ||
+        before.requests.globalUserAgent != after.requests.globalUserAgent ||
+        before.dnsPreferences != after.dnsPreferences || before.geoResources.urls != after.geoResources.urls
+
 private fun requiresNetworkRestart(settings: LiteSettings, snapshot: VpnSnapshot): Boolean =
-    snapshot.phase == VpnPhase.Running && snapshot.initialNetwork?.let {
-        effectiveVpnNetworkOptions(it) != effectiveVpnNetworkOptions(settings.network)
-    } == true
+    requiresVpnRestart(settings, snapshot)
+
+private fun mergeDnsPreferences(before: dev.aerove.lite.dnssettings.DnsPreferences,
+    requested: dev.aerove.lite.dnssettings.DnsPreferences, current: dev.aerove.lite.dnssettings.DnsPreferences): dev.aerove.lite.dnssettings.DnsPreferences {
+    fun <T> choose(old: T, next: T, latest: T): T = if (old == next) latest else next
+    val fields = dev.aerove.lite.dnssettings.DnsField.entries
+    val hosts = before.hosts.keys + requested.hosts.keys + current.hosts.keys
+    return current.copy(
+        values = fields.mapNotNull { field -> choose(before.values[field], requested.values[field], current.values[field])?.let { field to it } }.toMap(),
+        overridden = fields.filterTo(linkedSetOf()) { choose(it in before.overridden, it in requested.overridden, it in current.overridden) },
+        hosts = hosts.mapNotNull { host -> choose(before.hosts[host], requested.hosts[host], current.hosts[host])?.let { host to it } }.toMap(),
+        legacyFallbackServers = choose(before.legacyFallbackServers, requested.legacyFallbackServers, current.legacyFallbackServers),
+    )
+}

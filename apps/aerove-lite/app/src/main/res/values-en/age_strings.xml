@@ -1,0 +1,20 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+  <string name="age_secret_title">Age secret key</string>
+  <string name="age_secret_label">Secret key</string>
+  <string name="age_continue">Continue</string>
+  <string name="age_cancel">Cancel</string>
+  <string name="age_decrypt_failed">Decryption failed. Check the key and try again.</string>
+  <string name="age_import_title">Import profiles</string>
+  <string name="age_batch_mode">Batch input</string>
+  <string name="age_name">Name</string>
+  <string name="age_urls">URLs</string>
+  <string name="age_url">URL</string>
+  <string name="age_import_failed">Some profiles could not be imported.</string>
+  <string name="age_queued">Queued</string>
+  <string name="age_running">Importing</string>
+  <string name="age_succeeded">Imported</string>
+  <string name="age_failed">Failed</string>
+  <string name="age_cancelled">Cancelled</string>
+  <string name="age_import">Import</string>
+</resources>

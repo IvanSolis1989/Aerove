@@ -1,0 +1,15 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="requests_add">Добавить</string>
+    <string name="requests_certificate">Проверить сертификаты</string>
+    <string name="requests_default">По умолчанию</string>
+    <string name="requests_delete">Удалить</string>
+    <string name="requests_delete_confirm">Удалить этот пользовательский агент? Выбранная запись вернется к значению по умолчанию.</string>
+    <string name="requests_edit">Редактировать</string>
+    <string name="requests_invalid">Введите уникальный User-Agent (печатный ASCII, до 1024 символов).</string>
+    <string name="requests_move_down">Двигаться вниз</string>
+    <string name="requests_move_up">Вверх</string>
+    <string name="requests_save">Сохранить</string>
+    <string name="requests_title">Запросы и обновления</string>
+    <string name="requests_user_agent">User-Agent</string>
+</resources>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="navigation_bar_style">Bottom bar</string>
+    <string name="navigation_floating">Floating</string>
+    <string name="navigation_docked">Docked</string>
+    <string name="navigation_tab_animation">Tab animation</string>
+    <string name="navigation_slide">Slide</string>
+    <string name="navigation_fade">Fade</string>
+</resources>

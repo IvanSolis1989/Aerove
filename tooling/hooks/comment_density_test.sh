@@ -4,7 +4,9 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 checker="$script_dir/comment_density.sh"
-temp_dir="$(mktemp -d)"
+test_tmp_root='/d/CodexTemp/aerove-independent-20261022/session-20261023/hook-go-directives/tmp'
+mkdir -p "$test_tmp_root"
+temp_dir="$(mktemp -d "$test_tmp_root/comment-density.XXXXXX")"
 trap 'rm -rf "$temp_dir"' EXIT
 
 repo="$temp_dir/repo"
@@ -12,6 +14,7 @@ mkdir -p "$repo"
 git -C "$repo" init --quiet
 git -C "$repo" config user.email 'test@example.com'
 git -C "$repo" config user.name 'Test'
+git -C "$repo" config core.autocrlf false
 printf 'void main() {}\n' >"$repo/tracked.dart"
 git -C "$repo" add tracked.dart
 git -C "$repo" commit --quiet -m 'seed'
@@ -112,6 +115,31 @@ expect_under 'go pointer dereferences are not comments' "$repo/deref.go" \
     for i in $(seq 1 30); do echo '	*p = 1'; done
     echo '}'
   )"
+expect_under 'Go compiler directives do not count as comments' "$repo/directives.go" \
+  "$(
+    echo '//go:build cgo'
+    echo 'package main'
+    echo '//export foo'
+    echo 'func foo() {}'
+    for i in $(seq 1 16); do echo "func step$i() {}"; done
+  )"
+expect_over 'ordinary Go comments still count beside compiler directives' "$repo/dense_directives.go" \
+  "$(
+    echo '//go:build cgo'
+    echo 'package main'
+    for i in $(seq 1 8); do echo "// explanation $i"; done
+    for i in $(seq 1 22); do echo "func step$i() {}"; done
+  )"
+expect_over 'other go-prefixed Go comments still count' "$repo/dense_go_comments.go" \
+  "$(
+    echo 'package main'
+    for i in $(seq 1 8); do echo "//go:note $i is prose"; done
+    for i in $(seq 1 22); do echo "func step$i() {}"; done
+  )"
+expect_over 'a Go directive lookalike in a non-Go file still counts' "$repo/directives.yaml" \
+  '//export foo' \
+  "$(for i in $(seq 1 7); do echo "# explanation $i"; done)" \
+  "$(for i in $(seq 1 22); do echo "value$i: $i"; done)"
 expect_under 'a generated file is skipped' "$repo/model.g.dart" "$(dense 20 4)"
 expect_under 'generated plugin bindings are skipped' \
   "$repo/plugins/rust_api/lib/src/rust/frb_generated.io.dart" "$(dense 20 4)"
@@ -186,6 +214,10 @@ rm -f \
   "$repo/dense.dart" \
   "$repo/block.kt" \
   "$repo/argv.dart" \
+  "$repo/dense_directives.go" \
+  "$repo/dense_go_comments.go" \
+  "$repo/directives.go" \
+  "$repo/directives.yaml" \
   "$repo/plugins/proxy/lib/dense.dart"
 run_stdin
 if [ "$status" -ne 0 ] || [ -s "$temp_dir/err" ]; then
@@ -209,6 +241,7 @@ mkdir -p "$rename_repo"
 git -C "$rename_repo" init --quiet
 git -C "$rename_repo" config user.email 'test@example.com'
 git -C "$rename_repo" config user.name 'Test'
+git -C "$rename_repo" config core.autocrlf false
 printf '%s\n' "$(dense 24 370)" >"$rename_repo/original.go"
 git -C "$rename_repo" add original.go
 git -C "$rename_repo" commit --quiet -m 'seed original source'

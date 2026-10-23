@@ -5,6 +5,7 @@ import dev.aerove.lite.ColorMode
 import dev.aerove.lite.ColorStyle
 import dev.aerove.lite.LiteSettings
 import dev.aerove.lite.MaterialTier
+import dev.aerove.lite.FindProcessMode
 import dev.aerove.lite.ProxyMode
 import dev.aerove.lite.normalizeAuroraColors
 import dev.aerove.lite.normalizeDashboardWidgetValues
@@ -12,11 +13,19 @@ import dev.aerove.lite.normalizeThemeColors
 import dev.aerove.lite.normalized
 import dev.aerove.lite.networksettings.NetworkSettingsJson
 import dev.aerove.lite.networksettings.requireValid
+import dev.aerove.lite.navigation.TabAnimation
+import dev.aerove.lite.requests.RequestPreferencesJson
+import dev.aerove.lite.proxies.encodeProxyPresentation
+import dev.aerove.lite.proxies.decodeProxyPresentation
 import dev.aerove.lite.rotateAuroraForDay as rotateAuroraSettingsForDay
 import dev.aerove.lite.shuffleAuroraWallpaper as shuffleAuroraSettings
 import java.io.File
 import java.time.ZonedDateTime
 import kotlin.random.Random
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
@@ -26,13 +35,55 @@ class LiteSettingsStore(privateDirectory: File) {
     private val storage = PrivateStorage(File(privateDirectory, "settings"))
     private val savedSettings = MutableStateFlow<LiteSettings?>(null)
     val changes = savedSettings.asStateFlow()
+    private val publicationGate = Mutex()
+    @Volatile private var publicationDeferred = false
 
-    suspend fun read(): LiteSettings = storage.transaction { load().also { savedSettings.value = it } }
+    /** The backup domain owns commit/rollback; never hold the settings mutex across that work. */
+    suspend fun <T> deferPublication(block: suspend () -> T): T = publicationGate.withLock {
+        publicationDeferred = true
+        var original: Throwable? = null
+        try { block() }
+        catch (failure: Throwable) { original = failure; throw failure }
+        finally {
+            withContext(NonCancellable) {
+                try {
+                    storage.transaction {
+                        val actual = load()
+                        publicationDeferred = false
+                        savedSettings.value = actual
+                    }
+                } catch (recovery: Throwable) {
+                    publicationDeferred = false
+                    if (original != null) {
+                        invalidateRestoreRollback(original, recovery)
+                        original.addSuppressed(recovery)
+                    } else throw recovery
+                }
+            }
+        }
+    }
+
+    private fun publish(value: LiteSettings) { if (!publicationDeferred) savedSettings.value = value }
+
+    fun requestPolicy(defaultUserAgent: String): dev.aerove.lite.requests.RequestPolicySource {
+        require(dev.aerove.lite.requests.RequestPreferences.validUserAgent(defaultUserAgent))
+        return object : dev.aerove.lite.requests.RequestPolicySource {
+            override val defaultUserAgent = defaultUserAgent
+            override fun snapshot() = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) { read().requests }
+        }
+    }
+
+    suspend fun read(): LiteSettings = storage.transaction { load().also(::publish) }
+
+    /** Called only inside the repository's controlled reset domain and deferred publication fence. */
+    suspend fun reset(): LiteSettings = storage.transaction { persist(LiteSettings().normalized()) }
 
     suspend fun save(settings: LiteSettings, vpnAuthorized: Boolean = false): LiteSettings = storage.transaction {
         val normalized = settings.normalized()
         validateSettings(normalized)
-        require(!normalized.autoStart || vpnAuthorized) { "Boot auto-start requires an existing VPN authorization" }
+        require(!(normalized.autoStart || normalized.backgroundPolicy.autoRun) || !normalized.network.vpnEnabled || vpnAuthorized) {
+            "Boot auto-start requires an existing VPN authorization"
+        }
         persist(normalized)
     }
 
@@ -71,6 +122,20 @@ class LiteSettingsStore(privateDirectory: File) {
             .put("textScale", normalized.textScale.toDouble())
             .put("pureBlack", normalized.pureBlack)
             .put("locale", normalized.locale ?: JSONObject.NULL)
+            .put("floatingNavigationBar", normalized.floatingNavigationBar)
+            .put("tabAnimation", normalized.tabAnimation.wireName)
+            .put("requests", RequestPreferencesJson.encode(normalized.requests))
+            .put("proxyPresentation", encodeProxyPresentation(normalized.proxyPresentation))
+            .put("historyTables", dev.aerove.lite.observability.encodeHistoryTables(normalized.historyTables))
+            .put("backgroundPolicy", dev.aerove.lite.backgroundpolicy.BackgroundPolicyJson.encode(normalized.backgroundPolicy))
+            .put("appAccess", dev.aerove.lite.appaccess.AppAccessPreferencesJson.encode(normalized.appAccess))
+            .put("developerMode", normalized.developerMode)
+            .put("acceptedDisclaimerVersion", normalized.acceptedDisclaimerVersion)
+            .put("unifiedDelay", normalized.unifiedDelay).put("tcpConcurrent", normalized.tcpConcurrent)
+            .put("findProcessMode", normalized.findProcessMode.wireName)
+            .put("externalController", dev.aerove.lite.controllerprefs.encodeExternalController(normalized.externalController))
+            .put("dnsPreferences", dev.aerove.lite.dnssettings.DnsPreferencesJson.encode(normalized.dnsPreferences))
+            .put("geoResources", dev.aerove.lite.resources.GeoResourcePreferencesJson.encode(normalized.geoResources))
             .put("mode", normalized.mode.name).put("ipv6", normalized.ipv6)
             .put("overrideDns", normalized.overrideDns).put("dnsServers", JSONArray(normalized.dnsServers))
             .put("appFilterMode", normalized.appFilterMode.name)
@@ -82,7 +147,7 @@ class LiteSettingsStore(privateDirectory: File) {
         val encoded = json.toString()
         require(encoded.toByteArray(Charsets.UTF_8).size <= 128 * 1024) { "Settings exceed storage limit" }
         storage.write("settings.json", encoded)
-        savedSettings.value = normalized
+        publish(normalized)
         return normalized
     }
 
@@ -117,6 +182,23 @@ class LiteSettingsStore(privateDirectory: File) {
             dnsServers = strings("dnsServers"),
             appFilterMode = AppFilterMode.valueOf(json.getString("appFilterMode")),
             packages = strings("packages").toSet(),
+            appAccess = if (json.has("appAccess")) dev.aerove.lite.appaccess.AppAccessPreferencesJson.decode(json.readOptionalObject("appAccess")) else
+                LiteSettings(appFilterMode = AppFilterMode.valueOf(json.getString("appFilterMode")), packages = strings("packages").toSet()).appAccess,
+            developerMode = json.readOptionalBoolean("developerMode", false),
+            unifiedDelay = json.readOptionalBoolean("unifiedDelay", true),
+            tcpConcurrent = json.readOptionalBoolean("tcpConcurrent", true),
+            findProcessMode = if (!json.has("findProcessMode")) FindProcessMode.Always else {
+                val wire = json.get("findProcessMode")
+                require(wire is String) { "Invalid find process mode" }
+                FindProcessMode.entries.singleOrNull { it.wireName.equals(wire, ignoreCase = true) }
+                    ?: throw IllegalArgumentException("Invalid find process mode")
+            },
+            externalController = dev.aerove.lite.controllerprefs.decodeExternalController(json.readOptionalObject("externalController")),
+            acceptedDisclaimerVersion = if (!json.has("acceptedDisclaimerVersion")) 0 else {
+                val value = json.get("acceptedDisclaimerVersion")
+                require(value is Int && value >= 0) { "Invalid disclaimer version" }
+                value
+            },
             autoStart = json.getBoolean("autoStart"),
             openLogs = json.optBoolean("openLogs", false),
             colorStyle = json.readColorStyle(defaults.colorStyle),
@@ -151,9 +233,28 @@ class LiteSettingsStore(privateDirectory: File) {
                 require(json.get("locale") is String) { "Invalid application locale" }
                 json.getString("locale")
             },
+            floatingNavigationBar = json.readOptionalBoolean("floatingNavigationBar", defaults.floatingNavigationBar),
+            tabAnimation = if (!json.has("tabAnimation")) defaults.tabAnimation else {
+                val value = json.get("tabAnimation")
+                require(value is String) { "Invalid tab animation" }
+                requireNotNull(TabAnimation.entries.firstOrNull { it.wireName == value }) { "Invalid tab animation" }
+            },
+            requests = RequestPreferencesJson.decode(json.readOptionalObject("requests")),
+            proxyPresentation = decodeProxyPresentation(json.readOptionalObject("proxyPresentation")),
+            dnsPreferences = if (json.has("dnsPreferences")) dev.aerove.lite.dnssettings.DnsPreferencesJson.decode(json.readOptionalObject("dnsPreferences"))
+                else dev.aerove.lite.dnssettings.legacyDnsPreferences(json.optBoolean("overrideDns", false), strings("dnsServers"), json.getBoolean("ipv6")),
+            historyTables = json.readOptionalObject("historyTables")?.let { dev.aerove.lite.observability.decodeHistoryTables(it) } ?: dev.aerove.lite.observability.HistoryTablePreferences(),
+            geoResources = dev.aerove.lite.resources.GeoResourcePreferencesJson.decode(json.readOptionalObject("geoResources")),
+            backgroundPolicy = if (json.has("backgroundPolicy")) dev.aerove.lite.backgroundpolicy.BackgroundPolicyJson.decode(json.readOptionalObject("backgroundPolicy"))
+                else dev.aerove.lite.backgroundpolicy.BackgroundPolicyPreferences(autoRun = json.getBoolean("autoStart")),
         ).normalized().also(::validateSettings)
     }
 
+}
+
+private fun JSONObject.readOptionalObject(key: String): JSONObject? {
+    if (!has(key)) return null
+    return get(key) as? JSONObject ?: throw IllegalArgumentException("Invalid $key setting")
 }
 
 private fun JSONObject.readOptionalBoolean(key: String, default: Boolean): Boolean {
@@ -175,19 +276,22 @@ private fun JSONObject.readColorStyle(default: ColorStyle): ColorStyle {
 }
 
 internal fun validateSettings(settings: LiteSettings) {
+    require(settings.acceptedDisclaimerVersion >= 0) { "Invalid disclaimer version" }
+    settings.externalController.validate()
+    require(!settings.externalController.enabled || settings.externalController.secret.isNotEmpty()) { "externalController.secret: required when enabled" }
     settings.network.requireValid()
+    settings.proxyPresentation.validate()
+    settings.dnsPreferences.requireValid()
+    settings.geoResources.validate()
     require(settings.fontFamily == null || (settings.fontFamily.length <= 256 && settings.fontFamily.none { it.isISOControl() })) {
         "Invalid font family"
     }
     require(settings.themeColor in 0..0xffffffffL) { "Invalid ARGB theme color" }
     require(settings.dnsServers.isNotEmpty() && settings.dnsServers.size <= 32) { "Set at least one DNS server" }
     settings.dnsServers.forEach(::validateDnsServer)
-    require(settings.packages.size <= 3000 && settings.packages.all {
+    require(settings.packages.size <= 20_000 && settings.packages.all {
         it.length <= 255 && it.matches(Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)*"))
     }) { "Invalid application package" }
-    require(settings.appFilterMode != AppFilterMode.Include || settings.packages.isNotEmpty()) {
-        "An include-only VPN needs at least one application"
-    }
 }
 
 internal fun validateDnsServer(value: String) {

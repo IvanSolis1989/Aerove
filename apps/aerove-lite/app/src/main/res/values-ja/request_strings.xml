@@ -1,0 +1,14 @@
+<resources>
+    <string name="requests_title">リクエストと更新</string>
+    <string name="requests_user_agent">ユーザーエージェント</string>
+    <string name="requests_default">デフォルト</string>
+    <string name="requests_certificate">証明書を検証</string>
+    <string name="requests_add">追加</string>
+    <string name="requests_edit">編集</string>
+    <string name="requests_delete">削除</string>
+    <string name="requests_move_up">上へ移動</string>
+    <string name="requests_move_down">下へ移動</string>
+    <string name="requests_save">保存</string>
+    <string name="requests_invalid">重複しないユーザーエージェントを入力してください（表示可能な ASCII、最大 1024 文字）。</string>
+    <string name="requests_delete_confirm">このユーザーエージェントを削除しますか？選択中の場合はデフォルトに戻ります。</string>
+</resources>

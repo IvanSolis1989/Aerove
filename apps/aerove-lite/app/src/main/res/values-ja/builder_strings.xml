@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="builder_close">"閉じる"</string>
+    <string name="builder_save">"保存"</string>
+    <string name="builder_retry">"再試行"</string>
+    <string name="builder_add">"追加"</string>
+    <string name="builder_sort">"並べ替え"</string>
+    <string name="builder_delete">"削除"</string>
+    <string name="builder_empty">"項目がありません"</string>
+    <string name="builder_up">"上へ移動"</string>
+    <string name="builder_down">"下へ移動"</string>
+    <string name="builder_selected">"選択済み"</string>
+    <string name="builder_unsaved">"変更を保存しますか？"</string>
+    <string name="builder_discard">"変更を破棄"</string>
+    <string name="builder_edit">"編集"</string>
+    <string name="builder_select">"選択"</string>
+    <string name="builder_duplicate">"コピー"</string>
+    <string name="builder_name">"名前"</string>
+    <string name="builder_references">"参照元: %1$s"</string>
+    <string name="builder_replacement">"参照先を置き換える"</string>
+    <string name="builder_proxies">"プロキシ"</string>
+    <string name="builder_groups">"プロキシグループ"</string>
+    <string name="builder_rules">"ルール"</string>
+    <string name="builder_proxy_providers">"プロキシプロバイダー"</string>
+    <string name="builder_rule_providers">"ルールプロバイダー"</string>
+    <string name="builder_type">"タイプ"</string>
+    <string name="builder_payload">"一致条件"</string>
+    <string name="builder_target">"宛先"</string>
+    <string name="builder_remove_field">"%1$s を削除"</string>
+    <string name="builder_add_field">"フィールドを追加"</string>
+    <string name="builder_field_name">"フィールド名"</string>
+    <string name="builder_filters">"フィルター"</string>
+    <string name="builder_icon_sets">"アイコンセット"</string>
+    <string name="builder_import_url">"URL からインポート"</string>
+    <string name="builder_import_file">"ファイルをインポート"</string>
+    <string name="builder_regex">"正規表現"</string>
+    <string name="builder_sync">"同期"</string>
+    <string name="builder_title">"カスタムプロファイル"</string>
+    <string name="builder_undo">"元に戻す"</string>
+    <string name="builder_redo">"やり直す"</string>
+</resources>

@@ -33,6 +33,7 @@ class UpdateFeatureTest {
         var failCheck = false
         var entered: CompletableDeferred<Unit>? = null
         var hold: CompletableDeferred<Unit>? = null
+        var nonCancellableDownload = false
         override suspend fun releases(page: Int): String {
             requests++
             if (failCheck) error("fixture network failure")
@@ -49,7 +50,7 @@ class UpdateFeatureTest {
             downloads++
             destination.writeBytes(if (corrupt) ByteArray(payload.size) else payload)
             entered?.complete(Unit)
-            hold?.await()
+            if (nonCancellableDownload) withContext(NonCancellable) { hold?.await() } else hold?.await()
             progress(expectedBytes, expectedBytes)
         }
     }
@@ -57,25 +58,71 @@ class UpdateFeatureTest {
         var automatic = true
         var tag: String? = null
         var allowed = false
+        var failReset = false
         override val packageName = LITE_PACKAGE
         override suspend fun identity() = UpdateIdentity("0.1.0-beta.1", 1, listOf("arm64-v8a"))
         override suspend fun automaticEnabled() = automatic
         override suspend fun promptedTag() = tag
         override suspend fun savePromptedTag(tag: String) { this.tag = tag }
+        override suspend fun resetPromptedTag() { check(!failReset) { "fixture prompt reset failure" }; tag = null }
         override suspend fun canInstall() = allowed
         override suspend fun installUri(file: File) = "content://dev.aerove.lite.updates/verified_updates/${file.name}"
     }
     private suspend fun await(feature: UpdateFeature, predicate: (UpdateState) -> Boolean) = withTimeout(10_000) { feature.state.first(predicate) }
 
-    @Test fun feedIsLiteOnlyAndVersionCodeAndSemverMustBothAdvance() {
+    @Test fun feedIsLiteOnlyAndCodeAdvancesWithoutSemanticDowngrade() {
         val release = release()
         assertEquals(release.tag, parseLiteReleases(JSONArray().put(JSONObject().put("tag_name", "v99.0.0+999")).put(json(release))).single().tag)
         assertEquals(release, selectLiteRelease(listOf(release), identity))
         assertNull(selectLiteRelease(listOf(release.copy(version = "0.0.1")), identity))
         assertNull(selectLiteRelease(listOf(release.copy(versionCode = 1)), identity))
+        assertEquals(release, selectLiteRelease(listOf(release), identity.copy(version = release.version)))
+        assertNull(selectLiteRelease(listOf(release), identity.copy(version = release.version, versionCode = release.versionCode)))
         assertTrue(ProductVersion.parse("0.2.0-beta.10") > ProductVersion.parse("0.2.0-beta.2"))
         assertTrue(ProductVersion.parse("0.2.0") > ProductVersion.parse("0.2.0-rc.99"))
         assertThrows(IllegalArgumentException::class.java) { ProductVersion.parse("0.2.0-beta.01") }
+    }
+
+    @Test fun allChannelsChooseHighestUpgradeableVersionAndSkipDraftForeignOrBadAssets() {
+        fun candidate(version: String, code: Long) = release(code).copy(tag = "lite-v$version+$code", version = version,
+            apkUrl = url("lite-v$version+$code", LITE_APK_NAME), sumsUrl = url("lite-v$version+$code", "SHA256SUMS"),
+            buildInfoUrl = url("lite-v$version+$code", "BUILD_INFO.json"))
+        val beta2 = candidate("0.2.0-beta.2", 3)
+        val beta10 = candidate("0.2.0-beta.10", 4)
+        val rc = candidate("0.2.0-rc.1", 5)
+        val stable = candidate("0.2.0", 6)
+        val installed = UpdateIdentity("0.2.0-beta.1", 2, listOf("arm64-v8a"))
+        assertEquals(beta10, selectLiteRelease(listOf(candidate("0.1.0", 1), beta2, beta10), installed))
+        assertEquals(stable, selectLiteRelease(listOf(beta2, stable, rc, beta10), installed))
+        assertNull(selectLiteRelease(listOf(rc), installed.copy(version = "0.2.0")))
+        assertNull(selectLiteRelease(listOf(stable.copy(versionCode = 2)), installed))
+        val draft = json(candidate("99.0.0", 99)).put("draft", true)
+        val badAssets = json(candidate("98.0.0", 98)).put("assets", JSONArray())
+        val foreign = json(candidate("97.0.0", 97))
+        foreign.getJSONArray("assets").getJSONObject(0).put("browser_download_url", "https://evil.test/a.apk")
+        assertEquals(listOf(beta10), parseLiteReleases(JSONArray().put(draft).put(badAssets).put(foreign)
+            .put(JSONObject().put("tag_name", "v99.0.0+99")).put(JSONObject().put("tag_name", "lite-vbad+3")).put(json(beta10))))
+    }
+
+    @Test fun pageFailureOrTruncationNeverClaimsCurrentAndCheckNeverDownloads() = runBlocking<Unit> {
+        val source = Transport()
+        var pages = 0
+        var failSecond = true
+        val transport = object : UpdateTransport by source {
+            override suspend fun releases(page: Int): String {
+                pages++
+                if (page == 2 && failSecond) error("fixture second page failure")
+                return JSONArray(List(100) { json(source.release) }).toString()
+            }
+        }
+        val repo = UpdateRepository(transport, temporary.root, UpdateApkVerifier { _, _ -> })
+        assertTrue(runCatching { repo.check(identity) }.isFailure)
+        assertEquals(2, pages)
+        failSecond = false; pages = 0
+        assertTrue(runCatching { repo.check(identity) }.isFailure)
+        assertEquals(5, pages)
+        assertEquals(0, source.downloads)
+        repo.close()
     }
 
     @Test fun foreignHostsRepositoriesQueriesAndWrongAbiAreRejected() {
@@ -129,6 +176,8 @@ class UpdateFeatureTest {
             feature.autoCheckOnce(); await(feature) { it.phase == UpdatePhase.Available }
             assertEquals(transport.release.tag, platform.tag)
             feature.dismiss(); assertTrue(platform.automatic)
+            assertEquals(0, transport.downloads)
+            assertNull(feature.state.value.installRequest)
             feature.autoCheckOnce(); assertEquals(1, transport.requests)
             feature.check(); await(feature) { it.phase == UpdatePhase.Available && it.visible }
             feature.disableAutomatic(); await(feature) { !it.visible }
@@ -192,5 +241,78 @@ class UpdateFeatureTest {
             feature.check(); await(feature) { it.phase == UpdatePhase.Available && it.visible }
             assertEquals(2, transport.requests)
         } finally { feature.close(); scope.cancel() }
+    }
+
+    @Test fun committedClearJoinsDownloadClearsExactCacheAndTagAndRejectsLatePublication() = runBlocking<Unit> {
+        val transport = Transport().apply { entered = CompletableDeferred(); hold = CompletableDeferred(); nonCancellableDownload = true }
+        val platform = Platform().apply { tag = "old-tag" }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val feature = UpdateFeature(UpdateRepository(transport, temporary.root, UpdateApkVerifier { _, _ -> }), platform, scope) { }
+        val unknown = File(temporary.root, "unrelated.part").apply { writeText("retain") }
+        val stale = File(temporary.root, "a".repeat(64) + ".apk").apply { writeText("old owned cache") }
+        try {
+            feature.check(); await(feature) { it.phase == UpdatePhase.Available }
+            feature.download(); withTimeout(5000) { transport.entered!!.await() }
+            val reset = async { feature.clearUserState() }
+            yield(); assertFalse(reset.isCompleted)
+            transport.hold!!.complete(Unit); withTimeout(5000) { reset.await() }
+            assertEquals(UpdateState(), feature.state.value)
+            assertNull(platform.tag); assertFalse(stale.exists())
+            assertEquals("retain", unknown.readText())
+            assertTrue(temporary.root.listFiles()!!.none { it.name.startsWith(".download-") || it.extension == "apk" })
+            val requests = transport.requests
+            feature.check(); feature.autoCheckOnce(); feature.download()
+            assertEquals(requests, transport.requests)
+            assertTrue(runCatching { feature.resumeAfterMaintenance() }.isFailure)
+        } finally { transport.hold!!.complete(Unit); feature.close(); scope.cancel() }
+    }
+
+    @Test fun maintenancePausePreservesVerifiedCacheButRejectsDispatchUntilResume() = runBlocking<Unit> {
+        val transport = Transport(); val platform = Platform()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val feature = UpdateFeature(UpdateRepository(transport, temporary.root, UpdateApkVerifier { _, _ -> }), platform, scope) { }
+        try {
+            feature.check(); await(feature) { it.phase == UpdatePhase.Available }
+            feature.download(); await(feature) { it.phase == UpdatePhase.Ready }
+            feature.requestInstall(); val old = await(feature) { it.installRequest != null }.installRequest!!
+            feature.quiesce()
+            assertFalse(feature.platformLaunched(old.id))
+            feature.requestInstall(); assertNull(feature.state.value.installRequest)
+            assertTrue(temporary.root.listFiles()!!.any { it.extension == "apk" })
+            feature.resumeAfterMaintenance()
+            feature.requestInstall()
+            val fresh = await(feature) { it.installRequest != null }.installRequest!!
+            assertNotEquals(old.id, fresh.id)
+        } finally { feature.close(); scope.cancel() }
+    }
+
+    @Test fun secondaryPromptFailureStillClearsCacheAndKeepsFeatureTerminal() = runBlocking<Unit> {
+        val transport = Transport(); val platform = Platform().apply { tag = "persisted-tag"; failReset = true }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val repository = UpdateRepository(transport, temporary.root, UpdateApkVerifier { _, _ -> })
+        val feature = UpdateFeature(repository, platform, scope) { }
+        val owned = File(temporary.root, "b".repeat(64) + ".apk").apply { writeText("owned") }
+        try {
+            val failure = runCatching { feature.clearUserState() }.exceptionOrNull()
+            assertNotNull(failure)
+            assertFalse(owned.exists())
+            assertEquals("persisted-tag", platform.tag)
+            assertEquals(UpdateState(), feature.state.value)
+            assertTrue(runCatching { feature.resumeAfterMaintenance() }.isFailure)
+            assertTrue(runCatching { repository.check(identity) }.isFailure)
+        } finally { feature.close(); scope.cancel() }
+    }
+
+    @Test fun uninitializedCacheClearTargetsOnlyGeneratedFileNamesAndReportsDirectoryCollision() = runBlocking<Unit> {
+        val owned = File(temporary.root, "c".repeat(64) + ".apk").apply { writeText("owned") }
+        val partial = File(temporary.root, ".download-12345678-1234-1234-1234-123456789abc.part").apply { writeText("partial") }
+        val unknown = File(temporary.root, ".download-not-a-uuid.part").apply { writeText("retain") }
+        val nested = temporary.newFolder("unrelated").resolve("d".repeat(64) + ".apk").apply { writeText("retain nested") }
+        UpdateRepository.clearCachedUserState(temporary.root)
+        assertFalse(owned.exists()); assertFalse(partial.exists())
+        assertEquals("retain", unknown.readText()); assertEquals("retain nested", nested.readText())
+        val collision = temporary.newFolder("e".repeat(64) + ".apk")
+        assertTrue(runCatching { UpdateRepository.clearCachedUserState(temporary.root) }.isFailure)
+        assertTrue(collision.isDirectory)
     }
 }

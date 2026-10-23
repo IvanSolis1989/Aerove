@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="global_resources_back">"戻る"</string>
+    <string name="global_resources_cancel">"キャンセル"</string>
+    <string name="global_resources_delete_confirm">"%1$s を削除しますか？参照しているプロファイルの更新が必要になります。"</string>
+    <string name="global_resources_done">"完了"</string>
+    <string name="global_resources_local">"ローカル"</string>
+    <string name="global_resources_options">"オプション"</string>
+    <string name="global_resources_preview">"プレビュー"</string>
+    <string name="global_resources_quick_edit">"クイック編集"</string>
+    <string name="global_resources_remote">"リモート"</string>
+    <string name="global_resources_replaced_confirm">"次のノードを削除します: %1$s。続行しますか？"</string>
+    <string name="global_resources_scratch">"最初から作成"</string>
+    <string name="global_resources_search">"検索"</string>
+    <string name="global_resources_select_all">"すべて選択"</string>
+    <string name="global_resources_title">"カスタムプロファイルのリソース"</string>
+    <string name="global_resources_url">"URL"</string>
+</resources>

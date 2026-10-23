@@ -14,10 +14,44 @@ class NetworkSettingsTest {
 
     @Test fun absentNetworkUsesExactStandardDefaults() {
         val settings = NetworkSettingsJson.decode(null)
+        assertTrue(settings.vpnEnabled)
         assertTrue(settings.systemProxy); assertTrue(settings.allowBypass); assertFalse(settings.allowLan)
         assertEquals(UserProxyPorts(7890, 0, 0), settings.ports)
         assertEquals(listOf("*zhihu.com", "*zhimg.com", "*jd.com", "100ime-iat-api.xfyun.cn", "*360buyimg.com",
             "localhost", "*.local", "127.*", "10.*", "172.16.*", "172.17.*", "172.18.*", "172.19.*", "172.2*", "172.30.*", "172.31.*", "192.168.*"), settings.bypassDomains)
+    }
+
+    @Test fun vpnEnableMigratesOldJsonAndStrictlyRoundTripsBothModes() {
+        assertTrue(NetworkSettingsJson.decode(JSONObject("{}" )).vpnEnabled)
+        listOf(true, false).forEach { enabled ->
+            val settings = NetworkSettings(vpnEnabled = enabled)
+            assertEquals(settings, NetworkSettingsJson.decode(NetworkSettingsJson.encode(settings)))
+        }
+        listOf(JSONObject.NULL, "false", 0, JSONObject(), JSONArray()).forEach { invalid ->
+            fails(NetworkIssueCode.Type, "network.vpnEnabled") {
+                NetworkSettingsJson.decode(JSONObject().put("vpnEnabled", invalid))
+            }
+        }
+    }
+
+    @Test fun proxyModeNormalizesAllBuilderOptionsButKeepsRealCoreInboundsAndAuthentication() {
+        val settings = NetworkSettings(vpnEnabled = false)
+        val changed = settings.copy(systemProxy = false, allowBypass = false, bypassDomains = listOf("*.example.org"),
+            ports = UserProxyPorts(8000, 8001, 8002), allowLan = true,
+            authentication = ProxyAuthentication(true, "alice", "secret"))
+        val effective = effectiveVpnNetworkOptions(settings)
+        assertFalse(effective.enabled); assertFalse(effective.allowBypass); assertNull(effective.systemProxy)
+        assertEquals(effective, effectiveVpnNetworkOptions(changed))
+        assertNotEquals(effective, effectiveVpnNetworkOptions(changed.copy(vpnEnabled = true)))
+        val plan = planNetwork(changed, 59333, true)
+        assertFalse(plan.vpnEnabled); assertFalse(plan.allowBypass); assertNull(plan.systemProxy)
+        assertEquals(3, plan.inbounds.size)
+        assertEquals(8000, plan.userConfigFields()["mixed-port"])
+        assertEquals(true, plan.userConfigFields()["allow-lan"])
+        assertEquals(listOf("alice:secret"), plan.userConfigFields()["authentication"])
+        assertEquals(setOf("mixed-port", "allow-lan", "bind-address", "authentication", "port", "socks-port"), plan.userConfigFields().keys)
+        assertEquals(plan.userConfigFields(), planNetwork(changed.copy(vpnEnabled = true), 59333, true).userConfigFields())
+        assertEquals(settings, NetworkSettingsJson.decode(NetworkSettingsJson.encode(settings)))
     }
 
     @Test fun jsonRoundTripPreservesDormantCredentialsOrderAndWildcardDomains() {

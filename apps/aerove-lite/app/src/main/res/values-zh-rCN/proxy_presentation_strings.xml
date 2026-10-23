@@ -1,0 +1,5 @@
+<resources>
+    <string name="proxy_presentation_scroll_to_selected">滚动到已选</string>
+    <string name="proxy_presentation_clear_search">清除搜索</string>
+    <string name="proxy_presentation_delay_failed">失败</string>
+</resources>

@@ -66,7 +66,7 @@ internal class EditorAssets private constructor(
                 return EditorAssets(
                     textmate,
                     TextMateColorScheme.create(themes, themes.currentThemeModel),
-                    Typeface.createFromAsset(context.assets, "editor/fonts/JetBrainsMono-Regular.ttf"),
+                    Typeface.MONOSPACE,
                     context.assets.open("editor/full-schema.json").bufferedReader(Charsets.UTF_8).use { EditorCompletion.fromJson(it.readText()) },
                     grammars,
                 )

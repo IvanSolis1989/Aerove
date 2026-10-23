@@ -16,6 +16,11 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.produceState
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import dev.aerove.lite.presentation.SystemFontCatalog
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -123,8 +128,17 @@ internal fun LiteTheme(settings: LiteSettings, content: @Composable () -> Unit) 
     val colors = remember(seed, dark, aurora, settings.colorStyle, settings.pureBlack) {
         fullColorScheme(seed.toInt(), dark, aurora, settings.colorStyle, settings.pureBlack)
     }
-    val family = remember(settings.fontFamily) {
-        settings.fontFamily?.takeIf { it.isNotBlank() }?.let {
+    val fontConfiguration = LocalConfiguration.current.toString()
+    val fontLifecycle = LocalLifecycleOwner.current
+    val eligibleFonts by produceState<List<String>>(emptyList(), fontConfiguration, fontLifecycle, settings.fontFamily) {
+        if (settings.fontFamily == null) value = emptyList()
+        else fontLifecycle.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            value = SystemFontCatalog.load(fontConfiguration)
+        }
+    }
+    val effectiveFamily = SystemFontCatalog.resolve(settings.fontFamily, eligibleFonts)
+    val family = remember(effectiveFamily) {
+        effectiveFamily?.let {
             FontFamily(android.graphics.Typeface.create(it, android.graphics.Typeface.NORMAL))
         } ?: FontFamily.Default
     }

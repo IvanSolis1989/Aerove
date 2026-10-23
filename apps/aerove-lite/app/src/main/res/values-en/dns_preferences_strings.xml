@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="dns_preferences_title">DNS</string>
+    <string name="dns_preferences_hosts">Hosts</string>
+    <string name="dns_preferences_scope">Select fields to override; other fields follow the profile source.</string>
+    <string name="dns_preferences_hosts_detail">Merge these host mappings into every profile; matching names use the saved IP address.</string>
+    <string name="dns_preferences_inherit">Inherit</string>
+    <string name="dns_preferences_overridden">Override</string>
+    <string name="dns_preferences_override">Override this field</string>
+    <string name="dns_preferences_entry">Entry %1$d</string>
+    <string name="dns_preferences_domain">Domain %1$d</string>
+    <string name="dns_preferences_target">Target %1$d</string>
+    <string name="dns_preferences_count">%1$d mappings</string>
+    <string name="dns_preferences_add">Add</string>
+    <string name="dns_preferences_remove">Remove</string>
+    <string name="dns_preferences_move_up">Move up</string>
+    <string name="dns_preferences_move_down">Move down</string>
+    <string name="dns_preferences_cancel">Cancel</string>
+    <string name="dns_preferences_save">Save</string>
+    <string name="dns_preferences_invalid">Check field: %1$s</string>
+    <string name="dns_preferences_unsupported">This core does not support the value of %1$s.</string>
+    <string name="dns_preferences_enabled">Enable DNS</string>
+    <string name="dns_preferences_listen">Listen address</string>
+    <string name="dns_preferences_use_hosts">Use hosts</string>
+    <string name="dns_preferences_ipv6">IPv6</string>
+    <string name="dns_preferences_respect_rules">Respect rules</string>
+    <string name="dns_preferences_mode">DNS mode</string>
+    <string name="dns_preferences_range">Fake-IP range</string>
+    <string name="dns_preferences_filter">Fake-IP filter</string>
+    <string name="dns_preferences_bootstrap">Default nameservers</string>
+    <string name="dns_preferences_policy">Nameserver policy</string>
+    <string name="dns_preferences_nameservers">Nameservers</string>
+    <string name="dns_preferences_fallback">Fallback nameservers</string>
+    <string name="dns_preferences_proxy_servers">Proxy server nameservers</string>
+    <string name="dns_preferences_geoip">GeoIP filter</string>
+    <string name="dns_preferences_country">GeoIP country code</string>
+    <string name="dns_preferences_cidrs">Fallback IP-CIDR filter</string>
+    <string name="dns_preferences_domains">Fallback domain filter</string>
+    <string name="dns_preferences_save_failed">Could not save. Please try again.</string>
+</resources>

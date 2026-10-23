@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="network_tun">"TUN"</string>
+    <string name="network_mtu">"MTU"</string>
+    <string name="network_mtu_range">"1280~65535 범위의 정수를 입력하세요."</string>
+    <string name="network_dns_hijacking">"DNS 하이재킹"</string>
+    <string name="network_bypass_private_route">"사설 주소 우회"</string>
+    <string name="network_route_addresses">"라우팅 주소"</string>
+    <string name="network_route_exclusions">"라우팅 제외 주소"</string>
+    <string name="network_route_count">"경로 %1$d개"</string>
+    <string name="network_route_entry">"경로 %1$d"</string>
+    <string name="network_add_route">"경로 추가"</string>
+    <string name="network_remove_route">"제거"</string>
+    <string name="network_move_route_up">"위로 이동"</string>
+    <string name="network_move_route_down">"아래로 이동"</string>
+    <string name="network_invalid_cidr">"경로 %1$d의 CIDR을 확인하세요."</string>
+</resources>

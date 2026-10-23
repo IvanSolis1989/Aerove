@@ -29,6 +29,28 @@ class VpnCoordinatorTest {
         fun ready() { ready.complete(Unit) }
     }
 
+    @Test fun maintenanceStopCannotAcknowledgeBeforeOwnedSessionJoin() = runTest {
+        val joined = CompletableDeferred<Unit>()
+        val coordinator = VpnCoordinator(backgroundScope, TunnelBackend {
+            object : TunnelSession {
+                override val endpoint = CoreEndpoint(1234, "test-secret")
+                override suspend fun awaitReady() = Unit
+                override suspend fun awaitExit(): Unit = awaitCancellation()
+                override suspend fun stop() { joined.await() }
+            }
+        })
+        coordinator.start(VpnPlan("profile", LiteSettings())); runCurrent()
+        var acknowledged = false
+        val stop = launch { coordinator.stopAndJoin(); acknowledged = true }
+        runCurrent()
+        assertEquals(VpnPhase.Stopping, coordinator.state.value.phase)
+        assertTrue(!acknowledged)
+        joined.complete(Unit); runCurrent()
+        assertTrue(acknowledged)
+        assertEquals(VpnPhase.Stopped, coordinator.state.value.phase)
+        stop.join(); coordinator.close()
+    }
+
     @Test
     fun stoppingAnUnreadyStartCannotPublishRunning() = runTest {
         val session = Session()

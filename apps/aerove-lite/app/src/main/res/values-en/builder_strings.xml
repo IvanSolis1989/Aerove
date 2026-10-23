@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="builder_close">Close</string>
+    <string name="builder_save">Save</string>
+    <string name="builder_retry">Retry</string>
+    <string name="builder_add">Add</string>
+    <string name="builder_sort">Sort</string>
+    <string name="builder_delete">Delete</string>
+    <string name="builder_empty">No items</string>
+    <string name="builder_up">Move up</string>
+    <string name="builder_down">Move down</string>
+    <string name="builder_selected">Selected</string>
+    <string name="builder_unsaved">Save changes?</string>
+    <string name="builder_discard">Discard changes</string>
+    <string name="builder_edit">Edit</string>
+    <string name="builder_select">Select</string>
+    <string name="builder_duplicate">Duplicate</string>
+    <string name="builder_name">Name</string>
+    <string name="builder_references">Referenced by: %1$s</string>
+    <string name="builder_replacement">Replace references with</string>
+    <string name="builder_proxies">Proxies</string>
+    <string name="builder_groups">Proxy groups</string>
+    <string name="builder_rules">Rules</string>
+    <string name="builder_proxy_providers">Proxy providers</string>
+    <string name="builder_rule_providers">Rule providers</string>
+    <string name="builder_type">Type</string>
+    <string name="builder_payload">Match value</string>
+    <string name="builder_target">Target</string>
+    <string name="builder_remove_field">Remove %1$s</string>
+    <string name="builder_add_field">Add field</string>
+    <string name="builder_field_name">Field name</string>
+    <string name="builder_filters">Filters</string>
+    <string name="builder_icon_sets">Icon sets</string>
+    <string name="builder_import_url">Import URL</string>
+    <string name="builder_import_file">Import file</string>
+    <string name="builder_regex">Regular expression</string>
+    <string name="builder_sync">Sync</string>
+    <string name="builder_title">Custom profile</string>
+    <string name="builder_undo">Undo</string>
+    <string name="builder_redo">Redo</string>
+</resources>

@@ -50,30 +50,34 @@ internal fun trustedAssetUrl(raw: String, tag: String, name: String): String {
 }
 
 internal fun parseLiteReleases(array: JSONArray): List<LiteRelease> = (0 until array.length()).mapNotNull { index ->
-    val row = array.getJSONObject(index)
+    val row = array.optJSONObject(index) ?: return@mapNotNull null
     if (row.optBoolean("draft", false)) return@mapNotNull null
     val tag = row.optString("tag_name")
     val match = Regex("lite-v(.+)\\+([1-9][0-9]{0,9})").matchEntire(tag) ?: return@mapNotNull null
     val version = match.groupValues[1]
     runCatching { ProductVersion.parse(version) }.getOrNull() ?: return@mapNotNull null
-    val code = match.groupValues[2].toLong().also { require(it <= 2_100_000_000L) { "Invalid Lite Android version code" } }
-    val assets = row.getJSONArray("assets")
-    fun asset(name: String): JSONObject {
-        val found = (0 until assets.length()).map(assets::getJSONObject).filter { it.optString("name") == name }
-        require(found.size == 1) { "Lite release is missing an unambiguous $name" }
-        return found.single()
-    }
-    val apk = asset(LITE_APK_NAME)
-    val bytes = apk.getLong("size").also { require(it in 1..MAX_APK_BYTES) { "Invalid Lite APK size" } }
-    LiteRelease(tag, version, code, row.optString("body").take(100_000),
-        trustedAssetUrl(apk.getString("browser_download_url"), tag, LITE_APK_NAME),
-        trustedAssetUrl(asset("SHA256SUMS").getString("browser_download_url"), tag, "SHA256SUMS"),
-        trustedAssetUrl(asset("BUILD_INFO.json").getString("browser_download_url"), tag, "BUILD_INFO.json"), bytes)
+    val code = match.groupValues[2].toLong()
+    if (code > 2_100_000_000L) return@mapNotNull null
+    runCatching {
+        val assets = row.getJSONArray("assets")
+        fun asset(name: String): JSONObject {
+            val found = (0 until assets.length()).map(assets::getJSONObject).filter { it.optString("name") == name }
+            require(found.size == 1) { "Lite release is missing an unambiguous $name" }
+            return found.single()
+        }
+        val apk = asset(LITE_APK_NAME)
+        val bytes = apk.getLong("size").also { require(it in 1..MAX_APK_BYTES) { "Invalid Lite APK size" } }
+        LiteRelease(tag, version, code, row.optString("body").take(100_000),
+            trustedAssetUrl(apk.getString("browser_download_url"), tag, LITE_APK_NAME),
+            trustedAssetUrl(asset("SHA256SUMS").getString("browser_download_url"), tag, "SHA256SUMS"),
+            trustedAssetUrl(asset("BUILD_INFO.json").getString("browser_download_url"), tag, "BUILD_INFO.json"), bytes)
+    }.getOrNull()
 }
 
 internal fun selectLiteRelease(releases: List<LiteRelease>, identity: UpdateIdentity): LiteRelease? {
+    require(identity.versionCode in 1..2_100_000_000L) { "Invalid installed Lite Android version code" }
     val current = ProductVersion.parse(identity.version)
-    val newer = releases.filter { it.versionCode > identity.versionCode && ProductVersion.parse(it.version) > current }
+    val newer = releases.filter { it.versionCode in (identity.versionCode + 1)..2_100_000_000L && ProductVersion.parse(it.version) >= current }
     val release = newer.maxWithOrNull(compareBy<LiteRelease> { ProductVersion.parse(it.version) }.thenBy { it.versionCode })
     require(release == null || "arm64-v8a" in identity.supportedAbis) { "No compatible Lite update asset for this device ABI" }
     return release

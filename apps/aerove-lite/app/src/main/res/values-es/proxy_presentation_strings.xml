@@ -1,0 +1,5 @@
+<resources>
+    <string name="proxy_presentation_scroll_to_selected">Ir a la selección</string>
+    <string name="proxy_presentation_clear_search">Borrar búsqueda</string>
+    <string name="proxy_presentation_delay_failed">Fallido</string>
+</resources>

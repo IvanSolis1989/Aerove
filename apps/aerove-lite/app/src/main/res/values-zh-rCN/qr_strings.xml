@@ -1,0 +1,6 @@
+<resources>
+    <string name="profile_qr_menu">二维码</string>
+    <string name="profile_qr_share_tip">在另一台设备上用 AEROVE 扫码即可导入此配置。</string>
+    <string name="profile_qr_too_long">链接过长，无法生成二维码，请改用“复制链接”。</string>
+    <string name="profile_qr_loading">正在生成二维码</string>
+</resources>

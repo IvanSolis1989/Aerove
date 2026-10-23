@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="profile_qr_menu">"QRコード"</string>
+    <string name="profile_qr_share_tip">"別のデバイスの AEROVE でスキャンすると、このプロファイルをインポートできます。"</string>
+    <string name="profile_qr_too_long">"このリンクは長すぎて QR コードにできません。「リンクをコピー」を使ってください。"</string>
+    <string name="profile_qr_loading">"QR コードを生成中"</string>
+</resources>

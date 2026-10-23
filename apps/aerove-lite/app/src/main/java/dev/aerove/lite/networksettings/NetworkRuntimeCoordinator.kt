@@ -30,6 +30,7 @@ class NetworkRuntimeCoordinator(
 ) {
     private class Binding(val endpoint: CoreEndpoint, val startup: Desired, var applied: Desired = startup) {
         var failed: InboundKey? = null
+        var parked = false
     }
     private data class InboundKey(val ports: UserProxyPorts, val allowLan: Boolean, val ipv6: Boolean,
         val credentials: List<String>) {
@@ -78,12 +79,12 @@ class NetworkRuntimeCoordinator(
     }
 
     fun bind(endpoint: CoreEndpoint?, initialNetwork: NetworkSettings? = null, initialIpv6: Boolean? = null,
-        appliedNetwork: NetworkSettings? = null, appliedIpv6: Boolean? = null) {
+        appliedNetwork: NetworkSettings? = null, appliedIpv6: Boolean? = null, initiallyParked: Boolean = false) {
         val cancelled = synchronized(lock) {
             if (closed || (binding?.endpoint === endpoint && endpoint != null)) return
             binding = if (endpoint != null && initialNetwork != null && initialIpv6 != null)
                 Binding(endpoint, Desired(initialNetwork.snapshot().requireValid(), initialIpv6),
-                    Desired((appliedNetwork ?: initialNetwork).snapshot().requireValid(), appliedIpv6 ?: initialIpv6)) else null
+                    Desired((appliedNetwork ?: initialNetwork).snapshot().requireValid(), appliedIpv6 ?: initialIpv6)).also { it.parked = initiallyParked } else null
             signals.trySend(Unit)
             active?.task
         }
@@ -102,6 +103,26 @@ class NetworkRuntimeCoordinator(
     fun retry() = synchronized(lock) {
         if (!closed) {
             binding?.failed = null
+            signals.trySend(Unit)
+        }
+    }
+
+    /** Excludes new POSTs and waits for the already accepted POST+GET transaction before Native park. */
+    suspend fun parkBarrier(endpoint: CoreEndpoint) {
+        val accepted = synchronized(lock) {
+            val current = binding?.takeIf { it.endpoint === endpoint } ?: return
+            current.parked = true
+            active?.takeIf { it.binding === current }?.task
+        }
+        try { accepted?.await() } catch (cancelled: CancellationException) {
+            if (synchronized(lock) { binding?.endpoint === endpoint }) throw cancelled
+        } catch (_: Exception) {
+        }
+    }
+
+    fun resume(endpoint: CoreEndpoint) = synchronized(lock) {
+        binding?.takeIf { it.endpoint === endpoint }?.let {
+            it.parked = false
             signals.trySend(Unit)
         }
     }
@@ -129,6 +150,7 @@ class NetworkRuntimeCoordinator(
     private fun next(): Active? {
         if (closed || active != null) return null
         val current = binding ?: return null
+        if (current.parked) return null
         val target = desired ?: return null
         val fields = fields(target)
         if (fields == fields(current.applied) || fields == current.failed) return null
@@ -143,7 +165,6 @@ class NetworkRuntimeCoordinator(
         value.ipv6 && value.network.allowLan, value.network.authentication.credentials)
 
     private fun publish(binding: Binding, applying: Boolean, error: String? = null) {
-        // Retain startup-only fields; initialNetwork is authoritative for the effective Builder policy.
         val applied = binding.applied.network.copy(systemProxy = binding.startup.network.systemProxy,
             allowBypass = binding.startup.network.allowBypass, bypassDomains = binding.startup.network.bypassDomains.toList())
         onStatus(NetworkRuntimeStatus(binding.endpoint, applied, applying, error, binding.applied.ipv6))

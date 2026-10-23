@@ -1,0 +1,271 @@
+name: Lite ABI build
+'on':
+  workflow_call:
+    inputs:
+      abi:
+        required: true
+        type: string
+      target:
+        required: true
+        type: string
+    secrets:
+      AEROVE_LITE_KEYSTORE:
+        required: true
+      AEROVE_LITE_KEYSTORE_PASSWORD:
+        required: true
+permissions:
+  contents: read
+  actions: read
+env:
+  RUSTC_BOOTSTRAP: '1'
+  NDK_VERSION: 28.2.13676358
+jobs:
+  rust:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+      with:
+        packages: platform-tools
+        log-accepted-android-sdk-licenses: false
+        cmdline-tools-version: '16111833'
+    - name: Install the pinned Android toolchain
+      run: sdkmanager "ndk;$NDK_VERSION"
+    - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+      with:
+        toolchain: 1.99.0
+        targets: ${{ inputs.target }}
+    - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+      with:
+        workspaces: apps/aerove-lite/native -> target
+        key: lite-${{ inputs.target }}-${{ env.NDK_VERSION }}-rust1.99.0
+        cache-workspace-crates: true
+        cache-directories: |-
+          apps/aerove-lite/native/.upstream
+          apps/aerove-lite/native/build
+    - name: Build the pinned Rust Android bridge
+      run: python3 apps/aerove-lite/tool/ci_artifacts.py native --abi "${{ inputs.abi }}" --target "${{ inputs.target }}" --ndk "$ANDROID_SDK_ROOT/ndk/$NDK_VERSION"
+    - name: Seal native build inputs
+      run: |-
+        mkdir -p "$RUNNER_TEMP/lite-core/jniLibs"
+        cp -r apps/aerove-lite/app/src/main/jniLibs/${{ inputs.abi }} "$RUNNER_TEMP/lite-core/jniLibs/"
+        cp apps/aerove-lite/native/build/provenance.json "$RUNNER_TEMP/lite-core/"
+        python3 apps/aerove-lite/tool/ci_artifacts.py seal --directory "$RUNNER_TEMP/lite-core" --abi "${{ inputs.abi }}"
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: Lite-core-${{ inputs.abi }}-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/lite-core/
+        if-no-files-found: error
+        compression-level: 0
+    name: rust
+  helper:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+      with:
+        packages: platform-tools
+        log-accepted-android-sdk-licenses: false
+        cmdline-tools-version: '16111833'
+    - name: Install the pinned Android toolchain
+      run: sdkmanager "ndk;$NDK_VERSION"
+    - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+      with:
+        go-version: 1.27.1
+        cache-dependency-path: apps/aerove-lite/regexp2/go.sum
+    - name: Build the isolated client helper for this ABI
+      id: client_helper
+      run: |
+        python3 apps/aerove-lite/regexp2/build.py --go "$(go env GOROOT)/bin/go" \
+          --ndk "$ANDROID_SDK_ROOT/ndk/$NDK_VERSION" --abi '${{ inputs.abi }}' \
+          --staging "$RUNNER_TEMP/aerove-client-helper-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ inputs.abi }}" \
+          --out apps/aerove-lite/app/src/main/jniLibs 2>&1 | tee "$RUNNER_TEMP/lite-client-helper-${{ inputs.abi }}.log"
+    - name: Preserve the client helper build receipt
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: AEROVE-Lite-client-helper-${{ inputs.abi }}-attempt-${{ github.run_attempt }}
+        path: |
+          ${{ runner.temp }}/aerove-client-helper-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.abi }}/build-receipt.json
+          ${{ runner.temp }}/lite-client-helper-${{ inputs.abi }}.log
+        if-no-files-found: warn
+    - name: Seal helper build inputs
+      run: |-
+        mkdir -p "$RUNNER_TEMP/lite-helper/jniLibs"
+        cp -r apps/aerove-lite/app/src/main/jniLibs/${{ inputs.abi }} "$RUNNER_TEMP/lite-helper/jniLibs/"
+        cp "$RUNNER_TEMP/aerove-client-helper-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ inputs.abi }}/build-receipt.json" "$RUNNER_TEMP/lite-helper/"
+        python3 apps/aerove-lite/tool/ci_artifacts.py seal --directory "$RUNNER_TEMP/lite-helper" --abi "${{ inputs.abi }}"
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: Lite-helper-${{ inputs.abi }}-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/lite-helper/
+        if-no-files-found: error
+        compression-level: 0
+    name: helper
+  package:
+    needs:
+    - rust
+    - helper
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      AEROVE_LITE_KEYSTORE_PASSWORD: ${{ secrets.AEROVE_LITE_KEYSTORE_PASSWORD }}
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+      with:
+        distribution: temurin
+        java-version: '17'
+    - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+      with:
+        packages: platform-tools
+        log-accepted-android-sdk-licenses: false
+        cmdline-tools-version: '16111833'
+    - name: Install the pinned Android toolchain
+      run: |-
+        sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
+        test -f "$ANDROID_SDK_ROOT/platforms/android-37.0/android.jar"
+    - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+      with:
+        gradle-version: 9.6.0
+        cache-read-only: false
+    - name: Fetch exact same-run build inputs
+      run: python3 apps/aerove-lite/tool/ci_artifacts.py fetch --name "Lite-core-${{ inputs.abi }}-attempt-${{ github.run_attempt }}" --destination "$RUNNER_TEMP/lite-core" --abi "${{ inputs.abi }}"
+    - name: Fetch exact same-run build inputs
+      run: python3 apps/aerove-lite/tool/ci_artifacts.py fetch --name "Lite-helper-${{ inputs.abi }}-attempt-${{ github.run_attempt }}" --destination "$RUNNER_TEMP/lite-helper" --abi "${{ inputs.abi }}"
+    - name: Restore verified native inputs
+      run: |-
+        mkdir -p apps/aerove-lite/app/src/main/jniLibs apps/aerove-lite/native/build "$RUNNER_TEMP/aerove-client-helper-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ inputs.abi }}"
+        cp -r "$RUNNER_TEMP/lite-core/jniLibs/"* apps/aerove-lite/app/src/main/jniLibs/
+        cp -r "$RUNNER_TEMP/lite-helper/jniLibs/"* apps/aerove-lite/app/src/main/jniLibs/
+        cp "$RUNNER_TEMP/lite-core/provenance.json" apps/aerove-lite/native/build/provenance.json
+        cp "$RUNNER_TEMP/lite-helper/build-receipt.json" "$RUNNER_TEMP/aerove-client-helper-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ inputs.abi }}/"
+    - name: Prepare the independent Lite release signing identity
+      env:
+        KEYSTORE_BASE64: ${{ secrets.AEROVE_LITE_KEYSTORE }}
+      run: |
+        python3 - <<'PY'
+        import base64, os
+        from pathlib import Path
+        encoded = os.environ['KEYSTORE_BASE64']
+        if not encoded or not os.environ['AEROVE_LITE_KEYSTORE_PASSWORD']:
+            raise SystemExit('The independent Lite signing secrets are required')
+        target = Path(os.environ['RUNNER_TEMP']) / 'aerove-lite.p12'
+        target.write_bytes(base64.b64decode(encoded, validate=True))
+        target.chmod(0o600)
+        with open(os.environ['GITHUB_ENV'], 'a') as output:
+            output.write(f'AEROVE_LITE_KEYSTORE_PATH={target}\n')
+        PY
+    - name: Signed preview ARM64 APK
+      if: inputs.abi == 'arm64-v8a'
+      working-directory: apps/aerove-lite
+      run: gradle --no-daemon :app:assembleRelease -PliteAbi=arm64-v8a -PsourceSha="$GITHUB_SHA"
+    - name: Emulator application and instrumentation APK
+      id: emulator_apks
+      if: inputs.abi == 'x86_64'
+      working-directory: apps/aerove-lite
+      run: gradle --no-daemon :app:assembleRelease :app:assembleReleaseAndroidTest -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA"
+    - name: Check the signed APK and record its exact provenance
+      id: apk_inspection
+      run: |
+        "$ANDROID_SDK_ROOT/build-tools/37.0.0/apksigner" verify --verbose --print-certs \
+          apps/aerove-lite/app/build/outputs/apk/release/app-release.apk | tee "$RUNNER_TEMP/lite-signature.txt"
+        "$ANDROID_SDK_ROOT/build-tools/37.0.0/aapt" dump badging \
+          apps/aerove-lite/app/build/outputs/apk/release/app-release.apk | tee "$RUNNER_TEMP/lite-badging.txt"
+        python3 apps/aerove-lite/tool/verify_apk.py \
+          --apk apps/aerove-lite/app/build/outputs/apk/release/app-release.apk --channel preview \
+          --abi '${{ inputs.abi }}' --source "$GITHUB_SHA" --tree "$(git rev-parse HEAD^{tree})" \
+          --workflow "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+          --run-number "$GITHUB_RUN_NUMBER" --run-attempt "$GITHUB_RUN_ATTEMPT" \
+          --badging "$RUNNER_TEMP/lite-badging.txt" --signature "$RUNNER_TEMP/lite-signature.txt" \
+          --helper-receipt "$RUNNER_TEMP/aerove-client-helper-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ inputs.abi }}/build-receipt.json" \
+          --helper-source-root apps/aerove-lite/regexp2 --output "$RUNNER_TEMP/lite-artifact-${{ inputs.abi }}"
+    - name: Preserve the built x86 runtime contract
+      if: ${{ !cancelled() && inputs.abi == 'x86_64' && steps.emulator_apks.outcome == 'success' }}
+      working-directory: apps/aerove-lite
+      env:
+        APK_INSPECTION_OUTCOME: ${{ steps.apk_inspection.outcome }}
+      run: |
+        diagnostic_root="$RUNNER_TEMP/lite-runtime-diagnostics"
+        mkdir -p "$diagnostic_root/apks" "$diagnostic_root/dependencies"
+        cp app/build/outputs/apk/release/app-release.apk "$diagnostic_root/apks/"
+        if [ -f "$RUNNER_TEMP/lite-artifact-x86_64/BUILD_INFO.json" ]; then
+          cp "$RUNNER_TEMP/lite-artifact-x86_64/BUILD_INFO.json" "$diagnostic_root/"
+        fi
+        cp "$RUNNER_TEMP/aerove-client-helper-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-x86_64/build-receipt.json" "$diagnostic_root/client-helper-build-receipt.json"
+        cp "$RUNNER_TEMP/lite-signature.txt" "$RUNNER_TEMP/lite-badging.txt" "$diagnostic_root/"
+        cp app/build/outputs/apk/androidTest/release/app-release-androidTest.apk "$diagnostic_root/apks/"
+        for variant in release releaseAndroidTest; do
+          for report in mapping.txt usage.txt seeds.txt configuration.txt; do
+            original="app/build/outputs/mapping/$variant/$report"
+            if [ -f "$original" ]; then
+              mkdir -p "$diagnostic_root/mapping/$variant"
+              cp "$original" "$diagnostic_root/mapping/$variant/"
+            fi
+          done
+        done
+        for configuration in releaseRuntimeClasspath releaseAndroidTestRuntimeClasspath; do
+          if gradle --no-daemon :app:dependencies --configuration "$configuration" \
+              -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" \
+              > "$diagnostic_root/dependencies/$configuration.stdout.txt" \
+              2> "$diagnostic_root/dependencies/$configuration.stderr.txt"; then
+            query_exit=0
+          else
+            query_exit=$?
+          fi
+          printf '%s\n' "$query_exit" > "$diagnostic_root/dependencies/$configuration.exit.txt"
+        done
+        python3 - <<'PY'
+        import hashlib, json, os, subprocess
+        from pathlib import Path
+        root = Path(os.environ['RUNNER_TEMP']) / 'lite-runtime-diagnostics'
+        files = sorted(path for path in root.rglob('*') if path.is_file())
+        manifest = [{'path': path.relative_to(root).as_posix(), 'bytes': path.stat().st_size,
+                     'sha256': hashlib.sha256(path.read_bytes()).hexdigest()} for path in files]
+        (root / 'SHA256SUMS').write_text(''.join(f"{item['sha256']}  {item['path']}\n" for item in manifest))
+        source = {'sourceRevision': os.environ['GITHUB_SHA'],
+                  'sourceTree': subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], text=True).strip(),
+                  'workflowRun': os.environ['GITHUB_RUN_ID'], 'runNumber': int(os.environ['GITHUB_RUN_NUMBER']),
+                  'runAttempt': int(os.environ['GITHUB_RUN_ATTEMPT']),
+                  'abi': 'x86_64', 'prebuiltApks': True,
+                  'apkInspectorOutcome': os.environ['APK_INSPECTION_OUTCOME'], 'files': manifest}
+        (root / 'source-manifest.json').write_text(json.dumps(source, indent=2) + '\n')
+        PY
+    - name: Upload the built x86 runtime contract
+      if: ${{ !cancelled() && inputs.abi == 'x86_64' && steps.emulator_apks.outcome == 'success' }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: AEROVE-Lite-runtime-contract-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/lite-runtime-diagnostics/
+        if-no-files-found: error
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      if: inputs.abi == 'arm64-v8a'
+      with:
+        name: AEROVE-Lite-preview-arm64-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/lite-artifact-arm64-v8a/
+        if-no-files-found: error
+    - name: Preserve package diagnostics
+      if: ${{ always() }}
+      run: |-
+        mkdir -p "$RUNNER_TEMP/lite-package-diagnostics"
+        git status --short > "$RUNNER_TEMP/lite-package-diagnostics/git-status.txt"
+        git diff --binary > "$RUNNER_TEMP/lite-package-diagnostics/generated.patch"
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      if: ${{ always() }}
+      with:
+        name: AEROVE-Lite-package-diagnostics-${{ inputs.abi }}-attempt-${{ github.run_attempt }}
+        path: |-
+          apps/aerove-lite/app/build/reports/
+          apps/aerove-lite/app/build/outputs/androidTest-results/
+          ${{ runner.temp }}/lite-package-diagnostics/
+        if-no-files-found: warn
+    name: package

@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="about_license_client_helper">"클라이언트 보조 프로그램(Go, regexp2, age)"</string>
+</resources>

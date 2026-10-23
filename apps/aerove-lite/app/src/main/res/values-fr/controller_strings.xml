@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="controller_external">Contrôleur externe</string>
+    <string name="controller_secret">Secret du contrôleur externe</string>
+    <string name="controller_save">Enregistrer</string>
+    <string name="controller_cancel">Annuler</string>
+    <string name="controller_invalid_secret">Saisissez un secret de 1–512 caractères.</string>
+    <string name="controller_save_failed">Impossible d’enregistrer les paramètres.</string>
+</resources>

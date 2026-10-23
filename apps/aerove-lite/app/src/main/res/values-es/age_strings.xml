@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="age_secret_title">Clave secreta de age</string>
+    <string name="age_cancel">Cancelar</string>
+    <string name="age_name">Nombre</string>
+    <string name="age_url">URL</string>
+    <string name="age_failed">Fallido</string>
+    <string name="age_import">Importar</string>
+    <string name="age_secret_label">Clave secreta</string>
+    <string name="age_continue">Continuar</string>
+    <string name="age_decrypt_failed">Error de descifrado. Comprueba la clave e inténtalo de nuevo.</string>
+    <string name="age_import_title">Importar perfiles</string>
+    <string name="age_batch_mode">Entrada por lotes</string>
+    <string name="age_urls">URL</string>
+    <string name="age_import_failed">No se pudieron importar algunos perfiles.</string>
+    <string name="age_queued">En cola</string>
+    <string name="age_running">Importando</string>
+    <string name="age_succeeded">Importado</string>
+    <string name="age_cancelled">Cancelado</string>
+</resources>

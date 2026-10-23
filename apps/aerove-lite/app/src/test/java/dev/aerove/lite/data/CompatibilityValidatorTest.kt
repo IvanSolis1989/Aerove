@@ -23,6 +23,126 @@ class CompatibilityValidatorTest {
         assertTrue(failure.message, failure.issues.any { it.path == path })
     }
 
+    @Test fun realSystemAndDhcpDnsReachNativeWithoutLegacyStoreRejection() {
+        val source = "dns: {nameserver: [system, 'system://', 'dhcp://auto', 'dhcp://wlan0'], nameserver-policy: {example.com: 'dhcp://wlan0'}}"
+        validator.validate(source)
+        assertEquals(listOf(source), nativeSources)
+        rejected("dns: {nameserver: ['dhcp://']}", "$.dns.nameserver[0]")
+        rejected("dns: {nameserver: ['ftp://dns.example']}", "$.dns.nameserver[0]")
+        rejected("dns: {nameserver-policy: {example.com: [system]}}", "$.dns.nameserver-policy.example.com")
+        assertEquals(1, nativeCalls)
+    }
+
+    @Test fun probeDialOptionsAreStrictBooleansAndKeepExplicitFalse() {
+        val source = "unified-delay: false\ntcp-concurrent: true"
+        validator.validate(source)
+        assertEquals(listOf(source), nativeSources)
+        listOf("unified-delay", "tcp-concurrent").forEach { key ->
+            listOf("null", "'false'", "1", "[]").forEach { invalid -> rejected("$key: $invalid", "$.$key") }
+        }
+        assertEquals(1, nativeCalls)
+    }
+
+    @Test fun fixedUnsupportedCapabilitiesReportActualConsumersRatherThanASchemaLabel() {
+        listOf("ntp" to "{}", "sniffer" to "{enable: false}", "geodata-loader" to "standard").forEach { (key, value) ->
+            val error = assertThrows(ConfigValidationException::class.java) { validator.validate("$key: $value") }
+            val issue = error.issues.single { it.path == "$.$key" }
+            assertTrue(issue.reason, issue.reason.contains("Fixed clash-rs"))
+            assertFalse(issue.reason.contains("compatibility schema"))
+        }
+    }
+
+    @Test fun fourNativeFeatureProtocolsKeepTheirPreciseCanonicalFieldsAndDefaultsUnmodified() {
+        val key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        listOf(
+            "{type: ssh, name: SSH, server: ssh.example, port: 22, username: user, password: pass, host-key-algorithms: [ssh-ed25519]}",
+            "{type: wireguard, name: WG, server: wg.example, port: 51820, private-key: '$key', public-key: '$key', ip: 10.0.0.2/32, ipv6: 'fd00::2/128', dns: [1.1.1.1], reserved-bits: [0, 1, 255]}",
+            "{type: shadowquic, name: SQ, server: sq.example, port: 443, username: user, password: pass, server-name: sq.example}",
+            "{type: tailscale, name: TS, ephemeral: false}",
+        ).forEach { proxy ->
+            val source = "proxies: [$proxy]"
+            validator.validate(source)
+            assertEquals(source, nativeSources.last())
+        }
+        assertEquals(4, nativeCalls)
+    }
+
+    @Test fun standardShadowQuicAliasesAndOmittedSniStayIntactForNativeNormalization() {
+        val base = "type: shadowquic, name: Q, server: sq.example, port: 443, username: u, password: p"
+        listOf(base, "$base, sni: front.example, udp-over-stream: false, congestion-controller: bbr, disable-mtu-discovery: false",
+            base.replace(", username: u, password: p", ""), base.replace("username: u, password: p", "username: '', password: ''")).forEach { proxy ->
+            val source = "proxies: [{$proxy}]"
+            validator.validate(source)
+            assertEquals(source, nativeSources.last())
+        }
+        listOf(
+            "sni: name, server-name: name" to "sni",
+            "udp-over-stream: true, over-stream: true" to "udp-over-stream",
+            "mtu-discovery: true, disable-mtu-discovery: false" to "disable-mtu-discovery",
+            "congestion-control: bbr, congestion-controller: bbr" to "congestion-controller",
+            "disable-mtu-discovery: 'false'" to "disable-mtu-discovery",
+            "udp-over-stream: 0" to "udp-over-stream",
+            "max-open-streams: 1024" to "max-open-streams",
+        ).forEach { (options, field) -> rejected("proxies: [{$base, $options}]", "$.proxies[0].$field") }
+        assertEquals(4, nativeCalls)
+    }
+
+    @Test fun wireGuardRejectsInputsThatFixedRuntimeWouldTruncateIgnoreOrUnwrap() {
+        val key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        val valid = "type: wireguard, name: W, server: wg.example, port: 51820, private-key: '$key', public-key: '$key', ip: 10.0.0.2/32"
+        listOf(
+            valid.replace("private-key: '$key'", "private-key: malformed") to "private-key",
+            "$valid, pre-shared-key: malformed" to "pre-shared-key",
+            "$valid, ipv6: malformed" to "ipv6",
+            "$valid, ipv6: '192.0.2.1/24'" to "ipv6",
+            "$valid, dns: [hostname.example]" to "dns[0]",
+            "$valid, allowed-ips: [10.0.0.0/99]" to "allowed-ips[0]",
+            "$valid, pre-shared-key: '$key', preshared-key: '$key'" to "preshared-key",
+        ).forEach { (proxy, field) -> rejected("proxies: [{$proxy}]", "$.proxies[0].$field") }
+        assertEquals(0, nativeCalls)
+        val source = "proxies: [{$valid, preshared-key: '$key', allowed-ips: ['::/0', '0.0.0.0/0'], dns: ['::1'], reserved-bits: [0,0,0]}]"
+        validator.validate(source)
+        assertEquals(listOf(source), nativeSources)
+    }
+
+    @Test fun newProtocolTypeErrorsUnknownsAndIgnoredFieldsRejectBeforeNative() {
+        listOf(
+            "{type: ssh, name: S, server: ssh.example, port: 22, username: 1}" to "username",
+            "{type: ssh, name: S, server: ssh.example, port: 22, username: u, host-key: text}" to "host-key",
+            "{type: wireguard, name: W, server: wg.example, port: 51820, private-key: a, public-key: b, ip: 10.0.0.2/32, udp: 'true'}" to "udp",
+            "{type: wireguard, name: W, server: wg.example, port: 51820, private-key: a, public-key: b, ip: 10.0.0.2/32, reserved-bits: [1, 2, 3, 4]}" to "reserved-bits",
+            "{type: wireguard, name: W, server: wg.example, port: 51820, private-key: a, public-key: b, ip: 10.0.0.2/32, peers: []}" to "peers",
+            "{type: shadowquic, name: Q, server: sq.example, port: 443, username: u, password: p, server-name: sq.example, initial-mtu: 1.5}" to "initial-mtu",
+            "{type: tailscale, name: T, server: ts.example}" to "server",
+            "{type: tailscale, name: T, ephemeral: 'false'}" to "ephemeral",
+            "{type: tailscale, name: T, exit-node: remote}" to "exit-node",
+        ).forEach { (proxy, field) -> rejected("proxies: [$proxy]", "$.proxies[0].$field") }
+        assertEquals(0, nativeCalls)
+        val error = assertThrows(ConfigValidationException::class.java) { validator.validate("proxies: [{type: openvpn, name: O}]") }
+        assertTrue(error.issues.single().reason.contains("no openvpn outbound variant"))
+    }
+
+    @Test fun exactProcessNameAndPathRulesReachNativeAndModesStayStrict() {
+        val source = "find-process-mode: always\nrules: ['PROCESS-NAME,com.example.app,DIRECT', 'PROCESS-PATH,/data/app/example,DIRECT', 'AND,((PROCESS-NAME,com.example.app),(NETWORK,TCP)),DIRECT']"
+        validator.validate(source)
+        assertEquals(listOf(source), nativeSources)
+        listOf("strict", "Always", "off").forEach { validator.validate("find-process-mode: $it") }
+        listOf("null", "true", "[]", "unknown").forEach { rejected("find-process-mode: $it", "$.find-process-mode") }
+        assertEquals(4, nativeCalls)
+    }
+
+    @Test fun uidUserRegexAndWildcardGuardsRemainExactForInlineAndProviderRules() {
+        listOf("UID", "IN-USER", "PROCESS-NAME-REGEX", "PROCESS-PATH-REGEX", "PROCESS-NAME-WILDCARD", "PROCESS-PATH-WILDCARD").forEach { rule ->
+            rejected("rules: ['$rule,app,DIRECT']", "$.rules[0]")
+            val failure = assertThrows(ConfigValidationException::class.java) {
+                validator.validateRulePayload(listOf("$rule,app,DIRECT"), "$.payload")
+            }
+            assertEquals("$.payload[0]", failure.issues.single().path)
+        }
+        validator.validateRulePayload(listOf("PROCESS-NAME,com.example,DIRECT", "PROCESS-PATH,/data/app/example,DIRECT"), "$.payload")
+        assertEquals(0, nativeCalls)
+    }
+
     @Test fun supportedProfileAlsoRunsNativeParser() {
         validator.validate("mode: rule\nproxies:\n - {name: direct, type: direct}\nrules:\n - MATCH,direct")
         assertEquals(1, nativeCalls)
@@ -165,13 +285,12 @@ class CompatibilityValidatorTest {
 
     @Test fun unsupportedDnsPoliciesAreNotSilentlyAccepted() {
         rejected("dns: {enhanced-mode: redir-host}", "$.dns.enhanced-mode")
-        rejected("dns: {nameserver: [system]}", "$.dns.nameserver[0]")
         rejected("dns: {nameserver-policy: {example.com: [1.1.1.1]}}", "$.dns.nameserver-policy.example.com")
         rejected("dns: {fake-ip-filter: ['geosite:cn']}", "$.dns.fake-ip-filter[0]")
     }
 
-    @Test fun androidProcessRuleIsRejectedInsideLogicalRules() {
-        rejected("rules:\n - AND,((PROCESS-NAME,app),(NETWORK,TCP)),DIRECT", "$.rules[0]")
+    @Test fun androidUnsupportedUidRuleIsRejectedInsideLogicalRules() {
+        rejected("rules:\n - AND,((UID,1000),(NETWORK,TCP)),DIRECT", "$.rules[0]")
     }
 
     @Test fun geoRequirementAndUnmanagedProvidersAreExplicitErrors() {

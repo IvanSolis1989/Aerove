@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="platform_tile_label">"AEROVE Lite"</string>
+    <string name="platform_action_start">"시작"</string>
+    <string name="platform_action_start_long">"AEROVE Lite 시작"</string>
+    <string name="platform_action_stop">"중지"</string>
+    <string name="platform_action_stop_long">"AEROVE Lite 중지"</string>
+    <string name="platform_action_toggle">"전환"</string>
+    <string name="platform_action_toggle_long">"AEROVE Lite 전환"</string>
+    <string name="platform_external_link_invalid">"이 구성 링크는 올바르지 않습니다."</string>
+</resources>

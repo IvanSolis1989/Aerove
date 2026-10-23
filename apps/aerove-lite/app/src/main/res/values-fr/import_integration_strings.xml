@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="integration_import_line_error">Impossible d’importer la ligne %1$d.</string>
+    <string name="integration_import_skipped">Abonnements existants ignorés : %1$d</string>
+</resources>

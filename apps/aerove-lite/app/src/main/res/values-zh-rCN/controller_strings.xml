@@ -1,0 +1,8 @@
+<resources>
+    <string name="controller_external">外部控制器</string>
+    <string name="controller_secret">外部控制器密钥</string>
+    <string name="controller_save">保存</string>
+    <string name="controller_cancel">取消</string>
+    <string name="controller_invalid_secret">请输入 1–512 个字符的密钥。</string>
+    <string name="controller_save_failed">无法保存设置。</string>
+</resources>

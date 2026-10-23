@@ -221,9 +221,9 @@
     <string name="network_field_issue">%1$s: %2$s</string>
     <string name="presentation_font_family">フォント</string>
     <string name="presentation_font_default">デフォルト</string>
-    <string name="presentation_fonts_installed">インストール済みのシステムフォント</string>
+    <string name="presentation_fonts_installed">中国語と英語に対応するシステムフォント</string>
     <string name="presentation_fonts_loading">システムフォントを読み込み中…</string>
-    <string name="presentation_fonts_empty">名前付きのシステムフォントが見つかりません</string>
+    <string name="presentation_fonts_empty">中国語と英語の両方に対応するシステムフォントがありません</string>
     <string name="presentation_fonts_error">システムフォントを読み込めません</string>
     <string name="presentation_retry">再試行</string>
     <string name="presentation_font_preview">AEROVE · いろはにほへと 0123456789</string>
@@ -553,4 +553,11 @@
     <string name="locale_ko">韓国語</string>
     <string name="locale_ru">ロシア語</string>
     <string name="locale_zh_cn">簡体字中国語</string>
+    <string name="navigation_bar_style">ボトムバー</string>
+    <string name="navigation_floating">フローティング</string>
+    <string name="navigation_docked">固定</string>
+    <string name="navigation_tab_animation">タブアニメーション</string>
+    <string name="navigation_slide">スライド</string>
+    <string name="navigation_fade">フェード</string>
+    <string name="network_vpn_enabled">VPN を有効にする</string>
 </resources>

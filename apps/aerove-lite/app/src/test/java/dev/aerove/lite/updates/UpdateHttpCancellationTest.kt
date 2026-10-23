@@ -119,6 +119,7 @@ class UpdateHttpCancellationTest {
                         override suspend fun automaticEnabled() = true
                         override suspend fun promptedTag(): String? = null
                         override suspend fun savePromptedTag(tag: String) = Unit
+                        override suspend fun resetPromptedTag() = Unit
                         override suspend fun canInstall() = false
                         override suspend fun installUri(file: File): String = error("No installer in cancellation fixture")
                     }

@@ -9,11 +9,14 @@ import java.io.IOException
 import java.security.MessageDigest
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.nio.file.LinkOption
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -116,10 +119,22 @@ class UpdateRepository(
     private val verifier: UpdateApkVerifier,
 ) : AutoCloseable {
     private val directory = cacheDirectory.canonicalFile.apply { check(isDirectory || mkdirs()) }
-    suspend fun check(identity: UpdateIdentity): LiteRelease? = withContext(Dispatchers.IO) {
+    private val operationGate = Any()
+    private val operations = mutableSetOf<Job>()
+    private var cleared = false
+    private suspend fun <T> operation(action: suspend () -> T): T = withContext(Dispatchers.IO) {
+        val job = checkNotNull(currentCoroutineContext()[Job])
+        synchronized(operationGate) { check(!cleared) { "Update repository was cleared" }; operations += job }
+        try { action() } finally { synchronized(operationGate) { operations -= job } }
+    }
+    suspend fun check(identity: UpdateIdentity): LiteRelease? = operation {
+        checkOwned(identity)
+    }
+    private suspend fun checkOwned(identity: UpdateIdentity): LiteRelease? = withContext(Dispatchers.IO) {
         val all = mutableListOf<LiteRelease>()
         for (page in 1..5) {
             val array = JSONArray(transport.releases(page))
+            require(array.length() <= 100) { "Invalid release page size" }
             all += parseLiteReleases(array)
             if (array.length() < 100) break
             require(page < 5) { "Release feed scan limit reached" }
@@ -127,7 +142,10 @@ class UpdateRepository(
         selectLiteRelease(all, identity)
     }
 
-    suspend fun download(release: LiteRelease, progress: (Long, Long) -> Unit): VerifiedUpdate = withContext(Dispatchers.IO) {
+    suspend fun download(release: LiteRelease, progress: (Long, Long) -> Unit): VerifiedUpdate = operation {
+        downloadOwned(release, progress)
+    }
+    private suspend fun downloadOwned(release: LiteRelease, progress: (Long, Long) -> Unit): VerifiedUpdate = withContext(Dispatchers.IO) {
         require(release.tag == "lite-v${release.version}+${release.versionCode}" && release.versionCode in 1..2_100_000_000L && release.bytes in 1..MAX_APK_BYTES) { "Invalid Lite update identity" }
         ProductVersion.parse(release.version)
         trustedAssetUrl(release.apkUrl, release.tag, LITE_APK_NAME)
@@ -152,7 +170,7 @@ class UpdateRepository(
         val destination = File(directory, "$expected.apk")
         if (destination.isFile) {
             val ready = VerifiedUpdate(destination, release, expected)
-            try { validate(ready); return@withContext ready }
+            try { validateOwned(ready); return@withContext ready }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { }
         }
@@ -160,7 +178,7 @@ class UpdateRepository(
         try {
             transport.download(release.apkUrl, temporary, release.bytes, progress)
             val candidate = VerifiedUpdate(temporary, release, expected)
-            validate(candidate)
+            validateOwned(candidate)
             currentCoroutineContext().ensureActive()
             Files.move(temporary.toPath(), destination.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
             directory.listFiles()?.filter { it.isFile && it.name.matches(Regex("[0-9a-f]{64}\\.apk")) && it != destination }
@@ -169,7 +187,10 @@ class UpdateRepository(
         } finally { Files.deleteIfExists(temporary.toPath()) }
     }
 
-    suspend fun validate(update: VerifiedUpdate) = withContext(Dispatchers.IO) {
+    suspend fun validate(update: VerifiedUpdate) = operation {
+        validateOwned(update)
+    }
+    private suspend fun validateOwned(update: VerifiedUpdate) = withContext(Dispatchers.IO) {
         require(update.file.canonicalFile.parentFile == directory && update.file.isFile && update.file.length() == update.release.bytes) { "Update cache is unavailable" }
         val hash = MessageDigest.getInstance("SHA-256")
         update.file.inputStream().use { input ->
@@ -182,6 +203,31 @@ class UpdateRepository(
         }
         require(hash.digest().hex() == update.sha256) { "APK checksum mismatch" }
         verifier.verify(update.file, update.release)
+    }
+
+    suspend fun clearUserState() = withContext(NonCancellable) {
+        val pending = synchronized(operationGate) { cleared = true; operations.toList() }
+        pending.forEach { it.cancel() }
+        pending.joinAll()
+        clearCachedUserState(directory)
+    }
+
+    companion object {
+        /** For the application factory only when no repository/feature has ever been initialized. */
+        suspend fun clearCachedUserState(cacheDirectory: File) = withContext(NonCancellable + Dispatchers.IO) {
+            val directory = cacheDirectory.absoluteFile.toPath().normalize()
+            check(!Files.isSymbolicLink(directory)) { "Update cache directory was redirected" }
+            if (!Files.exists(directory, LinkOption.NOFOLLOW_LINKS)) return@withContext
+            check(Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) { "Update cache directory is unavailable" }
+            val known = Regex("(?:[0-9a-f]{64}\\.apk|\\.download-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.part)")
+            fun candidates(): List<File> = checkNotNull(directory.toFile().listFiles()) { "Cannot read update cache" }
+                .filter { known.matches(it.name) }
+            candidates().forEach { file ->
+                check(!Files.isDirectory(file.toPath(), LinkOption.NOFOLLOW_LINKS)) { "Update cache entry is not a file" }
+                Files.deleteIfExists(file.toPath())
+            }
+            check(candidates().isEmpty()) { "Update cache cleanup did not complete" }
+        }
     }
     override fun close() = transport.close()
 }

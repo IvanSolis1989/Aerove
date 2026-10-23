@@ -61,7 +61,22 @@ comment_lines() {
   local body="$1"
   printf '%s\n' "$body" |
     grep -E "$(printf '\t')[[:space:]]*(//|/\*|#|\*([[:space:]]|/|$))" |
-    grep -vE 'ignore:|ignore_for_file:|coverage:ignore|Copyright|SPDX-|Licensed under|GENERATED|dart format off|yaml-language-server|[[:space:]]#!$|[[:space:]]#!/|#!?\[|#(include|define|undef|ifdef|ifndef|if|elif|else|endif|pragma|error)\b' || true
+    grep -vE 'ignore:|ignore_for_file:|coverage:ignore|Copyright|SPDX-|Licensed under|GENERATED|dart format off|yaml-language-server|[[:space:]]#!$|[[:space:]]#!/|#!?\[|#(include|define|undef|ifdef|ifndef|if|elif|else|endif|pragma|error)\b' |
+    awk '
+      {
+        separator = index($0, "\t")
+        if (!separator) {
+          print
+          next
+        }
+        path = substr($0, 1, separator - 1)
+        line = substr($0, separator + 1)
+        if (path ~ /\.go$/ && (line ~ /^[[:space:]]*\/\/go:build[[:space:]].+$/ || line ~ /^[[:space:]]*\/\/export[[:space:]]+[[:alpha:]_][[:alnum:]_]*[[:space:]]*$/)) {
+          next
+        }
+        print
+      }
+    ' || true
 }
 
 changed_files() {

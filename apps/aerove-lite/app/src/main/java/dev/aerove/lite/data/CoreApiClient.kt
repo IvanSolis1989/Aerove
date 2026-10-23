@@ -9,6 +9,7 @@ import dev.aerove.lite.ProxyNode
 import dev.aerove.lite.Traffic
 import dev.aerove.lite.telemetry.CoreTelemetry
 import dev.aerove.lite.telemetry.OutboundAnswer
+import dev.aerove.lite.observability.decodeObservationWindow
 import dev.aerove.lite.networksettings.NetworkSettings
 import dev.aerove.lite.networksettings.planNetwork
 import dev.aerove.lite.networksettings.networkApplyBody
@@ -23,8 +24,11 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.awaitClose
@@ -36,16 +40,19 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Call
 import okhttp3.HttpUrl
 import okhttp3.MediaType.Companion.toMediaType
@@ -60,9 +67,13 @@ import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
 
+private fun defaultCoreHttpClient(): OkHttpClient = OkHttpClient.Builder()
+    .dispatcher(okhttp3.Dispatcher().apply { maxRequestsPerHost = 32 })
+    .build()
+
 class CoreApiClient(
     private val endpoint: ControlEndpoint,
-    client: OkHttpClient = OkHttpClient(),
+    client: OkHttpClient = defaultCoreHttpClient(),
 ) : Closeable {
     private val closed = AtomicBoolean(false)
     private val calls = ConcurrentHashMap.newKeySet<Call>()
@@ -81,13 +92,29 @@ class CoreApiClient(
         .pingInterval(20, TimeUnit.SECONDS)
         .build()
 
+    private data class TelemetryDemand(val observations: Boolean = false, val revision: Long = 0)
+    private data class TelemetryPacket(val revision: Long, val value: Result<CoreTelemetry>)
+    private val telemetryGate = Any()
+    private val telemetryDemand = MutableStateFlow(TelemetryDemand())
+
+    fun setTelemetryObservations(enabled: Boolean) = synchronized(telemetryGate) {
+        val current = telemetryDemand.value
+        if (!closed.get() && current.observations != enabled)
+            telemetryDemand.value = TelemetryDemand(enabled, current.revision + 1)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
     private val telemetryPackets by lazy {
-        frames(listOf("aerove", "telemetry"), 1024)
-            .map { Result.success(decodeTelemetry(it)) }
+        telemetryDemand.flatMapLatest { demand ->
+            frames(listOf("aerove", "telemetry"), 65536,
+                query = if (demand.observations) mapOf("observations" to "true") else emptyMap(), serializedClose = true,
+                gracefulClose = { telemetryDemand.value.revision != demand.revision })
+            .map { TelemetryPacket(demand.revision, Result.success(decodeTelemetry(it))) }
             .onCompletion { cause ->
-                if (cause == null) emit(Result.failure(IOException("Core telemetry stream closed")))
+                if (cause == null) emit(TelemetryPacket(demand.revision, Result.failure(IOException("Core telemetry stream closed"))))
             }
-            .catch { emit(Result.failure(it)) }
+            .catch { emit(TelemetryPacket(demand.revision, Result.failure(it))) }
+        }
             .shareIn(streamScope, SharingStarted.WhileSubscribed(0, 0), replay = 1)
     }
 
@@ -161,8 +188,14 @@ class CoreApiClient(
 
     suspend fun outboundIdentity(): OutboundIdentity = decodeOutbound(json(listOf("aerove", "outbound")))
 
-    suspend fun outboundProbe(): OutboundAnswer {
-        val value = json(listOf("aerove", "outbound"))
+    suspend fun outboundProbe(forceDirect: Boolean = false): OutboundAnswer {
+        val value = json(listOf("aerove", "outbound"), if (forceDirect) mapOf("forceDirect" to "true") else emptyMap())
+        val direct = if (value.has("direct")) value.get("direct") as? Boolean
+            ?: throw IOException("Core returned an invalid outbound direct receipt") else null
+        val epoch = if (value.has("coreEpoch")) (value.get("coreEpoch") as? String)?.takeIf {
+            it.matches(Regex("0|[1-9][0-9]*")) && it.toULongOrNull() != null
+        } ?: throw IOException("Core returned an invalid outbound epoch") else null
+        if (forceDirect && (direct != true || epoch == null)) throw IOException("Core did not confirm the requested direct outbound route")
         val identity = decodeOutbound(value)
         val chains = try {
             val raw = value.getJSONArray("chains")
@@ -221,6 +254,9 @@ class CoreApiClient(
     }
 
     suspend fun closeAllConnections() { request(listOf("connections"), "DELETE") }
+    suspend fun resetConnections() { request(listOf("aerove", "reset-connections"), "POST", emptyBody = true) }
+
+    suspend fun clearDnsCache() { request(listOf("cache", "dns", "flush"), "POST", JSONObject()) }
 
     fun logs(): Flow<LogLine> = messages(listOf("logs")).map { value ->
         LogLine(System.currentTimeMillis(), value.getString("type"), value.getString("payload"))
@@ -229,7 +265,11 @@ class CoreApiClient(
     fun telemetry(): Flow<CoreTelemetry> = flow {
         check(!closed.get()) { "Core client is closed" }
         emitAll(merge(
-            telemetryPackets.map { it.getOrThrow() },
+            flow<CoreTelemetry> {
+                telemetryPackets.collect { packet ->
+                    if (packet.revision == telemetryDemand.value.revision) emit(packet.value.getOrThrow())
+                }
+            },
             flow<CoreTelemetry> {
                 closedSignal.first { it }
                 throw IOException("Core client is closed")
@@ -270,10 +310,12 @@ class CoreApiClient(
         budgetMillis: Long? = null,
         failure: ((Int, String) -> IOException)? = null,
         maxBytes: Int = MAX_PROFILE_BYTES,
+        emptyBody: Boolean = false,
     ): String = withContext(Dispatchers.IO) {
         check(!closed.get()) { "Core client is closed" }
         val builder = authenticated(url(path, query))
         val body = data?.toString()?.toRequestBody("application/json; charset=utf-8".toMediaType())
+            ?: if (emptyBody) ByteArray(0).toRequestBody(null) else null
         val transport = if (budgetMillis == null) http else http.newBuilder()
             .readTimeout(budgetMillis + 5000, TimeUnit.MILLISECONDS)
             .callTimeout(budgetMillis + 10000, TimeUnit.MILLISECONDS)
@@ -313,12 +355,17 @@ class CoreApiClient(
 
     private fun messages(path: List<String>): Flow<JSONObject> = frames(path).map(::JSONObject)
 
-    private fun frames(path: List<String>, limit: Int = MAX_PROFILE_BYTES): Flow<String> = callbackFlow {
+    private fun frames(path: List<String>, limit: Int = MAX_PROFILE_BYTES,
+        query: Map<String, String> = emptyMap(), serializedClose: Boolean = false,
+        gracefulClose: () -> Boolean = { false }): Flow<String> = flow {
+        val ended = CompletableDeferred<Unit>()
+        var owned: WebSocket? = null
+        try { emitAll(callbackFlow {
         check(!closed.get()) { "Core client is closed" }
-        val socket = http.newWebSocket(authenticated(url(path)).build(), object : WebSocketListener() {
+        val socket = http.newWebSocket(authenticated(url(path, query)).build(), object : WebSocketListener() {
             override fun onMessage(webSocket: WebSocket, text: String) {
                 try {
-                    if (text.length > limit) throw IOException("Core stream message is too large")
+                    if (text.toByteArray(Charsets.UTF_8).size > limit) throw IOException("Core stream message is too large")
                     if (trySend(text).isFailure) {
                         close(IOException("Core stream consumer is too slow"))
                     }
@@ -332,6 +379,7 @@ class CoreApiClient(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                ended.complete(Unit)
                 response?.close()
                 close(IOException("Core stream failed", t))
             }
@@ -342,16 +390,23 @@ class CoreApiClient(
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                ended.complete(Unit)
                 close()
             }
         })
+        owned = socket
         sockets.add(socket)
         if (closed.get()) socket.cancel()
         awaitClose {
-            sockets.remove(socket)
-            socket.cancel()
+            if (serializedClose && !closed.get() && gracefulClose()) socket.close(1000, "") else socket.cancel()
         }
-    }.buffer(64)
+        }.buffer(64)) } finally {
+            if (serializedClose && owned != null) withContext(NonCancellable) {
+                if (withTimeoutOrNull(1000) { ended.await() } == null) owned.cancel()
+            }
+            owned?.let(sockets::remove)
+        }
+    }
 
     override fun close() {
         if (closed.compareAndSet(false, true)) {
@@ -392,6 +447,25 @@ class CoreApiClient(
                     }
                     CoreTelemetry.GroupsChanged(revision)
                 }
+                "providersLoaded" -> {
+                    if (json.keys().asSequence().toSet() != setOf("type", "providers")) throw IOException("Invalid provider loaded frame")
+                    val rows = json.getJSONArray("providers")
+                    if (rows.length() > 2048) throw IOException("Too many loaded providers")
+                    val keys = mutableSetOf<Pair<dev.aerove.lite.providers.ProviderKind, String>>()
+                    CoreTelemetry.ProvidersLoaded((0 until rows.length()).map { index ->
+                        val row = rows.getJSONObject(index)
+                        if (row.keys().asSequence().toSet() != setOf("kind", "name", "revision", "phase", "changed")) throw IOException("Invalid provider loaded event")
+                        val kind = when (row.get("kind")) { "proxy" -> dev.aerove.lite.providers.ProviderKind.Proxy; "rule" -> dev.aerove.lite.providers.ProviderKind.Rule; else -> throw IOException("Invalid provider kind") }
+                        val name = row.get("name") as? String ?: throw IOException("Invalid provider name")
+                        if (name.isBlank() || name.length > 1024 || name.any(Char::isISOControl) || !keys.add(kind to name)) throw IOException("Invalid provider name")
+                        val raw = row.get("revision") as? String ?: throw IOException("Invalid provider revision")
+                        val revision = raw.toULongOrNull()?.takeIf { it > 0uL && it.toString() == raw } ?: throw IOException("Invalid provider revision")
+                        val phase = when (row.get("phase")) { "initial" -> dev.aerove.lite.telemetry.ProviderLoadPhase.Initial; "update" -> dev.aerove.lite.telemetry.ProviderLoadPhase.Update; else -> throw IOException("Invalid provider phase") }
+                        val changed = row.get("changed") as? Boolean ?: throw IOException("Invalid provider change flag")
+                        dev.aerove.lite.telemetry.ProviderLoaded(kind, name, revision, phase, changed)
+                    })
+                }
+                "observations" -> CoreTelemetry.Observations(decodeObservationWindow(frame))
                 else -> throw IOException("Core returned an unknown telemetry frame")
             }
         } catch (error: JSONException) {

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="global_resources_back">"뒤로"</string>
+    <string name="global_resources_cancel">"취소"</string>
+    <string name="global_resources_delete_confirm">"%1$s을(를) 삭제할까요? 참조하는 프로필을 업데이트해야 합니다."</string>
+    <string name="global_resources_done">"완료"</string>
+    <string name="global_resources_local">"로컬"</string>
+    <string name="global_resources_options">"옵션"</string>
+    <string name="global_resources_preview">"미리보기"</string>
+    <string name="global_resources_quick_edit">"빠른 편집"</string>
+    <string name="global_resources_remote">"원격"</string>
+    <string name="global_resources_replaced_confirm">"다음 노드가 제거됩니다: %1$s. 계속할까요?"</string>
+    <string name="global_resources_scratch">"처음부터 시작"</string>
+    <string name="global_resources_search">"검색"</string>
+    <string name="global_resources_select_all">"모두 선택"</string>
+    <string name="global_resources_title">"사용자 지정 프로필 리소스"</string>
+    <string name="global_resources_url">"URL"</string>
+</resources>
