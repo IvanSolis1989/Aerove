@@ -150,7 +150,14 @@ def capture(args, report, deadline):
         report["attempts"].append(result)
         stderr = (args.evidence_dir / (stem + ".stderr")).read_text(errors="replace")
         stdout = (args.evidence_dir / (stem + ".stdout")).read_text(errors="replace")
-        denied = "ptrace: Operation not permitted" in stderr or "ptrace: Permission denied" in stderr
+        denied = (
+            "ptrace: Operation not permitted" in stderr
+            or "ptrace: Permission denied" in stderr
+            or ("#0 " not in stdout
+                and "ptrace: Inappropriate ioctl for device." in stderr
+                and "Could not attach to process." in stdout
+                and "try again as the root user." in " ".join(stdout.split()))
+        )
         if attempt == 0 and denied and result["status"] == "completed" and not STOP:
             sudo = shutil.which("sudo")
             if sudo:
