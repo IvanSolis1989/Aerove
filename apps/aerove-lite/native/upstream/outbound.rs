@@ -107,7 +107,7 @@ impl Probe {
         match body {Ok(Ok(bytes)) if bytes.is_empty()=>{},_=>return failure(StatusCode::BAD_REQUEST,"no_body"),}
         if self.cancel.is_cancelled(){return failure(StatusCode::SERVICE_UNAVAILABLE,"session_stopped");}
         let components=self.components.read().unwrap().clone();
-        let result=tokio::select! {biased;_=self.cancel.cancelled()=>return failure(StatusCode::SERVICE_UNAVAILABLE,"session_stopped"),result=components.resolver.reset_connections()=>result};
+        let result=tokio::select! {biased;_=self.cancel.cancelled()=>return failure(StatusCode::SERVICE_UNAVAILABLE,"session_stopped"),result=components.dns_resolver.reset_connections()=>result};
         match result {Ok(())=>StatusCode::NO_CONTENT.into_response(),Err(_)=>failure(StatusCode::BAD_GATEWAY,"dns_reset_failed")}
     }
 

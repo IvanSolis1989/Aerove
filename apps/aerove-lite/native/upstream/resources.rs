@@ -33,6 +33,100 @@ const MAX_SITE_DOMAINS: usize = 100_000;
 const MAX_SITE_REGEXES: usize = 256;
 const MAX_SITE_TRIE_NODES: usize = 250_000;
 
+#[derive(serde::Serialize)]
+struct RuleSetInfo { format: &'static str, behavior: &'static str, count: usize }
+
+/// Pure file inspection follows Standard's local-source classification; it owns no runtime.
+pub fn inspect_rule_set(path: &Path) -> Result<String> {
+    let (format, behavior, rules) = offline_rules(path)?;
+    Ok(serde_json::to_string(&RuleSetInfo { format, behavior: behavior_name(behavior), count: rules.len() })?)
+}
+
+pub fn dump_rule_set(path: &Path, behavior: &str, format: &str) -> Result<String> {
+    let (actual_format, actual_behavior, rules) = offline_rules(path)?;
+    ensure!(format.eq_ignore_ascii_case(actual_format) || (actual_format == "yaml" && format.eq_ignore_ascii_case("yml")), "rule_set_format_mismatch");
+    ensure!(behavior.eq_ignore_ascii_case(behavior_name(actual_behavior)) || (actual_behavior == RuleSetBehavior::Classical && behavior.eq_ignore_ascii_case("classic")), "rule_set_behavior_mismatch");
+    let size = rules.iter().try_fold(0usize, |size, rule| size.checked_add(rule.len() + 1)).context("rule_set_dump_size_overflow")?;
+    ensure!(size <= MAX_EXPANDED_BYTES, "rule_set_dump_limit_exceeded");
+    let mut text = String::with_capacity(size);
+    for rule in rules { text.push_str(&rule); text.push('\n'); }
+    Ok(text)
+}
+
+fn behavior_name(behavior: RuleSetBehavior) -> &'static str {
+    match behavior { RuleSetBehavior::Domain => "domain", RuleSetBehavior::Ipcidr => "ipcidr", RuleSetBehavior::Classical => "classical" }
+}
+
+fn offline_rules(path: &Path) -> Result<(&'static str, RuleSetBehavior, Vec<String>)> {
+    let bytes = read_input(path, MAX_INPUT_BYTES)?;
+    if bytes.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
+        let expanded = unpack_zstd(&bytes)?;
+        let behavior = match expanded.get(4) { Some(0) => RuleSetBehavior::Domain, Some(1) => RuleSetBehavior::Ipcidr, _ => bail!("rule_set_invalid_mrs_behavior") };
+        let content = mobile_rules_mrs_parse(&bytes, behavior)?;
+        let page = content.page(0, MAX_ENTRIES);
+        ensure!(page.complete && page.rules.len() == page.rule_count, "rule_set_dump_count_limit_exceeded");
+        return Ok(("mrs", behavior, page.rules));
+    }
+    ensure!(bytes.len() <= MAX_TEXT_BYTES, "rule-provider text input limit exceeded");
+    let text = std::str::from_utf8(&bytes)?;
+    let yaml = bounded_yaml(&bytes).ok().and_then(|value| {
+        let mut entries = Vec::new(); let mut found = false;
+        for key in ["payload", "rules"] {
+            if let Some(list) = value.get(key) {
+                let list = list.as_sequence()?; found = true;
+                for entry in list { entries.push(entry.as_str()?.trim().to_owned()); }
+            }
+        }
+        found.then_some(entries)
+    });
+    let (format, entries) = if let Some(entries) = yaml { ("yaml", entries) } else {
+        ("text", text.lines().map(str::trim).filter(|line| !line.starts_with('#') && !line.starts_with("//")).map(str::to_owned).collect())
+    };
+    let entries: Vec<String> = entries.into_iter().filter(|entry| !entry.is_empty()).collect();
+    ensure!(entries.len() <= MAX_ENTRIES && entries.iter().all(|line| line.len() <= 2048), "rule-provider payload count/line limit exceeded");
+    if entries.is_empty() { return Ok((format, RuleSetBehavior::Classical, entries)); }
+    let (behavior, keys) = classify_offline_rules(&entries)?;
+    if behavior == RuleSetBehavior::Classical {
+        for line in &entries { mobile_parse_classical_rule(line)?; }
+        return Ok((format, behavior, entries));
+    }
+    let nodes: usize = keys.iter().map(|line| line.split('.').count()).sum();
+    ensure!(nodes <= 500_000 && keys.iter().all(|line| line.split('.').count() <= 128), "rule-provider trie node/depth limit exceeded");
+    let content = mobile_make_rules(behavior, keys, None, None)?;
+    let page = content.page(0, MAX_ENTRIES);
+    ensure!(page.complete && page.rules.len() == page.rule_count, "rule_set_dump_count_limit_exceeded");
+    ensure!(!page.rules.is_empty(), "rule_set_empty");
+    Ok((format, behavior, page.rules))
+}
+
+fn offline_cidr(value: &str) -> Option<String> {
+    if let Ok(network) = value.parse::<ipnet::IpNet>() { return Some(network.to_string()); }
+    let address = value.parse::<IpAddr>().ok()?;
+    Some(format!("{address}/{}", if address.is_ipv4() {32} else {128}))
+}
+
+fn classify_offline_rules(entries: &[String]) -> Result<(RuleSetBehavior, Vec<String>)> {
+    if entries.iter().any(|line| line.contains(',')) {
+        let mut domains = Vec::new(); let mut cidrs = Vec::new();
+        for entry in entries {
+            let Some((kind, value)) = entry.split_once(',') else { return Ok((RuleSetBehavior::Classical, Vec::new())); };
+            let value = value.trim();
+            if value.contains(',') { return Ok((RuleSetBehavior::Classical, Vec::new())); }
+            match kind.trim().to_ascii_uppercase().as_str() {
+                "DOMAIN" | "DOMAIN-SUFFIX" if !value.is_empty() && !value.starts_with('.') && !value.contains(['+', '*', '/']) => {
+                    domains.push(if kind.trim().eq_ignore_ascii_case("DOMAIN-SUFFIX") {format!("+.{value}")} else {value.to_owned()});
+                }
+                "IP-CIDR" | "IP-CIDR6" if value.parse::<ipnet::IpNet>().is_ok() => cidrs.push(value.to_owned()),
+                _ => return Ok((RuleSetBehavior::Classical, Vec::new())),
+            }
+        }
+        return Ok(if cidrs.is_empty() {(RuleSetBehavior::Domain, domains)} else if domains.is_empty() {(RuleSetBehavior::Ipcidr, cidrs)} else {(RuleSetBehavior::Classical, Vec::new())});
+    }
+    let cidrs: Vec<String> = entries.iter().filter_map(|entry| offline_cidr(entry)).collect();
+    ensure!(cidrs.is_empty() || cidrs.len() == entries.len(), "rule_set_mixed: domains and IP ranges");
+    Ok(if cidrs.is_empty() {(RuleSetBehavior::Domain, entries.to_vec())} else {(RuleSetBehavior::Ipcidr, cidrs)})
+}
+
 pub fn validate_resource(kind: &str, path: &Path, behavior: &str, format: &str) -> Result<()> {
     let kind = kind.to_ascii_lowercase();
     let format = format.to_ascii_lowercase();
@@ -228,7 +322,7 @@ pub(crate) fn rule_payload(bytes: &[u8], format: &str) -> Result<Vec<String>> {
         super::check_value(&value, "$")?;
         serde_yaml::from_value::<RulePayload>(value)?.payload
     };
-    ensure!(!payload.is_empty() && payload.len() <= MAX_ENTRIES, "rule-provider payload count must be 1..={MAX_ENTRIES}");
+    ensure!(payload.len() <= MAX_ENTRIES, "rule-provider payload count exceeds {MAX_ENTRIES}");
     for (index, line) in payload.iter().enumerate() {
         ensure!(!line.is_empty() && line.len() <= 2048, "payload[{index}] is empty or exceeds 2048 bytes");
         let upper = line.to_ascii_uppercase();

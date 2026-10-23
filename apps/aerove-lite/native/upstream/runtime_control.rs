@@ -71,7 +71,7 @@ impl Receiver {
     }
 }
 fn invalidate_identity(context:&super::Context)->crate::Result<()> {
-    let generation=context.network_generation.fetch_update(std::sync::atomic::Ordering::AcqRel,std::sync::atomic::Ordering::Acquire,|old|old.checked_add(1)).map_err(|_|Error::Operation("identity generation exhausted".into()))?+1;
+    let generation=context.network_generation.try_update(std::sync::atomic::Ordering::AcqRel,std::sync::atomic::Ordering::Acquire,|old|old.checked_add(1)).map_err(|_|Error::Operation("identity generation exhausted".into()))?+1;
     if let Some(owner)=&context.process_owner {owner.set_network_generation(generation);}Ok(())
 }
 async fn execute(action:Action,mode:RuntimeMode,components:Arc<RwLock<Arc<RuntimeComponents>>>,network:Arc<inbound::Owner>,user:Arc<super::user_controller::Owner>,global_state:Arc<tokio::sync::Mutex<crate::GlobalState>>)->crate::Result<ListenerStatus> {

@@ -132,6 +132,12 @@ object NativeCore {
     external fun validate(config: String): String?
 
     @JvmStatic
+    external fun inspectRuleSet(path: String): String
+
+    @JvmStatic
+    external fun dumpRuleSet(path: String, behavior: String, format: String): String
+
+    @JvmStatic
     external fun validateResource(kind: String, path: String, behavior: String, format: String): String?
 
     @JvmStatic

@@ -95,7 +95,7 @@ async fn finish(cancel: CancellationToken, task: JoinHandle<Result<()>>, ports: 
     cancel.cancel();
     tokio::time::timeout(Duration::from_secs(5), task).await.unwrap().unwrap().unwrap();
     assert!(CONTEXT.read().unwrap().is_none());
-    for port in ports { assert!(socket_helpers::try_create_dualstack_tcplistener((Ipv4Addr::LOCALHOST, *port).into()).is_ok()); }
+    for port in ports { assert!(crate::proxy::utils::try_create_dualstack_tcplistener((Ipv4Addr::LOCALHOST, *port).into()).is_ok()); }
 }
 
 async fn proxy_io() {
@@ -152,7 +152,7 @@ async fn mode_failure() {
     assert!(tokio::time::timeout(Duration::from_secs(5), task).await.unwrap().unwrap().is_err());
     assert!(receiver.await.is_err());
     assert!(CONTEXT.read().unwrap().is_none()); drop(collision);
-    for port in ports { assert!(socket_helpers::try_create_dualstack_tcplistener((Ipv4Addr::LOCALHOST, port).into()).is_ok()); }
+    for port in ports { assert!(crate::proxy::utils::try_create_dualstack_tcplistener((Ipv4Addr::LOCALHOST, port).into()).is_ok()); }
 }
 
 async fn proxy_cancel() {

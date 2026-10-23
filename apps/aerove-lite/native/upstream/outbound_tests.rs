@@ -428,7 +428,7 @@ async fn reset_dns_connections() {
     let echo=TcpListener::bind("127.0.0.1:0").await.unwrap();let target=echo.local_addr().unwrap();let echo_task=tokio::spawn(async move {let (mut stream,_)=echo.accept().await.unwrap();let mut byte=[0;1];while stream.read_exact(&mut byte).await.is_ok(){stream.write_all(&byte).await.unwrap();}});
     let (mut application,inbound)=tokio::io::duplex(64);let dispatcher=components.dispatcher.clone();let user=tokio::spawn(async move {dispatcher.dispatch_stream(crate::session::Session {destination:crate::session::SocksAddr::Ip(target),..Default::default()},Box::new(inbound)).await;});
     application.write_all(b"a").await.unwrap();let mut byte=[0;1];tokio::time::timeout(Duration::from_secs(3),application.read_exact(&mut byte)).await.unwrap().unwrap();assert_eq!(&byte,b"a");
-    let (mut dns_app,dns_input)=tokio::io::duplex(4096);let resolver=components.resolver.clone();let dns_bridge=tokio::spawn(crate::mobile::dns_network::tcp(dns_input,resolver));
+    let (mut dns_app,dns_input)=tokio::io::duplex(4096);let resolver=components.dns_resolver.clone();let dns_bridge=tokio::spawn(crate::mobile::dns_network::tcp(dns_input,resolver));
     let query=|host:&str|{let mut message=Message::query();message.metadata.id=91;let mut question=Query::new();question.set_name(Name::from_ascii(host).unwrap());question.set_query_type(RecordType::A);message.add_query(question);message};
     dns_frame(&mut dns_app,&query("before-reset.test")).await;assert_eq!(accepted.load(Ordering::SeqCst),1);
     let probe=Probe::new(Arc::new(RwLock::new(components.clone())),CancellationToken::new());assert_eq!(probe.reset_connections(request("/aerove/reset-connections")).await.status(),StatusCode::NO_CONTENT);
@@ -439,10 +439,11 @@ async fn reset_dns_connections() {
     let body=Request::builder().body(axum::body::Body::from("{}")).unwrap();assert_eq!(probe.reset_connections(body).await.status(),StatusCode::BAD_REQUEST);
     probe.cancel.cancel();assert_eq!(probe.reset_connections(request("/aerove/reset-connections")).await.status(),StatusCode::SERVICE_UNAVAILABLE);
     drop(dns_app);tokio::time::timeout(Duration::from_secs(3),dns_bridge).await.unwrap().unwrap();
-    drop(application);tokio::time::timeout(Duration::from_secs(3),user).await.unwrap().unwrap();echo_task.await.unwrap();components.resolver.reset_connections().await.unwrap();components.stop_all().await;dns_task.abort();let _=dns_task.await;
+    drop(application);tokio::time::timeout(Duration::from_secs(3),user).await.unwrap().unwrap();echo_task.await.unwrap();components.dns_resolver.reset_connections().await.unwrap();components.stop_all().await;dns_task.abort();let _=dns_task.await;
 }
 
 async fn protocol_types() {
+    use serde_yaml::Value;
     use crate::config::internal::proxy::OutboundProxyProtocol;
     let base="type: shadowquic\nname: sq\nserver: 127.0.0.1\nport: 443\n";
     for extra in ["","sni: sq.test\nudp-over-stream: true\ncongestion-controller: new_reno\ndisable-mtu-discovery: true\n","server-name: sq.test\nover-stream: false\ncongestion-control: cubic\nmtu-discovery: false\n"] {

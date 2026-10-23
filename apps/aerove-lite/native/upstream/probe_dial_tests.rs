@@ -153,7 +153,8 @@ async fn history() {
     let node: AnyOutboundHandler = Arc::new(direct::Handler::new("probe-node"));
     let first = manager.url_test(node.clone(), &url, Some(Duration::from_secs(2))).await.unwrap();
     assert_eq!(manager.last_delay("probe-node").await, Some(first.0));
-    assert_eq!(manager.delay_history("probe-node").await.last().unwrap().delay, first.0);
+    let history = serde_json::to_value(manager.delay_history("probe-node").await).unwrap();
+    assert_eq!(history.as_array().unwrap().last().unwrap()["delay"], serde_json::json!(first.0.as_millis()));
     let hc = HealthCheck::new(vec![node.clone()], url.clone(), 0, false, manager.clone());
     let provider: ArcProxyProvider = Arc::new(PlainProvider::new("probe-provider".into(), vec![node.clone()],
         HealthCheck::new(vec![node.clone()], url.clone(), 0, false, manager.clone())).unwrap());

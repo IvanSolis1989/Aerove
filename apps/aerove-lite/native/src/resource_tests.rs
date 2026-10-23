@@ -277,3 +277,49 @@ fn input_and_decompression_limits_reject_remote_bombs_without_core_start() {
     assert!(validate_resource("proxy-provider", &path, "", "text").is_err());
     assert!(validate_resource("mmdb", &files.0, "", "mmdb").is_err());
 }
+
+#[test]
+fn offline_rule_sets_match_standard_local_classification_and_normalized_payloads() {
+    use clash_lib::mobile::resources::{inspect_rule_set, dump_rule_set};
+    let files = Files::new();
+    for (name, source, format, behavior, count) in [
+        ("empty", "", "text", "classical", 0),
+        ("empty-yaml", "payload: []\n", "yaml", "classical", 0),
+        ("domains", "# comment\nexample.com\n// comment\n+.example.org\n", "text", "domain", 2),
+        ("rules-alias", "rules: ['DOMAIN-SUFFIX,example.com']\n", "yaml", "domain", 1),
+        ("both-lists", "payload: [example.com]\nrules: [example.org]\n", "yaml", "domain", 2),
+        ("addresses", "192.0.2.1\n2001:db8::1\n", "text", "ipcidr", 2),
+        ("classical", "DOMAIN-KEYWORD,example\n", "text", "classical", 1),
+    ] {
+        let path = files.file(name, source);
+        let info: serde_json::Value = serde_json::from_str(&inspect_rule_set(&path).unwrap()).unwrap();
+        assert_eq!(info, serde_json::json!({"format":format,"behavior":behavior,"count":count}));
+        let dump = dump_rule_set(&path, behavior, format).unwrap();
+        if count == 0 { assert!(dump.is_empty()); }
+        else {
+            assert!(dump.ends_with('\n'));
+            let materialized = files.file("materialized", &dump);
+            validate_resource("ruleset", &materialized, behavior, "text").unwrap();
+        }
+        if name == "rules-alias" { assert_eq!(dump, "+.example.com\n"); }
+        if name == "addresses" { assert!(dump.contains("192.0.2.1/32\n")); assert!(dump.contains("2001:db8::1/128\n")); }
+    }
+    validate_resource("ruleset", &files.file("empty-runtime", b""), "classical", "text").unwrap();
+    validate_resource("ruleset", &files.file("empty-runtime-yaml", b"payload: []\n"), "classical", "yaml").unwrap();
+}
+
+#[test]
+fn offline_rule_sets_dump_real_mrs_and_reject_mismatch_and_ambiguous_sources() {
+    use clash_lib::mobile::resources::{inspect_rule_set, dump_rule_set};
+    let files = Files::new();
+    let path = files.file("domain.mrs", mrs_domain());
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&inspect_rule_set(&path).unwrap()).unwrap(), serde_json::json!({"format":"mrs","behavior":"domain","count":1}));
+    assert_eq!(dump_rule_set(&path, "domain", "mrs").unwrap(), "example.com\n");
+    assert!(dump_rule_set(&path, "ipcidr", "mrs").is_err());
+    assert!(dump_rule_set(&path, "domain", "text").is_err());
+    for source in ["example.com\n192.0.2.0/24\n", "bad/name\n", "UNKNOWN-RULE,value\n"] {
+        assert!(inspect_rule_set(&files.file("invalid", source)).is_err());
+    }
+    assert!(inspect_rule_set(&files.file("broken.mrs", [0x28, 0xb5, 0x2f, 0xfd, 0])).is_err());
+    assert!(inspect_rule_set(&files.0.join("absent")).is_err());
+}

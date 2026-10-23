@@ -553,6 +553,31 @@ pub extern "system" fn Java_dev_aerove_lite_core_NativeCore_validateResource<'lo
     }).resolve::<ThrowRuntimeExAndDefault>()
 }
 
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_NativeCore_inspectRuleSet<'local>(
+    mut env: EnvUnowned<'local>, _class: JClass<'local>, path: JString<'local>,
+) -> JString<'local> {
+    env.with_env(|env| -> std::result::Result<JString<'local>, BridgeError> {
+        let path = path.try_to_string(env)?; let mut output = String::new();
+        validate_catching_panic(|| { output = clash_lib::mobile::resources::inspect_rule_set(std::path::Path::new(&path))?; Ok(()) })
+            .map_err(|_| BridgeError("rule_set_invalid: offline inspection failed".into()))?;
+        Ok(env.new_string(output)?)
+    }).resolve::<ThrowRuntimeExAndDefault>()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_NativeCore_dumpRuleSet<'local>(
+    mut env: EnvUnowned<'local>, _class: JClass<'local>, path: JString<'local>, behavior: JString<'local>, format: JString<'local>,
+) -> JString<'local> {
+    env.with_env(|env| -> std::result::Result<JString<'local>, BridgeError> {
+        let path = path.try_to_string(env)?; let behavior = behavior.try_to_string(env)?; let format = format.try_to_string(env)?;
+        let mut output = String::new();
+        validate_catching_panic(|| { output = clash_lib::mobile::resources::dump_rule_set(std::path::Path::new(&path), &behavior, &format)?; Ok(()) })
+            .map_err(|_| BridgeError("rule_set_invalid: offline dump failed".into()))?;
+        Ok(env.new_string(output)?)
+    }).resolve::<ThrowRuntimeExAndDefault>()
+}
+
 #[cfg(test)]
 mod resource_tests;
 
