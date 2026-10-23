@@ -16,7 +16,8 @@ Lite 后续公开 Release 复用同一通知入口，通过标签中的 `lite` �
 所有执行读取默认分支的通知实现，不执行 Release 标签或构建产物中的代码。
 通知直接发送 Release 的全部产物文件，多个文件合并为一组，附正式/预览标记、摘要和完整说明链接。
 下载后逐项核对 GitHub Release 的 SHA256 digest 与文件大小，再把原文件作为 document 上传；不重编或改写 APK。
-附件说明控制在 1000 字符以内，完整更新说明以 GitHub Release 为准。
+附件说明只保留一次版本标题、最多四条实际变化和一个短文本“发布页”链接；
+去掉源码 SHA、包名、重复版本及构建流程。HTML 链接避免裸 URL 占据多行。
 
 文件通过 Telethon 的机器人账号 MTProto 上传，支持超过云端 Bot API 50 MB 限制的 APK。
 每次运行只在内存中创建机器人 session，结束后登出；不登录个人用户账号，不持久化 session，不运行常驻服务。
@@ -32,6 +33,7 @@ Actions → **Telegram release notification** → Run workflow，选择 main：
 - `test`：发送一条静音的“机器人部署测试”，不需要 tag。
 - `send`：填写准确 Release tag，发送已发布版本的原始附件；重复发送自动跳过。
 - `recover`：仅在查看频道确认上次没有发送成功后使用。此模式允许重试不确定的发送，有重复消息风险。
+- `edit`：仅更新已有成功消息的简短说明，不重新上传或再次发布附件。
 
 勾选 `verify_files` 会在上传后从 Telegram 下载全部附件，并逐项核对 SHA256，用于实际交付验收。
 执行摘要保留每个文件的名称、大小、SHA256、消息 ID 和下载回验结果。
@@ -44,7 +46,8 @@ Actions → **Telegram release notification** → Run workflow，选择 main：
 频道改名后公开链接需要同步更新，numeric chat ID 保持固定。机器人权限或 Secret 缺失会明确失败，
 通知失败不改变原应用的构建和发行结果。GitHub Step Summary 显示真实消息链接或跳过原因。
 
-Smart-Config-Kit 使用同一机器人，但仅 main 根 `CHANGELOG.md` 修改时发送配置产物 ZIP；其部署规则在该仓库独立维护。
+Smart-Config-Kit 使用同一机器人，仅 main 根 `CHANGELOG.md` 修改时发送各客户端原始配置文件，
+不压缩、不改文件名、不改文件内容；根日志引用的同日子目录日志用于提取实际变化，其部署规则独立维护。
 
 依据：[Telegram sendMessage](https://core.telegram.org/bots/api#sendmessage)、
 [频道关联讨论群](https://core.telegram.org/api/discussion)、
