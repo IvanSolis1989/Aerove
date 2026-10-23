@@ -96,6 +96,12 @@ Future<ProviderContainer> pumpProfiles(
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUpAll(() async {
+    await AppLocalizations.load(const Locale('en'));
+  });
+
   testWidgets(
     'the liquid background preserves profile selection and usage semantics',
     (tester) async {
