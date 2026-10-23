@@ -20,7 +20,7 @@ missing wrappers or a first-release deadline are not product exceptions. Follow 
 
 The long-term Android objective is for the native product to replace the current Android application after measured
 energy efficiency, functionality, visual quality and reliability justify migration. Keep both products separate during
-development; preserve the existing stable app and desktop support. Rust/clash-rs is the current candidate, not proof of
+development; preserve the existing stable app and desktop support. The selected Rust core is meow-rs; its [migration](../docs/aerove-lite/core/meow-migration.md) is in progress, not proof of
 the most efficient core. Compare cores on the same native frontend and workload before making that claim.
 
 Product versions belong to Aerove, not to the latest FlClash tag. Upstream work is a reference and requires a scoped

@@ -51,7 +51,8 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 | [Smart-Config-Kit](https://github.com/IvanSolis1989/Smart-Config-Kit) | `28b86e2e991cde8bc2fa71b874e807c622f2b096` | 分类 Issue Forms、MiMo Flash 首轮与 Pro 追问、过滤/失败只读模式作为流程参考；本产品重新实现，没有复制规则/提示词或自动PR | 未复制或分发其代码；上游 `.github/ISSUE_TEMPLATE`、固定revision，本仓库只读流程对照 |
 | [tun-rs/tun-rs](https://github.com/tun-rs/tun-rs) | `d0f764c135a34ad92360462f89a40b59f373cc06` | Lite clash-rs核心能力审计中，只读核对Unix异步设备/已打开fd保护边界；未新增独立依赖 | MIT；`docs/aerove-lite/core/clash-rs-audit.md` |
 | [Arc-blroth/memory-stats](https://github.com/Arc-blroth/memory-stats) | `431e74654c27ec38a6f7d19c186bec42c2a938b8` | Lite核心审计中只读核对内存统计实现；未新增依赖 | MIT；`docs/aerove-lite/core/clash-rs-audit.md` |
-| [meow-rs/meow-rs](https://github.com/meow-rs/meow-rs) | 审计文档固定链接；未将其release作为产品来源 | 只读评估Rust代理核心公开基准及Android DNS反馈；没有采用其内核或实现 | GPL-3.0；`docs/research/android-core-decision.md` |
+| [meow-rs/meow-rs](https://github.com/meow-rs/meow-rs) | `v0.26.1` / `727ddcd06f592e2f12c5222c4de6cce328df808c` | Lite Rust代理内核迁移来源，固定源码用于实施；不表示已完成集成、功能对齐、APK或设备验收。保留此前只读评估公开基准及 Android DNS 行为的历史记录，并参考官方 Android FFI/Cargo 实现。 | MIT；[固定提交 LICENSE](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/LICENSE)、[固定 Cargo.toml](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/Cargo.toml)；官方 Android FFI 来源和 SHA256 见外部迁移报告。 |
+| [meow-rs/meow-android](https://github.com/meow-rs/meow-android) | `4740012bf0efdb8bae8fbeeefaf4937dfa309f26`；该参考自身 Meow 依赖仍为 `v0.26.0` | Lite Meow 接入的 Android JNI、socket protect、TUN FD、配置装配及 NDK/CMake 只读参照；不照搬删监听/sniffer、公共 DNS fallback 或未等待退出的路径，不作为已验收实现 | MIT；[固定提交 LICENSE](https://github.com/meow-rs/meow-android/blob/4740012bf0efdb8bae8fbeeefaf4937dfa309f26/LICENSE)，SHA256 `9efa36b633149025223074bc471560d9aec5111d31a874d133cb1e1eec38f59e`；实际采用桥接另保原始署名与许可 |
 | [MFSGA/AChimera](https://github.com/MFSGA/AChimera) | 只读查阅公开项目；无产品依赖 | Android Rust代理客户端形态与限制调查，未采用其实现 | GPL-3.0；`docs/research/android-core-decision.md` |
 | [chrisbanes/haze](https://github.com/chrisbanes/haze) | `2.0.1` / `347c67a1f190b71f439f3b9ca7ffb326d0044629` | 液态玻璃库对比；检查Glass、形状和Shader API，未进入产品依赖或复制代码 | Apache-2.0；`docs/research/rendering/haze.md`、`docs/research/rendering/library-selection.md` |
 | [belinwu/cloudy](https://github.com/belinwu/cloudy) | `0.7.1`；只读源码锚点 `e3ffd8e957b2a29832c287a95665ecc540e9c7eb` | 玻璃渲染与多层捕获路径比较，未进入产品依赖或复制代码 | Apache-2.0；`docs/research/rendering/native-alternatives.md`、`library-selection.md` |
@@ -82,7 +83,8 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 | --- | --- | --- |
 | FlClash | 历史来源及可选择的客户端实现参考 | 按 Aerove 实际问题选择相关变更，保留来源和许可证，不自动整套合并 |
 | MetaCubeX/mihomo | 标准版代理核心 | 直接核验官方已公开发布的稳定版本，固定源码提交，在本仓库维护可重放适配补丁，不等待 FlClash |
-| ibigbug/clash-rs | Lite 代理核心 | 固定公开发布版本及 Android 适配，单独核验配置、协议和平台契约 |
+| meow-rs/meow-rs | Lite 选定代理核心（迁移中） | 固定公开版本、宿主接入与配置/协议/平台契约；真实验收前不冒充已发行 APK |
+| ibigbug/clash-rs | Lite 历史核心检查点 | 保留源码、许可、测试和实测证据，不继续扩展或复用成 Meow 的验收结论 |
 | Android 图形库与 Flutter | 两版呈现基础 | 固定依赖并保持共同视觉、交互、功能和刷新策略；框架差异不构成删减理由 |
 
 产品版本、签名、更新地址、验收和发版由 Aerove 决定。上游发布是评估依赖更新的输入，不是跳过兼容性验证或自动发版的授权。借鉴代码仍须保留原始版权与许可证；独立维护不意味着重写历史或宣称全部代码原创。

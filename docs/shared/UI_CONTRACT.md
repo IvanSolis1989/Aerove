@@ -1,6 +1,6 @@
 # AEROVE 标准版 / Lite 双向开发契约
 
-用户确认：2026-10-22。适用于 AEROVE 标准版（原完整版，Flutter + 官方 Mihomo）与 AEROVE Lite（原生 Android + clash-rs）。
+用户确认：2026-10-22；2026-10-23 将 Lite 内核改为 meow-rs。适用于 AEROVE 标准版（原完整版，Flutter + 官方 Mihomo）与 AEROVE Lite（原生 Android + meow-rs，迁移中）。
 本文件是两版共同实现的权威规格；根 [AGENTS.md](../../AGENTS.md) 和产品入口均强制引用。版本规则见[独立版本规范](../development/VERSIONING.md)。
 
 ## 交付标准

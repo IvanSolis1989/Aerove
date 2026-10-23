@@ -1,6 +1,6 @@
 # AEROVE Lite
 
-Independent Android application: Kotlin/Jetpack Compose, Backdrop and a pinned Rust/clash-rs core. The Flutter/Go Aerove
+Independent Android application: Kotlin/Jetpack Compose, Backdrop and a pinned Rust/meow-rs core (migration in progress). The Flutter/Go Aerove
 application remains a separate product. This directory is the actual Lite application; `../../experiments/aerove-lite-renderer`
 is an earlier, frozen experiment and is not a dependency.
 
@@ -10,6 +10,11 @@ Aerove, share its storage/signature, or publish to its stable update feed. The w
 separate source assets.
 
 ## Development
+
+The selected replacement is Meow v0.26.1 at `727ddcd06f592e2f12c5222c4de6cce328df808c`.
+The candidate `meow-native/` bridge and its isolated CI must compile and run before the production JNI/build
+entry is switched. See the [migration record](../../docs/aerove-lite/core/meow-migration.md) for current gates.
+The commands below describe the preserved clash-rs checkpoint, not a validated Meow APK.
 
 Use JDK 17, Gradle 9.6.0, Android SDK/Build Tools 37, NDK 28.2.13676358 and Rust 1.99.0. Source and dependency pins are in
 `native/prepare.py`, `native/Cargo.toml`, `native/Cargo.lock` and the Gradle files. The small upstream patch and mobile
@@ -59,7 +64,8 @@ The project's development status and remaining evidence are tracked outside the 
 
 ## Licenses
 
-The repository's GPL license remains applicable. The pinned clash-rs sources retain Apache-2.0 and their NOTICE, including
+The repository's GPL license remains applicable. The selected Meow sources retain MIT and their original copyright.
+The preserved clash-rs sources retain Apache-2.0 and their NOTICE, including
 the enabled TUIC feature's GPL3 condition. Backdrop and Shapes retain Apache-2.0. Copies of the principal notices are in
 the APK's `assets/licenses/` and the native source's `licenses/`. The full corresponding source and exact dependency pins
 must accompany any distributed production build.

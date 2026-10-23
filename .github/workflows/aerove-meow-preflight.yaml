@@ -1,0 +1,149 @@
+name: AEROVE Meow bridge preflight
+on:
+  push:
+    branches: [codex/aerove-meow-preflight]
+    paths:
+      - apps/aerove-lite/meow-native/**
+      - .github/workflows/aerove-meow-preflight.yaml
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: Host representative chain first; Android requires committed source archive hash and bridge lock
+        type: choice
+        options: [host, android]
+        default: host
+      initialize_lock:
+        description: Explicit first bridge lock/source archive bootstrap when no bridge Cargo.lock exists
+        type: boolean
+        default: false
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: meow-preflight-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  RUSTUP_TOOLCHAIN: '1.98.1'
+  NDK_VERSION: '28.2.13676358'
+jobs:
+  host:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: '1.98.1'
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          workspaces: apps/aerove-lite/meow-native -> target
+          key: meow-host-1.98.1
+          cache-on-failure: true
+          cache-directories: apps/aerove-lite/meow-native/.upstream
+      - name: Python source preparation and Android link policy checks
+        run: python3 apps/aerove-lite/meow-native/test_build.py
+      - name: Record actual host C and CMake prerequisites
+        run: |
+          set -euo pipefail
+          clang --version
+          cmake --version
+          ninja --version
+          pkg-config --version
+      - name: Real locked host proxy lifecycle chain
+        shell: bash
+        env:
+          INITIALIZE_LOCK: ${{ inputs.initialize_lock }}
+          PHASE: ${{ inputs.phase }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' 2>&1 | tee "$RUNNER_TEMP/meow-host-command.log"
+          import json, os, subprocess
+          from pathlib import Path
+          root=Path('apps/aerove-lite/meow-native')
+          spec=json.loads((root/'source.json').read_text())
+          initial=not (root/'Cargo.lock').exists() and (os.environ['INITIALIZE_LOCK']=='true' or
+              (os.environ['GITHUB_EVENT_NAME']=='push' and spec['archiveSha256'] is None))
+          if initial and os.environ['PHASE']=='android':
+              raise SystemExit('First bootstrap is host-only; commit the real source archive hash and lock before Android')
+          command=['python3',str(root/'build.py')]
+          if initial:command.append('--initialize-lock')
+          subprocess.run(command,check=True)
+          PY
+      - name: Preserve actual source, lock and host terminal result
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=apps/aerove-lite/meow-native
+          evidence="$RUNNER_TEMP/meow-host-evidence"
+          mkdir -p "$evidence"
+          cp "$root/source.json" "$root/Cargo.toml" "$root/rust-toolchain.toml" "$evidence/"
+          for file in Cargo.lock build/host-receipt.json .upstream/meow-rs/AEROVE_SOURCE_PROVENANCE.json; do
+            if [ -f "$root/$file" ]; then cp "$root/$file" "$evidence/"; fi
+          done
+          if [ -f "$RUNNER_TEMP/meow-host-command.log" ]; then cp "$RUNNER_TEMP/meow-host-command.log" "$evidence/"; fi
+          python3 - "$evidence" <<'PY'
+          import hashlib,json,sys
+          from pathlib import Path
+          root=Path(sys.argv[1]); provenance=root/'AEROVE_SOURCE_PROVENANCE.json'
+          if provenance.exists():
+              source=json.loads((root/'source.json').read_text())
+              source['archiveSha256']=json.loads(provenance.read_text())['archiveSha256']
+              (root/'source.resolved.json').write_text(json.dumps(source,indent=2)+'\n')
+          rows=[dict(path=p.name,bytes=p.stat().st_size,sha256=hashlib.sha256(p.read_bytes()).hexdigest()) for p in sorted(root.iterdir()) if p.is_file()]
+          (root/'evidence-files.json').write_text(json.dumps(rows,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: Meow-host-evidence-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/meow-host-evidence/
+          if-no-files-found: error
+  android:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.phase == 'android' }}
+    needs: host
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-linux-android, x86_64-linux-android]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: '1.98.1'
+          targets: ${{ matrix.target }}
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+          cmdline-tools-version: '16111833'
+      - run: sdkmanager "ndk;$NDK_VERSION" 'cmake;3.22.1'
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          workspaces: apps/aerove-lite/meow-native -> target
+          key: meow-${{ matrix.target }}-1.98.1-ndk28.2
+          cache-directories: apps/aerove-lite/meow-native/.upstream
+      - name: Link the real locked bridge for this Android ABI
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          export CMAKE="$ANDROID_SDK_ROOT/cmake/3.22.1/bin/cmake"
+          export PATH="$ANDROID_SDK_ROOT/cmake/3.22.1/bin:$PATH"
+          python3 apps/aerove-lite/meow-native/build.py --target "$TARGET" --ndk "$ANDROID_SDK_ROOT/ndk/$NDK_VERSION" 2>&1 | tee "$RUNNER_TEMP/meow-android-link.log"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: Meow-link-${{ matrix.target }}-attempt-${{ github.run_attempt }}
+          path: |
+            apps/aerove-lite/meow-native/build/
+            apps/aerove-lite/meow-native/Cargo.lock
+            ${{ runner.temp }}/meow-android-link.log
+          if-no-files-found: warn

@@ -1,0 +1,16 @@
+{
+  "engine": {
+    "repository": "https://github.com/meow-rs/meow-rs",
+    "commit": "727ddcd06f592e2f12c5222c4de6cce328df808c",
+    "license": "MIT",
+    "retainedFile": "meow-rs-MIT.txt"
+  },
+  "androidReference": {
+    "repository": "https://github.com/meow-rs/meow-android",
+    "commit": "4740012bf0efdb8bae8fbeeefaf4937dfa309f26",
+    "path": "core/build.gradle.kts",
+    "sha256": "41fd91893b0b324436ffcf47c93552c19f525c804cbfe23c88bb672b2991bdcc",
+    "use": "Android per-target CMake ABI/API wrapper and BoringSSL static C++ runtime policy reference; no Android0.26.0 Cargo lock adopted"
+  },
+  "transitiveGitDependenciesInPinnedEngineLock": []
+}
