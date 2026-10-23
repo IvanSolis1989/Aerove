@@ -95,6 +95,8 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 | [android/gradle-recipes](https://github.com/android/gradle-recipes) | `agp-9.0` 分支固定 `449b73601ba59ae751ff76f9869f2b8461e2b9c0` | 修复客户端预检的资产 SourceSet Provider 配置错误时，只读参照官方 `addGeneratedSourceFolder` 的 README / CustomPlugin.kt，比较 Variant 生成目录方案。实际沿用既有固定输出目录并传 File，保留原 Sync / mergeAssets 依赖；未复制示例代码。 | Apache-2.0，AOSP 2022 源文件许可头；[固定示例](https://github.com/android/gradle-recipes/tree/449b73601ba59ae751ff76f9869f2b8461e2b9c0/addGeneratedSourceFolder)、[实际采用的 AGP 9.4 API](https://developer.android.com/reference/tools/gradle-api/9.4/com/android/build/api/dsl/AndroidSourceDirectorySet)。 |
 
+| [aosp-mirror/platform_frameworks_base](https://github.com/aosp-mirror/platform_frameworks_base) | 固定 `1cdfff555f4a21f71ccc978290e2e212e2f8b168` | SDK 37 客户端编译修复时只读参考 Android `ActivityManager.AppTask#getTaskInfo()`：任务不存在可返回 null，采用安全访问忽略失效任务；未复制实现、未新增产品依赖。 | Apache-2.0，原 AOSP 源文件许可头；[固定 ActivityManager.java](https://github.com/aosp-mirror/platform_frameworks_base/blob/1cdfff555f4a21f71ccc978290e2e212e2f8b168/core/java/android/app/ActivityManager.java)、[官方 API](https://developer.android.com/reference/android/app/ActivityManager.AppTask#getTaskInfo())。 |
+
 ### 来源登记边界
 
 版本、commit、许可证分别按表中对应证据记录；缺失信息不从仓库名或最新上游状态推定。`Cargo.lock`/Maven/Pub锁定值标识依赖时，若未核实源码commit，版本列仅陈述已固定的发行版本与锁校验值。`russh`、`shadowquic`、`boring-noise`等peer测试读取上游API但未复制其实现；只读调查也与实际运行依赖分开。Cargo、Dart SDK和网络库的只读研究来源不代表被复制进产品。
