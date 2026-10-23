@@ -42,6 +42,15 @@ impl TunDriver {
         cancel: CancellationToken, factory: F) -> io::Result<Arc<Self>>
     where F: FnOnce(Arc<RuntimePlan>, Arc<OwnedLoadScope>) -> Fut + Send + 'static,
           Fut: Future<Output = io::Result<Arc<dyn PacketHandler>>> + Send + 'static {
+        eprintln!("[tun-stack] start-entry factory-future-bytes={}", std::mem::size_of::<Fut>());
+        Self::start_inner(json, caller, network, cancel, factory)
+    }
+
+    fn start_inner<F, Fut>(json: &str, caller: BorrowedFd<'_>, network: NetworkContext,
+        cancel: CancellationToken, factory: F) -> io::Result<Arc<Self>>
+    where F: FnOnce(Arc<RuntimePlan>, Arc<OwnedLoadScope>) -> Fut + Send + 'static,
+          Fut: Future<Output = io::Result<Arc<dyn PacketHandler>>> + Send + 'static {
+        eprintln!("[tun-stack] start-inner-entry");
         let plan = Arc::new(RuntimePlan::parse(json, std::os::fd::AsRawFd::as_raw_fd(&caller), true, false)?);
         if plan.runtime_mode != RuntimeMode::Tun || plan.initially_parked {
             return Err(error("packet driver requires an attached Tun plan"));
@@ -61,12 +70,23 @@ impl TunDriver {
         let progress = Arc::new(Progress { ready: AtomicBool::new(false), done: AtomicBool::new(false), incoming: AtomicU64::new(0), outgoing: AtomicU64::new(0), phase });
         let owner = Arc::new(Self { cancel: cancel.clone(), network: network.clone(), loads: loads.clone(),
             task: Mutex::new(None), progress: progress.clone(), tun: tun.clone() });
-        let task = runtime.spawn(async move {
+        eprintln!("[tun-stack] before-worker-construction");
+        let worker = async move {
+            eprintln!("[tun-stack] worker-first-poll");
             let mut core_done = None;
             let mut stack_started = false;
             let outcome = AssertUnwindSafe(async {
                 let loaded = {
-                    let work = loads.run(network.scope(async { factory(plan, loads.clone()).await }));
+                    eprintln!("[tun-stack] before-load-work-construction");
+                    let work = loads.run(network.scope(async {
+                        eprintln!("[tun-stack] before-factory-call");
+                        let factory_work = factory(plan, loads.clone());
+                        eprintln!("[tun-stack] factory-constructed bytes={}", std::mem::size_of_val(&factory_work));
+                        let result = factory_work.await;
+                        eprintln!("[tun-stack] factory-complete");
+                        result
+                    }));
+                    eprintln!("[tun-stack] load-work-constructed bytes={}", std::mem::size_of_val(&work));
                     tokio::pin!(work);
                     tokio::select! { biased;
                         _ = cancel.cancelled() => return Ok(()),
@@ -76,9 +96,11 @@ impl TunDriver {
                 };
                 let handler = loaded?;
                 if cancel.is_cancelled() || network.cancelled() { return Ok(()); }
+                eprintln!("[tun-stack] before-netstack-construction");
                 stack_started = true;
                 let (stack, tcp, udp) = lwip::NetStack::with_mtu(tun.mtu, 256, 64)
                     .map_err(|_| error("netstack construction failed"))?;
+                eprintln!("[tun-stack] netstack-constructed");
                 core_done = Some(stack.core_done());
                 network.scope(drive(fd, stack, tcp, udp, handler, tun, network.clone(), cancel.clone(), progress.clone())).await
             }).catch_unwind().await;
@@ -107,7 +129,10 @@ impl TunDriver {
                 .and_then(|result| result);
             progress.phase.send_replace(if result.is_err() { Phase::Failed } else { Phase::Stopped });
             result
-        });
+        };
+        eprintln!("[tun-stack] worker-constructed bytes={}", std::mem::size_of_val(&worker));
+        let task = runtime.spawn(worker);
+        eprintln!("[tun-stack] worker-spawned");
         *owner.task.try_lock().map_err(|_| error("new packet owner lock unavailable"))? = Some(task);
         Ok(owner)
     }
