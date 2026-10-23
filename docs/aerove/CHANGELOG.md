@@ -4,6 +4,11 @@
 
 分支差异以记录的 FlClash `v0.9.1`（`8d4f9744948751f1273fe871e1d05276fac09b0e`）为基线。代理协议、核心路由、VPN 授权和监控数据等上游已有能力，不列为 Aerove 独创功能。
 
+## 待发布
+
+- 「工具 > 关于」的 Telegram 频道更新为 [IvanSolis89](https://t.me/IvanSolis89)，群组更新为 [Olympus_Habitue](https://t.me/Olympus_Habitue)。
+- 标准版与 Lite 同步这两个入口及七种语言文案，分别打开自家频道和群组。
+
 ## 0.10.0-beta.5+2026102228 — 已发布预览版
 
 发布于 **2026-10-23 22:59:08（日本时间）**：[Release](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.10.0-beta.5%2B2026102228)。发布源码为 [`fa96b549`](https://github.com/IvanSolis1989/Aerove/commit/fa96b5491dd80dc516fd39e46d05bd49f6b9a774)，对应 [原构建 #28](https://github.com/IvanSolis1989/Aerove/actions/runs/39959283242) 与 [main 推广 #29](https://github.com/IvanSolis1989/Aerove/actions/runs/39965665533)。完整 CI 和 ARM64 APK 验收通过；main 直接推广该原包，保留源码、版本、安装编号与签名，不重复编译。发布资产的尺寸与 SHA256、实际 CDN 返回字节已核对。

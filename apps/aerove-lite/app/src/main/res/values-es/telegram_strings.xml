@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="telegram_channel">Canal de Telegram</string>
+    <string name="telegram_group">Grupo de Telegram</string>
+</resources>
