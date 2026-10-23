@@ -17,7 +17,7 @@ on:
       - '.github/workflows/pages.yaml'
       - '.github/workflows/sync-upstream.yaml'
       - '.github/workflows/telegram-release.yml'
-      - '.github/scripts/telegram-*.mjs'
+      - '.github/scripts/telegram-*'
       - '.github/actions/**'
       - 'experiments/**'
       - 'website/**'
