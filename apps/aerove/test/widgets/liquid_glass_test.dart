@@ -205,6 +205,11 @@ void main() {
       );
       final boundary =
           key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+      if (boundary.debugNeedsPaint) {
+        tester.binding.scheduleForcedFrame();
+        await tester.pump();
+      }
+      expect(boundary.debugNeedsPaint, isFalse);
       final image = boundary.toImageSync(pixelRatio: 3);
       addTearDown(image.dispose);
       const midSide = (4 + 24 / 2) * 3;
