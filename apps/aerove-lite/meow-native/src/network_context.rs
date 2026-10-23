@@ -161,14 +161,14 @@ mod scope_layout_tests {
     async fn boxed_scope_bounds_layout_and_preserves_lazy_first_poll_and_context() {
         let context = NetworkContext::platform(CancellationToken::new());
         let polls = Arc::new(AtomicUsize::new(0));
-        let old = prior_inline_scope(&context, LargeWork { bytes: [7; 32768], polls: polls.clone() });
+        fn layout<F: Future>(_: impl FnOnce() -> F) -> usize { std::mem::size_of::<F>() }
+        let before = layout(|| prior_inline_scope(&context, LargeWork { bytes: [7; 32768], polls: polls.clone() }));
         let work = context.scope(LargeWork { bytes: [7; 32768], polls: polls.clone() });
-        let before = std::mem::size_of_val(&old); let after = std::mem::size_of_val(&work);
+        let after = std::mem::size_of_val(&work);
         eprintln!("[network-scope-layout] input={} inline={before} boxed={after} before-first-poll", std::mem::size_of::<LargeWork>());
         assert_eq!(polls.load(Ordering::SeqCst), 0);
         assert!(after < 2048, "boxed scope must not embed the input future");
         assert!(before > after * 16, "the failed inline layout must remain represented");
-        drop(old);
         assert_eq!(work.await, 14);
         assert_eq!(polls.load(Ordering::SeqCst), 1);
         assert!(!NetworkScope::is_captured());
