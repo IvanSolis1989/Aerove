@@ -20,8 +20,9 @@ class MeowTunnelBackendTest {
         var onListener: (String,Int) -> Unit = {_,_->}
         var starts = 0; var stops = 0; var payload = ""; var descriptor = 0
         var parked = false;var tunMode = false
+        val policy = MeowPolicyFixture()
         override fun start(planJson: String, fd: Int, protector: SocketProtector?, owner: ConnectionOwnerLookup?): Long {
-            starts++; payload=planJson;descriptor=fd;onStart();return 1
+            starts++; payload=planJson;descriptor=fd;policy.startup(org.json.JSONObject(planJson).getString("hostPolicyYaml"));onStart();return 1
         }
         override fun awaitReady(handle: Long) = onReady()
         override fun awaitExit(handle: Long) = onExit()
@@ -33,7 +34,8 @@ class MeowTunnelBackendTest {
         }
         override fun status(handle: Long) = MeowStatus(MeowState.Running, null, "127.0.0.1:49152", if(tunMode) NativeCore.RuntimeMode.Tun else NativeCore.RuntimeMode.Proxy,
             tunMode && !parked, !parked, !parked, true)
-        override fun listeners(handle: Long) = MeowListenerStatus(!parked,tunMode && !parked,!parked,if(parked) emptyList() else listOf(7890),"1",true,true,true,"always")
+        override fun hostPolicy(handle: Long, request: String) = policy.command(request)
+        override fun listeners(handle: Long) = MeowListenerStatus(!parked,tunMode && !parked,!parked,if(parked) emptyList() else listOf(7890),policy.epoch(),policy.onlyProxy,policy.probe.unifiedDelay,policy.probe.tcpConcurrent,policy.mode)
     }
     private inner class Fixture(parked: Boolean = false, tunMode: Boolean = false) {
         val settings = LiteSettings(network = NetworkSettings(vpnEnabled = tunMode))
@@ -44,7 +46,7 @@ class MeowTunnelBackendTest {
         val config = MeowRuntimeConfigComposer(temp.root,cacheDirectory=File(temp.root,"meow-cache/session").apply{mkdirs()}).compose(prepared,settings,if(tunMode && !parked)42 else -1,49152,"0123456789abcdef0123456789abcdef",
             initiallyParked=parked,physicalNetworkHandle="42")
         var current = true;var released = 0;var verified = 0;var failRelease = false
-        var stages=0;var commits=0;var parkedFds=0;var discarded=0
+        var stages=0;var commits=0;var parkedFds=0;var discarded=0;var networkCommits=0;var identityClears=0
         val pending=mutableSetOf<MeowTunnelBackend.TunReceipt>()
         val native = Native().also { it.parked=parked;it.tunMode=tunMode }
         val lease = object : MeowTunnelBackend.Lease {
@@ -57,6 +59,15 @@ class MeowTunnelBackendTest {
             override val coreDnsEnabled = false
             override val builderReservedFakeIpRanges = emptyList<String>()
             override val coreReservedFakeIpRanges = emptyList<String>()
+            override val startupPolicies = MeowHostPolicyTarget.from(settings, "AEROVE-Lite")
+            override val establishedBuilderSettings get() = settings.takeIf { !tunMode || commits > 0 || !parked }
+            override fun currentPolicies(fallback: LiteSettings) = MeowHostPolicyTarget.from(fallback, "AEROVE-Lite")
+            override suspend fun captureNetwork(expectedDns: SystemDnsSnapshot) = object : MeowTunnelBackend.NetworkReceipt {
+                override val physical = MeowPhysicalNetwork("43", expectedDns)
+            }
+            override fun networkCurrent(receipt: MeowTunnelBackend.NetworkReceipt) = current
+            override suspend fun commitNetwork(receipt: MeowTunnelBackend.NetworkReceipt) { networkCommits++ }
+            override fun clearIdentityCache() { identityClears++ }
             override suspend fun stageTun():MeowTunnelBackend.TunReceipt {
                 stages++;return object:MeowTunnelBackend.TunReceipt{override val descriptor=43}.also{pending+=it}
             }
@@ -182,4 +193,30 @@ class MeowTunnelBackendTest {
         assertTrue(attach.isCancelled);assertEquals(1,f.commits);assertEquals(1,f.parkedFds)
         assertFalse(session.listenerReadback!!.listening);assertEquals(0,f.released);session.stop()
     }
+    @Test fun fullSessionPolicyAndNetworkUseSameNativeOwnerAndKeepFdLineage()=runBlocking<Unit>{
+        val f=Fixture(parked=true,tunMode=true);val session=f.backend.open(f.plan);session.awaitReady()
+        assertTrue(session is ListenerPolicySession)
+        val saved=f.settings.copy(unifiedDelay=false,tcpConcurrent=false,
+            requests=f.settings.requests.copy(globalUserAgent="AEROVE/hot",checkCertificate=false),
+            backgroundPolicy=f.settings.backgroundPolicy.copy(onlyStatisticsProxy=false),
+            externalController=dev.aerove.lite.controllerprefs.ExternalControllerPreferences(true,"persisted-secret"))
+        session.configurePolicies(saved)
+        assertFalse(f.native.policy.onlyProxy);assertFalse(f.native.policy.probe.unifiedDelay)
+        assertTrue(f.native.policy.enabled);assertFalse(session.listenerReadback!!.listening)
+        val before=session.endpoint
+        session.configureNetworkDns(SystemDnsSnapshot("wlan0",mapOf("wlan0" to listOf("8.8.8.8"))))
+        assertEquals(1,f.networkCommits);assertEquals("43",f.native.policy.networkHandle)
+        session.invalidateIdentity();assertEquals(1,f.identityClears)
+        session.setListening(true);assertEquals(1,f.stages);assertEquals(1,f.commits)
+        assertSame(before,session.endpoint);assertEquals(1,f.native.starts);assertEquals(0,f.released)
+        session.stop();assertEquals(1,f.released)
+    }
+    @Test fun unconfirmedNetworkResolverJoinCannotUpdateHostOrClaimSuccess()=runBlocking<Unit>{
+        val f=Fixture();val session=f.backend.open(f.plan);session.awaitReady();f.native.policy.joinConfirmed=false
+        val failure=runCatching { session.configureNetworkDns(SystemDnsSnapshot("wlan0",mapOf("wlan0" to listOf("8.8.8.8")))) }.exceptionOrNull()
+        assertNotNull(failure);assertTrue(failure!!.message!!.contains("unconfirmed"))
+        assertEquals(0,f.networkCommits);assertEquals(0,f.released);assertEquals(0,f.native.stops)
+        session.stop();assertEquals(1,f.released)
+    }
+
 }

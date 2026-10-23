@@ -62,6 +62,7 @@ class MeowAndroidHost(private val service: LiteVpnService, private val applicati
             resources.controlPort = port
             val parked = !initialListening(plan)
             val captured = capturePhysical()
+            resources.physicalValue = captured
             val physical = captured.network
             val dns = captured.dns
             resources.coreDnsEnabled = effectiveProfileDnsEnabled(resources.prepared)
@@ -80,7 +81,8 @@ class MeowAndroidHost(private val service: LiteVpnService, private val applicati
             check(cache.toPath().startsWith(File(runtime,"meow-cache").canonicalFile.toPath()) && cache.mkdirs()) { "Could not create private Meow cache" }
             resources.cache = cache
             val baseline = plan.builderSettings()
-            val startup = runtimePoliciesForStart(plan.settings, application.settings.changes.value)
+            val startup = runtimePoliciesForStart(plan.settings, application.settings.read())
+            resources.startupPolicies = MeowHostPolicyTarget.from(startup, application.requestPolicy.defaultUserAgent)
             resources.configValue = MeowRuntimeConfigComposer(runtime, application.requestPolicy.defaultUserAgent, cache)
                 .compose(resources.prepared, startup, resources.tun?.fd ?: -1, port, secret, mode, dns,
                     TunRuntimeOptions(baseline.network.mtu, baseline.network.dnsHijacking, baseline.ipv6), parked,
@@ -137,12 +139,44 @@ class MeowAndroidHost(private val service: LiteVpnService, private val applicati
         override var coreDnsEnabled = false
         override var builderReservedFakeIpRanges: List<String> = emptyList()
         override var coreReservedFakeIpRanges: List<String> = emptyList()
+        lateinit var physicalValue: CapturedMeowPhysical
+        override lateinit var startupPolicies: MeowHostPolicyTarget
+        override val establishedBuilderSettings get() = startupPlan.builderSettings().takeIf { configuration.runtimeMode == NativeCore.RuntimeMode.Proxy || tun != null }
+        override fun currentPolicies(fallback: dev.aerove.lite.LiteSettings) = MeowHostPolicyTarget.from(
+            application.settings.changes.value ?: fallback, application.requestPolicy.defaultUserAgent)
+        private inner class PhysicalReceipt(val captured: CapturedMeowPhysical) : MeowTunnelBackend.NetworkReceipt {
+            val owner = this@Resources
+            override val physical = MeowPhysicalNetwork(captured.networkHandle, captured.dns)
+        }
+        override suspend fun captureNetwork(expectedDns: SystemDnsSnapshot): MeowTunnelBackend.NetworkReceipt = withContext(Dispatchers.IO) {
+            check(isCurrent() && !sharedCleaned) { "Meow network owner is not current" }
+            val captured = capturePhysical()
+            check(captured.network != null && captured.networkHandle != null) { "No captured physical network" }
+            check(captured.dns.json() == expectedDns.json()) { "Physical Network and supplied DNS are from different captures" }
+            check(captured.dns.interfaces.values.any { it.isNotEmpty() }) { "No captured physical DNS" }
+            PhysicalReceipt(captured)
+        }
+        override fun networkCurrent(receipt: MeowTunnelBackend.NetworkReceipt): Boolean {
+            val owned = receipt as? PhysicalReceipt ?: return false
+            if (owned.owner !== this) return false
+            val latest = capturePhysical()
+            return latest.networkHandle == owned.captured.networkHandle && latest.dns.json() == owned.captured.dns.json()
+        }
+        override suspend fun commitNetwork(receipt: MeowTunnelBackend.NetworkReceipt) { cleanup.withLock {
+            val owned = receipt as? PhysicalReceipt ?: error("Foreign Meow network receipt")
+            check(owned.owner === this) { "Foreign Meow network owner" }
+            val captured = owned.captured
+            check(isCurrent() && !sharedCleaned) { "Meow network owner is not current" }
+            if (tun != null) check(service.setUnderlyingNetworks(arrayOf(checkNotNull(captured.network)))) { "Android underlying network binding failed" }
+            physicalValue = captured
+        } }
+        override fun clearIdentityCache() { resolver?.clearPackageCache() }
         lateinit var startupPlan: VpnPlan
         var controlPort = 0
         override suspend fun stageTun(): MeowTunnelBackend.TunReceipt = withContext(Dispatchers.IO) { cleanup.withLock {
             check(isCurrent() && !sharedCleaned && tun == null) { "Meow TUN cannot be staged in this state" }
             val captured = capturePhysical()
-            check(captured.networkHandle == configuration.physicalNetwork.handle && captured.dns.json() == configuration.physicalNetwork.dns.json()) {
+            check(captured.networkHandle == physicalValue.networkHandle && captured.dns.json() == physicalValue.dns.json()) {
                 "Physical network changed; Meow network policy update is required before TUN attach"
             }
             val fd = establishAndroidTun(service,startupPlan,controlPort,builderDnsEnabled,captured.dns,builderReservedFakeIpRanges) { captured.network }

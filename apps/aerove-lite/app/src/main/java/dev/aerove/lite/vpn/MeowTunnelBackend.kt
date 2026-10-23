@@ -1,5 +1,6 @@
 package dev.aerove.lite.vpn
 
+import dev.aerove.lite.LiteSettings
 import dev.aerove.lite.core.*
 import dev.aerove.lite.data.*
 import kotlinx.coroutines.*
@@ -7,11 +8,12 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.coroutines.coroutineContext
 
-/** Candidate only: ListenerPolicySession/hot-policy support is required before production registration. */
+/** Candidate complete policy adapter; Native/ART acceptance is required before production registration. */
 class MeowTunnelBackend(private val host: Host, private val commands: Commands = JniCommands) : TunnelBackend {
     /** Existing Service responsibilities: lifecycle lock, prepare/retain, Builder FD and applied-file lease. */
     fun interface Host { suspend fun acquire(plan: VpnPlan): Lease }
     interface TunReceipt { val descriptor: Int }
+    interface NetworkReceipt { val physical: MeowPhysicalNetwork }
     interface Lease {
         val prepared: PreparedProfile
         val configuration: MeowRuntimeConfig
@@ -22,6 +24,13 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
         val coreDnsEnabled: Boolean
         val builderReservedFakeIpRanges: List<String>
         val coreReservedFakeIpRanges: List<String>
+        val startupPolicies: MeowHostPolicyTarget
+        val establishedBuilderSettings: LiteSettings?
+        fun currentPolicies(fallback: LiteSettings): MeowHostPolicyTarget
+        suspend fun captureNetwork(expectedDns: SystemDnsSnapshot): NetworkReceipt
+        fun networkCurrent(receipt: NetworkReceipt): Boolean
+        suspend fun commitNetwork(receipt: NetworkReceipt)
+        fun clearIdentityCache()
         suspend fun stageTun(): TunReceipt
         suspend fun commitTun(receipt: TunReceipt)
         suspend fun discardUnsubmittedTun(receipt: TunReceipt)
@@ -39,6 +48,7 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
         fun listeners(handle: Long): MeowListenerStatus
         fun stop(handle: Long)
         fun listener(handle: Long, action: String, fd: Int): MeowListenerStatus
+        fun hostPolicy(handle: Long, request: String): String
     }
     private object JniCommands : Commands {
         override fun start(planJson: String, fd: Int, protector: SocketProtector?, owner: ConnectionOwnerLookup?) =
@@ -48,6 +58,7 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
         override fun status(handle: Long) = MeowNativeCore.readStatus(handle)
         override fun listeners(handle: Long) = MeowNativeCore.readListenerStatus(handle)
         override fun stop(handle: Long) = MeowNativeCore.stop(handle)
+        override fun hostPolicy(handle: Long, request: String) = MeowNativeCore.hostPolicyCommand(handle, request)
         override fun listener(handle: Long, action: String, fd: Int) =
             MeowStatusCodec.listeners(MeowNativeCore.listenerCommand(handle, action, fd))
     }
@@ -106,7 +117,7 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
         } finally { synchronized(gate) { acquiring = false } }
     }
 
-    inner class Session internal constructor(private val handle: Long, private val lease: Lease) : TunnelSession {
+    inner class Session internal constructor(private val handle: Long, private val lease: Lease) : ListenerPolicySession {
         internal fun owns(candidate: Lease) = lease === candidate
         private val cleanup = Mutex()
         private val listenerChanges = Mutex()
@@ -121,7 +132,20 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
         override val coreDnsEnabled get() = lease.coreDnsEnabled
         override val builderReservedFakeIpRanges get() = lease.builderReservedFakeIpRanges.toList()
         override val coreReservedFakeIpRanges get() = lease.coreReservedFakeIpRanges.toList()
-        @Volatile var initialListenerReadback: ListenerReadback? = null
+        private var coreEpoch: String? = null
+        private fun acceptEpoch(epoch: String) {
+            val actual = MeowHttpPolicyCodec.epoch(epoch)
+            check(coreEpoch?.let { actual.toULong() >= it.toULong() } != false) { "Stale Meow session epoch" }
+            coreEpoch = actual
+            listenerReadback = listenerReadback?.copy(coreEpoch = actual)
+        }
+        private val policy = MeowHostPolicyClient(handle, listenerChanges, { coreEpoch }, ::acceptEpoch,
+            object : MeowHostPolicyClient.Commands {
+                override fun epoch() = commands.listeners(handle).coreEpoch
+                override fun command(json: String) = commands.hostPolicy(handle, json)
+            })
+        override val establishedBuilderSettings get() = lease.establishedBuilderSettings
+        @Volatile override var initialListenerReadback: ListenerReadback? = null
             private set
         @Volatile var listenerReadback: ListenerReadback? = null
             private set
@@ -144,10 +168,15 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
                         check(status.listening && status.userListenersReady && status.tunReady == tun &&
                             actual.listening && actual.userListenersReady && actual.tunReady == tun) { "Meow listener readiness differs from requested mode" }
                     }
+                    acceptEpoch(actual.coreEpoch)
+                    val policies = policy.read { !stopping && lease.isCurrent() }
+                    val expected = lease.startupPolicies
+                    check(policies.http == expected.http && policies.probe == expected.probe && policies.mode == expected.mode &&
+                        policies.onlyProxy == expected.onlyProxy && policies.controller.enabled == expected.controller.enabled) { "Meow startup policies differ from persisted plan" }
                     lease.verifyControl(endpoint)
                     synchronized(gate) {
                         check(!stopping && lease.isCurrent()) { "Meow readiness intent was superseded" }
-                        initialListenerReadback = ListenerReadback(actual.listening, actual.tunReady, actual.userListenersReady, actual.coreEpoch, actual.activePorts)
+                        initialListenerReadback = ListenerReadback(actual.listening, actual.tunReady, actual.userListenersReady, checkNotNull(coreEpoch), actual.activePorts)
                         listenerReadback = initialListenerReadback
                     }
                 }
@@ -157,7 +186,7 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
             }
         } }
 
-        suspend fun setListening(enabled: Boolean): ListenerReadback {
+        override suspend fun setListening(enabled: Boolean): ListenerReadback {
             val intent = listenerIntent.incrementAndGet()
             val caller = coroutineContext[Job]
             var submitted = false
@@ -191,6 +220,7 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
                     }
                 }
                 if (enabled) check(actual.listening && actual.userListenersReady && actual.tunReady == (config.runtimeMode == NativeCore.RuntimeMode.Tun)) { "Meow resumed listener mode mismatch" }
+                acceptEpoch(actual.coreEpoch)
                 val readback = ListenerReadback(actual.listening,actual.tunReady,actual.userListenersReady,actual.coreEpoch,actual.activePorts)
                 synchronized(gate) {
                     if (!stopping && lease.isCurrent() && intent == listenerIntent.get() && caller?.isActive != false) listenerReadback = readback
@@ -205,6 +235,25 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
             coroutineContext.ensureActive()
             if (stopping || !lease.isCurrent() || intent != listenerIntent.get()) throw CancellationException("Meow listener receipt superseded")
             return result
+        }
+
+        override suspend fun configurePolicies(settings: LiteSettings) {
+            val target = lease.currentPolicies(settings)
+            policy.apply(target) { !stopping && lease.isCurrent() && lease.currentPolicies(settings) == target }
+        }
+        override suspend fun configureNetworkDns(snapshot: SystemDnsSnapshot) {
+            check(!stopping && lease.isCurrent()) { "Meow network owner is no longer current" }
+            val captured = lease.captureNetwork(snapshot)
+            policy.network(captured.physical, { !stopping && lease.isCurrent() && lease.networkCurrent(captured) }) {
+                // Same session gate: no attach can use old Host DNS after Native network commit.
+                check(!stopping && lease.isCurrent()) { "Meow network receipt superseded" }
+                lease.commitNetwork(captured)
+            }
+            coroutineContext.ensureActive()
+        }
+        suspend fun invalidateIdentity() {
+            lease.clearIdentityCache()
+            policy.invalidate { !stopping && lease.isCurrent() }
         }
 
         override suspend fun awaitExit(): Unit = coroutineScope {

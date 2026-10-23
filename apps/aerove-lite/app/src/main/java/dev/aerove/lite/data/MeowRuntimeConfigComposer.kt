@@ -50,7 +50,7 @@ class MeowPhysicalNetwork(val handle: String? = null, val dns: SystemDnsSnapshot
 }
 
 /** Reuses the existing safe resource/control composition; only the engine dialect is adapted here. */
-class MeowRuntimeConfigComposer(privateDirectory: File, defaultUserAgent: String = "AEROVE-Lite", cacheDirectory: File? = null) {
+class MeowRuntimeConfigComposer(privateDirectory: File, private val defaultUserAgent: String = "AEROVE-Lite", cacheDirectory: File? = null) {
     private val shared = RuntimeConfigComposer(privateDirectory, defaultUserAgent)
     private val cacheRoot = cacheDirectory?.canonicalFile?.also { cache ->
         val owner = File(privateDirectory.canonicalFile, "meow-cache").canonicalFile
@@ -68,7 +68,7 @@ class MeowRuntimeConfigComposer(privateDirectory: File, defaultUserAgent: String
         val composed = shared.compose(prepared.copy(yaml = ConfigYaml.dump(input.first)), settings, tunFd, port,
             secret, runtimeMode, systemDns, tunOptions, initiallyParked)
         return finish(composed, input.second, tunFd, runtimeMode, tunOptions, initiallyParked,
-            prepared.profileId, prepared.revision, prepared.generation, MeowPhysicalNetwork(physicalNetworkHandle, systemDns), verifiedNativeFeatures.toSet(), prepared.resourceDirectory?.canonicalFile)
+            prepared.profileId, prepared.revision, prepared.generation, MeowPhysicalNetwork(physicalNetworkHandle, systemDns), verifiedNativeFeatures.toSet(), prepared.resourceDirectory?.canonicalFile, settings)
     }
 
     fun compose(source: String, settings: LiteSettings, tunFd: Int, port: Int, secret: String,
@@ -80,7 +80,7 @@ class MeowRuntimeConfigComposer(privateDirectory: File, defaultUserAgent: String
         val input = input(source)
         return finish(shared.compose(ConfigYaml.dump(input.first), settings, tunFd, port, secret,
             runtimeMode, systemDns, tunOptions, initiallyParked), input.second, tunFd, runtimeMode,
-            tunOptions, initiallyParked, null, null, null, MeowPhysicalNetwork(physicalNetworkHandle, systemDns), verifiedNativeFeatures.toSet(), null)
+            tunOptions, initiallyParked, null, null, null, MeowPhysicalNetwork(physicalNetworkHandle, systemDns), verifiedNativeFeatures.toSet(), null, settings)
     }
 
     private fun invalid(path: String, reason: String): Nothing = throw ConfigValidationException(listOf(ConfigIssue(path, reason)))
@@ -146,7 +146,7 @@ class MeowRuntimeConfigComposer(privateDirectory: File, defaultUserAgent: String
 
     private fun finish(composed: String, named: List<Any?>, fd: Int, mode: RuntimeMode, actual: TunRuntimeOptions,
         parked: Boolean, profile: String?, revision: String?, generation: String?, physicalNetwork: MeowPhysicalNetwork,
-        verifiedNativeFeatures: Set<String>, resourceReadRoot: File?): MeowRuntimeConfig {
+        verifiedNativeFeatures: Set<String>, resourceReadRoot: File?, settings: LiteSettings): MeowRuntimeConfig {
         val root = ConfigYaml.parse(composed)
         val endpoint = (root.remove("external-controller") as String).substringAfterLast(':').toInt()
         val control = ControlEndpoint(endpoint, root.remove("secret") as String)
@@ -160,6 +160,10 @@ class MeowRuntimeConfigComposer(privateDirectory: File, defaultUserAgent: String
         }
         val host = linkedMapOf<String, Any?>()
         listOf("aerove-system-dns", "global-ua", "check-certificate", "find-process-mode", "unified-delay", "tcp-concurrent", "cors-allow-origins").forEach { host[it] = root.remove(it) }
+        val policies = dev.aerove.lite.core.MeowHostPolicyTarget.from(settings, defaultUserAgent)
+        require(host["cors-allow-origins"] == emptyList<String>()) { "Private controller CORS must be disabled" }
+        host["only-statistics-proxy"] = policies.onlyProxy
+        host["user-controller"] = linkedMapOf("enabled" to policies.controller.enabled, "secret" to policies.controller.secret)
         @Suppress("UNCHECKED_CAST")
         val dns = root["dns"] as? MutableMap<String, Any?>
         if (dns?.containsKey("listen") == true) user["dns-listen"] = dns.remove("listen")

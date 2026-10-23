@@ -138,4 +138,18 @@ class MeowRuntimeConfigComposerTest {
         assertThrows(IllegalArgumentException::class.java){MeowRuntimeConfigComposer(temporary.root,cacheDirectory=temporary.root)}
         assertThrows(IllegalArgumentException::class.java){MeowRuntimeConfigComposer(temporary.root,cacheDirectory=File(temporary.root,"meow-cache/missing"))}
     }
+    @Test fun startupPoliciesComeFromSavedPreferencesAndPrivateCorsStayClosed() {
+        val saved = LiteSettings(backgroundPolicy=dev.aerove.lite.backgroundpolicy.BackgroundPolicyPreferences(onlyStatisticsProxy=false),
+            externalController=dev.aerove.lite.controllerprefs.ExternalControllerPreferences(true,"persisted-secret"))
+        val plan = composer().compose("rules: ['MATCH,DIRECT']",saved,-1,49152,secret,initiallyParked=true)
+        val host=ConfigYaml.parse(plan.hostPolicyYaml)
+        assertEquals(false,host["only-statistics-proxy"])
+        assertEquals(mapOf("enabled" to true,"secret" to "persisted-secret"),host["user-controller"])
+        assertEquals(emptyList<String>(),host["cors-allow-origins"])
+        assertFalse(ConfigYaml.parse(plan.engineYaml).containsKey("user-controller"))
+        assertThrows(IllegalArgumentException::class.java) { composer().compose("rules: ['MATCH,DIRECT']",
+            saved.copy(externalController=dev.aerove.lite.controllerprefs.ExternalControllerPreferences(true," not-canonical ")),
+            -1,49152,secret,initiallyParked=true) }
+    }
+
 }
