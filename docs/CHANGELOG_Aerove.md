@@ -5,9 +5,11 @@
 
 分支差异以记录的 FlClash `v0.9.1`（`8d4f9744948751f1273fe871e1d05276fac09b0e`）为基线。代理协议、核心路由、VPN 授权和监控数据等上游已有能力，不列为 Aerove 独创功能。
 
-## 待发布
+## 0.10.0-beta.4+2026102220 — 已发布预览版
 
-标准版 `0.10.0-beta.4` 候选，尚待新源码的 CI、APK 与双版本交互验收；实际安装编号由原构建运行号生成。
+发布于 **2026-10-23 12:27:03（日本时间）**：[Release](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.10.0-beta.4%2B2026102220)。发布源码为 [`28ac35ab`](https://github.com/IvanSolis1989/Aerove/commit/28ac35ab4e1b50a6f291386c67d4efe5bd51e562)，对应 [原构建 #20](https://github.com/IvanSolis1989/Aerove/actions/runs/39889227346) 与 [main 推广 #21](https://github.com/IvanSolis1989/Aerove/actions/runs/39895032339)。新源码 CI、ARM64 构建及包验收通过；main 复用同一原始 APK，跳过重复验证和编译，保留原版本、源码、签名及构建身份。
+
+本版本为预览版，不覆盖稳定版 latest；稳定版仍为 `0.9.1+2026102203`。Lite 的十二图、完整 APK 和首发验收仍未完成。
 
 - 导航响应系统“移除动画”：立即切换到最新选中的页面，开启该设置时终止已有过渡，避免旧动画完成回调干扰后续切换。
 - 底部导航与按钮保留手指拖动的直接反馈，松手后立即收敛，不再残留弹簧回弹、拉伸或高光尾帧；正常动画时长与弹簧参数保持不变。
