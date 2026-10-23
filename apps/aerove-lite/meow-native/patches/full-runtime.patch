@@ -8520,7 +8520,7 @@
  pub async fn maybe_enrich_with_process_async(metadata: &Metadata) -> Option<Metadata> {
 +    if let Some(owner) = metadata.process_identity.as_ref() {
 +        let mut enriched = metadata.clone();
-+        enriched.process.clear(); enriched.process_path.clear(); enriched.uid = None;
++        enriched.process = Default::default(); enriched.process_path = Default::default(); enriched.uid = None;
 +        if let Some(info) = owner.lookup() {
 +            enriched.process = info.name.into(); enriched.process_path = info.path.into(); enriched.uid = info.uid;
 +        }
@@ -8536,7 +8536,7 @@
  pub fn maybe_enrich_with_process(metadata: &Metadata) -> Option<Metadata> {
 +    if let Some(owner) = metadata.process_identity.as_ref() {
 +        let mut enriched = metadata.clone();
-+        enriched.process.clear(); enriched.process_path.clear(); enriched.uid = None;
++        enriched.process = Default::default(); enriched.process_path = Default::default(); enriched.uid = None;
 +        if let Some(info) = owner.lookup() {
 +            enriched.process = info.name.into(); enriched.process_path = info.path.into(); enriched.uid = info.uid;
 +        }

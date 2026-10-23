@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "patch": "patches/full-runtime.patch",
-  "patchSha256": "c087af4584757bc1e067ee721d69ff8eb1d8eae24d47083cfb787d4a8480a11c",
+  "patchSha256": "0ecd0673185b36609c4f5cdb594a804ce3c2bac6e228b9fad9b8d64147122e52",
   "rawFileManifestSha256": "a1948157edb77700f6f9152f3467907fb6a050c66cd153edfe98295bbf56e550",
-  "adaptedFileManifestSha256": "1b54d89bf8d54e7eb90db1f825fbe349489702aa015e950e2cbaeddcb168860d",
+  "adaptedFileManifestSha256": "d441255d0c4a938635bcfad32719988d9412201008995a3e97ab166260176e05",
   "changes": {
     "crates/meow-anytls/src/client/client.rs": {
       "beforeSha256": "806773111b6ca84adcdad0e24d6db6c5653e72bdba58f4d5e95fd959d3504515",
@@ -407,7 +407,7 @@
     },
     "crates/meow-tunnel/src/match_engine.rs": {
       "beforeSha256": "011df47ef8cab31e60090cd72ebfff029560f0e31ff6fcd0a7f0459098a3c39c",
-      "afterSha256": "a099276a86687789119de6785bcf33acf24ae119cc7d84ae4ded1498fe312c6e"
+      "afterSha256": "759ddb456f875c71f411e6ce1927ec45e440d9c80f9df21be5c29a437afa39e6"
     },
     "crates/meow-tunnel/src/statistics.rs": {
       "beforeSha256": "de95e8f19a04713db2f7aabbadc723d393b9a3aca25dcf865dc1ea50439cf1fd",
@@ -674,7 +674,7 @@
     "crates/meow-tunnel/benches/udp_bench.rs": "93d63348570edb53b39ac731bd98eb34bd622fa289bb52686fa3693e38473c76",
     "crates/meow-tunnel/src/health_check.rs": "91e218f1b8d61e59b09f46c9210992885d4d03b73d67020eb9401886bc9c3c48",
     "crates/meow-tunnel/src/lib.rs": "e3b5f4f3d867696e9245336b54034979c75da703854c1f872ab3037708ca67ad",
-    "crates/meow-tunnel/src/match_engine.rs": "a099276a86687789119de6785bcf33acf24ae119cc7d84ae4ded1498fe312c6e",
+    "crates/meow-tunnel/src/match_engine.rs": "759ddb456f875c71f411e6ce1927ec45e440d9c80f9df21be5c29a437afa39e6",
     "crates/meow-tunnel/src/relay.rs": "3e90433f50df3c40eef4b084c7963a3b49b41cb13625e97a9cf9e9a3bfc6cdc6",
     "crates/meow-tunnel/src/rule_ir.rs": "7e1f6e272e5c1110565cd8832f267fc6ebbe1aa82b9250d7f1fd277d8df3a0dc",
     "crates/meow-tunnel/src/sniff.rs": "2bb7bf13aa467580beb167d3959230b365d5d64f283be08818842548692b0f0e",

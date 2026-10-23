@@ -39,7 +39,7 @@
     "user_request_context"
   ],
   "overlay": "source-metadata/full-runtime.json",
-  "overlaySha256": "17657c5af5c9c18562e84c6861265b7824dfdbc84dfb39664a2e14adaa85c535",
+  "overlaySha256": "f447f05b6bf80dac7efeb04286b8604be6b169b161efb286e40efa85a27ee15d",
   "featureBoundary": "capabilities-no-default",
   "coreTests": "policy-runtime-v2"
 }
