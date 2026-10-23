@@ -1,0 +1,51 @@
+name: 性能与耗电 / Performance
+description: 卡顿、发热、耗电、内存增长或后台异常的可比较报告
+title: "[性能] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        MiMo AI 会根据公开文字和仓库片段初步分析；提交前请隐藏凭据和个人信息。
+        请描述同条件下的实际观测；系统电量百分比、模拟器截图或语言/内核选型本身不能证明能耗差异。
+        没有专业工具也可以反馈：填写设备、操作、持续时间和观察结果即可，不必先跑大型基准。
+  - type: dropdown
+    id: edition
+    attributes:
+      label: 产品版本 / Edition
+      options: [AEROVE 标准版, AEROVE Lite, 两版对比]
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 应用版本、系统与设备 / Environment
+      description: 关于页完整版本、安装来源、系统版本、机型；桌面补充 CPU/GPU 和架构
+    validations:
+      required: true
+  - type: dropdown
+    id: symptom
+    attributes:
+      label: 主要现象 / Symptom
+      multiple: true
+      options: [滚动或动画卡顿, 启动或操作响应慢, 发热或耗电, CPU/内存增长, 后台活动异常, 其他]
+    validations:
+      required: true
+  - type: textarea
+    id: workload
+    attributes:
+      label: 操作与观测条件 / Workload
+      placeholder: |
+        操作步骤、持续时间与出现频率：
+        前台/后台、亮屏/锁屏、是否连接、网络与实际流量：
+        UI 问题：材质、普通/灵动极光底图、深浅色、刷新率、减少动态效果：
+        耗电问题：测量时长、起止电量、是否充电、其他同时运行的应用：
+    validations:
+      required: true
+  - type: textarea
+    id: observations
+    attributes:
+      label: 观测结果与对照 / Observations
+      description: 可附系统电池统计、进程 CPU/内存、帧率或录屏；对比其他版本时说明是否同配置、节点、流量、画质和测量时长。没有对照请直接写明
+    validations:
+      required: true

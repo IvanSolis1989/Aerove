@@ -1,0 +1,28 @@
+name: 文档与教程 / Documentation
+description: 安装、使用、版本说明或双版本文档中的错误和歧义
+title: "[文档] "
+labels: [documentation]
+body:
+  - type: markdown
+    attributes:
+      value: MiMo AI 会使用公开文字和仓库片段初步核对，最终由维护者确认；不要上传订阅或凭据。
+  - type: input
+    id: location
+    attributes:
+      label: 文档位置 / Location
+      description: 公开链接或仓库文件路径，加上章节；说明涉及标准版、Lite 还是两版
+      placeholder: "docs/aerove/network-defaults.md 的某一节"
+    validations:
+      required: true
+  - type: textarea
+    id: discrepancy
+    attributes:
+      label: 原文与实际差异 / Discrepancy
+      description: 哪句话有误或不清楚？如涉及实际操作，附应用版本与系统；不要包含订阅或凭据
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: 建议修改与依据 / Suggestion
+      description: 可附公开来源；AI 会先核对提供的文档片段，修改由维护者确认

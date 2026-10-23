@@ -1,0 +1,72 @@
+name: AEROVE Issue assistant
+
+on:
+  issues:
+    types: [opened, labeled]
+  issue_comment:
+    types: [created]
+  push:
+    branches: [main]
+    paths: ['.github/scripts/ai-issue-*', '.github/workflows/ai-issue-responder.yml', '.github/ISSUE_TEMPLATE/**']
+  pull_request:
+    paths: ['.github/scripts/ai-issue-*', '.github/workflows/ai-issue-responder.yml', '.github/ISSUE_TEMPLATE/**']
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue number; leave empty for a synthetic deployment check (preview only)
+        type: string
+        required: false
+      mode:
+        description: Preview calls MiMo without posting; send posts to the selected Issue
+        type: choice
+        options: [preview, send]
+        default: preview
+      deep_analysis:
+        description: Use MiMo Pro instead of Flash
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aerove-ai-issue-${{ github.event.issue.number || inputs.issue_number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: node --test .github/scripts/ai-issue-*.test.mjs
+      - name: Parse Issue forms and workflow YAML
+        run: ruby -ryaml -e 'Dir[".github/ISSUE_TEMPLATE/*.yml", ".github/workflows/ai-issue-responder.yml"].each { |file| YAML.load_file(file) }'
+  respond:
+    if: >-
+      github.repository == 'IvanSolis1989/Aerove' && github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' && !github.event.issue.pull_request && github.event.issue.user.type != 'Bot') ||
+      (github.event_name == 'issue_comment' && !github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/ai-help') && github.event.comment.user.type != 'Bot' &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - run: node --test .github/scripts/ai-issue-*.test.mjs
+      - name: Analyse and reply
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MIMO_API_KEY: ${{ secrets.MIMO_API_KEY }}
+          MIMO_BASE_URL: ${{ vars.MIMO_BASE_URL || secrets.MIMO_BASE_URL || 'https://api.xiaomimimo.com/v1' }}
+        run: node .github/scripts/ai-issue-responder.mjs

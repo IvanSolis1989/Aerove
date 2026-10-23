@@ -21,6 +21,12 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 GitHub 的 fork 网络关系单独处理，不是上述开发治理的前提。当前保留 `IvanSolis1989/Aerove` 地址、发布资产和升级入口。根据 [GitHub 官方脱离 fork 文档](https://docs.github.com/en/pull-requests/how-tos/work-with-forks/detaching-a-fork)，脱离会丢失 Star、议题、PR、Wiki 等仓库记录，且不可恢复关联；Git 提交历史会保留。不能把移除标记描述成无损操作，也不能直接删除重建仓库。真正执行前应列出保存、恢复和无法恢复的记录，以及发行地址、Secrets、工作流和客户端更新入口的影响，取得针对该具体结果的授权。
 
+## 开源来源与鸣谢
+
+| 来源 | 已核实提交 | 本仓库用途与采用方式 |
+| --- | --- | --- |
+| [IvanSolis1989/Smart-Config-Kit](https://github.com/IvanSolis1989/Smart-Config-Kit) | [28b86e2e](https://github.com/IvanSolis1989/Smart-Config-Kit/tree/28b86e2e991cde8bc2fa71b874e807c622f2b096) | 参考分类 Issue Forms、MiMo Flash 首轮 / Pro 追问、过滤与失败处理的设计；按 AEROVE 双产品诊断需求重新实现表单、只分析的评论机器人和限量源码上下文。未复制配置规则、提示词或自动补丁/PR 实现。 |
+
 ## 选择性参考
 
 `.github/workflows/sync-upstream.yaml` 现在是 **Review upstream reference**，只接受手动触发，不再定时合并、推送 main 或触发 Android 构建。输入明确的公开 Release 标签后，它以只读权限核对发布状态、可下载资产和 peeled commit，只输出参考摘要。

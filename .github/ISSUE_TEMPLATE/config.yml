@@ -1,4 +1,8 @@
+blank_issues_enabled: false
 contact_links:
-  - name: 讨论交流 / Communication
-    url: https://t.me/+G-veVtwBOl4wODc1
-    about: 在 Telegram 群组中与其他用户讨论交流 / Communicate with other users in the Telegram group
+  - name: AEROVE 使用与版本说明
+    url: https://github.com/IvanSolis1989/Aerove#readme
+    about: 先查看产品介绍、系统要求和官方发行入口
+  - name: 官方讨论群 / Telegram
+    url: https://t.me/Olympus_Habitue
+    about: 使用交流可进入 Olympus 官方讨论群；可复现的问题请保留在 Issue 中
