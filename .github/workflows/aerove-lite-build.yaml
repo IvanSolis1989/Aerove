@@ -17,7 +17,6 @@ permissions:
   contents: read
   actions: read
 env:
-  RUSTC_BOOTSTRAP: '1'
   NDK_VERSION: 28.2.13676358
 jobs:
   rust:
@@ -36,23 +35,23 @@ jobs:
       run: sdkmanager "ndk;$NDK_VERSION"
     - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
       with:
-        toolchain: 1.99.0
+        toolchain: 1.98.1
         targets: ${{ inputs.target }}
     - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       with:
-        workspaces: apps/aerove-lite/native -> target
-        key: lite-${{ inputs.target }}-${{ env.NDK_VERSION }}-rust1.99.0
+        workspaces: apps/aerove-lite/meow-native -> target
+        key: lite-${{ inputs.target }}-${{ env.NDK_VERSION }}-rust1.98.1
         cache-workspace-crates: true
         cache-directories: |-
-          apps/aerove-lite/native/.upstream
-          apps/aerove-lite/native/build
+          apps/aerove-lite/meow-native/.upstream
+          apps/aerove-lite/meow-native/build
     - name: Build the pinned Rust Android bridge
       run: python3 apps/aerove-lite/tool/ci_artifacts.py native --abi "${{ inputs.abi }}" --target "${{ inputs.target }}" --ndk "$ANDROID_SDK_ROOT/ndk/$NDK_VERSION"
     - name: Seal native build inputs
       run: |-
         mkdir -p "$RUNNER_TEMP/lite-core/jniLibs"
         cp -r apps/aerove-lite/app/src/main/jniLibs/${{ inputs.abi }} "$RUNNER_TEMP/lite-core/jniLibs/"
-        cp apps/aerove-lite/native/build/provenance.json "$RUNNER_TEMP/lite-core/"
+        cp apps/aerove-lite/meow-native/build/${{ inputs.abi }}-receipt.json "$RUNNER_TEMP/lite-core/provenance.json"
         python3 apps/aerove-lite/tool/ci_artifacts.py seal --directory "$RUNNER_TEMP/lite-core" --abi "${{ inputs.abi }}"
     - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
@@ -144,10 +143,10 @@ jobs:
       run: python3 apps/aerove-lite/tool/ci_artifacts.py fetch --name "Lite-helper-${{ inputs.abi }}-attempt-${{ github.run_attempt }}" --destination "$RUNNER_TEMP/lite-helper" --abi "${{ inputs.abi }}"
     - name: Restore verified native inputs
       run: |-
-        mkdir -p apps/aerove-lite/app/src/main/jniLibs apps/aerove-lite/native/build "$RUNNER_TEMP/aerove-client-helper-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ inputs.abi }}"
+        mkdir -p apps/aerove-lite/app/src/main/jniLibs apps/aerove-lite/meow-native/build "$RUNNER_TEMP/aerove-client-helper-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ inputs.abi }}"
         cp -r "$RUNNER_TEMP/lite-core/jniLibs/"* apps/aerove-lite/app/src/main/jniLibs/
         cp -r "$RUNNER_TEMP/lite-helper/jniLibs/"* apps/aerove-lite/app/src/main/jniLibs/
-        cp "$RUNNER_TEMP/lite-core/provenance.json" apps/aerove-lite/native/build/provenance.json
+        cp "$RUNNER_TEMP/lite-core/provenance.json" apps/aerove-lite/meow-native/build/${{ inputs.abi }}-receipt.json
         cp "$RUNNER_TEMP/lite-helper/build-receipt.json" "$RUNNER_TEMP/aerove-client-helper-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ inputs.abi }}/"
     - name: Prepare the independent Lite release signing identity
       env:
@@ -188,6 +187,7 @@ jobs:
           --run-number "$GITHUB_RUN_NUMBER" --run-attempt "$GITHUB_RUN_ATTEMPT" \
           --badging "$RUNNER_TEMP/lite-badging.txt" --signature "$RUNNER_TEMP/lite-signature.txt" \
           --helper-receipt "$RUNNER_TEMP/aerove-client-helper-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ inputs.abi }}/build-receipt.json" \
+          --native-receipt "$RUNNER_TEMP/lite-core/provenance.json" \
           --helper-source-root apps/aerove-lite/regexp2 --output "$RUNNER_TEMP/lite-artifact-${{ inputs.abi }}"
     - name: Preserve the built x86 runtime contract
       if: ${{ !cancelled() && inputs.abi == 'x86_64' && steps.emulator_apks.outcome == 'success' }}

@@ -302,9 +302,11 @@ def validate_artifacts(arm, helper, runtime, matrix, source, tree, run, attempt,
         raise PromotionError("Expected exactly one ARM64 helper build receipt")
     verifier_spec = importlib.util.spec_from_file_location("lite_verify_apk", TOOL_DIR / "verify_apk.py")
     verifier = importlib.util.module_from_spec(verifier_spec); verifier_spec.loader.exec_module(verifier)
-    if build.get("clash_rs_source") != verifier.CLASH_RS_SOURCE:
-        raise PromotionError("ARM64 Build Info does not identify the fixed Lite clash-rs source")
-    arm_result = verifier.verify(arm / "AEROVE-Lite-android-arm64.apk", "arm64-v8a", helper_source, helper_receipts[0])
+    core_identity = verifier.native_identity()
+    if any(build.get(key) != value for key, value in core_identity.items()):
+        raise PromotionError("ARM64 Build Info does not identify the fixed Meow source/lock/overlay")
+    workflow_identity = dict(workflowSourceSha=source, workflowRun=str(run), workflowAttempt=str(attempt))
+    arm_result = verifier.verify(arm / "AEROVE-Lite-android-arm64.apk", "arm64-v8a", helper_source, helper_receipts[0], build.get("native_build_receipt", {}), workflow_identity)
     product = verifier.product_version(APP_DIR / "version.properties")
     arm_identity = verifier.verify_identity(Path(arm_badging).read_text(encoding="utf-8"),
         Path(arm_signature).read_text(encoding="utf-8"), product, "preview")
@@ -318,13 +320,14 @@ def validate_artifacts(arm, helper, runtime, matrix, source, tree, run, attempt,
             or arm_result.get("client_helper_license_assets") != build.get("client_helper_license_assets")):
         raise PromotionError("ARM64 packaged native/helper readback differs from Build Info")
     x86apk = runtime / "apks/app-release.apk"
-    x86_result = verifier.verify(x86apk, "x86_64", helper_source, runtime / "client-helper-build-receipt.json")
+    x86_result = verifier.verify(x86apk, "x86_64", helper_source, runtime / "client-helper-build-receipt.json",
+        _json(runtime / "BUILD_INFO.json").get("native_build_receipt", {}), workflow_identity)
     x86_info = _json(runtime / "BUILD_INFO.json")
     if (x86_info.get("product") != "AEROVE Lite" or x86_info.get("channel") != "preview"
             or x86_info.get("application_id") != "dev.aerove.lite" or x86_info.get("min_sdk") != 33
             or x86_info.get("version") != build.get("version") or x86_info.get("version_code") != build.get("version_code")
             or x86_info.get("signer_sha256") != build.get("signer_sha256")
-            or x86_info.get("clash_rs_source") != verifier.CLASH_RS_SOURCE
+            or any(x86_info.get(key) != value for key, value in core_identity.items())
             or x86_info.get("source") != source or x86_info.get("tree") != tree
             or type(x86_info.get("run_number")) is not int or type(x86_info.get("run_attempt")) is not int
             or x86_info.get("run_number") != number

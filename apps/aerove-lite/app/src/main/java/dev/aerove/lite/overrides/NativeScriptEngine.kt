@@ -34,5 +34,5 @@ class NativeScriptEngine : ScriptEngine {
     private external fun nativeCancel(operation: Long)
     private external fun nativeRelease(operation: Long)
 
-    companion object { init { System.loadLibrary("aerove_core") } }
+    companion object { init { System.loadLibrary("aerove_meow_core") } }
 }

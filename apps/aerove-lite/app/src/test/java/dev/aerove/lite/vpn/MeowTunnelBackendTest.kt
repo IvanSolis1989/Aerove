@@ -1,0 +1,185 @@
+package dev.aerove.lite.vpn
+
+import dev.aerove.lite.LiteSettings
+import dev.aerove.lite.core.*
+import dev.aerove.lite.data.*
+import dev.aerove.lite.networksettings.NetworkSettings
+import kotlinx.coroutines.*
+import org.junit.Assert.*
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+
+class MeowTunnelBackendTest {
+    @get:Rule val temp = TemporaryFolder()
+    private class Native : MeowTunnelBackend.Commands {
+        var onStart: () -> Unit = {}; var onReady: () -> Unit = {}; var onStop: () -> Unit = {}; var onExit: () -> Unit = {}
+        var onListener: (String,Int) -> Unit = {_,_->}
+        var starts = 0; var stops = 0; var payload = ""; var descriptor = 0
+        var parked = false;var tunMode = false
+        override fun start(planJson: String, fd: Int, protector: SocketProtector?, owner: ConnectionOwnerLookup?): Long {
+            starts++; payload=planJson;descriptor=fd;onStart();return 1
+        }
+        override fun awaitReady(handle: Long) = onReady()
+        override fun awaitExit(handle: Long) = onExit()
+        override fun stop(handle: Long) { stops++;onStop() }
+        override fun listener(handle:Long,action:String,fd:Int):MeowListenerStatus {
+            onListener(action,fd)
+            parked = action == "park"
+            return listeners(handle)
+        }
+        override fun status(handle: Long) = MeowStatus(MeowState.Running, null, "127.0.0.1:49152", if(tunMode) NativeCore.RuntimeMode.Tun else NativeCore.RuntimeMode.Proxy,
+            tunMode && !parked, !parked, !parked, true)
+        override fun listeners(handle: Long) = MeowListenerStatus(!parked,tunMode && !parked,!parked,if(parked) emptyList() else listOf(7890),"1",true,true,true,"always")
+    }
+    private inner class Fixture(parked: Boolean = false, tunMode: Boolean = false) {
+        val settings = LiteSettings(network = NetworkSettings(vpnEnabled = tunMode))
+        val plan = VpnPlan("profile",settings)
+        val yaml = "proxies: [{name: direct, type: direct}]\nrules: ['MATCH,direct']"
+        val bundle = File(temp.root,"resources/bundles/profile/resource-generation").apply{mkdirs()}
+        val prepared = PreparedProfile("profile",yaml,yaml,"source-revision","resource-generation",bundle,null)
+        val config = MeowRuntimeConfigComposer(temp.root,cacheDirectory=File(temp.root,"meow-cache/session").apply{mkdirs()}).compose(prepared,settings,if(tunMode && !parked)42 else -1,49152,"0123456789abcdef0123456789abcdef",
+            initiallyParked=parked,physicalNetworkHandle="42")
+        var current = true;var released = 0;var verified = 0;var failRelease = false
+        var stages=0;var commits=0;var parkedFds=0;var discarded=0
+        val pending=mutableSetOf<MeowTunnelBackend.TunReceipt>()
+        val native = Native().also { it.parked=parked;it.tunMode=tunMode }
+        val lease = object : MeowTunnelBackend.Lease {
+            override val prepared get() = this@Fixture.prepared
+            override val configuration get() = config
+            override val appliedConfiguration = AppliedConfigSnapshot("profile",File(temp.root,"applied-${System.nanoTime()}.yaml").apply{writeText(config.engineYaml)})
+            override val protector: SocketProtector? = if(tunMode) SocketProtector { true } else null
+            override val connectionOwner: ConnectionOwnerLookup? = null
+            override val builderDnsEnabled = false
+            override val coreDnsEnabled = false
+            override val builderReservedFakeIpRanges = emptyList<String>()
+            override val coreReservedFakeIpRanges = emptyList<String>()
+            override suspend fun stageTun():MeowTunnelBackend.TunReceipt {
+                stages++;return object:MeowTunnelBackend.TunReceipt{override val descriptor=43}.also{pending+=it}
+            }
+            override suspend fun commitTun(receipt:MeowTunnelBackend.TunReceipt){assertTrue(pending.remove(receipt));commits++}
+            override suspend fun discardUnsubmittedTun(receipt:MeowTunnelBackend.TunReceipt){assertTrue(pending.remove(receipt));discarded++}
+            override suspend fun parkedTun(){parkedFds++;pending.clear()}
+            override fun isCurrent() = current
+            override suspend fun verifyControl(endpoint: CoreEndpoint) { verified++ }
+            override suspend fun release() { check(!failRelease) { "lease cleanup pending" };pending.clear();released++ }
+        }
+        val backend = MeowTunnelBackend({lease},native)
+    }
+    private suspend fun CountDownLatch.entered() { assertTrue(withContext(Dispatchers.IO){await(3,TimeUnit.SECONDS)}) }
+    @Test fun actualPreparedPlanAndReadyReceiptKeepOwnedEndpointLineage()=runBlocking<Unit>{
+        val f=Fixture();val session=f.backend.open(f.plan)
+        session.awaitReady();assertEquals(1,f.verified)
+        assertEquals("source-revision",session.endpoint.profileRevision);assertEquals("resource-generation",session.endpoint.resourceGeneration)
+        assertEquals(-1,f.native.descriptor)
+        val json=org.json.JSONObject(f.native.payload);assertEquals("42",json.getJSONObject("physicalNetwork").getString("handle"))
+        assertEquals(f.config.engineYaml,json.getString("engineYaml"));assertTrue(session.initialListenerReadback!!.listening)
+        session.stop();session.stop();assertEquals(1,f.native.stops);assertEquals(1,f.released)
+    }
+    @Test fun cancellationDuringLateStartStopsReceiptBeforeReleasingResources()=runBlocking<Unit>{
+        val f=Fixture();val entered=CountDownLatch(1);val exit=CountDownLatch(1)
+        f.native.onStart={entered.countDown();check(exit.await(3,TimeUnit.SECONDS))}
+        val opening=async(Dispatchers.Default){f.backend.open(f.plan)}
+        entered.entered();opening.cancel();assertEquals(0,f.released);exit.countDown()
+        withTimeout(3000){opening.join()};assertTrue(opening.isCancelled)
+        assertEquals(1,f.native.stops);assertEquals(1,f.released)
+    }
+    @Test fun cancellationWhileNativeReadyIsBlockedStopsAndJoinsBeforeLeaseRelease()=runBlocking<Unit>{
+        val f=Fixture();val entered=CountDownLatch(1);val exit=CountDownLatch(1)
+        f.native.onReady={entered.countDown();check(exit.await(3,TimeUnit.SECONDS))}
+        f.native.onStop={exit.countDown()}
+        val session=f.backend.open(f.plan);val ready=launch(Dispatchers.Default){session.awaitReady()}
+        entered.entered();ready.cancel();withTimeout(3000){ready.join()}
+        assertEquals(1,f.native.stops);assertEquals(1,f.released);assertNull(session.initialListenerReadback)
+    }
+    @Test fun unconfirmedJoinRetainsLeaseAndBlocksReplacementUntilRetrySucceeds()=runBlocking<Unit>{
+        val f=Fixture();val session=f.backend.open(f.plan)
+        f.native.onStop={throw java.io.IOException("join unconfirmed")}
+        try{session.stop();fail("stop must propagate")}catch(expected:java.io.IOException){assertEquals("join unconfirmed",expected.message)}
+        assertEquals(0,f.released)
+        try{f.backend.open(f.plan);fail("must block replacement")}catch(expected:IllegalStateException){assertTrue(expected.message!!.contains("not joined"))}
+        f.native.onStop={};session.stop();assertEquals(1,f.released)
+    }
+    @Test fun supersededAndInvalidParkedReadyCannotPublishSuccess()=runBlocking<Unit>{
+        val f=Fixture(true);val session=f.backend.open(f.plan)
+        f.native.parked=false
+        try{session.awaitReady();fail("parked listener mismatch must fail")}catch(expected:IllegalStateException){assertTrue(expected.message!!.contains("Parked"))}
+        assertNull(session.initialListenerReadback);assertEquals(1,f.released)
+        val next=Fixture();next.native.onStart={next.current=false}
+        try{next.backend.open(next.plan);fail("late stale handle must stop")}catch(expected:IllegalStateException){assertTrue(expected.message!!.contains("superseded"))}
+        assertEquals(1,next.native.stops);assertEquals(1,next.released)
+    }
+    @Test fun failedOpenKeepsRecoveryReceiptAndTerminalWaitUsesRealCompletionEvent()=runBlocking<Unit>{
+        val f=Fixture();f.native.onStart={f.current=false};f.native.onStop={throw java.io.IOException("join pending")}
+        try{f.backend.open(f.plan);fail("stale open must fail")}catch(expected:IllegalStateException){
+            assertEquals("join pending",expected.suppressed.single().message)
+        }
+        assertEquals(0,f.released);f.native.onStop={};f.backend.stopAndJoinRetained();assertEquals(1,f.released)
+        val next=Fixture();val session=next.backend.open(next.plan);val entered=CountDownLatch(1);val exited=CountDownLatch(1)
+        next.native.onExit={entered.countDown();check(exited.await(3,TimeUnit.SECONDS))}
+        next.native.onStop={exited.countDown()}
+        val terminal=launch(Dispatchers.Default){session.awaitExit()};entered.entered();assertFalse(terminal.isCompleted)
+        session.stop();withTimeout(3000){terminal.join()};assertEquals(1,next.released)
+    }
+    @Test fun preHandleFailureRetainsFailedCleanupUntilExplicitRecovery()=runBlocking<Unit>{
+        val f=Fixture();f.native.onStart={throw java.io.IOException("start rejected")};f.failRelease=true
+        try{f.backend.open(f.plan);fail("must reject start")}catch(expected:java.io.IOException){assertEquals("lease cleanup pending",expected.suppressed.single().message)}
+        assertEquals(0,f.native.stops);assertEquals(0,f.released)
+        try{f.backend.open(f.plan);fail("must retain failed cleanup")}catch(expected:IllegalStateException){assertTrue(expected.message!!.contains("not joined"))}
+        f.failRelease=false;f.backend.stopAndJoinRetained();assertEquals(1,f.released)
+    }
+    @Test fun successfulParkedReadyReportsNoListenersAndNoDescriptor()=runBlocking<Unit>{
+        val f=Fixture(true);val session=f.backend.open(f.plan);session.awaitReady()
+        assertEquals(-1,f.native.descriptor);assertFalse(session.initialListenerReadback!!.listening)
+        assertTrue(session.initialListenerReadback!!.activePorts.isEmpty());session.stop();assertEquals(1,f.released)
+    }
+    @Test fun tunDescriptorStaysSeparateFromSerializedPlanAtCommandBoundary()=runBlocking<Unit>{
+        val f=Fixture(tunMode=true);val session=f.backend.open(f.plan);session.awaitReady()
+        assertEquals(42,f.native.descriptor);assertFalse(f.native.payload.contains("fd://"))
+        assertFalse(org.json.JSONObject(f.native.payload).getJSONObject("tun").has("descriptor"))
+        assertTrue(session.initialListenerReadback!!.tunReady);session.stop();assertEquals(1,f.released)
+    }
+    @Test fun parkDoesNotReleaseBorrowedDescriptorBeforeNativeJoinReceipt()=runBlocking<Unit>{
+        val f=Fixture(tunMode=true);val session=f.backend.open(f.plan);session.awaitReady()
+        val entered=CountDownLatch(1);val joined=CountDownLatch(1)
+        f.native.onListener={action,fd->assertEquals("park",action);assertEquals(-1,fd);entered.countDown();check(joined.await(3,TimeUnit.SECONDS))}
+        val parking=async(Dispatchers.Default){session.setListening(false)};entered.entered()
+        assertEquals(0,f.parkedFds);joined.countDown();assertFalse(withTimeout(3000){parking.await()}.listening)
+        assertEquals(1,f.parkedFds);assertEquals(0,f.released);session.stop()
+    }
+    @Test fun cancelledAcceptedAttachKeepsCommittedDescriptorWithoutPublishingLateReceipt()=runBlocking<Unit>{
+        val f=Fixture(parked=true,tunMode=true);val session=f.backend.open(f.plan);session.awaitReady()
+        val entered=CountDownLatch(1);val ready=CountDownLatch(1)
+        f.native.onListener={action,fd->assertEquals("attachTun",action);assertEquals(43,fd);entered.countDown();check(ready.await(3,TimeUnit.SECONDS))}
+        val attach=async(Dispatchers.Default){session.setListening(true)};entered.entered();attach.cancel()
+        assertEquals(1,f.pending.size);assertEquals(0,f.released);ready.countDown();withTimeout(3000){attach.join()}
+        assertEquals(1,f.commits);assertFalse(session.listenerReadback!!.listening);assertEquals(0,f.released)
+        session.stop();assertEquals(1,f.released)
+    }
+    @Test fun failedAttachAndUnconfirmedStopKeepStagedDescriptorUntilRecoveryJoin()=runBlocking<Unit>{
+        val f=Fixture(parked=true,tunMode=true);val session=f.backend.open(f.plan);session.awaitReady()
+        f.native.onListener={_,_->throw java.io.IOException("driver failure")};f.native.onStop={throw java.io.IOException("join pending")}
+        try{session.setListening(true);fail("attach must fail")}catch(expected:java.io.IOException){assertEquals("driver failure",expected.message);assertEquals("join pending",expected.suppressed.single().message)}
+        assertEquals(1,f.pending.size);assertEquals(0,f.released)
+        f.native.onStop={};session.stop();assertTrue(f.pending.isEmpty());assertEquals(1,f.released)
+    }
+    @Test fun proxyResumeUsesNoTunAndPreservesSamePrivateEndpoint()=runBlocking<Unit>{
+        val f=Fixture(parked=true);val session=f.backend.open(f.plan);session.awaitReady()
+        val endpoint=session.endpoint
+        f.native.onListener={action,fd->assertEquals("resumeProxy",action);assertEquals(-1,fd)}
+        assertTrue(session.setListening(true).listening);assertSame(endpoint,session.endpoint);assertEquals(0,f.stages);session.stop()
+    }
+    @Test fun newerParkConvergesAfterAcceptedAttachAndSuppressesItsStaleReceipt()=runBlocking<Unit>{
+        val f=Fixture(parked=true,tunMode=true);val session=f.backend.open(f.plan);session.awaitReady()
+        val entered=CountDownLatch(1);val ready=CountDownLatch(1)
+        f.native.onListener={action,_->if(action=="attachTun"){entered.countDown();check(ready.await(3,TimeUnit.SECONDS))}}
+        val attach=async(Dispatchers.Default){session.setListening(true)};entered.entered()
+        val park=async(start=CoroutineStart.UNDISPATCHED){session.setListening(false)}
+        ready.countDown();assertFalse(withTimeout(3000){park.await()}.listening);withTimeout(3000){attach.join()}
+        assertTrue(attach.isCancelled);assertEquals(1,f.commits);assertEquals(1,f.parkedFds)
+        assertFalse(session.listenerReadback!!.listening);assertEquals(0,f.released);session.stop()
+    }
+}

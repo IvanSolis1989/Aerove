@@ -5,6 +5,7 @@ from pathlib import Path
 import struct
 import tempfile
 import unittest
+from unittest import mock
 import warnings
 import zipfile
 
@@ -34,7 +35,8 @@ class ApkInspectionTests(unittest.TestCase):
             if receipt_overrides:
                 receipt_data.update(receipt_overrides)
             receipt.write_text(json.dumps(receipt_data), encoding="utf-8")
-            return module.verify(apk, abi, HELPER_SOURCE_ROOT, receipt)
+            with mock.patch.object(module, "validate_native_receipt", return_value={"meow_source": module.MEOW_SOURCE}):
+                return module.verify(apk, abi, HELPER_SOURCE_ROOT, receipt, {})
 
     def product(self):
         return {"applicationId": "dev.aerove.lite", "version": "0.1.0-beta.1", "versionCode": "1",
@@ -178,7 +180,7 @@ class ApkInspectionTests(unittest.TestCase):
             archive.writestr("AndroidManifest.xml", b"manifest fixture")
             archive.writestr("classes.dex", b"dex fixture")
             if include_core:
-                archive.writestr(f"lib/{abi}/libaerove_core.so", image)
+                archive.writestr(f"lib/{abi}/libaerove_meow_core.so", self.core_elf(machine))
             for name in module.HELPER_LIBRARIES:
                 archive.writestr(f"lib/{abi}/{name}", image)
             archive.writestr("assets/licenses/client-helper/dependencies.json", (HELPER_SOURCE_ROOT / "dependencies.json").read_bytes())
@@ -200,6 +202,148 @@ class ApkInspectionTests(unittest.TestCase):
         struct.pack_into("<HHH", image, 52, 64, 56, 1)
         struct.pack_into("<IIQQQQQQ", image, 64, 1 if loadable else 4, 5, 0, 0, 0, len(image), len(image), p_align)
         return bytes(image)
+
+    def core_elf(self, machine=183, symbols=None, undefined=False):
+        symbols = module.CORE_JNI_SYMBOLS if symbols is None else symbols
+        image = bytearray(self.elf64(machine))
+        strings = b"\0" + b"".join(name.encode()+b"\0" for name in symbols)
+        string_offset = len(image); image.extend(strings)
+        symbol_offset = len(image); image.extend(bytes(24))
+        cursor = 1
+        for name in symbols:
+            image.extend(struct.pack("<IBBHQQ", cursor, 18, 0, 0 if undefined else 1, 1, 1))
+            cursor += len(name)+1
+        section_offset = len(image); image.extend(bytes(64))
+        image.extend(struct.pack("<IIQQQQIIQQ", 0, 3, 0, 0, string_offset, len(strings), 0, 0, 1, 0))
+        image.extend(struct.pack("<IIQQQQIIQQ", 0, 11, 0, 0, symbol_offset, (len(symbols)+1)*24, 1, 0, 8, 24))
+        struct.pack_into("<Q", image, 40, section_offset)
+        struct.pack_into("<HH", image, 58, 64, 3)
+        return bytes(image)
+
+    def test_core_exports_require_defined_dynamic_functions_not_strings_or_imports(self):
+        self.assertEqual(set(module.CORE_JNI_SYMBOLS), module.exported_functions(self.core_elf()))
+        self.assertEqual(set(), module.exported_functions(self.core_elf(undefined=True)))
+        self.assertEqual(set(), module.exported_functions(self.core_elf(symbols=[])+b"".join(x.encode() for x in module.CORE_JNI_SYMBOLS)))
+        with self.assertRaises(ValueError): module.exported_functions(b"not an ELF")
+
+    def test_packaged_core_missing_meow_jni_is_rejected_before_receipt(self):
+        with tempfile.TemporaryDirectory() as temp:
+            apk=self.make_apk(temp)
+            with zipfile.ZipFile(apk) as archive:
+                entries={name:archive.read(name) for name in archive.namelist()}
+            core='lib/arm64-v8a/'+module.CORE_LIBRARY
+            entries[core]=self.core_elf(symbols=module.CORE_JNI_SYMBOLS[1:])
+            with zipfile.ZipFile(apk,'w') as archive:
+                for name,data in entries.items():archive.writestr(name,data)
+            with self.assertRaisesRegex(ValueError,'Meow JNI exports missing.*startOwned'):
+                self.verify(apk,'arm64-v8a')
+
+    def test_packaged_core_requires_await_exit_runtime_export(self):
+        symbol = "Java_dev_aerove_lite_core_MeowNativeCore_awaitExit"
+        self.assertIn(symbol, module.CORE_JNI_SYMBOLS)
+        self.assertEqual(18, len(module.CORE_JNI_SYMBOLS))
+        with tempfile.TemporaryDirectory() as temp:
+            apk = self.make_apk(temp)
+            self.assertEqual("arm64-v8a", self.verify(apk, "arm64-v8a")["abi"])
+            with zipfile.ZipFile(apk) as archive:
+                entries = {name: archive.read(name) for name in archive.namelist()}
+            entries["lib/arm64-v8a/" + module.CORE_LIBRARY] = self.core_elf(
+                symbols=[name for name in module.CORE_JNI_SYMBOLS if name != symbol])
+            with zipfile.ZipFile(apk, "w") as archive:
+                for name, data in entries.items(): archive.writestr(name, data)
+            with self.assertRaisesRegex(ValueError, "Meow JNI exports missing.*awaitExit"):
+                self.verify(apk, "arm64-v8a")
+
+    def test_packaged_core_requires_listener_command_runtime_export(self):
+        symbol = "Java_dev_aerove_lite_core_MeowNativeCore_listenerCommand"
+        self.assertIn(symbol, module.CORE_JNI_SYMBOLS)
+        self.assertEqual(18, len(module.CORE_JNI_SYMBOLS))
+        with tempfile.TemporaryDirectory() as temp:
+            apk = self.make_apk(temp)
+            self.assertEqual("arm64-v8a", self.verify(apk, "arm64-v8a")["abi"])
+            with zipfile.ZipFile(apk) as archive:
+                entries = {name: archive.read(name) for name in archive.namelist()}
+            entries["lib/arm64-v8a/" + module.CORE_LIBRARY] = self.core_elf(
+                symbols=[name for name in module.CORE_JNI_SYMBOLS if name != symbol])
+            with zipfile.ZipFile(apk, "w") as archive:
+                for name, data in entries.items(): archive.writestr(name, data)
+            with self.assertRaisesRegex(ValueError, "Meow JNI exports missing.*listenerCommand"):
+                self.verify(apk, "arm64-v8a")
+
+    def test_packaged_core_requires_all_frozen_runtime_and_script_exports(self):
+        runtime = ("startOwned", "status", "listenerStatus", "awaitReady", "stop", "awaitExit", "listenerCommand",
+            "configurePolicies", "policyStatus", "capabilities", "validate", "inspectRuleSet", "dumpRuleSet", "validateResource")
+        expected = tuple("Java_dev_aerove_lite_core_MeowNativeCore_" + name for name in runtime) + tuple(
+            "Java_dev_aerove_lite_overrides_NativeScriptEngine_native" + name for name in ("Begin", "Evaluate", "Cancel", "Release"))
+        self.assertEqual(expected, module.CORE_JNI_SYMBOLS)
+        self.assertEqual(18, len(set(expected)))
+        with tempfile.TemporaryDirectory() as temp:
+            apk = self.make_apk(temp)
+            self.assertEqual("arm64-v8a", self.verify(apk, "arm64-v8a")["abi"])
+            with zipfile.ZipFile(apk) as archive:
+                original = {name: archive.read(name) for name in archive.namelist()}
+            for omitted in expected:
+                with self.subTest(omitted=omitted):
+                    entries = dict(original)
+                    entries["lib/arm64-v8a/" + module.CORE_LIBRARY] = self.core_elf(
+                        symbols=[name for name in expected if name != omitted])
+                    with zipfile.ZipFile(apk, "w") as archive:
+                        for name, data in entries.items(): archive.writestr(name, data)
+                    with self.assertRaises(ValueError) as caught:
+                        self.verify(apk, "arm64-v8a")
+                    self.assertEqual("Meow JNI exports missing: " + omitted, str(caught.exception))
+
+    def test_native_receipt_requires_accepted_policy_exact_source_and_output(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            def write(name,value):
+                path=root/name;path.parent.mkdir(parents=True,exist_ok=True)
+                path.write_text(json.dumps(value) if isinstance(value,dict) else value)
+                return module.sha256(path)
+            manifest=write('Cargo.toml','manifest');write('Cargo.lock','lock')
+            patch=write('patches/core.patch','patch')
+            overlay=write('source-metadata/overlay.json',dict(patch='patches/core.patch',patchSha256=patch,adaptedFileManifestSha256='d'*64))
+            write('source.json',dict(commit=module.MEOW_SOURCE,tag='v0.26.1',archiveSha256='a'*64))
+            policy=dict(resolveLock=False,manifestSha256=manifest,overlay='source-metadata/overlay.json',overlaySha256=overlay,targets=['lib','proxy_runtime'])
+            write('build-policy.json',policy);identity=module.native_identity(root)
+            receipt=dict(command=["cargo","test","--locked","--lib","--test","proxy_runtime","--","--test-threads=1","--nocapture"],schema=1,commandExit=0,acceptedLock=True,bootstrapRequested=False,resolveLockRequested=False,
+                lockUnchangedDuringLockedCommand=True,toolchain='rustc 1.98.1 (fixture)',androidTarget=None,representativeTargets=policy['targets'],
+                declaredSourceSpecSha256=identity['meow_source_spec_sha256'],bridgeManifestSha256=manifest,buildPolicySha256=identity['meow_policy_sha256'],
+                lockSha256Before=identity['meow_lock_sha256'],resolvedLockSha256=identity['meow_lock_sha256'],lockSha256After=identity['meow_lock_sha256'],
+                source=dict(commit=module.MEOW_SOURCE,tag='v0.26.1',archiveHashBootstrapped=False,archiveSha256='a'*64,
+                    fileManifestSha256='d'*64,overlaySha256=overlay,patchSha256=patch))
+            self.assertEqual(identity,module.validate_native_receipt(receipt,root=root))
+            for changes in [dict(acceptedLock=False),dict(resolveLockRequested=True),dict(lockSha256Before='f'*64),dict(representativeTargets=['lib']),dict(toolchain='rustc 1.99.0')]:
+                with self.subTest(changes=changes),self.assertRaises(ValueError):module.validate_native_receipt(dict(receipt,**changes),root=root)
+            image=self.core_elf();android=dict(receipt,command=['cargo','build','--locked','--release','--target','aarch64-linux-android'],androidTarget='aarch64-linux-android',ndkSourceProperties='Pkg.Revision = 28.2.13676358',
+                output=dict(abi='arm64-v8a',sha256=hashlib.sha256(image).hexdigest(),bytes=len(image),minPageAlignment=16384))
+            module.validate_native_receipt(android,'arm64-v8a',image,root)
+            with self.assertRaises(ValueError):module.validate_native_receipt(android,'arm64-v8a',image+b'changed',root)
+            with self.assertRaises(ValueError):module.validate_native_receipt(android,'arm64-v8a',image,root,dict(workflowRun='123'))
+            boundary_command = ['cargo','test','--locked','--no-default-features','--lib',
+                'capabilities::tests::','--','--test-threads=1','--nocapture']
+            feature_policy = dict(policy,featureBoundary='capabilities-no-default')
+            policy_hash = write('build-policy.json',feature_policy)
+            host = dict(receipt,buildPolicySha256=policy_hash,
+                featureBoundaryCommand=boundary_command,featureBoundaryExit=0)
+            module.validate_native_receipt(host,root=root)
+            # Android must not manufacture host-only cfg-off execution evidence.
+            module.validate_native_receipt(dict(android,buildPolicySha256=policy_hash),'arm64-v8a',image,root)
+            for changes in [dict(featureBoundaryCommand=None),dict(featureBoundaryCommand=boundary_command[:-1]),
+                    dict(featureBoundaryCommand=['cargo','test','--lib']),dict(featureBoundaryExit=None),
+                    dict(featureBoundaryExit=1),dict(featureBoundaryExit=False),dict(featureBoundaryExit='0')]:
+                with self.subTest(boundary=changes),self.assertRaisesRegex(ValueError,'feature boundary proof'):
+                    module.validate_native_receipt(dict(host,**changes),root=root)
+            for omitted in ['featureBoundaryCommand','featureBoundaryExit']:
+                missing = dict(host);missing.pop(omitted)
+                with self.subTest(omitted=omitted),self.assertRaisesRegex(ValueError,'feature boundary proof'):
+                    module.validate_native_receipt(missing,root=root)
+            for unknown in ['other',None,True]:
+                write('build-policy.json',dict(policy,featureBoundary=unknown))
+                with self.subTest(unknown=unknown),self.assertRaisesRegex(ValueError,'Unknown Meow feature boundary'):
+                    module.native_identity(root)
+            write('build-policy.json',dict(policy,resolveLock=True))
+            with self.assertRaisesRegex(ValueError,'accepted committed lock'):module.native_identity(root)
 
     def test_rejects_wrong_elf_even_under_arm64_filename(self):
         with tempfile.TemporaryDirectory() as root:

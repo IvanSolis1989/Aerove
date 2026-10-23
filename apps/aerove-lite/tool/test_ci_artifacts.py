@@ -45,33 +45,30 @@ class TransportTests(unittest.TestCase):
             value['apkInspectorOutcome']='failure';(root/'source-manifest.json').write_text(json.dumps(value))
             with self.assertRaises(ci.PromotionError):ci.verify(root,self.expected,True)
 
-class NativeOutputCacheTests(unittest.TestCase):
-    def test_exact_native_inputs_reuse_then_changed_or_corrupt_inputs_rebuild(self):
+class NativeBuildTests(unittest.TestCase):
+    def test_native_build_stages_only_after_current_locked_receipt_validates(self):
         with tempfile.TemporaryDirectory() as temp:
-            root=Path(temp); source=root/'source.rs';source.write_text('first')
-            built=[]
-            def build(command,check):
-                built.append(command)
-                target=root/'apps/aerove-lite/app/src/main/jniLibs/x86_64';target.mkdir(parents=True,exist_ok=True)
-                header=bytearray(20);header[:6]=b'\x7fELF\x02\x01';header[18:20]=(62).to_bytes(2,'little')
-                (target/'libaerove_core.so').write_bytes(bytes(header)+source.read_bytes())
-                provenance=root/'apps/aerove-lite/native/build/provenance.json';provenance.parent.mkdir(parents=True,exist_ok=True);provenance.write_text('{"fixture":"provenance"}')
-            with mock.patch.object(ci.Path,'cwd',return_value=root),mock.patch.object(ci,'native_fingerprint',side_effect=lambda *_:ci.digest(source)),mock.patch.object(ci.subprocess,'run',side_effect=build):
+            root=Path(temp);build=root/'apps/aerove-lite/meow-native/build'
+            (build/'x86_64').mkdir(parents=True);(build/'x86_64'/ci.CORE_LIBRARY).write_bytes(b'actual current ELF')
+            (build/'x86_64-receipt.json').write_text('{}')
+            with mock.patch.object(ci.Path,'cwd',return_value=root),mock.patch.object(ci,'native_fingerprint',return_value='fingerprint'),mock.patch.object(ci,'native_identity'),mock.patch.object(ci,'valid_elf64_shared_object',return_value=True),mock.patch.object(ci,'exported_functions',return_value=set(ci.CORE_JNI_SYMBOLS)),mock.patch.object(ci.subprocess,'run') as run,mock.patch.object(ci,'validate_native_receipt') as validate,mock.patch.dict(ci.os.environ,dict(GITHUB_SHA='a'*40,GITHUB_RUN_ID='123',GITHUB_RUN_ATTEMPT='2')):
                 ci.native_build('x86_64-linux-android','x86_64','ndk')
-                ci.native_build('x86_64-linux-android','x86_64','ndk')
-                self.assertEqual(1,len(built))
-                source.write_text('second');ci.native_build('x86_64-linux-android','x86_64','ndk')
-                self.assertEqual(2,len(built))
-                (root/'apps/aerove-lite/native/build/ci-cache-x86_64/libaerove_core.so').write_bytes(b'corrupt')
-                ci.native_build('x86_64-linux-android','x86_64','ndk');self.assertEqual(3,len(built))
+                self.assertEqual((root/'apps/aerove-lite/app/src/main/jniLibs/x86_64'/ci.CORE_LIBRARY).read_bytes(),b'actual current ELF')
+                self.assertIn('apps/aerove-lite/meow-native/build.py',run.call_args.args[0])
+                self.assertNotIn('--resolve-lock',run.call_args.args[0]);validate.assert_called_once()
                 with self.assertRaises(ci.PromotionError):ci.native_build('aarch64-linux-android','x86_64','ndk')
+                destination=root/'apps/aerove-lite/app/src/main/jniLibs/x86_64'/ci.CORE_LIBRARY
+                destination.write_bytes(b'previous verified output')
+                with mock.patch.object(ci,'exported_functions',return_value=set()),self.assertRaisesRegex(ci.PromotionError,'JNI exports'):
+                    ci.native_build('x86_64-linux-android','x86_64','ndk')
+                self.assertEqual(destination.read_bytes(),b'previous verified output')
 
     def test_fingerprint_includes_native_content_toolchain_ndk_and_wrapper(self):
         with tempfile.TemporaryDirectory() as temp:
-            root=Path(temp);source=root/'apps/aerove-lite/native/src/lib.rs';source.parent.mkdir(parents=True);source.write_text('one')
+            root=Path(temp);source=root/'apps/aerove-lite/meow-native/src/lib.rs';source.parent.mkdir(parents=True);source.write_text('one')
             ndk=root/'ndk';ndk.mkdir();(ndk/'source.properties').write_text('ndk28.2')
             def output(command,**kwargs):
-                return b'apps/aerove-lite/native/src/lib.rs\0' if command[0]=='git' else 'rustc 1.99.0'
+                return b'apps/aerove-lite/meow-native/src/lib.rs\0' if command[0]=='git' else 'rustc 1.98.1'
             with mock.patch.object(ci.subprocess,'check_output',side_effect=output):
                 initial=ci.native_fingerprint(root,'x86_64-linux-android',ndk)
                 self.assertEqual(initial,ci.native_fingerprint(root,'x86_64-linux-android',ndk))

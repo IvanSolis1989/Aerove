@@ -125,38 +125,7 @@ class AndroidTunnelBackend(
 
     private fun establishTun(plan: VpnPlan, port: Int, dnsEnabled: Boolean,
         dnsSnapshot: SystemDnsSnapshot = networkDns(), reservedRanges: List<String> = emptyList()): ParcelFileDescriptor {
-        check(android.net.VpnService.prepare(service) == null) { "VPN authorization is required" }
-        val builder = service.Builder()
-            .setSession("AEROVE Lite")
-            .addAddress("198.18.0.1", 30)
-            .setBlocking(false)
-            .setMetered(false)
-            .setConfigureIntent(PendingIntent.getActivity(
-                service, 0, Intent(service, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
-            ))
-        val networkPlan = vpnBuilderNetworkPlan(plan, port, reservedRanges)
-        applyVpnNetworkPolicy(builder, networkPlan)
-        applyVpnTunPolicy(builder, networkPlan)
-        if (vpnBuilderIpv6(plan)) {
-            builder.addAddress("fdfe:dcba:9876::1", 126)
-        }
-        val builderSettings = plan.builderSettings()
-        val applications = vpnApplicationPolicy(builderSettings.appFilterMode, builderSettings.packages, service.packageName)
-        fun addApplication(name: String, include: Boolean) {
-            try {
-                if (include) builder.addAllowedApplication(name) else builder.addDisallowedApplication(name)
-            } catch (_: android.content.pm.PackageManager.NameNotFoundException) {
-                android.util.Log.w("AEROVE Lite", "VPN policy skipped an uninstalled application: $name")
-            }
-        }
-        applications.allowed?.forEach { addApplication(it, true) }
-        applications.disallowed.forEach { addApplication(it, false) }
-        underlying()?.let { builder.setUnderlyingNetworks(arrayOf(it)) }
-        val dns = if (dnsEnabled) listOf("198.18.0.2") + if (vpnBuilderIpv6(plan)) listOf("fdfe:dcba:9876::2") else emptyList()
-            else dnsSnapshot.interfaces[dnsSnapshot.defaultInterface].orEmpty().filter { vpnBuilderIpv6(plan) || ':' !in it }
-        check(dns.isNotEmpty()) { "The underlying network has no DNS server while custom DNS is disabled" }
-        dns.forEach(builder::addDnsServer)
-        return checkNotNull(builder.establish()) { "VPN authorization was revoked" }
+        return establishAndroidTun(service, plan, port, dnsEnabled, dnsSnapshot, reservedRanges, underlying)
     }
 
     private inner class Session(
@@ -375,14 +344,7 @@ class AndroidTunnelBackend(
     private suspend fun cleanupStoppedResources(
         tun: ParcelFileDescriptor?, config: File?, profileLease: ProfileLease?, lease: Any, acquired: Boolean = true,
     ) {
-        try {
-            try {
-                tun?.close()
-            } finally {
-                if (config != null && !config.delete() && config.exists()) warnStoppedCleanup(java.io.IOException("Runtime configuration cleanup failed"))
-                profileLease?.let { application.profiles.release(it) }
-            }
-        } finally {
+        releaseAndroidTunResources(application, tun, config, profileLease, ::warnStoppedCleanup) {
             if (acquired) application.nativeLifecycle.unlock(lease)
         }
     }

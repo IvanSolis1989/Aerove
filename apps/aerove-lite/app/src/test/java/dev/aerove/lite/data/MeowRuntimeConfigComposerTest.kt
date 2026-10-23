@@ -13,14 +13,74 @@ import java.io.File
 class MeowRuntimeConfigComposerTest {
     @get:Rule val temporary = TemporaryFolder()
     private val secret = "0123456789abcdef0123456789abcdef"
-    private fun composer() = MeowRuntimeConfigComposer(temporary.root, "AEROVE-test/1")
+    private fun composer() = MeowRuntimeConfigComposer(temporary.root, "AEROVE-test/1", File(temporary.root,"meow-cache/test-session").apply{mkdirs()})
+    @Test fun finalEngineIsNormalizedOnlyWithExplicitVerifiedFeaturesAndSettingsSurvivePlan() {
+        val source = """
+            proxies: [{name: secure, type: ss, server: proxy.example, port: 443, cipher: aes-128-gcm, password: password}]
+            proxy-groups: [{name: select, type: select, proxies: [secure]}]
+            rules: ["MATCH,select"]
+            dns: {enable: true, nameserver: ["https://dns.example/dns-query"]}
+        """.trimIndent()
+        val profile = PreparedProfile("actual-profile", source, source, "actual-revision", null, null, null)
+        val settings = LiteSettings(ipv6 = true, requests = RequestPreferences(globalUserAgent = "verified-UA", checkCertificate = false))
+        val failure = assertThrows(ConfigValidationException::class.java) { composer().compose(profile, settings, -1, 49152, secret, initiallyParked = true) }
+        assertEquals("$.proxies[0].type", failure.issues.single().path)
+        val value = composer().compose(profile, settings, -1, 49152, secret, initiallyParked = true, verifiedNativeFeatures = setOf("ss"))
+        val plan = org.json.JSONObject(value.planJson())
+        val engine = ConfigYaml.parse(plan.getString("engineYaml"))
+        assertEquals(true, engine["strict"])
+        assertEquals("ss", ((engine["proxies"] as List<*>).single() as Map<*, *>)["type"])
+        assertEquals("actual-profile", plan.getString("profileId"));assertEquals("actual-revision", plan.getString("revision"))
+        assertEquals("verified-UA", ConfigYaml.parse(plan.getString("hostPolicyYaml"))["global-ua"])
+        assertFalse(plan.toString().contains("fd://"));assertNull(value.tun!!.descriptor)
+        assertEquals(false, ConfigYaml.parse(plan.getString("hostPolicyYaml"))["check-certificate"])
+    }
+    @Test fun finalEngineRejectsAliasConflictsRatherThanSilentlyChoosingOne() {
+        val source = """
+            proxies:
+              - {name: v, type: vmess, server: proxy.example, port: 443, uuid: '00000000-0000-0000-0000-000000000001', tls: true, server-name: one.example, servername: two.example}
+        """.trimIndent()
+        val error = assertThrows(ConfigValidationException::class.java) {
+            composer().compose(source, LiteSettings(), 42, 49152, secret, verifiedNativeFeatures = setOf("vmess"))
+        }
+        assertEquals("$.proxies[0].server-name", error.issues.single().path)
+    }
+    @Test fun schemaOneSerializationHasExplicitPlanAndNeverSerializesDescriptor() {
+        val value = composer().compose("dns: {enable: true}", LiteSettings(ipv6 = true), 91, 49152, secret,
+            systemDns = SystemDnsSnapshot("wlan0", mapOf("wlan0" to listOf("192.0.2.1"))),
+            tunOptions = TunRuntimeOptions(1480, true, true), physicalNetworkHandle = "18446744073709551615")
+        val json = org.json.JSONObject(value.planJson())
+        assertEquals(1, json.getInt("schemaVersion"));assertEquals("tun", json.getString("runtimeMode"))
+        assertEquals("127.0.0.1:49152", json.getJSONObject("privateControl").getString("address"))
+        assertEquals(secret, json.getJSONObject("privateControl").getString("secret"))
+        assertEquals(1480, json.getJSONObject("tun").getInt("mtu"));assertFalse(json.getJSONObject("tun").getBoolean("autoRoute"))
+        assertEquals("any:53", json.getJSONObject("tun").getJSONArray("dnsHijack").getString(0))
+        assertFalse(json.getJSONObject("tun").has("descriptor"));assertFalse(value.planJson().contains("fd://"))
+        assertEquals("18446744073709551615", json.getJSONObject("physicalNetwork").getString("handle"))
+        assertEquals("wlan0", json.getJSONObject("physicalNetwork").getJSONObject("dns").getString("defaultInterface"))
+        assertTrue(json.isNull("profileId"));assertTrue(json.getJSONObject("inbounds").has("configYaml"))
+        assertThrows(IllegalArgumentException::class.java) { MeowPhysicalNetwork("00") }
+        assertThrows(IllegalArgumentException::class.java) { MeowPhysicalNetwork("0") }
+    }
+    @Test fun candidateStatusWireIsStrictWithoutLoadingNativeLibrary() {
+        val row = org.json.JSONObject("""{"state":"Running","error":null,"apiAddress":"127.0.0.1:49152","runtimeMode":"tun","tunReady":false,"userListenersReady":false,"listening":false,"coreReady":true}""")
+        val status = dev.aerove.lite.core.MeowStatusCodec.status(row.toString())
+        assertTrue(status.coreReady);assertFalse(status.listening)
+        assertEquals(dev.aerove.lite.core.MeowState.Running, status.state)
+        row.put("tunReady", "true")
+        assertThrows(Exception::class.java) { dev.aerove.lite.core.MeowStatusCodec.status(row.toString()) }
+        val listener = org.json.JSONObject("""{"listening":true,"tunReady":false,"userListenersReady":true,"activePorts":[7890],"coreEpoch":"18446744073709551615","onlyStatisticsProxy":true,"unifiedDelay":true,"tcpConcurrent":true,"findProcessMode":"always"}""")
+        assertEquals(listOf(7890), dev.aerove.lite.core.MeowStatusCodec.listeners(listener.toString()).activePorts)
+        listener.put("coreEpoch", "01")
+        assertThrows(Exception::class.java) { dev.aerove.lite.core.MeowStatusCodec.listeners(listener.toString()) }
+    }
     @Test fun actualTunIsTypedAndParserCannotCreateDeviceOrUserListeners() {
-        val value = composer().compose("dns: {enable: true, listen: '127.0.0.1:1053'}\nsniffer: {enable: true}",
+        val value = composer().compose("dns: {enable: true, listen: '127.0.0.1:1053'}\nsniffer: {enable: true, sniff: {TLS: {ports: [443]}}}",
             LiteSettings(ipv6 = true), 42, 49152, secret, tunOptions = TunRuntimeOptions(1420, true, true))
         val root = ConfigYaml.parse(value.engineYaml)
         assertEquals(mapOf("enable" to false, "auto-route" to false), root["tun"])
         listOf("mixed-port", "port", "listeners", "external-controller", "secret").forEach { assertFalse(root.containsKey(it)) }
-        assertEquals(mapOf("enable" to true), root["sniffer"])
+        assertEquals(mapOf("enable" to true, "sniff" to mapOf("TLS" to mapOf("ports" to listOf(443)))), root["sniffer"])
         assertFalse((root["dns"] as Map<*, *>).containsKey("listen"))
         val tun = ConfigYaml.parse(value.tun!!.rawYaml)
         assertEquals(42, value.tun!!.descriptor);assertEquals(1420, tun["mtu"])
@@ -65,7 +125,17 @@ class MeowRuntimeConfigComposerTest {
         val value = composer().compose(prepared, LiteSettings(), 4, 49152, secret)
         assertEquals("generation", value.resourceGeneration);assertEquals("revision", value.revision)
         assertTrue(value.engineYaml.contains("rules.yaml"))
+        val plan = org.json.JSONObject(value.planJson())
+        assertEquals(bundle.canonicalPath, plan.getString("resourceReadRoot"))
+        assertEquals(File(temporary.root,"meow-cache/test-session").canonicalPath,plan.getString("cacheRoot"))
+        assertEquals("payload: [example.com]",rules.readText())
         assertThrows(IllegalArgumentException::class.java) { composer().compose(prepared.copy(resourceDirectory = temporary.root), LiteSettings(), 4, 49152, secret) }
         assertThrows(Exception::class.java) { composer().compose("geodata: {mmdb-path: '../outside.mmdb'}", LiteSettings(), 4, 49152, secret) }
+    }
+    @Test fun cacheRootMustBeTrustedPrivateAndExplicitBeforeSerialization() {
+        val value=MeowRuntimeConfigComposer(temporary.root).compose("{}",LiteSettings(),42,49152,secret)
+        assertThrows(IllegalStateException::class.java){value.planJson()}
+        assertThrows(IllegalArgumentException::class.java){MeowRuntimeConfigComposer(temporary.root,cacheDirectory=temporary.root)}
+        assertThrows(IllegalArgumentException::class.java){MeowRuntimeConfigComposer(temporary.root,cacheDirectory=File(temporary.root,"meow-cache/missing"))}
     }
 }

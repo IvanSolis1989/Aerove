@@ -1,7 +1,7 @@
 package dev.aerove.lite
 
 import android.app.Application
-import dev.aerove.lite.core.NativeCore
+import dev.aerove.lite.core.MeowNativeCore
 import dev.aerove.lite.data.CompatibilityValidator
 import dev.aerove.lite.data.LiteSettingsStore
 import dev.aerove.lite.data.NativeConfigValidator
@@ -85,16 +85,16 @@ class LiteApplication : Application() {
     val subscriptionDownloader by lazy { SubscriptionDownloader(requestPolicy) }
     val resourceDownloader by lazy { ResourceDownloader(requestPolicy) }
     val profileValidator by lazy {
-        CompatibilityValidator(NativeConfigValidator { NativeCore.validate(it) }, File(filesDir, "runtime"))
+        CompatibilityValidator(NativeConfigValidator { MeowNativeCore.validate(it) }, File(filesDir, "runtime"))
     }
     val rulePayloadInspector by lazy {
         dev.aerove.lite.data.NativeJsonRulePayloadInspector(
-            { path -> NativeCore.inspectRuleSet(path) },
-            { path, behavior, format -> NativeCore.dumpRuleSet(path, behavior, format) })
+            { path -> MeowNativeCore.inspectRuleSet(path) },
+            { path, behavior, format -> MeowNativeCore.dumpRuleSet(path, behavior, format) })
     }
     val resourceBundles by lazy {
         ResourceBundleManager(File(filesDir, "runtime"), profileValidator, NativeResourceValidator { kind, path, behavior, format ->
-            NativeCore.validateResource(kind, path, behavior, format)
+            MeowNativeCore.validateResource(kind, path, behavior, format)
         }, downloader = resourceDownloader, offlineRules = rulePayloadInspector)
     }
     val builderResourceLibrary by lazy { dev.aerove.lite.profilebuilder.BuilderResourceLibrary(filesDir, subscriptionDownloader) }
@@ -107,7 +107,7 @@ class LiteApplication : Application() {
     }
     val geoResourceCatalog by lazy {
         dev.aerove.lite.resources.GeoResourceCatalog(File(filesDir, "runtime"), profileValidator,
-            NativeResourceValidator { kind, path, behavior, format -> NativeCore.validateResource(kind, path, behavior, format) },
+            NativeResourceValidator { kind, path, behavior, format -> MeowNativeCore.validateResource(kind, path, behavior, format) },
             resourceDownloader, { checkNotNull(settings.changes.value) { "Settings have not loaded" }.geoResources })
     }
 

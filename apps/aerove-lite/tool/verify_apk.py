@@ -12,7 +12,117 @@ import zipfile
 HELPER_LIBRARIES = ("libaerove_filter_helper.so", "libaerove_filter_jni.so")
 HELPER_LICENSE_PREFIX = "assets/licenses/client-helper/"
 ANDROID_MAX_PAGE_SIZE = 16 * 1024
-CLASH_RS_SOURCE = "36eec77463d1243ede287bf6b7197e38237948d5"
+MEOW_SOURCE = "727ddcd06f592e2f12c5222c4de6cce328df808c"
+CORE_LIBRARY = "libaerove_meow_core.so"
+MEOW_ROOT = Path(__file__).resolve().parents[1] / "meow-native"
+CORE_JNI_SYMBOLS = tuple("Java_dev_aerove_lite_core_MeowNativeCore_" + name for name in
+    ("startOwned", "status", "listenerStatus", "awaitReady", "stop", "awaitExit", "listenerCommand",
+     "configurePolicies", "policyStatus", "capabilities", "validate", "inspectRuleSet", "dumpRuleSet", "validateResource")) + tuple(
+    "Java_dev_aerove_lite_overrides_NativeScriptEngine_native" + name for name in
+    ("Begin", "Evaluate", "Cancel", "Release"))
+
+
+def native_identity(root=MEOW_ROOT):
+    root = Path(root)
+    spec = json.loads((root / "source.json").read_text())
+    policy = json.loads((root / "build-policy.json").read_text())
+    if "featureBoundary" in policy and policy["featureBoundary"] != "capabilities-no-default":
+        raise ValueError("Unknown Meow feature boundary check")
+    if (spec.get("commit") != MEOW_SOURCE or spec.get("tag") != "v0.26.1"
+            or not re.fullmatch(r"[0-9a-f]{64}", str(spec.get("archiveSha256", "")))
+            or policy.get("resolveLock") is not False):
+        raise ValueError("Meow requires a pinned source and accepted committed lock policy")
+    def owned(name):
+        path = root / name
+        if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
+            raise ValueError("Meow identity path escapes source root")
+        return path
+    overlay = json.loads(owned(policy["overlay"]).read_text())
+    if (sha256(root / "Cargo.toml") != policy["manifestSha256"]
+            or sha256(owned(policy["overlay"])) != policy["overlaySha256"]
+            or sha256(owned(overlay["patch"])) != overlay["patchSha256"]):
+        raise ValueError("Meow policy/overlay/manifest identity changed")
+    return dict(meow_source=MEOW_SOURCE, meow_version="v0.26.1", core_library=CORE_LIBRARY, meow_source_spec_sha256=sha256(root / "source.json"),
+        meow_lock_sha256=sha256(root / "Cargo.lock"), meow_manifest_sha256=sha256(root / "Cargo.toml"),
+        meow_policy_sha256=sha256(root / "build-policy.json"), meow_overlay_sha256=policy["overlaySha256"],
+        meow_patch_sha256=overlay["patchSha256"], meow_archive_sha256=spec["archiveSha256"],
+        meow_file_manifest_sha256=overlay["adaptedFileManifestSha256"])
+
+
+def validate_native_receipt(receipt_path, abi=None, image=None, root=MEOW_ROOT, workflow=None):
+    expected = native_identity(root)
+    receipt = receipt_path if isinstance(receipt_path, dict) else json.loads(Path(receipt_path).read_text())
+    source = receipt.get("source", {})
+    if (receipt.get("schema") != 1 or receipt.get("commandExit") != 0
+            or receipt.get("acceptedLock") is not True
+            or receipt.get("bootstrapRequested") is not False or receipt.get("resolveLockRequested") is not False
+            or receipt.get("lockUnchangedDuringLockedCommand") is not True
+            or not str(receipt.get("toolchain", "")).startswith("rustc 1.98.1 ")
+            or source.get("commit") != MEOW_SOURCE or source.get("tag") != "v0.26.1"
+            or source.get("archiveHashBootstrapped") is not False):
+        raise ValueError("Meow receipt is not an accepted locked build")
+    fields = {"declaredSourceSpecSha256": "meow_source_spec_sha256", "bridgeManifestSha256": "meow_manifest_sha256",
+        "buildPolicySha256": "meow_policy_sha256", "lockSha256Before": "meow_lock_sha256",
+        "resolvedLockSha256": "meow_lock_sha256", "lockSha256After": "meow_lock_sha256"}
+    if any(receipt.get(key) != expected[value] for key, value in fields.items()) or any(
+        source.get(key) != expected[value] for key, value in {"archiveSha256": "meow_archive_sha256",
+        "fileManifestSha256": "meow_file_manifest_sha256", "overlaySha256": "meow_overlay_sha256",
+        "patchSha256": "meow_patch_sha256"}.items()):
+        raise ValueError("Meow receipt source/lock/overlay identity mismatch")
+    if workflow and any(str(receipt.get(key)) != str(value) for key, value in workflow.items()):
+        raise ValueError("Meow receipt source/run/attempt mismatch")
+    if abi is None:
+        policy = json.loads((Path(root)/"build-policy.json").read_text())
+        targets = policy["targets"]
+        command = ["cargo", "test", "--locked"]
+        for target in targets:
+            command += ["--lib"] if target == "lib" else ["--test", target]
+        command += ["--", "--test-threads=1", "--nocapture"]
+        if receipt.get("command") != command or receipt.get("androidTarget") is not None or receipt.get("representativeTargets") != targets:
+            raise ValueError("Meow host receipt did not run the complete approved suite")
+        if "featureBoundary" in policy:
+            boundary_command = ["cargo", "test", "--locked", "--no-default-features", "--lib",
+                "capabilities::tests::", "--", "--test-threads=1", "--nocapture"]
+            if (receipt.get("featureBoundaryCommand") != boundary_command
+                    or type(receipt.get("featureBoundaryExit")) is not int
+                    or receipt["featureBoundaryExit"] != 0):
+                raise ValueError("Meow host receipt lacks successful approved feature boundary proof")
+    else:
+        target = {"arm64-v8a": "aarch64-linux-android", "x86_64": "x86_64-linux-android"}[abi]
+        output = receipt.get("output", {})
+        if (receipt.get("command") != ["cargo", "build", "--locked", "--release", "--target", target]
+                or receipt.get("androidTarget") != target or output.get("abi") != abi
+                or output.get("sha256") != hashlib.sha256(image).hexdigest() or output.get("bytes") != len(image)
+                or output.get("minPageAlignment") != 16384
+                or not re.search(r"Pkg.Revision\s*=\s*28\.2\.13676358\s*$", receipt.get("ndkSourceProperties", ""), re.MULTILINE)):
+            raise ValueError("Meow receipt output/NDK/ABI mismatch")
+    return expected
+
+
+def exported_functions(image):
+    """Read defined dynamic ELF functions; strings or undefined imports do not qualify."""
+    try:
+        offset = struct.unpack_from("<Q", image, 40)[0]
+        size, count = struct.unpack_from("<HH", image, 58)
+        if size < 64 or count < 1 or offset + size * count > len(image):
+            raise ValueError("Invalid ELF section table")
+        sections = [struct.unpack_from("<IIQQQQIIQQ", image, offset + i * size) for i in range(count)]
+        result = set()
+        for section in sections:
+            if section[1] != 11: continue  # SHT_DYNSYM
+            start, length, link, entry = section[4], section[5], section[6], section[9]
+            if entry < 24 or length % entry or start + length > len(image) or link >= count:
+                raise ValueError("Invalid ELF dynamic symbols")
+            strings = sections[link]
+            table = image[strings[4]:strings[4]+strings[5]]
+            for index in range(0, length, entry):
+                name, info, other, defined, _value, _size = struct.unpack_from("<IBBHQQ", image, start + index)
+                if info & 15 == 2 and info >> 4 in (1, 2) and other & 3 in (0, 3) and defined:
+                    if name >= len(table) or b"\0" not in table[name:]: raise ValueError("Invalid ELF symbol name")
+                    result.add(table[name:table.index(b"\0",name)].decode("ascii"))
+        return result
+    except (struct.error, UnicodeDecodeError, IndexError) as error:
+        raise ValueError("Invalid ELF dynamic symbols") from error
 
 
 def sha256(path):
@@ -85,7 +195,7 @@ def verify_identity(badging, signature, product, channel):
         "version_code": int(product["versionCode"]), "min_sdk": 33, "signer_sha256": signer[0]}
 
 
-def verify(apk, abi, helper_source_root, helper_receipt):
+def verify(apk, abi, helper_source_root, helper_receipt, native_receipt, workflow=None):
     machine = {"arm64-v8a": 183, "x86_64": 62}[abi]
     with zipfile.ZipFile(apk) as archive:
         if archive.testzip() is not None:
@@ -93,9 +203,18 @@ def verify(apk, abi, helper_source_root, helper_receipt):
         names = archive.namelist()
         if len(names) != len(set(names)):
             raise ValueError("Duplicate APK entries")
-        library = f"lib/{abi}/libaerove_core.so"
+        library = f"lib/{abi}/{CORE_LIBRARY}"
         if library not in names:
             raise ValueError("The actual Rust core is missing")
+        core = archive.read(library)
+        if f"lib/{abi}/libaerove_core.so" in names:
+            raise ValueError("Legacy clash-rs library must not be packaged with Meow")
+        if not valid_elf64_shared_object(core, machine):
+            raise ValueError("Wrong Meow ELF architecture or 16KiB alignment")
+        missing = set(CORE_JNI_SYMBOLS) - exported_functions(core)
+        if missing:
+            raise ValueError("Meow JNI exports missing: " + ", ".join(sorted(missing)))
+        core_identity = validate_native_receipt(native_receipt, abi, core, workflow=workflow)
         helpers = [f"lib/{abi}/{name}" for name in HELPER_LIBRARIES]
         missing_helpers = [name for name in helpers if name not in names]
         if missing_helpers:
@@ -133,7 +252,7 @@ def verify(apk, abi, helper_source_root, helper_receipt):
                 raise ValueError(f"Client helper build receipt does not match APK: {helper_name}")
         if "AndroidManifest.xml" not in names or not any(name.endswith(".dex") for name in names):
             raise ValueError("Not a complete Android application")
-        return {"abi": abi, "jni_libraries": libraries, "core_sha256": hashlib.sha256(archive.read(library)).hexdigest(),
+        return {**core_identity, "abi": abi, "jni_libraries": libraries, "core_sha256": hashlib.sha256(archive.read(library)).hexdigest(),
             "client_helpers": helper_readback, "client_helper_license_assets": licenses,
             "client_helper_source_sha256": helper_provenance["source_sha256"]}
 
@@ -145,7 +264,6 @@ def build_info(identity, result, source, tree, workflow, run_number, run_attempt
         "product": "AEROVE Lite", "channel": channel, **identity,
         "source": source, "tree": tree, "workflow": workflow,
         "run_number": run_number, "run_attempt": run_attempt,
-        "clash_rs_source": CLASH_RS_SOURCE,
         "apk_sha256": sha256(apk_path), **result,
     }
 
@@ -271,6 +389,7 @@ def main():
     parser.add_argument("--signature", required=True, type=Path)
     parser.add_argument("--helper-source-root", required=True, type=Path)
     parser.add_argument("--helper-receipt", required=True, type=Path)
+    parser.add_argument("--native-receipt", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     if not all(re.fullmatch(r"[0-9a-f]{40}", value) for value in (args.source, args.tree)):
@@ -280,7 +399,8 @@ def main():
     if args.run_number < 1 or args.run_attempt < 1:
         parser.error("Positive workflow run number and attempt are required")
     try:
-        result = verify(args.apk, args.abi, args.helper_source_root, args.helper_receipt)
+        result = verify(args.apk, args.abi, args.helper_source_root, args.helper_receipt, args.native_receipt,
+            dict(workflowSourceSha=args.source, workflowRun=args.workflow.rsplit("/", 1)[-1], workflowAttempt=str(args.run_attempt)))
     except ValueError as error:
         parser.error(str(error))
     badging = args.badging.read_text(encoding="utf-8")
@@ -292,6 +412,7 @@ def main():
     apk = args.output / artifact_name(args.abi, args.channel)
     shutil.copyfile(args.apk, apk)
     info = args.output / "BUILD_INFO.json"
+    result["native_build_receipt"] = json.loads(args.native_receipt.read_text())
     info.write_text(json.dumps(build_info(identity, result, args.source, args.tree, args.workflow,
         args.run_number, args.run_attempt, apk, args.channel), indent=2) + "\n", encoding="utf-8")
     (args.output / "SHA256SUMS").write_text("".join(f"{sha256(path)}  {path.name}\n" for path in (apk, info)), encoding="utf-8")

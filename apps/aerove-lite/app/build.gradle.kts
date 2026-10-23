@@ -49,6 +49,7 @@ android {
     testOptions { unitTests.isReturnDefaultValues = true }
     packaging {
         jniLibs.useLegacyPackaging = false
+        jniLibs.excludes += "**/libaerove_core.so"
         jniLibs.keepDebugSymbols += setOf("**/libaerove_filter_helper.so", "**/libaerove_filter_jni.so")
     }
     testBuildType = "release"
@@ -77,15 +78,37 @@ android {
 
 val verifyNativeCore = tasks.register("verifyNativeCore") {
     val abi = providers.gradleProperty("liteAbi").getOrElse("arm64-v8a")
-    val library = layout.projectDirectory.file("src/main/jniLibs/$abi/libaerove_core.so")
-    inputs.file(library)
+    val library = layout.projectDirectory.file("src/main/jniLibs/$abi/libaerove_meow_core.so")
+    val nativeRoot = rootProject.file("meow-native")
+    val receipt = nativeRoot.resolve("build/$abi-receipt.json")
+    val verifier = rootProject.file("tool/verify_apk.py")
+    inputs.files(library, receipt, verifier, nativeRoot.resolve("Cargo.lock"),
+        nativeRoot.resolve("Cargo.toml"), nativeRoot.resolve("source.json"), nativeRoot.resolve("build-policy.json"))
     doLast {
         check(abi in setOf("arm64-v8a", "x86_64")) { "Unsupported native ABI: $abi" }
-        check(library.asFile.isFile) { "Build the actual Rust core with apps/aerove-lite/native/build.py before packaging" }
-        val header = library.asFile.inputStream().use { it.readNBytes(20) }
-        val machine = if (abi == "arm64-v8a") 183 else 62
-        check(header.size == 20 && header.sliceArray(0..5).contentEquals(byteArrayOf(0x7f, 0x45, 0x4c, 0x46, 2, 1)) &&
-            (header[18].toInt() and 0xff) == machine && header[19].toInt() == 0) { "Wrong Rust core ELF ABI" }
+        check(library.asFile.isFile && receipt.isFile) {
+            "Build with meow-native/build.py --target TRIPLE --ndk PATH and inject the original ABI receipt before packaging"
+        }
+        val verification = """
+            import os, sys
+            from pathlib import Path
+            sys.path.insert(0, sys.argv[1])
+            from verify_apk import validate_native_receipt, valid_elf64_shared_object, exported_functions, CORE_JNI_SYMBOLS
+            root, receipt, library, abi = Path(sys.argv[2]), Path(sys.argv[3]), Path(sys.argv[4]), sys.argv[5]
+            image = library.read_bytes()
+            workflow = {key: os.environ[name] for key, name in [('workflowSourceSha','GITHUB_SHA'), ('workflowRun','GITHUB_RUN_ID'), ('workflowAttempt','GITHUB_RUN_ATTEMPT')]} if os.environ.get('GITHUB_ACTIONS') == 'true' else None
+            validate_native_receipt(receipt, abi=abi, image=image, root=root, workflow=workflow)
+            if not valid_elf64_shared_object(image, 183 if abi == 'arm64-v8a' else 62):
+                raise ValueError('Meow ELF ABI/16KiB alignment invalid')
+            missing = set(CORE_JNI_SYMBOLS) - exported_functions(image)
+            if missing:
+                raise ValueError('Missing Meow JNI exports: ' + ','.join(sorted(missing)))
+        """.trimIndent()
+        providers.exec {
+            commandLine(providers.gradleProperty("litePython").getOrElse("python3"), "-c", verification,
+                verifier.parentFile.absolutePath, nativeRoot.absolutePath, receipt.absolutePath,
+                library.asFile.absolutePath, abi)
+        }.result.get().assertNormalExitValue()
     }
 }
 val verifyClientHelper = tasks.register("verifyClientHelper") {

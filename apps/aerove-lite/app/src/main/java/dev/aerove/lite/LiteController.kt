@@ -135,7 +135,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
     override val resourceManagement get() = resourceManagementOwner.value
     private val globalResourcesOwner = lazy {
         dev.aerove.lite.integration.GlobalResourceWorkspace(application.builderResourceLibrary, application.profiles,
-            application.globalRulePayloads, { yaml -> withContext(Dispatchers.Default) { dev.aerove.lite.core.NativeCore.validate(yaml) } },
+            application.globalRulePayloads, { yaml -> withContext(Dispatchers.Default) { dev.aerove.lite.core.MeowNativeCore.validate(yaml) } },
             { sourceApplyOwner.value.request() })
     }
     override val globalResources get() = globalResourcesOwner.value

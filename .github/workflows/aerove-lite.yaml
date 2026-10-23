@@ -5,11 +5,12 @@ concurrency:
   group: aerove-lite-${{ github.ref }}
   cancel-in-progress: false
 env:
-  RUSTC_BOOTSTRAP: '1'
   NDK_VERSION: 28.2.13676358
 jobs:
-  resolve:
-    if: ${{ !inputs.publish_release }}
+  legacy_native_diagnosis:
+    if: ${{ !inputs.client_preflight && (inputs.native_preflight && !inputs.publish_release) }}
+    env:
+      RUSTC_BOOTSTRAP: '1'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -25,15 +26,6 @@ jobs:
         cache-on-failure: ${{ inputs.native_preflight }}
         cache-workspace-crates: true
         cache-directories: apps/aerove-lite/native/.upstream
-    - name: Stable lock and host production regression
-      if: ${{ !inputs.native_preflight }}
-      run: |-
-        python3 apps/aerove-lite/native/build.py --initialize-lock --prepare-only
-        git diff --exit-code -- apps/aerove-lite/native/Cargo.lock
-
-        python3 apps/aerove-lite/native/reference_resources.py --download --output "$RUNNER_TEMP/geosite.dat"
-        python3 apps/aerove-lite/native/build.py --test --test-geosite "$RUNNER_TEMP/geosite.dat"
-        git diff --exit-code -- apps/aerove-lite/native/Cargo.lock
     - name: Ensure GDB is available for requested native stack capture
       if: ${{ inputs.native_preflight && inputs.native_test_stacks }}
       timeout-minutes: 5
@@ -203,12 +195,6 @@ jobs:
         sys.exit(1 if validation_error else int(sys.argv[1]))
         PY
     - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-      if: ${{ always() && !inputs.native_preflight }}
-      with:
-        name: AEROVE-Lite-resolved-lock
-        path: apps/aerove-lite/native/Cargo.lock
-        if-no-files-found: error
-    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       if: ${{ always() && inputs.native_preflight }}
       with:
         name: AEROVE-Lite-native-preflight
@@ -216,17 +202,68 @@ jobs:
           apps/aerove-lite/native/Cargo.lock
           ${{ runner.temp }}/lite-native-preflight/
         if-no-files-found: warn
+  resolve:
+    if: ${{ !inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+      with:
+        toolchain: 1.98.1
+    - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+      with:
+        workspaces: apps/aerove-lite/meow-native -> target
+        key: lite-meow-host-rust1.98.1
+        cache-workspace-crates: true
+        cache-directories: apps/aerove-lite/meow-native/.upstream
+    - name: Stable lock and host production regression
+      run: |-
+        python3 apps/aerove-lite/tool/ci_artifacts.py admission
+        python3 apps/aerove-lite/meow-native/build.py
+        python3 apps/aerove-lite/tool/ci_artifacts.py host
+        git diff --exit-code -- apps/aerove-lite/meow-native/Cargo.lock
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      if: always()
+      with:
+        name: AEROVE-Lite-meow-host-attempt-${{ github.run_attempt }}
+        path: |-
+          apps/aerove-lite/meow-native/Cargo.lock
+          apps/aerove-lite/meow-native/build/
+        if-no-files-found: error
   verify:
-    if: ${{ !inputs.native_preflight && !inputs.publish_release }}
+    if: ${{ inputs.client_preflight || (!inputs.native_preflight && !inputs.publish_release) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
+    - name: Validate exclusive client-only preflight request
+      if: ${{ inputs.client_preflight }}
+      env:
+        REQUEST_EVENT: ${{ github.event_name }}
+        PUBLISH_RELEASE: ${{ inputs.publish_release }}
+        NATIVE_PREFLIGHT: ${{ inputs.native_preflight }}
+        NATIVE_TEST_FILTER: ${{ inputs.native_test_filter }}
+        NATIVE_TEST_SERIAL: ${{ inputs.native_test_serial }}
+        NATIVE_UNDERLAY_TESTS: ${{ inputs.native_underlay_tests }}
+        NATIVE_TEST_STACKS: ${{ inputs.native_test_stacks }}
+      run: |-
+        python3 - <<'PY'
+        import os
+        conflicts = [key for key in ('PUBLISH_RELEASE', 'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL',
+                     'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS') if os.environ[key] == 'true']
+        if os.environ['NATIVE_TEST_FILTER']:
+            conflicts.append('NATIVE_TEST_FILTER')
+        if os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
+            raise SystemExit('client_preflight requires an exclusive workflow_dispatch request; conflicts: ' + ', '.join(conflicts))
+        PY
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       with:
         persist-credentials: false
     - name: Source preparation and APK inspector regression tests
       run: |-
-        python3 apps/aerove-lite/native/test_build.py
+        python3 apps/aerove-lite/meow-native/test_build.py
         python3 apps/aerove-lite/tool/test_verify_apk.py
         python3 apps/aerove-lite/tool/test_lite_release.py
 
@@ -270,7 +307,7 @@ jobs:
           apps/aerove-lite/app/build/test-results/
         if-no-files-found: warn
   reuse:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight }}
+    if: ${{ !inputs.client_preflight && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -292,7 +329,7 @@ jobs:
         GH_TOKEN: ${{ github.token }}
       run: python3 apps/aerove-lite/tool/lite_release.py select --source "$GITHUB_SHA" --current-run "$GITHUB_RUN_ID" --outputs "$GITHUB_OUTPUT"
   release:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight && needs.reuse.result == 'success' }}
+    if: ${{ !inputs.client_preflight && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight && needs.reuse.result == 'success') }}
     needs:
     - reuse
     runs-on: ubuntu-24.04
@@ -382,7 +419,7 @@ jobs:
           --number "$ACCEPTANCE_NUMBER"
   build_arm:
     name: build (arm64-v8a)
-    if: ${{ !inputs.native_preflight && !inputs.publish_release }}
+    if: ${{ !inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release) }}
     uses: ./.github/workflows/aerove-lite-build.yaml
     with:
       abi: arm64-v8a
@@ -393,7 +430,7 @@ jobs:
       actions: read
   build_x86:
     name: build (x86_64)
-    if: ${{ !inputs.native_preflight && !inputs.publish_release }}
+    if: ${{ !inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release) }}
     uses: ./.github/workflows/aerove-lite-build.yaml
     with:
       abi: x86_64
@@ -403,7 +440,7 @@ jobs:
       contents: read
       actions: read
   acceptance:
-    if: ${{ !inputs.native_preflight && !inputs.publish_release }}
+    if: ${{ !inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release) }}
     needs:
     - build_x86
     strategy:
@@ -474,12 +511,12 @@ jobs:
         path: |
           apps/aerove-lite/app/build/reports/
           apps/aerove-lite/app/build/outputs/androidTest-results/
-          apps/aerove-lite/native/Cargo.lock
+          apps/aerove-lite/meow-native/Cargo.lock
           ${{ runner.temp }}/lite-diagnostics/
           ${{ runner.temp }}/lite-fixture.log
         if-no-files-found: warn
   accepted:
-    if: ${{ always() && !inputs.native_preflight && !inputs.publish_release }}
+    if: ${{ !inputs.client_preflight && (always() && !inputs.native_preflight && !inputs.publish_release) }}
     needs:
     - resolve
     - verify
@@ -503,13 +540,18 @@ jobs:
     - .github/workflows/aerove-lite-build.yaml
   workflow_dispatch:
     inputs:
+      client_preflight:
+        description: Client-only unit tests, lint, AndroidTest compilation and R8; exclusive, no native/APK or acceptance
+        required: false
+        type: boolean
+        default: false
       publish_release:
         description: Promote a fully accepted Lite artifact for this exact main commit; never rebuild
         required: false
         type: boolean
         default: false
       native_preflight:
-        description: Resolve the native Cargo lock and run host Rust tests only; skip Android verification and APK builds
+        description: Legacy clash-rs diagnosis only; never accepted as a Meow application build
         required: false
         type: boolean
         default: false

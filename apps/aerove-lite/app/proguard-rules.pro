@@ -1,4 +1,7 @@
 -keep class dev.aerove.lite.core.NativeCore { *; }
+-keep,includedescriptorclasses class dev.aerove.lite.core.MeowNativeCore {
+    native <methods>;
+}
 -keep class dev.aerove.lite.core.SocketProtector { *; }
 # The C bridge exports Java_dev_aerove_lite_regexp2_FilterNative_{batch,cancel,decrypt}.
 -keep,includedescriptorclasses class dev.aerove.lite.regexp2.FilterNative {
