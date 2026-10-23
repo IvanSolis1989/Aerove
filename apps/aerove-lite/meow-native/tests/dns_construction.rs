@@ -3,6 +3,7 @@ use aerove_meow_core::transport_tasks::TransportTasks;
 use meow_config::owned_load::{LoadContext,OwnedLoadScope,OwnedWork,with_dns_transport_scope};
 use meow_common::transport_tasks::{TransportTaskContext,TransportScope,Work};
 use hickory_proto::{op::{Message,MessageType,OpCode},rr::{Record,RData,rdata::A}};
+use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
 use std::{io,net::{Ipv4Addr,SocketAddr},sync::{Arc,Mutex,Weak,atomic::{AtomicUsize,Ordering}},time::Duration};
 use tokio::{net::UdpSocket,task::AbortHandle};
 use tokio_util::sync::CancellationToken;
