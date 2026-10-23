@@ -32,6 +32,7 @@ pub(super) async fn run(count: Arc<AtomicUsize>, refused: Arc<AtomicBool>) {
     let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(tls));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let camouflage = listener.local_addr().unwrap();
+    let fallback = tokio::net::UdpSocket::bind(camouflage).await.unwrap();
     let cancel = CancellationToken::new();
     let tls_cancel = cancel.clone();
     let tls_hits = Arc::new(AtomicUsize::new(0));
@@ -49,8 +50,8 @@ pub(super) async fn run(count: Arc<AtomicUsize>, refused: Arc<AtomicBool>) {
                     hits.fetch_add(1, Ordering::SeqCst);
                     let acceptor = acceptor.clone();
                     connections.spawn(async move {
-                        // JLS only needs the camouflage handshake transcript and may
-                        // disconnect before completing this ordinary TLS handshake.
+                        // Authenticated JLS performs TLS inside QUIC at EndServer.
+                        // This TCP listener must not be used for that handshake.
                         let _ = tokio::time::timeout(LIMIT, async move {
                             if let Ok(mut stream) = acceptor.accept(stream).await {
                                 let mut byte = [0];
@@ -135,7 +136,13 @@ pub(super) async fn run(count: Arc<AtomicUsize>, refused: Arc<AtomicBool>) {
         }
     }).await.expect("production ShadowQUIC Handler handshake/echo exceeded limit");
     assert!(count.load(Ordering::SeqCst) > before, "production Handler did not protect its UDP socket");
-    assert!(tls_hits.load(Ordering::SeqCst) > 0, "local TLS camouflage was bypassed");
+    // Locked rustls-jls returns an upstream only for AuthFailed; quinn-jls
+    // forwards original UDP datagrams on that branch. Valid JLS stays local.
+    let mut unexpected = [0; 2048];
+    assert!(tokio::time::timeout(Duration::from_millis(100), fallback.recv_from(&mut unexpected)).await.is_err(),
+        "authenticated ShadowQUIC traffic was forwarded to the camouflage fallback");
+    assert_eq!(tls_hits.load(Ordering::SeqCst), 0,
+        "authenticated QUIC unexpectedly contacted the TCP camouflage fixture");
 
     refused.store(true, Ordering::SeqCst);
     let before = count.load(Ordering::SeqCst);

@@ -1539,3 +1539,14 @@
 +            tokio::spawn(association);
  
              s.write_all(&buf[..]).await?;
+--- a/clash-lib/src/proxy/ssh/mod.rs
++++ b/clash-lib/src/proxy/ssh/mod.rs
+@@ -205,7 +205,7 @@
+         // host key algorithms
+         let key = match self.opts.host_key_algorithms.clone() {
+             Some(host_key_algorithms) => Cow::Owned(host_key_algorithms),
+-            None => Default::default(),
++            None => Preferred::default().key,
+         };
+         // TODO: make inactivity_timeout configurable
+         let config = client::Config {
