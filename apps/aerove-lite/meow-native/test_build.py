@@ -7,12 +7,15 @@ from pathlib import Path
 import tarfile
 import tempfile
 import subprocess
+import shlex
+import types
 import sys
 import unittest
 from unittest import mock
 import prepare
 import build
 import build_policy
+import clang_probe
 from verify_source import sha, verify, source_spec
 
 class SourceTests(unittest.TestCase):
@@ -184,7 +187,7 @@ class OverlayAndResolutionTests(unittest.TestCase):
                 def run(command,*args,**kwargs):
                     if command[0]=='rustc':return 'rustc 1.98.1 fixture'
                     self.assertIn('--locked',command);self.assertIn('api_lifecycle',command)
-                with mock.patch.object(build,'ROOT',root),mock.patch.object(build,'load_policy',return_value=policy),mock.patch.object(build,'prepare',return_value=upstream),mock.patch.object(build,'run',side_effect=run),mock.patch.object(build.subprocess,'run',side_effect=metadata),mock.patch.object(sys,'argv',['build.py','--resolve-lock']):
+                with mock.patch.object(build,'probe_libclang',return_value={'library':{'path':'unit-test-fixture-only'}}),mock.patch('builtins.print'),mock.patch.object(build,'ROOT',root),mock.patch.object(build,'load_policy',return_value=policy),mock.patch.object(build,'prepare',return_value=upstream),mock.patch.object(build,'run',side_effect=run),mock.patch.object(build.subprocess,'run',side_effect=metadata),mock.patch.object(sys,'argv',['build.py','--resolve-lock']):
                     if success:build.main()
                     else:
                         with self.assertRaises(subprocess.CalledProcessError):build.main()
@@ -193,18 +196,64 @@ class OverlayAndResolutionTests(unittest.TestCase):
                 self.assertEqual(success,receipt['acceptedLock']);self.assertEqual(0 if success else 42,receipt['metadataExit'])
                 self.assertEqual(b'resolver diagnostic',(root/'build/metadata.stderr.log').read_bytes())
 
+class ClangProbeTests(unittest.TestCase):
+    def library_file(self,root):
+        path=root/'libclang-20.so.1';header=bytearray(20);header[:6]=b'\x7fELF\x02\x01';header[16:18]=(3).to_bytes(2,'little');header[18:20]=(62).to_bytes(2,'little');path.write_bytes(header);return path
+
+    def test_actual_loader_branch_checks_elf_c_api_version_and_disposes_string(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=self.library_file(Path(directory));library=types.SimpleNamespace(**{name:mock.Mock() for name in clang_probe.REQUIRED_EXPORTS})
+            library.clang_getClangVersion.return_value=clang_probe.CXString(None,0);library.clang_getCString.return_value=b'clang version 20.1.8 unit-test-only'
+            with mock.patch.object(clang_probe.ctypes,'CDLL',return_value=library) as loader:
+                result=clang_probe.load_library(path);self.assertEqual(str(path.resolve()),result['path']);self.assertEqual(sha(path),result['sha256']);loader.assert_called_once_with(str(path));library.clang_disposeString.assert_called_once()
+            path.write_bytes(b'not an ELF library')
+            with mock.patch.object(clang_probe.ctypes,'CDLL') as loader,self.assertRaises(ValueError):clang_probe.load_library(path)
+            loader.assert_not_called()
+
+    def test_probe_writes_negative_receipt_and_never_accepts_an_unloadable_library(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);path=self.library_file(root);output=root/'probe.json'
+            with mock.patch.object(clang_probe.sys,'platform','linux'),mock.patch.object(clang_probe.platform,'machine',return_value='x86_64'),mock.patch.object(clang_probe,'candidates',return_value=[path]),mock.patch.object(clang_probe,'load_library',side_effect=OSError('unit-test load failure')):
+                with self.assertRaisesRegex(ValueError,'No existing host libclang'):clang_probe.probe(output,{})
+            result=json.loads(output.read_text());self.assertEqual('failure',result['status']);self.assertNotIn('library',result);self.assertEqual('OSError',result['attempts'][0]['errorType'])
+
+    def test_explicit_library_path_does_not_fall_back_to_clang_executable_or_cpp(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);path=self.library_file(root);(root/'libclang-cpp.so.20').write_bytes(b'not the C API')
+            self.assertEqual([path.resolve()],clang_probe.candidates({'LIBCLANG_PATH':str(root)}))
+            self.assertEqual([],clang_probe.candidates({'LIBCLANG_PATH':str(root/'clang')}))
+
+class BindgenGraphTests(unittest.TestCase):
+    def test_target_only_feature_requires_actual_metadata_and_lock_dependency_edge(self):
+        manifest={'dependencies':{'rquickjs':{'version':'=0.12.2','default-features':False}},'target':{'cfg(target_os = "android")':{'dependencies':{'rquickjs':{'version':'=0.12.2','default-features':False,'features':['bindgen']}}}}}
+        metadata={'packages':[{'id':'sys','name':'rquickjs-sys','version':'0.12.2'},{'id':'bindgen','name':'bindgen','version':'0.72.1'}],'resolve':{'nodes':[{'id':'sys','features':['bindgen'],'deps':[{'name':'bindgen_rs','pkg':'bindgen'}]}]}}
+        lock={'package':[{'name':'rquickjs-sys','version':'0.12.2','dependencies':['cc','bindgen']}]}
+        self.assertTrue(build.verify_bindgen_graph(metadata,lock,manifest)['lockDependencyEdgeVerified'])
+        lock['package'][0]['dependencies']=['cc']
+        with self.assertRaisesRegex(ValueError,'lacks'):build.verify_bindgen_graph(metadata,lock,manifest)
+        lock['package'][0]['dependencies']=['cc','bindgen'];metadata['resolve']['nodes'][0]['features']=[]
+        with self.assertRaisesRegex(ValueError,'did not activate'):build.verify_bindgen_graph(metadata,lock,manifest)
+        manifest['dependencies']['rquickjs']['features']=['bindgen']
+        with self.assertRaisesRegex(ValueError,'target-only'):build.android_bindgen_requested(manifest)
+
 class AndroidRecipeTests(unittest.TestCase):
     def test_exact_ndk_target_cmake_and_16k_linker_arguments(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);ndk=root/'ndk';ndk.mkdir();(ndk/'source.properties').write_text('Pkg.Revision = 28.2.13676358\n')
             compiler=ndk/'toolchains/llvm/prebuilt/linux-x86_64/bin';compiler.mkdir(parents=True)
+            (compiler.parent/'sysroot/usr/include/android').mkdir(parents=True);(compiler.parent/'sysroot/usr/include/android/api-level.h').touch()
             for target in build.TARGETS:
+                (compiler.parent/'sysroot/usr/include'/target).mkdir()
                 for name in (target+'33-clang',target+'33-clang++','llvm-ar','llvm-readelf'):(compiler/name).touch()
                 with mock.patch.object(build,'ROOT',root):environment,readelf=build.android_environment(ndk,target,{})
                 self.assertEqual('c++_static',environment['BORING_BSSL_RUST_CPPLIB'])
                 self.assertIn('max-page-size=16384',environment['CARGO_TARGET_'+target.replace('-','_').upper()+'_RUSTFLAGS'])
                 self.assertIn('android-33',Path(environment['CMAKE_TOOLCHAIN_FILE_'+target]).read_text())
                 self.assertEqual(compiler/'llvm-readelf',readelf)
+                self.assertEqual(['--sysroot='+str(compiler.parent/'sysroot'),'--target='+target+'33'],shlex.split(environment['BINDGEN_EXTRA_CLANG_ARGS_'+target]))
+                self.assertEqual(environment['BINDGEN_EXTRA_CLANG_ARGS_'+target],environment['BINDGEN_EXTRA_CLANG_ARGS_'+target.replace('-','_')])
+                self.assertEqual(str(compiler/(target+'33-clang')),environment['CLANG_PATH'])
+                self.assertNotIn('BINDGEN_EXTRA_CLANG_ARGS',environment)
             (ndk/'source.properties').write_text('Pkg.Revision = 28.1.0')
             with self.assertRaises(ValueError):build.android_environment(ndk,'x86_64-linux-android',{})
 
@@ -216,5 +265,14 @@ class AndroidRecipeTests(unittest.TestCase):
                 with self.assertRaises(ValueError):build.verify_elf(path,183,'readelf')
             with mock.patch.object(build.subprocess,'check_output',return_value='  LOAD 0 0 0 0 0 R E 0x1000\n'):
                 with self.assertRaises(ValueError):build.verify_elf(path,62,'readelf')
+
+    def test_required_script_jni_exports_are_read_from_dynamic_symbols(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'lib.so';header=bytearray(20);header[:6]=b'\x7fELF\x02\x01';header[16:18]=(3).to_bytes(2,'little');header[18:20]=(62).to_bytes(2,'little');path.write_bytes(header)
+            symbols='\n'.join(' 1: 00000123 42 FUNC GLOBAL DEFAULT 1 '+name for name in build.SCRIPT_JNI_SYMBOLS)
+            with mock.patch.object(build.subprocess,'check_output',side_effect=[' LOAD 0 0 0 0 0 R E 0x4000\n','NEEDED libc.so',symbols]):build.verify_elf(path,62,'readelf',build.SCRIPT_JNI_SYMBOLS)
+            diagnostics=path.parent/'readelf.txt'
+            with mock.patch.object(build.subprocess,'check_output',side_effect=[' LOAD 0 0 0 0 0 R E 0x4000\n','NEEDED libc.so',symbols.replace('DEFAULT 1','DEFAULT UND')]),self.assertRaisesRegex(ValueError,'JNI symbols'):build.verify_elf(path,62,'readelf',build.SCRIPT_JNI_SYMBOLS,diagnostics)
+            self.assertIn('DEFAULT UND',diagnostics.read_text())
 
 if __name__=='__main__':unittest.main()

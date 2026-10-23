@@ -125,7 +125,7 @@ jobs:
           evidence="$RUNNER_TEMP/meow-host-evidence"
           mkdir -p "$evidence"
           cp "$root/source.json" "$root/Cargo.toml" "$root/rust-toolchain.toml" "$evidence/"
-          for file in Cargo.lock build-policy.json source-metadata/api-lifecycle.json patches/api-lifecycle.patch build/host-receipt.json build/lock-before-resolution.lock build/metadata.stdout.json build/metadata.stderr.log .upstream/meow-rs/AEROVE_SOURCE_PROVENANCE.json; do
+          for file in Cargo.lock build-policy.json source-metadata/api-lifecycle.json patches/api-lifecycle.patch build/host-receipt.json build/libclang-probe.json build/lock-before-resolution.lock build/metadata.stdout.json build/metadata.stderr.log .upstream/meow-rs/AEROVE_SOURCE_PROVENANCE.json; do
             if [ -f "$root/$file" ]; then cp "$root/$file" "$evidence/"; fi
           done
           if [ -f "$RUNNER_TEMP/meow-host-command.log" ]; then cp "$RUNNER_TEMP/meow-host-command.log" "$evidence/"; fi

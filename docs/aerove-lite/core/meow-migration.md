@@ -19,10 +19,33 @@
 `6457a817530396d61d534bf360c40cfa7ad370ea`。保留旧 `native/`、锁文件、适配补丁、测试场景及真实失败证据；
 停止继续扩展旧核心。旧检查点不是完成版，旧测试通过也不能代表 Meow 已通过。
 
+迁移开发位于 `codex/aerove-meow-preflight` 分支；main 的文档更新不等于生产运行时已切换。
+
 新候选位于 `apps/aerove-lite/meow-native/`。第一条代表链先验证唯一运行实例、私有认证 API、真实预绑定
 mixed 端口、经 Meow DIRECT 到回环 HTTP 服务、实际流量快照、取消、等待退出和端口重新绑定。
 Kotlin 的 `MeowRuntimeConfigComposer` 只形成候选配置和宿主计划，尚未替换生产入口。
 真实 Rust/Android/APK 证据取得前，不能把新增目录、配置适配或单模块测试描述为已切换的 APK。
+
+已取得的真实证据分属不同源码图，不能相互替代：
+
+- 初始 Proxy 图的 5 项 Rust 用例，以及 ARM64、x86_64 真实链接和 16 KiB ELF 检查已通过。
+- 加入 API / WebSocket / QuickJS 后，13 项 host 用例在真实 CI 通过；对应双 Android ABI
+  在 `rquickjs-sys 0.12.2` 缺少 Android 预生成 bindings 处失败，尚未取得这张新图的 ELF。
+- 下一批采用同版本官方 `bindgen` feature，须实际加载 libclang、生成目标 bindings、核对新依赖锁并重验双 ABI。
+  它不替代后续 JNI、TUN、配置保真、共同功能、完整 APK 与设备验收。
+
+## 固定核心差异
+
+当前固定 SHA 的封闭代理 factory、导出模块与 Cargo feature 表均无 `tuic`、`ssh`、`wireguard`、
+`tailscale`、`shadowquic` 出站实现。依据为同一提交的
+[proxy_parser.rs](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/crates/meow-config/src/proxy_parser.rs)、
+[代理模块](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/crates/meow-proxy/src/lib.rs) 和
+[feature 声明](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/crates/meow-config/Cargo.toml)。
+这五项按核心例外记录；导入含对应 `$.proxies[i].type` 的配置须指出具体节点、字段及原因，禁止静默删除或转换。
+
+`trusttunnel` 已有实现，只是未纳入官方 `full`，须显式启用并验证。DNS redir-host、nameserver-policy
+列表及 UID / IN-USER 规则也已有实现，不得沿用旧核心的 blanket 拒绝。其他传输或选项差异仍须逐字段核对，
+尚未接入的 JNI、宿主策略、API、provider 或客户端功能继续阻止发行，不作为核心例外。
 
 ## 保留的运行边界
 
@@ -62,5 +85,5 @@ Kotlin 的 `MeowRuntimeConfigComposer` 只形成候选配置和宿主计划，�
 6. 全部门槛通过后首发；main 推广同一已验收 APK，保留原源码和构建身份，不重新编译旧包。
 
 独立工作流先验证第一代表链；它不替代 Lite 的完整发行门禁。首轮最小协议 feature 集也不等于产品最终协议支持集合。
-旧 clash-rs 的能力例外须依据固定 Meow 源码重新核验。当前没有借迁移新增已验收的能力例外，也没有 Lite 首版发行或十二图。
+旧 clash-rs 的能力例外须依据固定 Meow 源码重新核验。上述五项只证明固定核心能力边界，不代表配置准入或 APP 已完成；Lite 尚无首版发行或十二图。
 公开核心基准不证明 AEROVE Android 更省电，实际测量仍按[验收边界](../../shared/ACCEPTANCE.md)。
