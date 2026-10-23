@@ -214,6 +214,10 @@ class MessageLookup extends MessageLookupByLibrary {
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
     "about": MessageLookupByLibrary.simpleMessage("アプリについて"),
+    "aboutTelegramChannel": MessageLookupByLibrary.simpleMessage(
+      "Telegram チャンネル",
+    ),
+    "aboutTelegramGroup": MessageLookupByLibrary.simpleMessage("Telegram グループ"),
     "accessControl": MessageLookupByLibrary.simpleMessage("アクセス制御"),
     "accessControlAllowDesc": MessageLookupByLibrary.simpleMessage(
       "選択したアプリのみVPNを経由します",

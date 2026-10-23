@@ -18,6 +18,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -38,6 +39,7 @@ private val Licenses = listOf(
 
 @Composable
 internal fun AboutScreen(padding: PaddingValues) {
+    val uriHandler = LocalUriHandler.current
     var selected by rememberSaveable { mutableStateOf<Int?>(null) }
     val entry = Licenses.firstOrNull { it.label == selected }
     BackHandler(entry != null) { selected = null }
@@ -51,6 +53,18 @@ internal fun AboutScreen(padding: PaddingValues) {
                     LiteText(stringResource(R.string.lite_version, BuildConfig.VERSION_NAME), style = LiteType.Label)
                     LiteText(stringResource(R.string.lite_about_detail), color = LocalLiteVisuals.current.secondaryInk)
                 }
+            }
+        }
+        item {
+            LitePane(Modifier.fillMaxWidth()) {
+                SettingsRow(stringResource(R.string.telegram_channel), subtitle = "t.me/IvanSolis89",
+                    onClick = { uriHandler.openUri("https://t.me/IvanSolis89") }) { LiteIcon(FullGlyphs.chevronForward) }
+            }
+        }
+        item {
+            LitePane(Modifier.fillMaxWidth()) {
+                SettingsRow(stringResource(R.string.telegram_group), subtitle = "t.me/Olympus_Habitue",
+                    onClick = { uriHandler.openUri("https://t.me/Olympus_Habitue") }) { LiteIcon(FullGlyphs.chevronForward) }
             }
         }
         item { SectionLabel(stringResource(R.string.lite_open_source)) }

@@ -250,6 +250,12 @@ class MessageLookup extends MessageLookupByLibrary {
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
     "about": MessageLookupByLibrary.simpleMessage("À propos"),
+    "aboutTelegramChannel": MessageLookupByLibrary.simpleMessage(
+      "Canal Telegram",
+    ),
+    "aboutTelegramGroup": MessageLookupByLibrary.simpleMessage(
+      "Groupe Telegram",
+    ),
     "accessControl": MessageLookupByLibrary.simpleMessage("Contrôle d’accès"),
     "accessControlAllowDesc": MessageLookupByLibrary.simpleMessage(
       "Seules les apps sélectionnées passent par le VPN",
@@ -1042,9 +1048,10 @@ class MessageLookup extends MessageLookupByLibrary {
     "inputRuleContent": MessageLookupByLibrary.simpleMessage(
       "Saisissez le contenu de la règle",
     ),
-    "installedAppsPermissionDeniedMessage": MessageLookupByLibrary.simpleMessage(
-      "L’autorisation de la liste des apps a été refusée ; les apps installées ne peuvent donc pas être listées. Veuillez l’accorder manuellement dans les réglages du système.",
-    ),
+    "installedAppsPermissionDeniedMessage":
+        MessageLookupByLibrary.simpleMessage(
+          "L’autorisation de la liste des apps a été refusée ; les apps installées ne peuvent donc pas être listées. Veuillez l’accorder manuellement dans les réglages du système.",
+        ),
     "installedAppsPermissionDesc": MessageLookupByLibrary.simpleMessage(
       "Ce système masque la liste des apps installées tant que l’autorisation n’est pas accordée. Accordez-la pour configurer le proxy par app.",
     ),
