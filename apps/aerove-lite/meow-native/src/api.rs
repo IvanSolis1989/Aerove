@@ -378,6 +378,7 @@ fn allowed(method: &Method, path: &str) -> bool {
 fn public_control_route(method: &Method, path: &str) -> bool {
     let parts: Vec<_> = path.split('/').skip(1).collect();
     match parts.as_slice() {
+        ["proxies", name, "delay"] => method == Method::GET && !name.is_empty(),
         ["configs"] => method == Method::PATCH,
         ["proxies", name] => method == Method::PUT && !name.is_empty(),
         ["providers", "proxies"] => method == Method::GET,
@@ -408,6 +409,13 @@ async fn public_control(policy: &Boundary, request: Request) -> Response {
             Err(_) => return StatusCode::BAD_REQUEST.into_response(),
         }
     } else { None };
+    if path.starts_with("/proxies/") && path.ends_with("/delay") {
+        let query = match axum::extract::Query::<crate::control::DelayQuery>::from_request_parts(&mut parts, &()).await {
+            Ok(axum::extract::Query(query)) => query,
+            Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+        };
+        return policy.control.node_delay(name.expect("matched proxy name"), query).await;
+    }
     if path.starts_with("/providers/rules") {
         if method == Method::GET { return match policy.control.plane.rule_snapshot(&policy.state, name.as_deref()) {
             Ok(value) => Json(value).into_response(), Err(code) => failure(code),

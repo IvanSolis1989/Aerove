@@ -245,7 +245,7 @@ class OverlayAndResolutionTests(unittest.TestCase):
                 with self.subTest(value=invalid),self.assertRaises(ValueError):build_policy.load_policy(root)
 
     def test_feature_boundary_failure_or_lock_mutation_cannot_accept_a_resolved_lock(self):
-        for outcome in ['success','failure','mutated-lock']:
+        for outcome in ['success','failure','mutated-lock','primary-failure']:
             with self.subTest(outcome=outcome),tempfile.TemporaryDirectory() as directory:
                 root=Path(directory);(root/'Cargo.toml').write_text('[package]\nname="aerove-meow-core"\n[lib]\nname="aerove_meow_core"\n[dependencies]\n')
                 (root/'Cargo.lock').write_bytes(b'accepted lock\n');previous=sha(root/'Cargo.lock')
@@ -258,6 +258,7 @@ class OverlayAndResolutionTests(unittest.TestCase):
                 def run(command,*args,**kwargs):
                     if command[0]=='rustc':return 'rustc 1.98.1 fixture'
                     executed.append(command)
+                    if '--no-default-features' not in command and outcome=='primary-failure':raise subprocess.CalledProcessError(101,command)
                     if '--no-default-features' in command:
                         if outcome=='failure':raise subprocess.CalledProcessError(19,command)
                         if outcome=='mutated-lock':(root/'Cargo.lock').write_bytes(b'unexpected mutation\n')
@@ -266,7 +267,11 @@ class OverlayAndResolutionTests(unittest.TestCase):
                     else:
                         with self.assertRaises((subprocess.CalledProcessError,ValueError)):build.main()
                 receipt=json.loads((root/'build/host-receipt.json').read_text())
-                self.assertEqual(2,len(executed));self.assertNotIn('--no-default-features',executed[0])
+                self.assertIn('--no-fail-fast',executed[0])
+                if outcome=='primary-failure':
+                    self.assertEqual(1,len(executed));self.assertFalse(receipt['acceptedLock']);self.assertEqual(101,receipt['commandExit'])
+                    self.assertNotIn('featureBoundaryCommand',receipt);self.assertEqual(executed[0],receipt['command']);continue
+                self.assertEqual(2,len(executed));self.assertNotIn('--no-default-features',executed[0]);self.assertNotIn('--no-fail-fast',executed[1])
                 self.assertEqual(build_policy.feature_boundary_command(policy),executed[1]);self.assertEqual(executed[0],receipt['command'])
                 self.assertEqual(executed[1],receipt['featureBoundaryCommand'])
                 self.assertEqual(19 if outcome=='failure' else 0,receipt['featureBoundaryExit'])

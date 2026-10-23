@@ -10,6 +10,7 @@
     "control_plane",
     "general_groups",
     "host_policy_runtime",
+    "node_delay",
     "offline_scope",
     "owned_runtime",
     "owned_spawn",
@@ -26,6 +27,6 @@
     "tun_driver"
   ],
   "overlay": "source-metadata/full-runtime.json",
-  "overlaySha256": "869ce70718cb1c07f0bfd910ce40197f5ee776989e1a6e65631caa5cd0da8a8d",
+  "overlaySha256": "5f0540005b38b70dfcc06ceb6fbdfbc4062dc4286829de3eef2d8621d3e9fab7",
   "featureBoundary": "capabilities-no-default"
 }

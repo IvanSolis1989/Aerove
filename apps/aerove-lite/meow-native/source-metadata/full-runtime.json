@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "patch": "patches/full-runtime.patch",
-  "patchSha256": "c1527ebca1c5e34803f9cb6aa2374df2af9ed808d90981140749924c1f2c401f",
+  "patchSha256": "8f5d8ba1c3e8a903d5bf797641e56418148e3ff1683008b2d2f39c059fa60c08",
   "rawFileManifestSha256": "a1948157edb77700f6f9152f3467907fb6a050c66cd153edfe98295bbf56e550",
-  "adaptedFileManifestSha256": "0c4311464536facd1837c75fe5f12622a416da74ae292fe9e3b9ad89d7175189",
+  "adaptedFileManifestSha256": "3a0fd569294189c0b78e1db7be57d62d345aa6c4dc1b02085732b3ffa0fcf53f",
   "changes": {
     "crates/meow-api/Cargo.toml": {
       "beforeSha256": "9c85af582fabee22cfe407c41dab38849eb70350034bcb1484bd0dc26d840d3b",
@@ -23,7 +23,7 @@
     },
     "crates/meow-api/src/routes.rs": {
       "beforeSha256": "ede953ab7bfc0394e70c67128c0f99f94ff60681f7d77f1e1dd1946f4f427740",
-      "afterSha256": "a720a829933644698d28a02d293bb77bbe1e53e93e0dd1ba943df0d8d7b7c40e"
+      "afterSha256": "bbd4f9f0a381888dd8a62b92cd5d999dbf98db3da856995da4a4f4e330f27beb"
     },
     "crates/meow-common/Cargo.toml": {
       "beforeSha256": "563038bd1e9e4e22b0aa79399d44674844818e8e7a595dca4130b693605d8cc7",
@@ -63,7 +63,7 @@
     },
     "crates/meow-config/src/lib.rs": {
       "beforeSha256": "9490de648857f9e26be6f8f2cff054996fe755ff52e2b51ee8eeca8e3b1339ec",
-      "afterSha256": "d3cbf91521e02c12abcfab961740f0bc9f4a6f313aa5ef1fbcedb48308c852b4"
+      "afterSha256": "e03f20c3bd5ebe70fa9ca5429446b2ccc3cc180fdc0646e092254f68ec9c6705"
     },
     "crates/meow-config/src/offline_validation.rs": {
       "beforeSha256": null,
@@ -75,7 +75,7 @@
     },
     "crates/meow-config/src/owned_load.rs": {
       "beforeSha256": null,
-      "afterSha256": "7f2a37ebd26c22d5b43e6f3dced2ea616493ab80be3a7c211c54c104a52499c0"
+      "afterSha256": "a322acd3065ccc59ca79340f6cd09fe52da7beb1fac5474e77a0ea0f6f2e4388"
     },
     "crates/meow-config/src/provider_events.rs": {
       "beforeSha256": null,
@@ -975,10 +975,10 @@
     "crates/meow-config/src/external_ui.rs": "e97b5df73a24748862405c7efea5f686ca404f171af460daa2f29432de18453b",
     "crates/meow-config/src/geodata.rs": "039b0ef9470cd61e346cd3ab213a547252d5fde7675a2322979f2b96edbafa52",
     "crates/meow-config/src/internal_http.rs": "4bd5a72d556bd00b0f2dc85d63c8ed729d1006ee3d78d2aee4c348e9fcd29c9d",
-    "crates/meow-config/src/lib.rs": "d3cbf91521e02c12abcfab961740f0bc9f4a6f313aa5ef1fbcedb48308c852b4",
+    "crates/meow-config/src/lib.rs": "e03f20c3bd5ebe70fa9ca5429446b2ccc3cc180fdc0646e092254f68ec9c6705",
     "crates/meow-config/src/offline_validation.rs": "02cae41e5e46b6d68115aba32f571d9e7b35b02cf3090efd3c4d59fc5630ee79",
     "crates/meow-config/src/owned_dns_tests.rs": "26f14292e971a1b7c117469105119fc1ff8ec4a0194946716e082c5c07a0c6b4",
-    "crates/meow-config/src/owned_load.rs": "7f2a37ebd26c22d5b43e6f3dced2ea616493ab80be3a7c211c54c104a52499c0",
+    "crates/meow-config/src/owned_load.rs": "a322acd3065ccc59ca79340f6cd09fe52da7beb1fac5474e77a0ea0f6f2e4388",
     "crates/meow-config/src/provider_events.rs": "f8f90ba8a834e748cea21ebf1436aa82a94d149310473fdcceed22f1aa8f57b3",
     "crates/meow-config/src/proxy_parser.rs": "68ec68e9207bf9198902bdca3d64c8b06c22d4f34c9696f0333deaade01c1e3b",
     "crates/meow-config/src/proxy_provider.rs": "e8e8b9ede5e5285f235582936413c9fba3e94cc35f3f0fa59bf09a68973b610b",
@@ -1071,7 +1071,7 @@
     "crates/meow-api/src/lifecycle.rs": "b8c077ca5235260c15ab8c902eac1c3297ef8ab280def447af4dd55f6758e0db",
     "crates/meow-api/src/logbook.rs": "35f9708b9520ae8ff7389de3c404c079915793c8fc255644c1c4c438039880d6",
     "crates/meow-api/src/log_stream.rs": "3d648a3743402e06af52a0bc93a5661b6b0d3f21a4964af096d3ca5fdc6b8561",
-    "crates/meow-api/src/routes.rs": "a720a829933644698d28a02d293bb77bbe1e53e93e0dd1ba943df0d8d7b7c40e",
+    "crates/meow-api/src/routes.rs": "bbd4f9f0a381888dd8a62b92cd5d999dbf98db3da856995da4a4f4e330f27beb",
     "crates/meow-api/src/ui.rs": "90fe34463c020f8b2d6761fb1b11be7cf2eda6db277a7ec14c169582d70ee058",
     "crates/meow-api/static/index.html": "b7ce4862842ce8186a0da3e781cf38a36a65a04aaee8ddf2ea2319049b4a8334",
     "crates/meow-api/tests/api_logs_ws_test.rs": "fd58cac7a759a831b6fc5ce6cb057bfdaca335a1011ac46b7edd98c07ade3275",

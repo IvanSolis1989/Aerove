@@ -186,6 +186,30 @@
              let mut feed = feed;
              loop {
                  let frame = match feed.recv().await {
+@@ -2555,10 +2557,10 @@
+ // `newError("An error occurred in the delay test")`.
+ 
+ #[derive(Deserialize)]
+-struct DelayParams {
+-    url: Option<String>,
+-    timeout: Option<String>,
+-    expected: Option<String>,
++pub struct DelayParams {
++    pub url: Option<String>,
++    pub timeout: Option<String>,
++    pub expected: Option<String>,
+ }
+ 
+ #[derive(Serialize)]
+@@ -2574,7 +2576,7 @@
+ /// Validate `url` and `timeout`. Returns `timeout` as `Duration` on success,
+ /// or the `400 Body invalid` response on any validation failure — matching
+ /// upstream's single "ErrBadRequest" shape for all parse errors.
+-fn parse_delay_params(params: &DelayParams) -> Result<Duration, Box<Response>> {
++pub fn parse_delay_params(params: &DelayParams) -> Result<Duration, Box<Response>> {
+     // upstream: hub/route/proxies.go::getProxyDelay — url is not strictly
+     // validated upstream, but an empty host would panic our prober.
+     let url = params.url.as_deref().unwrap_or("").trim();
 @@ -3763,6 +3765,7 @@
      State(state): State<Arc<AppState>>,
      Query(params): Query<LogsParams>,
@@ -1069,7 +1093,7 @@
 +#[cfg(test)]
 +mod owned_dns_tests;
 +
-+pub use meow_proxy::{health::probe_without_record as probe_leaf_without_record, DialerProxyAdapter as ChainedProxyAdapter};
++pub use meow_proxy::{health::{probe_without_record as probe_leaf_without_record, UrlTestError as DelayProbeError}, DialerProxyAdapter as ChainedProxyAdapter};
 --- /dev/null
 +++ b/crates/meow-config/src/offline_validation.rs
 @@ -0,0 +1,164 @@
@@ -1373,7 +1397,7 @@
 +}
 --- /dev/null
 +++ b/crates/meow-config/src/owned_load.rs
-@@ -0,0 +1,303 @@
+@@ -0,0 +1,316 @@
 +use parking_lot::Mutex;
 +use std::{cell::RefCell, collections::HashMap, future::Future, pin::Pin, sync::{Arc, atomic::{AtomicU64, Ordering}}};
 +use tokio::{sync::Notify, task::{AbortHandle, JoinHandle}};
@@ -1471,6 +1495,17 @@
 +    pub async fn run<F: Future>(self: &Arc<Self>, work: F) -> F::Output {
 +        CURRENT.scope(self.clone(), work).await
 +    }
++    /// Run caller-owned work in this session's captured context. A lease makes
++    /// close wait for the caller to drop its future; no background task escapes.
++    pub async fn run_captured<F>(self: &Arc<Self>, work: F) -> Result<F::Output, &'static str>
++    where F: Future + Send + 'static, F::Output: Send + 'static {
++        let _lease = self.lease().ok_or("ownedLoadScopeClosed")?;
++        let wrapped = wrap_with(self.clone(), work);
++        tokio::select! { biased;
++            _ = self.cancelled() => Err("ownedLoadScopeClosed"),
++            value = wrapped => Ok(value),
++        }
++    }
 +    fn lease(self: &Arc<Self>) -> Option<Lease> {
 +        let id = self.serial.fetch_add(1, Ordering::Relaxed);
 +        let mut jobs = self.jobs.lock();
@@ -1501,7 +1536,9 @@
 +    pub fn cancel(&self) {
 +        let mut jobs = self.jobs.lock();
 +        jobs.closed = true;
-+        for abort in jobs.tasks.values().flatten() { abort.abort(); }
++        let aborts: Vec<_> = jobs.tasks.values().flatten().cloned().collect();
++        drop(jobs);
++        for abort in aborts { abort.abort(); }
 +        self.changed.notify_waiters();
 +    }
 +    pub async fn close(&self) -> Result<(), &'static str> {

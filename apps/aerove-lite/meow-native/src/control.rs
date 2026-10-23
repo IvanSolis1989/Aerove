@@ -364,3 +364,106 @@ impl RouteControl {
         Ok(snapshot)
     }
 }
+
+#[derive(serde::Deserialize)]
+pub(crate) struct DelayQuery {
+    url: Option<String>, timeout: Option<String>, expected: Option<String>,
+    #[serde(rename = "coreEpoch")]
+    core_epoch: Option<String>,
+}
+
+impl RouteControl {
+    /// The HTTP caller owns this future. The captured factory lease joins its
+    /// real I/O at close without detaching a second request task.
+    pub(crate) async fn node_delay(self: &Arc<Self>, name: String, query: DelayQuery)
+        -> axum::response::Response {
+        use axum::response::IntoResponse;
+        let scope = self.groups.lock().clone();
+        let Some(scope) = scope else { return ControlError::SelectionMemberNotIntegrated.response(); };
+        let control = self.clone();
+        let work = Box::pin(async move { control.node_delay_captured(name, query).await });
+        match scope.run_captured(work).await {
+            Ok(response) => response,
+            Err(_) => (axum::http::StatusCode::GONE, "cancelled").into_response(),
+        }
+    }
+
+    async fn node_delay_captured(&self, name: String, query: DelayQuery) -> axum::response::Response {
+        use axum::{Json, http::{HeaderValue, StatusCode}, response::IntoResponse};
+        let params = meow_api::routes::DelayParams {
+            url: query.url, timeout: query.timeout, expected: query.expected,
+        };
+        let timeout = match meow_api::routes::parse_delay_params(&params) {
+            Ok(timeout) => timeout, Err(response) => return *response,
+        };
+        let expected_epoch = match query.core_epoch {
+            Some(value) => match value.parse::<u64>() {
+                Ok(epoch) if epoch != 0 && epoch.to_string() == value => Some(epoch),
+                _ => return ControlError::InvalidEpoch.response(),
+            },
+            None => None,
+        };
+        let admitted = (|| {
+            let mut gate = self.plane.gate.lock(); self.check_live(&gate)?;
+            if expected_epoch.is_some_and(|epoch| epoch != gate.core_epoch) { return Err(ControlError::Superseded); }
+            self.group_members()?;
+            let route = self.state.tunnel.route_snapshot();
+            let proxy = route.proxies.get(name.as_str()).cloned().ok_or(ControlError::NotFound)?;
+            let path = Self::probe_path(proxy.clone())?;
+            let keys: Vec<_> = path.iter().map(|member| member.health() as *const _ as usize).collect();
+            gate.selection_serial = gate.selection_serial.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
+            let ticket = gate.selection_serial;
+            for key in &keys { gate.delay_intents.insert(*key, ticket); }
+            Ok((route, proxy, path, keys, ticket, gate.core_epoch, gate.revision))
+        })();
+        let (route, proxy, path, keys, ticket, epoch, revision) = match admitted {
+            Ok(value) => value, Err(error) => return error.response(),
+        };
+        let result = tokio::select! { biased;
+            _ = self.plane.cancel.cancelled() => return ControlError::Cancelled.response(),
+            result = meow_config::probe_leaf_without_record(path.last().unwrap(),
+                params.url.as_deref().unwrap_or(""), params.expected.as_deref(), timeout) => result,
+        };
+        let committed = (|| {
+            let mut gate = self.plane.gate.lock(); self.check_live(&gate)?;
+            if gate.core_epoch != epoch || gate.revision != revision ||
+                keys.iter().any(|key| gate.delay_intents.get(key) != Some(&ticket)) {
+                return Err(ControlError::Superseded);
+            }
+            let live = self.state.tunnel.route_snapshot();
+            if !live.proxies.get(name.as_str()).is_some_and(|value| Arc::ptr_eq(value, &proxy)) {
+                return Err(ControlError::Superseded);
+            }
+            let current_path = Self::probe_path(proxy.clone())?;
+            if path.len() != current_path.len() || !path.iter().zip(&current_path)
+                .all(|(before, after)| Arc::ptr_eq(before, after)) { return Err(ControlError::Superseded); }
+            let all = self.group_members()?;
+            let next = gate.revision.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
+            let sequence = gate.groups_sequence.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
+            let before = self.snapshot_locked(&gate).picks;
+            let fixed_before: Vec<_> = all.iter().map(|member| member.selection().and_then(|selection| selection.fixed())).collect();
+            let delay = result.as_ref().copied().unwrap_or(0);
+            for member in &path { member.health().apply_committed(meow_common::adapter::HealthUpdate::Delay(delay)); }
+            for member in &all { if let Some(selection) = member.selection() { selection.reconcile_health(); } }
+            let fixed_after: Vec<_> = all.iter().map(|member| member.selection().and_then(|selection| selection.fixed())).collect();
+            if self.snapshot_locked(&gate).picks != before || fixed_before != fixed_after { gate.revision = next; }
+            gate.groups_sequence = sequence;
+            Ok((gate.core_epoch, gate.revision))
+        })();
+        // Retain the route generation throughout the probe and commit, as the
+        // official handler does for chained registry ownership.
+        drop(route);
+        let (epoch, revision) = match committed { Ok(stamp) => stamp, Err(error) => return error.response() };
+        self.groups_changed.notify_one();
+        let mut response = match result {
+            Ok(delay) => Json(serde_json::json!({"delay":delay})).into_response(),
+            Err(meow_config::DelayProbeError::Timeout) =>
+                (StatusCode::GATEWAY_TIMEOUT, Json(serde_json::json!({"message":"Timeout"}))).into_response(),
+            Err(meow_config::DelayProbeError::Transport(_)) =>
+                (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"message":"An error occurred in the delay test"}))).into_response(),
+        };
+        response.headers_mut().insert("x-aerove-core-epoch", HeaderValue::from_str(&epoch.to_string()).unwrap());
+        response.headers_mut().insert("x-aerove-picks-version", HeaderValue::from_str(&revision.to_string()).unwrap());
+        response
+    }
+}

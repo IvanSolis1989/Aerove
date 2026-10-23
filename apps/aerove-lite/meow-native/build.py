@@ -130,7 +130,7 @@ def main():
         bootstrapRequested=args.initialize_lock,resolveLockRequested=args.resolve_lock,buildPolicySha256=policy['policySha256'] if policy else None,
         lockPresentBefore=lock.is_file(),lockSha256Before=sha(lock) if lock.is_file() else None,
         representativeTargets=targets,androidTarget=args.target,commandExit=None,acceptedLock=False,libclang=libclang)
-    command=['cargo','test','--locked']
+    command=['cargo','test','--locked','--no-fail-fast']
     for target in targets:command+=['--lib'] if target=='lib' else ['--test',target]
     command+=['--','--test-threads=1','--nocapture']
     build=ROOT/'build';build.mkdir(exist_ok=True);resolved=None
