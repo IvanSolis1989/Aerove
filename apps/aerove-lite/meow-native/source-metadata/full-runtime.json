@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "patch": "patches/full-runtime.patch",
-  "patchSha256": "6feeec8d4a651e7bafd1dcde99616f84d216f1a57d4c4aae85a069d103903073",
+  "patchSha256": "c087af4584757bc1e067ee721d69ff8eb1d8eae24d47083cfb787d4a8480a11c",
   "rawFileManifestSha256": "a1948157edb77700f6f9152f3467907fb6a050c66cd153edfe98295bbf56e550",
-  "adaptedFileManifestSha256": "d1a8c24d97c2708e30a2291d0e831b1e3bfaf5b0bc8bb388c579c89f60860416",
+  "adaptedFileManifestSha256": "1b54d89bf8d54e7eb90db1f825fbe349489702aa015e950e2cbaeddcb168860d",
   "changes": {
     "crates/meow-anytls/src/client/client.rs": {
       "beforeSha256": "806773111b6ca84adcdad0e24d6db6c5653e72bdba58f4d5e95fd959d3504515",
@@ -159,7 +159,7 @@
     },
     "crates/meow-dns/src/resolver.rs": {
       "beforeSha256": "9338f2f32638c232212101fbdca887f42822d9ed7e2de968584216c6ac0cb491",
-      "afterSha256": "732608a5899bf7b8db66606a10ca7efc17fae363da1cf0453cd670cddaac9267"
+      "afterSha256": "2a63cd27425618d5986a674f8a535821040188b86701a61b4be30b6d01e2fca3"
     },
     "crates/meow-dns/src/server.rs": {
       "beforeSha256": "8acadfd004d31585a9b4f05483f4e502c00c6fc73c3461409974f5cbfe36090d",
@@ -1183,7 +1183,7 @@
     "crates/meow-dns/src/fakeip.rs": "6345eca0a98f03e1d77601eccf3a364d52994834a743acd1b9bc3a218b335d77",
     "crates/meow-dns/src/host_resolver_hook.rs": "8d6c9e79f251ae23ef0102868c52d492108d1f1dc2d2ee23998dfb5cfad8362f",
     "crates/meow-dns/src/lib.rs": "a124f31e19bed18eb5da8e8fee0706fa5c056fe9dcd0280a7490ce0b6ba28f3b",
-    "crates/meow-dns/src/resolver.rs": "732608a5899bf7b8db66606a10ca7efc17fae363da1cf0453cd670cddaac9267",
+    "crates/meow-dns/src/resolver.rs": "2a63cd27425618d5986a674f8a535821040188b86701a61b4be30b6d01e2fca3",
     "crates/meow-dns/src/server.rs": "af673b6eda4f20ce9c34240b6e7b41e84de9f60e837a2219fc3a2ac934d147f0",
     "crates/meow-dns/src/upstream.rs": "9a7917ec58c7e6f6a06632168e6985ce08b473ac37e66e5b11d26b214d27276d",
     "crates/meow-dns/tests/cache_soak.rs": "14a255503e89609c01c502168fdc34e541c41b4b9bab5e2918f709758a538d98",

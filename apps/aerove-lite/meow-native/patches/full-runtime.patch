@@ -4558,7 +4558,16 @@
                  let first = set.and_then(|set| set.positive_ips().into_iter().next());
                  match first {
                      Some(ip) => {
-@@ -1195,6 +1324,9 @@
+@@ -1041,6 +1170,8 @@
+             fakeip_skipper: None,
+             fakeip_ttl: DEFAULT_FAKE_IP_TTL,
+             ipv6,
++            transport_scope: TransportScope::current(),
++            unavailable_error: None,
+         })
+     }
+ 
+@@ -1195,6 +1326,9 @@
          // answer below. The error is only reported when nothing else can.
          let mut lookup_err: Option<io::Error> = None;
          let pipeline_set = if want.is_empty() {
@@ -4568,7 +4577,7 @@
              None
          } else {
              match self.run_pipeline(lookup_host, want).await {
-@@ -1709,7 +1841,7 @@
+@@ -1709,7 +1843,7 @@
          if let Some(policy) = &self.policy {
              if let Some(entry) = policy.lookup(host) {
                  conn_note!(Dns, "nameserver-policy matched {host}");
@@ -4577,7 +4586,7 @@
                  upstream_err = prefer_errno(upstream_err, err);
                  if let Some(set) = set {
                      if set.has_positive() {
-@@ -1738,7 +1870,7 @@
+@@ -1738,7 +1872,7 @@
  
          // Global nameservers (parallel, first-positive / first-definitive-negative).
          {
@@ -4586,7 +4595,7 @@
              upstream_err = prefer_errno(upstream_err, err);
              if let Some(set) = set {
                  if set.has_positive() {
-@@ -1784,7 +1916,7 @@
+@@ -1784,7 +1918,7 @@
          want: QueryFamilies,
      ) -> (Option<FamilySet>, Option<ClientError>) {
          match self.fallback.as_deref() {
@@ -4595,7 +4604,7 @@
              None => (None, None),
          }
      }
-@@ -1861,25 +1993,26 @@
+@@ -1861,25 +1995,26 @@
          domain: &str,
          query_name: &Name,
          record_type: RecordType,
@@ -4632,7 +4641,7 @@
      }
  
      async fn try_fallback_generic(
-@@ -1888,7 +2021,7 @@
+@@ -1888,7 +2023,7 @@
          record_type: RecordType,
      ) -> Option<Message> {
          let fb = self.fallback.as_deref()?;
@@ -4641,7 +4650,7 @@
      }
  
      /// Capture the live reverse (IP → host) table with remaining lifetimes,
-@@ -2146,6 +2279,51 @@
+@@ -2146,6 +2281,51 @@
      use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
      use std::net::{Ipv4Addr, Ipv6Addr};
      use std::sync::atomic::{AtomicUsize, Ordering};
@@ -4693,7 +4702,7 @@
  
      async fn one_shot_a_upstream(
          response_code: ResponseCode,
-@@ -2296,6 +2474,22 @@
+@@ -2296,6 +2476,22 @@
              client.upstream_label(),
              "https://1.1.1.1/dns-query#cloudflare-dns.com"
          );
@@ -4716,7 +4725,7 @@
      }
  
      #[tokio::test]
-@@ -4037,3 +4231,143 @@
+@@ -4037,3 +4233,143 @@
          assert_eq!(resolver.resolve_ips("gone.example").await.unwrap(), None);
      }
  }
