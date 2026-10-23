@@ -1,3 +1,4 @@
+use crate::mobile::telemetry;
 use super::*;
 use crate::{app::remote_content_manager::{ProxyManager,healthcheck::HealthCheck,
     providers::{Provider,ProviderVehicle,ProviderVehicleType,proxy_provider::{ProxyProvider,proxy_set_provider::ProxySetProvider},

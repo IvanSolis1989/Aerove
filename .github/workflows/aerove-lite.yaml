@@ -65,6 +65,26 @@ jobs:
         run: |
           python3 apps/aerove-lite/native/build.py --initialize-lock --prepare-only
           git diff --exit-code -- apps/aerove-lite/native/Cargo.lock
+      - name: Ensure GDB is available for requested native stack capture
+        if: ${{ inputs.native_preflight && inputs.native_test_stacks }}
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v gdb >/dev/null 2>&1; then
+            sudo -n env DEBIAN_FRONTEND=noninteractive \
+              timeout --signal=TERM --kill-after=10s 90s \
+              apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 \
+              -o Acquire::https::Timeout=20 update
+            sudo -n env DEBIAN_FRONTEND=noninteractive \
+              timeout --signal=TERM --kill-after=10s 150s \
+              apt-get -o DPkg::Lock::Timeout=30 -o Acquire::Retries=1 \
+              -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 \
+              install --yes --no-install-recommends gdb
+          fi
+          command -v gdb
+          timeout --signal=TERM --kill-after=5s 10s \
+            gdb -nx -nh --batch -ex 'show version' -ex quit
       - name: Initialize native lock and run host Rust tests
         if: ${{ inputs.native_preflight }}
         shell: bash
