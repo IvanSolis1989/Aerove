@@ -26,6 +26,16 @@ def run_block(name):
 
 
 class WorkflowPolicyTest(unittest.TestCase):
+    def test_generated_artifact_id_consumers_download_into_the_replay_directory(self):
+        downloads = re.findall(
+            r'artifact-ids: \$\{\{ needs.prep.outputs.generated_artifact_id \}\}\n'
+            r'(.*?)(?=\n      - |\n  [a-z]|\Z)', FULL, re.DOTALL,
+        )
+        self.assertEqual(len(downloads), 4)
+        for download in downloads:
+            self.assertIn('merge-multiple: true', download)
+            self.assertIn('path: ${{ runner.temp }}/xclash-generated', download)
+
     def test_composite_font_action_keeps_timeout_on_workflow_callers(self):
         font = (ROOT / '.github/actions/aerove-test-font/action.yaml').read_text(encoding='utf-8')
         self.assertNotIn('timeout-minutes:', font)
