@@ -86,12 +86,14 @@ jobs:
             --repository "$GITHUB_REPOSITORY" --source "$GITHUB_SHA" \
             --exclude-run "$GITHUB_RUN_ID" --output "$GITHUB_OUTPUT"
 
-  verify:
+  prep:
     needs: reuse
     if: ${{ needs.reuse.outputs.run_id == '' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 15
     outputs:
+      render_matrix: ${{ steps.matrices.outputs.render_matrix }}
+      regressions_matrix: ${{ steps.matrices.outputs.regressions_matrix }}
       generated_artifact_id: ${{ steps.generated.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -114,11 +116,17 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.27.1'
-          cache-dependency-path: apps/aerove/core/go.sum
+          cache: false
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-aerove-go-v1-1.27.1-${{ hashFiles('apps/aerove/core/go.sum') }}
       - name: Test repository commit hooks
         run: bash ../../tooling/hooks/test.sh
       - name: Test product version, provenance and artifact promotion
-        run: python3 -m unittest tool.test_aerove_version tool.test_xclash_version tool.test_aerove_release_notes tool.test_aerove_artifact tool.test_aerove_workflow -v
+        run: python3 -m unittest tool.test_aerove_version tool.test_xclash_version tool.test_aerove_release_notes tool.test_aerove_artifact tool.test_aerove_workflow tool.test_ci_verify -v
       - name: Generate and format sources
         run: |
           cp pubspec.yaml "$RUNNER_TEMP/xclash-pubspec.yaml"
@@ -146,6 +154,51 @@ jobs:
       - name: Require committed generated sources
         if: ${{ !inputs.prepare_sources }}
         run: test "$(cat "$RUNNER_TEMP/xclash-verified-tree.txt")" = "$(git -C "$GITHUB_WORKSPACE" rev-parse 'HEAD^{tree}')"
+      - uses: ./.github/actions/aerove-test-font
+        with:
+          system-fonts: 'false'
+          save-cache: 'true'
+      - name: Export verification matrices
+        id: matrices
+        run: python3 tool/ci_verify.py matrices
+
+  static:
+    needs: prep
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: recursive
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.prep.outputs.generated_artifact_id }}
+          path: ${{ runner.temp }}/xclash-generated
+      - name: Apply verified generated sources
+        run: |
+          patch="$RUNNER_TEMP/xclash-generated/xclash-generated.patch"
+          if test -s "$patch"; then git -C "$GITHUB_WORKSPACE" apply "$patch"; fi
+          git -C "$GITHUB_WORKSPACE" add -- apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
+          test "$(git -C "$GITHUB_WORKSPACE" write-tree)" = "$(cat "$RUNNER_TEMP/xclash-generated/xclash-verified-tree.txt")"
+          git -C "$GITHUB_WORKSPACE" restore --staged -- apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
+      - uses: ./.github/actions/flutter
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+          cache-read-only: true
+      - name: Install dependencies
+        run: flutter pub get
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-aerove-go-v1-1.27.1-${{ hashFiles('apps/aerove/core/go.sum') }}
       - name: Verify Core background telemetry
         working-directory: apps/aerove/core
         env:
@@ -156,282 +209,190 @@ jobs:
           go test .
       - name: Analyze
         id: analyze
-        run: flutter analyze --no-fatal-infos
-      - name: Install preview font
-        timeout-minutes: 10
-        run: |
-          sudo python3 - <<'PY'
-          from pathlib import Path
-          sources = [Path('/etc/apt/apt-mirrors.txt'), Path('/etc/apt/sources.list')]
-          sources.extend(Path('/etc/apt/sources.list.d').glob('*.list'))
-          sources.extend(Path('/etc/apt/sources.list.d').glob('*.sources'))
-          for path in sources:
-              if not path.is_file():
-                  continue
-              original = path.read_text()
-              updated = original.replace(
-                  'http://azure.archive.ubuntu.com/ubuntu',
-                  'https://archive.ubuntu.com/ubuntu')
-              if updated != original:
-                  print(f'Replacing Azure Ubuntu mirror in {path}', flush=True)
-                  path.write_text(updated)
-          PY
-          sudo apt-get -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::Retries=1 update -qq
-          sudo apt-get -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::Retries=1 install -y fonts-noto-cjk
-          test -s /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
-      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        id: device_font_cache
+        run: flutter analyze --no-pub --no-fatal-infos
+
+  native:
+    needs: prep
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          path: ${{ runner.temp }}/misans-fixture
-          key: misans-vf-4.009-0ddef90648998900175cfdca9a6f087a2544c182f130b0ad4f7e94a03a115e79
-      - name: Prepare device font regression fixture
-        id: device_font
-        run: |
-          python3 - "$RUNNER_TEMP/misans-fixture" <<'PY'
-          from pathlib import Path
-          import hashlib, struct, sys, time, urllib.parse, urllib.request, zlib
-          output = Path(sys.argv[1])
-          output.mkdir(parents=True, exist_ok=True)
-          font_hash = '0ddef90648998900175cfdca9a6f087a2544c182f130b0ad4f7e94a03a115e79'
-          license_hash = '4a93a27cd2bd81b3b5ecfd0a853144a876fa26938a93a68443c67d74172fcb86'
-          if all(path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == expected
-                 for path, expected in [(output / 'MiSansVF.ttf', font_hash),
-                                        (output / 'MiSans-license.pdf', license_hash)]):
-              print('Verified cached MiSans font and license')
-              sys.exit(0)
-          first, last = 213458452, 227869191
-          for attempt, query in enumerate(('?download=1', '', '?fixture=4.009')):
-              request = urllib.request.Request(
-                  'https://hyperos.mi.com/font-download/MiSans.zip' + query,
-                  headers={'Range': f'bytes={first}-{last}', 'User-Agent': 'Mozilla/5.0'})
-              try:
-                  with urllib.request.urlopen(request, timeout=60) as response:
-                      assert response.status == 206
-                      assert response.headers.get('Content-Range') == f'bytes {first}-{last}/227880072'
-                      data = response.read(last - first + 2)
-                  assert len(data) == last - first + 1, f'Range body: {len(data)} bytes, expected {last-first+1}'
-                  break
-              except Exception as error:
-                  print(f'MiSans range attempt {attempt + 1}: {error}', flush=True)
-                  if attempt == 2:
-                      raise
-                  time.sleep(attempt + 1)
-          header = struct.unpack_from('<4s5H3L2H', data)
-          assert header[0] == b'PK\x03\x04' and header[3] == 8 and not header[2] & 1
-          assert data[30:30 + header[9]].endswith(b'/MiSansVF.ttf')
-          start = 30 + header[9] + header[10]
-          font = zlib.decompress(data[start:start + 14410630], -15)
-          assert len(font) == 20093424 and zlib.crc32(font) & 0xffffffff == 3747145830
-          assert hashlib.sha256(font).hexdigest() == font_hash
-          (output / 'MiSansVF.ttf').write_bytes(font)
-          license_url = 'https://hyperos.mi.com/font-download/' + urllib.parse.quote('MiSans字体知识产权许可协议.pdf')
-          with urllib.request.urlopen(license_url, timeout=30) as response:
-              license_data = response.read(1000000)
-          assert hashlib.sha256(license_data).hexdigest() == license_hash
-          (output / 'MiSans-license.pdf').write_bytes(license_data)
-          PY
-          echo "XCLASH_MISANS_FONT=$RUNNER_TEMP/misans-fixture/MiSansVF.ttf" >> "$GITHUB_ENV"
-      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        if: ${{ !cancelled() && steps.device_font.outcome == 'success' && steps.device_font_cache.outputs.cache-hit != 'true' }}
+          submodules: recursive
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          path: ${{ runner.temp }}/misans-fixture
-          key: misans-vf-4.009-0ddef90648998900175cfdca9a6f087a2544c182f130b0ad4f7e94a03a115e79
+          artifact-ids: ${{ needs.prep.outputs.generated_artifact_id }}
+          path: ${{ runner.temp }}/xclash-generated
+      - name: Apply verified generated sources
+        run: |
+          patch="$RUNNER_TEMP/xclash-generated/xclash-generated.patch"
+          if test -s "$patch"; then git -C "$GITHUB_WORKSPACE" apply "$patch"; fi
+          git -C "$GITHUB_WORKSPACE" add -- apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
+          test "$(git -C "$GITHUB_WORKSPACE" write-tree)" = "$(cat "$RUNNER_TEMP/xclash-generated/xclash-verified-tree.txt")"
+          git -C "$GITHUB_WORKSPACE" restore --staged -- apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
+      - uses: ./.github/actions/flutter
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+          cache-read-only: true
+      - name: Install dependencies
+        run: flutter pub get
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          workspaces: apps/aerove/plugins/rust_api/rust
-          cache-directories: apps/aerove/.dart_tool/hooks_runner
-      - name: Verify luminous ink rendering
-        env:
-          XCLASH_REQUIRE_IMPELLER: 'true'
-          XCLASH_SCREENSHOT_DIR: ${{ runner.temp }}/xclash-previews/ink-probe
-        run: |
-          cp pubspec.yaml "$RUNNER_TEMP/ink-pubspec.yaml"
-          trap 'cp "$RUNNER_TEMP/ink-pubspec.yaml" pubspec.yaml' EXIT
-          sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
-          flutter test --enable-impeller --reporter expanded test/widgets/glass_foreground_test.dart test/widgets/glass_ink_cache_test.dart test/widgets/glass_ink_quality_test.dart test/widgets/glass_visibility_test.dart test/widgets/glass_body_blur_test.dart test/widgets/target_icon_test.dart test/widgets/selection_mark_test.dart test/widgets/loading_ink_test.dart test/widgets/core_status_button_test.dart test/lint/sheet_scroll_controller_test.dart test/widgets/appbar_actions_test.dart test/widgets/switch_glass_test.dart test/widgets/slider_glass_test.dart test/widgets/segmented_control_glass_test.dart test/widgets/palette_glass_test.dart test/widgets/header_button_glass_test.dart test/manager/status_message_glass_test.dart test/common/changelog_test.dart test/common/request_test.dart test/widgets/update_dialog_test.dart test/l10n/app_localizations_test.dart test/tool/packaging_config_test.dart test/common/protocol_test.dart test/views/dashboard/network_takeover_test.dart test/models/config_test.dart test/providers/config_test.dart test/common/xclash_defaults_test.dart test/manager/android_manager_test.dart test/views/network_config_test.dart test/models/dns_override_test.dart test/common/cidr_test.dart test/common/task_dns_override_test.dart test/common/task_tun_override_test.dart test/providers/state_derived_test.dart test/providers/custom_import_test.dart test/views/dns_view_test.dart test/views/disclaimer_view_test.dart test/common/dialog_test.dart test/widgets/aurora_app_test.dart test/views/theme_test.dart test/views/aurora_settings_test.dart test/providers/action_test.dart test/widgets/aurora_activity_test.dart test/widgets/aurora_lifecycle_test.dart test/manager/core_manager_test.dart test/providers/proxies_action_test.dart test/providers/common_action_test.dart test/providers/ip_quality_test.dart test/common/ip_quality_test.dart test/application_test.dart test/providers/profiles_action_test.dart test/providers/resources_action_test.dart test/providers/system_action_test.dart test/providers/icon_sets_action_test.dart test/providers/clash_providers_action_test.dart test/models/profile_save_test.dart test/providers/updating_action_test.dart test/core/protocol_contract_test.dart
-      - name: Verify feather blend pixels
-        id: feather
-        if: ${{ !cancelled() && steps.analyze.outcome == 'success' && !(github.event_name == 'workflow_dispatch' && inputs.verification_recheck && !inputs.build_apk && !inputs.publish_release) }}
-        env:
-          XCLASH_REQUIRE_IMPELLER: 'true'
-          XCLASH_SCREENSHOT_DIR: ${{ runner.temp }}/xclash-previews/feather
-        run: |
-          cp pubspec.yaml "$RUNNER_TEMP/feather-pubspec.yaml"
-          trap 'cp "$RUNNER_TEMP/feather-pubspec.yaml" pubspec.yaml' EXIT
-          sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
-          feather_status=0
-          flutter test --enable-impeller --reporter expanded test/widgets/header_blur_occlusion_test.dart test/widgets/header_blur_test.dart || feather_status=1
-          XCLASH_REQUIRE_IMPELLER=false XCLASH_SCREENSHOT_DIR="$XCLASH_SCREENSHOT_DIR/software" flutter test --reporter expanded test/widgets/header_blur_occlusion_test.dart test/widgets/header_blur_test.dart || feather_status=1
-          exit "$feather_status"
-      - name: Upload feather blend evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+          toolchain: '1.99.0'
+          targets: x86_64-unknown-linux-gnu
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          name: xclash-feather
-          path: ${{ runner.temp }}/xclash-previews/feather
-          if-no-files-found: ignore
-      - name: Verify reported UI regressions
-        id: reported
-        if: ${{ !cancelled() && steps.analyze.outcome == 'success' && !(github.event_name == 'workflow_dispatch' && inputs.verification_recheck && !inputs.build_apk && !inputs.publish_release) }}
-        env:
-          XCLASH_REQUIRE_IMPELLER: 'true'
-          XCLASH_SCREENSHOT_DIR: ${{ runner.temp }}/xclash-previews/reported
-        run: |
-          cp pubspec.yaml "$RUNNER_TEMP/reported-pubspec.yaml"
-          trap 'cp "$RUNNER_TEMP/reported-pubspec.yaml" pubspec.yaml' EXIT
-          sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
-          tests=(test/widgets/glass_ink_quality_test.dart test/widgets/aurora_app_test.dart test/views/disclaimer_view_test.dart test/widgets/aurora_activity_test.dart test/widgets/aurora_motion_test.dart test/widgets/aurora_lifecycle_test.dart test/widgets/theme_cross_fade_test.dart test/widgets/subscription_usage_fill_test.dart test/widgets/dashboard_text_bounds_test.dart test/widgets/proxies_scroll_work_test.dart test/widgets/proxies_list_test.dart test/widgets/list_header_focus_test.dart test/widgets/sheet_occlusion_test.dart test/widgets/sheet_surface_render_test.dart test/widgets/glass_sheet_surfaces_test.dart test/widgets/sheet_barrier_test.dart test/views/dashboard/foreground_test.dart test/views/dashboard/traffic_test.dart test/views/aurora_settings_test.dart)
-          tests+=(test/views/about_text_bounds_test.dart)
-          tests+=(test/android_tv_launcher_icon_test.dart test/android_branding_assets_test.dart test/widgets/scrollbar_inset_test.dart test/lint/dead_file_test.dart)
-          tests+=(test/pages/tablet_sidebar_bounds_test.dart test/widgets/sidebar_test.dart test/widgets/sidebar_glass_test.dart)
-          tests+=(test/widgets/header_button_glass_test.dart test/widgets/header_frame_pages_test.dart test/lint/header_bar_test.dart test/widgets/sheet_search_test.dart test/manager/status_message_glass_test.dart test/manager/status_manager_test.dart test/widgets/skeleton_test.dart)
-          tests+=(test/widgets/switch_glass_test.dart test/widgets/slider_glass_test.dart test/widgets/segmented_control_glass_test.dart test/widgets/palette_glass_test.dart test/widgets/palette_test.dart test/views/theme_test.dart test/common/changelog_test.dart test/l10n/app_localizations_test.dart test/tool/packaging_config_test.dart)
-          tests+=(test/widgets/glass_visibility_test.dart)
-          tests+=(test/common/aurora_rotation_test.dart test/manager/aurora_rotation_test.dart test/providers/store_action_test.dart test/views/aurora_settings_test.dart)
-          tests+=(test/widgets/glass_cache_lifecycle_test.dart test/common/task_test.dart test/widgets/icon_loading_test.dart test/views/icon_sets_view_test.dart test/common/update_download_test.dart test/plugins/update_download_test.dart test/widgets/update_dialog_test.dart)
-          reported_status=0
-          flutter test --enable-impeller --reporter expanded "${tests[@]}" || reported_status=1
-          XCLASH_REQUIRE_IMPELLER=false XCLASH_SCREENSHOT_DIR="$XCLASH_SCREENSHOT_DIR/software" flutter test --reporter expanded "${tests[@]}" || reported_status=1
-          exit "$reported_status"
-      - name: Upload reported regression evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: xclash-reported
-          path: ${{ runner.temp }}/xclash-previews/reported
-          if-no-files-found: ignore
-      - name: Ink performance and transition probes
-        id: performance
-        if: ${{ !cancelled() && steps.analyze.outcome == 'success' && steps.feather.outcome == 'success' && steps.reported.outcome == 'success' }}
-        env:
-          XCLASH_REQUIRE_IMPELLER: 'true'
-          XCLASH_SCREENSHOT_DIR: ${{ runner.temp }}/xclash-previews/performance
-        run: |
-          set -euo pipefail
-          cp pubspec.yaml "$RUNNER_TEMP/performance-pubspec.yaml"
-          trap 'cp "$RUNNER_TEMP/performance-pubspec.yaml" pubspec.yaml' EXIT
-          sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
-          mkdir -p "$XCLASH_SCREENSHOT_DIR"
-          flutter test --enable-impeller --reporter expanded \
-            test/widgets/ink_motion_baseline_test.dart \
-            test/widgets/navigation_dock_ink_test.dart \
-            test/widgets/navigation_dock_collapse_test.dart \
-            test/pages/home_dock_scroll_test.dart \
-            test/pages/home_test.dart \
-            test/widgets/aurora_transform_test.dart \
-            test/widgets/aurora_motion_test.dart \
-            test/widgets/aurora_activity_test.dart \
-            test/widgets/aurora_lifecycle_test.dart \
-            test/widgets/aurora_text_colors_test.dart \
-            test/widgets/glass_ink_cache_test.dart \
-            test/widgets/glass_ink_geometry_test.dart \
-            test/widgets/dashboard_text_bounds_test.dart \
-            test/views/about_text_bounds_test.dart \
-            test/widgets/shared_text_bounds_test.dart \
-            test/widgets/glass_wallpaper_sampling_test.dart \
-            test/widgets/source_blur_cache_test.dart \
-            test/widgets/glass_cache_lifecycle_test.dart \
-            test/widgets/sheet_occlusion_test.dart \
-            test/widgets/popup_occlusion_test.dart \
-            test/widgets/home_first_frame_glass_test.dart \
-            test/widgets/liquid_glass_host_test.dart \
-            test/widgets/glass_page_handover_test.dart \
-            test/widgets/settings_route_transition_test.dart \
-            test/widgets/open_container_test.dart \
-            test/widgets/theme_cross_fade_test.dart \
-            test/widgets/scaffold_actions_test.dart \
-            test/widgets/header_title_test.dart \
-            test/widgets/core_status_button_test.dart \
-            test/widgets/proxy_card_focus_test.dart \
-            test/widgets/proxies_list_test.dart \
-            test/widgets/proxies_scroll_work_test.dart \
-            test/widgets/proxies_tab_test.dart \
-            test/widgets/floating_scrollbar_test.dart \
-            test/widgets/scrollbar_inset_test.dart \
-            test/views/proxies_list_test.dart \
-            test/widgets/subscription_usage_fill_test.dart \
-            test/views/dashboard/foreground_test.dart \
-            test/views/dashboard/traffic_test.dart \
-            test/views/dashboard/current_outbound_test.dart \
-            test/views/dns_queries_view_test.dart \
-            test/common/aurora_rotation_test.dart \
-            test/views/aurora_settings_test.dart \
-            test/widgets/glass_foreground_test.dart test/widgets/target_icon_test.dart 2>&1 | tee "$XCLASH_SCREENSHOT_DIR/focused.log"
-      - name: Upload focused rendering evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: xclash-performance
-          path: ${{ runner.temp }}/xclash-previews/performance
-          if-no-files-found: ignore
-      - name: UI and configuration regressions
-        if: ${{ !cancelled() && steps.analyze.outcome == 'success' && ((github.event_name == 'workflow_dispatch' && inputs.verification_recheck && !inputs.build_apk && !inputs.publish_release) || (steps.feather.outcome == 'success' && steps.reported.outcome == 'success' && steps.performance.outcome == 'success')) }}
-        env:
-          XCLASH_SCREENSHOT_DIR: ${{ runner.temp }}/xclash-previews
-        run: |
-          cp pubspec.yaml "$RUNNER_TEMP/xclash-test-pubspec.yaml"
-          trap 'cp "$RUNNER_TEMP/xclash-test-pubspec.yaml" pubspec.yaml' EXIT
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-          path = Path('pubspec.yaml')
-          text, count = re.subn(
-              r'(?m)^(    setup:\s*\n      build_assets: )true(\s*)$',
-              r'\g<1>false\2', path.read_text())
-          if count != 1:
-              raise SystemExit('Expected exactly one enabled setup native hook')
-          path.write_text(text)
-          PY
-          test_status=0
-          XCLASH_REQUIRE_IMPELLER=true \
-            XCLASH_SCREENSHOT_DIR="$RUNNER_TEMP/xclash-previews/impeller" \
-            flutter test --enable-impeller --reporter expanded \
-              test/widgets/glass_surface_scope_test.dart test/widgets/page_surfaces_glass_test.dart \
-              test/widgets/text_context_menu_test.dart test/widgets/linear_loading_test.dart \
-              test/widgets/record_table_scroll_test.dart test/widgets/liquid_glass_test.dart \
-              test/widgets/sheet_drag_handle_test.dart \
-              test/widgets/header_blur_test.dart test/widgets/glass_scroll_test.dart \
-              test/widgets/liquid_glass_host_test.dart test/widgets/glass_foreground_test.dart \
-              test/widgets/sliver_glass_group_test.dart test/widgets/header_title_test.dart test/widgets/sheet_surface_render_test.dart test/widgets/subscription_usage_fill_test.dart test/views/dashboard/traffic_test.dart \
-              test/widgets/aurora_motion_test.dart test/widgets/glass_button_test.dart \
-              test/widgets/record_glass_routes_test.dart test/widgets/sidebar_glass_test.dart test/widgets/target_icon_test.dart \
-              test/widgets/settings_route_transition_test.dart \
-              test/widgets/open_container_test.dart test/widgets/route_motion_hold_test.dart || test_status=1
-          flutter test --reporter expanded \
-            test/application_theme_test.dart \
-            test/features/glass_feature_surfaces_test.dart \
-            test/features/custom_quick_edit_test.dart test/features/editor_completion_test.dart \
-            test/manager/window_header_test.dart test/manager/window_manager_test.dart \
-            test/pages/editor_load_test.dart test/pages/scan_test.dart \
-            test/models/config_test.dart test/models/dns_override_test.dart test/providers/config_test.dart \
-            test/manager/theme_manager_test.dart test/manager/status_manager_test.dart test/manager/status_message_glass_test.dart \
-            test/common/preferences_test.dart test/common/dialog_test.dart test/common/tray_menu_test.dart \
-            test/common/request_test.dart test/common/path_test.dart test/common/protocol_test.dart \
-            test/common/xclash_defaults_test.dart test/common/task_dns_override_test.dart \
-            test/common/aurora_test.dart \
-            test/common/task_test.dart test/common/migration_test.dart test/common/update_download_test.dart \
-            test/plugins/update_download_test.dart \
-            test/providers/profiles_action_test.dart test/providers/backup_action_test.dart \
-            test/providers/action_test.dart \
-            test/views/aurora_settings_test.dart test/views/theme_test.dart \
-            test/views/dns_view_test.dart test/views/scripts_source_test.dart \
-            test/views/proxies_list_test.dart test/views/dashboard/ \
-            test/views/script_content_test.dart test/pages/home_test.dart \
-            test/widgets/ test/l10n/ test/lint/ || test_status=1
-          exit "$test_status"
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/aerove/.dart_tool/hooks_runner/rust_api
+            apps/aerove/.dart_tool/hooks_runner/shared/rust_api
+          key: ${{ runner.os }}-aerove-rust-host-v2-1.99.0-${{ hashFiles('apps/aerove/plugins/rust_api/**', 'apps/aerove/pubspec.lock') }}
+      - uses: ./.github/actions/aerove-test-font
+      - name: Build shared host Rust assets and check update behavior
+        run: python3 tool/ci_verify.py warmup --evidence "$RUNNER_TEMP/update-smoke"
+      - name: Verify producer host Rust output
+        run: python3 tool/ci_verify.py host-assets --record
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: xclash-previews
+          name: xclash-update-smoke
+          path: ${{ runner.temp }}/update-smoke
+          if-no-files-found: ignore
+
+  render:
+    if: ${{ needs.prep.result == 'success' }}
+    name: render (${{ matrix.suite }} ${{ matrix.shard }})
+    needs: prep
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: true
+      max-parallel: 11
+      matrix: ${{ fromJSON(needs.prep.outputs.render_matrix) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: recursive
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.prep.outputs.generated_artifact_id }}
+          path: ${{ runner.temp }}/xclash-generated
+      - name: Apply verified generated sources
+        run: |
+          patch="$RUNNER_TEMP/xclash-generated/xclash-generated.patch"
+          if test -s "$patch"; then git -C "$GITHUB_WORKSPACE" apply "$patch"; fi
+          git -C "$GITHUB_WORKSPACE" add -- apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
+          test "$(git -C "$GITHUB_WORKSPACE" write-tree)" = "$(cat "$RUNNER_TEMP/xclash-generated/xclash-verified-tree.txt")"
+          git -C "$GITHUB_WORKSPACE" restore --staged -- apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
+      - uses: ./.github/actions/flutter
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+          cache-read-only: true
+      - name: Install dependencies
+        run: flutter pub get
+      - uses: ./.github/actions/aerove-test-font
+      - name: Run preserved verification combination
+        run: python3 tool/ci_verify.py run "${{ matrix.suite }}" --shard "${{ matrix.shard }}" --evidence "$RUNNER_TEMP/xclash-previews"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: xclash-${{ matrix.suite }}-${{ matrix.shard }}
           path: ${{ runner.temp }}/xclash-previews
           if-no-files-found: ignore
 
+  regressions:
+    if: ${{ needs.prep.result == 'success' && needs.native.result == 'success' }}
+    name: regressions (${{ matrix.suite }} ${{ matrix.shard }})
+    needs: [prep, native]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: true
+      max-parallel: 6
+      matrix: ${{ fromJSON(needs.prep.outputs.regressions_matrix) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: recursive
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.prep.outputs.generated_artifact_id }}
+          path: ${{ runner.temp }}/xclash-generated
+      - name: Apply verified generated sources
+        run: |
+          patch="$RUNNER_TEMP/xclash-generated/xclash-generated.patch"
+          if test -s "$patch"; then git -C "$GITHUB_WORKSPACE" apply "$patch"; fi
+          git -C "$GITHUB_WORKSPACE" add -- apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
+          test "$(git -C "$GITHUB_WORKSPACE" write-tree)" = "$(cat "$RUNNER_TEMP/xclash-generated/xclash-verified-tree.txt")"
+          git -C "$GITHUB_WORKSPACE" restore --staged -- apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
+      - uses: ./.github/actions/flutter
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+          cache-read-only: true
+      - name: Install dependencies
+        run: flutter pub get
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: '1.99.0'
+          targets: x86_64-unknown-linux-gnu
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: host_rust_cache
+        with:
+          fail-on-cache-miss: true
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/aerove/.dart_tool/hooks_runner/rust_api
+            apps/aerove/.dart_tool/hooks_runner/shared/rust_api
+          key: ${{ runner.os }}-aerove-rust-host-v2-1.99.0-${{ hashFiles('apps/aerove/plugins/rust_api/**', 'apps/aerove/pubspec.lock') }}
+      - name: Require exact producer host Rust cache
+        if: ${{ !cancelled() && steps.host_rust_cache.outcome != 'skipped' }}
+        env:
+          HOST_RUST_CACHE_HIT: ${{ steps.host_rust_cache.outputs.cache-hit }}
+        run: |
+          if test "$HOST_RUST_CACHE_HIT" != true; then
+            echo '::error::Exact host Rust cache unavailable. Rebuild the native producer with a clean host cache, then retry regressions.'
+            exit 1
+          fi
+          python3 tool/ci_verify.py host-assets
+      - uses: ./.github/actions/aerove-test-font
+      - name: Run preserved verification combination
+        run: python3 tool/ci_verify.py run "${{ matrix.suite }}" --shard "${{ matrix.shard }}" --evidence "$RUNNER_TEMP/xclash-previews"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: xclash-${{ matrix.suite }}-${{ matrix.shard }}
+          path: ${{ runner.temp }}/xclash-previews
+          if-no-files-found: ignore
+
+  verify:
+    if: ${{ always() && needs.prep.result != 'skipped' }}
+    needs: [prep, static, render, native, regressions]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      generated_artifact_id: ${{ needs.prep.outputs.generated_artifact_id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Require every verification job to succeed
+        env:
+          CI_VERIFY_NEEDS: ${{ toJSON(needs) }}
+        run: python3 tool/ci_verify.py gate
+
   apk:
     if: ${{ github.event_name == 'push' || inputs.build_apk }}
-    needs: verify
+    needs: prep
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      GRADLE_OPTS: -Dorg.gradle.caching=true
     outputs:
       tag: ${{ steps.version.outputs.tag }}
       artifact_id: ${{ steps.apk_artifact.outputs.artifact-id }}
@@ -456,6 +417,7 @@ jobs:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
+          cache-read-only: true
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
@@ -499,15 +461,37 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.27.1'
-          cache-dependency-path: apps/aerove/core/go.sum
+          cache: false
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-aerove-go-v1-1.27.1-${{ hashFiles('apps/aerove/core/go.sum') }}
       - uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1
         id: ndk
         with:
           ndk-version: r28c
           link-to-sdk: true
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
-          workspaces: apps/aerove/plugins/rust_api/rust
+          toolchain: '1.99.0'
+          targets: aarch64-linux-android
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/aerove/.dart_tool/hooks_runner/rust_api
+            apps/aerove/.dart_tool/hooks_runner/shared/rust_api
+          key: ${{ runner.os }}-aerove-rust-android-v1-1.99.0-r28c-${{ hashFiles('apps/aerove/plugins/rust_api/**', 'apps/aerove/pubspec.lock') }}
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-aerove-gradle-v1-jdk17-r28c-${{ hashFiles('apps/aerove/android/**/*.gradle*', 'apps/aerove/android/gradle/wrapper/gradle-wrapper.properties', 'apps/aerove/pubspec.lock') }}
+          restore-keys: ${{ runner.os }}-aerove-gradle-v1-jdk17-r28c-
       - name: Build Android arm64
         env:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
@@ -523,7 +507,7 @@ jobs:
           UPSTREAM_SOURCE_BRANCHES: ${{ steps.version.outputs.upstream_source_branches }}
         run: |
           flutter pub get
-          flutter build apk --release --target-platform android-arm64 \
+          flutter build apk --no-pub --release --target-platform android-arm64 \
             --build-name "$VERSION_NAME" --build-number "$VERSION_NUMBER" \
             --dart-define=APP_ENV="$APP_ENV"
           mkdir -p dist

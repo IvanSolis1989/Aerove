@@ -26,6 +26,10 @@ inputs:
     description: Cache the Flutter SDK
     required: false
     default: "false"
+  cache-read-only:
+    description: Restore SDK and pub caches without saving consumer caches
+    required: false
+    default: "false"
   cache-key:
     description: Identifier for the Flutter SDK cache
     required: false
@@ -81,10 +85,10 @@ outputs:
     value: "${{ steps.flutter-action.outputs.GIT_SOURCE }}"
     description: Git source of Flutter SDK repository to clone
   CACHE-HIT:
-    value: "${{ steps.cache-flutter.outputs.cache-hit }}"
+    value: "${{ steps.cache-flutter.outputs.cache-hit || steps.restore-flutter.outputs.cache-hit }}"
     description: "`true` if the flutter cache was a hit"
   PUB-CACHE-HIT:
-    value: "${{ steps.cache-pub.outputs.cache-hit }}"
+    value: "${{ steps.cache-pub.outputs.cache-hit || steps.restore-pub.outputs.cache-hit }}"
     description: "`true` if the pub cache was a hit"
 
 runs:
@@ -121,7 +125,7 @@ runs:
     - name: Cache Flutter
       id: cache-flutter
       uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
-      if: ${{ inputs.cache == 'true' }}
+      if: ${{ inputs.cache == 'true' && inputs.cache-read-only != 'true' }}
       with:
         path: ${{ steps.flutter-action.outputs.CACHE-PATH }}
         key: ${{ steps.flutter-action.outputs.CACHE-KEY }}
@@ -129,7 +133,23 @@ runs:
     - name: Cache pub dependencies
       uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
       id: cache-pub
-      if: ${{ (inputs.pub-cache == '' && inputs.cache == 'true') || inputs.pub-cache == 'true' }}
+      if: ${{ inputs.cache-read-only != 'true' && ((inputs.pub-cache == '' && inputs.cache == 'true') || inputs.pub-cache == 'true') }}
+      with:
+        path: ${{ steps.flutter-action.outputs.PUB-CACHE-PATH }}
+        key: ${{ steps.flutter-action.outputs.PUB-CACHE-KEY }}-${{ hashFiles('**/pubspec.lock') }}
+
+    - name: Restore consumer Flutter
+      id: restore-flutter
+      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+      if: ${{ inputs.cache == 'true' && inputs.cache-read-only == 'true' }}
+      with:
+        path: ${{ steps.flutter-action.outputs.CACHE-PATH }}
+        key: ${{ steps.flutter-action.outputs.CACHE-KEY }}
+
+    - name: Restore consumer pub dependencies
+      id: restore-pub
+      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+      if: ${{ inputs.cache-read-only == 'true' && ((inputs.pub-cache == '' && inputs.cache == 'true') || inputs.pub-cache == 'true') }}
       with:
         path: ${{ steps.flutter-action.outputs.PUB-CACHE-PATH }}
         key: ${{ steps.flutter-action.outputs.PUB-CACHE-KEY }}-${{ hashFiles('**/pubspec.lock') }}

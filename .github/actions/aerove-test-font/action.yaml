@@ -1,0 +1,94 @@
+name: Aerove test font
+description: Verify the shared MiSans fixture and install the system font for rendering tests
+inputs:
+  system-fonts:
+    description: Install the Noto rendering font on this runner
+    default: 'true'
+  save-cache:
+    description: Allow only the preparation job to populate the immutable fixture cache
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - name: Install preview font
+      if: ${{ inputs.system-fonts == 'true' }}
+      timeout-minutes: 10
+      shell: bash
+      run: |
+        sudo python3 - <<'PY'
+        from pathlib import Path
+        sources = [Path('/etc/apt/apt-mirrors.txt'), Path('/etc/apt/sources.list')]
+        sources.extend(Path('/etc/apt/sources.list.d').glob('*.list'))
+        sources.extend(Path('/etc/apt/sources.list.d').glob('*.sources'))
+        for path in sources:
+            if not path.is_file():
+                continue
+            original = path.read_text()
+            updated = original.replace(
+                'http://azure.archive.ubuntu.com/ubuntu',
+                'https://archive.ubuntu.com/ubuntu')
+            if updated != original:
+                print(f'Replacing Azure Ubuntu mirror in {path}', flush=True)
+                path.write_text(updated)
+        PY
+        sudo apt-get -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::Retries=1 update -qq
+        sudo apt-get -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::Retries=1 install -y fonts-noto-cjk
+        test -s /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
+    - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      id: device_font_cache
+      with:
+        path: ${{ runner.temp }}/misans-fixture
+        key: misans-vf-4.009-0ddef90648998900175cfdca9a6f087a2544c182f130b0ad4f7e94a03a115e79
+    - name: Prepare device font regression fixture
+      id: device_font
+      shell: bash
+      run: |
+        python3 - "$RUNNER_TEMP/misans-fixture" <<'PY'
+        from pathlib import Path
+        import hashlib, struct, sys, time, urllib.parse, urllib.request, zlib
+        output = Path(sys.argv[1])
+        output.mkdir(parents=True, exist_ok=True)
+        font_hash = '0ddef90648998900175cfdca9a6f087a2544c182f130b0ad4f7e94a03a115e79'
+        license_hash = '4a93a27cd2bd81b3b5ecfd0a853144a876fa26938a93a68443c67d74172fcb86'
+        if all(path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == expected
+               for path, expected in [(output / 'MiSansVF.ttf', font_hash),
+                                      (output / 'MiSans-license.pdf', license_hash)]):
+            print('Verified cached MiSans font and license')
+            sys.exit(0)
+        first, last = 213458452, 227869191
+        for attempt, query in enumerate(('?download=1', '', '?fixture=4.009')):
+            request = urllib.request.Request(
+                'https://hyperos.mi.com/font-download/MiSans.zip' + query,
+                headers={'Range': f'bytes={first}-{last}', 'User-Agent': 'Mozilla/5.0'})
+            try:
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    assert response.status == 206
+                    assert response.headers.get('Content-Range') == f'bytes {first}-{last}/227880072'
+                    data = response.read(last - first + 2)
+                assert len(data) == last - first + 1, f'Range body: {len(data)} bytes, expected {last-first+1}'
+                break
+            except Exception as error:
+                print(f'MiSans range attempt {attempt + 1}: {error}', flush=True)
+                if attempt == 2:
+                    raise
+                time.sleep(attempt + 1)
+        header = struct.unpack_from('<4s5H3L2H', data)
+        assert header[0] == b'PK\x03\x04' and header[3] == 8 and not header[2] & 1
+        assert data[30:30 + header[9]].endswith(b'/MiSansVF.ttf')
+        start = 30 + header[9] + header[10]
+        font = zlib.decompress(data[start:start + 14410630], -15)
+        assert len(font) == 20093424 and zlib.crc32(font) & 0xffffffff == 3747145830
+        assert hashlib.sha256(font).hexdigest() == font_hash
+        (output / 'MiSansVF.ttf').write_bytes(font)
+        license_url = 'https://hyperos.mi.com/font-download/' + urllib.parse.quote('MiSans字体知识产权许可协议.pdf')
+        with urllib.request.urlopen(license_url, timeout=30) as response:
+            license_data = response.read(1000000)
+        assert hashlib.sha256(license_data).hexdigest() == license_hash
+        (output / 'MiSans-license.pdf').write_bytes(license_data)
+        PY
+        echo "XCLASH_MISANS_FONT=$RUNNER_TEMP/misans-fixture/MiSansVF.ttf" >> "$GITHUB_ENV"
+    - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      if: ${{ inputs.save-cache == 'true' && !cancelled() && steps.device_font.outcome == 'success' && steps.device_font_cache.outputs.cache-hit != 'true' }}
+      with:
+        path: ${{ runner.temp }}/misans-fixture
+        key: misans-vf-4.009-0ddef90648998900175cfdca9a6f087a2544c182f130b0ad4f7e94a03a115e79

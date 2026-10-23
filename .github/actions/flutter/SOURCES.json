@@ -7,8 +7,8 @@
       "path": "action.yaml",
       "source": "https://raw.githubusercontent.com/subosito/flutter-action/1a449444c387b1966244ae4d4f8c696479add0b2/action.yaml",
       "sourceSha256": "5c0e5a243d010be58a41bded0cbca71687317b712d6876ebf6ab434494adcb75",
-      "sha256": "894287b8e3cb570f65cddbc46fd029ca7fdf0fa50771a24876ebc46dc8877de9",
-      "adaptation": "pin nested actions/cache v5 to full commit"
+      "sha256": "834abc5dedbdb814f0a338099c10e498659661319b670ca8914486527150c5dd",
+      "adaptation": "pin nested actions/cache v5 to full commit; add opt-in restore-only SDK and pub consumers"
     },
     {
       "path": "setup.sh",
