@@ -132,7 +132,7 @@ impl HostResolver for PhysicalResolver {
         let network = self.network.clone(); let hook = self.hook.clone(); let host = host.to_owned();
         let answer = self.owner.run(async move { network.scope(hook.resolve_all(&host)).await }).await?;
         if self.network.cancelled() { return Err(cancelled()); }
-        answer
+        Ok(answer)
     }
     fn resolve_all_local(&self, host: &str) -> Option<Vec<IpAddr>> {
         if self.network.cancelled() || self.owner.closed.load(Ordering::Acquire) { None } else { self.hook.resolve_all_local(host) }

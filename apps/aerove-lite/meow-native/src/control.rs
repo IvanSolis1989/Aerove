@@ -581,14 +581,21 @@ impl RouteControl {
         let GroupDelayAdmission { route, group, retained, paths, keys, ticket, epoch, revision } = admission;
         let deadline = tokio::time::Instant::now() + timeout;
         let completed = {
-            let probes = futures::stream::iter(paths.iter().enumerate().map(|(index, path)| {
-                let params = &params;
-                async move {
-                    let result = meow_config::probe_leaf_without_record(path.last().unwrap(),
-                        params.url.as_deref().unwrap_or(""), params.expected.as_deref(), timeout).await;
+            // Each child future owns its leaf and parameters. Keep `paths`
+            // untouched for the pointer/selection CAS after all probes drop.
+            let mut pending = Vec::with_capacity(paths.len());
+            for (index, path) in paths.iter().enumerate() {
+                let leaf = path.last().unwrap().clone();
+                let url = params.url.clone().unwrap_or_default();
+                let expected = params.expected.clone();
+                pending.push(async move {
+                    let result = meow_config::probe_leaf_without_record(&leaf,
+                        &url, expected.as_deref(), timeout).await;
                     (index, result)
-                }
-            })).buffer_unordered(meow_config::GROUP_DELAY_CONCURRENCY);
+                });
+            }
+            let probes = futures::stream::iter(pending)
+                .buffer_unordered(meow_config::GROUP_DELAY_CONCURRENCY);
             tokio::pin!(probes);
             let mut completed = Vec::new();
             loop {
