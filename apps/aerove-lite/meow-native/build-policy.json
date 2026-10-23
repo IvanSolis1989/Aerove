@@ -14,6 +14,6 @@
     "provider_events",
     "owned_runtime"
   ],
-  "overlay": "source-metadata/owned-runtime.json",
-  "overlaySha256": "230eb3ab14f81ad3591d3999a9e42a619f1bf08034f8f2589311eea2e4b04a03"
+  "overlay": "source-metadata/owned-runtime-alias.json",
+  "overlaySha256": "8216b28bcd3efbfa92896b8b01e3fd46a810a233346db8c50d6cbffe53a89f02"
 }
