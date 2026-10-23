@@ -2,6 +2,58 @@
 
 Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与历史记录的来源项目，也可以作为功能参考；其新标签、分支推进或版本号不会自动改写本产品，也不再阻止本产品发版。
 
+## 开源来源与鸣谢
+
+本项目在功能开发前先检索可复用的 GitHub 实现；实际采用的依赖、复制适配代码、只读参照和仅评估未采用的候选分别记录。固定 commit 的来源以 commit 为准；只有 tag/版本和锁文件校验值时，明确记录现有证据，不推测完整 commit。该表覆盖已登记的实际来源，不是完整传递依赖许可证清单，也不代表所有历史调研均已穷尽。
+
+| 上游仓库 | 固定版本 / revision | 用途与采用方式 | 许可证与署名/文件证据 |
+| --- | --- | --- | --- |
+| [chen08209/FlClash](https://github.com/chen08209/FlClash) | `v0.9.2-pre.1` / `7220961f7c5e494df831ca196ab53ef08a17e926` | 标准版历史源码来源及选择性整合；保留双父历史和改编来源，具体整合按问题审查，不自动追随 | 保留历史版权与对应文件许可；`apps/aerove/core/mihomo-upstream.json` 中保留的双父与补丁来源记录 |
+| [MetaCubeX/mihomo](https://github.com/MetaCubeX/mihomo) | `v1.19.33` / `3f27ef39f8c96bbfbc8b0b9bb10f5c9ef60149d8` | 标准版 Go 代理核心，来源代码及本项目适配 | GPL-3.0；`apps/aerove/core/mihomo-upstream.json`、`apps/aerove/core/Clash.Meta/LICENSE`、该目录源码及其原始版权头 |
+| [ibigbug/clash-rs](https://github.com/ibigbug/clash-rs) | `v0.10.10` / `36eec77463d1243ede287bf6b7197e38237948d5` | Lite Rust 代理核心复制适配；socket保护、移动端嵌入、日志路由、生命周期、provider校验等适配 | GPL-3.0-only；TUIC按原NOTICE为GPL-3.0；`apps/aerove-lite/native/NOTICE.md`、`native/licenses/clash-rs-NOTICE.md`、`native/upstream.patch`、`native/dependency-protect/manifest.json`；保留上游版权与NOTICE |
+| [material-components/material-components-android](https://github.com/material-components/material-components-android) | `1.13.0` / `84c0e6d6d493fcf176d2099683245b78afbeb78d` | Lite Material Color Utilities：20个Java类复制，包名迁移并按来源记录移除源码级Error Prone注解 | Apache-2.0；`apps/aerove-lite/third_party/material-color-utilities/LICENSE`、`SOURCES.json` |
+| [dlclark/regexp2](https://github.com/dlclark/regexp2) | `v1.12.0`（`apps/aerove-lite/regexp2/dependencies.json` 固定模块版本） | Lite regexp2 Go辅助代码纳入/适配 | MIT；`apps/aerove-lite/regexp2/licenses/github.com_dlclark_regexp2/LICENSE` |
+| [MetaCubeX/age](https://github.com/MetaCubeX/age) | `v0.0.0-20260603010618-28d156b4ea78`（伪版本后缀仅证明短修订，不补写完整SHA） | regexp2客户端辅助包中的Age解密bridge；实际调用Go age实现 | 以随包许可文本为准；`apps/aerove-lite/regexp2/dependencies.json`、`regexp2/licenses/github.com_metacubex_age/LICENSE`、本轮 `apps/aerove-lite/regexp2/agebridge/`、`regexp2/dependencies.json` |
+| [MetaCubeX/hkdf](https://github.com/MetaCubeX/hkdf) | `v0.1.0`（依赖清单版本） | Age加密辅助依赖，作为现成依赖随辅助包使用；未登记为复制其源码 | 以 `regexp2/licenses/github.com_metacubex_hkdf/LICENSE` 为准；`regexp2/dependencies.json` |
+| [MetaCubeX/hpke](https://github.com/MetaCubeX/hpke) | `v0.1.0`（依赖清单版本） | Age加密辅助依赖，作为现成依赖随辅助包使用 | 以 `regexp2/licenses/github.com_metacubex_hpke/LICENSE` 为准；`regexp2/dependencies.json` |
+| [MetaCubeX/mlkem](https://github.com/MetaCubeX/mlkem) | `v0.1.0`（依赖清单版本） | Age加密辅助依赖，作为现成依赖随辅助包使用 | 以 `regexp2/licenses/github.com_metacubex_mlkem/LICENSE` 为准；`regexp2/dependencies.json` |
+| [golang/crypto](https://github.com/golang/crypto) | `v0.57.0`（依赖清单版本） | regexp2/Age辅助包所用Go密码学支持依赖 | BSD-3-Clause；`regexp2/licenses/golang.org_x_crypto/LICENSE`、`PATENTS`、`dependencies.json` |
+| [golang/sys](https://github.com/golang/sys) | `v0.48.0`（依赖清单版本） | regexp2/Age辅助包所用Go系统接口依赖 | BSD-3-Clause；`regexp2/licenses/golang.org_x_sys/LICENSE`、`PATENTS`、`dependencies.json` |
+| [Kyant0/AndroidLiquidGlass](https://github.com/Kyant0/AndroidLiquidGlass) | `io.github.kyant0:backdrop:2.0.1` / `65ab177e90e5c1d8c62e70cf7755841982da65f6` | Lite材质/背景呈现所用Backdrop实现，直接依赖 | Apache-2.0；`apps/aerove-lite/app/build.gradle.kts`、`docs/research/rendering/backdrop.md`、`app/src/main/assets/optics/NOTICE.md` |
+| [Kotlin/kotlinx.coroutines](https://github.com/Kotlin/kotlinx.coroutines) | `1.10.2`，release/tag短commit `5f89004` | 读取 `CoroutineScope.kt`、`Job.kt`、`Builders.common.kt`，复用结构化并发取消语义，并确认 `withContext` 的prompt cancellation可能在IO提交后丢失返回值；导入/文件写入沿用项目既有 `onCommitted` 回执处理；未复制实现代码、未新增依赖 | Apache-2.0；`apps/aerove-lite/app/build.gradle.kts`、[CoroutineScope.kt](https://github.com/Kotlin/kotlinx.coroutines/blob/1.10.2/kotlinx-coroutines-core/common/src/CoroutineScope.kt)、[Job.kt](https://github.com/Kotlin/kotlinx.coroutines/blob/1.10.2/kotlinx-coroutines-core/common/src/Job.kt)、[Builders.common.kt](https://github.com/Kotlin/kotlinx.coroutines/blob/1.10.2/kotlinx-coroutines-core/common/src/Builders.common.kt) |
+| [BigBadaboom/androidsvg](https://github.com/BigBadaboom/androidsvg) | Maven `com.caverock:androidsvg-aar:1.4`；AAR SHA256 `02a5b08a2b35d2d58eb2eaca9d84ac00fb341da725fdbd653ea3ed130437e95a`，无源码commit记录 | Lite代理组图标SVG渲染，直接依赖；AAR源包核验 | Apache-2.0；`apps/aerove-lite/app/build.gradle.kts` |
+| [square/okhttp](https://github.com/square/okhttp) | `4.12.0` | Lite HTTP请求与MockWebServer测试现存依赖；本轮结构化并发变更没有参照Dispatcher实现，也未改客户端池/并发策略 | Apache-2.0；`apps/aerove-lite/app/build.gradle.kts`。本轮尝试打开tagged Dispatcher源码时工具重定向到未确认owner页面，该页面未作依据且未取用代码 |
+| [snakeyaml/snakeyaml](https://github.com/snakeyaml/snakeyaml) | `2.4` | Lite配置YAML解析，直接依赖 | Apache-2.0；`apps/aerove-lite/app/build.gradle.kts` |
+| [zxing/zxing](https://github.com/zxing/zxing) | `3.5.3` | Lite二维码读写，直接依赖 | Apache-2.0；`apps/aerove-lite/app/build.gradle.kts` |
+| [Flutter](https://github.com/flutter/flutter) | SDK `3.47.6` / framework `5fc346839b5d0eef006ed8404392afb4dfae428d` | 标准版Flutter框架；Lite optics几何与AGSL shader适配源自Flutter Impeller superellipse；字体测试fixture保留Roboto许可，生产不新增捆绑字体；字体策略只读参考SDK Android默认字体行为 | BSD-3-Clause（Flutter）；字体按原 `roboto_license.txt`；`apps/aerove-lite/app/src/main/assets/optics/NOTICE.md`、`FLUTTER_LICENSE`、`apps/aerove/test/fixtures/fonts/SOURCE.json` |
+| [dart-lang/sdk](https://github.com/dart-lang/sdk) | Dart `3.13.5` / `04bcd1036cdc799ac6564988f159ee454d42c822` | SDK提供的TLS、字体和Socket API只读来源核验；非应用代码复制项 | BSD-3-Clause；本轮SDK版本/修订核验记录 |
+| [rust-lang/cargo](https://github.com/rust-lang/cargo) | `956fdaeb068d791a39dec140f2efc9ba48c59729` | 只读研究Cargo官方source/选包语义，不复制Cargo实现，不构成应用运行时依赖 | Apache-2.0 OR MIT；本轮来源检索记录 |
+| [spongebob888/shadowquic](https://github.com/spongebob888/shadowquic) | `0.3.13`；源码crate在上游clash-rs仓库锁定版本；本次未另记完整commit | Lite核心的真实上游依赖及适配，另只读核对官方JLS/QUIC server、SQConnect API编写loopback peer；peer仍是测试验证 | MIT；`apps/aerove-lite/native/Cargo.lock`、`native/upstream/shadowquic_peer_tests.rs`，核心锁源 `apps/aerove-lite/native/.upstream/shadowquic/Cargo.toml` |
+| [warp-tech/russh](https://github.com/warp-tech/russh) | `0.61.1`，crate SHA256 `f67013f080c226e5a34db1c71f2567f44d95a6300005bb6cd4e2c8fe3c326d1b` | Lite核心的真实SSH依赖/适配；另只读读取SSH server API与官方loopback echo示例编写测试peer，未复制上游实现或示例 | Apache-2.0；`apps/aerove-lite/native/Cargo.lock`、`native/upstream/ssh_peer_tests.rs` |
+| [Watfaq/boring-noise](https://github.com/Watfaq/boring-noise) | `9ddf1b54d0c9679e7bc50e9151f72d526190db1a` | Lite核心的WireGuard Noise实现依赖及适配；测试peer另读取 `Tunn` API，不复制上游实现 | MIT；固定revision源码包原始LICENSE保留于受控依赖快照，`apps/aerove-lite/native/Cargo.lock`、`native/upstream/wireguard_peer_tests.rs` |
+| [tailscale/tailscale-rs](https://github.com/tailscale/tailscale-rs) | `0.6.1`；crate源码通过依赖保护快照固定，源码归档SHA见 `native/dependency-protect/manifest.json` | Lite Tailscale/DERP族Rust依赖来源；`tailscale`、`ts_control`、`ts_derp`等均来自同一仓库和固定版本。manifest列出原始crate、hash及本地补丁 | BSD-3-Clause；`apps/aerove-lite/native/dependency-protect/manifest.json`、对应vendor包LICENSE |
+| [DelSkayn/rquickjs](https://github.com/DelSkayn/rquickjs) | `rquickjs 0.12.2`，Cargo.lock checksum `4e04e4eedfb060b503b5f0a2644abb890b0b3620d3fb674f9455f230014964e4` | Lite JS脚本API直接依赖；版本与registry锁校验固定，不表示源码复制 | MIT；`apps/aerove-lite/native/Cargo.toml`、`Cargo.lock` |
+| [Itsusinn/tuic](https://github.com/Itsusinn/tuic) | `v1.8.5` | Lite clash-rs审计中只读调查TUIC实现和协议行为；与clash-rs中实际启用的TUIC依赖区分，不复制该仓库代码 | GPL-3.0；`docs/aerove-lite/core/clash-rs-audit.md` |
+| [material-foundation/material-color-utilities](https://github.com/material-foundation/material-color-utilities) | `0.13.0` / pub.lock SHA256 `9c337007e82b1889149c82ed242ed1cb24a66044e30979c44912381e9be4c48b` | Standard Flutter Material色彩依赖；保留pub锁定 | Apache-2.0；`apps/aerove/pubspec.lock` |
+| [dart-lang/http](https://github.com/dart-lang/http) | 搜索结果commit `3b504cf09cb70ae4071d4c2549c903aad5cf4bc4` | Cronet取消实现候选，仅评估，未采用；不构成代码依赖或鸣谢为采用实现 | BSD-3-Clause；本轮搜索记录；保留此项用于区分评估与采用 |
+| [chen08209/Clash.Meta](https://github.com/chen08209/Clash.Meta) | `8380d0e7462f061a964323e9bf3129a236fcc5d5` | FlClash历史来源体系中的适配源码参照；审计 mihomo DNS配置行为及保留的API适配来源，不作为当前核心主线 | GPL-3.0；`docs/aerove-lite/core/clash-rs-audit.md`、`apps/aerove/core/mihomo-upstream.json` |
+| [Kyant0/Shapes](https://github.com/Kyant0/Shapes) | `1.2.1` / `ad83e4ad9ca6219cb0091fdc75d9b349865bf12b` | Backdrop配套形状库，Lite直接依赖；此前登记的 `Kyant0/AndroidShapes` 使用相同版本和固定revision，按同一来源别名归并 | Apache-2.0；Gradle依赖、`docs/research/rendering/backdrop.md` |
+| [tokio-rs/tokio](https://github.com/tokio-rs/tokio) | `1.53.1`（Cargo.lock固定registry crate校验值） | Lite Rust异步运行时直接依赖；使用既有API，不复制Tokio实现 | MIT；`apps/aerove-lite/native/Cargo.toml`、`Cargo.lock` |
+| [rust-lang/rust](https://github.com/rust-lang/rust) | `1.91.0` | 只读核验标准库 `RwLock::set` 在锁外析构旧值的行为；不复制标准库代码 | MIT OR Apache-2.0；来源为固定版本 `library/std/src/sync/poison/rwlock.rs`，本轮native资源实现记录 |
+| [Smart-Config-Kit](https://github.com/IvanSolis1989/Smart-Config-Kit) | `28b86e2e991cde8bc2fa71b874e807c622f2b096` | 分类 Issue Forms、MiMo Flash 首轮与 Pro 追问、过滤/失败只读模式作为流程参考；本产品重新实现，没有复制规则/提示词或自动PR | 未复制或分发其代码；上游 `.github/ISSUE_TEMPLATE`、固定revision，本仓库只读流程对照 |
+| [tun-rs/tun-rs](https://github.com/tun-rs/tun-rs) | `d0f764c135a34ad92360462f89a40b59f373cc06` | Lite clash-rs核心能力审计中，只读核对Unix异步设备/已打开fd保护边界；未新增独立依赖 | MIT；`docs/aerove-lite/core/clash-rs-audit.md` |
+| [Arc-blroth/memory-stats](https://github.com/Arc-blroth/memory-stats) | `431e74654c27ec38a6f7d19c186bec42c2a938b8` | Lite核心审计中只读核对内存统计实现；未新增依赖 | MIT；`docs/aerove-lite/core/clash-rs-audit.md` |
+| [meow-rs/meow-rs](https://github.com/meow-rs/meow-rs) | 审计文档固定链接；未将其release作为产品来源 | 只读评估Rust代理核心公开基准及Android DNS反馈；没有采用其内核或实现 | GPL-3.0；`docs/research/android-core-decision.md` |
+| [MFSGA/AChimera](https://github.com/MFSGA/AChimera) | 只读查阅公开项目；无产品依赖 | Android Rust代理客户端形态与限制调查，未采用其实现 | GPL-3.0；`docs/research/android-core-decision.md` |
+| [chrisbanes/haze](https://github.com/chrisbanes/haze) | `2.0.1` / `347c67a1f190b71f439f3b9ca7ffb326d0044629` | 液态玻璃库对比；检查Glass、形状和Shader API，未进入产品依赖或复制代码 | Apache-2.0；`docs/research/rendering/haze.md`、`docs/research/rendering/library-selection.md` |
+| [belinwu/cloudy](https://github.com/belinwu/cloudy) | `0.7.1`；只读源码锚点 `e3ffd8e957b2a29832c287a95665ecc540e9c7eb` | 玻璃渲染与多层捕获路径比较，未进入产品依赖或复制代码 | Apache-2.0；`docs/research/rendering/native-alternatives.md`、`library-selection.md` |
+| [BuildItCode/LiquidGlass](https://github.com/BuildItCode/LiquidGlass) | `v0.8.2`；只读源码锚点 `3e30a2300ce471f8b44497df87b93beb24fc6f5e` | Android玻璃捕获层级与GPU背景采样比较；未采用，完整AAR/许可证据在原评估中待核 | 许可证尚未由该评估证实；`docs/research/rendering/library-selection.md`、`native-alternatives.md` |
+| [Dimezis/BlurView](https://github.com/Dimezis/BlurView) | 未固定release/commit | 仅作底层View模糊能力比较，未采用，也未据此复制代码 | Apache-2.0（上游）；`docs/research/rendering/library-selection.md` |
+### 来源登记边界
+
+版本、commit、许可证分别按表中对应证据记录；缺失信息不从仓库名或最新上游状态推定。`Cargo.lock`/Maven/Pub锁定值标识依赖时，若未核实源码commit，版本列仅陈述已固定的发行版本与锁校验值。`russh`、`shadowquic`、`boring-noise`等peer测试读取上游API但未复制其实现；只读调查也与实际运行依赖分开。Cargo、Dart SDK和网络库的只读研究来源不代表被复制进产品。
+
+本名单不展开所有Cargo/Pub/Maven传递依赖，也不扫描缓存、class或二进制。订阅数据、用户私密URL及query token不属于来源登记内容。若新功能开发实际打开并采用了额外GitHub实现，应在同一节增补仓库、已证revision、用途、采用方式、许可证与来源证据；只有搜索命中或未被采用的外部页面不应登记成已采用来源。
 ## 多个来源，独立交付
 
 | 来源 | 职责 | 纳入规则 |

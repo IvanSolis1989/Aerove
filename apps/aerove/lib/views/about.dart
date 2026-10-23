@@ -82,10 +82,17 @@ class AboutView extends ConsumerWidget {
                 label: 'github.com/$repository',
               ),
               _buildLinkItem(
+                glyph: AppGlyphs.code,
+                title: appLocalizations.source,
+                url:
+                    'https://github.com/IvanSolis1989/Aerove/blob/main/docs/development/upstreams.md#开源来源与鸣谢',
+                label: 'docs/development/upstreams.md',
+              ),
+              _buildLinkItem(
                 glyph: AppGlyphs.cpu,
                 title: appLocalizations.core,
-                url: 'https://github.com/chen08209/Clash.Meta/tree/FlClash',
-                label: 'github.com/chen08209/Clash.Meta',
+                url: 'https://github.com/MetaCubeX/mihomo',
+                label: 'github.com/MetaCubeX/mihomo',
               ),
               _buildLinkItem(
                 glyph: AppGlyphs.send,

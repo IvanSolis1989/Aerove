@@ -34,6 +34,20 @@ Read this entry point, then the applicable product instructions. The Standard ed
 详细规格只有一份：[双向实现与功能契约](docs/shared/UI_CONTRACT.md)、[外观参数](docs/shared/appearance.md)、
 [验收边界](docs/shared/ACCEPTANCE.md)。调研、产品文档和子目录规则不得放宽本契约；未完成项如实记录，不能以改文档代替实现。
 
+## 提交说明语言
+
+- 提交标题和正文优先使用中文，简明说明实际变更及原因。
+- 保留 Conventional Commits 的类型和可选作用域等必要格式，例如 `fix(lite): 修复核心接口不一致`；代码符号、路径、SHA 和机器读取字段沿用原文。
+- `Changelog:` 等发布工具字段继续遵守对应格式与语言要求；普通提交说明仍优先中文。
+
+## 开发前检索与开源复用
+
+- 任何 APP 功能代码开发前，先在 GitHub 搜索已有实现，优先查官方上游和成熟开源项目；核对实际源码、版本、平台和接口是否适用，再确定实现方案。
+- 已有可直接使用或小范围适配的可靠实现时，优先复用，不重复手写同等能力。确无适用实现，或存在明确不兼容约束时，记录检索结果和理由后自行实现；常规复用不额外请求批准。
+- 在开发记录中保留检索关键词、候选仓库和采用结论。同一功能已有有效检索及固定来源时复用其记录；检索和引用不能代替本项目的实际验证。
+- 所有实际参照、复制、适配或采用的上游仓库都须登记到[开源来源与鸣谢](docs/development/upstreams.md#开源来源与鸣谢)，包括仅作实现参考的项目；记录仓库链接、已核实的版本或提交、用途及采用方式，保留必要许可证、版权和署名，不宣称上游实现为原创。
+- 来源登记和鸣谢使用上述唯一清单，仓库与 APP 的鸣谢入口链接该清单；新增来源随实现同步补齐，不另建相互漂移的名单。
+
 ## Safe implementation and delivery
 
 - Preserve uncommitted work, collaborator ownership, licenses, signing identities and user data. Never reset, broadly
