@@ -43,13 +43,15 @@ impl TunDriver {
     where F: FnOnce(Arc<RuntimePlan>, Arc<OwnedLoadScope>) -> Fut + Send + 'static,
           Fut: Future<Output = io::Result<Arc<dyn PacketHandler>>> + Send + 'static {
         eprintln!("[tun-stack] start-entry factory-future-bytes={}", std::mem::size_of::<Fut>());
+        let factory: Box<dyn FnOnce(Arc<RuntimePlan>, Arc<OwnedLoadScope>) -> PacketWork<Arc<dyn PacketHandler>> + Send> =
+            Box::new(move |plan, loads| Box::pin(factory(plan, loads)));
         Self::start_inner(json, caller, network, cancel, factory)
     }
 
-    fn start_inner<F, Fut>(json: &str, caller: BorrowedFd<'_>, network: NetworkContext,
-        cancel: CancellationToken, factory: F) -> io::Result<Arc<Self>>
-    where F: FnOnce(Arc<RuntimePlan>, Arc<OwnedLoadScope>) -> Fut + Send + 'static,
-          Fut: Future<Output = io::Result<Arc<dyn PacketHandler>>> + Send + 'static {
+    fn start_inner(json: &str, caller: BorrowedFd<'_>, network: NetworkContext,
+        cancel: CancellationToken,
+        factory: Box<dyn FnOnce(Arc<RuntimePlan>, Arc<OwnedLoadScope>) -> PacketWork<Arc<dyn PacketHandler>> + Send>,
+    ) -> io::Result<Arc<Self>> {
         eprintln!("[tun-stack] start-inner-entry");
         let plan = Arc::new(RuntimePlan::parse(json, std::os::fd::AsRawFd::as_raw_fd(&caller), true, false)?);
         if plan.runtime_mode != RuntimeMode::Tun || plan.initially_parked {
