@@ -4,7 +4,7 @@
   "tag": "v0.26.1",
   "commit": "727ddcd06f592e2f12c5222c4de6cce328df808c",
   "archiveUrl": "https://codeload.github.com/meow-rs/meow-rs/tar.gz/727ddcd06f592e2f12c5222c4de6cce328df808c",
-  "archiveSha256": null,
+  "archiveSha256": "4273e027c5db3f7c052b255730f29165908772bf417ec89d9ab54478f81dcd9a",
   "toolchain": "1.98.1",
   "license": "MIT",
   "licenseSha256": "b7a39018faacfd98597da373045fbacf2c3f134fd755e553894a6a9adad38db5",

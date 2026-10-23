@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       phase:
-        description: Host representative chain first; Android requires committed source archive hash and bridge lock
+        description: Explicit host-only proof or full host plus Android proof; fixed push runs all three legs
         type: choice
         options: [host, android]
         default: host
@@ -26,7 +26,55 @@ env:
   RUSTUP_TOOLCHAIN: '1.98.1'
   NDK_VERSION: '28.2.13676358'
 jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      bootstrap: ${{ steps.plan.outputs.bootstrap }}
+      android: ${{ steps.plan.outputs.android }}
+      proof: ${{ steps.plan.outputs.proof }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - id: plan
+        name: Admit explicit source and lock plan
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_PHASE: ${{ inputs.phase }}
+          INITIALIZE_LOCK: ${{ inputs.initialize_lock }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          # MEOW_PLAN_BEGIN
+          def decide_plan(lock_present, archive_hash, event, phase, initialize):
+              pinned=isinstance(archive_hash,str) and re.fullmatch('[0-9a-f]{64}',archive_hash) is not None
+              if event not in ('push','workflow_dispatch') or phase not in ('','host','android'):
+                  raise ValueError('Unsupported explicit preflight request')
+              if lock_present and pinned:
+                  if initialize:raise ValueError('Bootstrap cannot replace an existing committed lock')
+                  android=event=='push' or phase=='android'
+                  return dict(bootstrap=False,android=android,proof='host-android' if android else 'host-only')
+              if lock_present or archive_hash is not None:
+                  raise ValueError('Commit both the resolved lock and exact archive hash before locked preflight')
+              if phase=='android':raise ValueError('Android requires a committed lock and archive hash')
+              if event!='push' and not initialize:raise ValueError('First manual host bootstrap requires initialize_lock')
+              return dict(bootstrap=True,android=False,proof='bootstrap-host-only')
+          # MEOW_PLAN_END
+          root=Path('apps/aerove-lite/meow-native')
+          plan=decide_plan((root/'Cargo.lock').is_file(),json.loads((root/'source.json').read_text())['archiveSha256'],
+              os.environ['EVENT_NAME'],os.environ['REQUESTED_PHASE'],os.environ['INITIALIZE_LOCK']=='true')
+          with open(os.environ['GITHUB_OUTPUT'],'a') as output:
+              for key,value in plan.items():output.write(f'{key}={str(value).lower()}\n')
+          print(json.dumps(plan,sort_keys=True))
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as summary:
+              summary.write('Meow requested proof: '+plan['proof']+'; Android required: '+str(plan['android']).lower()+'\n')
+          PY
   host:
+    needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -54,22 +102,26 @@ jobs:
       - name: Real locked host proxy lifecycle chain
         shell: bash
         env:
-          INITIALIZE_LOCK: ${{ inputs.initialize_lock }}
-          PHASE: ${{ inputs.phase }}
+          INITIALIZE_LOCK: ${{ needs.plan.outputs.bootstrap }}
+          REQUESTED_PROOF: ${{ needs.plan.outputs.proof }}
         run: |
           set -euo pipefail
           python3 - <<'PY' 2>&1 | tee "$RUNNER_TEMP/meow-host-command.log"
           import json, os, subprocess
           from pathlib import Path
           root=Path('apps/aerove-lite/meow-native')
-          spec=json.loads((root/'source.json').read_text())
-          initial=not (root/'Cargo.lock').exists() and (os.environ['INITIALIZE_LOCK']=='true' or
-              (os.environ['GITHUB_EVENT_NAME']=='push' and spec['archiveSha256'] is None))
-          if initial and os.environ['PHASE']=='android':
-              raise SystemExit('First bootstrap is host-only; commit the real source archive hash and lock before Android')
+          initial=os.environ['INITIALIZE_LOCK']=='true'
           command=['python3',str(root/'build.py')]
           if initial:command.append('--initialize-lock')
-          subprocess.run(command,check=True)
+          try:
+              subprocess.run(command,check=True)
+          finally:
+              receipt=root/'build/host-receipt.json'
+              if receipt.is_file():
+                  result=json.loads(receipt.read_text())
+                  result['requestedProof']=os.environ['REQUESTED_PROOF']
+                  result['proofScope']='host-only result; full Android acceptance requires aggregate verify'
+                  receipt.write_text(json.dumps(result,indent=2)+'\n')
           PY
       - name: Preserve actual source, lock and host terminal result
         if: always()
@@ -102,8 +154,8 @@ jobs:
           path: ${{ runner.temp }}/meow-host-evidence/
           if-no-files-found: error
   android:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.phase == 'android' }}
-    needs: host
+    if: ${{ needs.plan.outputs.android == 'true' }}
+    needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
@@ -147,3 +199,30 @@ jobs:
             apps/aerove-lite/meow-native/Cargo.lock
             ${{ runner.temp }}/meow-android-link.log
           if-no-files-found: warn
+  verify:
+    if: always()
+    needs: [plan, host, android]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Aggregate only the explicitly planned proof
+        shell: bash
+        env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+          HOST_RESULT: ${{ needs.host.result }}
+          ANDROID_RESULT: ${{ needs.android.result }}
+          ANDROID_REQUIRED: ${{ needs.plan.outputs.android }}
+          PROOF: ${{ needs.plan.outputs.proof }}
+        run: |
+          set -euo pipefail
+          test "$PLAN_RESULT" = success
+          test "$HOST_RESULT" = success
+          case "$PROOF:$ANDROID_REQUIRED:$ANDROID_RESULT" in
+            host-android:true:success) ;;
+            bootstrap-host-only:false:skipped|host-only:false:skipped) ;;
+            *) echo 'Planned Meow proof failed or has an unexpected skipped leg' >&2; exit 1 ;;
+          esac
+          printf 'Accepted Meow preflight proof: %s\n' "$PROOF" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$ANDROID_REQUIRED" != true ]; then
+            echo 'Host-only proof: no Android ABI/link/16KiB acceptance from this run.' >> "$GITHUB_STEP_SUMMARY"
+          fi

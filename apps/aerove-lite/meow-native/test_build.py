@@ -1,6 +1,8 @@
 """Source/recipe tests only. These never invoke Rust, NDK, Gradle or network."""
 import io
 import json
+import re
+import textwrap
 from pathlib import Path
 import tarfile
 import tempfile
@@ -84,6 +86,23 @@ class SourceTests(unittest.TestCase):
     def test_pending_archive_hash_cannot_enter_normal_locked_build(self):
         with tempfile.TemporaryDirectory() as directory,mock.patch.object(prepare,'ROOT',Path(directory)),mock.patch.object(prepare,'source_spec',return_value={'archiveSha256':None}):
             with self.assertRaisesRegex(ValueError,'explicit first CI bootstrap'):prepare.prepare()
+
+class WorkflowPlanTests(unittest.TestCase):
+    def test_actual_workflow_plan_admits_only_requested_fixed_or_bootstrap_proof(self):
+        workflow=Path(__file__).resolve().parents[3]/'.github/workflows/aerove-meow-preflight.yaml'
+        text=workflow.read_text()
+        code=textwrap.dedent(text.split('# MEOW_PLAN_BEGIN\n',1)[1].split('# MEOW_PLAN_END',1)[0])
+        scope={'re':re};exec(code,scope);plan=scope['decide_plan'];pin='a'*64
+        self.assertEqual(dict(bootstrap=False,android=True,proof='host-android'),plan(True,pin,'push','',False))
+        self.assertEqual('host-only',plan(True,pin,'workflow_dispatch','host',False)['proof'])
+        self.assertEqual('host-android',plan(True,pin,'workflow_dispatch','android',False)['proof'])
+        self.assertEqual('bootstrap-host-only',plan(False,None,'push','',False)['proof'])
+        self.assertEqual('bootstrap-host-only',plan(False,None,'workflow_dispatch','host',True)['proof'])
+        for args in [(False,None,'workflow_dispatch','android',True),(False,None,'workflow_dispatch','host',False),
+                     (True,pin,'workflow_dispatch','host',True),(True,None,'push','',False),
+                     (False,pin,'push','',False),(True,'not-a-hash','push','',False),
+                     (True,pin,'pull_request','',False),(True,pin,'workflow_dispatch','injected',False)]:
+            with self.subTest(args=args),self.assertRaises(ValueError):plan(*args)
 
 class AndroidRecipeTests(unittest.TestCase):
     def test_exact_ndk_target_cmake_and_16k_linker_arguments(self):
