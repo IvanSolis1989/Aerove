@@ -555,7 +555,7 @@ final class ClashProvidersActionProvider
 }
 
 String _$clashProvidersActionHash() =>
-    r'35f1d484bf0d04fc1556277775f8d43591ffac29';
+    r'9d6915d18309957dc9e710601f7573f4d6b9b1db';
 
 abstract class _$ClashProvidersAction extends $Notifier<void> {
   void build();
