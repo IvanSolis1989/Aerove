@@ -21,7 +21,7 @@ fn explicit_mode_admission_rejects_mismatched_descriptors_and_callbacks_without_
 
 #[test]
 fn session_requires_actual_mode_specific_readiness_and_clears_metadata_on_exit() {
-    let proxy = Session::new(RuntimeMode::Proxy);
+    let proxy = Session::new(RuntimeMode::Proxy, false);
     proxy.ready(ready(RuntimeMode::Tun, true, true));
     proxy.ready(ready(RuntimeMode::Proxy, false, false));
     proxy.ready(ready(RuntimeMode::Proxy, true, true));
@@ -35,7 +35,7 @@ fn session_requires_actual_mode_specific_readiness_and_clears_metadata_on_exit()
     assert!(snapshot.runtime_mode.is_none());
     assert!(!snapshot.tun_ready && !snapshot.user_listeners_ready);
     drop(snapshot);
-    let tun = Session::new(RuntimeMode::Tun);
+    let tun = Session::new(RuntimeMode::Tun, false);
     tun.ready(ready(RuntimeMode::Tun, false, true));
     assert_eq!(tun.snapshot.lock().unwrap().state, State::Starting);
     tun.cancel.cancel();
