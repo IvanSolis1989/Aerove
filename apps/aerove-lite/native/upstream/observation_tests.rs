@@ -1,5 +1,7 @@
 use super::*;
 use futures::StreamExt;
+use std::{pin::Pin,task::{Context as TaskContext,Poll}};
+use tokio::io::{AsyncRead,ReadBuf};
 use serde_json::{Value, json};
 use tokio::{net::{TcpListener,TcpStream,UdpSocket},sync::oneshot};
 use tokio_tungstenite::{connect_async, tungstenite::client::IntoClientRequest};
@@ -20,24 +22,51 @@ async fn api(port:u16, method:&str, path:&str, body:&str)->String {
     socket.write_all(format!("{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer 0123456789abcdef0123456789abcdef\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
     let mut reply=String::new();tokio::time::timeout(Duration::from_secs(5),socket.read_to_string(&mut reply)).await.unwrap().unwrap();reply
 }
+#[derive(Default,Debug)]
+struct FixtureProgress {
+    dns_received: AtomicUsize, dns_replied: AtomicUsize,
+    target_accepted: AtomicUsize, target_headers: AtomicUsize, target_read_error: AtomicUsize, target_read_bytes: AtomicUsize,
+    target_written: AtomicUsize, target_closed: AtomicUsize,
+}
+struct ResponseProgress<'a> { inner: &'a mut TcpStream, bytes: usize, prefix: Vec<u8>, eof: bool }
+impl AsyncRead for ResponseProgress<'_> {
+    fn poll_read(self: Pin<&mut Self>, cx: &mut TaskContext<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
+        let this=self.get_mut();let before=buf.filled().len();let capacity=buf.remaining();
+        let result=Pin::new(&mut *this.inner).poll_read(cx,buf);
+        if matches!(&result,Poll::Ready(Ok(()))) {
+            let added=&buf.filled()[before..];this.bytes+=added.len();this.eof|=added.is_empty()&&capacity>0;
+            let keep=added.len().min(512-this.prefix.len());this.prefix.extend_from_slice(&added[..keep]);
+        }
+        result
+    }
+}
 async fn io() {
+    let progress=Arc::new(FixtureProgress::default());
+    let dns_progress=progress.clone();
     let dns=UdpSocket::bind("127.0.0.1:0").await.unwrap();let dns_addr=dns.local_addr().unwrap();
     let dns_task=tokio::spawn(async move {
         let mut buffer=[0u8;4096]; loop {
             let (n,peer)=dns.recv_from(&mut buffer).await.unwrap();
+            dns_progress.dns_received.fetch_add(1,Ordering::SeqCst);
             let request=Message::from_vec(&buffer[..n]).unwrap();
             let mut reply=Message::response(request.metadata.id,request.metadata.op_code);reply.queries=request.queries;
             for q in reply.queries.clone() { if q.query_type()==RecordType::A {
                 reply.add_answer(hickory_proto::rr::Record::from_rdata(q.name().clone(),60,RData::A(hickory_proto::rr::rdata::A(std::net::Ipv4Addr::LOCALHOST))));
             }}
             dns.send_to(&reply.to_vec().unwrap(),peer).await.unwrap();
+            dns_progress.dns_replied.fetch_add(1,Ordering::SeqCst);
         }
     });
     let target=TcpListener::bind("127.0.0.1:0").await.unwrap();let target_port=target.local_addr().unwrap().port();
+    let target_progress=progress.clone();
     let target_task=tokio::spawn(async move { loop {
         let (mut s,_)=target.accept().await.unwrap(); let mut b=Vec::new();let mut c=[0;1];
-        while !b.ends_with(b"\r\n\r\n") { if s.read_exact(&mut c).await.is_err(){break;} b.push(c[0]); }
+        target_progress.target_accepted.fetch_add(1,Ordering::SeqCst);
+        while !b.ends_with(b"\r\n\r\n") { if s.read_exact(&mut c).await.is_err(){target_progress.target_read_error.fetch_add(1,Ordering::SeqCst);break;} b.push(c[0]);target_progress.target_read_bytes.fetch_add(1,Ordering::SeqCst); }
+        if b.ends_with(b"\r\n\r\n") {target_progress.target_headers.fetch_add(1,Ordering::SeqCst);}
         s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\nConnection: close\r\n\r\nobserved-ok").await.unwrap();
+        target_progress.target_written.fetch_add(1,Ordering::SeqCst);
+        drop(s);target_progress.target_closed.fetch_add(1,Ordering::SeqCst);
     }});
     let reserved:Vec<_>=(21000..49000).filter_map(|p|std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST,p)).ok()).take(2).collect();
     let ports:Vec<_>=reserved.iter().map(|s|s.local_addr().unwrap().port()).collect();drop(reserved);
@@ -56,7 +85,18 @@ async fn io() {
     for ordinal in 0..2 {
         let mut request=TcpStream::connect((std::net::Ipv4Addr::LOCALHOST,ports[0])).await.unwrap();
         request.write_all(format!("GET http://observation.test:{target_port}/ HTTP/1.1\r\nHost: observation.test\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
-        let mut response=String::new();tokio::time::timeout(Duration::from_secs(5),request.read_to_string(&mut response)).await.unwrap().unwrap();assert!(response.ends_with("observed-ok"));
+        let mut response=String::new();
+        let mut reading=ResponseProgress {inner:&mut request,bytes:0,prefix:Vec::new(),eof:false};
+        let result=tokio::time::timeout(Duration::from_secs(5),reading.read_to_string(&mut response)).await;
+        if result.is_err() {
+            let header_end=reading.prefix.windows(4).position(|v|v==b"\r\n\r\n").map(|p|p+4);
+            let window=collector.window(generation.as_str().unwrap().parse().unwrap(),cursor,false)
+                .map(|w|serde_json::to_value(w).unwrap()).map(|w|json!({"cursor":w["cursor"],"dropped":w["dropped"],
+                    "kinds":w["events"].as_array().unwrap().iter().map(|e|e["kind"].clone()).collect::<Vec<_>>()}));
+            eprintln!("[observation-http] ordinal={ordinal} bytes={} eof={} header_end={header_end:?} prefix={:?} fixture={progress:?} window={window:?}",
+                reading.bytes,reading.eof,String::from_utf8_lossy(&reading.prefix));
+        }
+        result.unwrap().unwrap();assert!(response.ends_with("observed-ok"));
         loop {
             let f=frame(&mut ws).await;if f["type"]!="observations"{continue;}
             assert_eq!(f["sessionId"],session);assert_eq!(f["generation"],generation);assert_eq!(f["dropped"],"0");
