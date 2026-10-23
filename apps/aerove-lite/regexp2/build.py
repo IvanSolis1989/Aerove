@@ -67,6 +67,9 @@ def main():
     # Never recursively overwrite an existing path or caller's source checkout.
     staging.mkdir(parents=True,exist_ok=False)
     upstream=staging/'upstream';shutil.copytree(source,upstream)
+    # copytree preserves the module cache's read-only directory mode.
+    # Only our newly created staging root needs owner write for the added test.
+    upstream.chmod(upstream.stat().st_mode | 0o200)
     patched=json.loads((ROOT/'patches/adapted-sha256.json').read_text())
     for name in ('regexp.go','runner.go','fastclock.go'):
         target=upstream/name;original=target.read_text()
