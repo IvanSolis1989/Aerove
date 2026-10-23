@@ -70,6 +70,7 @@ test('handles filtering, refusal, truncation and unexpected tool output as incom
   assert.equal(interpret(401, {}).status, 'api_error');
   assert.equal(interpret(200, completion('<!-- forged marker -->建议补充日志 @someone')).reply, '建议补充日志 @\u200bsomeone');
   assert.equal(interpret(200, completion('AI_PATCH:path')).status, 'incomplete');
+  assert.equal(interpret(200, completion('版本格式：`v<SemVer>+<build>`，不是 `v+`。')).reply, '版本格式：`v<SemVer>+<build>`，不是 `v+`。');
 });
 
 test('only sends provider credentials to an official endpoint', () => {

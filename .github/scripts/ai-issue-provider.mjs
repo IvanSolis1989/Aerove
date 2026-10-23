@@ -51,7 +51,7 @@ export function interpret(httpStatus, payload) {
   if (choice?.finish_reason !== 'stop' || !content || message?.tool_calls?.length) return {
     status: 'incomplete', reply: 'AI 未返回完整分析，本次不发布截断内容，请等待维护者处理。',
   };
-  const reply = redact(content).replace(/<!--[\s\S]*?(?:-->|$)/g, '').replace(/<[^>]*>/g, '')
+  const reply = redact(content).replace(/<!--[\s\S]*?(?:-->|$)/g, '')
     .replace(/@(?=[a-zA-Z0-9])/g, '@\u200b').trim();
   if (!reply || reply.length > 6000 || /AI_PATCH|AI_PR/.test(reply)) return {
     status: 'incomplete', reply: 'AI 回复未满足技术支持格式要求，本次未发布生成内容，请等待维护者处理。',
