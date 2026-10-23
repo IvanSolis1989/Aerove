@@ -88,6 +88,86 @@ CORE_POLICY_TEST_CASES = (('meow-common', 'cli_without_scope_keeps_output_and_re
  ('meow-dns', 'resolver_captures_generation_scope_when_constructed', 1),
  ('meow-dns', 'upstream_exchange_stays_with_captured_generation', 1),
  ('meow-dns', 'retiring_generation_cancels_and_joins_pending_exchange', 1))
+HOST_POLICY_RUNTIME_V2_TARGETS = ('lib',
+ 'anytls_owned_shutdown',
+ 'api_lifecycle',
+ 'config_validation',
+ 'control_plane',
+ 'dns_construction',
+ 'ech_lazy',
+ 'ech_response_binding',
+ 'general_groups',
+ 'group_delay',
+ 'health_round_context',
+ 'host_policy_runtime',
+ 'native_ech_context',
+ 'node_delay',
+ 'offline_scope',
+ 'owned_runtime',
+ 'owned_spawn',
+ 'packet_fd',
+ 'physical_dns',
+ 'provider_events',
+ 'provider_files',
+ 'provider_rules',
+ 'proxy_runtime',
+ 'request_policy',
+ 'resource_roots',
+ 'runtime_admission',
+ 'runtime_transports',
+ 'statistics_actual_outcome',
+ 'tcp_dns',
+ 'transport_tasks',
+ 'tun_driver',
+ 'urltest_gate',
+ 'user_request_context')
+CORE_POLICY_TEST_CASES_V2 = (('meow-transport', 'scoped_join::', 11, 'lib', ('ws', 'grpc', 'h2', 'xhttp')),
+ ('meow-transport',
+  'actual_stream_preserves_send_sync_transport_contract',
+  3,
+  'lib',
+  ('ws', 'grpc', 'h2', 'xhttp')),
+ ('meow-transport',
+  'closed_origin_upgrade_has_repeatable_error_and_zero_http_bytes',
+  1,
+  'lib',
+  ('ws', 'grpc', 'h2', 'xhttp')),
+ ('meow-proxy', 'vmess::conn::scoped_owner_tests::', 2, 'lib', ('vmess',)),
+ ('meow-proxy',
+  'actual_tasked_duplex_preserves_stream_and_proxy_conversion',
+  1,
+  'lib',
+  ('vmess',)),
+ ('meow-anytls',
+  'actual_pool_reaper_drop_aborts_and_native_observer_joins_resource_release',
+  1,
+  'lib',
+  ()),
+ ('meow-common', None, 3, 'transport_scope_compat', ('aerove-android-runtime',)),
+ ('meow-anytls',
+  'pooled_close_cancelled_after_admission_can_resume_and_last_arc_drops_both_transports',
+  1,
+  'lib',
+  ()),
+ ('meow-anytls',
+  'concurrent_close_waiter_observes_completion_and_takes_over_cancelled_first_attempt',
+  1,
+  'lib',
+  ()),
+ ('meow-dns', 'resolver_captures_generation_scope_when_constructed', 1, 'lib', ()),
+ ('meow-dns', 'upstream_exchange_stays_with_captured_generation', 1, 'lib', ()),
+ ('meow-dns', 'retiring_generation_cancels_and_joins_pending_exchange', 1, 'lib', ()),
+ ('meow-dns',
+  'resolver::tests::ech_cycle_guard_survives_dns_owned_spawn',
+  1,
+  'lib',
+  ('encrypted',)),
+ ('meow-dns',
+  'resolver::owned_generation_tests::ech_cycle_guard_survives_run_owned_query_spawn',
+  1,
+  'lib',
+  ('encrypted',)))
+
 CORE_POLICY_TEST_PACKAGES = tuple(sorted({package for package, _, _ in CORE_POLICY_TEST_CASES}))
 
 
@@ -102,12 +182,14 @@ def native_identity(root=MEOW_ROOT):
             or policy.get("resolveLock") is not False):
         raise ValueError("Meow requires a pinned source and accepted committed lock policy")
     if "coreTests" in policy:
-        if (policy["coreTests"] != "policy-runtime-v1"
-                or tuple(policy.get("targets", ())) != HOST_POLICY_RUNTIME_TARGETS
+        approved_targets = {"policy-runtime-v1": HOST_POLICY_RUNTIME_TARGETS,
+            "policy-runtime-v2": HOST_POLICY_RUNTIME_V2_TARGETS}.get(policy["coreTests"])
+        if (not approved_targets
+                or tuple(policy.get("targets", ())) != approved_targets
                 or policy.get("featureBoundary") != "capabilities-no-default"
                 or not re.fullmatch(r"[0-9a-f]{64}", str(policy.get("coreTestLockSha256", "")))):
             raise ValueError("Unrecognized Meow Core unit test policy")
-    elif "coreTestLockSha256" in policy or tuple(policy.get("targets", ())) == HOST_POLICY_RUNTIME_TARGETS:
+    elif "coreTestLockSha256" in policy or tuple(policy.get("targets", ())) in (HOST_POLICY_RUNTIME_TARGETS, HOST_POLICY_RUNTIME_V2_TARGETS):
         raise ValueError("Meow policy lacks approved Core unit test admission")
     def owned(name):
         path = root / name
@@ -153,10 +235,10 @@ def validate_native_receipt(receipt_path, abi=None, image=None, root=MEOW_ROOT, 
     if abi is None:
         policy = json.loads((Path(root)/"build-policy.json").read_text())
         targets = policy["targets"]
-        if "node_delay" in targets and tuple(targets) not in (HOST_NO_FAIL_FAST_TARGETS, HOST_POLICY_RUNTIME_TARGETS):
+        if "node_delay" in targets and tuple(targets) not in (HOST_NO_FAIL_FAST_TARGETS, HOST_POLICY_RUNTIME_TARGETS, HOST_POLICY_RUNTIME_V2_TARGETS):
             raise ValueError("Unrecognized Meow no-fail-fast target contract")
         command = ["cargo", "test", "--locked"]
-        if tuple(targets) in (HOST_NO_FAIL_FAST_TARGETS, HOST_POLICY_RUNTIME_TARGETS):
+        if tuple(targets) in (HOST_NO_FAIL_FAST_TARGETS, HOST_POLICY_RUNTIME_TARGETS, HOST_POLICY_RUNTIME_V2_TARGETS):
             command.append("--no-fail-fast")
         for target in targets:
             command += ["--lib"] if target == "lib" else ["--test", target]
@@ -196,7 +278,12 @@ def validate_core_test_receipt(state, policy, root):
         reject()
     overlay = json.loads((root / policy["overlay"]).read_text())
     upstream_lock = overlay.get("files", {}).get("Cargo.lock")
-    if (state.get("mode") != "policy-runtime-v1" or state.get("accepted") is not True
+    mode = policy["coreTests"]
+    if mode not in ("policy-runtime-v1", "policy-runtime-v2"):
+        reject()
+    cases = (tuple((package, name, count, "lib", ()) for package, name, count in CORE_POLICY_TEST_CASES)
+        if mode == "policy-runtime-v1" else CORE_POLICY_TEST_CASES_V2)
+    if (state.get("mode") != mode or state.get("accepted") is not True
             or state.get("upstreamLockRestored") is not True or not is_hash(upstream_lock)
             or state.get("upstreamLockBeforeSha256") != upstream_lock
             or state.get("seedSha256") != policy["coreTestLockSha256"]
@@ -211,7 +298,7 @@ def validate_core_test_receipt(state, policy, root):
     if (not isinstance(members, list) or any(not isinstance(m, str) for m in members)
             or members != sorted(set(members)) or not set(CORE_POLICY_TEST_PACKAGES) <= set(members)
             or not isinstance(features, dict) or set(features) != set(CORE_POLICY_TEST_PACKAGES)
-            or not isinstance(commands, list) or len(commands) != len(CORE_POLICY_TEST_CASES)):
+            or not isinstance(commands, list) or len(commands) != len(cases)):
         reject()
     for package in CORE_POLICY_TEST_PACKAGES:
         values = features[package]
@@ -219,13 +306,20 @@ def validate_core_test_receipt(state, policy, root):
                 or re.fullmatch(r"[A-Za-z0-9_-]+", f) is None for f in values)
                 or values != sorted(set(values))):
             reject()
-    for entry, (package, name, count) in zip(commands, CORE_POLICY_TEST_CASES):
+    for entry, (package, name, count, target, required_features) in zip(commands, cases):
+        if not set(required_features) <= set(features[package]):
+            reject()
         command = ["cargo", "test", "--manifest-path", ".upstream/meow-rs/Cargo.toml", "--locked",
-            "--package", package, "--lib", "--no-default-features"]
+            "--package", package]
+        command += ["--lib"] if target == "lib" else ["--test", "transport_scope_compat"]
+        command += ["--no-default-features"]
         if features[package]:
             command += ["--features", ",".join(package + "/" + f for f in features[package])]
-        command += [name, "--", "--test-threads=1", "--nocapture"]
+        if name is not None:
+            command += [name]
+        command += ["--", "--test-threads=1", "--nocapture"]
         if (not isinstance(entry, dict) or entry.get("package") != package or entry.get("filter") != name
+                or (mode == "policy-runtime-v2" and (entry.get("target") != target or "filter" not in entry))
                 or entry.get("command") != command or not exited(entry.get("exit"))
                 or type(entry.get("expectedPass")) is not int or entry["expectedPass"] != count
                 or type(entry.get("passed")) is not int or entry["passed"] != count
