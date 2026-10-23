@@ -208,6 +208,9 @@ def prepare(archive: Path | None = None) -> Path:
     process_identity_patch=(ROOT / "process_identity.patch").read_bytes()
     process_policy_patch=(ROOT / "process_policy.patch").read_bytes()
     dns_transaction_patch=(ROOT / "dns_transaction.patch").read_bytes()
+    provider_loaded_patch=(ROOT / "provider_loaded.patch").read_bytes()
+    provider_loaded=(ROOT / "upstream/provider_loaded.rs").read_bytes()
+    provider_loaded_tests=(ROOT / "upstream/provider_loaded_tests.rs").read_bytes()
     tailscale_transport_patch=(ROOT / "tailscale_transport.patch").read_bytes()
     tailscale_source=prepare_tailscale()
     shadowquic_source=prepare_dependency("shadowquic","0.3.13","9ebb2a8146e287bdc7adf5b9bdd690495fa45b524458f0d1c26df73ca5d4ac57",shadowquic_dependency_patch)
@@ -242,6 +245,7 @@ def prepare(archive: Path | None = None) -> Path:
     provenance = {
         "dependencies":{"shadowquic":shadowquic_source,"tailscale":tailscale_source},
         "dnsTransactionPatchSha256":digest(dns_transaction_patch),
+        "providerLoadedPatchSha256":digest(provider_loaded_patch),"providerLoadedSha256":digest(provider_loaded),"providerLoadedTestsSha256":digest(provider_loaded_tests),
         "processIdentitySha256":digest(process_identity),"processIdentityTestsSha256":digest(process_identity_tests),"processIdentityPatchSha256":digest(process_identity_patch),"processPolicyPatchSha256":digest(process_policy_patch),"tailscaleTransportPatchSha256":digest(tailscale_transport_patch),
         "protocolsPatchSha256":digest(protocols_patch),"shadowquicTransportPatchSha256":digest(shadowquic_transport_patch),"protocolTransportSha256":digest(protocol_transport),
         "repository": "https://github.com/ibigbug/clash-rs",
@@ -293,6 +297,7 @@ def prepare(archive: Path | None = None) -> Path:
         apply_patch(staging, process_policy_patch.decode("utf-8"))
         apply_patch(staging, process_identity_patch.decode("utf-8"))
         apply_patch(staging, dns_transaction_patch.decode("utf-8"))
+        apply_patch(staging, provider_loaded_patch.decode("utf-8"))
         (staging / "clash-lib/src/mobile.rs").write_bytes(overlay)
         resource_target = staging / "clash-lib/src/mobile/resources.rs"
         resource_target.parent.mkdir(exist_ok=True)
@@ -312,6 +317,8 @@ def prepare(archive: Path | None = None) -> Path:
         (resource_target.parent / "outbound_tests.rs").write_bytes(outbound_tests)
         (resource_target.parent / "outbound_route_tests.rs").write_bytes(outbound_route_tests)
         (resource_target.parent / "telemetry.rs").write_bytes(telemetry)
+        (resource_target.parent / "provider_loaded.rs").write_bytes(provider_loaded)
+        (resource_target.parent / "provider_loaded_tests.rs").write_bytes(provider_loaded_tests)
         (resource_target.parent / "telemetry_tests.rs").write_bytes(telemetry_tests)
         (resource_target.parent / "http_probe.rs").write_bytes(http_probe)
         (resource_target.parent / "dns_network.rs").write_bytes(dns_network)

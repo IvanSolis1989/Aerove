@@ -1,0 +1,389 @@
+--- a/clash-lib/src/app/api/handlers/provider.rs
++++ b/clash-lib/src/app/api/handlers/provider.rs
+@@ -71,24 +71,51 @@
+         .with_state(state)
+ }
+ 
+-async fn get_providers(State(state): State<ProviderState>) -> impl IntoResponse {
++#[cfg(feature = "aerove-mobile")]
++fn provider_revision<P:crate::app::remote_content_manager::providers::Provider+?Sized>(provider:&P)->Result<Option<String>,Response> {
++    provider.loaded_revision().map_err(|_|provider_changed())
++}
++#[cfg(feature = "aerove-mobile")]
++fn provider_changed()->Response {(StatusCode::CONFLICT,axum::Json(json!({"code":"provider_changed"}))).into_response()}
++#[cfg(feature = "aerove-mobile")]
++fn finish_provider_revision<P:crate::app::remote_content_manager::providers::Provider+?Sized>(
++    provider:&P,before:Option<String>,map:&mut HashMap<String,Box<dyn erased_serde::Serialize+Send>>,
++)->Result<(),Response> {
++    if provider_revision(provider)?!=before {return Err(provider_changed());}
++    map.insert("revision".into(),Box::new(before));Ok(())
++}
++
++pub(crate) async fn provider_snapshot<P:crate::app::remote_content_manager::providers::Provider+Sync+?Sized>(provider:&P)->Response {
++    #[cfg(feature = "aerove-mobile")]
++    let revision=match provider_revision(provider) {Ok(value)=>value,Err(error)=>return error};
++    let map=provider.as_map().await;
++    #[cfg(feature = "aerove-mobile")]
++    let map={let mut map=map;if let Err(error)=finish_provider_revision(provider,revision,&mut map) {return error;}map};
++    axum::Json(map).into_response()
++}
++
++async fn get_providers(State(state): State<ProviderState>) -> Response {
+     let outbound_manager = state.outbound_manager();
+     let mut res = HashMap::new();
+ 
+     let mut providers = HashMap::new();
+ 
+     for (name, p) in outbound_manager.get_proxy_providers() {
++        #[cfg(feature = "aerove-mobile")]
++        let revision=match provider_revision(p.as_ref()) {Ok(value)=>value,Err(error)=>return error};
+         let proxies = p.proxies().await;
+         let proxies = futures::future::join_all(
+             proxies.iter().map(|x| outbound_manager.get_proxy(x)),
+         );
+         let mut m = p.as_map().await;
+         m.insert("proxies".to_owned(), Box::new(proxies.await));
++        #[cfg(feature = "aerove-mobile")]
++        if let Err(error)=finish_provider_revision(p.as_ref(),revision,&mut m) {return error;}
+         providers.insert(name, m);
+     }
+ 
+     res.insert("providers".to_owned(), providers);
+-    axum::response::Json(res)
++    axum::response::Json(res).into_response()
+ }
+ 
+ #[derive(Deserialize)]
+@@ -116,9 +143,18 @@
+ }
+ 
+ async fn get_provider(
++    State(state): State<ProviderState>,
+     Extension(provider): Extension<ArcProxyProvider>,
+ ) -> impl IntoResponse {
+-    axum::response::Json(provider.as_map().await)
++    #[cfg(feature = "aerove-mobile")]
++    let revision=match provider_revision(provider.as_ref()) {Ok(value)=>value,Err(error)=>return error};
++    let manager=state.outbound_manager();
++    let proxies=provider.proxies().await;
++    let mut map=provider.as_map().await;
++    map.insert("proxies".into(),Box::new(futures::future::join_all(proxies.iter().map(|proxy|manager.get_proxy(proxy))).await));
++    #[cfg(feature = "aerove-mobile")]
++    if let Err(error)=finish_provider_revision(provider.as_ref(),revision,&mut map) {return error;}
++    axum::Json(map).into_response()
+ }
+ 
+ async fn update_provider(
+@@ -254,11 +290,16 @@
+ ) -> impl IntoResponse {
+     let mut providers = HashMap::new();
+     for (name, p) in state.router().get_rule_providers() {
+-        providers.insert(name.clone(), p.as_map().await);
++        #[cfg(feature = "aerove-mobile")]
++        let revision=match provider_revision(p.as_ref()) {Ok(value)=>value,Err(error)=>return error};
++        let map=p.as_map().await;
++        #[cfg(feature = "aerove-mobile")]
++        let map={let mut map=map;if let Err(error)=finish_provider_revision(p.as_ref(),revision,&mut map) {return error;}map};
++        providers.insert(name.clone(), map);
+     }
+     let mut res = HashMap::new();
+     res.insert("providers", providers);
+-    axum::response::Json(res)
++    axum::response::Json(res).into_response()
+ }
+ 
+ #[derive(Deserialize)]
+@@ -271,7 +312,7 @@
+     Path(RuleProviderNamePath { provider_name }): Path<RuleProviderNamePath>,
+ ) -> impl IntoResponse {
+     match state.router().get_rule_providers().get(&provider_name) {
+-        Some(p) => axum::response::Json(p.as_map().await).into_response(),
++        Some(p) => provider_snapshot(p.as_ref()).await,
+         None => (
+             StatusCode::NOT_FOUND,
+             format!("rule provider {provider_name} not found"),
+--- a/clash-lib/src/app/api/mod.rs
++++ b/clash-lib/src/app/api/mod.rs
+@@ -34,3 +34,6 @@
+         self.components.read().unwrap().statistics_manager.clone()
+     }
+ }
++
++#[cfg(feature = "aerove-mobile-tests")]
++pub(crate) use handlers::provider::{provider_snapshot,routes as provider_test_routes};
+--- a/clash-lib/src/app/remote_content_manager/providers/fetcher.rs
++++ b/clash-lib/src/app/remote_content_manager/providers/fetcher.rs
+@@ -28,6 +28,8 @@
+     inner: Arc<RwLock<Inner>>,
+     parser: Arc<P>,
+     pub on_update: Option<Arc<U>>,
++    #[cfg(feature = "aerove-mobile")]
++    pub(crate) loaded: Option<Arc<crate::mobile::provider_loaded::Observer>>,
+     /// Aborts the polling and file-watch tasks on drop so config reloads don't
+     /// leak tasks or OS watches.
+     cancel_token: CancellationToken,
+@@ -36,6 +38,8 @@
+ impl<U, P> Drop for Fetcher<U, P> {
+     fn drop(&mut self) {
+         self.cancel_token.cancel();
++        #[cfg(feature = "aerove-mobile")]
++        if let Some(observer)=&self.loaded {observer.stop();}
+     }
+ }
+ 
+@@ -63,6 +67,8 @@
+             })),
+             parser: Arc::new(parser),
+             on_update: on_update.map(|f| Arc::new(f)),
++            #[cfg(feature = "aerove-mobile")]
++            loaded: None,
+             cancel_token: CancellationToken::new(),
+         }
+     }
+@@ -205,7 +211,12 @@
+         parser: Arc<P>,
+         on_update: Option<Arc<U>>,
+         name: &str,
++        #[cfg(feature = "aerove-mobile")] loaded: Option<Arc<crate::mobile::provider_loaded::Observer>>,
+     ) {
++        #[cfg(feature = "aerove-mobile")]
++        let operation=match loaded.as_ref() {Some(observer)=>Some(observer.begin().await),None=>None};
++        #[cfg(feature = "aerove-mobile")]
++        if operation.as_ref().is_some_and(|operation|!operation.active()) {return;}
+         let (elm, same) =
+             match Fetcher::<U, P>::update_inner(inner, vehicle, parser).await {
+                 Ok(result) => result,
+@@ -215,8 +226,12 @@
+                 }
+             };
+ 
++        #[cfg(feature = "aerove-mobile")]
++        if operation.as_ref().is_some_and(|operation|!operation.active()) {return;}
+         if same {
+             trace!("fetcher {} no update", name);
++            #[cfg(feature = "aerove-mobile")]
++            if let Some(operation)=&operation {if let Err(error)=operation.success(crate::mobile::provider_loaded::Phase::Update,false) {warn!("provider revision failed: {error}");}}
+             return;
+         }
+ 
+@@ -224,6 +239,8 @@
+             info!("fetcher {} updated", name);
+             on_update(elm).await;
+         }
++        #[cfg(feature = "aerove-mobile")]
++        if let Some(operation)=&operation {if let Err(error)=operation.success(crate::mobile::provider_loaded::Phase::Update,true) {warn!("provider revision failed: {error}");}}
+     }
+ 
+     /// Watch the provider's local file and reload its content on change.
+@@ -255,6 +272,8 @@
+         let on_update = self.on_update.clone();
+         let name = self.name.clone();
+         let cancel_token = self.cancel_token.clone();
++        #[cfg(feature = "aerove-mobile")]
++        let loaded=self.loaded.clone();
+ 
+         let (tx, mut rx) = tokio::sync::mpsc::channel::<()>(1);
+ 
+@@ -318,6 +337,7 @@
+                             parser.clone(),
+                             on_update.clone(),
+                             &name,
++                            #[cfg(feature = "aerove-mobile")] loaded.clone(),
+                         )
+                         .await;
+                     }
+@@ -339,6 +359,8 @@
+         let on_update = self.on_update.clone();
+         let name = self.name.clone();
+         let cancel_token = self.cancel_token.clone();
++        #[cfg(feature = "aerove-mobile")]
++        let loaded=self.loaded.clone();
+         let fire_immediately = immediately_update;
+ 
+         tokio::spawn(async move {
+@@ -349,6 +371,7 @@
+                     parser.clone(),
+                     on_update.clone(),
+                     &name,
++                    #[cfg(feature = "aerove-mobile")] loaded.clone(),
+                 )
+             };
+ 
+--- a/clash-lib/src/app/remote_content_manager/providers/mod.rs
++++ b/clash-lib/src/app/remote_content_manager/providers/mod.rs
+@@ -64,6 +64,8 @@
+ /// either Proxy or Rule provider
+ #[async_trait]
+ pub trait Provider {
++    #[cfg(feature = "aerove-mobile")]
++    fn loaded_revision(&self)->Result<Option<String>,()> {Ok(None)}
+     fn name(&self) -> &str;
+     fn vehicle_type(&self) -> ProviderVehicleType;
+     fn typ(&self) -> ProviderType;
+--- a/clash-lib/src/app/remote_content_manager/providers/proxy_provider/proxy_set_provider.rs
++++ b/clash-lib/src/app/remote_content_manager/providers/proxy_provider/proxy_set_provider.rs
+@@ -276,7 +276,9 @@
+             result
+         });
+ 
+-        let fetcher = Fetcher::new(name, interval, vehicle, parser, Some(updater));
++        let fetcher = Fetcher::new(name.clone(), interval, vehicle, parser, Some(updater));
++        #[cfg(feature = "aerove-mobile")]
++        let fetcher = {let mut fetcher=fetcher;fetcher.loaded=crate::mobile::provider_loaded::Observer::capture(crate::mobile::provider_loaded::Kind::Proxy,&name);fetcher};
+         Ok(Self { fetcher, hc, inner })
+     }
+ }
+@@ -296,7 +298,11 @@
+     }
+ 
+     async fn initialize(&self) -> std::io::Result<()> {
++        #[cfg(feature = "aerove-mobile")]
++        let operation=match self.fetcher.loaded.as_ref() {Some(observer)=>Some(observer.begin().await),None=>None};
+         let ele = self.fetcher.initial().await.map_err(map_io_error)?;
++        #[cfg(feature = "aerove-mobile")]
++        if operation.as_ref().is_some_and(|operation|!operation.active()) {return Err(std::io::ErrorKind::Interrupted.into());}
+         debug!("{} initialized with {} proxies", self.name(), ele.len());
+         if let Some(updater) = self.fetcher.on_update.as_ref() {
+             updater(ele).await;
+@@ -313,11 +319,17 @@
+                 e
+             );
+         }
++        #[cfg(feature = "aerove-mobile")]
++        if let Some(operation)=&operation {operation.success(crate::mobile::provider_loaded::Phase::Initial,true)?;}
+         Ok(())
+     }
+ 
+     async fn update(&self) -> std::io::Result<()> {
++        #[cfg(feature = "aerove-mobile")]
++        let operation=match self.fetcher.loaded.as_ref() {Some(observer)=>Some(observer.begin().await),None=>None};
+         let (ele, same) = self.fetcher.update().await.map_err(map_io_error)?;
++        #[cfg(feature = "aerove-mobile")]
++        if operation.as_ref().is_some_and(|operation|!operation.active()) {return Err(std::io::ErrorKind::Interrupted.into());}
+         debug!(
+             "{} updated with {} proxies, same? {}",
+             self.name(),
+@@ -327,8 +339,13 @@
+         if !same && let Some(updater) = self.fetcher.on_update.as_ref() {
+             updater(ele).await;
+         }
++        #[cfg(feature = "aerove-mobile")]
++        if let Some(operation)=&operation {operation.success(crate::mobile::provider_loaded::Phase::Update,!same)?;}
+         Ok(())
+     }
++
++    #[cfg(feature = "aerove-mobile")]
++    fn loaded_revision(&self)->Result<Option<String>,()> {self.fetcher.loaded.as_ref().map_or(Ok(None),|observer|observer.revision())}
+ 
+     async fn as_map(&self) -> HashMap<String, Box<dyn ESerialize + Send>> {
+         let mut m: HashMap<String, Box<dyn ESerialize + Send>> = HashMap::new();
+--- a/clash-lib/src/app/remote_content_manager/providers/rule_provider/provider.rs
++++ b/clash-lib/src/app/remote_content_manager/providers/rule_provider/provider.rs
+@@ -178,6 +178,8 @@
+ 
+ pub struct RuleProviderImpl {
+     name: String,
++    #[cfg(feature = "aerove-mobile")]
++    loaded: Option<Arc<crate::mobile::provider_loaded::Observer>>,
+     fetcher: Option<Fetcher<RuleUpdater, RuleParser>>,
+     inner: Arc<tokio::sync::RwLock<Inner>>,
+     behavior: RuleSetBehavior,
+@@ -186,6 +188,11 @@
+ 
+     mmdb: Option<MmdbLookup>,
+     geodata: Option<GeoDataLookup>,
++}
++
++#[cfg(feature = "aerove-mobile")]
++impl Drop for RuleProviderImpl {
++    fn drop(&mut self) {if let Some(observer)=&self.loaded {observer.stop();}}
+ }
+ 
+ impl RuleProviderImpl {
+@@ -321,18 +328,25 @@
+         // A file/http vehicle always gets a fetcher so its content loads at
+         // startup, regardless of `interval` (file providers also live-reload
+         // via the watcher). Only inline providers (no vehicle) have none.
++        #[cfg(feature = "aerove-mobile")]
++        let loaded=crate::mobile::provider_loaded::Observer::capture(crate::mobile::provider_loaded::Kind::Rule,&name);
+         let fetcher = vehicle.map(|vehicle| {
+-            Fetcher::new(
++            let fetcher=Fetcher::new(
+                 name.clone(),
+                 interval.unwrap_or_default(),
+                 vehicle,
+                 parser,
+                 Some(updater),
+-            )
++            );
++            #[cfg(feature = "aerove-mobile")]
++            let fetcher={let mut fetcher=fetcher;fetcher.loaded=loaded.clone();fetcher};
++            fetcher
+         });
+ 
+         Self {
+             name,
++            #[cfg(feature = "aerove-mobile")]
++            loaded,
+             fetcher,
+             inner,
+             behavior,
+@@ -397,11 +411,15 @@
+     }
+ 
+     async fn initialize(&self) -> std::io::Result<()> {
++        #[cfg(feature = "aerove-mobile")]
++        let operation=match self.loaded.as_ref() {Some(observer)=>Some(observer.begin().await),None=>None};
+         debug!("initializing rule provider {}", self.name());
+ 
+         if let Some(fetcher) = &self.fetcher {
+             trace!("initializing rule provider {} with fetcher", self.name());
+             let ele = fetcher.initial().await.map_err(map_io_error)?;
++            #[cfg(feature = "aerove-mobile")]
++            if operation.as_ref().is_some_and(|operation|!operation.active()) {return Err(std::io::ErrorKind::Interrupted.into());}
+             if let Some(updater) = fetcher.on_update.as_ref() {
+                 updater(ele).await; // Directly pass RuleContent
+             }
+@@ -430,6 +448,8 @@
+                     #[cfg(feature = "aerove-mobile")]
+                     let _route_change = crate::mobile::telemetry::route_mutation();
+                     let mut inner = self.inner.write().await;
++                    #[cfg(feature = "aerove-mobile")]
++                    if operation.as_ref().is_some_and(|operation|!operation.active()) {return Err(std::io::ErrorKind::Interrupted.into());}
+                     inner.content = content;
+                     #[cfg(feature = "aerove-mobile")]
+                     crate::mobile::telemetry::structure_changed();
+@@ -446,22 +466,33 @@
+                 }
+             }
+         }
++        #[cfg(feature = "aerove-mobile")]
++        if let Some(operation)=&operation {operation.success(crate::mobile::provider_loaded::Phase::Initial,true)?;}
+         Ok(())
+     }
+ 
+     async fn update(&self) -> std::io::Result<()> {
++        #[cfg(feature = "aerove-mobile")]
++        let operation=match self.loaded.as_ref() {Some(observer)=>Some(observer.begin().await),None=>None};
+         if let Some(fetcher) = &self.fetcher {
+             let (ele, same) = fetcher.update().await.map_err(map_io_error)?;
++            #[cfg(feature = "aerove-mobile")]
++            if operation.as_ref().is_some_and(|operation|!operation.active()) {return Err(std::io::ErrorKind::Interrupted.into());}
+             debug!("rule provider {} updated. same? {}", self.name(), same);
+             if !same && let Some(updater) = fetcher.on_update.as_ref() {
+                 updater(ele).await; // Directly pass RuleContent
+             }
++            #[cfg(feature = "aerove-mobile")]
++            if let Some(operation)=&operation {operation.success(crate::mobile::provider_loaded::Phase::Update,!same)?;}
+         } else {
+             trace!("no fetcher for rule provider {}", self.name());
+         }
+ 
+         Ok(())
+     }
++
++    #[cfg(feature = "aerove-mobile")]
++    fn loaded_revision(&self)->Result<Option<String>,()> {self.loaded.as_ref().map_or(Ok(None),|observer|observer.revision())}
+ 
+     async fn as_map(&self) -> HashMap<String, Box<dyn ESerialize + Send>> {
+         let mut m: HashMap<String, Box<dyn ESerialize + Send>> = HashMap::new();

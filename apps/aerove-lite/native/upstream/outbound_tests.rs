@@ -11,6 +11,9 @@ pub fn with_runtime_lock(operation: impl FnOnce()) {
     operation();
 }
 
+#[path = "provider_loaded_tests.rs"]
+mod provider_loaded_tests;
+
 #[path = "telemetry_tests.rs"]
 mod telemetry_tests;
 
@@ -73,6 +76,7 @@ pub fn run(case: &str) {
     crate::proxy::utils::set_tcp_concurrent(true);
     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
         match case {
+            case if case.starts_with("provider-loaded-")=>provider_loaded_tests::run(case).await,
             case if case.starts_with("probe-")||case.starts_with("dial-")=>crate::mobile::probe_dial_tests::run(case).await,
             "outbound-direct"=>forced_direct().await,
             "reset-connections"=>reset_dns_connections().await,

@@ -696,3 +696,6 @@ mod wireguard_peer_tests;
 
 #[cfg(test)]
 mod shadowquic_peer_tests;
+
+#[cfg(test)]
+mod provider_loaded_tests;

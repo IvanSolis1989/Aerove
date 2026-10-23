@@ -80,6 +80,7 @@ pub struct ReadyInfo {
 pub mod resources;
 pub mod outbound;
 pub mod telemetry;
+pub(crate) mod provider_loaded;
 pub mod runtime_control;
 pub mod user_controller;
 #[cfg(feature="aerove-mobile-tests")]

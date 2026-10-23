@@ -29,11 +29,14 @@ enum Frame {
     Traffic(Traffic),
     #[serde(rename = "groupsChanged")]
     GroupsChanged { revision: u64 },
+    #[serde(rename = "providersLoaded")]
+    ProvidersLoaded { providers: Vec<super::provider_loaded::Loaded> },
     #[serde(rename = "observations")]
     Observations(super::observations::Window),
 }
 
 pub(crate) struct Bus {
+    pub(crate) providers: super::provider_loaded::Store,
     pub(crate) observations: Arc<super::observations::Collector>,
     traffic: watch::Sender<Traffic>,
     groups: watch::Sender<u64>,
@@ -82,6 +85,7 @@ struct Delay {
 impl Bus {
     pub(crate) fn new(cancel: CancellationToken) -> Arc<Self> {
         Arc::new(Self {
+            providers: super::provider_loaded::Store::new(),
             observations: super::observations::Collector::new(cancel.clone()),
             traffic: watch::channel(Traffic::default()).0,
             groups: watch::channel(0).0,
@@ -258,6 +262,9 @@ async fn stream(mut socket: WebSocket, bus: Arc<Bus>, cancel: CancellationToken,
         if !send(&mut socket, Frame::Observations(window), &bus, &cancel).await { return; }
     }
     let (mut traffic, mut groups) = bus.subscribe();
+    let mut providers=bus.providers.subscribe();
+    let mut provider_cursor=0u64;
+    let mut provider_pending=true;
     let sample = *traffic.borrow_and_update();
     let revision = *groups.borrow_and_update();
     if !send(&mut socket, Frame::Traffic(sample), &bus, &cancel).await
@@ -266,6 +273,16 @@ async fn stream(mut socket: WebSocket, bus: Arc<Bus>, cancel: CancellationToken,
         return;
     }
     loop {
+        if provider_pending {
+            drop(providers.borrow_and_update());
+            let Ok(pending_providers)=bus.providers.batch(provider_cursor) else {break;};
+            if !pending_providers.is_empty() {
+                let next=pending_providers.last().unwrap().revision.parse::<u64>().unwrap();
+                if !send(&mut socket,Frame::ProvidersLoaded {providers:pending_providers},&bus,&cancel).await {break;}
+                provider_cursor=next;continue;
+            }
+            provider_pending=false;
+        }
         // Register before inspecting the queue: a publication between inspection
         // and await must not strand an event until unrelated traffic arrives.
         let notified = bus.observations.changed.notified();
@@ -285,6 +302,10 @@ async fn stream(mut socket: WebSocket, bus: Arc<Bus>, cancel: CancellationToken,
                     Some(Ok(Message::Ping(_) | Message::Pong(_))) => continue,
                     _ => break,
                 }
+            }
+            changed = providers.changed() => {
+                if changed.is_err() {break;}
+                provider_pending=true;continue;
             }
             changed = groups.changed() => {
                 if changed.is_err() { break; }
