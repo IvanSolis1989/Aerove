@@ -47,6 +47,7 @@ pub struct ApiError(pub &'static str);
 
 pub struct CoreApi {
     pub state: Arc<AppState>,
+    pub control: Arc<crate::control::RouteControl>,
     private_scope: ApiLifecycle,
     user_scope: ApiLifecycle,
     private_router: Router,
@@ -66,6 +67,15 @@ impl CoreApi {
         private_secret: &str,
         user_secret: Option<&str>,
         aerove_router: Router,
+    ) -> Result<Self, ApiError> {
+        Self::assemble_with_epoch(config, tunnel, actual_mixed, private_secret, user_secret,
+            aerove_router, 1, CancellationToken::new())
+    }
+
+    pub fn assemble_with_epoch(
+        config: &meow_config::Config, tunnel: Tunnel, actual_mixed: SocketAddr,
+        private_secret: &str, user_secret: Option<&str>, aerove_router: Router,
+        epoch: u64, cancel: CancellationToken,
     ) -> Result<Self, ApiError> {
         if private_secret.len() < 32 || private_secret.len() > 512 || !private_secret.is_ascii()
             || private_secret.bytes().any(|c| c.is_ascii_control()) {
@@ -94,6 +104,9 @@ impl CoreApi {
             traffic_feed: Default::default(),
             dns_server: Arc::new(RwLock::new(None)),
         });
+        let control = crate::control::RouteControl::new(state.clone(), epoch, cancel)
+            .map_err(|_| ApiError("invalidCoreEpoch"))?;
+        let aerove_router = aerove_router.merge(crate::control::router(control.clone()));
         let authorization = HeaderValue::from_str(&format!("Bearer {private_secret}"))
             .map_err(|_| ApiError("invalidPrivateSecret"))?;
         let official = meow_api::routes::create_router(state.clone());
@@ -120,7 +133,7 @@ impl CoreApi {
             layer: meow_api::log_stream::LogBroadcastLayer { tx: state.log_tx.clone() },
             minimum: meow_api::log_stream::parse_log_level(&config.general.log_level),
         });
-        Ok(Self { state, private_scope, user_scope, private_router, user_router, log_sink })
+        Ok(Self { state, control, private_scope, user_scope, private_router, user_router, log_sink })
     }
 
     pub fn private_router(&self) -> Router { self.private_router.clone() }
@@ -149,6 +162,7 @@ impl CoreApi {
     }
 
     pub fn cancel(&self) {
+        self.control.cancel();
         self.private_scope.cancel();
         self.user_scope.cancel();
         self.state.traffic_feed.lifecycle.cancel();

@@ -29,10 +29,12 @@ Kotlin 的 `MeowRuntimeConfigComposer` 只形成候选配置和宿主计划，�
 已取得的真实证据分属不同源码图，不能相互替代：
 
 - 初始 Proxy 图的 5 项 Rust 用例，以及 ARM64、x86_64 真实链接和 16 KiB ELF 检查已通过。
-- 加入 API / WebSocket / QuickJS 后，13 项 host 用例在真实 CI 通过；对应双 Android ABI
-  在 `rquickjs-sys 0.12.2` 缺少 Android 预生成 bindings 处失败，尚未取得这张新图的 ELF。
-- 下一批采用同版本官方 `bindgen` feature，须实际加载 libclang、生成目标 bindings、核对新依赖锁并重验双 ABI。
-  它不替代后续 JNI、TUN、配置保真、共同功能、完整 APK 与设备验收。
+- 加入 API / WebSocket / QuickJS 后，13 项 host 用例在真实 CI 通过；双 ABI 曾因缺少 QuickJS Android
+  预生成 bindings 失败。已采用同版本官方 `bindgen`，真实加载 libclang 18，核对新锁与依赖边。
+- [锁定双 ABI 验证](https://github.com/IvanSolis1989/Aerove/actions/runs/39974811882)在源码
+  `230f41a5d9985bb8a993ae5e1cff13733171a91a` 成功：原 13 项 host 用例、API33/NDK28.2 真正生成绑定、
+  ARM64 / x86_64 链接、16 KiB ELF、四个已定义脚本 JNI 导出和动态依赖门禁全部通过；原产物收据已核。
+  这些只证明该源码图，不包含后续 FD / 控制变更，不替代完整运行 JNI、TUN、配置保真、共同功能、APK 与设备验收。
 
 ## 固定核心差异
 

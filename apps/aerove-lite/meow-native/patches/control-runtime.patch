@@ -1,0 +1,799 @@
+--- a/crates/meow-api/Cargo.toml
++++ b/crates/meow-api/Cargo.toml
+@@ -21,6 +21,7 @@
+ meow-rules = { workspace = true }
+ meow-listener = { workspace = true, default-features = false, optional = true }
+ tokio = { workspace = true }
++tokio-util = { workspace = true, features = ["rt"] }
+ axum = { workspace = true }
+ tower = { workspace = true }
+ tower-http = { workspace = true }
+--- a/crates/meow-api/src/lib.rs
++++ b/crates/meow-api/src/lib.rs
+@@ -3,6 +3,7 @@
+ //! Runtime control of proxies, rules, connections, config, traffic, and DNS,
+ //! plus the built-in web dashboard.
+ 
++pub mod lifecycle;
+ pub mod log_stream;
+ mod logbook;
+ pub mod routes;
+--- /dev/null
++++ b/crates/meow-api/src/lifecycle.rs
+@@ -0,0 +1,83 @@
++//! Runtime-scoped API tasks; upgrades acquire their lease before Axum spawns.
++use axum::{extract::ws::{WebSocket, WebSocketUpgrade}, http::StatusCode, response::{IntoResponse, Response}};
++use parking_lot::Mutex;
++use std::{future::Future, sync::Arc};
++use tokio_util::{sync::CancellationToken, task::{TaskTracker, task_tracker::TaskTrackerToken}};
++
++#[derive(Clone)]
++pub struct ApiLifecycle(Arc<Inner>);
++
++struct Inner {
++    admission: Mutex<bool>,
++    cancel: CancellationToken,
++    tasks: TaskTracker,
++}
++
++impl Default for ApiLifecycle {
++    fn default() -> Self {
++        Self(Arc::new(Inner {
++            admission: Mutex::new(true),
++            cancel: CancellationToken::new(),
++            tasks: TaskTracker::new(),
++        }))
++    }
++}
++
++impl ApiLifecycle {
++    fn lease(&self) -> Option<TaskTrackerToken> {
++        let open = self.0.admission.lock();
++        if !*open { return None; }
++        Some(self.0.tasks.token())
++    }
++
++    pub fn on_upgrade<F, Fut>(&self, ws: WebSocketUpgrade, callback: F) -> Response
++    where
++        F: FnOnce(WebSocket) -> Fut + Send + 'static,
++        Fut: Future<Output = ()> + Send + 'static,
++    {
++        let Some(lease) = self.lease() else {
++            return StatusCode::SERVICE_UNAVAILABLE.into_response();
++        };
++        let cancel = self.0.cancel.clone();
++        ws.on_upgrade(move |socket| async move {
++            let _lease = lease;
++            tokio::select! {
++                biased;
++                _ = cancel.cancelled() => {},
++                _ = callback(socket) => {},
++            }
++        })
++    }
++
++    pub fn spawn<F>(&self, task: F)
++    where F: Future<Output = ()> + Send + 'static {
++        let Some(lease) = self.lease() else { return; };
++        let cancel = self.0.cancel.clone();
++        tokio::spawn(async move {
++            let _lease = lease;
++            tokio::select! {
++                biased;
++                _ = cancel.cancelled() => {},
++                _ = task => {},
++            }
++        });
++    }
++
++    pub fn cancel(&self) {
++        let mut open = self.0.admission.lock();
++        *open = false;
++        self.0.cancel.cancel();
++        self.0.tasks.close();
++    }
++
++    pub async fn join(&self) {
++        self.0.tasks.wait().await;
++    }
++
++    pub async fn shutdown(&self) {
++        self.cancel();
++        self.join().await;
++    }
++
++    pub fn active_tasks(&self) -> usize { self.0.tasks.len() }
++}
+--- a/crates/meow-api/src/log_stream.rs
++++ b/crates/meow-api/src/log_stream.rs
+@@ -85,6 +85,10 @@
+         event: &tracing::Event<'_>,
+         _ctx: tracing_subscriber::layer::Context<'_, S>,
+     ) {
++        // Tokio can clone this waker while holding the same broadcast tail lock.
++        if event.metadata().target() == "tokio::task::waker" {
++            return;
++        }
+         // The broadcast sender exists for the process lifetime, but most
+         // deployments have no active /logs consumer. Avoid formatting fields,
+         // reading the clock, and constructing a heap-backed message when there
+--- a/crates/meow-api/src/routes.rs
++++ b/crates/meow-api/src/routes.rs
+@@ -61,6 +61,8 @@
+ #[derive(Default)]
+ pub struct TrafficFeed {
+     sender: std::sync::Mutex<Option<broadcast::Sender<Arc<str>>>>,
++    memory_sender: std::sync::Mutex<Option<broadcast::Sender<Arc<str>>>>,
++    pub lifecycle: crate::lifecycle::ApiLifecycle,
+ }
+ 
+ pub struct AppState {
+@@ -649,13 +651,16 @@
+     State(state): State<Arc<AppState>>,
+     Query(params): Query<ConnectionsParams>,
+     MaybeWebSocket(ws): MaybeWebSocket,
++    connection_scope: Option<axum::Extension<crate::lifecycle::ApiLifecycle>>,
+ ) -> Response {
+     let Some(interval_ms) = parse_connections_interval(params.interval.as_deref()) else {
+         return msg_err(StatusCode::BAD_REQUEST, "Body invalid");
+     };
+ 
+     if let Some(ws) = ws {
+-        return ws.on_upgrade(move |mut socket| async move {
++        let scope = connection_scope.map(|axum::Extension(scope)| scope)
++            .unwrap_or_else(|| state.traffic_feed.lifecycle.clone());
++        return scope.on_upgrade(ws, move |mut socket| async move {
+             if socket
+                 .send(Message::Text(connections_json(&state).await.into()))
+                 .await
+@@ -976,8 +981,9 @@
+     // the first frame's instantaneous rate.
+     state.tunnel.statistics().sample_traffic();
+ 
++    let lifecycle = state.traffic_feed.lifecycle.clone();
+     let state = Arc::clone(state);
+-    tokio::spawn(async move {
++    lifecycle.spawn(async move {
+         let mut ticker = tokio::time::interval(Duration::from_secs(1));
+         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+         ticker.tick().await;
+@@ -1005,10 +1011,13 @@
+ async fn get_traffic(
+     State(state): State<Arc<AppState>>,
+     MaybeWebSocket(ws): MaybeWebSocket,
++    connection_scope: Option<axum::Extension<crate::lifecycle::ApiLifecycle>>,
+ ) -> Response {
+     let feed = subscribe_traffic_feed(&state);
+     if let Some(ws) = ws {
+-        return ws.on_upgrade(move |mut socket| async move {
++        let scope = connection_scope.map(|axum::Extension(scope)| scope)
++            .unwrap_or_else(|| state.traffic_feed.lifecycle.clone());
++        return scope.on_upgrade(ws, move |mut socket| async move {
+             let mut feed = feed;
+             loop {
+                 let frame = match feed.recv().await {
+@@ -3763,6 +3772,7 @@
+     State(state): State<Arc<AppState>>,
+     Query(params): Query<LogsParams>,
+     MaybeWebSocket(ws): MaybeWebSocket,
++    connection_scope: Option<axum::Extension<crate::lifecycle::ApiLifecycle>>,
+ ) -> Response {
+     let level = match parse_requested_log_level(params.level.as_deref()) {
+         Ok(level) => level,
+@@ -3771,9 +3781,18 @@
+     let structured = params.format.as_deref() == Some("structured");
+     let mut rx = state.log_tx.subscribe();
+     if let Some(ws) = ws {
+-        return ws.on_upgrade(move |mut socket| async move {
++        let scope = connection_scope.map(|axum::Extension(scope)| scope)
++            .unwrap_or_else(|| state.traffic_feed.lifecycle.clone());
++        return scope.on_upgrade(ws, move |mut socket| async move {
+             loop {
+-                match rx.recv().await {
++                let message = tokio::select! {
++                    message = rx.recv() => message,
++                    incoming = socket.recv() => {
++                        if matches!(incoming, None | Some(Err(_)) | Some(Ok(Message::Close(_)))) { break; }
++                        continue;
++                    }
++                };
++                match message {
+                     Ok(msg) if msg.level >= level => {
+                         if socket
+                             .send(Message::Text(log_json(&msg, structured).into()))
+@@ -3817,32 +3836,33 @@
+ 
+ // upstream: hub/route/memory.go
+ //
+-// One process-wide sampler task reads RSS + limit and serialises the JSON
++// One runtime-scoped sampler task reads RSS + limit and serialises the JSON
+ // frame once per tick; every connected socket forwards the shared string
+ // (audit M8 — previously each socket sampled and serialised independently,
+ // per-socket per-tick). The sampler starts with the first subscriber and
+ // exits once the last socket disconnects, so an idle API server pays nothing.
+ // Model: the log websocket's single-serialisation broadcast fan-out.
+-static MEMORY_FEED: std::sync::Mutex<Option<broadcast::Sender<Arc<str>>>> =
+-    std::sync::Mutex::new(None);
+-
+-fn subscribe_memory_feed() -> broadcast::Receiver<Arc<str>> {
+-    let mut guard = MEMORY_FEED.lock().expect("memory feed lock poisoned");
++fn subscribe_memory_feed(state: &Arc<AppState>) -> broadcast::Receiver<Arc<str>> {
++    let mut guard = state.traffic_feed.memory_sender.lock().expect("memory feed lock poisoned");
+     if let Some(tx) = guard.as_ref() {
+         // Sampler still alive (it clears the slot under this lock on exit).
+         return tx.subscribe();
+     }
+     let (tx, rx) = broadcast::channel(2);
+     *guard = Some(tx.clone());
+-    tokio::spawn(async move {
++    drop(guard);
++    let lifecycle = state.traffic_feed.lifecycle.clone();
++    let state = Arc::clone(state);
++    lifecycle.spawn(async move {
+         let mut interval = tokio::time::interval(Duration::from_secs(1));
++        interval.tick().await;
+         loop {
+             interval.tick().await;
+             if tx.receiver_count() == 0 {
+                 // Re-check under the lock so a subscriber arriving right now
+                 // either sees the live sender or a cleared slot — never a
+                 // sender whose sampler has already exited.
+-                let mut guard = MEMORY_FEED.lock().expect("memory feed lock poisoned");
++                let mut guard = state.traffic_feed.memory_sender.lock().expect("memory feed lock poisoned");
+                 if tx.receiver_count() == 0 {
+                     *guard = None;
+                     break;
+@@ -3858,12 +3878,17 @@
+ }
+ 
+ async fn get_memory(
+-    State(_state): State<Arc<AppState>>,
++    State(state): State<Arc<AppState>>,
+     MaybeWebSocket(ws): MaybeWebSocket,
++    connection_scope: Option<axum::Extension<crate::lifecycle::ApiLifecycle>>,
+ ) -> Response {
+-    let first: Arc<str> = Arc::from("{\"inuse\":0,\"oslimit\":0}");
++    let inuse = read_rss_bytes().await;
++    let oslimit = read_os_memory_limit().await;
++    let first: Arc<str> = Arc::from(format!("{{\"inuse\":{inuse},\"oslimit\":{oslimit}}}"));
+     if let Some(ws) = ws {
+-        return ws.on_upgrade(move |mut socket| async move {
++        let scope = connection_scope.map(|axum::Extension(scope)| scope)
++            .unwrap_or_else(|| state.traffic_feed.lifecycle.clone());
++        return scope.on_upgrade(ws, move |mut socket| async move {
+             if socket
+                 .send(Message::Text(first.as_ref().into()))
+                 .await
+@@ -3871,7 +3896,7 @@
+             {
+                 return;
+             }
+-            let mut feed = subscribe_memory_feed();
++            let mut feed = subscribe_memory_feed(&state);
+             loop {
+                 let msg = match feed.recv().await {
+                     Ok(msg) => msg,
+@@ -3889,33 +3914,19 @@
+         });
+     }
+ 
+-    let feed = subscribe_memory_feed();
+-    let stream = futures::stream::unfold((Some(first), feed), |(first, mut feed)| async move {
+-        if let Some(first) = first {
+-            return Some((
+-                Ok::<String, std::convert::Infallible>(format!("{first}\n")),
+-                (None, feed),
+-            ));
+-        }
+-        loop {
+-            match feed.recv().await {
+-                Ok(msg) => {
+-                    return Some((
+-                        Ok::<String, std::convert::Infallible>(format!("{msg}\n")),
+-                        (None, feed),
+-                    ));
+-                }
+-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+-                Err(broadcast::error::RecvError::Closed) => return None,
+-            }
+-        }
+-    });
+-    Response::builder()
+-        .header(header::CONTENT_TYPE, "application/json")
+-        .body(Body::from_stream(stream))
+-        .expect("valid memory stream response")
+-}
+-
++    ([(header::CONTENT_TYPE, "application/json")], first.as_ref().to_owned()).into_response()
++}
++
++#[cfg(target_os = "android")]
++async fn read_rss_bytes() -> u64 {
++    let Ok(status) = tokio::fs::read_to_string("/proc/self/status").await else { return 0; };
++    status.lines().find_map(|line| {
++        let kb = line.strip_prefix("VmRSS:")?.split_whitespace().next()?.parse::<u64>().ok()?;
++        kb.checked_mul(1024)
++    }).unwrap_or(0)
++}
++
++#[cfg(not(target_os = "android"))]
+ async fn read_rss_bytes() -> u64 {
+     tokio::task::spawn_blocking(|| {
+         use sysinfo::{Pid, ProcessesToUpdate, System};
+--- a/crates/meow-common/src/adapter.rs
++++ b/crates/meow-common/src/adapter.rs
+@@ -231,6 +231,9 @@
+ pub trait ProxySelection: Send + Sync {
+     /// Validate and select a member by name.
+     async fn set(&self, name: &str) -> Result<()>;
++
++    async fn prepare(&self, name: &str) -> Result<Option<(Arc<dyn Proxy>, u16)>>;
++    fn commit(&self, name: &str, health: Option<(Arc<dyn Proxy>, u16)>) -> Result<()>;
+ 
+     /// Set or clear a selection without validation. This mirrors mihomo's
+     /// `SelectAble.ForceSet` and is used to unfix automatic groups before a
+--- a/crates/meow-config/src/lib.rs
++++ b/crates/meow-config/src/lib.rs
+@@ -3,6 +3,7 @@
+ //! Turns a Clash Meta-style `config.yaml` into typed structs consumed by
+ //! the tunnel, listeners, DNS, and API.
+ 
++pub mod owned_load;
+ pub mod auth;
+ pub mod dns_parser;
+ pub mod dropped_providers;
+@@ -45,6 +46,21 @@
+ use std::sync::Arc;
+ use tracing::{debug, info, warn};
+ 
++pub async fn load_config_from_str_owned(
++    content: &str, scope: &Arc<owned_load::OwnedLoadScope>,
++) -> Result<Config, anyhow::Error> {
++    let result = scope.run(async {
++        tokio::select! {
++            biased;
++            _ = scope.cancelled() => Err(anyhow::anyhow!("configLoadCancelled")),
++            result = load_config_from_str(content) => result,
++        }
++    }).await;
++    if result.is_err() {
++        scope.close().await.map_err(anyhow::Error::msg)?;
++    }
++    result
++}
+ pub(crate) async fn spawn_blocking_with_current_dispatcher<F, R>(
+     f: F,
+ ) -> Result<R, tokio::task::JoinError>
+@@ -53,7 +69,7 @@
+     R: Send + 'static,
+ {
+     let dispatch = tracing::dispatcher::get_default(Clone::clone);
+-    tokio::task::spawn_blocking(move || tracing::dispatcher::with_default(&dispatch, f)).await
++    crate::owned_load::spawn_blocking(move || tracing::dispatcher::with_default(&dispatch, f)).await
+ }
+ 
+ pub(crate) fn parse_optional_socket_addr(
+--- /dev/null
++++ b/crates/meow-config/src/owned_load.rs
+@@ -0,0 +1,249 @@
++use parking_lot::Mutex;
++use std::{cell::RefCell, collections::HashMap, future::Future, pin::Pin, sync::{Arc, atomic::{AtomicU64, Ordering}}};
++use tokio::{sync::Notify, task::{AbortHandle, JoinHandle}};
++
++tokio::task_local! { static CURRENT: Arc<OwnedLoadScope>; }
++thread_local! { static BLOCKING: RefCell<Option<Arc<OwnedLoadScope>>> = const { RefCell::new(None) }; }
++
++#[derive(Default)]
++struct Jobs { closed: bool, panicked: bool, tasks: HashMap<u64, Option<AbortHandle>>, threads: Vec<std::thread::JoinHandle<()>> }
++
++pub type OwnedWork = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
++pub trait LoadContext: Send + Sync {
++    fn wrap(&self, work: OwnedWork) -> OwnedWork;
++    fn run_blocking(&self, work: Box<dyn FnOnce() + Send>);
++}
++struct IdentityContext;
++impl LoadContext for IdentityContext {
++    fn wrap(&self, work: OwnedWork) -> OwnedWork { work }
++    fn run_blocking(&self, work: Box<dyn FnOnce() + Send>) { work(); }
++}
++pub struct OwnedLoadScope {
++    jobs: Mutex<Jobs>, changed: Notify, serial: AtomicU64, context: Arc<dyn LoadContext>,
++}
++
++struct Lease { owner: Arc<OwnedLoadScope>, id: u64 }
++impl Drop for Lease {
++    fn drop(&mut self) {
++        let mut jobs = self.owner.jobs.lock();
++        jobs.panicked |= std::thread::panicking();
++        jobs.tasks.remove(&self.id);
++        drop(jobs);
++        self.owner.changed.notify_waiters();
++    }
++}
++
++impl OwnedLoadScope {
++    pub fn new() -> Arc<Self> { Self::with_context(Arc::new(IdentityContext)) }
++    pub fn with_context(context: Arc<dyn LoadContext>) -> Arc<Self> {
++        Arc::new(Self { jobs: Mutex::new(Jobs::default()), changed: Notify::new(),
++            serial: AtomicU64::new(0), context })
++    }
++    pub fn current() -> Option<Arc<Self>> {
++        CURRENT.try_with(Arc::clone).ok().or_else(|| BLOCKING.with(|slot| slot.borrow().clone()))
++    }
++    pub fn is_cancelled(&self) -> bool { self.jobs.lock().closed }
++    pub async fn cancelled(&self) {
++        loop {
++            let changed = self.changed.notified();
++            tokio::pin!(changed);
++            changed.as_mut().enable();
++            if self.is_cancelled() { return; }
++            changed.await;
++        }
++    }
++    pub async fn run<F: Future>(self: &Arc<Self>, work: F) -> F::Output {
++        CURRENT.scope(self.clone(), work).await
++    }
++    fn lease(self: &Arc<Self>) -> Option<Lease> {
++        let id = self.serial.fetch_add(1, Ordering::Relaxed);
++        let mut jobs = self.jobs.lock();
++        if jobs.closed { return None; }
++        jobs.tasks.insert(id, None);
++        Some(Lease { owner: self.clone(), id })
++    }
++    pub fn cancel(&self) {
++        let mut jobs = self.jobs.lock();
++        jobs.closed = true;
++        for abort in jobs.tasks.values().flatten() { abort.abort(); }
++        self.changed.notify_waiters();
++    }
++    pub async fn close(&self) -> Result<(), &'static str> {
++        self.cancel();
++        loop {
++            let changed = self.changed.notified();
++            tokio::pin!(changed);
++            changed.as_mut().enable();
++            let finished = self.jobs.lock().tasks.is_empty();
++            if finished { break; }
++            changed.await;
++        }
++        let mut jobs = self.jobs.lock();
++        let mut failed = jobs.panicked;
++        for thread in jobs.threads.drain(..) { failed |= thread.join().is_err(); }
++        if failed { Err("providerThreadPanicked") } else { Ok(()) }
++    }
++}
++
++pub(crate) fn spawn<F>(work: F) -> JoinHandle<F::Output>
++where F: Future + Send + 'static, F::Output: Send + 'static {
++    let Some(owner) = OwnedLoadScope::current() else { return tokio::spawn(work); };
++    let Some(lease) = owner.lease() else {
++        return tokio::spawn(async { panic!("ownedLoadScopeClosed") });
++    };
++    let id = lease.id;
++    let wrapped = wrap_with(owner.clone(), work);
++    let task = tokio::spawn(async move { let _lease = lease; wrapped.await });
++    let mut jobs = owner.jobs.lock();
++    if jobs.closed { task.abort(); }
++    if let Some(slot) = jobs.tasks.get_mut(&id) { *slot = Some(task.abort_handle()); }
++    task
++}
++
++fn blocking_with<F, R>(owner: Arc<OwnedLoadScope>, work: F) -> R
++where F: FnOnce() -> R + Send + 'static, R: Send + 'static {
++    let result = Arc::new(Mutex::new(None));
++    let output = result.clone();
++    let context = owner.context.clone();
++    context.run_blocking(Box::new(move || {
++        BLOCKING.with(|slot| {
++            let prior = slot.replace(Some(owner));
++            struct Restore<'a>(&'a RefCell<Option<Arc<OwnedLoadScope>>>, Option<Arc<OwnedLoadScope>>);
++            impl Drop for Restore<'_> { fn drop(&mut self) { self.0.replace(self.1.take()); } }
++            let _restore = Restore(slot, prior);
++            *output.lock() = Some(work());
++        })
++    }));
++    let value = result.lock().take().expect("LoadContext must run blocking work");
++    value
++}
++
++fn wrap_with<F>(owner: Arc<OwnedLoadScope>, work: F) -> impl Future<Output = F::Output> + Send
++where F: Future + Send + 'static, F::Output: Send + 'static {
++    let result = Arc::new(Mutex::new(None));
++    let output = result.clone();
++    let context = owner.context.clone();
++    let wrapped = context.wrap(Box::pin(async move {
++        let value = owner.run(work).await;
++        *output.lock() = Some(value);
++    }));
++    async move {
++        wrapped.await;
++        let value = result.lock().take().expect("LoadContext must await async work");
++        value
++    }
++}
++
++pub(crate) fn wrap_current<F>(work: F) -> impl Future<Output = F::Output> + Send
++where F: Future + Send + 'static, F::Output: Send + 'static {
++    let owner = OwnedLoadScope::current();
++    async move {
++        match owner { Some(owner) => wrap_with(owner, work).await, None => work.await }
++    }
++}
++
++pub(crate) fn spawn_blocking<F, R>(work: F) -> JoinHandle<R>
++where F: FnOnce() -> R + Send + 'static, R: Send + 'static {
++    let Some(owner) = OwnedLoadScope::current() else { return tokio::task::spawn_blocking(work); };
++    let Some(lease) = owner.lease() else {
++        return tokio::spawn(async { panic!("ownedLoadScopeClosed") });
++    };
++    tokio::task::spawn_blocking(move || {
++        let _lease = lease;
++        blocking_with(owner, work)
++    })
++}
++
++pub(crate) fn spawn_thread<F>(builder: std::thread::Builder, work: F) -> std::io::Result<()>
++where F: FnOnce() + Send + 'static {
++    let owner = OwnedLoadScope::current();
++    let lease = match owner.as_ref() {
++        Some(owner) => Some(owner.lease().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Interrupted, "ownedLoadScopeClosed"))?),
++        None => None,
++    };
++    let mut jobs = owner.as_ref().map(|owner| owner.jobs.lock());
++    let context = owner.clone();
++    let thread = builder.spawn(move || {
++        let _lease = lease;
++        match context { Some(owner) => blocking_with(owner, work), None => work() }
++    })?;
++    if let Some(jobs) = jobs.as_mut() { jobs.threads.push(thread); }
++    Ok(())
++}
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::{future::{poll_fn, Future}, task::Poll};
++    use tokio::{net::TcpListener, sync::Notify};
++
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn real_initial_download_cancels_and_joins_before_successor() {
++        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let address = origin.local_addr().unwrap();
++        let accepted = Arc::new(Notify::new());
++        let connected = accepted.clone();
++        let server = tokio::spawn(async move {
++            use tokio::io::AsyncReadExt;
++            let (mut stream, _) = origin.accept().await.unwrap();
++            let mut bytes = [0; 4096];
++            assert!(stream.read(&mut bytes).await.unwrap() > 0);
++            connected.notify_one();
++            let mut received = Vec::new();
++            stream.read_to_end(&mut received).await.unwrap();
++        });
++        let scope = OwnedLoadScope::new();
++        let worker = scope.clone();
++        let yaml = format!("strict: true\nproxy-providers:\n  feed:\n    type: http\n    url: http://{address}/feed\n    interval: 0\nproxy-groups:\n  - name: PICK\n    type: select\n    use: [feed]\nrules: ['MATCH,PICK']\n");
++        let loading = tokio::spawn(async move { crate::load_config_from_str_owned(&yaml, &worker).await });
++        tokio::time::timeout(std::time::Duration::from_secs(5), accepted.notified()).await.unwrap();
++        scope.cancel();
++        assert!(loading.await.unwrap().is_err());
++        tokio::time::timeout(std::time::Duration::from_secs(5), scope.close()).await.unwrap().unwrap();
++        tokio::time::timeout(std::time::Duration::from_secs(5), server).await.unwrap().unwrap();
++        assert!(scope.jobs.lock().tasks.is_empty());
++        let successor = OwnedLoadScope::new();
++        crate::load_config_from_str_owned("strict: true\nrules: ['MATCH,DIRECT']\n", &successor).await.unwrap();
++        successor.close().await.unwrap();
++    }
++
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn real_rule_prefetch_cancel_joins_independent_runtime_thread() {
++        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let address = origin.local_addr().unwrap();
++        let accepted = Arc::new(Notify::new());
++        let connected = accepted.clone();
++        let server = tokio::spawn(async move {
++            use tokio::io::AsyncReadExt;
++            let (mut stream, _) = origin.accept().await.unwrap();
++            let mut bytes = [0; 4096];
++            assert!(stream.read(&mut bytes).await.unwrap() > 0);
++            connected.notify_one();
++            let mut received = Vec::new();
++            stream.read_to_end(&mut received).await.unwrap();
++        });
++        let scope = OwnedLoadScope::new();
++        let worker = scope.clone();
++        let yaml = format!("strict: true\nrule-providers:\n  feed:\n    type: http\n    behavior: domain\n    url: http://{address}/rules\n    interval: 0\nrules: ['RULE-SET,feed,DIRECT', 'MATCH,DIRECT']\n");
++        let loading = tokio::spawn(async move { crate::load_config_from_str_owned(&yaml, &worker).await });
++        tokio::time::timeout(std::time::Duration::from_secs(5), accepted.notified()).await.unwrap();
++        scope.cancel();
++        assert!(loading.await.unwrap().is_err());
++        tokio::time::timeout(std::time::Duration::from_secs(5), scope.close()).await.unwrap().unwrap();
++        tokio::time::timeout(std::time::Duration::from_secs(5), server).await.unwrap().unwrap();
++        assert!(scope.jobs.lock().tasks.is_empty());
++        assert!(scope.jobs.lock().threads.is_empty());
++    }
++    #[tokio::test]
++    async fn blocking_child_survives_cancelled_wait_and_must_finish_before_close() {
++        let scope = OwnedLoadScope::new();
++        let (release, wait) = std::sync::mpsc::channel::<()>();
++        scope.run(async { drop(spawn_blocking(move || { wait.recv().unwrap(); })); }).await;
++        let mut first = Box::pin(scope.close());
++        poll_fn(|cx| { assert!(first.as_mut().poll(cx).is_pending()); Poll::Ready(()) }).await;
++        drop(first);
++        let mut retry = Box::pin(scope.close());
++        poll_fn(|cx| { assert!(retry.as_mut().poll(cx).is_pending()); Poll::Ready(()) }).await;
++        release.send(()).unwrap();
++        retry.await.unwrap();
++    }
++}
+--- a/crates/meow-config/src/proxy_provider.rs
++++ b/crates/meow-config/src/proxy_provider.rs
+@@ -861,7 +861,7 @@
+     /// The task holds only a `Weak` between attempts, so a provider dropped
+     /// by a config commit — or an embedder shutting down — ends it.
+     pub fn spawn_initial_fetch(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+-        tokio::spawn(background_fetch_loop(Arc::downgrade(self)))
++        crate::owned_load::spawn(background_fetch_loop(Arc::downgrade(self)))
+     }
+ 
+     /// Parse a fetched provider payload into proxies.
+@@ -1332,7 +1332,7 @@
+             fetches.push((
+                 name.clone(),
+                 Arc::clone(&provider),
+-                tokio::spawn(async move { fetching.initial_load(strict).await }),
++                crate::owned_load::spawn(async move { fetching.initial_load(strict).await }),
+             ));
+         }
+         result.insert(name.clone(), provider);
+@@ -1363,7 +1363,7 @@
+                     "proxy-provider still fetching at the startup deadline; \
+                      starting empty and finishing in the background");
+                 provider.background_pending.store(true, Ordering::Relaxed);
+-                tokio::spawn(async move {
++                crate::owned_load::spawn(async move {
+                     if let Ok(Err(e)) = fetch.await {
+                         warn!(provider = %name, error = %e, "proxy-provider payload rejected");
+                     }
+--- a/crates/meow-config/src/rule_provider.rs
++++ b/crates/meow-config/src/rule_provider.rs
+@@ -429,7 +429,7 @@
+         if matches!(owed, InitialFetch::Settled) {
+             return None;
+         }
+-        Some(tokio::spawn(initial_fetch_loop(Arc::downgrade(self), owed)))
++        Some(crate::owned_load::spawn(initial_fetch_loop(Arc::downgrade(self), owed)))
+     }
+ 
+     fn owe(&self, owed: InitialFetch) {
+@@ -706,9 +706,9 @@
+     let deadline_at = deadline.and_then(|d| std::time::Instant::now().checked_add(d));
+     let worker_board = Arc::clone(&board);
+     let dispatch = tracing::dispatcher::get_default(Clone::clone);
+-    let spawned = std::thread::Builder::new()
+-        .name("rule-provider-fetch".to_string())
+-        .spawn(move || {
++    let fetch_scope = crate::owned_load::OwnedLoadScope::current();
++    let spawned = crate::owned_load::spawn_thread(std::thread::Builder::new()
++        .name("rule-provider-fetch".to_string()), move || {
+             tracing::dispatcher::with_default(&dispatch, || {
+                 let _abandon = AbandonRemaining(Arc::clone(&worker_board), count);
+                 let runtime = match tokio::runtime::Builder::new_current_thread()
+@@ -721,23 +721,36 @@
+                         return;
+                     }
+                 };
+-                runtime.block_on(async {
++                runtime.block_on(crate::owned_load::wrap_current(async move {
+                     let mut tasks = tokio::task::JoinSet::new();
+                     let mut indexes = HashMap::with_capacity(count);
+                     for (index, d) in downloads.into_iter().enumerate() {
+-                        let task = tasks.spawn(async move {
++                        let task = tasks.spawn(crate::owned_load::wrap_current(async move {
+                             internal_http::fetch(&d.url, d.proxy.as_ref(), &d.headers).await
+-                        });
++                        }));
+                         indexes.insert(task.id(), index);
+                     }
+-                    while let Some(joined) = tasks.join_next_with_id().await {
++                    loop {
++                        let joined = tokio::select! {
++                            biased;
++                            _ = async { match fetch_scope.as_ref() {
++                                Some(scope) => scope.cancelled().await,
++                                None => std::future::pending::<()>().await,
++                            } } => {
++                                tasks.abort_all();
++                                while tasks.join_next().await.is_some() {}
++                                break;
++                            }
++                            joined = tasks.join_next_with_id() => joined,
++                        };
++                        let Some(joined) = joined else { break; };
+                         let (id, result) = match joined {
+                             Ok((id, result)) => (id, result.map_err(|e| format!("{e:#}"))),
+                             Err(e) => (e.id(), Err(format!("download task failed: {e}"))),
+                         };
+                         worker_board.complete(indexes[&id], result);
+                     }
+-                });
++                }));
+             });
+         });
+     if let Err(e) = spawned {
+--- a/crates/meow-proxy/src/group/fallback.rs
++++ b/crates/meow-proxy/src/group/fallback.rs
+@@ -343,6 +343,25 @@
+         Ok(())
+     }
+ 
++    async fn prepare(&self, name: &str) -> Result<Option<(Arc<dyn Proxy>, u16)>> {
++        let proxy = self.find_member(name).ok_or_else(|| MeowError::Proxy("proxy not exist".into()))?;
++        if !proxy.alive_for_url(&self.test_url) {
++            let delay = crate::health::probe_without_record(&proxy, &self.test_url,
++                (!self.expected_status.is_empty()).then_some(self.expected_status.as_str()),
++                std::time::Duration::from_secs(5)).await.unwrap_or(0);
++            return Ok(Some((proxy, delay)));
++        }
++        Ok(None)
++    }
++    fn commit(&self, name: &str, health: Option<(Arc<dyn Proxy>, u16)>) -> Result<()> {
++        let proxy = self.find_member(name).ok_or_else(|| MeowError::Proxy("proxy not exist".into()))?;
++        if let Some((prepared, delay)) = health {
++            if !Arc::ptr_eq(&proxy, &prepared) { return Err(MeowError::Proxy("proxy changed during preparation".into())); }
++            proxy.health().record_delay(delay);
++        }
++        self.force_set(Some(name));
++        Ok(())
++    }
+     fn force_set(&self, name: Option<&str>) {
+         *self.fixed.write() = name.map(SmolStr::from);
+         if let Some(store) = &self.store {
+--- a/crates/meow-proxy/src/group/selector.rs
++++ b/crates/meow-proxy/src/group/selector.rs
+@@ -272,6 +272,12 @@
+         }
+     }
+ 
++    async fn prepare(&self, name: &str) -> Result<Option<(Arc<dyn Proxy>, u16)>> {
++        if self.contains_name(name) { Ok(None) } else { Err(MeowError::Proxy("proxy not exist".into())) }
++    }
++    fn commit(&self, name: &str, _health: Option<(Arc<dyn Proxy>, u16)>) -> Result<()> {
++        if self.select(name) { Ok(()) } else { Err(MeowError::Proxy("proxy not exist".into())) }
++    }
+     fn force_set(&self, name: Option<&str>) {
+         // SelectorGroup is a manual-pick group with no automatic fallback.
+         // Clearing (None) is intentionally a no-op — a selector without a
+--- a/crates/meow-proxy/src/group/urltest.rs
++++ b/crates/meow-proxy/src/group/urltest.rs
+@@ -459,6 +459,14 @@
+         Ok(())
+     }
+ 
++    async fn prepare(&self, name: &str) -> Result<Option<(Arc<dyn Proxy>, u16)>> {
++        if self.contains_name(name) { Ok(None) } else { Err(MeowError::Proxy("proxy not exist".into())) }
++    }
++    fn commit(&self, name: &str, _health: Option<(Arc<dyn Proxy>, u16)>) -> Result<()> {
++        if !self.contains_name(name) { return Err(MeowError::Proxy("proxy not exist".into())); }
++        self.force_set(Some(name));
++        Ok(())
++    }
+     fn force_set(&self, name: Option<&str>) {
+         *self.fixed.write() = name.map(SmolStr::from);
+         if let Some(store) = &self.store {
+--- a/crates/meow-proxy/src/health.rs
++++ b/crates/meow-proxy/src/health.rs
+@@ -101,6 +101,14 @@
+             Err(UrlTestError::Timeout)
+         }
+     }
++}
++
++pub async fn probe_without_record(
++    proxy: &Arc<dyn Proxy>, url: &str, expected: Option<&str>, timeout: Duration,
++) -> Result<u16, UrlTestError> {
++    let _permit = global_delay_probe_limiter().acquire().await
++        .expect("global delay probe semaphore is never closed");
++    url_test(proxy.as_ref(), url, expected, timeout).await
+ }
+ 
+ /// Probe a proxy and record the result in its [`ProxyHealth`].

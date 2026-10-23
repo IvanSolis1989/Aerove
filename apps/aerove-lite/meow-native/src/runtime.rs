@@ -60,6 +60,7 @@ pub struct Session {
     task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
     stop_gate: tokio::sync::Mutex<()>,
     tunnel: Mutex<Option<Tunnel>>,
+    control: Mutex<Option<Arc<crate::control::RouteControl>>>,
 }
 
 pub struct Registry;
@@ -92,7 +93,7 @@ impl Registry {
         });
         let session = Arc::new(Session { generation, cancel: CancellationToken::new(), state,
             task: tokio::sync::Mutex::new(None), stop_gate: tokio::sync::Mutex::new(()),
-            tunnel: Mutex::new(None) });
+            tunnel: Mutex::new(None), control: Mutex::new(None) });
         *owner = Arc::downgrade(&session);
         let worker = session.clone();
         // Store without an await so stop cannot overtake task registration.
@@ -135,7 +136,11 @@ impl Session {
     }
 
     pub async fn stop(&self) -> Result<Snapshot, Failure> {
-        self.cancel.cancel();
+        {
+            let control = self.control.lock();
+            if let Some(control) = control.as_ref() { control.cancel(); }
+            self.cancel.cancel();
+        }
         let _stop = self.stop_gate.lock().await;
         let mut task_slot = self.task.lock().await;
         if let Some(task) = task_slot.as_mut() {
@@ -154,6 +159,8 @@ impl Session {
         let outcome = self.serve(options).await;
         // All accepted transports have joined before either terminal receipt.
         let final_snapshot = self.snapshot();
+        let old_control = self.control.lock().take();
+        drop(old_control);
         let old = self.tunnel.lock().take();
         drop(old);
         self.state.send_modify(|s| {
@@ -199,17 +206,26 @@ impl Session {
         if self.cancel.is_cancelled() { return Ok(()); }
         let aerove_router = Router::new().route("/aerove/runtime", get(api_snapshot))
             .with_state(ApiState { session: Arc::downgrade(self), secret: options.secret.clone() });
-        let core_api = crate::api::CoreApi::assemble(&config, tunnel.clone(), mixed_addr,
-            &options.secret, None, aerove_router);
+        let core_api = crate::api::CoreApi::assemble_with_epoch(&config, tunnel.clone(), mixed_addr,
+            &options.secret, None, aerove_router, self.generation, self.cancel.clone());
         let core_api = core_api.map_err(|error| Failure::new(error.0))?;
+        {
+            let mut control = self.control.lock();
+            if self.cancel.is_cancelled() { core_api.control.cancel(); }
+            *control = Some(core_api.control.clone());
+        }
         core_api.install_log_sink().map_err(|error| Failure::new(error.0))?;
         tunnel.update_routing(config.proxies, config.rules, config.dialer_registry);
         *self.tunnel.lock() = Some(tunnel.clone());
         let router = core_api.private_router();
-        self.state.send_modify(|s| {
-            s.phase = Phase::Running; s.api_address = Some(api_addr); s.mixed_address = Some(mixed_addr);
-            s.api_ready = true; s.user_listeners_ready = true;
-        });
+        {
+            let _control_admission = self.control.lock();
+            self.state.send_modify(|s| {
+                if self.cancel.is_cancelled() { return; }
+                s.phase = Phase::Running; s.api_address = Some(api_addr); s.mixed_address = Some(mixed_addr);
+                s.api_ready = true; s.user_listeners_ready = true;
+            });
+        }
         let mut children = JoinSet::new();
         let outcome = loop {
             tokio::select! {
@@ -276,10 +292,11 @@ fn validate_candidate(yaml: &str) -> Result<(), Failure> {
     // This isolated candidate does not admit features whose task owners are not migrated yet.
     for key in map.keys() {
         let key = key.as_str().ok_or_else(|| Failure::new("invalidConfig"))?;
-        if !["mode", "rules", "dns", "ipv6", "strict", "hosts", "connection-notes", "authentication", "log-level"].contains(&key) {
+        if !["mode", "rules", "dns", "ipv6", "strict", "hosts", "connection-notes", "authentication", "log-level", "proxy-groups"].contains(&key) {
             return Err(Failure::field(key));
         }
     }
+    if let Some(groups) = map.get(&serde_yaml::Value::String("proxy-groups".into())) { validate_leaf_groups(groups)?; }
     if map.get(&serde_yaml::Value::String("strict".into())).and_then(|v| v.as_bool()) != Some(true) {
         return Err(Failure::new("candidateRequiresStrictConfig"));
     }
@@ -287,6 +304,39 @@ fn validate_candidate(yaml: &str) -> Result<(), Failure> {
         .and_then(|v| v.as_mapping())
         .is_some_and(|dns| dns.contains_key(&serde_yaml::Value::String("listen".into()))) {
         return Err(Failure::field("dns.listen"));
+    }
+    Ok(())
+}
+
+fn validate_leaf_groups(groups: &serde_yaml::Value) -> Result<(), Failure> {
+    use serde_yaml::Value;
+    let groups = groups.as_sequence().ok_or_else(|| Failure::field("proxy-groups"))?;
+    let mut names = std::collections::BTreeSet::from(["DIRECT", "REJECT"]);
+    for group in groups {
+        let group = group.as_mapping().ok_or_else(|| Failure::field("proxy-groups"))?;
+        let get = |name: &str| group.get(&Value::String(name.into()));
+        let name = get("name").and_then(Value::as_str).filter(|name| !name.is_empty())
+            .ok_or_else(|| Failure::field("proxy-groups.name"))?;
+        if !names.insert(name) { return Err(Failure::field("proxy-groups.name")); }
+        let kind = get("type").and_then(Value::as_str).ok_or_else(|| Failure::field("proxy-groups.type"))?;
+        if !matches!(kind, "select" | "fallback") { return Err(Failure::field("proxy-groups.type")); }
+        for key in group.keys() {
+            let key = key.as_str().ok_or_else(|| Failure::field("proxy-groups"))?;
+            if !matches!(key, "name" | "type" | "proxies" | "hidden" | "icon")
+                && !(kind == "fallback" && matches!(key, "interval" | "url" | "expected-status")) {
+                return Err(Failure::field(&format!("proxy-groups.{key}")));
+            }
+        }
+        let members = get("proxies").and_then(Value::as_sequence).filter(|members| !members.is_empty())
+            .ok_or_else(|| Failure::field("proxy-groups.proxies"))?;
+        if members.iter().any(|member| !matches!(member.as_str(), Some("DIRECT" | "REJECT"))) {
+            return Err(Failure::field("proxy-groups.proxies"));
+        }
+        if kind == "fallback" && get("interval").and_then(Value::as_u64) != Some(0) {
+            return Err(Failure::field("proxy-groups.interval"));
+        }
+        if get("url").is_some_and(|v| v.as_str().is_none()) || get("icon").is_some_and(|v| v.as_str().is_none())
+            || get("hidden").is_some_and(|v| v.as_bool().is_none()) { return Err(Failure::field("proxy-groups")); }
     }
     Ok(())
 }
@@ -309,7 +359,7 @@ mod tests {
         let session = Session {
             generation: 1, cancel: CancellationToken::new(), state,
             task: tokio::sync::Mutex::new(None), stop_gate: tokio::sync::Mutex::new(()),
-            tunnel: Mutex::new(None),
+            tunnel: Mutex::new(None), control: Mutex::new(None),
         };
         let cleanup_started = Arc::new(Notify::new());
         let cleanup_release = Arc::new(Notify::new());
@@ -340,5 +390,88 @@ mod tests {
         cleanup_release.notify_one();
         assert_eq!(retry.await.unwrap().phase, Phase::Stopped);
         assert!(session.task.lock().await.is_none());
+    }
+
+    #[test]
+    fn candidate_leaf_group_admission_rejects_health_workers_and_nested_members() {
+        for group in ["{name: PICK, type: select, proxies: [DIRECT, REJECT]}",
+            "{name: FALLBACK, type: fallback, interval: 0, proxies: [DIRECT, REJECT]}"] {
+            assert!(validate_candidate(&format!("strict: true\nproxy-groups: [{group}]\n")).is_ok());
+        }
+        for group in ["{name: FALLBACK, type: fallback, proxies: [DIRECT]}",
+            "{name: FALLBACK, type: fallback, interval: 1, proxies: [DIRECT]}",
+            "{name: FALLBACK, type: fallback, interval: '0', proxies: [DIRECT]}",
+            "{name: PICK, type: select, proxies: [OTHER]}",
+            "{name: PICK, type: select, proxies: [DIRECT], use: [provider]}",
+            "{name: PICK, type: select, proxies: [DIRECT], include-all: true}",
+            "{name: AUTO, type: url-test, interval: 0, proxies: [DIRECT]}",
+            "{name: DIRECT, type: select, proxies: [REJECT]}"] {
+            assert!(validate_candidate(&format!("strict: true\nproxy-groups: [{group}]\n")).is_err());
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn registry_stop_cancels_real_http_fallback_prepare_without_committing() {
+        use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream}, sync::Notify};
+        use std::{sync::Arc, time::Duration};
+        let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target_address = target.local_addr().unwrap();
+        let requested = Arc::new(Notify::new());
+        let request_seen = requested.clone();
+        let target_task = tokio::spawn(async move {
+            let (mut socket, _) = target.accept().await.unwrap();
+            let mut headers = Vec::new();
+            while !headers.ends_with(b"\r\n\r\n") {
+                headers.push(socket.read_u8().await.unwrap());
+                assert!(headers.len() < 8192);
+            }
+            request_seen.notify_one();
+            let mut byte = [0];
+            assert_eq!(socket.read(&mut byte).await.unwrap(), 0);
+        });
+        let secret = "registry-fallback-private-secret-00001";
+        let yaml = format!("strict: true\nproxy-groups:\n  - name: FALLBACK\n    type: fallback\n    interval: 0\n    url: http://{target_address}/health\n    proxies: [DIRECT, REJECT]\nrules: ['MATCH,FALLBACK']\n");
+        let session = Registry::start(StartOptions { config_yaml: yaml.clone(), private_api: "127.0.0.1:0".parse().unwrap(),
+            mixed: "127.0.0.1:0".parse().unwrap(), secret: secret.into() }).unwrap();
+        let ready = tokio::time::timeout(Duration::from_secs(10), session.ready()).await.unwrap().unwrap();
+        let tunnel = session.tunnel.lock().as_ref().unwrap().clone();
+        let control = session.control.lock().as_ref().unwrap().clone();
+        let route = tunnel.route_snapshot();
+        let group = route.proxies.get("FALLBACK").unwrap();
+        let direct = route.proxies.get("DIRECT").unwrap();
+        direct.health().record_delay(0);
+        let before = control.snapshot().await.unwrap();
+        assert_eq!(before.picks["FALLBACK"], "REJECT");
+        assert_eq!(before.picks_version, "0");
+        let api_address = ready.api_address.unwrap();
+        let client_task = tokio::spawn(async move {
+            let mut socket = TcpStream::connect(api_address).await.unwrap();
+            let body = "{\"name\":\"DIRECT\"}";
+            socket.write_all(format!("PUT /aerove/selection/FALLBACK HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {secret}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+            let mut response = String::new();
+            match socket.read_to_string(&mut response).await {
+                Ok(_) => {},
+                Err(error) => assert!(matches!(error.kind(), std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::UnexpectedEof)),
+            }
+            assert!(!response.starts_with("HTTP/1.1 200"), "{response}");
+        });
+        tokio::time::timeout(Duration::from_secs(3), requested.notified()).await.unwrap();
+        assert_eq!(group.selection().unwrap().fixed().as_deref(), Some(""));
+        assert!(!direct.alive());
+        let stopped = tokio::time::timeout(Duration::from_secs(5), session.stop()).await.unwrap().unwrap();
+        assert_eq!(stopped.phase, Phase::Stopped);
+        assert_eq!(group.selection().unwrap().fixed().as_deref(), Some(""));
+        assert!(!direct.alive());
+        assert_eq!(group.current().as_deref(), Some("REJECT"));
+        assert_eq!(control.snapshot().await, Err(crate::control::ControlError::Cancelled));
+        tokio::time::timeout(Duration::from_secs(3), client_task).await.unwrap().unwrap();
+        tokio::time::timeout(Duration::from_secs(3), target_task).await.unwrap().unwrap();
+        let successor = Registry::start(StartOptions { config_yaml: yaml, private_api: api_address,
+            mixed: ready.mixed_address.unwrap(), secret: secret.into() }).unwrap();
+        assert!(successor.generation() > session.generation());
+        tokio::time::timeout(Duration::from_secs(10), successor.ready()).await.unwrap().unwrap();
+        let successor_control = successor.control.lock().as_ref().unwrap().clone();
+        assert_eq!(successor_control.snapshot().await.unwrap().picks_version, "0");
+        tokio::time::timeout(Duration::from_secs(5), successor.stop()).await.unwrap().unwrap();
     }
 }

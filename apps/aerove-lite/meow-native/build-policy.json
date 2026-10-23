@@ -1,13 +1,15 @@
 {
   "schema": 1,
-  "manifestSha256": "451c2d6177d8281b0e817fb152f21dd333e47cd94e77cfcb37a6cdab1fc634ac",
-  "resolveLock": false,
+  "manifestSha256": "25b5102567a699428eb3a3ddd3f7802497de92e3b1883f9d59260ca28e4709d4",
+  "resolveLock": true,
   "expectedLockBeforeSha256": "25d1a5c991670f7157b9a5c8bf9876bf625efbde33720edf176f27ebcd791226",
   "targets": [
     "lib",
     "proxy_runtime",
-    "api_lifecycle"
+    "api_lifecycle",
+    "control_plane",
+    "packet_fd"
   ],
-  "overlay": "source-metadata/api-lifecycle.json",
-  "overlaySha256": "b95942366ed958f2dbd1703d61fa4a6823ddfd460f060faa18254eed0de19c9c"
+  "overlay": "source-metadata/control-runtime.json",
+  "overlaySha256": "85f8226919cc6b6135c2550696cbb8da08cdc25abdfe8eda4b30f906f5bf22b2"
 }
