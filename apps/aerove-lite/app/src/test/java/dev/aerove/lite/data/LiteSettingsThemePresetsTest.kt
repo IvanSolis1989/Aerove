@@ -239,13 +239,18 @@ class LiteSettingsThemePresetsTest {
         val before = file.readBytes()
         val huge = LiteSettings(themeColor = 0xFF000000L, themeColors = List(20000) { 0xFF000000L + it })
         val invalid = listOf(huge, LiteSettings(themeColor = -1L, followSystemColor = true),
-            LiteSettings(autoStart = true), LiteSettings(dnsServers = listOf("system")),
-            LiteSettings(appFilterMode = AppFilterMode.Include))
+            LiteSettings(autoStart = true), LiteSettings(dnsServers = listOf("system")))
         invalid.forEach { settings ->
             assertThrows(IllegalArgumentException::class.java) { runBlocking { store.save(settings) } }
             assertArrayEquals(before, file.readBytes())
         }
         assertEquals(LiteSettings(), store.read())
+        store.save(store.read().copy(appFilterMode = AppFilterMode.Include, packages = emptySet()))
+        val included = store.read()
+        assertEquals(AppFilterMode.Include, included.appFilterMode)
+        val applications = dev.aerove.lite.vpn.vpnApplicationPolicy(included.appFilterMode, included.packages, "dev.aerove.lite")
+        assertEquals(setOf("dev.aerove.lite"), applications.allowed)
+        assertTrue(applications.disallowed.isEmpty())
         file.writeText(" ".repeat(128 * 1024 + 1))
         assertThrows(java.io.IOException::class.java) { runBlocking { store.read() } }
     }

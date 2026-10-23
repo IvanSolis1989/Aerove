@@ -338,6 +338,21 @@ class ApkInspectionTests(unittest.TestCase):
                 missing = dict(host);missing.pop(omitted)
                 with self.subTest(omitted=omitted),self.assertRaisesRegex(ValueError,'feature boundary proof'):
                     module.validate_native_receipt(missing,root=root)
+            new_targets = list(module.HOST_NO_FAIL_FAST_TARGETS)
+            next_policy = dict(feature_policy,targets=new_targets)
+            next_command = ['cargo','test','--locked','--no-fail-fast']
+            for target in new_targets:
+                next_command += ['--lib'] if target == 'lib' else ['--test',target]
+            next_command += ['--','--test-threads=1','--nocapture']
+            next_host = dict(host,buildPolicySha256=write('build-policy.json',next_policy),
+                representativeTargets=new_targets,command=next_command)
+            module.validate_native_receipt(next_host,root=root)
+            for command in [next_command[:3]+next_command[4:],next_command[:3]+next_command[4:-3]+['--no-fail-fast']+next_command[-3:]]:
+                with self.subTest(command=command),self.assertRaisesRegex(ValueError,'complete approved suite'):
+                    module.validate_native_receipt(dict(next_host,command=command),root=root)
+            unsupported = dict(next_policy,targets=new_targets[:-1])
+            with self.assertRaisesRegex(ValueError,'target contract'):
+                module.validate_native_receipt(dict(next_host,buildPolicySha256=write('build-policy.json',unsupported)),root=root)
             for unknown in ['other',None,True]:
                 write('build-policy.json',dict(policy,featureBoundary=unknown))
                 with self.subTest(unknown=unknown),self.assertRaisesRegex(ValueError,'Unknown Meow feature boundary'):

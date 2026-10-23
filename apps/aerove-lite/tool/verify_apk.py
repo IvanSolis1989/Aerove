@@ -23,6 +23,16 @@ CORE_JNI_SYMBOLS = tuple("Java_dev_aerove_lite_core_MeowNativeCore_" + name for 
     ("Begin", "Evaluate", "Cancel", "Release"))
 
 
+HOST_NO_FAIL_FAST_TARGETS = (
+    'lib', 'api_lifecycle', 'config_validation', 'control_plane',
+    'general_groups', 'host_policy_runtime', 'node_delay', 'offline_scope',
+    'owned_runtime', 'owned_spawn', 'packet_fd', 'physical_dns',
+    'provider_events', 'provider_files', 'provider_rules', 'proxy_runtime',
+    'request_policy', 'resource_roots', 'runtime_transports', 'transport_tasks',
+    'tun_driver',
+)
+
+
 def native_identity(root=MEOW_ROOT):
     root = Path(root)
     spec = json.loads((root / "source.json").read_text())
@@ -75,7 +85,11 @@ def validate_native_receipt(receipt_path, abi=None, image=None, root=MEOW_ROOT, 
     if abi is None:
         policy = json.loads((Path(root)/"build-policy.json").read_text())
         targets = policy["targets"]
+        if "node_delay" in targets and tuple(targets) != HOST_NO_FAIL_FAST_TARGETS:
+            raise ValueError("Unrecognized Meow no-fail-fast target contract")
         command = ["cargo", "test", "--locked"]
+        if tuple(targets) == HOST_NO_FAIL_FAST_TARGETS:
+            command.append("--no-fail-fast")
         for target in targets:
             command += ["--lib"] if target == "lib" else ["--test", target]
         command += ["--", "--test-threads=1", "--nocapture"]

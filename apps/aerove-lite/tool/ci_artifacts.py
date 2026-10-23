@@ -1,14 +1,22 @@
-"""Same-run transport of immutable build inputs; never builds or rewrites APK identity."""
+"""Prepare and transport immutable native/helper inputs; never rewrite APK identity."""
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path, PurePosixPath
 import shutil
 import subprocess
+import sys
 from lite_release import download_artifact, _gh_json, PromotionError
 from verify_apk import native_identity, validate_native_receipt, CORE_LIBRARY, MEOW_ROOT, CORE_JNI_SYMBOLS, exported_functions, valid_elf64_shared_object
 
+
+HOST_ASSESSMENT_ROOT = Path(__file__).with_name('regexp2-assessment')
+HOST_ASSESSMENT_HASHES = {
+    'cases.json': '8bba42374ab04a1480715ee867e6cab38071e7bdc0d67e7adc6a366927ba0539',
+    'regexp2-v1.12.0.json': '72b01f624f820a1a8dcb30c14f7d03cee4ec9d0a062a359e30474864afa79e49',
+}
 
 def identity():
     return dict(sourceRevision=os.environ['GITHUB_SHA'],
@@ -20,6 +28,17 @@ def identity():
 def digest(path):
     with path.open('rb') as source:
         return hashlib.file_digest(source, 'sha256').hexdigest()
+
+
+def assessment_identity(directory):
+    directory = Path(directory)
+    if directory.is_symlink() or not directory.is_dir():
+        raise PromotionError('Pinned regexp2 assessment corpus identity mismatch')
+    paths = list(directory.iterdir())
+    value = {p.name: digest(p) for p in paths if p.is_file() and not p.is_symlink()}
+    if value != HOST_ASSESSMENT_HASHES or any(not p.is_file() or p.is_symlink() for p in paths):
+        raise PromotionError('Pinned regexp2 assessment corpus identity mismatch')
+    return value
 
 
 def seal(directory, abi, expected):
@@ -107,12 +126,84 @@ def native_build(target, abi, ndk):
     shutil.copyfile(build / abi / CORE_LIBRARY, destination / CORE_LIBRARY)
 
 
+def host_helper(go, staging, destination, receipt_path):
+    """Build the real JVM helper from the production checksum-verified patched staging."""
+    root = Path.cwd(); source = root / 'apps/aerove-lite/regexp2'
+    staging, destination, receipt_path = Path(staging).resolve(), Path(destination).resolve(), Path(receipt_path)
+    assessment_destination = staging.parent / 'regexp2-assessment'
+    if staging.exists() or destination.exists() or receipt_path.exists() or assessment_destination.exists():
+        raise PromotionError('Host helper staging, output and receipt must be new')
+    if (receipt_path.resolve().is_relative_to(source.resolve())
+            or receipt_path.resolve().is_relative_to(HOST_ASSESSMENT_ROOT.resolve())
+            or receipt_path.resolve().is_relative_to(staging) or receipt_path.resolve().is_relative_to(destination)
+            or staging.is_relative_to(source.resolve()) or destination.is_relative_to(source.resolve())
+            or staging.is_relative_to(destination) or destination.is_relative_to(staging)):
+        raise PromotionError('Host helper paths overlap source or each other')
+    spec = importlib.util.spec_from_file_location('lite_production_helper_build', source / 'build.py')
+    builder = importlib.util.module_from_spec(spec); spec.loader.exec_module(builder)
+    inputs = builder.input_identity(source)
+    fixtures = source / 'agebridge/testdata'
+    provenance = json.loads((fixtures / 'provenance.json').read_text())
+    fixture_names = {'hybrid.age', 'hybrid.identity', 'profile.yaml', 'wrong.identity', 'x25519.age', 'x25519.identity'}
+    fixture_hashes = {}
+    for item in provenance['files']:
+        name = item['name']; path = fixtures / name
+        if (name not in fixture_names or name in fixture_hashes or path.is_symlink()
+                or not path.is_file() or digest(path) != item['sha256']):
+            raise PromotionError('Pinned age interoperability fixture identity mismatch')
+        fixture_hashes[name] = item['sha256']
+    if set(fixture_hashes) != fixture_names:
+        raise PromotionError('Pinned age interoperability fixtures are incomplete')
+    environment = dict(os.environ, GOTOOLCHAIN='local', GOSUMDB='off', CGO_ENABLED='0')
+    for key in ('GOOS', 'GOARCH', 'GOFLAGS', 'CC', 'CXX'):
+        environment.pop(key, None)
+    version = subprocess.check_output([str(go), 'version'], env=environment, text=True).strip()
+    if not version.startswith('go version go1.27.1 '):
+        raise PromotionError('Pinned Go 1.27.1 is required for the host helper')
+    assessment_inputs = assessment_identity(HOST_ASSESSMENT_ROOT)
+    assessment_destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(HOST_ASSESSMENT_ROOT, assessment_destination)
+    subprocess.run([sys.executable, str(source / 'build.py'), '--go', str(go), '--test-only',
+        '--staging', str(staging)], env=environment, check=True)
+    # build.py validates module sums/source/patches and tests the same service used
+    # by Android; compiling directly in the source checkout would bypass that patch.
+    destination.mkdir(parents=True)
+    commands, outputs = [], {}
+    for target in ('hostverify', 'ageverify'):
+        executable = destination / (target + ('.exe' if os.name == 'nt' else ''))
+        command = [str(go), 'build', '-mod=readonly', '-trimpath', '-o', str(executable), './cmd/' + target]
+        subprocess.run(command, cwd=staging, env=environment, check=True)
+        if executable.is_symlink() or not executable.is_file() or executable.stat().st_size == 0:
+            raise PromotionError('Host helper build did not produce a real executable: ' + target)
+        commands.append(command)
+        outputs[target] = dict(path=str(executable), bytes=executable.stat().st_size, sha256=digest(executable))
+    if builder.input_identity(source) != inputs:
+        raise PromotionError('Host helper production source inputs changed during build')
+    if (assessment_identity(HOST_ASSESSMENT_ROOT) != assessment_inputs
+            or assessment_identity(assessment_destination) != assessment_inputs):
+        raise PromotionError('Host helper assessment corpus changed during build')
+    value = dict(identity(), go=version, commands=commands, productionBuilderSha256=digest(source / 'build.py'),
+        **inputs, outputs=outputs, assessmentCorpus=dict(source=str(HOST_ASSESSMENT_ROOT), staged=str(assessment_destination),
+            files=assessment_inputs), ciWrapperSha256=digest(Path(__file__)),
+        ageFixtures=dict(path=str(fixtures), files=fixture_hashes,
+            provenanceSha256=digest(fixtures / 'provenance.json')))
+    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    receipt_path.write_text(json.dumps(value, indent=2)+'\n')
+    return value
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=['seal', 'fetch', 'runtime', 'native', 'admission', 'host'])
+    parser.add_argument('action', choices=['seal', 'fetch', 'runtime', 'native', 'admission', 'host', 'host-helper'])
     parser.add_argument('--directory'); parser.add_argument('--destination'); parser.add_argument('--name'); parser.add_argument('--abi')
     parser.add_argument('--target'); parser.add_argument('--ndk')
+    parser.add_argument('--go'); parser.add_argument('--receipt')
     args = parser.parse_args()
+    if args.action == 'host-helper':
+        if not all((args.go, args.directory, args.destination, args.receipt)):
+            parser.error('Host helper requires --go, --directory, --destination and --receipt')
+        print(json.dumps(host_helper(args.go, args.directory, args.destination, args.receipt)))
+        return
     if args.action in {'admission', 'host'}:
         native_identity()
         subprocess.run(['git', 'diff', '--exit-code', 'HEAD', '--', 'apps/aerove-lite/meow-native'], check=True)

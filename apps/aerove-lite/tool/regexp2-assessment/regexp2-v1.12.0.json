@@ -1,0 +1,92 @@
+[
+  {
+    "name": "class-subtraction",
+    "matches": {
+      "-": false,
+      "a": false,
+      "b": true
+    }
+  },
+  {
+    "name": "conditional",
+    "matches": {
+      "ab": true,
+      "ac": false,
+      "c": true
+    }
+  },
+  {
+    "name": "comment",
+    "matches": {
+      "JP": true,
+      "US": false
+    }
+  },
+  {
+    "name": "single-quote-named-capture",
+    "matches": {
+      "JPJP": true,
+      "JPUS": false
+    }
+  },
+  {
+    "name": "capture-numbering",
+    "matches": {
+      "aba": false,
+      "abb": true
+    }
+  },
+  {
+    "name": "unicode-digits",
+    "matches": {
+      "123": true,
+      "١٢٣": true
+    }
+  },
+  {
+    "name": "unicode-word",
+    "matches": {
+      "abc": true,
+      "日本": true
+    }
+  },
+  {
+    "name": "unicode-case",
+    "matches": {
+      "K": true,
+      "k": true,
+      "K": true
+    }
+  },
+  {
+    "name": "duplicate-names",
+    "matches": {
+      "a": true,
+      "b": true
+    }
+  },
+  {
+    "name": "balancing-groups",
+    "matches": {
+      "oc": true,
+      "occ": false,
+      "ooc": false,
+      "oocc": true
+    }
+  },
+  {
+    "name": "explicit-capture",
+    "matches": {
+      "aba": false,
+      "abb": true
+    }
+  },
+  {
+    "name": "lookaround-preset",
+    "matches": {
+      "CHKS 1": false,
+      "HK 01": true,
+      "香港 IPLC": true
+    }
+  }
+]

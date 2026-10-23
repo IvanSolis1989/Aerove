@@ -10,16 +10,16 @@ class BuilderResourceRestoreTest {
             filters = listOf(BuilderFilter("region", "JP")))
         val imported = BuilderResources(proxies = listOf(BuilderEntry("node", mapOf("type" to "reject"))),
             filters = listOf(BuilderFilter("region", "US")))
-        val document = imported.bindProxy("node", ProfileBuilderDocument.empty())
+        val document = imported.bindProxy(requireNotNull(imported.proxies.single().id), ProfileBuilderDocument.empty())
         val source = document.yaml()
         val merged = existing.mergeForRestore(imported)
         assertEquals("node 2", merged.proxyNames["node"])
         assertEquals("region 2", merged.filterNames["region"])
         assertEquals(listOf("node", "node 2"), merged.resources.proxies.map { it.name })
         val rewritten = ProfileBuilderDocument.parse(merged.rewriteSource(source))
-        assertEquals(mapOf("node" to "node 2"), rewritten.bindings.proxies)
+        assertEquals(mapOf("node" to merged.proxyIds.getValue(requireNotNull(imported.proxies.single().id))), rewritten.bindings.proxies)
         assertEquals("node", rewritten.entries(BuilderSection.Proxies).single().name)
-        assertEquals(mapOf("node" to "node"), ProfileBuilderDocument.parse(source).bindings.proxies)
+        assertEquals(mapOf("node" to requireNotNull(imported.proxies.single().id)), ProfileBuilderDocument.parse(source).bindings.proxies)
         val resolved = ProfileBuilderDocument.parse(merged.resources.resolve(rewritten.yaml()))
         assertEquals("reject", resolved.entries(BuilderSection.Proxies).single().fields["type"])
     }
@@ -44,7 +44,7 @@ class BuilderResourceRestoreTest {
         val resources = BuilderResources(proxies = listOf(BuilderEntry("used", mapOf("type" to "direct")),
             BuilderEntry("other", mapOf("type" to "reject"))),
             filters = listOf(BuilderFilter("unused", "a")))
-        val source = resources.bindProxy("used", ProfileBuilderDocument.empty()).yaml()
+        val source = resources.bindProxy(requireNotNull(resources.proxies.single { it.name == "used" }.id), ProfileBuilderDocument.empty()).yaml()
         val selected = resources.referencedBy(listOf(source))
         assertEquals(listOf("used"), selected.proxies.map { it.name })
         assertTrue(selected.filters.isEmpty())

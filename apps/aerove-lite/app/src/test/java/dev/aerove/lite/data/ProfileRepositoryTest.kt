@@ -72,9 +72,10 @@ class ProfileRepositoryTest {
         assertTrue(closed)
         assertNull(profile.url)
         assertEquals(valid, repository().readConfig(profile.id))
-        assertThrows(java.nio.charset.CharacterCodingException::class.java) {
+        val failure = assertThrows(dev.aerove.lite.profilesource.AgeSourceException::class.java) {
             runBlocking { repository().importFile("Broken", ByteArrayInputStream(byteArrayOf(0xc3.toByte(), 0x28))) }
         }
+        assertEquals("invalid_encoding", failure.code)
         assertEquals(1, repository().list().size)
     }
 

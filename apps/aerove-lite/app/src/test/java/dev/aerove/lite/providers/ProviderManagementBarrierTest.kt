@@ -24,7 +24,8 @@ import org.junit.rules.TemporaryFolder
 class ProviderManagementBarrierTest {
     @get:Rule val temporary = TemporaryFolder()
     private val secret = "fixture-only-secret-00000000000000"
-    private val proxies = """{"providers":{"fixture":{"vehicleType":"File","proxies":[]}}}"""
+    private val provider = """{"vehicleType":"File","revision":"7","proxies":[]}"""
+    private val proxies = """{"providers":{"fixture":$provider}}"""
     private val rules = """{"providers":{}}"""
     private fun page(text: String) = """{"rules":["$text"],"ruleCount":1,"offset":0,"nextOffset":null,"complete":true,"coreEpoch":"7"}"""
 
@@ -43,11 +44,21 @@ class ProviderManagementBarrierTest {
                 }
             }
             try {
-                server.enqueue(MockResponse().setResponseCode(202)); server.enqueue(MockResponse().setBody(proxies))
+                server.enqueue(MockResponse().setResponseCode(202)); server.enqueue(MockResponse().setBody(provider))
                 session.update(ProviderKind.Proxy, "fixture"); withTimeout(5000) { entered.await() }
+                for (method in listOf("PUT", "GET")) {
+                    val request = server.takeRequest(5, TimeUnit.SECONDS)!!
+                    assertEquals(method, request.method)
+                    assertEquals("/providers/proxies/fixture", request.path)
+                    assertEquals("Bearer $secret", request.getHeader("Authorization"))
+                }
+                assertEquals(setOf("Proxy/fixture"), session.state.value.busy)
+                assertFalse(session.state.value.failed)
                 session.cancel()
                 server.enqueue(MockResponse().setBody(proxies)); server.enqueue(MockResponse().setBody(rules))
                 session.load(); withTimeout(5000) { session.state.first { it.providers.isNotEmpty() && it.busy.isEmpty() } }
+                assertEquals("7", session.state.value.providers.single().revision)
+                assertFalse(session.state.value.failed)
                 assertFalse(release.isCompleted)
                 val paused = async { session.quiesce() }
                 yield(); assertFalse(paused.isCompleted)

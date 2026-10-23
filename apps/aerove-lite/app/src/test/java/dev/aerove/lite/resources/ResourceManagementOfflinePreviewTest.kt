@@ -76,9 +76,16 @@ class ResourceManagementOfflinePreviewTest {
                 runBlocking { profiles.delete(id); profiles.collectGarbage() }
                 assertTrue(target.exists()); throw failure
             })
-            try { repository.preview(id, key); fail("Expected dump failure") } catch (error: IOException) { assertSame(failure, error) }
+            try { repository.preview(id, key); fail("Expected dump failure") } catch (error: IOException) { assertSame(failure, originalFailure(error)) }
             profiles.collectGarbage(); assertFalse(file.exists())
         }
+    }
+
+    // kotlinx.coroutines 1.10.2 recovery keeps the original as the cause of a same-type copy.
+    private fun originalFailure(error: Throwable): Throwable {
+        val cause = error.cause
+        return if (cause != null && cause.javaClass == error.javaClass &&
+            error.stackTrace.any { it.className.startsWith("_COROUTINE.") }) cause else error
     }
 
     @Test fun cancellationKeepsLeaseThroughBlockingDumpThenReleasesWithoutLateResult() = runBlocking<Unit> {

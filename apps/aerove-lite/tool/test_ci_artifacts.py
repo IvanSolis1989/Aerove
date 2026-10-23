@@ -77,4 +77,96 @@ class NativeBuildTests(unittest.TestCase):
                 self.assertNotEqual(initial,ci.native_fingerprint(root,'x86_64-linux-android',ndk))
                 (ndk/'source.properties').write_text('ndk28.2')
                 self.assertNotEqual(initial,ci.native_fingerprint(root,'aarch64-linux-android',ndk))
+class HostHelperTests(unittest.TestCase):
+    def source(self, root):
+        source = root/'apps/aerove-lite/regexp2';source.mkdir(parents=True)
+        production = Path(__file__).resolve().parents[1]/'regexp2/build.py'
+        (source/'build.py').write_bytes(production.read_bytes())
+        (source/'go.mod').write_text('module fixture\ngo 1.27.1\n')
+        (source/'go.sum').write_text('fixture checksums\n')
+        ci.shutil.copytree(production.parent/'agebridge/testdata',source/'agebridge/testdata')
+        return source
+
+    def test_real_host_target_uses_production_patched_staging_and_records_saved_bytes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);self.source(root);stage=root/'staging';output=root/'bin';receipt=root/'reports/host.json'
+            calls=[]
+            def run(command, **kwargs):
+                calls.append((command,kwargs))
+                if '--test-only' in command:
+                    self.assertEqual(ci.HOST_ASSESSMENT_HASHES,{p.name:ci.digest(p) for p in (stage.parent/'regexp2-assessment').iterdir()})
+                    stage.mkdir();(stage/'go.mod').write_text('replace github.com/dlclark/regexp2 => ./upstream\n')
+                else:
+                    self.assertEqual(stage,kwargs['cwd'])
+                    self.assertIn('replace github.com/dlclark/regexp2', (stage/'go.mod').read_text())
+                    Path(command[command.index('-o')+1]).write_bytes(b'compiled host executable fixture')
+                self.assertEqual('0',kwargs['env']['CGO_ENABLED'])
+                self.assertEqual('local',kwargs['env']['GOTOOLCHAIN'])
+                for key in ('GOOS','GOARCH','GOFLAGS','CC','CXX'):self.assertNotIn(key,kwargs['env'])
+            with mock.patch.object(ci.Path,'cwd',return_value=root),mock.patch.object(ci.subprocess,'check_output',return_value='go version go1.27.1 linux/amd64'),mock.patch.object(ci.subprocess,'run',side_effect=run),mock.patch.object(ci,'identity',return_value=TransportTests.expected),mock.patch.dict(ci.os.environ,dict(GOOS='android',GOARCH='arm64',CC='android-clang',GOFLAGS='-mod=mod')):
+                value=ci.host_helper('/go/bin/go',stage,output,receipt)
+            self.assertEqual(value,json.loads(receipt.read_text()))
+            self.assertEqual(ci.digest(Path(value['outputs']['hostverify']['path'])),value['outputs']['hostverify']['sha256'])
+            self.assertEqual(len(b'compiled host executable fixture'),value['outputs']['hostverify']['bytes'])
+            self.assertEqual('a'*40,value['sourceRevision'])
+            self.assertEqual(3,len(calls))
+            self.assertIn('--test-only',calls[0][0]);self.assertNotIn('--ndk',calls[0][0])
+            self.assertEqual('./cmd/hostverify',calls[1][0][-1])
+            self.assertIn('-mod=readonly',calls[1][0])
+            self.assertTrue({'build.py','go.mod','go.sum','agebridge/testdata/provenance.json'}.issubset(value['inputFiles']))
+            self.assertEqual({'hostverify','ageverify'},set(value['outputs']))
+            self.assertEqual('./cmd/ageverify',calls[2][0][-1])
+            self.assertEqual(6,len(value['ageFixtures']['files']))
+            self.assertEqual(ci.HOST_ASSESSMENT_HASHES,value['assessmentCorpus']['files'])
+
+    def test_host_helper_rejects_wrong_go_existing_output_and_source_change(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);source=self.source(root);stage=root/'staging';output=root/'bin';receipt=root/'receipt.json'
+            with mock.patch.object(ci.Path,'cwd',return_value=root),mock.patch.object(ci.subprocess,'check_output',return_value='go version go1.26.0 linux/amd64'),mock.patch.object(ci.subprocess,'run') as run:
+                with self.assertRaisesRegex(ci.PromotionError,'Go 1.27.1'):ci.host_helper('go',stage,output,receipt)
+                run.assert_not_called();self.assertFalse(receipt.exists())
+            output.mkdir()
+            with self.assertRaisesRegex(ci.PromotionError,'must be new'):ci.host_helper('go',stage,output,receipt)
+            output.rmdir()
+            def changed(command,**kwargs):
+                if '--test-only' in command:stage.mkdir()
+                else:
+                    Path(command[command.index('-o')+1]).write_bytes(b'compiled fixture')
+                    (source/'go.mod').write_text('changed during build')
+            with mock.patch.object(ci.Path,'cwd',return_value=root),mock.patch.object(ci.subprocess,'check_output',return_value='go version go1.27.1 linux/amd64'),mock.patch.object(ci.subprocess,'run',side_effect=changed):
+                with self.assertRaisesRegex(ci.PromotionError,'inputs changed'):ci.host_helper('go',stage,output,receipt)
+            self.assertFalse(receipt.exists())
+
+    def test_failed_production_preparation_never_builds_or_exports_unpatched_helper(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);self.source(root);output=root/'bin';receipt=root/'receipt.json'
+            with mock.patch.object(ci.Path,'cwd',return_value=root),mock.patch.object(ci.subprocess,'check_output',return_value='go version go1.27.1 linux/amd64'),mock.patch.object(ci.subprocess,'run',side_effect=ci.subprocess.CalledProcessError(1,['production-checksum-gate'])) as run:
+                with self.assertRaises(ci.subprocess.CalledProcessError):ci.host_helper('go',root/'staging',output,receipt)
+                self.assertEqual(1,run.call_count)
+            self.assertFalse(output.exists());self.assertFalse(receipt.exists())
+
+            (root/'apps/aerove-lite/regexp2/agebridge/testdata/profile.yaml').write_text('corrupt fixture')
+            with mock.patch.object(ci.Path,'cwd',return_value=root),mock.patch.object(ci.subprocess,'run') as run:
+                with self.assertRaisesRegex(ci.PromotionError,'fixture identity mismatch'):
+                    ci.host_helper('go',root/'second'/'staging',root/'second'/'bin',receipt)
+                run.assert_not_called()
+
+    def test_modified_assessment_corpus_is_rejected_before_production_tests(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);self.source(root);bad=root/'bad-corpus';ci.shutil.copytree(ci.HOST_ASSESSMENT_ROOT,bad)
+            (bad/'cases.json').write_text('[]')
+            with mock.patch.object(ci.Path,'cwd',return_value=root),mock.patch.object(ci,'HOST_ASSESSMENT_ROOT',bad),mock.patch.object(ci.subprocess,'check_output',return_value='go version go1.27.1 linux/amd64'),mock.patch.object(ci.subprocess,'run') as run:
+                with self.assertRaisesRegex(ci.PromotionError,'assessment corpus identity mismatch'):
+                    ci.host_helper('go',root/'staging',root/'bin',root/'receipt.json')
+                run.assert_not_called()
+            self.assertFalse((root/'regexp2-assessment').exists())
+            existing=root/'existing';(existing/'regexp2-assessment').mkdir(parents=True)
+            with self.assertRaisesRegex(ci.PromotionError,'must be new'):
+                ci.host_helper('go',existing/'staging',existing/'bin',root/'receipt.json')
+            with mock.patch.object(ci.Path,'cwd',return_value=root):
+                with self.assertRaisesRegex(ci.PromotionError,'overlap'):
+                    ci.host_helper('go',root/'staging',root/'bin',root/'bin'/'receipt.json')
+                with self.assertRaisesRegex(ci.PromotionError,'overlap'):
+                    ci.host_helper('go',root/'apps/aerove-lite/regexp2/staging',root/'bin',root/'receipt.json')
+
 if __name__=='__main__':unittest.main()

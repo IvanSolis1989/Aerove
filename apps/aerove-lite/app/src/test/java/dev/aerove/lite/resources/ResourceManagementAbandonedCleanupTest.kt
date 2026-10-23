@@ -32,7 +32,7 @@ class ResourceManagementAbandonedCleanupTest {
         val parent = SupervisorJob()
         val session = ResourceManagementSession(ResourceManagementRepository(profiles), CoroutineScope(parent + dispatcher), {})
         val expected = IOException("Expected abandoned input close failure")
-        val failedClose = CountDownLatch(1); val closeEntered = CountDownLatch(1); val closeRelease = CountDownLatch(1)
+        val failedClose = CountDownLatch(1); val closeEntered = CountDownLatch(1); val closeRelease = CountDownLatch(1); val closeExited = CountDownLatch(1)
         try {
             session.load(id)
             while (session.state.value.snapshot == null || session.state.value.busy.isNotEmpty()) dispatcher.runNext()
@@ -45,7 +45,7 @@ class ResourceManagementAbandonedCleanupTest {
                 override fun close() {
                     closeEntered.countDown()
                     check(closeRelease.await(5, TimeUnit.SECONDS))
-                    super.close()
+                    super.close(); closeExited.countDown()
                 }
             })
             session.cancel(); dispatcher.runNext()
@@ -54,13 +54,23 @@ class ResourceManagementAbandonedCleanupTest {
             val barrier = async(Dispatchers.Default) { started.complete(Unit); runCatching { session.quiesce() } }
             started.await()
             assertNull("A failed receipt must not skip the other blocked close", withTimeoutOrNull(250) { barrier.await() })
+            assertEquals(1L, closeExited.count)
             closeRelease.countDown()
-            assertSame(expected, withTimeout(5000) { barrier.await() }.exceptionOrNull())
+            val actual = checkNotNull(withTimeout(5000) { barrier.await() }.exceptionOrNull())
+            assertSame(expected, originalFailure(actual))
+            assertEquals("Every registered cleanup completed before the failure escaped", 0L, closeExited.count)
         } finally {
             closeRelease.countDown()
             runCatching { session.closeAndJoin() }
             parent.cancelAndJoin()
         }
+    }
+
+    // kotlinx.coroutines 1.10.2 recovery keeps the original as the cause of a same-type copy.
+    private fun originalFailure(error: Throwable): Throwable {
+        val cause = error.cause
+        return if (cause != null && cause.javaClass == error.javaClass &&
+            error.stackTrace.any { it.className.startsWith("_COROUTINE.") }) cause else error
     }
 
     private suspend fun fixture(): Pair<ProfileRepository, String> {

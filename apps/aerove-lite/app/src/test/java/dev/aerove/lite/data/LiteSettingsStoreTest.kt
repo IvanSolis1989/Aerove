@@ -297,7 +297,7 @@ class LiteSettingsStoreTest {
         assertFalse(store.read().openLogs)
     }
 
-    @Test fun invalidDnsAndEmptyAllowListPreservePriorSettings() = runBlocking<Unit> {
+    @Test fun invalidSettingsPreservePriorDataAndEmptyIncludeAllowsOnlyOwnPackage() = runBlocking<Unit> {
         val store = LiteSettingsStore(temporary.root)
         store.save(LiteSettings(material = MaterialTier.Frosted))
         val file = File(temporary.root, "settings/settings.json")
@@ -306,7 +306,6 @@ class LiteSettingsStoreTest {
             LiteSettings(dnsServers = listOf("system")),
             LiteSettings(dnsServers = listOf("dhcp://wlan0")),
             LiteSettings(dnsServers = emptyList()),
-            LiteSettings(appFilterMode = AppFilterMode.Include),
             LiteSettings(themeColor = -1L, auroraColors = emptyList()),
             LiteSettings(packages = setOf("invalid package")),
         ).forEach { invalid ->
@@ -314,6 +313,12 @@ class LiteSettingsStoreTest {
             assertArrayEquals(originalBytes, file.readBytes())
         }
         assertEquals(MaterialTier.Frosted, store.read().material)
+        store.save(store.read().copy(appFilterMode = AppFilterMode.Include, packages = emptySet()))
+        val included = store.read()
+        assertEquals(AppFilterMode.Include, included.appFilterMode)
+        val applications = dev.aerove.lite.vpn.vpnApplicationPolicy(included.appFilterMode, included.packages, "dev.aerove.lite")
+        assertEquals(setOf("dev.aerove.lite"), applications.allowed)
+        assertTrue(applications.disallowed.isEmpty())
     }
 
     @Test fun corruptSettingsAreReportedInsteadOfSilentlyReset() = runBlocking<Unit> {

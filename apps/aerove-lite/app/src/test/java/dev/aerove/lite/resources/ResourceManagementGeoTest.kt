@@ -219,10 +219,11 @@ class ResourceManagementGeoTest {
             library.replace(library.snapshot(), BuilderResources(ruleProviders = listOf(BuilderEntry("Rules", mapOf(
                 "type" to "http", "url" to server.url("/rules").toString(), "path" to "rules.yaml", "behavior" to "domain")))))
             val resources = ResourceManagementLibraryRepository(library, ResourceBundleManager(runtime, validator, native))
+            val ruleId = resources.snapshot().entries.single { it.kind == ResourceManagementRemoteKind.RuleSet }.id
             server.enqueue(MockResponse().setBody("payload: ['+.example.com']").setBodyDelay(150, java.util.concurrent.TimeUnit.MILLISECONDS))
             coroutineScope {
-                val first = async(start = CoroutineStart.UNDISPATCHED) { resources.sync("rule:Rules") }
-                val second = async(start = CoroutineStart.UNDISPATCHED) { resources.sync("rule:Rules") }
+                val first = async(start = CoroutineStart.UNDISPATCHED) { resources.sync(ruleId) }
+                val second = async(start = CoroutineStart.UNDISPATCHED) { resources.sync(ruleId) }
                 assertEquals(first.await(), second.await())
             }
             assertEquals(2, server.requestCount)

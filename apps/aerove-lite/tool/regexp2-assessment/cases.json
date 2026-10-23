@@ -1,0 +1,14 @@
+[
+ {"name":"class-subtraction","pattern":"^[a-z-[aeiou]]$","samples":["a","b","-"]},
+ {"name":"conditional","pattern":"^(a)?(?(1)b|c)$","samples":["ab","c","ac"]},
+ {"name":"comment","pattern":"(?#country)^JP$","samples":["JP","US"]},
+ {"name":"single-quote-named-capture","pattern":"^(?'country'JP)\\k'country'$","samples":["JPJP","JPUS"]},
+ {"name":"capture-numbering","pattern":"^(?<N>a)(b)\\1$","samples":["abb","aba"]},
+ {"name":"unicode-digits","pattern":"^\\d+$","samples":["123","١٢٣"]},
+ {"name":"unicode-word","pattern":"^\\w+$","samples":["abc","日本"]},
+ {"name":"unicode-case","pattern":"(?i)^k$","samples":["k","K","K"]},
+ {"name":"duplicate-names","pattern":"^(?:(?<x>a)|(?<x>b))$","samples":["a","b"]},
+ {"name":"balancing-groups","pattern":"^(?<open>o)+(?<-open>c)+(?(open)(?!))$","samples":["oc","oocc","ooc","occ"]},
+ {"name":"explicit-capture","pattern":"(?n)^(a)(?<x>b)\\1$","samples":["abb","aba"]},
+ {"name":"lookaround-preset","pattern":"(?i)港|(?<![a-z])hk(?![a-z])","samples":["香港 IPLC","HK 01","CHKS 1"]}
+]

@@ -199,12 +199,13 @@ class BackupRepositoryTest {
 
     @Test fun profilesOnlyMergeKeepsExistingGlobalsAndRewritesImportedCollidingBindings() = runBlocking<Unit> {
         val source = data("profile-libraries-source")
-        val binding = BuilderResourceBindings(filters = mapOf("Group" to BuilderFilterBinding(listOf("shared"), emptyList())))
+        val incomingResources = BuilderResources(filters = listOf(BuilderFilter("shared", "JP"), BuilderFilter("unused", "SG")))
+        val binding = BuilderResourceBindings(filters = mapOf("Group" to BuilderFilterBinding(listOf(incomingResources.filters.first().id), emptyList())))
         val profile = source.profiles.importText("Imported", binding.header() + "proxy-groups: [{name: Group, type: select, proxies: [DIRECT]}]\n" + simple)
         val incomingOverrides = OverrideSnapshot(listOf(ScriptResource("script", "Imported script", content = "throw new Error('must not execute on restore')")),
             listOf(ProfileOverride(profile.id, OverrideMode.Script, scriptId = "script")), listOf(OverrideRule("rule", "DOMAIN,incoming.example,DIRECT")))
         File(source.root, "settings/overrides.json").writeText(OverrideRepository.encode(incomingOverrides))
-        File(source.root, "settings/builder-resources.yaml").writeText(BuilderResources(filters = listOf(BuilderFilter("shared", "JP"), BuilderFilter("unused", "SG"))).yaml())
+        File(source.root, "settings/builder-resources.yaml").writeText(incomingResources.yaml())
         val target = data("profile-libraries-target")
         val existing = target.profiles.importText("Existing", simple)
         val current = OverrideSnapshot(listOf(ScriptResource("script", "Existing script", content = "keep")),
@@ -220,8 +221,8 @@ class BackupRepositoryTest {
         assertTrue("DOMAIN,incoming.example,DIRECT" in restored.addedRules)
         assertNotEquals("script", restored.scriptId)
         val sourceAgain = target.profiles.readConfig(importedId)
-        assertEquals(listOf("shared 2"), BuilderResourceBindings.parse(sourceAgain).filters.getValue("Group").labels)
         val resources = BuilderResources.parse(File(target.root, "settings/builder-resources.yaml").readText())
+        assertEquals(listOf(resources.filters.single { it.label == "shared 2" }.id), BuilderResourceBindings.parse(sourceAgain).filters.getValue("Group").labels)
         assertEquals(listOf("shared", "shared 2"), resources.filters.map { it.label })
         assertEquals(existing.id, target.profiles.snapshot().selectedId)
     }
@@ -320,10 +321,11 @@ class BackupRepositoryTest {
         server.start()
         val url = server.url("/shared.yaml").toString()
         val fields = mapOf<String, Any?>("type" to "http", "url" to url, "path" to "rules/cloud.yaml", "behavior" to "domain", "format" to "yaml")
-        val definitions = BuilderResources(ruleProviders = listOf(BuilderEntry("Cloud", fields))).yaml()
+        val sharedResources = BuilderResources(ruleProviders = listOf(BuilderEntry("Cloud", fields)))
+        val definitions = sharedResources.yaml()
         val source = data("private-payload-source")
         val incomingPayload = source.resources.syncLibraryRule("Cloud", url, "domain", "yaml")
-        val binding = BuilderResourceBindings(ruleProviders = mapOf("Alias" to "Cloud"))
+        val binding = BuilderResourceBindings(ruleProviders = mapOf("Alias" to requireNotNull(sharedResources.ruleProviders.single().id)))
         val incoming = source.profiles.importText("Imported", binding.header() + "rule-providers: {Alias: {type: http, url: '$url', path: rules/alias.yaml, behavior: domain, format: yaml}}\nrules: ['RULE-SET,Alias,DIRECT']")
         File(source.root, "settings/builder-resources.yaml").writeText(definitions)
         val target = data("private-payload-target")
