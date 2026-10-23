@@ -12,7 +12,6 @@ runs:
   steps:
     - name: Install preview font
       if: ${{ inputs.system-fonts == 'true' }}
-      timeout-minutes: 10
       shell: bash
       run: |
         sudo python3 - <<'PY'

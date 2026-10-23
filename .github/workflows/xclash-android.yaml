@@ -155,6 +155,7 @@ jobs:
         if: ${{ !inputs.prepare_sources }}
         run: test "$(cat "$RUNNER_TEMP/xclash-verified-tree.txt")" = "$(git -C "$GITHUB_WORKSPACE" rev-parse 'HEAD^{tree}')"
       - uses: ./.github/actions/aerove-test-font
+        timeout-minutes: 10
         with:
           system-fonts: 'false'
           save-cache: 'true'
@@ -251,6 +252,7 @@ jobs:
             apps/aerove/.dart_tool/hooks_runner/shared/rust_api
           key: ${{ runner.os }}-aerove-rust-host-v2-1.99.0-${{ hashFiles('apps/aerove/plugins/rust_api/**', 'apps/aerove/pubspec.lock') }}
       - uses: ./.github/actions/aerove-test-font
+        timeout-minutes: 10
       - name: Build shared host Rust assets and check update behavior
         run: python3 tool/ci_verify.py warmup --evidence "$RUNNER_TEMP/update-smoke"
       - name: Verify producer host Rust output
@@ -296,6 +298,7 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
       - uses: ./.github/actions/aerove-test-font
+        timeout-minutes: 10
       - name: Run preserved verification combination
         run: python3 tool/ci_verify.py run "${{ matrix.suite }}" --shard "${{ matrix.shard }}" --evidence "$RUNNER_TEMP/xclash-previews"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -363,6 +366,7 @@ jobs:
           fi
           python3 tool/ci_verify.py host-assets
       - uses: ./.github/actions/aerove-test-font
+        timeout-minutes: 10
       - name: Run preserved verification combination
         run: python3 tool/ci_verify.py run "${{ matrix.suite }}" --shard "${{ matrix.shard }}" --evidence "$RUNNER_TEMP/xclash-previews"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

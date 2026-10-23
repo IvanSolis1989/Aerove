@@ -26,6 +26,17 @@ def run_block(name):
 
 
 class WorkflowPolicyTest(unittest.TestCase):
+    def test_composite_font_action_keeps_timeout_on_workflow_callers(self):
+        font = (ROOT / '.github/actions/aerove-test-font/action.yaml').read_text(encoding='utf-8')
+        self.assertNotIn('timeout-minutes:', font)
+        callers = re.findall(
+            r'- uses: \./\.github/actions/aerove-test-font\n(.*?)(?=\n      - |\n  [a-z]|\Z)',
+            FULL, re.DOTALL,
+        )
+        self.assertEqual(len(callers), 4)
+        for caller in callers:
+            self.assertIn('timeout-minutes: 10', caller)
+
     def test_host_cache_miss_and_nonexact_match_stop_before_the_native_tests(self):
         git = Path(shutil.which('git')).resolve()
         bash = git.parent.parent / 'bin/bash.exe' if os.name == 'nt' else shutil.which('bash')
