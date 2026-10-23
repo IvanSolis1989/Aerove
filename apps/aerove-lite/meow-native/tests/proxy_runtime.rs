@@ -69,6 +69,8 @@ async fn proxy_direct_http_snapshot_cancel_join_and_rebind() {
     assert_eq!(body["runtimeMode"], "proxy");
     assert_eq!(body["mixedAddress"], mixed.to_string());
     assert!(body["downloadBytes"].as_str().unwrap().parse::<u64>().unwrap() >= 12);
+    // The rewritten plain-HTTP request head is forwarded before the relay body.
+    assert!(body["uploadBytes"].as_str().unwrap().parse::<u64>().unwrap() >= 12);
     assert!(body["proxyTraffic"]["DIRECT"][1].as_str().unwrap().parse::<u64>().unwrap() >= 12);
     // An idle accepted transport must not delay owner stop or survive it.
     let mut idle = TcpStream::connect(mixed).await.unwrap();

@@ -133,8 +133,9 @@ async fn factory_owned_children_capture_policy_and_restore_blocking_context() {
     use meow_config::owned_load::LoadContext;
     let roots = root_fixture::Roots::new();
     let (policy, context, cancel) = policies("Aerove/factory",true,100);
-    let context = context.with_resource_roots(Arc::new(ResourceRoots::validate(Some(roots.read.to_str().unwrap()),Some(roots.cache.to_str().unwrap())).unwrap()))
-        .with_physical_dns(vec!["127.0.0.1:53".parse().unwrap()]);
+    let context = context.with_resource_roots(Arc::new(ResourceRoots::validate(Some(roots.read.to_str().unwrap()),Some(roots.cache.to_str().unwrap())).unwrap()));
+    let physical = aerove_meow_core::physical_dns::PhysicalResolver::from_servers(vec!["127.0.0.1:53".parse().unwrap()],context,false).unwrap();
+    let context = physical.network();
     let scope = OwnedLoadScope::with_context(Arc::new(context.clone()));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap(); let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
@@ -150,7 +151,8 @@ async fn factory_owned_children_capture_policy_and_restore_blocking_context() {
         blocking_context.run_blocking(Box::new(|| assert_eq!(request_policy::current().unwrap().unwrap().global_user_agent,"Aerove/factory")));
         assert!(request_policy::current().unwrap().is_none());
     }).await.unwrap();
-    scope.cancel(); scope.close().await.unwrap(); cancel.cancel();
+    scope.cancel(); scope.close().await.unwrap(); physical.retire().await.unwrap(); cancel.cancel();
+    assert!(physical.dns_owner().cleanup_confirmed());
     assert_eq!(policy.status().unwrap().http.global_user_agent,"Aerove/factory");
 }
 

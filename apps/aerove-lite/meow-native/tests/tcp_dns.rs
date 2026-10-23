@@ -86,12 +86,35 @@ async fn maximum_wire_length_is_bounded_and_core_rejects_malformed_dns() {
 
 #[tokio::test]
 async fn stalled_fragment_read_timeout_and_cancel_are_joinable() {
+    struct ObservedRead { stream: TcpStream, consumed: Option<tokio::sync::oneshot::Sender<()>> }
+    impl tokio::io::AsyncRead for ObservedRead {
+        fn poll_read(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, buffer: &mut tokio::io::ReadBuf<'_>) -> std::task::Poll<io::Result<()>> {
+            let this = self.get_mut(); let before = buffer.filled().len();
+            let result = tokio::io::AsyncRead::poll_read(std::pin::Pin::new(&mut this.stream),cx,buffer);
+            if buffer.filled().len() > before { if let Some(consumed) = this.consumed.take() { let _ = consumed.send(()); } }
+            result
+        }
+    }
+    impl tokio::io::AsyncWrite for ObservedRead {
+        fn poll_write(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, bytes: &[u8]) -> std::task::Poll<io::Result<usize>> {
+            tokio::io::AsyncWrite::poll_write(std::pin::Pin::new(&mut self.get_mut().stream),cx,bytes)
+        }
+        fn poll_flush(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<io::Result<()>> {
+            tokio::io::AsyncWrite::poll_flush(std::pin::Pin::new(&mut self.get_mut().stream),cx)
+        }
+        fn poll_shutdown(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<io::Result<()>> {
+            tokio::io::AsyncWrite::poll_shutdown(std::pin::Pin::new(&mut self.get_mut().stream),cx)
+        }
+    }
     for cancelled in [false, true] {
         let (tunnel, _) = core("192.0.2.7", "127.0.0.1:9").await;
         let (mut client, server) = pair().await; let cancel = CancellationToken::new();
         let limits = Limits { read: Duration::from_millis(40), ..Limits::default() };
-        let task = tokio::spawn(serve(server, tunnel, cancel.clone(), limits));
-        client.write_all(&[0]).await.unwrap(); if cancelled { cancel.cancel(); }
+        let (consumed, read_started) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(serve(ObservedRead { stream: server, consumed: Some(consumed) }, tunnel, cancel.clone(), limits));
+        client.write_all(&[0]).await.unwrap();
+        timeout(Duration::from_secs(2),read_started).await.unwrap().unwrap();
+        if cancelled { cancel.cancel(); }
         let result = timeout(Duration::from_secs(2), task).await.unwrap().unwrap();
         if cancelled { result.unwrap(); } else { assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut); }
         assert_eq!(timeout(Duration::from_secs(2), client.read(&mut [0])).await.unwrap().unwrap(), 0);

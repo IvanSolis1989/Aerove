@@ -250,6 +250,19 @@ impl Drop for ServeExit {
     }
 }
 
+fn readback_status(response: &[u8]) -> io::Result<u16> {
+    let invalid = || error("userControllerReadbackInvalid");
+    let head_end = response.windows(4).position(|part| part == b"\r\n\r\n").ok_or_else(invalid)?;
+    let line_end = response[..head_end + 2].windows(2).position(|part| part == b"\r\n").ok_or_else(invalid)?;
+    let line = &response[..line_end];
+    let status = line.strip_prefix(b"HTTP/1.1 ").or_else(|| line.strip_prefix(b"HTTP/1.0 ")).ok_or_else(invalid)?;
+    if status.len() < 4 || status[3] != b' '
+        || status[4..].iter().any(|byte| !matches!(*byte, b'\t' | b' '..=b'~' | 0x80..=0xff)) {
+        return Err(invalid());
+    }
+    axum::http::StatusCode::from_bytes(&status[..3]).map(|code| code.as_u16()).map_err(|_| invalid())
+}
+
 async fn probe(address: SocketAddr, path: &str, secret: Option<&str>, cancel: &CancellationToken) -> io::Result<u16> {
     let exchange = async {
         let mut stream = TcpStream::connect(address).await?;
@@ -257,9 +270,7 @@ async fn probe(address: SocketAddr, path: &str, secret: Option<&str>, cancel: &C
         stream.write_all(format!("GET {path} HTTP/1.1\r\nHost: {address}\r\n{authorization}Connection: close\r\n\r\n").as_bytes()).await?;
         let mut bytes = Vec::new(); stream.take(8193).read_to_end(&mut bytes).await?;
         if bytes.len() > 8192 { return Err(error("userControllerReadbackTooLarge")); }
-        std::str::from_utf8(&bytes).ok().and_then(|text| text.lines().next())
-            .and_then(|line| line.split_whitespace().nth(1)).and_then(|code| code.parse().ok())
-            .ok_or(error("userControllerReadbackInvalid"))
+        readback_status(&bytes)
     };
     tokio::select! { biased;
         _ = cancel.cancelled() => Err(error("cancelled")),

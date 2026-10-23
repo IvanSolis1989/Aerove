@@ -15,7 +15,7 @@ pub struct RouteSnapshot {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ControlError { Cancelled, NotFound, InvalidSelection, RevisionExhausted, InvalidEpoch, SelectionMemberNotIntegrated, Superseded }
+pub enum ControlError { Cancelled, NotFound, InvalidSelection, RevisionExhausted, InvalidEpoch, SelectionMemberNotIntegrated, DialerProxyNotIntegrated, Superseded }
 
 
 
@@ -131,11 +131,14 @@ impl ControlError {
             Self::NotFound => axum::http::StatusCode::NOT_FOUND,
             Self::InvalidSelection | Self::InvalidEpoch => axum::http::StatusCode::BAD_REQUEST,
             Self::RevisionExhausted | Self::Superseded => axum::http::StatusCode::CONFLICT,
-            Self::SelectionMemberNotIntegrated => axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            Self::SelectionMemberNotIntegrated | Self::DialerProxyNotIntegrated => axum::http::StatusCode::UNPROCESSABLE_ENTITY,
         };
         let body = if self == Self::SelectionMemberNotIntegrated {
             serde_json::json!({"error": "selectionMemberNotIntegrated", "field": "proxy-groups.proxies",
                 "reason": "selection preparation currently requires DIRECT or REJECT leaf members"})
+        } else if self == Self::DialerProxyNotIntegrated {
+            serde_json::json!({"error": "managedDialerProxyGraphNotIntegrated", "field": "proxies.dialer-proxy",
+                "reason": "injected dialer edges require managed graph activation and health/selection ownership"})
         } else { serde_json::json!({"error": format!("{self:?}")}) };
         (status, axum::Json(body)).into_response()
     }
@@ -265,6 +268,19 @@ impl RouteControl {
         let gate = self.plane.gate.lock(); self.check_live(&gate)?;
         if scope.is_cancelled() { return Err(ControlError::Cancelled); }
         if !self.state.proxy_providers.is_empty() { return Err(ControlError::SelectionMemberNotIntegrated); }
+        {
+            let raw = self.state.raw_config.read();
+            let mut seen = std::collections::BTreeSet::new();
+            for node in raw.proxies.iter().flatten().rev() {
+                let Some(name) = node.get("name").and_then(serde_yaml::Value::as_str) else { continue; };
+                if !seen.insert(name) { continue; }
+                if matches!(name, "DIRECT" | "REJECT" | "REJECT-DROP" | "COMPATIBLE" | "PASS" | "PASS-RULE") { continue; }
+                if node.get("dialer-proxy").is_some_and(|value|
+                    !value.is_null() && value.as_str().is_none_or(|name| !name.is_empty())) {
+                    return Err(ControlError::DialerProxyNotIntegrated);
+                }
+            }
+        }
         let proxies = self.group_members()?;
         if proxies.iter().any(|proxy| proxy.health().observed()) { return Err(ControlError::InvalidSelection); }
         let observer: Arc<dyn meow_common::adapter::HealthObserver> = Arc::new(GroupHealthObserver(Arc::downgrade(self)));

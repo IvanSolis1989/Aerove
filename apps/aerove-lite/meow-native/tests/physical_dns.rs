@@ -140,6 +140,7 @@ async fn physical_dns_cancel_drops_pending_query_and_does_not_reuse_successor_co
     timeout(Duration::from_secs(2), received).await.unwrap().unwrap();
     cancel.cancel();
     assert_eq!(timeout(Duration::from_secs(1), lookup).await.unwrap().unwrap().unwrap_err().kind(), io::ErrorKind::Interrupted);
+    assert!(resolver.dns_owner().cleanup_confirmed(), "network cancellation must join its actual DNS generation before returning");
     let (server, peer, answer) = fixture.await.unwrap();
     server.send_to(&answer, peer).await.unwrap();
     let next = CancellationToken::new();

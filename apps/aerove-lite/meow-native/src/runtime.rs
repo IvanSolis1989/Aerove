@@ -28,14 +28,26 @@ pub enum Phase { Loading, Running, Stopped, Failed }
 pub struct Failure {
     pub code: &'static str,
     pub field: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 impl Failure {
-    fn new(code: &'static str) -> Self { Self { code, field: None } }
+    fn new(code: &'static str) -> Self { Self { code, field: None, reason: None } }
     fn field(field: &str) -> Self {
-        Self { code: "candidateFieldNotIntegrated", field: Some(field.to_owned()) }
+        Self { code: "candidateFieldNotIntegrated", field: Some(field.to_owned()), reason: None }
     }
 }
+
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.code)?;
+        if let Some(field) = &self.field { write!(f, ": {field}")?; }
+        if let Some(reason) = &self.reason { write!(f, ": {reason}")?; }
+        Ok(())
+    }
+}
+impl std::error::Error for Failure {}
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -156,11 +168,11 @@ impl Session {
             if session.cancel.is_cancelled() { control.cancel(); return false; }
             *admission = Some(control); *session.tunnel.lock() = Some(tunnel); true
         });
-        let owner = match crate::owned_runtime::OwnedRuntime::start(json, fd, network, self.generation, self.cancel.clone(), register, lookup) {
+        let owner = match crate::owned_runtime::OwnedRuntime::start(json, fd, network, self.generation, self.cancel.clone(), register, lookup,
+            |owner| { *self.owned.lock() = Some(owner); }) {
             Ok(owner) => owner,
             Err(_) => { self.state.send_modify(|state| { state.phase = Phase::Failed; state.failure = Some(Failure::new("ownedStartFailed")); }); return; },
         };
-        *self.owned.lock() = Some(owner.clone());
         let mut updates = owner.subscribe();
         loop {
             let status = updates.borrow_and_update().clone();
@@ -175,7 +187,9 @@ impl Session {
         let old_tunnel = self.tunnel.lock().take(); drop(old_tunnel);
         self.state.send_modify(|state| {
             state.phase = if result.is_err() || status.state == "Failed" { Phase::Failed } else { Phase::Stopped };
-            state.failure = if state.phase == Phase::Failed { Some(Failure::new("ownedRuntimeFailed")) } else { None };
+            state.failure = if state.phase == Phase::Failed {
+                Some(owner.failure().unwrap_or_else(|| Failure::new("ownedRuntimeFailed")))
+            } else { None };
             state.api_ready = false; state.tun_ready = false; state.user_listeners_ready = false;
             state.api_address = None; state.mixed_address = None;
             state.upload_bytes = stats.upload_bytes.clone(); state.download_bytes = stats.download_bytes.clone();
@@ -204,12 +218,21 @@ impl Session {
             let snapshot = state.borrow_and_update().clone();
             {
                 let _admission = self.control.lock();
-                if self.cancel.is_cancelled() { return Err(Failure::new("cancelled")); }
                 match snapshot.phase {
-                    Phase::Running => return Ok(snapshot),
                     Phase::Failed => return Err(snapshot.failure.expect("failed receipt")),
                     Phase::Stopped => return Err(Failure::new("cancelled")),
-                    Phase::Loading => {}
+                    _ => {},
+                }
+                if self.cancel.is_cancelled() {
+                    // Typed startup failures must retain their terminal receipt across cleanup cancellation.
+                    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+                    let joining_owned = snapshot.phase == Phase::Loading && self.owned.lock().as_ref()
+                        .is_some_and(|owner| owner.joining_startup_diagnostic());
+                    #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
+                    let joining_owned = false;
+                    if !joining_owned { return Err(Failure::new("cancelled")); }
+                } else if snapshot.phase == Phase::Running {
+                    return Ok(snapshot);
                 }
             }
             state.changed().await.map_err(|_| Failure::new("ownerExited"))?;

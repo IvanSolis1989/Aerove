@@ -911,7 +911,7 @@
      /// `SelectAble.ForceSet` and is used to unfix automatic groups before a
 --- /dev/null
 +++ b/crates/meow-common/src/dial_outcome.rs
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,67 @@
 +//! Per-dial success receipt; no engine/global state and never serialized.
 +use crate::{AdapterType, Metadata, MeowError, Result};
 +use std::sync::{Arc, Mutex};
@@ -943,6 +943,13 @@
 +        let receipt=Arc::new(Self::default()); let mut child=metadata.clone(); child.dial_receipt=Some(receipt.clone()); (child,receipt)
 +    }
 +    pub fn commit(metadata: &Metadata, kind: AdapterType, name: &str, child: &Self) -> Result<()> {
++        // Raw REJECT transports deliberately implement EOF/discard (DROP waits).
++        // Returning such a transport is not a successful forwarding dial, even
++        // when the caller did not request a receipt. Preserve raw behavior and
++        // reject only after the raw dial has resolved, so DROP stays cancellable.
++        if matches!(kind,AdapterType::Reject|AdapterType::RejectDrop|AdapterType::Pass|AdapterType::PassRule) {
++            return Err(MeowError::Proxy("rejected".into()));
++        }
 +        let Some(parent)=metadata.dial_receipt.as_ref() else { return Ok(()); };
 +        let group=matches!(kind,AdapterType::Selector|AdapterType::Fallback|AdapterType::UrlTest|AdapterType::LoadBalance|AdapterType::Relay);
 +        let mut outcome=if group { child.outcome().ok_or_else(||MeowError::Proxy("successful group dial omitted leaf outcome".into()))? }
@@ -4948,6 +4955,34 @@
  meow-common = { workspace = true }
  meow-trie = { workspace = true }
  meow-tunnel = { workspace = true }
+--- a/crates/meow-listener/src/http_proxy.rs
++++ b/crates/meow-listener/src/http_proxy.rs
+@@ -279,10 +279,16 @@
+ 
+         _guard
+             .run_until_closed(async {
+-                let dial = with_dial_timeout(proxy.name(), proxy.dial_tcp(&metadata)).await;
++                let (dial_metadata, receipt) = meow_common::dial_outcome::DialReceipt::branch(&metadata);
++                let dial = with_dial_timeout(proxy.name(), proxy.dial_tcp_observed(&dial_metadata)).await;
+                 drop(route.take());
+                 match dial {
+                     Ok(mut remote) => {
++                        let outcome = receipt.outcome().ok_or_else(||
++                            io::Error::other("successful HTTP dial omitted leaf outcome"))?;
++                        if !inner.stats.complete_dial(_guard.counters(), _guard.id(), &outcome) {
++                            return Err(io::Error::other("HTTP dial already classified").into());
++                        }
+                         // Rewrite the request line: remove the absolute URI scheme+host,
+                         // keep the path. Rebuild headers without Proxy-* headers while
+                         // preserving all other field bytes exactly.
+@@ -293,6 +299,7 @@
+                         // wrapper forwards exactly this request body, holds any
+                         // pipelined request back, and marks the final response close.
+                         remote.write_all(&rewritten).await?;
++                        inner.stats.record_upload(_guard.counters(), rewritten.len() as meow_common::atomic::Int);
+                         let up = Arc::clone(_guard.counters());
+                         let dn = Arc::clone(_guard.counters());
+                         // Relay scratch buffers live on this plain-HTTP path's stack —
 --- a/crates/meow-listener/src/lib.rs
 +++ b/crates/meow-listener/src/lib.rs
 @@ -4,6 +4,9 @@
@@ -5742,7 +5777,23 @@
          if let Some(proxy) = self.fixed_proxy_if_alive() {
              return Some(proxy);
          }
-@@ -336,11 +343,8 @@
+@@ -192,7 +199,14 @@
+             }
+         } else if !current_alive {
+             let fb = first_any.clone();
+-            *self.fastest.write() = fb.as_ref().map(|p| SmolStr::from(p.name()));
++            // A managed fallback is provisional until a measured candidate
++            // exists. Unfix-before-probe must not create an unmeasured
++            // incumbent that can incorrectly acquire tolerance protection.
++            *self.fastest.write() = if self.health.observed() {
++                None
++            } else {
++                fb.as_ref().map(|p| SmolStr::from(p.name()))
++            };
+             return fb;
+         }
+         current_proxy.or(best_proxy).or(first_any)
+@@ -336,11 +350,8 @@
      }
  
      fn support_udp(&self) -> bool {
@@ -5756,7 +5807,7 @@
          self.pick_for_dial().is_some_and(|p| p.support_udp())
      }
  
-@@ -353,7 +357,7 @@
+@@ -353,7 +364,7 @@
              super::note_front_hop_member(&self.chain_health, target, &proxy);
          }
          let attempt = super::DialAttempt::new(&self.name, &self.dial_failures, &proxy);
@@ -5765,7 +5816,7 @@
          Ok(match front_hop {
              Some(target) => {
                  super::watch_front_hop(conn, &self.name, &self.chain_health, target, &proxy)
-@@ -368,16 +372,15 @@
+@@ -368,16 +379,15 @@
              .pick_for_dial()
              .ok_or_else(|| MeowError::Proxy("no proxy available".into()))?;
          let attempt = super::DialAttempt::new(&self.name, &self.dial_failures, &proxy);
@@ -5785,7 +5836,7 @@
          self.pick_for(metadata, false).map(|(pick, _)| pick)
      }
  
-@@ -459,6 +462,34 @@
+@@ -459,6 +469,34 @@
          Ok(())
      }
  
@@ -5820,6 +5871,38 @@
      fn force_set(&self, name: Option<&str>) {
          *self.fixed.write() = name.map(SmolStr::from);
          if let Some(store) = &self.store {
+@@ -545,6 +583,31 @@
+     }
+ 
+     #[test]
++    fn managed_unmeasured_fallback_is_not_a_tolerance_incumbent() {
++        struct Owner;
++        impl meow_common::adapter::HealthObserver for Owner {
++            fn commit(&self, health: &ProxyHealth, update: meow_common::adapter::HealthUpdate) {
++                health.apply_committed(update);
++            }
++        }
++        let a = MockProxy::new("a"); let b = MockProxy::new("b");
++        let g = UrlTestGroup::new("managed", vec![a.clone(), b.clone()], 1000);
++        assert!(g.health.observe(Arc::new(Owner)));
++        // Same order as the public group-delay command: unpin precedes IO.
++        g.unfix_memory().unwrap(); assert_eq!(g.current().as_deref(), Some("a"));
++        assert!(g.fastest.read().is_none());
++        a.set_delay(250); b.set_delay(5); g.reconcile_health();
++        assert_eq!(g.current().as_deref(), Some("b"));
++        a.set_delay(5); b.set_delay(50); g.reconcile_health();
++        assert_eq!(g.current().as_deref(), Some("b"), "measured incumbent retains tolerance");
++        // Fixed-member recovery and auto incumbent remain independent.
++        g.commit_memory("a").unwrap(); assert_eq!(g.current().as_deref(), Some("a"));
++        a.set_alive(false); g.reconcile_health(); assert_eq!(g.current().as_deref(), Some("b"));
++        a.set_alive(true); g.reconcile_health(); assert_eq!(g.current().as_deref(), Some("a"));
++        g.unfix_memory().unwrap(); assert_eq!(g.current().as_deref(), Some("b"));
++    }
++
++    #[test]
+     fn tolerance_keeps_current_pick_until_strictly_better() {
+         // tolerance = 50: once an incumbent exists, a challenger must beat
+         // it by MORE than 50 ms before the selection flips.
 --- a/crates/meow-proxy/src/health.rs
 +++ b/crates/meow-proxy/src/health.rs
 @@ -35,6 +35,20 @@

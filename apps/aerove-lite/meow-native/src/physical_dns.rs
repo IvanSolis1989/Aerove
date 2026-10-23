@@ -10,8 +10,8 @@ use tokio_util::{sync::CancellationToken};
 
 pub struct PhysicalDnsOwner { cancel: CancellationToken, closed: AtomicBool, gate: Mutex<()>, tasks: Arc<crate::transport_tasks::TransportTasks>, joined: AtomicBool, loads: Arc<OwnedLoadScope>, unavailable_not_connected: AtomicBool }
 impl PhysicalDnsOwner {
-    fn new(_network: &NetworkContext) -> Arc<Self> {
-        Arc::new(Self { cancel: CancellationToken::new(), closed: AtomicBool::new(false), gate: Mutex::new(()),
+    fn new(network: &NetworkContext) -> Arc<Self> {
+        Arc::new(Self { cancel: network.cancellation().child_token(), closed: AtomicBool::new(false), gate: Mutex::new(()),
             tasks: crate::transport_tasks::TransportTasks::new(), joined: AtomicBool::new(false), loads: OwnedLoadScope::new(), unavailable_not_connected: AtomicBool::new(false) })
     }
     pub(crate) fn run<T: Send + 'static>(self: &Arc<Self>, work: impl Future<Output = io::Result<T>> + Send + 'static)
@@ -128,11 +128,17 @@ impl HostResolver for PhysicalResolver {
         self.resolve_all(host).await?.into_iter().next().ok_or_else(unavailable)
     }
     async fn resolve_all(&self, host: &str) -> io::Result<Vec<IpAddr>> {
-        if self.network.cancelled() { return Err(cancelled()); }
+        if self.network.cancelled() {
+            self.owner.close().await.map_err(io::Error::other)?;
+            return Err(cancelled());
+        }
         let network = self.network.clone(); let hook = self.hook.clone(); let host = host.to_owned();
-        let answer = self.owner.run(async move { network.scope(hook.resolve_all(&host)).await }).await?;
-        if self.network.cancelled() { return Err(cancelled()); }
-        Ok(answer)
+        let answer = self.owner.run(async move { network.scope(hook.resolve_all(&host)).await }).await;
+        if self.network.cancelled() {
+            self.owner.close().await.map_err(io::Error::other)?;
+            return Err(cancelled());
+        }
+        answer
     }
     fn resolve_all_local(&self, host: &str) -> Option<Vec<IpAddr>> {
         if self.network.cancelled() || self.owner.closed.load(Ordering::Acquire) { None } else { self.hook.resolve_all_local(host) }

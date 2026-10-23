@@ -284,3 +284,29 @@ async fn user_controller_joined_serve_failure_preserves_failure_without_false_un
     tokio::time::timeout(IO_LIMIT,fixture.private_task).await.unwrap().unwrap().unwrap();
     tokio::time::timeout(IO_LIMIT,fixture.api.join()).await.unwrap();
 }
+
+#[test]
+fn user_controller_readback_decodes_status_without_decoding_binary_entity() {
+    for (response, expected) in [
+        (b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n\x00\xff\x80\x01".as_slice(), 200),
+        (b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 2\r\n\r\n\xff\x80".as_slice(), 401),
+        (b"HTTP/1.1 404 Not Found\r\nContent-Length: 1\r\n\r\n\xff".as_slice(), 404),
+        (b"HTTP/1.0 200 OK\r\n\r\n\xff".as_slice(), 200),
+    ] {
+        assert_eq!(readback_status(response).unwrap(), expected);
+    }
+}
+
+#[test]
+fn user_controller_readback_rejects_malformed_status_or_incomplete_head() {
+    for response in [
+        b"".as_slice(), b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n".as_slice(),
+        b"HTTP/1.1 200 OK\n\n".as_slice(), b"garbage 200 OK\r\n\r\n".as_slice(),
+        b"HTTP/2.0 200 OK\r\n\r\n".as_slice(), b"HTTP/1.1 20 OK\r\n\r\n".as_slice(),
+        b"HTTP/1.1 2000 OK\r\n\r\n".as_slice(), b"HTTP/1.1 099 Invalid\r\n\r\n".as_slice(),
+        b"HTTP/1.1 abc Invalid\r\n\r\n".as_slice(), b"HTTP/1.1 200\r\n\r\n".as_slice(),
+        b"HTTP/1.1 200 bad\x00reason\r\n\r\n".as_slice(),
+    ] {
+        assert_eq!(readback_status(response).unwrap_err().to_string(), "userControllerReadbackInvalid");
+    }
+}

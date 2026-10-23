@@ -85,6 +85,9 @@ async fn unsupported_protocol_unowned_group_provider_and_malformed_factory_still
     configurations.push("strict: true\nproxy-providers: {P: {type: http,url: 'http://127.0.0.1:1/proxies'}}\nrules: ['MATCH,DIRECT']\n".into());
     configurations.push("strict: true\nproxies: [{name: NODE,type: http,server: 127.0.0.1,port: 0}]\nrules: ['MATCH,NODE']\n".into());
     configurations.push("strict: true\nproxies:\n - {name: FIRST,type: http,server: 127.0.0.1,port: 443}\n - {name: NODE,type: http,server: 127.0.0.1,port: 444,dialer-proxy: FIRST}\nrules: ['MATCH,NODE']\n".into());
+    for kind in ["http", "socks5"] {
+        configurations.push(format!("strict: true\nproxies:\n - {{name: FIRST,type: http,server: 127.0.0.1,port: 443}}\n - {{name: NODE,type: {kind},server: 127.0.0.1,port: 444,dialer-proxy: FIRST,tls: true}}\nrules: ['MATCH,NODE']\n"));
+    }
     for yaml in configurations {
         let roots=root_fixture::Roots::new();let addresses=ports().await;
         let network=NetworkContext::platform(CancellationToken::new()).with_physical_dns(vec!["127.0.0.1:53".parse().unwrap()]);
@@ -138,4 +141,102 @@ async fn native_periodic_urltest_nested_http_route_keeps_old_flow_and_joins_owne
     assert_eq!(timeout(Duration::from_secs(5),old.read_u8()).await.unwrap().unwrap_err().kind(),io::ErrorKind::UnexpectedEof);assert_eq!(timeout(Duration::from_secs(5),fresh.read_u8()).await.unwrap().unwrap_err().kind(),io::ErrorKind::UnexpectedEof);
     assert!(calls.load(Ordering::Relaxed)>=4);fixture.cancel();timeout(Duration::from_secs(5),a_task).await.unwrap().unwrap();timeout(Duration::from_secs(5),b_task).await.unwrap().unwrap();
     for address in [addresses[0],addresses[1],a,b]{assert!(TcpListener::bind(address).await.is_ok());}
+}
+
+
+#[tokio::test]
+async fn managed_dialer_failure_preserves_field_reason_through_ready_terminal_and_confirmed_cleanup() {
+    let _serial=LOCK.lock().await;
+    for kind in ["http","socks5"] {
+        let roots=root_fixture::Roots::new();let addresses=ports().await;
+        let yaml=format!("strict: true\nproxies:\n - {{name: FIRST,type: http,server: 127.0.0.1,port: 443}}\n - {{name: NODE,type: {kind},server: 127.0.0.1,port: 444,dialer-proxy: FIRST}}\nrules: ['MATCH,NODE']\ndns: {{enable: false,use-system-hosts: false}}\ntun: {{enable: false,auto-route: false}}\n");
+        let network=NetworkContext::platform(CancellationToken::new()).with_physical_dns(vec!["127.0.0.1:53".parse().unwrap()]);
+        let session=Registry::start_owned(plan(yaml,addresses,&roots),None,network,None).unwrap();
+        let generation=session.generation();
+        let failure=timeout(Duration::from_secs(5),session.ready()).await.unwrap().unwrap_err();
+        assert_eq!(failure.code,"managedDialerProxyGraphNotIntegrated");
+        assert_eq!(failure.field.as_deref(),Some("proxies.dialer-proxy"));
+        assert_eq!(failure.reason.as_deref(),Some("injected dialer edges require managed graph activation and health/selection ownership"));
+        let json=serde_json::to_value(&failure).unwrap();
+        assert_eq!(json["field"],"proxies.dialer-proxy");assert_eq!(json["reason"],failure.reason.as_deref().unwrap());
+        let owner=session.owned_runtime().unwrap();assert!(owner.cleanup_confirmed());
+        let status=owner.status();assert_eq!(status.state,"Failed");
+        let message=failure.to_string();assert_eq!(status.error.as_deref(),Some(message.as_str()));
+        assert_eq!(timeout(Duration::from_secs(5),owner.ready()).await.unwrap().unwrap_err().to_string(),failure.to_string());
+        assert_eq!(timeout(Duration::from_secs(5),session.exited()).await.unwrap().unwrap_err(),failure);
+        let terminal=timeout(Duration::from_secs(5),session.stop()).await.unwrap().unwrap();
+        assert_eq!(terminal.phase,Phase::Failed);assert_eq!(terminal.failure.as_ref(),Some(&failure));
+        assert_eq!(session.generation(),generation);assert!(!terminal.api_ready);assert!(!terminal.user_listeners_ready);assert!(!terminal.tun_ready);
+        assert_eq!(timeout(Duration::from_secs(5),session.stop()).await.unwrap().unwrap().failure.as_ref(),Some(&failure));
+        for address in addresses {assert!(TcpListener::bind(address).await.is_ok());}
+    }
+    // Untyped Loading cancellation must remain immediate.
+    let roots=root_fixture::Roots::new();let addresses=ports().await;
+    let yaml="strict: true\nproxies: [{name: NODE,type: http,server: 127.0.0.1,port: 0}]\nrules: ['MATCH,NODE']\ndns: {enable: false}\ntun: {enable: false,auto-route: false}\n";
+    let network=NetworkContext::platform(CancellationToken::new()).with_physical_dns(vec!["127.0.0.1:53".parse().unwrap()]);
+    let session=Registry::start_owned(plan(yaml.into(),addresses,&roots),None,network,None).unwrap();
+    let terminal_failure=timeout(Duration::from_secs(5),session.exited()).await.unwrap().unwrap_err();
+    let failure=timeout(Duration::from_secs(5),session.ready()).await.unwrap().unwrap_err();
+    assert_eq!(failure,terminal_failure);
+    assert_eq!(failure.code,"ownedRuntimeFailed");assert!(failure.field.is_none());assert!(failure.reason.is_none());
+    assert!(serde_json::to_value(&failure).unwrap().get("reason").is_none());
+    let terminal=timeout(Duration::from_secs(5),session.stop()).await.unwrap().unwrap();
+    assert_eq!(terminal.phase,Phase::Failed);assert_eq!(terminal.failure,Some(failure));
+    assert!(session.owned_runtime().unwrap().cleanup_confirmed());
+    for address in addresses {assert!(TcpListener::bind(address).await.is_ok());}
+}
+
+
+#[tokio::test]
+async fn user_cancelled_running_ready_never_succeeds_and_stop_restart_preserves_successor() {
+    let _serial=LOCK.lock().await;
+    let roots=root_fixture::Roots::new();let addresses=ports().await;
+    let yaml="strict: true\nrules: ['MATCH,DIRECT']\ndns: {enable: false,use-system-hosts: false}\ntun: {enable: false,auto-route: false}\n";
+    let cancel=CancellationToken::new();
+    let network=NetworkContext::platform(cancel.clone()).with_physical_dns(vec!["127.0.0.1:53".parse().unwrap()]);
+    let session=Registry::start_owned(plan(yaml.into(),addresses,&roots),None,network,None).unwrap();
+    timeout(Duration::from_secs(5),session.ready()).await.unwrap().unwrap();
+    assert_eq!(session.snapshot().phase,Phase::Running);
+    cancel.cancel();
+    assert_eq!(timeout(Duration::from_secs(5),session.ready()).await.unwrap().unwrap_err().code,"cancelled");
+    let stopped=timeout(Duration::from_secs(5),session.stop()).await.unwrap().unwrap();
+    assert_eq!(stopped.phase,Phase::Stopped);assert!(stopped.failure.is_none());
+    assert!(session.owned_runtime().unwrap().cleanup_confirmed());
+    let successor_network=NetworkContext::platform(CancellationToken::new()).with_physical_dns(vec!["127.0.0.1:53".parse().unwrap()]);
+    let successor=Registry::start_owned(plan(yaml.into(),addresses,&roots),None,successor_network,None).unwrap();
+    timeout(Duration::from_secs(5),successor.ready()).await.unwrap().unwrap();
+    assert!(successor.generation()>session.generation());
+    assert_eq!(timeout(Duration::from_secs(5),session.stop()).await.unwrap().unwrap().phase,Phase::Stopped);
+    assert_eq!(timeout(Duration::from_secs(5),session.ready()).await.unwrap().unwrap_err().code,"cancelled");
+    assert_eq!(timeout(Duration::from_secs(5),successor.ready()).await.unwrap().unwrap().phase,Phase::Running);
+    assert_eq!(timeout(Duration::from_secs(5),successor.stop()).await.unwrap().unwrap().phase,Phase::Stopped);
+    assert!(successor.owned_runtime().unwrap().cleanup_confirmed());
+    for address in addresses {assert!(TcpListener::bind(address).await.is_ok());}
+}
+
+
+#[tokio::test]
+async fn user_cancelled_loading_bootstrap_ready_remains_cancelled_and_joins_without_late_running() {
+    let _serial=LOCK.lock().await;
+    let roots=root_fixture::Roots::new();let addresses=ports().await;
+    let upstream=tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();let dns=upstream.local_addr().unwrap();
+    let (hit,waiting)=tokio::sync::oneshot::channel();
+    let fixture=tokio::spawn(async move {
+        let mut bytes=[0u8;4096];let received=upstream.recv_from(&mut bytes).await.unwrap();
+        assert!(received.0>0);hit.send(()).unwrap();upstream
+    });
+    let yaml=format!("strict: true\nrules: ['MATCH,DIRECT']\ntun: {{enable: false,auto-route: false}}\ndns:\n enable: true\n use-system-hosts: false\n nameserver: ['udp://pending-owned.invalid:53']\n default-nameserver: ['{dns}']\n");
+    let cancel=CancellationToken::new();
+    let network=NetworkContext::platform(cancel.clone()).with_physical_dns(vec![dns]);
+    let session=Registry::start_owned(plan(yaml,addresses,&roots),None,network,None).unwrap();
+    timeout(Duration::from_secs(5),waiting).await.unwrap().unwrap();
+    assert_eq!(session.snapshot().phase,Phase::Loading);
+    cancel.cancel();
+    assert_eq!(timeout(Duration::from_secs(5),session.ready()).await.unwrap().unwrap_err().code,"cancelled");
+    let terminal=timeout(Duration::from_secs(5),session.stop()).await.unwrap().unwrap();
+    assert_eq!(terminal.phase,Phase::Stopped);assert!(terminal.failure.is_none());
+    assert!(!terminal.api_ready);assert!(!terminal.user_listeners_ready);assert!(!terminal.tun_ready);
+    let owner=session.owned_runtime().unwrap();assert!(owner.cleanup_confirmed());assert!(!owner.status().core_ready);
+    drop(timeout(Duration::from_secs(5),fixture).await.unwrap().unwrap());
+    for address in addresses {assert!(TcpListener::bind(address).await.is_ok());}
 }

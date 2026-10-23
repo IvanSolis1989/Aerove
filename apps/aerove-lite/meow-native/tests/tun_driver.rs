@@ -1,6 +1,7 @@
 #![cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 use aerove_meow_core::{network_context::NetworkContext, runtime_plan::RuntimePlan, tun_driver::{PacketHandler, PacketWork, TunDriver}};
 use meow_common::socket_protect::{self, SocketProtector};
+use meow_config::owned_load::LoadContext;
 use meow_tunnel::Tunnel;
 use std::{future::{Future, poll_fn}, io, net::SocketAddr, os::{fd::{AsFd, RawFd}, unix::net::UnixDatagram}, sync::{Arc, atomic::{AtomicUsize, Ordering}}, task::Poll, time::Duration};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpListener, sync::{Mutex, mpsc}, time::timeout};
@@ -96,6 +97,8 @@ async fn plan_owned_fd_factory_protect_netstack_packets_cancel_join_and_caller_s
     let _serial=TEST_LOCK.lock().await;
     let (caller, peer)=pair(); let cancel=CancellationToken::new();
     let calls=Arc::new(AtomicUsize::new(0)); let network=context(&cancel,false,calls.clone());
+    let physical=aerove_meow_core::physical_dns::PhysicalResolver::from_servers(vec!["127.0.0.1:53".parse().unwrap()],network.clone(),true).unwrap();
+    let dns_transport=physical.network().dns_transport_scope().unwrap();
     let server=TcpListener::bind("127.0.0.1:0").await.unwrap(); let address=server.local_addr().unwrap();
     let accepted=tokio::spawn(async move { let (mut socket,_)=server.accept().await.unwrap(); socket.write_all(b"factory-protected").await.unwrap(); });
     let (tx,mut observed)=mpsc::channel(8);
@@ -105,7 +108,7 @@ async fn plan_owned_fd_factory_protect_netstack_packets_cancel_join_and_caller_s
         let mut probe=socket_protect::connect_tcp(address).await?;
         let mut body=[0;17]; probe.read_exact(&mut body).await?; assert_eq!(&body,b"factory-protected");
         assert!(socket_protect::resolve_host("no-system-fallback.invalid", 443).await.is_err());
-        handler(plan,scope,tx).await
+        meow_config::owned_load::with_dns_transport_scope(dns_transport,handler(plan,scope,tx)).await
     }).await.unwrap();
     accepted.await.unwrap(); assert_eq!(calls.load(Ordering::Relaxed),1);
     assert!(driver.receipt().ready); assert!(!driver.receipt().core_done); assert_eq!(driver.receipt().mtu,9000);
@@ -131,9 +134,14 @@ async fn plan_owned_fd_factory_protect_netstack_packets_cancel_join_and_caller_s
     let old_network=socket_protect::NetworkScope { protector:captured.lock().await.take(), resolver:None };
     assert!(old_network.scope(socket_protect::connect_tcp(address)).await.is_err()); assert_eq!(calls.load(Ordering::Relaxed),1);
     caller.send(b"original-fd-alive").unwrap(); let mut retained=[0;32]; assert_eq!(peer.recv(&mut retained).await.unwrap(),17);
+    physical.retire().await.unwrap(); assert!(physical.dns_owner().cleanup_confirmed());
     let next_cancel=CancellationToken::new(); let (tx,_)=mpsc::channel(8);
-    let next=TunDriver::load(&plan().to_string(),caller.as_fd(),context(&next_cancel,false,calls.clone()),next_cancel,move|plan,scope|handler(plan,scope,tx)).await.unwrap();
+    let next_network=context(&next_cancel,false,calls.clone());
+    let next_physical=aerove_meow_core::physical_dns::PhysicalResolver::from_servers(vec!["127.0.0.1:53".parse().unwrap()],next_network.clone(),true).unwrap();
+    let next_dns=next_physical.network().dns_transport_scope().unwrap();
+    let next=TunDriver::load(&plan().to_string(),caller.as_fd(),next_network,next_cancel,move|plan,scope|meow_config::owned_load::with_dns_transport_scope(next_dns,handler(plan,scope,tx))).await.unwrap();
     assert!(next.receipt().ready); assert!(timeout(Duration::from_secs(5),next.stop()).await.unwrap().unwrap().core_done);
+    next_physical.retire().await.unwrap(); assert!(next_physical.dns_owner().cleanup_confirmed());
 }
 
 #[tokio::test]

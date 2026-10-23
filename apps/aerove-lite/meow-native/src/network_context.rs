@@ -34,12 +34,12 @@ pub struct ResolverPair { pub main: Arc<meow_dns::Resolver>, pub proxy: Option<A
 pub(crate) struct TunnelCapture { pub tunnel: meow_tunnel::Tunnel }
 
 #[derive(Clone)]
-struct NetworkBinding { scope: NetworkScope, network_handle: Option<u64>, physical_dns: Option<Vec<SocketAddr>>, physical_dns_plan: Option<Arc<crate::runtime_plan::PhysicalDns>>,
+struct NetworkBinding { scope: NetworkScope, protector: Option<Arc<dyn SocketProtector>>, network_handle: Option<u64>, physical_dns: Option<Vec<SocketAddr>>, physical_dns_plan: Option<Arc<crate::runtime_plan::PhysicalDns>>,
     dns_owner: Option<Arc<crate::physical_dns::PhysicalDnsOwner>>, dns_transport: Option<meow_common::transport_tasks::TransportScope>, core_resolver: Option<Arc<meow_dns::Resolver>>, proxy_resolver: Option<Arc<meow_dns::Resolver>> }
 pub struct NetworkContextSlot { current: RwLock<NetworkBinding> }
 impl NetworkContextSlot {
     pub fn new(initial: &NetworkContext) -> Arc<Self> {
-        Arc::new(Self { current: RwLock::new(NetworkBinding { scope: initial.scope.clone(), network_handle: initial.network_handle, physical_dns: initial.physical_dns.clone(), physical_dns_plan: initial.physical_dns_plan.clone(),
+        Arc::new(Self { current: RwLock::new(NetworkBinding { scope: initial.scope.clone(), protector: initial.protector.clone(), network_handle: initial.network_handle, physical_dns: initial.physical_dns.clone(), physical_dns_plan: initial.physical_dns_plan.clone(),
             dns_owner: initial.dns_owner.clone(), dns_transport: initial.dns_transport.clone(), core_resolver: initial.core_resolver.clone(), proxy_resolver: initial.proxy_resolver.clone() }) })
     }
     pub fn view(self: &Arc<Self>, base: &NetworkContext) -> NetworkContext { NetworkContext { live: Some(self.clone()), live_weak: None, ..base.clone() } }
@@ -47,15 +47,15 @@ impl NetworkContextSlot {
         let mut current = self.current.write();
         let old = NetworkContext { scope: current.scope.clone(), cancel: next.cancel.clone(), network_handle: current.network_handle,
             physical_dns: current.physical_dns.clone(), physical_dns_plan: current.physical_dns_plan.clone(), plane: next.plane.clone(), resource_roots: next.resource_roots.clone(), live: None, live_weak: None, resolver_weak: None, proxy_resolver_weak: None,
-            protector: next.protector.clone(), dns_owner: current.dns_owner.clone(), dns_transport: current.dns_transport.clone(), core_resolver: current.core_resolver.clone(), proxy_resolver: current.proxy_resolver.clone(), request_policy: next.request_policy.clone(), transport: next.transport.clone(), probe: next.probe.clone(), probe_owner: next.probe_owner.clone(), probe_snapshot: next.probe_snapshot.clone(), tunnel_capture: next.tunnel_capture.clone() };
-        *current = NetworkBinding { scope: next.scope.clone(), network_handle: next.network_handle, physical_dns: next.physical_dns.clone(), physical_dns_plan: next.physical_dns_plan.clone(),
+            protector: current.protector.clone(), dns_owner: current.dns_owner.clone(), dns_transport: current.dns_transport.clone(), core_resolver: current.core_resolver.clone(), proxy_resolver: current.proxy_resolver.clone(), request_policy: next.request_policy.clone(), transport: next.transport.clone(), probe: next.probe.clone(), probe_owner: next.probe_owner.clone(), probe_snapshot: next.probe_snapshot.clone(), tunnel_capture: next.tunnel_capture.clone() };
+        *current = NetworkBinding { scope: next.scope.clone(), protector: next.protector.clone(), network_handle: next.network_handle, physical_dns: next.physical_dns.clone(), physical_dns_plan: next.physical_dns_plan.clone(),
             dns_owner: next.dns_owner.clone(), dns_transport: next.dns_transport.clone(), core_resolver: next.core_resolver.clone(), proxy_resolver: next.proxy_resolver.clone() };
         old
     }
     pub(crate) fn retire_after_join(&self) {
         let retired = {
             let mut current = self.current.write();
-            let empty = NetworkBinding { scope: NetworkScope { protector: None, resolver: None }, network_handle: current.network_handle,
+            let empty = NetworkBinding { scope: NetworkScope { protector: None, resolver: None }, protector: None, network_handle: current.network_handle,
                 physical_dns: current.physical_dns.clone(), physical_dns_plan: current.physical_dns_plan.clone(), dns_owner: None, dns_transport: None, core_resolver: None, proxy_resolver: None };
             std::mem::replace(&mut *current,empty)
         };
@@ -180,7 +180,7 @@ impl NetworkContext {
     fn current_scope(&self) -> NetworkScope {
         let Some(slot) = self.live_slot() else { return self.scope.clone(); };
         let binding = slot.capture();
-        NetworkScope { protector: Some(binding_protector(self.protector.clone(),self.cancel.clone(),binding.network_handle,binding.dns_owner.as_ref())),
+        NetworkScope { protector: Some(binding_protector(binding.protector.clone(),self.cancel.clone(),binding.network_handle,binding.dns_owner.as_ref())),
             resolver: binding.scope.resolver }
     }
     pub fn captured_with_resolver(&self) -> (Self, Option<Arc<meow_dns::Resolver>>) {
@@ -211,11 +211,11 @@ impl NetworkContext {
             return (captured,resolver);
         };
         let current = slot.capture();
-        let scope = NetworkScope { protector: Some(binding_protector(self.protector.clone(),self.cancel.clone(),current.network_handle,current.dns_owner.as_ref())),
+        let scope = NetworkScope { protector: Some(binding_protector(current.protector.clone(),self.cancel.clone(),current.network_handle,current.dns_owner.as_ref())),
             resolver: current.scope.resolver };
         let resolver = current.core_resolver.clone();
         let mut captured = Self { scope, cancel: self.cancel.clone(), network_handle: current.network_handle, physical_dns: current.physical_dns, physical_dns_plan: current.physical_dns_plan,
-            plane: self.plane.clone(), resource_roots: self.resource_roots.clone(), live: None, live_weak: None, resolver_weak: None, proxy_resolver_weak: None, protector: self.protector.clone(), dns_owner: current.dns_owner, dns_transport: current.dns_transport,
+            plane: self.plane.clone(), resource_roots: self.resource_roots.clone(), live: None, live_weak: None, resolver_weak: None, proxy_resolver_weak: None, protector: current.protector.clone(), dns_owner: current.dns_owner, dns_transport: current.dns_transport,
             core_resolver: resolver.clone(), proxy_resolver: current.proxy_resolver, request_policy: self.request_policy.clone(), transport: self.transport.clone(), probe: self.probe.clone(), probe_owner: self.probe_owner.clone(), probe_snapshot: self.probe_snapshot.clone(), tunnel_capture: self.tunnel_capture.clone() };
         if let Some(transport) = &self.transport {
             captured.transport = Some(transport.with_network(Self { transport: None, ..captured.clone() }));
@@ -245,7 +245,7 @@ impl NetworkContext {
         let network_handle = current.network_handle;
         let protector = Some(binding_protector(current.protector.clone(),cancel.clone(),network_handle,current.dns_owner.as_ref()));
         Self { scope: NetworkScope { protector, resolver: current.scope.resolver.clone() }, cancel, network_handle, physical_dns: current.physical_dns, physical_dns_plan: current.physical_dns_plan,
-            plane: self.plane.clone(), resource_roots: self.resource_roots.clone(), live: self.live.clone(), live_weak: self.live_weak.clone(), resolver_weak: self.resolver_weak.clone(), proxy_resolver_weak: self.proxy_resolver_weak.clone(), protector: self.protector.clone(), dns_owner: self.dns_owner.clone(), dns_transport: self.dns_transport.clone(),
+            plane: self.plane.clone(), resource_roots: self.resource_roots.clone(), live: self.live.clone(), live_weak: self.live_weak.clone(), resolver_weak: self.resolver_weak.clone(), proxy_resolver_weak: self.proxy_resolver_weak.clone(), protector: current.protector.clone(), dns_owner: self.dns_owner.clone(), dns_transport: self.dns_transport.clone(),
             core_resolver: current.core_resolver, proxy_resolver: current.proxy_resolver, request_policy: self.request_policy.clone(), transport: self.transport.clone(), probe: self.probe.clone(), probe_owner: self.probe_owner.clone(), probe_snapshot: self.probe_snapshot.clone(), tunnel_capture: self.tunnel_capture.clone() }
     }
     fn bound_scope<F: Future>(&self, work: F) -> impl Future<Output = F::Output> {

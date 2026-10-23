@@ -77,7 +77,24 @@ async fn relay_commits_last_actual_nontransparent_hop_after_all_connects() {
 #[tokio::test]
 async fn failed_or_cancelled_dial_never_commits_success_receipt() {
     let reject=meow_config::load_config_from_str("strict: true\n").await.unwrap();let meta=Metadata::default();let (meta,receipt)=DialReceipt::branch(&meta);
+    // EOF/discard completion is not a successful forwarding outcome.
+    let rejected = reject.proxies.get("REJECT").unwrap();
+    let mut raw = rejected.dial_tcp(&meta).await.unwrap();
+    assert_eq!(raw.write(b"discard").await.unwrap(),7);
+    let mut eof = [0u8;1]; assert_eq!(raw.read(&mut eof).await.unwrap(),0);
+    assert!(receipt.outcome().is_none());
     assert!(reject.proxies.get("REJECT").unwrap().dial_tcp_observed(&meta).await.is_err());assert!(receipt.outcome().is_none());
+    let (udp_meta,udp_receipt)=DialReceipt::branch(&Metadata{network:Network::Udp,..Default::default()});
+    assert!(rejected.dial_udp_observed(&udp_meta).await.is_err());assert!(udp_receipt.outcome().is_none());
+    assert!(rejected.dial_tcp_observed(&Metadata::default()).await.is_err());
+    let selecting_reject=meow_config::load_config_from_str("strict: true\nproxy-groups:\n - {name: PICK, type: select, proxies: [REJECT]}\n").await.unwrap();
+    let (group_meta,group_receipt)=DialReceipt::branch(&Metadata::default());
+    assert!(selecting_reject.proxies["PICK"].dial_tcp_observed(&group_meta).await.is_err());
+    assert!(group_receipt.outcome().is_none());
+    let (drop_meta,drop_receipt)=DialReceipt::branch(&Metadata::default());
+    assert!(tokio::time::timeout(std::time::Duration::from_millis(25),
+        reject.proxies["REJECT-DROP"].dial_tcp_observed(&drop_meta)).await.is_err());
+    assert!(drop_receipt.outcome().is_none());
     let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();let addr=listener.local_addr().unwrap();let(notify,started)=tokio::sync::oneshot::channel();let cancel=CancellationToken::new();let stop=cancel.clone();
     let peer=tokio::spawn(async move{let(mut conn,_)=listener.accept().await.unwrap();let mut byte=[0];conn.read_exact(&mut byte).await.unwrap();notify.send(()).unwrap();stop.cancelled().await;});
     let yaml=format!("strict: true\nproxies:\n  - {{name: blocked, type: http, server: 127.0.0.1, port: {}}}\n",addr.port());let config=meow_config::load_config_from_str(&yaml).await.unwrap();let proxy=config.proxies.get("blocked").unwrap();
@@ -186,5 +203,55 @@ async fn committed_view_switch_changes_existing_sampler_read_without_reset_or_co
     assert_eq!(stats.traffic_snapshot(),(3,4,9,12));
     stats.set_only_proxy_view(true);assert_eq!(stats.traffic_snapshot(),(0,0,3,4));
     assert_eq!(stats.active_connection_count(),count);assert!(stats.connection_counters(held).is_some());
+    peers.close().await;
+}
+
+
+#[tokio::test]
+async fn plain_http_actual_dial_accounts_direct_and_proxy_before_view_switch() {
+    let peers=Peers::start().await;
+    let yaml=peers.yaml("select")+"mode: rule\nrules: ['MATCH,PICK']\n";
+    let config=meow_config::load_config_from_str(&yaml).await.unwrap();
+    let group=config.proxies["PICK"].clone();
+    let tunnel=Arc::new(meow_tunnel::Tunnel::new_with_slot(config.dns.resolver_slot.clone()));
+    tunnel.set_mode(config.general.mode);
+    tunnel.update_routing(config.proxies,config.rules,config.dialer_registry);
+    let stats=tunnel.statistics();
+    assert_eq!(stats.totals_for(false),(0,0));assert_eq!(stats.totals_for(true),(0,0));
+    let mut direct=(0,0);
+    for proxy in [false,true] {
+        group.selection().unwrap().set(if proxy {"through-http"} else {"named-local"}).await.unwrap();
+        let origin=TcpListener::bind("127.0.0.1:0").await.unwrap();let destination=origin.local_addr().unwrap();
+        let responder=tokio::spawn(async move {
+            let(mut remote,_)=origin.accept().await.unwrap();let mut head=Vec::new();
+            while !head.ends_with(b"\r\n\r\n") {head.push(remote.read_u8().await.unwrap());assert!(head.len()<8192);}
+            assert!(head.starts_with(b"POST /tracked HTTP/1.1\r\n"));
+            let mut body=[0;3];remote.read_exact(&mut body).await.unwrap();assert_eq!(&body,b"abc");
+            remote.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nresp").await.unwrap();remote.shutdown().await.unwrap();
+        });
+        let inbound=TcpListener::bind("127.0.0.1:0").await.unwrap();let address=inbound.local_addr().unwrap();let engine=tunnel.clone();
+        let worker=tokio::spawn(async move {
+            let(conn,source)=inbound.accept().await.unwrap();
+            meow_listener::http_proxy::handle_http(&engine,conn,source,None,None,"statistics-test",address.port()).await;
+        });
+        let mut client=TcpStream::connect(address).await.unwrap();
+        let request=format!("POST http://{destination}/tracked HTTP/1.1\r\nHost: {destination}\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc");
+        client.write_all(request.as_bytes()).await.unwrap();let mut response=Vec::new();
+        tokio::time::timeout(std::time::Duration::from_secs(5),client.read_to_end(&mut response)).await.unwrap().unwrap();
+        assert!(response.starts_with(b"HTTP/1.1 200"));assert!(response.ends_with(b"resp"));
+        tokio::time::timeout(std::time::Duration::from_secs(5),worker).await.unwrap().unwrap();responder.await.unwrap();
+        assert_eq!(stats.active_connection_count(),0);
+        let all=stats.totals_for(false);let only=stats.totals_for(true);
+        if !proxy {
+            direct=all;assert!(direct.0>=3 && direct.1>=4);assert_eq!(only,(0,0));
+            stats.sample_traffic();stats.set_only_proxy_view(true);assert_eq!(stats.traffic_snapshot(),(0,0,0,0));
+        } else {
+            assert!(only.0>=3 && only.1>=4);assert_eq!((all.0-direct.0,all.1-direct.1),only);
+            assert_eq!(peers.requests.load(Ordering::SeqCst),1);
+            stats.sample_traffic();let proxy_view=stats.traffic_snapshot();assert_eq!((proxy_view.2,proxy_view.3),only);
+            stats.set_only_proxy_view(false);let all_view=stats.traffic_snapshot();assert_eq!((all_view.2,all_view.3),all);
+            assert_eq!(stats.totals_for(true),only);
+        }
+    }
     peers.close().await;
 }

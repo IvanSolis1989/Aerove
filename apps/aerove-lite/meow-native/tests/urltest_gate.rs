@@ -87,6 +87,18 @@ async fn actual_periodic_urltest_nested_route_events_and_session_owned_health_st
     tokio::time::timeout(Duration::from_secs(5),async{
         loop{events.recv().await.unwrap();if f.api.control.snapshot().await.unwrap().picks["AUTO"]=="B"{break;}}
     }).await.unwrap();
+    // A single A->B route commit advances the defined initial version 0 to 1.
+    // Exercise two further actual periodic changes before asserting >1,
+    // rather than inventing a revision for unchanged health publication.
+    for (a_millis,b_millis,pick,marker) in [(5,250,"A",b'A'),(250,5,"B",b'B')] {
+        let before=f.api.control.snapshot().await.unwrap();
+        f.a.delay.store(a_millis,Ordering::Release);f.b.delay.store(b_millis,Ordering::Release);
+        tokio::time::timeout(Duration::from_secs(5),async{
+            loop{events.recv().await.unwrap();if f.api.control.snapshot().await.unwrap().picks["AUTO"]==pick{break;}}
+        }).await.unwrap();
+        assert!(f.api.control.snapshot().await.unwrap().picks_version.parse::<u64>().unwrap()>before.picks_version.parse::<u64>().unwrap());
+        f.wire(marker).await;
+    }
     let snapshot=f.api.control.snapshot().await.unwrap();assert_eq!(snapshot.picks["OUTER"],"AUTO");assert!(snapshot.picks_version.parse::<u64>().unwrap()>1);f.wire(b'B').await;
     let a=f.tunnel.route_snapshot().proxies["A"].clone();let b=f.tunnel.route_snapshot().proxies["B"].clone();
     f.api.control.cancel();f.scope.close().await.unwrap();assert!(health.await.unwrap_err().is_cancelled());

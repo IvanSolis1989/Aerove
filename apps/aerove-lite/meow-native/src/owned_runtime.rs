@@ -55,6 +55,8 @@ pub struct OwnedRuntime {
     tunnel_capture: Arc<std::sync::OnceLock<std::sync::Weak<TunnelCapture>>>,
     cancel: CancellationToken, scope: Mutex<Option<Arc<OwnedLoadScope>>>, network: Mutex<Option<NetworkContext>>,
     status: watch::Sender<OwnedStatus>, listeners: Mutex<ListenerStatus>, commands: mpsc::Sender<Command>,
+    failure: Mutex<Option<crate::runtime::Failure>>,
+    startup_diagnostic: AtomicBool,
     task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
     listener_intents: AtomicU64,
     cleanup: CleanupState,
@@ -63,9 +65,21 @@ pub struct OwnedRuntime {
 }
 fn error(message: &'static str) -> io::Error { io::Error::other(message) }
 
+fn group_activation_error(cause: crate::control::ControlError) -> io::Error {
+    match cause {
+        crate::control::ControlError::DialerProxyNotIntegrated => io::Error::other(crate::runtime::Failure {
+            code: "managedDialerProxyGraphNotIntegrated",
+            field: Some("proxies.dialer-proxy".to_owned()),
+            reason: Some("injected dialer edges require managed graph activation and health/selection ownership".to_owned()),
+        }),
+        _ => error("groupActivationFailed"),
+    }
+}
+
 impl OwnedRuntime {
     pub(crate) fn start(json: String, fd: Option<OwnedFd>, network: NetworkContext, generation: u64,
-        cancel: CancellationToken, register: RegisterControl, lookup: Option<Arc<dyn FlowOwnerLookup>>) -> io::Result<Arc<Self>> {
+        cancel: CancellationToken, register: RegisterControl, lookup: Option<Arc<dyn FlowOwnerLookup>>,
+        install_owner: impl FnOnce(Arc<Self>)) -> io::Result<Arc<Self>> {
         let raw_fd = fd.as_ref().map_or(-1, AsRawFd::as_raw_fd);
         let mode = serde_json::from_str::<serde_json::Value>(&json).ok().and_then(|v| v.get("runtimeMode").and_then(|v| v.as_str()).map(str::to_owned));
         let plan = Arc::new(RuntimePlan::parse(&json, raw_fd, mode.as_deref() == Some("tun"), false)?);
@@ -110,16 +124,22 @@ impl OwnedRuntime {
             tun_ready: false, user_listeners_ready: false, listening: false, core_ready: false });
         let (commands, receiver) = mpsc::channel(8);
         let owner = Arc::new(Self { plane, policies, probes, processes, network_slot, network_policy: Mutex::new(None), user_controller: Mutex::new(None), statistics: Mutex::new(None), tunnel_capture, cancel: cancel.clone(), scope: Mutex::new(Some(scope.clone())), network: Mutex::new(Some(network.clone())),
-            status, commands, listeners: Mutex::new(ListenerStatus { listening: false, tun_ready: false,
+            status, commands, failure: Mutex::new(None), startup_diagnostic: AtomicBool::new(false), listeners: Mutex::new(ListenerStatus { listening: false, tun_ready: false,
                 user_listeners_ready: false, active_ports: Vec::new(), core_epoch: generation.to_string(),
                 only_statistics_proxy: crate::statistics_policies::StatisticsPolicies::from_host(&plan.host_policy_yaml)?, unified_delay: initial_probe.unified_delay, tcp_concurrent: initial_probe.tcp_concurrent, find_process_mode: find_mode }),
             task: tokio::sync::Mutex::new(None), listener_intents: AtomicU64::new(0), cleanup: CleanupState::default(), transports, transport_scope });
+        // Register before spawn so cancellation always sees the typed-error owner.
+        install_owner(owner.clone());
         let worker = owner.clone();
         let task = runtime.spawn(async move {
             let mut core = None;
             let serving = Box::pin(worker.serve(json, plan, fd, network.clone(), scope.clone(), generation, register, receiver, &mut core));
             let result = AssertUnwindSafe(serving).catch_unwind().await;
             let stopping = cancel.is_cancelled();
+            if !stopping && result.as_ref().ok().and_then(|outcome| outcome.as_ref().err())
+                .and_then(|cause| cause.get_ref()).is_some_and(|cause| cause.is::<crate::runtime::Failure>()) {
+                worker.startup_diagnostic.store(true, Ordering::Release);
+            }
             worker.plane.cancel(); scope.cancel();
             let user = worker.user_controller.lock().clone();
             let user_closed = match &user { Some(owner) => owner.stop().await, None => Ok(()) };
@@ -158,7 +178,13 @@ impl OwnedRuntime {
                 (_, _, _) if user.as_ref().and_then(|owner| owner.failure()).is_some() => user.as_ref().and_then(|owner| owner.failure()).map(str::to_owned),
                 (_, _, _) if worker.transports.panicked() => Some("transportTaskPanicked".to_owned()),
                 (Err(_), _, _) => Some("ownedRuntimePanicked".to_owned()),
-                (Ok(Err(failure)), _, _) if !stopping => Some(failure.to_string()),
+                (Ok(Err(failure)), _, _) if !stopping => {
+                    // Cleanup/owner failures take priority over the selected serve error.
+                    if let Some(detail) = failure.get_ref().and_then(|cause| cause.downcast_ref::<crate::runtime::Failure>()) {
+                        *worker.failure.lock() = Some(detail.clone());
+                    }
+                    Some(failure.to_string())
+                },
                 _ => None,
             };
             worker.status.send_modify(|status| {
@@ -208,12 +234,18 @@ impl OwnedRuntime {
         }
         status
     }
+    pub(crate) fn failure(&self) -> Option<crate::runtime::Failure> { self.failure.lock().clone() }
+    pub(crate) fn joining_startup_diagnostic(&self) -> bool { self.startup_diagnostic.load(Ordering::Acquire) }
     pub fn subscribe(&self) -> watch::Receiver<OwnedStatus> { self.status.subscribe() }
     pub async fn ready(&self) -> io::Result<OwnedStatus> {
         let mut changed = self.subscribe();
         loop {
             let status = changed.borrow_and_update().clone();
-            match status.state { "Running" => return Ok(status), "Failed" | "Exited" => return Err(error("runtimeNotReady")), _ => {} }
+            match status.state {
+                "Running" => return Ok(status),
+                "Failed" | "Exited" => return Err(self.failure().map(io::Error::other).unwrap_or_else(|| error("runtimeNotReady"))),
+                _ => {},
+            }
             changed.changed().await.map_err(|_| error("runtimeExited"))?;
         }
     }
@@ -320,7 +352,7 @@ impl OwnedRuntime {
         let auth = config.auth.clone();
         let health_specs = meow_config::extract_health_check_specs(config.raw.proxy_groups.as_deref().unwrap_or(&[]));
         tunnel.update_routing(config.proxies, config.rules, config.dialer_registry);
-        let group_events = api.control.activate_groups(&scope).map_err(|_| error("groupActivationFailed"))?;
+        let group_events = api.control.activate_groups(&scope).map_err(group_activation_error)?;
         core_slot.as_mut().expect("installed core").group_events = Some(group_events);
         for spec in health_specs {
             let inner = tunnel.weak_inner(); let probe = self.probes.scope();
@@ -685,6 +717,55 @@ mod cleanup_ack_tests {
         let json = attachment_fixture(None,"127.0.0.1:39875".parse().unwrap(),39876,"proxy","{}");
         assert!(managed_yaml(&RuntimePlan::parse(&json,-1,false,false).unwrap()).is_ok());
     }
+    #[tokio::test(flavor="multi_thread", worker_threads=3)]
+    async fn owner_install_callback_precedes_worker_spawn_and_typed_startup_cancellation() {
+        use tokio::time::{timeout, Duration};
+        let roots = super::resume_roots::Roots::new();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let private = listener.local_addr().unwrap(); drop(listener);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mixed = listener.local_addr().unwrap(); drop(listener);
+        let mut json: serde_json::Value = serde_json::from_str(&attachment_fixture(Some(&roots),private,mixed.port(),"proxy","{}")).unwrap();
+        json["engineYaml"] = "strict: true\nproxies:\n - {name: FIRST,type: http,server: 127.0.0.1,port: 443}\n - {name: NODE,type: http,server: 127.0.0.1,port: 444,dialer-proxy: FIRST}\nrules: ['MATCH,NODE']\ndns: {enable: false,use-system-hosts: false}\ntun: {enable: false,auto-route: false}\n".into();
+        let resources = Arc::new(crate::resource_roots::ResourceRoots::validate(
+            roots.read.to_str(),roots.cache.to_str()).unwrap());
+        let cancel = CancellationToken::new();
+        let network = NetworkContext::platform(cancel.clone()).with_resource_roots(resources)
+            .with_physical_dns(vec!["127.0.0.1:53".parse().unwrap()]);
+        let installed = Arc::new(Mutex::new(None::<Arc<OwnedRuntime>>));
+        let registered = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let calls = registered.clone();
+        let register: RegisterControl = Arc::new(move |_,_| { calls.fetch_add(1,Ordering::AcqRel); true });
+        let (visible, observed) = oneshot::channel();
+        let (release, paused) = std::sync::mpsc::channel();
+        let target = installed.clone(); let shared_cancel = cancel.clone();
+        let starting = tokio::spawn(async move {
+            OwnedRuntime::start(json.to_string(),None,network,4242,shared_cancel,register,None,move |owner| {
+                *target.lock() = Some(owner.clone());
+                assert!(visible.send(owner).is_ok());
+                paused.recv_timeout(Duration::from_secs(5)).unwrap();
+            })
+        });
+        let owner = timeout(Duration::from_secs(5),observed).await.unwrap().unwrap();
+        assert!(Arc::ptr_eq(installed.lock().as_ref().unwrap(),&owner));
+        assert!(!cancel.is_cancelled()); assert!(!owner.joining_startup_diagnostic());
+        assert!(owner.task.try_lock().unwrap().is_none(), "worker registered before install returned");
+        assert_eq!(registered.load(Ordering::Acquire),0); assert_eq!(owner.status().state,"Starting");
+        release.send(()).unwrap();
+        let returned = timeout(Duration::from_secs(5),starting).await.unwrap().unwrap().unwrap();
+        assert!(Arc::ptr_eq(&owner,&returned));
+        let failure = timeout(Duration::from_secs(5),owner.ready()).await.unwrap().unwrap_err();
+        let detail = failure.get_ref().unwrap().downcast_ref::<crate::runtime::Failure>().unwrap();
+        assert_eq!(detail.code,"managedDialerProxyGraphNotIntegrated");
+        assert_eq!(detail.field.as_deref(),Some("proxies.dialer-proxy"));
+        assert!(detail.reason.as_deref().unwrap().contains("health/selection ownership"));
+        let status = timeout(Duration::from_secs(5),owner.wait()).await.unwrap().unwrap();
+        assert_eq!(status.state,"Failed"); assert_eq!(status.error,Some(failure.to_string()));
+        assert!(owner.cleanup_confirmed()); assert!(cancel.is_cancelled());
+        assert_eq!(registered.load(Ordering::Acquire),1);
+        for address in [private,mixed] { assert!(TcpListener::bind(address).await.is_ok()); }
+    }
+
     #[test]
     fn protocol_and_urltest_admission_preserves_fields_and_rejects_unowned_groups() {
         let cases = [("http",true),("socks5",true),("direct",true),("ss",cfg!(feature="ss")),
