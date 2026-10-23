@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "manifestSha256": "34e742d365f22608296caec8975b4cbd5f9346357df30a405aee458e196251c9",
-  "resolveLock": true,
-  "expectedLockBeforeSha256": "ca7bd37cdba45f46f6fc3eaf4b8aa19aa97c3d9ffc54363849b1ced3a420e78f",
+  "resolveLock": false,
+  "expectedLockBeforeSha256": "333699a851d7ae548145740d7c9fdf9f93009eb322c333fefd5414ffdcca4eef",
   "targets": [
     "lib",
     "api_lifecycle",
