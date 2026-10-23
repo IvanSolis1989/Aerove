@@ -4,6 +4,7 @@
 - [独立维护架构](INDEPENDENCE.md)
 - [上游来源与更新策略](upstreams.md)
 - [标准版与 Lite 独立版本规范](VERSIONING.md)
+- [Issue 表单与 AI 助手](issue-assistant.md)
 - [项目上下文](../../.agents/project.md)
 - [构建与验证命令](../../.agents/commands.md)
 - [工程约束](../../.agents/rules.md)
