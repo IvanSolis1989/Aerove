@@ -34,6 +34,7 @@ Actions → **Telegram release notification** → Run workflow，选择 main：
 - `send`：填写准确 Release tag，发送已发布版本的原始附件；重复发送自动跳过。
 - `recover`：仅在查看频道确认上次没有发送成功后使用。此模式允许重试不确定的发送，有重复消息风险。
 - `edit`：仅更新已有成功消息的简短说明，不重新上传或再次发布附件。
+- `verify`：指定 `first_message_id`，只读取其后有限范围内的已有附件并下载核对 SHA256，补齐发送回执，不发新文件。
 
 勾选 `verify_files` 会在上传后从 Telegram 下载全部附件，并逐项核对 SHA256，用于实际交付验收。
 执行摘要保留每个文件的名称、大小、SHA256、消息 ID 和下载回验结果。
