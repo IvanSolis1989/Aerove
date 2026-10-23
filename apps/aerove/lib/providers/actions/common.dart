@@ -211,7 +211,7 @@ class CommonAction extends _$CommonAction {
                 );
               } else {
                 final opened = await launchUrl(
-                  Uri.parse('https://github.com/$repository/releases/latest'),
+                  standardReleasePage(data),
                   mode: LaunchMode.externalApplication,
                 );
                 if (!opened) {

@@ -5,6 +5,14 @@
 
 分支差异以记录的 FlClash `v0.9.1`（`8d4f9744948751f1273fe871e1d05276fac09b0e`）为基线。代理协议、核心路由、VPN 授权和监控数据等上游已有能力，不列为 Aerove 独创功能。
 
+## 待发布
+
+- 检查更新同时发现本产品已发布的正式版、Alpha、Beta 和 RC，按版本选择最新可升级版本，由用户选择更新或取消；取消不下载、不安装。
+- Android 还会核对安装编号必须递增，保持标准版与 Lite 的更新资产隔离；同一产品版本的更高安装编号也可提示更新。
+- 修复只查询稳定版 latest 而漏掉较新测试版的问题；请求失败或发行列表未能完整读取时报告检查失败，不再误报已是最新版。
+- 桌面更新打开提示中选定版本的发布页，避免发现测试版后跳转到旧稳定版页面。
+- 已安装 Beta.1 或 Beta.4 的更新检查逻辑固定在旧包中，首次升级到本修复版需手动下载安装；覆盖安装保留原包名和签名。
+
 ## 0.10.0-beta.4+2026102220 — 已发布预览版
 
 发布于 **2026-10-23 12:27:03（日本时间）**：[Release](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.10.0-beta.4%2B2026102220)。发布源码为 [`28ac35ab`](https://github.com/IvanSolis1989/Aerove/commit/28ac35ab4e1b50a6f291386c67d4efe5bd51e562)，对应 [原构建 #20](https://github.com/IvanSolis1989/Aerove/actions/runs/39889227346) 与 [main 推广 #21](https://github.com/IvanSolis1989/Aerove/actions/runs/39895032339)。新源码 CI、ARM64 构建及包验收通过；main 复用同一原始 APK，跳过重复验证和编译，保留原版本、源码、签名及构建身份。

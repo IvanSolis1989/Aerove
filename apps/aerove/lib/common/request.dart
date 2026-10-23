@@ -6,8 +6,10 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/common/update_download.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/changelog.dart';
+import 'package:fl_clash/plugins/app.dart';
 import 'package:fl_clash/state.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 
@@ -88,13 +90,15 @@ class Request {
 
   /// Null when this build is current; throws when GitHub cannot be asked.
   Future<Map<String, dynamic>?> checkForUpdate() async {
-    final release = await latestRelease();
-    final remoteVersion = release['tag_name'] as String;
     final packageInfo = globalState.packageInfo;
     final buildNumber = int.tryParse(packageInfo.buildNumber) ?? 0;
-    final version = '${packageInfo.version}+$buildNumber';
-    final hasUpdate = compareVersions(remoteVersion, version) > 0;
-    return hasUpdate ? await _withReleaseNotes(release) : null;
+    final release = selectStandardUpdate(
+      await publishedReleases(),
+      version: packageInfo.version,
+      buildNumber: buildNumber,
+      androidAbis: Platform.isAndroid ? await app!.getSupportedAbis() : null,
+    );
+    return release == null ? null : await _withReleaseNotes(release);
   }
 
   Future<Map<String, dynamic>> _withReleaseNotes(
@@ -137,39 +141,112 @@ class Request {
     return release;
   }
 
-  /// The release page redirect still answers once the hourly API quota is spent.
+  /// A failed or incomplete list cannot establish that this build is current.
   @visibleForTesting
-  Future<Map<String, dynamic>> latestRelease() async {
-    try {
-      final response = await dio.get<Map<String, dynamic>>(
-        'https://api.github.com/repos/$repository/releases/latest',
-        options: Options(responseType: ResponseType.json),
+  Future<List<Map<String, dynamic>>> publishedReleases() async {
+    final releases = <Map<String, dynamic>>[];
+    for (var page = 1; page <= 5; page++) {
+      final response = await dio.get<List<dynamic>>(
+        'https://api.github.com/repos/$repository/releases',
+        queryParameters: {'per_page': 100, 'page': page},
+        options: Options(
+          responseType: ResponseType.json,
+          receiveTimeout: const Duration(seconds: 20),
+          headers: {'Accept': 'application/vnd.github+json'},
+        ),
       );
-      return response.data!;
-    } on DioException catch (error) {
-      commonPrint.log(
-        'latest release API failed: ${compactError(error)}',
-        logLevel: LogLevel.warning,
-      );
+      final rows = response.data;
+      if (rows == null || rows.length > 100) {
+        throw const FormatException('Invalid release list');
+      }
+      releases.addAll(rows.whereType<Map<String, dynamic>>());
+      if (rows.length < 100) return releases;
     }
-    final response = await dio.get<void>(
-      'https://github.com/$repository/releases/latest',
-      options: Options(
-        followRedirects: false,
-        validateStatus: (status) => status != null && status < 400,
-      ),
-    );
-    final location = response.headers.value(HttpHeaders.locationHeader);
-    final segments = Uri.tryParse(location ?? '')?.pathSegments ?? const [];
-    final tagIndex = segments.indexOf('tag') + 1;
-    if (tagIndex == 0 || tagIndex >= segments.length) {
-      throw FormatException('No release tag in the redirect', location);
-    }
-    return {'tag_name': segments[tagIndex]};
+    throw StateError('Release feed scan limit reached');
   }
 }
 
 final request = Request();
+
+/// Reuses the product comparator, with Android's independent install-code gate.
+@visibleForTesting
+Map<String, dynamic>? selectStandardUpdate(
+  List<Map<String, dynamic>> releases, {
+  required String version,
+  required int buildNumber,
+  List<String>? androidAbis,
+}) {
+  if (androidAbis != null && (buildNumber <= 0 || buildNumber > 2100000000)) {
+    throw StateError('Invalid installed Android version code');
+  }
+  Map<String, dynamic>? selected;
+  final installed = '$version+$buildNumber';
+  for (final release in releases) {
+    final tag = release['tag_name'];
+    if (release['draft'] == true || tag is! String || !tag.startsWith('v')) {
+      continue;
+    }
+    try {
+      if (compareVersions(tag, installed) <= 0) continue;
+      if (androidAbis != null) {
+        final code = int.tryParse(tag.split('+').skip(1).firstOrNull ?? '');
+        if (code == null || code <= buildNumber || code > 2100000000) {
+          continue;
+        }
+      }
+      final assets = release['assets'];
+      if (assets is! List) continue;
+      final trusted = assets.whereType<Map>().where((asset) {
+        final name = asset['name'];
+        final url = Uri.tryParse('${asset['browser_download_url']}');
+        return name is String &&
+            RegExp(
+              r'^(?:Aerove|XClash)-(?:android-[\w-]+\.apk|windows-[\w.-]+\.(?:exe|zip|msix)|linux-[\w.-]+\.(?:deb|rpm|AppImage|tar\.gz)|macos-[\w.-]+\.(?:dmg|zip))$',
+              caseSensitive: false,
+            ).hasMatch(name) &&
+            url != null &&
+            url.scheme == 'https' &&
+            url.host == 'github.com' &&
+            url.port == 443 &&
+            url.userInfo.isEmpty &&
+            !url.hasQuery &&
+            !url.hasFragment &&
+            url.pathSegments.join('/') ==
+                '$repository/releases/download/$tag/$name';
+      }).toList();
+      if (trusted.isEmpty ||
+          (androidAbis != null &&
+              selectAndroidUpdateAsset({'assets': trusted}, androidAbis) ==
+                  null)) {
+        continue;
+      }
+      if (selected == null ||
+          compareVersions(tag, selected['tag_name'] as String) > 0) {
+        selected = {...release, 'assets': trusted};
+      }
+    } on FormatException {
+      // Unrelated or malformed tags do not poison another product's feed.
+      continue;
+    }
+  }
+  return selected;
+}
+
+Uri standardReleasePage(Map<String, dynamic> release) {
+  final tag = release['tag_name'] as String;
+  final exact = Uri.https('github.com', '/$repository/releases/tag/$tag');
+  final supplied = Uri.tryParse('${release['html_url']}');
+  return supplied != null &&
+          supplied.scheme == 'https' &&
+          supplied.host == 'github.com' &&
+          supplied.port == 443 &&
+          supplied.userInfo.isEmpty &&
+          !supplied.hasQuery &&
+          !supplied.hasFragment &&
+          supplied.pathSegments.join('/') == '$repository/releases/tag/$tag'
+      ? supplied
+      : exact;
+}
 
 /// Some subscription servers send a gzip or zlib body without saying so in
 /// Content-Encoding, which is the only signal dart:io decompresses on.

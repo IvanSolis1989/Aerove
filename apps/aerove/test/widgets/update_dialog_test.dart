@@ -49,7 +49,19 @@ class _LatestRelease implements HttpClientAdapter {
     Future<void>? cancelFuture,
   ) async {
     return ResponseBody.fromString(
-      jsonEncode({'tag_name': tag, 'body': _bulletsOnly}),
+      jsonEncode([
+        {
+          'tag_name': tag,
+          'body': _bulletsOnly,
+          'assets': [
+            {
+              'name': 'Aerove-android-arm64.apk',
+              'browser_download_url':
+                  'https://github.com/IvanSolis1989/Aerove/releases/download/$tag/Aerove-android-arm64.apk',
+            },
+          ],
+        },
+      ]),
       200,
       headers: {
         Headers.contentTypeHeader: [Headers.jsonContentType],
@@ -289,6 +301,21 @@ void main() {
   testWidgets(
     'duplicate checks share one dialog and cancellation permits retry',
     (tester) async {
+      final calls = <MethodCall>[];
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      for (final name in [
+        'plugins.flutter.io/url_launcher',
+        'com.follow.clash/app',
+      ]) {
+        messenger.setMockMethodCallHandler(MethodChannel(name), (call) async {
+          calls.add(call);
+          return true;
+        });
+        addTearDown(
+          () => messenger.setMockMethodCallHandler(MethodChannel(name), null),
+        );
+      }
       final container = await pumpApp(tester);
       final action = container.read(commonActionProvider.notifier);
       final shown = action.checkUpdateResultHandle(
@@ -304,6 +331,7 @@ void main() {
       expect(find.textContaining('v0.8.96'), findsOneWidget);
       await tapCancel(tester);
       await shown;
+      expect(calls, isEmpty);
       expect(container.read(appSettingProvider).autoCheckUpdate, isTrue);
 
       final retry = action.checkUpdateResultHandle(
@@ -321,9 +349,13 @@ void main() {
     tester,
   ) async {
     const channel = MethodChannel('plugins.flutter.io/url_launcher');
+    final launches = <MethodCall>[];
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-    messenger.setMockMethodCallHandler(channel, (_) async => false);
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      launches.add(call);
+      return false;
+    });
     addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
     final container = await pumpApp(tester, withStatusManager: true);
     final action = container.read(commonActionProvider.notifier);
@@ -335,6 +367,10 @@ void main() {
     await tester.tap(find.text('Download'));
     await tester.pumpAndSettle();
     await shown;
+    expect(
+      launches.single.arguments['url'],
+      'https://github.com/IvanSolis1989/Aerove/releases/tag/v0.8.96',
+    );
     expect(
       find.text('Could not start the system download. Please try again.'),
       findsOneWidget,
