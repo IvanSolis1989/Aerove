@@ -347,6 +347,8 @@ void main() {
     await tester.pumpWidget(bandsScene(_red));
     expect(_capture().snapshots, 1);
     expect(_capture().keptBands, 0);
+    tester.binding.scheduleForcedFrame();
+    await tester.pump();
 
     await tester.pumpWidget(bandsScene(_green));
     expect(_capture().snapshots, 1);

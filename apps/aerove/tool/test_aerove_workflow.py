@@ -6,6 +6,8 @@ import subprocess
 import tempfile
 import unittest
 
+from tool import ci_verify
+
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOWS = ROOT / '.github/workflows'
@@ -26,14 +28,24 @@ def run_block(name):
 
 
 class WorkflowPolicyTest(unittest.TestCase):
-    def test_luminous_runner_prepares_the_pinned_core_source_for_dns_tests(self):
-        render = re.search(r'(?ms)^  render:\n(.*?)(?=^  [a-z][a-z_-]*:|\Z)', FULL)[1]
-        preparation = "      - name: Prepare official Core source for DNS contract tests\n" \
-            "        if: ${{ matrix.suite == 'luminous' }}\n" \
-            "        run: python3 tool/mihomo_source.py prepare"
-        self.assertIn(preparation, render)
-        self.assertLess(render.index(preparation),
-                        render.index('Run preserved verification combination'))
+    def test_every_suite_covering_dns_tests_prepares_the_pinned_core_source(self):
+        dependency = 'test/models/dns_override_test.dart'
+        required = {
+            name for name, suite in ci_verify.SUITES.items()
+            if any(dependency == path or dependency.startswith(path.rstrip('/') + '/')
+                   for path in suite['paths'])
+        }
+        self.assertEqual(required, {'luminous', 'regression-software'})
+        for name in required:
+            group = 'regressions' if ci_verify.SUITES[name]['rust'] else 'render'
+            job = re.search(rf'(?ms)^  {group}:\n(.*?)(?=^  [a-z][a-z_-]*:|\Z)', FULL)[1]
+            preparation = "      - name: Prepare official Core source for DNS contract tests\n" \
+                f"        if: ${{{{ matrix.suite == '{name}' }}}}\n" \
+                "        run: python3 tool/mihomo_source.py prepare"
+            with self.subTest(suite=name):
+                self.assertIn(preparation, job)
+                self.assertLess(job.index(preparation),
+                                job.index('Run preserved verification combination'))
 
     def test_generated_artifact_id_consumers_download_into_the_replay_directory(self):
         downloads = re.findall(
