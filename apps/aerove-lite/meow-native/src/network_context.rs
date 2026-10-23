@@ -70,7 +70,10 @@ impl NetworkContext {
         }) as Arc<dyn SocketProtector>);
         Self { scope: NetworkScope { protector, resolver: self.scope.resolver.clone() }, cancel, network_handle: self.network_handle, physical_dns: self.physical_dns.clone(), plane: self.plane.clone(), resource_roots: self.resource_roots.clone(), request_policy: self.request_policy.clone(), transport: self.transport.clone(), probe: self.probe.clone() }
     }
-    pub async fn scope<F: Future>(&self, work: F) -> F::Output {
+    pub fn scope<F: Future>(&self, work: F) -> impl Future<Output = F::Output> {
+        self.scope_boxed(Box::pin(work))
+    }
+    async fn scope_boxed<F: Future>(&self, work: std::pin::Pin<Box<F>>) -> F::Output {
         let protected = async { match &self.request_policy {
             Some(policy) => policy.scope(self.scope.scope(work)).await,
             None => self.scope.scope(work).await,
@@ -126,4 +129,49 @@ fn bind_network(network: u64, fd: RawFd) -> io::Result<()> {
     }
     #[cfg(not(target_os = "android"))]
     { let _ = (network, fd); Err(io::Error::from(io::ErrorKind::Unsupported)) }
+}
+
+#[cfg(test)]
+mod scope_layout_tests {
+    use super::*;
+    use std::{pin::Pin, sync::atomic::{AtomicUsize, Ordering}, task::{Context, Poll}};
+
+    struct LargeWork { bytes: [u8; 32768], polls: Arc<AtomicUsize> }
+    impl Future for LargeWork {
+        type Output = usize;
+        fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<usize> {
+            assert!(NetworkScope::is_captured());
+            self.polls.fetch_add(1, Ordering::SeqCst);
+            Poll::Ready(usize::from(self.bytes[0]) + usize::from(self.bytes[32767]))
+        }
+    }
+    // Preserve the failed source's inline layout only to measure this regression.
+    async fn prior_inline_scope<F: Future>(context: &NetworkContext, work: F) -> F::Output {
+        let protected = async { match &context.request_policy {
+            Some(policy) => policy.scope(context.scope.scope(work)).await,
+            None => context.scope.scope(work).await,
+        } };
+        let probed = async { match &context.probe { Some(probe) => probe.scope(protected).await, None => protected.await } };
+        match &context.transport {
+            Some(owner) => meow_common::transport_tasks::TransportScope::new(owner.clone()).scope(probed).await,
+            None => probed.await,
+        }
+    }
+    #[tokio::test]
+    async fn boxed_scope_bounds_layout_and_preserves_lazy_first_poll_and_context() {
+        let context = NetworkContext::platform(CancellationToken::new());
+        let polls = Arc::new(AtomicUsize::new(0));
+        let old = prior_inline_scope(&context, LargeWork { bytes: [7; 32768], polls: polls.clone() });
+        let work = context.scope(LargeWork { bytes: [7; 32768], polls: polls.clone() });
+        let before = std::mem::size_of_val(&old); let after = std::mem::size_of_val(&work);
+        eprintln!("[network-scope-layout] input={} inline={before} boxed={after} before-first-poll", std::mem::size_of::<LargeWork>());
+        assert_eq!(polls.load(Ordering::SeqCst), 0);
+        assert!(after < 2048, "boxed scope must not embed the input future");
+        assert!(before > after * 16, "the failed inline layout must remain represented");
+        drop(old);
+        assert_eq!(work.await, 14);
+        assert_eq!(polls.load(Ordering::SeqCst), 1);
+        assert!(!NetworkScope::is_captured());
+        eprintln!("[network-scope-layout] first-poll-complete context-restored");
+    }
 }
