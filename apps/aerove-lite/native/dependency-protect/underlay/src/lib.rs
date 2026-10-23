@@ -138,6 +138,7 @@ impl AsyncWrite for TcpStream {
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> { Pin::new(&mut self.inner).poll_shutdown(cx) }
 }
 
+#[derive(Debug)]
 pub struct UdpSocket { inner: tokio::net::UdpSocket, owner: Underlay }
 impl UdpSocket {
     pub fn local_addr(&self) -> io::Result<SocketAddr> { self.inner.local_addr() }

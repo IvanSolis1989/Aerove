@@ -171,7 +171,7 @@
     },
     {
       "path": "src/lib.rs",
-      "sha256": "a7c7b311c2ceb85423a9b051cd0a4eb7cac6e1f03201ef0a1dccf71a03eaa049"
+      "sha256": "39a21d6c38ff0fc74e68dd2931ed546faa1a755fecb675be9a60cffe4ef80c47"
     },
     {
       "path": "tests/sockets.rs",

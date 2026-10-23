@@ -23,6 +23,11 @@ on:
         required: false
         type: boolean
         default: false
+      native_test_stacks:
+        description: Capture one bounded native stack snapshot for a filtered host-test diagnosis
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -61,6 +66,7 @@ jobs:
         env:
           NATIVE_TEST_FILTER: ${{ inputs.native_test_filter }}
           NATIVE_TEST_SERIAL: ${{ inputs.native_test_serial }}
+          NATIVE_TEST_STACKS: ${{ inputs.native_test_stacks }}
           RUST_TEST_NOCAPTURE: '1'
           RUST_BACKTRACE: '1'
         run: |
@@ -80,6 +86,10 @@ jobs:
               'lockPresentBefore': lock.is_file(),
           }, indent=2))
           PY
+          if [[ "$NATIVE_TEST_STACKS" == true && -z "$NATIVE_TEST_FILTER" ]]; then
+            echo 'Stack diagnosis requires an explicit host-test filter.' >&2
+            exit 2
+          fi
           if [[ -n "$NATIVE_TEST_FILTER" ]]; then
             [[ "$NATIVE_TEST_FILTER" =~ ^[[:alnum:]_:]+$ ]] || exit 2
             python3 apps/aerove-lite/native/build.py --initialize-lock --prepare-only
@@ -91,11 +101,23 @@ jobs:
             compile_status=${PIPESTATUS[0]}
             command_status=$compile_status
             if [[ "$compile_status" == 0 ]]; then
+              stack_monitor=''
+              if [[ "$NATIVE_TEST_STACKS" == true ]]; then
+                python3 apps/aerove-lite/tooling/capture_native_stacks.py \
+                  --target-dir "$GITHUB_WORKSPACE/apps/aerove-lite/native/target" \
+                  --evidence-dir "$evidence/stacks" --filter "$NATIVE_TEST_FILTER" \
+                  > "$evidence/stack-monitor.log" 2>&1 &
+                stack_monitor=$!
+              fi
               (cd apps/aerove-lite/native && \
                 CARGO_TARGET_DIR="$GITHUB_WORKSPACE/apps/aerove-lite/native/target" RUST_BACKTRACE=1 \
                 timeout --signal=TERM --kill-after=10s 120s cargo test --locked --lib "$NATIVE_TEST_FILTER" \
                 -- --test-threads=1 --nocapture) 2>&1 | tee "$evidence/native-test.log"
               command_status=${PIPESTATUS[0]}
+              if [[ -n "$stack_monitor" ]]; then
+                kill -TERM "$stack_monitor" 2>/dev/null || true
+                wait "$stack_monitor" || true
+              fi
             fi
             set -e
           else
@@ -121,6 +143,8 @@ jobs:
                           + os.environ['NATIVE_TEST_FILTER'] + ' -- --test-threads=1 --nocapture') if os.environ['NATIVE_TEST_FILTER'] else
                          'timeout --signal=TERM --kill-after=10s 10m python3 apps/aerove-lite/native/build.py --initialize-lock --test',
               'testSelection': os.environ['NATIVE_TEST_FILTER'] or 'full-suite',
+              'stackCaptureRequested': os.environ['NATIVE_TEST_STACKS'] == 'true',
+              'stackCaptureMetadata': 'stacks/capture.json' if (evidence / 'stacks/capture.json').is_file() else None,
               'testThreads': 1 if os.environ['NATIVE_TEST_FILTER'] or os.environ['NATIVE_TEST_SERIAL'] == 'true' else 'default',
               'workingDirectory': 'apps/aerove-lite/native' if os.environ['NATIVE_TEST_FILTER'] else '.',
               'compileCommand': 'timeout --signal=TERM --kill-after=10s 8m cargo test --locked --lib --no-run' if os.environ['NATIVE_TEST_FILTER'] else None,
