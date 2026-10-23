@@ -80,11 +80,12 @@ jobs:
         cache-dependency-path: apps/aerove-lite/regexp2/go.sum
     - name: Build the isolated client helper for this ABI
       id: client_helper
+      shell: bash
       run: |
-        python3 apps/aerove-lite/regexp2/build.py --go "$(go env GOROOT)/bin/go" \
+        python3 apps/aerove-lite/tool/ci_artifacts.py android-helper --go "$(go env GOROOT)/bin/go" \
           --ndk "$ANDROID_SDK_ROOT/ndk/$NDK_VERSION" --abi '${{ inputs.abi }}' \
-          --staging "$RUNNER_TEMP/aerove-client-helper-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ inputs.abi }}" \
-          --out apps/aerove-lite/app/src/main/jniLibs 2>&1 | tee "$RUNNER_TEMP/lite-client-helper-${{ inputs.abi }}.log"
+          --directory "$RUNNER_TEMP/aerove-client-helper-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ inputs.abi }}" \
+          --destination apps/aerove-lite/app/src/main/jniLibs 2>&1 | tee "$RUNNER_TEMP/lite-client-helper-${{ inputs.abi }}.log"
     - name: Preserve the client helper build receipt
       if: always()
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

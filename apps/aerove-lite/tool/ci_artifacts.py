@@ -126,6 +126,60 @@ def native_build(target, abi, ndk):
     shutil.copyfile(build / abi / CORE_LIBRARY, destination / CORE_LIBRARY)
 
 
+def stage_helper_assessment(staging, source):
+    """Supply the identical authored corpus to production service tests in either ABI path."""
+    staging, source = Path(staging).resolve(), Path(source).resolve()
+    destination = staging.parent / 'regexp2-assessment'
+    if staging.exists() or destination.exists():
+        raise PromotionError('Helper staging and assessment corpus must be new')
+    if (staging.is_relative_to(source) or source.is_relative_to(staging)
+            or destination.is_relative_to(source) or source.is_relative_to(destination)
+            or staging.is_relative_to(HOST_ASSESSMENT_ROOT.resolve())
+            or destination == HOST_ASSESSMENT_ROOT.resolve()):
+        raise PromotionError('Helper staging or assessment corpus overlaps source')
+    inputs = assessment_identity(HOST_ASSESSMENT_ROOT)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(HOST_ASSESSMENT_ROOT, destination)
+    return destination, inputs
+
+
+def android_helper(go, ndk, abi, staging, destination):
+    """Run the unchanged Android producer after staging its required exact test inputs."""
+    if abi not in {'arm64-v8a', 'x86_64'}:
+        raise PromotionError('Unsupported Android helper ABI')
+    source = Path.cwd() / 'apps/aerove-lite/regexp2'
+    staging, destination = Path(staging).resolve(), Path(destination).resolve()
+    if (destination.is_relative_to(source.resolve()) or source.resolve().is_relative_to(destination)
+            or destination.is_relative_to(staging) or staging.is_relative_to(destination)
+            or destination.is_relative_to(HOST_ASSESSMENT_ROOT.resolve())):
+        raise PromotionError('Android helper paths overlap source or each other')
+    for name in ('libaerove_filter_helper.so', 'libaerove_filter_jni.so'):
+        if (destination / abi / name).exists():
+            raise PromotionError('Android helper output must be new')
+    spec = importlib.util.spec_from_file_location('lite_android_helper_build', source / 'build.py')
+    builder = importlib.util.module_from_spec(spec); spec.loader.exec_module(builder)
+    inputs = builder.input_identity(source)
+    corpus, assessment_inputs = stage_helper_assessment(staging, source)
+    environment = dict(os.environ, GOTOOLCHAIN='local', GOSUMDB='off')
+    for key in ('GOOS', 'GOARCH', 'GOFLAGS', 'CC', 'CXX', 'CGO_ENABLED'):
+        environment.pop(key, None)
+    command = [sys.executable, str(source / 'build.py'), '--go', str(go), '--ndk', str(ndk),
+        '--abi', abi, '--staging', str(staging), '--out', str(destination)]
+    subprocess.run(command, env=environment, check=True)
+    if builder.input_identity(source) != inputs:
+        raise PromotionError('Android helper production source inputs changed during build')
+    if (assessment_identity(HOST_ASSESSMENT_ROOT) != assessment_inputs
+            or assessment_identity(corpus) != assessment_inputs):
+        raise PromotionError('Android helper assessment corpus changed during build')
+    receipt = staging / 'build-receipt.json'
+    original = json.loads(receipt.read_text())
+    if original.get('sourceSha256') != inputs['sourceSha256'] or original.get('inputFiles') != inputs['inputFiles']:
+        raise PromotionError('Android helper producer receipt source identity mismatch')
+    # Preserve the production receipt bytes; transport/package admission verifies outputs.
+    return dict(identity(), productionReceiptSha256=digest(receipt), assessmentCorpus=dict(
+        source=str(HOST_ASSESSMENT_ROOT), staged=str(corpus), files=assessment_inputs))
+
+
 def host_helper(go, staging, destination, receipt_path):
     """Build the real JVM helper from the production checksum-verified patched staging."""
     root = Path.cwd(); source = root / 'apps/aerove-lite/regexp2'
@@ -160,9 +214,7 @@ def host_helper(go, staging, destination, receipt_path):
     version = subprocess.check_output([str(go), 'version'], env=environment, text=True).strip()
     if not version.startswith('go version go1.27.1 '):
         raise PromotionError('Pinned Go 1.27.1 is required for the host helper')
-    assessment_inputs = assessment_identity(HOST_ASSESSMENT_ROOT)
-    assessment_destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(HOST_ASSESSMENT_ROOT, assessment_destination)
+    assessment_destination, assessment_inputs = stage_helper_assessment(staging, source)
     subprocess.run([sys.executable, str(source / 'build.py'), '--go', str(go), '--test-only',
         '--staging', str(staging)], env=environment, check=True)
     # build.py validates module sums/source/patches and tests the same service used
@@ -194,11 +246,16 @@ def host_helper(go, staging, destination, receipt_path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=['seal', 'fetch', 'runtime', 'native', 'admission', 'host', 'host-helper'])
+    parser.add_argument('action', choices=['seal', 'fetch', 'runtime', 'native', 'admission', 'host', 'host-helper', 'android-helper'])
     parser.add_argument('--directory'); parser.add_argument('--destination'); parser.add_argument('--name'); parser.add_argument('--abi')
     parser.add_argument('--target'); parser.add_argument('--ndk')
     parser.add_argument('--go'); parser.add_argument('--receipt')
     args = parser.parse_args()
+    if args.action == 'android-helper':
+        if not all((args.go, args.ndk, args.abi, args.directory, args.destination)):
+            parser.error('Android helper requires --go, --ndk, --abi, --directory and --destination')
+        print(json.dumps(android_helper(args.go, args.ndk, args.abi, args.directory, args.destination)))
+        return
     if args.action == 'host-helper':
         if not all((args.go, args.directory, args.destination, args.receipt)):
             parser.error('Host helper requires --go, --directory, --destination and --receipt')

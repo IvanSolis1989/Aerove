@@ -169,4 +169,50 @@ class HostHelperTests(unittest.TestCase):
                 with self.assertRaisesRegex(ci.PromotionError,'overlap'):
                     ci.host_helper('go',root/'apps/aerove-lite/regexp2/staging',root/'bin',root/'receipt.json')
 
+class AndroidHelperTests(unittest.TestCase):
+    def test_android_abis_use_original_producer_receipt_and_exact_sibling_corpus(self):
+        for abi in ('arm64-v8a','x86_64'):
+            with self.subTest(abi=abi),tempfile.TemporaryDirectory() as temp:
+                root=Path(temp);source=HostHelperTests.source(self,root);stage=root/'staging';output=root/'jniLibs';saved=[]
+                spec=ci.importlib.util.spec_from_file_location('fixture_builder',source/'build.py')
+                builder=ci.importlib.util.module_from_spec(spec);spec.loader.exec_module(builder)
+                def run(command,**kwargs):
+                    self.assertEqual(ci.HOST_ASSESSMENT_HASHES,ci.assessment_identity(stage.parent/'regexp2-assessment'))
+                    self.assertEqual(str(source/'build.py'),command[1]);self.assertNotIn('--test-only',command)
+                    self.assertEqual(abi,command[command.index('--abi')+1]);self.assertEqual(str(output),command[-1])
+                    self.assertEqual('local',kwargs['env']['GOTOOLCHAIN'])
+                    for key in ('GOOS','GOARCH','GOFLAGS','CC','CXX','CGO_ENABLED'):self.assertNotIn(key,kwargs['env'])
+                    stage.mkdir();data=(json.dumps(dict(builder.input_identity(source),abis=[abi]),indent=4)+'\n').encode()
+                    (stage/'build-receipt.json').write_bytes(data);saved.append(data)
+                with mock.patch.object(ci.Path,'cwd',return_value=root),mock.patch.object(ci.subprocess,'run',side_effect=run) as called,mock.patch.object(ci,'identity',return_value=TransportTests.expected):
+                    value=ci.android_helper('/go/bin/go','/ndk',abi,stage,output)
+                self.assertEqual(1,called.call_count)
+                self.assertEqual(saved[0],(stage/'build-receipt.json').read_bytes())
+                self.assertEqual(ci.digest(stage/'build-receipt.json'),value['productionReceiptSha256'])
+                self.assertEqual(ci.HOST_ASSESSMENT_HASHES,value['assessmentCorpus']['files'])
+
+    def test_android_helper_rejects_failed_changed_existing_and_overlapping_inputs(self):
+        for failure in ('process','source','corpus','receipt'):
+            with self.subTest(failure=failure),tempfile.TemporaryDirectory() as temp:
+                root=Path(temp);source=HostHelperTests.source(self,root);stage=root/'staging'
+                spec=ci.importlib.util.spec_from_file_location('fixture_builder',source/'build.py')
+                builder=ci.importlib.util.module_from_spec(spec);spec.loader.exec_module(builder)
+                def run(command,**kwargs):
+                    if failure=='process':raise ci.subprocess.CalledProcessError(1,command)
+                    stage.mkdir();(stage/'build-receipt.json').write_text(json.dumps(builder.input_identity(source)))
+                    if failure=='source':(source/'go.mod').write_text('changed')
+                    if failure=='corpus':(stage.parent/'regexp2-assessment/cases.json').write_text('[]')
+                    if failure=='receipt':(stage/'build-receipt.json').write_text('{}')
+                with mock.patch.object(ci.Path,'cwd',return_value=root),mock.patch.object(ci.subprocess,'run',side_effect=run):
+                    with self.assertRaises((ci.PromotionError,ci.subprocess.CalledProcessError)):
+                        ci.android_helper('go','/ndk','arm64-v8a',stage,root/'out')
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);source=HostHelperTests.source(self,root)
+            with mock.patch.object(ci.Path,'cwd',return_value=root),mock.patch.object(ci.subprocess,'run') as run:
+                for stage,out in [(source/'staging',root/'out'),(root/'staging',source/'output'),(root/'staging',root/'staging'/'output')]:
+                    with self.assertRaises(ci.PromotionError):ci.android_helper('go','/ndk','arm64-v8a',stage,out)
+                (root/'regexp2-assessment').mkdir()
+                with self.assertRaises(ci.PromotionError):ci.android_helper('go','/ndk','arm64-v8a',root/'staging',root/'out')
+                run.assert_not_called()
+
 if __name__=='__main__':unittest.main()
