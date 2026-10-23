@@ -302,6 +302,9 @@ jobs:
         run: flutter pub get
       - uses: ./.github/actions/aerove-test-font
         timeout-minutes: 10
+      - name: Prepare official Core source for DNS contract tests
+        if: ${{ matrix.suite == 'luminous' }}
+        run: python3 tool/mihomo_source.py prepare
       - name: Run preserved verification combination
         run: python3 tool/ci_verify.py run "${{ matrix.suite }}" --shard "${{ matrix.shard }}" --evidence "$RUNNER_TEMP/xclash-previews"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
