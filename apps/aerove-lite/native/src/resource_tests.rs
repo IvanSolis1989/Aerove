@@ -61,7 +61,7 @@ fn rules_reject_unknown_nested_bad_cidr_and_android_unsupported_payloads() {
         ("domain", "payload: [{domain: example.com}]"),
         ("domain", "payload: ['invalid..example']"),
         ("ipcidr", "payload: ['not-a-cidr']"),
-        ("classical", "payload: ['PROCESS-NAME,app']"),
+        ("classical", "payload: ['PROCESS-NAME-REGEX,app.*']"),
         ("classical", "payload: ['RULE-SET,nested']"),
         ("classical", "payload: ['UID,1000']"),
         ("classical", "payload: ['UNKNOWN-RULE,value']"),
@@ -69,6 +69,8 @@ fn rules_reject_unknown_nested_bad_cidr_and_android_unsupported_payloads() {
         let path = files.file("bad.yaml", payload);
         assert!(validate_resource("ruleset", &path, behavior, "yaml").is_err(), "accepted {payload}");
     }
+    let path = files.file("exact-process.yaml", "payload: ['PROCESS-NAME,app']");
+    validate_resource("ruleset", &path, "classical", "yaml").unwrap();
     let path = files.file("alias.yaml", "payload: &list [example.com]\nother: *list");
     assert!(validate_resource("ruleset", &path, "domain", "yaml").is_err());
 }
@@ -129,10 +131,12 @@ fn zstd_raw(bytes: &[u8]) -> Vec<u8> {
     frame
 }
 
-fn mrs_domain() -> Vec<u8> {
+fn mrs_domain() -> Vec<u8> { mrs_domain_count(1) }
+
+fn mrs_domain_count(count: i64) -> Vec<u8> {
     let labels = b"moc.elpmaxe";
     let mut bytes = b"MRS\x01\x00".to_vec();
-    bytes.extend_from_slice(&1i64.to_be_bytes());
+    bytes.extend_from_slice(&count.to_be_bytes());
     bytes.extend_from_slice(&0i64.to_be_bytes());
     bytes.push(1);
     bytes.extend_from_slice(&1i64.to_be_bytes());
@@ -304,6 +308,14 @@ fn offline_rule_sets_match_standard_local_classification_and_normalized_payloads
         if name == "rules-alias" { assert_eq!(dump, "+.example.com\n"); }
         if name == "addresses" { assert!(dump.contains("192.0.2.1/32\n")); assert!(dump.contains("2001:db8::1/128\n")); }
     }
+    let duplicate = files.file("duplicates", "+.example.com\n+.example.com\nexample.com\n.example.com\n");
+    let info: serde_json::Value = serde_json::from_str(&inspect_rule_set(&duplicate).unwrap()).unwrap();
+    assert_eq!(info["count"], 4); // Standard Count preserves successfully inserted source entries.
+    assert_eq!(dump_rule_set(&duplicate, "domain", "text").unwrap(), "+.example.com\n");
+    let separate = files.file("separate", ".example.com\nexample.net\nexample.org\n.example.org\n");
+    assert_eq!(dump_rule_set(&separate, "domain", "text").unwrap(), "+.example.org\n.example.com\nexample.net\n");
+    let wildcards = files.file("wildcards", "*.example.com\n+.example.org\ntest.*.google.com\n.test.*.google.com\n.example.net\n");
+    assert_eq!(dump_rule_set(&wildcards, "domain", "text").unwrap(), "*.example.com\n+.example.org\n+.test.*.google.com\n.example.net\n");
     validate_resource("ruleset", &files.file("empty-runtime", b""), "classical", "text").unwrap();
     validate_resource("ruleset", &files.file("empty-runtime-yaml", b"payload: []\n"), "classical", "yaml").unwrap();
 }
@@ -315,11 +327,18 @@ fn offline_rule_sets_dump_real_mrs_and_reject_mismatch_and_ambiguous_sources() {
     let path = files.file("domain.mrs", mrs_domain());
     assert_eq!(serde_json::from_str::<serde_json::Value>(&inspect_rule_set(&path).unwrap()).unwrap(), serde_json::json!({"format":"mrs","behavior":"domain","count":1}));
     assert_eq!(dump_rule_set(&path, "domain", "mrs").unwrap(), "example.com\n");
+    let header_count = files.file("source-count.mrs", mrs_domain_count(4));
+    let info: serde_json::Value = serde_json::from_str(&inspect_rule_set(&header_count).unwrap()).unwrap();
+    assert_eq!(info["count"], 4); // Header logical count can differ from unique core terminals.
+    assert_eq!(dump_rule_set(&header_count, "domain", "mrs").unwrap(), "example.com\n");
+    assert!(inspect_rule_set(&files.file("empty-count.mrs", mrs_domain_count(0))).is_err());
     assert!(dump_rule_set(&path, "ipcidr", "mrs").is_err());
     assert!(dump_rule_set(&path, "domain", "text").is_err());
     for source in ["example.com\n192.0.2.0/24\n", "bad/name\n", "UNKNOWN-RULE,value\n"] {
-        assert!(inspect_rule_set(&files.file("invalid", source)).is_err());
+        assert!(inspect_rule_set(&files.file("invalid", source)).is_err(), "accepted invalid source {source:?}");
     }
+    let mixed_invalid = files.file("mixed-invalid", "example.com\ninvalid..example\n");
+    assert!(inspect_rule_set(&mixed_invalid).is_err(), "A valid entry must not hide a rejected core trie insertion");
     assert!(inspect_rule_set(&files.file("broken.mrs", [0x28, 0xb5, 0x2f, 0xfd, 0])).is_err());
     assert!(inspect_rule_set(&files.0.join("absent")).is_err());
 }

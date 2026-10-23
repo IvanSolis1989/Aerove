@@ -151,11 +151,24 @@ pub(crate) fn tailscale_underlay()->Option<::tailscale::Underlay> {
 
 pub(crate) fn process_owner()->Option<Arc<process_identity::Owner>> {context().ok().and_then(|context|context.process_owner.clone())}
 
+#[cfg(feature = "aerove-mobile-tests")]
+fn lifecycle_phase(stage: &str) { eprintln!("[dns-phase] owner {stage}"); }
+
 struct ContextLease;
 
 impl Drop for ContextLease {
     fn drop(&mut self) {
-        *CONTEXT.write().unwrap() = None;
+        #[cfg(feature = "aerove-mobile-tests")]
+        {
+            lifecycle_phase("context lease write-lock begin");
+            let mut active = CONTEXT.write().unwrap();
+            lifecycle_phase("context lease write-lock acquired");
+            *active = None;
+            drop(active);
+            lifecycle_phase("context lease drop complete");
+        }
+        #[cfg(not(feature = "aerove-mobile-tests"))]
+        { *CONTEXT.write().unwrap() = None; }
     }
 }
 
@@ -476,16 +489,31 @@ pub async fn run_runtime_identity(
             ready.take().unwrap()(ReadyInfo { address, runtime_mode: mode, tun_ready, user_listeners_ready });
         }
     };
+    #[cfg(feature = "aerove-mobile-tests")] lifecycle_phase("cancel begin");
     cancel.cancel();
+    #[cfg(feature = "aerove-mobile-tests")] lifecycle_phase("cancel complete");
+    #[cfg(feature = "aerove-mobile-tests")] lifecycle_phase("api shutdown begin");
     api.shutdown();
+    #[cfg(feature = "aerove-mobile-tests")] lifecycle_phase("api shutdown complete");
+    #[cfg(feature = "aerove-mobile-tests")] lifecycle_phase("user controller stop begin");
     let user_controller_result=user_controller.stop().await;
+    #[cfg(feature = "aerove-mobile-tests")] lifecycle_phase("user controller stop complete");
+    #[cfg(feature = "aerove-mobile-tests")] lifecycle_phase("network join begin");
     let network_result = network.join().await;
+    #[cfg(feature = "aerove-mobile-tests")] lifecycle_phase("network join complete");
+    #[cfg(feature = "aerove-mobile-tests")] lifecycle_phase("components stop_all begin");
     components.stop_all().await;
+    #[cfg(feature = "aerove-mobile-tests")] lifecycle_phase("components stop_all complete");
+    #[cfg(feature = "aerove-mobile-tests")] lifecycle_phase("telemetry stop begin");
     let telemetry_result = telemetry.stop().await;
+    #[cfg(feature = "aerove-mobile-tests")] lifecycle_phase("telemetry stop complete");
+    #[cfg(feature = "aerove-mobile-tests")] lifecycle_phase("api join begin");
     api.join().await?;
+    #[cfg(feature = "aerove-mobile-tests")] lifecycle_phase("api join complete");
     network_result?;
     user_controller_result?;
     telemetry_result.map_err(|error| Error::Operation(format!("delay notification task: {error}")))?;
+    #[cfg(feature = "aerove-mobile-tests")] lifecycle_phase("return result");
     result
 }
 

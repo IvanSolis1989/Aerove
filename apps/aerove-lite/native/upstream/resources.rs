@@ -38,12 +38,12 @@ struct RuleSetInfo { format: &'static str, behavior: &'static str, count: usize 
 
 /// Pure file inspection follows Standard's local-source classification; it owns no runtime.
 pub fn inspect_rule_set(path: &Path) -> Result<String> {
-    let (format, behavior, rules) = offline_rules(path)?;
-    Ok(serde_json::to_string(&RuleSetInfo { format, behavior: behavior_name(behavior), count: rules.len() })?)
+    let (format, behavior, _rules, count) = offline_rules(path)?;
+    Ok(serde_json::to_string(&RuleSetInfo { format, behavior: behavior_name(behavior), count })?)
 }
 
 pub fn dump_rule_set(path: &Path, behavior: &str, format: &str) -> Result<String> {
-    let (actual_format, actual_behavior, rules) = offline_rules(path)?;
+    let (actual_format, actual_behavior, rules, _count) = offline_rules(path)?;
     ensure!(format.eq_ignore_ascii_case(actual_format) || (actual_format == "yaml" && format.eq_ignore_ascii_case("yml")), "rule_set_format_mismatch");
     ensure!(behavior.eq_ignore_ascii_case(behavior_name(actual_behavior)) || (actual_behavior == RuleSetBehavior::Classical && behavior.eq_ignore_ascii_case("classic")), "rule_set_behavior_mismatch");
     let size = rules.iter().try_fold(0usize, |size, rule| size.checked_add(rule.len() + 1)).context("rule_set_dump_size_overflow")?;
@@ -57,15 +57,21 @@ fn behavior_name(behavior: RuleSetBehavior) -> &'static str {
     match behavior { RuleSetBehavior::Domain => "domain", RuleSetBehavior::Ipcidr => "ipcidr", RuleSetBehavior::Classical => "classical" }
 }
 
-fn offline_rules(path: &Path) -> Result<(&'static str, RuleSetBehavior, Vec<String>)> {
+fn offline_rules(path: &Path) -> Result<(&'static str, RuleSetBehavior, Vec<String>, usize)> {
     let bytes = read_input(path, MAX_INPUT_BYTES)?;
     if bytes.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
         let expanded = unpack_zstd(&bytes)?;
         let behavior = match expanded.get(4) { Some(0) => RuleSetBehavior::Domain, Some(1) => RuleSetBehavior::Ipcidr, _ => bail!("rule_set_invalid_mrs_behavior") };
         let content = mobile_rules_mrs_parse(&bytes, behavior)?;
-        let page = content.page(0, MAX_ENTRIES);
+        // Standard retains the source-entry count carried in the validated MRS header.
+        let mut header = Cursor::new(expanded.as_slice()); header.set_position(5);
+        let count = read_length(&mut header)?;
+        ensure!(count > 0, "rule_set_empty");
+        let page = content.page(0, MAX_ENTRIES * 2);
         ensure!(page.complete && page.rules.len() == page.rule_count, "rule_set_dump_count_limit_exceeded");
-        return Ok(("mrs", behavior, page.rules));
+        let rules = if behavior == RuleSetBehavior::Domain { compact_domain_rules(page.rules) } else { page.rules };
+        ensure!(rules.len() <= MAX_ENTRIES, "rule_set_dump_count_limit_exceeded");
+        return Ok(("mrs", behavior, rules, count));
     }
     ensure!(bytes.len() <= MAX_TEXT_BYTES, "rule-provider text input limit exceeded");
     let text = std::str::from_utf8(&bytes)?;
@@ -84,19 +90,38 @@ fn offline_rules(path: &Path) -> Result<(&'static str, RuleSetBehavior, Vec<Stri
     };
     let entries: Vec<String> = entries.into_iter().filter(|entry| !entry.is_empty()).collect();
     ensure!(entries.len() <= MAX_ENTRIES && entries.iter().all(|line| line.len() <= 2048), "rule-provider payload count/line limit exceeded");
-    if entries.is_empty() { return Ok((format, RuleSetBehavior::Classical, entries)); }
+    if entries.is_empty() { return Ok((format, RuleSetBehavior::Classical, entries, 0)); }
     let (behavior, keys) = classify_offline_rules(&entries)?;
     if behavior == RuleSetBehavior::Classical {
         for line in &entries { mobile_parse_classical_rule(line)?; }
-        return Ok((format, behavior, entries));
+        let count = entries.len();
+        return Ok((format, behavior, entries, count));
     }
     let nodes: usize = keys.iter().map(|line| line.split('.').count()).sum();
     ensure!(nodes <= 500_000 && keys.iter().all(|line| line.split('.').count() <= 128), "rule-provider trie node/depth limit exceeded");
+    if behavior == RuleSetBehavior::Domain {
+        ensure!(keys.iter().all(|key| !key.contains('/')), "rule_set_invalid_domain: slash is not allowed");
+    }
+    let count = keys.len();
     let content = mobile_make_rules(behavior, keys, None, None)?;
-    let page = content.page(0, MAX_ENTRIES);
+    let page = content.page(0, MAX_ENTRIES * 2);
     ensure!(page.complete && page.rules.len() == page.rule_count, "rule_set_dump_count_limit_exceeded");
     ensure!(!page.rules.is_empty(), "rule_set_empty");
-    Ok((format, behavior, page.rules))
+    let rules = if behavior == RuleSetBehavior::Domain { compact_domain_rules(page.rules) } else { page.rules };
+    ensure!(rules.len() <= MAX_ENTRIES, "rule_set_dump_count_limit_exceeded");
+    Ok((format, behavior, rules, count))
+}
+
+fn compact_domain_rules(rules: Vec<String>) -> Vec<String> {
+    let keys: std::collections::BTreeSet<String> = rules.into_iter().collect();
+    let mut compact = std::collections::BTreeSet::new();
+    for key in &keys {
+        let bare = key.strip_prefix('.').unwrap_or(key);
+        if keys.contains(bare) && keys.contains(&format!(".{bare}")) {
+            compact.insert(format!("+.{bare}"));
+        } else { compact.insert(key.clone()); }
+    }
+    compact.into_iter().collect()
 }
 
 fn offline_cidr(value: &str) -> Option<String> {
