@@ -192,3 +192,95 @@ pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_listenerCommand<
         Ok(env.new_string(serde_json::to_string(&status).map_err(|_| BridgeError("listener status encoding failed".into()))?)?)
     }).resolve::<ThrowRuntimeExAndDefault>()
 }
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_configurePolicies<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, handle: i64,
+    request: JString<'local>) -> JString<'local> {
+    env.with_env(|env| -> Result<JString<'local>, BridgeError> {
+        let session = session(handle)?;
+        let owner = session.owned_runtime().ok_or_else(|| BridgeError("runtimeNotReady".into()))?;
+        let request = request.try_to_string(env)?;
+        let receipt = owner.policies().configure_json(&request)?;
+        Ok(env.new_string(serde_json::to_string(&receipt).map_err(|_| BridgeError("policy encoding failed".into()))?)?)
+    }).resolve::<ThrowRuntimeExAndDefault>()
+}
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_policyStatus<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, handle: i64) -> JString<'local> {
+    env.with_env(|env| -> Result<JString<'local>, BridgeError> {
+        let session = session(handle)?;
+        let owner = session.owned_runtime().ok_or_else(|| BridgeError("runtimeNotReady".into()))?;
+        let status = owner.policies().status()?;
+        Ok(env.new_string(serde_json::to_string(&status).map_err(|_| BridgeError("policy encoding failed".into()))?)?)
+    }).resolve::<ThrowRuntimeExAndDefault>()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_capabilities<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>) -> JString<'local> {
+    env.with_env(|env| -> Result<JString<'local>, BridgeError> {
+        let json = executor()?.block_on(crate::capabilities::json())?;
+        Ok(env.new_string(json)?)
+    }).resolve::<ThrowRuntimeExAndDefault>()
+}
+
+fn validation_result<T>(work: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
+        .unwrap_or_else(|_| Err("native_validation_panicked".into()))
+}
+async fn validation_future<T>(work: impl std::future::Future<Output = Result<T, String>>) -> Result<T, String> {
+    use futures::FutureExt;
+    std::panic::AssertUnwindSafe(work).catch_unwind().await
+        .unwrap_or_else(|_| Err("native_validation_panicked".into()))
+}
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_validate<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, source: JString<'local>) -> JString<'local> {
+    env.with_env(|env| -> Result<JString<'local>, BridgeError> {
+        let source = source.try_to_string(env)?;
+        match executor()?.block_on(validation_future(crate::config_validation::validate_config(&source))) {
+            Ok(()) => Ok(JString::null()),
+            Err(error) => Ok(env.new_string(error)?),
+        }
+    }).resolve::<ThrowRuntimeExAndDefault>()
+}
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_validateResource<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, kind: JString<'local>, path: JString<'local>, behavior: JString<'local>, format: JString<'local>) -> JString<'local> {
+    env.with_env(|env| -> Result<JString<'local>, BridgeError> {
+        let kind = kind.try_to_string(env)?; let path = path.try_to_string(env)?;
+        let behavior = behavior.try_to_string(env)?; let format = format.try_to_string(env)?;
+        match executor()?.block_on(validation_future(crate::config_validation::validate_resource(&kind,std::path::Path::new(&path),&behavior,&format))) {
+            Ok(()) => Ok(JString::null()),
+            Err(error) => Ok(env.new_string(error)?),
+        }
+    }).resolve::<ThrowRuntimeExAndDefault>()
+}
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_inspectRuleSet<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, path: JString<'local>) -> JString<'local> {
+    env.with_env(|env| -> Result<JString<'local>, BridgeError> {
+        let path = path.try_to_string(env)?;
+        let output = validation_result(|| crate::config_validation::inspect_rule_set(std::path::Path::new(&path))).map_err(BridgeError)?;
+        Ok(env.new_string(output)?)
+    }).resolve::<ThrowRuntimeExAndDefault>()
+}
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_dumpRuleSet<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, path: JString<'local>, behavior: JString<'local>, format: JString<'local>) -> JString<'local> {
+    env.with_env(|env| -> Result<JString<'local>, BridgeError> {
+        let path = path.try_to_string(env)?; let behavior = behavior.try_to_string(env)?; let format = format.try_to_string(env)?;
+        let output = validation_result(|| crate::config_validation::dump_rule_set(std::path::Path::new(&path),&behavior,&format)).map_err(BridgeError)?;
+        Ok(env.new_string(output)?)
+    }).resolve::<ThrowRuntimeExAndDefault>()
+}
+#[cfg(test)]
+mod validation_boundary_tests {
+    use super::*;
+    #[test]
+    fn synchronous_validation_keeps_specific_errors_and_contains_panics() {
+        assert_eq!(validation_result(|| Ok::<_,String>("payload\n".to_owned())).unwrap(),"payload\n");
+        assert_eq!(validation_result::<()>(|| Err("rule_set_behavior_mismatch".into())).unwrap_err(),"rule_set_behavior_mismatch");
+        assert_eq!(validation_result::<()>(|| panic!("fixture parser panic")).unwrap_err(),"native_validation_panicked");
+    }
+    #[tokio::test]
+    async fn asynchronous_validation_keeps_specific_errors_and_contains_panics() {
+        validation_future(async { Ok::<_,String>(()) }).await.unwrap();
+        assert_eq!(validation_future::<()>(async { Err("$.unknown: unsupported_config_field".into()) }).await.unwrap_err(),"$.unknown: unsupported_config_field");
+        assert_eq!(validation_future::<()>(async { panic!("fixture converter panic") }).await.unwrap_err(),"native_validation_panicked");
+    }
+}

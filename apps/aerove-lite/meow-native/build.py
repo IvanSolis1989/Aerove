@@ -10,13 +10,13 @@ import subprocess
 import sys
 import tomllib
 from prepare import prepare
-from build_policy import load_policy, digest
+from build_policy import load_policy, digest, feature_boundary_command
 from clang_probe import probe as probe_libclang
 from verify_source import ROOT, sha, verify
 
 TARGETS={'aarch64-linux-android':('arm64-v8a',183),'x86_64-linux-android':('x86_64',62)}
 SCRIPT_JNI_SYMBOLS=['Java_dev_aerove_lite_overrides_NativeScriptEngine_native'+name for name in ['Begin','Evaluate','Cancel','Release']]
-RUNTIME_JNI_SYMBOLS=['Java_dev_aerove_lite_core_MeowNativeCore_'+name for name in ['startOwned','status','listenerStatus','awaitReady','stop','awaitExit','listenerCommand']]
+RUNTIME_JNI_SYMBOLS=['Java_dev_aerove_lite_core_MeowNativeCore_'+name for name in ['startOwned','status','listenerStatus','awaitReady','stop','awaitExit','listenerCommand','configurePolicies','policyStatus','capabilities','validate','inspectRuleSet','dumpRuleSet','validateResource']]
 
 def run(command, environment, capture=False):
     return subprocess.run(command,cwd=ROOT,env=environment,check=True,text=True,stdout=subprocess.PIPE if capture else None).stdout
@@ -151,6 +151,15 @@ def main():
             command=['cargo','build','--locked','--release','--target',args.target]
         run(command,environment)
         if sha(lock)!=resolved:raise ValueError('Locked build mutated Cargo.lock')
+        if not args.target and feature_boundary_command(policy):
+            receipt['featureBoundaryCommand']=feature_boundary_command(policy)
+            receipt['featureBoundaryExit']=None
+            try:
+                run(receipt['featureBoundaryCommand'],environment)
+                receipt['featureBoundaryExit']=0
+            except BaseException as error:
+                receipt['featureBoundaryExit']=getattr(error,'returncode',1);raise
+            if sha(lock)!=resolved:raise ValueError('Feature boundary test mutated Cargo.lock')
         if args.target:
             abi,machine=TARGETS[args.target];library=ROOT/'target'/args.target/'release/libaerove_meow_core.so'
             output=verify_elf(library,machine,readelf,SCRIPT_JNI_SYMBOLS+RUNTIME_JNI_SYMBOLS,build/(abi+'-readelf.txt'));receipt['scriptJniSymbols']=SCRIPT_JNI_SYMBOLS;receipt['runtimeJniSymbols']=RUNTIME_JNI_SYMBOLS;(build/(abi+'-readelf.txt')).write_text(output)

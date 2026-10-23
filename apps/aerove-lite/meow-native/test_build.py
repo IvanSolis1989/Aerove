@@ -231,6 +231,49 @@ class OverlayAndResolutionTests(unittest.TestCase):
                 self.assertEqual(success,receipt['acceptedLock']);self.assertEqual(0 if success else 42,receipt['metadataExit'])
                 self.assertEqual(b'resolver diagnostic',(root/'build/metadata.stderr.log').read_bytes())
 
+
+    def test_feature_boundary_policy_is_optional_and_rejects_other_commands(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);self.overlay(root)
+            policy=json.loads((root/'build-policy.json').read_text())
+            self.assertIsNone(build_policy.feature_boundary_command(build_policy.load_policy(root)))
+            policy['featureBoundary']='capabilities-no-default'
+            (root/'build-policy.json').write_bytes(json.dumps(policy).encode())
+            self.assertEqual(['cargo','test','--locked','--no-default-features','--lib','capabilities::tests::','--','--test-threads=1','--nocapture'],build_policy.feature_boundary_command(build_policy.load_policy(root)))
+            for invalid in [None,True,[],{'command':'shell'},'arbitrary-test']:
+                policy['featureBoundary']=invalid;(root/'build-policy.json').write_bytes(json.dumps(policy).encode())
+                with self.subTest(value=invalid),self.assertRaises(ValueError):build_policy.load_policy(root)
+
+    def test_feature_boundary_failure_or_lock_mutation_cannot_accept_a_resolved_lock(self):
+        for outcome in ['success','failure','mutated-lock']:
+            with self.subTest(outcome=outcome),tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);(root/'Cargo.toml').write_text('[package]\nname="aerove-meow-core"\n[lib]\nname="aerove_meow_core"\n[dependencies]\n')
+                (root/'Cargo.lock').write_bytes(b'accepted lock\n');previous=sha(root/'Cargo.lock')
+                upstream=root/'source';upstream.mkdir();(upstream/'AEROVE_SOURCE_PROVENANCE.json').write_text('{}');(root/'source.json').write_text('{}')
+                policy=dict(resolveLock=True,expectedLockBeforeSha256=previous,targets=['lib','proxy_runtime'],policySha256='fixture policy',featureBoundary='capabilities-no-default')
+                executed=[]
+                def metadata(*args,**kwargs):
+                    (root/'Cargo.lock').write_bytes(b'resolved lock\n')
+                    return subprocess.CompletedProcess(args[0],0,b'{}',b'')
+                def run(command,*args,**kwargs):
+                    if command[0]=='rustc':return 'rustc 1.98.1 fixture'
+                    executed.append(command)
+                    if '--no-default-features' in command:
+                        if outcome=='failure':raise subprocess.CalledProcessError(19,command)
+                        if outcome=='mutated-lock':(root/'Cargo.lock').write_bytes(b'unexpected mutation\n')
+                with mock.patch.object(build,'probe_libclang',return_value={'library':{'path':'unit-test-fixture-only'}}),mock.patch('builtins.print'),mock.patch.object(build,'ROOT',root),mock.patch.object(build,'load_policy',return_value=policy),mock.patch.object(build,'prepare',return_value=upstream),mock.patch.object(build,'run',side_effect=run),mock.patch.object(build.subprocess,'run',side_effect=metadata),mock.patch.object(sys,'argv',['build.py','--resolve-lock']):
+                    if outcome=='success':build.main()
+                    else:
+                        with self.assertRaises((subprocess.CalledProcessError,ValueError)):build.main()
+                receipt=json.loads((root/'build/host-receipt.json').read_text())
+                self.assertEqual(2,len(executed));self.assertNotIn('--no-default-features',executed[0])
+                self.assertEqual(build_policy.feature_boundary_command(policy),executed[1]);self.assertEqual(executed[0],receipt['command'])
+                self.assertEqual(executed[1],receipt['featureBoundaryCommand'])
+                self.assertEqual(19 if outcome=='failure' else 0,receipt['featureBoundaryExit'])
+                self.assertEqual(outcome=='success',receipt['acceptedLock'])
+                self.assertEqual(outcome!='mutated-lock',receipt['lockUnchangedDuringLockedCommand'])
+                self.assertEqual(b'accepted lock\n',(root/'build/lock-before-resolution.lock').read_bytes())
+
 class ClangProbeTests(unittest.TestCase):
     def library_file(self,root):
         path=root/'libclang-20.so.1';header=bytearray(20);header[:6]=b'\x7fELF\x02\x01';header[16:18]=(3).to_bytes(2,'little');header[18:20]=(62).to_bytes(2,'little');path.write_bytes(header);return path
@@ -310,15 +353,15 @@ class AndroidRecipeTests(unittest.TestCase):
             with mock.patch.object(build.subprocess,'check_output',side_effect=[' LOAD 0 0 0 0 0 R E 0x4000\n','NEEDED libc.so',symbols.replace('DEFAULT 1','DEFAULT UND')]),self.assertRaisesRegex(ValueError,'JNI symbols'):build.verify_elf(path,62,'readelf',build.SCRIPT_JNI_SYMBOLS,diagnostics)
             self.assertIn('DEFAULT UND',diagnostics.read_text())
 
-    def test_complete_owned_runtime_requires_all_seven_defined_runtime_and_four_script_jni_symbols(self):
+    def test_complete_owned_runtime_requires_all_fourteen_defined_runtime_and_four_script_jni_symbols(self):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'lib.so';header=bytearray(20);header[:6]=b'\x7fELF\x02\x01';header[16:18]=(3).to_bytes(2,'little');header[18:20]=(62).to_bytes(2,'little');path.write_bytes(header)
             required=build.SCRIPT_JNI_SYMBOLS+build.RUNTIME_JNI_SYMBOLS
-            self.assertEqual(11,len(set(required)))
+            self.assertEqual(18,len(set(required)))
             self.assertIn('Java_dev_aerove_lite_core_MeowNativeCore_awaitExit',required)
             symbols='\n'.join(' 1: 00000123 42 FUNC GLOBAL DEFAULT 1 '+name for name in required)
             with mock.patch.object(build.subprocess,'check_output',side_effect=[' LOAD 0 0 0 0 0 R E 0x4000\n','NEEDED libc.so',symbols]):build.verify_elf(path,62,'readelf',required)
-            for name in build.RUNTIME_JNI_SYMBOLS[-2:]:
+            for name in build.RUNTIME_JNI_SYMBOLS:
                 missing=symbols.replace('DEFAULT 1 '+name,'DEFAULT UND '+name)
                 with self.subTest(name=name),mock.patch.object(build.subprocess,'check_output',side_effect=[' LOAD 0 0 0 0 0 R E 0x4000\n','NEEDED libc.so',missing]),self.assertRaisesRegex(ValueError,name):build.verify_elf(path,62,'readelf',required)
 

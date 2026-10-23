@@ -67,6 +67,22 @@ impl ControlPlane {
             sources: BTreeMap::new(), busy: BTreeSet::new(), emitting: BTreeSet::new(), pending: BTreeMap::new(), sequence: 0,
         }), cancel, this: this.clone(), changed: Notify::new(), events }))
     }
+    /// `install` only swaps validated Rust state and returns retired objects.
+    /// Notifications, I/O and final retired-object destruction happen after return.
+    pub fn commit_policy<T>(&self, expected: u64, changed: bool, install: impl FnOnce() -> T)
+        -> Result<((u64, u64), Option<T>), String> {
+        let mut gate = self.gate.lock();
+        if gate.closed || self.cancel.is_cancelled() { return Err("cancelled".into()); }
+        if gate.core_epoch != expected { return Err("staleCoreEpoch".into()); }
+        if !changed {
+            let stamp = (gate.core_epoch, gate.revision); drop(gate); drop(install);
+            return Ok((stamp, None));
+        }
+        let epoch = next_core_epoch(gate.core_epoch)?;
+        let retired = install(); gate.core_epoch = epoch;
+        let stamp = (gate.core_epoch, gate.revision); drop(gate);
+        Ok((stamp, Some(retired)))
+    }
     pub fn stamp(&self) -> (u64, u64) {
         let gate = self.gate.lock();
         (gate.core_epoch, gate.revision)
@@ -140,6 +156,61 @@ impl ControlPlane {
             }
             tokio::select! { biased; _ = self.cancel.cancelled() => return, _ = notified => {} }
         }
+    }
+    pub fn rule_snapshot(&self, state: &meow_api::routes::AppState, name: Option<&str>) -> Result<serde_json::Value, &'static str> {
+        let captured = {
+            let gate = self.gate.lock();
+            if gate.closed || self.cancel.is_cancelled() { return Err("cancelled"); }
+            let providers = state.rule_providers.read();
+            let mut captured = Vec::new();
+            for (key, provider) in providers.iter() {
+                if name.is_some_and(|name| name != key) { continue; }
+                let identity = provider.provider_identity();
+                if gate.busy.contains(&identity.source) || provider.is_busy() { return Err("providerBusy"); }
+                if gate.live.get(&(identity.kind, identity.name.clone())) != Some(&identity.source) { return Err("staleProviderSource"); }
+                let receipt = gate.sources.get(&identity.source).filter(|receipt| receipt.revision > 0).ok_or("providerBusy")?;
+                captured.push((key.clone(), meow_api::routes::rule_provider_snapshot(provider), receipt.revision.to_string()));
+            }
+            captured
+        };
+        let mut snapshots = serde_json::Map::new();
+        for (key, provider, revision) in captured {
+            let mut value = serde_json::to_value(provider).map_err(|_| "providerSerializationFailed")?;
+            value["revision"] = serde_json::Value::String(revision); snapshots.insert(key, value);
+        }
+        match name {
+            Some(name) => snapshots.remove(name).ok_or("providerNotFound"),
+            None => Ok(serde_json::json!({"providers":snapshots})),
+        }
+    }
+    pub async fn rule_page(&self, state: &meow_api::routes::AppState, name: &str, offset: usize, limit: usize, expected: Option<&str>)
+        -> Result<serde_json::Value, String> {
+        if limit == 0 || limit > 10000 { return Err("invalidRulePageLimit".into()); }
+        if expected.is_some_and(|epoch| epoch.parse::<u64>().ok().is_none_or(|value| value == 0 || value.to_string() != epoch)) {
+            return Err("invalidRulePageEpoch".into());
+        }
+        let (provider, pages, stamp, source) = {
+            let gate = self.gate.lock();
+            if gate.closed || self.cancel.is_cancelled() { return Err("cancelled".into()); }
+            if expected.is_some_and(|expected| expected != gate.core_epoch.to_string()) { return Err("staleRulePage".into()); }
+            let provider = state.rule_providers.read().get(name).cloned().ok_or("providerNotFound")?;
+            let identity = provider.provider_identity(); let source = identity.source;
+            if gate.live.get(&(identity.kind, identity.name.clone())) != Some(&source) { return Err("staleProviderSource".into()); }
+            if gate.busy.contains(&source) || provider.is_busy() { return Err("providerBusy".into()); }
+            let pages = provider.page_snapshot().ok_or("providerBusy")?;
+            (provider, pages, (gate.core_epoch, gate.revision), source)
+        };
+        let page = provider.read_page_owned(pages, offset, limit).await?;
+        {
+            let gate = self.gate.lock();
+            if gate.closed || self.cancel.is_cancelled() { return Err("cancelled".into()); }
+            if (gate.core_epoch, gate.revision) != stamp || gate.live.get(&(meow_config::provider_events::ProviderKind::Rule, name.to_owned())) != Some(&source) {
+                return Err("staleRulePage".into());
+            }
+        }
+        let mut value = serde_json::to_value(page).map_err(|_| "providerSerializationFailed")?;
+        value["coreEpoch"] = serde_json::Value::String(stamp.0.to_string());
+        Ok(value)
     }
     pub fn proxy_snapshot(&self, state: &meow_api::routes::AppState, name: Option<&str>)
         -> Result<serde_json::Value, &'static str> {

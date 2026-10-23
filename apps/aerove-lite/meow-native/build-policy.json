@@ -1,21 +1,26 @@
 {
   "schema": 1,
-  "manifestSha256": "a2abb30ddd9a649f358f4860d3a17e4d89bcfba896180c898c6e7827a3fa5acb",
-  "resolveLock": false,
+  "manifestSha256": "34e742d365f22608296caec8975b4cbd5f9346357df30a405aee458e196251c9",
+  "resolveLock": true,
   "expectedLockBeforeSha256": "ca7bd37cdba45f46f6fc3eaf4b8aa19aa97c3d9ffc54363849b1ced3a420e78f",
   "targets": [
     "lib",
-    "proxy_runtime",
     "api_lifecycle",
+    "config_validation",
     "control_plane",
+    "offline_scope",
+    "owned_runtime",
     "packet_fd",
-    "tun_driver",
     "physical_dns",
     "provider_events",
-    "owned_runtime",
+    "provider_files",
+    "provider_rules",
+    "proxy_runtime",
+    "request_policy",
     "resource_roots",
-    "provider_files"
+    "tun_driver"
   ],
-  "overlay": "source-metadata/listener-runtime.json",
-  "overlaySha256": "b896f08f50d7ddaa24c95bb857683c8bb27b8cd92dac12550cc02d27571ce2a9"
+  "overlay": "source-metadata/full-runtime.json",
+  "overlaySha256": "093148585647e7382dbb8942193b76c5f99fbeee76325ddffbd238595afc65eb",
+  "featureBoundary": "capabilities-no-default"
 }

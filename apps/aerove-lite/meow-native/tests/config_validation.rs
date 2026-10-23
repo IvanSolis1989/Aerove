@@ -1,0 +1,235 @@
+use std::{fs, path::PathBuf, sync::atomic::{AtomicU64, Ordering}};
+use aerove_meow_core::config_validation::{self as validation, dump_rule_set, inspect_rule_set, validate_resource};
+
+struct Fixture(PathBuf);
+impl Fixture {
+    fn new(bytes: &[u8]) -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!("aerove-meow-offline-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, bytes).unwrap(); Self(path)
+    }
+}
+impl Drop for Fixture { fn drop(&mut self) { let _ = fs::remove_file(&self.0); } }
+
+#[tokio::test]
+async fn syntax_success_is_not_fake_complete_configuration_admission() {
+    validation::validate_config_syntax("mode: rule\nrules: ['MATCH,DIRECT']").unwrap();
+    assert!(validation::validate_config_syntax("port: [broken]").is_err());
+    validation::validate_config("{}").await.unwrap();
+    assert!(validation::validate_config("mode: invalid").await.is_err());
+    assert!(validation::validate_config("unknown-root: true").await.unwrap_err().contains("$.unknown-root"));
+}
+
+#[tokio::test]
+async fn yaml_domain_resource_uses_core_checked_build_and_preserves_old_json_shape() {
+    let f = Fixture::new(b"payload: ['example.com', '+.example.org']\n");
+    validate_resource("RULESET", &f.0, "domain", "YAML").await.unwrap();
+    let result: serde_json::Value = serde_json::from_str(&inspect_rule_set(&f.0).unwrap()).unwrap();
+    assert_eq!(result, serde_json::json!({"format":"yaml","behavior":"domain","count":2}));
+    assert_eq!(dump_rule_set(&f.0, "domain", "yml").unwrap(), "example.com\n+.example.org\n");
+    assert!(dump_rule_set(&f.0, "ipcidr", "yaml").unwrap_err().contains("behavior_mismatch"));
+    assert!(dump_rule_set(&f.0, "domain", "text").unwrap_err().contains("format_mismatch"));
+}
+
+#[tokio::test]
+async fn malformed_domain_that_old_checked_builder_silently_accepted_is_rejected() {
+    let f = Fixture::new(b"payload: ['.']\n");
+    assert!(validate_resource("ruleset", &f.0, "domain", "yaml").await.is_err());
+}
+
+#[tokio::test]
+async fn ip_literals_and_classical_rules_are_actually_converted() {
+    let ip = Fixture::new(b"192.0.2.1\n2001:db8::/32\n");
+    validate_resource("rule-provider", &ip.0, "ipcidr", "text").await.unwrap();
+    assert_eq!(dump_rule_set(&ip.0, "ipcidr", "text").unwrap(), "192.0.2.1/32\n2001:db8::/32\n");
+    let classical = Fixture::new(b"payload: ['DOMAIN-KEYWORD,example', 'DST-PORT,443']\n");
+    validate_resource("ruleset", &classical.0, "classical", "yaml").await.unwrap();
+    let bad = Fixture::new(b"payload: ['NOT-A-RULE,example']\n");
+    assert!(validate_resource("ruleset", &bad.0, "classical", "yaml").await.is_err());
+}
+
+#[tokio::test]
+async fn real_mrs_codec_roundtrip_count_mismatch_and_corruption() {
+    let bytes = meow_config::offline_rules::mrs_parser::write_ruleset_mrs(0, &["example.com", "+.example.org"]).unwrap();
+    let f = Fixture::new(&bytes);
+    validate_resource("ruleset", &f.0, "domain", "mrs").await.unwrap();
+    let result: serde_json::Value = serde_json::from_str(&inspect_rule_set(&f.0).unwrap()).unwrap();
+    assert_eq!(result["format"], "mrs"); assert_eq!(result["count"], 2);
+    assert_eq!(dump_rule_set(&f.0, "domain", "mrs").unwrap(), "example.com\n+.example.org\n");
+    assert!(validate_resource("ruleset", &f.0, "ipcidr", "mrs").await.is_err());
+    let mut mismatch = bytes.clone(); mismatch[9] = 3;
+    let f = Fixture::new(&mismatch);
+    assert!(validate_resource("ruleset", &f.0, "domain", "mrs").await.is_err());
+    let broken = Fixture::new(b"MRS!\x01\x00\x00\x00\x00\x01broken");
+    assert!(validate_resource("ruleset", &broken.0, "domain", "mrs").await.is_err());
+}
+
+#[tokio::test]
+async fn bounds_and_resource_identity_are_real_errors() {
+    let oversized_line = Fixture::new(format!("{}\n", "a".repeat(2049)).as_bytes());
+    assert!(inspect_rule_set(&oversized_line.0).is_err());
+    let bad_mmdb = Fixture::new(b"not a database");
+    assert!(validate_resource("mmdb", &bad_mmdb.0, "", "mmdb").await.is_err());
+    assert!(validate_resource("mmdb", &bad_mmdb.0, "domain", "mmdb").await.is_err());
+    assert!(validate_resource("unknown", &bad_mmdb.0, "", "").await.is_err());
+    let path = std::env::temp_dir();
+    assert!(inspect_rule_set(&path).is_err());
+}
+
+#[tokio::test]
+async fn no_proxy_syntax_only_pass_or_external_plugin_process_launch() {
+    let f = Fixture::new(b"proxies: [{name: external, type: ss, server: '127.0.0.1', port: 1, cipher: aes-128-gcm, password: secret, plugin: should-never-execute}]\n");
+    let error = validate_resource("proxy-provider", &f.0, "", "yaml").await.unwrap_err();
+    assert!(error.contains("offline_external_plugin_forbidden"));
+}
+
+#[tokio::test]
+async fn geosite_uses_strict_actual_protobuf_loader_not_nonempty_bytes() {
+    fn dat(kind: u8, value: &[u8]) -> Vec<u8> {
+        let mut domain = vec![8, kind, 18, value.len() as u8]; domain.extend_from_slice(value);
+        let mut site = vec![10, 2, b'c', b'n', 18, domain.len() as u8]; site.extend(domain);
+        let mut list = vec![10, site.len() as u8]; list.extend(site); list
+    }
+    let valid = Fixture::new(&dat(3, b"example.com"));
+    validate_resource("geosite", &valid.0, "", "dat").await.unwrap();
+    let bad_regex = Fixture::new(&dat(1, b"["));
+    assert!(validate_resource("geosite", &bad_regex.0, "", "dat").await.is_err());
+    let empty = Fixture::new(&dat(3, b""));
+    assert!(validate_resource("geosite", &empty.0, "", "dat").await.is_err());
+    let garbage = Fixture::new(b"notprotobuf");
+    assert!(validate_resource("geosite", &garbage.0, "", "dat").await.is_err());
+}
+
+#[tokio::test]
+async fn simultaneous_conversion_never_changes_cli_offline_global() {
+    let before = meow_config::is_offline_validate();
+    let (good, bad) = tokio::join!(validation::validate_config("mode: rule"), validation::validate_config("mode: invalid"));
+    good.unwrap(); assert!(bad.is_err());
+    assert_eq!(before, meow_config::is_offline_validate());
+}
+
+#[tokio::test]
+async fn valid_proxy_resource_runs_fixed_offline_factory_and_unknown_field_is_rejected() {
+    let f = Fixture::new(b"proxies: [{name: direct-node, type: direct}]\n");
+    validate_resource("proxy-provider", &f.0, "", "yaml").await.unwrap();
+    let bad = Fixture::new(b"proxies: [{name: direct-node, type: direct, ignored-field: true}]\n");
+    let error = validate_resource("proxy-provider", &bad.0, "", "yaml").await.unwrap_err();
+    assert!(error.contains("$.proxies[0].ignored-field"));
+}
+
+fn gzip(bytes: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(bytes).unwrap(); encoder.finish().unwrap()
+}
+#[test]
+fn gzip_all_members_crc_truncation_and_expansion_bound() {
+    let first = gzip(b"first"); let second = gzip(b"second");
+    let mut multi = first.clone(); multi.extend(second);
+    assert_eq!(validation::unpack_geodata(&multi, 64).unwrap(), b"firstsecond");
+    assert_eq!(validation::unpack_geodata(b"raw", 64).unwrap(), b"raw");
+    assert!(validation::unpack_geodata(b"raw", 2).is_err());
+    assert!(validation::unpack_geodata(&gzip(&[0u8; 1024]), 32).unwrap_err().contains("expanded limit"));
+    let mut crc = first.clone(); let n = crc.len(); crc[n - 8] ^= 1;
+    assert!(validation::unpack_geodata(&crc, 64).is_err());
+    let mut size = first.clone(); let n = size.len(); size[n - 4] ^= 1;
+    assert!(validation::unpack_geodata(&size, 64).is_err());
+    assert!(validation::unpack_geodata(&first[..first.len()-1], 64).is_err());
+    let mut trailing = first.clone(); trailing.extend_from_slice(b"not-a-gzip-member");
+    assert!(validation::unpack_geodata(&trailing, 64).is_err());
+    assert!(validation::unpack_geodata(&[0x1f,0x8b,0x00],64).is_err());
+}
+fn ss_fields(plugin: &str, opts: &str, extra: &str) -> Result<String,String> {
+    validation::normalize_config_fields(&format!("proxies: [{{name: node, type: ss, server: example.com, port: 443, cipher: aes-128-gcm, password: secret, plugin: '{plugin}', plugin-opts: {opts}{extra}}}]"))
+}
+#[test]
+fn ss_plugin_opts_normalize_aliases_without_dropping_or_replacing_policies() {
+    let simple = ss_fields("simple-obfs", "{obfs: tls, obfs-host: Case.Example}", "").unwrap();
+    assert!(simple.contains("host=Case.Example;mode=tls"));
+    let jls = ss_fields("jls", "{host: example.com, username: user, password: pass, skip_cert_verify: false, alpn: [h2, http/1.1]}", "").unwrap();
+    assert!(jls.contains("skip-cert-verify=false")); assert!(jls.contains("alpn=h2,http/1.1"));
+    let gost = ss_fields("gost-plugin", "{mode: websocket, tls: true, ech-opts: {enable: true, config: AQID}, headers: {X-Test: value}}", "").unwrap();
+    assert!(gost.contains("ech-opts.enable=true")); assert!(gost.contains("header=X-Test:value"));
+    let ech = ss_fields("ech-tls-tunnel", "{mode: client, sni: example.com, path: /, ech_config: AQID, fast_open: false}", "").unwrap();
+    assert!(ech.contains("ech-config=AQID")); assert!(ech.contains("fast-open=false"));
+    let raw = ss_fields("v2ray-plugin", "'mode=websocket;tls;host=Case.Example;header=X-Test:value'", "").unwrap();
+    assert!(raw.contains("tls=true")); assert!(raw.contains("host=Case.Example"));
+}
+#[test]
+fn ss_plugin_unknown_conflicting_ignored_and_unsafe_options_have_exact_paths() {
+    let cases = [
+        ("obfs", "{obfs: tls, mode: http}", "", "$.proxies[0].plugin-opts.mode"),
+        ("v2ray-plugin", "{mode: quic}", "", "$.proxies[0].plugin-opts.mode"),
+        ("restls", "{client-id: abc}", "", "$.proxies[0].plugin-opts.client-id"),
+        ("gost-plugin", "{tls: typo}", "", "$.proxies[0].plugin-opts.tls"),
+        ("v2ray-plugin", "{skip-cert-verify: true}", "", "$.proxies[0].plugin-opts.skip-cert-verify"),
+        ("v2ray-plugin", "{headers: {X: 'value;tls'}}", "", "$.proxies[0].plugin-opts.headers.X"),
+        ("jls", "{alpn: ['h2;host=other']}", "", "$.proxies[0].plugin-opts.alpn[0]"),
+        ("gost-plugin", "{ech-enable: true, ech-opts: {enable: false}, tls: true}", "", "$.proxies[0].plugin-opts.ech-opts.enable"),
+        ("restls", "{version-hint: tls14}", "", "$.proxies[0].plugin-opts.version-hint"),
+        ("shadow-tls", "{version: 4}", "", "$.proxies[0].plugin-opts.version"),
+        ("kcptun", "{smuxver: 2}", "", "$.proxies[0].plugin-opts.smuxver"),
+        ("kcptun", "{crypt: made-up}", "", "$.proxies[0].plugin-opts.crypt"),
+        ("kcptun", "{mode: fast, interval: 10}", "", "$.proxies[0].plugin-opts.interval"),
+        ("kcptun", "{datashard: 200, parityshard: 200}", "", "$.proxies[0].plugin-opts.parityshard"),
+        ("shadow-tls", "{host: example.com}", ", udp: true", "$.proxies[0].udp"),
+        ("restls", "{host: example.com}", ", client-fingerprint: chrome", "$.proxies[0].client-fingerprint"),
+    ];
+    for (plugin, opts, extra, path) in cases { let error=ss_fields(plugin,opts,extra).unwrap_err(); assert!(error.starts_with(path), "{error} should point to {path}"); }
+}
+
+
+#[cfg(unix)]
+#[test]
+fn unix_fifo_child_probe() {
+    let Some(path) = std::env::var_os("AEROVE_CONFIG_FIFO_CHILD_PATH") else { return; };
+    let path = PathBuf::from(path);
+    assert_eq!(inspect_rule_set(&path).unwrap_err(), "resource candidate must be a regular file");
+    assert_eq!(dump_rule_set(&path, "domain", "yaml").unwrap_err(), "resource candidate must be a regular file");
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_fifo_and_symlink_to_fifo_cannot_block_resource_open() {
+    use std::{ffi::CString, os::unix::{ffi::OsStrExt, fs::symlink}, process::Command, time::{Duration, Instant}};
+    let fifo = Fixture::new(b"placeholder");
+    fs::remove_file(&fifo.0).unwrap();
+    let name = CString::new(fifo.0.as_os_str().as_bytes()).unwrap();
+    // SAFETY: CString lives across mkfifo, is NUL terminated, and names this fixture only.
+    assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+    let link = Fixture::new(b"placeholder");
+    fs::remove_file(&link.0).unwrap();
+    symlink(&fifo.0, &link.0).unwrap();
+    // Each probe is isolated: the old blocking open fails this regression within a bounded deadline.
+    // No writer is ever opened, and a timed-out child is killed and reaped before failing the test.
+    for path in [&fifo.0, &link.0] {
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "unix_fifo_child_probe", "--nocapture"])
+            .env("AEROVE_CONFIG_FIFO_CHILD_PATH", path)
+            .spawn().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() { assert!(status.success(), "FIFO child failed: {status}"); break; }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("resource open blocked on FIFO without a writer: {path:?}");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_regular_symlink_directory_and_empty_path_keep_resource_semantics() {
+    use std::os::unix::fs::symlink;
+    let regular = Fixture::new(b"payload: [example.com]\n");
+    let link = Fixture::new(b"placeholder");
+    fs::remove_file(&link.0).unwrap();
+    symlink(&regular.0, &link.0).unwrap();
+    assert_eq!(inspect_rule_set(&regular.0).unwrap(), inspect_rule_set(&link.0).unwrap());
+    assert_eq!(dump_rule_set(&link.0, "domain", "yaml").unwrap(), "example.com\n");
+    assert_eq!(inspect_rule_set(&std::env::temp_dir()).unwrap_err(), "resource candidate must be a regular file");
+    assert!(inspect_rule_set(std::path::Path::new("")).unwrap_err().starts_with("open resource candidate:"));
+}

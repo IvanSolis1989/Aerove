@@ -19,14 +19,22 @@ def owned_file(root, name):
         raise ValueError('Policy or patch path escapes owner')
     return target
 
+def feature_boundary_command(policy):
+    """Only the authored cfg-off capability admission check is an approved extra command."""
+    if policy is None or 'featureBoundary' not in policy:return None
+    if policy['featureBoundary']!='capabilities-no-default':raise ValueError('Unknown feature boundary check')
+    return ['cargo','test','--locked','--no-default-features','--lib','capabilities::tests::','--','--test-threads=1','--nocapture']
+
 def load_policy(root, *, check_resolution_seed=True):
     file=Path(root)/'build-policy.json'
     if not file.exists():return None
     raw=file.read_bytes();policy=json.loads(raw)
-    if set(policy)!={'schema','manifestSha256','resolveLock','expectedLockBeforeSha256','targets','overlay','overlaySha256'} or type(policy['schema']) is not int or policy['schema']!=1:
+    required={'schema','manifestSha256','resolveLock','expectedLockBeforeSha256','targets','overlay','overlaySha256'}
+    if not required.issubset(policy) or set(policy)-required-{'featureBoundary'} or type(policy['schema']) is not int or policy['schema']!=1:
         raise ValueError('Unknown build policy schema or fields')
     if type(policy['resolveLock']) is not bool or any(not isinstance(policy[k],str) or not HASH.fullmatch(policy[k]) for k in ['manifestSha256','expectedLockBeforeSha256','overlaySha256']):
         raise ValueError('Invalid explicit build policy identity')
+    feature_boundary_command(policy)
     targets=policy['targets']
     if not isinstance(targets,list) or not targets or targets[0]!='lib' or len(set(targets))!=len(targets) or any(not isinstance(t,str) or not re.fullmatch('[a-z][a-z0-9_]*',t) for t in targets):
         raise ValueError('Invalid representative test targets')

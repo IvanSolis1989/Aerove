@@ -9,6 +9,23 @@ license = "GPL-3.0-only"
 name = "aerove_meow_core"
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = ["ss", "trojan", "vless", "vless-vision", "vless-encryption", "ech-tls-tunnel", "vmess", "snell", "hysteria2", "mux", "kcptun", "anytls", "trusttunnel", "trusttunnel-h3"]
+ss = ["meow-config/ss"]
+trojan = ["meow-config/trojan"]
+vless = ["meow-config/vless"]
+vless-vision = ["vless", "meow-config/vless-vision"]
+vless-encryption = ["vless", "meow-config/vless-encryption"]
+ech-tls-tunnel = ["ss", "meow-config/ech-tls-tunnel"]
+vmess = ["meow-config/vmess"]
+snell = ["meow-config/snell"]
+hysteria2 = ["meow-config/hysteria2"]
+mux = ["ss", "meow-config/mux"]
+kcptun = ["ss", "mux", "meow-config/kcptun"]
+anytls = ["meow-config/anytls"]
+trusttunnel = ["meow-config/trusttunnel"]
+trusttunnel-h3 = ["trusttunnel", "meow-config/trusttunnel-h3"]
+
 [dependencies]
 meow-common = { path = ".upstream/meow-rs/crates/meow-common", features = ["aerove-android-runtime"] }
 meow-dns = { path = ".upstream/meow-rs/crates/meow-dns", default-features = false, features = ["aerove-android-runtime"] }
@@ -33,6 +50,8 @@ tokio-util = { version = "0.7", features = ["rt"] }
 futures = "0.3"
 async-trait = "0.1"
 ipnet = "2"
+uuid = "1"
+flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
 
 [target.'cfg(unix)'.dependencies]
 lwip = { package = "meow-lwip", path = ".upstream/meow-rs/crates/meow-lwip" }
@@ -43,4 +62,7 @@ rquickjs = { version = "=0.12.2", default-features = false, features = ["bindgen
 
 [dev-dependencies]
 hickory-proto = "0.26"
+boring = "5.2"
+tokio-boring = "5.2"
+meow-transport = { path = ".upstream/meow-rs/crates/meow-transport", default-features = false, features = ["tls"] }
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake"] }

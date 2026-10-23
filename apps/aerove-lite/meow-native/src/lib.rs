@@ -1,5 +1,7 @@
 //! Independent Meow candidate; the existing Android core is not switched here.
 pub mod runtime;
+pub mod capabilities;
+pub mod config_validation;
 pub mod api;
 pub mod control;
 pub mod providers;
@@ -7,6 +9,7 @@ pub mod providers;
 pub mod packet_fd;
 pub mod runtime_plan;
 pub mod resource_roots;
+pub mod request_policies;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 pub mod network_context;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]

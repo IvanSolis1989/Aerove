@@ -118,7 +118,9 @@ impl CoreApi {
         let aerove_router = aerove_router.merge(crate::control::router(control.clone()));
         let authorization = HeaderValue::from_str(&format!("Bearer {private_secret}"))
             .map_err(|_| ApiError("invalidPrivateSecret"))?;
-        let official = meow_api::routes::create_router(state.clone());
+        let pages = Router::new().route("/providers/rules/{name}/rules", axum::routing::get(rule_page_route))
+            .with_state((state.clone(), control.clone()));
+        let official = meow_api::routes::create_router(state.clone()).merge(pages);
         let private_scope = ApiLifecycle::default();
         let user_scope = ApiLifecycle::default();
         let private_router = official.clone().merge(aerove_router)
@@ -149,6 +151,7 @@ impl CoreApi {
     pub fn activate_providers(&self) -> Result<(), ApiError> {
         let providers = self.state.proxy_providers.iter()
             .map(|entry| entry.value().clone()).collect::<Vec<_>>();
+        let rules = self.state.rule_providers.read().values().cloned().collect::<Vec<_>>();
         let mut owner = None;
         for provider in &providers {
             let scope = provider.owned_scope().ok_or(ApiError("providerOwnerMissing"))?;
@@ -157,17 +160,25 @@ impl CoreApi {
             }
             owner = Some(scope);
         }
+        for provider in &rules {
+            let scope = provider.owned_scope().ok_or(ApiError("providerOwnerMissing"))?;
+            if owner.as_ref().is_some_and(|prior| !Arc::ptr_eq(prior, &scope)) { return Err(ApiError("providerOwnerMismatch")); }
+            owner = Some(scope);
+        }
+        let mut identities = providers.iter().map(|provider| provider.provider_identity().clone()).collect::<Vec<_>>();
+        identities.extend(rules.iter().map(|provider| provider.provider_identity().clone()));
         use std::sync::atomic::Ordering;
         if self.provider_tasks_started.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
             return Err(ApiError("providersAlreadyActivated"));
         }
-        if self.control.plane.activate(&providers.iter().map(|provider| provider.provider_identity().clone()).collect::<Vec<_>>()).is_err() {
+        if self.control.plane.activate(&identities).is_err() {
             self.provider_tasks_started.store(false, Ordering::Release);
             return Err(ApiError("providerActivationFailed"));
         }
         if let Some(owner) = owner {
             let registry = self.state.proxy_providers.clone();
             let supervisor = self.state.proxy_provider_refresh.clone();
+            let rule_registry = self.state.rule_providers.clone(); let rule_supervisor = self.state.rule_provider_refresh.clone();
             let raws = self.state.raw_config.read().proxy_providers.clone();
             // The API owner leases registration; each resulting task is registered
             // in the same Session load scope and wraps its captured network context.
@@ -175,6 +186,7 @@ impl CoreApi {
                 owner.run(async move {
                     meow_config::proxy_provider::spawn_deferred_initial_fetches(&registry);
                     supervisor.reconcile(&registry, raws.as_ref());
+                    rule_supervisor.reconcile(&rule_registry);
                 }).await;
             });
         }
@@ -356,6 +368,7 @@ fn allowed(method: &Method, path: &str) -> bool {
         | ["connections"] | ["statistics"] | ["traffic"] | ["logs"] | ["memory"]
         | ["listeners"] | ["dns", "results"] | ["providers", "proxies"]
         | ["providers", "rules"] => true,
+        ["providers", "rules", name, "rules"] => !name.is_empty(),
         ["proxies", name] | ["group", name] | ["connections", name]
         | ["providers", "proxies", name] | ["providers", "rules", name] => !name.is_empty(),
         _ => false,
@@ -368,7 +381,8 @@ fn public_control_route(method: &Method, path: &str) -> bool {
         ["configs"] => method == Method::PATCH,
         ["proxies", name] => method == Method::PUT && !name.is_empty(),
         ["providers", "proxies"] => method == Method::GET,
-        ["providers", "proxies", name] => !name.is_empty() && (method == Method::GET || method == Method::PUT),
+        ["providers", "proxies", name] | ["providers", "rules", name] => !name.is_empty() && (method == Method::GET || method == Method::PUT),
+        ["providers", "rules"] => method == Method::GET,
         _ => false,
     }
 }
@@ -388,12 +402,22 @@ async fn public_control(policy: &Boundary, request: Request) -> Response {
     let method = request.method().clone();
     let path = request.uri().path().to_owned();
     let (mut parts, body) = request.into_parts();
-    let name = if path != "/configs" && path != "/providers/proxies" {
+    let name = if path != "/configs" && path != "/providers/proxies" && path != "/providers/rules" {
         match Path::<String>::from_request_parts(&mut parts, &()).await {
             Ok(Path(name)) => Some(name),
             Err(_) => return StatusCode::BAD_REQUEST.into_response(),
         }
     } else { None };
+    if path.starts_with("/providers/rules") {
+        if method == Method::GET { return match policy.control.plane.rule_snapshot(&policy.state, name.as_deref()) {
+            Ok(value) => Json(value).into_response(), Err(code) => failure(code),
+        }; }
+        let Some(name) = name else { return failure("providerNotFound"); };
+        let provider = match policy.state.rule_providers.read().get(&name).cloned() { Some(provider) => provider, None => return failure("providerNotFound") };
+        return match provider.refresh_owned().await {
+            Ok(()) => StatusCode::NO_CONTENT.into_response(), Err(error) => failure(&error.to_string()),
+        };
+    }
     if path.starts_with("/providers/proxies") {
         if method == Method::GET {
             return match policy.control.plane.proxy_snapshot(&policy.state, name.as_deref()) {
@@ -428,5 +452,28 @@ async fn public_control(policy: &Boundary, request: Request) -> Response {
     };
     match policy.control.select(&name.expect("matched proxy name"), &body.name).await {
         Ok(_) => StatusCode::NO_CONTENT.into_response(), Err(error) => error.response(),
+    }
+}
+
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RulePageQuery { offset: Option<usize>, limit: Option<usize>, core_epoch: Option<String> }
+async fn rule_page_route(
+    State((state, control)): State<(Arc<AppState>, Arc<crate::control::RouteControl>)>,
+    axum::extract::Path(name): axum::extract::Path<String>, Query(query): Query<RulePageQuery>,
+) -> Response {
+    match control.plane.rule_page(&state, &name, query.offset.unwrap_or(0), query.limit.unwrap_or(500), query.core_epoch.as_deref()).await {
+        Ok(value) => axum::Json(value).into_response(),
+        Err(error) => {
+            let status = match error.as_str() {
+                "providerNotFound" => StatusCode::NOT_FOUND,
+                "staleRulePage" | "staleProviderSource" | "providerBusy" => StatusCode::CONFLICT,
+                "invalidRulePageLimit" | "invalidRulePageEpoch" => StatusCode::BAD_REQUEST,
+                "cancelled" => StatusCode::GONE,
+                _ => StatusCode::SERVICE_UNAVAILABLE,
+            };
+            (status, axum::Json(serde_json::json!({"error":error}))).into_response()
+        }
     }
 }

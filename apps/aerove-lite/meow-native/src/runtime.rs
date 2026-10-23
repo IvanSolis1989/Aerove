@@ -86,6 +86,7 @@ impl Registry {
             .and_then(|value| value.get("runtimeMode").and_then(|mode| mode.as_str()).map(str::to_owned));
         let plan = crate::runtime_plan::RuntimePlan::parse(&json, fd.as_ref().map_or(-1, AsRawFd::as_raw_fd),
             mode.as_deref() == Some("tun"), lookup.is_some()).map_err(|_| Failure::new("invalidOwnedPlan"))?;
+        crate::request_policies::RequestPolicies::from_host(&plan.host_policy_yaml).map_err(|error| Failure::field(&error.to_string()))?;
         let roots = crate::resource_roots::ResourceRoots::validate(plan.resource_read_root.as_deref(), plan.cache_root.as_deref())
             .map_err(|error| Failure::field(&error.to_string()))?;
         let network = network.with_resource_roots(Arc::new(roots));

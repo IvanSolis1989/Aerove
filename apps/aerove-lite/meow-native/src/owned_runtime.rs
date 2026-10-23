@@ -45,6 +45,7 @@ impl CleanupState {
 
 pub struct OwnedRuntime {
     plane: Arc<crate::providers::ControlPlane>,
+    policies: Arc<crate::request_policies::RequestPolicies>,
     cancel: CancellationToken, scope: Mutex<Option<Arc<OwnedLoadScope>>>, network: Mutex<Option<NetworkContext>>,
     status: watch::Sender<OwnedStatus>, listeners: Mutex<ListenerStatus>, commands: mpsc::Sender<Command>,
     task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
@@ -59,19 +60,21 @@ impl OwnedRuntime {
         let raw_fd = fd.as_ref().map_or(-1, AsRawFd::as_raw_fd);
         let mode = serde_json::from_str::<serde_json::Value>(&json).ok().and_then(|v| v.get("runtimeMode").and_then(|v| v.as_str()).map(str::to_owned));
         let plan = Arc::new(RuntimePlan::parse(&json, raw_fd, mode.as_deref() == Some("tun"), false)?);
+        let initial_policy = crate::request_policies::RequestPolicies::from_host(&plan.host_policy_yaml)?;
         let find_mode = process_mode(&plan)?;
         if find_mode == "always" && (lookup.is_none() || plan.runtime_mode != RuntimeMode::Tun) { return Err(error("connectionOwnerRequired")); }
         let lookup = if find_mode == "always" { lookup } else { None };
         let runtime = tokio::runtime::Handle::try_current().map_err(|_| error("runtimeUnavailable"))?;
         let plane = crate::providers::ControlPlane::new(generation, cancel.clone()).map_err(error)?;
         if cancel.is_cancelled() { plane.cancel(); }
-        let network = network.with_control_plane(plane.clone());
+        let policies = crate::request_policies::RequestPolicies::new(initial_policy, plane.clone(), cancel.clone())?;
+        let network = network.with_control_plane(plane.clone()).with_request_policy(policies.clone());
         let scope = OwnedLoadScope::with_context(Arc::new(network.clone()));
         let (status, _) = watch::channel(OwnedStatus { state: "Starting", error: None, api_address: None,
             runtime_mode: if plan.runtime_mode == RuntimeMode::Tun { "tun" } else { "proxy" },
             tun_ready: false, user_listeners_ready: false, listening: false, core_ready: false });
         let (commands, receiver) = mpsc::channel(8);
-        let owner = Arc::new(Self { plane, cancel: cancel.clone(), scope: Mutex::new(Some(scope.clone())), network: Mutex::new(Some(network.clone())),
+        let owner = Arc::new(Self { plane, policies, cancel: cancel.clone(), scope: Mutex::new(Some(scope.clone())), network: Mutex::new(Some(network.clone())),
             status, commands, listeners: Mutex::new(ListenerStatus { listening: false, tun_ready: false,
                 user_listeners_ready: false, active_ports: Vec::new(), core_epoch: generation.to_string(),
                 only_statistics_proxy: false, unified_delay: true, tcp_concurrent: true, find_process_mode: find_mode }),
@@ -108,6 +111,7 @@ impl OwnedRuntime {
         Ok(owner)
     }
 
+    pub fn policies(&self) -> Arc<crate::request_policies::RequestPolicies> { self.policies.clone() }
     pub fn cleanup_confirmed(&self) -> bool { self.cleanup.confirmed.load(Ordering::Acquire) }
     pub fn status(&self) -> OwnedStatus { self.status.borrow().clone() }
     pub fn route_stamp(&self) -> (u64, u64) { self.plane.stamp() }
@@ -329,8 +333,7 @@ fn managed_yaml(plan: &RuntimePlan) -> io::Result<String> {
                 let snapshot: crate::runtime_plan::PhysicalDns = serde_yaml::from_value(value.clone()).map_err(|_| error("invalidHostPolicy.aerove-system-dns"))?;
                 if snapshot != plan.physical_network.dns { return Err(error("hostPolicy.aerove-system-dnsMismatch")); }
             },
-            Some("global-ua") => return Err(error("hostPolicy.global-uaNotIntegrated")),
-            Some("check-certificate") => return Err(error("hostPolicy.check-certificateNotIntegrated")),
+            Some("global-ua" | "check-certificate") => {},
             Some("unified-delay") => return Err(error("hostPolicy.unified-delayNotIntegrated")),
             Some("tcp-concurrent") => return Err(error("hostPolicy.tcp-concurrentNotIntegrated")),
             Some("cors-allow-origins") => return Err(error("hostPolicy.cors-allow-originsNotIntegrated")),

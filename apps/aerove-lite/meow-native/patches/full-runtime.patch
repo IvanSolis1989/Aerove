@@ -1,0 +1,3500 @@
+--- a/crates/meow-api/Cargo.toml
++++ b/crates/meow-api/Cargo.toml
+@@ -21,6 +21,7 @@
+ meow-rules = { workspace = true }
+ meow-listener = { workspace = true, default-features = false, optional = true }
+ tokio = { workspace = true }
++tokio-util = { workspace = true, features = ["rt"] }
+ axum = { workspace = true }
+ tower = { workspace = true }
+ tower-http = { workspace = true }
+--- a/crates/meow-api/src/lib.rs
++++ b/crates/meow-api/src/lib.rs
+@@ -3,6 +3,7 @@
+ //! Runtime control of proxies, rules, connections, config, traffic, and DNS,
+ //! plus the built-in web dashboard.
+ 
++pub mod lifecycle;
+ pub mod log_stream;
+ mod logbook;
+ pub mod routes;
+--- /dev/null
++++ b/crates/meow-api/src/lifecycle.rs
+@@ -0,0 +1,83 @@
++//! Runtime-scoped API tasks; upgrades acquire their lease before Axum spawns.
++use axum::{extract::ws::{WebSocket, WebSocketUpgrade}, http::StatusCode, response::{IntoResponse, Response}};
++use parking_lot::Mutex;
++use std::{future::Future, sync::Arc};
++use tokio_util::{sync::CancellationToken, task::{TaskTracker, task_tracker::TaskTrackerToken}};
++
++#[derive(Clone)]
++pub struct ApiLifecycle(Arc<Inner>);
++
++struct Inner {
++    admission: Mutex<bool>,
++    cancel: CancellationToken,
++    tasks: TaskTracker,
++}
++
++impl Default for ApiLifecycle {
++    fn default() -> Self {
++        Self(Arc::new(Inner {
++            admission: Mutex::new(true),
++            cancel: CancellationToken::new(),
++            tasks: TaskTracker::new(),
++        }))
++    }
++}
++
++impl ApiLifecycle {
++    fn lease(&self) -> Option<TaskTrackerToken> {
++        let open = self.0.admission.lock();
++        if !*open { return None; }
++        Some(self.0.tasks.token())
++    }
++
++    pub fn on_upgrade<F, Fut>(&self, ws: WebSocketUpgrade, callback: F) -> Response
++    where
++        F: FnOnce(WebSocket) -> Fut + Send + 'static,
++        Fut: Future<Output = ()> + Send + 'static,
++    {
++        let Some(lease) = self.lease() else {
++            return StatusCode::SERVICE_UNAVAILABLE.into_response();
++        };
++        let cancel = self.0.cancel.clone();
++        ws.on_upgrade(move |socket| async move {
++            let _lease = lease;
++            tokio::select! {
++                biased;
++                _ = cancel.cancelled() => {},
++                _ = callback(socket) => {},
++            }
++        })
++    }
++
++    pub fn spawn<F>(&self, task: F)
++    where F: Future<Output = ()> + Send + 'static {
++        let Some(lease) = self.lease() else { return; };
++        let cancel = self.0.cancel.clone();
++        tokio::spawn(async move {
++            let _lease = lease;
++            tokio::select! {
++                biased;
++                _ = cancel.cancelled() => {},
++                _ = task => {},
++            }
++        });
++    }
++
++    pub fn cancel(&self) {
++        let mut open = self.0.admission.lock();
++        *open = false;
++        self.0.cancel.cancel();
++        self.0.tasks.close();
++    }
++
++    pub async fn join(&self) {
++        self.0.tasks.wait().await;
++    }
++
++    pub async fn shutdown(&self) {
++        self.cancel();
++        self.join().await;
++    }
++
++    pub fn active_tasks(&self) -> usize { self.0.tasks.len() }
++}
+--- a/crates/meow-api/src/log_stream.rs
++++ b/crates/meow-api/src/log_stream.rs
+@@ -85,6 +85,10 @@
+         event: &tracing::Event<'_>,
+         _ctx: tracing_subscriber::layer::Context<'_, S>,
+     ) {
++        // Tokio can clone this waker while holding the same broadcast tail lock.
++        if event.metadata().target() == "tokio::task::waker" {
++            return;
++        }
+         // The broadcast sender exists for the process lifetime, but most
+         // deployments have no active /logs consumer. Avoid formatting fields,
+         // reading the clock, and constructing a heap-backed message when there
+--- a/crates/meow-api/src/routes.rs
++++ b/crates/meow-api/src/routes.rs
+@@ -61,6 +61,8 @@
+ #[derive(Default)]
+ pub struct TrafficFeed {
+     sender: std::sync::Mutex<Option<broadcast::Sender<Arc<str>>>>,
++    memory_sender: std::sync::Mutex<Option<broadcast::Sender<Arc<str>>>>,
++    pub lifecycle: crate::lifecycle::ApiLifecycle,
+ }
+ 
+ pub struct AppState {
+@@ -382,13 +384,6 @@
+         let display = members
+             .is_some()
+             .then(|| proxy.group_display().cloned().unwrap_or_default());
+-        debug!(
+-            name = proxy.name(),
+-            proxy_type = %proxy.adapter_type(),
+-            member_count = members.as_ref().map(std::vec::Vec::len),
+-            current = ?current,
+-            "building ProxyInfo",
+-        );
+         let delay = Some(proxy.last_delay()).filter(|&d| d > 0);
+         Self {
+             name: proxy.name().to_string(),
+@@ -649,13 +644,16 @@
+     State(state): State<Arc<AppState>>,
+     Query(params): Query<ConnectionsParams>,
+     MaybeWebSocket(ws): MaybeWebSocket,
++    connection_scope: Option<axum::Extension<crate::lifecycle::ApiLifecycle>>,
+ ) -> Response {
+     let Some(interval_ms) = parse_connections_interval(params.interval.as_deref()) else {
+         return msg_err(StatusCode::BAD_REQUEST, "Body invalid");
+     };
+ 
+     if let Some(ws) = ws {
+-        return ws.on_upgrade(move |mut socket| async move {
++        let scope = connection_scope.map(|axum::Extension(scope)| scope)
++            .unwrap_or_else(|| state.traffic_feed.lifecycle.clone());
++        return scope.on_upgrade(ws, move |mut socket| async move {
+             if socket
+                 .send(Message::Text(connections_json(&state).await.into()))
+                 .await
+@@ -976,8 +974,9 @@
+     // the first frame's instantaneous rate.
+     state.tunnel.statistics().sample_traffic();
+ 
++    let lifecycle = state.traffic_feed.lifecycle.clone();
+     let state = Arc::clone(state);
+-    tokio::spawn(async move {
++    lifecycle.spawn(async move {
+         let mut ticker = tokio::time::interval(Duration::from_secs(1));
+         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+         ticker.tick().await;
+@@ -1005,10 +1004,13 @@
+ async fn get_traffic(
+     State(state): State<Arc<AppState>>,
+     MaybeWebSocket(ws): MaybeWebSocket,
++    connection_scope: Option<axum::Extension<crate::lifecycle::ApiLifecycle>>,
+ ) -> Response {
+     let feed = subscribe_traffic_feed(&state);
+     if let Some(ws) = ws {
+-        return ws.on_upgrade(move |mut socket| async move {
++        let scope = connection_scope.map(|axum::Extension(scope)| scope)
++            .unwrap_or_else(|| state.traffic_feed.lifecycle.clone());
++        return scope.on_upgrade(ws, move |mut socket| async move {
+             let mut feed = feed;
+             loop {
+                 let frame = match feed.recv().await {
+@@ -3763,6 +3765,7 @@
+     State(state): State<Arc<AppState>>,
+     Query(params): Query<LogsParams>,
+     MaybeWebSocket(ws): MaybeWebSocket,
++    connection_scope: Option<axum::Extension<crate::lifecycle::ApiLifecycle>>,
+ ) -> Response {
+     let level = match parse_requested_log_level(params.level.as_deref()) {
+         Ok(level) => level,
+@@ -3771,9 +3774,18 @@
+     let structured = params.format.as_deref() == Some("structured");
+     let mut rx = state.log_tx.subscribe();
+     if let Some(ws) = ws {
+-        return ws.on_upgrade(move |mut socket| async move {
++        let scope = connection_scope.map(|axum::Extension(scope)| scope)
++            .unwrap_or_else(|| state.traffic_feed.lifecycle.clone());
++        return scope.on_upgrade(ws, move |mut socket| async move {
+             loop {
+-                match rx.recv().await {
++                let message = tokio::select! {
++                    message = rx.recv() => message,
++                    incoming = socket.recv() => {
++                        if matches!(incoming, None | Some(Err(_)) | Some(Ok(Message::Close(_)))) { break; }
++                        continue;
++                    }
++                };
++                match message {
+                     Ok(msg) if msg.level >= level => {
+                         if socket
+                             .send(Message::Text(log_json(&msg, structured).into()))
+@@ -3817,32 +3829,33 @@
+ 
+ // upstream: hub/route/memory.go
+ //
+-// One process-wide sampler task reads RSS + limit and serialises the JSON
++// One runtime-scoped sampler task reads RSS + limit and serialises the JSON
+ // frame once per tick; every connected socket forwards the shared string
+ // (audit M8 — previously each socket sampled and serialised independently,
+ // per-socket per-tick). The sampler starts with the first subscriber and
+ // exits once the last socket disconnects, so an idle API server pays nothing.
+ // Model: the log websocket's single-serialisation broadcast fan-out.
+-static MEMORY_FEED: std::sync::Mutex<Option<broadcast::Sender<Arc<str>>>> =
+-    std::sync::Mutex::new(None);
+-
+-fn subscribe_memory_feed() -> broadcast::Receiver<Arc<str>> {
+-    let mut guard = MEMORY_FEED.lock().expect("memory feed lock poisoned");
++fn subscribe_memory_feed(state: &Arc<AppState>) -> broadcast::Receiver<Arc<str>> {
++    let mut guard = state.traffic_feed.memory_sender.lock().expect("memory feed lock poisoned");
+     if let Some(tx) = guard.as_ref() {
+         // Sampler still alive (it clears the slot under this lock on exit).
+         return tx.subscribe();
+     }
+     let (tx, rx) = broadcast::channel(2);
+     *guard = Some(tx.clone());
+-    tokio::spawn(async move {
++    drop(guard);
++    let lifecycle = state.traffic_feed.lifecycle.clone();
++    let state = Arc::clone(state);
++    lifecycle.spawn(async move {
+         let mut interval = tokio::time::interval(Duration::from_secs(1));
++        interval.tick().await;
+         loop {
+             interval.tick().await;
+             if tx.receiver_count() == 0 {
+                 // Re-check under the lock so a subscriber arriving right now
+                 // either sees the live sender or a cleared slot — never a
+                 // sender whose sampler has already exited.
+-                let mut guard = MEMORY_FEED.lock().expect("memory feed lock poisoned");
++                let mut guard = state.traffic_feed.memory_sender.lock().expect("memory feed lock poisoned");
+                 if tx.receiver_count() == 0 {
+                     *guard = None;
+                     break;
+@@ -3858,12 +3871,17 @@
+ }
+ 
+ async fn get_memory(
+-    State(_state): State<Arc<AppState>>,
++    State(state): State<Arc<AppState>>,
+     MaybeWebSocket(ws): MaybeWebSocket,
++    connection_scope: Option<axum::Extension<crate::lifecycle::ApiLifecycle>>,
+ ) -> Response {
+-    let first: Arc<str> = Arc::from("{\"inuse\":0,\"oslimit\":0}");
++    let inuse = read_rss_bytes().await;
++    let oslimit = read_os_memory_limit().await;
++    let first: Arc<str> = Arc::from(format!("{{\"inuse\":{inuse},\"oslimit\":{oslimit}}}"));
+     if let Some(ws) = ws {
+-        return ws.on_upgrade(move |mut socket| async move {
++        let scope = connection_scope.map(|axum::Extension(scope)| scope)
++            .unwrap_or_else(|| state.traffic_feed.lifecycle.clone());
++        return scope.on_upgrade(ws, move |mut socket| async move {
+             if socket
+                 .send(Message::Text(first.as_ref().into()))
+                 .await
+@@ -3871,7 +3889,7 @@
+             {
+                 return;
+             }
+-            let mut feed = subscribe_memory_feed();
++            let mut feed = subscribe_memory_feed(&state);
+             loop {
+                 let msg = match feed.recv().await {
+                     Ok(msg) => msg,
+@@ -3889,33 +3907,19 @@
+         });
+     }
+ 
+-    let feed = subscribe_memory_feed();
+-    let stream = futures::stream::unfold((Some(first), feed), |(first, mut feed)| async move {
+-        if let Some(first) = first {
+-            return Some((
+-                Ok::<String, std::convert::Infallible>(format!("{first}\n")),
+-                (None, feed),
+-            ));
+-        }
+-        loop {
+-            match feed.recv().await {
+-                Ok(msg) => {
+-                    return Some((
+-                        Ok::<String, std::convert::Infallible>(format!("{msg}\n")),
+-                        (None, feed),
+-                    ));
+-                }
+-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+-                Err(broadcast::error::RecvError::Closed) => return None,
+-            }
+-        }
+-    });
+-    Response::builder()
+-        .header(header::CONTENT_TYPE, "application/json")
+-        .body(Body::from_stream(stream))
+-        .expect("valid memory stream response")
+-}
+-
++    ([(header::CONTENT_TYPE, "application/json")], first.as_ref().to_owned()).into_response()
++}
++
++#[cfg(target_os = "android")]
++async fn read_rss_bytes() -> u64 {
++    let Ok(status) = tokio::fs::read_to_string("/proc/self/status").await else { return 0; };
++    status.lines().find_map(|line| {
++        let kb = line.strip_prefix("VmRSS:")?.split_whitespace().next()?.parse::<u64>().ok()?;
++        kb.checked_mul(1024)
++    }).unwrap_or(0)
++}
++
++#[cfg(not(target_os = "android"))]
+ async fn read_rss_bytes() -> u64 {
+     tokio::task::spawn_blocking(|| {
+         use sysinfo::{Pid, ProcessesToUpdate, System};
+@@ -3971,7 +3975,7 @@
+ 
+ #[derive(Serialize)]
+ #[serde(rename_all = "camelCase")]
+-struct ProviderInfo {
++pub struct ProviderInfo {
+     name: String,
+     #[serde(rename = "type")]
+     provider_type: String,
+@@ -4044,6 +4048,10 @@
+     }
+ }
+ 
++pub fn provider_snapshot(name: &str, provider: &ProxyProvider) -> ProviderInfo {
++    provider_to_info(name, provider)
++}
++
+ async fn get_providers(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+     let mut map = serde_json::Map::new();
+     for entry in state.proxy_providers.iter() {
+@@ -4175,7 +4183,7 @@
+ // ── Rule Providers ────────────────────────────────────────────────────
+ 
+ #[derive(Serialize)]
+-struct RuleProviderInfo {
++pub struct RuleProviderInfo {
+     name: String,
+     #[serde(rename = "type")]
+     provider_type: String,
+@@ -4217,6 +4225,10 @@
+             vehicle_type: vehicle_type.to_string(),
+         }
+     }
++}
++
++pub fn rule_provider_snapshot(provider: &Arc<RuleProvider>) -> RuleProviderInfo {
++    RuleProviderInfo::from_provider(provider)
+ }
+ 
+ #[derive(Serialize)]
+--- a/crates/meow-common/Cargo.toml
++++ b/crates/meow-common/Cargo.toml
+@@ -31,6 +31,7 @@
+ ], optional = true }
+ 
+ [features]
++aerove-android-runtime = []
+ # Persistent logbook (`meow_common::logbook`, ADR-0014). Off, the logbook
+ # API stays and records nothing.
+ logbook = ["dep:rusqlite"]
+--- a/crates/meow-common/src/adapter.rs
++++ b/crates/meow-common/src/adapter.rs
+@@ -231,6 +231,9 @@
+ pub trait ProxySelection: Send + Sync {
+     /// Validate and select a member by name.
+     async fn set(&self, name: &str) -> Result<()>;
++
++    async fn prepare(&self, name: &str) -> Result<Option<(Arc<dyn Proxy>, u16)>>;
++    fn commit(&self, name: &str, health: Option<(Arc<dyn Proxy>, u16)>) -> Result<()>;
+ 
+     /// Set or clear a selection without validation. This mirrors mihomo's
+     /// `SelectAble.ForceSet` and is used to unfix automatic groups before a
+--- a/crates/meow-common/src/lib.rs
++++ b/crates/meow-common/src/lib.rs
+@@ -79,3 +79,5 @@
+ 
+ pub mod health_check;
+ pub use health_check::HealthCheckSpec;
++
++pub mod request_policy;
+--- /dev/null
++++ b/crates/meow-common/src/request_policy.rs
+@@ -0,0 +1,43 @@
++//! Session-captured defaults for application downloads, never outbound protocol TLS.
++use serde::{Deserialize, Serialize};
++use std::{cell::RefCell, future::Future, io, sync::Arc};
++
++#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase", deny_unknown_fields)]
++pub struct RequestPolicy { pub global_user_agent: String, pub check_certificate: bool }
++impl RequestPolicy {
++    pub fn new(global_user_agent: String, check_certificate: bool) -> io::Result<Self> {
++        let policy = Self { global_user_agent, check_certificate };
++        policy.validate()?;
++        Ok(policy)
++    }
++    pub fn validate(&self) -> io::Result<()> {
++        if self.global_user_agent.trim().is_empty() || self.global_user_agent.len() > 4096
++            || self.global_user_agent.chars().any(char::is_control) {
++            return Err(io::Error::new(io::ErrorKind::InvalidInput, "global-ua"));
++        }
++        Ok(())
++    }
++}
++impl Default for RequestPolicy {
++    fn default() -> Self { Self { global_user_agent: concat!("clash.meta/", env!("CARGO_PKG_VERSION")).into(), check_certificate: true } }
++}
++pub trait PolicySource: Send + Sync { fn snapshot(&self) -> io::Result<Arc<RequestPolicy>>; }
++#[derive(Clone)]
++pub struct PolicyScope { source: Arc<dyn PolicySource> }
++tokio::task_local! { static CURRENT: PolicyScope; }
++thread_local! { static BLOCKING: RefCell<Option<PolicyScope>> = const { RefCell::new(None) }; }
++impl PolicyScope {
++    pub fn new(source: Arc<dyn PolicySource>) -> Self { Self { source } }
++    pub async fn scope<F: Future>(&self, work: F) -> F::Output { CURRENT.scope(self.clone(), work).await }
++    pub fn run_blocking<R>(&self, work: impl FnOnce() -> R) -> R {
++        struct Restore(Option<PolicyScope>);
++        impl Drop for Restore { fn drop(&mut self) { BLOCKING.with(|slot| { slot.replace(self.0.take()); }); } }
++        let _restore = Restore(BLOCKING.with(|slot| slot.replace(Some(self.clone()))));
++        work()
++    }
++}
++pub fn current() -> io::Result<Option<Arc<RequestPolicy>>> {
++    let scope = CURRENT.try_with(Clone::clone).ok().or_else(|| BLOCKING.with(|slot| slot.borrow().clone()));
++    scope.map(|scope| { let policy = scope.source.snapshot()?; policy.validate()?; Ok(policy) }).transpose()
++}
+--- a/crates/meow-common/src/socket_protect.rs
++++ b/crates/meow-common/src/socket_protect.rs
+@@ -102,6 +102,8 @@
+ 
+ /// Snapshot of the currently-installed host resolver.
+ pub fn host_resolver() -> Option<Arc<dyn HostResolver>> {
++    #[cfg(all(feature = "aerove-android-runtime", any(target_os = "android", target_os = "linux", target_os = "macos")))]
++    if let Some(scope) = captured_network() { return scope.resolver; }
+     RESOLVER.read().clone()
+ }
+ 
+@@ -191,7 +193,7 @@
+ // non-Android binaries paying any footprint for it. For tests we additionally
+ // enable the module on any unix host so CI (which does not target Android)
+ // can actually exercise the protector path against real loopback sockets.
+-#[cfg(any(target_os = "android", all(test, unix)))]
++#[cfg(any(target_os = "android", all(test, unix), all(feature = "aerove-android-runtime", any(target_os = "linux", target_os = "macos"))))]
+ mod android {
+     use super::*;
+     use std::os::fd::{AsRawFd, RawFd};
+@@ -231,6 +233,8 @@
+     /// that build sockets through `socket2` directly (e.g. for `SO_MARK`)
+     /// can still apply protect on the fd they own.
+     pub fn socket_protector() -> Option<Arc<dyn SocketProtector>> {
++        #[cfg(all(feature = "aerove-android-runtime", any(target_os = "android", target_os = "linux", target_os = "macos")))]
++        if let Some(scope) = captured_network() { return scope.protector; }
+         PROTECTOR.read().clone()
+     }
+ 
+@@ -286,10 +290,52 @@
+     }
+ }
+ 
+-#[cfg(any(target_os = "android", all(test, unix)))]
++#[cfg(any(target_os = "android", all(test, unix), all(feature = "aerove-android-runtime", any(target_os = "linux", target_os = "macos"))))]
+ pub use android::{
+     clear_socket_protector, set_socket_protector, socket_protector, SocketProtector,
+ };
++
++
++#[cfg(all(feature = "aerove-android-runtime", any(target_os = "android", target_os = "linux", target_os = "macos")))]
++#[derive(Clone)]
++pub struct NetworkScope {
++    pub protector: Option<Arc<dyn SocketProtector>>,
++    pub resolver: Option<Arc<dyn HostResolver>>,
++}
++
++#[cfg(all(feature = "aerove-android-runtime", any(target_os = "android", target_os = "linux", target_os = "macos")))]
++tokio::task_local! { static CAPTURED_NETWORK: NetworkScope; }
++
++#[cfg(all(feature = "aerove-android-runtime", any(target_os = "android", target_os = "linux", target_os = "macos")))]
++std::thread_local! {
++    static BLOCKING_NETWORK: std::cell::RefCell<Option<NetworkScope>> = const { std::cell::RefCell::new(None) };
++}
++
++#[cfg(all(feature = "aerove-android-runtime", any(target_os = "android", target_os = "linux", target_os = "macos")))]
++fn captured_network() -> Option<NetworkScope> {
++    CAPTURED_NETWORK.try_with(Clone::clone).ok()
++        .or_else(|| BLOCKING_NETWORK.with(|slot| slot.borrow().clone()))
++}
++
++#[cfg(all(feature = "aerove-android-runtime", any(target_os = "android", target_os = "linux", target_os = "macos")))]
++impl NetworkScope {
++    pub fn current() -> Option<Self> { captured_network() }
++
++    pub fn is_captured() -> bool { captured_network().is_some() }
++
++    pub async fn scope<F: std::future::Future>(&self, work: F) -> F::Output {
++        CAPTURED_NETWORK.scope(self.clone(), work).await
++    }
++
++    pub fn run_blocking<R>(&self, work: impl FnOnce() -> R) -> R {
++        struct Restore(Option<NetworkScope>);
++        impl Drop for Restore {
++            fn drop(&mut self) { BLOCKING_NETWORK.with(|slot| { slot.replace(self.0.take()); }); }
++        }
++        let _restore = Restore(BLOCKING_NETWORK.with(|slot| slot.replace(Some(self.clone()))));
++        work()
++    }
++}
+ 
+ /// Dial an outbound TCP stream to an already-resolved [`SocketAddr`]. On
+ /// Android, applies the installed `SocketProtector` (if any) to the
+@@ -302,7 +348,7 @@
+ /// silent regressions back into the system resolver; see the module docs
+ /// for the loop-routing failure mode.
+ pub async fn connect_tcp(addr: SocketAddr) -> io::Result<TcpStream> {
+-    #[cfg(any(target_os = "android", all(test, unix)))]
++    #[cfg(any(target_os = "android", all(test, unix), all(feature = "aerove-android-runtime", any(target_os = "linux", target_os = "macos"))))]
+     {
+         if let Some(p) = android::socket_protector() {
+             return android::connect_tcp_protected(addr, p.as_ref()).await;
+@@ -388,11 +434,16 @@
+         None => {}
+     }
+ 
++    #[cfg(all(feature = "aerove-android-runtime", any(target_os = "android", target_os = "linux", target_os = "macos")))]
++    if captured_network().is_some_and(|scope| scope.protector.is_some()) {
++        return Err(io::Error::new(io::ErrorKind::NotFound, "captured physical DNS cannot resolve host"));
++    }
++
+     if let Some(cached) = sys_cache_get(host, port) {
+         return Ok(cached);
+     }
+ 
+-    #[cfg(any(target_os = "android", all(test, unix)))]
++    #[cfg(any(target_os = "android", all(test, unix), all(feature = "aerove-android-runtime", any(target_os = "linux", target_os = "macos"))))]
+     {
+         if android::socket_protector().is_some() {
+             tracing::warn!(
+@@ -492,7 +543,7 @@
+ /// `SocketProtector` (if any) to the socket fd before `bind()`. On every
+ /// other target this is equivalent to [`UdpSocket::bind`].
+ pub async fn bind_udp<A: ToSocketAddrs>(local: A) -> io::Result<UdpSocket> {
+-    #[cfg(any(target_os = "android", all(test, unix)))]
++    #[cfg(any(target_os = "android", all(test, unix), all(feature = "aerove-android-runtime", any(target_os = "linux", target_os = "macos"))))]
+     {
+         if let Some(p) = android::socket_protector() {
+             let resolved = tokio::net::lookup_host(local)
+--- a/crates/meow-config/src/dns_parser.rs
++++ b/crates/meow-config/src/dns_parser.rs
+@@ -45,8 +45,12 @@
+             }
+             let hosts = build_hosts_trie(raw.hosts.as_ref(), strict)?;
+             let use_hosts = raw.dns.as_ref().and_then(|d| d.use_hosts).unwrap_or(true);
++            let physical_servers = match crate::owned_load::OwnedLoadScope::current() {
++                Some(scope) => scope.disabled_dns_servers().map_err(anyhow::Error::msg)?,
++                None => None,
++            };
+             let resolver = Resolver::new(
+-                vec!["8.8.8.8:53".parse().unwrap()],
++                physical_servers.unwrap_or_else(|| vec!["8.8.8.8:53".parse().unwrap()]),
+                 vec![],
+                 DnsMode::Normal,
+                 hosts,
+@@ -90,7 +94,7 @@
+     let listen_addr = crate::parse_optional_socket_addr("dns.listen", dns.listen.as_deref())?;
+     let mut hosts = build_hosts_trie(raw.hosts.as_ref(), strict)?;
+ 
+-    if use_hosts && use_system_hosts {
++    if use_hosts && use_system_hosts && !crate::owned_load::offline_validation() {
+         merge_system_hosts(&mut hosts).await;
+     }
+ 
+@@ -114,7 +118,7 @@
+             );
+         }
+         let mut proxy_hosts = build_hosts_trie(raw.hosts.as_ref(), strict)?;
+-        if use_hosts && use_system_hosts {
++        if use_hosts && use_system_hosts && !crate::owned_load::offline_validation() {
+             merge_system_hosts(&mut proxy_hosts).await;
+         }
+         Some(Arc::new(
+@@ -226,7 +230,7 @@
+     // The file this generation would bind to, when persisting. Computed
+     // before the reuse check so the check can compare store identity, not
+     // just store kind.
+-    let wanted_store_path = persist.then(|| {
++    let wanted_store_path = (persist && !crate::owned_load::offline_validation()).then(|| {
+         // `cache_dir` is `None` for a `--config-string` run — the launch
+         // CWD is not the daemon's to write into, so persist under the
+         // resolved home (same base geodata defaults use) instead of
+@@ -857,7 +861,7 @@
+     }
+ 
+     // Attempt to load GeoIP MMDB for the geoip gate.
+-    let geoip_reader = if geoip {
++    let geoip_reader = if geoip && !crate::owned_load::offline_validation() {
+         let mmdb_path =
+             explicit_mmdb_path.map_or_else(crate::default_geoip_path, std::path::PathBuf::from);
+         match std::fs::read(&mmdb_path)
+--- a/crates/meow-config/src/internal_http.rs
++++ b/crates/meow-config/src/internal_http.rs
+@@ -199,10 +199,11 @@
+     headers: &[(String, String)],
+     limit: usize,
+ ) -> Result<Response> {
++    let policy = meow_common::request_policy::current()?;
+     let mut current = Url::parse(url).map_err(|e| anyhow!("invalid URL '{url}': {e}"))?;
+     let mut headers = headers.to_vec();
+     for _ in 0..=MAX_REDIRECTS {
+-        match fetch_one(&current, proxy, &headers, limit).await? {
++        match fetch_one(&current, proxy, &headers, limit, policy.as_deref()).await? {
+             Outcome::Body(response) => return Ok(response),
+             Outcome::Redirect(next) => {
+                 let next = current
+@@ -238,6 +239,7 @@
+     proxy: Option<&Arc<dyn Proxy>>,
+     headers: &[(String, String)],
+     limit: usize,
++    policy: Option<&meow_common::request_policy::RequestPolicy>,
+ ) -> Result<Outcome> {
+     let scheme = url.scheme();
+     let is_https = match scheme {
+@@ -327,7 +329,7 @@
+     );
+     if !has_custom_ua {
+         request.push_str("User-Agent: ");
+-        request.push_str(USER_AGENT);
++        request.push_str(policy.map_or(USER_AGENT, |policy| policy.global_user_agent.as_str()));
+         request.push_str("\r\n");
+     }
+     for (name, value) in headers {
+@@ -357,9 +359,9 @@
+ 
+     let mut stream = if is_https {
+         // Same TlsLayer the proxies dial with (BoringSSL).
+-        let tls = TlsLayer::new(&TlsConfig::new(
+-            host.trim_start_matches('[').trim_end_matches(']'),
+-        ))
++        let mut config = TlsConfig::new(host.trim_start_matches('[').trim_end_matches(']'));
++        if let Some(policy) = policy { config.skip_cert_verify = !policy.check_certificate; }
++        let tls = TlsLayer::new(&config)
+         .map_err(|e| anyhow!("invalid TLS server name '{host}': {e}"))?;
+         tokio::time::timeout(CONNECT_TIMEOUT, tls.connect(conn))
+             .await
+--- a/crates/meow-config/src/lib.rs
++++ b/crates/meow-config/src/lib.rs
+@@ -3,6 +3,10 @@
+ //! Turns a Clash Meta-style `config.yaml` into typed structs consumed by
+ //! the tunnel, listeners, DNS, and API.
+ 
++pub mod owned_load;
++mod offline_validation;
++pub use offline_validation::{validate_offline_config, validate_offline_config_with_scope};
++pub mod provider_events;
+ pub mod auth;
+ pub mod dns_parser;
+ pub mod dropped_providers;
+@@ -30,6 +34,8 @@
+ #[cfg(test)]
+ mod test_support;
+ 
++pub use meow_rules as offline_rules;
++pub use maxminddb as offline_maxminddb;
+ pub use dropped_providers::DroppedProviders;
+ pub use geodata::GeoDataConfig;
+ 
+@@ -45,6 +51,29 @@
+ use std::sync::Arc;
+ use tracing::{debug, info, warn};
+ 
++pub async fn load_config_from_str_owned(
++    content: &str, scope: &Arc<owned_load::OwnedLoadScope>,
++) -> Result<Config, anyhow::Error> {
++    load_config_from_str_owned_with_cache(content, scope, None).await
++}
++
++/// `cache_dir` is a trusted embedder-owned resource root, never a directory
++/// derived from provider YAML. Existing safe_path containment remains authoritative.
++pub async fn load_config_from_str_owned_with_cache(
++    content: &str, scope: &Arc<owned_load::OwnedLoadScope>, cache_dir: Option<&Path>,
++) -> Result<Config, anyhow::Error> {
++    let result = scope.run(async {
++        tokio::select! {
++            biased;
++            _ = scope.cancelled() => Err(anyhow::anyhow!("configLoadCancelled")),
++            result = async { build_config(parse_raw_yaml(content)?, cache_dir).await } => result,
++        }
++    }).await;
++    if result.is_err() {
++        scope.close().await.map_err(anyhow::Error::msg)?;
++    }
++    result
++}
+ pub(crate) async fn spawn_blocking_with_current_dispatcher<F, R>(
+     f: F,
+ ) -> Result<R, tokio::task::JoinError>
+@@ -53,7 +82,7 @@
+     R: Send + 'static,
+ {
+     let dispatch = tracing::dispatcher::get_default(Clone::clone);
+-    tokio::task::spawn_blocking(move || tracing::dispatcher::with_default(&dispatch, f)).await
++    crate::owned_load::spawn_blocking(move || tracing::dispatcher::with_default(&dispatch, f)).await
+ }
+ 
+ pub(crate) fn parse_optional_socket_addr(
+@@ -603,6 +632,7 @@
+ /// True when config loading must skip remote proxy-provider fetches (see
+ /// [`set_offline_validate`]).
+ pub fn is_offline_validate() -> bool {
++    if let Some(scope) = owned_load::OwnedLoadScope::current() { return scope.offline_validation(); }
+     OFFLINE_VALIDATE.load(std::sync::atomic::Ordering::Relaxed)
+ }
+ 
+@@ -3902,6 +3932,17 @@
+     mut raw: raw::RawConfig,
+     cache_dir: Option<&Path>,
+ ) -> Result<Config, anyhow::Error> {
++    // Capture observer validation before prefetch, ECH or any provider factory I/O.
++    if let Some(scope) = owned_load::OwnedLoadScope::current() {
++        if let Some(observer) = scope.provider_observer() {
++            for name in raw.proxy_providers.iter().flat_map(|providers| providers.keys()) {
++                observer.validate(provider_events::ProviderKind::Proxy, name).map_err(anyhow::Error::msg)?;
++            }
++            for name in raw.rule_providers.iter().flat_map(|providers| providers.keys()) {
++                observer.validate(provider_events::ProviderKind::Rule, name).map_err(anyhow::Error::msg)?;
++            }
++        }
++    }
+     // Pre-resolve any DNS-sourced ECH configs into inline base64 so the
+     // sync `parse_proxy` path that follows can stay sync. Failures warn
+     // and leave the map unchanged — except the `enable: true` with no
+@@ -7771,3 +7812,6 @@
+         );
+     }
+ }
++
++#[cfg(test)]
++mod owned_dns_tests;
+--- /dev/null
++++ b/crates/meow-config/src/offline_validation.rs
+@@ -0,0 +1,164 @@
++use crate::owned_load::{LoadContext, OwnedLoadScope, OwnedWork};
++use std::sync::Arc;
++
++struct OfflineContext;
++impl LoadContext for OfflineContext {
++    fn offline_validation(&self) -> bool { true }
++    fn wrap(&self, work: OwnedWork) -> OwnedWork { work }
++    fn run_blocking(&self, work: Box<dyn FnOnce() + Send>) { work(); }
++}
++struct CancelOnDrop(Arc<OwnedLoadScope>);
++impl Drop for CancelOnDrop { fn drop(&mut self) { self.0.cancel(); } }
++
++/// Run the real fixed-core converter in a private captured offline scope.
++/// No process-global offline/plugin policy is written and no core is started.
++pub async fn validate_offline_config(source: &str) -> Result<(), String> {
++    let scope = OwnedLoadScope::with_context(Arc::new(OfflineContext));
++    validate_offline_config_with_scope(source, &scope).await
++}
++
++/// Cancellation-aware embedding/testing entry. The caller can retain this same
++/// scope and await close even after dropping the validation request future.
++pub async fn validate_offline_config_with_scope(source: &str, scope: &Arc<OwnedLoadScope>) -> Result<(), String> {
++    if !scope.offline_validation() { return Err("offline_scope_required".into()); }
++    let _cancel = CancelOnDrop(scope.clone());
++    let result = scope.run(async {
++        tokio::select! {
++            biased;
++            _ = scope.cancelled() => Err("offline_validation_cancelled".into()),
++            result = async {
++                let mut raw = crate::parse_raw_yaml(source).map_err(|error| error.to_string())?;
++                let mut input: serde_yaml::Value = serde_yaml::from_str(source).map_err(|error| error.to_string())?;
++                input.apply_merge().map_err(|error| error.to_string())?;
++                let typed = serde_yaml::to_value(&raw).map_err(|error| error.to_string())?;
++                require_preserved_keys(&input, &typed, "$")?;
++                // Validation cannot succeed after the lenient converter drops a
++                // malformed proxy/rule or falls back to a different enum value.
++                raw.strict = Some(true);
++                for proxy in raw.proxies.iter().flatten() {
++                    if crate::proxy_parser::node_selects_external_plugin(proxy) {
++                        return Err("offline_external_plugin_forbidden".to_owned());
++                    }
++                }
++                // No trusted resource lease is supplied to this string-only
++                // entry. Do not validate against an ambient user's geodata or
++                // invent empty country/category DBs and report conversion success.
++                let scan = crate::collect_geo_scan_lines(&raw, &crate::rule_provider::PrefetchedPayloads::default());
++                if scan.iter().any(|line| crate::line_references_geoip(line) || crate::line_references_asn(line) || crate::line_references_geosite(line)) || crate::dns_policy_uses_geosite(&raw) {
++                    return Err("offline_geodata_resource_context_required".to_owned());
++                }
++                let config = crate::build_config(raw, None).await.map_err(|error| error.to_string())?;
++                drop(config);
++                Ok(())
++            } => result,
++        }
++    }).await;
++    scope.close().await.map_err(str::to_owned)?;
++    result
++}
++
++// Compare the official typed schema instead of maintaining another key list.
++// Dynamic proxy maps remain subject to the embedding boundary's protocol guards.
++fn require_preserved_keys(input: &serde_yaml::Value, typed: &serde_yaml::Value, path: &str) -> Result<(), String> {
++    match (input, typed) {
++        (serde_yaml::Value::Mapping(input), serde_yaml::Value::Mapping(typed)) => {
++            for (key, value) in input {
++                let name = key.as_str().ok_or_else(|| format!("{path}: non_string_key"))?;
++                let path = format!("{path}.{name}");
++                let converted = typed.get(key).ok_or_else(|| format!("{path}: unsupported_config_field"))?;
++                require_preserved_keys(value, converted, &path)?;
++            }
++        }
++        (serde_yaml::Value::Sequence(input), serde_yaml::Value::Sequence(typed)) => {
++            for (index, value) in input.iter().enumerate() {
++                let converted = typed.get(index).ok_or_else(|| format!("{path}[{index}]: dropped_config_entry"))?;
++                require_preserved_keys(value, converted, &format!("{path}[{index}]"))?;
++            }
++        }
++        _ => {}
++    }
++    Ok(())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::time::Duration;
++
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn real_conversion_rejects_dropped_invalid_objects_and_isolated_from_live_scope() {
++        let cli = crate::OFFLINE_VALIDATE.load(std::sync::atomic::Ordering::Relaxed);
++        let good = "proxies: [{name: good, type: direct}]\nproxy-groups: [{name: PICK, type: select, proxies: [good, REJECT]}]\nrules: ['MATCH,PICK']\n";
++        assert!(validate_offline_config("unknown-setting: true\nrules: ['MATCH,DIRECT']").await.unwrap_err().contains("unsupported_config_field"));
++        let bad = "strict: false\nproxies: [{name: bad, type: no-such-protocol}]\nrules: ['MATCH,DIRECT']\n";
++        let live = OwnedLoadScope::new();
++        let (success, failure, live_flag) = tokio::join!(validate_offline_config(good), validate_offline_config(bad), live.run(async {
++            assert!(!crate::is_offline_validate());
++            let result = crate::spawn_blocking_with_current_dispatcher(crate::is_offline_validate).await.unwrap();
++            assert!(!result); result
++        }));
++        success.unwrap(); assert!(failure.is_err()); assert!(!live_flag); live.close().await.unwrap();
++        assert_eq!(crate::OFFLINE_VALIDATE.load(std::sync::atomic::Ordering::Relaxed), cli);
++        assert!(validate_offline_config("mode: definitely-invalid\nrules: ['MATCH,DIRECT']").await.is_err());
++        assert!(validate_offline_config("rules: ['GEOIP,CN,DIRECT']").await.unwrap_err().contains("offline_geodata_resource_context_required"));
++    }
++
++    #[tokio::test]
++    async fn factory_offline_scope_crosses_real_blocking_jobs_and_never_fetches() {
++        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let address = listener.local_addr().unwrap();
++        let yaml = format!("proxy-providers:\n p:\n  type: http\n  url: http://{address}/proxies\n  interval: 1\nrules: ['MATCH,DIRECT']\n");
++        let scope = OwnedLoadScope::with_context(Arc::new(OfflineContext));
++        assert!(scope.run(async { crate::spawn_blocking_with_current_dispatcher(crate::is_offline_validate).await.unwrap() }).await);
++        validate_offline_config_with_scope(&yaml, &scope).await.unwrap();
++        assert!(tokio::time::timeout(Duration::from_millis(100), listener.accept()).await.is_err(), "offline initial factory dialed the real HTTP origin");
++        let dns = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
++        let address = dns.local_addr().unwrap();
++        let yaml = format!("dns:\n enable: true\n use-system-hosts: true\n enhanced-mode: fake-ip\n store-fake-ip: true\n default-nameserver: [127.0.0.1:{port}]\n nameserver: ['udp://offline.invalid:53']\nrules: ['MATCH,DIRECT']\n",port=address.port());
++        validate_offline_config(&yaml).await.unwrap();
++        assert!(tokio::time::timeout(Duration::from_millis(100), dns.recv_from(&mut [0; 1024])).await.is_err(), "offline DNS conversion bootstrapped via real UDP");
++    }
++
++    #[cfg(all(feature = "ss", unix))]
++    #[tokio::test]
++    async fn external_plugin_is_rejected_before_actual_executable_can_write_marker() {
++        use std::os::unix::fs::PermissionsExt;
++        let directory = tempfile::tempdir().unwrap(); let executable = directory.path().join("plugin"); let marker = directory.path().join("spawned");
++        std::fs::write(&executable, format!("#!/bin/sh\nprintf spawned > '{}'\n",marker.display())).unwrap();
++        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
++        let yaml = format!("proxies:\n - name: dangerous\n   type: ss\n   server: 127.0.0.1\n   port: 443\n   cipher: aes-128-gcm\n   password: secret\n   plugin: '{}'\nrules: ['MATCH,DIRECT']\n",executable.display());
++        assert_eq!(validate_offline_config(&yaml).await.unwrap_err(), "offline_external_plugin_forbidden");
++        assert!(!marker.exists(), "validation executed the plugin");
++    }
++
++    struct BlockContext { started: Arc<tokio::sync::Notify>, release: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)> }
++    impl LoadContext for BlockContext {
++        fn offline_validation(&self) -> bool { true }
++        fn wrap(&self, work: OwnedWork) -> OwnedWork { work }
++        fn run_blocking(&self, work: Box<dyn FnOnce() + Send>) {
++            self.started.notify_one(); let (lock, condition) = &*self.release; let mut released = lock.lock().unwrap();
++            while !*released { released = condition.wait(released).unwrap(); } drop(released); work();
++        }
++    }
++    struct Release(Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>);
++    impl Drop for Release { fn drop(&mut self) { let (lock, condition) = &*self.0; *lock.lock().unwrap() = true; condition.notify_all(); } }
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn cancelled_caller_retains_actual_blocking_job_until_scope_join() {
++        let started = Arc::new(tokio::sync::Notify::new()); let release = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
++        let release_on_drop = Release(release.clone());
++        let scope = OwnedLoadScope::with_context(Arc::new(BlockContext { started: started.clone(), release }));
++        let running = scope.clone(); let caller = tokio::spawn(async move { validate_offline_config_with_scope("rules: ['MATCH,DIRECT']", &running).await });
++        tokio::time::timeout(Duration::from_secs(5), started.notified()).await.unwrap(); caller.abort(); let _ = caller.await;
++        assert!(scope.is_cancelled()); let closing = scope.clone(); let joined = tokio::spawn(async move { closing.close().await });
++        tokio::task::yield_now().await; assert!(!joined.is_finished(), "validation job escaped cancellation join");
++        drop(release_on_drop); tokio::time::timeout(Duration::from_secs(5), joined).await.unwrap().unwrap().unwrap();
++        validate_offline_config("rules: ['MATCH,DIRECT']").await.unwrap();
++    }
++
++    #[cfg(feature = "anytls")]
++    #[tokio::test]
++    async fn actual_anytls_conversion_is_pure_and_no_client_pool_is_started() {
++        validate_offline_config("proxies: [{name: any, type: anytls, server: example.com, port: 443, password: secret, udp: true}]\nproxy-groups: [{name: PICK, type: select, proxies: [any]}]\nrules: ['MATCH,PICK']\n").await.unwrap();
++        assert!(validate_offline_config("proxies: [{name: any, type: anytls, server: example.com, port: 0, password: secret}]\nrules: ['MATCH,DIRECT']\n").await.is_err());
++    }
++}
+--- /dev/null
++++ b/crates/meow-config/src/owned_dns_tests.rs
+@@ -0,0 +1,131 @@
++use crate::owned_load::{LoadContext, OwnedLoadScope, OwnedWork};
++use hickory_proto::{op::{Message, MessageType, OpCode}, rr::{Record, RData, rdata::A}};
++use std::{net::{Ipv4Addr, SocketAddr}, sync::Arc, time::Duration};
++use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, UdpSocket}, sync::Notify};
++
++struct PhysicalContext(Option<Vec<SocketAddr>>);
++impl LoadContext for PhysicalContext {
++    fn requires_physical_dns(&self) -> bool { true }
++    fn physical_dns_servers(&self) -> Option<Vec<SocketAddr>> { self.0.clone() }
++    fn wrap(&self, work: OwnedWork) -> OwnedWork { work }
++    fn run_blocking(&self, work: Box<dyn FnOnce() + Send>) { work(); }
++}
++fn scope(servers: Option<Vec<SocketAddr>>) -> Arc<OwnedLoadScope> {
++    OwnedLoadScope::with_context(Arc::new(PhysicalContext(servers)))
++}
++fn response(request: &Message, truncated: bool) -> Vec<u8> {
++    let mut reply = Message::new(request.metadata.id, MessageType::Response, OpCode::Query);
++    reply.add_queries(request.queries.iter().cloned());
++    reply.metadata.truncation = truncated;
++    if !truncated {
++        reply.add_answer(Record::from_rdata(request.queries[0].name.clone(), 60,
++            RData::A(A(Ipv4Addr::new(192, 0, 2, 42)))));
++    }
++    reply.to_bytes().unwrap()
++}
++
++async fn round_trip(bind: &str, tcp_retry: bool, use_hosts: bool) {
++    let tcp = TcpListener::bind(bind).await.unwrap();
++    let address = tcp.local_addr().unwrap();
++    let udp = UdpSocket::bind(address).await.unwrap();
++    let expected_name = if use_hosts { "wire.example." } else { "pinned.example." };
++    let server = tokio::spawn(async move {
++        let mut buffer = [0; 4096];
++        let (length, peer) = udp.recv_from(&mut buffer).await.unwrap();
++        let query = Message::from_bytes(&buffer[..length]).unwrap();
++        assert_eq!(query.queries[0].name.to_string(), expected_name);
++        udp.send_to(&response(&query, tcp_retry), peer).await.unwrap();
++        if tcp_retry {
++            let (mut stream, _) = tcp.accept().await.unwrap();
++            let length = stream.read_u16().await.unwrap();
++            let mut wire = vec![0; usize::from(length)];
++            stream.read_exact(&mut wire).await.unwrap();
++            let query = Message::from_bytes(&wire).unwrap();
++            assert_eq!(query.queries[0].name.to_string(), expected_name);
++            let reply = response(&query, false);
++            stream.write_u16(reply.len().try_into().unwrap()).await.unwrap();
++            stream.write_all(&reply).await.unwrap();
++        }
++    });
++    let owner = scope(Some(vec![address]));
++    let yaml = format!("strict: true\nipv6: false\nhosts:\n  pinned.example: 192.0.2.9\ndns:\n  enable: false\n  use-hosts: {use_hosts}\nrules: ['MATCH,DIRECT']\n");
++    let config = crate::load_config_from_str_owned(&yaml, &owner).await.unwrap();
++    assert!(!config.dns.enabled);
++    assert!(config.dns.listen_addr.is_none());
++    assert_eq!(config.raw.dns.as_ref().unwrap().enable, Some(false));
++    if use_hosts {
++        assert_eq!(config.dns.resolver.lookup_ipv4("pinned.example").await,
++            Some("192.0.2.9".parse().unwrap()));
++    }
++    assert_eq!(config.dns.resolver.lookup_ipv6("pinned.example").await, None);
++    let name = if use_hosts { "wire.example" } else { "pinned.example" };
++    let answer = tokio::time::timeout(Duration::from_secs(5), owner.run(config.dns.resolver.lookup_ipv4(name))).await.unwrap();
++    assert_eq!(answer, Some("192.0.2.42".parse().unwrap()));
++    tokio::time::timeout(Duration::from_secs(5), server).await.unwrap().unwrap();
++    owner.close().await.unwrap();
++}
++
++#[tokio::test]
++async fn disabled_dns_uses_captured_ipv4_udp_and_preserves_hosts() {
++    round_trip("127.0.0.1:0", false, true).await;
++}
++#[tokio::test]
++async fn disabled_dns_uses_same_physical_server_for_truncated_udp_tcp_retry() {
++    round_trip("127.0.0.1:0", true, false).await;
++}
++#[tokio::test]
++async fn disabled_dns_accepts_captured_ipv6_upstream_without_enabling_ipv6_answers() {
++    round_trip("[::1]:0", false, true).await;
++}
++#[tokio::test]
++async fn missing_empty_invalid_physical_snapshot_fails_instead_of_public_fallback() {
++    for (servers, expected) in [
++        (None, "physicalDnsSnapshotMissing"),
++        (Some(vec![]), "physicalDnsSnapshotEmpty"),
++        (Some(vec!["0.0.0.0:53".parse().unwrap()]), "physicalDnsSnapshotInvalid"),
++        (Some(vec!["127.0.0.1:0".parse().unwrap()]), "physicalDnsSnapshotInvalid"),
++    ] {
++        let owner = scope(servers);
++        let error = match crate::load_config_from_str_owned("strict: true\ndns: {enable: false}\nrules: ['MATCH,DIRECT']\n", &owner).await {
++            Ok(_) => panic!("missing physical snapshot silently admitted default DNS"),
++            Err(error) => error,
++        };
++        assert!(error.to_string().contains(expected), "{error}");
++        owner.close().await.unwrap();
++    }
++}
++
++#[tokio::test]
++async fn disabled_dns_owned_query_cancel_joins_tcp_io_before_successor() {
++    let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
++    let address = tcp.local_addr().unwrap();
++    let udp = UdpSocket::bind(address).await.unwrap();
++    let received = Arc::new(Notify::new());
++    let accepted = received.clone();
++    let server = tokio::spawn(async move {
++        let mut buffer = [0; 4096];
++        let (length, peer) = udp.recv_from(&mut buffer).await.unwrap();
++        let query = Message::from_bytes(&buffer[..length]).unwrap();
++        udp.send_to(&response(&query, true), peer).await.unwrap();
++        let (mut stream, _) = tcp.accept().await.unwrap();
++        let length = stream.read_u16().await.unwrap();
++        let mut wire = vec![0; usize::from(length)];
++        stream.read_exact(&mut wire).await.unwrap();
++        accepted.notify_one();
++        let mut byte = [0];
++        assert_eq!(stream.read(&mut byte).await.unwrap(), 0);
++    });
++    let owner = scope(Some(vec![address]));
++    let config = crate::load_config_from_str_owned("strict: true\ndns: {enable: false}\nrules: ['MATCH,DIRECT']\n", &owner).await.unwrap();
++    let resolver = config.dns.resolver.clone();
++    let querying = owner.run(async { crate::owned_load::spawn(async move { resolver.lookup_ipv4("cancel.example").await }) }).await;
++    tokio::time::timeout(Duration::from_secs(5), received.notified()).await.unwrap();
++    owner.cancel();
++    tokio::time::timeout(Duration::from_secs(5), owner.close()).await.unwrap().unwrap();
++    assert!(querying.await.unwrap_err().is_cancelled());
++    tokio::time::timeout(Duration::from_secs(5), server).await.unwrap().unwrap();
++    assert!(TcpListener::bind(address).await.is_ok());
++    let successor = scope(Some(vec![address]));
++    crate::load_config_from_str_owned("strict: true\nrules: ['MATCH,DIRECT']\n", &successor).await.unwrap();
++    successor.close().await.unwrap();
++}
+--- /dev/null
++++ b/crates/meow-config/src/owned_load.rs
+@@ -0,0 +1,292 @@
++use parking_lot::Mutex;
++use std::{cell::RefCell, collections::HashMap, future::Future, pin::Pin, sync::{Arc, atomic::{AtomicU64, Ordering}}};
++use tokio::{sync::Notify, task::{AbortHandle, JoinHandle}};
++
++tokio::task_local! { static CURRENT: Arc<OwnedLoadScope>; }
++thread_local! { static BLOCKING: RefCell<Option<Arc<OwnedLoadScope>>> = const { RefCell::new(None) }; }
++
++#[derive(Default)]
++struct Jobs { closed: bool, panicked: bool, tasks: HashMap<u64, Option<AbortHandle>>, threads: Vec<std::thread::JoinHandle<()>> }
++
++pub type OwnedWork = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
++#[derive(Clone)]
++pub struct ProviderRoots {
++    pub resource_read_root: Option<std::path::PathBuf>,
++    pub cache_root: std::path::PathBuf,
++}
++pub trait LoadContext: Send + Sync {
++    fn offline_validation(&self) -> bool { false }
++    fn requires_provider_roots(&self) -> bool { false }
++    fn provider_roots(&self) -> Option<ProviderRoots> { None }
++    fn provider_observer(&self) -> Option<Arc<dyn crate::provider_events::ProviderObserver>> { None }
++    fn requires_physical_dns(&self) -> bool { false }
++    fn physical_dns_servers(&self) -> Option<Vec<std::net::SocketAddr>> { None }
++    fn wrap(&self, work: OwnedWork) -> OwnedWork;
++    fn run_blocking(&self, work: Box<dyn FnOnce() + Send>);
++}
++struct IdentityContext;
++impl LoadContext for IdentityContext {
++    fn wrap(&self, work: OwnedWork) -> OwnedWork { work }
++    fn run_blocking(&self, work: Box<dyn FnOnce() + Send>) { work(); }
++}
++pub struct OwnedLoadScope {
++    jobs: Mutex<Jobs>, changed: Notify, serial: AtomicU64, context: Arc<dyn LoadContext>,
++}
++
++struct Lease { owner: Arc<OwnedLoadScope>, id: u64 }
++impl Drop for Lease {
++    fn drop(&mut self) {
++        let mut jobs = self.owner.jobs.lock();
++        jobs.panicked |= std::thread::panicking();
++        jobs.tasks.remove(&self.id);
++        drop(jobs);
++        self.owner.changed.notify_waiters();
++    }
++}
++
++impl OwnedLoadScope {
++    pub fn new() -> Arc<Self> { Self::with_context(Arc::new(IdentityContext)) }
++    pub fn with_context(context: Arc<dyn LoadContext>) -> Arc<Self> {
++        Arc::new(Self { jobs: Mutex::new(Jobs::default()), changed: Notify::new(),
++            serial: AtomicU64::new(0), context })
++    }
++    pub fn current() -> Option<Arc<Self>> {
++        CURRENT.try_with(Arc::clone).ok().or_else(|| BLOCKING.with(|slot| slot.borrow().clone()))
++    }
++    pub fn offline_validation(&self) -> bool { self.context.offline_validation() }
++    pub fn provider_observer(&self) -> Option<Arc<dyn crate::provider_events::ProviderObserver>> { self.context.provider_observer() }
++    pub fn provider_roots(&self) -> Result<Option<ProviderRoots>, &'static str> {
++        let Some(roots) = self.context.provider_roots() else {
++            return if self.context.requires_provider_roots() { Err("providerRootsMissing") } else { Ok(None) };
++        };
++        if !roots.cache_root.is_absolute() || roots.resource_read_root.as_ref().is_some_and(|path| !path.is_absolute()) {
++            return Err("providerRootsInvalid");
++        }
++        let cache_root = roots.cache_root.canonicalize().map_err(|_| "providerCacheRootInvalid")?;
++        let resource_read_root = roots.resource_read_root.as_ref().map(|path| path.canonicalize().map_err(|_| "providerReadRootInvalid")).transpose()?;
++        if resource_read_root.as_ref().is_some_and(|read| cache_root.starts_with(read) || read.starts_with(&cache_root)) {
++            return Err("providerRootsOverlap");
++        }
++        if !cache_root.is_dir() || resource_read_root.as_ref().is_some_and(|read| !read.is_dir()) {
++            return Err("providerRootsInvalid");
++        }
++        Ok(Some(roots))
++    }
++    pub fn disabled_dns_servers(&self) -> Result<Option<Vec<std::net::SocketAddr>>, &'static str> {
++        let Some(servers) = self.context.physical_dns_servers() else {
++            return if self.context.requires_physical_dns() { Err("physicalDnsSnapshotMissing") } else { Ok(None) };
++        };
++        if servers.is_empty() { return Err("physicalDnsSnapshotEmpty"); }
++        if servers.iter().any(|server| server.port() == 0 || server.ip().is_unspecified() || server.ip().is_multicast()) {
++            return Err("physicalDnsSnapshotInvalid");
++        }
++        Ok(Some(servers))
++    }
++    pub fn is_cancelled(&self) -> bool { self.jobs.lock().closed }
++    pub async fn cancelled(&self) {
++        loop {
++            let changed = self.changed.notified();
++            tokio::pin!(changed);
++            changed.as_mut().enable();
++            if self.is_cancelled() { return; }
++            changed.await;
++        }
++    }
++    pub async fn run<F: Future>(self: &Arc<Self>, work: F) -> F::Output {
++        CURRENT.scope(self.clone(), work).await
++    }
++    fn lease(self: &Arc<Self>) -> Option<Lease> {
++        let id = self.serial.fetch_add(1, Ordering::Relaxed);
++        let mut jobs = self.jobs.lock();
++        if jobs.closed { return None; }
++        jobs.tasks.insert(id, None);
++        Some(Lease { owner: self.clone(), id })
++    }
++    pub fn cancel(&self) {
++        let mut jobs = self.jobs.lock();
++        jobs.closed = true;
++        for abort in jobs.tasks.values().flatten() { abort.abort(); }
++        self.changed.notify_waiters();
++    }
++    pub async fn close(&self) -> Result<(), &'static str> {
++        self.cancel();
++        loop {
++            let changed = self.changed.notified();
++            tokio::pin!(changed);
++            changed.as_mut().enable();
++            let finished = self.jobs.lock().tasks.is_empty();
++            if finished { break; }
++            changed.await;
++        }
++        let mut jobs = self.jobs.lock();
++        let mut failed = jobs.panicked;
++        for thread in jobs.threads.drain(..) { failed |= thread.join().is_err(); }
++        if failed { Err("providerThreadPanicked") } else { Ok(()) }
++    }
++}
++
++pub(crate) fn spawn<F>(work: F) -> JoinHandle<F::Output>
++where F: Future + Send + 'static, F::Output: Send + 'static {
++    let Some(owner) = OwnedLoadScope::current() else { return tokio::spawn(work); };
++    let Some(lease) = owner.lease() else {
++        return tokio::spawn(async { panic!("ownedLoadScopeClosed") });
++    };
++    let id = lease.id;
++    let wrapped = wrap_with(owner.clone(), work);
++    let task = tokio::spawn(async move { let _lease = lease; wrapped.await });
++    let mut jobs = owner.jobs.lock();
++    if jobs.closed { task.abort(); }
++    if let Some(slot) = jobs.tasks.get_mut(&id) { *slot = Some(task.abort_handle()); }
++    task
++}
++
++fn blocking_with<F, R>(owner: Arc<OwnedLoadScope>, work: F) -> R
++where F: FnOnce() -> R + Send + 'static, R: Send + 'static {
++    let result = Arc::new(Mutex::new(None));
++    let output = result.clone();
++    let context = owner.context.clone();
++    context.run_blocking(Box::new(move || {
++        BLOCKING.with(|slot| {
++            let prior = slot.replace(Some(owner));
++            struct Restore<'a>(&'a RefCell<Option<Arc<OwnedLoadScope>>>, Option<Arc<OwnedLoadScope>>);
++            impl Drop for Restore<'_> { fn drop(&mut self) { self.0.replace(self.1.take()); } }
++            let _restore = Restore(slot, prior);
++            *output.lock() = Some(work());
++        })
++    }));
++    let value = result.lock().take().expect("LoadContext must run blocking work");
++    value
++}
++
++pub(crate) fn wrap_with<F>(owner: Arc<OwnedLoadScope>, work: F) -> impl Future<Output = F::Output> + Send
++where F: Future + Send + 'static, F::Output: Send + 'static {
++    let result = Arc::new(Mutex::new(None));
++    let output = result.clone();
++    let context = owner.context.clone();
++    let wrapped = context.wrap(Box::pin(async move {
++        let value = owner.run(work).await;
++        *output.lock() = Some(value);
++    }));
++    async move {
++        wrapped.await;
++        let value = result.lock().take().expect("LoadContext must await async work");
++        value
++    }
++}
++
++pub(crate) fn wrap_current<F>(work: F) -> impl Future<Output = F::Output> + Send
++where F: Future + Send + 'static, F::Output: Send + 'static {
++    let owner = OwnedLoadScope::current();
++    async move {
++        match owner { Some(owner) => wrap_with(owner, work).await, None => work.await }
++    }
++}
++
++pub(crate) fn spawn_blocking<F, R>(work: F) -> JoinHandle<R>
++where F: FnOnce() -> R + Send + 'static, R: Send + 'static {
++    let Some(owner) = OwnedLoadScope::current() else { return tokio::task::spawn_blocking(work); };
++    let Some(lease) = owner.lease() else {
++        return tokio::spawn(async { panic!("ownedLoadScopeClosed") });
++    };
++    tokio::task::spawn_blocking(move || {
++        let _lease = lease;
++        blocking_with(owner, work)
++    })
++}
++
++pub(crate) fn spawn_thread<F>(builder: std::thread::Builder, work: F) -> std::io::Result<()>
++where F: FnOnce() + Send + 'static {
++    let owner = OwnedLoadScope::current();
++    let lease = match owner.as_ref() {
++        Some(owner) => Some(owner.lease().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Interrupted, "ownedLoadScopeClosed"))?),
++        None => None,
++    };
++    let mut jobs = owner.as_ref().map(|owner| owner.jobs.lock());
++    let context = owner.clone();
++    let thread = builder.spawn(move || {
++        let _lease = lease;
++        match context { Some(owner) => blocking_with(owner, work), None => work() }
++    })?;
++    if let Some(jobs) = jobs.as_mut() { jobs.threads.push(thread); }
++    Ok(())
++}
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::{future::{poll_fn, Future}, task::Poll};
++    use tokio::{net::TcpListener, sync::Notify};
++
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn real_initial_download_cancels_and_joins_before_successor() {
++        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let address = origin.local_addr().unwrap();
++        let accepted = Arc::new(Notify::new());
++        let connected = accepted.clone();
++        let server = tokio::spawn(async move {
++            use tokio::io::AsyncReadExt;
++            let (mut stream, _) = origin.accept().await.unwrap();
++            let mut bytes = [0; 4096];
++            assert!(stream.read(&mut bytes).await.unwrap() > 0);
++            connected.notify_one();
++            let mut received = Vec::new();
++            stream.read_to_end(&mut received).await.unwrap();
++        });
++        let scope = OwnedLoadScope::new();
++        let worker = scope.clone();
++        let yaml = format!("strict: true\nproxy-providers:\n  feed:\n    type: http\n    url: http://{address}/feed\n    interval: 0\nproxy-groups:\n  - name: PICK\n    type: select\n    use: [feed]\nrules: ['MATCH,PICK']\n");
++        let loading = tokio::spawn(async move { crate::load_config_from_str_owned(&yaml, &worker).await });
++        tokio::time::timeout(std::time::Duration::from_secs(5), accepted.notified()).await.unwrap();
++        scope.cancel();
++        assert!(loading.await.unwrap().is_err());
++        tokio::time::timeout(std::time::Duration::from_secs(5), scope.close()).await.unwrap().unwrap();
++        tokio::time::timeout(std::time::Duration::from_secs(5), server).await.unwrap().unwrap();
++        assert!(scope.jobs.lock().tasks.is_empty());
++        let successor = OwnedLoadScope::new();
++        crate::load_config_from_str_owned("strict: true\nrules: ['MATCH,DIRECT']\n", &successor).await.unwrap();
++        successor.close().await.unwrap();
++    }
++
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn real_rule_prefetch_cancel_joins_independent_runtime_thread() {
++        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let address = origin.local_addr().unwrap();
++        let accepted = Arc::new(Notify::new());
++        let connected = accepted.clone();
++        let server = tokio::spawn(async move {
++            use tokio::io::AsyncReadExt;
++            let (mut stream, _) = origin.accept().await.unwrap();
++            let mut bytes = [0; 4096];
++            assert!(stream.read(&mut bytes).await.unwrap() > 0);
++            connected.notify_one();
++            let mut received = Vec::new();
++            stream.read_to_end(&mut received).await.unwrap();
++        });
++        let scope = OwnedLoadScope::new();
++        let worker = scope.clone();
++        let yaml = format!("strict: true\nrule-providers:\n  feed:\n    type: http\n    behavior: domain\n    url: http://{address}/rules\n    interval: 0\nrules: ['RULE-SET,feed,DIRECT', 'MATCH,DIRECT']\n");
++        let loading = tokio::spawn(async move { crate::load_config_from_str_owned(&yaml, &worker).await });
++        tokio::time::timeout(std::time::Duration::from_secs(5), accepted.notified()).await.unwrap();
++        scope.cancel();
++        assert!(loading.await.unwrap().is_err());
++        tokio::time::timeout(std::time::Duration::from_secs(5), scope.close()).await.unwrap().unwrap();
++        tokio::time::timeout(std::time::Duration::from_secs(5), server).await.unwrap().unwrap();
++        assert!(scope.jobs.lock().tasks.is_empty());
++        assert!(scope.jobs.lock().threads.is_empty());
++    }
++    #[tokio::test]
++    async fn blocking_child_survives_cancelled_wait_and_must_finish_before_close() {
++        let scope = OwnedLoadScope::new();
++        let (release, wait) = std::sync::mpsc::channel::<()>();
++        scope.run(async { drop(spawn_blocking(move || { wait.recv().unwrap(); })); }).await;
++        let mut first = Box::pin(scope.close());
++        poll_fn(|cx| { assert!(first.as_mut().poll(cx).is_pending()); Poll::Ready(()) }).await;
++        drop(first);
++        let mut retry = Box::pin(scope.close());
++        poll_fn(|cx| { assert!(retry.as_mut().poll(cx).is_pending()); Poll::Ready(()) }).await;
++        release.send(()).unwrap();
++        retry.await.unwrap();
++    }
++}
++
++/// Captured ownership context only; never reads or changes the CLI global.
++pub fn offline_validation() -> bool { OwnedLoadScope::current().is_some_and(|scope| scope.offline_validation()) }
+--- /dev/null
++++ b/crates/meow-config/src/provider_events.rs
+@@ -0,0 +1,45 @@
++use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
++use serde::Serialize;
++static NEXT_SOURCE: AtomicU64 = AtomicU64::new(1);
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
++#[serde(rename_all = "lowercase")]
++pub enum ProviderKind { Proxy, Rule }
++#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
++pub struct ProviderIdentity { pub kind: ProviderKind, pub name: String, pub source: u64 }
++pub trait ProviderLease: Send + Sync {
++    fn commit(&self, changed: bool, install: &mut dyn FnMut()) -> Result<(), String>;
++}
++pub trait ProviderObserver: Send + Sync {
++    fn validate(&self, kind: ProviderKind, name: &str) -> Result<(), String>;
++    fn begin(&self, identity: &ProviderIdentity) -> Result<Arc<dyn ProviderLease>, String>;
++}
++#[derive(Clone)]
++pub struct ProviderBinding {
++    identity: ProviderIdentity,
++    observer: Option<Arc<dyn ProviderObserver>>,
++    scope: Option<Arc<crate::owned_load::OwnedLoadScope>>,
++}
++struct UnobservedLease;
++impl ProviderLease for UnobservedLease {
++    fn commit(&self, _changed: bool, install: &mut dyn FnMut()) -> Result<(), String> { install(); Ok(()) }
++}
++impl ProviderBinding {
++    pub fn capture(kind: ProviderKind, name: &str) -> Result<Self, String> {
++        let scope = crate::owned_load::OwnedLoadScope::current();
++        let observer = scope.as_ref().and_then(|scope| scope.provider_observer());
++        if let Some(observer) = &observer { observer.validate(kind, name)?; }
++        Ok(Self { identity: ProviderIdentity { kind, name: name.into(), source: NEXT_SOURCE.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |source| source.checked_add(1)).map_err(|_| "providerSourceExhausted".to_string())? },
++            observer, scope })
++    }
++    pub async fn run<F>(&self, work: F) -> F::Output
++    where F: std::future::Future + Send + 'static, F::Output: Send + 'static {
++        match &self.scope { Some(scope) => crate::owned_load::wrap_with(scope.clone(), work).await, None => work.await }
++    }
++    pub fn observed(&self) -> bool { self.observer.is_some() }
++    pub fn scope(&self) -> Option<Arc<crate::owned_load::OwnedLoadScope>> { self.scope.clone() }
++    pub fn identity(&self) -> &ProviderIdentity { &self.identity }
++    pub fn begin(&self) -> Result<Arc<dyn ProviderLease>, String> {
++        match &self.observer { Some(observer) => observer.begin(&self.identity), None => Ok(Arc::new(UnobservedLease)) }
++    }
++}
+--- a/crates/meow-config/src/proxy_parser.rs
++++ b/crates/meow-config/src/proxy_parser.rs
+@@ -35,18 +35,22 @@
+ /// Wraps a ProxyAdapter to implement the full Proxy trait
+ pub struct WrappedProxy {
+     adapter: Box<dyn ProxyAdapter>,
++    configured_name: Option<String>,
+ }
+ 
+ impl WrappedProxy {
+     pub fn new(adapter: Box<dyn ProxyAdapter>) -> Self {
+-        Self { adapter }
++        Self { adapter, configured_name: None }
++    }
++    fn with_name(mut self, name: &str) -> Self {
++        self.configured_name = Some(name.to_owned()); self
+     }
+ }
+ 
+ #[async_trait]
+ impl ProxyAdapter for WrappedProxy {
+     fn name(&self) -> &str {
+-        self.adapter.name()
++        self.configured_name.as_deref().unwrap_or_else(|| self.adapter.name())
+     }
+     fn adapter_type(&self) -> AdapterType {
+         self.adapter.adapter_type()
+@@ -346,7 +350,7 @@
+         "direct" => {
+             reject_unthreaded_dialer(name, "direct", dialer)?;
+             let adapter = parse_direct(name, config, ipv6)?;
+-            Ok(Arc::new(WrappedProxy::new(Box::new(adapter))))
++            Ok(Arc::new(WrappedProxy::new(Box::new(adapter)).with_name(name)))
+         }
+         #[cfg(feature = "anytls")]
+         "anytls" => {
+@@ -1135,7 +1139,11 @@
+         .and_then(serde_yaml::Value::as_bool)
+         .unwrap_or(false);
+ 
+-    meow_proxy::AnytlsAdapter::new(name, server, port, password, sni, skip_cert_verify, udp)
++    if crate::owned_load::offline_validation() {
++        meow_proxy::AnytlsAdapter::validate_options(name, server, port, password, sni, skip_cert_verify, udp)
++    } else {
++        meow_proxy::AnytlsAdapter::new(name, server, port, password, sni, skip_cert_verify, udp)
++    }
+ }
+ 
+ /// Parse a `type: hysteria2` proxy block.
+@@ -4833,8 +4841,7 @@
+     // rather than the strict pass's error failing the whole load.
+     #[tokio::test]
+     async fn load_config_unknown_use_provider_warns_and_loads() {
+-        // A `direct` leaf normalizes to the built-in DIRECT name — use ss so
+-        // the static member keeps its own name in `members()`.
++        // Keep this existing ss fixture independent of the direct alias regression.
+         let yaml = "proxies:\n  - {name: p, type: ss, server: 127.0.0.1, port: 443, cipher: aes-128-gcm, password: x}\n\
+             proxy-groups:\n  - {name: g, type: load-balance, proxies: [p], use: [ghost]}\n";
+         let cfg = crate::load_config_from_str(yaml)
+@@ -5472,3 +5479,24 @@
+         assert_eq!(names, ["ok", "plain"], "dropped: {names:?}");
+     }
+ }
++
++
++#[cfg(test)]
++mod configured_direct_alias_tests {
++    use super::*;
++    #[test]
++    fn configured_direct_preserves_name_without_changing_builtin_identity() {
++        let builtin = WrappedProxy::new(Box::new(DirectAdapter::new()));
++        assert_eq!(builtin.name(), "DIRECT");
++        let compatible = WrappedProxy::new(Box::new(DirectAdapter::compatible()));
++        assert_eq!(compatible.name(), "COMPATIBLE");
++        for name in ["d1", "d2"] {
++            let config = HashMap::from([("name".to_string(), serde_yaml::Value::String(name.into())),
++                ("type".to_string(), serde_yaml::Value::String("direct".into()))]);
++            let dialer: Arc<dyn meow_proxy::dialer::TcpDialer> = Arc::new(meow_proxy::dialer::DirectDialer);
++            let proxy = parse_proxy_provider_node(&config, true, false, &dialer).unwrap();
++            assert_eq!(proxy.name(), name); assert_eq!(proxy.adapter_type(), AdapterType::Direct);
++            assert!(proxy.members().is_none()); assert!(proxy.selection().is_none());
++        }
++    }
++}
+--- a/crates/meow-config/src/proxy_provider.rs
++++ b/crates/meow-config/src/proxy_provider.rs
+@@ -46,6 +46,7 @@
+ }
+ 
+ pub struct ProxyProvider {
++    binding: crate::provider_events::ProviderBinding,
+     pub name: String,
+     pub slot: ProviderSlot,
+     pub vehicle_type: &'static str,
+@@ -223,6 +224,7 @@
+         /// `None` = fetch to memory only (no containment root available for
+         /// an on-disk cache; issue #429).
+         cache_path: Option<PathBuf>,
++        seed_path: Option<PathBuf>,
+     },
+ }
+ 
+@@ -235,6 +237,10 @@
+         strict: bool,
+         dialer_registry: meow_proxy::dialer::ProxyRegistry,
+     ) -> Result<Self, String> {
++        let binding = crate::provider_events::ProviderBinding::capture(crate::provider_events::ProviderKind::Proxy, name)?;
++        let roots = crate::owned_load::OwnedLoadScope::current()
++            .map(|scope| scope.provider_roots()).transpose()?.flatten();
++        let read_dir = match &roots { Some(roots) => roots.resource_read_root.as_deref(), None => cache_dir };
+         // Any on-disk location (read or write) must stay inside `cache_dir`
+         // (issue #429): `path:` — and the provider *name* feeding the implicit
+         // cache location — are attacker-influenced when the config document
+@@ -246,13 +252,15 @@
+                     .path
+                     .as_deref()
+                     .ok_or("file proxy-provider requires 'path'")?;
+-                let Some(dir) = cache_dir else {
++                let Some(dir) = read_dir else {
++                    if roots.is_some() { return Err(format!("proxy-provider '{name}': providerReadRootMissing")); }
+                     return Err(format!(
+                         "proxy-provider '{name}': 'path' cannot be used without a provider \
+                          cache directory"
+                     ));
+                 };
+-                let path = crate::safe_path::resolve_contained(dir, Path::new(path_str))
++                let path = if roots.is_some() { crate::safe_path::resolve_contained_strict(dir, Path::new(path_str)) }
++                    else { crate::safe_path::resolve_contained(dir, Path::new(path_str)) }
+                     .map_err(|e| format!("proxy-provider '{name}': {e}"))?;
+                 (Vehicle::File(path), "File")
+             }
+@@ -271,29 +279,34 @@
+                         "proxy-provider '{name}': invalid url '{url}' (strict mode)"
+                     ));
+                 }
+-                let cache_path = match (raw.path.as_deref(), cache_dir) {
+-                    (Some(p), Some(dir)) => Some(
+-                        crate::safe_path::resolve_contained(dir, Path::new(p))
++                let (cache_path, seed_path) = if let Some(roots) = &roots {
++                    owned_http_paths(name, raw.path.as_deref(), roots)?
++                } else {
++                    let cache_path = match (raw.path.as_deref(), cache_dir) {
++                        (Some(p), Some(dir)) => Some(
++                            crate::safe_path::resolve_contained(dir, Path::new(p))
++                                .map_err(|e| format!("proxy-provider '{name}': {e}"))?,
++                        ),
++                        (Some(_), None) => {
++                            warn!(
++                                provider = %name,
++                                "ignoring 'path' (no provider cache directory in this context); \
++                                 fetching to memory without an on-disk cache"
++                            );
++                            None
++                        }
++                        (None, Some(dir)) => Some(
++                            crate::safe_path::resolve_contained(
++                                dir,
++                                Path::new(&format!("provider_{name}.yaml")),
++                            )
+                             .map_err(|e| format!("proxy-provider '{name}': {e}"))?,
+-                    ),
+-                    (Some(_), None) => {
+-                        warn!(
+-                            provider = %name,
+-                            "ignoring 'path' (no provider cache directory in this context); \
+-                             fetching to memory without an on-disk cache"
+-                        );
+-                        None
+-                    }
+-                    (None, Some(dir)) => Some(
+-                        crate::safe_path::resolve_contained(
+-                            dir,
+-                            Path::new(&format!("provider_{name}.yaml")),
+-                        )
+-                        .map_err(|e| format!("proxy-provider '{name}': {e}"))?,
+-                    ),
+-                    (None, None) => None,
++                        ),
++                        (None, None) => None,
++                    };
++                    (cache_path, None)
+                 };
+-                (Vehicle::Http { url, cache_path }, "HTTP")
++                (Vehicle::Http { url, cache_path, seed_path }, "HTTP")
+             }
+             t => return Err(format!("unknown proxy-provider type '{t}'")),
+         };
+@@ -437,6 +450,7 @@
+             def: Self::def_identity(raw),
+             content_hash: Mutex::new(None), // see field docs
+             subscription_userinfo: Mutex::new(None),
++            binding,
+         })
+     }
+ 
+@@ -525,7 +539,7 @@
+     async fn fetch_source(&self) -> Result<(String, Option<SubscriptionUserinfo>), String> {
+         let registry = &self.dialer_registry;
+         match &self.vehicle {
+-            Vehicle::File(path) => tokio::fs::read_to_string(path)
++            Vehicle::File(path) => read_provider_file_owned(path)
+                 .await
+                 .map(|text| (text, None))
+                 .map_err(|e| {
+@@ -601,13 +615,13 @@
+ 
+     /// Persist a parsed-and-committed HTTP payload for offline fallback,
+     /// atomically ([`write_atomic`]).
+-    async fn write_cache(&self, text: &str) {
++    async fn write_cache(&self, text: &str, operation: Arc<dyn crate::provider_events::ProviderLease>) {
+         if let Vehicle::Http {
+             cache_path: Some(cache_path),
+             ..
+         } = &self.vehicle
+         {
+-            write_atomic(cache_path, text.as_bytes()).await;
++            write_atomic(cache_path, text.as_bytes(), operation).await;
+         }
+     }
+ 
+@@ -635,29 +649,30 @@
+ 
+     /// Keep the file next to the on-disk cache in step with `userinfo`,
+     /// removing it when there is none.
+-    async fn persist_userinfo(&self, userinfo: Option<SubscriptionUserinfo>) {
++    async fn persist_userinfo(&self, userinfo: Option<SubscriptionUserinfo>, operation: Arc<dyn crate::provider_events::ProviderLease>) {
+         let Some(path) = self.userinfo_path() else {
+             return;
+         };
+         match userinfo {
+-            Some(userinfo) => write_atomic(&path, userinfo.to_string().as_bytes()).await,
++            Some(userinfo) => write_atomic(&path, userinfo.to_string().as_bytes(), operation).await,
+             None => {
+-                let _ = tokio::fs::remove_file(&path).await;
++                let _ = crate::spawn_blocking_with_current_dispatcher(move || {
++                    let _operation = operation;
++                    std::fs::remove_file(path)
++                }).await;
+             }
+         }
+     }
+ 
+     /// Read back the plan usage persisted with the on-disk cache, for a
+     /// payload just loaded from it. `None` when nothing was persisted.
+-    async fn load_cached_userinfo(&self) {
+-        let Some(path) = self.userinfo_path() else {
+-            return;
+-        };
+-        let userinfo = tokio::fs::read_to_string(&path)
++    async fn load_cached_userinfo(&self) -> Option<SubscriptionUserinfo> {
++        let path = self.userinfo_path()?;
++        let userinfo = read_provider_file_owned(&path)
+             .await
+             .ok()
+             .and_then(|text| SubscriptionUserinfo::parse(&text));
+-        *self.subscription_userinfo.lock() = userinfo;
++        userinfo
+     }
+ 
+     /// Shared acquisition tail: dedup → parse → persist cache → commit.
+@@ -666,46 +681,61 @@
+     /// content changes). `source` distinguishes a live fetch from an
+     /// on-disk cache read — cache content is never written back. A fetch
+     /// the provider accepts, changed or not, also sets the plan usage.
++    pub async fn refresh_owned(self: &Arc<Self>) -> Result<(), String> {
++        let provider = self.clone();
++        self.binding.run(async move { provider.refresh().await }).await
++    }
++    pub fn owned_scope(&self) -> Option<Arc<crate::owned_load::OwnedLoadScope>> { self.binding.scope() }
++    pub fn provider_identity(&self) -> &crate::provider_events::ProviderIdentity { self.binding.identity() }
++    pub fn is_busy(&self) -> bool { self.refresh_lock.try_lock().is_err() }
++
+     async fn ingest(&self, content: String, source: Source) -> Result<bool, anyhow::Error> {
++        let operation = self.binding.begin().map_err(anyhow::Error::msg)?;
++        self.ingest_with_operation(content, source, operation).await
++    }
++    async fn ingest_with_operation(&self, content: String, source: Source,
++        operation: Arc<dyn crate::provider_events::ProviderLease>) -> Result<bool, anyhow::Error> {
+         let strict = self.strict.load(Ordering::Relaxed);
+         let hash = content_hash(&content);
+         let from_remote = matches!(source, Source::Fetched(_));
+-        if *self.content_hash.lock() == Some((hash, strict)) {
+-            if let Source::Fetched(userinfo) = source {
+-                self.fetched_remote.store(true, Ordering::Relaxed);
+-                // The usage moves on most fetches, the payload on few.
+-                if self.set_userinfo(userinfo) {
+-                    self.persist_userinfo(userinfo).await;
+-                }
+-                self.logbook_updated(Payload::Unchanged);
+-            }
++        let unchanged = *self.content_hash.lock() == Some((hash, strict));
++        if unchanged {
++            let userinfo = match source {
++                Source::Fetched(userinfo) => { self.persist_userinfo(userinfo, operation.clone()).await; userinfo },
++                Source::Cache => self.load_cached_userinfo().await,
++            };
++            operation.commit(false, &mut || {
++                self.set_userinfo(userinfo);
++                if from_remote { self.fetched_remote.store(true, Ordering::Relaxed); }
++            }).map_err(anyhow::Error::msg)?;
++            if from_remote { self.logbook_updated(Payload::Unchanged); }
+             return Ok(false);
+         }
+-        let proxies = self.parse_proxies(&content).await?;
+-        match source {
++        let (proxies, declared) = self.parse_proxies(&content).await?;
++        let userinfo = match source {
+             Source::Fetched(userinfo) => {
+-                self.write_cache(&content).await;
+-                // Rewritten with the cache whether it changed or not, so
+-                // the two on disk always come from the same fetch.
+-                self.set_userinfo(userinfo);
+-                self.persist_userinfo(userinfo).await;
++                self.write_cache(&content, operation.clone()).await;
++                self.persist_userinfo(userinfo, operation.clone()).await;
++                userinfo
+             }
+             Source::Cache => self.load_cached_userinfo().await,
+-        }
+-        let payload = if self.has_content() {
+-            Payload::Replaced(self.slot.read().len())
+-        } else {
+-            Payload::First
+-        };
+-        self.commit(proxies);
+-        *self.content_hash.lock() = Some((hash, strict));
+-        if from_remote {
+-            self.fetched_remote.store(true, Ordering::Relaxed);
+-            self.logbook_updated(payload);
+-        }
++        };
++        let retired = self.slot.read().clone();
++        let payload = if self.has_content() { Payload::Replaced(retired.len()) } else { Payload::First };
++        let mut candidate = Some((proxies, declared));
++        operation.commit(true, &mut || {
++            let (proxies, declared) = candidate.take().expect("provider installation runs once");
++            *self.declared_dialers.write() = declared;
++            self.set_userinfo(userinfo);
++            self.commit(proxies);
++            *self.content_hash.lock() = Some((hash, strict));
++            if from_remote { self.fetched_remote.store(true, Ordering::Relaxed); }
++        }).map_err(anyhow::Error::msg)?;
++        drop(retired);
++        info!(provider = %self.name, count = self.slot.read().len(), "proxy-provider refreshed");
++        if from_remote { self.logbook_updated(payload); }
+         Ok(true)
+     }
+-
+     /// Logbook: a fetch from the source parsed. Recorded when it replaced a
+     /// payload or ends a failure the logbook shows: a first load belongs to
+     /// the start or config change that declared the provider, and an
+@@ -765,7 +795,15 @@
+         if self.has_content() {
+             return false;
+         }
+-        let content = match tokio::fs::read_to_string(path).await {
++        let mut path = path.clone();
++        let mut content = read_provider_file_owned(&path).await;
++        if content.as_ref().is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) {
++            if let Vehicle::Http { seed_path: Some(seed), .. } = &self.vehicle {
++                path = seed.clone();
++                content = read_provider_file_owned(&path).await;
++            }
++        }
++        let content = match content {
+             Ok(content) => content,
+             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return false,
+             Err(e) => {
+@@ -779,7 +817,9 @@
+         }
+         // Report the cache's age, not the load time (upstream sets
+         // `UpdatedAt` to the file's mtime too).
+-        if let Ok(mtime) = tokio::fs::metadata(path).await.and_then(|m| m.modified()) {
++        let stat_path = path.clone();
++        let modified = crate::spawn_blocking_with_current_dispatcher(move || std::fs::metadata(stat_path).and_then(|metadata| metadata.modified())).await;
++        if let Ok(Ok(mtime)) = modified {
+             if let Ok(age) = mtime.duration_since(UNIX_EPOCH) {
+                 self.updated_at.store(
+                     age.as_secs() as meow_common::atomic::Uint,
+@@ -861,7 +901,7 @@
+     /// The task holds only a `Weak` between attempts, so a provider dropped
+     /// by a config commit — or an embedder shutting down — ends it.
+     pub fn spawn_initial_fetch(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+-        tokio::spawn(background_fetch_loop(Arc::downgrade(self)))
++        crate::owned_load::spawn(background_fetch_loop(Arc::downgrade(self)))
+     }
+ 
+     /// Parse a fetched provider payload into proxies.
+@@ -878,7 +918,7 @@
+     /// `declared_dialers` is rewritten only on the success path that will
+     /// be committed: an `Err` keeps the last-good slot running, so it must
+     /// keep that generation's declarations too (issue #489 review).
+-    async fn parse_proxies(&self, content: &str) -> Result<Vec<Arc<dyn Proxy>>, anyhow::Error> {
++    async fn parse_proxies(&self, content: &str) -> Result<(Vec<Arc<dyn Proxy>>, Vec<String>), anyhow::Error> {
+         let strict = self.strict.load(Ordering::Relaxed);
+         if !crate::yaml_within_depth(content) {
+             return Err(anyhow::anyhow!(
+@@ -977,15 +1017,12 @@
+                 }
+             }
+         }
+-        *self.declared_dialers.write() = declared;
+-
+-        Ok(result)
++        Ok((result, declared))
+     }
+ 
+     /// Publish a freshly parsed node set — shared by `refresh` and the
+     /// strict-gated initial load in [`load_proxy_providers`].
+     fn commit(&self, proxies: Vec<Arc<dyn Proxy>>) {
+-        info!(provider = %self.name, count = proxies.len(), "proxy-provider refreshed");
+         // Main slot first, then the derived views — readers can never
+         // observe new derived contents against a stale main slot.
+         *self.slot.write() = proxies;
+@@ -1138,10 +1175,11 @@
+         // Hold the generation across fetch+parse+swap: two overlapping
+         // refreshes could otherwise interleave slot/derived/declared_dialers
+         // from different payloads.
+-        let _generation = self.refresh_lock.lock().await;
++        let _generation = self.refresh_lock.try_lock().map_err(|_| "providerBusy".to_string())?;
++        let operation = self.binding.begin()?;
+         match self.fetch_source().await {
+             Ok((content, userinfo)) => {
+-                match self.ingest(content, Source::Fetched(userinfo)).await {
++                match self.ingest_with_operation(content, Source::Fetched(userinfo), operation).await {
+                     Ok(_) => Ok(()),
+                     Err(e) => {
+                         // A torn payload keeps the last-good set instead of
+@@ -1332,7 +1370,7 @@
+             fetches.push((
+                 name.clone(),
+                 Arc::clone(&provider),
+-                tokio::spawn(async move { fetching.initial_load(strict).await }),
++                crate::owned_load::spawn(async move { fetching.initial_load(strict).await }),
+             ));
+         }
+         result.insert(name.clone(), provider);
+@@ -1363,7 +1401,7 @@
+                     "proxy-provider still fetching at the startup deadline; \
+                      starting empty and finishing in the background");
+                 provider.background_pending.store(true, Ordering::Relaxed);
+-                tokio::spawn(async move {
++                crate::owned_load::spawn(async move {
+                     if let Ok(Err(e)) = fetch.await {
+                         warn!(provider = %name, error = %e, "proxy-provider payload rejected");
+                     }
+@@ -1511,30 +1549,19 @@
+ /// scratch, since the manual-refresh endpoint, an interval tick, and a
+ /// detached initial fetch can race these writes unlaned, and a torn file
+ /// would poison the next read (issue #543 review). Best-effort.
+-async fn write_atomic(path: &Path, bytes: &[u8]) {
+-    if let Some(parent) = path.parent() {
+-        let _ = tokio::fs::create_dir_all(parent).await;
+-    }
+-    // Sweep scratch siblings a crashed writer left behind (issue #621) — on
+-    // the blocking pool so the dir walk never stalls the worker.
+-    {
+-        let sweep_target = path.to_path_buf();
+-        let _ = crate::spawn_blocking_with_current_dispatcher(move || {
+-            meow_common::fs_util::sweep_scratch_siblings(
+-                &sweep_target,
+-                meow_common::fs_util::SCRATCH_STALE_AGE,
+-            );
+-        })
+-        .await;
+-    }
+-    let tmp = crate::unique_scratch_path(path);
+-    let saved = match tokio::fs::write(&tmp, bytes).await {
+-        Ok(()) => tokio::fs::rename(&tmp, path).await.is_ok(),
+-        Err(_) => false,
+-    };
+-    if !saved {
+-        let _ = tokio::fs::remove_file(&tmp).await;
+-    }
++async fn write_atomic(path: &Path, bytes: &[u8], operation: Arc<dyn crate::provider_events::ProviderLease>) {
++    let path = path.to_path_buf();
++    let bytes = bytes.to_vec();
++    let _ = crate::spawn_blocking_with_current_dispatcher(move || {
++        // Keep refresh admission busy through the actual filesystem operation,
++        // even when its caller future is dropped. Session close also joins it.
++        let _operation = operation;
++        if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
++        meow_common::fs_util::sweep_scratch_siblings(&path, meow_common::fs_util::SCRATCH_STALE_AGE);
++        let tmp = crate::unique_scratch_path(&path);
++        let saved = std::fs::write(&tmp, bytes).is_ok() && std::fs::rename(&tmp, &path).is_ok();
++        if !saved { let _ = std::fs::remove_file(tmp); }
++    }).await;
+ }
+ 
+ async fn read_cache(path: Option<&Path>, name: &str) -> Result<String, String> {
+@@ -1543,7 +1570,7 @@
+             "proxy-provider '{name}': fetch failed and no on-disk cache is configured"
+         ));
+     };
+-    tokio::fs::read_to_string(path)
++    read_provider_file_owned(path)
+         .await
+         .map_err(|e| format!("proxy-provider '{name}': no cache at {path:?}: {e}"))
+ }
+@@ -3453,3 +3480,28 @@
+         assert_eq!(memory.subscription_userinfo(), Some(usage(3, 4)));
+     }
+ }
++
++
++async fn read_provider_file_owned(path: &std::path::Path) -> std::io::Result<String> {
++    let path = path.to_path_buf();
++    crate::spawn_blocking_with_current_dispatcher(move || std::fs::read_to_string(path))
++        .await.map_err(|error| std::io::Error::other(format!("provider file read task failed: {error}")))?
++}
++
++
++fn owned_http_paths(name: &str, path: Option<&str>, roots: &crate::owned_load::ProviderRoots)
++    -> Result<(Option<PathBuf>, Option<PathBuf>), String> {
++    let requested = path.map(Path::new);
++    let default_path = PathBuf::from(format!("provider_{name}.yaml"));
++    let requested = requested.unwrap_or(default_path.as_path());
++    match crate::safe_path::resolve_contained_strict(&roots.cache_root, requested) {
++        Ok(cache) => Ok((Some(cache), None)),
++        Err(cache_error) => {
++            let Some(read) = &roots.resource_read_root else { return Err(cache_error); };
++            let seed = crate::safe_path::resolve_contained_strict(read, requested)?;
++            let relative = seed.strip_prefix(read).map_err(|_| "providerSeedOutsideReadRoot")?;
++            let cache = crate::safe_path::resolve_contained_strict(&roots.cache_root, relative)?;
++            Ok((Some(cache), Some(seed)))
++        }
++    }
++}
+--- a/crates/meow-config/src/proxy_provider_refresh.rs
++++ b/crates/meow-config/src/proxy_provider_refresh.rs
+@@ -115,7 +115,7 @@
+             if tasks.contains_key(&name) {
+                 continue;
+             }
+-            let task = tokio::spawn(refresh_loop(
++            let task = crate::owned_load::spawn(refresh_loop(
+                 name.clone(),
+                 interval,
+                 Arc::downgrade(registry),
+@@ -195,7 +195,7 @@
+         // provider's `refresh_lock`, and a failed refresh keeps the
+         // last-good slot — the loop only schedules, it never degrades the
+         // provider.
+-        if let Err(e) = provider.refresh().await {
++        if let Err(e) = provider.refresh_owned().await {
+             error!(provider = %provider.name, "background refresh failed: {e}");
+         }
+     }
+--- /dev/null
++++ b/crates/meow-config/src/rule_pages.rs
+@@ -0,0 +1,133 @@
++use std::{fs::{File, OpenOptions}, io::{BufWriter, Read, Seek, SeekFrom, Write}, path::{Path, PathBuf}, sync::Arc};
++use parking_lot::Mutex;
++use meow_rules::rule_set::AcceptedEntrySink;
++
++/// The matcher builders emit accepted entries once into bounded buffered storage.
++/// The offset index lives on disk, avoiding a permanent second Vec<String> for MRS.
++pub struct PageCapture {
++    state: Mutex<CaptureState>,
++}
++struct CaptureState {
++    data: Option<BufWriter<File>>,
++    index: Option<BufWriter<File>>,
++    paths: Option<[PathBuf; 2]>,
++    count: usize,
++    bytes: u64,
++    error: Option<String>,
++}
++pub struct RulePages {
++    files: Mutex<Option<(File, File)>>,
++    paths: [PathBuf; 2],
++    count: usize,
++}
++#[derive(serde::Serialize)]
++#[serde(rename_all = "camelCase")]
++pub struct RulePage {
++    pub rules: Vec<String>, pub rule_count: usize, pub offset: usize,
++    pub next_offset: Option<usize>, pub complete: bool,
++}
++impl PageCapture {
++    pub fn create(root: &Path) -> Result<Arc<Self>, String> {
++        let directory = crate::safe_path::resolve_contained_strict(root, Path::new("rule-pages"))?;
++        std::fs::create_dir_all(&directory).map_err(|error| format!("rulePageStorage: {error}"))?;
++        let data_path = crate::unique_scratch_path(&directory.join("entries"));
++        let mut index_name = data_path.as_os_str().to_os_string(); index_name.push(".index");
++        let index_path = PathBuf::from(index_name);
++        let data = OpenOptions::new().read(true).write(true).create_new(true).open(&data_path)
++            .map_err(|error| format!("rulePageStorage: {error}"))?;
++        let index = match OpenOptions::new().read(true).write(true).create_new(true).open(&index_path) {
++            Ok(index) => index,
++            Err(error) => { drop(data); let _ = std::fs::remove_file(&data_path); return Err(format!("rulePageStorage: {error}")); }
++        };
++        Ok(Arc::new(Self { state: Mutex::new(CaptureState {
++            data: Some(BufWriter::with_capacity(32 * 1024, data)), index: Some(BufWriter::with_capacity(16 * 1024, index)),
++            paths: Some([data_path, index_path]), count: 0, bytes: 0, error: None,
++        }) }))
++    }
++    pub fn finish(&self, expected: usize) -> Result<Arc<RulePages>, String> {
++        let mut state = self.state.lock();
++        if let Some(error) = &state.error { return Err(error.clone()); }
++        if state.count != expected { return Err("rulePageBuilderCountMismatch".into()); }
++        let mut data = state.data.take().ok_or("rulePageStorageAlreadyFinished")?;
++        let mut index = state.index.take().ok_or("rulePageStorageAlreadyFinished")?;
++        data.flush().and_then(|()| index.flush()).map_err(|error| format!("rulePageStorage: {error}"))?;
++        let data = data.into_inner().map_err(|error| format!("rulePageStorage: {error}"))?;
++        let index = index.into_inner().map_err(|error| format!("rulePageStorage: {error}"))?;
++        let paths = state.paths.take().ok_or("rulePageStorageAlreadyFinished")?;
++        Ok(Arc::new(RulePages { files: Mutex::new(Some((data, index))), paths, count: state.count }))
++    }
++}
++impl AcceptedEntrySink for PageCapture {
++    fn accepted(&self, entry: &str) {
++        let mut state = self.state.lock();
++        if state.error.is_some() { return; }
++        let result = (|| -> Result<(), String> {
++            let length = u32::try_from(entry.len()).map_err(|_| "rulePageEntryTooLarge")?;
++            let count = state.count.checked_add(1).filter(|count| *count <= i32::MAX as usize).ok_or("rulePageCountExceeded")?;
++            let offset = state.bytes;
++            let next = offset.checked_add(4).and_then(|offset| offset.checked_add(u64::from(length))).ok_or("rulePageStorageTooLarge")?;
++            let data = state.data.as_mut().ok_or("rulePageStorageAlreadyFinished")?;
++            data.write_all(&length.to_le_bytes()).and_then(|()| data.write_all(entry.as_bytes())).map_err(|error| format!("rulePageStorage: {error}"))?;
++            state.index.as_mut().ok_or("rulePageStorageAlreadyFinished")?.write_all(&offset.to_le_bytes()).map_err(|error| format!("rulePageStorage: {error}"))?;
++            state.count = count; state.bytes = next;
++            Ok(())
++        })();
++        if let Err(error) = result { state.error = Some(error); }
++    }
++}
++impl RulePages {
++    pub fn count(&self) -> usize { self.count }
++    /// Compare the exact accepted stream with bounded buffers, outside commit.
++    pub fn same_entries(&self, other: &Self) -> Result<bool, String> {
++        if std::ptr::eq(self, other) { return Ok(true); }
++        if self.count != other.count { return Ok(false); }
++        // Both candidates are immutable. Independent handles avoid locking a
++        // live page reader or acquiring two RulePages locks in reverse order.
++        let mut left = File::open(&self.paths[0]).map_err(|error| format!("rulePageStorage: {error}"))?;
++        let mut right = File::open(&other.paths[0]).map_err(|error| format!("rulePageStorage: {error}"))?;
++        let mut a = [0; 16384]; let mut b = [0; 16384];
++        loop {
++            let length = left.read(&mut a).map_err(|error| format!("rulePageStorage: {error}"))?;
++            if length == 0 { return Ok(right.read(&mut b[..1]).map_err(|error| format!("rulePageStorage: {error}"))? == 0); }
++            if let Err(error) = right.read_exact(&mut b[..length]) {
++                if error.kind() == std::io::ErrorKind::UnexpectedEof { return Ok(false); }
++                return Err(format!("rulePageStorage: {error}"));
++            }
++            if a[..length] != b[..length] { return Ok(false); }
++        }
++    }
++    pub fn page(&self, offset: usize, limit: usize) -> Result<RulePage, String> {
++        if limit == 0 || limit > 10000 { return Err("invalidRulePageLimit".into()); }
++        let mut rows = Vec::new();
++        let mut files = self.files.lock();
++        let (data, index) = files.as_mut().ok_or("rulePageStorageClosed")?;
++        let end = offset.saturating_add(limit).min(self.count);
++        if offset < self.count {
++            let position = u64::try_from(offset).ok().and_then(|offset| offset.checked_mul(8)).ok_or("invalidRulePageOffset")?;
++            index.seek(SeekFrom::Start(position)).map_err(|error| format!("rulePageStorage: {error}"))?;
++            rows.reserve(end - offset);
++            for _ in offset..end {
++                let mut raw = [0; 8]; index.read_exact(&mut raw).map_err(|error| format!("rulePageStorage: {error}"))?;
++                data.seek(SeekFrom::Start(u64::from_le_bytes(raw))).map_err(|error| format!("rulePageStorage: {error}"))?;
++                let mut length = [0; 4]; data.read_exact(&mut length).map_err(|error| format!("rulePageStorage: {error}"))?;
++                let mut bytes = vec![0; u32::from_le_bytes(length) as usize];
++                data.read_exact(&mut bytes).map_err(|error| format!("rulePageStorage: {error}"))?;
++                rows.push(String::from_utf8(bytes).map_err(|_| "rulePageStorageInvalidUtf8")?);
++            }
++        }
++        let complete = offset >= self.count || end >= self.count;
++        Ok(RulePage { rules: rows, rule_count: self.count, offset, next_offset: (!complete).then_some(end), complete })
++    }
++}
++impl Drop for CaptureState {
++    fn drop(&mut self) {
++        drop(self.data.take()); drop(self.index.take());
++        if let Some(paths) = self.paths.take() { for path in paths { let _ = std::fs::remove_file(path); } }
++    }
++}
++impl Drop for RulePages {
++    fn drop(&mut self) {
++        drop(self.files.get_mut().take());
++        for path in &self.paths { let _ = std::fs::remove_file(path); }
++    }
++}
+--- a/crates/meow-config/src/rule_provider.rs
++++ b/crates/meow-config/src/rule_provider.rs
+@@ -25,7 +25,7 @@
+ use meow_common::logbook::{self, Level};
+ use meow_common::{Metadata, RuleMatchHelper};
+ use meow_rules::{
+-    build_rule_set, build_rule_set_checked, build_rule_set_from_mrs_with_behavior, is_mrs_bytes,
++    build_rule_set, is_mrs_bytes,
+     ParserContext, RuleSet, RuleSetBehavior, RuleSetFormat,
+ };
+ use parking_lot::RwLock;
+@@ -38,6 +38,11 @@
+     BACKGROUND_RETRY_MAX, BACKGROUND_RETRY_MIN, MAX_REVALIDATION_ATTEMPTS,
+ };
+ use crate::raw::RawRuleProvider;
++#[path = "rule_pages.rs"]
++mod rule_pages;
++pub use rule_pages::{RulePage, RulePages};
++use rule_pages::PageCapture;
++type ParsedPayload = (Box<dyn RuleSet>, RuleSetFormat, Option<Arc<RulePages>>, u64, Option<bool>);
+ 
+ // ---------------------------------------------------------------------------
+ // Public types
+@@ -86,6 +91,10 @@
+ /// protected by a short-held `RwLock` (just a pointer swap on write);
+ /// refresh parse work runs on a blocking thread (ADR-0008 §7 sub-area 3).
+ pub struct RuleProvider {
++    binding: crate::provider_events::ProviderBinding,
++    pages: RwLock<Option<Arc<RulePages>>>,
++    content_hash: parking_lot::Mutex<Option<u64>>,
++    refresh_lock: tokio::sync::Mutex<()>,
+     pub name: String,
+     pub provider_type: ProviderType,
+     pub behavior: RuleSetBehavior,
+@@ -220,6 +229,19 @@
+ }
+ 
+ impl RuleProvider {
++    pub fn provider_identity(&self) -> &crate::provider_events::ProviderIdentity { self.binding.identity() }
++    pub fn owned_scope(&self) -> Option<Arc<crate::owned_load::OwnedLoadScope>> { self.binding.scope() }
++    pub fn is_busy(&self) -> bool { self.refresh_lock.try_lock().is_err() }
++    pub fn page_snapshot(&self) -> Option<Arc<RulePages>> { self.pages.read().clone() }
++    pub async fn refresh_owned(self: &Arc<Self>) -> Result<()> {
++        let provider = self.clone(); self.binding.run(async move { provider.refresh().await }).await
++    }
++    pub async fn read_page_owned(self: &Arc<Self>, pages: Arc<RulePages>, offset: usize, limit: usize) -> Result<RulePage, String> {
++        self.binding.run(async move {
++            crate::spawn_blocking_with_current_dispatcher(move || pages.page(offset, limit)).await.map_err(|error| format!("rulePageTask: {error}"))?
++        }).await
++    }
++
+     /// Return a snapshot of the current rule set.
+     ///
+     /// A snapshot is detached from later `refresh()`es — anything that must
+@@ -263,6 +285,7 @@
+     /// databases the initial load saw. Refresh callers therefore cannot
+     /// accidentally pass a different (e.g. empty) context.
+     pub async fn refresh(&self) -> Result<()> {
++        let _refresh = if self.binding.observed() { Some(self.refresh_lock.try_lock().map_err(|_| anyhow!("providerBusy"))?) } else { None };
+         let refreshed = self.fetch_and_install().await;
+         if let Err(e) = &refreshed {
+             self.logbook_failed(&format!("{e:#}"));
+@@ -271,6 +294,7 @@
+     }
+ 
+     async fn fetch_and_install(&self) -> Result<()> {
++        let operation = self.binding.begin().map_err(anyhow::Error::msg)?;
+         let bytes = match self.provider_type {
+             ProviderType::Http => {
+                 fetch_http_async(
+@@ -280,10 +304,13 @@
+                 )
+                 .await?
+             }
+-            ProviderType::File => tokio::fs::read(&self.vehicle)
+-                .await
+-                .with_context(|| format!("reading provider file {}", self.vehicle))?,
+-            ProviderType::Inline => return Ok(()),
++            ProviderType::File => {
++                let path = self.vehicle.clone(); let held = operation.clone();
++                crate::spawn_blocking_with_current_dispatcher(move || { let _operation = held; std::fs::read(path) }).await
++                    .map_err(|error| anyhow!("provider read task: {error}"))?
++                    .with_context(|| format!("reading provider file {}", self.vehicle))?
++            }
++            ProviderType::Inline => return operation.commit(false, &mut || {}).map_err(anyhow::Error::msg),
+         };
+         // Generation taken when the fetch completes: under the write lock
+         // an older refresh that finishes after a newer one already wrote
+@@ -293,7 +320,7 @@
+             reason = "identity on 64-bit; narrows u64 on targets without 64-bit atomics"
+         )]
+         let gen: u64 = self.refresh_gen.fetch_add(1, Ordering::Relaxed).into();
+-        self.install_payload(Arc::new(bytes), gen).await
++        self.install_payload_with_operation(Arc::new(bytes), gen, operation).await
+     }
+ 
+     /// Install the startup download a deadline left running. `Ok(false)`
+@@ -313,72 +340,39 @@
+     /// Parse fetched payload bytes on a blocking thread, persist them, and
+     /// install them as refresh generation `gen`.
+     async fn install_payload(&self, bytes: Arc<Vec<u8>>, gen: u64) -> Result<()> {
+-        let behavior = self.behavior;
+-        let strict = self.strict;
+-        let ctx_clone = self.ctx.clone();
+-        let format = self.format;
+-        let cache_path = self.cache_path.clone();
+-        let cache_write_lock = Arc::clone(&self.cache_write_lock);
+-        let (boxed, parsed_as) = crate::spawn_blocking_with_current_dispatcher(move || {
+-            let parsed =
+-                parse_bytes_to_ruleset_with_format(&bytes, behavior, format, &ctx_clone, strict)?;
+-            // Persist the payload only *after* the parse succeeds so the
+-            // cache always holds the last usable payload — a cache-first
+-            // restart then picks up the newest refresh rather than the
+-            // initial-load-era file (issue #543). The
+-            // write+rename runs on this blocking thread: synchronous fs
+-            // I/O on the async worker can stall the executor (issue #621).
++        let _refresh = if self.binding.observed() { Some(self.refresh_lock.try_lock().map_err(|_| anyhow!("providerBusy"))?) } else { None };
++        let operation = self.binding.begin().map_err(anyhow::Error::msg)?;
++        self.install_payload_with_operation(bytes, gen, operation).await
++    }
++    async fn install_payload_with_operation(&self, bytes: Arc<Vec<u8>>, gen: u64,
++        operation: Arc<dyn crate::provider_events::ProviderLease>) -> Result<()> {
++        let hash = hash_payload(&bytes);
++        if !self.binding.observed() && *self.content_hash.lock() == Some(hash) {
++            if *self.install_gen.lock() >= gen { return if self.binding.observed() { Err(anyhow!("supersededProviderUpdate")) } else { Ok(()) }; }
++            operation.commit(false, &mut || { *self.install_gen.lock() = gen; self.touch(); }).map_err(anyhow::Error::msg)?;
++            self.logbook_updated(Some(self.rule_count()), self.rule_count());
++            return Ok(());
++        }
++        let behavior = self.behavior; let strict = self.strict; let ctx = self.ctx.clone(); let format = self.format;
++        let binding = self.binding.clone(); let cache_path = self.cache_path.clone(); let cache_write_lock = self.cache_write_lock.clone();
++        let held = operation.clone(); let previous_pages = self.page_snapshot(); let previous_format = self.format();
++        let parsed = crate::spawn_blocking_with_current_dispatcher(move || {
++            let _operation = held;
++            let mut parsed = parse_for_provider(&bytes, behavior, format, &ctx, strict, &binding)?;
++            parsed.4 = match (&previous_pages, &parsed.2) {
++                (Some(previous), Some(candidate)) => Some(previous_format != parsed.1 || !previous.same_entries(candidate).map_err(anyhow::Error::msg)?),
++                _ => None,
++            };
+             if let Some(path) = &cache_path {
+-                let mut written_gen = cache_write_lock.lock();
+-                if *written_gen < gen && write_cache(path, &bytes) {
+-                    *written_gen = gen;
+-                }
++                let mut written = cache_write_lock.lock();
++                if *written < gen && write_cache(path, &bytes) { *written = gen; }
+             }
+             Ok::<_, anyhow::Error>(parsed)
+-        })
+-        .await
+-        .map_err(|e| anyhow!("parse task panicked: {e}"))??;
+-        let count = boxed.len();
+-        let new_rules: Arc<dyn RuleSet> = Arc::from(boxed);
+-        // The compiled rule table bakes each RULE-SET slot's "needs IP /
+-        // needs process" demand at build time; behavior is fixed per
+-        // provider, so only a classical set gaining or losing IP / PROCESS
+-        // entries can move them. Say so instead of silently matching with
+-        // stale demands until the next reload.
+-        let demands = |set: &dyn RuleSet| (set.should_resolve_ip(), set.should_find_process());
+-        // Install only the newest completed generation: two unlaned
+-        // refreshes (supervisor tick vs `PUT /providers/rules/{name}`) can
+-        // finish out of order, and without this gate the stale one's rules
+-        // would overwrite live memory even though its cache write was
+-        // already skipped (issue #621 review).
+-        let mut installed = self.install_gen.lock();
+-        if *installed >= gen {
+-            debug!(
+-                provider = %self.name,
+-                "rule-provider refresh gen {gen} superseded; not installing"
+-            );
+-            return Ok(());
+-        }
+-        let previous = self
+-            .filled
+-            .swap(true, Ordering::Relaxed)
+-            .then(|| self.rules.read().len());
+-        if demands(&**self.rules.read()) != demands(&*new_rules) {
+-            warn!(
+-                provider = %self.name,
+-                "rule-provider refresh changed whether the set needs IP resolution or \
+-                 process lookup; live RULE-SET rules keep the previous demand flags \
+-                 until the next config reload (entries requiring the new demand \
+-                 cannot fire until then — and inside a SUB-RULE block, the \
+-                 resolution gate can skip the whole block while metadata is \
+-                 unresolved)"
+-            );
+-        }
+-        *self.rules.write() = new_rules;
+-        *self.payload_format.lock() = parsed_as;
+-        *installed = gen;
+-        self.touch();
+-        debug!(provider = %self.name, "rule-provider refreshed: {} rules", count);
++        }).await.map_err(|error| anyhow!("parse task failed: {error}"))??;
++        let count = parsed.0.len();
++        let previous = self.filled.load(Ordering::Relaxed).then(|| self.rule_count());
++        self.install_parsed(parsed, Some(gen), operation)?;
++        debug!(provider = %self.name, count, "rule-provider refreshed");
+         self.logbook_updated(previous, count);
+         Ok(())
+     }
+@@ -429,7 +423,7 @@
+         if matches!(owed, InitialFetch::Settled) {
+             return None;
+         }
+-        Some(tokio::spawn(initial_fetch_loop(Arc::downgrade(self), owed)))
++        Some(crate::owned_load::spawn(initial_fetch_loop(Arc::downgrade(self), owed)))
+     }
+ 
+     fn owe(&self, owed: InitialFetch) {
+@@ -457,6 +451,7 @@
+     /// Atomically install a freshly-parsed rule set (initial fill after an
+     /// acquisition-then-parse load, or a refresh), with the format its
+     /// payload parsed as.
++    #[cfg(test)]
+     fn swap_rules(&self, (rules, format): (Box<dyn RuleSet>, RuleSetFormat)) {
+         *self.rules.write() = Arc::from(rules);
+         *self.payload_format.lock() = format;
+@@ -465,9 +460,27 @@
+     }
+ 
+     /// [`Self::swap_rules`] with a payload fetched or read for this load.
+-    fn fill_fresh(&self, parsed: (Box<dyn RuleSet>, RuleSetFormat)) {
+-        self.swap_rules(parsed);
++    fn fill_fresh(&self, parsed: ParsedPayload) -> Result<()> {
++        self.install_parsed(parsed, None, self.binding.begin().map_err(anyhow::Error::msg)?)?;
+         *self.load_note.lock() = Some(LoadNote::Fresh);
++        Ok(())
++    }
++    fn install_parsed(&self, (rules, format, pages, hash, changed): ParsedPayload, gen: Option<u64>, operation: Arc<dyn crate::provider_events::ProviderLease>) -> Result<()> {
++        let retired_rules = self.rules.read().clone();
++        let retired_pages = self.pages.read().clone();
++        let changed = changed.unwrap_or_else(|| *self.content_hash.lock() != Some(hash));
++        if gen.is_some_and(|gen| *self.install_gen.lock() >= gen) { return if self.binding.observed() { Err(anyhow!("supersededProviderUpdate")) } else { Ok(()) }; }
++        let mut candidate = Some((Arc::<dyn RuleSet>::from(rules), pages));
++        operation.commit(changed, &mut || {
++            let (rules, pages) = candidate.take().expect("rule installation runs once");
++            *self.rules.write() = rules; *self.pages.write() = pages;
++            *self.payload_format.lock() = format; *self.content_hash.lock() = Some(hash);
++            self.filled.store(true, Ordering::Relaxed);
++            if let Some(gen) = gen { *self.install_gen.lock() = gen; }
++            self.touch();
++        }).map_err(anyhow::Error::msg)?;
++        drop(retired_rules); drop(retired_pages);
++        Ok(())
+     }
+ }
+ 
+@@ -706,9 +719,9 @@
+     let deadline_at = deadline.and_then(|d| std::time::Instant::now().checked_add(d));
+     let worker_board = Arc::clone(&board);
+     let dispatch = tracing::dispatcher::get_default(Clone::clone);
+-    let spawned = std::thread::Builder::new()
+-        .name("rule-provider-fetch".to_string())
+-        .spawn(move || {
++    let fetch_scope = crate::owned_load::OwnedLoadScope::current();
++    let spawned = crate::owned_load::spawn_thread(std::thread::Builder::new()
++        .name("rule-provider-fetch".to_string()), move || {
+             tracing::dispatcher::with_default(&dispatch, || {
+                 let _abandon = AbandonRemaining(Arc::clone(&worker_board), count);
+                 let runtime = match tokio::runtime::Builder::new_current_thread()
+@@ -721,23 +734,36 @@
+                         return;
+                     }
+                 };
+-                runtime.block_on(async {
++                runtime.block_on(crate::owned_load::wrap_current(async move {
+                     let mut tasks = tokio::task::JoinSet::new();
+                     let mut indexes = HashMap::with_capacity(count);
+                     for (index, d) in downloads.into_iter().enumerate() {
+-                        let task = tasks.spawn(async move {
++                        let task = tasks.spawn(crate::owned_load::wrap_current(async move {
+                             internal_http::fetch(&d.url, d.proxy.as_ref(), &d.headers).await
+-                        });
++                        }));
+                         indexes.insert(task.id(), index);
+                     }
+-                    while let Some(joined) = tasks.join_next_with_id().await {
++                    loop {
++                        let joined = tokio::select! {
++                            biased;
++                            _ = async { match fetch_scope.as_ref() {
++                                Some(scope) => scope.cancelled().await,
++                                None => std::future::pending::<()>().await,
++                            } } => {
++                                tasks.abort_all();
++                                while tasks.join_next().await.is_some() {}
++                                break;
++                            }
++                            joined = tasks.join_next_with_id() => joined,
++                        };
++                        let Some(joined) = joined else { break; };
+                         let (id, result) = match joined {
+                             Ok((id, result)) => (id, result.map_err(|e| format!("{e:#}"))),
+                             Err(e) => (e.id(), Err(format!("download task failed: {e}"))),
+                         };
+                         worker_board.complete(indexes[&id], result);
+                     }
+-                });
++                }));
+             });
+         });
+     if let Err(e) = spawned {
+@@ -879,7 +905,7 @@
+                 };
+                 match http_source(name, cfg, cache_dir) {
+                     Err(e) => Err(e),
+-                    Ok((url, cache_path)) => match read_cache(cache_path.as_deref()) {
++                    Ok((url, cache_path)) => match read_initial_cache(cfg, cache_dir, name, cache_path.as_deref()) {
+                         Some(cached) => Ok(cached),
+                         None if crate::is_offline_validate() => {
+                             Ok(Prefetched::Failed(offline_miss(url)))
+@@ -1216,21 +1242,8 @@
+ }
+ 
+ /// Parse payload bytes into a rule set, honoring `strict` per-entry: strict
+-/// uses [`build_rule_set_checked`] so one malformed line fails the payload
++/// uses [`meow_rules::build_rule_set_checked`] so one malformed line fails the payload
+ /// instead of installing a partial set (issue #533).
+-fn entries_to_rule_set(
+-    behavior: RuleSetBehavior,
+-    entries: &[String],
+-    ctx: &ParserContext,
+-    strict: bool,
+-) -> Result<Box<dyn RuleSet>, LoadError> {
+-    if strict {
+-        build_rule_set_checked(behavior, entries, ctx)
+-            .map_err(|e| LoadError::Payload(anyhow!("{e}")))
+-    } else {
+-        Ok(build_rule_set(behavior, entries, ctx))
+-    }
+-}
+ 
+ fn load_inline(
+     name: &str,
+@@ -1250,7 +1263,6 @@
+             "rule-provider '{name}': inline type requires `payload:`"
+         ))
+     })?;
+-    let rules = entries_to_rule_set(behavior, payload, ctx, strict)?;
+     // `format:` does not apply to a payload written in the config itself,
+     // but a declared one is still what the provider reports.
+     let declared = parse_explicit_format(cfg)
+@@ -1268,8 +1280,13 @@
+         ctx.clone(),
+         None,
+         None,
+-    );
+-    provider.fill_fresh((rules, declared));
++    )?;
++    let capture = capture_pages(&provider.binding).map_err(LoadError::Payload)?;
++    let sink = capture.as_ref().map(|capture| capture.clone() as Arc<dyn meow_rules::rule_set::AcceptedEntrySink>);
++    let rules = if strict { meow_rules::rule_set::build_rule_set_checked_with_sink(behavior, payload, ctx, sink).map_err(|error| LoadError::Payload(anyhow!(error)))? }
++        else { meow_rules::rule_set::build_rule_set_with_sink(behavior, payload, ctx, sink) };
++    let pages = capture.map(|capture| capture.finish(rules.len())).transpose().map_err(|error| LoadError::Payload(anyhow!(error)))?;
++    provider.fill_fresh((rules, declared, pages, hash_payload(&payload.join("\n").into_bytes()), None)).map_err(LoadError::Payload)?;
+     Ok(provider)
+ }
+ 
+@@ -1316,7 +1333,7 @@
+         // A file provider's path *is* the payload source — `refresh()`
+         // re-reads it; there is no separate cache to write.
+         None,
+-    );
++    )?;
+     let bytes_owned;
+     let bytes: &[u8] = match prefetched {
+         Some(b) => b,
+@@ -1336,9 +1353,8 @@
+             }
+         },
+     };
+-    let parsed = parse_bytes_to_ruleset_with_format(bytes, behavior, explicit_format, ctx, strict)
+-        .map_err(LoadError::Payload)?;
+-    provider.fill_fresh(parsed);
++    let parsed = parse_for_provider(bytes, behavior, explicit_format, ctx, strict, &provider.binding).map_err(LoadError::Payload)?;
++    provider.fill_fresh(parsed).map_err(LoadError::Payload)?;
+     Ok(provider)
+ }
+ 
+@@ -1391,12 +1407,12 @@
+         ctx.clone(),
+         explicit_format,
+         cache_path.clone(),
+-    );
++    )?;
+     let acquired;
+     let entry = match prefetched {
+         Some(entry) => entry,
+         None => {
+-            let fetched = match read_cache(cache_path.as_deref()) {
++            let fetched = match read_initial_cache(cfg, cache_dir, name, cache_path.as_deref()) {
+                 Some(cached) => Ok(cached),
+                 None if crate::is_offline_validate() => Err(anyhow!(offline_miss(url))),
+                 None => fetch_http_blocking(url, download_proxy, &headers).map(|bytes| {
+@@ -1419,14 +1435,14 @@
+         }
+     };
+     let parse = |bytes: &[u8]| {
+-        parse_bytes_to_ruleset_with_format(bytes, behavior, explicit_format, ctx, strict)
++        parse_for_provider(bytes, behavior, explicit_format, ctx, strict, &provider.binding)
+     };
+     match entry {
+         Prefetched::Fresh(bytes) => {
+-            provider.fill_fresh(parse(bytes).map_err(LoadError::Payload)?);
++            provider.fill_fresh(parse(bytes).map_err(LoadError::Payload)?).map_err(LoadError::Payload)?;
+         }
+         Prefetched::Downloaded { bytes, persisted } => {
+-            provider.fill_fresh(parse(bytes).map_err(LoadError::Payload)?);
++            provider.fill_fresh(parse(bytes).map_err(LoadError::Payload)?).map_err(LoadError::Payload)?;
+             if let Some(path) = &cache_path {
+                 if !persisted.swap(true, Ordering::Relaxed) {
+                     write_cache(path, bytes);
+@@ -1435,7 +1451,7 @@
+         }
+         Prefetched::Cached { bytes, modified } => match parse(bytes) {
+             Ok(parsed) => {
+-                provider.swap_rules(parsed);
++                provider.install_parsed(parsed, None, provider.binding.begin().map_err(|error| LoadError::Payload(anyhow!(error)))?).map_err(LoadError::Payload)?;
+                 // Report the cache's age, not the load time.
+                 if let Some(modified) = modified {
+                     provider.set_updated_at(*modified);
+@@ -1489,14 +1505,17 @@
+     ctx: ParserContext,
+     format: Option<RuleSetFormat>,
+     cache_path: Option<PathBuf>,
+-) -> RuleProvider {
++) -> Result<RuleProvider, LoadError> {
++    let binding = crate::provider_events::ProviderBinding::capture(crate::provider_events::ProviderKind::Rule, name)
++        .map_err(|error| LoadError::Defect(anyhow!(error)))?;
+     let now = SystemTime::now()
+         .duration_since(UNIX_EPOCH)
+         .unwrap_or(Duration::ZERO)
+         .as_secs();
+     // Empty until a payload lands (`swap_rules`).
+     let rules_arc: Arc<dyn RuleSet> = Arc::from(empty_rule_set(behavior, &ctx));
+-    RuleProvider {
++    Ok(RuleProvider {
++        binding, pages: RwLock::new(None), content_hash: parking_lot::Mutex::new(None), refresh_lock: tokio::sync::Mutex::new(()),
+         name: name.to_string(),
+         provider_type,
+         behavior,
+@@ -1518,7 +1537,7 @@
+         initial_fetch: parking_lot::Mutex::new(InitialFetch::Settled),
+         load_note: parking_lot::Mutex::new(None),
+         filled: AtomicBool::new(false),
+-    }
++    })
+ }
+ 
+ /// Minimal provider for supervisor/refresh tests — an empty domain ruleset
+@@ -1552,7 +1571,7 @@
+         ParserContext::empty(),
+         None,
+         None,
+-    );
++    ).unwrap_or_else(|error| panic!("{error}"));
+     provider.swap_rules((
+         meow_rules::build_rule_set(RuleSetBehavior::Domain, &[], &ParserContext::empty()),
+         RuleSetFormat::Yaml,
+@@ -1582,16 +1601,14 @@
+ /// Parse payload bytes into a rule set, returned with the format they
+ /// parsed as: MRS when declared or when the bytes carry the MRS magic,
+ /// otherwise the declared format (YAML when undeclared).
+-fn parse_bytes_to_ruleset_with_format(
+-    bytes: &[u8],
+-    behavior: RuleSetBehavior,
+-    explicit_format: Option<RuleSetFormat>,
+-    ctx: &ParserContext,
+-    strict: bool,
++
++fn parse_bytes_with_sink(
++    bytes: &[u8], behavior: RuleSetBehavior, explicit_format: Option<RuleSetFormat>, ctx: &ParserContext, strict: bool,
++    sink: Option<Arc<dyn meow_rules::rule_set::AcceptedEntrySink>>,
+ ) -> Result<(Box<dyn RuleSet>, RuleSetFormat)> {
+     let use_mrs = explicit_format == Some(RuleSetFormat::Mrs) || is_mrs_bytes(bytes);
+     if use_mrs {
+-        return build_rule_set_from_mrs_with_behavior(bytes, ctx, Some(behavior), strict)
++        return meow_rules::rule_set::build_rule_set_from_mrs_with_sink(bytes, ctx, Some(behavior), strict, sink)
+             .map(|rules| (rules, RuleSetFormat::Mrs))
+             .map_err(|e| anyhow!("mrs parse error: {e}"));
+     }
+@@ -1603,11 +1620,11 @@
+         RuleSetFormat::Mrs => unreachable!("handled above"),
+     };
+     if strict {
+-        return build_rule_set_checked(behavior, &entries, ctx)
++        return meow_rules::rule_set::build_rule_set_checked_with_sink(behavior, &entries, ctx, sink)
+             .map(|rules| (rules, format))
+             .map_err(|e| anyhow!("rule-set entry error: {e}"));
+     }
+-    Ok((build_rule_set(behavior, &entries, ctx), format))
++    Ok((meow_rules::rule_set::build_rule_set_with_sink(behavior, &entries, ctx, sink), format))
+ }
+ 
+ fn parse_yaml_payload(raw: &str, strict: bool) -> Result<Vec<String>> {
+@@ -1673,6 +1690,18 @@
+     name: &str,
+     emit_warnings: bool,
+ ) -> Result<Option<PathBuf>> {
++    if let Some(scope) = crate::owned_load::OwnedLoadScope::current() {
++        if let Some(roots) = scope.provider_roots().map_err(anyhow::Error::msg)? {
++            if cfg.provider_type == "file" {
++                let root = roots.resource_read_root.as_deref().ok_or_else(|| anyhow!("providerReadRootMissing"))?;
++                let requested = cfg.path.as_deref().ok_or_else(|| anyhow!("file provider requires path"))?;
++                return crate::safe_path::resolve_contained_strict(root, Path::new(requested)).map(Some).map_err(anyhow::Error::msg);
++            }
++            if cfg.provider_type == "http" {
++                return owned_http_paths(cfg, name, &roots).map(|paths| paths.0);
++            }
++        }
++    }
+     // Only file (payload location) and http (on-disk cache) providers ever
+     // read the resolved path; other types must not fail on a stray `path:`.
+     if !matches!(cfg.provider_type.as_str(), "file" | "http") {
+@@ -3312,3 +3341,41 @@
+         assert_eq!(origin.hits(), 1, "a later commit does not fetch again");
+     }
+ }
++
++
++fn hash_payload(bytes: &[u8]) -> u64 {
++    use std::hash::{Hash, Hasher};
++    let mut hash = std::collections::hash_map::DefaultHasher::new(); bytes.hash(&mut hash); hash.finish()
++}
++fn capture_pages(binding: &crate::provider_events::ProviderBinding) -> Result<Option<Arc<PageCapture>>> {
++    if !binding.observed() { return Ok(None); }
++    let scope = binding.scope().ok_or_else(|| anyhow!("providerOwnerMissing"))?;
++    let roots = scope.provider_roots().map_err(anyhow::Error::msg)?.ok_or_else(|| anyhow!("providerCacheRootMissing"))?;
++    PageCapture::create(&roots.cache_root).map(Some).map_err(anyhow::Error::msg)
++}
++fn parse_for_provider(bytes: &[u8], behavior: RuleSetBehavior, format: Option<RuleSetFormat>, ctx: &ParserContext, strict: bool,
++    binding: &crate::provider_events::ProviderBinding) -> Result<ParsedPayload> {
++    let capture = capture_pages(binding)?;
++    let sink = capture.as_ref().map(|capture| capture.clone() as Arc<dyn meow_rules::rule_set::AcceptedEntrySink>);
++    let (rules, format) = parse_bytes_with_sink(bytes, behavior, format, ctx, strict, sink)?;
++    let pages = capture.map(|capture| capture.finish(rules.len())).transpose().map_err(anyhow::Error::msg)?;
++    Ok((rules, format, pages, hash_payload(bytes), None))
++}
++
++fn owned_http_paths(cfg: &RawRuleProvider, name: &str, roots: &crate::owned_load::ProviderRoots) -> Result<(Option<PathBuf>, Option<PathBuf>)> {
++    let default = Path::new("rule-providers").join(format!("{name}.yaml"));
++    let requested = cfg.path.as_deref().map(Path::new).unwrap_or(default.as_path());
++    if let Ok(path) = crate::safe_path::resolve_contained_strict(&roots.cache_root, requested) { return Ok((Some(path), None)); }
++    let read = roots.resource_read_root.as_deref().ok_or_else(|| anyhow!("providerReadRootMissing"))?;
++    let seed = crate::safe_path::resolve_contained_strict(read, requested).map_err(anyhow::Error::msg)?;
++    let relative = seed.strip_prefix(read).map_err(|_| anyhow!("providerSeedOutsideReadRoot"))?;
++    let cache = crate::safe_path::resolve_contained_strict(&roots.cache_root, relative).map_err(anyhow::Error::msg)?;
++    Ok((Some(cache), Some(seed)))
++}
++fn read_initial_cache(cfg: &RawRuleProvider, _cache_dir: Option<&Path>, name: &str, cache: Option<&Path>) -> Option<Prefetched> {
++    if let Some(cached) = read_cache(cache) { return Some(cached); }
++    let scope = crate::owned_load::OwnedLoadScope::current()?;
++    let roots = scope.provider_roots().ok()??;
++    let (_, seed) = owned_http_paths(cfg, name, &roots).ok()?;
++    read_cache(seed.as_deref())
++}
+--- a/crates/meow-config/src/rule_provider_refresh.rs
++++ b/crates/meow-config/src/rule_provider_refresh.rs
+@@ -77,8 +77,8 @@
+             tokio::runtime::Handle::try_current().is_ok(),
+             "RefreshSupervisor::reconcile must run inside a tokio runtime"
+         );
+-        let wanted: HashMap<String, u64> = registry
+-            .read()
++        let providers = registry.read().iter().map(|(name, provider)| (name.clone(), provider.clone())).collect::<HashMap<_, _>>();
++        let wanted: HashMap<String, u64> = providers
+             .iter()
+             .filter(|(_, p)| {
+                 if p.interval > MAX_REFRESH_INTERVAL_SECS {
+@@ -106,7 +106,7 @@
+             if tasks.contains_key(&name) {
+                 continue;
+             }
+-            let task = tokio::spawn(refresh_loop(
++            let task = crate::owned_load::spawn(refresh_loop(
+                 name.clone(),
+                 interval,
+                 Arc::downgrade(registry),
+@@ -115,7 +115,7 @@
+         }
+         drop(tasks);
+ 
+-        for provider in registry.read().values() {
++        for provider in providers.values() {
+             provider.spawn_initial_fetch();
+         }
+     }
+@@ -203,7 +203,7 @@
+         // The provider re-parses the payload in its own load-time
+         // ParserContext and declared format, so geo-dependent entries
+         // survive refreshes (issue #533 review).
+-        if let Err(e) = provider.refresh().await {
++        if let Err(e) = provider.refresh_owned().await {
+             error!(provider = %provider.name, "background refresh failed: {:#}", e);
+         }
+     }
+--- a/crates/meow-config/src/safe_path.rs
++++ b/crates/meow-config/src/safe_path.rs
+@@ -47,6 +47,11 @@
+ /// I/O, so the checked path and the opened path cannot diverge lexically.
+ pub(crate) fn resolve_contained(base: &Path, requested: &Path) -> Result<PathBuf, String> {
+     resolve_contained_impl(base, requested, skip_safe_path_check())
++}
++
++/// Session-owned mobile paths never honor process-wide escape hatches.
++pub(crate) fn resolve_contained_strict(base: &Path, requested: &Path) -> Result<PathBuf, String> {
++    resolve_contained_impl(base, requested, false)
+ }
+ 
+ fn resolve_contained_impl(
+--- a/crates/meow-dns/Cargo.toml
++++ b/crates/meow-dns/Cargo.toml
+@@ -9,6 +9,7 @@
+ homepage.workspace = true
+ 
+ [features]
++aerove-android-runtime = ["meow-common/aerove-android-runtime"]
+ default = ["encrypted", "dns-server"]
+ # DoT / DoH upstreams. TLS goes through `meow_transport::tls::TlsLayer`, so
+ # DNS shares the process-wide backend (BoringSSL when the app is built with
+--- a/crates/meow-dns/src/client.rs
++++ b/crates/meow-dns/src/client.rs
+@@ -1221,7 +1221,19 @@
+     // Binding to the loopback address selects `lo0` explicitly; it also
+     // needs no VPN `protect()` on Android because loopback is never routed
+     // into the tunnel.
+-    let sock = if addr.ip().is_loopback() {
++    #[cfg(all(feature = "aerove-android-runtime", any(target_os = "android", target_os = "linux", target_os = "macos")))]
++    let captured = meow_common::socket_protect::NetworkScope::is_captured();
++    #[cfg(not(all(feature = "aerove-android-runtime", any(target_os = "android", target_os = "linux", target_os = "macos"))))]
++    let captured = false;
++    let sock = if captured {
++        let local: SocketAddr = match (addr.is_ipv6(), addr.ip().is_loopback()) {
++            (false, true) => SocketAddr::from(([127, 0, 0, 1], 0)),
++            (true, true) => SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, 0)),
++            (false, false) => SocketAddr::from(([0, 0, 0, 0], 0)),
++            (true, false) => SocketAddr::from((std::net::Ipv6Addr::UNSPECIFIED, 0)),
++        };
++        meow_common::bind_udp(local).await?
++    } else if addr.ip().is_loopback() {
+         let local: SocketAddr = match addr {
+             SocketAddr::V4(_) => SocketAddr::from(([127, 0, 0, 1], 0)),
+             SocketAddr::V6(_) => SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, 0)),
+@@ -1245,7 +1257,11 @@
+             // RFC 7766 §0: retry a truncated UDP answer over TCP with a
+             // one-off connection (the truncation fallback is intentionally
+             // not pooled).
+-            let mut stream = factory().connect_tcp(addr).await?;
++            let mut stream = if captured {
++                meow_common::connect_tcp(addr).await?
++            } else {
++                factory().connect_tcp(addr).await?
++            };
+             return tcp_message_exchange(&mut stream, wire, expected).await;
+         }
+         return Ok(response);
+--- a/crates/meow-listener/Cargo.toml
++++ b/crates/meow-listener/Cargo.toml
+@@ -9,6 +9,7 @@
+ homepage.workspace = true
+ 
+ [features]
++aerove-android-runtime = ["meow-common/aerove-android-runtime", "dep:tokio-util"]
+ default = ["listener-http", "listener-socks5", "listener-mixed", "listener-tproxy"]
+ listener-http = []
+ listener-socks5 = []
+@@ -38,6 +39,7 @@
+ ]
+ 
+ [dependencies]
++tokio-util = { workspace = true, features = ["rt"], optional = true }
+ meow-common = { workspace = true }
+ meow-trie = { workspace = true }
+ meow-tunnel = { workspace = true }
+--- a/crates/meow-listener/src/lib.rs
++++ b/crates/meow-listener/src/lib.rs
+@@ -4,6 +4,9 @@
+ //! inbound (feature `listener-tun`).
+ 
+ pub mod sniffer;
++
++#[cfg(all(feature = "aerove-android-runtime", any(target_os = "android", target_os = "linux", target_os = "macos")))]
++pub mod owned_ingress;
+ 
+ pub const DEFAULT_HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+ 
+--- /dev/null
++++ b/crates/meow-listener/src/owned_ingress.rs
+@@ -0,0 +1,50 @@
++// SPDX-License-Identifier: GPL-3.0-only
++use meow_common::socket_protect::NetworkScope;
++use parking_lot::Mutex;
++use std::{collections::BTreeMap, future::Future, sync::{Arc, Weak}};
++use tokio::task::{AbortHandle, JoinHandle};
++use tokio_util::task::TaskTracker;
++
++tokio::task_local! { static CURRENT: Arc<OwnedIngress>; }
++struct Admission { closed: bool, next: u64, tasks: BTreeMap<u64, AbortHandle> }
++pub struct OwnedIngress { gate: Mutex<Admission>, tracker: TaskTracker }
++struct Registration { owner: Weak<OwnedIngress>, id: u64 }
++impl Drop for Registration {
++    fn drop(&mut self) { if let Some(owner) = self.owner.upgrade() { owner.gate.lock().tasks.remove(&self.id); } }
++}
++impl OwnedIngress {
++    pub fn new() -> Arc<Self> {
++        Arc::new(Self { gate: Mutex::new(Admission { closed: false, next: 1, tasks: BTreeMap::new() }), tracker: TaskTracker::new() })
++    }
++    pub fn current() -> Option<Arc<Self>> { CURRENT.try_with(Clone::clone).ok() }
++    pub async fn scope<F: Future>(self: &Arc<Self>, work: F) -> F::Output { CURRENT.scope(self.clone(), work).await }
++    pub fn spawn<F>(self: &Arc<Self>, work: F) -> JoinHandle<F::Output>
++    where F: Future + Send + 'static, F::Output: Send + 'static {
++        let mut gate = self.gate.lock();
++        if gate.closed {
++            drop(gate);
++            drop(work);
++            panic!("inbound owner closed");
++        }
++        let context = NetworkScope::current().expect("owned ingress requires captured network");
++        let id = gate.next; gate.next = id.checked_add(1).expect("inbound task identity exhausted");
++        let token = self.tracker.token();
++        let registration = Registration { owner: Arc::downgrade(self), id };
++        let owner = self.clone();
++        let task = tokio::spawn(async move {
++            let _registration = registration;
++            let _token = token;
++            owner.scope(context.scope(work)).await
++        });
++        gate.tasks.insert(id, task.abort_handle());
++        task
++    }
++    pub async fn close(&self) {
++        let tasks = {
++            let mut gate = self.gate.lock(); gate.closed = true; self.tracker.close();
++            gate.tasks.values().cloned().collect::<Vec<_>>()
++        };
++        for task in tasks { task.abort(); }
++        self.tracker.wait().await;
++    }
++}
+--- a/crates/meow-listener/src/socks5_udp.rs
++++ b/crates/meow-listener/src/socks5_udp.rs
+@@ -406,7 +406,7 @@
+ 
+     let last_activity_ms = Arc::new(AtomicU::new(monotonic_ms() as meow_common::atomic::Uint));
+     let dead = Arc::new(AtomicBool::new(false));
+-    let task = tokio::spawn(run_session(
++    let task = spawn_owned(run_session(
+         Arc::clone(inner),
+         Arc::clone(relay),
+         metadata,
+@@ -550,7 +550,7 @@
+             self.0.abort();
+         }
+     }
+-    let mut reply_task = tokio::spawn({
++    let mut reply_task = spawn_owned({
+         let conn = Arc::clone(&conn);
+         let last_activity_ms = Arc::clone(&last_activity_ms);
+         async move {
+@@ -690,6 +690,14 @@
+         }
+     }
+     out.extend_from_slice(&addr.port().to_be_bytes());
++}
++
++
++fn spawn_owned<F>(work: F) -> tokio::task::JoinHandle<F::Output>
++where F: std::future::Future + Send + 'static, F::Output: Send + 'static {
++    #[cfg(all(feature = "aerove-android-runtime", any(target_os = "android", target_os = "linux", target_os = "macos")))]
++    if let Some(owner) = crate::owned_ingress::OwnedIngress::current() { return owner.spawn(work); }
++    tokio::spawn(work)
+ }
+ 
+ #[cfg(test)]
+--- a/crates/meow-lwip/rust/core.rs
++++ b/crates/meow-lwip/rust/core.rs
+@@ -459,6 +459,15 @@
+         stack_buffer_size: usize,
+         udp_buffer_size: usize,
+     ) -> Result<CoreParts, crate::Error> {
++        Self::build_with_mtu(stack_buffer_size, udp_buffer_size, 1500)
++    }
++
++    pub(crate) fn build_with_mtu(
++        stack_buffer_size: usize,
++        udp_buffer_size: usize,
++        mtu: u16,
++    ) -> Result<CoreParts, crate::Error> {
++        if mtu < 1280 { return Err(crate::Error::InvalidMtu(mtu)); }
+         use std::sync::Once;
+         static LWIP_INIT: Once = Once::new();
+         LWIP_INIT.call_once(|| unsafe { lwip_init() });
+@@ -475,7 +484,8 @@
+         unsafe {
+             (*netif_list).output = Some(output_ip4);
+             (*netif_list).output_ip6 = Some(output_ip6);
+-            (*netif_list).mtu = 1500;
++            (*netif_list).mtu = mtu;
++            (*netif_list).mtu6 = mtu;
+             OUTPUT_PTR = output_ctx;
+         }
+ 
+--- a/crates/meow-lwip/rust/lib.rs
++++ b/crates/meow-lwip/rust/lib.rs
+@@ -15,6 +15,8 @@
+ 
+ #[derive(thiserror::Error, Debug)]
+ pub enum Error {
++    #[error("invalid Android TUN MTU ({0})")]
++    InvalidMtu(u16),
+     #[error("LwIP error ({0})")]
+     LwIP(i8),
+ }
+--- a/crates/meow-lwip/rust/stack.rs
++++ b/crates/meow-lwip/rust/stack.rs
+@@ -6,7 +6,7 @@
+ use tokio::sync::{mpsc::Receiver, watch};
+ use tokio_util::sync::PollSender;
+ 
+-use super::core::LwipCore;
++use super::core::{CoreParts, LwipCore};
+ use super::tcp_listener::TcpListener;
+ use super::udp::UdpSocket;
+ use crate::Error;
+@@ -39,8 +39,16 @@
+         stack_buffer_size: usize,
+         udp_buffer_size: usize,
+     ) -> Result<(Self, TcpListener, Box<UdpSocket>), Error> {
+-        let parts = LwipCore::build(stack_buffer_size, udp_buffer_size)?;
++        Self::from_parts(LwipCore::build(stack_buffer_size, udp_buffer_size)?)
++    }
+ 
++    pub fn with_mtu(
++        mtu: u16, stack_buffer_size: usize, udp_buffer_size: usize,
++    ) -> Result<(Self, TcpListener, Box<UdpSocket>), Error> {
++        Self::from_parts(LwipCore::build_with_mtu(stack_buffer_size, udp_buffer_size, mtu)?)
++    }
++
++    fn from_parts(parts: CoreParts) -> Result<(Self, TcpListener, Box<UdpSocket>), Error> {
+         let stack = NetStack {
+             ingress: PollSender::new(parts.ingress_tx),
+             egress_rx: parts.egress_rx,
+--- a/crates/meow-proxy/src/anytls_adapter.rs
++++ b/crates/meow-proxy/src/anytls_adapter.rs
+@@ -40,7 +40,7 @@
+     name: String,
+     addr: String,
+     health: ProxyHealth,
+-    client: AnytlsClient,
++    client: Option<AnytlsClient>,
+     /// The adapter's own TLS layer, `Arc`-shared with the `TlsConnect` hook
+     /// given to the anytls client. `connect_over` runs it directly on the
+     /// relay-supplied stream because `TlsConnect::connect` is typed on
+@@ -69,11 +69,24 @@
+         skip_cert_verify: bool,
+         udp: bool,
+     ) -> std::result::Result<Self, String> {
++        let mut adapter = Self::validate_options(name, server, port, password, sni, skip_cert_verify, udp)?;
+         // Bridge meow_common's outbound-socket hooks (resolver-aware TCP
+         // dialer + Android `SocketProtector`) into anytls-rs's separate
+         // registries exactly once — see `install_anytls_bridges`.
+         install_anytls_bridges();
+ 
++        let tls: Arc<dyn TlsConnect> = Arc::new(MeowTlsConnect { layer: Arc::clone(&adapter.tls_layer) });
++        adapter.client = Some(AnytlsClient::new(password, adapter.addr.clone(), tls, PaddingFactory::default()));
++        Ok(adapter)
++    }
++
++    /// Run the identical endpoint/SNI/TLS conversion without installing global
++    /// bridges or constructing the dependency client's background session pool.
++    /// The result is validation-only; every dial fails closed.
++    pub fn validate_options(
++        name: &str, server: &str, port: u16, _password: &str,
++        sni: Option<&str>, skip_cert_verify: bool, udp: bool,
++    ) -> std::result::Result<Self, String> {
+         let server_addr = format!("{server}:{port}");
+ 
+         let effective_sni = sni.filter(|s| !s.trim().is_empty()).unwrap_or(server);
+@@ -91,22 +104,17 @@
+             })
+             .map_err(|e| format!("anytls[{name}]: tls config: {e}"))?,
+         );
+-        let tls: Arc<dyn TlsConnect> = Arc::new(MeowTlsConnect {
+-            layer: Arc::clone(&tls_layer),
+-        });
+-
+-        let padding = PaddingFactory::default();
+-
+-        let client = AnytlsClient::new(password, server_addr.clone(), tls, padding);
+-
+         Ok(Self {
+             name: name.to_string(),
+             addr: server_addr,
+             health: ProxyHealth::new(),
+-            client,
++            client: None,
+             tls_layer,
+             udp,
+         })
++    }
++    fn client(&self) -> Result<&AnytlsClient> {
++        self.client.as_ref().ok_or_else(|| MeowError::Proxy("offline_validation_adapter".into()))
+     }
+ }
+ 
+@@ -132,7 +140,7 @@
+         let host = anytls_tcp_destination(metadata)?;
+         let port = metadata.dst_port;
+         let (stream, session) = self
+-            .client
++            .client()?
+             .create_proxy_stream((host, port))
+             .await
+             .map_err(|e| anytls_err("dial", e))?;
+@@ -153,6 +161,7 @@
+         stream: Box<dyn ProxyConn>,
+         metadata: &Metadata,
+     ) -> Result<Box<dyn ProxyConn>> {
++        let _client = self.client()?;
+         let host = anytls_tcp_destination(metadata)?;
+         let port = metadata.dst_port;
+         let tls_stream = self
+@@ -164,7 +173,7 @@
+                 other => MeowError::Proxy(format!("anytls relay tls: {other}")),
+             })?;
+         let (stream, session) = self
+-            .client
++            .client()?
+             .create_proxy_stream_on_tls(tls_stream, (host, port))
+             .await
+             .map_err(|e| anytls_err("relay dial", e))?;
+@@ -200,7 +209,7 @@
+             None => None,
+         };
+         let (stream, session) = self
+-            .client
++            .client()?
+             .create_proxy_stream_with_payload(
+                 (UDP_OVER_TCP_MAGIC_ADDR.to_string(), 0),
+                 Some(Bytes::from(encode_uot_request(metadata))),
+@@ -218,7 +227,7 @@
+     /// fresh, interface-bound connection (see `SessionPool::reset`). The
+     /// unpooled `connect_over` sessions belong to their relay stream.
+     fn reset_sessions(&self) {
+-        self.client.reset_sessions();
++        if let Some(client) = &self.client { client.reset_sessions(); }
+     }
+ 
+     fn health(&self) -> &ProxyHealth {
+@@ -733,6 +742,25 @@
+     use meow_common::Network;
+     use std::time::Duration;
+     use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
++
++    #[test]
++    fn pure_options_need_no_reactor_or_client_and_preserve_sni_errors() {
++        let adapter = AnytlsAdapter::validate_options("v", "127.0.0.1", 443, "secret", Some("example.com"), false, true).unwrap();
++        assert!(adapter.client.is_none()); assert_eq!(adapter.name(), "v"); assert!(adapter.support_udp());
++        let pure = AnytlsAdapter::validate_options("v", "127.0.0.1", 443, "s", Some("[]"), false, false).err().unwrap();
++        let production = AnytlsAdapter::new("v", "127.0.0.1", 443, "s", Some("[]"), false, false).err().unwrap();
++        assert_eq!(pure, production);
++    }
++
++    #[tokio::test]
++    async fn validation_only_adapter_cannot_dial() {
++        let adapter = AnytlsAdapter::validate_options("v", "127.0.0.1", 1, "s", None, false, true).unwrap();
++        let mut metadata = Metadata::default(); metadata.host = "example.com".into(); metadata.dst_port = 443;
++        let error = adapter.dial_tcp(&metadata).await.err().unwrap().to_string();
++        assert!(error.contains("offline_validation_adapter"));
++        let error = adapter.dial_udp(&metadata).await.err().unwrap().to_string();
++        assert!(error.contains("offline_validation_adapter"));
++    }
+ 
+     async fn test_session() -> (Arc<Session>, DuplexStream) {
+         let (io, peer) = tokio::io::duplex(64);
+--- a/crates/meow-proxy/src/group/fallback.rs
++++ b/crates/meow-proxy/src/group/fallback.rs
+@@ -343,6 +343,25 @@
+         Ok(())
+     }
+ 
++    async fn prepare(&self, name: &str) -> Result<Option<(Arc<dyn Proxy>, u16)>> {
++        let proxy = self.find_member(name).ok_or_else(|| MeowError::Proxy("proxy not exist".into()))?;
++        if !proxy.alive_for_url(&self.test_url) {
++            let delay = crate::health::probe_without_record(&proxy, &self.test_url,
++                (!self.expected_status.is_empty()).then_some(self.expected_status.as_str()),
++                std::time::Duration::from_secs(5)).await.unwrap_or(0);
++            return Ok(Some((proxy, delay)));
++        }
++        Ok(None)
++    }
++    fn commit(&self, name: &str, health: Option<(Arc<dyn Proxy>, u16)>) -> Result<()> {
++        let proxy = self.find_member(name).ok_or_else(|| MeowError::Proxy("proxy not exist".into()))?;
++        if let Some((prepared, delay)) = health {
++            if !Arc::ptr_eq(&proxy, &prepared) { return Err(MeowError::Proxy("proxy changed during preparation".into())); }
++            proxy.health().record_delay(delay);
++        }
++        self.force_set(Some(name));
++        Ok(())
++    }
+     fn force_set(&self, name: Option<&str>) {
+         *self.fixed.write() = name.map(SmolStr::from);
+         if let Some(store) = &self.store {
+--- a/crates/meow-proxy/src/group/selector.rs
++++ b/crates/meow-proxy/src/group/selector.rs
+@@ -272,6 +272,12 @@
+         }
+     }
+ 
++    async fn prepare(&self, name: &str) -> Result<Option<(Arc<dyn Proxy>, u16)>> {
++        if self.contains_name(name) { Ok(None) } else { Err(MeowError::Proxy("proxy not exist".into())) }
++    }
++    fn commit(&self, name: &str, _health: Option<(Arc<dyn Proxy>, u16)>) -> Result<()> {
++        if self.select(name) { Ok(()) } else { Err(MeowError::Proxy("proxy not exist".into())) }
++    }
+     fn force_set(&self, name: Option<&str>) {
+         // SelectorGroup is a manual-pick group with no automatic fallback.
+         // Clearing (None) is intentionally a no-op — a selector without a
+--- a/crates/meow-proxy/src/group/urltest.rs
++++ b/crates/meow-proxy/src/group/urltest.rs
+@@ -459,6 +459,14 @@
+         Ok(())
+     }
+ 
++    async fn prepare(&self, name: &str) -> Result<Option<(Arc<dyn Proxy>, u16)>> {
++        if self.contains_name(name) { Ok(None) } else { Err(MeowError::Proxy("proxy not exist".into())) }
++    }
++    fn commit(&self, name: &str, _health: Option<(Arc<dyn Proxy>, u16)>) -> Result<()> {
++        if !self.contains_name(name) { return Err(MeowError::Proxy("proxy not exist".into())); }
++        self.force_set(Some(name));
++        Ok(())
++    }
+     fn force_set(&self, name: Option<&str>) {
+         *self.fixed.write() = name.map(SmolStr::from);
+         if let Some(store) = &self.store {
+--- a/crates/meow-proxy/src/health.rs
++++ b/crates/meow-proxy/src/health.rs
+@@ -101,6 +101,14 @@
+             Err(UrlTestError::Timeout)
+         }
+     }
++}
++
++pub async fn probe_without_record(
++    proxy: &Arc<dyn Proxy>, url: &str, expected: Option<&str>, timeout: Duration,
++) -> Result<u16, UrlTestError> {
++    let _permit = global_delay_probe_limiter().acquire().await
++        .expect("global delay probe semaphore is never closed");
++    url_test(proxy.as_ref(), url, expected, timeout).await
+ }
+ 
+ /// Probe a proxy and record the result in its [`ProxyHealth`].
+--- a/crates/meow-rules/src/geosite_dat.rs
++++ b/crates/meow-rules/src/geosite_dat.rs
+@@ -58,6 +58,8 @@
+     InvalidUtf8(usize),
+     #[error("geosite.dat: unknown wire type {1} at offset {0}")]
+     UnknownWireType(usize, u32),
++    #[error("geosite.dat: rejected skipped entries (empty={empty}, regex={bad_regex}, domain={bad_domain}, type={unknown_type}, category={unnamed})")]
++    RejectedEntries { empty: usize, bad_regex: usize, bad_domain: usize, unknown_type: usize, unnamed: usize },
+ }
+ 
+ /// Minimal protobuf reader — only the wire-format primitives needed for the
+@@ -154,6 +156,9 @@
+ struct SkipStats {
+     empty: usize,
+     bad_regex: usize,
++    bad_domain: usize,
++    unknown_type: usize,
++    unnamed: usize,
+ }
+ 
+ /// Parse a V2Ray `geosite.dat` byte buffer into a fully-built [`GeositeDB`].
+@@ -167,6 +172,16 @@
+     data: &[u8],
+     allowed: Option<&HashSet<String>>,
+ ) -> Result<GeositeDB, DatError> {
++    parse_dat_bytes(data, allowed, false)
++}
++
++/// Parse through the same official converter, rejecting every dropped entry
++/// in the selected categories instead of returning a partially accepted DB.
++pub fn from_dat_bytes_checked(data: &[u8], allowed: Option<&HashSet<String>>) -> Result<GeositeDB, DatError> {
++    parse_dat_bytes(data, allowed, true)
++}
++
++fn parse_dat_bytes(data: &[u8], allowed: Option<&HashSet<String>>, checked: bool) -> Result<GeositeDB, DatError> {
+     let mut r = PbReader::new(data);
+     let mut categories: HashMap<String, DomainTrie<()>> = HashMap::new();
+     let mut counts: HashMap<String, usize> = HashMap::new();
+@@ -192,6 +207,10 @@
+         )?;
+     }
+ 
++    if checked && (skipped.empty > 0 || skipped.bad_regex > 0 || skipped.bad_domain > 0 || skipped.unknown_type > 0 || skipped.unnamed > 0) {
++        return Err(DatError::RejectedEntries { empty: skipped.empty, bad_regex: skipped.bad_regex,
++            bad_domain: skipped.bad_domain, unknown_type: skipped.unknown_type, unnamed: skipped.unnamed });
++    }
+     if skipped.empty > 0 {
+         warn!("geosite.dat: skipped {} empty-value entries", skipped.empty);
+     }
+@@ -256,8 +275,11 @@
+     }
+ 
+     let Some(country) = country else {
++        skipped.unnamed += 1;
+         return Ok(()); // unnamed category — drop silently
+     };
++
++    if country.is_empty() { skipped.unnamed += 1; }
+ 
+     // If the category is not in the allow-set, skip it entirely.
+     if let Some(set) = allowed {
+@@ -402,10 +424,16 @@
+         DOMAIN_TYPE_DOMAIN => {
+             let pat = format!("+.{value}");
+             let _ = trie.insert(&value, ());
+-            trie.insert(&pat, ())
+-        }
+-        DOMAIN_TYPE_FULL => trie.insert(&value, ()),
+-        _ => false,
++            let inserted = trie.insert(&pat, ());
++            if !inserted { skipped.bad_domain += 1; }
++            inserted
++        }
++        DOMAIN_TYPE_FULL => {
++            let inserted = trie.insert(&value, ());
++            if !inserted { skipped.bad_domain += 1; }
++            inserted
++        }
++        _ => { skipped.unknown_type += 1; false },
+     }
+ }
+ 
+@@ -483,6 +511,28 @@
+             write_len_delim(&mut out, &entry);
+         }
+         out
++    }
++
++    #[test]
++    fn checked_rejects_official_lenient_drops() {
++        for (kind, value) in [(DOMAIN_TYPE_DOMAIN, ""), (DOMAIN_TYPE_REGEX, "["), (DOMAIN_TYPE_FULL, "."), (99, "x.example")] {
++            let bytes = build_geosite_list(&[("test", &[(kind, value)])]);
++            assert!(from_dat_bytes(&bytes, None).is_ok(), "preserve lenient parser behavior");
++            assert!(matches!(from_dat_bytes_checked(&bytes, None), Err(DatError::RejectedEntries { .. })));
++        }
++        let bytes = build_geosite_list(&[("", &[(DOMAIN_TYPE_DOMAIN, "x.example")])]);
++        assert!(matches!(from_dat_bytes_checked(&bytes, None), Err(DatError::RejectedEntries { .. })));
++    }
++
++    #[test]
++    fn checked_accepts_real_mixed_domains_and_respects_explicit_category_filter() {
++        let bytes = build_geosite_list(&[("ok", &[(DOMAIN_TYPE_DOMAIN, "a.example"), (DOMAIN_TYPE_FULL, "b.example"), (DOMAIN_TYPE_REGEX, "^c"), (DOMAIN_TYPE_PLAIN, "keyword")]), ("ignored", &[(DOMAIN_TYPE_REGEX, "[")])]);
++        let allowed = HashSet::from(["ok".to_owned()]);
++        let db = from_dat_bytes_checked(&bytes, Some(&allowed)).expect("all selected entries accepted");
++        assert_eq!(db.domain_count("ok"), Some(4)); assert!(db.lookup("ok", "a.example"));
++        assert!(db.lookup("ok", "sub.a.example")); assert!(db.lookup("ok", "b.example"));
++        assert!(db.lookup("ok", "contains-keyword.example")); assert!(db.lookup("ok", "c.example"));
++        assert!(matches!(from_dat_bytes_checked(&bytes, None), Err(DatError::RejectedEntries { .. })));
+     }
+ 
+     #[test]
+--- a/crates/meow-rules/src/mrs_parser.rs
++++ b/crates/meow-rules/src/mrs_parser.rs
+@@ -140,7 +140,8 @@
+     decompress_payload_bounded(compressed, MAX_DECOMPRESSED_BYTES)
+ }
+ 
+-fn decompress_payload_bounded(compressed: &[u8], max: u64) -> Result<Vec<u8>, MrsError> {
++pub fn decompress_payload_bounded(compressed: &[u8], max: u64) -> Result<Vec<u8>, MrsError> {
++    let max = max.min(MAX_DECOMPRESSED_BYTES);
+     let mut decoder = zstd::stream::Decoder::new(Cursor::new(compressed))?;
+     let mut out = Vec::new();
+     // Read one byte past the bound so an over-limit payload is an error rather
+--- a/crates/meow-rules/src/rule_set.rs
++++ b/crates/meow-rules/src/rule_set.rs
+@@ -12,6 +12,7 @@
+ //!   is parsed as a normal rule (adapter ignored).
+ 
+ use std::fmt;
++use std::sync::Arc;
+ use std::str::FromStr;
+ 
+ use ipnet::IpNet;
+@@ -68,6 +69,12 @@
+             other => Err(format!("unsupported rule-set format: {other}")),
+         }
+     }
++}
++
++/// Called only for entries accepted by the actual matcher builder. Embedders
++/// may stream export data to bounded storage without retaining a second rule list.
++pub trait AcceptedEntrySink: Send + Sync {
++    fn accepted(&self, entry: &str);
+ }
+ 
+ pub trait RuleSet: Send + Sync {
+@@ -105,10 +112,29 @@
+     entries: &[String],
+     ctx: &ParserContext,
+ ) -> Box<dyn RuleSet> {
++    build_rule_set_with_sink(behavior, entries, ctx, None)
++}
++
++pub fn build_rule_set_with_sink(
++    behavior: RuleSetBehavior, entries: &[String], ctx: &ParserContext,
++    sink: Option<Arc<dyn AcceptedEntrySink>>,
++) -> Box<dyn RuleSet> {
+     match behavior {
+-        RuleSetBehavior::Domain => Box::new(DomainRuleSet::from_entries(entries)),
+-        RuleSetBehavior::IpCidr => Box::new(IpCidrRuleSet::from_entries(entries)),
+-        RuleSetBehavior::Classical => Box::new(ClassicalRuleSet::from_entries(entries, ctx)),
++        RuleSetBehavior::Domain => {
++            let mut builder = DomainRuleSetBuilder::with_sink(sink);
++            for entry in entries { builder.push(entry); }
++            Box::new(builder.build())
++        }
++        RuleSetBehavior::IpCidr => {
++            let mut builder = IpCidrRuleSetBuilder::with_sink(sink);
++            for entry in entries { builder.push(entry); }
++            Box::new(builder.build())
++        }
++        RuleSetBehavior::Classical => {
++            let mut builder = ClassicalRuleSetBuilder::with_sink(ctx, sink);
++            for entry in entries { builder.push(entry); }
++            Box::new(builder.build())
++        }
+     }
+ }
+ 
+@@ -121,23 +147,30 @@
+     entries: &[String],
+     ctx: &ParserContext,
+ ) -> Result<Box<dyn RuleSet>, String> {
++    build_rule_set_checked_with_sink(behavior, entries, ctx, None)
++}
++
++pub fn build_rule_set_checked_with_sink(
++    behavior: RuleSetBehavior, entries: &[String], ctx: &ParserContext,
++    sink: Option<Arc<dyn AcceptedEntrySink>>,
++) -> Result<Box<dyn RuleSet>, String> {
+     match behavior {
+         RuleSetBehavior::Domain => {
+-            let mut builder = DomainRuleSetBuilder::new();
++            let mut builder = DomainRuleSetBuilder::with_sink(sink);
+             for entry in entries {
+                 builder.push_checked(entry)?;
+             }
+             Ok(Box::new(builder.build()))
+         }
+         RuleSetBehavior::IpCidr => {
+-            let mut builder = IpCidrRuleSetBuilder::new();
++            let mut builder = IpCidrRuleSetBuilder::with_sink(sink);
+             for entry in entries {
+                 builder.push_checked(entry)?;
+             }
+             Ok(Box::new(builder.build()))
+         }
+         RuleSetBehavior::Classical => {
+-            let mut builder = ClassicalRuleSetBuilder::new(ctx);
++            let mut builder = ClassicalRuleSetBuilder::with_sink(ctx, sink);
+             for entry in entries {
+                 builder.push_checked(entry)?;
+             }
+@@ -179,6 +212,13 @@
+     expected: Option<RuleSetBehavior>,
+     strict: bool,
+ ) -> Result<Box<dyn RuleSet>, String> {
++    build_rule_set_from_mrs_with_sink(bytes, ctx, expected, strict, None)
++}
++
++pub fn build_rule_set_from_mrs_with_sink(
++    bytes: &[u8], ctx: &ParserContext, expected: Option<RuleSetBehavior>, strict: bool,
++    sink: Option<Arc<dyn AcceptedEntrySink>>,
++) -> Result<Box<dyn RuleSet>, String> {
+     use crate::mrs_parser::{
+         parse_header, stream_ipcidr_list, stream_string_list, UpstreamRuleSetReader,
+         TYPE_CLASSICAL, TYPE_DOMAIN, TYPE_IPCIDR, ZSTD_MAGIC,
+@@ -195,7 +235,7 @@
+         }
+         return match actual {
+             RuleSetBehavior::Domain => {
+-                let mut builder = DomainRuleSetBuilder::new();
++                let mut builder = DomainRuleSetBuilder::with_sink(sink.clone());
+                 let mut first_err = None;
+                 reader
+                     .for_each_domain(|d| {
+@@ -216,7 +256,7 @@
+                 Ok(Box::new(builder.build()))
+             }
+             RuleSetBehavior::IpCidr => {
+-                let mut builder = IpCidrRuleSetBuilder::new();
++                let mut builder = IpCidrRuleSetBuilder::with_sink(sink.clone());
+                 reader
+                     .for_each_net(|net| builder.push_net(net))
+                     .map_err(|e| e.to_string())?;
+@@ -242,7 +282,7 @@
+     let mut first_err = None;
+     let result = match hdr.type_tag {
+         TYPE_DOMAIN => {
+-            let mut builder = DomainRuleSetBuilder::new();
++            let mut builder = DomainRuleSetBuilder::with_sink(sink.clone());
+             stream_string_list(decoder, |entry| {
+                 if first_err.is_none() {
+                     if strict {
+@@ -258,12 +298,12 @@
+             Box::new(builder.build()) as Box<dyn RuleSet>
+         }
+         TYPE_IPCIDR => {
+-            let mut builder = IpCidrRuleSetBuilder::new();
++            let mut builder = IpCidrRuleSetBuilder::with_sink(sink.clone());
+             stream_ipcidr_list(decoder, |net| builder.push_net(net)).map_err(|e| e.to_string())?;
+             Box::new(builder.build()) as Box<dyn RuleSet>
+         }
+         TYPE_CLASSICAL => {
+-            let mut builder = ClassicalRuleSetBuilder::new(ctx);
++            let mut builder = ClassicalRuleSetBuilder::with_sink(ctx, sink.clone());
+             stream_string_list(decoder, |entry| {
+                 if first_err.is_none() {
+                     if strict {
+@@ -321,9 +361,11 @@
+ pub struct DomainRuleSetBuilder {
+     trie: DomainTrie<()>,
+     count: usize,
++    sink: Option<Arc<dyn AcceptedEntrySink>>,
+ }
+ 
+ impl DomainRuleSetBuilder {
++    pub fn with_sink(sink: Option<Arc<dyn AcceptedEntrySink>>) -> Self { Self { sink, ..Self::default() } }
+     pub fn new() -> Self {
+         Self::default()
+     }
+@@ -351,10 +393,11 @@
+         let bare_inserted = if let Some(rest) = entry.strip_prefix("+.") {
+             self.trie.insert(rest, ())
+         } else {
+-            true
++            false
+         };
+         if inserted || bare_inserted {
+             self.count += 1;
++            if let Some(sink) = &self.sink { sink.accepted(entry); }
+             Ok(())
+         } else {
+             Err(format!("'{entry}' is not a valid domain pattern"))
+@@ -423,9 +466,11 @@
+ pub struct IpCidrRuleSetBuilder {
+     set: IpRangeSetBuilder,
+     count: usize,
++    sink: Option<Arc<dyn AcceptedEntrySink>>,
+ }
+ 
+ impl IpCidrRuleSetBuilder {
++    pub fn with_sink(sink: Option<Arc<dyn AcceptedEntrySink>>) -> Self { Self { sink, ..Self::default() } }
+     pub fn new() -> Self {
+         Self::default()
+     }
+@@ -459,6 +504,7 @@
+     pub fn push_net(&mut self, net: IpNet) {
+         self.set.add(net);
+         self.count += 1;
++        if let Some(sink) = &self.sink { sink.accepted(&net.trunc().to_string()); }
+     }
+ 
+     pub fn build(self) -> IpCidrRuleSet {
+@@ -509,14 +555,13 @@
+ pub struct ClassicalRuleSetBuilder<'a> {
+     rules: Vec<Box<dyn Rule>>,
+     ctx: &'a ParserContext,
++    sink: Option<Arc<dyn AcceptedEntrySink>>,
+ }
+ 
+ impl<'a> ClassicalRuleSetBuilder<'a> {
+-    pub fn new(ctx: &'a ParserContext) -> Self {
+-        Self {
+-            rules: Vec::new(),
+-            ctx,
+-        }
++    pub fn new(ctx: &'a ParserContext) -> Self { Self::with_sink(ctx, None) }
++    pub fn with_sink(ctx: &'a ParserContext, sink: Option<Arc<dyn AcceptedEntrySink>>) -> Self {
++        Self { rules: Vec::new(), ctx, sink }
+     }
+ 
+     pub fn push(&mut self, entry: &str) {
+@@ -570,6 +615,7 @@
+         match parse_rule(&patched, self.ctx) {
+             Ok(rule) => {
+                 self.rules.push(rule);
++                if let Some(sink) = &self.sink { sink.accepted(entry); }
+                 Ok(())
+             }
+             Err(e) => Err(format!("'{entry}': {e}")),
+@@ -965,3 +1011,16 @@
+         assert!(err.contains("+."), "unexpected: {err}");
+     }
+ }
++
++#[cfg(test)]
++mod plain_domain_validation_regression {
++    use super::*;
++    #[test]
++    fn invalid_plain_pattern_is_not_an_accepted_rule() {
++        for entry in [".", "*.", "+."] {
++            assert!(DomainRuleSetBuilder::new().push_checked(entry).is_err(), "accepted {entry}");
++        }
++        let mut builder = DomainRuleSetBuilder::new(); builder.push_checked("a.example").unwrap();
++        assert_eq!(builder.build().len(), 1);
++    }
++}
