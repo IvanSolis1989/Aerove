@@ -360,6 +360,105 @@ class ApkInspectionTests(unittest.TestCase):
             write('build-policy.json',dict(policy,resolveLock=True))
             with self.assertRaisesRegex(ValueError,'accepted committed lock'):module.native_identity(root)
 
+    def test_policy_runtime_requires_complete_locked_core_units(self):
+        import copy
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            def write(name, value):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(value) if isinstance(value, dict) else value)
+                return module.sha256(path)
+            manifest = write('Cargo.toml', 'manifest')
+            lock = write('Cargo.lock', 'bridge-lock')
+            core_lock = write('core-tests.lock', 'independent-core-test-lock')
+            patch = write('patches/core.patch', 'patch')
+            upstream_lock = hashlib.sha256(b'original-upstream-lock').hexdigest()
+            overlay = write('source-metadata/overlay.json', dict(patch='patches/core.patch',
+                patchSha256=patch, adaptedFileManifestSha256='d'*64, files={'Cargo.lock': upstream_lock}))
+            write('source.json', dict(commit=module.MEOW_SOURCE, tag='v0.26.1', archiveSha256='a'*64))
+            targets = list(module.HOST_POLICY_RUNTIME_TARGETS)
+            self.assertEqual(29, len(targets))
+            self.assertEqual(22, len(module.CORE_POLICY_TEST_CASES))
+            self.assertEqual(24, sum(count for _, _, count in module.CORE_POLICY_TEST_CASES))
+            policy = dict(resolveLock=False, manifestSha256=manifest, overlay='source-metadata/overlay.json',
+                overlaySha256=overlay, targets=targets, featureBoundary='capabilities-no-default',
+                coreTests='policy-runtime-v1', coreTestLockSha256=core_lock)
+            policy_hash = write('build-policy.json', policy)
+            identity = module.native_identity(root)
+            command = ['cargo', 'test', '--locked', '--no-fail-fast']
+            for target in targets:
+                command += ['--lib'] if target == 'lib' else ['--test', target]
+            command += ['--', '--test-threads=1', '--nocapture']
+            features = {package: [] for package in module.CORE_POLICY_TEST_PACKAGES}
+            features['meow-proxy'] = ['tls']
+            entries = []
+            for package, name, count in module.CORE_POLICY_TEST_CASES:
+                args = ['cargo', 'test', '--manifest-path', '.upstream/meow-rs/Cargo.toml', '--locked',
+                    '--package', package, '--lib', '--no-default-features']
+                if features[package]:
+                    args += ['--features', ','.join(package+'/'+f for f in features[package])]
+                entries.append(dict(package=package, filter=name,
+                    command=args+[name, '--', '--test-threads=1', '--nocapture'], exit=0,
+                    expectedPass=count, passed=count, stdoutSha256='e'*64, stderrSha256='f'*64))
+            state = dict(mode='policy-runtime-v1', accepted=True, upstreamLockRestored=True,
+                upstreamLockBeforeSha256=upstream_lock, seedSha256=core_lock, resolvedLockSha256=core_lock,
+                bridgeMetadataCommand=['cargo', 'metadata', '--locked', '--format-version', '1'], bridgeMetadataExit=0,
+                metadataCommand=['cargo', 'metadata', '--manifest-path', '.upstream/meow-rs/Cargo.toml',
+                    '--format-version', '1', '--locked'], metadataExit=0,
+                workspaceMembers=list(module.CORE_POLICY_TEST_PACKAGES), features=features, commands=entries)
+            receipt = dict(schema=1, command=command, commandExit=0, acceptedLock=True,
+                bootstrapRequested=False, resolveLockRequested=False, lockUnchangedDuringLockedCommand=True,
+                toolchain='rustc 1.98.1 (fixture)', androidTarget=None, representativeTargets=targets,
+                declaredSourceSpecSha256=identity['meow_source_spec_sha256'], bridgeManifestSha256=manifest,
+                buildPolicySha256=policy_hash, lockSha256Before=lock, resolvedLockSha256=lock, lockSha256After=lock,
+                source=dict(commit=module.MEOW_SOURCE, tag='v0.26.1', archiveHashBootstrapped=False,
+                    archiveSha256='a'*64, fileManifestSha256='d'*64, overlaySha256=overlay, patchSha256=patch),
+                featureBoundaryCommand=['cargo', 'test', '--locked', '--no-default-features', '--lib',
+                    'capabilities::tests::', '--', '--test-threads=1', '--nocapture'], featureBoundaryExit=0,
+                coreTests=state)
+            self.assertEqual(identity, module.validate_native_receipt(receipt, root=root))
+            for omitted in state:
+                bad = copy.deepcopy(state); bad.pop(omitted)
+                with self.subTest(omitted=omitted), self.assertRaises(ValueError):
+                    module.validate_native_receipt(dict(receipt, coreTests=bad), root=root)
+            for key, value in [('mode','other'), ('accepted',False), ('upstreamLockRestored',False),
+                    ('upstreamLockBeforeSha256','0'*64), ('seedSha256',lock), ('resolvedLockSha256',lock),
+                    ('bridgeMetadataExit',False), ('bridgeMetadataExit',1), ('metadataExit','0'),
+                    ('metadataExit',1), ('metadataCommand',state['metadataCommand'][:-1]),
+                    ('workspaceMembers',[]), ('features',{}), ('commands',entries[:-1])]:
+                with self.subTest(key=key,value=value), self.assertRaises(ValueError):
+                    module.validate_native_receipt(dict(receipt, coreTests=dict(state, **{key:value})), root=root)
+            for index in range(len(entries)):
+                for key, value in [('exit',1), ('exit',False), ('passed',0), ('expectedPass',0),
+                        ('command',entries[index]['command'][:-1]), ('filter','arbitrary'),
+                        ('stdoutSha256',None), ('stderrSha256','wrong')]:
+                    bad = copy.deepcopy(state); bad['commands'][index][key] = value
+                    with self.subTest(index=index,key=key,value=value), self.assertRaises(ValueError):
+                        module.validate_native_receipt(dict(receipt, coreTests=bad), root=root)
+            for bad in [None, {}, dict(state, commands=list(reversed(entries)))]:
+                with self.subTest(core=bad), self.assertRaises(ValueError):
+                    module.validate_native_receipt(dict(receipt, coreTests=bad), root=root)
+            for values in [['tls','tls'], ['tls; arbitrary'], ['z','a']]:
+                bad = copy.deepcopy(state); bad['features']['meow-proxy'] = values
+                with self.subTest(features=values), self.assertRaises(ValueError):
+                    module.validate_native_receipt(dict(receipt, coreTests=bad), root=root)
+            for changes in [dict(coreTests='other'), dict(coreTestLockSha256='f'*64),
+                    dict(targets=targets[:-1]), dict(featureBoundary=None)]:
+                write('build-policy.json',dict(policy,**changes))
+                with self.subTest(policy=changes), self.assertRaises(ValueError):
+                    module.native_identity(root)
+            for omitted in ['coreTests','coreTestLockSha256']:
+                bad = dict(policy); bad.pop(omitted); write('build-policy.json',bad)
+                with self.subTest(policyOmitted=omitted), self.assertRaises(ValueError):
+                    module.native_identity(root)
+            write('build-policy.json',policy)
+            # Android receipts do not claim these host-only Core executions.
+            image=self.core_elf();android=dict(receipt,command=['cargo','build','--locked','--release','--target','aarch64-linux-android'],
+                androidTarget='aarch64-linux-android',ndkSourceProperties='Pkg.Revision = 28.2.13676358',
+                output=dict(abi='arm64-v8a',sha256=hashlib.sha256(image).hexdigest(),bytes=len(image),minPageAlignment=16384))
+            android.pop('coreTests'); module.validate_native_receipt(android,'arm64-v8a',image,root)
+
     def test_rejects_wrong_elf_even_under_arm64_filename(self):
         with tempfile.TemporaryDirectory() as root:
             with self.assertRaisesRegex(ValueError, "ELF"):

@@ -33,6 +33,64 @@ HOST_NO_FAIL_FAST_TARGETS = (
 )
 
 
+HOST_POLICY_RUNTIME_TARGETS = ('lib',
+ 'anytls_owned_shutdown',
+ 'api_lifecycle',
+ 'config_validation',
+ 'control_plane',
+ 'dns_construction',
+ 'general_groups',
+ 'group_delay',
+ 'health_round_context',
+ 'host_policy_runtime',
+ 'node_delay',
+ 'offline_scope',
+ 'owned_runtime',
+ 'owned_spawn',
+ 'packet_fd',
+ 'physical_dns',
+ 'provider_events',
+ 'provider_files',
+ 'provider_rules',
+ 'proxy_runtime',
+ 'request_policy',
+ 'resource_roots',
+ 'runtime_transports',
+ 'statistics_actual_outcome',
+ 'tcp_dns',
+ 'transport_tasks',
+ 'tun_driver',
+ 'urltest_gate',
+ 'user_request_context')
+CORE_POLICY_TEST_CASES = (('meow-common', 'cli_without_scope_keeps_output_and_real_join_error', 1),
+ ('meow-common', 'observer_does_not_consume_protocol_output_or_panic', 1),
+ ('meow-common', 'protocol_can_consume_error_before_native_observer', 1),
+ ('meow-common', 'abort_handle_targets_actual_work_and_real_socket_reaches_eof', 1),
+ ('meow-common', 'dropped_protocol_handle_remains_owned_until_actual_join', 1),
+ ('meow-common', 'cancelled_join_waiter_retains_actual_handle_for_retry', 1),
+ ('meow-common', 'closed_admission_drops_future_without_polling_user_work', 1),
+ ('meow-common', 'nested_task_captures_same_scope_without_an_observer_task', 1),
+ ('meow-common', 'ready_then_session_cancel_has_actual_completed_ack', 1),
+ ('meow-common', 'captured_closed_session_never_adopts_another_current_owner', 1),
+ ('meow-common', 'send_only_user_future_keeps_scoped_join_send_sync', 1),
+ ('meow-proxy', 'actual_tasked_duplex_preserves_stream_and_proxy_conversion', 1),
+ ('meow-proxy', 'actual_vmess_read_write_supervisor_are_joined_before_transport_eof_ack', 1),
+ ('meow-proxy', 'closed_session_rejects_vmess_before_any_relay_task_is_spawned', 1),
+ ('meow-transport', 'actual_stream_preserves_send_sync_transport_contract', 3),
+ ('meow-transport', 'closed_origin_upgrade_has_repeatable_error_and_zero_http_bytes', 1),
+ ('meow-anytls', 'actual_pool_reaper_drop_aborts_and_native_observer_joins_resource_release', 1),
+ ('meow-anytls',
+  'pooled_close_cancelled_after_admission_can_resume_and_last_arc_drops_both_transports',
+  1),
+ ('meow-anytls',
+  'concurrent_close_waiter_observes_completion_and_takes_over_cancelled_first_attempt',
+  1),
+ ('meow-dns', 'resolver_captures_generation_scope_when_constructed', 1),
+ ('meow-dns', 'upstream_exchange_stays_with_captured_generation', 1),
+ ('meow-dns', 'retiring_generation_cancels_and_joins_pending_exchange', 1))
+CORE_POLICY_TEST_PACKAGES = tuple(sorted({package for package, _, _ in CORE_POLICY_TEST_CASES}))
+
+
 def native_identity(root=MEOW_ROOT):
     root = Path(root)
     spec = json.loads((root / "source.json").read_text())
@@ -43,6 +101,14 @@ def native_identity(root=MEOW_ROOT):
             or not re.fullmatch(r"[0-9a-f]{64}", str(spec.get("archiveSha256", "")))
             or policy.get("resolveLock") is not False):
         raise ValueError("Meow requires a pinned source and accepted committed lock policy")
+    if "coreTests" in policy:
+        if (policy["coreTests"] != "policy-runtime-v1"
+                or tuple(policy.get("targets", ())) != HOST_POLICY_RUNTIME_TARGETS
+                or policy.get("featureBoundary") != "capabilities-no-default"
+                or not re.fullmatch(r"[0-9a-f]{64}", str(policy.get("coreTestLockSha256", "")))):
+            raise ValueError("Unrecognized Meow Core unit test policy")
+    elif "coreTestLockSha256" in policy or tuple(policy.get("targets", ())) == HOST_POLICY_RUNTIME_TARGETS:
+        raise ValueError("Meow policy lacks approved Core unit test admission")
     def owned(name):
         path = root / name
         if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
@@ -53,6 +119,8 @@ def native_identity(root=MEOW_ROOT):
             or sha256(owned(policy["overlay"])) != policy["overlaySha256"]
             or sha256(owned(overlay["patch"])) != overlay["patchSha256"]):
         raise ValueError("Meow policy/overlay/manifest identity changed")
+    if "coreTests" in policy and sha256(owned("core-tests.lock")) != policy["coreTestLockSha256"]:
+        raise ValueError("Meow Core unit test lock identity changed")
     return dict(meow_source=MEOW_SOURCE, meow_version="v0.26.1", core_library=CORE_LIBRARY, meow_source_spec_sha256=sha256(root / "source.json"),
         meow_lock_sha256=sha256(root / "Cargo.lock"), meow_manifest_sha256=sha256(root / "Cargo.toml"),
         meow_policy_sha256=sha256(root / "build-policy.json"), meow_overlay_sha256=policy["overlaySha256"],
@@ -85,10 +153,10 @@ def validate_native_receipt(receipt_path, abi=None, image=None, root=MEOW_ROOT, 
     if abi is None:
         policy = json.loads((Path(root)/"build-policy.json").read_text())
         targets = policy["targets"]
-        if "node_delay" in targets and tuple(targets) != HOST_NO_FAIL_FAST_TARGETS:
+        if "node_delay" in targets and tuple(targets) not in (HOST_NO_FAIL_FAST_TARGETS, HOST_POLICY_RUNTIME_TARGETS):
             raise ValueError("Unrecognized Meow no-fail-fast target contract")
         command = ["cargo", "test", "--locked"]
-        if tuple(targets) == HOST_NO_FAIL_FAST_TARGETS:
+        if tuple(targets) in (HOST_NO_FAIL_FAST_TARGETS, HOST_POLICY_RUNTIME_TARGETS):
             command.append("--no-fail-fast")
         for target in targets:
             command += ["--lib"] if target == "lib" else ["--test", target]
@@ -102,6 +170,8 @@ def validate_native_receipt(receipt_path, abi=None, image=None, root=MEOW_ROOT, 
                     or type(receipt.get("featureBoundaryExit")) is not int
                     or receipt["featureBoundaryExit"] != 0):
                 raise ValueError("Meow host receipt lacks successful approved feature boundary proof")
+        if "coreTests" in policy:
+            validate_core_test_receipt(receipt.get("coreTests"), policy, Path(root))
     else:
         target = {"arm64-v8a": "aarch64-linux-android", "x86_64": "x86_64-linux-android"}[abi]
         output = receipt.get("output", {})
@@ -112,6 +182,55 @@ def validate_native_receipt(receipt_path, abi=None, image=None, root=MEOW_ROOT, 
                 or not re.search(r"Pkg.Revision\s*=\s*28\.2\.13676358\s*$", receipt.get("ndkSourceProperties", ""), re.MULTILINE)):
             raise ValueError("Meow receipt output/NDK/ABI mismatch")
     return expected
+
+
+def validate_core_test_receipt(state, policy, root):
+    """Require the producer's fixed dependency tests and separately accepted locked graph."""
+    def reject():
+        raise ValueError("Meow host receipt lacks complete approved Core unit proof")
+    def is_hash(value):
+        return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+    def exited(value):
+        return type(value) is int and value == 0
+    if not isinstance(state, dict):
+        reject()
+    overlay = json.loads((root / policy["overlay"]).read_text())
+    upstream_lock = overlay.get("files", {}).get("Cargo.lock")
+    if (state.get("mode") != "policy-runtime-v1" or state.get("accepted") is not True
+            or state.get("upstreamLockRestored") is not True or not is_hash(upstream_lock)
+            or state.get("upstreamLockBeforeSha256") != upstream_lock
+            or state.get("seedSha256") != policy["coreTestLockSha256"]
+            or state.get("resolvedLockSha256") != policy["coreTestLockSha256"]
+            or state.get("bridgeMetadataCommand") != ["cargo", "metadata", "--locked", "--format-version", "1"]
+            or not exited(state.get("bridgeMetadataExit"))
+            or state.get("metadataCommand") != ["cargo", "metadata", "--manifest-path",
+                ".upstream/meow-rs/Cargo.toml", "--format-version", "1", "--locked"]
+            or not exited(state.get("metadataExit"))):
+        reject()
+    members, features, commands = state.get("workspaceMembers"), state.get("features"), state.get("commands")
+    if (not isinstance(members, list) or any(not isinstance(m, str) for m in members)
+            or members != sorted(set(members)) or not set(CORE_POLICY_TEST_PACKAGES) <= set(members)
+            or not isinstance(features, dict) or set(features) != set(CORE_POLICY_TEST_PACKAGES)
+            or not isinstance(commands, list) or len(commands) != len(CORE_POLICY_TEST_CASES)):
+        reject()
+    for package in CORE_POLICY_TEST_PACKAGES:
+        values = features[package]
+        if (not isinstance(values, list) or any(not isinstance(f, str)
+                or re.fullmatch(r"[A-Za-z0-9_-]+", f) is None for f in values)
+                or values != sorted(set(values))):
+            reject()
+    for entry, (package, name, count) in zip(commands, CORE_POLICY_TEST_CASES):
+        command = ["cargo", "test", "--manifest-path", ".upstream/meow-rs/Cargo.toml", "--locked",
+            "--package", package, "--lib", "--no-default-features"]
+        if features[package]:
+            command += ["--features", ",".join(package + "/" + f for f in features[package])]
+        command += [name, "--", "--test-threads=1", "--nocapture"]
+        if (not isinstance(entry, dict) or entry.get("package") != package or entry.get("filter") != name
+                or entry.get("command") != command or not exited(entry.get("exit"))
+                or type(entry.get("expectedPass")) is not int or entry["expectedPass"] != count
+                or type(entry.get("passed")) is not int or entry["passed"] != count
+                or not is_hash(entry.get("stdoutSha256")) or not is_hash(entry.get("stderrSha256"))):
+            reject()
 
 
 def exported_functions(image):
