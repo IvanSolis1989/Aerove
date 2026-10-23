@@ -159,7 +159,7 @@ class MainActivity : ComponentActivity() {
                 controller.state.collect { state ->
                     if (state.initialized && state.settings.acceptedDisclaimerVersion >= 1) {
                         if (lastHidden != state.settings.backgroundPolicy.hidden) {
-                            getSystemService(android.app.ActivityManager::class.java).appTasks.firstOrNull { it.taskInfo.taskId == taskId }
+                            getSystemService(android.app.ActivityManager::class.java).appTasks.firstOrNull { it.taskInfo?.taskId == taskId }
                                 ?.setExcludeFromRecents(state.settings.backgroundPolicy.hidden)
                             lastHidden = state.settings.backgroundPolicy.hidden
                         }
