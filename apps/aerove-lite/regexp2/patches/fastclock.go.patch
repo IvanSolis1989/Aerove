@@ -1,0 +1,81 @@
+--- a/fastclock.go
++++ b/fastclock.go
+@@ -33,6 +33,8 @@
+ 	mu      sync.Mutex
+ 	start   time.Time // Time corresponding to fasttime(0)
+ 	running bool      // Is a clock updater running?
++	stop    chan struct{}
++	done    chan struct{}
+ }
+ 
+ var fast fastclock
+@@ -84,7 +86,9 @@
+ 	// Start clock if necessary
+ 	if !fast.running {
+ 		fast.running = true
+-		go runClock()
++		fast.stop = make(chan struct{})
++		fast.done = make(chan struct{})
++		go runClock(fast.stop, fast.done)
+ 	}
+ }
+ 
+@@ -92,19 +96,18 @@
+ // should only used for unit tests to abandon the background goroutine
+ func stopClock() {
+ 	fast.mu.Lock()
++	done := fast.done
+ 	if fast.running {
+ 		fast.clockEnd.write(fasttime(0))
++		select {
++		case <-fast.stop:
++		default:
++			close(fast.stop)
++		}
+ 	}
+ 	fast.mu.Unlock()
+-
+-	// pause until not running
+-	// get and release the lock
+-	isRunning := true
+-	for isRunning {
+-		time.Sleep(clockPeriod / 2)
+-		fast.mu.Lock()
+-		isRunning = fast.running
+-		fast.mu.Unlock()
++	if done != nil {
++		<-done
+ 	}
+ }
+ 
+@@ -119,18 +122,28 @@
+ // clockPeriod is the approximate interval between updates of approximateClock.
+ var clockPeriod = DefaultClockPeriod
+ 
+-func runClock() {
++func runClock(stop <-chan struct{}, done chan<- struct{}) {
++	defer close(done)
++	timer := time.NewTimer(clockPeriod)
++	defer timer.Stop()
+ 	fast.mu.Lock()
+ 	defer fast.mu.Unlock()
+ 
+ 	for fast.current.read() <= fast.clockEnd.read() {
+ 		// Unlock while sleeping.
+ 		fast.mu.Unlock()
+-		time.Sleep(clockPeriod)
++		select {
++		case <-stop:
++			fast.mu.Lock()
++			fast.running = false
++			return
++		case <-timer.C:
++		}
+ 		fast.mu.Lock()
+ 
+ 		newTime := durationToTicks(time.Since(fast.start))
+ 		fast.current.write(newTime)
++		timer.Reset(clockPeriod)
+ 	}
+ 	fast.running = false
+ }

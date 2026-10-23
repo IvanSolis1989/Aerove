@@ -67,14 +67,19 @@ def main():
     # Never recursively overwrite an existing path or caller's source checkout.
     staging.mkdir(parents=True,exist_ok=False)
     upstream=staging/'upstream';shutil.copytree(source,upstream)
-    for name in ('regexp.go','runner.go'):
+    patched=json.loads((ROOT/'patches/adapted-sha256.json').read_text())
+    for name in ('regexp.go','runner.go','fastclock.go'):
         target=upstream/name;original=target.read_text()
         patch=(ROOT/'patches'/(name+'.patch')).read_text()
         adapted=apply_exact_patch(original,patch)
         if ''.join(difflib.unified_diff(original.splitlines(True),adapted.splitlines(True),fromfile='a/'+name,tofile='b/'+name))!=patch:raise RuntimeError('Non-exact patch')
         target.chmod(0o600);target.write_text(adapted,encoding='utf-8',newline='\n')
-        patched=json.loads((ROOT/'patches/adapted-sha256.json').read_text())
         if hashlib.sha256(target.read_bytes()).hexdigest()!=patched[name]:raise RuntimeError('Adapted source checksum mismatch')
+    clock=json.loads((ROOT/'patches/clock-stop-source.json').read_text())
+    if clock['upstreamSha256']!=expected['fastclock.go'] or clock['adaptedSha256']!=patched['fastclock.go']:raise RuntimeError('Clock source identity mismatch')
+    regression=ROOT/'patches/fastclock_stop_test.go'
+    if hashlib.sha256(regression.read_bytes()).hexdigest()!=clock['regressionTestSha256']:raise RuntimeError('Clock regression identity mismatch')
+    shutil.copyfile(regression,upstream/'aerove_fastclock_stop_test.go')
     for name in ('go.mod','go.sum'):shutil.copyfile(ROOT/name,staging/name)
     for name in ('service','cmd','agebridge'):shutil.copytree(ROOT/name,staging/name)
     with (staging/'go.mod').open('a') as f:f.write('\nreplace github.com/dlclark/regexp2 => ./upstream\n')

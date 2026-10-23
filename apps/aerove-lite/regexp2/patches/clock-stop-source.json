@@ -1,0 +1,16 @@
+{
+  "upstreamRepository": "https://github.com/dlclark/regexp2",
+  "version": "v1.12.0",
+  "upstreamFile": "fastclock.go",
+  "upstreamSha256": "b0a3306c573aebad068d839c516715dce424c99597a1b4c1491aef85db745ea2",
+  "adaptedSha256": "e34417c28962b754c4c0278351155a1f120c6ecde245af3ac74b6df100b1309e",
+  "patchSha256": "7bf6835d05aa705b27642edd2201e074194ead1578e03f39a7a67afb65569586",
+  "regressionTestSha256": "e952a10997dec5f73aa9b41465e2411b17739e8576dc622a11f5413b13832959",
+  "license": "MIT",
+  "licensePath": "licenses/LICENSE.regexp2",
+  "licenseSha256": "9be5d04bb4d706914d5bf943710da4afeb42048f7c529902fb57c82762a991a9",
+  "referenceCommit": "936b3813c162928c10e57cb04c9e3e7620bb7daf",
+  "referenceScope": "Reviewed upstream current fastclock and issue63; stop still uses Sleep. The adaptation is Aerove wake/join logic, not an upstream stop fix.",
+  "upstreamTestsModified": false,
+  "timingAssertionModified": false
+}
