@@ -22,6 +22,7 @@ dependencies = [
  "hickory-proto",
  "hyper",
  "hyper-util",
+ "ipnet",
  "jni",
  "libc",
  "meow-api",
@@ -1326,6 +1327,7 @@ dependencies = [
  "smallvec",
  "smol_str",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 

@@ -6,6 +6,10 @@ use std::{future::{Future, poll_fn}, io, net::{Ipv4Addr, SocketAddr}, os::{fd::{
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream, UdpSocket}, sync::{Mutex, oneshot}, time::timeout};
 use tokio_util::sync::CancellationToken;
 
+#[path = "support/resource_roots.rs"]
+mod root_fixture;
+use root_fixture::Roots;
+
 static LOCK: Mutex<()> = Mutex::const_new(());
 const SECRET: &str = "meow-owned-runtime-private-secret-000001";
 struct Protect(Arc<AtomicUsize>);
@@ -23,14 +27,15 @@ fn pair() -> (UnixDatagram, tokio::net::UnixDatagram) {
     let (caller, peer) = UnixDatagram::pair().unwrap(); caller.set_nonblocking(true).unwrap(); peer.set_nonblocking(true).unwrap();
     (caller, tokio::net::UnixDatagram::from_std(peer).unwrap())
 }
-fn plan(ports: [SocketAddr; 3], dns: SocketAddr, parked: bool) -> serde_json::Value {
+fn plan(ports: [SocketAddr; 3], dns: SocketAddr, parked: bool, roots: &Roots) -> serde_json::Value {
     serde_json::json!({"schemaVersion":1,"runtimeMode":"tun","initiallyParked":parked,
         "engineYaml":format!("strict: true\nmode: rule\nrules: ['MATCH,DIRECT']\ntun: {{enable: false, auto-route: false}}\ndns:\n  enable: true\n  use-system-hosts: false\n  nameserver: ['{dns}']\n"),
         "privateControl":{"address":ports[0].to_string(),"secret":SECRET},
         "inbounds":{"configYaml":format!("mixed-port: {}\nbind-address: 127.0.0.1\ndns-listen: '{}'\n",ports[1].port(),ports[2])},
         "tun":{"mtu":9000,"ipv6":false,"inet4Address":"198.18.0.1/30","inet6Address":null,"dnsHijack":["198.18.0.2:53"],"autoRoute":false},
         "physicalNetwork":{"handle":null,"dns":{"defaultInterface":"fixture","interfaces":{"fixture":["127.0.0.1"]}}},
-        "hostPolicyYaml":"{}","profileId":null,"revision":null,"resourceGeneration":null})
+        "hostPolicyYaml":"{}","profileId":null,"revision":null,"resourceGeneration":null,
+        "resourceReadRoot":roots.read.to_str().unwrap(),"cacheRoot":roots.cache.to_str().unwrap()})
 }
 fn network(cancel: &CancellationToken, calls: Arc<AtomicUsize>, dns: SocketAddr) -> NetworkContext {
     PhysicalResolver::from_servers(vec![dns], NetworkContext::protected(Arc::new(Protect(calls)), None, cancel.clone()), false).unwrap().network()
@@ -115,6 +120,7 @@ async fn real_tcp_http(peer: &tokio::net::UnixDatagram, target: SocketAddr) {
 #[tokio::test]
 async fn one_session_routes_actual_tun_tcp_udp_dns_and_socks_udp_then_joins_and_rebinds() {
     let _serial = LOCK.lock().await;
+    let roots = Roots::new();
     let fixtures = CancellationToken::new(); let (dns, dns_task, _) = dns_fixture(fixtures.clone()).await;
     let udp = UdpSocket::bind("127.0.0.1:0").await.unwrap(); let udp_address = udp.local_addr().unwrap();
     let udp_stop = fixtures.clone(); let udp_task = tokio::spawn(async move { let mut bytes = vec![0u8;65535]; loop { tokio::select! { biased;
@@ -128,7 +134,7 @@ async fn one_session_routes_actual_tun_tcp_udp_dns_and_socks_udp_then_joins_and_
         stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 15\r\nConnection: close\r\n\r\nmeow-tun-direct").await.unwrap();
         stream.shutdown().await.unwrap(); let mut rest = Vec::new(); stream.read_to_end(&mut rest).await.unwrap(); tcp
     });
-    let ports = ports().await; let json = plan(ports,dns,false).to_string(); let (caller,peer) = pair();
+    let ports = ports().await; let json = plan(ports,dns,false,&roots).to_string(); let (caller,peer) = pair();
     let cancel = CancellationToken::new(); let calls = Arc::new(AtomicUsize::new(0)); let context = network(&cancel,calls.clone(),dns);
     let session = Registry::start_owned(json.clone(),Some(caller.try_clone().unwrap().into()),context.clone(),None).unwrap();
     let ready = timeout(Duration::from_secs(5),session.ready()).await.unwrap().unwrap(); assert!(ready.tun_ready && ready.api_ready && ready.user_listeners_ready);
@@ -159,6 +165,7 @@ async fn one_session_routes_actual_tun_tcp_udp_dns_and_socks_udp_then_joins_and_
     let mut stopping = Box::pin(session.stop()); poll_fn(|cx| { assert!(stopping.as_mut().poll(cx).is_pending()); Poll::Ready(()) }).await; drop(stopping);
     assert_eq!(timeout(Duration::from_secs(5),session.stop()).await.unwrap().unwrap().phase,Phase::Stopped);
     assert_eq!(timeout(Duration::from_secs(5),exiting).await.unwrap().unwrap().unwrap().phase,Phase::Stopped);
+    assert!(owner.cleanup_confirmed());
     let listening = timeout(Duration::from_secs(5),target).await.unwrap().unwrap();
     assert_eq!(timeout(Duration::from_secs(5),socks.read(&mut bytes)).await.unwrap().unwrap(),0);
     assert!(UdpSocket::bind(relay).await.is_ok());
@@ -174,9 +181,10 @@ async fn one_session_routes_actual_tun_tcp_udp_dns_and_socks_udp_then_joins_and_
 #[tokio::test]
 async fn initially_parked_has_only_private_api_then_same_core_attaches_parks_and_resumes() {
     let _serial = LOCK.lock().await;
+    let roots = Roots::new();
     let fixtures = CancellationToken::new(); let (dns, task, _) = dns_fixture(fixtures.clone()).await;
     let ports = ports().await; let cancel = CancellationToken::new(); let calls = Arc::new(AtomicUsize::new(0));
-    let session = Registry::start_owned(plan(ports,dns,true).to_string(),None,network(&cancel,calls,dns),None).unwrap();
+    let session = Registry::start_owned(plan(ports,dns,true,&roots).to_string(),None,network(&cancel,calls,dns),None).unwrap();
     let ready = timeout(Duration::from_secs(5),session.ready()).await.unwrap().unwrap();
     assert_eq!(ready.runtime_mode,"tun"); assert!(ready.api_ready && !ready.tun_ready && !ready.user_listeners_ready);
     let owner = session.owned_runtime().unwrap(); assert!(owner.status().core_ready); assert!(!owner.listener_status().listening); assert!(owner.listener_status().active_ports.is_empty());
@@ -187,6 +195,8 @@ async fn initially_parked_has_only_private_api_then_same_core_attaches_parks_and
     assert!(active.tun_ready && active.user_listeners_ready && active.listening);
     assert!(TcpListener::bind(ports[1]).await.is_err()); assert!(UdpSocket::bind(ports[2]).await.is_err());
     assert!(owner.resume(None).await.is_err()); assert!(owner.status().core_ready);
+    assert!(owner.resume(Some(caller.try_clone().unwrap().into())).await.is_err());
+    assert!(unsafe { libc::fcntl(caller.as_raw_fd(),libc::F_GETFD) } >= 0);
     let parked = timeout(Duration::from_secs(5),owner.park()).await.unwrap().unwrap();
     assert!(!parked.listening && !parked.tun_ready && parked.active_ports.is_empty());
     assert_eq!(before,http_json(&http(ports[0],"/aerove/route").await)); assert!(owner.status().core_ready);
@@ -201,13 +211,16 @@ async fn initially_parked_has_only_private_api_then_same_core_attaches_parks_and
 #[tokio::test]
 async fn conflicting_bind_fails_before_tun_and_cleans_partial_listener_admission() {
     let _serial = LOCK.lock().await;
+    let roots = Roots::new();
     let fixtures = CancellationToken::new(); let (dns, task, _) = dns_fixture(fixtures.clone()).await;
     let ports = ports().await; let occupied = TcpListener::bind(ports[1]).await.unwrap(); let (caller,peer) = pair();
     let cancel = CancellationToken::new(); let calls = Arc::new(AtomicUsize::new(0));
-    let session = Registry::start_owned(plan(ports,dns,false).to_string(),Some(caller.try_clone().unwrap().into()),network(&cancel,calls.clone(),dns),None).unwrap();
+    let session = Registry::start_owned(plan(ports,dns,false,&roots).to_string(),Some(caller.try_clone().unwrap().into()),network(&cancel,calls.clone(),dns),None).unwrap();
     assert!(timeout(Duration::from_secs(5),session.ready()).await.unwrap().is_err());
     assert_eq!(session.snapshot().phase,Phase::Failed); assert!(!session.owned_runtime().unwrap().status().tun_ready);
     session.stop().await.unwrap(); assert_eq!(calls.load(Ordering::Relaxed),0);
+    assert!(session.owned_runtime().unwrap().cleanup_confirmed());
+    assert_eq!(session.snapshot().phase,Phase::Failed);
     assert!(TcpListener::bind(ports[0]).await.is_ok()); assert!(UdpSocket::bind(ports[2]).await.is_ok());
     caller.send(b"fd-after-failure").unwrap(); let mut bytes = [0;32]; assert_eq!(peer.recv(&mut bytes).await.unwrap(),16);
     assert!(unsafe { libc::fcntl(caller.as_raw_fd(),libc::F_GETFD) }>=0);
@@ -217,11 +230,12 @@ async fn conflicting_bind_fails_before_tun_and_cleans_partial_listener_admission
 #[tokio::test]
 async fn stop_during_actual_bootstrap_query_joins_load_without_late_ready_or_fd_loss() {
     let _serial = LOCK.lock().await;
+    let roots = Roots::new();
     let upstream = UdpSocket::bind("127.0.0.1:0").await.unwrap(); let address = upstream.local_addr().unwrap();
     let (hit, waiting) = oneshot::channel();
     let fixture = tokio::spawn(async move { let mut bytes = [0u8;4096]; let (n,peer) = upstream.recv_from(&mut bytes).await.unwrap();
         hit.send(()).unwrap(); (upstream,peer,answer(&bytes[..n])) });
-    let ports = ports().await; let mut value = plan(ports,address,false);
+    let ports = ports().await; let mut value = plan(ports,address,false,&roots);
     value["engineYaml"] = format!("strict: true\nrules: ['MATCH,DIRECT']\ntun: {{enable: false, auto-route: false}}\ndns:\n  enable: true\n  use-system-hosts: false\n  nameserver: ['udp://pending-owned.invalid:53']\n  default-nameserver: ['{address}']\n").into();
     let (caller,peer) = pair(); let cancel = CancellationToken::new(); let calls = Arc::new(AtomicUsize::new(0));
     let context = network(&cancel,calls.clone(),address);

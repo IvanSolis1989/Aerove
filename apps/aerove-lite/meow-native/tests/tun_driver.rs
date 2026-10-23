@@ -49,7 +49,9 @@ fn pair() -> (UnixDatagram, tokio::net::UnixDatagram) {
     (caller, tokio::net::UnixDatagram::from_std(peer).unwrap())
 }
 fn context(cancel: &CancellationToken, deny: bool, calls: Arc<AtomicUsize>) -> NetworkContext {
-    NetworkContext::protected(Arc::new(Protector { calls, deny }), None, cancel.clone())
+    let cache = std::env::temp_dir().canonicalize().unwrap();
+    let roots = aerove_meow_core::resource_roots::ResourceRoots::validate(None, Some(cache.to_str().unwrap())).unwrap();
+    NetworkContext::protected(Arc::new(Protector { calls, deny }), None, cancel.clone()).with_resource_roots(Arc::new(roots))
 }
 async fn handler(plan: Arc<RuntimePlan>, scope: Arc<meow_config::owned_load::OwnedLoadScope>, observed: mpsc::Sender<Observed>) -> io::Result<Arc<dyn PacketHandler>> {
     let config = meow_config::load_config_from_str_owned(&plan.engine_yaml, &scope).await.map_err(|_| io::Error::other("config failed"))?;

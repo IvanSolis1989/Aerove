@@ -99,7 +99,7 @@ pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_startOwned<'loca
         let lookup = if owner.is_null() { None } else { Some(Arc::new(JavaOwner { vm: env.get_java_vm()?, callback: env.new_global_ref(owner)?, cancel }) as Arc<dyn FlowOwnerLookup>) };
         let fd = duplicate_fd(fd)?;
         let runtime = executor()?;
-        let session = { let _entered = runtime.enter(); Registry::start_owned(json, fd, network, lookup).map_err(|error| BridgeError(error.code.into()))? };
+        let session = { let _entered = runtime.enter(); Registry::start_owned(json, fd, network, lookup).map_err(|error| BridgeError(match error.field { Some(field) => format!("{}:{field}", error.code), None => error.code.into() }))? };
         let handle = match i64::try_from(session.generation()) { Ok(handle) => handle, Err(_) => {
             let _ = runtime.block_on(session.stop()); return Err(BridgeError("JNI handle exhausted".into()));
         } };
@@ -153,8 +153,10 @@ pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_awaitReady<'loca
 pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_stop<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, handle: i64) {
     env.with_env(|_| -> Result<(), BridgeError> {
         let session = session(handle)?;
-        let status = executor()?.block_on(session.stop()).map_err(|error| failure(&session, error.code))?;
-        if status.phase == Phase::Failed { return Err(failure(&session, "ownedRuntimeFailed")); }
+        executor()?.block_on(session.stop()).map_err(|error| failure(&session, error.code))?;
+        if session.owned_runtime().is_some_and(|owner| !owner.cleanup_confirmed()) {
+            return Err(failure(&session, "runtimeCleanupUnconfirmed"));
+        }
         Ok(())
     }).resolve::<ThrowRuntimeExAndDefault>()
 }
@@ -165,5 +167,28 @@ pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_awaitExit<'local
         let session = session(handle)?;
         executor()?.block_on(session.exited()).map_err(|error| failure(&session, error.code))?;
         Ok(())
+    }).resolve::<ThrowRuntimeExAndDefault>()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_listenerCommand<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, handle: i64,
+    action: JString<'local>, fd: i32) -> JString<'local> {
+    env.with_env(|env| -> Result<JString<'local>, BridgeError> {
+        let session = session(handle)?;
+        if session.snapshot().phase != Phase::Running { return Err(failure(&session, "runtimeNotReady")); }
+        let owner = session.owned_runtime().ok_or_else(|| BridgeError("runtimeNotReady".into()))?;
+        let action = action.try_to_string(env)?;
+        let mode = owner.status().runtime_mode;
+        let runtime = executor()?;
+        let status = match (action.as_str(), mode, fd) {
+            ("park", _, -1) => runtime.block_on(owner.park())?,
+            ("resumeProxy", "proxy", -1) => runtime.block_on(owner.resume(None))?,
+            ("attachTun", "tun", fd) if fd >= 0 => {
+                let owned = duplicate_fd(fd)?.ok_or_else(|| BridgeError("attachedTunFdRequired".into()))?;
+                runtime.block_on(owner.resume(Some(owned)))?
+            },
+            _ => return Err(BridgeError("invalidListenerCommandFdMode".into())),
+        };
+        Ok(env.new_string(serde_json::to_string(&status).map_err(|_| BridgeError("listener status encoding failed".into()))?)?)
     }).resolve::<ThrowRuntimeExAndDefault>()
 }

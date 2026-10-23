@@ -20,6 +20,10 @@ pub struct RuntimePlan {
     pub profile_id: Option<String>,
     pub revision: Option<String>,
     pub resource_generation: Option<String>,
+    #[serde(default)]
+    pub resource_read_root: Option<String>,
+    #[serde(default)]
+    pub cache_root: Option<String>,
 }
 
 #[derive(Deserialize)]

@@ -32,8 +32,9 @@ def load_policy(root, *, check_resolution_seed=True):
         raise ValueError('Invalid representative test targets')
     if digest((Path(root)/'Cargo.toml').read_bytes())!=policy['manifestSha256']:
         raise ValueError('Cargo manifest does not match approved build policy')
-    if check_resolution_seed and policy['resolveLock'] and digest((Path(root)/'Cargo.lock').read_bytes())!=policy['expectedLockBeforeSha256']:
-        raise ValueError('Explicit lock resolution requires the approved previous lock')
+    if check_resolution_seed and digest((Path(root)/'Cargo.lock').read_bytes())!=policy['expectedLockBeforeSha256']:
+        if policy['resolveLock']:raise ValueError('Explicit lock resolution requires the approved previous lock')
+        raise ValueError('Locked build requires the approved accepted lock')
     metadata=owned_file(root,policy['overlay']).read_bytes()
     if digest(metadata)!=policy['overlaySha256']:raise ValueError('Overlay metadata identity mismatch')
     overlay=json.loads(metadata)

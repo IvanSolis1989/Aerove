@@ -1,14 +1,22 @@
-pub use meow_config::owned_load::{LoadContext, OwnedLoadScope, OwnedWork};
+pub use meow_config::owned_load::{LoadContext, OwnedLoadScope, OwnedWork, ProviderRoots};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 pub async fn load(
     yaml: &str, scope: &Arc<OwnedLoadScope>, cancel: &CancellationToken,
 ) -> Result<meow_config::Config, String> {
+    load_with_cache(yaml, scope, cancel, None).await
+}
+
+/// The caller must supply a trusted app-private root captured by this Session.
+pub async fn load_with_cache(
+    yaml: &str, scope: &Arc<OwnedLoadScope>, cancel: &CancellationToken,
+    cache_dir: Option<&std::path::Path>,
+) -> Result<meow_config::Config, String> {
     let result = tokio::select! {
         biased;
         _ = cancel.cancelled() => Err("configLoadCancelled".to_owned()),
-        result = meow_config::load_config_from_str_owned(yaml, scope) => result.map_err(|error| error.to_string()),
+        result = meow_config::load_config_from_str_owned_with_cache(yaml, scope, cache_dir) => result.map_err(|error| error.to_string()),
     };
     if result.is_err() {
         scope.cancel();
@@ -33,7 +41,7 @@ pub struct ProviderLoaded {
 #[derive(Default)]
 struct SourceReceipt { revision: u64, changed: bool }
 pub(crate) struct PlaneState {
-    pub revision: u64, pub closed: bool,
+    pub core_epoch: u64, pub revision: u64, pub closed: bool,
     active: bool,
     live: BTreeMap<ProviderKey, u64>,
     admitted: BTreeMap<ProviderKey, u64>,
@@ -45,7 +53,6 @@ pub(crate) struct PlaneState {
 }
 pub struct ControlPlane {
     pub(crate) gate: Mutex<PlaneState>,
-    pub epoch: u64,
     pub(crate) cancel: CancellationToken,
     this: Weak<ControlPlane>,
     changed: Notify,
@@ -56,9 +63,13 @@ impl ControlPlane {
         if epoch == 0 { return Err("invalidCoreEpoch"); }
         let (events, _) = broadcast::channel(1024);
         Ok(Arc::new_cyclic(|this| Self { gate: Mutex::new(PlaneState {
-            revision: 0, closed: false, active: false, live: BTreeMap::new(), admitted: BTreeMap::new(),
+            core_epoch: epoch, revision: 0, closed: false, active: false, live: BTreeMap::new(), admitted: BTreeMap::new(),
             sources: BTreeMap::new(), busy: BTreeSet::new(), emitting: BTreeSet::new(), pending: BTreeMap::new(), sequence: 0,
-        }), epoch, cancel, this: this.clone(), changed: Notify::new(), events }))
+        }), cancel, this: this.clone(), changed: Notify::new(), events }))
+    }
+    pub fn stamp(&self) -> (u64, u64) {
+        let gate = self.gate.lock();
+        (gate.core_epoch, gate.revision)
     }
     pub fn cancel(&self) {
         self.gate.lock().closed = true;
@@ -177,14 +188,14 @@ impl ProviderObserver for ControlPlane {
         }
         Ok(())
     }
-    fn begin(&self, identity: &ProviderIdentity) -> Result<Box<dyn ProviderLease>, String> {
+    fn begin(&self, identity: &ProviderIdentity) -> Result<Arc<dyn ProviderLease>, String> {
         let mut gate = self.gate.lock();
         if gate.closed || self.cancel.is_cancelled() { return Err("cancelled".into()); }
         let key = (identity.kind, identity.name.clone());
         if gate.active && gate.live.get(&key) != Some(&identity.source) { return Err("staleProviderSource".into()); }
         if !gate.busy.insert(identity.source) { return Err("providerBusy".into()); }
         gate.sources.entry(identity.source).or_default();
-        Ok(Box::new(ActiveLease { plane: self.this.upgrade().ok_or("controlPlaneRetired")?, identity: identity.clone() }))
+        Ok(Arc::new(ActiveLease { plane: self.this.upgrade().ok_or("controlPlaneRetired")?, identity: identity.clone() }))
     }
 }
 impl ProviderLease for ActiveLease {
@@ -195,11 +206,11 @@ impl ProviderLease for ActiveLease {
         if gate.active && gate.live.get(&key) != Some(&self.identity.source) { return Err("staleProviderSource".into()); }
         let previous = gate.sources.get(&self.identity.source).ok_or("providerNotRegistered")?.revision;
         let next = previous.checked_add(1).ok_or("providerRevisionExhausted")?;
-        let route_next = if changed { gate.revision.checked_add(1).ok_or("routeRevisionExhausted")? } else { gate.revision };
+        let epoch_next = if changed { next_core_epoch(gate.core_epoch)? } else { gate.core_epoch };
         let sequence = gate.sequence.checked_add(1).ok_or("providerSequenceExhausted")?;
         install();
         gate.sources.insert(self.identity.source, SourceReceipt { revision: next, changed });
-        gate.revision = route_next;
+        gate.core_epoch = epoch_next;
         gate.sequence = sequence;
         if gate.active {
             gate.pending.insert(key, (sequence, ProviderLoaded { kind: self.identity.kind, name: self.identity.name.clone(),
@@ -213,4 +224,19 @@ impl ProviderLease for ActiveLease {
 fn kotlin_whitespace(value: char) -> bool {
     matches!(value, '\u{0009}'..='\u{000d}' | '\u{001c}'..='\u{0020}' | '\u{00a0}' | '\u{1680}' |
         '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}')
+}
+
+fn next_core_epoch(previous: u64) -> Result<u64, String> {
+    use std::sync::atomic::Ordering;
+    let minimum = previous.checked_add(1).ok_or("coreEpochExhausted")?;
+    let counter = crate::runtime::identity_counter();
+    let mut current = counter.load(Ordering::Relaxed);
+    loop {
+        let epoch = current.max(minimum);
+        let next = epoch.checked_add(1).ok_or("coreEpochExhausted")?;
+        match counter.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return Ok(epoch),
+            Err(observed) => current = observed,
+        }
+    }
 }

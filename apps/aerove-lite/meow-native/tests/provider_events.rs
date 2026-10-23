@@ -187,6 +187,7 @@ async fn real_timer_receipts_join_stalled_fetch_before_successor() {
     let server = tokio::spawn(async move { serving.serve_private(listener, stopping).await });
     let initial = tokio::time::timeout(Duration::from_secs(5), events.recv()).await.unwrap().unwrap();
     assert_eq!(initial.revision, "1"); assert_eq!(initial.phase, "initial");
+    let stamp_before = plane.stamp();
     let route_before = request(api_address, "GET", "/aerove/route", PRIVATE, "").await;
     tokio::time::timeout(Duration::from_secs(5), timer_started.notified()).await.unwrap();
     for path in ["/providers/proxies", "/providers/proxies/feed"] {
@@ -198,8 +199,11 @@ async fn real_timer_receipts_join_stalled_fetch_before_successor() {
     assert_eq!(unchanged.revision, "2"); assert_eq!(unchanged.phase, "update"); assert!(!unchanged.changed);
     let route_after = request(api_address, "GET", "/aerove/route", PRIVATE, "").await;
     assert_eq!(body(&route_before)["picks-version"], body(&route_after)["picks-version"]);
+    assert_eq!(plane.stamp(), stamp_before, "unchanged success changed the published route stamp");
     let changed = tokio::time::timeout(Duration::from_secs(5), events.recv()).await.unwrap().unwrap();
     assert_eq!(changed.revision, "3"); assert!(changed.changed);
+    let structural_stamp = plane.stamp();
+    assert!(structural_stamp.0 > stamp_before.0); assert_eq!(structural_stamp.1, stamp_before.1);
     let receipt = request(api_address, "GET", "/providers/proxies/feed", PRIVATE, "").await;
     assert_eq!(body(&receipt)["revision"], "3");
     assert_eq!(body(&receipt)["proxies"][0]["name"], "d2");
@@ -280,4 +284,23 @@ async fn cancelled_plane_rejects_initial_factory_before_http() {
     assert!(tokio::time::timeout(Duration::from_millis(100), origin.accept()).await.is_err(), "closed factory admission opened a socket");
     assert!(plane.provider_baseline().is_empty());
     scope.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn structural_epoch_exhaustion_rejects_real_initial_install_without_wrap() {
+    let origin = TcpListener::bind("127.0.0.1:0").await.unwrap(); let address = origin.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = origin.accept().await.unwrap();
+        let mut headers = Vec::new();
+        while !headers.ends_with(b"\r\n\r\n") { headers.push(stream.read_u8().await.unwrap()); assert!(headers.len() < 8192); }
+        let payload = "proxies:\n - {name: d1, type: direct}\n";
+        stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}", payload.len()).as_bytes()).await.unwrap();
+    });
+    let plane = ControlPlane::new(u64::MAX, CancellationToken::new()).unwrap();
+    let scope = OwnedLoadScope::with_context(Arc::new(Context(plane.clone())));
+    let yaml = format!("strict: true\nproxy-providers:\n  feed:\n    type: http\n    url: http://{address}/feed\n    interval: 0\nrules: ['MATCH,DIRECT']\n");
+    let result = meow_config::load_config_from_str_owned(&yaml, &scope).await;
+    assert!(result.is_err()); assert!(result.err().unwrap().to_string().contains("coreEpochExhausted"));
+    server.await.unwrap(); scope.close().await.unwrap();
+    assert_eq!(plane.stamp(), (u64::MAX, 0)); assert!(plane.provider_baseline().is_empty());
 }

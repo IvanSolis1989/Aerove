@@ -5,7 +5,7 @@ use meow_config::{ListenerSpec, NamedListener, owned_load::OwnedLoadScope};
 use meow_tunnel::Tunnel;
 use parking_lot::Mutex;
 use serde::Serialize;
-use std::{io, net::SocketAddr, os::fd::{AsFd, AsRawFd, OwnedFd}, panic::AssertUnwindSafe, sync::{Arc, atomic::{AtomicU64, Ordering}}, time::Duration};
+use std::{io, net::SocketAddr, os::fd::{AsFd, AsRawFd, OwnedFd}, panic::AssertUnwindSafe, sync::{Arc, atomic::{AtomicBool, AtomicU64, Ordering}}, time::Duration};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream, UdpSocket}, sync::{mpsc, oneshot, watch}, task::{JoinHandle, JoinSet}};
 use tokio_util::sync::CancellationToken;
 use crate::flow_owner::FlowOwnerLookup;
@@ -27,12 +27,29 @@ pub struct ListenerStatus {
 pub(crate) type RegisterControl = Arc<dyn Fn(Arc<RouteControl>, Tunnel) -> bool + Send + Sync>;
 enum Command { Park(oneshot::Sender<io::Result<()>>), Resume(Option<OwnedFd>, oneshot::Sender<io::Result<()>>) }
 
+#[derive(Default)]
+struct CleanupState { confirmed: AtomicBool, uncertain: AtomicBool }
+impl CleanupState {
+    async fn park(&self, active: &mut ActiveListeners) -> io::Result<()> {
+        self.uncertain.store(true, Ordering::Release);
+        active.close().await?;
+        self.uncertain.store(false, Ordering::Release);
+        Ok(())
+    }
+    fn complete(&self, loaded: bool, closed: bool) -> bool {
+        let confirmed = loaded && closed && !self.uncertain.load(Ordering::Acquire);
+        self.confirmed.store(confirmed, Ordering::Release);
+        confirmed
+    }
+}
+
 pub struct OwnedRuntime {
     plane: Arc<crate::providers::ControlPlane>,
     cancel: CancellationToken, scope: Mutex<Option<Arc<OwnedLoadScope>>>, network: Mutex<Option<NetworkContext>>,
     status: watch::Sender<OwnedStatus>, listeners: Mutex<ListenerStatus>, commands: mpsc::Sender<Command>,
     task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
     listener_intents: AtomicU64,
+    cleanup: CleanupState,
 }
 fn error(message: &'static str) -> io::Error { io::Error::other(message) }
 
@@ -58,7 +75,7 @@ impl OwnedRuntime {
             status, commands, listeners: Mutex::new(ListenerStatus { listening: false, tun_ready: false,
                 user_listeners_ready: false, active_ports: Vec::new(), core_epoch: generation.to_string(),
                 only_statistics_proxy: false, unified_delay: true, tcp_concurrent: true, find_process_mode: find_mode }),
-            task: tokio::sync::Mutex::new(None), listener_intents: AtomicU64::new(0) });
+            task: tokio::sync::Mutex::new(None), listener_intents: AtomicU64::new(0), cleanup: CleanupState::default() });
         let worker = owner.clone();
         let task = runtime.spawn(async move {
             let mut core = None;
@@ -71,7 +88,9 @@ impl OwnedRuntime {
             network.cancel();
             let old_scope = worker.scope.lock().take(); drop(old_scope);
             let old_network = worker.network.lock().take(); drop(old_network);
+            let cleanup_confirmed = worker.cleanup.complete(loaded.is_ok(), closed.is_ok());
             let failure = match (result, loaded, closed) {
+                (_, Ok(()), Ok(())) if !cleanup_confirmed => Some("runtimeCleanupFailed".to_owned()),
                 (_, _, Err(_)) => Some("runtimeCleanupFailed".to_owned()),
                 (_, Err(_), _) => Some("loadJoinFailed".to_owned()),
                 (Err(_), _, _) => Some("ownedRuntimePanicked".to_owned()),
@@ -89,8 +108,14 @@ impl OwnedRuntime {
         Ok(owner)
     }
 
+    pub fn cleanup_confirmed(&self) -> bool { self.cleanup.confirmed.load(Ordering::Acquire) }
     pub fn status(&self) -> OwnedStatus { self.status.borrow().clone() }
-    pub fn listener_status(&self) -> ListenerStatus { self.listeners.lock().clone() }
+    pub fn route_stamp(&self) -> (u64, u64) { self.plane.stamp() }
+    pub fn listener_status(&self) -> ListenerStatus {
+        let mut status = self.listeners.lock().clone();
+        status.core_epoch = self.route_stamp().0.to_string();
+        status
+    }
     pub fn subscribe(&self) -> watch::Receiver<OwnedStatus> { self.status.subscribe() }
     pub async fn ready(&self) -> io::Result<OwnedStatus> {
         let mut changed = self.subscribe();
@@ -196,13 +221,13 @@ impl OwnedRuntime {
             command = commands.recv() => match command {
                 Some(Command::Park(reply)) => {
                     let core = core_slot.as_mut().expect("installed core");
-                    if let Some(mut active) = core.active.take() { active.close().await?; }
+                    if let Some(mut active) = core.active.take() { self.cleanup.park(&mut active).await?; }
                     self.publish_inactive(); let _ = reply.send(Ok(()));
                 },
                 Some(Command::Resume(fd, reply)) => {
                     let core = core_slot.as_mut().expect("installed core");
-                    let result = if core.active.is_some() { Err(error("alreadyListening")) }
-                        else { self.activate(core, &json, &plan, fd, &network, &specs, &auth, lookup.clone()).await };
+                    if core.active.is_some() { let _ = reply.send(Err(error("alreadyListening"))); continue; }
+                    let result = self.activate(core, &json, &plan, fd, &network, &specs, &auth, lookup.clone()).await;
                     let failed = result.is_err(); let _ = reply.send(result);
                     if failed { return Err(error("listenerResumeFailed")); }
                 },
@@ -417,4 +442,41 @@ async fn serve_dns(tcp: TcpListener, udp: UdpSocket, tunnel: Tunnel, cancel: Can
         },
     } }
     tasks.abort_all(); while tasks.join_next().await.is_some() {}
+}
+
+#[cfg(test)]
+mod cleanup_ack_tests {
+    use super::*;
+    use std::os::{fd::{AsFd, AsRawFd}, unix::net::UnixDatagram};
+    fn active(driver: Option<Arc<TunDriver>>) -> ActiveListeners {
+        ActiveListeners { cancel: CancellationToken::new(), tasks: JoinSet::new(), driver,
+            ingress: meow_listener::owned_ingress::OwnedIngress::new() }
+    }
+    #[tokio::test]
+    async fn park_failed_driver_join_cannot_be_acknowledged_by_later_empty_cleanup() {
+        let (caller, _peer) = UnixDatagram::pair().unwrap(); caller.set_nonblocking(true).unwrap();
+        let json = serde_json::json!({"schemaVersion":1,"runtimeMode":"tun","initiallyParked":false,
+            "engineYaml":"{}","privateControl":{"address":"127.0.0.1:19090","secret":"cleanup-failure-regression-private-0001"},
+            "inbounds":{"configYaml":"mixed-port: 17890"},"tun":{"mtu":1500,"ipv6":false,
+                "inet4Address":"198.18.0.1/30","inet6Address":null,"dnsHijack":["any:53"],"autoRoute":false},
+            "physicalNetwork":{"handle":null,"dns":{"defaultInterface":null,"interfaces":{}}},
+            "hostPolicyYaml":"{}","profileId":null,"revision":null,"resourceGeneration":null});
+        let driver = TunDriver::start(&json.to_string(),caller.as_fd(),NetworkContext::platform(CancellationToken::new()),
+            CancellationToken::new(),|_,_| async { Err(error("fixture factory failed before netstack")) }).unwrap();
+        assert!(driver.await_ready().await.is_err());
+        let cleanup = CleanupState::default(); let mut listeners = Some(active(Some(driver)));
+        let mut taken = listeners.take().unwrap();
+        assert!(cleanup.park(&mut taken).await.is_err()); drop(taken);
+        assert!(listeners.is_none());
+        assert!(!cleanup.complete(true,true));
+        assert!(!cleanup.confirmed.load(Ordering::Acquire));
+        assert!(unsafe { libc::fcntl(caller.as_raw_fd(),libc::F_GETFD) } >= 0);
+    }
+    #[tokio::test]
+    async fn joined_cleanup_is_acknowledged_without_erasing_failed_business_status() {
+        let cleanup = CleanupState::default(); let mut listeners = active(None);
+        cleanup.park(&mut listeners).await.unwrap();
+        assert!(cleanup.complete(true,true));
+        assert!(cleanup.confirmed.load(Ordering::Acquire));
+    }
 }

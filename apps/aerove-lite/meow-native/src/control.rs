@@ -44,10 +44,10 @@ impl RouteControl {
         if gate.closed || self.plane.cancel.is_cancelled() { Err(ControlError::Cancelled) } else { Ok(()) }
     }
 
-    fn snapshot_locked(&self, revision: u64) -> RouteSnapshot {
+    fn snapshot_locked(&self, gate: &PlaneState) -> RouteSnapshot {
         let route = self.state.tunnel.route_snapshot();
         RouteSnapshot {
-            core_epoch: self.plane.epoch.to_string(), picks_version: revision.to_string(),
+            core_epoch: gate.core_epoch.to_string(), picks_version: gate.revision.to_string(),
             picks: route.proxies.iter().filter_map(|(name, proxy)| {
                 proxy.current().map(|selected| (name.to_string(), selected))
             }).collect(),
@@ -57,7 +57,7 @@ impl RouteControl {
     pub async fn snapshot(&self) -> Result<RouteSnapshot, ControlError> {
         let gate = self.plane.gate.lock();
         self.check_live(&gate)?;
-        Ok(self.snapshot_locked(gate.revision))
+        Ok(self.snapshot_locked(&gate))
     }
 
     pub async fn set_mode(&self, mode: TunnelMode) -> Result<RouteSnapshot, ControlError> {
@@ -69,7 +69,7 @@ impl RouteControl {
             self.state.raw_config.write().mode = Some(mode.to_string());
             gate.revision = next;
         }
-        Ok(self.snapshot_locked(gate.revision))
+        Ok(self.snapshot_locked(&gate))
     }
 
     fn validate_prepare_members(proxy: &Arc<dyn Proxy>, name: &str) -> Result<(), ControlError> {
@@ -104,7 +104,7 @@ impl RouteControl {
         let next = gate.revision.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
         selection.commit(name, health).map_err(|_| ControlError::InvalidSelection)?;
         gate.revision = next;
-        Ok(self.snapshot_locked(gate.revision))
+        Ok(self.snapshot_locked(&gate))
     }
 }
 

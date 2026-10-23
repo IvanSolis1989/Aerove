@@ -6,6 +6,7 @@ pub mod providers;
 #[cfg(unix)]
 pub mod packet_fd;
 pub mod runtime_plan;
+pub mod resource_roots;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 pub mod network_context;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]

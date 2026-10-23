@@ -4,7 +4,7 @@ use std::{future::Future, io, net::SocketAddr, os::fd::RawFd, sync::Arc};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
-pub struct NetworkContext { scope: NetworkScope, cancel: CancellationToken, network_handle: Option<u64>, physical_dns: Option<Vec<SocketAddr>>, plane: Option<Arc<crate::providers::ControlPlane>> }
+pub struct NetworkContext { scope: NetworkScope, cancel: CancellationToken, network_handle: Option<u64>, physical_dns: Option<Vec<SocketAddr>>, plane: Option<Arc<crate::providers::ControlPlane>>, resource_roots: Option<Arc<crate::resource_roots::ResourceRoots>> }
 
 struct FencedProtector { callback: Option<Arc<dyn SocketProtector>>, cancel: CancellationToken, network_handle: Option<u64> }
 impl SocketProtector for FencedProtector {
@@ -20,24 +20,27 @@ fn cancelled() -> io::Error { io::Error::new(io::ErrorKind::Interrupted, "captur
 
 impl NetworkContext {
     pub fn protected(callback: Arc<dyn SocketProtector>, resolver: Option<Arc<dyn HostResolver>>, cancel: CancellationToken) -> Self {
-        Self { scope: NetworkScope { protector: Some(Arc::new(FencedProtector { callback: Some(callback), cancel: cancel.clone(), network_handle: None })), resolver }, cancel, network_handle: None, physical_dns: None, plane: None }
+        Self { scope: NetworkScope { protector: Some(Arc::new(FencedProtector { callback: Some(callback), cancel: cancel.clone(), network_handle: None })), resolver }, cancel, network_handle: None, physical_dns: None, plane: None, resource_roots: None }
     }
     pub fn protected_on_network(callback: Arc<dyn SocketProtector>, resolver: Option<Arc<dyn HostResolver>>, network: u64, cancel: CancellationToken) -> io::Result<Self> {
         if network == 0 { return Err(io::Error::new(io::ErrorKind::InvalidInput, "network handle must be nonzero")); }
         #[cfg(not(target_os = "android"))]
         { let _ = (callback, resolver, cancel); return Err(io::Error::from(io::ErrorKind::Unsupported)); }
         #[cfg(target_os = "android")]
-        Ok(Self { scope: NetworkScope { protector: Some(Arc::new(FencedProtector { callback: Some(callback), cancel: cancel.clone(), network_handle: Some(network) })), resolver }, cancel, network_handle: Some(network), physical_dns: None, plane: None })
+        Ok(Self { scope: NetworkScope { protector: Some(Arc::new(FencedProtector { callback: Some(callback), cancel: cancel.clone(), network_handle: Some(network) })), resolver }, cancel, network_handle: Some(network), physical_dns: None, plane: None, resource_roots: None })
     }
     pub fn platform(cancel: CancellationToken) -> Self {
-        Self { scope: NetworkScope { protector: Some(Arc::new(FencedProtector { callback: None, cancel: cancel.clone(), network_handle: None })), resolver: None }, cancel, network_handle: None, physical_dns: None, plane: None }
+        Self { scope: NetworkScope { protector: Some(Arc::new(FencedProtector { callback: None, cancel: cancel.clone(), network_handle: None })), resolver: None }, cancel, network_handle: None, physical_dns: None, plane: None, resource_roots: None }
     }
     pub fn platform_on_network(network: u64, cancel: CancellationToken) -> io::Result<Self> {
         if network == 0 { return Err(io::Error::new(io::ErrorKind::InvalidInput, "network handle must be nonzero")); }
         #[cfg(not(target_os = "android"))]
         { let _ = cancel; Err(io::Error::from(io::ErrorKind::Unsupported)) }
         #[cfg(target_os = "android")]
-        { Ok(Self { scope: NetworkScope { protector: Some(Arc::new(FencedProtector { callback: None, cancel: cancel.clone(), network_handle: Some(network) })), resolver: None }, cancel, network_handle: Some(network), physical_dns: None, plane: None }) }
+        { Ok(Self { scope: NetworkScope { protector: Some(Arc::new(FencedProtector { callback: None, cancel: cancel.clone(), network_handle: Some(network) })), resolver: None }, cancel, network_handle: Some(network), physical_dns: None, plane: None, resource_roots: None }) }
+    }
+    pub fn with_resource_roots(&self, roots: Arc<crate::resource_roots::ResourceRoots>) -> Self {
+        Self { resource_roots: Some(roots), ..self.clone() }
     }
     pub fn with_control_plane(&self, plane: Arc<crate::providers::ControlPlane>) -> Self {
         Self { plane: Some(plane), ..self.clone() }
@@ -48,14 +51,14 @@ impl NetworkContext {
     pub fn network_handle(&self) -> Option<u64> { self.network_handle }
     pub fn with_resolver(&self, resolver: Arc<dyn HostResolver>) -> Self {
         Self { scope: NetworkScope { protector: self.scope.protector.clone(), resolver: Some(resolver) },
-            cancel: self.cancel.clone(), network_handle: self.network_handle, physical_dns: self.physical_dns.clone(), plane: self.plane.clone() }
+            cancel: self.cancel.clone(), network_handle: self.network_handle, physical_dns: self.physical_dns.clone(), plane: self.plane.clone(), resource_roots: self.resource_roots.clone() }
     }
     pub fn child(&self) -> Self {
         let cancel = self.cancel.child_token();
         let protector = self.scope.protector.as_ref().map(|callback| Arc::new(FencedProtector {
             callback: Some(callback.clone()), cancel: cancel.clone(), network_handle: None,
         }) as Arc<dyn SocketProtector>);
-        Self { scope: NetworkScope { protector, resolver: self.scope.resolver.clone() }, cancel, network_handle: self.network_handle, physical_dns: self.physical_dns.clone(), plane: self.plane.clone() }
+        Self { scope: NetworkScope { protector, resolver: self.scope.resolver.clone() }, cancel, network_handle: self.network_handle, physical_dns: self.physical_dns.clone(), plane: self.plane.clone(), resource_roots: self.resource_roots.clone() }
     }
     pub async fn scope<F: Future>(&self, work: F) -> F::Output { self.scope.scope(work).await }
     pub fn cancelled(&self) -> bool { self.cancel.is_cancelled() }
@@ -65,6 +68,11 @@ impl NetworkContext {
 }
 
 impl LoadContext for NetworkContext {
+    fn requires_provider_roots(&self) -> bool { true }
+    fn provider_roots(&self) -> Option<meow_config::owned_load::ProviderRoots> {
+        if self.cancelled() { return None; }
+        self.resource_roots.as_ref().and_then(|roots| roots.provider_roots().ok())
+    }
     fn provider_observer(&self) -> Option<Arc<dyn meow_config::provider_events::ProviderObserver>> {
         self.plane.clone().map(|plane| plane as Arc<dyn meow_config::provider_events::ProviderObserver>)
     }

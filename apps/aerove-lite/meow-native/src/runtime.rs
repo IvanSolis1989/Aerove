@@ -9,6 +9,7 @@ use tokio_util::sync::CancellationToken;
 const MAX_CONFIG_BYTES: usize = 4 * 1024 * 1024;
 const MAX_CONNECTIONS: usize = 256;
 static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
+pub(crate) fn identity_counter() -> &'static AtomicU64 { &NEXT_GENERATION }
 static OWNER: OnceLock<Mutex<Weak<Session>>> = OnceLock::new();
 
 pub struct StartOptions {
@@ -85,6 +86,9 @@ impl Registry {
             .and_then(|value| value.get("runtimeMode").and_then(|mode| mode.as_str()).map(str::to_owned));
         let plan = crate::runtime_plan::RuntimePlan::parse(&json, fd.as_ref().map_or(-1, AsRawFd::as_raw_fd),
             mode.as_deref() == Some("tun"), lookup.is_some()).map_err(|_| Failure::new("invalidOwnedPlan"))?;
+        let roots = crate::resource_roots::ResourceRoots::validate(plan.resource_read_root.as_deref(), plan.cache_root.as_deref())
+            .map_err(|error| Failure::field(&error.to_string()))?;
+        let network = network.with_resource_roots(Arc::new(roots));
         let mode = if plan.runtime_mode == crate::runtime_plan::RuntimeMode::Tun { "tun" } else { "proxy" };
         Self::launch(mode, Some(network.cancellation()), move |session| async move { session.run_owned(json, fd, network, lookup).await })
     }

@@ -176,6 +176,18 @@ class OverlayAndResolutionTests(unittest.TestCase):
             (root/'patches/chosen.patch').write_bytes(b'corrupted source patch')
             with self.assertRaisesRegex(ValueError,'patch identity'):build_policy.copy_policy_evidence(root,destination)
 
+    def test_locked_policy_requires_the_exact_accepted_lock_without_implicit_resolution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);self.overlay(root)
+            policy=json.loads((root/'build-policy.json').read_text());policy['resolveLock']=False
+            (root/'build-policy.json').write_bytes(json.dumps(policy).encode())
+            self.assertFalse(build_policy.load_policy(root)['resolveLock'])
+            (root/'Cargo.lock').write_bytes(b'another otherwise valid candidate lock')
+            with self.assertRaisesRegex(ValueError,'approved accepted lock'):build_policy.load_policy(root)
+            destination=root/'archive';destination.mkdir()
+            build_policy.copy_policy_evidence(root,destination)
+            self.assertTrue(json.loads((destination/'source-policy-evidence.json').read_text())['archiveOnly'])
+
     def test_two_stage_prepare_verifies_raw_and_adapted_cache_bytes(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);raw,spec,patch,changes,metadata,policy=self.overlay(root)
@@ -298,15 +310,16 @@ class AndroidRecipeTests(unittest.TestCase):
             with mock.patch.object(build.subprocess,'check_output',side_effect=[' LOAD 0 0 0 0 0 R E 0x4000\n','NEEDED libc.so',symbols.replace('DEFAULT 1','DEFAULT UND')]),self.assertRaisesRegex(ValueError,'JNI symbols'):build.verify_elf(path,62,'readelf',build.SCRIPT_JNI_SYMBOLS,diagnostics)
             self.assertIn('DEFAULT UND',diagnostics.read_text())
 
-    def test_complete_owned_runtime_requires_all_six_defined_runtime_and_four_script_jni_symbols(self):
+    def test_complete_owned_runtime_requires_all_seven_defined_runtime_and_four_script_jni_symbols(self):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'lib.so';header=bytearray(20);header[:6]=b'\x7fELF\x02\x01';header[16:18]=(3).to_bytes(2,'little');header[18:20]=(62).to_bytes(2,'little');path.write_bytes(header)
             required=build.SCRIPT_JNI_SYMBOLS+build.RUNTIME_JNI_SYMBOLS
-            self.assertEqual(10,len(set(required)))
+            self.assertEqual(11,len(set(required)))
             self.assertIn('Java_dev_aerove_lite_core_MeowNativeCore_awaitExit',required)
             symbols='\n'.join(' 1: 00000123 42 FUNC GLOBAL DEFAULT 1 '+name for name in required)
             with mock.patch.object(build.subprocess,'check_output',side_effect=[' LOAD 0 0 0 0 0 R E 0x4000\n','NEEDED libc.so',symbols]):build.verify_elf(path,62,'readelf',required)
-            missing=symbols.replace('DEFAULT 1 '+build.RUNTIME_JNI_SYMBOLS[-1],'DEFAULT UND '+build.RUNTIME_JNI_SYMBOLS[-1])
-            with mock.patch.object(build.subprocess,'check_output',side_effect=[' LOAD 0 0 0 0 0 R E 0x4000\n','NEEDED libc.so',missing]),self.assertRaisesRegex(ValueError,'awaitExit'):build.verify_elf(path,62,'readelf',required)
+            for name in build.RUNTIME_JNI_SYMBOLS[-2:]:
+                missing=symbols.replace('DEFAULT 1 '+name,'DEFAULT UND '+name)
+                with self.subTest(name=name),mock.patch.object(build.subprocess,'check_output',side_effect=[' LOAD 0 0 0 0 0 R E 0x4000\n','NEEDED libc.so',missing]),self.assertRaisesRegex(ValueError,name):build.verify_elf(path,62,'readelf',required)
 
 if __name__=='__main__':unittest.main()
