@@ -11,5 +11,5 @@
     "packet_fd"
   ],
   "overlay": "source-metadata/control-runtime.json",
-  "overlaySha256": "85f8226919cc6b6135c2550696cbb8da08cdc25abdfe8eda4b30f906f5bf22b2"
+  "overlaySha256": "d06cfa3d8d772be400b2c78f2f709b3e14cb2ee8f959cd167e1dcbc4749d34f0"
 }
