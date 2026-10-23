@@ -53,6 +53,7 @@ pub struct CoreApi {
     private_router: Router,
     user_router: Option<Router>,
     log_sink: Arc<LogSink>,
+    provider_tasks_started: std::sync::atomic::AtomicBool,
 }
 
 impl Drop for CoreApi {
@@ -76,6 +77,15 @@ impl CoreApi {
         config: &meow_config::Config, tunnel: Tunnel, actual_mixed: SocketAddr,
         private_secret: &str, user_secret: Option<&str>, aerove_router: Router,
         epoch: u64, cancel: CancellationToken,
+    ) -> Result<Self, ApiError> {
+        let plane = crate::providers::ControlPlane::new(epoch, cancel).map_err(ApiError)?;
+        Self::assemble_with_plane(config, tunnel, actual_mixed, private_secret, user_secret, aerove_router, plane)
+    }
+
+    pub fn assemble_with_plane(
+        config: &meow_config::Config, tunnel: Tunnel, actual_mixed: SocketAddr,
+        private_secret: &str, user_secret: Option<&str>, aerove_router: Router,
+        plane: Arc<crate::providers::ControlPlane>,
     ) -> Result<Self, ApiError> {
         if private_secret.len() < 32 || private_secret.len() > 512 || !private_secret.is_ascii()
             || private_secret.bytes().any(|c| c.is_ascii_control()) {
@@ -104,8 +114,7 @@ impl CoreApi {
             traffic_feed: Default::default(),
             dns_server: Arc::new(RwLock::new(None)),
         });
-        let control = crate::control::RouteControl::new(state.clone(), epoch, cancel)
-            .map_err(|_| ApiError("invalidCoreEpoch"))?;
+        let control = crate::control::RouteControl::with_plane(state.clone(), plane.clone());
         let aerove_router = aerove_router.merge(crate::control::router(control.clone()));
         let authorization = HeaderValue::from_str(&format!("Bearer {private_secret}"))
             .map_err(|_| ApiError("invalidPrivateSecret"))?;
@@ -115,7 +124,7 @@ impl CoreApi {
         let private_router = official.clone().merge(aerove_router)
             .layer(Extension(private_scope.clone()))
             .layer(middleware::from_fn_with_state(Boundary {
-                user: false, secret: Arc::from(private_secret), authorization: authorization.clone(),
+                user: false, secret: Arc::from(private_secret), authorization: authorization.clone(), control: control.clone(), state: state.clone(),
             }, boundary));
         let user_router = user_secret.map(|secret| {
             if secret.is_empty() || secret.encode_utf16().count() > 512 {
@@ -123,7 +132,7 @@ impl CoreApi {
             }
             Ok(official.clone().layer(Extension(user_scope.clone()))
                 .layer(middleware::from_fn_with_state(Boundary {
-                    user: true, secret: Arc::from(secret), authorization: authorization.clone(),
+                    user: true, secret: Arc::from(secret), authorization: authorization.clone(), control: control.clone(), state: state.clone(),
                 }, boundary)))
         }).transpose()?;
         if !meow_api::log_stream::is_valid_log_level(&config.general.log_level) {
@@ -133,7 +142,43 @@ impl CoreApi {
             layer: meow_api::log_stream::LogBroadcastLayer { tx: state.log_tx.clone() },
             minimum: meow_api::log_stream::parse_log_level(&config.general.log_level),
         });
-        Ok(Self { state, control, private_scope, user_scope, private_router, user_router, log_sink })
+        private_scope.spawn(async move { plane.run_events().await; });
+        Ok(Self { state, control, private_scope, user_scope, private_router, user_router, log_sink, provider_tasks_started: std::sync::atomic::AtomicBool::new(false) })
+    }
+
+    pub fn activate_providers(&self) -> Result<(), ApiError> {
+        let providers = self.state.proxy_providers.iter()
+            .map(|entry| entry.value().clone()).collect::<Vec<_>>();
+        let mut owner = None;
+        for provider in &providers {
+            let scope = provider.owned_scope().ok_or(ApiError("providerOwnerMissing"))?;
+            if owner.as_ref().is_some_and(|prior| !Arc::ptr_eq(prior, &scope)) {
+                return Err(ApiError("providerOwnerMismatch"));
+            }
+            owner = Some(scope);
+        }
+        use std::sync::atomic::Ordering;
+        if self.provider_tasks_started.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
+            return Err(ApiError("providersAlreadyActivated"));
+        }
+        if self.control.plane.activate(&providers.iter().map(|provider| provider.provider_identity().clone()).collect::<Vec<_>>()).is_err() {
+            self.provider_tasks_started.store(false, Ordering::Release);
+            return Err(ApiError("providerActivationFailed"));
+        }
+        if let Some(owner) = owner {
+            let registry = self.state.proxy_providers.clone();
+            let supervisor = self.state.proxy_provider_refresh.clone();
+            let raws = self.state.raw_config.read().proxy_providers.clone();
+            // The API owner leases registration; each resulting task is registered
+            // in the same Session load scope and wraps its captured network context.
+            self.private_scope.spawn(async move {
+                owner.run(async move {
+                    meow_config::proxy_provider::spawn_deferred_initial_fetches(&registry);
+                    supervisor.reconcile(&registry, raws.as_ref());
+                }).await;
+            });
+        }
+        Ok(())
     }
 
     pub fn private_router(&self) -> Router { self.private_router.clone() }
@@ -220,6 +265,8 @@ struct Boundary {
     user: bool,
     secret: Arc<str>,
     authorization: HeaderValue,
+    control: Arc<crate::control::RouteControl>,
+    state: Arc<AppState>,
 }
 
 async fn boundary(State(policy): State<Boundary>, mut request: Request, next: Next) -> Response {
@@ -248,7 +295,13 @@ async fn boundary(State(policy): State<Boundary>, mut request: Request, next: Ne
     if !authorized { return StatusCode::UNAUTHORIZED.into_response(); }
     // Authentication has completed at the outer boundary; only this internal hop uses its token.
     request.headers_mut().insert(header::AUTHORIZATION, policy.authorization);
-    let mut response = next.run(request).await;
+    let origin = request.headers().contains_key(header::ORIGIN);
+    let mut response = if public_control_route(request.method(), request.uri().path()) {
+        public_control(&policy, request).await
+    } else { next.run(request).await };
+    if policy.user && origin {
+        response.headers_mut().insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+    }
     if !policy.user {
         for key in ["access-control-allow-origin", "access-control-allow-credentials",
             "access-control-allow-methods", "access-control-allow-headers"] {
@@ -293,6 +346,7 @@ fn user_preflight(request: &Request) -> Response {
 
 fn allowed(method: &Method, path: &str) -> bool {
     let segments: Vec<_> = path.split('/').skip(1).collect();
+    if public_control_route(method, path) { return true; }
     if method == Method::DELETE {
         return matches!(segments.as_slice(), ["connections"] | ["connections", _]);
     }
@@ -305,5 +359,74 @@ fn allowed(method: &Method, path: &str) -> bool {
         ["proxies", name] | ["group", name] | ["connections", name]
         | ["providers", "proxies", name] | ["providers", "rules", name] => !name.is_empty(),
         _ => false,
+    }
+}
+
+fn public_control_route(method: &Method, path: &str) -> bool {
+    let parts: Vec<_> = path.split('/').skip(1).collect();
+    match parts.as_slice() {
+        ["configs"] => method == Method::PATCH,
+        ["proxies", name] => method == Method::PUT && !name.is_empty(),
+        ["providers", "proxies"] => method == Method::GET,
+        ["providers", "proxies", name] => !name.is_empty() && (method == Method::GET || method == Method::PUT),
+        _ => false,
+    }
+}
+
+async fn public_control(policy: &Boundary, request: Request) -> Response {
+    use axum::{Json, extract::{FromRequestParts, Path}};
+    fn failure(code: &str) -> Response {
+        let status = match code {
+            "providerBusy" => StatusCode::CONFLICT,
+            "providerNotFound" => StatusCode::NOT_FOUND,
+            "cancelled" => StatusCode::GONE,
+            "staleProviderSource" => StatusCode::CONFLICT,
+            _ => StatusCode::SERVICE_UNAVAILABLE,
+        };
+        (status, Json(serde_json::json!({"error":code}))).into_response()
+    }
+    let method = request.method().clone();
+    let path = request.uri().path().to_owned();
+    let (mut parts, body) = request.into_parts();
+    let name = if path != "/configs" && path != "/providers/proxies" {
+        match Path::<String>::from_request_parts(&mut parts, &()).await {
+            Ok(Path(name)) => Some(name),
+            Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+        }
+    } else { None };
+    if path.starts_with("/providers/proxies") {
+        if method == Method::GET {
+            return match policy.control.plane.proxy_snapshot(&policy.state, name.as_deref()) {
+                Ok(value) => Json(value).into_response(), Err(code) => failure(code),
+            };
+        }
+        let Some(name) = name else { return StatusCode::NOT_FOUND.into_response(); };
+        let provider = match policy.state.proxy_providers.get(&name) {
+            Some(provider) => provider.value().clone(), None => return failure("providerNotFound"),
+        };
+        return match provider.refresh_owned().await {
+            Ok(()) => StatusCode::NO_CONTENT.into_response(), Err(code) => failure(&code),
+        };
+    }
+    let bytes = match axum::body::to_bytes(body, 4096).await {
+        Ok(bytes) => bytes, Err(_) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
+    };
+    if path == "/configs" {
+        #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+        struct Mode { mode: meow_common::TunnelMode }
+        let body: Mode = match serde_json::from_slice(&bytes) {
+            Ok(body) => body, Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+        };
+        return match policy.control.set_mode(body.mode).await {
+            Ok(_) => StatusCode::NO_CONTENT.into_response(), Err(error) => error.response(),
+        };
+    }
+    #[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]
+    struct Selection { name: String }
+    let body: Selection = match serde_json::from_slice(&bytes) {
+        Ok(body) => body, Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+    };
+    match policy.control.select(&name.expect("matched proxy name"), &body.name).await {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(), Err(error) => error.response(),
     }
 }

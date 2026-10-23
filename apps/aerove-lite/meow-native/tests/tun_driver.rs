@@ -37,7 +37,7 @@ impl PacketHandler for EchoPackets {
 
 fn plan() -> serde_json::Value {
     serde_json::json!({"schemaVersion":1,"runtimeMode":"tun","initiallyParked":false,
-        "engineYaml":"strict: true\nrules: ['MATCH,DIRECT']\n", "privateControl":{"address":"127.0.0.1:19090","secret":"candidate-tun-private-secret-0000000001"},
+        "engineYaml":"strict: true\nrules: ['MATCH,DIRECT']\ndns: {enable: true, use-system-hosts: false, nameserver: ['127.0.0.1:53']}\n", "privateControl":{"address":"127.0.0.1:19090","secret":"candidate-tun-private-secret-0000000001"},
         "inbounds":{"configYaml":"mixed-port: 17890\n"},
         "tun":{"mtu":9000,"ipv6":true,"inet4Address":"198.18.0.1/30","inet6Address":"fdfe:dcba:9876::1/126","dnsHijack":["any:53"],"autoRoute":false},
         "physicalNetwork":{"handle":null,"dns":{"defaultInterface":null,"interfaces":{}}},

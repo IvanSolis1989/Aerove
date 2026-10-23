@@ -125,19 +125,22 @@ jobs:
           evidence="$RUNNER_TEMP/meow-host-evidence"
           mkdir -p "$evidence"
           cp "$root/source.json" "$root/Cargo.toml" "$root/rust-toolchain.toml" "$evidence/"
-          for file in Cargo.lock build-policy.json source-metadata/api-lifecycle.json patches/api-lifecycle.patch build/host-receipt.json build/libclang-probe.json build/lock-before-resolution.lock build/metadata.stdout.json build/metadata.stderr.log .upstream/meow-rs/AEROVE_SOURCE_PROVENANCE.json; do
+          for file in Cargo.lock build-policy.json build/host-receipt.json build/libclang-probe.json build/lock-before-resolution.lock build/metadata.stdout.json build/metadata.stderr.log .upstream/meow-rs/AEROVE_SOURCE_PROVENANCE.json; do
             if [ -f "$root/$file" ]; then cp "$root/$file" "$evidence/"; fi
           done
           if [ -f "$RUNNER_TEMP/meow-host-command.log" ]; then cp "$RUNNER_TEMP/meow-host-command.log" "$evidence/"; fi
-          python3 - "$evidence" <<'PY'
+          python3 - "$root" "$evidence" <<'PY'
           import hashlib,json,sys
           from pathlib import Path
-          root=Path(sys.argv[1]); provenance=root/'AEROVE_SOURCE_PROVENANCE.json'
+          source_root=Path(sys.argv[1]);root=Path(sys.argv[2]);provenance=root/'AEROVE_SOURCE_PROVENANCE.json'
+          sys.path.insert(0,str(source_root))
+          from build_policy import copy_policy_evidence
+          copy_policy_evidence(source_root,root)
           if provenance.exists():
               source=json.loads((root/'source.json').read_text())
               source['archiveSha256']=json.loads(provenance.read_text())['archiveSha256']
               (root/'source.resolved.json').write_text(json.dumps(source,indent=2)+'\n')
-          rows=[dict(path=p.name,bytes=p.stat().st_size,sha256=hashlib.sha256(p.read_bytes()).hexdigest()) for p in sorted(root.iterdir()) if p.is_file()]
+          rows=[dict(path=p.relative_to(root).as_posix(),bytes=p.stat().st_size,sha256=hashlib.sha256(p.read_bytes()).hexdigest()) for p in sorted(root.rglob('*')) if p.is_file()]
           (root/'evidence-files.json').write_text(json.dumps(rows,indent=2)+'\n')
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

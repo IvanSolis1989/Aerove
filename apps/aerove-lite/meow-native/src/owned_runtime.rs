@@ -1,0 +1,420 @@
+use crate::{api::CoreApi, control::RouteControl, network_context::NetworkContext, runtime_plan::{RuntimeMode, RuntimePlan}, tun_driver::TunDriver, tunnel_packets::TunnelPackets};
+use axum::Router;
+use futures::FutureExt;
+use meow_config::{ListenerSpec, NamedListener, owned_load::OwnedLoadScope};
+use meow_tunnel::Tunnel;
+use parking_lot::Mutex;
+use serde::Serialize;
+use std::{io, net::SocketAddr, os::fd::{AsFd, AsRawFd, OwnedFd}, panic::AssertUnwindSafe, sync::{Arc, atomic::{AtomicU64, Ordering}}, time::Duration};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream, UdpSocket}, sync::{mpsc, oneshot, watch}, task::{JoinHandle, JoinSet}};
+use tokio_util::sync::CancellationToken;
+use crate::flow_owner::FlowOwnerLookup;
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OwnedStatus {
+    pub state: &'static str, pub error: Option<String>, pub api_address: Option<SocketAddr>,
+    pub runtime_mode: &'static str, pub tun_ready: bool, pub user_listeners_ready: bool,
+    pub listening: bool, pub core_ready: bool,
+}
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListenerStatus {
+    pub listening: bool, pub tun_ready: bool, pub user_listeners_ready: bool, pub active_ports: Vec<u16>,
+    pub core_epoch: String, pub only_statistics_proxy: bool, pub unified_delay: bool,
+    pub tcp_concurrent: bool, pub find_process_mode: &'static str,
+}
+pub(crate) type RegisterControl = Arc<dyn Fn(Arc<RouteControl>, Tunnel) -> bool + Send + Sync>;
+enum Command { Park(oneshot::Sender<io::Result<()>>), Resume(Option<OwnedFd>, oneshot::Sender<io::Result<()>>) }
+
+pub struct OwnedRuntime {
+    plane: Arc<crate::providers::ControlPlane>,
+    cancel: CancellationToken, scope: Mutex<Option<Arc<OwnedLoadScope>>>, network: Mutex<Option<NetworkContext>>,
+    status: watch::Sender<OwnedStatus>, listeners: Mutex<ListenerStatus>, commands: mpsc::Sender<Command>,
+    task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
+    listener_intents: AtomicU64,
+}
+fn error(message: &'static str) -> io::Error { io::Error::other(message) }
+
+impl OwnedRuntime {
+    pub(crate) fn start(json: String, fd: Option<OwnedFd>, network: NetworkContext, generation: u64,
+        cancel: CancellationToken, register: RegisterControl, lookup: Option<Arc<dyn FlowOwnerLookup>>) -> io::Result<Arc<Self>> {
+        let raw_fd = fd.as_ref().map_or(-1, AsRawFd::as_raw_fd);
+        let mode = serde_json::from_str::<serde_json::Value>(&json).ok().and_then(|v| v.get("runtimeMode").and_then(|v| v.as_str()).map(str::to_owned));
+        let plan = Arc::new(RuntimePlan::parse(&json, raw_fd, mode.as_deref() == Some("tun"), false)?);
+        let find_mode = process_mode(&plan)?;
+        if find_mode == "always" && (lookup.is_none() || plan.runtime_mode != RuntimeMode::Tun) { return Err(error("connectionOwnerRequired")); }
+        let lookup = if find_mode == "always" { lookup } else { None };
+        let runtime = tokio::runtime::Handle::try_current().map_err(|_| error("runtimeUnavailable"))?;
+        let plane = crate::providers::ControlPlane::new(generation, cancel.clone()).map_err(error)?;
+        if cancel.is_cancelled() { plane.cancel(); }
+        let network = network.with_control_plane(plane.clone());
+        let scope = OwnedLoadScope::with_context(Arc::new(network.clone()));
+        let (status, _) = watch::channel(OwnedStatus { state: "Starting", error: None, api_address: None,
+            runtime_mode: if plan.runtime_mode == RuntimeMode::Tun { "tun" } else { "proxy" },
+            tun_ready: false, user_listeners_ready: false, listening: false, core_ready: false });
+        let (commands, receiver) = mpsc::channel(8);
+        let owner = Arc::new(Self { plane, cancel: cancel.clone(), scope: Mutex::new(Some(scope.clone())), network: Mutex::new(Some(network.clone())),
+            status, commands, listeners: Mutex::new(ListenerStatus { listening: false, tun_ready: false,
+                user_listeners_ready: false, active_ports: Vec::new(), core_epoch: generation.to_string(),
+                only_statistics_proxy: false, unified_delay: true, tcp_concurrent: true, find_process_mode: find_mode }),
+            task: tokio::sync::Mutex::new(None), listener_intents: AtomicU64::new(0) });
+        let worker = owner.clone();
+        let task = runtime.spawn(async move {
+            let mut core = None;
+            let serving = Box::pin(worker.serve(json, plan, fd, network.clone(), scope.clone(), generation, register, receiver, &mut core, lookup));
+            let result = AssertUnwindSafe(serving).catch_unwind().await;
+            let stopping = cancel.is_cancelled();
+            worker.plane.cancel(); scope.cancel();
+            let closed = match core { Some(mut core) => core.close().await, None => Ok(()) };
+            let loaded = scope.close().await;
+            network.cancel();
+            let old_scope = worker.scope.lock().take(); drop(old_scope);
+            let old_network = worker.network.lock().take(); drop(old_network);
+            let failure = match (result, loaded, closed) {
+                (_, _, Err(_)) => Some("runtimeCleanupFailed".to_owned()),
+                (_, Err(_), _) => Some("loadJoinFailed".to_owned()),
+                (Err(_), _, _) => Some("ownedRuntimePanicked".to_owned()),
+                (Ok(Err(failure)), _, _) if !stopping => Some(failure.to_string()),
+                _ => None,
+            };
+            worker.status.send_modify(|status| {
+                status.state = if failure.is_some() { "Failed" } else { "Exited" }; status.error = failure.clone();
+                status.core_ready = false; status.listening = false; status.tun_ready = false;
+                status.user_listeners_ready = false; status.api_address = None;
+            });
+            worker.publish_inactive();
+        });
+        *owner.task.try_lock().expect("new owned runtime task") = Some(task);
+        Ok(owner)
+    }
+
+    pub fn status(&self) -> OwnedStatus { self.status.borrow().clone() }
+    pub fn listener_status(&self) -> ListenerStatus { self.listeners.lock().clone() }
+    pub fn subscribe(&self) -> watch::Receiver<OwnedStatus> { self.status.subscribe() }
+    pub async fn ready(&self) -> io::Result<OwnedStatus> {
+        let mut changed = self.subscribe();
+        loop {
+            let status = changed.borrow_and_update().clone();
+            match status.state { "Running" => return Ok(status), "Failed" | "Exited" => return Err(error("runtimeNotReady")), _ => {} }
+            changed.changed().await.map_err(|_| error("runtimeExited"))?;
+        }
+    }
+    pub(crate) fn cancel(&self) {
+        self.plane.cancel();
+        if let Some(scope) = self.scope.lock().as_ref() { scope.cancel(); }
+    }
+    pub(crate) async fn wait(&self) -> io::Result<OwnedStatus> {
+        let mut slot = self.task.lock().await;
+        if let Some(task) = slot.as_mut() {
+            let result = task.await; slot.take(); result.map_err(|_| error("runtimeOwnerPanicked"))?;
+        }
+        Ok(self.status())
+    }
+    pub async fn park(&self) -> io::Result<ListenerStatus> {
+        self.admit_listener_intent()?;
+        let (reply, receipt) = oneshot::channel();
+        tokio::select! { biased;
+            _ = self.cancel.cancelled() => return Err(error("runtimeExited")),
+            sent = self.commands.send(Command::Park(reply)) => sent.map_err(|_| error("runtimeExited"))?,
+        }
+        receipt.await.map_err(|_| error("runtimeExited"))??;
+        Ok(self.listener_status())
+    }
+    pub async fn resume(&self, fd: Option<OwnedFd>) -> io::Result<ListenerStatus> {
+        if (self.status().runtime_mode == "tun") != fd.is_some() { return Err(error("resumeFdModeMismatch")); }
+        self.admit_listener_intent()?;
+        let (reply, receipt) = oneshot::channel();
+        tokio::select! { biased;
+            _ = self.cancel.cancelled() => return Err(error("runtimeExited")),
+            sent = self.commands.send(Command::Resume(fd, reply)) => sent.map_err(|_| error("runtimeExited"))?,
+        }
+        receipt.await.map_err(|_| error("runtimeExited"))??;
+        Ok(self.listener_status())
+    }
+    fn admit_listener_intent(&self) -> io::Result<()> {
+        if self.cancel.is_cancelled() { return Err(error("runtimeExited")); }
+        self.listener_intents.fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| value.checked_add(1))
+            .map_err(|_| error("listenerIntentExhausted"))?;
+        Ok(())
+    }
+    fn publish_inactive(&self) {
+        let mut listeners = self.listeners.lock(); listeners.listening = false; listeners.tun_ready = false;
+        listeners.user_listeners_ready = false; listeners.active_ports.clear();
+        self.status.send_modify(|status| { status.listening = false; status.tun_ready = false; status.user_listeners_ready = false; });
+    }
+
+    async fn serve(&self, json: String, plan: Arc<RuntimePlan>, fd: Option<OwnedFd>, network: NetworkContext,
+        scope: Arc<OwnedLoadScope>, _generation: u64, register: RegisterControl,
+        mut commands: mpsc::Receiver<Command>, core_slot: &mut Option<RunningCore>, lookup: Option<Arc<dyn FlowOwnerLookup>>) -> io::Result<()> {
+        let engine = managed_yaml(&plan)?;
+        let config_work = Box::pin(meow_config::load_config_from_str_owned(&engine, &scope));
+        let loading = scope.run(network.scope(config_work));
+        let config = tokio::select! { biased;
+            _ = self.cancel.cancelled() => return Ok(()),
+            result = loading => result.map_err(|_| error("invalidConfig"))?,
+        };
+        if self.cancel.is_cancelled() { return Ok(()); }
+        let specs = config.listeners.named.clone();
+        for spec in &specs { if !matches!(spec.spec, ListenerSpec::Mixed | ListenerSpec::Http | ListenerSpec::Socks5) { return Err(error("managedListenerNotIntegrated")); } }
+        let mixed = specs.iter().find(|spec| matches!(spec.spec, ListenerSpec::Mixed)).ok_or_else(|| error("mixedListenerRequired"))?;
+        let mixed_address = listener_address(mixed)?;
+        let tunnel = Tunnel::new_with_slot(config.dns.resolver_slot.clone());
+        tunnel.set_dialer_registry(config.provider_dialer_registry.clone());
+        tunnel.set_mode(config.general.mode); tunnel.set_connection_notes(config.general.connection_notes);
+        let listener = TcpListener::bind(plan.private_control.address).await.map_err(|_| error("privateApiBindFailed"))?;
+        let address = listener.local_addr()?;
+        let api = Arc::new(CoreApi::assemble_with_plane(&config, tunnel.clone(), mixed_address,
+            &plan.private_control.secret, None, Router::new(), self.plane.clone()).map_err(|_| error("apiAssemblyFailed"))?);
+        if !register(api.control.clone(), tunnel.clone()) { api.cancel(); api.join().await; return Ok(()); }
+        let api_cancel = self.cancel.child_token();
+        let (fault, mut faults) = mpsc::channel(8);
+        *core_slot = Some(RunningCore { tunnel: tunnel.clone(), api: api.clone(), private_task: None,
+            private_cancel: api_cancel.clone(), active: None, fault: fault.clone(), dns_enabled: config.dns.enabled });
+        api.install_log_sink().map_err(|_| error("logSinkFailed"))?;
+        let auth = config.auth.clone();
+        tunnel.update_routing(config.proxies, config.rules, config.dialer_registry);
+        api.activate_providers().map_err(|_| error("providerActivationFailed"))?;
+        let serving = api.clone(); let stop = api_cancel.clone();
+        let private_fault = fault.clone();
+        let context = network.clone();
+        let private_task = tokio::spawn(async move {
+            let result = AssertUnwindSafe(context.scope(serve_private(listener, serving.private_router(), stop.clone()))).catch_unwind().await
+                .unwrap_or(Err(crate::api::ApiError("privateApiPanicked")));
+            if !stop.is_cancelled() { let _ = private_fault.try_send("privateApiOwnerExited"); }
+            result
+        });
+        core_slot.as_mut().expect("installed core").private_task = Some(private_task);
+        self.status.send_modify(|status| { status.api_address = Some(address); status.core_ready = true; });
+        if !plan.initially_parked && self.listener_intents.load(Ordering::Acquire) == 0 {
+            self.activate(core_slot.as_mut().expect("installed core"), &json, &plan, fd, &network, &specs, &auth, lookup.clone()).await?;
+        } else { drop(fd); }
+        self.status.send_modify(|status| { if !self.cancel.is_cancelled() { status.state = "Running"; } });
+        loop { tokio::select! { biased;
+            _ = self.cancel.cancelled() => return Ok(()),
+            fault = faults.recv() => return Err(error(fault.unwrap_or("listenerOwnerExited"))),
+            command = commands.recv() => match command {
+                Some(Command::Park(reply)) => {
+                    let core = core_slot.as_mut().expect("installed core");
+                    if let Some(mut active) = core.active.take() { active.close().await?; }
+                    self.publish_inactive(); let _ = reply.send(Ok(()));
+                },
+                Some(Command::Resume(fd, reply)) => {
+                    let core = core_slot.as_mut().expect("installed core");
+                    let result = if core.active.is_some() { Err(error("alreadyListening")) }
+                        else { self.activate(core, &json, &plan, fd, &network, &specs, &auth, lookup.clone()).await };
+                    let failed = result.is_err(); let _ = reply.send(result);
+                    if failed { return Err(error("listenerResumeFailed")); }
+                },
+                None => return Ok(()),
+            },
+        } }
+    }
+
+    async fn activate(&self, core: &mut RunningCore, json: &str, plan: &RuntimePlan, fd: Option<OwnedFd>,
+        network: &NetworkContext, specs: &[NamedListener], auth: &Arc<meow_common::AuthConfig>, lookup: Option<Arc<dyn FlowOwnerLookup>>) -> io::Result<()> {
+        let mut bound = Vec::new(); let mut ports = Vec::new();
+        for spec in specs { let socket = TcpListener::bind(listener_address(spec)?).await.map_err(|_| error("userListenerBindFailed"))?; ports.push(socket.local_addr()?.port()); bound.push((socket, spec.clone())); }
+        let dns_address = if core.dns_enabled { dns_listen(plan)? } else { None };
+        let dns = match dns_address {
+            Some(address) => { let tcp = TcpListener::bind(address).await.map_err(|_| error("dnsTcpBindFailed"))?;
+                let udp = UdpSocket::bind(tcp.local_addr()?).await.map_err(|_| error("dnsUdpBindFailed"))?; ports.push(tcp.local_addr()?.port()); Some((tcp, udp)) },
+            None => None,
+        };
+        let stop = self.cancel.child_token();
+        core.active = Some(ActiveListeners { cancel: stop.clone(), tasks: JoinSet::new(), driver: None, ingress: meow_listener::owned_ingress::OwnedIngress::new() });
+        let active = core.active.as_mut().expect("registered listeners");
+        if plan.runtime_mode == RuntimeMode::Tun {
+            let fd = fd.ok_or_else(|| error("attachedTunFdRequired"))?;
+            let mut value: serde_json::Value = serde_json::from_str(json).map_err(|_| error("invalidPlan"))?;
+            value["initiallyParked"] = false.into();
+            let tunnel = core.tunnel.clone();
+            let driver = TunDriver::start(&value.to_string(), fd.as_fd(), network.clone(), stop.clone(), move |_, _| async move {
+                TunnelPackets::with_owner(tunnel, Duration::from_secs(60), lookup).map(|handler| handler as Arc<dyn crate::tun_driver::PacketHandler>)
+            })?;
+            active.driver = Some(driver.clone());
+            driver.await_ready().await?;
+            let fault = core.fault.clone(); let cancel = stop.clone();
+            active.tasks.spawn(async move {
+                let result = driver.exited().await;
+                if !cancel.is_cancelled() || result.is_err() { let _ = fault.try_send("tunDriverExited"); }
+            });
+        } else if fd.is_some() { return Err(error("proxyFdForbidden")); }
+        for (socket, spec) in bound {
+            let tunnel = core.tunnel.clone(); let auth = auth.clone(); let context = network.clone(); let cancel = stop.clone(); let ingress = active.ingress.clone(); let fault = core.fault.clone();
+            active.tasks.spawn(async move {
+                let result = AssertUnwindSafe(ingress.scope(context.scope(serve_inbound(socket, spec, tunnel, auth, cancel.clone())))).catch_unwind().await;
+                if !cancel.is_cancelled() || result.is_err() { let _ = fault.try_send("userListenerOwnerExited"); }
+            });
+        }
+        if let Some((tcp, udp)) = dns {
+            let tunnel = core.tunnel.clone(); let cancel = stop.clone(); let context = network.clone(); let fault = core.fault.clone();
+            active.tasks.spawn(async move {
+                let result = AssertUnwindSafe(context.scope(serve_dns(tcp, udp, tunnel, cancel.clone()))).catch_unwind().await;
+                if !cancel.is_cancelled() || result.is_err() { let _ = fault.try_send("dnsListenerOwnerExited"); }
+            });
+        }
+        ports.sort_unstable(); ports.dedup();
+        if self.cancel.is_cancelled() { return Err(error("cancelled")); }
+        let tun = plan.runtime_mode == RuntimeMode::Tun;
+        { let mut listeners = self.listeners.lock(); listeners.listening = true; listeners.tun_ready = tun;
+            listeners.user_listeners_ready = true; listeners.active_ports = ports; }
+        self.status.send_modify(|status| { status.listening = true; status.tun_ready = tun; status.user_listeners_ready = true; });
+        Ok(())
+    }
+}
+
+struct RunningCore { tunnel: Tunnel, api: Arc<CoreApi>, private_task: Option<JoinHandle<Result<(), crate::api::ApiError>>>, private_cancel: CancellationToken, active: Option<ActiveListeners>, fault: mpsc::Sender<&'static str>, dns_enabled: bool }
+impl RunningCore {
+    async fn close(&mut self) -> io::Result<()> {
+        self.api.cancel(); self.private_cancel.cancel();
+        let active_result = match self.active.take() { Some(mut active) => active.close().await, None => Ok(()) };
+        self.tunnel.statistics().close_all_connections(); self.tunnel.close_all_udp_sessions();
+        let private_result = match self.private_task.as_mut() { Some(task) => task.await.map_err(|_| error("privateApiOwnerPanicked")).and_then(|result| result.map_err(|_| error("privateApiOwnerFailed"))), None => Ok(()) };
+        self.private_task.take();
+        self.api.join().await;
+        active_result.and(private_result)
+    }
+}
+struct ActiveListeners { cancel: CancellationToken, tasks: JoinSet<()>, driver: Option<Arc<TunDriver>>, ingress: Arc<meow_listener::owned_ingress::OwnedIngress> }
+impl ActiveListeners {
+    async fn close(&mut self) -> io::Result<()> {
+        self.cancel.cancel();
+        self.ingress.close().await;
+        let driver = match self.driver.as_ref() { Some(driver) => driver.stop().await.map(|_| ()), None => Ok(()) };
+        self.driver.take();
+        while self.tasks.join_next().await.is_some() {}
+        driver
+    }
+}
+fn listener_address(spec: &NamedListener) -> io::Result<SocketAddr> {
+    Ok(SocketAddr::new(spec.listen.parse().map_err(|_| error("listenerMustUseIpLiteral"))?, spec.port))
+}
+fn dns_listen(plan: &RuntimePlan) -> io::Result<Option<SocketAddr>> {
+    let value: serde_yaml::Value = serde_yaml::from_str(&plan.inbounds.config_yaml).map_err(|_| error("invalidInbounds"))?;
+    match value.get("dns-listen") { None | Some(serde_yaml::Value::Null) => Ok(None), Some(serde_yaml::Value::String(value)) => value.parse().map(Some).map_err(|_| error("invalidDnsListen")), _ => Err(error("invalidDnsListen")) }
+}
+fn managed_yaml(plan: &RuntimePlan) -> io::Result<String> {
+    let host: serde_yaml::Value = serde_yaml::from_str(&plan.host_policy_yaml).map_err(|_| error("invalidHostPolicy"))?;
+    for (key, value) in host.as_mapping().ok_or_else(|| error("invalidHostPolicy"))? {
+        if value.is_null() { continue; }
+        match key.as_str() {
+            Some("find-process-mode") => {},
+            Some("aerove-system-dns") => {
+                let snapshot: crate::runtime_plan::PhysicalDns = serde_yaml::from_value(value.clone()).map_err(|_| error("invalidHostPolicy.aerove-system-dns"))?;
+                if snapshot != plan.physical_network.dns { return Err(error("hostPolicy.aerove-system-dnsMismatch")); }
+            },
+            Some("global-ua") => return Err(error("hostPolicy.global-uaNotIntegrated")),
+            Some("check-certificate") => return Err(error("hostPolicy.check-certificateNotIntegrated")),
+            Some("unified-delay") => return Err(error("hostPolicy.unified-delayNotIntegrated")),
+            Some("tcp-concurrent") => return Err(error("hostPolicy.tcp-concurrentNotIntegrated")),
+            Some("cors-allow-origins") => return Err(error("hostPolicy.cors-allow-originsNotIntegrated")),
+            _ => return Err(error("unknownHostPolicyField")),
+        }
+    }
+    let mut root: serde_yaml::Value = serde_yaml::from_str(&plan.engine_yaml).map_err(|_| error("invalidEngineYaml"))?;
+    let map = root.as_mapping_mut().ok_or_else(|| error("invalidEngineYaml"))?;
+    for key in ["proxies", "proxy-providers", "rule-providers", "external-controller", "secret", "listeners", "mixed-port", "port", "socks-port"] {
+        if map.contains_key(&serde_yaml::Value::String(key.into())) { return Err(error("engineFieldNotIntegrated")); }
+    }
+    if map.get(&serde_yaml::Value::String("strict".into())).and_then(serde_yaml::Value::as_bool) != Some(true) { return Err(error("strictConfigRequired")); }
+    if let Some(groups) = map.get(&serde_yaml::Value::String("proxy-groups".into())) { crate::runtime::validate_leaf_groups(groups).map_err(|_| error("groupNotIntegrated"))?; }
+    if let Some(tun) = map.get(&serde_yaml::Value::String("tun".into())) {
+        if tun.get("enable").and_then(serde_yaml::Value::as_bool) != Some(false) || tun.get("auto-route").and_then(serde_yaml::Value::as_bool) != Some(false) { return Err(error("engineTunMustBeDisabled")); }
+        if !tun.as_mapping().is_some_and(|map| map.keys().all(|key| matches!(key.as_str(), Some("enable" | "auto-route")))) { return Err(error("engineTunMustBeManaged")); }
+    }
+    if map.get(&serde_yaml::Value::String("dns".into())).and_then(|dns| dns.get("listen")).is_some_and(|value| !value.is_null()) { return Err(error("engineDnsListenMustBeManaged")); }
+    if map.get(&serde_yaml::Value::String("geodata".into())).and_then(|geo| geo.get("auto-update")).and_then(serde_yaml::Value::as_bool) == Some(true) { return Err(error("geodataAutoUpdateNotIntegrated")); }
+    let inbounds: serde_yaml::Value = serde_yaml::from_str(&plan.inbounds.config_yaml).map_err(|_| error("invalidInbounds"))?;
+    for (key, value) in inbounds.as_mapping().ok_or_else(|| error("invalidInbounds"))? {
+        let key_string = key.as_str().ok_or_else(|| error("invalidInbounds"))?;
+        if key_string == "dns-listen" { continue; }
+        if matches!(key_string, "redir-port" | "tproxy-port") && value.as_u64() == Some(0) { continue; }
+        if !["mixed-port", "port", "socks-port", "allow-lan", "bind-address", "authentication", "listeners"].contains(&key_string) { return Err(error("inboundFieldNotIntegrated")); }
+        if map.insert(key.clone(), value.clone()).is_some() { return Err(error("duplicateManagedField")); }
+    }
+    serde_yaml::to_string(&root).map_err(|_| error("invalidConfig"))
+}
+fn process_mode(plan: &RuntimePlan) -> io::Result<&'static str> {
+    let host: serde_yaml::Value = serde_yaml::from_str(&plan.host_policy_yaml).map_err(|_| error("invalidHostPolicy"))?;
+    match host.get("find-process-mode") {
+        None | Some(serde_yaml::Value::Null) => Ok("off"),
+        Some(serde_yaml::Value::String(mode)) if mode == "off" => Ok("off"),
+        Some(serde_yaml::Value::String(mode)) if mode == "always" => Ok("always"),
+        _ => Err(error("findProcessModeNotIntegrated")),
+    }
+}
+
+async fn serve_inbound(socket: TcpListener, spec: NamedListener, tunnel: Tunnel, auth: Arc<meow_common::AuthConfig>, cancel: CancellationToken) {
+    let mut connections = JoinSet::new();
+    loop { tokio::select! { biased;
+        _ = cancel.cancelled() => break,
+        result = connections.join_next(), if !connections.is_empty() => { if result.is_some_and(|result| result.is_err()) { break; } },
+        accepted = socket.accept(), if spec.max_connections == 0 || connections.len() < spec.max_connections => {
+            let Ok((stream, peer)) = accepted else { break; };
+            let tunnel = tunnel.clone(); let auth = auth.clone(); let spec = spec.clone();
+            let context = meow_common::socket_protect::NetworkScope::current();
+            let ingress = meow_listener::owned_ingress::OwnedIngress::current();
+            connections.spawn(async move {
+                let work = inbound_connection(stream, peer, spec, tunnel, auth);
+                if let (Some(context), Some(ingress)) = (context, ingress) { ingress.scope(context.scope(work)).await; }
+            });
+        },
+    } }
+    connections.abort_all(); while connections.join_next().await.is_some() {}
+}
+async fn serve_private(listener: TcpListener, router: Router, cancel: CancellationToken) -> Result<(), crate::api::ApiError> {
+    let mut tasks = JoinSet::new();
+    let result = loop { tokio::select! { biased;
+        _ = cancel.cancelled() => break Ok(()),
+        joined = tasks.join_next(), if !tasks.is_empty() => {
+            if joined.is_some_and(|result| result.is_err()) { break Err(crate::api::ApiError("apiConnectionPanicked")); }
+        },
+        accepted = listener.accept(), if tasks.len() < 256 => {
+            let (stream, _) = match accepted { Ok(accepted) => accepted, Err(_) => break Err(crate::api::ApiError("apiAcceptFailed")) };
+            let context = meow_common::socket_protect::NetworkScope::current(); let router = router.clone();
+            tasks.spawn(async move { if let Some(context) = context { context.scope(crate::api::serve_connection(stream, router)).await; } });
+        },
+    } };
+    tasks.abort_all(); while tasks.join_next().await.is_some() {}
+    result
+}
+async fn inbound_connection(stream: TcpStream, peer: SocketAddr, spec: NamedListener, tunnel: Tunnel, auth: Arc<meow_common::AuthConfig>) {
+    let socks = match spec.spec {
+        ListenerSpec::Socks5 => true, ListenerSpec::Http => false,
+        ListenerSpec::Mixed => { let mut byte = [0u8];
+            if !matches!(tokio::time::timeout(meow_listener::DEFAULT_HANDSHAKE_TIMEOUT, stream.peek(&mut byte)).await, Ok(Ok(1))) { return; } byte[0] == 5 },
+        _ => return,
+    };
+    if socks { meow_listener::socks5::handle_socks5(&tunnel, stream, peer, None, Some(&auth), &spec.name, spec.port).await; }
+    else { meow_listener::http_proxy::handle_http(&tunnel, stream, peer, None, Some(&auth), &spec.name, spec.port).await; }
+}
+async fn serve_dns(tcp: TcpListener, udp: UdpSocket, tunnel: Tunnel, cancel: CancellationToken) {
+    let udp = Arc::new(udp); let mut tasks = JoinSet::new(); let mut buffer = vec![0u8; 65535];
+    loop { tokio::select! { biased;
+        _ = cancel.cancelled() => break,
+        _ = tasks.join_next(), if !tasks.is_empty() => {},
+        request = udp.recv_from(&mut buffer), if tasks.len() < 256 => {
+            let Ok((count, peer)) = request else { break; }; let request = buffer[..count].to_vec();
+            let socket = udp.clone(); let resolver = tunnel.resolver();
+            let context = meow_common::socket_protect::NetworkScope::current();
+            tasks.spawn(async move { if let Some(context) = context { context.scope(async move {
+                if let Ok(answer) = meow_dns::DnsServer::handle_query(&request, &resolver).await { let _ = socket.send_to(&answer, peer).await; }
+            }).await; } });
+        },
+        accepted = tcp.accept(), if tasks.len() < 256 => {
+            let Ok((mut stream, _)) = accepted else { break; }; let resolver = tunnel.resolver();
+            let context = meow_common::socket_protect::NetworkScope::current();
+            tasks.spawn(async move { if let Some(context) = context { context.scope(async move {
+                loop {
+                    let Ok(length) = stream.read_u16().await else { break; }; let mut request = vec![0u8; usize::from(length)];
+                    if stream.read_exact(&mut request).await.is_err() { break; }
+                    let Ok(answer) = meow_dns::DnsServer::handle_query(&request, &resolver).await else { break; };
+                    let Ok(length) = u16::try_from(answer.len()) else { break; };
+                    if stream.write_u16(length).await.is_err() || stream.write_all(&answer).await.is_err() { break; }
+                }
+            }).await; } });
+        },
+    } }
+    tasks.abort_all(); while tasks.join_next().await.is_some() {}
+}

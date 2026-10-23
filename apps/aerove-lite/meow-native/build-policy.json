@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "manifestSha256": "54f92dd7cbc1651cc7475c171dea08a6c132743127a41ae66bc95269f8bddfa8",
+  "manifestSha256": "a2abb30ddd9a649f358f4860d3a17e4d89bcfba896180c898c6e7827a3fa5acb",
   "resolveLock": true,
-  "expectedLockBeforeSha256": "5527d54892acc1d1026ea675040504f7614b6bd3957ad1b3ba9cdb9eb6e236b2",
+  "expectedLockBeforeSha256": "2510fedd3e78deabc5e771140b2a5d41c937750daffb4d00079e87b048322475",
   "targets": [
     "lib",
     "proxy_runtime",
@@ -10,8 +10,10 @@
     "control_plane",
     "packet_fd",
     "tun_driver",
-    "physical_dns"
+    "physical_dns",
+    "provider_events",
+    "owned_runtime"
   ],
-  "overlay": "source-metadata/android-driver-runtime.json",
-  "overlaySha256": "f072b14b21d882c1db751e030371dda028970ec40874b3675da66f205cc48b78"
+  "overlay": "source-metadata/owned-runtime.json",
+  "overlaySha256": "230eb3ab14f81ad3591d3999a9e42a619f1bf08034f8f2589311eea2e4b04a03"
 }

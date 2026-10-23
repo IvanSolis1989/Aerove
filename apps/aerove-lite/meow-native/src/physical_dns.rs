@@ -55,6 +55,7 @@ impl PhysicalResolver {
         if servers.is_empty() || servers.len() > 16 || servers.iter().any(|server| server.port() == 0 || server.ip().is_unspecified() || server.ip().is_multicast()) {
             return Err(invalid());
         }
+        let network = network.with_physical_dns(servers.clone());
         let resolver = Arc::new(Resolver::new(servers, Vec::new(), DnsMode::Normal, Default::default(), false, ipv6));
         Ok(Arc::new(Self { hook: ResolverHostHook::new(resolver), network }))
     }

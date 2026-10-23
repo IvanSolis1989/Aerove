@@ -2,7 +2,7 @@ use meow_api::routes::AppState;
 use meow_common::{AdapterType, Proxy, TunnelMode};
 use serde::Serialize;
 use std::{collections::BTreeMap, sync::Arc};
-use parking_lot::Mutex;
+use crate::providers::{ControlPlane, PlaneState};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -17,35 +17,37 @@ pub struct RouteSnapshot {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ControlError { Cancelled, NotFound, InvalidSelection, RevisionExhausted, InvalidEpoch, SelectionMemberNotIntegrated }
 
-struct CommitState { revision: u64, closed: bool }
+
 
 pub struct RouteControl {
     state: Arc<AppState>,
-    epoch: u64,
-    gate: Mutex<CommitState>,
-    cancel: CancellationToken,
+    pub plane: Arc<ControlPlane>,
 }
 
 impl RouteControl {
     pub fn new(state: Arc<AppState>, epoch: u64, cancel: CancellationToken)
         -> Result<Arc<Self>, ControlError> {
         if epoch == 0 { return Err(ControlError::InvalidEpoch); }
-        Ok(Arc::new(Self { state, epoch, gate: Mutex::new(CommitState { revision: 0, closed: false }), cancel }))
+        let plane = ControlPlane::new(epoch, cancel).map_err(|_| ControlError::InvalidEpoch)?;
+        Ok(Self::with_plane(state, plane))
+    }
+
+    pub fn with_plane(state: Arc<AppState>, plane: Arc<ControlPlane>) -> Arc<Self> {
+        Arc::new(Self { state, plane })
     }
 
     pub fn cancel(&self) {
-        self.gate.lock().closed = true;
-        self.cancel.cancel();
+        self.plane.cancel();
     }
 
-    fn check_live(&self, gate: &CommitState) -> Result<(), ControlError> {
-        if gate.closed || self.cancel.is_cancelled() { Err(ControlError::Cancelled) } else { Ok(()) }
+    fn check_live(&self, gate: &PlaneState) -> Result<(), ControlError> {
+        if gate.closed || self.plane.cancel.is_cancelled() { Err(ControlError::Cancelled) } else { Ok(()) }
     }
 
     fn snapshot_locked(&self, revision: u64) -> RouteSnapshot {
         let route = self.state.tunnel.route_snapshot();
         RouteSnapshot {
-            core_epoch: self.epoch.to_string(), picks_version: revision.to_string(),
+            core_epoch: self.plane.epoch.to_string(), picks_version: revision.to_string(),
             picks: route.proxies.iter().filter_map(|(name, proxy)| {
                 proxy.current().map(|selected| (name.to_string(), selected))
             }).collect(),
@@ -53,13 +55,13 @@ impl RouteControl {
     }
 
     pub async fn snapshot(&self) -> Result<RouteSnapshot, ControlError> {
-        let gate = self.gate.lock();
+        let gate = self.plane.gate.lock();
         self.check_live(&gate)?;
         Ok(self.snapshot_locked(gate.revision))
     }
 
     pub async fn set_mode(&self, mode: TunnelMode) -> Result<RouteSnapshot, ControlError> {
-        let mut gate = self.gate.lock();
+        let mut gate = self.plane.gate.lock();
         self.check_live(&gate)?;
         if self.state.tunnel.mode() != mode {
             let next = gate.revision.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
@@ -82,17 +84,17 @@ impl RouteControl {
         Ok(())
     }
     pub async fn select(&self, group: &str, name: &str) -> Result<RouteSnapshot, ControlError> {
-        { self.check_live(&self.gate.lock())?; }
+        { self.check_live(&self.plane.gate.lock())?; }
         let route = self.state.tunnel.route_snapshot();
         let proxy = route.proxies.get(group).ok_or(ControlError::NotFound)?;
         Self::validate_prepare_members(proxy, name)?;
         let selection = proxy.selection().ok_or(ControlError::InvalidSelection)?;
         let health = tokio::select! {
             biased;
-            _ = self.cancel.cancelled() => return Err(ControlError::Cancelled),
+            _ = self.plane.cancel.cancelled() => return Err(ControlError::Cancelled),
             result = selection.prepare(name) => result.map_err(|_| ControlError::InvalidSelection)?,
         };
-        let mut gate = self.gate.lock();
+        let mut gate = self.plane.gate.lock();
         self.check_live(&gate)?;
         let live = self.state.tunnel.route_snapshot();
         if !live.proxies.get(group).is_some_and(|current| Arc::ptr_eq(current, proxy)) {
@@ -115,7 +117,7 @@ struct ModeRequest { mode: TunnelMode }
 struct SelectRequest { name: String }
 
 impl ControlError {
-    fn response(self) -> axum::response::Response {
+    pub(crate) fn response(self) -> axum::response::Response {
         use axum::response::IntoResponse;
         let status = match self {
             Self::Cancelled => axum::http::StatusCode::GONE,
@@ -135,6 +137,7 @@ impl ControlError {
 pub fn router(control: Arc<RouteControl>) -> axum::Router {
     use axum::{extract::{Path, State}, routing::{get, patch, put}, Json};
     axum::Router::new()
+        .route("/aerove/telemetry", get(provider_telemetry))
         .route("/aerove/route", get(|State(control): State<Arc<RouteControl>>| async move {
             control.snapshot().await.map(Json).map_err(ControlError::response)
         }))
@@ -145,4 +148,35 @@ pub fn router(control: Arc<RouteControl>) -> axum::Router {
             control.select(&group, &body.name).await.map(Json).map_err(ControlError::response)
         }))
         .with_state(control)
+}
+
+async fn provider_telemetry(
+    axum::extract::State(control): axum::extract::State<Arc<RouteControl>>,
+    axum::Extension(scope): axum::Extension<meow_api::lifecycle::ApiLifecycle>,
+    upgrade: axum::extract::WebSocketUpgrade,
+) -> axum::response::Response {
+    scope.on_upgrade(upgrade, move |mut socket| async move {
+        use axum::extract::ws::Message;
+        let mut events = control.plane.subscribe();
+        let mut seen = std::collections::BTreeMap::new();
+        for event in control.plane.provider_baseline() {
+            seen.insert((event.kind, event.name.clone()), event.revision.parse::<u64>().expect("canonical provider revision"));
+            let frame = serde_json::json!({"type":"providersLoaded","providers":[event]}).to_string();
+            if socket.send(Message::Text(frame.into())).await.is_err() { return; }
+        }
+        loop {
+            tokio::select! {
+                incoming = socket.recv() => if incoming.is_none() || incoming.is_some_and(|message| message.is_err() || matches!(message, Ok(Message::Close(_)))) { return; },
+                event = events.recv() => {
+                    let Ok(event) = event else { return; };
+                    let revision = event.revision.parse::<u64>().expect("canonical provider revision");
+                    let key = (event.kind, event.name.clone());
+                    if seen.get(&key).is_some_and(|previous| *previous >= revision) { continue; }
+                    seen.insert(key, revision);
+                    let frame = serde_json::json!({"type":"providersLoaded","providers":[event]}).to_string();
+                    if socket.send(Message::Text(frame.into())).await.is_err() { return; }
+                }
+            }
+        }
+    })
 }

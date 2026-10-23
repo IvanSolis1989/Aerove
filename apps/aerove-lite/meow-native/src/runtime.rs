@@ -61,6 +61,8 @@ pub struct Session {
     stop_gate: tokio::sync::Mutex<()>,
     tunnel: Mutex<Option<Tunnel>>,
     control: Mutex<Option<Arc<crate::control::RouteControl>>>,
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    owned: Mutex<Option<Arc<crate::owned_runtime::OwnedRuntime>>>,
 }
 
 pub struct Registry;
@@ -72,6 +74,23 @@ impl Registry {
 
     /// Reserves the sole process owner before asynchronous config loading starts.
     pub fn start(options: StartOptions) -> Result<Arc<Session>, Failure> {
+        Self::launch("proxy", None, move |session| async move { session.run(options).await })
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    pub fn start_owned(json: String, fd: Option<std::os::fd::OwnedFd>, network: crate::network_context::NetworkContext,
+        lookup: Option<Arc<dyn crate::flow_owner::FlowOwnerLookup>>) -> Result<Arc<Session>, Failure> {
+        use std::os::fd::AsRawFd;
+        let mode = serde_json::from_str::<serde_json::Value>(&json).ok()
+            .and_then(|value| value.get("runtimeMode").and_then(|mode| mode.as_str()).map(str::to_owned));
+        let plan = crate::runtime_plan::RuntimePlan::parse(&json, fd.as_ref().map_or(-1, AsRawFd::as_raw_fd),
+            mode.as_deref() == Some("tun"), lookup.is_some()).map_err(|_| Failure::new("invalidOwnedPlan"))?;
+        let mode = if plan.runtime_mode == crate::runtime_plan::RuntimeMode::Tun { "tun" } else { "proxy" };
+        Self::launch(mode, Some(network.cancellation()), move |session| async move { session.run_owned(json, fd, network, lookup).await })
+    }
+
+    fn launch<F, Fut>(mode: &'static str, cancel: Option<CancellationToken>, work: F) -> Result<Arc<Session>, Failure>
+    where F: FnOnce(Arc<Session>) -> Fut, Fut: std::future::Future<Output = ()> + Send + 'static {
         let runtime = tokio::runtime::Handle::try_current().map_err(|_| Failure::new("runtimeUnavailable"))?;
         let mut owner = OWNER.get_or_init(|| Mutex::new(Weak::new())).lock();
         if owner.upgrade().is_some_and(|s| !s.is_terminal()) {
@@ -85,26 +104,79 @@ impl Registry {
             }
         };
         let (state, _) = watch::channel(Snapshot {
-            generation: generation.to_string(), phase: Phase::Loading, runtime_mode: "proxy",
+            generation: generation.to_string(), phase: Phase::Loading, runtime_mode: mode,
             api_address: None, mixed_address: None, api_ready: false,
             user_listeners_ready: false, tun_ready: false, failure: None,
             upload_bytes: "0".into(), download_bytes: "0".into(),
             proxy_traffic: BTreeMap::new(),
         });
-        let session = Arc::new(Session { generation, cancel: CancellationToken::new(), state,
+        let session = Arc::new(Session { generation, cancel: cancel.unwrap_or_default(), state,
             task: tokio::sync::Mutex::new(None), stop_gate: tokio::sync::Mutex::new(()),
-            tunnel: Mutex::new(None), control: Mutex::new(None) });
+            tunnel: Mutex::new(None), control: Mutex::new(None),
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+            owned: Mutex::new(None) });
         *owner = Arc::downgrade(&session);
         let worker = session.clone();
         // Store without an await so stop cannot overtake task registration.
-        let task = runtime.spawn(async move { worker.run(options).await; });
+        let task = runtime.spawn(work(worker));
         *session.task.try_lock().expect("new session task mutex") = Some(task);
         Ok(session)
     }
 }
 
 impl Session {
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    fn mirror_owned_status(&self, status: &crate::owned_runtime::OwnedStatus) -> bool {
+        let _admission = self.control.lock();
+        if self.cancel.is_cancelled() { return false; }
+        self.state.send_modify(|state| {
+            state.phase = if status.state == "Running" { Phase::Running } else { Phase::Loading };
+            state.api_address = status.api_address; state.api_ready = status.core_ready;
+            state.tun_ready = status.tun_ready; state.user_listeners_ready = status.user_listeners_ready;
+        });
+        true
+    }
+
     pub fn generation(&self) -> u64 { self.generation }
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    pub fn owned_runtime(&self) -> Option<Arc<crate::owned_runtime::OwnedRuntime>> { self.owned.lock().clone() }
+
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    async fn run_owned(self: Arc<Self>, json: String, fd: Option<std::os::fd::OwnedFd>, network: crate::network_context::NetworkContext,
+        lookup: Option<Arc<dyn crate::flow_owner::FlowOwnerLookup>>) {
+        let session = Arc::downgrade(&self);
+        let register = Arc::new(move |control: Arc<crate::control::RouteControl>, tunnel: Tunnel| {
+            let Some(session) = session.upgrade() else { control.cancel(); return false; };
+            let mut admission = session.control.lock();
+            if session.cancel.is_cancelled() { control.cancel(); return false; }
+            *admission = Some(control); *session.tunnel.lock() = Some(tunnel); true
+        });
+        let owner = match crate::owned_runtime::OwnedRuntime::start(json, fd, network, self.generation, self.cancel.clone(), register, lookup) {
+            Ok(owner) => owner,
+            Err(_) => { self.state.send_modify(|state| { state.phase = Phase::Failed; state.failure = Some(Failure::new("ownedStartFailed")); }); return; },
+        };
+        *self.owned.lock() = Some(owner.clone());
+        let mut updates = owner.subscribe();
+        loop {
+            let status = updates.borrow_and_update().clone();
+            if matches!(status.state, "Failed" | "Exited") { break; }
+            self.mirror_owned_status(&status);
+            if updates.changed().await.is_err() { break; }
+        }
+        let result = owner.wait().await;
+        let status = owner.status();
+        let stats = self.snapshot();
+        let old_control = self.control.lock().take(); drop(old_control);
+        let old_tunnel = self.tunnel.lock().take(); drop(old_tunnel);
+        self.state.send_modify(|state| {
+            state.phase = if result.is_err() || status.state == "Failed" { Phase::Failed } else { Phase::Stopped };
+            state.failure = if state.phase == Phase::Failed { Some(Failure::new("ownedRuntimeFailed")) } else { None };
+            state.api_ready = false; state.tun_ready = false; state.user_listeners_ready = false;
+            state.api_address = None; state.mixed_address = None;
+            state.upload_bytes = stats.upload_bytes.clone(); state.download_bytes = stats.download_bytes.clone();
+            state.proxy_traffic = stats.proxy_traffic.clone();
+        });
+    }
 
     pub fn snapshot(&self) -> Snapshot {
         let mut result = self.state.borrow().clone();
@@ -125,11 +197,35 @@ impl Session {
         let mut state = self.subscribe();
         loop {
             let snapshot = state.borrow_and_update().clone();
-            match snapshot.phase {
-                Phase::Running => return Ok(snapshot),
-                Phase::Failed => return Err(snapshot.failure.expect("failed receipt")),
-                Phase::Stopped => return Err(Failure::new("cancelled")),
-                Phase::Loading => {}
+            {
+                let _admission = self.control.lock();
+                if self.cancel.is_cancelled() { return Err(Failure::new("cancelled")); }
+                match snapshot.phase {
+                    Phase::Running => return Ok(snapshot),
+                    Phase::Failed => return Err(snapshot.failure.expect("failed receipt")),
+                    Phase::Stopped => return Err(Failure::new("cancelled")),
+                    Phase::Loading => {}
+                }
+            }
+            state.changed().await.map_err(|_| Failure::new("ownerExited"))?;
+        }
+    }
+
+    pub async fn exited(&self) -> Result<Snapshot, Failure> {
+        let mut state = self.subscribe();
+        loop {
+            let snapshot = state.borrow_and_update().clone();
+            if matches!(snapshot.phase, Phase::Stopped | Phase::Failed) {
+                let mut slot = self.task.lock().await;
+                if let Some(task) = slot.as_mut() {
+                    let result = task.await;
+                    slot.take();
+                    result.map_err(|_| Failure::new("ownerPanicked"))?;
+                }
+                return match snapshot.phase {
+                    Phase::Failed => Err(snapshot.failure.unwrap_or_else(|| Failure::new("ownerFailed"))),
+                    _ => Ok(snapshot),
+                };
             }
             state.changed().await.map_err(|_| Failure::new("ownerExited"))?;
         }
@@ -139,6 +235,8 @@ impl Session {
         {
             let control = self.control.lock();
             if let Some(control) = control.as_ref() { control.cancel(); }
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+            if let Some(owner) = self.owned.lock().as_ref() { owner.cancel(); }
             self.cancel.cancel();
         }
         let _stop = self.stop_gate.lock().await;
@@ -308,7 +406,7 @@ fn validate_candidate(yaml: &str) -> Result<(), Failure> {
     Ok(())
 }
 
-fn validate_leaf_groups(groups: &serde_yaml::Value) -> Result<(), Failure> {
+pub(crate) fn validate_leaf_groups(groups: &serde_yaml::Value) -> Result<(), Failure> {
     use serde_yaml::Value;
     let groups = groups.as_sequence().ok_or_else(|| Failure::field("proxy-groups"))?;
     let mut names = std::collections::BTreeSet::from(["DIRECT", "REJECT"]);
@@ -360,6 +458,8 @@ mod tests {
             generation: 1, cancel: CancellationToken::new(), state,
             task: tokio::sync::Mutex::new(None), stop_gate: tokio::sync::Mutex::new(()),
             tunnel: Mutex::new(None), control: Mutex::new(None),
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+            owned: Mutex::new(None),
         };
         let cleanup_started = Arc::new(Notify::new());
         let cleanup_release = Arc::new(Notify::new());
@@ -381,6 +481,16 @@ mod tests {
         }).await;
         cleanup_started.notified().await;
         drop(first_stop);
+
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+        {
+            let delayed = crate::owned_runtime::OwnedStatus { state: "Running", error: None,
+                api_address: Some("127.0.0.1:10001".parse().unwrap()), runtime_mode: "proxy",
+                tun_ready: false, user_listeners_ready: true, listening: true, core_ready: true };
+            assert!(!session.mirror_owned_status(&delayed));
+            assert_eq!(session.snapshot().phase, Phase::Loading);
+            assert_eq!(session.ready().await.unwrap_err().code, "cancelled");
+        }
 
         let mut retry = Box::pin(session.stop());
         poll_fn(|cx| {

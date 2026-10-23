@@ -153,6 +153,29 @@ class OverlayAndResolutionTests(unittest.TestCase):
                 with self.subTest(path=path),self.assertRaises((ValueError,json.JSONDecodeError)):build_policy.load_policy(root)
                 (root/path).write_bytes(original)
 
+    def test_archive_preserves_selected_overlay_after_resolution_without_weakening_build_seed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);self.overlay(root)
+            metadata=json.loads((root/'overlay.json').read_text());metadata['patch']='patches/chosen.patch'
+            (root/'patches').mkdir();(root/'patches/chosen.patch').write_bytes((root/'patch').read_bytes())
+            (root/'source-metadata').mkdir();body=(json.dumps(metadata)+'\n').encode();(root/'source-metadata/chosen.json').write_bytes(body)
+            policy=json.loads((root/'build-policy.json').read_text());policy.update(overlay='source-metadata/chosen.json',overlaySha256=build_policy.digest(body))
+            (root/'build-policy.json').write_bytes(json.dumps(policy).encode())
+            (root/'Cargo.lock').write_bytes(b'actual resolved lock, not the original seed')
+            with self.assertRaisesRegex(ValueError,'previous lock'):build_policy.load_policy(root)
+            destination=root/'archive';destination.mkdir()
+            self.assertEqual(['source-metadata/chosen.json','patches/chosen.patch'],build_policy.copy_policy_evidence(root,destination))
+            self.assertEqual(body,(destination/'source-metadata/chosen.json').read_bytes())
+            self.assertEqual((root/'patch').read_bytes(),(destination/'patches/chosen.patch').read_bytes())
+            self.assertFalse((destination/'overlay.json').exists())
+            evidence=json.loads((destination/'source-policy-evidence.json').read_text())
+            self.assertTrue(evidence['archiveOnly'])
+            self.assertEqual(policy['expectedLockBeforeSha256'],evidence['expectedBeforeLockSha256'])
+            self.assertEqual(sha(root/'Cargo.lock'),evidence['actualAfterLockSha256'])
+            self.assertNotIn('acceptedLock',evidence)
+            (root/'patches/chosen.patch').write_bytes(b'corrupted source patch')
+            with self.assertRaisesRegex(ValueError,'patch identity'):build_policy.copy_policy_evidence(root,destination)
+
     def test_two_stage_prepare_verifies_raw_and_adapted_cache_bytes(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);raw,spec,patch,changes,metadata,policy=self.overlay(root)
@@ -274,5 +297,16 @@ class AndroidRecipeTests(unittest.TestCase):
             diagnostics=path.parent/'readelf.txt'
             with mock.patch.object(build.subprocess,'check_output',side_effect=[' LOAD 0 0 0 0 0 R E 0x4000\n','NEEDED libc.so',symbols.replace('DEFAULT 1','DEFAULT UND')]),self.assertRaisesRegex(ValueError,'JNI symbols'):build.verify_elf(path,62,'readelf',build.SCRIPT_JNI_SYMBOLS,diagnostics)
             self.assertIn('DEFAULT UND',diagnostics.read_text())
+
+    def test_complete_owned_runtime_requires_all_six_defined_runtime_and_four_script_jni_symbols(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'lib.so';header=bytearray(20);header[:6]=b'\x7fELF\x02\x01';header[16:18]=(3).to_bytes(2,'little');header[18:20]=(62).to_bytes(2,'little');path.write_bytes(header)
+            required=build.SCRIPT_JNI_SYMBOLS+build.RUNTIME_JNI_SYMBOLS
+            self.assertEqual(10,len(set(required)))
+            self.assertIn('Java_dev_aerove_lite_core_MeowNativeCore_awaitExit',required)
+            symbols='\n'.join(' 1: 00000123 42 FUNC GLOBAL DEFAULT 1 '+name for name in required)
+            with mock.patch.object(build.subprocess,'check_output',side_effect=[' LOAD 0 0 0 0 0 R E 0x4000\n','NEEDED libc.so',symbols]):build.verify_elf(path,62,'readelf',required)
+            missing=symbols.replace('DEFAULT 1 '+build.RUNTIME_JNI_SYMBOLS[-1],'DEFAULT UND '+build.RUNTIME_JNI_SYMBOLS[-1])
+            with mock.patch.object(build.subprocess,'check_output',side_effect=[' LOAD 0 0 0 0 0 R E 0x4000\n','NEEDED libc.so',missing]),self.assertRaisesRegex(ValueError,'awaitExit'):build.verify_elf(path,62,'readelf',required)
 
 if __name__=='__main__':unittest.main()

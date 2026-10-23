@@ -1,0 +1,1604 @@
+--- a/crates/meow-api/Cargo.toml
++++ b/crates/meow-api/Cargo.toml
+@@ -21,6 +21,7 @@
+ meow-rules = { workspace = true }
+ meow-listener = { workspace = true, default-features = false, optional = true }
+ tokio = { workspace = true }
++tokio-util = { workspace = true, features = ["rt"] }
+ axum = { workspace = true }
+ tower = { workspace = true }
+ tower-http = { workspace = true }
+--- a/crates/meow-api/src/lib.rs
++++ b/crates/meow-api/src/lib.rs
+@@ -3,6 +3,7 @@
+ //! Runtime control of proxies, rules, connections, config, traffic, and DNS,
+ //! plus the built-in web dashboard.
+ 
++pub mod lifecycle;
+ pub mod log_stream;
+ mod logbook;
+ pub mod routes;
+--- /dev/null
++++ b/crates/meow-api/src/lifecycle.rs
+@@ -0,0 +1,83 @@
++//! Runtime-scoped API tasks; upgrades acquire their lease before Axum spawns.
++use axum::{extract::ws::{WebSocket, WebSocketUpgrade}, http::StatusCode, response::{IntoResponse, Response}};
++use parking_lot::Mutex;
++use std::{future::Future, sync::Arc};
++use tokio_util::{sync::CancellationToken, task::{TaskTracker, task_tracker::TaskTrackerToken}};
++
++#[derive(Clone)]
++pub struct ApiLifecycle(Arc<Inner>);
++
++struct Inner {
++    admission: Mutex<bool>,
++    cancel: CancellationToken,
++    tasks: TaskTracker,
++}
++
++impl Default for ApiLifecycle {
++    fn default() -> Self {
++        Self(Arc::new(Inner {
++            admission: Mutex::new(true),
++            cancel: CancellationToken::new(),
++            tasks: TaskTracker::new(),
++        }))
++    }
++}
++
++impl ApiLifecycle {
++    fn lease(&self) -> Option<TaskTrackerToken> {
++        let open = self.0.admission.lock();
++        if !*open { return None; }
++        Some(self.0.tasks.token())
++    }
++
++    pub fn on_upgrade<F, Fut>(&self, ws: WebSocketUpgrade, callback: F) -> Response
++    where
++        F: FnOnce(WebSocket) -> Fut + Send + 'static,
++        Fut: Future<Output = ()> + Send + 'static,
++    {
++        let Some(lease) = self.lease() else {
++            return StatusCode::SERVICE_UNAVAILABLE.into_response();
++        };
++        let cancel = self.0.cancel.clone();
++        ws.on_upgrade(move |socket| async move {
++            let _lease = lease;
++            tokio::select! {
++                biased;
++                _ = cancel.cancelled() => {},
++                _ = callback(socket) => {},
++            }
++        })
++    }
++
++    pub fn spawn<F>(&self, task: F)
++    where F: Future<Output = ()> + Send + 'static {
++        let Some(lease) = self.lease() else { return; };
++        let cancel = self.0.cancel.clone();
++        tokio::spawn(async move {
++            let _lease = lease;
++            tokio::select! {
++                biased;
++                _ = cancel.cancelled() => {},
++                _ = task => {},
++            }
++        });
++    }
++
++    pub fn cancel(&self) {
++        let mut open = self.0.admission.lock();
++        *open = false;
++        self.0.cancel.cancel();
++        self.0.tasks.close();
++    }
++
++    pub async fn join(&self) {
++        self.0.tasks.wait().await;
++    }
++
++    pub async fn shutdown(&self) {
++        self.cancel();
++        self.join().await;
++    }
++
++    pub fn active_tasks(&self) -> usize { self.0.tasks.len() }
++}
+--- a/crates/meow-api/src/log_stream.rs
++++ b/crates/meow-api/src/log_stream.rs
+@@ -85,6 +85,10 @@
+         event: &tracing::Event<'_>,
+         _ctx: tracing_subscriber::layer::Context<'_, S>,
+     ) {
++        // Tokio can clone this waker while holding the same broadcast tail lock.
++        if event.metadata().target() == "tokio::task::waker" {
++            return;
++        }
+         // The broadcast sender exists for the process lifetime, but most
+         // deployments have no active /logs consumer. Avoid formatting fields,
+         // reading the clock, and constructing a heap-backed message when there
+--- a/crates/meow-api/src/routes.rs
++++ b/crates/meow-api/src/routes.rs
+@@ -61,6 +61,8 @@
+ #[derive(Default)]
+ pub struct TrafficFeed {
+     sender: std::sync::Mutex<Option<broadcast::Sender<Arc<str>>>>,
++    memory_sender: std::sync::Mutex<Option<broadcast::Sender<Arc<str>>>>,
++    pub lifecycle: crate::lifecycle::ApiLifecycle,
+ }
+ 
+ pub struct AppState {
+@@ -382,13 +384,6 @@
+         let display = members
+             .is_some()
+             .then(|| proxy.group_display().cloned().unwrap_or_default());
+-        debug!(
+-            name = proxy.name(),
+-            proxy_type = %proxy.adapter_type(),
+-            member_count = members.as_ref().map(std::vec::Vec::len),
+-            current = ?current,
+-            "building ProxyInfo",
+-        );
+         let delay = Some(proxy.last_delay()).filter(|&d| d > 0);
+         Self {
+             name: proxy.name().to_string(),
+@@ -649,13 +644,16 @@
+     State(state): State<Arc<AppState>>,
+     Query(params): Query<ConnectionsParams>,
+     MaybeWebSocket(ws): MaybeWebSocket,
++    connection_scope: Option<axum::Extension<crate::lifecycle::ApiLifecycle>>,
+ ) -> Response {
+     let Some(interval_ms) = parse_connections_interval(params.interval.as_deref()) else {
+         return msg_err(StatusCode::BAD_REQUEST, "Body invalid");
+     };
+ 
+     if let Some(ws) = ws {
+-        return ws.on_upgrade(move |mut socket| async move {
++        let scope = connection_scope.map(|axum::Extension(scope)| scope)
++            .unwrap_or_else(|| state.traffic_feed.lifecycle.clone());
++        return scope.on_upgrade(ws, move |mut socket| async move {
+             if socket
+                 .send(Message::Text(connections_json(&state).await.into()))
+                 .await
+@@ -976,8 +974,9 @@
+     // the first frame's instantaneous rate.
+     state.tunnel.statistics().sample_traffic();
+ 
++    let lifecycle = state.traffic_feed.lifecycle.clone();
+     let state = Arc::clone(state);
+-    tokio::spawn(async move {
++    lifecycle.spawn(async move {
+         let mut ticker = tokio::time::interval(Duration::from_secs(1));
+         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+         ticker.tick().await;
+@@ -1005,10 +1004,13 @@
+ async fn get_traffic(
+     State(state): State<Arc<AppState>>,
+     MaybeWebSocket(ws): MaybeWebSocket,
++    connection_scope: Option<axum::Extension<crate::lifecycle::ApiLifecycle>>,
+ ) -> Response {
+     let feed = subscribe_traffic_feed(&state);
+     if let Some(ws) = ws {
+-        return ws.on_upgrade(move |mut socket| async move {
++        let scope = connection_scope.map(|axum::Extension(scope)| scope)
++            .unwrap_or_else(|| state.traffic_feed.lifecycle.clone());
++        return scope.on_upgrade(ws, move |mut socket| async move {
+             let mut feed = feed;
+             loop {
+                 let frame = match feed.recv().await {
+@@ -3763,6 +3765,7 @@
+     State(state): State<Arc<AppState>>,
+     Query(params): Query<LogsParams>,
+     MaybeWebSocket(ws): MaybeWebSocket,
++    connection_scope: Option<axum::Extension<crate::lifecycle::ApiLifecycle>>,
+ ) -> Response {
+     let level = match parse_requested_log_level(params.level.as_deref()) {
+         Ok(level) => level,
+@@ -3771,9 +3774,18 @@
+     let structured = params.format.as_deref() == Some("structured");
+     let mut rx = state.log_tx.subscribe();
+     if let Some(ws) = ws {
+-        return ws.on_upgrade(move |mut socket| async move {
++        let scope = connection_scope.map(|axum::Extension(scope)| scope)
++            .unwrap_or_else(|| state.traffic_feed.lifecycle.clone());
++        return scope.on_upgrade(ws, move |mut socket| async move {
+             loop {
+-                match rx.recv().await {
++                let message = tokio::select! {
++                    message = rx.recv() => message,
++                    incoming = socket.recv() => {
++                        if matches!(incoming, None | Some(Err(_)) | Some(Ok(Message::Close(_)))) { break; }
++                        continue;
++                    }
++                };
++                match message {
+                     Ok(msg) if msg.level >= level => {
+                         if socket
+                             .send(Message::Text(log_json(&msg, structured).into()))
+@@ -3817,32 +3829,33 @@
+ 
+ // upstream: hub/route/memory.go
+ //
+-// One process-wide sampler task reads RSS + limit and serialises the JSON
++// One runtime-scoped sampler task reads RSS + limit and serialises the JSON
+ // frame once per tick; every connected socket forwards the shared string
+ // (audit M8 — previously each socket sampled and serialised independently,
+ // per-socket per-tick). The sampler starts with the first subscriber and
+ // exits once the last socket disconnects, so an idle API server pays nothing.
+ // Model: the log websocket's single-serialisation broadcast fan-out.
+-static MEMORY_FEED: std::sync::Mutex<Option<broadcast::Sender<Arc<str>>>> =
+-    std::sync::Mutex::new(None);
+-
+-fn subscribe_memory_feed() -> broadcast::Receiver<Arc<str>> {
+-    let mut guard = MEMORY_FEED.lock().expect("memory feed lock poisoned");
++fn subscribe_memory_feed(state: &Arc<AppState>) -> broadcast::Receiver<Arc<str>> {
++    let mut guard = state.traffic_feed.memory_sender.lock().expect("memory feed lock poisoned");
+     if let Some(tx) = guard.as_ref() {
+         // Sampler still alive (it clears the slot under this lock on exit).
+         return tx.subscribe();
+     }
+     let (tx, rx) = broadcast::channel(2);
+     *guard = Some(tx.clone());
+-    tokio::spawn(async move {
++    drop(guard);
++    let lifecycle = state.traffic_feed.lifecycle.clone();
++    let state = Arc::clone(state);
++    lifecycle.spawn(async move {
+         let mut interval = tokio::time::interval(Duration::from_secs(1));
++        interval.tick().await;
+         loop {
+             interval.tick().await;
+             if tx.receiver_count() == 0 {
+                 // Re-check under the lock so a subscriber arriving right now
+                 // either sees the live sender or a cleared slot — never a
+                 // sender whose sampler has already exited.
+-                let mut guard = MEMORY_FEED.lock().expect("memory feed lock poisoned");
++                let mut guard = state.traffic_feed.memory_sender.lock().expect("memory feed lock poisoned");
+                 if tx.receiver_count() == 0 {
+                     *guard = None;
+                     break;
+@@ -3858,12 +3871,17 @@
+ }
+ 
+ async fn get_memory(
+-    State(_state): State<Arc<AppState>>,
++    State(state): State<Arc<AppState>>,
+     MaybeWebSocket(ws): MaybeWebSocket,
++    connection_scope: Option<axum::Extension<crate::lifecycle::ApiLifecycle>>,
+ ) -> Response {
+-    let first: Arc<str> = Arc::from("{\"inuse\":0,\"oslimit\":0}");
++    let inuse = read_rss_bytes().await;
++    let oslimit = read_os_memory_limit().await;
++    let first: Arc<str> = Arc::from(format!("{{\"inuse\":{inuse},\"oslimit\":{oslimit}}}"));
+     if let Some(ws) = ws {
+-        return ws.on_upgrade(move |mut socket| async move {
++        let scope = connection_scope.map(|axum::Extension(scope)| scope)
++            .unwrap_or_else(|| state.traffic_feed.lifecycle.clone());
++        return scope.on_upgrade(ws, move |mut socket| async move {
+             if socket
+                 .send(Message::Text(first.as_ref().into()))
+                 .await
+@@ -3871,7 +3889,7 @@
+             {
+                 return;
+             }
+-            let mut feed = subscribe_memory_feed();
++            let mut feed = subscribe_memory_feed(&state);
+             loop {
+                 let msg = match feed.recv().await {
+                     Ok(msg) => msg,
+@@ -3889,33 +3907,19 @@
+         });
+     }
+ 
+-    let feed = subscribe_memory_feed();
+-    let stream = futures::stream::unfold((Some(first), feed), |(first, mut feed)| async move {
+-        if let Some(first) = first {
+-            return Some((
+-                Ok::<String, std::convert::Infallible>(format!("{first}\n")),
+-                (None, feed),
+-            ));
+-        }
+-        loop {
+-            match feed.recv().await {
+-                Ok(msg) => {
+-                    return Some((
+-                        Ok::<String, std::convert::Infallible>(format!("{msg}\n")),
+-                        (None, feed),
+-                    ));
+-                }
+-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+-                Err(broadcast::error::RecvError::Closed) => return None,
+-            }
+-        }
+-    });
+-    Response::builder()
+-        .header(header::CONTENT_TYPE, "application/json")
+-        .body(Body::from_stream(stream))
+-        .expect("valid memory stream response")
+-}
+-
++    ([(header::CONTENT_TYPE, "application/json")], first.as_ref().to_owned()).into_response()
++}
++
++#[cfg(target_os = "android")]
++async fn read_rss_bytes() -> u64 {
++    let Ok(status) = tokio::fs::read_to_string("/proc/self/status").await else { return 0; };
++    status.lines().find_map(|line| {
++        let kb = line.strip_prefix("VmRSS:")?.split_whitespace().next()?.parse::<u64>().ok()?;
++        kb.checked_mul(1024)
++    }).unwrap_or(0)
++}
++
++#[cfg(not(target_os = "android"))]
+ async fn read_rss_bytes() -> u64 {
+     tokio::task::spawn_blocking(|| {
+         use sysinfo::{Pid, ProcessesToUpdate, System};
+@@ -3971,7 +3975,7 @@
+ 
+ #[derive(Serialize)]
+ #[serde(rename_all = "camelCase")]
+-struct ProviderInfo {
++pub struct ProviderInfo {
+     name: String,
+     #[serde(rename = "type")]
+     provider_type: String,
+@@ -4042,6 +4046,10 @@
+         updated_at: unix_rfc3339(provider.updated_at_secs()),
+         subscription_info: provider.subscription_userinfo().map(Into::into),
+     }
++}
++
++pub fn provider_snapshot(name: &str, provider: &ProxyProvider) -> ProviderInfo {
++    provider_to_info(name, provider)
+ }
+ 
+ async fn get_providers(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+--- a/crates/meow-common/Cargo.toml
++++ b/crates/meow-common/Cargo.toml
+@@ -31,6 +31,7 @@
+ ], optional = true }
+ 
+ [features]
++aerove-android-runtime = []
+ # Persistent logbook (`meow_common::logbook`, ADR-0014). Off, the logbook
+ # API stays and records nothing.
+ logbook = ["dep:rusqlite"]
+--- a/crates/meow-common/src/adapter.rs
++++ b/crates/meow-common/src/adapter.rs
+@@ -231,6 +231,9 @@
+ pub trait ProxySelection: Send + Sync {
+     /// Validate and select a member by name.
+     async fn set(&self, name: &str) -> Result<()>;
++
++    async fn prepare(&self, name: &str) -> Result<Option<(Arc<dyn Proxy>, u16)>>;
++    fn commit(&self, name: &str, health: Option<(Arc<dyn Proxy>, u16)>) -> Result<()>;
+ 
+     /// Set or clear a selection without validation. This mirrors mihomo's
+     /// `SelectAble.ForceSet` and is used to unfix automatic groups before a
+--- a/crates/meow-common/src/socket_protect.rs
++++ b/crates/meow-common/src/socket_protect.rs
+@@ -102,6 +102,8 @@
+ 
+ /// Snapshot of the currently-installed host resolver.
+ pub fn host_resolver() -> Option<Arc<dyn HostResolver>> {
++    #[cfg(all(feature = "aerove-android-runtime", any(target_os = "android", target_os = "linux", target_os = "macos")))]
++    if let Some(scope) = captured_network() { return scope.resolver; }
+     RESOLVER.read().clone()
+ }
+ 
+@@ -191,7 +193,7 @@
+ // non-Android binaries paying any footprint for it. For tests we additionally
+ // enable the module on any unix host so CI (which does not target Android)
+ // can actually exercise the protector path against real loopback sockets.
+-#[cfg(any(target_os = "android", all(test, unix)))]
++#[cfg(any(target_os = "android", all(test, unix), all(feature = "aerove-android-runtime", any(target_os = "linux", target_os = "macos"))))]
+ mod android {
+     use super::*;
+     use std::os::fd::{AsRawFd, RawFd};
+@@ -231,6 +233,8 @@
+     /// that build sockets through `socket2` directly (e.g. for `SO_MARK`)
+     /// can still apply protect on the fd they own.
+     pub fn socket_protector() -> Option<Arc<dyn SocketProtector>> {
++        #[cfg(all(feature = "aerove-android-runtime", any(target_os = "android", target_os = "linux", target_os = "macos")))]
++        if let Some(scope) = captured_network() { return scope.protector; }
+         PROTECTOR.read().clone()
+     }
+ 
+@@ -286,10 +290,52 @@
+     }
+ }
+ 
+-#[cfg(any(target_os = "android", all(test, unix)))]
++#[cfg(any(target_os = "android", all(test, unix), all(feature = "aerove-android-runtime", any(target_os = "linux", target_os = "macos"))))]
+ pub use android::{
+     clear_socket_protector, set_socket_protector, socket_protector, SocketProtector,
+ };
++
++
++#[cfg(all(feature = "aerove-android-runtime", any(target_os = "android", target_os = "linux", target_os = "macos")))]
++#[derive(Clone)]
++pub struct NetworkScope {
++    pub protector: Option<Arc<dyn SocketProtector>>,
++    pub resolver: Option<Arc<dyn HostResolver>>,
++}
++
++#[cfg(all(feature = "aerove-android-runtime", any(target_os = "android", target_os = "linux", target_os = "macos")))]
++tokio::task_local! { static CAPTURED_NETWORK: NetworkScope; }
++
++#[cfg(all(feature = "aerove-android-runtime", any(target_os = "android", target_os = "linux", target_os = "macos")))]
++std::thread_local! {
++    static BLOCKING_NETWORK: std::cell::RefCell<Option<NetworkScope>> = const { std::cell::RefCell::new(None) };
++}
++
++#[cfg(all(feature = "aerove-android-runtime", any(target_os = "android", target_os = "linux", target_os = "macos")))]
++fn captured_network() -> Option<NetworkScope> {
++    CAPTURED_NETWORK.try_with(Clone::clone).ok()
++        .or_else(|| BLOCKING_NETWORK.with(|slot| slot.borrow().clone()))
++}
++
++#[cfg(all(feature = "aerove-android-runtime", any(target_os = "android", target_os = "linux", target_os = "macos")))]
++impl NetworkScope {
++    pub fn current() -> Option<Self> { captured_network() }
++
++    pub fn is_captured() -> bool { captured_network().is_some() }
++
++    pub async fn scope<F: std::future::Future>(&self, work: F) -> F::Output {
++        CAPTURED_NETWORK.scope(self.clone(), work).await
++    }
++
++    pub fn run_blocking<R>(&self, work: impl FnOnce() -> R) -> R {
++        struct Restore(Option<NetworkScope>);
++        impl Drop for Restore {
++            fn drop(&mut self) { BLOCKING_NETWORK.with(|slot| { slot.replace(self.0.take()); }); }
++        }
++        let _restore = Restore(BLOCKING_NETWORK.with(|slot| slot.replace(Some(self.clone()))));
++        work()
++    }
++}
+ 
+ /// Dial an outbound TCP stream to an already-resolved [`SocketAddr`]. On
+ /// Android, applies the installed `SocketProtector` (if any) to the
+@@ -302,7 +348,7 @@
+ /// silent regressions back into the system resolver; see the module docs
+ /// for the loop-routing failure mode.
+ pub async fn connect_tcp(addr: SocketAddr) -> io::Result<TcpStream> {
+-    #[cfg(any(target_os = "android", all(test, unix)))]
++    #[cfg(any(target_os = "android", all(test, unix), all(feature = "aerove-android-runtime", any(target_os = "linux", target_os = "macos"))))]
+     {
+         if let Some(p) = android::socket_protector() {
+             return android::connect_tcp_protected(addr, p.as_ref()).await;
+@@ -388,11 +434,16 @@
+         None => {}
+     }
+ 
++    #[cfg(all(feature = "aerove-android-runtime", any(target_os = "android", target_os = "linux", target_os = "macos")))]
++    if captured_network().is_some_and(|scope| scope.protector.is_some()) {
++        return Err(io::Error::new(io::ErrorKind::NotFound, "captured physical DNS cannot resolve host"));
++    }
++
+     if let Some(cached) = sys_cache_get(host, port) {
+         return Ok(cached);
+     }
+ 
+-    #[cfg(any(target_os = "android", all(test, unix)))]
++    #[cfg(any(target_os = "android", all(test, unix), all(feature = "aerove-android-runtime", any(target_os = "linux", target_os = "macos"))))]
+     {
+         if android::socket_protector().is_some() {
+             tracing::warn!(
+@@ -492,7 +543,7 @@
+ /// `SocketProtector` (if any) to the socket fd before `bind()`. On every
+ /// other target this is equivalent to [`UdpSocket::bind`].
+ pub async fn bind_udp<A: ToSocketAddrs>(local: A) -> io::Result<UdpSocket> {
+-    #[cfg(any(target_os = "android", all(test, unix)))]
++    #[cfg(any(target_os = "android", all(test, unix), all(feature = "aerove-android-runtime", any(target_os = "linux", target_os = "macos"))))]
+     {
+         if let Some(p) = android::socket_protector() {
+             let resolved = tokio::net::lookup_host(local)
+--- a/crates/meow-config/src/dns_parser.rs
++++ b/crates/meow-config/src/dns_parser.rs
+@@ -45,8 +45,12 @@
+             }
+             let hosts = build_hosts_trie(raw.hosts.as_ref(), strict)?;
+             let use_hosts = raw.dns.as_ref().and_then(|d| d.use_hosts).unwrap_or(true);
++            let physical_servers = match crate::owned_load::OwnedLoadScope::current() {
++                Some(scope) => scope.disabled_dns_servers().map_err(anyhow::Error::msg)?,
++                None => None,
++            };
+             let resolver = Resolver::new(
+-                vec!["8.8.8.8:53".parse().unwrap()],
++                physical_servers.unwrap_or_else(|| vec!["8.8.8.8:53".parse().unwrap()]),
+                 vec![],
+                 DnsMode::Normal,
+                 hosts,
+--- a/crates/meow-config/src/lib.rs
++++ b/crates/meow-config/src/lib.rs
+@@ -3,6 +3,8 @@
+ //! Turns a Clash Meta-style `config.yaml` into typed structs consumed by
+ //! the tunnel, listeners, DNS, and API.
+ 
++pub mod owned_load;
++pub mod provider_events;
+ pub mod auth;
+ pub mod dns_parser;
+ pub mod dropped_providers;
+@@ -45,6 +47,21 @@
+ use std::sync::Arc;
+ use tracing::{debug, info, warn};
+ 
++pub async fn load_config_from_str_owned(
++    content: &str, scope: &Arc<owned_load::OwnedLoadScope>,
++) -> Result<Config, anyhow::Error> {
++    let result = scope.run(async {
++        tokio::select! {
++            biased;
++            _ = scope.cancelled() => Err(anyhow::anyhow!("configLoadCancelled")),
++            result = load_config_from_str(content) => result,
++        }
++    }).await;
++    if result.is_err() {
++        scope.close().await.map_err(anyhow::Error::msg)?;
++    }
++    result
++}
+ pub(crate) async fn spawn_blocking_with_current_dispatcher<F, R>(
+     f: F,
+ ) -> Result<R, tokio::task::JoinError>
+@@ -53,7 +70,7 @@
+     R: Send + 'static,
+ {
+     let dispatch = tracing::dispatcher::get_default(Clone::clone);
+-    tokio::task::spawn_blocking(move || tracing::dispatcher::with_default(&dispatch, f)).await
++    crate::owned_load::spawn_blocking(move || tracing::dispatcher::with_default(&dispatch, f)).await
+ }
+ 
+ pub(crate) fn parse_optional_socket_addr(
+@@ -7771,3 +7788,6 @@
+         );
+     }
+ }
++
++#[cfg(test)]
++mod owned_dns_tests;
+--- /dev/null
++++ b/crates/meow-config/src/owned_dns_tests.rs
+@@ -0,0 +1,131 @@
++use crate::owned_load::{LoadContext, OwnedLoadScope, OwnedWork};
++use hickory_proto::{op::{Message, MessageType, OpCode}, rr::{Record, RData, rdata::A}};
++use std::{net::{Ipv4Addr, SocketAddr}, sync::Arc, time::Duration};
++use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, UdpSocket}, sync::Notify};
++
++struct PhysicalContext(Option<Vec<SocketAddr>>);
++impl LoadContext for PhysicalContext {
++    fn requires_physical_dns(&self) -> bool { true }
++    fn physical_dns_servers(&self) -> Option<Vec<SocketAddr>> { self.0.clone() }
++    fn wrap(&self, work: OwnedWork) -> OwnedWork { work }
++    fn run_blocking(&self, work: Box<dyn FnOnce() + Send>) { work(); }
++}
++fn scope(servers: Option<Vec<SocketAddr>>) -> Arc<OwnedLoadScope> {
++    OwnedLoadScope::with_context(Arc::new(PhysicalContext(servers)))
++}
++fn response(request: &Message, truncated: bool) -> Vec<u8> {
++    let mut reply = Message::new(request.metadata.id, MessageType::Response, OpCode::Query);
++    reply.add_queries(request.queries.iter().cloned());
++    reply.metadata.truncation = truncated;
++    if !truncated {
++        reply.add_answer(Record::from_rdata(request.queries[0].name.clone(), 60,
++            RData::A(A(Ipv4Addr::new(192, 0, 2, 42)))));
++    }
++    reply.to_bytes().unwrap()
++}
++
++async fn round_trip(bind: &str, tcp_retry: bool, use_hosts: bool) {
++    let tcp = TcpListener::bind(bind).await.unwrap();
++    let address = tcp.local_addr().unwrap();
++    let udp = UdpSocket::bind(address).await.unwrap();
++    let expected_name = if use_hosts { "wire.example." } else { "pinned.example." };
++    let server = tokio::spawn(async move {
++        let mut buffer = [0; 4096];
++        let (length, peer) = udp.recv_from(&mut buffer).await.unwrap();
++        let query = Message::from_bytes(&buffer[..length]).unwrap();
++        assert_eq!(query.queries[0].name.to_string(), expected_name);
++        udp.send_to(&response(&query, tcp_retry), peer).await.unwrap();
++        if tcp_retry {
++            let (mut stream, _) = tcp.accept().await.unwrap();
++            let length = stream.read_u16().await.unwrap();
++            let mut wire = vec![0; usize::from(length)];
++            stream.read_exact(&mut wire).await.unwrap();
++            let query = Message::from_bytes(&wire).unwrap();
++            assert_eq!(query.queries[0].name.to_string(), expected_name);
++            let reply = response(&query, false);
++            stream.write_u16(reply.len().try_into().unwrap()).await.unwrap();
++            stream.write_all(&reply).await.unwrap();
++        }
++    });
++    let owner = scope(Some(vec![address]));
++    let yaml = format!("strict: true\nipv6: false\nhosts:\n  pinned.example: 192.0.2.9\ndns:\n  enable: false\n  use-hosts: {use_hosts}\nrules: ['MATCH,DIRECT']\n");
++    let config = crate::load_config_from_str_owned(&yaml, &owner).await.unwrap();
++    assert!(!config.dns.enabled);
++    assert!(config.dns.listen_addr.is_none());
++    assert_eq!(config.raw.dns.as_ref().unwrap().enable, Some(false));
++    if use_hosts {
++        assert_eq!(config.dns.resolver.lookup_ipv4("pinned.example").await,
++            Some("192.0.2.9".parse().unwrap()));
++    }
++    assert_eq!(config.dns.resolver.lookup_ipv6("pinned.example").await, None);
++    let name = if use_hosts { "wire.example" } else { "pinned.example" };
++    let answer = tokio::time::timeout(Duration::from_secs(5), owner.run(config.dns.resolver.lookup_ipv4(name))).await.unwrap();
++    assert_eq!(answer, Some("192.0.2.42".parse().unwrap()));
++    tokio::time::timeout(Duration::from_secs(5), server).await.unwrap().unwrap();
++    owner.close().await.unwrap();
++}
++
++#[tokio::test]
++async fn disabled_dns_uses_captured_ipv4_udp_and_preserves_hosts() {
++    round_trip("127.0.0.1:0", false, true).await;
++}
++#[tokio::test]
++async fn disabled_dns_uses_same_physical_server_for_truncated_udp_tcp_retry() {
++    round_trip("127.0.0.1:0", true, false).await;
++}
++#[tokio::test]
++async fn disabled_dns_accepts_captured_ipv6_upstream_without_enabling_ipv6_answers() {
++    round_trip("[::1]:0", false, true).await;
++}
++#[tokio::test]
++async fn missing_empty_invalid_physical_snapshot_fails_instead_of_public_fallback() {
++    for (servers, expected) in [
++        (None, "physicalDnsSnapshotMissing"),
++        (Some(vec![]), "physicalDnsSnapshotEmpty"),
++        (Some(vec!["0.0.0.0:53".parse().unwrap()]), "physicalDnsSnapshotInvalid"),
++        (Some(vec!["127.0.0.1:0".parse().unwrap()]), "physicalDnsSnapshotInvalid"),
++    ] {
++        let owner = scope(servers);
++        let error = match crate::load_config_from_str_owned("strict: true\ndns: {enable: false}\nrules: ['MATCH,DIRECT']\n", &owner).await {
++            Ok(_) => panic!("missing physical snapshot silently admitted default DNS"),
++            Err(error) => error,
++        };
++        assert!(error.to_string().contains(expected), "{error}");
++        owner.close().await.unwrap();
++    }
++}
++
++#[tokio::test]
++async fn disabled_dns_owned_query_cancel_joins_tcp_io_before_successor() {
++    let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
++    let address = tcp.local_addr().unwrap();
++    let udp = UdpSocket::bind(address).await.unwrap();
++    let received = Arc::new(Notify::new());
++    let accepted = received.clone();
++    let server = tokio::spawn(async move {
++        let mut buffer = [0; 4096];
++        let (length, peer) = udp.recv_from(&mut buffer).await.unwrap();
++        let query = Message::from_bytes(&buffer[..length]).unwrap();
++        udp.send_to(&response(&query, true), peer).await.unwrap();
++        let (mut stream, _) = tcp.accept().await.unwrap();
++        let length = stream.read_u16().await.unwrap();
++        let mut wire = vec![0; usize::from(length)];
++        stream.read_exact(&mut wire).await.unwrap();
++        accepted.notify_one();
++        let mut byte = [0];
++        assert_eq!(stream.read(&mut byte).await.unwrap(), 0);
++    });
++    let owner = scope(Some(vec![address]));
++    let config = crate::load_config_from_str_owned("strict: true\ndns: {enable: false}\nrules: ['MATCH,DIRECT']\n", &owner).await.unwrap();
++    let resolver = config.dns.resolver.clone();
++    let querying = owner.run(async { crate::owned_load::spawn(async move { resolver.lookup_ipv4("cancel.example").await }) }).await;
++    tokio::time::timeout(Duration::from_secs(5), received.notified()).await.unwrap();
++    owner.cancel();
++    tokio::time::timeout(Duration::from_secs(5), owner.close()).await.unwrap().unwrap();
++    assert!(querying.await.unwrap_err().is_cancelled());
++    tokio::time::timeout(Duration::from_secs(5), server).await.unwrap().unwrap();
++    assert!(TcpListener::bind(address).await.is_ok());
++    let successor = scope(Some(vec![address]));
++    crate::load_config_from_str_owned("strict: true\nrules: ['MATCH,DIRECT']\n", &successor).await.unwrap();
++    successor.close().await.unwrap();
++}
+--- /dev/null
++++ b/crates/meow-config/src/owned_load.rs
+@@ -0,0 +1,263 @@
++use parking_lot::Mutex;
++use std::{cell::RefCell, collections::HashMap, future::Future, pin::Pin, sync::{Arc, atomic::{AtomicU64, Ordering}}};
++use tokio::{sync::Notify, task::{AbortHandle, JoinHandle}};
++
++tokio::task_local! { static CURRENT: Arc<OwnedLoadScope>; }
++thread_local! { static BLOCKING: RefCell<Option<Arc<OwnedLoadScope>>> = const { RefCell::new(None) }; }
++
++#[derive(Default)]
++struct Jobs { closed: bool, panicked: bool, tasks: HashMap<u64, Option<AbortHandle>>, threads: Vec<std::thread::JoinHandle<()>> }
++
++pub type OwnedWork = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
++pub trait LoadContext: Send + Sync {
++    fn provider_observer(&self) -> Option<Arc<dyn crate::provider_events::ProviderObserver>> { None }
++    fn requires_physical_dns(&self) -> bool { false }
++    fn physical_dns_servers(&self) -> Option<Vec<std::net::SocketAddr>> { None }
++    fn wrap(&self, work: OwnedWork) -> OwnedWork;
++    fn run_blocking(&self, work: Box<dyn FnOnce() + Send>);
++}
++struct IdentityContext;
++impl LoadContext for IdentityContext {
++    fn wrap(&self, work: OwnedWork) -> OwnedWork { work }
++    fn run_blocking(&self, work: Box<dyn FnOnce() + Send>) { work(); }
++}
++pub struct OwnedLoadScope {
++    jobs: Mutex<Jobs>, changed: Notify, serial: AtomicU64, context: Arc<dyn LoadContext>,
++}
++
++struct Lease { owner: Arc<OwnedLoadScope>, id: u64 }
++impl Drop for Lease {
++    fn drop(&mut self) {
++        let mut jobs = self.owner.jobs.lock();
++        jobs.panicked |= std::thread::panicking();
++        jobs.tasks.remove(&self.id);
++        drop(jobs);
++        self.owner.changed.notify_waiters();
++    }
++}
++
++impl OwnedLoadScope {
++    pub fn new() -> Arc<Self> { Self::with_context(Arc::new(IdentityContext)) }
++    pub fn with_context(context: Arc<dyn LoadContext>) -> Arc<Self> {
++        Arc::new(Self { jobs: Mutex::new(Jobs::default()), changed: Notify::new(),
++            serial: AtomicU64::new(0), context })
++    }
++    pub fn current() -> Option<Arc<Self>> {
++        CURRENT.try_with(Arc::clone).ok().or_else(|| BLOCKING.with(|slot| slot.borrow().clone()))
++    }
++    pub fn provider_observer(&self) -> Option<Arc<dyn crate::provider_events::ProviderObserver>> { self.context.provider_observer() }
++    pub fn disabled_dns_servers(&self) -> Result<Option<Vec<std::net::SocketAddr>>, &'static str> {
++        let Some(servers) = self.context.physical_dns_servers() else {
++            return if self.context.requires_physical_dns() { Err("physicalDnsSnapshotMissing") } else { Ok(None) };
++        };
++        if servers.is_empty() { return Err("physicalDnsSnapshotEmpty"); }
++        if servers.iter().any(|server| server.port() == 0 || server.ip().is_unspecified() || server.ip().is_multicast()) {
++            return Err("physicalDnsSnapshotInvalid");
++        }
++        Ok(Some(servers))
++    }
++    pub fn is_cancelled(&self) -> bool { self.jobs.lock().closed }
++    pub async fn cancelled(&self) {
++        loop {
++            let changed = self.changed.notified();
++            tokio::pin!(changed);
++            changed.as_mut().enable();
++            if self.is_cancelled() { return; }
++            changed.await;
++        }
++    }
++    pub async fn run<F: Future>(self: &Arc<Self>, work: F) -> F::Output {
++        CURRENT.scope(self.clone(), work).await
++    }
++    fn lease(self: &Arc<Self>) -> Option<Lease> {
++        let id = self.serial.fetch_add(1, Ordering::Relaxed);
++        let mut jobs = self.jobs.lock();
++        if jobs.closed { return None; }
++        jobs.tasks.insert(id, None);
++        Some(Lease { owner: self.clone(), id })
++    }
++    pub fn cancel(&self) {
++        let mut jobs = self.jobs.lock();
++        jobs.closed = true;
++        for abort in jobs.tasks.values().flatten() { abort.abort(); }
++        self.changed.notify_waiters();
++    }
++    pub async fn close(&self) -> Result<(), &'static str> {
++        self.cancel();
++        loop {
++            let changed = self.changed.notified();
++            tokio::pin!(changed);
++            changed.as_mut().enable();
++            let finished = self.jobs.lock().tasks.is_empty();
++            if finished { break; }
++            changed.await;
++        }
++        let mut jobs = self.jobs.lock();
++        let mut failed = jobs.panicked;
++        for thread in jobs.threads.drain(..) { failed |= thread.join().is_err(); }
++        if failed { Err("providerThreadPanicked") } else { Ok(()) }
++    }
++}
++
++pub(crate) fn spawn<F>(work: F) -> JoinHandle<F::Output>
++where F: Future + Send + 'static, F::Output: Send + 'static {
++    let Some(owner) = OwnedLoadScope::current() else { return tokio::spawn(work); };
++    let Some(lease) = owner.lease() else {
++        return tokio::spawn(async { panic!("ownedLoadScopeClosed") });
++    };
++    let id = lease.id;
++    let wrapped = wrap_with(owner.clone(), work);
++    let task = tokio::spawn(async move { let _lease = lease; wrapped.await });
++    let mut jobs = owner.jobs.lock();
++    if jobs.closed { task.abort(); }
++    if let Some(slot) = jobs.tasks.get_mut(&id) { *slot = Some(task.abort_handle()); }
++    task
++}
++
++fn blocking_with<F, R>(owner: Arc<OwnedLoadScope>, work: F) -> R
++where F: FnOnce() -> R + Send + 'static, R: Send + 'static {
++    let result = Arc::new(Mutex::new(None));
++    let output = result.clone();
++    let context = owner.context.clone();
++    context.run_blocking(Box::new(move || {
++        BLOCKING.with(|slot| {
++            let prior = slot.replace(Some(owner));
++            struct Restore<'a>(&'a RefCell<Option<Arc<OwnedLoadScope>>>, Option<Arc<OwnedLoadScope>>);
++            impl Drop for Restore<'_> { fn drop(&mut self) { self.0.replace(self.1.take()); } }
++            let _restore = Restore(slot, prior);
++            *output.lock() = Some(work());
++        })
++    }));
++    let value = result.lock().take().expect("LoadContext must run blocking work");
++    value
++}
++
++pub(crate) fn wrap_with<F>(owner: Arc<OwnedLoadScope>, work: F) -> impl Future<Output = F::Output> + Send
++where F: Future + Send + 'static, F::Output: Send + 'static {
++    let result = Arc::new(Mutex::new(None));
++    let output = result.clone();
++    let context = owner.context.clone();
++    let wrapped = context.wrap(Box::pin(async move {
++        let value = owner.run(work).await;
++        *output.lock() = Some(value);
++    }));
++    async move {
++        wrapped.await;
++        let value = result.lock().take().expect("LoadContext must await async work");
++        value
++    }
++}
++
++pub(crate) fn wrap_current<F>(work: F) -> impl Future<Output = F::Output> + Send
++where F: Future + Send + 'static, F::Output: Send + 'static {
++    let owner = OwnedLoadScope::current();
++    async move {
++        match owner { Some(owner) => wrap_with(owner, work).await, None => work.await }
++    }
++}
++
++pub(crate) fn spawn_blocking<F, R>(work: F) -> JoinHandle<R>
++where F: FnOnce() -> R + Send + 'static, R: Send + 'static {
++    let Some(owner) = OwnedLoadScope::current() else { return tokio::task::spawn_blocking(work); };
++    let Some(lease) = owner.lease() else {
++        return tokio::spawn(async { panic!("ownedLoadScopeClosed") });
++    };
++    tokio::task::spawn_blocking(move || {
++        let _lease = lease;
++        blocking_with(owner, work)
++    })
++}
++
++pub(crate) fn spawn_thread<F>(builder: std::thread::Builder, work: F) -> std::io::Result<()>
++where F: FnOnce() + Send + 'static {
++    let owner = OwnedLoadScope::current();
++    let lease = match owner.as_ref() {
++        Some(owner) => Some(owner.lease().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Interrupted, "ownedLoadScopeClosed"))?),
++        None => None,
++    };
++    let mut jobs = owner.as_ref().map(|owner| owner.jobs.lock());
++    let context = owner.clone();
++    let thread = builder.spawn(move || {
++        let _lease = lease;
++        match context { Some(owner) => blocking_with(owner, work), None => work() }
++    })?;
++    if let Some(jobs) = jobs.as_mut() { jobs.threads.push(thread); }
++    Ok(())
++}
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::{future::{poll_fn, Future}, task::Poll};
++    use tokio::{net::TcpListener, sync::Notify};
++
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn real_initial_download_cancels_and_joins_before_successor() {
++        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let address = origin.local_addr().unwrap();
++        let accepted = Arc::new(Notify::new());
++        let connected = accepted.clone();
++        let server = tokio::spawn(async move {
++            use tokio::io::AsyncReadExt;
++            let (mut stream, _) = origin.accept().await.unwrap();
++            let mut bytes = [0; 4096];
++            assert!(stream.read(&mut bytes).await.unwrap() > 0);
++            connected.notify_one();
++            let mut received = Vec::new();
++            stream.read_to_end(&mut received).await.unwrap();
++        });
++        let scope = OwnedLoadScope::new();
++        let worker = scope.clone();
++        let yaml = format!("strict: true\nproxy-providers:\n  feed:\n    type: http\n    url: http://{address}/feed\n    interval: 0\nproxy-groups:\n  - name: PICK\n    type: select\n    use: [feed]\nrules: ['MATCH,PICK']\n");
++        let loading = tokio::spawn(async move { crate::load_config_from_str_owned(&yaml, &worker).await });
++        tokio::time::timeout(std::time::Duration::from_secs(5), accepted.notified()).await.unwrap();
++        scope.cancel();
++        assert!(loading.await.unwrap().is_err());
++        tokio::time::timeout(std::time::Duration::from_secs(5), scope.close()).await.unwrap().unwrap();
++        tokio::time::timeout(std::time::Duration::from_secs(5), server).await.unwrap().unwrap();
++        assert!(scope.jobs.lock().tasks.is_empty());
++        let successor = OwnedLoadScope::new();
++        crate::load_config_from_str_owned("strict: true\nrules: ['MATCH,DIRECT']\n", &successor).await.unwrap();
++        successor.close().await.unwrap();
++    }
++
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn real_rule_prefetch_cancel_joins_independent_runtime_thread() {
++        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let address = origin.local_addr().unwrap();
++        let accepted = Arc::new(Notify::new());
++        let connected = accepted.clone();
++        let server = tokio::spawn(async move {
++            use tokio::io::AsyncReadExt;
++            let (mut stream, _) = origin.accept().await.unwrap();
++            let mut bytes = [0; 4096];
++            assert!(stream.read(&mut bytes).await.unwrap() > 0);
++            connected.notify_one();
++            let mut received = Vec::new();
++            stream.read_to_end(&mut received).await.unwrap();
++        });
++        let scope = OwnedLoadScope::new();
++        let worker = scope.clone();
++        let yaml = format!("strict: true\nrule-providers:\n  feed:\n    type: http\n    behavior: domain\n    url: http://{address}/rules\n    interval: 0\nrules: ['RULE-SET,feed,DIRECT', 'MATCH,DIRECT']\n");
++        let loading = tokio::spawn(async move { crate::load_config_from_str_owned(&yaml, &worker).await });
++        tokio::time::timeout(std::time::Duration::from_secs(5), accepted.notified()).await.unwrap();
++        scope.cancel();
++        assert!(loading.await.unwrap().is_err());
++        tokio::time::timeout(std::time::Duration::from_secs(5), scope.close()).await.unwrap().unwrap();
++        tokio::time::timeout(std::time::Duration::from_secs(5), server).await.unwrap().unwrap();
++        assert!(scope.jobs.lock().tasks.is_empty());
++        assert!(scope.jobs.lock().threads.is_empty());
++    }
++    #[tokio::test]
++    async fn blocking_child_survives_cancelled_wait_and_must_finish_before_close() {
++        let scope = OwnedLoadScope::new();
++        let (release, wait) = std::sync::mpsc::channel::<()>();
++        scope.run(async { drop(spawn_blocking(move || { wait.recv().unwrap(); })); }).await;
++        let mut first = Box::pin(scope.close());
++        poll_fn(|cx| { assert!(first.as_mut().poll(cx).is_pending()); Poll::Ready(()) }).await;
++        drop(first);
++        let mut retry = Box::pin(scope.close());
++        poll_fn(|cx| { assert!(retry.as_mut().poll(cx).is_pending()); Poll::Ready(()) }).await;
++        release.send(()).unwrap();
++        retry.await.unwrap();
++    }
++}
+--- /dev/null
++++ b/crates/meow-config/src/provider_events.rs
+@@ -0,0 +1,43 @@
++use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
++use serde::Serialize;
++static NEXT_SOURCE: AtomicU64 = AtomicU64::new(1);
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
++#[serde(rename_all = "lowercase")]
++pub enum ProviderKind { Proxy, Rule }
++#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
++pub struct ProviderIdentity { pub kind: ProviderKind, pub name: String, pub source: u64 }
++pub trait ProviderLease: Send + Sync {
++    fn commit(&self, changed: bool, install: &mut dyn FnMut()) -> Result<(), String>;
++}
++pub trait ProviderObserver: Send + Sync {
++    fn validate(&self, kind: ProviderKind, name: &str) -> Result<(), String>;
++    fn begin(&self, identity: &ProviderIdentity) -> Result<Box<dyn ProviderLease>, String>;
++}
++pub struct ProviderBinding {
++    identity: ProviderIdentity,
++    observer: Option<Arc<dyn ProviderObserver>>,
++    scope: Option<Arc<crate::owned_load::OwnedLoadScope>>,
++}
++struct UnobservedLease;
++impl ProviderLease for UnobservedLease {
++    fn commit(&self, _changed: bool, install: &mut dyn FnMut()) -> Result<(), String> { install(); Ok(()) }
++}
++impl ProviderBinding {
++    pub fn capture(kind: ProviderKind, name: &str) -> Result<Self, String> {
++        let scope = crate::owned_load::OwnedLoadScope::current();
++        let observer = scope.as_ref().and_then(|scope| scope.provider_observer());
++        if let Some(observer) = &observer { observer.validate(kind, name)?; }
++        Ok(Self { identity: ProviderIdentity { kind, name: name.into(), source: NEXT_SOURCE.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |source| source.checked_add(1)).map_err(|_| "providerSourceExhausted".to_string())? },
++            observer, scope })
++    }
++    pub async fn run<F>(&self, work: F) -> F::Output
++    where F: std::future::Future + Send + 'static, F::Output: Send + 'static {
++        match &self.scope { Some(scope) => crate::owned_load::wrap_with(scope.clone(), work).await, None => work.await }
++    }
++    pub fn scope(&self) -> Option<Arc<crate::owned_load::OwnedLoadScope>> { self.scope.clone() }
++    pub fn identity(&self) -> &ProviderIdentity { &self.identity }
++    pub fn begin(&self) -> Result<Box<dyn ProviderLease>, String> {
++        match &self.observer { Some(observer) => observer.begin(&self.identity), None => Ok(Box::new(UnobservedLease)) }
++    }
++}
+--- a/crates/meow-config/src/proxy_provider.rs
++++ b/crates/meow-config/src/proxy_provider.rs
+@@ -46,6 +46,7 @@
+ }
+ 
+ pub struct ProxyProvider {
++    binding: crate::provider_events::ProviderBinding,
+     pub name: String,
+     pub slot: ProviderSlot,
+     pub vehicle_type: &'static str,
+@@ -235,6 +236,7 @@
+         strict: bool,
+         dialer_registry: meow_proxy::dialer::ProxyRegistry,
+     ) -> Result<Self, String> {
++        let binding = crate::provider_events::ProviderBinding::capture(crate::provider_events::ProviderKind::Proxy, name)?;
+         // Any on-disk location (read or write) must stay inside `cache_dir`
+         // (issue #429): `path:` — and the provider *name* feeding the implicit
+         // cache location — are attacker-influenced when the config document
+@@ -437,6 +439,7 @@
+             def: Self::def_identity(raw),
+             content_hash: Mutex::new(None), // see field docs
+             subscription_userinfo: Mutex::new(None),
++            binding,
+         })
+     }
+ 
+@@ -649,15 +652,13 @@
+ 
+     /// Read back the plan usage persisted with the on-disk cache, for a
+     /// payload just loaded from it. `None` when nothing was persisted.
+-    async fn load_cached_userinfo(&self) {
+-        let Some(path) = self.userinfo_path() else {
+-            return;
+-        };
++    async fn load_cached_userinfo(&self) -> Option<SubscriptionUserinfo> {
++        let path = self.userinfo_path()?;
+         let userinfo = tokio::fs::read_to_string(&path)
+             .await
+             .ok()
+             .and_then(|text| SubscriptionUserinfo::parse(&text));
+-        *self.subscription_userinfo.lock() = userinfo;
++        userinfo
+     }
+ 
+     /// Shared acquisition tail: dedup → parse → persist cache → commit.
+@@ -666,46 +667,61 @@
+     /// content changes). `source` distinguishes a live fetch from an
+     /// on-disk cache read — cache content is never written back. A fetch
+     /// the provider accepts, changed or not, also sets the plan usage.
++    pub async fn refresh_owned(self: &Arc<Self>) -> Result<(), String> {
++        let provider = self.clone();
++        self.binding.run(async move { provider.refresh().await }).await
++    }
++    pub fn owned_scope(&self) -> Option<Arc<crate::owned_load::OwnedLoadScope>> { self.binding.scope() }
++    pub fn provider_identity(&self) -> &crate::provider_events::ProviderIdentity { self.binding.identity() }
++    pub fn is_busy(&self) -> bool { self.refresh_lock.try_lock().is_err() }
++
+     async fn ingest(&self, content: String, source: Source) -> Result<bool, anyhow::Error> {
++        let operation = self.binding.begin().map_err(anyhow::Error::msg)?;
++        self.ingest_with_operation(content, source, operation).await
++    }
++    async fn ingest_with_operation(&self, content: String, source: Source,
++        operation: Box<dyn crate::provider_events::ProviderLease>) -> Result<bool, anyhow::Error> {
+         let strict = self.strict.load(Ordering::Relaxed);
+         let hash = content_hash(&content);
+         let from_remote = matches!(source, Source::Fetched(_));
+-        if *self.content_hash.lock() == Some((hash, strict)) {
+-            if let Source::Fetched(userinfo) = source {
+-                self.fetched_remote.store(true, Ordering::Relaxed);
+-                // The usage moves on most fetches, the payload on few.
+-                if self.set_userinfo(userinfo) {
+-                    self.persist_userinfo(userinfo).await;
+-                }
+-                self.logbook_updated(Payload::Unchanged);
+-            }
++        let unchanged = *self.content_hash.lock() == Some((hash, strict));
++        if unchanged {
++            let userinfo = match source {
++                Source::Fetched(userinfo) => { self.persist_userinfo(userinfo).await; userinfo },
++                Source::Cache => self.load_cached_userinfo().await,
++            };
++            operation.commit(false, &mut || {
++                self.set_userinfo(userinfo);
++                if from_remote { self.fetched_remote.store(true, Ordering::Relaxed); }
++            }).map_err(anyhow::Error::msg)?;
++            if from_remote { self.logbook_updated(Payload::Unchanged); }
+             return Ok(false);
+         }
+-        let proxies = self.parse_proxies(&content).await?;
+-        match source {
++        let (proxies, declared) = self.parse_proxies(&content).await?;
++        let userinfo = match source {
+             Source::Fetched(userinfo) => {
+                 self.write_cache(&content).await;
+-                // Rewritten with the cache whether it changed or not, so
+-                // the two on disk always come from the same fetch.
+-                self.set_userinfo(userinfo);
+                 self.persist_userinfo(userinfo).await;
++                userinfo
+             }
+             Source::Cache => self.load_cached_userinfo().await,
+-        }
+-        let payload = if self.has_content() {
+-            Payload::Replaced(self.slot.read().len())
+-        } else {
+-            Payload::First
+-        };
+-        self.commit(proxies);
+-        *self.content_hash.lock() = Some((hash, strict));
+-        if from_remote {
+-            self.fetched_remote.store(true, Ordering::Relaxed);
+-            self.logbook_updated(payload);
+-        }
++        };
++        let retired = self.slot.read().clone();
++        let payload = if self.has_content() { Payload::Replaced(retired.len()) } else { Payload::First };
++        let mut candidate = Some((proxies, declared));
++        operation.commit(true, &mut || {
++            let (proxies, declared) = candidate.take().expect("provider installation runs once");
++            *self.declared_dialers.write() = declared;
++            self.set_userinfo(userinfo);
++            self.commit(proxies);
++            *self.content_hash.lock() = Some((hash, strict));
++            if from_remote { self.fetched_remote.store(true, Ordering::Relaxed); }
++        }).map_err(anyhow::Error::msg)?;
++        drop(retired);
++        info!(provider = %self.name, count = self.slot.read().len(), "proxy-provider refreshed");
++        if from_remote { self.logbook_updated(payload); }
+         Ok(true)
+     }
+-
+     /// Logbook: a fetch from the source parsed. Recorded when it replaced a
+     /// payload or ends a failure the logbook shows: a first load belongs to
+     /// the start or config change that declared the provider, and an
+@@ -861,7 +877,7 @@
+     /// The task holds only a `Weak` between attempts, so a provider dropped
+     /// by a config commit — or an embedder shutting down — ends it.
+     pub fn spawn_initial_fetch(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+-        tokio::spawn(background_fetch_loop(Arc::downgrade(self)))
++        crate::owned_load::spawn(background_fetch_loop(Arc::downgrade(self)))
+     }
+ 
+     /// Parse a fetched provider payload into proxies.
+@@ -878,7 +894,7 @@
+     /// `declared_dialers` is rewritten only on the success path that will
+     /// be committed: an `Err` keeps the last-good slot running, so it must
+     /// keep that generation's declarations too (issue #489 review).
+-    async fn parse_proxies(&self, content: &str) -> Result<Vec<Arc<dyn Proxy>>, anyhow::Error> {
++    async fn parse_proxies(&self, content: &str) -> Result<(Vec<Arc<dyn Proxy>>, Vec<String>), anyhow::Error> {
+         let strict = self.strict.load(Ordering::Relaxed);
+         if !crate::yaml_within_depth(content) {
+             return Err(anyhow::anyhow!(
+@@ -977,15 +993,12 @@
+                 }
+             }
+         }
+-        *self.declared_dialers.write() = declared;
+-
+-        Ok(result)
++        Ok((result, declared))
+     }
+ 
+     /// Publish a freshly parsed node set — shared by `refresh` and the
+     /// strict-gated initial load in [`load_proxy_providers`].
+     fn commit(&self, proxies: Vec<Arc<dyn Proxy>>) {
+-        info!(provider = %self.name, count = proxies.len(), "proxy-provider refreshed");
+         // Main slot first, then the derived views — readers can never
+         // observe new derived contents against a stale main slot.
+         *self.slot.write() = proxies;
+@@ -1138,10 +1151,11 @@
+         // Hold the generation across fetch+parse+swap: two overlapping
+         // refreshes could otherwise interleave slot/derived/declared_dialers
+         // from different payloads.
+-        let _generation = self.refresh_lock.lock().await;
++        let _generation = self.refresh_lock.try_lock().map_err(|_| "providerBusy".to_string())?;
++        let operation = self.binding.begin()?;
+         match self.fetch_source().await {
+             Ok((content, userinfo)) => {
+-                match self.ingest(content, Source::Fetched(userinfo)).await {
++                match self.ingest_with_operation(content, Source::Fetched(userinfo), operation).await {
+                     Ok(_) => Ok(()),
+                     Err(e) => {
+                         // A torn payload keeps the last-good set instead of
+@@ -1332,7 +1346,7 @@
+             fetches.push((
+                 name.clone(),
+                 Arc::clone(&provider),
+-                tokio::spawn(async move { fetching.initial_load(strict).await }),
++                crate::owned_load::spawn(async move { fetching.initial_load(strict).await }),
+             ));
+         }
+         result.insert(name.clone(), provider);
+@@ -1363,7 +1377,7 @@
+                     "proxy-provider still fetching at the startup deadline; \
+                      starting empty and finishing in the background");
+                 provider.background_pending.store(true, Ordering::Relaxed);
+-                tokio::spawn(async move {
++                crate::owned_load::spawn(async move {
+                     if let Ok(Err(e)) = fetch.await {
+                         warn!(provider = %name, error = %e, "proxy-provider payload rejected");
+                     }
+--- a/crates/meow-config/src/proxy_provider_refresh.rs
++++ b/crates/meow-config/src/proxy_provider_refresh.rs
+@@ -115,7 +115,7 @@
+             if tasks.contains_key(&name) {
+                 continue;
+             }
+-            let task = tokio::spawn(refresh_loop(
++            let task = crate::owned_load::spawn(refresh_loop(
+                 name.clone(),
+                 interval,
+                 Arc::downgrade(registry),
+@@ -195,7 +195,7 @@
+         // provider's `refresh_lock`, and a failed refresh keeps the
+         // last-good slot — the loop only schedules, it never degrades the
+         // provider.
+-        if let Err(e) = provider.refresh().await {
++        if let Err(e) = provider.refresh_owned().await {
+             error!(provider = %provider.name, "background refresh failed: {e}");
+         }
+     }
+--- a/crates/meow-config/src/rule_provider.rs
++++ b/crates/meow-config/src/rule_provider.rs
+@@ -429,7 +429,7 @@
+         if matches!(owed, InitialFetch::Settled) {
+             return None;
+         }
+-        Some(tokio::spawn(initial_fetch_loop(Arc::downgrade(self), owed)))
++        Some(crate::owned_load::spawn(initial_fetch_loop(Arc::downgrade(self), owed)))
+     }
+ 
+     fn owe(&self, owed: InitialFetch) {
+@@ -706,9 +706,9 @@
+     let deadline_at = deadline.and_then(|d| std::time::Instant::now().checked_add(d));
+     let worker_board = Arc::clone(&board);
+     let dispatch = tracing::dispatcher::get_default(Clone::clone);
+-    let spawned = std::thread::Builder::new()
+-        .name("rule-provider-fetch".to_string())
+-        .spawn(move || {
++    let fetch_scope = crate::owned_load::OwnedLoadScope::current();
++    let spawned = crate::owned_load::spawn_thread(std::thread::Builder::new()
++        .name("rule-provider-fetch".to_string()), move || {
+             tracing::dispatcher::with_default(&dispatch, || {
+                 let _abandon = AbandonRemaining(Arc::clone(&worker_board), count);
+                 let runtime = match tokio::runtime::Builder::new_current_thread()
+@@ -721,23 +721,36 @@
+                         return;
+                     }
+                 };
+-                runtime.block_on(async {
++                runtime.block_on(crate::owned_load::wrap_current(async move {
+                     let mut tasks = tokio::task::JoinSet::new();
+                     let mut indexes = HashMap::with_capacity(count);
+                     for (index, d) in downloads.into_iter().enumerate() {
+-                        let task = tasks.spawn(async move {
++                        let task = tasks.spawn(crate::owned_load::wrap_current(async move {
+                             internal_http::fetch(&d.url, d.proxy.as_ref(), &d.headers).await
+-                        });
++                        }));
+                         indexes.insert(task.id(), index);
+                     }
+-                    while let Some(joined) = tasks.join_next_with_id().await {
++                    loop {
++                        let joined = tokio::select! {
++                            biased;
++                            _ = async { match fetch_scope.as_ref() {
++                                Some(scope) => scope.cancelled().await,
++                                None => std::future::pending::<()>().await,
++                            } } => {
++                                tasks.abort_all();
++                                while tasks.join_next().await.is_some() {}
++                                break;
++                            }
++                            joined = tasks.join_next_with_id() => joined,
++                        };
++                        let Some(joined) = joined else { break; };
+                         let (id, result) = match joined {
+                             Ok((id, result)) => (id, result.map_err(|e| format!("{e:#}"))),
+                             Err(e) => (e.id(), Err(format!("download task failed: {e}"))),
+                         };
+                         worker_board.complete(indexes[&id], result);
+                     }
+-                });
++                }));
+             });
+         });
+     if let Err(e) = spawned {
+--- a/crates/meow-dns/Cargo.toml
++++ b/crates/meow-dns/Cargo.toml
+@@ -9,6 +9,7 @@
+ homepage.workspace = true
+ 
+ [features]
++aerove-android-runtime = ["meow-common/aerove-android-runtime"]
+ default = ["encrypted", "dns-server"]
+ # DoT / DoH upstreams. TLS goes through `meow_transport::tls::TlsLayer`, so
+ # DNS shares the process-wide backend (BoringSSL when the app is built with
+--- a/crates/meow-dns/src/client.rs
++++ b/crates/meow-dns/src/client.rs
+@@ -1221,7 +1221,19 @@
+     // Binding to the loopback address selects `lo0` explicitly; it also
+     // needs no VPN `protect()` on Android because loopback is never routed
+     // into the tunnel.
+-    let sock = if addr.ip().is_loopback() {
++    #[cfg(all(feature = "aerove-android-runtime", any(target_os = "android", target_os = "linux", target_os = "macos")))]
++    let captured = meow_common::socket_protect::NetworkScope::is_captured();
++    #[cfg(not(all(feature = "aerove-android-runtime", any(target_os = "android", target_os = "linux", target_os = "macos"))))]
++    let captured = false;
++    let sock = if captured {
++        let local: SocketAddr = match (addr.is_ipv6(), addr.ip().is_loopback()) {
++            (false, true) => SocketAddr::from(([127, 0, 0, 1], 0)),
++            (true, true) => SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, 0)),
++            (false, false) => SocketAddr::from(([0, 0, 0, 0], 0)),
++            (true, false) => SocketAddr::from((std::net::Ipv6Addr::UNSPECIFIED, 0)),
++        };
++        meow_common::bind_udp(local).await?
++    } else if addr.ip().is_loopback() {
+         let local: SocketAddr = match addr {
+             SocketAddr::V4(_) => SocketAddr::from(([127, 0, 0, 1], 0)),
+             SocketAddr::V6(_) => SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, 0)),
+@@ -1245,7 +1257,11 @@
+             // RFC 7766 §0: retry a truncated UDP answer over TCP with a
+             // one-off connection (the truncation fallback is intentionally
+             // not pooled).
+-            let mut stream = factory().connect_tcp(addr).await?;
++            let mut stream = if captured {
++                meow_common::connect_tcp(addr).await?
++            } else {
++                factory().connect_tcp(addr).await?
++            };
+             return tcp_message_exchange(&mut stream, wire, expected).await;
+         }
+         return Ok(response);
+--- a/crates/meow-listener/Cargo.toml
++++ b/crates/meow-listener/Cargo.toml
+@@ -9,6 +9,7 @@
+ homepage.workspace = true
+ 
+ [features]
++aerove-android-runtime = ["meow-common/aerove-android-runtime", "dep:tokio-util"]
+ default = ["listener-http", "listener-socks5", "listener-mixed", "listener-tproxy"]
+ listener-http = []
+ listener-socks5 = []
+@@ -38,6 +39,7 @@
+ ]
+ 
+ [dependencies]
++tokio-util = { workspace = true, features = ["rt"], optional = true }
+ meow-common = { workspace = true }
+ meow-trie = { workspace = true }
+ meow-tunnel = { workspace = true }
+--- a/crates/meow-listener/src/lib.rs
++++ b/crates/meow-listener/src/lib.rs
+@@ -4,6 +4,9 @@
+ //! inbound (feature `listener-tun`).
+ 
+ pub mod sniffer;
++
++#[cfg(all(feature = "aerove-android-runtime", any(target_os = "android", target_os = "linux", target_os = "macos")))]
++pub mod owned_ingress;
+ 
+ pub const DEFAULT_HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+ 
+--- /dev/null
++++ b/crates/meow-listener/src/owned_ingress.rs
+@@ -0,0 +1,50 @@
++// SPDX-License-Identifier: GPL-3.0-only
++use meow_common::socket_protect::NetworkScope;
++use parking_lot::Mutex;
++use std::{collections::BTreeMap, future::Future, sync::{Arc, Weak}};
++use tokio::task::{AbortHandle, JoinHandle};
++use tokio_util::task::TaskTracker;
++
++tokio::task_local! { static CURRENT: Arc<OwnedIngress>; }
++struct Admission { closed: bool, next: u64, tasks: BTreeMap<u64, AbortHandle> }
++pub struct OwnedIngress { gate: Mutex<Admission>, tracker: TaskTracker }
++struct Registration { owner: Weak<OwnedIngress>, id: u64 }
++impl Drop for Registration {
++    fn drop(&mut self) { if let Some(owner) = self.owner.upgrade() { owner.gate.lock().tasks.remove(&self.id); } }
++}
++impl OwnedIngress {
++    pub fn new() -> Arc<Self> {
++        Arc::new(Self { gate: Mutex::new(Admission { closed: false, next: 1, tasks: BTreeMap::new() }), tracker: TaskTracker::new() })
++    }
++    pub fn current() -> Option<Arc<Self>> { CURRENT.try_with(Clone::clone).ok() }
++    pub async fn scope<F: Future>(self: &Arc<Self>, work: F) -> F::Output { CURRENT.scope(self.clone(), work).await }
++    pub fn spawn<F>(self: &Arc<Self>, work: F) -> JoinHandle<F::Output>
++    where F: Future + Send + 'static, F::Output: Send + 'static {
++        let mut gate = self.gate.lock();
++        if gate.closed {
++            drop(gate);
++            drop(work);
++            panic!("inbound owner closed");
++        }
++        let context = NetworkScope::current().expect("owned ingress requires captured network");
++        let id = gate.next; gate.next = id.checked_add(1).expect("inbound task identity exhausted");
++        let token = self.tracker.token();
++        let registration = Registration { owner: Arc::downgrade(self), id };
++        let owner = self.clone();
++        let task = tokio::spawn(async move {
++            let _registration = registration;
++            let _token = token;
++            owner.scope(context.scope(work)).await
++        });
++        gate.tasks.insert(id, task.abort_handle());
++        task
++    }
++    pub async fn close(&self) {
++        let tasks = {
++            let mut gate = self.gate.lock(); gate.closed = true; self.tracker.close();
++            gate.tasks.values().cloned().collect::<Vec<_>>()
++        };
++        for task in tasks { task.abort(); }
++        self.tracker.wait().await;
++    }
++}
+--- a/crates/meow-listener/src/socks5_udp.rs
++++ b/crates/meow-listener/src/socks5_udp.rs
+@@ -406,7 +406,7 @@
+ 
+     let last_activity_ms = Arc::new(AtomicU::new(monotonic_ms() as meow_common::atomic::Uint));
+     let dead = Arc::new(AtomicBool::new(false));
+-    let task = tokio::spawn(run_session(
++    let task = spawn_owned(run_session(
+         Arc::clone(inner),
+         Arc::clone(relay),
+         metadata,
+@@ -550,7 +550,7 @@
+             self.0.abort();
+         }
+     }
+-    let mut reply_task = tokio::spawn({
++    let mut reply_task = spawn_owned({
+         let conn = Arc::clone(&conn);
+         let last_activity_ms = Arc::clone(&last_activity_ms);
+         async move {
+@@ -690,6 +690,14 @@
+         }
+     }
+     out.extend_from_slice(&addr.port().to_be_bytes());
++}
++
++
++fn spawn_owned<F>(work: F) -> tokio::task::JoinHandle<F::Output>
++where F: std::future::Future + Send + 'static, F::Output: Send + 'static {
++    #[cfg(all(feature = "aerove-android-runtime", any(target_os = "android", target_os = "linux", target_os = "macos")))]
++    if let Some(owner) = crate::owned_ingress::OwnedIngress::current() { return owner.spawn(work); }
++    tokio::spawn(work)
+ }
+ 
+ #[cfg(test)]
+--- a/crates/meow-lwip/rust/core.rs
++++ b/crates/meow-lwip/rust/core.rs
+@@ -459,6 +459,15 @@
+         stack_buffer_size: usize,
+         udp_buffer_size: usize,
+     ) -> Result<CoreParts, crate::Error> {
++        Self::build_with_mtu(stack_buffer_size, udp_buffer_size, 1500)
++    }
++
++    pub(crate) fn build_with_mtu(
++        stack_buffer_size: usize,
++        udp_buffer_size: usize,
++        mtu: u16,
++    ) -> Result<CoreParts, crate::Error> {
++        if mtu < 1280 { return Err(crate::Error::InvalidMtu(mtu)); }
+         use std::sync::Once;
+         static LWIP_INIT: Once = Once::new();
+         LWIP_INIT.call_once(|| unsafe { lwip_init() });
+@@ -475,7 +484,8 @@
+         unsafe {
+             (*netif_list).output = Some(output_ip4);
+             (*netif_list).output_ip6 = Some(output_ip6);
+-            (*netif_list).mtu = 1500;
++            (*netif_list).mtu = mtu;
++            (*netif_list).mtu6 = mtu;
+             OUTPUT_PTR = output_ctx;
+         }
+ 
+--- a/crates/meow-lwip/rust/lib.rs
++++ b/crates/meow-lwip/rust/lib.rs
+@@ -15,6 +15,8 @@
+ 
+ #[derive(thiserror::Error, Debug)]
+ pub enum Error {
++    #[error("invalid Android TUN MTU ({0})")]
++    InvalidMtu(u16),
+     #[error("LwIP error ({0})")]
+     LwIP(i8),
+ }
+--- a/crates/meow-lwip/rust/stack.rs
++++ b/crates/meow-lwip/rust/stack.rs
+@@ -6,7 +6,7 @@
+ use tokio::sync::{mpsc::Receiver, watch};
+ use tokio_util::sync::PollSender;
+ 
+-use super::core::LwipCore;
++use super::core::{CoreParts, LwipCore};
+ use super::tcp_listener::TcpListener;
+ use super::udp::UdpSocket;
+ use crate::Error;
+@@ -39,8 +39,16 @@
+         stack_buffer_size: usize,
+         udp_buffer_size: usize,
+     ) -> Result<(Self, TcpListener, Box<UdpSocket>), Error> {
+-        let parts = LwipCore::build(stack_buffer_size, udp_buffer_size)?;
++        Self::from_parts(LwipCore::build(stack_buffer_size, udp_buffer_size)?)
++    }
+ 
++    pub fn with_mtu(
++        mtu: u16, stack_buffer_size: usize, udp_buffer_size: usize,
++    ) -> Result<(Self, TcpListener, Box<UdpSocket>), Error> {
++        Self::from_parts(LwipCore::build_with_mtu(stack_buffer_size, udp_buffer_size, mtu)?)
++    }
++
++    fn from_parts(parts: CoreParts) -> Result<(Self, TcpListener, Box<UdpSocket>), Error> {
+         let stack = NetStack {
+             ingress: PollSender::new(parts.ingress_tx),
+             egress_rx: parts.egress_rx,
+--- a/crates/meow-proxy/src/group/fallback.rs
++++ b/crates/meow-proxy/src/group/fallback.rs
+@@ -343,6 +343,25 @@
+         Ok(())
+     }
+ 
++    async fn prepare(&self, name: &str) -> Result<Option<(Arc<dyn Proxy>, u16)>> {
++        let proxy = self.find_member(name).ok_or_else(|| MeowError::Proxy("proxy not exist".into()))?;
++        if !proxy.alive_for_url(&self.test_url) {
++            let delay = crate::health::probe_without_record(&proxy, &self.test_url,
++                (!self.expected_status.is_empty()).then_some(self.expected_status.as_str()),
++                std::time::Duration::from_secs(5)).await.unwrap_or(0);
++            return Ok(Some((proxy, delay)));
++        }
++        Ok(None)
++    }
++    fn commit(&self, name: &str, health: Option<(Arc<dyn Proxy>, u16)>) -> Result<()> {
++        let proxy = self.find_member(name).ok_or_else(|| MeowError::Proxy("proxy not exist".into()))?;
++        if let Some((prepared, delay)) = health {
++            if !Arc::ptr_eq(&proxy, &prepared) { return Err(MeowError::Proxy("proxy changed during preparation".into())); }
++            proxy.health().record_delay(delay);
++        }
++        self.force_set(Some(name));
++        Ok(())
++    }
+     fn force_set(&self, name: Option<&str>) {
+         *self.fixed.write() = name.map(SmolStr::from);
+         if let Some(store) = &self.store {
+--- a/crates/meow-proxy/src/group/selector.rs
++++ b/crates/meow-proxy/src/group/selector.rs
+@@ -272,6 +272,12 @@
+         }
+     }
+ 
++    async fn prepare(&self, name: &str) -> Result<Option<(Arc<dyn Proxy>, u16)>> {
++        if self.contains_name(name) { Ok(None) } else { Err(MeowError::Proxy("proxy not exist".into())) }
++    }
++    fn commit(&self, name: &str, _health: Option<(Arc<dyn Proxy>, u16)>) -> Result<()> {
++        if self.select(name) { Ok(()) } else { Err(MeowError::Proxy("proxy not exist".into())) }
++    }
+     fn force_set(&self, name: Option<&str>) {
+         // SelectorGroup is a manual-pick group with no automatic fallback.
+         // Clearing (None) is intentionally a no-op — a selector without a
+--- a/crates/meow-proxy/src/group/urltest.rs
++++ b/crates/meow-proxy/src/group/urltest.rs
+@@ -459,6 +459,14 @@
+         Ok(())
+     }
+ 
++    async fn prepare(&self, name: &str) -> Result<Option<(Arc<dyn Proxy>, u16)>> {
++        if self.contains_name(name) { Ok(None) } else { Err(MeowError::Proxy("proxy not exist".into())) }
++    }
++    fn commit(&self, name: &str, _health: Option<(Arc<dyn Proxy>, u16)>) -> Result<()> {
++        if !self.contains_name(name) { return Err(MeowError::Proxy("proxy not exist".into())); }
++        self.force_set(Some(name));
++        Ok(())
++    }
+     fn force_set(&self, name: Option<&str>) {
+         *self.fixed.write() = name.map(SmolStr::from);
+         if let Some(store) = &self.store {
+--- a/crates/meow-proxy/src/health.rs
++++ b/crates/meow-proxy/src/health.rs
+@@ -101,6 +101,14 @@
+             Err(UrlTestError::Timeout)
+         }
+     }
++}
++
++pub async fn probe_without_record(
++    proxy: &Arc<dyn Proxy>, url: &str, expected: Option<&str>, timeout: Duration,
++) -> Result<u16, UrlTestError> {
++    let _permit = global_delay_probe_limiter().acquire().await
++        .expect("global delay probe semaphore is never closed");
++    url_test(proxy.as_ref(), url, expected, timeout).await
+ }
+ 
+ /// Probe a proxy and record the result in its [`ProxyHealth`].

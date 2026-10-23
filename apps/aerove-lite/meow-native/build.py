@@ -16,6 +16,7 @@ from verify_source import ROOT, sha, verify
 
 TARGETS={'aarch64-linux-android':('arm64-v8a',183),'x86_64-linux-android':('x86_64',62)}
 SCRIPT_JNI_SYMBOLS=['Java_dev_aerove_lite_overrides_NativeScriptEngine_native'+name for name in ['Begin','Evaluate','Cancel','Release']]
+RUNTIME_JNI_SYMBOLS=['Java_dev_aerove_lite_core_MeowNativeCore_'+name for name in ['startOwned','status','listenerStatus','awaitReady','stop','awaitExit']]
 
 def run(command, environment, capture=False):
     return subprocess.run(command,cwd=ROOT,env=environment,check=True,text=True,stdout=subprocess.PIPE if capture else None).stdout
@@ -152,7 +153,7 @@ def main():
         if sha(lock)!=resolved:raise ValueError('Locked build mutated Cargo.lock')
         if args.target:
             abi,machine=TARGETS[args.target];library=ROOT/'target'/args.target/'release/libaerove_meow_core.so'
-            output=verify_elf(library,machine,readelf,SCRIPT_JNI_SYMBOLS,build/(abi+'-readelf.txt'));receipt['scriptJniSymbols']=SCRIPT_JNI_SYMBOLS;(build/(abi+'-readelf.txt')).write_text(output)
+            output=verify_elf(library,machine,readelf,SCRIPT_JNI_SYMBOLS+RUNTIME_JNI_SYMBOLS,build/(abi+'-readelf.txt'));receipt['scriptJniSymbols']=SCRIPT_JNI_SYMBOLS;receipt['runtimeJniSymbols']=RUNTIME_JNI_SYMBOLS;(build/(abi+'-readelf.txt')).write_text(output)
             destination=build/abi;destination.mkdir(exist_ok=True);shutil.copyfile(library,destination/library.name)
             receipt['output']=dict(abi=abi,file=str(destination/library.name),sha256=sha(library),bytes=library.stat().st_size,minPageAlignment=16384)
         receipt['commandExit']=0;receipt['acceptedLock']=True

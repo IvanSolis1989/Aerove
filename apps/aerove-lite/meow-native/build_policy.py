@@ -3,6 +3,7 @@ import hashlib
 import json
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
+import shutil
 
 HASH = re.compile('[0-9a-f]{64}')
 
@@ -18,7 +19,7 @@ def owned_file(root, name):
         raise ValueError('Policy or patch path escapes owner')
     return target
 
-def load_policy(root):
+def load_policy(root, *, check_resolution_seed=True):
     file=Path(root)/'build-policy.json'
     if not file.exists():return None
     raw=file.read_bytes();policy=json.loads(raw)
@@ -31,7 +32,7 @@ def load_policy(root):
         raise ValueError('Invalid representative test targets')
     if digest((Path(root)/'Cargo.toml').read_bytes())!=policy['manifestSha256']:
         raise ValueError('Cargo manifest does not match approved build policy')
-    if policy['resolveLock'] and digest((Path(root)/'Cargo.lock').read_bytes())!=policy['expectedLockBeforeSha256']:
+    if check_resolution_seed and policy['resolveLock'] and digest((Path(root)/'Cargo.lock').read_bytes())!=policy['expectedLockBeforeSha256']:
         raise ValueError('Explicit lock resolution requires the approved previous lock')
     metadata=owned_file(root,policy['overlay']).read_bytes()
     if digest(metadata)!=policy['overlaySha256']:raise ValueError('Overlay metadata identity mismatch')
@@ -53,6 +54,26 @@ def load_policy(root):
     actual=digest(json.dumps(overlay['files'],sort_keys=True,separators=(',',':')).encode())
     if actual!=overlay['adaptedFileManifestSha256']:raise ValueError('Adapted file manifest identity mismatch')
     return dict(policy,policySha256=digest(raw),overlayMetadata=overlay)
+
+
+def copy_policy_evidence(root, destination):
+    """Archive validated source bodies after resolution may have changed the lock."""
+    policy=load_policy(root,check_resolution_seed=False)
+    if policy is None:return []
+    metadata=policy['overlayMetadata']
+    result=[]
+    for name,expected in [(policy['overlay'],policy['overlaySha256']),(metadata['patch'],metadata['patchSha256'])]:
+        source=owned_file(root,name);target=owned_file(destination,name)
+        target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(source,target)
+        if digest(target.read_bytes())!=expected:raise ValueError('Archived source body identity mismatch')
+        result.append(name)
+    lock=Path(root)/'Cargo.lock'
+    record=dict(schema=1,archiveOnly=True,resolutionSeedCheckSkippedForArchive=True,
+        expectedBeforeLockSha256=policy['expectedLockBeforeSha256'],actualAfterLockSha256=digest(lock.read_bytes()) if lock.is_file() else None,
+        sourcePolicySha256=policy['policySha256'],overlay=policy['overlay'],overlaySha256=policy['overlaySha256'],
+        patch=metadata['patch'],patchSha256=metadata['patchSha256'])
+    owned_file(destination,'source-policy-evidence.json').write_bytes((json.dumps(record,indent=2)+'\n').encode())
+    return result
 
 def decide_plan(lock_present, archive_hash, event, phase, initialize, resolve_requested=False):
     pinned=isinstance(archive_hash,str) and HASH.fullmatch(archive_hash) is not None

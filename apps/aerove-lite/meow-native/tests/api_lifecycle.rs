@@ -87,14 +87,15 @@ async fn actual_api_views_share_tunnel_and_user_cannot_reach_private_or_mutators
     for (address, path, method, headers) in [
         (private_address, "/configs", "GET", "Authorization"),
         (user_address, "/aerove/proof", "GET", "Authorization"),
-        (user_address, "/configs", "PATCH", "Authorization"),
+        (user_address, "/configs", "POST", "Authorization"),
         (user_address, "/configs", "GET", "X-Private-Admin"),
     ] {
         let denied = preflight(address, path, method, headers).await;
         assert!(!denied.starts_with("HTTP/1.1 2"), "{denied}");
         assert!(!denied.to_ascii_lowercase().contains("access-control-allow-origin:"));
     }
-    let malformed = raw_http(user_address, "OPTIONS /configs HTTP/1.1\r\nHost: localhost\r\nAccess-Control-Request-Method: GET\r\nConnection: close\r\n\r\n").await;
+    let patch_preflight = preflight(user_address, "/configs", "PATCH", "Authorization, Content-Type").await;
+    assert!(patch_preflight.starts_with("HTTP/1.1 204"), "{patch_preflight}");    let malformed = raw_http(user_address, "OPTIONS /configs HTTP/1.1\r\nHost: localhost\r\nAccess-Control-Request-Method: GET\r\nConnection: close\r\n\r\n").await;
     assert!(malformed.starts_with("HTTP/1.1 400"));
     api.cancel(); cancel.cancel();
     private_task.await.unwrap().unwrap(); user_task.await.unwrap().unwrap();

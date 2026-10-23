@@ -6,9 +6,14 @@ use tokio::{sync::{Mutex, Semaphore, mpsc, watch}, task::{JoinHandle, JoinSet}};
 use tokio_util::sync::CancellationToken;
 
 pub type PacketWork<T> = Pin<Box<dyn Future<Output = io::Result<T>> + Send + 'static>>;
-pub trait PacketHandler: Send + Sync {
+type PacketFactory = Box<dyn FnOnce(Arc<RuntimePlan>, Arc<OwnedLoadScope>) -> PacketWork<Arc<dyn PacketHandler>> + Send>;
+pub trait PacketHandler: Send + Sync + 'static {
     fn tcp(&self, stream: lwip::TcpStream, source: SocketAddr, target: SocketAddr) -> PacketWork<()>;
     fn udp(&self, payload: Vec<u8>, source: SocketAddr, target: SocketAddr, dns_hijacked: bool) -> PacketWork<Option<Vec<u8>>>;
+    fn udp_driver(self: Arc<Self>, socket: Box<lwip::UdpSocket>, tun: TunPlan,
+        cancel: CancellationToken, network: NetworkContext) -> PacketWork<()> {
+        Box::pin(default_udp(self, socket, tun, cancel, network))
+    }
 }
 
 static STACK: OnceLock<Arc<Semaphore>> = OnceLock::new();
@@ -42,17 +47,12 @@ impl TunDriver {
         cancel: CancellationToken, factory: F) -> io::Result<Arc<Self>>
     where F: FnOnce(Arc<RuntimePlan>, Arc<OwnedLoadScope>) -> Fut + Send + 'static,
           Fut: Future<Output = io::Result<Arc<dyn PacketHandler>>> + Send + 'static {
-        eprintln!("[tun-stack] start-entry factory-future-bytes={}", std::mem::size_of::<Fut>());
-        let factory: Box<dyn FnOnce(Arc<RuntimePlan>, Arc<OwnedLoadScope>) -> PacketWork<Arc<dyn PacketHandler>> + Send> =
-            Box::new(move |plan, loads| Box::pin(factory(plan, loads)));
+        let factory: PacketFactory = Box::new(move |plan, loads| Box::pin(factory(plan, loads)));
         Self::start_inner(json, caller, network, cancel, factory)
     }
 
     fn start_inner(json: &str, caller: BorrowedFd<'_>, network: NetworkContext,
-        cancel: CancellationToken,
-        factory: Box<dyn FnOnce(Arc<RuntimePlan>, Arc<OwnedLoadScope>) -> PacketWork<Arc<dyn PacketHandler>> + Send>,
-    ) -> io::Result<Arc<Self>> {
-        eprintln!("[tun-stack] start-inner-entry");
+        cancel: CancellationToken, factory: PacketFactory) -> io::Result<Arc<Self>> {
         let plan = Arc::new(RuntimePlan::parse(json, std::os::fd::AsRawFd::as_raw_fd(&caller), true, false)?);
         if plan.runtime_mode != RuntimeMode::Tun || plan.initially_parked {
             return Err(error("packet driver requires an attached Tun plan"));
@@ -72,23 +72,12 @@ impl TunDriver {
         let progress = Arc::new(Progress { ready: AtomicBool::new(false), done: AtomicBool::new(false), incoming: AtomicU64::new(0), outgoing: AtomicU64::new(0), phase });
         let owner = Arc::new(Self { cancel: cancel.clone(), network: network.clone(), loads: loads.clone(),
             task: Mutex::new(None), progress: progress.clone(), tun: tun.clone() });
-        eprintln!("[tun-stack] before-worker-construction");
-        let worker = async move {
-            eprintln!("[tun-stack] worker-first-poll");
+        let task = runtime.spawn(async move {
             let mut core_done = None;
             let mut stack_started = false;
             let outcome = AssertUnwindSafe(async {
                 let loaded = {
-                    eprintln!("[tun-stack] before-load-work-construction");
-                    let work = loads.run(network.scope(async {
-                        eprintln!("[tun-stack] before-factory-call");
-                        let factory_work = factory(plan, loads.clone());
-                        eprintln!("[tun-stack] factory-constructed bytes={}", std::mem::size_of_val(&factory_work));
-                        let result = factory_work.await;
-                        eprintln!("[tun-stack] factory-complete");
-                        result
-                    }));
-                    eprintln!("[tun-stack] load-work-constructed bytes={}", std::mem::size_of_val(&work));
+                    let work = loads.run(network.scope(async { factory(plan, loads.clone()).await }));
                     tokio::pin!(work);
                     tokio::select! { biased;
                         _ = cancel.cancelled() => return Ok(()),
@@ -98,11 +87,9 @@ impl TunDriver {
                 };
                 let handler = loaded?;
                 if cancel.is_cancelled() || network.cancelled() { return Ok(()); }
-                eprintln!("[tun-stack] before-netstack-construction");
                 stack_started = true;
                 let (stack, tcp, udp) = lwip::NetStack::with_mtu(tun.mtu, 256, 64)
                     .map_err(|_| error("netstack construction failed"))?;
-                eprintln!("[tun-stack] netstack-constructed");
                 core_done = Some(stack.core_done());
                 network.scope(drive(fd, stack, tcp, udp, handler, tun, network.clone(), cancel.clone(), progress.clone())).await
             }).catch_unwind().await;
@@ -131,10 +118,7 @@ impl TunDriver {
                 .and_then(|result| result);
             progress.phase.send_replace(if result.is_err() { Phase::Failed } else { Phase::Stopped });
             result
-        };
-        eprintln!("[tun-stack] worker-constructed bytes={}", std::mem::size_of_val(&worker));
-        let task = runtime.spawn(worker);
-        eprintln!("[tun-stack] worker-spawned");
+        });
         *owner.task.try_lock().map_err(|_| error("new packet owner lock unavailable"))? = Some(task);
         Ok(owner)
     }
@@ -169,6 +153,17 @@ impl TunDriver {
             mtu: self.tun.mtu, ipv6: self.tun.ipv6, packets_in: self.progress.incoming.load(Ordering::Relaxed),
             packets_out: self.progress.outgoing.load(Ordering::Relaxed) }
     }
+    pub async fn exited(&self) -> io::Result<PacketReceipt> {
+        let mut phase = self.progress.phase.subscribe();
+        loop {
+            match *phase.borrow_and_update() {
+                Phase::Stopped => return Ok(self.receipt()),
+                Phase::Failed => return Err(error("packet driver failed")),
+                _ => {},
+            }
+            phase.changed().await.map_err(|_| error("packet owner exited"))?;
+        }
+    }
 
     pub async fn stop(&self) -> io::Result<PacketReceipt> {
         self.cancel.cancel();
@@ -191,16 +186,23 @@ impl Drop for TunDriver {
 async fn drive(fd: PacketFd, mut stack: lwip::NetStack, mut tcp: lwip::TcpListener,
     udp: Box<lwip::UdpSocket>, handler: Arc<dyn PacketHandler>, tun: TunPlan, network: NetworkContext,
     cancel: CancellationToken, progress: Arc<Progress>) -> io::Result<()> {
-    let (udp_write, mut udp_read) = udp.split();
-    let (reply_tx, mut replies) = mpsc::channel::<(Vec<u8>, SocketAddr, SocketAddr)>(64);
-    let mut flows = JoinSet::new();
     if cancel.is_cancelled() || network.cancelled() { return Ok(()); }
+    let udp_cancel = cancel.child_token();
+    let work = handler.clone().udp_driver(udp, tun.clone(), udp_cancel.clone(), network.clone());
+    let context = network.clone();
+    let mut udp_task = tokio::spawn(async move { context.scope(work).await });
+    let mut udp_joined = false;
+    let mut flows = JoinSet::new();
     progress.ready.store(true, Ordering::Release);
     progress.phase.send_replace(Phase::Ready);
     let outcome = AssertUnwindSafe(async { loop {
         tokio::select! { biased;
             _ = cancel.cancelled() => break Ok(()),
             _ = network.cancelled_signal() => break Ok(()),
+            joined = &mut udp_task => {
+                udp_joined = true;
+                break joined.map_err(|_| error("UDP owner panicked"))?.and_then(|_| Err(error("UDP owner exited")));
+            },
             joined = flows.join_next(), if !flows.is_empty() => {
                 if joined.is_some_and(|joined| joined.is_err()) { break Err(error("packet flow panicked")); }
             },
@@ -230,26 +232,44 @@ async fn drive(fd: PacketFd, mut stack: lwip::NetStack, mut tcp: lwip::TcpListen
                     _ = stop.cancelled() => Ok(()), result = work => result,
                 } }).await });
             },
-            packet = udp_read.recv_from(), if flows.len() < 256 => {
-                let (payload, source, target) = match packet { Ok(packet) => packet, Err(e) => break Err(e) };
-                let work = handler.udp(payload, source, target, tun.hijacks(target));
-                let context = network.clone(); let stop = cancel.clone(); let replies = reply_tx.clone();
-                flows.spawn(async move { context.scope(async move { tokio::select! { biased;
-                    _ = stop.cancelled() => Ok(()),
-                    result = async move {
-                        if let Some(reply) = work.await? { replies.send((reply, target, source)).await.map_err(|_| error("packet reply owner closed"))?; }
-                        Ok(())
-                    } => result,
-                } }).await });
-            },
-            Some((payload, source, target)) = replies.recv() => {
-                if let Err(e) = udp_write.send_to(&payload, &source, &target) { break Err(e); }
-            },
         }
     } }).catch_unwind().await;
+    udp_cancel.cancel();
     flows.abort_all();
     while flows.join_next().await.is_some() {}
-    drop((tcp, udp_read, udp_write, reply_tx, replies, stack, fd));
+    if !udp_joined { (&mut udp_task).await.map_err(|_| error("UDP owner panicked"))??; }
+    drop((tcp, stack, fd));
     if cancel.is_cancelled() || network.cancelled() { return Ok(()); }
     outcome.map_err(|_| error("packet loop panicked"))?
+}
+
+async fn default_udp<H: PacketHandler + ?Sized>(handler: Arc<H>, socket: Box<lwip::UdpSocket>, tun: TunPlan,
+    cancel: CancellationToken, network: NetworkContext) -> io::Result<()> {
+    let (writer, mut reader) = socket.split();
+    let (reply_tx, mut replies) = mpsc::channel::<(Vec<u8>, SocketAddr, SocketAddr)>(64);
+    let mut tasks = JoinSet::new();
+    let outcome = AssertUnwindSafe(async { loop { tokio::select! { biased;
+        _ = cancel.cancelled() => break Ok(()),
+        joined = tasks.join_next(), if !tasks.is_empty() => {
+            if joined.is_some_and(|result| result.is_err()) { break Err(error("UDP packet handler panicked")); }
+        },
+        packet = reader.recv_from(), if tasks.len() < 256 => {
+            let (payload, source, target) = match packet { Ok(packet) => packet, Err(e) => break Err(e) };
+            let work = handler.udp(payload, source, target, tun.hijacks(target));
+            let context = network.clone(); let stop = cancel.clone(); let replies = reply_tx.clone();
+            tasks.spawn(async move { context.scope(async move { tokio::select! { biased;
+                _ = stop.cancelled() => Ok(()),
+                result = async move {
+                    if let Some(reply) = work.await? { replies.send((reply, target, source)).await.map_err(|_| error("packet reply owner closed"))?; }
+                    Ok(())
+                } => result,
+            } }).await });
+        },
+        Some((payload, source, target)) = replies.recv() => {
+            if let Err(e) = writer.send_to(&payload, &source, &target) { break Err(e); }
+        },
+    } } }).catch_unwind().await;
+    tasks.abort_all();
+    while tasks.join_next().await.is_some() {}
+    outcome.map_err(|_| error("UDP packet owner panicked"))?
 }

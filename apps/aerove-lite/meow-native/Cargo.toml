@@ -14,7 +14,7 @@ meow-common = { path = ".upstream/meow-rs/crates/meow-common", features = ["aero
 meow-dns = { path = ".upstream/meow-rs/crates/meow-dns", default-features = false, features = ["aerove-android-runtime"] }
 meow-config = { path = ".upstream/meow-rs/crates/meow-config", default-features = false }
 meow-tunnel = { path = ".upstream/meow-rs/crates/meow-tunnel" }
-meow-listener = { path = ".upstream/meow-rs/crates/meow-listener", default-features = false, features = ["listener-mixed"] }
+meow-listener = { path = ".upstream/meow-rs/crates/meow-listener", default-features = false, features = ["listener-mixed", "aerove-android-runtime"] }
 meow-api = { path = ".upstream/meow-rs/crates/meow-api", default-features = false }
 axum = { version = "0.8", default-features = false, features = ["json", "http1", "tokio"] }
 hyper = { version = "1", features = ["http1", "server"] }
@@ -32,6 +32,7 @@ tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 futures = "0.3"
 async-trait = "0.1"
+ipnet = "2"
 
 [target.'cfg(unix)'.dependencies]
 lwip = { package = "meow-lwip", path = ".upstream/meow-rs/crates/meow-lwip" }

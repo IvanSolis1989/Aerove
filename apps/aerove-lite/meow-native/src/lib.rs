@@ -2,6 +2,7 @@
 pub mod runtime;
 pub mod api;
 pub mod control;
+pub mod providers;
 #[cfg(unix)]
 pub mod packet_fd;
 pub mod runtime_plan;
@@ -11,6 +12,13 @@ pub mod network_context;
 pub mod tun_driver;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 pub mod physical_dns;
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+pub mod tunnel_packets;
+pub mod flow_owner;
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+pub mod owned_runtime;
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+mod meow_jni;
 mod script_engine;
 mod script_jni;
 
