@@ -2,13 +2,13 @@
 //! A caller obtains handle and DNS in one AndroidTunResources capture, then
 //! calls apply with the latest coreEpoch. Existing NetworkContext scopes keep
 //! the binding captured when they started; future scopes observe the new slot.
-use crate::{network_context::{NetworkContext, NetworkContextSlot}, physical_dns::{PhysicalResolver, selected_servers}, runtime_plan::PhysicalDns, providers::ControlPlane};
+use crate::{network_context::{NetworkContext, NetworkContextSlot, ResolverPair}, physical_dns::{PhysicalResolver, selected_servers}, runtime_plan::PhysicalDns, providers::ControlPlane};
 use meow_tunnel::Tunnel;
 use parking_lot::Mutex;
 use std::{future::Future, net::SocketAddr, pin::Pin, sync::{Arc, atomic::{AtomicU64, Ordering}}};
 use tokio_util::sync::CancellationToken;
 
-pub struct DnsBuild { pub scope: Arc<meow_config::owned_load::OwnedLoadScope>, pub work: Pin<Box<dyn Future<Output = Result<Arc<meow_dns::Resolver>, String>> + Send>> }
+pub struct DnsBuild { pub scope: Arc<meow_config::owned_load::OwnedLoadScope>, pub work: Pin<Box<dyn Future<Output = Result<ResolverPair, String>> + Send>> }
 pub type DnsFactory = Arc<dyn Fn(NetworkContext, Arc<meow_dns::Resolver>) -> DnsBuild + Send + Sync>;
 pub struct CapturedPhysicalNetwork { pub intent: u64, pub core_epoch: u64, pub network_handle: u64, pub dns: PhysicalDns }
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,7 +29,7 @@ impl NetworkPolicyOwner {
     pub fn new(control: Arc<ControlPlane>, tunnel: Tunnel, network: Arc<NetworkContextSlot>, base_network: NetworkContext,
         dns_factory: DnsFactory, ipv6: bool, cancel: CancellationToken, initial_intent: u64) -> Result<Arc<Self>, &'static str> {
         if cancel.is_cancelled() { return Err("invalidNetworkPolicyOwner"); }
-        Ok(Arc::new(Self { pending_dns: Mutex::new(Vec::new()), pending_scopes: Mutex::new(Vec::new()), current_scope: Mutex::new(None), failure: Mutex::new(None), joined: std::sync::atomic::AtomicBool::new(false), processes: parking_lot::RwLock::new(None), control, tunnel, network, base_network, dns_factory, ipv6, cancel, latest_intent: AtomicU64::new(initial_intent),
+        Ok(Arc::new(Self { pending_dns: Mutex::new(Vec::new()), pending_scopes: Mutex::new(Vec::new()), current_scope: Mutex::new(None), failure: Mutex::new(None), joined: std::sync::atomic::AtomicBool::new(false), processes: parking_lot::RwLock::new(None), control, tunnel, network, base_network: base_network.rebind_seed_context(), dns_factory, ipv6, cancel, latest_intent: AtomicU64::new(initial_intent),
             intent_gate: Mutex::new(()), update_gate: tokio::sync::Mutex::new(()) }))
     }
     pub fn failure(&self) -> Option<&'static str> { *self.failure.lock() }
@@ -103,11 +103,12 @@ impl NetworkPolicyOwner {
         let retired_resolver = Arc::clone(&readback_slot.read());
         let build = (self.dns_factory)(next_network.clone(), Arc::clone(&retired_resolver));
         self.pending_scopes.lock().push(build.scope.clone());
-        let resolver = match build.scope.run(build.work).await {
+        let pair = match build.scope.run(build.work).await {
             Ok(resolver) => resolver,
             Err(error) => { let _ = self.retire_scope(build.scope).await; let _ = self.retire_dns(next.dns_owner()).await; return Err(error); }
         };
-        let next_network = next_network.with_core_resolver(Arc::clone(&resolver));
+        let resolver = pair.main.clone();
+        let next_network = next_network.with_resolver_pair(pair.clone());
         let tunnel = &self.tunnel; let network_slot = &self.network;
         let processes = self.processes.read().clone();
         let identity = match processes.as_ref().map(|owner| owner.prepare_network_invalidation()).transpose() {
@@ -159,9 +160,10 @@ impl NetworkPolicyOwner {
         let installed = Arc::clone(&slot.read());
         let resolver_readback = Arc::ptr_eq(&installed, &resolver);
         let (network_handle, servers) = self.network.current_identity();
-        let binding_resolver = self.network.current_core_resolver();
+        let binding_pair = self.network.current_resolver_pair();
         let network_readback = network_handle == Some(captured.network_handle) && servers.as_deref() == Some(dns_servers.as_slice())
-            && binding_resolver.as_ref().is_some_and(|current| Arc::ptr_eq(current, &resolver));
+            && binding_pair.as_ref().is_some_and(|current| Arc::ptr_eq(&current.main, &pair.main) && match (&current.proxy,&pair.proxy) {
+                (Some(current),Some(expected)) => Arc::ptr_eq(current,expected), (None,None) => true, _ => false });
         Ok(NetworkPolicyReceipt { intent: captured.intent, core_epoch: epoch, network_handle: captured.network_handle,
             dns_servers, resolver_readback, network_readback, retired_dns_joined })
     }

@@ -16,41 +16,47 @@ pub struct NetworkContext {
     live: Option<Arc<NetworkContextSlot>>,
     live_weak: Option<Weak<NetworkContextSlot>>,
     resolver_weak: Option<Weak<meow_dns::Resolver>>,
+    proxy_resolver_weak: Option<Weak<meow_dns::Resolver>>,
     protector: Option<Arc<dyn SocketProtector>>,
     dns_owner: Option<Arc<crate::physical_dns::PhysicalDnsOwner>>,
     dns_transport: Option<meow_common::transport_tasks::TransportScope>,
     core_resolver: Option<Arc<meow_dns::Resolver>>,
+    proxy_resolver: Option<Arc<meow_dns::Resolver>>,
     request_policy: Option<meow_common::request_policy::PolicyScope>,
     transport: Option<Arc<crate::transport_tasks::CapturedTransport>>,
     probe: Option<meow_common::probe_policy::ProbeScope>,
+    probe_owner: Option<Arc<crate::probe_policy::ProbePolicies>>,
+    probe_snapshot: Option<Arc<meow_common::probe_policy::ProbeSnapshot>>,
     tunnel_capture: Option<Arc<OnceLock<Weak<TunnelCapture>>>>,
 }
+#[derive(Clone)]
+pub struct ResolverPair { pub main: Arc<meow_dns::Resolver>, pub proxy: Option<Arc<meow_dns::Resolver>> }
 pub(crate) struct TunnelCapture { pub tunnel: meow_tunnel::Tunnel }
 
 #[derive(Clone)]
 struct NetworkBinding { scope: NetworkScope, network_handle: Option<u64>, physical_dns: Option<Vec<SocketAddr>>, physical_dns_plan: Option<Arc<crate::runtime_plan::PhysicalDns>>,
-    dns_owner: Option<Arc<crate::physical_dns::PhysicalDnsOwner>>, dns_transport: Option<meow_common::transport_tasks::TransportScope>, core_resolver: Option<Arc<meow_dns::Resolver>> }
+    dns_owner: Option<Arc<crate::physical_dns::PhysicalDnsOwner>>, dns_transport: Option<meow_common::transport_tasks::TransportScope>, core_resolver: Option<Arc<meow_dns::Resolver>>, proxy_resolver: Option<Arc<meow_dns::Resolver>> }
 pub struct NetworkContextSlot { current: RwLock<NetworkBinding> }
 impl NetworkContextSlot {
     pub fn new(initial: &NetworkContext) -> Arc<Self> {
         Arc::new(Self { current: RwLock::new(NetworkBinding { scope: initial.scope.clone(), network_handle: initial.network_handle, physical_dns: initial.physical_dns.clone(), physical_dns_plan: initial.physical_dns_plan.clone(),
-            dns_owner: initial.dns_owner.clone(), dns_transport: initial.dns_transport.clone(), core_resolver: initial.core_resolver.clone() }) })
+            dns_owner: initial.dns_owner.clone(), dns_transport: initial.dns_transport.clone(), core_resolver: initial.core_resolver.clone(), proxy_resolver: initial.proxy_resolver.clone() }) })
     }
     pub fn view(self: &Arc<Self>, base: &NetworkContext) -> NetworkContext { NetworkContext { live: Some(self.clone()), live_weak: None, ..base.clone() } }
     pub fn replace(&self, next: &NetworkContext) -> NetworkContext {
         let mut current = self.current.write();
         let old = NetworkContext { scope: current.scope.clone(), cancel: next.cancel.clone(), network_handle: current.network_handle,
-            physical_dns: current.physical_dns.clone(), physical_dns_plan: current.physical_dns_plan.clone(), plane: next.plane.clone(), resource_roots: next.resource_roots.clone(), live: None, live_weak: None, resolver_weak: None,
-            protector: next.protector.clone(), dns_owner: current.dns_owner.clone(), dns_transport: current.dns_transport.clone(), core_resolver: current.core_resolver.clone(), request_policy: next.request_policy.clone(), transport: next.transport.clone(), probe: next.probe.clone(), tunnel_capture: next.tunnel_capture.clone() };
+            physical_dns: current.physical_dns.clone(), physical_dns_plan: current.physical_dns_plan.clone(), plane: next.plane.clone(), resource_roots: next.resource_roots.clone(), live: None, live_weak: None, resolver_weak: None, proxy_resolver_weak: None,
+            protector: next.protector.clone(), dns_owner: current.dns_owner.clone(), dns_transport: current.dns_transport.clone(), core_resolver: current.core_resolver.clone(), proxy_resolver: current.proxy_resolver.clone(), request_policy: next.request_policy.clone(), transport: next.transport.clone(), probe: next.probe.clone(), probe_owner: next.probe_owner.clone(), probe_snapshot: next.probe_snapshot.clone(), tunnel_capture: next.tunnel_capture.clone() };
         *current = NetworkBinding { scope: next.scope.clone(), network_handle: next.network_handle, physical_dns: next.physical_dns.clone(), physical_dns_plan: next.physical_dns_plan.clone(),
-            dns_owner: next.dns_owner.clone(), dns_transport: next.dns_transport.clone(), core_resolver: next.core_resolver.clone() };
+            dns_owner: next.dns_owner.clone(), dns_transport: next.dns_transport.clone(), core_resolver: next.core_resolver.clone(), proxy_resolver: next.proxy_resolver.clone() };
         old
     }
     pub(crate) fn retire_after_join(&self) {
         let retired = {
             let mut current = self.current.write();
             let empty = NetworkBinding { scope: NetworkScope { protector: None, resolver: None }, network_handle: current.network_handle,
-                physical_dns: current.physical_dns.clone(), physical_dns_plan: current.physical_dns_plan.clone(), dns_owner: None, dns_transport: None, core_resolver: None };
+                physical_dns: current.physical_dns.clone(), physical_dns_plan: current.physical_dns_plan.clone(), dns_owner: None, dns_transport: None, core_resolver: None, proxy_resolver: None };
             std::mem::replace(&mut *current,empty)
         };
         drop(retired);
@@ -58,6 +64,9 @@ impl NetworkContextSlot {
     fn capture(&self) -> NetworkBinding { self.current.read().clone() }
     pub fn current_dns_owner(&self) -> Option<Arc<crate::physical_dns::PhysicalDnsOwner>> { self.current.read().dns_owner.clone() }
     pub fn current_core_resolver(&self) -> Option<Arc<meow_dns::Resolver>> { self.current.read().core_resolver.clone() }
+    pub fn current_resolver_pair(&self) -> Option<ResolverPair> {
+        let current = self.current.read(); current.core_resolver.clone().map(|main| ResolverPair { main, proxy: current.proxy_resolver.clone() })
+    }
     pub fn current_identity(&self) -> (Option<u64>, Option<Vec<SocketAddr>>) {
         let current = self.current.read(); (current.network_handle, current.physical_dns.clone())
     }
@@ -89,7 +98,7 @@ fn cancelled() -> io::Error { io::Error::new(io::ErrorKind::Interrupted, "captur
 impl NetworkContext {
     pub fn protected(callback: Arc<dyn SocketProtector>, resolver: Option<Arc<dyn HostResolver>>, cancel: CancellationToken) -> Self {
         Self { scope: NetworkScope { protector: Some(Arc::new(FencedProtector { callback: Some(callback.clone()), cancel: cancel.clone(), network_handle: None })), resolver },
-            cancel, network_handle: None, physical_dns: None, physical_dns_plan: None, plane: None, resource_roots: None, live: None, live_weak: None, resolver_weak: None, protector: Some(callback), dns_owner: None, dns_transport: None, core_resolver: None, request_policy: None, transport: None, probe: None, tunnel_capture: None }
+            cancel, network_handle: None, physical_dns: None, physical_dns_plan: None, plane: None, resource_roots: None, live: None, live_weak: None, resolver_weak: None, proxy_resolver_weak: None, protector: Some(callback), dns_owner: None, dns_transport: None, core_resolver: None, proxy_resolver: None, request_policy: None, transport: None, probe: None, probe_owner: None, probe_snapshot: None, tunnel_capture: None }
     }
     pub fn protected_on_network(callback: Arc<dyn SocketProtector>, resolver: Option<Arc<dyn HostResolver>>, network: u64, cancel: CancellationToken) -> io::Result<Self> {
         if network == 0 { return Err(io::Error::new(io::ErrorKind::InvalidInput, "network handle must be nonzero")); }
@@ -97,11 +106,11 @@ impl NetworkContext {
         { let _ = (callback, resolver, cancel); return Err(io::Error::from(io::ErrorKind::Unsupported)); }
         #[cfg(target_os = "android")]
         Ok(Self { scope: NetworkScope { protector: Some(Arc::new(FencedProtector { callback: Some(callback.clone()), cancel: cancel.clone(), network_handle: Some(network) })), resolver },
-            cancel, network_handle: Some(network), physical_dns: None, physical_dns_plan: None, plane: None, resource_roots: None, live: None, live_weak: None, resolver_weak: None, protector: Some(callback), dns_owner: None, dns_transport: None, core_resolver: None, request_policy: None, transport: None, probe: None, tunnel_capture: None })
+            cancel, network_handle: Some(network), physical_dns: None, physical_dns_plan: None, plane: None, resource_roots: None, live: None, live_weak: None, resolver_weak: None, proxy_resolver_weak: None, protector: Some(callback), dns_owner: None, dns_transport: None, core_resolver: None, proxy_resolver: None, request_policy: None, transport: None, probe: None, probe_owner: None, probe_snapshot: None, tunnel_capture: None })
     }
     pub fn platform(cancel: CancellationToken) -> Self {
         Self { scope: NetworkScope { protector: Some(Arc::new(FencedProtector { callback: None, cancel: cancel.clone(), network_handle: None })), resolver: None },
-            cancel, network_handle: None, physical_dns: None, physical_dns_plan: None, plane: None, resource_roots: None, live: None, live_weak: None, resolver_weak: None, protector: None, dns_owner: None, dns_transport: None, core_resolver: None, request_policy: None, transport: None, probe: None, tunnel_capture: None }
+            cancel, network_handle: None, physical_dns: None, physical_dns_plan: None, plane: None, resource_roots: None, live: None, live_weak: None, resolver_weak: None, proxy_resolver_weak: None, protector: None, dns_owner: None, dns_transport: None, core_resolver: None, proxy_resolver: None, request_policy: None, transport: None, probe: None, probe_owner: None, probe_snapshot: None, tunnel_capture: None }
     }
     pub fn platform_on_network(network: u64, cancel: CancellationToken) -> io::Result<Self> {
         if network == 0 { return Err(io::Error::new(io::ErrorKind::InvalidInput, "network handle must be nonzero")); }
@@ -109,13 +118,16 @@ impl NetworkContext {
         { let _ = cancel; Err(io::Error::from(io::ErrorKind::Unsupported)) }
         #[cfg(target_os = "android")]
         Ok(Self { scope: NetworkScope { protector: Some(Arc::new(FencedProtector { callback: None, cancel: cancel.clone(), network_handle: Some(network) })), resolver: None },
-            cancel, network_handle: Some(network), physical_dns: None, physical_dns_plan: None, plane: None, resource_roots: None, live: None, live_weak: None, resolver_weak: None, protector: None, dns_owner: None, dns_transport: None, core_resolver: None, request_policy: None, transport: None, probe: None, tunnel_capture: None })
+            cancel, network_handle: Some(network), physical_dns: None, physical_dns_plan: None, plane: None, resource_roots: None, live: None, live_weak: None, resolver_weak: None, proxy_resolver_weak: None, protector: None, dns_owner: None, dns_transport: None, core_resolver: None, proxy_resolver: None, request_policy: None, transport: None, probe: None, probe_owner: None, probe_snapshot: None, tunnel_capture: None })
     }
     pub fn with_request_policy(&self, source: Arc<dyn meow_common::request_policy::PolicySource>) -> Self {
         Self { request_policy: Some(meow_common::request_policy::PolicyScope::new(source)), ..self.clone() }
     }
     pub fn with_probe_policy(&self, probe: meow_common::probe_policy::ProbeScope) -> Self {
-        Self { probe: Some(probe), ..self.clone() }
+        Self { probe: Some(probe), probe_owner: None, probe_snapshot: None, ..self.clone() }
+    }
+    pub(crate) fn with_probe_policies(&self, owner: Arc<crate::probe_policy::ProbePolicies>) -> Self {
+        Self { probe: Some(owner.scope()), probe_owner: Some(owner), probe_snapshot: None, ..self.clone() }
     }
     pub(crate) fn with_tunnel_capture(&self, capture: Arc<OnceLock<Weak<TunnelCapture>>>) -> Self {
         Self { tunnel_capture: Some(capture), ..self.clone() }
@@ -136,7 +148,10 @@ impl NetworkContext {
     pub(crate) fn with_dns_transport(&self, scope: meow_common::transport_tasks::TransportScope) -> Self { Self { dns_transport: Some(scope), ..self.clone() } }
     pub(crate) fn dns_binding_context(&self) -> Self {
         let captured = self.captured();
-        Self { live: None, live_weak: None, core_resolver: None, resolver_weak: None, transport: None, dns_transport: None, dns_owner: None, ..captured }
+        Self { live: None, live_weak: None, core_resolver: None, proxy_resolver: None, resolver_weak: None, proxy_resolver_weak: None, transport: None, dns_transport: None, dns_owner: None, probe_snapshot: None, ..captured }
+    }
+    pub(crate) fn rebind_seed_context(&self) -> Self {
+        let mut seed = self.dns_binding_context(); seed.scope.resolver = None; seed
     }
     pub(crate) fn unavailable_dns_binding_context(&self) -> Self {
         let mut captured = self.dns_binding_context();
@@ -147,12 +162,16 @@ impl NetworkContext {
         self.live_slot().as_ref().map_or_else(|| self.dns_transport.clone(), |slot|slot.capture().dns_transport)
     }
 
-    pub fn with_core_resolver(&self, resolver: Arc<meow_dns::Resolver>) -> Self { Self { core_resolver: Some(resolver), ..self.clone() } }
+    pub fn with_core_resolver(&self, resolver: Arc<meow_dns::Resolver>) -> Self { self.with_resolver_pair(ResolverPair { main: resolver, proxy: None }) }
+    pub fn with_resolver_pair(&self, pair: ResolverPair) -> Self {
+        Self { core_resolver: Some(pair.main), proxy_resolver: pair.proxy, resolver_weak: None, proxy_resolver_weak: None, ..self.clone() }
+    }
     fn live_slot(&self) -> Option<Arc<NetworkContextSlot>> { self.live.clone().or_else(|| self.live_weak.as_ref().and_then(Weak::upgrade)) }
     pub(crate) fn transport_context(&self) -> Self {
         let mut context = Self { transport: None, ..self.clone() };
         if let Some(slot) = context.live.take() { context.live_weak = Some(Arc::downgrade(&slot)); }
         if let Some(resolver) = context.core_resolver.take() { context.resolver_weak = Some(Arc::downgrade(&resolver)); }
+        if let Some(resolver) = context.proxy_resolver.take() { context.proxy_resolver_weak = Some(Arc::downgrade(&resolver)); }
         context
     }
     pub fn dns_owner(&self) -> Option<Arc<crate::physical_dns::PhysicalDnsOwner>> { self.live_slot().as_ref().map_or_else(|| self.dns_owner.clone(), |slot| slot.capture().dns_owner) }
@@ -165,6 +184,23 @@ impl NetworkContext {
             resolver: binding.scope.resolver }
     }
     pub fn captured_with_resolver(&self) -> (Self, Option<Arc<meow_dns::Resolver>>) {
+        let Some(plane) = &self.plane else { return self.capture_binding_with_resolver(); };
+        let gate = plane.gate.lock();
+        let (mut captured, resolver) = self.capture_binding_with_resolver();
+        if self.live_slot().is_some() || captured.probe_snapshot.is_none() {
+            if let Some(owner) = &self.probe_owner {
+                let scope = owner.frozen_scope_under_plane_gate(gate.core_epoch);
+                captured.probe_snapshot = Some(Arc::new(scope.snapshot().expect("immutable probe source must provide its captured snapshot")));
+                captured.probe = Some(scope);
+            }
+        }
+        if let Some(transport) = &captured.transport {
+            captured.transport = Some(transport.with_network(Self { transport: None, ..captured.clone() }));
+        }
+        drop(gate);
+        (captured,resolver)
+    }
+    fn capture_binding_with_resolver(&self) -> (Self, Option<Arc<meow_dns::Resolver>>) {
         let Some(slot) = self.live_slot() else {
             let mut captured = self.clone();
             if captured.network_handle.is_none() && captured.dns_owner.as_ref().is_some_and(|owner|owner.is_unavailable_not_connected()) {
@@ -179,8 +215,8 @@ impl NetworkContext {
             resolver: current.scope.resolver };
         let resolver = current.core_resolver.clone();
         let mut captured = Self { scope, cancel: self.cancel.clone(), network_handle: current.network_handle, physical_dns: current.physical_dns, physical_dns_plan: current.physical_dns_plan,
-            plane: self.plane.clone(), resource_roots: self.resource_roots.clone(), live: None, live_weak: None, resolver_weak: None, protector: self.protector.clone(), dns_owner: current.dns_owner, dns_transport: current.dns_transport,
-            core_resolver: resolver.clone(), request_policy: self.request_policy.clone(), transport: self.transport.clone(), probe: self.probe.clone(), tunnel_capture: self.tunnel_capture.clone() };
+            plane: self.plane.clone(), resource_roots: self.resource_roots.clone(), live: None, live_weak: None, resolver_weak: None, proxy_resolver_weak: None, protector: self.protector.clone(), dns_owner: current.dns_owner, dns_transport: current.dns_transport,
+            core_resolver: resolver.clone(), proxy_resolver: current.proxy_resolver, request_policy: self.request_policy.clone(), transport: self.transport.clone(), probe: self.probe.clone(), probe_owner: self.probe_owner.clone(), probe_snapshot: self.probe_snapshot.clone(), tunnel_capture: self.tunnel_capture.clone() };
         if let Some(transport) = &self.transport {
             captured.transport = Some(transport.with_network(Self { transport: None, ..captured.clone() }));
         }
@@ -193,15 +229,15 @@ impl NetworkContext {
         { let _ = network; return Err(io::Error::from(io::ErrorKind::Unsupported)); }
         #[cfg(target_os = "android")]
         Ok(Self { scope: NetworkScope { protector: Some(Arc::new(FencedProtector { callback: self.protector.clone(), cancel: self.cancel.clone(), network_handle: Some(network) })), resolver: None },
-            cancel: self.cancel.clone(), network_handle: Some(network), physical_dns: None, physical_dns_plan: None, plane: self.plane.clone(), resource_roots: self.resource_roots.clone(), live: None, live_weak: None, resolver_weak: None,
-            protector: self.protector.clone(), dns_owner: None, dns_transport: None, core_resolver: None, request_policy: self.request_policy.clone(), transport: self.transport.clone(), probe: self.probe.clone(), tunnel_capture: self.tunnel_capture.clone() })
+            cancel: self.cancel.clone(), network_handle: Some(network), physical_dns: None, physical_dns_plan: None, plane: self.plane.clone(), resource_roots: self.resource_roots.clone(), live: None, live_weak: None, resolver_weak: None, proxy_resolver_weak: None,
+            protector: self.protector.clone(), dns_owner: None, dns_transport: None, core_resolver: None, proxy_resolver: None, request_policy: self.request_policy.clone(), transport: self.transport.clone(), probe: self.probe.clone(), probe_owner: self.probe_owner.clone(), probe_snapshot: self.probe_snapshot.clone(), tunnel_capture: self.tunnel_capture.clone() })
     }
     pub fn with_resolver(&self, resolver: Arc<dyn HostResolver>) -> Self {
         let callback = self.protector.clone();
         let network = self.network_handle();
         Self { scope: NetworkScope { protector: Some(Arc::new(FencedProtector { callback, cancel: self.cancel.clone(), network_handle: network })), resolver: Some(resolver) },
             cancel: self.cancel.clone(), network_handle: self.network_handle, physical_dns: self.physical_dns_snapshot(), physical_dns_plan: self.physical_dns_plan.clone(), plane: self.plane.clone(),
-            resource_roots: self.resource_roots.clone(), live: self.live.clone(), live_weak: self.live_weak.clone(), resolver_weak: self.resolver_weak.clone(), protector: self.protector.clone(), dns_owner: self.dns_owner.clone(), dns_transport: self.dns_transport.clone(), core_resolver: self.core_resolver.clone(), request_policy: self.request_policy.clone(), transport: self.transport.clone(), probe: self.probe.clone(), tunnel_capture: self.tunnel_capture.clone() }
+            resource_roots: self.resource_roots.clone(), live: self.live.clone(), live_weak: self.live_weak.clone(), resolver_weak: self.resolver_weak.clone(), proxy_resolver_weak: self.proxy_resolver_weak.clone(), protector: self.protector.clone(), dns_owner: self.dns_owner.clone(), dns_transport: self.dns_transport.clone(), core_resolver: self.core_resolver.clone(), proxy_resolver: self.proxy_resolver.clone(), request_policy: self.request_policy.clone(), transport: self.transport.clone(), probe: self.probe.clone(), probe_owner: self.probe_owner.clone(), probe_snapshot: self.probe_snapshot.clone(), tunnel_capture: self.tunnel_capture.clone() }
     }
     pub fn child(&self) -> Self {
         let cancel = self.cancel.child_token();
@@ -209,8 +245,8 @@ impl NetworkContext {
         let network_handle = current.network_handle;
         let protector = Some(binding_protector(current.protector.clone(),cancel.clone(),network_handle,current.dns_owner.as_ref()));
         Self { scope: NetworkScope { protector, resolver: current.scope.resolver.clone() }, cancel, network_handle, physical_dns: current.physical_dns, physical_dns_plan: current.physical_dns_plan,
-            plane: self.plane.clone(), resource_roots: self.resource_roots.clone(), live: self.live.clone(), live_weak: self.live_weak.clone(), resolver_weak: self.resolver_weak.clone(), protector: self.protector.clone(), dns_owner: self.dns_owner.clone(), dns_transport: self.dns_transport.clone(),
-            core_resolver: current.core_resolver, request_policy: self.request_policy.clone(), transport: self.transport.clone(), probe: self.probe.clone(), tunnel_capture: self.tunnel_capture.clone() }
+            plane: self.plane.clone(), resource_roots: self.resource_roots.clone(), live: self.live.clone(), live_weak: self.live_weak.clone(), resolver_weak: self.resolver_weak.clone(), proxy_resolver_weak: self.proxy_resolver_weak.clone(), protector: self.protector.clone(), dns_owner: self.dns_owner.clone(), dns_transport: self.dns_transport.clone(),
+            core_resolver: current.core_resolver, proxy_resolver: current.proxy_resolver, request_policy: self.request_policy.clone(), transport: self.transport.clone(), probe: self.probe.clone(), probe_owner: self.probe_owner.clone(), probe_snapshot: self.probe_snapshot.clone(), tunnel_capture: self.tunnel_capture.clone() }
     }
     fn bound_scope<F: Future>(&self, work: F) -> impl Future<Output = F::Output> {
         self.bound_scope_boxed(Box::pin(work))
@@ -227,13 +263,20 @@ impl NetworkContext {
             None => probed.await,
         }
     }
-    pub fn scope<F: Future>(&self, work: F) -> impl Future<Output = F::Output> {
+    pub fn scope<F: Future + Send>(&self, work: F) -> impl Future<Output = F::Output> where F::Output: Send {
         self.scope_captured(Box::pin(work))
     }
-    async fn scope_captured<F: Future>(&self, work: std::pin::Pin<Box<F>>) -> F::Output {
+    async fn scope_captured<F: Future + Send>(&self, work: std::pin::Pin<Box<F>>) -> F::Output where F::Output: Send {
         let (captured, resolver) = self.captured_with_resolver();
         let owner = captured.tunnel_capture.as_ref().and_then(|slot| slot.get()).and_then(Weak::upgrade);
+        let proxy_resolver = captured.proxy_resolver.clone().or_else(|| captured.proxy_resolver_weak.as_ref().and_then(Weak::upgrade));
+        let ech = resolver.as_ref().map(|main| meow_config::ech_dns::resolver_scope(main.clone(),proxy_resolver));
+        let probe_snapshot = captured.probe_snapshot.clone();
         let scoped = Box::pin(captured.bound_scope_boxed(work));
+        let scoped = Box::pin(async move {
+            let scoped = async move { match ech { Some(ech) => ech.scope(scoped).await, None => scoped.await } };
+            match probe_snapshot { Some(snapshot) => snapshot.scope(scoped).await, None => scoped.await }
+        });
         match (owner, resolver) {
             (Some(owner), Some(resolver)) => owner.tunnel.with_resolver_snapshot(resolver, scoped).await,
             _ => scoped.await,
@@ -347,6 +390,86 @@ mod tests {
         assert!(weak_resolver.upgrade().is_some(), "the active flow must retain its resolver");
         drop((flow,captured));
         assert!(weak_resolver.upgrade().is_none(), "an idle protocol pool must not retain the resolver registry");
+    }
+    #[tokio::test]
+    async fn health_round_wrap_refreshes_ech_pair_but_nested_protocol_spawn_keeps_its_flow_pair() {
+        use hickory_proto::{op::{Message,MessageType,OpCode},rr::{Record,RData,rdata::{HTTPS,SVCB,svcb::{EchConfigList,SvcParamKey,SvcParamValue}}},serialize::binary::{BinDecodable,BinEncodable}};
+        use tokio::{net::UdpSocket,time::{timeout,Duration}};
+        async fn reply(socket:&UdpSocket,bytes:Vec<u8>){
+            let mut buffer=[0;4096];let(count,peer)=timeout(Duration::from_secs(5),socket.recv_from(&mut buffer)).await.unwrap().unwrap();let query=Message::from_bytes(&buffer[..count]).unwrap();
+            let mut answer=Message::new(query.metadata.id,MessageType::Response,OpCode::Query);answer.add_queries(query.queries.iter().cloned());answer.add_answer(Record::from_rdata(query.queries[0].name.clone(),1,RData::HTTPS(HTTPS(SVCB::new(1,hickory_proto::rr::Name::root(),vec![(SvcParamKey::EchConfigList,SvcParamValue::EchConfigList(EchConfigList(bytes)))])))));socket.send_to(&answer.to_bytes().unwrap(),peer).await.unwrap();
+        }
+        let main=UdpSocket::bind("127.0.0.1:0").await.unwrap();let old_proxy=UdpSocket::bind("127.0.0.1:0").await.unwrap();let next_proxy=UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let physical=crate::physical_dns::PhysicalResolver::from_servers(vec![main.local_addr().unwrap()],NetworkContext::platform(CancellationToken::new()),false).unwrap();
+        let base=physical.network();let dns=base.dns_transport_scope().unwrap();
+        let (old_pair,next_pair)=dns.scope(async {
+            let main=Arc::new(meow_dns::Resolver::new(vec![main.local_addr().unwrap()],Vec::new(),meow_common::DnsMode::Normal,Default::default(),false,false));
+            let old=Arc::new(meow_dns::Resolver::new(vec![old_proxy.local_addr().unwrap()],Vec::new(),meow_common::DnsMode::Normal,Default::default(),false,false));
+            let next=Arc::new(meow_dns::Resolver::new(vec![next_proxy.local_addr().unwrap()],Vec::new(),meow_common::DnsMode::Normal,Default::default(),false,false));
+            (ResolverPair{main:main.clone(),proxy:Some(old)},ResolverPair{main,proxy:Some(next)})
+        }).await;
+        let slot=NetworkContextSlot::new(&base.with_resolver_pair(old_pair));let tasks=crate::transport_tasks::TransportTasks::new();let scope_slot=Arc::new(OnceLock::new());
+        let live=slot.view(&base).with_transport(tasks.clone(),scope_slot.clone());let loads=meow_config::owned_load::OwnedLoadScope::with_context(Arc::new(live.clone()));assert!(scope_slot.set(Arc::downgrade(&loads)).is_ok());
+        let flow=live.scope(async{meow_common::transport_tasks::TransportScope::current().unwrap()}).await;
+        let retired=slot.replace(&base.with_resolver_pair(next_pair));
+        let(send,receive)=tokio::sync::oneshot::channel();let joined=flow.spawn_join(Box::pin(async move{let _=send.send(meow_config::EchScope::resolve("ech.example".into()).await);})).unwrap();
+        let(result,())=tokio::join!(receive,reply(&old_proxy,vec![0,1,1]));assert_eq!(result.unwrap().unwrap(),vec![0,1,1]);assert!(!joined.wait().await.panicked);
+        let(send,receive)=tokio::sync::oneshot::channel();let round=flow.wrap(Box::pin(async move{let _=send.send(meow_config::EchScope::resolve("ech.example".into()).await);}));
+        let((),result,())=tokio::join!(round,receive,reply(&next_proxy,vec![0,1,2]));assert_eq!(result.unwrap().unwrap(),vec![0,1,2]);assert!(main.try_recv_from(&mut[0;4096]).is_err());
+        assert!(!tasks.close_joined().await.unwrap().panicked);loads.close().await.unwrap();physical.retire().await.unwrap();assert!(physical.dns_owner().cleanup_confirmed());drop(retired);slot.retire_after_join();
+    }
+    #[tokio::test]
+    async fn hot_commit_between_operation_entry_and_probe_capture_keeps_resolver_and_epoch_paired() {
+        use hickory_proto::{op::{Message,MessageType,OpCode},rr::{Record,RData,rdata::{HTTPS,SVCB,svcb::{EchConfigList,SvcParamKey,SvcParamValue}}},serialize::binary::{BinDecodable,BinEncodable}};
+        use tokio::{net::UdpSocket,time::{timeout,Duration}};
+        async fn reply(socket:&UdpSocket,bytes:Vec<u8>){
+            let mut buffer=[0;4096];let(count,peer)=timeout(Duration::from_secs(5),socket.recv_from(&mut buffer)).await.unwrap().unwrap();let query=Message::from_bytes(&buffer[..count]).unwrap();
+            let mut answer=Message::new(query.metadata.id,MessageType::Response,OpCode::Query);answer.add_queries(query.queries.iter().cloned());answer.add_answer(Record::from_rdata(query.queries[0].name.clone(),1,RData::HTTPS(HTTPS(SVCB::new(1,hickory_proto::rr::Name::root(),vec![(SvcParamKey::EchConfigList,SvcParamValue::EchConfigList(EchConfigList(bytes)))])))));socket.send_to(&answer.to_bytes().unwrap(),peer).await.unwrap();
+        }
+        let main=UdpSocket::bind("127.0.0.1:0").await.unwrap();let old_proxy=UdpSocket::bind("127.0.0.1:0").await.unwrap();let next_proxy=UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let physical=crate::physical_dns::PhysicalResolver::from_servers(vec![main.local_addr().unwrap()],NetworkContext::platform(CancellationToken::new()),false).unwrap();
+        let cancel=CancellationToken::new();let plane=crate::providers::ControlPlane::new(700,cancel.clone()).unwrap();
+        let probes=crate::probe_policy::ProbePolicies::new(Default::default(),plane.clone(),cancel);
+        let base=physical.network().with_control_plane(plane.clone()).with_probe_policies(probes.clone());let dns=base.dns_transport_scope().unwrap();
+        let (old_pair,next_pair)=dns.scope(async {
+            let main=Arc::new(meow_dns::Resolver::new(vec![main.local_addr().unwrap()],Vec::new(),meow_common::DnsMode::Normal,Default::default(),false,false));
+            let old=Arc::new(meow_dns::Resolver::new(vec![old_proxy.local_addr().unwrap()],Vec::new(),meow_common::DnsMode::Normal,Default::default(),false,false));
+            let next=Arc::new(meow_dns::Resolver::new(vec![next_proxy.local_addr().unwrap()],Vec::new(),meow_common::DnsMode::Normal,Default::default(),false,false));
+            (ResolverPair{main:main.clone(),proxy:Some(old)},ResolverPair{main,proxy:Some(next)})
+        }).await;
+        let slot=NetworkContextSlot::new(&base.with_resolver_pair(old_pair));let tasks=crate::transport_tasks::TransportTasks::new();let scope_slot=Arc::new(OnceLock::new());
+        let live=slot.view(&base).with_transport(tasks.clone(),scope_slot.clone());let loads=meow_config::owned_load::OwnedLoadScope::with_context(Arc::new(live.clone()));assert!(scope_slot.set(Arc::downgrade(&loads)).is_ok());
+        let (entered,entry)=tokio::sync::oneshot::channel();let(release,released)=tokio::sync::oneshot::channel();
+        let operation=tokio::spawn({let live=live.clone();async move{live.scope(async move{
+            let flow=meow_common::transport_tasks::TransportScope::current().unwrap();
+            entered.send(()).unwrap();released.await.unwrap();
+            let snapshot=meow_common::probe_policy::capture().unwrap().unwrap();
+            let epoch=snapshot.scope(async{meow_common::probe_policy::operation_epoch()}).await.unwrap();
+            let(send,receive)=tokio::sync::oneshot::channel();
+            let joined=flow.spawn_join(Box::pin(async move{
+                let nested=meow_common::probe_policy::capture().unwrap().unwrap();
+                let nested_epoch=nested.scope(async{meow_common::probe_policy::operation_epoch()}).await;
+                let _=send.send((nested_epoch,meow_config::EchScope::resolve("ech.example".into()).await));
+            })).unwrap();
+            let(nested_epoch,answer)=receive.await.unwrap();assert!(!joined.wait().await.panicked);
+            (flow,epoch,nested_epoch,answer)
+        }).await}});
+        timeout(Duration::from_secs(5),entry).await.unwrap().unwrap();
+        let(stamp,retired)=plane.commit_policy(700,true,||slot.replace(&base.with_resolver_pair(next_pair))).unwrap();
+        assert_ne!(stamp.0,700);release.send(()).unwrap();
+        let(result,())=tokio::join!(operation,reply(&old_proxy,vec![0,1,1]));
+        let(flow,old_epoch,nested_epoch,answer)=result.unwrap();assert_eq!(old_epoch,700);assert_eq!(nested_epoch,Some(700));assert_eq!(answer.unwrap(),vec![0,1,1]);
+        let published=std::sync::atomic::AtomicBool::new(false);
+        assert!(plane.commit_policy(old_epoch,true,||published.store(true,std::sync::atomic::Ordering::SeqCst)).is_err());
+        assert!(!published.load(std::sync::atomic::Ordering::SeqCst),"late old-pair results cannot commit as the new epoch");
+        let(send,receive)=tokio::sync::oneshot::channel();let round=flow.wrap(Box::pin(async move{
+            let snapshot=meow_common::probe_policy::capture().unwrap().unwrap();
+            let epoch=snapshot.scope(async{meow_common::probe_policy::operation_epoch()}).await;
+            let _=send.send((epoch,meow_config::EchScope::resolve("ech.example".into()).await));
+        }));
+        let((),result,())=tokio::join!(round,receive,reply(&next_proxy,vec![0,1,2]));
+        let(epoch,answer)=result.unwrap();assert_eq!(epoch,Some(stamp.0));assert_eq!(answer.unwrap(),vec![0,1,2]);assert!(main.try_recv_from(&mut[0;4096]).is_err());
+        assert!(!tasks.close_joined().await.unwrap().panicked);loads.close().await.unwrap();physical.retire().await.unwrap();assert!(physical.dns_owner().cleanup_confirmed());drop(retired);slot.retire_after_join();
     }
     #[tokio::test]
     async fn platform_child_preserves_explicit_dial_policy_and_cancellation() {

@@ -781,15 +781,16 @@
  #[derive(Serialize)]
 --- a/crates/meow-common/Cargo.toml
 +++ b/crates/meow-common/Cargo.toml
-@@ -9,6 +9,7 @@
+@@ -9,6 +9,8 @@
  homepage.workspace = true
  
  [dependencies]
++meow-transport = { workspace = true, default-features = false }
 +futures = { workspace = true }
  tokio = { workspace = true }
  serde = { workspace = true }
  smol_str = { workspace = true }
-@@ -31,6 +32,7 @@
+@@ -31,6 +33,7 @@
  ], optional = true }
  
  [features]
@@ -1271,223 +1272,8 @@
 +}
 --- /dev/null
 +++ b/crates/meow-common/src/scoped_join.rs
-@@ -0,0 +1,216 @@
-+use crate::transport_tasks::{self, TransportScope};
-+use std::{future::Future, io, pin::Pin, task::{Context, Poll}};
-+use tokio::task::{AbortHandle, JoinError};
-+use parking_lot::Mutex;
-+
-+type PollFuture<T> = Pin<Box<dyn Future<Output = Result<T, JoinError>> + Send + 'static>>;
-+
-+pub struct ScopedJoin<T> {
-+    future: Mutex<PollFuture<T>>,
-+    abort: AbortHandle,
-+}
-+impl<T> ScopedJoin<T> {
-+    pub fn abort(&self) { self.abort.abort(); }
-+    pub fn abort_handle(&self) -> AbortHandle { self.abort.clone() }
-+    pub fn is_finished(&self) -> bool { self.abort.is_finished() }
-+}
-+impl<T> Future for ScopedJoin<T> {
-+    type Output = Result<T, JoinError>;
-+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-+        self.get_mut().future.get_mut().as_mut().poll(cx)
-+    }
-+}
-+impl<T: Send + 'static> From<tokio::task::JoinHandle<T>> for ScopedJoin<T> {
-+    fn from(handle: tokio::task::JoinHandle<T>) -> Self {
-+        let abort = handle.abort_handle();
-+        let future: PollFuture<T> = Box::pin(handle);
-+        Self { future: Mutex::new(future), abort }
-+    }
-+}
-+#[derive(Clone)]
-+pub struct Spawner { scope: Option<TransportScope> }
-+impl Spawner {
-+    pub fn capture() -> Self { Self { scope: TransportScope::current() } }
-+    pub fn try_spawn<F>(&self, work: F) -> io::Result<ScopedJoin<F::Output>>
-+    where F: Future + Send + 'static, F::Output: Send + 'static {
-+        let (send, receive) = tokio::sync::oneshot::channel();
-+        let inherited = self.scope.clone();
-+        let unit = Box::pin(async move {
-+            let value = match inherited { Some(scope) => scope.scope(work).await, None => work.await };
-+            let _ = send.send(value);
-+        });
-+        let shared = match &self.scope {
-+            Some(scope) => scope.spawn_join(unit)?,
-+            None => {
-+                if TransportScope::current().is_some() { return Err(io::Error::other("capturedTransportOwnerMissing")); }
-+                transport_tasks::spawn_join(unit)?
-+            }
-+        };
-+        let abort = shared.abort_handle();
-+        let future: PollFuture<F::Output> = Box::pin(async move {
-+            shared.join_result().await?;
-+            Ok(receive.await.expect("transport owner must poll UnitWork to completion"))
-+        });
-+        Ok(ScopedJoin { abort, future: Mutex::new(future) })
-+    }
-+}
-+pub fn try_spawn<F>(work: F) -> io::Result<ScopedJoin<F::Output>>
-+where F: Future + Send + 'static, F::Output: Send + 'static {
-+    Spawner::capture().try_spawn(work)
-+}
-+
-+#[cfg(test)]
-+mod tests {
-+    use super::*;
-+    use crate::transport_tasks::{SharedUnitJoin, TransportTaskContext, Work};
-+    use parking_lot::Mutex;
-+    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
-+    #[derive(Default)]
-+    struct State { closed: bool, tasks: Vec<Arc<SharedUnitJoin>> }
-+    #[derive(Default)]
-+    struct Owner(Mutex<State>);
-+    impl TransportTaskContext for Owner {
-+        fn spawn(&self, work: Work) -> io::Result<AbortHandle> { self.spawn_join(work).map(|task| task.abort_handle()) }
-+        fn spawn_join(&self, work: Work) -> io::Result<Arc<SharedUnitJoin>> {
-+            let mut state = self.0.lock();
-+            if state.closed { return Err(io::Error::other("closed")); }
-+            let task = SharedUnitJoin::new(tokio::spawn(work));
-+            state.tasks.push(task.clone());
-+            Ok(task)
-+        }
-+    }
-+    impl Owner {
-+        async fn close(&self) {
-+            let tasks = { let mut state = self.0.lock(); state.closed = true;
-+                for task in &state.tasks { task.abort(); } state.tasks.clone() };
-+            for task in tasks { task.wait().await; }
-+        }
-+        fn tasks(&self) -> Vec<Arc<SharedUnitJoin>> { self.0.lock().tasks.clone() }
-+    }
-+    #[tokio::test]
-+    async fn cli_without_scope_keeps_output_and_real_join_error() {
-+        assert_eq!(try_spawn(async { 27u32 }).unwrap().await.unwrap(), 27);
-+        let error = try_spawn(async { panic!("original panic") }).unwrap().await.unwrap_err();
-+        assert!(error.is_panic());
-+        assert_eq!(*error.into_panic().downcast::<&str>().unwrap(), "original panic");
-+    }
-+    #[tokio::test]
-+    async fn observer_does_not_consume_protocol_output_or_panic() {
-+        let owner = Arc::new(Owner::default()); let scope = TransportScope::new(owner.clone());
-+        let task = scope.scope(async { try_spawn(async { String::from("ready") }).unwrap() }).await;
-+        owner.tasks()[0].wait().await;
-+        assert!(task.is_finished()); assert_eq!(task.await.unwrap(), "ready");
-+        let task = scope.scope(async { try_spawn(async { panic!("kept panic") }).unwrap() }).await;
-+        owner.tasks()[1].wait().await;
-+        let error = task.await.unwrap_err(); assert!(error.is_panic());
-+        assert_eq!(*error.into_panic().downcast::<&str>().unwrap(), "kept panic");
-+        assert!(owner.tasks()[1].wait().await.panicked);
-+        owner.close().await;
-+    }
-+    #[tokio::test]
-+    async fn protocol_can_consume_error_before_native_observer() {
-+        let owner = Arc::new(Owner::default()); let scope = TransportScope::new(owner.clone());
-+        let task = scope.scope(async { try_spawn(async { panic!("early panic") }).unwrap() }).await;
-+        assert!(task.await.unwrap_err().is_panic());
-+        assert!(owner.tasks()[0].wait().await.panicked);
-+        owner.close().await;
-+    }
-+    #[tokio::test]
-+    async fn abort_handle_targets_actual_work_and_real_socket_reaches_eof() {
-+        use tokio::io::AsyncReadExt;
-+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-+        let address = listener.local_addr().unwrap();
-+        let owner = Arc::new(Owner::default()); let scope = TransportScope::new(owner.clone());
-+        let task = scope.scope(async { try_spawn(async move {
-+            let _stream = tokio::net::TcpStream::connect(address).await.unwrap();
-+            std::future::pending::<()>().await;
-+        }).unwrap() }).await;
-+        let (mut peer, _) = listener.accept().await.unwrap();
-+        task.abort_handle().abort();
-+        assert!(task.await.unwrap_err().is_cancelled());
-+        let mut byte = [0];
-+        assert_eq!(tokio::time::timeout(std::time::Duration::from_secs(1), peer.read(&mut byte)).await.unwrap().unwrap(), 0);
-+        assert!(owner.tasks()[0].wait().await.cancelled);
-+        owner.close().await;
-+    }
-+    #[tokio::test]
-+    async fn dropped_protocol_handle_remains_owned_until_actual_join() {
-+        struct Guard(Arc<AtomicUsize>);
-+        impl Drop for Guard { fn drop(&mut self) { self.0.fetch_sub(1, Ordering::SeqCst); } }
-+        let owner = Arc::new(Owner::default()); let scope = TransportScope::new(owner.clone());
-+        let active = Arc::new(AtomicUsize::new(0)); let count = active.clone();
-+        let (entered, ready) = tokio::sync::oneshot::channel();
-+        let task = scope.scope(async { try_spawn(async move {
-+            count.fetch_add(1, Ordering::SeqCst); let _guard = Guard(count);
-+            entered.send(()).unwrap(); std::future::pending::<()>().await;
-+        }).unwrap() }).await;
-+        ready.await.unwrap(); drop(task);
-+        assert_eq!(active.load(Ordering::SeqCst), 1);
-+        owner.close().await;
-+        assert_eq!(active.load(Ordering::SeqCst), 0);
-+    }
-+    #[tokio::test]
-+    async fn cancelled_join_waiter_retains_actual_handle_for_retry() {
-+        let owner = Arc::new(Owner::default()); let scope = TransportScope::new(owner.clone());
-+        let task = scope.scope(async { try_spawn(std::future::pending::<()>()).unwrap() }).await;
-+        let record = owner.tasks()[0].clone();
-+        assert!(tokio::time::timeout(std::time::Duration::from_millis(10), record.wait()).await.is_err());
-+        record.abort(); assert!(record.wait().await.cancelled);
-+        assert!(task.await.unwrap_err().is_cancelled()); owner.close().await;
-+    }
-+    #[tokio::test]
-+    async fn closed_admission_drops_future_without_polling_user_work() {
-+        let owner = Arc::new(Owner::default()); owner.close().await;
-+        let scope = TransportScope::new(owner.clone());
-+        let polled = Arc::new(AtomicUsize::new(0)); let count = polled.clone();
-+        let result = scope.scope(async { try_spawn(async move { count.fetch_add(1, Ordering::SeqCst); }) }).await;
-+        assert!(result.is_err()); assert_eq!(polled.load(Ordering::SeqCst), 0); assert!(owner.tasks().is_empty());
-+    }
-+    #[tokio::test]
-+    async fn nested_task_captures_same_scope_without_an_observer_task() {
-+        let owner = Arc::new(Owner::default()); let scope = TransportScope::new(owner.clone());
-+        let task = scope.scope(async { try_spawn(async {
-+            assert!(TransportScope::current().is_some());
-+            try_spawn(async { assert!(TransportScope::current().is_some()); 53 }).unwrap().await.unwrap()
-+        }).unwrap() }).await;
-+        assert_eq!(task.await.unwrap(), 53); assert_eq!(owner.tasks().len(), 2); owner.close().await;
-+    }
-+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-+    async fn ready_then_session_cancel_has_actual_completed_ack() {
-+        let owner = Arc::new(Owner::default()); let scope = TransportScope::new(owner.clone());
-+        let (entered, ready) = tokio::sync::oneshot::channel();
-+        let task = scope.scope(async { try_spawn(async move { entered.send(()).unwrap(); std::future::pending::<()>().await; }).unwrap() }).await;
-+        ready.await.unwrap(); owner.close().await;
-+        assert!(owner.tasks()[0].is_finished()); assert!(task.await.unwrap_err().is_cancelled());
-+        let late = scope.scope(async { try_spawn(async { panic!("late work polled") }) }).await;
-+        assert!(late.is_err());
-+    }
-+    #[tokio::test]
-+    async fn captured_closed_session_never_adopts_another_current_owner() {
-+        let first = Arc::new(Owner::default()); let second = Arc::new(Owner::default());
-+        let origin = TransportScope::new(first.clone()); let later = TransportScope::new(second.clone());
-+        let spawner = origin.scope(async { Spawner::capture() }).await;
-+        first.close().await;
-+        let result = later.scope(async { spawner.try_spawn(async { panic!("rebound old session") }) }).await;
-+        assert!(result.is_err()); assert!(first.tasks().is_empty()); assert!(second.tasks().is_empty());
-+        second.close().await;
-+    }
-+
-+}
-+
-+#[cfg(test)]
-+mod sync_contract_tests {
-+    use super::*;
-+    #[tokio::test]
-+    async fn send_only_user_future_keeps_scoped_join_send_sync() {
-+        let value = std::cell::Cell::new(0u32);
-+        let task = try_spawn(async move {
-+            value.set(19);
-+            tokio::task::yield_now().await;
-+            value.get()
-+        }).unwrap();
-+        fn require_send_sync<T: Send + Sync>(_: &T) {}
-+        require_send_sync(&task);
-+        assert_eq!(task.await.unwrap(), 19);
-+    }
-+}
+@@ -0,0 +1 @@
++pub use meow_transport::scoped_join::*;
 --- a/crates/meow-common/src/socket_protect.rs
 +++ b/crates/meow-common/src/socket_protect.rs
 @@ -102,6 +102,8 @@
@@ -1517,7 +1303,7 @@
          PROTECTOR.read().clone()
      }
  
-@@ -286,10 +290,52 @@
+@@ -286,10 +290,53 @@
      }
  }
  
@@ -1556,7 +1342,8 @@
 +    pub fn is_captured() -> bool { captured_network().is_some() }
 +
 +    pub async fn scope<F: std::future::Future>(&self, work: F) -> F::Output {
-+        CAPTURED_NETWORK.scope(self.clone(), work).await
++        crate::transport_tasks::TransportScope::require_owner()
++            .scope(CAPTURED_NETWORK.scope(self.clone(), work)).await
 +    }
 +
 +    pub fn run_blocking<R>(&self, work: impl FnOnce() -> R) -> R {
@@ -1565,13 +1352,13 @@
 +            fn drop(&mut self) { BLOCKING_NETWORK.with(|slot| { slot.replace(self.0.take()); }); }
 +        }
 +        let _restore = Restore(BLOCKING_NETWORK.with(|slot| slot.replace(Some(self.clone()))));
-+        work()
++        crate::transport_tasks::TransportScope::require_owner().run_blocking(work)
 +    }
 +}
  
  /// Dial an outbound TCP stream to an already-resolved [`SocketAddr`]. On
  /// Android, applies the installed `SocketProtector` (if any) to the
-@@ -302,7 +348,7 @@
+@@ -302,7 +349,7 @@
  /// silent regressions back into the system resolver; see the module docs
  /// for the loop-routing failure mode.
  pub async fn connect_tcp(addr: SocketAddr) -> io::Result<TcpStream> {
@@ -1580,7 +1367,7 @@
      {
          if let Some(p) = android::socket_protector() {
              return android::connect_tcp_protected(addr, p.as_ref()).await;
-@@ -388,11 +434,16 @@
+@@ -388,11 +435,16 @@
          None => {}
      }
  
@@ -1598,7 +1385,7 @@
      {
          if android::socket_protector().is_some() {
              tracing::warn!(
-@@ -445,6 +496,21 @@
+@@ -445,6 +497,21 @@
  /// IP literals short-circuit inside `resolve_addrs` — no resolver hook is
  /// consulted, but the protector still applies to the literal dial.
  pub async fn connect_tcp_host(host: &str, port: u16) -> io::Result<TcpStream> {
@@ -1620,7 +1407,7 @@
      let addrs = resolve_addrs(host, port).await?;
      let mut last_err: Option<io::Error> = None;
      for addr in &addrs {
-@@ -492,7 +558,7 @@
+@@ -492,7 +559,7 @@
  /// `SocketProtector` (if any) to the socket fd before `bind()`. On every
  /// other target this is equivalent to [`UdpSocket::bind`].
  pub async fn bind_udp<A: ToSocketAddrs>(local: A) -> io::Result<UdpSocket> {
@@ -1631,131 +1418,85 @@
              let resolved = tokio::net::lookup_host(local)
 --- /dev/null
 +++ b/crates/meow-common/src/transport_join.rs
-@@ -0,0 +1,61 @@
-+use parking_lot::Mutex;
-+use std::sync::Arc;
-+use tokio::task::{AbortHandle, JoinError, JoinHandle};
-+
-+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-+pub struct TaskOutcome { pub panicked: bool, pub cancelled: bool }
-+#[derive(Default)]
-+struct Completion {
-+    done: bool,
-+    taken: bool,
-+    outcome: TaskOutcome,
-+    error: Option<JoinError>,
-+}
-+pub struct SharedUnitJoin {
-+    handle: tokio::sync::Mutex<Option<JoinHandle<()>>>,
-+    completion: Mutex<Completion>,
-+    abort: AbortHandle,
-+}
-+impl SharedUnitJoin {
-+    pub fn new(handle: JoinHandle<()>) -> Arc<Self> {
-+        let abort = handle.abort_handle();
-+        Arc::new(Self { handle: tokio::sync::Mutex::new(Some(handle)), completion: Mutex::new(Completion::default()), abort })
-+    }
-+    pub fn abort(&self) { self.abort.abort(); }
-+    pub fn abort_handle(&self) -> AbortHandle { self.abort.clone() }
-+    pub fn is_finished(&self) -> bool { self.abort.is_finished() }
-+    pub async fn wait(&self) -> TaskOutcome {
-+        let mut handle = self.handle.lock().await;
-+        let retired = if let Some(actual) = handle.as_mut() {
-+            let result = actual.await;
-+            {
-+                let mut completion = self.completion.lock();
-+                completion.outcome = TaskOutcome {
-+                    panicked: result.as_ref().is_err_and(JoinError::is_panic),
-+                    cancelled: result.as_ref().is_err_and(JoinError::is_cancelled),
-+                };
-+                completion.error = result.err();
-+                completion.done = true;
-+            }
-+            handle.take()
-+        } else { None };
-+        let outcome = {
-+            let completion = self.completion.lock();
-+            assert!(completion.done, "unit task must actually join before completion");
-+            completion.outcome
-+        };
-+        drop(handle);
-+        drop(retired);
-+        outcome
-+    }
-+    pub(crate) async fn join_result(&self) -> Result<(), JoinError> {
-+        self.wait().await;
-+        let error = {
-+            let mut completion = self.completion.lock();
-+            assert!(completion.done && !completion.taken, "protocol result has one consumer");
-+            completion.taken = true;
-+            completion.error.take()
-+        };
-+        match error { Some(error) => Err(error), None => Ok(()) }
-+    }
-+}
+@@ -0,0 +1 @@
++pub use meow_transport::transport_tasks::{SharedUnitJoin, TaskOutcome};
 --- /dev/null
 +++ b/crates/meow-common/src/transport_tasks.rs
-@@ -0,0 +1,61 @@
-+use std::{cell::RefCell, future::Future, io, pin::Pin, sync::Arc};
-+use tokio::task::AbortHandle;
+@@ -0,0 +1,3 @@
 +#[path = "transport_join.rs"] mod transport_join;
 +pub use transport_join::{SharedUnitJoin, TaskOutcome};
++pub use meow_transport::transport_tasks::{Work, TransportTaskContext, TransportScope, spawn, spawn_join, wrap_current};
+--- /dev/null
++++ b/crates/meow-common/tests/transport_scope_compat.rs
+@@ -0,0 +1,69 @@
++use meow_common::{scoped_join, transport_tasks};
++use parking_lot::Mutex;
++use std::{io, sync::Arc};
++use tokio::task::AbortHandle;
++use transport_tasks::{SharedUnitJoin, TransportScope, TransportTaskContext, Work};
 +
-+pub type Work = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
-+pub trait TransportTaskContext: Send + Sync {
-+    fn wrap(&self, work: Work) -> Work { work }
-+    fn spawn(&self, work: Work) -> io::Result<AbortHandle>;
-+    fn spawn_join(&self, _work: Work) -> io::Result<Arc<SharedUnitJoin>> {
-+        Err(io::Error::other("transportJoinOwnerMissing"))
++#[derive(Default)]
++struct Owner(Mutex<Vec<Arc<SharedUnitJoin>>>);
++impl TransportTaskContext for Owner {
++    fn spawn(&self, work: Work) -> io::Result<AbortHandle> {
++        self.spawn_join(work).map(|record| record.abort_handle())
++    }
++    fn spawn_join(&self, work: Work) -> io::Result<Arc<SharedUnitJoin>> {
++        let record = SharedUnitJoin::new(tokio::spawn(work));
++        self.0.lock().push(record.clone());
++        Ok(record)
 +    }
 +}
 +
-+#[derive(Clone)]
-+pub struct TransportScope(Arc<dyn TransportTaskContext>);
-+tokio::task_local! { static CURRENT: TransportScope; }
-+thread_local! { static BLOCKING: RefCell<Option<TransportScope>> = const { RefCell::new(None) }; }
-+
-+impl TransportScope {
-+    pub fn new(context: Arc<dyn TransportTaskContext>) -> Self { Self(context) }
-+    pub fn wrap(&self, work: Work) -> Work { self.0.wrap(work) }
-+    pub fn spawn(&self, work: Work) -> io::Result<AbortHandle> { self.0.spawn(work) }
-+    pub fn spawn_join(&self, work: Work) -> io::Result<Arc<SharedUnitJoin>> { self.0.spawn_join(work) }
-+    pub fn current() -> Option<Self> {
-+        CURRENT.try_with(Clone::clone).ok().or_else(|| BLOCKING.with(|slot| slot.borrow().clone()))
-+    }
-+    pub async fn scope<F: Future>(&self, work: F) -> F::Output { CURRENT.scope(self.clone(), work).await }
-+    pub fn run_blocking<T>(&self, work: impl FnOnce() -> T) -> T {
-+        struct Restore(Option<TransportScope>);
-+        impl Drop for Restore {
-+            fn drop(&mut self) { let retired = BLOCKING.with(|slot| slot.replace(self.0.take())); drop(retired); }
-+        }
-+        let _restore = Restore(BLOCKING.with(|slot| slot.replace(Some(self.clone()))));
-+        work()
-+    }
++#[tokio::test]
++async fn common_and_transport_share_exact_scope_join_and_owner() {
++    let owner = Arc::new(Owner::default());
++    let scope = TransportScope::new(owner.clone());
++    let task: meow_transport::scoped_join::ScopedJoin<u32> = scope.scope(async {
++        meow_transport::scoped_join::try_spawn(async { 71 }).unwrap()
++    }).await;
++    let record: Arc<meow_transport::transport_tasks::SharedUnitJoin> = owner.0.lock()[0].clone();
++    assert!(!record.wait().await.panicked);
++    assert_eq!(task.await.unwrap(), 71);
++    let task: scoped_join::ScopedJoin<u32> = meow_transport::transport_tasks::TransportScope::new(owner.clone())
++        .scope(async { scoped_join::try_spawn(async { 73 }).unwrap() }).await;
++    assert_eq!(task.await.unwrap(), 73);
++    assert_eq!(owner.0.lock().len(), 2);
 +}
 +
-+pub fn spawn(work: Work) -> io::Result<AbortHandle> {
-+    if let Some(scope) = TransportScope::current() { return scope.0.spawn(work); }
-+    #[cfg(all(feature = "aerove-android-runtime", any(target_os = "linux", target_os = "android", target_os = "macos")))]
-+    if crate::socket_protect::NetworkScope::current().is_some() {
-+        return Err(io::Error::other("capturedTransportOwnerMissing"));
-+    }
-+    Ok(tokio::spawn(work).abort_handle())
++#[cfg(all(feature = "aerove-android-runtime", any(target_os = "linux", target_os = "android", target_os = "macos")))]
++#[tokio::test]
++async fn network_scope_without_owner_rejects_leaf_and_preserves_captured_rejection() {
++    use std::sync::atomic::{AtomicUsize, Ordering};
++    let network = meow_common::socket_protect::NetworkScope { protector: None, resolver: None };
++    let polls = Arc::new(AtomicUsize::new(0));
++    let count = polls.clone();
++    let result = network.scope(async {
++        meow_transport::scoped_join::try_spawn(async move { count.fetch_add(1, Ordering::SeqCst); })
++    }).await;
++    assert_eq!(result.err().unwrap().to_string(), "capturedTransportOwnerMissing");
++    let captured = network.scope(async { scoped_join::Spawner::capture() }).await;
++    assert!(captured.try_spawn(async { panic!("missing origin cannot become CLI") }).is_err());
++    assert_eq!(polls.load(Ordering::SeqCst), 0);
++    assert!(TransportScope::current().is_none());
++    assert_eq!(scoped_join::try_spawn(async { 79 }).unwrap().await.unwrap(), 79);
 +}
 +
-+pub fn spawn_join(work: Work) -> io::Result<Arc<SharedUnitJoin>> {
-+    if let Some(scope) = TransportScope::current() { return scope.0.spawn_join(work); }
-+    #[cfg(all(feature = "aerove-android-runtime", any(target_os = "linux", target_os = "android", target_os = "macos")))]
-+    if crate::socket_protect::NetworkScope::current().is_some() {
-+        return Err(io::Error::other("capturedTransportOwnerMissing"));
-+    }
-+    Ok(SharedUnitJoin::new(tokio::spawn(work)))
-+}
-+
-+/// Re-enter the same session's live context for one caller-owned operation.
-+/// This creates no task and keeps cancellation with the calling future.
-+pub fn wrap_current(work: Work) -> Work {
-+    match TransportScope::current() { Some(scope) => scope.wrap(work), None => work }
++#[cfg(all(feature = "aerove-android-runtime", any(target_os = "linux", target_os = "android", target_os = "macos")))]
++#[tokio::test]
++async fn blocking_network_scope_rejects_without_owner_and_retains_real_owner() {
++    let network = meow_common::socket_protect::NetworkScope { protector: None, resolver: None };
++    let result = network.run_blocking(|| meow_transport::scoped_join::try_spawn(async { panic!("unowned work") }));
++    assert_eq!(result.err().unwrap().to_string(), "capturedTransportOwnerMissing");
++    assert!(TransportScope::current().is_none());
++    let owner = Arc::new(Owner::default());
++    let scope = TransportScope::new(owner.clone());
++    let task = scope.scope(network.scope(async {
++        network.run_blocking(|| meow_transport::scoped_join::try_spawn(async { 83 }).unwrap())
++    })).await;
++    assert_eq!(task.await.unwrap(), 83);
++    assert_eq!(owner.0.lock().len(), 1);
++    assert!(TransportScope::current().is_none());
 +}
 --- a/crates/meow-config/src/dns_parser.rs
 +++ b/crates/meow-config/src/dns_parser.rs
@@ -1869,6 +1610,469 @@
          let mmdb_path =
              explicit_mmdb_path.map_or_else(crate::default_geoip_path, std::path::PathBuf::from);
          match std::fs::read(&mmdb_path)
+--- a/crates/meow-config/src/ech_dns.rs
++++ b/crates/meow-config/src/ech_dns.rs
+@@ -1,292 +1,129 @@
+-//! DNS-sourced ECH config lookup and pre-resolution pass.
+-//!
+-//! Resolves the wire-format `ECHConfigList` from an HTTPS (RR type 65) record
+-//! using the system nameservers (`/etc/resolv.conf` on Unix, a small built-in
+-//! fallback list on Windows).  Queries go through the internal `meow-dns`
+-//! client so socket creation can be intercepted by host integrations
+-//! (e.g. Android `protect()`).
+-//!
+-//! # Why not the in-process resolver?
+-//!
+-//! `meow-dns::Resolver` is built *from* the parsed config, so at parse time
+-//! it does not yet exist. We bootstrap with the system nameservers instead.
+-//!
+-//! # Why a separate pre-resolution pass?
+-//!
+-//! `parse_proxy` is sync and called from many places (including sync API
+-//! reload paths and #[test] unit tests). Pushing async DNS into it would
+-//! force a wide cascade. Instead, callers in async contexts run
+-//! [`preresolve_ech`] over the proxy YAML map *before* parsing — it walks
+-//! every proxy with `ech-opts: { enable: true }` and no inline `config:`,
+-//! does the HTTPS lookup, and writes the result back into the map as
+-//! base64. The downstream sync parser then sees a fully inline config.
+-//!
+-//! upstream: `component/ech/dns.go::QueryECHConfigList`
+-use base64::Engine;
+-use hickory_proto::rr::rdata::svcb::SvcParamValue;
+-use hickory_proto::rr::{RData, RecordType};
+-use meow_dns::DnsClient;
++//! Pure ECH option checks and resolver-backed handshake lookup.
++//! Fixed Standard 3f27 ECHOptions.Parse installs a callback; ClientHandle
++//! executes it during TLS setup. No startup/system/public fallback is used.
++use hickory_proto::{op::Message,rr::{DNSClass,Name,RData,RecordType,rdata::svcb::{SvcParamKey,SvcParamValue}}};
++use meow_dns::Resolver;
+ use serde_yaml::Value;
+-use std::collections::HashMap;
+-#[cfg(unix)]
+-use std::net::SocketAddrV6;
+-use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+-use std::sync::Arc;
+-use std::time::Duration;
+-
+-/// Public DoH fallback used when no system nameserver answers an HTTPS RR
+-/// query. Many ISP/captive recursive resolvers refuse or strip RR type 65;
+-/// Cloudflare's resolver serves it reliably.
+-const DOH_FALLBACK_HOST: &str = "cloudflare-dns.com";
+-const DOH_FALLBACK_PATH: &str = "/dns-query";
+-/// Bootstrap A records for `cloudflare-dns.com`. Hard-coded so the DoH client
+-/// has somewhere to send the first packet without bootstrapping its own
+-/// resolver. If both fail, ECH lookup silently falls back to plain TLS.
+-const DOH_FALLBACK_IPS: &[IpAddr] = &[
+-    IpAddr::V4(std::net::Ipv4Addr::new(1, 1, 1, 1)),
+-    IpAddr::V4(std::net::Ipv4Addr::new(1, 0, 0, 1)),
+-];
+-
+-/// Parse a resolv.conf-style nameserver token into a `SocketAddr` on port 53,
+-/// honouring an optional IPv6 zone identifier (`fe80::1%en0`). Rust's
+-/// `IpAddr::FromStr` rejects the `%zone` suffix outright, so we strip it and
+-/// resolve it through `if_nametoindex(3)` to populate `SocketAddrV6::scope_id`.
+-#[cfg(unix)]
+-fn parse_nameserver_token(token: &str) -> Option<SocketAddr> {
+-    // IPv6 addresses can carry a zone-id (`%en0`) — strip it before parsing
+-    // and feed it into the resulting SocketAddrV6 as a numeric scope_id.
+-    let (addr_str, zone) = match token.split_once('%') {
+-        Some((addr, z)) => (addr, Some(z)),
+-        None => (token, None),
+-    };
+-    let ip: IpAddr = addr_str.parse().ok()?;
+-    match ip {
+-        IpAddr::V4(v4) => Some(SocketAddr::new(IpAddr::V4(v4), 53)),
+-        IpAddr::V6(v6) => {
+-            let scope = zone.map_or(0, zone_to_scope_id);
+-            Some(SocketAddr::V6(SocketAddrV6::new(v6, 53, 0, scope)))
+-        }
+-    }
+-}
+-
+-/// Resolve a textual zone identifier (interface name like `en0`, or a
+-/// numeric string like `4`) to a `scope_id`. Returns `0` on lookup failure,
+-/// which behaves the same as no scope from the kernel's perspective.
+-#[cfg(unix)]
+-fn zone_to_scope_id(zone: &str) -> u32 {
+-    if let Ok(n) = zone.parse::<u32>() {
+-        return n;
+-    }
+-    let Ok(c_name) = std::ffi::CString::new(zone) else {
+-        return 0;
+-    };
+-    // SAFETY: `if_nametoindex` reads the NUL-terminated string and returns
+-    // an index (or 0 on error); no aliasing or lifetime requirements.
+-    unsafe { libc::if_nametoindex(c_name.as_ptr()) }
+-}
+-
+-/// `_ = Ipv6Addr` keeps the import live on non-unix builds without
+-/// triggering `unused_imports`. The IPv6 path itself only runs after a
+-/// successful parse.
+-const _: fn() = || {
+-    let _: Ipv6Addr = Ipv6Addr::UNSPECIFIED;
+-};
+-
+-/// Read the platform's configured recursive resolvers.
+-///
+-/// Unix: parse `/etc/resolv.conf` `nameserver` lines.  Other platforms (or a
+-/// missing / unreadable resolv.conf) fall back to a short list of well-known
+-/// public resolvers so ECH lookups still succeed in unconfigured environments.
+-async fn system_nameservers() -> Vec<SocketAddr> {
+-    let mut out = Vec::new();
+-    #[cfg(unix)]
+-    {
+-        if let Ok(contents) = tokio::fs::read_to_string("/etc/resolv.conf").await {
+-            for line in contents.lines() {
+-                let line = line.trim();
+-                if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+-                    continue;
++use std::{collections::HashMap,io,sync::Arc};
++use meow_transport::tls::{EchQuery,EchScope,EchSource};
++#[cfg(all(test,unix))]
++use std::net::{IpAddr,SocketAddr,SocketAddrV6};
++
++/// Arc-owned immutable resolver generation, supplied by the existing owner.
++/// It never reads a live/global slot or substitutes another DNS source.
++pub struct ResolverEchSource { resolver:Arc<Resolver> }
++impl ResolverEchSource {
++    pub fn new(resolver:Arc<Resolver>)->Self{Self{resolver}}
++}
++impl EchSource for ResolverEchSource {
++    fn query<'a>(&'a self,name:&'a str)->EchQuery<'a>{
++        Box::pin(resolve_ech_with_resolver(self.resolver.clone(),name))
++    }
++}
++/// Explicitly choose the same proxy-server resolver priority as Standard.
++/// The caller captures the pair for one operation; it owns their lifecycle.
++pub fn resolver_scope(main:Arc<Resolver>,proxy:Option<Arc<Resolver>>)->EchScope{
++    EchScope::new(Arc::new(ResolverEchSource::new(proxy.unwrap_or(main))))
++}
++const MAX_ECH_DNS_ALIASES:usize=16;
++fn ech_dns_error(reason:&'static str)->io::Error{io::Error::new(io::ErrorKind::InvalidData,reason)}
++enum EchAnswer{Config(Vec<u8>),Follow(Name)}
++pub async fn resolve_ech_with_resolver(resolver:Arc<Resolver>,name:&str)->io::Result<Vec<u8>>{
++    let mut query=Name::from_utf8(name).map_err(|error|io::Error::new(io::ErrorKind::InvalidInput,error))?;
++    let mut visited=Vec::new();
++    // Incomplete alias answers are resolved using this same captured resolver.
++    // Both contained links and extra queries share one bounded ancestry.
++    for _ in 0..MAX_ECH_DNS_ALIASES {
++        let response=resolver.forward_generic(&query.to_utf8(),&query,RecordType::HTTPS).await?
++            .ok_or_else(||io::Error::new(io::ErrorKind::NotFound,"echDnsNoAnswer"))?;
++        match ech_answer(&response,&query,&mut visited)?{
++            EchAnswer::Config(bytes)=>return Ok(bytes),
++            EchAnswer::Follow(target)=>query=target,
++        }
++    }
++    Err(ech_dns_error("echDnsAliasLimit"))
++}
++/// Select only records belonging to the expected IN HTTPS alias lineage.
++/// This pure entry never treats an unrelated answer as an ECH configuration.
++pub fn ech_config_from_message(message:&Message,expected:&Name)->io::Result<Vec<u8>>{
++    match ech_answer(message,expected,&mut Vec::new())?{
++        EchAnswer::Config(bytes)=>Ok(bytes),
++        EchAnswer::Follow(_)=>Err(ech_dns_error("echDnsConfigMissing")),
++    }
++}
++fn ech_answer(message:&Message,expected:&Name,visited:&mut Vec<Name>)->io::Result<EchAnswer>{
++    if message.metadata.response_code!=hickory_proto::op::ResponseCode::NoError{
++        return Err(io::Error::new(io::ErrorKind::NotFound,"echDnsNegativeResponse"));
++    }
++    let mut owner=expected.clone();
++    loop{
++        let records:Vec<_>=message.answers.iter().filter(|record|
++            record.dns_class==DNSClass::IN&&record.name.eq_ignore_root(&owner)
++            &&matches!(&record.data,RData::CNAME(_)|RData::HTTPS(_))).collect();
++        if records.is_empty(){
++            return if owner.eq_ignore_root(expected){Err(ech_dns_error("echDnsConfigMissing"))}
++                else{Ok(EchAnswer::Follow(owner))};
++        }
++        if visited.iter().any(|name|name.eq_ignore_root(&owner)){return Err(ech_dns_error("echDnsAliasCycle"));}
++        if visited.len()>=MAX_ECH_DNS_ALIASES{return Err(ech_dns_error("echDnsAliasLimit"));}
++        visited.push(owner.clone());
++        let mut cname:Option<Name>=None;let mut services=Vec::new();
++        for record in records{
++            match &record.data{
++                RData::CNAME(target)=>{
++                    if cname.as_ref().is_some_and(|old|!old.eq_ignore_root(&target.0)){
++                        return Err(ech_dns_error("echDnsAmbiguousCname"));
++                    }
++                    cname=Some(target.0.clone());
+                 }
+-                let Some(rest) = line.strip_prefix("nameserver") else {
+-                    continue;
+-                };
+-                let token = rest.split_whitespace().next().unwrap_or("");
+-                if let Some(addr) = parse_nameserver_token(token) {
+-                    out.push(addr);
++                RData::HTTPS(https)=>services.push(&https.0),
++                _=>unreachable!(),
++            }
++        }
++        if let Some(target)=cname{
++            if !services.is_empty(){return Err(ech_dns_error("echDnsCnameWithHttps"));}
++            if target.is_root(){return Err(ech_dns_error("echDnsInvalidCname"));}
++            owner=target;continue;
++        }
++        let mut alias:Option<Name>=None;
++        for service in services.iter().filter(|service|service.svc_priority==0){
++            if service.target_name.is_root(){return Err(ech_dns_error("echDnsServiceUnavailable"));}
++            // RFC9460 recommends one alias. Conflicting targets are not an
++            // authenticated choice for this fixed-endpoint TLS lookup.
++            if alias.as_ref().is_some_and(|old|!old.eq_ignore_root(&service.target_name)){
++                return Err(ech_dns_error("echDnsAmbiguousAlias"));
++            }
++            alias=Some(service.target_name.clone());
++        }
++        if let Some(target)=alias{
++            // RFC9460: ignore AliasMode params and all ServiceMode records
++            // in a mixed RRset. Never take an ECH value from the alias itself.
++            owner=target;continue;
++        }
++        services.sort_by_key(|service|service.svc_priority);
++        for service in services{
++            // ServiceMode target '.' is valid and means this owner; it is
++            // not another DNS alias to traverse. The RR owner binds the key.
++            let mut config=None;
++            for (key,value) in &service.svc_params{
++                if *key!=SvcParamKey::EchConfigList{continue;}
++                let SvcParamValue::EchConfigList(list)=value else{return Err(ech_dns_error("echDnsInvalidConfig"));};
++                if config.is_some()||list.0.is_empty()||list.0.len()>u16::MAX as usize{
++                    return Err(ech_dns_error("echDnsInvalidConfig"));
+                 }
+-            }
+-        }
+-    }
+-    if out.is_empty() {
+-        // Fallback: well-known public resolvers.
+-        out.push(SocketAddr::from(([1, 1, 1, 1], 53)));
+-        out.push(SocketAddr::from(([8, 8, 8, 8], 53)));
+-    }
+-    out
+-}
+-
+-pub(crate) async fn fetch_ech_from_dns(name: &str) -> Result<Vec<u8>, String> {
+-    let nameservers = system_nameservers().await;
+-    let mut clients: Vec<Arc<DnsClient>> = nameservers
+-        .iter()
+-        .map(|addr| Arc::new(DnsClient::udp(*addr).with_timeout(Duration::from_secs(5))))
+-        .collect();
+-
+-    // DoH fallback: many recursive resolvers refuse/strip HTTPS RR (type 65),
+-    // so layer a public DoH endpoint after the system-NS attempts. Without
+-    // this, ECH bootstrap silently falls back to plain TLS on restrictive
+-    // networks.
+-    for ip in DOH_FALLBACK_IPS {
+-        clients.push(Arc::new(
+-            DnsClient::doh(
+-                SocketAddr::new(*ip, 443),
+-                DOH_FALLBACK_HOST,
+-                DOH_FALLBACK_PATH,
+-            )
+-            .with_timeout(Duration::from_secs(5)),
+-        ));
+-    }
+-
+-    let mut last_err: Option<String> = None;
+-    let mut response = None;
+-    for c in &clients {
+-        match c.query(name, RecordType::HTTPS).await {
+-            Ok(msg) => {
+-                response = Some(msg);
+-                break;
+-            }
+-            Err(e) => last_err = Some(format!("{e}")),
+-        }
+-    }
+-    let msg = response.ok_or_else(|| {
+-        format!(
+-            "ech-dns: HTTPS lookup for {name} failed via all nameservers (system + DoH {DOH_FALLBACK_HOST}): {}",
+-            last_err.unwrap_or_else(|| "no nameservers".to_string())
+-        )
+-    })?;
+-
+-    for record in &msg.answers {
+-        let svcb = match &record.data {
+-            RData::HTTPS(https) => &https.0,
+-            _ => continue,
+-        };
+-        for (_, value) in &svcb.svc_params {
+-            if let SvcParamValue::EchConfigList(list) = value {
+-                if !list.0.is_empty() {
+-                    return Ok(list.0.clone());
+-                }
+-            }
+-        }
+-    }
+-
+-    Err(format!(
+-        "ech-dns: no ECH config (SvcParam key 5) in HTTPS record for {name}"
+-    ))
+-}
+-
+-/// Walk a slice of proxy YAML maps and pre-resolve any DNS-sourced ECH
+-/// configs in-place. Proxies with `ech-opts: { enable: true }` and no
+-/// inline `config:` get a HTTPS-record lookup (using `query-server-name`
+-/// if present, else `server`); on success, the base64 of the wire-format
+-/// `ECHConfigList` is written into `ech-opts.config`.
+-///
+-/// Failures are logged at warn level and leave the map unchanged — the
+-/// downstream parser will then see `enable: true` with no `config:` and
+-/// silently skip ECH for that proxy (matches Go upstream behaviour:
+-/// "ECH lookup failed, proceed without ECH").
+-///
+-/// `strict` (top-level `strict: true`, issue #533): `enable: true` with no
+-/// `config:`, no `query-server-name:`, and no `server:` to query is a
+-/// config *defect* (ECH can never engage) and returns `Err` — DNS lookup
+-/// failures stay lenient in both modes since they are transient.
+-///
+-/// The defect check alone (no network I/O) is [`check_ech_defects`] —
+-/// runtime mutation paths already holding the config-mutation lane call
+-/// that instead of this function so no DNS lookup serializes other
+-/// commits (issue #533 review).
+-pub async fn preresolve_ech(
+-    proxies: &mut [HashMap<String, Value>],
+-    strict: bool,
+-) -> Result<(), String> {
+-    check_ech_defects(proxies, strict)?;
+-    if crate::is_offline_validate() {
+-        return Ok(());
+-    }
+-    for proxy in proxies {
+-        let proxy_name = proxy
+-            .get("name")
+-            .and_then(|v| v.as_str())
+-            .unwrap_or("<unnamed>")
+-            .to_string();
+-        let server = proxy
+-            .get("server")
+-            .and_then(|v| v.as_str())
+-            .map(String::from);
+-
+-        let Some(ech_opts) = proxy.get_mut("ech-opts") else {
+-            continue;
+-        };
+-        let Some(ech_map) = ech_opts.as_mapping_mut() else {
+-            continue;
+-        };
+-
+-        let enabled = ech_map
+-            .get(Value::String("enable".into()))
+-            .and_then(serde_yaml::Value::as_bool)
+-            .unwrap_or(false);
+-        if !enabled {
+-            continue;
+-        }
+-        if ech_map
+-            .get(Value::String("config".into()))
+-            .and_then(|v| v.as_str())
+-            .is_some()
+-        {
+-            continue;
+-        }
+-
+-        let query_name = ech_map
+-            .get(Value::String("query-server-name".into()))
+-            .and_then(|v| v.as_str())
+-            .map(String::from)
+-            .or(server);
+-        // No query source: `check_ech_defects` above already warned
+-        // (lenient) or returned Err (strict), so just skip the lookup.
+-        let Some(query_name) = query_name else {
+-            continue;
+-        };
+-
+-        match fetch_ech_from_dns(&query_name).await {
+-            Ok(bytes) => {
+-                let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+-                tracing::info!(
+-                    proxy = %proxy_name,
+-                    query = %query_name,
+-                    len = bytes.len(),
+-                    "ech-opts: fetched ECH config from DNS HTTPS record"
+-                );
+-                ech_map.insert(Value::String("config".into()), Value::String(b64));
+-            }
+-            Err(e) => {
+-                tracing::warn!(
+-                    proxy = %proxy_name,
+-                    query = %query_name,
+-                    error = %e,
+-                    "ech-opts: DNS lookup failed; continuing without ECH"
+-                );
+-            }
+-        }
+-    }
+-    Ok(())
+-}
+-
+-/// The pure-defect half of [`preresolve_ech`], with no network I/O:
+-/// `ech-opts.enable: true` without `config:` and without any name to query
+-/// (`query-server-name:` or `server:`) is a config defect that can never
+-/// engage ECH — under `strict` it returns `Err`; leniently it warns.
+-/// Runtime paths holding the config-mutation lane run this instead of the
+-/// full preresolve so no DNS lookup serializes other commits (issue #533
+-/// review); writers are expected to have preresolved before storing.
++                config=Some(list.0.clone());
++            }
++            if let Some(bytes)=config{return Ok(EchAnswer::Config(bytes));}
++        }
++        return Err(ech_dns_error("echDnsConfigMissing"));
++    }
++}
++/// Retained async API, now deliberately pure: DNS stays deferred until TLS.
++/// No YAML injection means reload/provider snapshots preserve user intent.
++pub async fn preresolve_ech(proxies:&mut [HashMap<String,Value>],strict:bool)->Result<(),String>{
++    check_ech_defects(proxies,strict)
++}
++
+ pub fn check_ech_defects(proxies: &[HashMap<String, Value>], strict: bool) -> Result<(), String> {
+     for proxy in proxies {
+         let proxy_name = proxy
+@@ -332,6 +169,44 @@
+     Ok(())
+ }
+ 
++/// Parse a resolv.conf-style nameserver token into a `SocketAddr` on port 53,
++/// honouring an optional IPv6 zone identifier (`fe80::1%en0`). Rust's
++/// `IpAddr::FromStr` rejects the `%zone` suffix outright, so we strip it and
++/// resolve it through `if_nametoindex(3)` to populate `SocketAddrV6::scope_id`.
++#[cfg(all(test, unix))]
++fn parse_nameserver_token(token: &str) -> Option<SocketAddr> {
++    // IPv6 addresses can carry a zone-id (`%en0`) — strip it before parsing
++    // and feed it into the resulting SocketAddrV6 as a numeric scope_id.
++    let (addr_str, zone) = match token.split_once('%') {
++        Some((addr, z)) => (addr, Some(z)),
++        None => (token, None),
++    };
++    let ip: IpAddr = addr_str.parse().ok()?;
++    match ip {
++        IpAddr::V4(v4) => Some(SocketAddr::new(IpAddr::V4(v4), 53)),
++        IpAddr::V6(v6) => {
++            let scope = zone.map_or(0, zone_to_scope_id);
++            Some(SocketAddr::V6(SocketAddrV6::new(v6, 53, 0, scope)))
++        }
++    }
++}
++
++/// Resolve a textual zone identifier (interface name like `en0`, or a
++/// numeric string like `4`) to a `scope_id`. Returns `0` on lookup failure,
++/// which behaves the same as no scope from the kernel's perspective.
++#[cfg(all(test, unix))]
++fn zone_to_scope_id(zone: &str) -> u32 {
++    if let Ok(n) = zone.parse::<u32>() {
++        return n;
++    }
++    let Ok(c_name) = std::ffi::CString::new(zone) else {
++        return 0;
++    };
++    // SAFETY: `if_nametoindex` reads the NUL-terminated string and returns
++    // an index (or 0 on error); no aliasing or lifetime requirements.
++    unsafe { libc::if_nametoindex(c_name.as_ptr()) }
++}
++
+ #[cfg(all(test, unix))]
+ mod tests {
+     use super::*;
 --- a/crates/meow-config/src/internal_http.rs
 +++ b/crates/meow-config/src/internal_http.rs
 @@ -199,10 +199,11 @@
@@ -1916,7 +2120,7 @@
              .await
 --- a/crates/meow-config/src/lib.rs
 +++ b/crates/meow-config/src/lib.rs
-@@ -3,6 +3,10 @@
+@@ -3,10 +3,15 @@
  //! Turns a Clash Meta-style `config.yaml` into typed structs consumed by
  //! the tunnel, listeners, DNS, and API.
  
@@ -1927,7 +2131,12 @@
  pub mod auth;
  pub mod dns_parser;
  pub mod dropped_providers;
-@@ -30,6 +34,8 @@
+ pub mod ech_dns;
++pub use meow_transport::tls::{EchQuery, EchScope, EchSource};
+ // Force-disabled on iOS/Android: mobile apps embed their own UI and must not
+ // ship the unzip/download path regardless of the feature flag (issue #223).
+ #[cfg(all(
+@@ -30,6 +35,8 @@
  #[cfg(test)]
  mod test_support;
  
@@ -1936,7 +2145,7 @@
  pub use dropped_providers::DroppedProviders;
  pub use geodata::GeoDataConfig;
  
-@@ -45,6 +51,38 @@
+@@ -45,6 +52,38 @@
  use std::sync::Arc;
  use tracing::{debug, info, warn};
  
@@ -1975,7 +2184,7 @@
  pub(crate) async fn spawn_blocking_with_current_dispatcher<F, R>(
      f: F,
  ) -> Result<R, tokio::task::JoinError>
-@@ -53,7 +91,7 @@
+@@ -53,7 +92,7 @@
      R: Send + 'static,
  {
      let dispatch = tracing::dispatcher::get_default(Clone::clone);
@@ -1984,7 +2193,7 @@
  }
  
  pub(crate) fn parse_optional_socket_addr(
-@@ -603,6 +641,7 @@
+@@ -603,6 +642,7 @@
  /// True when config loading must skip remote proxy-provider fetches (see
  /// [`set_offline_validate`]).
  pub fn is_offline_validate() -> bool {
@@ -1992,10 +2201,14 @@
      OFFLINE_VALIDATE.load(std::sync::atomic::Ordering::Relaxed)
  }
  
-@@ -3902,6 +3941,17 @@
+@@ -3902,10 +3942,19 @@
      mut raw: raw::RawConfig,
      cache_dir: Option<&Path>,
  ) -> Result<Config, anyhow::Error> {
+-    // Pre-resolve any DNS-sourced ECH configs into inline base64 so the
+-    // sync `parse_proxy` path that follows can stay sync. Failures warn
+-    // and leave the map unchanged — except the `enable: true` with no
+-    // query-source defect, which `strict` promotes to an error.
 +    // Capture observer validation before prefetch, ECH or any provider factory I/O.
 +    if let Some(scope) = owned_load::OwnedLoadScope::current() {
 +        if let Some(observer) = scope.provider_observer() {
@@ -2007,10 +2220,12 @@
 +            }
 +        }
 +    }
-     // Pre-resolve any DNS-sourced ECH configs into inline base64 so the
-     // sync `parse_proxy` path that follows can stay sync. Failures warn
-     // and leave the map unchanged — except the `enable: true` with no
-@@ -7771,3 +7821,8 @@
++    // Pure ECH defects only. DNS mode remains typed metadata until the
++    // handshake can use the operation's captured user resolver generation.
+     if let Some(ps) = raw.proxies.as_mut() {
+         ech_dns::preresolve_ech(ps, raw.strict.unwrap_or(false))
+             .await
+@@ -7771,3 +7820,8 @@
          );
      }
  }
@@ -2785,7 +3000,47 @@
  }
  
  /// Parse a `type: hysteria2` proxy block.
-@@ -4833,8 +4841,7 @@
+@@ -1887,26 +1895,22 @@
+         tls_cfg.fingerprint = client_fingerprint.map(std::string::ToString::to_string);
+         tls_cfg.reality = reality;
+ 
+-        // ── ECH opts ────────────────────────────────────────────────────
+-        // DNS-sourced ECH (`enable: true` without `config:`) is resolved by
+-        // `ech_dns::preresolve_ech` *before* `parse_proxy` runs, which injects
+-        // the fetched bytes back into `ech-opts.config` as base64. By the time
+-        // we get here only the inline-config branch matters; a missing
+-        // `config:` means pre-resolution failed (already warned) and we just
+-        // continue without ECH.
++        // DNS mode is pure metadata here. The real handshake later queries
++        // its captured proxy-server resolver (or main resolver), like the
++        // fixed Standard ECH callback. Missing/error scope never means no ECH.
+         if let Some(ech_opts) = config.get("ech-opts") {
+-            let ech_enabled = ech_opts
+-                .get("enable")
+-                .and_then(serde_yaml::Value::as_bool)
+-                .unwrap_or(false);
+-            if ech_enabled {
++            if ech_opts.get("enable").and_then(serde_yaml::Value::as_bool).unwrap_or(false) {
+                 use meow_transport::tls::EchOpts;
+-                if let Some(inline_config) = ech_opts.get("config").and_then(|v| v.as_str()) {
++                if let Some(inline_config) = ech_opts.get("config").and_then(|v|v.as_str()).filter(|v|!v.is_empty()) {
+                     use base64::Engine;
+-                    let bytes = base64::engine::general_purpose::STANDARD
+-                        .decode(inline_config)
+-                        .map_err(|e| format!("vless: ech-opts.config base64 decode: {e}"))?;
+-                    tls_cfg.ech = Some(EchOpts::Config(bytes));
++                    let bytes=base64::engine::general_purpose::STANDARD.decode(inline_config)
++                        .map_err(|e|format!("vless: ech-opts.config base64 decode: {e}"))?;
++                    tls_cfg.ech=Some(EchOpts::Config(bytes));
++                } else {
++                    let query_name=ech_opts.get("query-server-name").and_then(|v|v.as_str()).filter(|v|!v.is_empty()).unwrap_or(sni);
++                    hickory_proto::rr::Name::from_utf8(query_name)
++                        .map_err(|e|format!("vless: ech-opts.query-server-name: {e}"))?;
++                    tls_cfg.ech=Some(EchOpts::Dns(query_name.to_owned()));
+                 }
+             }
+         }
+@@ -4833,8 +4837,7 @@
      // rather than the strict pass's error failing the whole load.
      #[tokio::test]
      async fn load_config_unknown_use_provider_warns_and_loads() {
@@ -2795,7 +3050,7 @@
          let yaml = "proxies:\n  - {name: p, type: ss, server: 127.0.0.1, port: 443, cipher: aes-128-gcm, password: x}\n\
              proxy-groups:\n  - {name: g, type: load-balance, proxies: [p], use: [ghost]}\n";
          let cfg = crate::load_config_from_str(yaml)
-@@ -5472,3 +5479,24 @@
+@@ -5472,3 +5475,24 @@
          assert_eq!(names, ["ok", "plain"], "dropped: {names:?}");
      }
  }
@@ -4102,7 +4357,7 @@
  }
  
  impl Resolver {
-@@ -269,6 +276,34 @@
+@@ -269,6 +276,38 @@
      /// captured.
      pub fn main_nameservers(&self) -> &[Arc<DnsClient>] {
          &self.main
@@ -4126,6 +4381,10 @@
 +    /// task owner. Native owners retain the actual JoinHandle and join it when
 +    /// this generation is retired.
 +    pub(crate) async fn spawn_owned(&self, work: Work) -> io::Result<tokio::task::AbortHandle> {
++        // Tokio task-local values do not cross a spawn. Capture the current ECH
++        // query ancestry before wrapping this child in its captured network scope.
++        #[cfg(feature = "encrypted")]
++        let work: Work = meow_transport::tls::EchScope::wrap_current(work);
 +        if let Some(scope) = &self.transport_scope {
 +            let scope_for_work = scope.clone();
 +            let work: Work = Box::pin(async move { scope_for_work.scope(work).await });
@@ -4137,7 +4396,7 @@
      }
  }
  
-@@ -483,6 +518,52 @@
+@@ -483,6 +522,56 @@
  /// negative is returned.
  const NEGATIVE_GRACE_PERIOD: Duration = Duration::from_millis(300);
  
@@ -4164,6 +4423,10 @@
 +        let result = task_scope.scope(future).await;
 +        let _ = tx.send(result);
 +    });
++    // The HTTPS upstream exchange is spawned here (not by Resolver::spawn_owned).
++    // Capture ECH ancestry explicitly before crossing this real task boundary.
++    #[cfg(feature = "encrypted")]
++    let work: Work = meow_transport::tls::EchScope::wrap_current(work);
 +    let abort = scope
 +        .scope(async { transport_tasks::spawn(work) })
 +        .await
@@ -4190,7 +4453,7 @@
  /// Query a pool of clients in parallel for the requested family set `want`,
  /// returning `(set, error)`: the first positive resolution or, after a short
  /// grace period, the first definitive negative (review issue C: a fast
-@@ -500,6 +581,7 @@
+@@ -500,6 +589,7 @@
      host: &str,
      want: QueryFamilies,
      ipv6_enabled: bool,
@@ -4198,7 +4461,7 @@
  ) -> (Option<FamilySet>, Option<ClientError>) {
      if clients.is_empty() {
          return (None, None);
-@@ -507,9 +589,16 @@
+@@ -507,9 +597,16 @@
      let started = tokio::time::Instant::now();
      let mut pending = FuturesUnordered::new();
      for client in clients {
@@ -4217,7 +4480,7 @@
          });
      }
      let mut negative: Option<FamilySet> = None;
-@@ -689,17 +778,41 @@
+@@ -689,17 +786,41 @@
  /// races first-Ok-wins — any validated `Message` (including a negative
  /// rcode) answers, so pool semantics differ from the address pipeline's
  /// positive-preference and grace period.
@@ -4262,7 +4525,7 @@
              tokio::pin!(f1);
              tokio::pin!(f2);
              tokio::select! {
-@@ -711,7 +824,13 @@
+@@ -711,7 +832,13 @@
              let futs: Vec<_> = clients
                  .iter()
                  .map(|c| {
@@ -4277,7 +4540,7 @@
                  })
                  .collect();
              futures::future::select_ok(futs).await.ok().map(|(m, _)| m)
-@@ -770,6 +889,8 @@
+@@ -770,6 +897,8 @@
              fakeip_skipper: None,
              fakeip_ttl: DEFAULT_FAKE_IP_TTL,
              ipv6,
@@ -4286,7 +4549,7 @@
          }
      }
  
-@@ -982,7 +1103,7 @@
+@@ -982,7 +1111,7 @@
              let mut map = HashMap::new();
              for host in &hostnames_needing_bootstrap {
                  let (set, err) =
@@ -4295,7 +4558,7 @@
                  let first = set.and_then(|set| set.positive_ips().into_iter().next());
                  match first {
                      Some(ip) => {
-@@ -1195,6 +1316,9 @@
+@@ -1195,6 +1324,9 @@
          // answer below. The error is only reported when nothing else can.
          let mut lookup_err: Option<io::Error> = None;
          let pipeline_set = if want.is_empty() {
@@ -4305,7 +4568,7 @@
              None
          } else {
              match self.run_pipeline(lookup_host, want).await {
-@@ -1709,7 +1833,7 @@
+@@ -1709,7 +1841,7 @@
          if let Some(policy) = &self.policy {
              if let Some(entry) = policy.lookup(host) {
                  conn_note!(Dns, "nameserver-policy matched {host}");
@@ -4314,7 +4577,7 @@
                  upstream_err = prefer_errno(upstream_err, err);
                  if let Some(set) = set {
                      if set.has_positive() {
-@@ -1738,7 +1862,7 @@
+@@ -1738,7 +1870,7 @@
  
          // Global nameservers (parallel, first-positive / first-definitive-negative).
          {
@@ -4323,7 +4586,7 @@
              upstream_err = prefer_errno(upstream_err, err);
              if let Some(set) = set {
                  if set.has_positive() {
-@@ -1784,7 +1908,7 @@
+@@ -1784,7 +1916,7 @@
          want: QueryFamilies,
      ) -> (Option<FamilySet>, Option<ClientError>) {
          match self.fallback.as_deref() {
@@ -4332,7 +4595,7 @@
              None => (None, None),
          }
      }
-@@ -1861,25 +1985,26 @@
+@@ -1861,25 +1993,26 @@
          domain: &str,
          query_name: &Name,
          record_type: RecordType,
@@ -4369,7 +4632,7 @@
      }
  
      async fn try_fallback_generic(
-@@ -1888,7 +2013,7 @@
+@@ -1888,7 +2021,7 @@
          record_type: RecordType,
      ) -> Option<Message> {
          let fb = self.fallback.as_deref()?;
@@ -4378,7 +4641,59 @@
      }
  
      /// Capture the live reverse (IP → host) table with remaining lifetimes,
-@@ -2296,6 +2421,22 @@
+@@ -2146,6 +2279,51 @@
+     use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
+     use std::net::{Ipv4Addr, Ipv6Addr};
+     use std::sync::atomic::{AtomicUsize, Ordering};
++
++    #[cfg(feature = "encrypted")]
++    struct SpawnRecursiveEchSource {
++        resolver: Arc<Resolver>,
++        queries: Arc<AtomicUsize>,
++    }
++
++    #[cfg(feature = "encrypted")]
++    impl meow_transport::tls::EchSource for SpawnRecursiveEchSource {
++        fn query<'a>(&'a self, name: &'a str) -> meow_transport::tls::EchQuery<'a> {
++            self.queries.fetch_add(1, Ordering::SeqCst);
++            let resolver = Arc::clone(&self.resolver);
++            let name = name.to_owned();
++            Box::pin(async move {
++                let (tx, rx) = tokio::sync::oneshot::channel();
++                let work: Work = Box::pin(async move {
++                    let result = meow_transport::tls::EchScope::resolve(name).await;
++                    let _ = tx.send(result);
++                });
++                resolver.spawn_owned(work).await?;
++                rx.await.map_err(|_| io::Error::new(io::ErrorKind::Interrupted, "ECH child task ended"))?
++            })
++        }
++    }
++
++    /// Regression: an ECH resolver query that re-enters through the production
++    /// DNS owned-spawn helper must retain the same canonical query ancestry.
++    #[cfg(feature = "encrypted")]
++    #[tokio::test]
++    async fn ech_cycle_guard_survives_dns_owned_spawn() {
++        let resolver = Arc::new(Resolver::new(
++            vec![], vec![], DnsMode::Normal, DomainTrie::new(), true, false,
++        ));
++        let queries = Arc::new(AtomicUsize::new(0));
++        let scope = meow_transport::tls::EchScope::new(Arc::new(SpawnRecursiveEchSource {
++            resolver,
++            queries: Arc::clone(&queries),
++        }));
++        let result = scope.scope(async {
++            meow_transport::tls::EchScope::resolve("loop.example".to_owned()).await
++        }).await;
++        let error = result.expect_err("recursive ECH DNS query must fail closed");
++        assert_eq!(error.to_string(), "echDnsCycle");
++        assert_eq!(queries.load(Ordering::SeqCst), 1, "cycle must stop before another source query");
++    }
+ 
+     async fn one_shot_a_upstream(
+         response_code: ResponseCode,
+@@ -2296,6 +2474,22 @@
              client.upstream_label(),
              "https://1.1.1.1/dns-query#cloudflare-dns.com"
          );
@@ -4401,7 +4716,7 @@
      }
  
      #[tokio::test]
-@@ -4037,3 +4178,88 @@
+@@ -4037,3 +4231,143 @@
          assert_eq!(resolver.resolve_ips("gone.example").await.unwrap(), None);
      }
  }
@@ -4438,6 +4753,61 @@
 +                let _ = task.await;
 +            }
 +        }
++    }
++
++    #[cfg(feature = "encrypted")]
++    struct RunOwnedRecursiveEchSource {
++        scope: TransportScope,
++        queries: Arc<std::sync::atomic::AtomicUsize>,
++    }
++
++    #[cfg(feature = "encrypted")]
++    impl meow_transport::tls::EchSource for RunOwnedRecursiveEchSource {
++        fn query<'a>(&'a self, name: &'a str) -> meow_transport::tls::EchQuery<'a> {
++            use std::sync::atomic::Ordering;
++
++            self.queries.fetch_add(1, Ordering::SeqCst);
++            let scope = self.scope.clone();
++            let name = name.to_owned();
++            Box::pin(async move {
++                run_owned_query(Some(scope), async move {
++                    meow_transport::tls::EchScope::resolve(name)
++                        .await
++                        .map_err(ClientError::Io)
++                })
++                .await
++                .map_err(|error| error.to_io())
++            })
++        }
++    }
++
++    /// Regression for the production HTTPS exchange spawn: recursive ECH
++    /// resolution must retain ancestry through run_owned_query's real task.
++    #[cfg(feature = "encrypted")]
++    #[tokio::test]
++    async fn ech_cycle_guard_survives_run_owned_query_spawn() {
++        use std::sync::atomic::{AtomicUsize, Ordering};
++
++        let owner = Arc::new(JoinOwner::default());
++        let scope = TransportScope::new(owner.clone());
++        let queries = Arc::new(AtomicUsize::new(0));
++        let ech = meow_transport::tls::EchScope::new(Arc::new(RunOwnedRecursiveEchSource {
++            scope,
++            queries: Arc::clone(&queries),
++        }));
++
++        let result = ech
++            .scope(async {
++                meow_transport::tls::EchScope::resolve("loop.example".to_owned()).await
++            })
++            .await;
++        let error = result.expect_err("recursive ECH DNS query must fail closed");
++        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
++        assert_eq!(error.to_string(), "echDnsCycle");
++        assert_eq!(queries.load(Ordering::SeqCst), 1, "cycle must stop before another source query");
++        assert_eq!(owner.tasks.lock().unwrap().len(), 1, "real exchange task must be owned");
++        owner.close_joined().await;
++        assert!(owner.tasks.lock().unwrap().is_empty(), "retirement must join and drain the task");
 +    }
 +
 +    #[tokio::test]
@@ -7110,6 +7480,16 @@
      }
  }
  
+--- a/crates/meow-transport/Cargo.toml
++++ b/crates/meow-transport/Cargo.toml
+@@ -126,6 +126,7 @@
+ ]
+ 
+ [dependencies]
++parking_lot = { workspace = true }
+ async-trait = { workspace = true }
+ thiserror = { workspace = true }
+ tracing = { workspace = true }
 --- a/crates/meow-transport/src/grpc.rs
 +++ b/crates/meow-transport/src/grpc.rs
 @@ -111,9 +111,9 @@
@@ -7117,7 +7497,7 @@
          // drop can bound the driver's shutdown flush — a wedged send buffer
          // would otherwise pin the inner fd indefinitely (issue #669).
 -        let conn_driver = tokio::spawn(async move {
-+        let conn_driver = meow_common::scoped_join::try_spawn(async move {
++        let conn_driver = crate::scoped_join::try_spawn(async move {
              let _ = conn.await;
 -        });
 +        })?;
@@ -7129,8 +7509,8 @@
      /// only if its closing flush can make progress — the handle lets Drop
      /// bound that wait (issue #669).
 -    conn_driver: Option<tokio::task::JoinHandle<()>>,
-+    conn_driver: Option<meow_common::scoped_join::ScopedJoin<()>>,
-+    spawner: meow_common::scoped_join::Spawner,
++    conn_driver: Option<crate::scoped_join::ScopedJoin<()>>,
++    spawner: crate::scoped_join::Spawner,
  }
  
  impl GunStream {
@@ -7138,7 +7518,7 @@
          send: h2::SendStream<Bytes>,
          recv: RecvState,
 -        conn_driver: tokio::task::JoinHandle<()>,
-+        conn_driver: impl Into<meow_common::scoped_join::ScopedJoin<()>>,
++        conn_driver: impl Into<crate::scoped_join::ScopedJoin<()>>,
      ) -> Self {
          Self {
              send,
@@ -7148,7 +7528,7 @@
              pending_write: None,
 -            conn_driver: Some(conn_driver),
 +            conn_driver: Some(conn_driver.into()),
-+            spawner: meow_common::scoped_join::Spawner::capture(),
++            spawner: crate::scoped_join::Spawner::capture(),
          }
      }
  }
@@ -7187,7 +7567,7 @@
          // Drive the h2 connection (SETTINGS, WINDOW_UPDATE, PING, …) in a
          // background task so control frames keep flowing while we stream data.
 -        let driver_task = tokio::spawn(async move {
-+        let driver_task = meow_common::scoped_join::try_spawn(async move {
++        let driver_task = crate::scoped_join::try_spawn(async move {
              let _ = conn.await;
 -        });
 +        })?;
@@ -7201,8 +7581,8 @@
      remote_no_error_is_eof: bool,
      eos_sent: bool,
 -    conn_driver: Option<tokio::task::JoinHandle<()>>,
-+    conn_driver: Option<meow_common::scoped_join::ScopedJoin<()>>,
-+    spawner: meow_common::scoped_join::Spawner,
++    conn_driver: Option<crate::scoped_join::ScopedJoin<()>>,
++    spawner: crate::scoped_join::Spawner,
  }
  
  impl H2Stream {
@@ -7215,11 +7595,11 @@
 -
 -    pub fn with_conn_driver(mut self, driver: tokio::task::JoinHandle<()>) -> Self {
 -        self.conn_driver = Some(driver);
-+            spawner: meow_common::scoped_join::Spawner::capture(),
++            spawner: crate::scoped_join::Spawner::capture(),
 +        }
 +    }
 +
-+    pub fn with_conn_driver(mut self, driver: impl Into<meow_common::scoped_join::ScopedJoin<()>>) -> Self {
++    pub fn with_conn_driver(mut self, driver: impl Into<crate::scoped_join::ScopedJoin<()>>) -> Self {
 +        self.conn_driver = Some(driver.into());
          self
      }
@@ -7252,6 +7632,524 @@
 +        require_stream::<H2Stream>();
 +    }
 +}
+--- a/crates/meow-transport/src/lib.rs
++++ b/crates/meow-transport/src/lib.rs
+@@ -34,6 +34,9 @@
+ pub const MAX_EXTRA_HEADERS: usize = 64;
+ 
+ mod error;
++
++pub mod transport_tasks;
++pub mod scoped_join;
+ 
+ #[cfg(feature = "tls")]
+ pub mod tls;
+--- /dev/null
++++ b/crates/meow-transport/src/scoped_join.rs
+@@ -0,0 +1,216 @@
++use crate::transport_tasks::{self, TransportScope};
++use std::{future::Future, io, pin::Pin, task::{Context, Poll}};
++use tokio::task::{AbortHandle, JoinError};
++use parking_lot::Mutex;
++
++type PollFuture<T> = Pin<Box<dyn Future<Output = Result<T, JoinError>> + Send + 'static>>;
++
++pub struct ScopedJoin<T> {
++    future: Mutex<PollFuture<T>>,
++    abort: AbortHandle,
++}
++impl<T> ScopedJoin<T> {
++    pub fn abort(&self) { self.abort.abort(); }
++    pub fn abort_handle(&self) -> AbortHandle { self.abort.clone() }
++    pub fn is_finished(&self) -> bool { self.abort.is_finished() }
++}
++impl<T> Future for ScopedJoin<T> {
++    type Output = Result<T, JoinError>;
++    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
++        self.get_mut().future.get_mut().as_mut().poll(cx)
++    }
++}
++impl<T: Send + 'static> From<tokio::task::JoinHandle<T>> for ScopedJoin<T> {
++    fn from(handle: tokio::task::JoinHandle<T>) -> Self {
++        let abort = handle.abort_handle();
++        let future: PollFuture<T> = Box::pin(handle);
++        Self { future: Mutex::new(future), abort }
++    }
++}
++#[derive(Clone)]
++pub struct Spawner { scope: Option<TransportScope> }
++impl Spawner {
++    pub fn capture() -> Self { Self { scope: TransportScope::current() } }
++    pub fn try_spawn<F>(&self, work: F) -> io::Result<ScopedJoin<F::Output>>
++    where F: Future + Send + 'static, F::Output: Send + 'static {
++        let (send, receive) = tokio::sync::oneshot::channel();
++        let inherited = self.scope.clone();
++        let unit = Box::pin(async move {
++            let value = match inherited { Some(scope) => scope.scope(work).await, None => work.await };
++            let _ = send.send(value);
++        });
++        let shared = match &self.scope {
++            Some(scope) => scope.spawn_join(unit)?,
++            None => {
++                if TransportScope::current().is_some() { return Err(io::Error::other("capturedTransportOwnerMissing")); }
++                transport_tasks::spawn_join(unit)?
++            }
++        };
++        let abort = shared.abort_handle();
++        let future: PollFuture<F::Output> = Box::pin(async move {
++            shared.join_result().await?;
++            Ok(receive.await.expect("transport owner must poll UnitWork to completion"))
++        });
++        Ok(ScopedJoin { abort, future: Mutex::new(future) })
++    }
++}
++pub fn try_spawn<F>(work: F) -> io::Result<ScopedJoin<F::Output>>
++where F: Future + Send + 'static, F::Output: Send + 'static {
++    Spawner::capture().try_spawn(work)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::transport_tasks::{SharedUnitJoin, TransportTaskContext, Work};
++    use parking_lot::Mutex;
++    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
++    #[derive(Default)]
++    struct State { closed: bool, tasks: Vec<Arc<SharedUnitJoin>> }
++    #[derive(Default)]
++    struct Owner(Mutex<State>);
++    impl TransportTaskContext for Owner {
++        fn spawn(&self, work: Work) -> io::Result<AbortHandle> { self.spawn_join(work).map(|task| task.abort_handle()) }
++        fn spawn_join(&self, work: Work) -> io::Result<Arc<SharedUnitJoin>> {
++            let mut state = self.0.lock();
++            if state.closed { return Err(io::Error::other("closed")); }
++            let task = SharedUnitJoin::new(tokio::spawn(work));
++            state.tasks.push(task.clone());
++            Ok(task)
++        }
++    }
++    impl Owner {
++        async fn close(&self) {
++            let tasks = { let mut state = self.0.lock(); state.closed = true;
++                for task in &state.tasks { task.abort(); } state.tasks.clone() };
++            for task in tasks { task.wait().await; }
++        }
++        fn tasks(&self) -> Vec<Arc<SharedUnitJoin>> { self.0.lock().tasks.clone() }
++    }
++    #[tokio::test]
++    async fn cli_without_scope_keeps_output_and_real_join_error() {
++        assert_eq!(try_spawn(async { 27u32 }).unwrap().await.unwrap(), 27);
++        let error = try_spawn(async { panic!("original panic") }).unwrap().await.unwrap_err();
++        assert!(error.is_panic());
++        assert_eq!(*error.into_panic().downcast::<&str>().unwrap(), "original panic");
++    }
++    #[tokio::test]
++    async fn observer_does_not_consume_protocol_output_or_panic() {
++        let owner = Arc::new(Owner::default()); let scope = TransportScope::new(owner.clone());
++        let task = scope.scope(async { try_spawn(async { String::from("ready") }).unwrap() }).await;
++        owner.tasks()[0].wait().await;
++        assert!(task.is_finished()); assert_eq!(task.await.unwrap(), "ready");
++        let task = scope.scope(async { try_spawn(async { panic!("kept panic") }).unwrap() }).await;
++        owner.tasks()[1].wait().await;
++        let error = task.await.unwrap_err(); assert!(error.is_panic());
++        assert_eq!(*error.into_panic().downcast::<&str>().unwrap(), "kept panic");
++        assert!(owner.tasks()[1].wait().await.panicked);
++        owner.close().await;
++    }
++    #[tokio::test]
++    async fn protocol_can_consume_error_before_native_observer() {
++        let owner = Arc::new(Owner::default()); let scope = TransportScope::new(owner.clone());
++        let task = scope.scope(async { try_spawn(async { panic!("early panic") }).unwrap() }).await;
++        assert!(task.await.unwrap_err().is_panic());
++        assert!(owner.tasks()[0].wait().await.panicked);
++        owner.close().await;
++    }
++    #[tokio::test]
++    async fn abort_handle_targets_actual_work_and_real_socket_reaches_eof() {
++        use tokio::io::AsyncReadExt;
++        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let address = listener.local_addr().unwrap();
++        let owner = Arc::new(Owner::default()); let scope = TransportScope::new(owner.clone());
++        let task = scope.scope(async { try_spawn(async move {
++            let _stream = tokio::net::TcpStream::connect(address).await.unwrap();
++            std::future::pending::<()>().await;
++        }).unwrap() }).await;
++        let (mut peer, _) = listener.accept().await.unwrap();
++        task.abort_handle().abort();
++        assert!(task.await.unwrap_err().is_cancelled());
++        let mut byte = [0];
++        assert_eq!(tokio::time::timeout(std::time::Duration::from_secs(1), peer.read(&mut byte)).await.unwrap().unwrap(), 0);
++        assert!(owner.tasks()[0].wait().await.cancelled);
++        owner.close().await;
++    }
++    #[tokio::test]
++    async fn dropped_protocol_handle_remains_owned_until_actual_join() {
++        struct Guard(Arc<AtomicUsize>);
++        impl Drop for Guard { fn drop(&mut self) { self.0.fetch_sub(1, Ordering::SeqCst); } }
++        let owner = Arc::new(Owner::default()); let scope = TransportScope::new(owner.clone());
++        let active = Arc::new(AtomicUsize::new(0)); let count = active.clone();
++        let (entered, ready) = tokio::sync::oneshot::channel();
++        let task = scope.scope(async { try_spawn(async move {
++            count.fetch_add(1, Ordering::SeqCst); let _guard = Guard(count);
++            entered.send(()).unwrap(); std::future::pending::<()>().await;
++        }).unwrap() }).await;
++        ready.await.unwrap(); drop(task);
++        assert_eq!(active.load(Ordering::SeqCst), 1);
++        owner.close().await;
++        assert_eq!(active.load(Ordering::SeqCst), 0);
++    }
++    #[tokio::test]
++    async fn cancelled_join_waiter_retains_actual_handle_for_retry() {
++        let owner = Arc::new(Owner::default()); let scope = TransportScope::new(owner.clone());
++        let task = scope.scope(async { try_spawn(std::future::pending::<()>()).unwrap() }).await;
++        let record = owner.tasks()[0].clone();
++        assert!(tokio::time::timeout(std::time::Duration::from_millis(10), record.wait()).await.is_err());
++        record.abort(); assert!(record.wait().await.cancelled);
++        assert!(task.await.unwrap_err().is_cancelled()); owner.close().await;
++    }
++    #[tokio::test]
++    async fn closed_admission_drops_future_without_polling_user_work() {
++        let owner = Arc::new(Owner::default()); owner.close().await;
++        let scope = TransportScope::new(owner.clone());
++        let polled = Arc::new(AtomicUsize::new(0)); let count = polled.clone();
++        let result = scope.scope(async { try_spawn(async move { count.fetch_add(1, Ordering::SeqCst); }) }).await;
++        assert!(result.is_err()); assert_eq!(polled.load(Ordering::SeqCst), 0); assert!(owner.tasks().is_empty());
++    }
++    #[tokio::test]
++    async fn nested_task_captures_same_scope_without_an_observer_task() {
++        let owner = Arc::new(Owner::default()); let scope = TransportScope::new(owner.clone());
++        let task = scope.scope(async { try_spawn(async {
++            assert!(TransportScope::current().is_some());
++            try_spawn(async { assert!(TransportScope::current().is_some()); 53 }).unwrap().await.unwrap()
++        }).unwrap() }).await;
++        assert_eq!(task.await.unwrap(), 53); assert_eq!(owner.tasks().len(), 2); owner.close().await;
++    }
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn ready_then_session_cancel_has_actual_completed_ack() {
++        let owner = Arc::new(Owner::default()); let scope = TransportScope::new(owner.clone());
++        let (entered, ready) = tokio::sync::oneshot::channel();
++        let task = scope.scope(async { try_spawn(async move { entered.send(()).unwrap(); std::future::pending::<()>().await; }).unwrap() }).await;
++        ready.await.unwrap(); owner.close().await;
++        assert!(owner.tasks()[0].is_finished()); assert!(task.await.unwrap_err().is_cancelled());
++        let late = scope.scope(async { try_spawn(async { panic!("late work polled") }) }).await;
++        assert!(late.is_err());
++    }
++    #[tokio::test]
++    async fn captured_closed_session_never_adopts_another_current_owner() {
++        let first = Arc::new(Owner::default()); let second = Arc::new(Owner::default());
++        let origin = TransportScope::new(first.clone()); let later = TransportScope::new(second.clone());
++        let spawner = origin.scope(async { Spawner::capture() }).await;
++        first.close().await;
++        let result = later.scope(async { spawner.try_spawn(async { panic!("rebound old session") }) }).await;
++        assert!(result.is_err()); assert!(first.tasks().is_empty()); assert!(second.tasks().is_empty());
++        second.close().await;
++    }
++
++}
++
++#[cfg(test)]
++mod sync_contract_tests {
++    use super::*;
++    #[tokio::test]
++    async fn send_only_user_future_keeps_scoped_join_send_sync() {
++        let value = std::cell::Cell::new(0u32);
++        let task = try_spawn(async move {
++            value.set(19);
++            tokio::task::yield_now().await;
++            value.get()
++        }).unwrap();
++        fn require_send_sync<T: Send + Sync>(_: &T) {}
++        require_send_sync(&task);
++        assert_eq!(task.await.unwrap(), 19);
++    }
++}
+--- a/crates/meow-transport/src/tls.rs
++++ b/crates/meow-transport/src/tls.rs
+@@ -51,6 +51,8 @@
+ use crate::{Result, Stream, Transport, TransportError};
+ 
+ pub(crate) mod boring_backend;
++mod ech_scope;
++pub use ech_scope::{EchQuery, EchScope, EchSource};
+ pub(crate) mod boring_stream;
+ 
+ use boring_backend::{BoringInner, LazyBoringInner};
+@@ -59,10 +61,9 @@
+ 
+ /// Source of the ECH config list.
+ ///
+-/// DNS-sourced ECH (`ech-opts.enable = true` without `ech-opts.config`) is
+-/// resolved by `meow_config::ech_dns` before this layer is built — the DNS
+-/// HTTPS-record answer lands here as `Config` bytes, so the enum only ever
+-/// carries an inline list.
++/// Inline bytes are converted at parse time. DNS-sourced ECH keeps only its
++/// query name until a real handshake uses the operation's captured EchScope.
++/// No query during construction and no system/public/plain-TLS fallback.
+ #[derive(Debug, Clone)]
+ pub enum EchOpts {
+     /// Inline ECH config list bytes, base64-decoded by `meow-config` before
+@@ -70,6 +71,8 @@
+     ///
+     /// YAML key: `ech-opts.config`
+     Config(Vec<u8>),
++    /// Query HTTPS RR using the resolver generation captured for this handshake.
++    Dns(String),
+ }
+ 
+ /// REALITY client authentication parameters for TLS-based outbound proxies.
+@@ -161,7 +164,7 @@
+     /// ECH config source.
+     ///
+     /// `Some(EchOpts::Config(bytes))` → inline ECH config list.
+-    /// DNS-sourced ECH arrives here already resolved; see [`EchOpts`].
++    /// `Some(EchOpts::Dns(name))` queries the captured scope at handshake time.
+     ///
+     /// Applied per connection by BoringSSL; a server `ech_required`
+     /// rejection rotates the stored config to the supplied `retry_configs`.
+--- a/crates/meow-transport/src/tls/boring_backend.rs
++++ b/crates/meow-transport/src/tls/boring_backend.rs
+@@ -459,6 +459,11 @@
+                 )));
+             }
+         }
++        if let Some(EchOpts::Dns(name)) = &config.ech {
++            if name.is_empty() || name.len() > 255 || name.contains('\0') {
++                return Err(TransportError::Config("ech: invalid DNS query name".into()));
++            }
++        }
+         if let Some(verify_name) = &config.verify_name {
+             // `X509_VERIFY_PARAM_set1_host` rejects NUL bytes and names
+             // longer than 255 (DNS name cap) — surface that at startup
+@@ -685,8 +690,16 @@
+         let ech_snapshot = self.ech.lock().expect("ech mutex poisoned").clone();
+         let ech_requested = ech_snapshot.is_some();
+ 
+-        // ECH inline path — per-connection setup on ConnectConfiguration.
+-        if let Some(EchOpts::Config(ech_bytes)) = &ech_snapshot {
++        // Resolve only after the operation has captured its resolver/context.
++        // Query or parse errors fail this handshake before ClientHello; they
++        // must never downgrade an enabled ECH connection to ordinary TLS.
++        let ech_bytes = match &ech_snapshot {
++            Some(EchOpts::Config(bytes)) => Some(bytes.clone()),
++            Some(EchOpts::Dns(name)) => Some(super::EchScope::resolve(name.clone()).await
++                .map_err(|error| ConnectTypedError::Transport(TransportError::Tls(format!("ech DNS: {error}"))))?),
++            None => None,
++        };
++        if let Some(ech_bytes) = &ech_bytes {
+             cfg.set_ech_config_list(ech_bytes)
+                 .map_err(|e| TransportError::Config(format!("boring: set_ech_config_list: {e}")))
+                 .map_err(ConnectTypedError::Transport)?;
+@@ -794,13 +807,18 @@
+                                 .iter()
+                                 .map(|b| format!("{b:02x}"))
+                                 .collect::<String>();
+-                            *self.ech.lock().expect("ech mutex poisoned") =
+-                                Some(EchOpts::Config(new_bytes));
++                            // Inline configuration retains the original retry
++                            // key rotation. DNS mode must keep querying the
++                            // operation's captured resolver on later dials,
++                            // never turn into a cross-generation inline cache.
++                            if matches!(ech_snapshot, Some(EchOpts::Config(_))) {
++                                *self.ech.lock().expect("ech mutex poisoned") =
++                                    Some(EchOpts::Config(new_bytes));
++                            }
+                             tracing::warn!(
+                                 sni = %self.server_name,
+                                 retry_configs = %hex,
+-                                "ECH rejected by server; rotated to retry_configs — \
+-                                 next connect will use the new key"
++                                "ECH rejected by server; inline retry key retained or DNS mode will query its captured resolver again"
+                             );
+                             return Err(ConnectTypedError::Transport(TransportError::Tls(
+                                 format!(
+--- /dev/null
++++ b/crates/meow-transport/src/tls/ech_scope.rs
+@@ -0,0 +1,53 @@
++use std::{future::Future,io,pin::Pin,sync::Arc};
++
++pub type EchQuery<'a> = Pin<Box<dyn Future<Output=io::Result<Vec<u8>>>+Send+'a>>;
++/// The embedding owner supplies one already captured resolver generation.
++/// Queries must stay with that owner; this interface never looks up a global.
++pub trait EchSource: Send+Sync {
++    fn query<'a>(&'a self,name:&'a str)->EchQuery<'a>;
++}
++#[derive(Clone)]
++pub struct EchScope { source:Arc<dyn EchSource>, lineage:Arc<Vec<String>> }
++tokio::task_local! { static CURRENT: EchScope; }
++impl EchScope {
++    pub fn new(source:Arc<dyn EchSource>)->Self {Self{source,lineage:Arc::new(Vec::new())}}
++    pub fn current()->Option<Self>{CURRENT.try_with(Clone::clone).ok()}
++    /// A new request/flow may replace its resolver while retaining an outer
++    /// query ancestry. Resolver-owned children propagate that outer scope
++    /// explicitly with wrap_current, never by assuming spawn inherits it.
++    pub fn scope<'a,F>(&self,work:F)->Pin<Box<dyn Future<Output=F::Output>+Send+'a>>
++    where F:Future+Send+'a,F::Output:Send+'a {
++        let mut captured=self.clone();
++        if let Some(parent)=Self::current(){captured.lineage=parent.lineage;}
++        captured.scope_exact(work)
++    }
++    fn scope_exact<'a,F>(self,work:F)->Pin<Box<dyn Future<Output=F::Output>+Send+'a>>
++    where F:Future+Send+'a,F::Output:Send+'a {
++        let work:Pin<Box<dyn Future<Output=F::Output>+Send+'a>>=Box::pin(work);
++        Box::pin(async move{CURRENT.scope(self,work).await})
++    }
++    /// Capture at task creation, then enter on its first poll. The actual
++    /// task must still be registered/joined by the existing transport owner.
++    pub fn wrap_current<'a,F>(work:F)->Pin<Box<dyn Future<Output=F::Output>+Send+'a>>
++    where F:Future+Send+'a,F::Output:Send+'a {
++        let work:Pin<Box<dyn Future<Output=F::Output>+Send+'a>>=Box::pin(work);
++        match Self::current(){Some(scope)=>scope.scope_exact(work),None=>work}
++    }
++    pub fn resolve(name:String)->EchQuery<'static>{
++        Box::pin(async move{
++            let Some(scope)=Self::current() else{return Err(io::Error::new(io::ErrorKind::NotConnected,"echResolverScopeMissing"));};
++            let key=name.trim_end_matches('.').to_ascii_lowercase();
++            if key.is_empty()||key.contains('\0'){return Err(io::Error::new(io::ErrorKind::InvalidInput,"echQueryNameInvalid"));}
++            if scope.lineage.len()>=16||scope.lineage.iter().any(|ancestor|ancestor==&key){
++                return Err(io::Error::new(io::ErrorKind::InvalidInput,"echDnsCycle"));
++            }
++            let mut names=(*scope.lineage).clone();names.push(key);
++            let source=scope.source.clone();let nested=Self{source:source.clone(),lineage:Arc::new(names)};
++            let bytes=nested.scope_exact(async move{source.query(&name).await}).await?;
++            if bytes.is_empty()||bytes.len()>u16::MAX as usize{
++                return Err(io::Error::new(io::ErrorKind::InvalidData,"echConfigListInvalidLength"));
++            }
++            Ok(bytes)
++        })
++    }
++}
+--- /dev/null
++++ b/crates/meow-transport/src/transport_join.rs
+@@ -0,0 +1,61 @@
++use parking_lot::Mutex;
++use std::sync::Arc;
++use tokio::task::{AbortHandle, JoinError, JoinHandle};
++
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
++pub struct TaskOutcome { pub panicked: bool, pub cancelled: bool }
++#[derive(Default)]
++struct Completion {
++    done: bool,
++    taken: bool,
++    outcome: TaskOutcome,
++    error: Option<JoinError>,
++}
++pub struct SharedUnitJoin {
++    handle: tokio::sync::Mutex<Option<JoinHandle<()>>>,
++    completion: Mutex<Completion>,
++    abort: AbortHandle,
++}
++impl SharedUnitJoin {
++    pub fn new(handle: JoinHandle<()>) -> Arc<Self> {
++        let abort = handle.abort_handle();
++        Arc::new(Self { handle: tokio::sync::Mutex::new(Some(handle)), completion: Mutex::new(Completion::default()), abort })
++    }
++    pub fn abort(&self) { self.abort.abort(); }
++    pub fn abort_handle(&self) -> AbortHandle { self.abort.clone() }
++    pub fn is_finished(&self) -> bool { self.abort.is_finished() }
++    pub async fn wait(&self) -> TaskOutcome {
++        let mut handle = self.handle.lock().await;
++        let retired = if let Some(actual) = handle.as_mut() {
++            let result = actual.await;
++            {
++                let mut completion = self.completion.lock();
++                completion.outcome = TaskOutcome {
++                    panicked: result.as_ref().is_err_and(JoinError::is_panic),
++                    cancelled: result.as_ref().is_err_and(JoinError::is_cancelled),
++                };
++                completion.error = result.err();
++                completion.done = true;
++            }
++            handle.take()
++        } else { None };
++        let outcome = {
++            let completion = self.completion.lock();
++            assert!(completion.done, "unit task must actually join before completion");
++            completion.outcome
++        };
++        drop(handle);
++        drop(retired);
++        outcome
++    }
++    pub(crate) async fn join_result(&self) -> Result<(), JoinError> {
++        self.wait().await;
++        let error = {
++            let mut completion = self.completion.lock();
++            assert!(completion.done && !completion.taken, "protocol result has one consumer");
++            completion.taken = true;
++            completion.error.take()
++        };
++        match error { Some(error) => Err(error), None => Ok(()) }
++    }
++}
+--- /dev/null
++++ b/crates/meow-transport/src/transport_tasks.rs
+@@ -0,0 +1,65 @@
++use std::{cell::RefCell, future::Future, io, pin::Pin, sync::Arc};
++use tokio::task::AbortHandle;
++#[path = "transport_join.rs"] mod transport_join;
++pub use transport_join::{SharedUnitJoin, TaskOutcome};
++
++pub type Work = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
++pub trait TransportTaskContext: Send + Sync {
++    fn wrap(&self, work: Work) -> Work { work }
++    fn spawn(&self, work: Work) -> io::Result<AbortHandle>;
++    fn spawn_join(&self, _work: Work) -> io::Result<Arc<SharedUnitJoin>> {
++        Err(io::Error::other("transportJoinOwnerMissing"))
++    }
++}
++
++#[derive(Clone)]
++pub struct TransportScope(Arc<dyn TransportTaskContext>);
++tokio::task_local! { static CURRENT: TransportScope; }
++thread_local! { static BLOCKING: RefCell<Option<TransportScope>> = const { RefCell::new(None) }; }
++
++impl TransportScope {
++    pub fn new(context: Arc<dyn TransportTaskContext>) -> Self { Self(context) }
++    pub fn require_owner() -> Self {
++        struct MissingOwner;
++        impl TransportTaskContext for MissingOwner {
++            fn spawn(&self, _work: Work) -> io::Result<AbortHandle> {
++                Err(io::Error::other("capturedTransportOwnerMissing"))
++            }
++            fn spawn_join(&self, _work: Work) -> io::Result<Arc<SharedUnitJoin>> {
++                Err(io::Error::other("capturedTransportOwnerMissing"))
++            }
++        }
++        Self::current().unwrap_or_else(|| Self::new(Arc::new(MissingOwner)))
++    }
++    pub fn wrap(&self, work: Work) -> Work { self.0.wrap(work) }
++    pub fn spawn(&self, work: Work) -> io::Result<AbortHandle> { self.0.spawn(work) }
++    pub fn spawn_join(&self, work: Work) -> io::Result<Arc<SharedUnitJoin>> { self.0.spawn_join(work) }
++    pub fn current() -> Option<Self> {
++        CURRENT.try_with(Clone::clone).ok().or_else(|| BLOCKING.with(|slot| slot.borrow().clone()))
++    }
++    pub async fn scope<F: Future>(&self, work: F) -> F::Output { CURRENT.scope(self.clone(), work).await }
++    pub fn run_blocking<T>(&self, work: impl FnOnce() -> T) -> T {
++        struct Restore(Option<TransportScope>);
++        impl Drop for Restore {
++            fn drop(&mut self) { let retired = BLOCKING.with(|slot| slot.replace(self.0.take())); drop(retired); }
++        }
++        let _restore = Restore(BLOCKING.with(|slot| slot.replace(Some(self.clone()))));
++        work()
++    }
++}
++
++pub fn spawn(work: Work) -> io::Result<AbortHandle> {
++    if let Some(scope) = TransportScope::current() { return scope.0.spawn(work); }
++    Ok(tokio::spawn(work).abort_handle())
++}
++
++pub fn spawn_join(work: Work) -> io::Result<Arc<SharedUnitJoin>> {
++    if let Some(scope) = TransportScope::current() { return scope.0.spawn_join(work); }
++    Ok(SharedUnitJoin::new(tokio::spawn(work)))
++}
++
++/// Re-enter the same session's live context for one caller-owned operation.
++/// This creates no task and keeps cancellation with the calling future.
++pub fn wrap_current(work: Work) -> Work {
++    match TransportScope::current() { Some(scope) => scope.wrap(work), None => work }
++}
 --- a/crates/meow-transport/src/ws.rs
 +++ b/crates/meow-transport/src/ws.rs
 @@ -312,7 +312,7 @@
@@ -7259,7 +8157,7 @@
  /// `WsStream: Sync` without boxing the non-Sync handshake future.
  struct UpgradeTask {
 -    handle: tokio::task::JoinHandle<io::Result<WebSocketStream<BoxStream>>>,
-+    handle: meow_common::scoped_join::ScopedJoin<io::Result<WebSocketStream<BoxStream>>>,
++    handle: crate::scoped_join::ScopedJoin<io::Result<WebSocketStream<BoxStream>>>,
      /// Set once the handle resolves — a `JoinHandle` panics when polled
      /// after completion, but a caller that retries after a failed
      /// upgrade polls us again; return a stable terminal error instead.
@@ -7267,7 +8165,7 @@
  }
  
  struct PendingState {
-+    spawner: meow_common::scoped_join::Spawner,
++    spawner: crate::scoped_join::Spawner,
      inner: Option<BoxStream>,
      uri: String,
      host: String,
@@ -7283,7 +8181,7 @@
      ) -> Self {
          Self {
              inner: WsInner::Pending(Box::new(PendingState {
-+                spawner: meow_common::scoped_join::Spawner::capture(),
++                spawner: crate::scoped_join::Spawner::capture(),
                  inner: Some(inner),
                  uri,
                  host,
@@ -7381,7 +8279,7 @@
 +#[cfg(test)]
 +mod scoped_admission_tests {
 +    use super::*;
-+    use meow_common::transport_tasks::{SharedUnitJoin, TransportScope, TransportTaskContext, Work};
++    use crate::transport_tasks::{SharedUnitJoin, TransportScope, TransportTaskContext, Work};
 +    use std::sync::Arc;
 +    struct Closed;
 +    impl TransportTaskContext for Closed {
@@ -7418,7 +8316,7 @@
              .map_err(|e| crate::h2_common::h2_to_transport(e, TransportError::Xhttp))?;
  
 -        let driver_task = tokio::spawn(async move {
-+        let driver_task = meow_common::scoped_join::try_spawn(async move {
++        let driver_task = crate::scoped_join::try_spawn(async move {
              let _ = conn.await;
 -        });
 +        })?;

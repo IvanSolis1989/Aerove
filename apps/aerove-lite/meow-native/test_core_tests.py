@@ -27,12 +27,27 @@ class CoreTestAdmissionTests(unittest.TestCase):
             packages[0]['manifest_path']=str(upstream/'outside/Cargo.toml')
             with self.assertRaisesRegex(ValueError,'prepared source'):core_tests.feature_matrix(metadata,upstream)
 
-    def run_fixture(self,mode):
+    def test_v2_tracks_migrated_helpers_and_real_integration_target(self):
+        specs=core_tests.entries(core_tests.MODE_V2)
+        self.assertEqual(len(specs),14)
+        self.assertEqual(sum(row['expectedPass'] for row in specs),29)
+        self.assertEqual(specs[0]['package'],'meow-transport')
+        self.assertEqual((specs[0]['filter'],specs[0]['expectedPass']),('scoped_join::',11))
+        compat=next(row for row in specs if row['target']=='transport_scope_compat')
+        args=core_tests.entry_command(compat,['aerove-android-runtime'])
+        self.assertEqual(args,['cargo','test','--manifest-path',core_tests.MANIFEST,'--locked','--package','meow-common','--test','transport_scope_compat','--no-default-features','--features','meow-common/aerove-android-runtime','--','--test-threads=1','--nocapture'])
+        self.assertIsNone(compat['filter'])
+        for spec in specs:
+            if spec['requiredFeatures']:
+                with self.subTest(package=spec['package'],filter=spec['filter']):
+                    with self.assertRaisesRegex(ValueError,'authored Core test feature'):core_tests.entry_command(spec,[])
+
+    def run_fixture(self,mode,contract=core_tests.MODE):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);up=root/'.upstream/meow-rs';up.mkdir(parents=True);(root/'build').mkdir()
             original=b'actual-upstream-lock';bridge=b'accepted-bridge-lock';resolved=b'actual-cargo-core-lock'
             (up/'Cargo.lock').write_bytes(original);(root/'Cargo.lock').write_bytes(bridge)
-            policy=dict(resolveLock=True,coreTests=core_tests.MODE)
+            policy=dict(resolveLock=True,coreTests=contract)
             if mode in ['locked','bad-seed']:
                 (root/'core-tests.lock').write_bytes(resolved if mode=='locked' else b'wrong seed')
                 policy.update(resolveLock=False,coreTestLockSha256=core_tests.digest(resolved))
@@ -40,7 +55,9 @@ class CoreTestAdmissionTests(unittest.TestCase):
             for name in core_tests.PACKAGES:
                 p=up/'crates'/name/'Cargo.toml';p.parent.mkdir(parents=True);p.write_text('')
                 packages.append(dict(id=name,name=name,version='0.26.1',manifest_path=str(p)))
-                nodes.append(dict(id=name,features=['aerove-android-runtime'] if name=='meow-common' else [],deps=[]))
+                features=sorted({feature for spec in core_tests.entries(contract) if spec['package']==name for feature in spec['requiredFeatures']})
+                if name=='meow-common':features=sorted(set(features+['aerove-android-runtime']))
+                nodes.append(dict(id=name,features=features,deps=[]))
             metadata=dict(packages=packages,resolve=dict(nodes=nodes),workspace_members=[p['id'] for p in packages])
             receipt={};commands=[]
             def fake(args,**kwargs):
@@ -48,11 +65,12 @@ class CoreTestAdmissionTests(unittest.TestCase):
                 if args[1]=='metadata':
                     if '--manifest-path' in args:(up/'Cargo.lock').write_bytes(resolved)
                     return subprocess.CompletedProcess(args,0,json.dumps(metadata).encode(),b'')
-                name=args[args.index('--')-1];package=args[args.index('--package')+1]
+                package=args[args.index('--package')+1]
+                spec=next(row for row in core_tests.entries(contract) if row['package']==package and core_tests.entry_command(row,next(node['features'] for node in nodes if node['id']==package))==args)
                 if mode=='nonzero':return subprocess.CompletedProcess(args,101,b'',b'actual command failure')
                 if mode=='raise':raise KeyboardInterrupt()
                 if mode=='mutate':(up/'Cargo.lock').write_bytes(b'mutated')
-                count=0 if mode=='empty' else core_tests.COUNTS.get((package,name),1)
+                count=0 if mode=='empty' else spec['expectedPass']
                 return subprocess.CompletedProcess(args,0,f'test result: ok. {count} passed; 0 failed;\n'.encode(),b'')
             error=None
             with patch.object(core_tests.subprocess,'run',fake):
@@ -69,8 +87,8 @@ class CoreTestAdmissionTests(unittest.TestCase):
             self.assertEqual(commands[1],['cargo','metadata','--manifest-path',core_tests.MANIFEST,'--format-version','1']+(['--locked'] if mode=='locked' else []))
             if mode in ['success','locked']:
                 self.assertIsNone(error);self.assertTrue(receipt['coreTests']['accepted'])
-                self.assertEqual(len(receipt['coreTests']['commands']),22)
-                self.assertEqual(sum(row['passed'] for row in receipt['coreTests']['commands']),24)
+                self.assertEqual(len(receipt['coreTests']['commands']),len(core_tests.entries(contract)))
+                self.assertEqual(sum(row['passed'] for row in receipt['coreTests']['commands']),sum(row['expectedPass'] for row in core_tests.entries(contract)))
                 self.assertEqual((root/'build/core-tests/core-tests.lock').read_bytes(),resolved)
             else:
                 self.assertIsNotNone(error);self.assertFalse(receipt['coreTests']['accepted'])
@@ -85,5 +103,9 @@ class CoreTestAdmissionTests(unittest.TestCase):
     def test_failure_zero_matches_mutation_and_interrupt_cannot_accept_or_leak_test_lock(self):
         for mode in ['nonzero','empty','mutate','raise']:
             with self.subTest(mode=mode):self.run_fixture(mode)
+
+    def test_v2_success_and_zero_match_preserve_separate_lock_contract(self):
+        for mode in ['success','locked','empty','raise']:
+            with self.subTest(mode=mode):self.run_fixture(mode,core_tests.MODE_V2)
 
 if __name__=='__main__':unittest.main()

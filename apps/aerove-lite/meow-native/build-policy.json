@@ -10,10 +10,13 @@
     "config_validation",
     "control_plane",
     "dns_construction",
+    "ech_lazy",
+    "ech_response_binding",
     "general_groups",
     "group_delay",
     "health_round_context",
     "host_policy_runtime",
+    "native_ech_context",
     "node_delay",
     "offline_scope",
     "owned_runtime",
@@ -26,6 +29,7 @@
     "proxy_runtime",
     "request_policy",
     "resource_roots",
+    "runtime_admission",
     "runtime_transports",
     "statistics_actual_outcome",
     "tcp_dns",
@@ -35,7 +39,7 @@
     "user_request_context"
   ],
   "overlay": "source-metadata/full-runtime.json",
-  "overlaySha256": "ac4243b94ef20edcdf3348346b2234a4b6c491250377d4cdbee09cd58cef6733",
+  "overlaySha256": "fe45043ece20e1fcf17defc9b85b6ed170714a306531c5cf3325284266c2b0cc",
   "featureBoundary": "capabilities-no-default",
-  "coreTests": "policy-runtime-v1"
+  "coreTests": "policy-runtime-v2"
 }

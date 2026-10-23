@@ -25,6 +25,13 @@ struct Apply { schema_version: u32, request_id: String, expected_core_epoch: Str
 #[serde(rename_all = "camelCase")]
 pub struct ProbeReceipt { pub request_id: String, pub status: ProbeStatus }
 fn invalid() -> io::Error { io::Error::new(io::ErrorKind::InvalidInput, "invalidProbePolicy") }
+struct CapturedProbeSource { policy: Arc<ProbePolicy>, epoch: u64, owner: Arc<ProbePolicies> }
+impl ProbeSource for CapturedProbeSource {
+    fn snapshot(&self) -> io::Result<Arc<ProbePolicy>> { Ok(self.policy.clone()) }
+    fn snapshot_with_epoch(&self) -> io::Result<(Arc<ProbePolicy>, Option<u64>)> { Ok((self.policy.clone(),Some(self.epoch))) }
+    fn enter(&self) -> io::Result<Box<dyn Send>> { self.owner.enter() }
+    fn cancelled(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> { self.owner.cancelled() }
+}
 impl ProbePolicies {
     pub fn from_host(yaml: &str) -> io::Result<ProbePolicy> {
         let value: serde_yaml::Value = serde_yaml::from_str(yaml).map_err(|_| invalid())?;
@@ -48,6 +55,10 @@ impl ProbePolicies {
         }
     }
     pub fn scope(self: &Arc<Self>) -> ProbeScope { ProbeScope::new(self.clone()) }
+    pub(crate) fn frozen_scope_under_plane_gate(self: &Arc<Self>, epoch: u64) -> ProbeScope {
+        ProbeScope::new(Arc::new(CapturedProbeSource { policy: self.current.read().clone(), epoch, owner: self.clone() }))
+    }
+
     pub(crate) fn policy_under_plane_gate(&self) -> ProbePolicy { (**self.current.read()).clone() }
     pub fn status(&self) -> io::Result<ProbeStatus> {
         let gate = self.plane.gate.lock();

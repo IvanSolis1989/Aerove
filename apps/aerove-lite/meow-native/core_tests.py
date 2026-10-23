@@ -6,6 +6,7 @@ import re
 import subprocess
 
 MODE='policy-runtime-v1'
+MODE_V2='policy-runtime-v2'
 CASES=[
     ('meow-common',name) for name in [
         'cli_without_scope_keeps_output_and_real_join_error','observer_does_not_consume_protocol_output_or_panic',
@@ -31,6 +32,23 @@ CASES=[
 COUNTS={('meow-transport','actual_stream_preserves_send_sync_transport_contract'):3}
 PACKAGES=sorted({package for package,_ in CASES})
 MANIFEST='.upstream/meow-rs/Cargo.toml'
+# V1 remains the historical22-command contract. V2 follows the authored task-leaf migration table.
+CASES_V2=[
+    dict(package='meow-transport',filter='scoped_join::',expectedPass=11,target='lib',requiredFeatures=['ws','grpc','h2','xhttp']),
+    dict(package='meow-transport',filter='actual_stream_preserves_send_sync_transport_contract',expectedPass=3,target='lib',requiredFeatures=['ws','grpc','h2','xhttp']),
+    dict(package='meow-transport',filter='closed_origin_upgrade_has_repeatable_error_and_zero_http_bytes',expectedPass=1,target='lib',requiredFeatures=['ws','grpc','h2','xhttp']),
+    dict(package='meow-proxy',filter='vmess::conn::scoped_owner_tests::',expectedPass=2,target='lib',requiredFeatures=['vmess']),
+    dict(package='meow-proxy',filter='actual_tasked_duplex_preserves_stream_and_proxy_conversion',expectedPass=1,target='lib',requiredFeatures=['vmess']),
+    dict(package='meow-anytls',filter='actual_pool_reaper_drop_aborts_and_native_observer_joins_resource_release',expectedPass=1,target='lib',requiredFeatures=[]),
+    dict(package='meow-common',filter=None,expectedPass=3,target='transport_scope_compat',requiredFeatures=['aerove-android-runtime']),
+]+[dict(package=package,filter=name,expectedPass=1,target='lib',requiredFeatures=[]) for package,name in CASES if name in {
+    'pooled_close_cancelled_after_admission_can_resume_and_last_arc_drops_both_transports',
+    'concurrent_close_waiter_observes_completion_and_takes_over_cancelled_first_attempt',
+    'resolver_captures_generation_scope_when_constructed','upstream_exchange_stays_with_captured_generation',
+    'retiring_generation_cancels_and_joins_pending_exchange'}]+[
+    dict(package='meow-dns',filter='resolver::tests::ech_cycle_guard_survives_dns_owned_spawn',expectedPass=1,target='lib',requiredFeatures=['encrypted']),
+    dict(package='meow-dns',filter='resolver::owned_generation_tests::ech_cycle_guard_survives_run_owned_query_spawn',expectedPass=1,target='lib',requiredFeatures=['encrypted']),
+]
 
 def digest(data):return hashlib.sha256(data).hexdigest()
 
@@ -38,7 +56,7 @@ def validate_policy(policy):
     if 'coreTests' not in policy:
         if 'coreTestLockSha256' in policy:raise ValueError('Core test lock without approved tests')
         return False
-    if policy['coreTests']!=MODE:raise ValueError('Unknown Core unit test admission')
+    if policy['coreTests'] not in (MODE,MODE_V2):raise ValueError('Unknown Core unit test admission')
     expected=policy.get('coreTestLockSha256')
     if expected is not None and (not isinstance(expected,str) or re.fullmatch('[0-9a-f]{64}',expected) is None):
         raise ValueError('Invalid Core unit lock identity')
@@ -62,11 +80,25 @@ def command(package,name,features):
     if features:result+=['--features',','.join(package+'/'+f for f in features)]
     return result+[name,'--','--test-threads=1','--nocapture']
 
+def entries(mode):
+    if mode==MODE:return [dict(package=p,filter=f,expectedPass=COUNTS.get((p,f),1),target='lib',requiredFeatures=[]) for p,f in CASES]
+    if mode==MODE_V2:return CASES_V2
+    raise ValueError('Unknown Core unit test admission')
+
+def entry_command(entry,features):
+    if not set(entry['requiredFeatures'])<=set(features):raise ValueError('Actual bridge graph lacks the authored Core test feature')
+    if entry['target']=='lib':return command(entry['package'],entry['filter'],features)
+    if entry['package']!='meow-common' or entry['target']!='transport_scope_compat' or entry['filter'] is not None:
+        raise ValueError('Unknown fixed Core integration target')
+    result=['cargo','test','--manifest-path',MANIFEST,'--locked','--package',entry['package'],'--test','transport_scope_compat','--no-default-features']
+    if features:result+=['--features',','.join(entry['package']+'/'+f for f in features)]
+    return result+['--','--test-threads=1','--nocapture']
+
 def execute(root,policy,environment,receipt):
     """Resolve a separately recorded test graph, then restore the source lock even after interruption."""
     if not validate_policy(policy):return
     root=Path(root);upstream=root/'.upstream/meow-rs';directory=root/'build/core-tests';directory.mkdir(parents=True,exist_ok=True)
-    state=dict(mode=MODE,accepted=False,commands=[],upstreamLockRestored=False)
+    state=dict(mode=policy['coreTests'],accepted=False,commands=[],upstreamLockRestored=False)
     receipt['coreTests']=state
     source_lock=upstream/'Cargo.lock';original=source_lock.read_bytes()
     (directory/'upstream-before.lock').write_bytes(original);state['upstreamLockBeforeSha256']=digest(original)
@@ -94,10 +126,12 @@ def execute(root,policy,environment,receipt):
         state['workspaceMembers']=sorted(members)
         state['features']=matrix
         locked=source_lock.read_bytes();state['resolvedLockSha256']=digest(locked);(directory/'core-tests.lock').write_bytes(locked)
-        for index,(package,name) in enumerate(CASES):
-            args=command(package,name,matrix[package]);entry=dict(package=package,filter=name,command=args,exit=None,expectedPass=COUNTS.get((package,name),1));state['commands'].append(entry)
+        for index,spec in enumerate(entries(policy['coreTests'])):
+            package=spec['package'];name=spec['filter'];args=entry_command(spec,matrix[package]);entry=dict(package=package,filter=name,command=args,exit=None,expectedPass=spec['expectedPass']);state['commands'].append(entry)
+            if policy['coreTests']==MODE_V2:entry['target']=spec['target']
             result=subprocess.run(args,cwd=root,env=environment,capture_output=True)
-            stem=f'{index:02d}-{package}-{name}';(directory/(stem+'.stdout.log')).write_bytes(result.stdout);(directory/(stem+'.stderr.log')).write_bytes(result.stderr)
+            label=re.sub('[^A-Za-z0-9_.-]','_',name if name is not None else spec['target'])
+            stem=f'{index:02d}-{package}-{label}';(directory/(stem+'.stdout.log')).write_bytes(result.stdout);(directory/(stem+'.stderr.log')).write_bytes(result.stderr)
             entry.update(exit=result.returncode,stdoutSha256=digest(result.stdout),stderrSha256=digest(result.stderr))
             print(result.stdout.decode('utf-8',errors='replace'),end='',flush=True);print(result.stderr.decode('utf-8',errors='replace'),end='',flush=True)
             if result.returncode:raise subprocess.CalledProcessError(result.returncode,args)

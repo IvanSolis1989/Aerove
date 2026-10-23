@@ -145,20 +145,22 @@ pub(crate) type ScopeSlot = Arc<OnceLock<Weak<OwnedLoadScope>>>;
 
 pub(crate) struct CapturedTransport {
     network: crate::network_context::NetworkContext,
+    fresh_network: crate::network_context::NetworkContext,
     tasks: Arc<TransportTasks>,
     scope: ScopeSlot,
 }
 impl CapturedTransport {
     pub(crate) fn with_network(&self, network: crate::network_context::NetworkContext) -> Arc<Self> {
-        Arc::new(Self { network: network.transport_context(), tasks: self.tasks.clone(), scope: self.scope.clone() })
+        Arc::new(Self { network: network.transport_context(), fresh_network: self.fresh_network.clone(), tasks: self.tasks.clone(), scope: self.scope.clone() })
     }
     pub(crate) fn new(network: crate::network_context::NetworkContext, tasks: Arc<TransportTasks>, scope: ScopeSlot) -> Arc<Self> {
-        Arc::new(Self { network: network.transport_context(), tasks, scope })
+        let network = network.transport_context();
+        Arc::new(Self { fresh_network: network.clone(), network, tasks, scope })
     }
 }
 impl meow_common::transport_tasks::TransportTaskContext for CapturedTransport {
     fn wrap(&self, work: meow_common::transport_tasks::Work) -> meow_common::transport_tasks::Work {
-        let network = self.network.with_transport(self.tasks.clone(), self.scope.clone());
+        let network = self.fresh_network.with_transport(self.tasks.clone(), self.scope.clone());
         Box::pin(async move { network.scope(work).await })
     }
     fn spawn(&self, work: meow_common::transport_tasks::Work) -> io::Result<AbortHandle> {

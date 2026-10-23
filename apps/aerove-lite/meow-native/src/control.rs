@@ -239,7 +239,9 @@ impl RouteControl {
             }
             if members.is_none() && !matches!(proxy.adapter_type(), AdapterType::Direct | AdapterType::Reject |
                 AdapterType::RejectDrop | AdapterType::Compatible | AdapterType::Pass | AdapterType::PassRule |
-                AdapterType::Http | AdapterType::Socks5) {
+                AdapterType::Http | AdapterType::Socks5 | AdapterType::Shadowsocks |
+                AdapterType::Trojan | AdapterType::Vmess | AdapterType::Vless | AdapterType::Snell |
+                AdapterType::Hysteria2 | AdapterType::Anytls | AdapterType::TrustTunnel) {
                 return Err(ControlError::SelectionMemberNotIntegrated);
             }
             visiting.insert(id);

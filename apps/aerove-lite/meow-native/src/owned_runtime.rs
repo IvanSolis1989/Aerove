@@ -81,7 +81,7 @@ impl OwnedRuntime {
         let processes = crate::process_policies::ProcessPolicies::new(generation,lookup.clone(),crate::process_policy::FindProcessMode::parse(find_mode)?,plane.clone(),cancel.clone())?;
         let probes = crate::probe_policy::ProbePolicies::new(initial_probe.clone(), plane.clone(), cancel.clone());
         let tunnel_capture = Arc::new(std::sync::OnceLock::new());
-        let network = network.with_control_plane(plane.clone()).with_request_policy(policies.clone()).with_probe_policy(probes.scope()).with_tunnel_capture(tunnel_capture.clone());
+        let network = network.with_control_plane(plane.clone()).with_request_policy(policies.clone()).with_probe_policies(probes.clone()).with_tunnel_capture(tunnel_capture.clone());
         let network = match network.dns_owner() {
             Some(owner) => network.with_dns_transport(owner.transport_scope(&network)),
             None => {
@@ -281,7 +281,7 @@ impl OwnedRuntime {
         self.tunnel_capture.set(Arc::downgrade(&capture)).map_err(|_| error("tunnelCaptureAlreadySet"))?;
         let resolver_slot = tunnel.resolver_slot();
         let initial_resolver = Arc::clone(&resolver_slot.read());
-        let retired_initial = self.network_slot.replace(&network.captured().with_core_resolver(initial_resolver));
+        let retired_initial = self.network_slot.replace(&network.captured().with_resolver_pair(crate::network_context::ResolverPair { main: initial_resolver, proxy: config.dns.proxy_resolver.clone() }));
         drop(retired_initial);
         let dns_raw = config.raw.clone(); let dns_proxies = config.proxies.clone();
         let dns_rules = config.rule_providers.clone(); let dns_dialers = config.dialer_registry.clone();
@@ -292,7 +292,8 @@ impl OwnedRuntime {
             crate::network_policy::DnsBuild { scope: loads, work: Box::pin(async move {
                 let work = Box::pin(meow_config::parse_dns_from_raw(&raw,None,&proxies,Some(&rules),None,Some(&prior),Some(&dialers)));
                 let transport = dns_transport.ok_or_else(|| "dnsTransportOwnerMissing".to_owned())?;
-                let dns = meow_config::owned_load::with_dns_transport_scope(transport,work).await.map_err(|_| "dnsRebuildFailed".to_owned())?; Ok(dns.resolver)
+                let dns = meow_config::owned_load::with_dns_transport_scope(transport,work).await.map_err(|_| "dnsRebuildFailed".to_owned())?;
+                Ok(crate::network_context::ResolverPair { main: dns.resolver, proxy: dns.proxy_resolver })
             }) }
         });
         let network_policy = crate::network_policy::NetworkPolicyOwner::new(self.plane.clone(),tunnel.clone(),self.network_slot.clone(),network.captured(),factory,config.general.ipv6,self.cancel.clone(),0).map_err(error)?;
@@ -481,6 +482,16 @@ fn dns_listen(plan: &RuntimePlan) -> io::Result<Option<SocketAddr>> {
     let value: serde_yaml::Value = serde_yaml::from_str(&plan.inbounds.config_yaml).map_err(|_| error("invalidInbounds"))?;
     match value.get("dns-listen") { None | Some(serde_yaml::Value::Null) => Ok(None), Some(serde_yaml::Value::String(value)) => value.parse().map(Some).map_err(|_| error("invalidDnsListen")), _ => Err(error("invalidDnsListen")) }
 }
+fn runtime_protocol_enabled(kind: &str) -> bool {
+    match kind {
+        "http" | "socks5" | "direct" => true,
+        "ss" => cfg!(feature = "ss"), "trojan" => cfg!(feature = "trojan"),
+        "vmess" => cfg!(feature = "vmess"), "vless" => cfg!(feature = "vless"),
+        "snell" => cfg!(feature = "snell"), "hysteria2" => cfg!(feature = "hysteria2"),
+        "anytls" => cfg!(feature = "anytls"), "trusttunnel" => cfg!(feature = "trusttunnel"),
+        _ => false,
+    }
+}
 fn managed_yaml(plan: &RuntimePlan) -> io::Result<String> {
     let host: serde_yaml::Value = serde_yaml::from_str(&plan.host_policy_yaml).map_err(|_| error("invalidHostPolicy"))?;
     for (key, value) in host.as_mapping().ok_or_else(|| error("invalidHostPolicy"))? {
@@ -506,15 +517,15 @@ fn managed_yaml(plan: &RuntimePlan) -> io::Result<String> {
     }
     if let Some(proxies) = map.get(&serde_yaml::Value::String("proxies".into())) {
         for (index, proxy) in proxies.as_sequence().ok_or_else(|| error("proxiesMustBeSequence"))?.iter().enumerate() {
-            if !matches!(proxy.get("type").and_then(serde_yaml::Value::as_str), Some("http" | "socks5" | "direct")) {
-                return Err(io::Error::other(format!("proxies[{index}].type: runtime transport ownership not integrated")));
+            if !proxy.get("type").and_then(serde_yaml::Value::as_str).is_some_and(runtime_protocol_enabled) {
+                return Err(io::Error::other(format!("proxies[{index}].type: protocol is unavailable in this compiled runtime")));
             }
         }
     }
     if map.get(&serde_yaml::Value::String("strict".into())).and_then(serde_yaml::Value::as_bool) != Some(true) { return Err(error("strictConfigRequired")); }
     if let Some(groups) = map.get(&serde_yaml::Value::String("proxy-groups".into())) {
         for (index, group) in groups.as_sequence().ok_or_else(|| error("groupsMustBeSequence"))?.iter().enumerate() {
-            if !matches!(group.get("type").and_then(serde_yaml::Value::as_str), Some("select" | "fallback")) {
+            if !matches!(group.get("type").and_then(serde_yaml::Value::as_str), Some("select" | "fallback" | "url-test")) {
                 return Err(io::Error::other(format!("proxy-groups[{index}].type: runtime health ownership not integrated")));
             }
         }
@@ -673,6 +684,29 @@ mod cleanup_ack_tests {
         assert!(!crate::host_policies::startup_user("{}").unwrap().enabled);
         let json = attachment_fixture(None,"127.0.0.1:39875".parse().unwrap(),39876,"proxy","{}");
         assert!(managed_yaml(&RuntimePlan::parse(&json,-1,false,false).unwrap()).is_ok());
+    }
+    #[test]
+    fn protocol_and_urltest_admission_preserves_fields_and_rejects_unowned_groups() {
+        let cases = [("http",true),("socks5",true),("direct",true),("ss",cfg!(feature="ss")),
+            ("trojan",cfg!(feature="trojan")),("vmess",cfg!(feature="vmess")),("vless",cfg!(feature="vless")),
+            ("snell",cfg!(feature="snell")),("hysteria2",cfg!(feature="hysteria2")),
+            ("anytls",cfg!(feature="anytls")),("trusttunnel",cfg!(feature="trusttunnel"))];
+        for (kind,enabled) in cases {
+            let json = attachment_fixture(None,"127.0.0.1:39875".parse().unwrap(),39876,"proxy","{}");
+            let mut plan = RuntimePlan::parse(&json,-1,false,false).unwrap();
+            let yaml = format!("strict: true\nproxies:\n - {{name: NODE,type: {kind},server: 127.0.0.1,port: 443,udp: true}}\nproxy-groups:\n - {{name: AUTO,type: url-test,proxies: [NODE],url: 'http://probe.invalid/health',interval: 17,lazy: false,tolerance: 55}}\nrules: ['MATCH,AUTO']\n");
+            plan.engine_yaml = yaml.clone();
+            match managed_yaml(&plan) {
+                Ok(result) => { assert!(enabled,"{kind}"); let result:serde_yaml::Value=serde_yaml::from_str(&result).unwrap();
+                    let source:serde_yaml::Value=serde_yaml::from_str(&yaml).unwrap(); assert_eq!(result["proxies"],source["proxies"]);assert_eq!(result["proxy-groups"],source["proxy-groups"]); },
+                Err(_) => assert!(!enabled,"compiled protocol {kind} was rejected"),
+            }
+        }
+        for kind in ["ssh","wireguard","tailscale","shadowquic","tuic","unknown"] { assert!(!runtime_protocol_enabled(kind)); }
+        for kind in ["relay","load-balance","unknown"] {
+            let json = attachment_fixture(None,"127.0.0.1:39875".parse().unwrap(),39876,"proxy","{}");let mut plan=RuntimePlan::parse(&json,-1,false,false).unwrap();
+            plan.engine_yaml=format!("strict: true\nproxy-groups: [{{name: BLOCKED,type: {kind},proxies: [DIRECT]}}]\n"); assert!(managed_yaml(&plan).is_err());
+        }
     }
     #[tokio::test]
     async fn explicitly_disconnected_proxy_keeps_private_api_and_owned_dns_then_joins_without_user_ports() {
