@@ -23,6 +23,11 @@ on:
         required: false
         type: boolean
         default: false
+      native_underlay_tests:
+        description: Run the seven pinned Tailscale socket integration tests using the native root lock
+        required: false
+        type: boolean
+        default: false
       native_test_stacks:
         description: Capture one bounded native stack snapshot for a filtered host-test diagnosis
         required: false
@@ -67,6 +72,7 @@ jobs:
           NATIVE_TEST_FILTER: ${{ inputs.native_test_filter }}
           NATIVE_TEST_SERIAL: ${{ inputs.native_test_serial }}
           NATIVE_TEST_STACKS: ${{ inputs.native_test_stacks }}
+          NATIVE_UNDERLAY_TESTS: ${{ inputs.native_underlay_tests }}
           RUST_TEST_NOCAPTURE: '1'
           RUST_BACKTRACE: '1'
         run: |
@@ -90,7 +96,29 @@ jobs:
             echo 'Stack diagnosis requires an explicit host-test filter.' >&2
             exit 2
           fi
-          if [[ -n "$NATIVE_TEST_FILTER" ]]; then
+          if [[ "$NATIVE_UNDERLAY_TESTS" == true ]]; then
+            if [[ -n "$NATIVE_TEST_FILTER" || "$NATIVE_TEST_STACKS" == true ]]; then
+              echo 'Underlay tests require no core filter or stack capture.' >&2
+              exit 2
+            fi
+            python3 apps/aerove-lite/native/build.py --initialize-lock --prepare-only
+            cp apps/aerove-lite/native/Cargo.lock "$evidence/underlay-Cargo.lock.before"
+            set +e
+            (cd apps/aerove-lite/native && \
+              CARGO_TARGET_DIR="$GITHUB_WORKSPACE/apps/aerove-lite/native/target" \
+              timeout --signal=TERM --kill-after=10s 8m cargo test --locked --offline --manifest-path Cargo.toml \
+              -p aerove-ts-underlay@0.1.0 --test sockets --no-run) 2>&1 | tee "$evidence/native-compile.log"
+            compile_status=${PIPESTATUS[0]}
+            command_status=$compile_status
+            if [[ "$compile_status" == 0 ]]; then
+              (cd apps/aerove-lite/native && \
+                CARGO_TARGET_DIR="$GITHUB_WORKSPACE/apps/aerove-lite/native/target" RUST_BACKTRACE=1 \
+                timeout --signal=TERM --kill-after=10s 120s cargo test --locked --offline --manifest-path Cargo.toml \
+                -p aerove-ts-underlay@0.1.0 --test sockets -- --test-threads=1 --nocapture) 2>&1 | tee "$evidence/native-test.log"
+              command_status=${PIPESTATUS[0]}
+            fi
+            set -e
+          elif [[ -n "$NATIVE_TEST_FILTER" ]]; then
             [[ "$NATIVE_TEST_FILTER" =~ ^[[:alnum:]_:]+$ ]] || exit 2
             python3 apps/aerove-lite/native/build.py --initialize-lock --prepare-only
             set +e
@@ -130,26 +158,31 @@ jobs:
             set -e
           fi
           python3 - "$command_status" "$compile_status" <<'PY'
-          import hashlib, json, os, sys
+          import hashlib, json, os, re, sys
           from pathlib import Path
           evidence = Path(os.environ['RUNNER_TEMP']) / 'lite-native-preflight'
           before = json.loads((evidence / 'before.json').read_text())
           lock = Path('apps/aerove-lite/native/Cargo.lock')
           provenance_path = Path('apps/aerove-lite/native/.upstream/clash-rs/AEROVE_PROVENANCE.json')
           provenance = json.loads(provenance_path.read_text()) if provenance_path.is_file() else None
+          underlay = os.environ['NATIVE_UNDERLAY_TESTS'] == 'true'
+          selected = underlay or bool(os.environ['NATIVE_TEST_FILTER'])
+          underlay_command = 'cargo test --locked --offline --manifest-path Cargo.toml -p aerove-ts-underlay@0.1.0 --test sockets'
           result = {
               **before,
-              'command': ('timeout --signal=TERM --kill-after=10s 120s cargo test --locked --lib '
+              'command': ('timeout --signal=TERM --kill-after=10s 120s ' + underlay_command + ' -- --test-threads=1 --nocapture') if underlay else ('timeout --signal=TERM --kill-after=10s 120s cargo test --locked --lib '
                           + os.environ['NATIVE_TEST_FILTER'] + ' -- --test-threads=1 --nocapture') if os.environ['NATIVE_TEST_FILTER'] else
                          'timeout --signal=TERM --kill-after=10s 10m python3 apps/aerove-lite/native/build.py --initialize-lock --test',
-              'testSelection': os.environ['NATIVE_TEST_FILTER'] or 'full-suite',
+              'testSelection': 'aerove-ts-underlay@0.1.0::sockets' if underlay else os.environ['NATIVE_TEST_FILTER'] or 'full-suite',
+              'underlayTestsRequested': underlay,
+              'expectedUnderlayTests': 7 if underlay else None,
               'stackCaptureRequested': os.environ['NATIVE_TEST_STACKS'] == 'true',
               'stackCaptureMetadata': 'stacks/capture.json' if (evidence / 'stacks/capture.json').is_file() else None,
-              'testThreads': 1 if os.environ['NATIVE_TEST_FILTER'] or os.environ['NATIVE_TEST_SERIAL'] == 'true' else 'default',
-              'workingDirectory': 'apps/aerove-lite/native' if os.environ['NATIVE_TEST_FILTER'] else '.',
-              'compileCommand': 'timeout --signal=TERM --kill-after=10s 8m cargo test --locked --lib --no-run' if os.environ['NATIVE_TEST_FILTER'] else None,
+              'testThreads': 1 if selected or os.environ['NATIVE_TEST_SERIAL'] == 'true' else 'default',
+              'workingDirectory': 'apps/aerove-lite/native' if selected else '.',
+              'compileCommand': ('timeout --signal=TERM --kill-after=10s 8m ' + underlay_command + ' --no-run') if underlay else 'timeout --signal=TERM --kill-after=10s 8m cargo test --locked --lib --no-run' if os.environ['NATIVE_TEST_FILTER'] else None,
               'compileExitCode': int(sys.argv[2]) if sys.argv[2] else None,
-              'compileLog': 'native-compile.log' if os.environ['NATIVE_TEST_FILTER'] else None,
+              'compileLog': 'native-compile.log' if selected else None,
               'commandStage': 'compile' if sys.argv[2] and int(sys.argv[2]) != 0 else 'test',
               'commandLog': 'native-compile.log' if sys.argv[2] and int(sys.argv[2]) != 0 else 'native-test.log',
               'commandExitCode': int(sys.argv[1]),
@@ -158,13 +191,27 @@ jobs:
               'stableLockGate': 'not-run-in-native-preflight',
               'preparedSourceProvenance': provenance,
           }
+          validation_error = None
+          if underlay and result['commandExitCode'] == 0:
+              helper = Path('apps/aerove-lite/native/.upstream/dependency-protect/aerove-ts-underlay')
+              test_source = helper / 'tests/sockets.rs'
+              names = re.findall(r'#\[tokio::test\]\s+async fn (\w+)\(', test_source.read_text())
+              log = re.sub(r'\x1b\[[0-9;]*m', '', (evidence / 'native-test.log').read_text())
+              passed = [name for name in names if re.search(r'^test ' + re.escape(name) + r' \.\.\. ok\s*$', log, re.MULTILINE)]
+              lock_unchanged = lock.read_bytes() == (evidence / 'underlay-Cargo.lock.before').read_bytes()
+              helper_lock_created = (helper / 'Cargo.lock').exists()
+              complete = bool(re.search(r'^test result: ok\. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;', log, re.MULTILINE))
+              if len(names) != 7 or len(passed) != 7 or not complete or not lock_unchanged or helper_lock_created:
+                  validation_error = 'Underlay tests did not prove seven named passes with the unchanged root lock.'
+              result['underlayTestReceipt'] = {'expectedTests': names, 'passedTests': passed, 'rootLockUnchanged': lock_unchanged, 'helperLockCreated': helper_lock_created, 'testSourceSha256': hashlib.sha256(test_source.read_bytes()).hexdigest()}
+          result['validationError'] = validation_error
           (evidence / 'after.json').write_text(json.dumps(result, indent=2) + '\n')
           if result['lockChanged']:
               print('::notice::Native preflight generated or changed Cargo.lock; this does not pass the normal stable-lock gate.')
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
               summary.write('Native-only preflight completed. The normal stable Cargo.lock diff gate and Android verification/APK gates were not run.\n')
               summary.write(f"Cargo.lock changed during lock initialization: {result['lockChanged']}\n")
-          sys.exit(int(sys.argv[1]))
+          sys.exit(1 if validation_error else int(sys.argv[1]))
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: ${{ always() && !inputs.native_preflight }}
