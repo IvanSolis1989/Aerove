@@ -5,6 +5,9 @@ const baseline = ['docs/aerove/README.md', 'docs/aerove-lite/README.md', 'docs/s
   'docs/development/VERSIONING.md', 'apps/aerove/pubspec.yaml', 'apps/aerove-lite/version.properties',
   'apps/aerove/core/mihomo-upstream.json'];
 const topics = [
+  [/安装|更新|最低|系统要求|minSdk|install|update|android\s*1[0-9]/i,
+    ['apps/aerove/android/app/build.gradle.kts', 'apps/aerove/android/gradle/libs.versions.toml',
+      'apps/aerove-lite/app/build.gradle.kts', 'docs/development/upstreams.md']],
   [/vpn|tun|连接|断网|启停|后台|休眠|通知|permission|connect|background/i,
     ['docs/aerove/network-defaults.md', 'docs/aerove/background.md', 'apps/aerove/lib/core/service.dart',
       'apps/aerove/android/app/src/main/kotlin/com/follow/clash/ServiceState.kt',

@@ -46,6 +46,9 @@ test('builds bounded current source evidence for both products without arbitrary
   assert.doesNotMatch(context, /config.toml/);
   assert.ok(context.length < 55000);
   assert.match(context, new RegExp(`/blob/${sha}/`));
+  const install = buildContext(root, 'Android 12 Lite 无法安装', sha);
+  assert.match(install, /apps\/aerove\/android\/app\/build.gradle.kts/);
+  assert.match(install, /apps\/aerove-lite\/app\/build.gradle.kts/);
 });
 
 test('separates untrusted reports from policy and never grants tools or code modification', () => {

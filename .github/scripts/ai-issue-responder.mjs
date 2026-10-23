@@ -74,7 +74,7 @@ export async function respond({ plan, api, root, sha, apiKey, baseUrl, requestMo
     return { skipped: true, reason: 'Already replied during analysis' };
   }
   const posted = await api(`/issues/${plan.number}/comments`, { body:
-    `> 🤖 **AEROVE AI 初步分析** · ${model}\n\n${reply}\n\n---\n` +
+    `> 🤖 **AEROVE AI ${plan.deep ? '深度追问' : '初步分析'}** · ${model}\n\n${reply}\n\n---\n` +
     `AI 生成，尚未经维护者验证。维护者可评论 \`/ai-help\` 追问；最终处理由维护者决定。\n${plan.marker}` });
   return { status: result.status, model, posted: true, url: posted.html_url };
 }
