@@ -140,14 +140,14 @@ async fn http_rows() {
     }));
     let list=routes.clone().oneshot(request("/")).await.unwrap();assert_eq!(list.status(),StatusCode::OK);
     let list:Value=serde_json::from_slice(&axum::body::to_bytes(list.into_body(),64*1024).await.unwrap()).unwrap();
-    let single=routes.clone().oneshot(request("/p/")).await.unwrap();assert_eq!(single.status(),StatusCode::OK);
+    let single=routes.clone().oneshot(request("/p")).await.unwrap();assert_eq!(single.status(),StatusCode::OK);
     let row:Value=serde_json::from_slice(&axum::body::to_bytes(single.into_body(),64*1024).await.unwrap()).unwrap();
     assert_eq!(row["proxies"],list["providers"]["p"]["proxies"]);
     assert_eq!(row["proxies"][0]["name"],"named-direct");assert!(row["proxies"][0]["type"].is_string());assert!(row["proxies"][0]["history"].is_array());
     let initial=row["revision"].as_str().unwrap().parse::<u64>().unwrap();assert!(initial>0);
-    let put=routes.clone().oneshot(Request::builder().method(Method::PUT).uri("/p/").body(axum::body::Body::empty()).unwrap()).await.unwrap();
+    let put=routes.clone().oneshot(Request::builder().method(Method::PUT).uri("/p").body(axum::body::Body::empty()).unwrap()).await.unwrap();
     assert_eq!(put.status(),StatusCode::ACCEPTED);
-    let single=routes.oneshot(request("/p/")).await.unwrap();assert_eq!(single.status(),StatusCode::OK);
+    let single=routes.oneshot(request("/p")).await.unwrap();assert_eq!(single.status(),StatusCode::OK);
     let row:Value=serde_json::from_slice(&axum::body::to_bytes(single.into_body(),64*1024).await.unwrap()).unwrap();
     assert!(row["revision"].as_str().unwrap().parse::<u64>().unwrap()>initial);assert_eq!(row["proxies"][0]["name"],"named-direct");
     components.stop_all().await;telemetry::source().unwrap().stop().await.unwrap();
