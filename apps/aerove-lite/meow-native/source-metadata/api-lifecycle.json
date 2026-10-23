@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "patch": "patches/api-lifecycle.patch",
-  "patchSha256": "cdfb392b81e269435331438fecc9cca04d514317105a785abd910eb086472f5e",
+  "patchSha256": "0818bd4596b66a2f608f7f94f642e411d822a8b3fe9486769628898a301841a3",
   "rawFileManifestSha256": "a1948157edb77700f6f9152f3467907fb6a050c66cd153edfe98295bbf56e550",
-  "adaptedFileManifestSha256": "b559845dfac5a23f196a1804ec0a0cb80d09a16bc222cca1e27320e230ed22ed",
+  "adaptedFileManifestSha256": "1a4a0fe1335f522d4a8852a94089a632a5bf779a083cd8f7d81a73e99eabf7ec",
   "changes": {
     "crates/meow-api/Cargo.toml": {
       "beforeSha256": "9c85af582fabee22cfe407c41dab38849eb70350034bcb1484bd0dc26d840d3b",
@@ -15,7 +15,7 @@
     },
     "crates/meow-api/src/lifecycle.rs": {
       "beforeSha256": null,
-      "afterSha256": "236fa1e99536d05cc01daddc7bae6a691e494cb81ed983ff628f7ac2f4033979"
+      "afterSha256": "b8c077ca5235260c15ab8c902eac1c3297ef8ab280def447af4dd55f6758e0db"
     },
     "crates/meow-api/src/log_stream.rs": {
       "beforeSha256": "922125fe9e5f86a85d8f0016e87e3b771097ee2e45545c88cff2fb32ff1a6548",
@@ -259,7 +259,7 @@
     "crates/meow-anytls/src/util/tls.rs": "2803269d8c8b4d06fcca963104bc992444b4ec859387b16299dd59efe2845f78",
     "crates/meow-api/Cargo.toml": "c21deb1bef4ec2cd13a9e6c3ffda076948c6b3da28cca120b335f0d961e63a6a",
     "crates/meow-api/src/lib.rs": "73b79375f85db7cb3d7481b3ac1b8a0c6c942c334719ed28a5d600626a474ce0",
-    "crates/meow-api/src/lifecycle.rs": "236fa1e99536d05cc01daddc7bae6a691e494cb81ed983ff628f7ac2f4033979",
+    "crates/meow-api/src/lifecycle.rs": "b8c077ca5235260c15ab8c902eac1c3297ef8ab280def447af4dd55f6758e0db",
     "crates/meow-api/src/log_stream.rs": "3d648a3743402e06af52a0bc93a5661b6b0d3f21a4964af096d3ca5fdc6b8561",
     "crates/meow-api/src/logbook.rs": "35f9708b9520ae8ff7389de3c404c079915793c8fc255644c1c4c438039880d6",
     "crates/meow-api/src/routes.rs": "4ac1a5a3a742dc2d38bbc328b665db9e0afa6c0a3041e13c0a0d64655b3c41c3",
