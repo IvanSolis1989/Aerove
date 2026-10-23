@@ -688,37 +688,46 @@
  pub use dropped_providers::DroppedProviders;
  pub use geodata::GeoDataConfig;
  
-@@ -45,6 +51,29 @@
+@@ -45,6 +51,38 @@
  use std::sync::Arc;
  use tracing::{debug, info, warn};
  
-+pub async fn load_config_from_str_owned(
-+    content: &str, scope: &Arc<owned_load::OwnedLoadScope>,
-+) -> Result<Config, anyhow::Error> {
-+    load_config_from_str_owned_with_cache(content, scope, None).await
++pub type OwnedConfigLoad<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Config, anyhow::Error>> + Send + 'a>>;
++
++pub fn load_config_from_str_owned<'a>(
++    content: &'a str, scope: &'a Arc<owned_load::OwnedLoadScope>,
++) -> OwnedConfigLoad<'a> {
++    load_config_from_str_owned_with_cache(content, scope, None)
 +}
 +
 +/// `cache_dir` is a trusted embedder-owned resource root, never a directory
 +/// derived from provider YAML. Existing safe_path containment remains authoritative.
-+pub async fn load_config_from_str_owned_with_cache(
-+    content: &str, scope: &Arc<owned_load::OwnedLoadScope>, cache_dir: Option<&Path>,
-+) -> Result<Config, anyhow::Error> {
-+    let result = scope.run(async {
-+        tokio::select! {
-+            biased;
-+            _ = scope.cancelled() => Err(anyhow::anyhow!("configLoadCancelled")),
-+            result = async { build_config(parse_raw_yaml(content)?, cache_dir).await } => result,
++pub fn load_config_from_str_owned_with_cache<'a>(
++    content: &'a str, scope: &'a Arc<owned_load::OwnedLoadScope>, cache_dir: Option<&'a Path>,
++) -> OwnedConfigLoad<'a> {
++    Box::pin(async move {
++        let factory: OwnedConfigLoad<'a> = Box::pin(async move {
++            let raw = parse_raw_yaml(content)?;
++            let conversion: OwnedConfigLoad<'a> = Box::pin(build_config(raw, cache_dir));
++            conversion.await
++        });
++        let result = scope.run(async {
++            tokio::select! {
++                biased;
++                _ = scope.cancelled() => Err(anyhow::anyhow!("configLoadCancelled")),
++                result = factory => result,
++            }
++        }).await;
++        if result.is_err() {
++            scope.close().await.map_err(anyhow::Error::msg)?;
 +        }
-+    }).await;
-+    if result.is_err() {
-+        scope.close().await.map_err(anyhow::Error::msg)?;
-+    }
-+    result
++        result
++    })
 +}
  pub(crate) async fn spawn_blocking_with_current_dispatcher<F, R>(
      f: F,
  ) -> Result<R, tokio::task::JoinError>
-@@ -53,7 +82,7 @@
+@@ -53,7 +91,7 @@
      R: Send + 'static,
  {
      let dispatch = tracing::dispatcher::get_default(Clone::clone);
@@ -727,7 +736,7 @@
  }
  
  pub(crate) fn parse_optional_socket_addr(
-@@ -603,6 +632,7 @@
+@@ -603,6 +641,7 @@
  /// True when config loading must skip remote proxy-provider fetches (see
  /// [`set_offline_validate`]).
  pub fn is_offline_validate() -> bool {
@@ -735,7 +744,7 @@
      OFFLINE_VALIDATE.load(std::sync::atomic::Ordering::Relaxed)
  }
  
-@@ -3902,6 +3932,17 @@
+@@ -3902,6 +3941,17 @@
      mut raw: raw::RawConfig,
      cache_dir: Option<&Path>,
  ) -> Result<Config, anyhow::Error> {
@@ -753,7 +762,7 @@
      // Pre-resolve any DNS-sourced ECH configs into inline base64 so the
      // sync `parse_proxy` path that follows can stay sync. Failures warn
      // and leave the map unchanged — except the `enable: true` with no
-@@ -7771,3 +7812,6 @@
+@@ -7771,3 +7821,6 @@
          );
      }
  }

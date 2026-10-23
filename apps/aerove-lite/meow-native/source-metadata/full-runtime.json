@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "patch": "patches/full-runtime.patch",
-  "patchSha256": "2684c4eb5850865bb18274b761b4e16728a5b922cecaab69639d9029ec83f637",
+  "patchSha256": "3c64f1581832bdeb70d108569cd7ef71a429e8bc596577946dd49376b2954a84",
   "rawFileManifestSha256": "a1948157edb77700f6f9152f3467907fb6a050c66cd153edfe98295bbf56e550",
-  "adaptedFileManifestSha256": "de60701d2e2bc55137798e5c9e3e34ac22a2ab9449007e63dd71272e30f5d174",
+  "adaptedFileManifestSha256": "9fba025e808ee104e12df6845abffde0f1b9c817ff75e0c4f125f44180d6ef79",
   "changes": {
     "crates/meow-api/Cargo.toml": {
       "beforeSha256": "9c85af582fabee22cfe407c41dab38849eb70350034bcb1484bd0dc26d840d3b",
@@ -55,7 +55,7 @@
     },
     "crates/meow-config/src/lib.rs": {
       "beforeSha256": "9490de648857f9e26be6f8f2cff054996fe755ff52e2b51ee8eeca8e3b1339ec",
-      "afterSha256": "5789d1c34e0f0e6359441ccb83ee8855a3b3d25b011bf64111ea8235e97fa113"
+      "afterSha256": "6ec2346222c31e5375a30391ab947e0baf2300f3c2abd02ae74c513e481b0c7f"
     },
     "crates/meow-config/src/offline_validation.rs": {
       "beforeSha256": null,
@@ -938,7 +938,7 @@
     "crates/meow-config/src/external_ui.rs": "e97b5df73a24748862405c7efea5f686ca404f171af460daa2f29432de18453b",
     "crates/meow-config/src/geodata.rs": "039b0ef9470cd61e346cd3ab213a547252d5fde7675a2322979f2b96edbafa52",
     "crates/meow-config/src/internal_http.rs": "4bd5a72d556bd00b0f2dc85d63c8ed729d1006ee3d78d2aee4c348e9fcd29c9d",
-    "crates/meow-config/src/lib.rs": "5789d1c34e0f0e6359441ccb83ee8855a3b3d25b011bf64111ea8235e97fa113",
+    "crates/meow-config/src/lib.rs": "6ec2346222c31e5375a30391ab947e0baf2300f3c2abd02ae74c513e481b0c7f",
     "crates/meow-config/src/proxy_parser.rs": "68ec68e9207bf9198902bdca3d64c8b06c22d4f34c9696f0333deaade01c1e3b",
     "crates/meow-config/src/proxy_provider.rs": "e8e8b9ede5e5285f235582936413c9fba3e94cc35f3f0fa59bf09a68973b610b",
     "crates/meow-config/src/proxy_provider_refresh.rs": "3d4045e92836456c99404ffc947a7de7f89a762f043b096db88719592d9a7005",

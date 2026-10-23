@@ -21,6 +21,6 @@
     "tun_driver"
   ],
   "overlay": "source-metadata/full-runtime.json",
-  "overlaySha256": "093148585647e7382dbb8942193b76c5f99fbeee76325ddffbd238595afc65eb",
+  "overlaySha256": "5bcba533513fc0e792cfeed7f7d0e39a917b9d423729b6d6d2275c4b31a8728d",
   "featureBoundary": "capabilities-no-default"
 }

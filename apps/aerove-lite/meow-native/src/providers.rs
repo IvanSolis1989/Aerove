@@ -2,27 +2,32 @@ pub use meow_config::owned_load::{LoadContext, OwnedLoadScope, OwnedWork, Provid
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
-pub async fn load(
-    yaml: &str, scope: &Arc<OwnedLoadScope>, cancel: &CancellationToken,
-) -> Result<meow_config::Config, String> {
-    load_with_cache(yaml, scope, cancel, None).await
+pub type OwnedConfigLoad<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<meow_config::Config, String>> + Send + 'a>>;
+
+pub fn load<'a>(
+    yaml: &'a str, scope: &'a Arc<OwnedLoadScope>, cancel: &'a CancellationToken,
+) -> OwnedConfigLoad<'a> {
+    load_with_cache(yaml, scope, cancel, None)
 }
 
 /// The caller must supply a trusted app-private root captured by this Session.
-pub async fn load_with_cache(
-    yaml: &str, scope: &Arc<OwnedLoadScope>, cancel: &CancellationToken,
-    cache_dir: Option<&std::path::Path>,
-) -> Result<meow_config::Config, String> {
-    let result = tokio::select! {
-        biased;
-        _ = cancel.cancelled() => Err("configLoadCancelled".to_owned()),
-        result = meow_config::load_config_from_str_owned_with_cache(yaml, scope, cache_dir) => result.map_err(|error| error.to_string()),
-    };
-    if result.is_err() {
-        scope.cancel();
-        scope.close().await.map_err(str::to_owned)?;
-    }
-    result
+pub fn load_with_cache<'a>(
+    yaml: &'a str, scope: &'a Arc<OwnedLoadScope>, cancel: &'a CancellationToken,
+    cache_dir: Option<&'a std::path::Path>,
+) -> OwnedConfigLoad<'a> {
+    Box::pin(async move {
+        let factory = meow_config::load_config_from_str_owned_with_cache(yaml, scope, cache_dir);
+        let result = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => Err("configLoadCancelled".to_owned()),
+            result = factory => result.map_err(|error| error.to_string()),
+        };
+        if result.is_err() {
+            scope.cancel();
+            scope.close().await.map_err(str::to_owned)?;
+        }
+        result
+    })
 }
 
 use meow_config::provider_events::{ProviderIdentity, ProviderKind, ProviderLease, ProviderObserver};
