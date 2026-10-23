@@ -20,6 +20,14 @@ mod service_check_tests;
 #[path = "outbound_route_tests.rs"]
 mod route_tests;
 
+#[path = "ssh_peer_tests.rs"]
+mod ssh_peer_tests;
+#[path = "wireguard_peer_tests.rs"]
+mod wireguard_peer_tests;
+#[path = "shadowquic_peer_tests.rs"]
+mod shadowquic_peer_tests;
+
+
 pub fn run(case: &str) {
     let _lock = LOCK.lock().unwrap_or_else(|error| error.into_inner());
     if case.starts_with("initial-park-") {
@@ -68,6 +76,9 @@ pub fn run(case: &str) {
             case if case.starts_with("probe-")||case.starts_with("dial-")=>crate::mobile::probe_dial_tests::run(case).await,
             "outbound-direct"=>forced_direct().await,
             "reset-connections"=>reset_dns_connections().await,
+            "ssh-peer" => ssh_peer_tests::run(count, refused).await,
+            "wireguard-peer" => wireguard_peer_tests::run(count, refused).await,
+            "shadowquic-peer" => shadowquic_peer_tests::run(count, refused).await,
             "protocol-types"=>protocol_types().await,
             "protocol-sockets"=>protocol_sockets(count,refused).await,
             "dns-typed"=>crate::mobile::dns_network_tests::typed().await,

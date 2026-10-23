@@ -238,6 +238,7 @@ def prepare(archive: Path | None = None) -> Path:
     inbound = (ROOT / "upstream/inbound.rs").read_bytes()
     inbound_tests = (ROOT / "upstream/inbound_tests.rs").read_bytes()
     runtime_mode_tests = (ROOT / "upstream/runtime_mode_tests.rs").read_bytes()
+    peer_tests = {name: (ROOT / "upstream" / name).read_bytes() for name in ("ssh_peer_tests.rs", "wireguard_peer_tests.rs", "shadowquic_peer_tests.rs")}
     provenance = {
         "dependencies":{"shadowquic":shadowquic_source,"tailscale":tailscale_source},
         "dnsTransactionPatchSha256":digest(dns_transaction_patch),
@@ -264,6 +265,7 @@ def prepare(archive: Path | None = None) -> Path:
         "serviceCheckTestsSha256": digest(service_check_tests),
         "inboundSha256": digest(inbound), "inboundTestsSha256": digest(inbound_tests),
         "runtimeModeTestsSha256": digest(runtime_mode_tests),
+        "peerTestsSha256": {name: digest(source) for name, source in peer_tests.items()},
     }
     target = cache / "clash-rs"
     marker = target / "AEROVE_PROVENANCE.json"
@@ -322,6 +324,8 @@ def prepare(archive: Path | None = None) -> Path:
         (resource_target.parent / "inbound.rs").write_bytes(inbound)
         (resource_target.parent / "inbound_tests.rs").write_bytes(inbound_tests)
         (staging / "clash-lib/src/runtime_mode_tests.rs").write_bytes(runtime_mode_tests)
+        for name, source in peer_tests.items():
+            (resource_target.parent / name).write_bytes(source)
         provenance["treeSha256"] = tree_digest(staging)
         (staging / "AEROVE_PROVENANCE.json").write_text(
             json.dumps(provenance, indent=2) + "\n", encoding="utf-8", newline="\n")

@@ -687,3 +687,12 @@ mod process_identity_tests;
 
 #[cfg(test)]
 mod protocol_tests;
+
+#[cfg(test)]
+mod ssh_peer_tests;
+
+#[cfg(test)]
+mod wireguard_peer_tests;
+
+#[cfg(test)]
+mod shadowquic_peer_tests;

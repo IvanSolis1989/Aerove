@@ -128,6 +128,8 @@ class SourcePreparationTest(unittest.TestCase):
             (root / "upstream/inbound.rs").write_bytes(b"inbound\n")
             (root / "upstream/inbound_tests.rs").write_bytes(b"inbound_tests\n")
             (root / "upstream/runtime_mode_tests.rs").write_bytes(b"runtime_mode_tests\n")
+            for name in ("ssh_peer_tests.rs", "wireguard_peer_tests.rs", "shadowquic_peer_tests.rs"):
+                (root / "upstream" / name).write_bytes(name.encode("ascii"))
             (root / "upstream.patch").write_text(
                 "--- a/clash-lib/src/lib.rs\n+++ b/clash-lib/src/lib.rs\n@@ -1 +1 @@\n-original\n+patched\n")
             blob = root / "source.tar.gz"
