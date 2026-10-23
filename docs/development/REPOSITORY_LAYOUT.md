@@ -5,7 +5,7 @@
 ```text
 apps/
   aerove/             Flutter + 官方 Mihomo，包含所有平台、插件、测试和产品构建工具
-  aerove-lite/        原生 Android + clash-rs，包含 Android 工程、Rust 桥接和产品测试
+  aerove-lite/        原生 Android + meow-rs（迁移中），包含 Android 工程、Rust 桥接和产品测试
 docs/
   shared/             两版共同遵守的 UI、功能、性能及验收契约
   aerove/             标准版说明、默认值、网络行为、发行记录

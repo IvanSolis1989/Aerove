@@ -9,7 +9,7 @@
 | 产品 | 工程 | 技术路线 | 当前发行 |
 |---|---|---|---|
 | **AEROVE 标准版** | [apps/aerove](apps/aerove/) | Flutter + Mihomo；Android、Windows、macOS、Linux | [稳定版下载](https://github.com/IvanSolis1989/Aerove/releases/latest/download/Aerove-android-arm64.apk) |
-| **AEROVE Lite** | [apps/aerove-lite](apps/aerove-lite/) | 原生 Android + clash-rs；Android 13+ | 开发与验证中 |
+| **AEROVE Lite** | [apps/aerove-lite](apps/aerove-lite/) | 原生 Android + meow-rs（迁移中）；Android 13+ | 开发与验证中 |
 
 两版共享简约纯色、柔光磨砂、流光清透，以及普通主题和灵动极光；共同界面与客户端功能双向同步。
 Lite 仅可暂缓固定 Rust 内核确实不支持的能力，未完成移植不构成发行例外。
@@ -30,6 +30,6 @@ Lite 仅可暂缓固定 Rust 内核确实不支持的能力，未完成移植不
 
 AEROVE 的历史代码来自 [FlClash](https://github.com/chen08209/FlClash)，感谢原作者及贡献者；现独立维护，
 FlClash 作为参考上游。标准版核心直接跟踪 [Mihomo](https://github.com/MetaCubeX/mihomo) 的固定正式源码，
-Lite 使用固定的 [clash-rs](https://github.com/ibigbug/clash-rs) 源码与可审计适配。
+Lite 按用户决定迁移至固定的 [meow-rs](https://github.com/meow-rs/meow-rs) 源码，接入、功能与 APK 仍待验收；见[迁移记录](docs/aerove-lite/core/meow-migration.md)。
 
 本仓库遵循 [GPL-3.0](LICENSE)。各依赖原有许可证、版权声明和来源记录保留在所属工程中。

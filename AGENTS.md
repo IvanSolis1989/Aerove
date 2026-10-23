@@ -3,14 +3,14 @@
 Read this entry point, then the applicable product instructions. The Standard edition and Lite are independent build roots:
 
 - [AEROVE 标准版](apps/aerove/AGENTS.md): Flutter and official Mihomo; run its commands in `apps/aerove/`.
-- [AEROVE Lite](apps/aerove-lite/AGENTS.md): native Android and clash-rs; run its commands in `apps/aerove-lite/`.
+- [AEROVE Lite](apps/aerove-lite/AGENTS.md): native Android and meow-rs (migration in progress); run its commands in `apps/aerove-lite/`.
 - [Workspace and document policy](docs/development/REPOSITORY_LAYOUT.md): ownership, paths and archival rules.
 - [Project context](.agents/project.md), [commands](.agents/commands.md) and [engineering rules](.agents/rules.md).
 
 ## 双版本开发硬契约（每次开发必读）
 
 - 产品名称为 **AEROVE 标准版**（原完整版）和 **AEROVE Lite**。现阶段并行开发、独立安装和发行；Lite 采用原生
-  Android + clash-rs、最低 Android 13/API 33；标准版保留 Flutter + 官方 Mihomo 与现有桌面支持。
+  Android + meow-rs、最低 Android 13/API 33；标准版保留 Flutter + 官方 Mihomo 与现有桌面支持。
 - 两版 Android 共同界面、交互和客户端功能必须完全一致。任一版的新增功能、修复或微调均须双向核对并同步；
   另一版已正确实现时复用其证据，不制造无意义改动。不能把单端退化同步成新标准。
 - 只有固定 Rust 核心源码证明确实不支持的能力才可暂缓；必须记录核心 SHA、源码路径、行为证据和具体字段。
@@ -26,7 +26,7 @@ Read this entry point, then the applicable product instructions. The Standard ed
 - 共同变更须留下两版入口与数据流、状态/交互对照、相关验证及例外依据。仅有组件、包装、静态映射或截图不算闭环。
 - Lite 首发须提交真实 Android 渲染的十二宫格（三档材质 × 两种底图 × 深浅色），由用户确认细节；还须完成真实
   功能、取消/恢复、核心与 APK 验收。演示数据、模拟器截图和桌面 JVM 测试不冒充生产或真机能耗结果。
-- 两版各自按产品变更选择主/次/修订版本，禁止复制 FlClash、Mihomo 或 clash-rs 的版本号。上游版本仅记录来源；
+- 两版各自按产品变更选择主/次/修订版本，禁止复制 FlClash、Mihomo、meow-rs 或历史 clash-rs 的版本号。上游版本仅记录来源；
   Android 安装编号保持各产品单调递增。具体规则见[独立版本规范](docs/development/VERSIONING.md)。
 - 真实应用变更完整构建一次，main 推广同一已验证 APK；不得改写原构建身份、重用其他源码的包，或因文档和流程改动
   重编已验收应用。预览版不覆盖标准版稳定 latest，Lite 使用独立更新入口。
