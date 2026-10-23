@@ -98,3 +98,8 @@ fn proxy_registry_requires_join_before_successor_and_stale_ready_cannot_revive_o
         for port in ports { assert!(std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).is_ok()); }
     });
 }
+
+#[test]
+fn context_lease_releases_global_write_lock_before_context_destructors() {
+    clash_lib::mobile::context_lease_destructors_run_after_global_unlock();
+}

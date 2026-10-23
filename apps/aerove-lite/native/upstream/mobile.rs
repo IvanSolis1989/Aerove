@@ -158,18 +158,50 @@ struct ContextLease;
 
 impl Drop for ContextLease {
     fn drop(&mut self) {
-        #[cfg(feature = "aerove-mobile-tests")]
-        {
-            lifecycle_phase("context lease write-lock begin");
+        let retired = {
+            #[cfg(feature = "aerove-mobile-tests")] lifecycle_phase("context lease write-lock begin");
             let mut active = CONTEXT.write().unwrap();
-            lifecycle_phase("context lease write-lock acquired");
-            *active = None;
-            drop(active);
-            lifecycle_phase("context lease drop complete");
-        }
-        #[cfg(not(feature = "aerove-mobile-tests"))]
-        { *CONTEXT.write().unwrap() = None; }
+            #[cfg(feature = "aerove-mobile-tests")] lifecycle_phase("context lease write-lock acquired");
+            active.take()
+        };
+        #[cfg(feature = "aerove-mobile-tests")] lifecycle_phase("context lease write-lock released");
+        drop(retired);
+        #[cfg(feature = "aerove-mobile-tests")] lifecycle_phase("context lease drop complete");
     }
+}
+
+#[cfg(feature = "aerove-mobile-tests")]
+pub fn context_lease_destructors_run_after_global_unlock() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    struct DropSentinel { unlocked: Arc<AtomicBool>, dropped: Arc<AtomicUsize> }
+    impl Drop for DropSentinel {
+        fn drop(&mut self) {
+            self.unlocked.store(CONTEXT.try_read().is_ok(), Ordering::SeqCst);
+            self.dropped.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    outbound::regression::with_runtime_lock(|| {
+        assert!(CONTEXT.read().unwrap().is_none());
+        let unlocked = Arc::new(AtomicBool::new(false));
+        let dropped = Arc::new(AtomicUsize::new(0));
+        let sentinel = DropSentinel { unlocked: unlocked.clone(), dropped: dropped.clone() };
+        let (events, _) = mpsc::unbounded_channel();
+        let (logs, _) = broadcast::channel(8);
+        let cancel = CancellationToken::new();
+        *CONTEXT.write().unwrap() = Some(Arc::new(Context {
+            protector: Arc::new(move |_| { let _keep = &sentinel; Ok(()) }),
+            mode: RuntimeMode::Proxy, process_owner: None,
+            network_generation: std::sync::atomic::AtomicU64::new(0),
+            bootstrap: vec![], network_dns: RwLock::new(None),
+            dns_enabled: false, dns_hijack_all: false, events, logs,
+            level: tracing::level_filters::LevelFilter::OFF,
+            cancel: cancel.clone(), telemetry: telemetry::Bus::new(cancel), network: None,
+        }));
+        drop(ContextLease);
+        assert_eq!(dropped.load(Ordering::SeqCst), 1);
+        assert!(unlocked.load(Ordering::SeqCst), "Context field destructor ran under the global write lock");
+        assert!(CONTEXT.read().unwrap().is_none());
+    });
 }
 
 pub(crate) fn protect(fd: RawFd) -> io::Result<()> {

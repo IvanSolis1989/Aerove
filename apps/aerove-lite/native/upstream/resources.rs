@@ -113,7 +113,9 @@ fn offline_rules(path: &Path) -> Result<(&'static str, RuleSetBehavior, Vec<Stri
 }
 
 fn compact_domain_rules(rules: Vec<String>) -> Vec<String> {
-    let keys: std::collections::BTreeSet<String> = rules.into_iter().collect();
+    let keys: std::collections::BTreeSet<String> = rules.into_iter().map(|key| {
+        match key.strip_prefix("+.") { Some(bare) => format!(".{bare}"), None => key }
+    }).collect();
     let mut compact = std::collections::BTreeSet::new();
     for key in &keys {
         let bare = key.strip_prefix('.').unwrap_or(key);

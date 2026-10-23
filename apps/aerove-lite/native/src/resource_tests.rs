@@ -291,6 +291,7 @@ fn offline_rule_sets_match_standard_local_classification_and_normalized_payloads
         ("empty-yaml", "payload: []\n", "yaml", "classical", 0),
         ("domains", "# comment\nexample.com\n// comment\n+.example.org\n", "text", "domain", 2),
         ("rules-alias", "rules: ['DOMAIN-SUFFIX,example.com']\n", "yaml", "domain", 1),
+        ("suffix-only", ".example.com\n", "text", "domain", 1),
         ("both-lists", "payload: [example.com]\nrules: [example.org]\n", "yaml", "domain", 2),
         ("addresses", "192.0.2.1\n2001:db8::1\n", "text", "ipcidr", 2),
         ("classical", "DOMAIN-KEYWORD,example\n", "text", "classical", 1),
@@ -306,6 +307,7 @@ fn offline_rule_sets_match_standard_local_classification_and_normalized_payloads
             validate_resource("ruleset", &materialized, behavior, "text").unwrap();
         }
         if name == "rules-alias" { assert_eq!(dump, "+.example.com\n"); }
+        if name == "suffix-only" { assert_eq!(dump, ".example.com\n"); }
         if name == "addresses" { assert!(dump.contains("192.0.2.1/32\n")); assert!(dump.contains("2001:db8::1/128\n")); }
     }
     let duplicate = files.file("duplicates", "+.example.com\n+.example.com\nexample.com\n.example.com\n");
