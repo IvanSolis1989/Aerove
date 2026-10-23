@@ -21,6 +21,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "jni",
+ "libc",
  "meow-api",
  "meow-common",
  "meow-config",
