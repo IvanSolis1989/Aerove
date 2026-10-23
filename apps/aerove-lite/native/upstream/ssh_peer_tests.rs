@@ -18,7 +18,6 @@ struct Receipts {
 
 struct PeerHandler(Arc<Receipts>);
 
-#[async_trait::async_trait]
 impl server::Handler for PeerHandler {
     type Error = russh::Error;
 
