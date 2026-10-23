@@ -1,3 +1,350 @@
+--- a/crates/meow-anytls/src/client/client.rs
++++ b/crates/meow-anytls/src/client/client.rs
+@@ -482,11 +482,11 @@
+ /// `AnytlsConn`'s `Drop` uses for its owned session. Without a runtime
+ /// handle the session persists until its transport dies; every caller runs
+ /// inside one.
+-struct SessionCloseGuard(Option<Arc<Session>>);
++struct SessionCloseGuard(Option<Arc<Session>>, meow_common::scoped_join::Spawner);
+ 
+ impl SessionCloseGuard {
+     fn new(session: Arc<Session>) -> Self {
+-        Self(Some(session))
++        Self(Some(session), meow_common::scoped_join::Spawner::capture())
+     }
+ 
+     /// Ownership successfully handed to the caller/pool: leave the session
+@@ -502,8 +502,8 @@
+             return;
+         };
+         match tokio::runtime::Handle::try_current() {
+-            Ok(handle) => {
+-                handle.spawn(async move {
++            Ok(_handle) => {
++                let _ = self.1.try_spawn(async move {
+                     if let Err(e) = session.close().await {
+                         tracing::debug!("[Client] guarded session close failed: {e}");
+                     }
+--- a/crates/meow-anytls/src/client/session_pool.rs
++++ b/crates/meow-anytls/src/client/session_pool.rs
+@@ -6,7 +6,7 @@
+ use std::sync::Arc;
+ use std::sync::atomic::Ordering;
+ use tokio::sync::{Mutex, RwLock};
+-use tokio::task::JoinHandle;
++use meow_common::scoped_join::ScopedJoin;
+ use tokio::time::{Duration, Instant, interval};
+ use tracing::{field, info_span};
+ 
+@@ -45,6 +45,7 @@
+ 
+ /// SessionPool manages idle sessions for reuse with automatic cleanup
+ pub struct SessionPool {
++    spawner: meow_common::scoped_join::Spawner,
+     // Sessions stored by seq (BTreeMap for ordered access)
+     idle_sessions: Arc<RwLock<BTreeMap<u64, PooledSession>>>,
+ 
+@@ -55,7 +56,7 @@
+     config: SessionPoolConfig,
+ 
+     // Cleanup task handle
+-    cleanup_task: Arc<Mutex<Option<JoinHandle<()>>>>,
++    cleanup_task: Arc<Mutex<Option<ScopedJoin<()>>>>,
+ 
+     // Bumped by `reset`; sessions from an older generation are never handed
+     // out again. Compared for equality only, so the MIPS32 wrap is harmless.
+@@ -77,6 +78,7 @@
+     /// Create a new session pool with custom configuration
+     pub fn with_config(config: SessionPoolConfig) -> Self {
+         let pool = Self {
++            spawner: meow_common::scoped_join::Spawner::capture(),
+             idle_sessions: Arc::new(RwLock::new(BTreeMap::new())),
+             next_seq: Arc::new(AtomicU::new(1)),
+             config,
+@@ -119,13 +121,13 @@
+     /// map without `close` would leak their sockets.
+     pub fn reset(&self) {
+         self.generation.fetch_add(1, Ordering::SeqCst);
+-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
++        let Ok(_runtime) = tokio::runtime::Handle::try_current() else {
+             tracing::warn!("[SessionPool] reset without a tokio runtime; sessions stay pooled");
+             return;
+         };
+         let idle_sessions = Arc::clone(&self.idle_sessions);
+         let generation = Arc::clone(&self.generation);
+-        runtime.spawn(async move {
++        let _ = self.spawner.try_spawn(async move {
+             let stale: Vec<PooledSession> = {
+                 let mut sessions = idle_sessions.write().await;
+                 let current = generation.load(Ordering::SeqCst);
+@@ -326,7 +328,7 @@
+         let min_idle = self.config.min_idle_sessions;
+         let cleanup_task_handle = Arc::clone(&self.cleanup_task);
+ 
+-        let handle = tokio::spawn(async move {
++        let handle = self.spawner.try_spawn(async move {
+             let mut interval_timer = interval(check_interval);
+ 
+             tracing::debug!(
+@@ -394,6 +396,7 @@
+             }
+         });
+ 
++        let handle = match handle { Ok(handle) => handle, Err(_) => return };
+         // Store the handle
+         if let Ok(mut task) = cleanup_task_handle.try_lock() {
+             *task = Some(handle);
+@@ -405,6 +408,7 @@
+         let mut task_guard = self.cleanup_task.lock().await;
+         if let Some(handle) = task_guard.take() {
+             handle.abort();
++            let _ = handle.await;
+             tracing::debug!("[SessionPool] Cleanup task stopped");
+         }
+     }
+@@ -526,3 +530,27 @@
+         assert!(Arc::ptr_eq(&reused, &fresh));
+     }
+ }
++
++#[cfg(test)]
++mod scoped_reaper_tests {
++    use super::*;
++    use meow_common::transport_tasks::{SharedUnitJoin, TransportScope, TransportTaskContext, Work};
++    #[derive(Default)]
++    struct Owner(std::sync::Mutex<Vec<Arc<SharedUnitJoin>>>);
++    impl TransportTaskContext for Owner {
++        fn spawn(&self, work: Work) -> std::io::Result<tokio::task::AbortHandle> { self.spawn_join(work).map(|task| task.abort_handle()) }
++        fn spawn_join(&self, work: Work) -> std::io::Result<Arc<SharedUnitJoin>> {
++            let task = SharedUnitJoin::new(tokio::spawn(work)); self.0.lock().unwrap().push(task.clone()); Ok(task)
++        }
++    }
++    #[tokio::test]
++    async fn actual_pool_reaper_drop_aborts_and_native_observer_joins_resource_release() {
++        let owner = Arc::new(Owner::default()); let scope = TransportScope::new(owner.clone());
++        let pool = scope.scope(async { SessionPool::new() }).await;
++        let sessions = Arc::downgrade(&pool.idle_sessions);
++        let tasks = owner.0.lock().unwrap().clone(); assert_eq!(tasks.len(), 1);
++        drop(pool);
++        assert!(tasks[0].wait().await.cancelled);
++        assert!(sessions.upgrade().is_none());
++    }
++}
+--- a/crates/meow-anytls/src/session/session.rs
++++ b/crates/meow-anytls/src/session/session.rs
+@@ -63,6 +63,7 @@
+ 
+     // Session state
+     is_closed: Arc<std::sync::atomic::AtomicBool>,
++    close_phase: tokio::sync::Mutex<bool>,
+ 
+     // Padding factory in force for this session. Client sessions share the
+     // client's cell, so a server-pushed scheme reaches sessions opened later.
+@@ -156,6 +157,7 @@
+             stream_data_rx: Arc::new(tokio::sync::Mutex::new(Some(stream_data_rx))),
+             stream_receive_tx: Arc::new(RwLock::new(HashMap::new())),
+             is_closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
++            close_phase: tokio::sync::Mutex::new(false),
+             padding,
+             is_client: true,
+             send_padding: true,
+@@ -197,6 +199,7 @@
+             stream_data_rx: Arc::new(tokio::sync::Mutex::new(Some(stream_data_rx))),
+             stream_receive_tx: Arc::new(RwLock::new(HashMap::new())),
+             is_closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
++            close_phase: tokio::sync::Mutex::new(false),
+             padding: padding.into_shared(),
+             is_client: false,
+             send_padding: false,
+@@ -250,14 +253,11 @@
+ 
+     /// Close the session
+     pub async fn close(&self) -> Result<()> {
+-        let already_closed = self
+-            .is_closed
+-            .swap(true, std::sync::atomic::Ordering::Relaxed);
+-        if already_closed {
+-            return Ok(());
+-        }
++        self.is_closed.store(true, std::sync::atomic::Ordering::Relaxed);
+         self.stream_data_tx.close();
+         self.close_notify.notify_waiters();
++        let mut completed = self.close_phase.lock().await;
++        if *completed { return Ok(()); }
+ 
+         // Close stream data receiver so process_stream_data exits
+         // Close all streams and notify pending waiters. The two map
+@@ -296,6 +296,7 @@
+             }
+         }
+ 
++        *completed = true;
+         Ok(())
+     }
+ 
+@@ -932,7 +933,7 @@
+             && !self.is_closed()
+         {
+             let weak = Arc::downgrade(self);
+-            let watchdog = tokio::spawn(async move {
++            let watchdog = meow_common::scoped_join::try_spawn(async move {
+                 time::sleep(SYN_WATCHDOG_TIMEOUT).await;
+                 if let Some(session) = weak.upgrade() {
+                     tracing::warn!(
+@@ -944,17 +945,18 @@
+                     // by a racing SynAck disarm or a later re-arm — can
+                     // still land while `close()` is suspended (writer lock
+                     // + 1 s shutdown timeout), which would drop the future
+-                    // mid-teardown after `is_closed` was already set and
+-                    // strand the drain/shutdown forever (close() is
+-                    // idempotent and non-resumable). A spawned close runs
+-                    // to completion; an abort before the spawn is a clean
++                    // mid-teardown before drain/shutdown finishes. The owned
++                    // close survives per-flow disarm; session-owner shutdown
++                    // can resume a cancelled close after joining its tasks.
++                    // An abort before the spawn is a clean
+                     // disarm. Go parity: upstream's watcher goroutine is
+                     // uncancellable once it selects the deadline branch.
+-                    tokio::spawn(async move {
++                    let _ = meow_common::scoped_join::try_spawn(async move {
+                         let _ = session.close().await;
+                     });
+                 }
+             });
++            let watchdog = watchdog?;
+             let mut slot = self.syn_watchdog.lock().unwrap();
+             if let Some(prev) = slot.replace(watchdog.abort_handle()) {
+                 prev.abort();
+@@ -1270,7 +1272,7 @@
+             bytes_in = field::Empty,
+             iterations = field::Empty
+         );
+-        tokio::spawn(
++        meow_common::scoped_join::try_spawn(
+             async move {
+                 tracing::debug!(
+                     "[Session] recv_loop task spawned (client={})",
+@@ -1308,11 +1310,11 @@
+                 let _ = session.close().await;
+             }
+             .instrument(recv_span),
+-        );
++        )?;
+ 
+         // Start stream data processing in background
+         let session = Arc::clone(&self);
+-        tokio::spawn(async move {
++        meow_common::scoped_join::try_spawn(async move {
+             tracing::debug!(
+                 "[Session] process_stream_data task spawned (client={})",
+                 session.is_client
+@@ -1322,11 +1324,11 @@
+             } else {
+                 tracing::debug!("[Session] process_stream_data task completed normally");
+             }
+-        });
++        })?;
+ 
+         if let Some(heartbeat_state) = self.heartbeat.as_ref().map(Arc::clone) {
+             let session = Arc::clone(&self);
+-            tokio::spawn(async move {
++            meow_common::scoped_join::try_spawn(async move {
+                 let session_id = session.id();
+                 let mut ticker = time::interval(heartbeat_state.interval);
+                 ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+@@ -1387,7 +1389,7 @@
+                         "[Session] Heartbeat request sent successfully"
+                     );
+                 }
+-            });
++            })?;
+         }
+ 
+         Ok(())
+@@ -2634,8 +2636,8 @@
+ 
+     /// A late SynAck must not kill a watchdog-initiated `close()` mid-flight:
+     /// `is_closed` is set in close's synchronous prefix, so a cancelled close
+-    /// strands the stream drain + writer shutdown forever (close() is
+-    /// idempotent and never retries). The close is detached from the
++    /// requires a retry to finish stream drain + writer shutdown.
++    /// The close remains detached from the
+     /// abortable watchdog task — abort lands before the detach point or
+     /// misses it entirely (#625 review).
+     #[tokio::test(start_paused = true)]
+@@ -2731,3 +2733,72 @@
+         assert!(!session.is_closed());
+     }
+ }
++
++#[cfg(test)]
++mod owned_shutdown_tests {
++    use super::*;
++    use crate::client::SessionPool;
++    use std::{future::{Future, poll_fn}, pin::Pin, sync::atomic::{AtomicUsize, Ordering}, task::{Context, Poll}};
++    struct Reader<R> { inner: R, dropped: Arc<AtomicUsize> }
++    impl<R: AsyncRead + Unpin> AsyncRead for Reader<R> {
++        fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut tokio::io::ReadBuf<'_>) -> Poll<std::io::Result<()>> {
++            Pin::new(&mut self.inner).poll_read(cx, buf)
++        }
++    }
++    impl<R> Drop for Reader<R> { fn drop(&mut self) { self.dropped.fetch_add(1, Ordering::SeqCst); } }
++    struct Writer<W> { inner: W, dropped: Arc<AtomicUsize> }
++    impl<W: AsyncWrite + Unpin> AsyncWrite for Writer<W> {
++        fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<std::io::Result<usize>> { Pin::new(&mut self.inner).poll_write(cx, buf) }
++        fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> { Pin::new(&mut self.inner).poll_flush(cx) }
++        fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> { Pin::new(&mut self.inner).poll_shutdown(cx) }
++    }
++    impl<W> Drop for Writer<W> { fn drop(&mut self) { self.dropped.fetch_add(1, Ordering::SeqCst); } }
++    async fn pooled() -> (Arc<Session>, Arc<SessionPool>, tokio::net::TcpStream, Arc<AtomicUsize>) {
++        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let connection = tokio::net::TcpStream::connect(listener.local_addr().unwrap()).await.unwrap();
++        let (peer, _) = listener.accept().await.unwrap();
++        let (reader, writer) = connection.into_split();
++        let dropped = Arc::new(AtomicUsize::new(0));
++        let session = Arc::new(Session::new_client(Reader { inner: reader, dropped: dropped.clone() },
++            Writer { inner: writer, dropped: dropped.clone() }, PaddingFactory::default().into_shared(), None));
++        session.set_seq(1);
++        let pool = Arc::new(SessionPool::new());
++        pool.stop_cleanup_task().await;
++        pool.add_idle_session(session.clone()).await;
++        assert_eq!(pool.idle_count().await, 1);
++        (session, pool, peer, dropped)
++    }
++    async fn eof(peer: &mut tokio::net::TcpStream) {
++        let mut byte = [0];
++        assert_eq!(time::timeout(Duration::from_secs(1), peer.read(&mut byte)).await.unwrap().unwrap(), 0);
++    }
++    #[tokio::test]
++    async fn pooled_close_cancelled_after_admission_can_resume_and_last_arc_drops_both_transports() {
++        let (session, pool, mut peer, dropped) = pooled().await;
++        let held = session.streams.write().await;
++        let mut closing = Box::pin(session.close());
++        assert!(poll_fn(|cx| Poll::Ready(closing.as_mut().poll(cx).is_pending())).await);
++        assert!(session.is_closed());
++        drop(closing); drop(held);
++        session.close().await.unwrap();
++        eof(&mut peer).await;
++        assert_eq!(pool.idle_count().await, 1);
++        assert_eq!(dropped.load(Ordering::SeqCst), 0);
++        let weak = Arc::downgrade(&session); drop(session);
++        assert!(weak.upgrade().is_some()); drop(pool);
++        assert!(weak.upgrade().is_none());
++        assert_eq!(dropped.load(Ordering::SeqCst), 2);
++    }
++    #[tokio::test]
++    async fn concurrent_close_waiter_observes_completion_and_takes_over_cancelled_first_attempt() {
++        let (session, pool, mut peer, _) = pooled().await;
++        let held = session.streams.write().await;
++        let mut first = Box::pin(session.close());
++        assert!(poll_fn(|cx| Poll::Ready(first.as_mut().poll(cx).is_pending())).await);
++        let mut second = Box::pin(session.close());
++        assert!(poll_fn(|cx| Poll::Ready(second.as_mut().poll(cx).is_pending())).await);
++        drop(first); drop(held);
++        second.await.unwrap(); eof(&mut peer).await;
++        session.close().await.unwrap(); drop(pool);
++    }
++}
 --- a/crates/meow-api/Cargo.toml
 +++ b/crates/meow-api/Cargo.toml
 @@ -21,6 +21,7 @@
@@ -20,10 +367,11 @@
  pub mod routes;
 --- /dev/null
 +++ b/crates/meow-api/src/lifecycle.rs
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,97 @@
 +//! Runtime-scoped API tasks; upgrades acquire their lease before Axum spawns.
 +use axum::{extract::ws::{WebSocket, WebSocketUpgrade}, http::StatusCode, response::{IntoResponse, Response}};
 +use parking_lot::Mutex;
++use meow_config::owned_load::{LoadContext, OwnedWork};
 +use std::{future::Future, sync::Arc};
 +use tokio_util::{sync::CancellationToken, task::{TaskTracker, task_tracker::TaskTrackerToken}};
 +
@@ -34,6 +382,7 @@
 +    admission: Mutex<bool>,
 +    cancel: CancellationToken,
 +    tasks: TaskTracker,
++    context: Option<Arc<dyn LoadContext>>,
 +}
 +
 +impl Default for ApiLifecycle {
@@ -42,11 +391,22 @@
 +            admission: Mutex::new(true),
 +            cancel: CancellationToken::new(),
 +            tasks: TaskTracker::new(),
++            context: None,
 +        }))
 +    }
 +}
 +
 +impl ApiLifecycle {
++    /// Explicitly carry the owning Session context across Tokio/Axum task boundaries.
++    pub fn with_context(context: Arc<dyn LoadContext>) -> Self {
++        Self(Arc::new(Inner { admission: Mutex::new(true), cancel: CancellationToken::new(),
++            tasks: TaskTracker::new(), context: Some(context) }))
++    }
++
++    fn wrap(&self, task: OwnedWork) -> OwnedWork {
++        match &self.0.context { Some(context) => context.wrap(task), None => task }
++    }
++
 +    fn lease(&self) -> Option<TaskTrackerToken> {
 +        let open = self.0.admission.lock();
 +        if !*open { return None; }
@@ -62,28 +422,29 @@
 +            return StatusCode::SERVICE_UNAVAILABLE.into_response();
 +        };
 +        let cancel = self.0.cancel.clone();
-+        ws.on_upgrade(move |socket| async move {
++        let owner = self.clone();
++        ws.on_upgrade(move |socket| owner.wrap(Box::pin(async move {
 +            let _lease = lease;
 +            tokio::select! {
 +                biased;
 +                _ = cancel.cancelled() => {},
 +                _ = callback(socket) => {},
 +            }
-+        })
++        })))
 +    }
 +
 +    pub fn spawn<F>(&self, task: F)
 +    where F: Future<Output = ()> + Send + 'static {
 +        let Some(lease) = self.lease() else { return; };
 +        let cancel = self.0.cancel.clone();
-+        tokio::spawn(async move {
++        tokio::spawn(self.wrap(Box::pin(async move {
 +            let _lease = lease;
 +            tokio::select! {
 +                biased;
 +                _ = cancel.cancelled() => {},
 +                _ = task => {},
 +            }
-+        });
++        })));
 +    }
 +
 +    pub fn cancel(&self) {
@@ -186,7 +547,27 @@
              let mut feed = feed;
              loop {
                  let frame = match feed.recv().await {
-@@ -2555,10 +2557,10 @@
+@@ -1219,9 +1221,16 @@
+             )
+                 .into_response();
+         };
+-        resolver
+-            .forward_generic(&params.name, &query_name, record_type)
+-            .await
++        match resolver.forward_generic(&params.name, &query_name, record_type).await {
++            Ok(value) => value,
++            Err(error) if error.kind() == std::io::ErrorKind::NotConnected => {
++                return (StatusCode::SERVICE_UNAVAILABLE,
++                    Json(serde_json::json!({"message": "DNS unavailable: no captured network"})))
++                    .into_response();
++            }
++            Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR,
++                Json(serde_json::json!({"message": "DNS query failed"}))).into_response(),
++        }
+     } {
+         let metadata = &message.metadata;
+         response.insert("Status".into(), u16::from(metadata.response_code).into());
+@@ -2555,10 +2564,10 @@
  // `newError("An error occurred in the delay test")`.
  
  #[derive(Deserialize)]
@@ -201,7 +582,7 @@
  }
  
  #[derive(Serialize)]
-@@ -2574,7 +2576,7 @@
+@@ -2574,7 +2583,7 @@
  /// Validate `url` and `timeout`. Returns `timeout` as `Duration` on success,
  /// or the `400 Body invalid` response on any validation failure — matching
  /// upstream's single "ErrBadRequest" shape for all parse errors.
@@ -210,7 +591,7 @@
      // upstream: hub/route/proxies.go::getProxyDelay — url is not strictly
      // validated upstream, but an empty host would panic our prober.
      let url = params.url.as_deref().unwrap_or("").trim();
-@@ -3763,6 +3765,7 @@
+@@ -3763,6 +3772,7 @@
      State(state): State<Arc<AppState>>,
      Query(params): Query<LogsParams>,
      MaybeWebSocket(ws): MaybeWebSocket,
@@ -218,7 +599,7 @@
  ) -> Response {
      let level = match parse_requested_log_level(params.level.as_deref()) {
          Ok(level) => level,
-@@ -3771,9 +3774,18 @@
+@@ -3771,9 +3781,18 @@
      let structured = params.format.as_deref() == Some("structured");
      let mut rx = state.log_tx.subscribe();
      if let Some(ws) = ws {
@@ -239,7 +620,7 @@
                      Ok(msg) if msg.level >= level => {
                          if socket
                              .send(Message::Text(log_json(&msg, structured).into()))
-@@ -3817,32 +3829,33 @@
+@@ -3817,32 +3836,33 @@
  
  // upstream: hub/route/memory.go
  //
@@ -281,7 +662,7 @@
                  if tx.receiver_count() == 0 {
                      *guard = None;
                      break;
-@@ -3858,12 +3871,17 @@
+@@ -3858,12 +3878,17 @@
  }
  
  async fn get_memory(
@@ -302,7 +683,7 @@
              if socket
                  .send(Message::Text(first.as_ref().into()))
                  .await
-@@ -3871,7 +3889,7 @@
+@@ -3871,7 +3896,7 @@
              {
                  return;
              }
@@ -311,7 +692,7 @@
              loop {
                  let msg = match feed.recv().await {
                      Ok(msg) => msg,
-@@ -3889,33 +3907,19 @@
+@@ -3889,33 +3914,19 @@
          });
      }
  
@@ -358,7 +739,7 @@
  async fn read_rss_bytes() -> u64 {
      tokio::task::spawn_blocking(|| {
          use sysinfo::{Pid, ProcessesToUpdate, System};
-@@ -3971,7 +3975,7 @@
+@@ -3971,7 +3982,7 @@
  
  #[derive(Serialize)]
  #[serde(rename_all = "camelCase")]
@@ -367,7 +748,7 @@
      name: String,
      #[serde(rename = "type")]
      provider_type: String,
-@@ -4044,6 +4048,10 @@
+@@ -4044,6 +4055,10 @@
      }
  }
  
@@ -378,7 +759,7 @@
  async fn get_providers(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
      let mut map = serde_json::Map::new();
      for entry in state.proxy_providers.iter() {
-@@ -4175,7 +4183,7 @@
+@@ -4175,7 +4190,7 @@
  // ── Rule Providers ────────────────────────────────────────────────────
  
  #[derive(Serialize)]
@@ -387,7 +768,7 @@
      name: String,
      #[serde(rename = "type")]
      provider_type: String,
-@@ -4217,6 +4225,10 @@
+@@ -4217,6 +4232,10 @@
              vehicle_type: vehicle_type.to_string(),
          }
      }
@@ -482,7 +863,34 @@
          let mut history = self
              .history
              .write()
-@@ -231,6 +255,14 @@
+@@ -129,6 +153,26 @@
+     fn support_udp(&self) -> bool;
+     async fn dial_tcp(&self, metadata: &Metadata) -> Result<Box<dyn ProxyConn>>;
+     async fn dial_udp(&self, metadata: &Metadata) -> Result<Box<dyn ProxyPacketConn>>;
++    /// A child receipt is committed only after this exact dial succeeds.
++    async fn dial_tcp_observed(&self, metadata: &Metadata) -> Result<Box<dyn ProxyConn>> {
++        let (child, receipt) = crate::dial_outcome::DialReceipt::branch(metadata);
++        let conn = self.dial_tcp(&child).await?;
++        crate::dial_outcome::DialReceipt::commit(metadata,self.adapter_type(),self.name(),&receipt)?;
++        Ok(conn)
++    }
++    async fn dial_udp_observed(&self, metadata: &Metadata) -> Result<Box<dyn ProxyPacketConn>> {
++        let (child, receipt) = crate::dial_outcome::DialReceipt::branch(metadata);
++        let conn = self.dial_udp(&child).await?;
++        crate::dial_outcome::DialReceipt::commit(metadata,self.adapter_type(),self.name(),&receipt)?;
++        Ok(conn)
++    }
++    /// Per-hop success scope for an existing stream in a relay chain.
++    async fn connect_over_observed(&self, stream: Box<dyn ProxyConn>, metadata: &Metadata) -> Result<Box<dyn ProxyConn>> {
++        let (child, receipt) = crate::dial_outcome::DialReceipt::branch(metadata);
++        let conn = self.connect_over(stream,&child).await?;
++        crate::dial_outcome::DialReceipt::commit(metadata,self.adapter_type(),self.name(),&receipt)?;
++        Ok(conn)
++    }
+     /// Run this adapter's complete post-connect pipeline over `stream`.
+     ///
+     /// Used by relay groups (M1.C-2) to chain proxy hops without dialling a
+@@ -231,6 +275,17 @@
  pub trait ProxySelection: Send + Sync {
      /// Validate and select a member by name.
      async fn set(&self, name: &str) -> Result<()>;
@@ -492,14 +900,88 @@
 +    fn commit_memory(&self, _name: &str) -> Result<()> {
 +        Err(crate::error::MeowError::NotSupported("owned selection commit".into()))
 +    }
++    fn unfix_memory(&self) -> Result<()> {
++        Err(crate::error::MeowError::NotSupported("owned selection unpin".into()))
++    }
 +    fn flush_selection(&self) -> Option<Box<dyn FnOnce() + Send>> { None }
 +    fn reconcile_health(&self) {}
  
      /// Set or clear a selection without validation. This mirrors mihomo's
      /// `SelectAble.ForceSet` and is used to unfix automatic groups before a
+--- /dev/null
++++ b/crates/meow-common/src/dial_outcome.rs
+@@ -0,0 +1,60 @@
++//! Per-dial success receipt; no engine/global state and never serialized.
++use crate::{AdapterType, Metadata, MeowError, Result};
++use std::sync::{Arc, Mutex};
++#[derive(Clone, Debug)]
++pub struct DialOutcome { pub leaf_type: AdapterType, pub chains: Vec<Arc<str>> }
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum TrafficClass { Direct, Proxy, Uncounted }
++impl DialOutcome {
++    pub fn traffic_class(&self) -> TrafficClass {
++        match self.leaf_type { AdapterType::Direct => TrafficClass::Direct,
++            AdapterType::Reject | AdapterType::RejectDrop | AdapterType::Pass | AdapterType::PassRule => TrafficClass::Uncounted,
++            _ => TrafficClass::Proxy }
++    }
++}
++#[derive(Default, Debug)]
++pub struct DialReceipt(Mutex<Option<(DialOutcome, bool)>>);
++impl DialReceipt {
++    pub fn outcome(&self) -> Option<DialOutcome> { self.0.lock().unwrap().as_ref().map(|(outcome,_)|outcome.clone()) }
++    fn completed_route(&self) -> Option<DialOutcome> { self.0.lock().unwrap().as_ref().and_then(|entry| if entry.1 { Some(entry.0.clone()) } else { None }) }
++    pub fn complete(&self, outcome: DialOutcome) -> Result<()> { self.finish(outcome,false) }
++    /// A complete semantic route, not an incidental lower transport dial.
++    pub fn complete_route(&self, outcome: DialOutcome) -> Result<()> { self.finish(outcome,true) }
++    fn finish(&self, outcome: DialOutcome, route: bool) -> Result<()> {
++        let mut slot=self.0.lock().unwrap();
++        if slot.is_some() { return Err(MeowError::Proxy("dial receipt already completed".into())); }
++        *slot=Some((outcome,route)); Ok(())
++    }
++    pub fn branch(metadata: &Metadata) -> (Metadata, Arc<Self>) {
++        let receipt=Arc::new(Self::default()); let mut child=metadata.clone(); child.dial_receipt=Some(receipt.clone()); (child,receipt)
++    }
++    pub fn commit(metadata: &Metadata, kind: AdapterType, name: &str, child: &Self) -> Result<()> {
++        let Some(parent)=metadata.dial_receipt.as_ref() else { return Ok(()); };
++        let group=matches!(kind,AdapterType::Selector|AdapterType::Fallback|AdapterType::UrlTest|AdapterType::LoadBalance|AdapterType::Relay);
++        let mut outcome=if group { child.outcome().ok_or_else(||MeowError::Proxy("successful group dial omitted leaf outcome".into()))? }
++            else { child.completed_route().unwrap_or_else(|| DialOutcome { leaf_type:kind, chains:vec![Arc::from(name)] }) };
++        if group && outcome.chains.last().is_none_or(|entry| entry.as_ref()!=name) { outcome.chains.push(Arc::from(name)); }
++        if group || child.completed_route().is_some() { parent.complete_route(outcome) } else { parent.complete(outcome) }
++    }
++}
++
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    fn direct() -> DialOutcome { DialOutcome {leaf_type:AdapterType::Direct,chains:vec![Arc::from("transport-direct")]} }
++    #[test]
++    fn incidental_transport_does_not_replace_actual_protocol_type() {
++        let (metadata,parent)=DialReceipt::branch(&Metadata::default());let child=DialReceipt::default();child.complete(direct()).unwrap();
++        DialReceipt::commit(&metadata,AdapterType::Http,"actual-http",&child).unwrap();
++        assert_eq!(parent.outcome().unwrap().leaf_type,AdapterType::Http);
++    }
++    #[test]
++    fn semantic_nested_route_is_preserved_and_duplicate_is_still_error() {
++        let (metadata,parent)=DialReceipt::branch(&Metadata::default());let child=DialReceipt::default();
++        child.complete_route(DialOutcome{leaf_type:AdapterType::Http,chains:vec![Arc::from("front-http")]}).unwrap();
++        DialReceipt::commit(&metadata,AdapterType::Direct,"wrapped-local",&child).unwrap();
++        let outcome=parent.outcome().unwrap();assert_eq!(outcome.leaf_type,AdapterType::Http);assert_eq!(outcome.chains[0].as_ref(),"front-http");
++        assert!(parent.complete(direct()).is_err());assert_eq!(parent.outcome().unwrap().leaf_type,AdapterType::Http);
++    }
++}
 --- a/crates/meow-common/src/lib.rs
 +++ b/crates/meow-common/src/lib.rs
-@@ -31,6 +31,7 @@
+@@ -13,6 +13,7 @@
+ /// representable on every supported platform.
+ pub const MAX_DURATION_SECS: u64 = 10 * 365 * 24 * 60 * 60;
+ 
++pub mod dial_outcome;
+ pub mod adapter;
+ pub mod adapter_type;
+ pub mod atomic;
+@@ -31,6 +32,7 @@
  pub mod network;
  pub mod outbound_iface;
  pub mod process_lookup;
@@ -507,7 +989,7 @@
  pub mod replay_window;
  pub mod rule;
  pub mod sniffer;
-@@ -79,3 +80,7 @@
+@@ -79,3 +81,9 @@
  
  pub mod health_check;
  pub use health_check::HealthCheckSpec;
@@ -515,9 +997,58 @@
 +pub mod request_policy;
 +
 +pub mod transport_tasks;
++
++pub mod scoped_join;
+--- a/crates/meow-common/src/metadata.rs
++++ b/crates/meow-common/src/metadata.rs
+@@ -83,6 +83,11 @@
+     /// claiming it.
+     #[serde(skip)]
+     pub internal: bool,
++    #[serde(skip)]
++    pub dial_receipt: Option<std::sync::Arc<crate::dial_outcome::DialReceipt>>,
++    /// Original-tuple owner. Never accepted from JSON or retained by statistics.
++    #[serde(skip)]
++    pub process_identity: Option<std::sync::Arc<dyn crate::process_lookup::FlowProcessIdentity>>,
+ }
+ 
+ /// The JSON form of [`Metadata::dscp`]: always a number, `0` when the
+@@ -166,6 +171,8 @@
+             in_user: None,
+             special_proxy: SmolStr::default(),
+             internal: false,
++            dial_receipt: None,
++            process_identity: None,
+         }
+     }
+ }
+@@ -275,7 +282,7 @@
+     /// packets carried stay, as upstream reports them; inbound details and
+     /// per-match extras are dropped.
+     pub fn pure(&self) -> Self {
+-        Self {
++        let mut saved = Self {
+             network: self.network,
+             conn_type: self.conn_type,
+             src_ip: self.src_ip,
+@@ -296,7 +303,13 @@
+             in_user: None,
+             special_proxy: SmolStr::default(),
+             internal: self.internal,
+-        }
++            dial_receipt: None,
++            process_identity: None,
++        };
++        if let Some(info) = self.process_identity.as_ref().and_then(|owner| owner.known()) {
++            saved.process = info.name.into(); saved.process_path = info.path.into(); saved.uid = info.uid;
++        }
++        saved
+     }
+ }
+ 
 --- /dev/null
 +++ b/crates/meow-common/src/probe_policy.rs
-@@ -0,0 +1,147 @@
+@@ -0,0 +1,159 @@
 +use serde::{Deserialize, Serialize};
 +use std::{future::Future, io, net::SocketAddr, pin::Pin, sync::Arc};
 +use futures::{stream::FuturesUnordered, StreamExt};
@@ -530,13 +1061,16 @@
 +}
 +pub trait ProbeSource: Send + Sync {
 +    fn snapshot(&self) -> io::Result<Arc<ProbePolicy>>;
++    fn snapshot_with_epoch(&self) -> io::Result<(Arc<ProbePolicy>, Option<u64>)> {
++        Ok((self.snapshot()?, None))
++    }
 +    fn enter(&self) -> io::Result<Box<dyn Send>> { Ok(Box::new(())) }
 +    fn cancelled(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
 +}
 +#[derive(Clone)]
 +pub struct ProbeScope { source: Arc<dyn ProbeSource> }
 +#[derive(Clone)]
-+pub struct ProbeSnapshot { pub policy: Arc<ProbePolicy>, owner: ProbeScope }
++pub struct ProbeSnapshot { pub policy: Arc<ProbePolicy>, core_epoch: Option<u64>, owner: ProbeScope }
 +tokio::task_local! { static OWNER: ProbeScope; static OPERATION: ProbeSnapshot; }
 +impl ProbeScope {
 +    pub fn new(source: Arc<dyn ProbeSource>) -> Self { Self { source } }
@@ -550,7 +1084,8 @@
 +        }}).await
 +    }
 +    pub fn snapshot(&self) -> io::Result<ProbeSnapshot> {
-+        Ok(ProbeSnapshot { policy: self.source.snapshot()?, owner: self.clone() })
++        let (policy, core_epoch) = self.source.snapshot_with_epoch()?;
++        Ok(ProbeSnapshot { policy, core_epoch, owner: self.clone() })
 +    }
 +}
 +impl ProbeSnapshot {
@@ -571,7 +1106,10 @@
 +}
 +pub fn capture() -> io::Result<Option<ProbeSnapshot>> {
 +    if let Ok(snapshot) = OPERATION.try_with(Clone::clone) {
-+        snapshot.owner.source.snapshot()?;
++        let (_, current_epoch) = snapshot.owner.source.snapshot_with_epoch()?;
++        if snapshot.core_epoch.is_some() && snapshot.core_epoch != current_epoch {
++            return Err(io::Error::new(io::ErrorKind::Interrupted, "staleProbeEpoch"));
++        }
 +        return Ok(Some(snapshot));
 +    }
 +    ProbeScope::capture().map(|scope| scope.snapshot()).transpose()
@@ -665,6 +1203,26 @@
 +        assert_eq!(tokio::time::timeout(std::time::Duration::from_secs(1), peer.read(&mut byte)).await.unwrap().unwrap(), 0);
 +    }
 +}
++
++/// Pure task-local receipt, read before taking the control-plane commit gate.
++pub fn operation_epoch() -> Option<u64> {
++    OPERATION.try_with(|snapshot| snapshot.core_epoch).ok().flatten()
++}
+--- a/crates/meow-common/src/process_lookup.rs
++++ b/crates/meow-common/src/process_lookup.rs
+@@ -59,6 +59,12 @@
+ /// ([`enable_inbound_process_info`]).
+ pub fn uid_info_available() -> bool {
+     cfg!(target_os = "linux") || INBOUND_PROCESS_INFO.load(Ordering::Relaxed)
++}
++
++/// Captured flow owner; implementations fence their session and identity revision.
++pub trait FlowProcessIdentity: Send + Sync + std::fmt::Debug {
++    fn lookup(&self) -> Option<ProcessInfo>;
++    fn known(&self) -> Option<ProcessInfo>;
+ }
+ 
+ #[derive(Debug, Clone, Default)]
 --- /dev/null
 +++ b/crates/meow-common/src/request_policy.rs
 @@ -0,0 +1,43 @@
@@ -710,6 +1268,225 @@
 +pub fn current() -> io::Result<Option<Arc<RequestPolicy>>> {
 +    let scope = CURRENT.try_with(Clone::clone).ok().or_else(|| BLOCKING.with(|slot| slot.borrow().clone()));
 +    scope.map(|scope| { let policy = scope.source.snapshot()?; policy.validate()?; Ok(policy) }).transpose()
++}
+--- /dev/null
++++ b/crates/meow-common/src/scoped_join.rs
+@@ -0,0 +1,216 @@
++use crate::transport_tasks::{self, TransportScope};
++use std::{future::Future, io, pin::Pin, task::{Context, Poll}};
++use tokio::task::{AbortHandle, JoinError};
++use parking_lot::Mutex;
++
++type PollFuture<T> = Pin<Box<dyn Future<Output = Result<T, JoinError>> + Send + 'static>>;
++
++pub struct ScopedJoin<T> {
++    future: Mutex<PollFuture<T>>,
++    abort: AbortHandle,
++}
++impl<T> ScopedJoin<T> {
++    pub fn abort(&self) { self.abort.abort(); }
++    pub fn abort_handle(&self) -> AbortHandle { self.abort.clone() }
++    pub fn is_finished(&self) -> bool { self.abort.is_finished() }
++}
++impl<T> Future for ScopedJoin<T> {
++    type Output = Result<T, JoinError>;
++    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
++        self.get_mut().future.get_mut().as_mut().poll(cx)
++    }
++}
++impl<T: Send + 'static> From<tokio::task::JoinHandle<T>> for ScopedJoin<T> {
++    fn from(handle: tokio::task::JoinHandle<T>) -> Self {
++        let abort = handle.abort_handle();
++        let future: PollFuture<T> = Box::pin(handle);
++        Self { future: Mutex::new(future), abort }
++    }
++}
++#[derive(Clone)]
++pub struct Spawner { scope: Option<TransportScope> }
++impl Spawner {
++    pub fn capture() -> Self { Self { scope: TransportScope::current() } }
++    pub fn try_spawn<F>(&self, work: F) -> io::Result<ScopedJoin<F::Output>>
++    where F: Future + Send + 'static, F::Output: Send + 'static {
++        let (send, receive) = tokio::sync::oneshot::channel();
++        let inherited = self.scope.clone();
++        let unit = Box::pin(async move {
++            let value = match inherited { Some(scope) => scope.scope(work).await, None => work.await };
++            let _ = send.send(value);
++        });
++        let shared = match &self.scope {
++            Some(scope) => scope.spawn_join(unit)?,
++            None => {
++                if TransportScope::current().is_some() { return Err(io::Error::other("capturedTransportOwnerMissing")); }
++                transport_tasks::spawn_join(unit)?
++            }
++        };
++        let abort = shared.abort_handle();
++        let future: PollFuture<F::Output> = Box::pin(async move {
++            shared.join_result().await?;
++            Ok(receive.await.expect("transport owner must poll UnitWork to completion"))
++        });
++        Ok(ScopedJoin { abort, future: Mutex::new(future) })
++    }
++}
++pub fn try_spawn<F>(work: F) -> io::Result<ScopedJoin<F::Output>>
++where F: Future + Send + 'static, F::Output: Send + 'static {
++    Spawner::capture().try_spawn(work)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::transport_tasks::{SharedUnitJoin, TransportTaskContext, Work};
++    use parking_lot::Mutex;
++    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
++    #[derive(Default)]
++    struct State { closed: bool, tasks: Vec<Arc<SharedUnitJoin>> }
++    #[derive(Default)]
++    struct Owner(Mutex<State>);
++    impl TransportTaskContext for Owner {
++        fn spawn(&self, work: Work) -> io::Result<AbortHandle> { self.spawn_join(work).map(|task| task.abort_handle()) }
++        fn spawn_join(&self, work: Work) -> io::Result<Arc<SharedUnitJoin>> {
++            let mut state = self.0.lock();
++            if state.closed { return Err(io::Error::other("closed")); }
++            let task = SharedUnitJoin::new(tokio::spawn(work));
++            state.tasks.push(task.clone());
++            Ok(task)
++        }
++    }
++    impl Owner {
++        async fn close(&self) {
++            let tasks = { let mut state = self.0.lock(); state.closed = true;
++                for task in &state.tasks { task.abort(); } state.tasks.clone() };
++            for task in tasks { task.wait().await; }
++        }
++        fn tasks(&self) -> Vec<Arc<SharedUnitJoin>> { self.0.lock().tasks.clone() }
++    }
++    #[tokio::test]
++    async fn cli_without_scope_keeps_output_and_real_join_error() {
++        assert_eq!(try_spawn(async { 27u32 }).unwrap().await.unwrap(), 27);
++        let error = try_spawn(async { panic!("original panic") }).unwrap().await.unwrap_err();
++        assert!(error.is_panic());
++        assert_eq!(*error.into_panic().downcast::<&str>().unwrap(), "original panic");
++    }
++    #[tokio::test]
++    async fn observer_does_not_consume_protocol_output_or_panic() {
++        let owner = Arc::new(Owner::default()); let scope = TransportScope::new(owner.clone());
++        let task = scope.scope(async { try_spawn(async { String::from("ready") }).unwrap() }).await;
++        owner.tasks()[0].wait().await;
++        assert!(task.is_finished()); assert_eq!(task.await.unwrap(), "ready");
++        let task = scope.scope(async { try_spawn(async { panic!("kept panic") }).unwrap() }).await;
++        owner.tasks()[1].wait().await;
++        let error = task.await.unwrap_err(); assert!(error.is_panic());
++        assert_eq!(*error.into_panic().downcast::<&str>().unwrap(), "kept panic");
++        assert!(owner.tasks()[1].wait().await.panicked);
++        owner.close().await;
++    }
++    #[tokio::test]
++    async fn protocol_can_consume_error_before_native_observer() {
++        let owner = Arc::new(Owner::default()); let scope = TransportScope::new(owner.clone());
++        let task = scope.scope(async { try_spawn(async { panic!("early panic") }).unwrap() }).await;
++        assert!(task.await.unwrap_err().is_panic());
++        assert!(owner.tasks()[0].wait().await.panicked);
++        owner.close().await;
++    }
++    #[tokio::test]
++    async fn abort_handle_targets_actual_work_and_real_socket_reaches_eof() {
++        use tokio::io::AsyncReadExt;
++        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let address = listener.local_addr().unwrap();
++        let owner = Arc::new(Owner::default()); let scope = TransportScope::new(owner.clone());
++        let task = scope.scope(async { try_spawn(async move {
++            let _stream = tokio::net::TcpStream::connect(address).await.unwrap();
++            std::future::pending::<()>().await;
++        }).unwrap() }).await;
++        let (mut peer, _) = listener.accept().await.unwrap();
++        task.abort_handle().abort();
++        assert!(task.await.unwrap_err().is_cancelled());
++        let mut byte = [0];
++        assert_eq!(tokio::time::timeout(std::time::Duration::from_secs(1), peer.read(&mut byte)).await.unwrap().unwrap(), 0);
++        assert!(owner.tasks()[0].wait().await.cancelled);
++        owner.close().await;
++    }
++    #[tokio::test]
++    async fn dropped_protocol_handle_remains_owned_until_actual_join() {
++        struct Guard(Arc<AtomicUsize>);
++        impl Drop for Guard { fn drop(&mut self) { self.0.fetch_sub(1, Ordering::SeqCst); } }
++        let owner = Arc::new(Owner::default()); let scope = TransportScope::new(owner.clone());
++        let active = Arc::new(AtomicUsize::new(0)); let count = active.clone();
++        let (entered, ready) = tokio::sync::oneshot::channel();
++        let task = scope.scope(async { try_spawn(async move {
++            count.fetch_add(1, Ordering::SeqCst); let _guard = Guard(count);
++            entered.send(()).unwrap(); std::future::pending::<()>().await;
++        }).unwrap() }).await;
++        ready.await.unwrap(); drop(task);
++        assert_eq!(active.load(Ordering::SeqCst), 1);
++        owner.close().await;
++        assert_eq!(active.load(Ordering::SeqCst), 0);
++    }
++    #[tokio::test]
++    async fn cancelled_join_waiter_retains_actual_handle_for_retry() {
++        let owner = Arc::new(Owner::default()); let scope = TransportScope::new(owner.clone());
++        let task = scope.scope(async { try_spawn(std::future::pending::<()>()).unwrap() }).await;
++        let record = owner.tasks()[0].clone();
++        assert!(tokio::time::timeout(std::time::Duration::from_millis(10), record.wait()).await.is_err());
++        record.abort(); assert!(record.wait().await.cancelled);
++        assert!(task.await.unwrap_err().is_cancelled()); owner.close().await;
++    }
++    #[tokio::test]
++    async fn closed_admission_drops_future_without_polling_user_work() {
++        let owner = Arc::new(Owner::default()); owner.close().await;
++        let scope = TransportScope::new(owner.clone());
++        let polled = Arc::new(AtomicUsize::new(0)); let count = polled.clone();
++        let result = scope.scope(async { try_spawn(async move { count.fetch_add(1, Ordering::SeqCst); }) }).await;
++        assert!(result.is_err()); assert_eq!(polled.load(Ordering::SeqCst), 0); assert!(owner.tasks().is_empty());
++    }
++    #[tokio::test]
++    async fn nested_task_captures_same_scope_without_an_observer_task() {
++        let owner = Arc::new(Owner::default()); let scope = TransportScope::new(owner.clone());
++        let task = scope.scope(async { try_spawn(async {
++            assert!(TransportScope::current().is_some());
++            try_spawn(async { assert!(TransportScope::current().is_some()); 53 }).unwrap().await.unwrap()
++        }).unwrap() }).await;
++        assert_eq!(task.await.unwrap(), 53); assert_eq!(owner.tasks().len(), 2); owner.close().await;
++    }
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn ready_then_session_cancel_has_actual_completed_ack() {
++        let owner = Arc::new(Owner::default()); let scope = TransportScope::new(owner.clone());
++        let (entered, ready) = tokio::sync::oneshot::channel();
++        let task = scope.scope(async { try_spawn(async move { entered.send(()).unwrap(); std::future::pending::<()>().await; }).unwrap() }).await;
++        ready.await.unwrap(); owner.close().await;
++        assert!(owner.tasks()[0].is_finished()); assert!(task.await.unwrap_err().is_cancelled());
++        let late = scope.scope(async { try_spawn(async { panic!("late work polled") }) }).await;
++        assert!(late.is_err());
++    }
++    #[tokio::test]
++    async fn captured_closed_session_never_adopts_another_current_owner() {
++        let first = Arc::new(Owner::default()); let second = Arc::new(Owner::default());
++        let origin = TransportScope::new(first.clone()); let later = TransportScope::new(second.clone());
++        let spawner = origin.scope(async { Spawner::capture() }).await;
++        first.close().await;
++        let result = later.scope(async { spawner.try_spawn(async { panic!("rebound old session") }) }).await;
++        assert!(result.is_err()); assert!(first.tasks().is_empty()); assert!(second.tasks().is_empty());
++        second.close().await;
++    }
++
++}
++
++#[cfg(test)]
++mod sync_contract_tests {
++    use super::*;
++    #[tokio::test]
++    async fn send_only_user_future_keeps_scoped_join_send_sync() {
++        let value = std::cell::Cell::new(0u32);
++        let task = try_spawn(async move {
++            value.set(19);
++            tokio::task::yield_now().await;
++            value.get()
++        }).unwrap();
++        fn require_send_sync<T: Send + Sync>(_: &T) {}
++        require_send_sync(&task);
++        assert_eq!(task.await.unwrap(), 19);
++    }
 +}
 --- a/crates/meow-common/src/socket_protect.rs
 +++ b/crates/meow-common/src/socket_protect.rs
@@ -853,14 +1630,84 @@
          if let Some(p) = android::socket_protector() {
              let resolved = tokio::net::lookup_host(local)
 --- /dev/null
++++ b/crates/meow-common/src/transport_join.rs
+@@ -0,0 +1,61 @@
++use parking_lot::Mutex;
++use std::sync::Arc;
++use tokio::task::{AbortHandle, JoinError, JoinHandle};
++
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
++pub struct TaskOutcome { pub panicked: bool, pub cancelled: bool }
++#[derive(Default)]
++struct Completion {
++    done: bool,
++    taken: bool,
++    outcome: TaskOutcome,
++    error: Option<JoinError>,
++}
++pub struct SharedUnitJoin {
++    handle: tokio::sync::Mutex<Option<JoinHandle<()>>>,
++    completion: Mutex<Completion>,
++    abort: AbortHandle,
++}
++impl SharedUnitJoin {
++    pub fn new(handle: JoinHandle<()>) -> Arc<Self> {
++        let abort = handle.abort_handle();
++        Arc::new(Self { handle: tokio::sync::Mutex::new(Some(handle)), completion: Mutex::new(Completion::default()), abort })
++    }
++    pub fn abort(&self) { self.abort.abort(); }
++    pub fn abort_handle(&self) -> AbortHandle { self.abort.clone() }
++    pub fn is_finished(&self) -> bool { self.abort.is_finished() }
++    pub async fn wait(&self) -> TaskOutcome {
++        let mut handle = self.handle.lock().await;
++        let retired = if let Some(actual) = handle.as_mut() {
++            let result = actual.await;
++            {
++                let mut completion = self.completion.lock();
++                completion.outcome = TaskOutcome {
++                    panicked: result.as_ref().is_err_and(JoinError::is_panic),
++                    cancelled: result.as_ref().is_err_and(JoinError::is_cancelled),
++                };
++                completion.error = result.err();
++                completion.done = true;
++            }
++            handle.take()
++        } else { None };
++        let outcome = {
++            let completion = self.completion.lock();
++            assert!(completion.done, "unit task must actually join before completion");
++            completion.outcome
++        };
++        drop(handle);
++        drop(retired);
++        outcome
++    }
++    pub(crate) async fn join_result(&self) -> Result<(), JoinError> {
++        self.wait().await;
++        let error = {
++            let mut completion = self.completion.lock();
++            assert!(completion.done && !completion.taken, "protocol result has one consumer");
++            completion.taken = true;
++            completion.error.take()
++        };
++        match error { Some(error) => Err(error), None => Ok(()) }
++    }
++}
+--- /dev/null
 +++ b/crates/meow-common/src/transport_tasks.rs
-@@ -0,0 +1,37 @@
+@@ -0,0 +1,61 @@
 +use std::{cell::RefCell, future::Future, io, pin::Pin, sync::Arc};
 +use tokio::task::AbortHandle;
++#[path = "transport_join.rs"] mod transport_join;
++pub use transport_join::{SharedUnitJoin, TaskOutcome};
 +
 +pub type Work = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 +pub trait TransportTaskContext: Send + Sync {
++    fn wrap(&self, work: Work) -> Work { work }
 +    fn spawn(&self, work: Work) -> io::Result<AbortHandle>;
++    fn spawn_join(&self, _work: Work) -> io::Result<Arc<SharedUnitJoin>> {
++        Err(io::Error::other("transportJoinOwnerMissing"))
++    }
 +}
 +
 +#[derive(Clone)]
@@ -870,6 +1717,9 @@
 +
 +impl TransportScope {
 +    pub fn new(context: Arc<dyn TransportTaskContext>) -> Self { Self(context) }
++    pub fn wrap(&self, work: Work) -> Work { self.0.wrap(work) }
++    pub fn spawn(&self, work: Work) -> io::Result<AbortHandle> { self.0.spawn(work) }
++    pub fn spawn_join(&self, work: Work) -> io::Result<Arc<SharedUnitJoin>> { self.0.spawn_join(work) }
 +    pub fn current() -> Option<Self> {
 +        CURRENT.try_with(Clone::clone).ok().or_else(|| BLOCKING.with(|slot| slot.borrow().clone()))
 +    }
@@ -892,23 +1742,98 @@
 +    }
 +    Ok(tokio::spawn(work).abort_handle())
 +}
++
++pub fn spawn_join(work: Work) -> io::Result<Arc<SharedUnitJoin>> {
++    if let Some(scope) = TransportScope::current() { return scope.0.spawn_join(work); }
++    #[cfg(all(feature = "aerove-android-runtime", any(target_os = "linux", target_os = "android", target_os = "macos")))]
++    if crate::socket_protect::NetworkScope::current().is_some() {
++        return Err(io::Error::other("capturedTransportOwnerMissing"));
++    }
++    Ok(SharedUnitJoin::new(tokio::spawn(work)))
++}
++
++/// Re-enter the same session's live context for one caller-owned operation.
++/// This creates no task and keeps cancellation with the calling future.
++pub fn wrap_current(work: Work) -> Work {
++    match TransportScope::current() { Some(scope) => scope.wrap(work), None => work }
++}
 --- a/crates/meow-config/src/dns_parser.rs
 +++ b/crates/meow-config/src/dns_parser.rs
-@@ -45,8 +45,12 @@
+@@ -1,6 +1,7 @@
+ use crate::raw::{HostsValue, RawConfig};
+ use crate::rule_provider::RuleProvider;
+ use crate::DnsConfig;
++use crate::owned_load::DisabledDnsSource;
+ use meow_common::DnsMode;
+ use meow_dns::fakeip::{FileStore, MemoryStore, Pool, Skipper, SkipperMode, Store};
+ use meow_dns::resolver::{
+@@ -25,7 +26,23 @@
+ /// identity (in-memory vs the same backing file) are unchanged, so clients
+ /// holding earlier `host → fake-ip` answers keep a valid reverse mapping.
+ /// Pass `None` on cold start.
+-pub async fn parse_dns(
++pub fn parse_dns<'a>(
++    raw: &'a RawConfig,
++    mmdb_path: Option<&'a std::path::Path>,
++    cache_dir: Option<&'a std::path::Path>,
++    proxy_registry: &'a HashMap<smol_str::SmolStr, Arc<dyn meow_common::Proxy>>,
++    geosite: Option<Arc<meow_rules::geosite::GeositeDB>>,
++    rule_providers: &'a HashMap<String, Arc<RuleProvider>>,
++    prior: Option<&'a Resolver>,
++) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<DnsConfig, anyhow::Error>> + Send + 'a>> {
++    Box::pin(async move {
++        let scope = crate::owned_load::dns_transport_scope().map_err(anyhow::Error::msg)?;
++        let work: std::pin::Pin<Box<dyn std::future::Future<Output = Result<DnsConfig, anyhow::Error>> + Send + 'a>> = Box::pin(parse_dns_impl(raw, mmdb_path, cache_dir, proxy_registry, geosite, rule_providers, prior));
++        match scope { Some(scope) => scope.scope(work).await, None => work.await }
++    })
++}
++
++async fn parse_dns_impl(
+     raw: &RawConfig,
+     mmdb_path: Option<&std::path::Path>,
+     cache_dir: Option<&std::path::Path>,
+@@ -45,14 +62,32 @@
              }
              let hosts = build_hosts_trie(raw.hosts.as_ref(), strict)?;
              let use_hosts = raw.dns.as_ref().and_then(|d| d.use_hosts).unwrap_or(true);
-+            let physical_servers = match crate::owned_load::OwnedLoadScope::current() {
-+                Some(scope) => scope.disabled_dns_servers().map_err(anyhow::Error::msg)?,
+-            let resolver = Resolver::new(
+-                vec!["8.8.8.8:53".parse().unwrap()],
+-                vec![],
+-                DnsMode::Normal,
+-                hosts,
+-                use_hosts,
+-                crate::effective_ipv6(raw.ipv6),
+-            );
++            // Preserve the pre-existing CLI/default-context behavior. Android
++            // Native marks physical DNS as required and must provide an explicit
++            // physical or unavailable source; it never reaches this fallback.
++            let disabled_source = match crate::owned_load::OwnedLoadScope::current() {
++                Some(scope) if scope.requires_physical_dns() => Some(
++                    scope.disabled_dns_source().map_err(anyhow::Error::msg)?,
++                ),
++                Some(scope) => scope.disabled_dns_servers().map_err(anyhow::Error::msg)?
++                    .map(DisabledDnsSource::Physical),
 +                None => None,
 +            };
-             let resolver = Resolver::new(
--                vec!["8.8.8.8:53".parse().unwrap()],
-+                physical_servers.unwrap_or_else(|| vec!["8.8.8.8:53".parse().unwrap()]),
-                 vec![],
-                 DnsMode::Normal,
-                 hosts,
-@@ -90,7 +94,7 @@
++            let resolver = match disabled_source {
++                Some(DisabledDnsSource::Physical(servers)) => Resolver::new(
++                    servers, vec![], DnsMode::Normal, hosts, use_hosts,
++                    crate::effective_ipv6(raw.ipv6),
++                ),
++                Some(DisabledDnsSource::UnavailableNotConnected) => Resolver::new(
++                    vec![], vec![], DnsMode::Normal, hosts, use_hosts,
++                    crate::effective_ipv6(raw.ipv6),
++                ).unavailable(std::io::ErrorKind::NotConnected),
++                None => Resolver::new(
++                    vec!["8.8.8.8:53".parse().expect("static DNS address")],
++                    vec![], DnsMode::Normal, hosts, use_hosts,
++                    crate::effective_ipv6(raw.ipv6),
++                ),
++            };
+             let resolver = Arc::new(resolver);
+             return Ok(DnsConfig {
+                 resolver_slot: meow_dns::new_resolver_slot(Arc::clone(&resolver)),
+@@ -90,7 +125,7 @@
      let listen_addr = crate::parse_optional_socket_addr("dns.listen", dns.listen.as_deref())?;
      let mut hosts = build_hosts_trie(raw.hosts.as_ref(), strict)?;
  
@@ -917,7 +1842,7 @@
          merge_system_hosts(&mut hosts).await;
      }
  
-@@ -114,7 +118,7 @@
+@@ -114,7 +149,7 @@
              );
          }
          let mut proxy_hosts = build_hosts_trie(raw.hosts.as_ref(), strict)?;
@@ -926,7 +1851,7 @@
              merge_system_hosts(&mut proxy_hosts).await;
          }
          Some(Arc::new(
-@@ -226,7 +230,7 @@
+@@ -226,7 +261,7 @@
      // The file this generation would bind to, when persisting. Computed
      // before the reuse check so the check can compare store identity, not
      // just store kind.
@@ -935,7 +1860,7 @@
          // `cache_dir` is `None` for a `--config-string` run — the launch
          // CWD is not the daemon's to write into, so persist under the
          // resolved home (same base geodata defaults use) instead of
-@@ -857,7 +861,7 @@
+@@ -857,7 +892,7 @@
      }
  
      // Attempt to load GeoIP MMDB for the geoip gate.
@@ -1093,7 +2018,7 @@
 +#[cfg(test)]
 +mod owned_dns_tests;
 +
-+pub use meow_proxy::{health::{probe_without_record as probe_leaf_without_record, UrlTestError as DelayProbeError}, DialerProxyAdapter as ChainedProxyAdapter};
++pub use meow_proxy::{health::{probe_without_record as probe_leaf_without_record, UrlTestError as DelayProbeError, validate_url_test_parameters as validate_delay_parameters, GROUP_DELAY_CONCURRENCY}, DialerProxyAdapter as ChainedProxyAdapter};
 --- /dev/null
 +++ b/crates/meow-config/src/offline_validation.rs
 @@ -0,0 +1,164 @@
@@ -1397,12 +2322,13 @@
 +}
 --- /dev/null
 +++ b/crates/meow-config/src/owned_load.rs
-@@ -0,0 +1,316 @@
+@@ -0,0 +1,365 @@
 +use parking_lot::Mutex;
 +use std::{cell::RefCell, collections::HashMap, future::Future, pin::Pin, sync::{Arc, atomic::{AtomicU64, Ordering}}};
 +use tokio::{sync::Notify, task::{AbortHandle, JoinHandle}};
 +
 +tokio::task_local! { static CURRENT: Arc<OwnedLoadScope>; }
++tokio::task_local! { static DNS_TRANSPORT: meow_common::transport_tasks::TransportScope; }
 +thread_local! { static BLOCKING: RefCell<Option<Arc<OwnedLoadScope>>> = const { RefCell::new(None) }; }
 +
 +#[derive(Default)]
@@ -1414,7 +2340,21 @@
 +    pub resource_read_root: Option<std::path::PathBuf>,
 +    pub cache_root: std::path::PathBuf,
 +}
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub enum DisabledDnsSource {
++    Physical(Vec<std::net::SocketAddr>),
++    UnavailableNotConnected,
++}
++
 +pub trait LoadContext: Send + Sync {
++    fn disabled_dns_source(&self) -> Result<DisabledDnsSource, &'static str> {
++        let Some(servers) = self.physical_dns_servers() else {
++            return Err(if self.requires_physical_dns() { "physicalDnsSnapshotMissing" } else { "disabledDnsSourceMissing" });
++        };
++        validate_disabled_dns_servers(servers).map(DisabledDnsSource::Physical)
++    }
++    fn requires_dns_transport_scope(&self) -> bool { false }
++    fn dns_transport_scope(&self) -> Option<meow_common::transport_tasks::TransportScope> { None }
 +    fn offline_validation(&self) -> bool { false }
 +    fn requires_provider_roots(&self) -> bool { false }
 +    fn provider_roots(&self) -> Option<ProviderRoots> { None }
@@ -1431,6 +2371,14 @@
 +}
 +pub struct OwnedLoadScope {
 +    jobs: Mutex<Jobs>, changed: Notify, serial: AtomicU64, context: Arc<dyn LoadContext>,
++}
++
++fn validate_disabled_dns_servers(servers: Vec<std::net::SocketAddr>) -> Result<Vec<std::net::SocketAddr>, &'static str> {
++    if servers.is_empty() { return Err("physicalDnsSnapshotEmpty"); }
++    if servers.iter().any(|server| server.port() == 0 || server.ip().is_unspecified() || server.ip().is_multicast()) {
++        return Err("physicalDnsSnapshotInvalid");
++    }
++    Ok(servers)
 +}
 +
 +struct Lease { owner: Arc<OwnedLoadScope>, id: u64 }
@@ -1471,6 +2419,13 @@
 +            return Err("providerRootsInvalid");
 +        }
 +        Ok(Some(roots))
++    }
++    pub fn requires_physical_dns(&self) -> bool { self.context.requires_physical_dns() }
++    pub fn disabled_dns_source(&self) -> Result<DisabledDnsSource, &'static str> {
++        match self.context.disabled_dns_source()? {
++            DisabledDnsSource::UnavailableNotConnected => Ok(DisabledDnsSource::UnavailableNotConnected),
++            DisabledDnsSource::Physical(servers) => validate_disabled_dns_servers(servers).map(DisabledDnsSource::Physical),
++        }
 +    }
 +    pub fn disabled_dns_servers(&self) -> Result<Option<Vec<std::net::SocketAddr>>, &'static str> {
 +        let Some(servers) = self.context.physical_dns_servers() else {
@@ -1714,6 +2669,25 @@
 +
 +/// Captured ownership context only; never reads or changes the CLI global.
 +pub fn offline_validation() -> bool { OwnedLoadScope::current().is_some_and(|scope| scope.offline_validation()) }
++
++/// An explicit fresh DNS-generation owner overrides the initial factory owner.
++/// Only this future sees it; no global or successor context is consulted.
++pub fn with_dns_transport_scope<'a, F>(scope: meow_common::transport_tasks::TransportScope, work: F)
++    -> Pin<Box<dyn Future<Output = F::Output> + Send + 'a>>
++where F: Future + Send + 'a, F::Output: Send + 'a {
++    let work: Pin<Box<dyn Future<Output = F::Output> + Send + 'a>> = Box::pin(work);
++    Box::pin(DNS_TRANSPORT.scope(scope, work))
++}
++
++pub(crate) fn dns_transport_scope() -> Result<Option<meow_common::transport_tasks::TransportScope>, &'static str> {
++    let owner = OwnedLoadScope::current();
++    if owner.as_ref().is_some_and(|owner| owner.is_cancelled()) { return Err("ownedLoadScopeClosed"); }
++    if let Ok(scope) = DNS_TRANSPORT.try_with(Clone::clone) { return Ok(Some(scope)); }
++    let Some(owner) = owner else { return Ok(None); };
++    let scope = owner.context.dns_transport_scope();
++    if scope.is_none() && owner.context.requires_dns_transport_scope() { return Err("dnsTransportOwnerMissing"); }
++    Ok(scope)
++}
 --- /dev/null
 +++ b/crates/meow-config/src/provider_events.rs
 @@ -0,0 +1,45 @@
@@ -3102,6 +4076,480 @@
              return tcp_message_exchange(&mut stream, wire, expected).await;
          }
          return Ok(response);
+--- a/crates/meow-dns/src/resolver.rs
++++ b/crates/meow-dns/src/resolver.rs
+@@ -9,9 +9,11 @@
+ use ipnet::IpNet;
+ use meow_common::conn_note;
+ use meow_common::DnsMode;
++use meow_common::transport_tasks::{self, TransportScope, Work};
+ use meow_trie::DomainTrie;
+ use smol_str::SmolStr;
+ use std::collections::{BTreeSet, HashMap};
++use std::future::Future;
+ use std::io;
+ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+ use std::sync::Arc;
+@@ -261,6 +263,11 @@
+     /// Whether IPv6 resolution is enabled. Driven by the top-level `ipv6`
+     /// config flag and fixed at construction time.
+     ipv6: bool,
++    /// Captured owner for Core DNS work belonging to this resolver generation.
++    /// Set by the embedding runtime before publishing this resolver.
++    transport_scope: Option<TransportScope>,
++    /// Explicit no-network state: local data remains usable, upstream misses fail without I/O.
++    unavailable_error: Option<io::ErrorKind>,
+ }
+ 
+ impl Resolver {
+@@ -269,6 +276,34 @@
+     /// captured.
+     pub fn main_nameservers(&self) -> &[Arc<DnsClient>] {
+         &self.main
++    }
++
++    /// Mark this immutable resolver generation as explicitly offline. Hosts and
++    /// fresh cache hits remain available; upstream misses return `kind` without I/O.
++    pub fn unavailable(mut self, kind: io::ErrorKind) -> Self {
++        self.unavailable_error = Some(kind);
++        self
++    }
++
++    /// Bind DNS requests and upstream exchanges to the immutable owner captured
++    /// for this resolver generation before placing it in the live slot.
++    pub fn with_transport_scope(mut self, scope: TransportScope) -> Self {
++        self.transport_scope = Some(scope);
++        self
++    }
++
++    /// Dispatch one DNS-server request through this resolver generation's
++    /// task owner. Native owners retain the actual JoinHandle and join it when
++    /// this generation is retired.
++    pub(crate) async fn spawn_owned(&self, work: Work) -> io::Result<tokio::task::AbortHandle> {
++        if let Some(scope) = &self.transport_scope {
++            let scope_for_work = scope.clone();
++            let work: Work = Box::pin(async move { scope_for_work.scope(work).await });
++            let scope_for_spawn = scope.clone();
++            scope_for_spawn.scope(async move { transport_tasks::spawn(work) }).await
++        } else {
++            transport_tasks::spawn(work)
++        }
+     }
+ }
+ 
+@@ -483,6 +518,52 @@
+ /// negative is returned.
+ const NEGATIVE_GRACE_PERIOD: Duration = Duration::from_millis(300);
+ 
++/// Run one upstream exchange in this resolver generation's captured task
++/// owner. The task owner retains and joins the real spawned task at retirement.
++async fn run_owned_query<T, F>(scope: Option<TransportScope>, future: F) -> Result<T, ClientError>
++where
++    T: Send + 'static,
++    F: Future<Output = Result<T, ClientError>> + Send + 'static,
++{
++    let Some(scope) = scope else {
++        #[cfg(all(
++            feature = "aerove-android-runtime",
++            any(target_os = "linux", target_os = "android", target_os = "macos")
++        ))]
++        if meow_common::socket_protect::NetworkScope::current().is_some() {
++            return Err(ClientError::Io(io::Error::other("capturedTransportOwnerMissing")));
++        }
++        return future.await;
++    };
++    let (tx, rx) = tokio::sync::oneshot::channel();
++    let task_scope = scope.clone();
++    let work: Work = Box::pin(async move {
++        let result = task_scope.scope(future).await;
++        let _ = tx.send(result);
++    });
++    let abort = scope
++        .scope(async { transport_tasks::spawn(work) })
++        .await
++        .map_err(ClientError::Io)?;
++    struct AbortIfCallerLeaves(Option<tokio::task::AbortHandle>);
++    impl Drop for AbortIfCallerLeaves {
++        fn drop(&mut self) {
++            if let Some(abort) = self.0.take() {
++                abort.abort();
++            }
++        }
++    }
++    let mut abort_if_caller_leaves = AbortIfCallerLeaves(Some(abort));
++    let result = rx
++        .await
++        .map_err(|_| ClientError::Io(io::Error::new(
++            io::ErrorKind::Interrupted,
++            "captured DNS generation retired",
++        )))?;
++    abort_if_caller_leaves.0.take();
++    result
++}
++
+ /// Query a pool of clients in parallel for the requested family set `want`,
+ /// returning `(set, error)`: the first positive resolution or, after a short
+ /// grace period, the first definitive negative (review issue C: a fast
+@@ -500,6 +581,7 @@
+     host: &str,
+     want: QueryFamilies,
+     ipv6_enabled: bool,
++    scope: Option<TransportScope>,
+ ) -> (Option<FamilySet>, Option<ClientError>) {
+     if clients.is_empty() {
+         return (None, None);
+@@ -507,9 +589,16 @@
+     let started = tokio::time::Instant::now();
+     let mut pending = FuturesUnordered::new();
+     for client in clients {
++        let result_client = Arc::clone(client);
++        let query_client = Arc::clone(client);
++        let host = host.to_owned();
++        let query_scope = scope.clone();
+         pending.push(async move {
+-            let result = client.lookup_set(host, want, ipv6_enabled).await;
+-            (client, result)
++            let result = run_owned_query(query_scope, async move {
++                query_client.lookup_set(&host, want, ipv6_enabled).await
++            })
++            .await;
++            (result_client, result)
+         });
+     }
+     let mut negative: Option<FamilySet> = None;
+@@ -689,17 +778,41 @@
+ /// races first-Ok-wins — any validated `Message` (including a negative
+ /// rcode) answers, so pool semantics differ from the address pipeline's
+ /// positive-preference and grace period.
++async fn query_one_owned(
++    client: Arc<DnsClient>,
++    name: Name,
++    record_type: RecordType,
++    scope: Option<TransportScope>,
++) -> Result<Message, ClientError> {
++    run_owned_query(scope, async move { client.query_name(&name, record_type).await }).await
++}
++
+ async fn query_pool_generic(
+     clients: &[Arc<DnsClient>],
+     name: &Name,
+     record_type: RecordType,
++    scope: Option<TransportScope>,
+ ) -> Option<Message> {
+     match clients.len() {
+         0 => None,
+-        1 => clients[0].query_name(name, record_type).await.ok(),
++        1 => {
++            query_one_owned(Arc::clone(&clients[0]), name.clone(), record_type, scope)
++                .await
++                .ok()
++        }
+         2 => {
+-            let f1 = clients[0].query_name(name, record_type);
+-            let f2 = clients[1].query_name(name, record_type);
++            let f1 = query_one_owned(
++                Arc::clone(&clients[0]),
++                name.clone(),
++                record_type,
++                scope.clone(),
++            );
++            let f2 = query_one_owned(
++                Arc::clone(&clients[1]),
++                name.clone(),
++                record_type,
++                scope,
++            );
+             tokio::pin!(f1);
+             tokio::pin!(f2);
+             tokio::select! {
+@@ -711,7 +824,13 @@
+             let futs: Vec<_> = clients
+                 .iter()
+                 .map(|c| {
+-                    Box::pin(async move { c.query_name(name, record_type).await.map_err(|_| ()) })
++                    let scope = scope.clone();
++                    let name = name.clone();
++                    Box::pin(async move {
++                        query_one_owned(Arc::clone(c), name, record_type, scope)
++                            .await
++                            .map_err(|_| ())
++                    })
+                 })
+                 .collect();
+             futures::future::select_ok(futs).await.ok().map(|(m, _)| m)
+@@ -770,6 +889,8 @@
+             fakeip_skipper: None,
+             fakeip_ttl: DEFAULT_FAKE_IP_TTL,
+             ipv6,
++            transport_scope: TransportScope::current(),
++            unavailable_error: None,
+         }
+     }
+ 
+@@ -982,7 +1103,7 @@
+             let mut map = HashMap::new();
+             for host in &hostnames_needing_bootstrap {
+                 let (set, err) =
+-                    query_pool_set(&bootstrap_clients, host, QueryFamilies::BOTH, true).await;
++                    query_pool_set(&bootstrap_clients, host, QueryFamilies::BOTH, true, TransportScope::current()).await;
+                 let first = set.and_then(|set| set.positive_ips().into_iter().next());
+                 match first {
+                     Some(ip) => {
+@@ -1195,6 +1316,9 @@
+         // answer below. The error is only reported when nothing else can.
+         let mut lookup_err: Option<io::Error> = None;
+         let pipeline_set = if want.is_empty() {
++            None
++        } else if let Some(kind) = self.unavailable_error {
++            lookup_err = Some(io::Error::new(kind, "DNS unavailable: no captured network"));
+             None
+         } else {
+             match self.run_pipeline(lookup_host, want).await {
+@@ -1709,7 +1833,7 @@
+         if let Some(policy) = &self.policy {
+             if let Some(entry) = policy.lookup(host) {
+                 conn_note!(Dns, "nameserver-policy matched {host}");
+-                let (set, err) = query_pool_set(&entry.nameservers, host, want, self.ipv6).await;
++                let (set, err) = query_pool_set(&entry.nameservers, host, want, self.ipv6, self.transport_scope.clone()).await;
+                 upstream_err = prefer_errno(upstream_err, err);
+                 if let Some(set) = set {
+                     if set.has_positive() {
+@@ -1738,7 +1862,7 @@
+ 
+         // Global nameservers (parallel, first-positive / first-definitive-negative).
+         {
+-            let (set, err) = query_pool_set(&self.main, host, want, self.ipv6).await;
++            let (set, err) = query_pool_set(&self.main, host, want, self.ipv6, self.transport_scope.clone()).await;
+             upstream_err = prefer_errno(upstream_err, err);
+             if let Some(set) = set {
+                 if set.has_positive() {
+@@ -1784,7 +1908,7 @@
+         want: QueryFamilies,
+     ) -> (Option<FamilySet>, Option<ClientError>) {
+         match self.fallback.as_deref() {
+-            Some(clients) => query_pool_set(clients, host, want, self.ipv6).await,
++            Some(clients) => query_pool_set(clients, host, want, self.ipv6, self.transport_scope.clone()).await,
+             None => (None, None),
+         }
+     }
+@@ -1861,25 +1985,26 @@
+         domain: &str,
+         query_name: &Name,
+         record_type: RecordType,
+-    ) -> Option<Message> {
++    ) -> io::Result<Option<Message>> {
++        if let Some(kind) = self.unavailable_error {
++            return Err(io::Error::new(kind, "DNS unavailable: no captured network"));
++        }
+         if let Some(ff) = &self.fallback_filter {
+             if ff.domain_gated(domain) {
+-                return self.try_fallback_generic(query_name, record_type).await;
++                return Ok(self.try_fallback_generic(query_name, record_type).await);
+             }
+         }
+         if let Some(policy) = &self.policy {
+             if let Some(entry) = policy.lookup(domain) {
+-                if let Some(l) =
+-                    query_pool_generic(&entry.nameservers, query_name, record_type).await
+-                {
+-                    return Some(l);
++                if let Some(l) = query_pool_generic(&entry.nameservers, query_name, record_type, self.transport_scope.clone()).await {
++                    return Ok(Some(l));
+                 }
+             }
+         }
+-        if let Some(l) = query_pool_generic(&self.main, query_name, record_type).await {
+-            return Some(l);
+-        }
+-        self.try_fallback_generic(query_name, record_type).await
++        if let Some(l) = query_pool_generic(&self.main, query_name, record_type, self.transport_scope.clone()).await {
++            return Ok(Some(l));
++        }
++        Ok(self.try_fallback_generic(query_name, record_type).await)
+     }
+ 
+     async fn try_fallback_generic(
+@@ -1888,7 +2013,7 @@
+         record_type: RecordType,
+     ) -> Option<Message> {
+         let fb = self.fallback.as_deref()?;
+-        query_pool_generic(fb, query_name, record_type).await
++        query_pool_generic(fb, query_name, record_type, self.transport_scope.clone()).await
+     }
+ 
+     /// Capture the live reverse (IP → host) table with remaining lifetimes,
+@@ -2296,6 +2421,22 @@
+             client.upstream_label(),
+             "https://1.1.1.1/dns-query#cloudflare-dns.com"
+         );
++    }
++
++    #[tokio::test]
++    async fn offline_resolver_answers_local_hosts_and_fails_misses_without_upstream_io() {
++        let mut hosts: DomainTrie<HostEntry> = DomainTrie::new();
++        let local = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 44));
++        hosts.insert("node.test", vec![local].into());
++        let resolver = Resolver::new(vec![], vec![], DnsMode::Normal, hosts, true, false)
++            .unavailable(io::ErrorKind::NotConnected);
++
++        assert_eq!(resolver.resolve_ips("node.test").await.unwrap(), Some(vec![local]));
++        let error = resolver.resolve_ips("remote.test").await.unwrap_err();
++        assert_eq!(error.kind(), io::ErrorKind::NotConnected);
++        let name = Name::from_ascii("remote.test").unwrap();
++        let error = resolver.forward_generic("remote.test", &name, RecordType::TXT).await.unwrap_err();
++        assert_eq!(error.kind(), io::ErrorKind::NotConnected);
+     }
+ 
+     #[tokio::test]
+@@ -4037,3 +4178,88 @@
+         assert_eq!(resolver.resolve_ips("gone.example").await.unwrap(), None);
+     }
+ }
++
++
++#[cfg(test)]
++mod owned_generation_tests {
++    use super::*;
++    use meow_common::transport_tasks::{TransportTaskContext, Work};
++    use std::sync::Mutex;
++    use tokio::task::{AbortHandle, JoinHandle};
++
++    #[derive(Default)]
++    struct JoinOwner {
++        tasks: Mutex<Vec<JoinHandle<()>>>,
++    }
++
++    impl TransportTaskContext for JoinOwner {
++        fn spawn(&self, work: Work) -> io::Result<AbortHandle> {
++            let task = tokio::spawn(work);
++            let abort = task.abort_handle();
++            self.tasks.lock().unwrap().push(task);
++            Ok(abort)
++        }
++    }
++
++    impl JoinOwner {
++        async fn close_joined(&self) {
++            let tasks = std::mem::take(&mut *self.tasks.lock().unwrap());
++            for task in &tasks {
++                task.abort();
++            }
++            for task in tasks {
++                let _ = task.await;
++            }
++        }
++    }
++
++    #[tokio::test]
++    async fn resolver_captures_generation_scope_when_constructed() {
++        let owner = Arc::new(JoinOwner::default());
++        let scope = TransportScope::new(owner);
++        let resolver = scope
++            .scope(async {
++                Resolver::new(
++                    vec![],
++                    vec![],
++                    DnsMode::Normal,
++                    DomainTrie::new(),
++                    true,
++                    true,
++                )
++            })
++            .await;
++        assert!(resolver.transport_scope.is_some());
++    }
++
++    #[tokio::test]
++    async fn upstream_exchange_stays_with_captured_generation() {
++        let old_owner = Arc::new(JoinOwner::default());
++        let next_owner = Arc::new(JoinOwner::default());
++        let old_scope = TransportScope::new(old_owner.clone());
++        let result = run_owned_query(Some(old_scope), async { Ok::<_, ClientError>(41_u8) })
++            .await
++            .unwrap();
++        assert_eq!(result, 41);
++        assert_eq!(old_owner.tasks.lock().unwrap().len(), 1);
++        assert!(next_owner.tasks.lock().unwrap().is_empty());
++        old_owner.close_joined().await;
++    }
++
++    #[tokio::test]
++    async fn retiring_generation_cancels_and_joins_pending_exchange() {
++        let owner = Arc::new(JoinOwner::default());
++        let scope = TransportScope::new(owner.clone());
++        let query = tokio::spawn(run_owned_query(
++            Some(scope),
++            std::future::pending::<Result<(), ClientError>>(),
++        ));
++        while owner.tasks.lock().unwrap().is_empty() {
++            tokio::task::yield_now().await;
++        }
++        owner.close_joined().await;
++        let error = query.await.unwrap().unwrap_err();
++        assert_eq!(error.to_io().kind(), io::ErrorKind::Interrupted);
++        assert!(owner.tasks.lock().unwrap().is_empty());
++    }
++}
+--- a/crates/meow-dns/src/server.rs
++++ b/crates/meow-dns/src/server.rs
+@@ -488,7 +488,7 @@
+             .await;
+ 
+         let mut resp = match lookup {
+-            Some(mut l) => {
++            Ok(Some(mut l)) => {
+                 l.metadata.id = id;
+                 // `validate_response` already guarantees this — pinned
+                 // anyway since the field drives what we emit.
+@@ -550,7 +550,7 @@
+                 }
+                 l
+             }
+-            None => {
++            Ok(None) | Err(_) => {
+                 let mut resp = Message::new(id, MessageType::Response, req.metadata.op_code);
+                 resp.metadata.recursion_desired = req.metadata.recursion_desired;
+                 resp.metadata.checking_disabled = req.metadata.checking_disabled;
+@@ -1025,23 +1025,20 @@
+             let data = buf[..len].to_vec();
+             let resolver_slot = Arc::clone(&resolver);
+             let sock: Weak<UdpSocket> = Arc::downgrade(&socket);
+-            tokio::spawn(async move {
++            // Snapshot before scheduling so the request task is registered
++            // with the exact generation it will query, never a later slot.
++            let request_resolver = Arc::clone(&resolver_slot.read());
++            let task_owner = Arc::clone(&request_resolver);
++            let work: meow_common::transport_tasks::Work = Box::pin(async move {
+                 let _permit = permit;
+-                // Snapshot the current resolver generation per query —
+-                // a `PUT /configs` DNS reload swaps the slot (issue #514).
+-                // The read guard must drop before `.await`: it is !Send.
+-                let resolver = Arc::clone(&resolver_slot.read());
+                 // Panic guard: a panicked task would drop the query, so keep
+                 // the panic scoped to this one request and log it loudly.
+-                let outcome = AssertUnwindSafe(DnsServer::handle_query(&data, &resolver))
++                let outcome = AssertUnwindSafe(DnsServer::handle_query(&data, &request_resolver))
+                     .catch_unwind()
+                     .await;
+                 match outcome {
+                     Ok(Ok(response)) => {
+-                        // Upgrade per reply; hold the strong ref only across
+-                        // the send so the serve loop stays the socket owner.
+                         let Some(sock) = sock.upgrade() else {
+-                            // Server dropped — exit so the port stays free.
+                             return;
+                         };
+                         if let Err(e) = sock.send_to(&response, src).await {
+@@ -1056,6 +1053,9 @@
+                     }
+                 }
+             });
++            if let Err(e) = task_owner.spawn_owned(work).await {
++                warn!("DNS request owner unavailable; query dropped: {}", e);
++            }
+         }
+     }
+ }
 --- a/crates/meow-listener/Cargo.toml
 +++ b/crates/meow-listener/Cargo.toml
 @@ -9,6 +9,7 @@
@@ -3409,7 +4857,43 @@
      }
  
      fn health(&self) -> &ProxyHealth {
-@@ -733,6 +742,25 @@
+@@ -262,6 +271,7 @@
+ type PendingRead = Pin<Box<dyn std::future::Future<Output = io::Result<Vec<u8>>> + Send>>;
+ 
+ struct AnytlsConn {
++    spawner: meow_common::scoped_join::Spawner,
+     stream: Arc<AnytlsStream>,
+     // Keep the owning session alive even if the adapter is dropped while
+     // this connection is still in use.
+@@ -280,6 +290,7 @@
+             stream,
+             session,
+             session_owned: false,
++            spawner: meow_common::scoped_join::Spawner::capture(),
+             pending_read: Mutex::new(None),
+         }
+     }
+@@ -291,6 +302,7 @@
+             stream,
+             session,
+             session_owned: true,
++            spawner: meow_common::scoped_join::Spawner::capture(),
+             pending_read: Mutex::new(None),
+         }
+     }
+@@ -387,9 +399,9 @@
+         // session persists until its transport dies — no other watchdog
+         // exists; acceptable because conns are dropped on runtime tasks.
+         if self.session_owned {
+-            if let Ok(handle) = tokio::runtime::Handle::try_current() {
++            if tokio::runtime::Handle::try_current().is_ok() {
+                 let session = Arc::clone(&self.session);
+-                handle.spawn(async move {
++                let _ = self.spawner.try_spawn(async move {
+                     if let Err(e) = session.close().await {
+                         tracing::debug!("anytls: owned session close failed: {e}");
+                     }
+@@ -733,6 +745,25 @@
      use meow_common::Network;
      use std::time::Duration;
      use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
@@ -3435,9 +4919,118 @@
  
      async fn test_session() -> (Arc<Session>, DuplexStream) {
          let (io, peer) = tokio::io::duplex(64);
+--- a/crates/meow-proxy/src/dialer.rs
++++ b/crates/meow-proxy/src/dialer.rs
+@@ -446,8 +446,8 @@
+         /// on its own once the `PollSender` side closes — but only after
+         /// the in-flight `write_packet` completes, so a wedged front-proxy
+         /// conn would pin it indefinitely; abort that one too.
+-        read_task: tokio::task::JoinHandle<()>,
+-        write_task: tokio::task::JoinHandle<()>,
++        read_task: meow_common::scoped_join::ScopedJoin<()>,
++        write_task: meow_common::scoped_join::ScopedJoin<()>,
+     }
+ 
+     impl Drop for PacketConnSocket {
+@@ -458,12 +458,12 @@
+     }
+ 
+     impl PacketConnSocket {
+-        pub fn new(conn: Arc<dyn meow_common::ProxyPacketConn>, remote: SocketAddr) -> Self {
++        pub fn new(conn: Arc<dyn meow_common::ProxyPacketConn>, remote: SocketAddr) -> io::Result<Self> {
+             let (in_tx, inbound) = mpsc::channel(QUEUE);
+             let (outbound, mut out_rx) = mpsc::channel::<Vec<u8>>(QUEUE);
+ 
+             let reader = Arc::clone(&conn);
+-            let read_task = tokio::spawn(async move {
++            let read_task = meow_common::scoped_join::try_spawn(async move {
+                 let mut buf = vec![0u8; 65536];
+                 // try_send drops on a full queue: KCP retransmits, same as
+                 // a full kernel socket buffer upstream.
+@@ -471,8 +471,8 @@
+                     let _ = in_tx.try_send(buf[..n].to_vec());
+                 }
+                 let _ = reader.close();
+-            });
+-            let write_task = tokio::spawn(async move {
++            })?;
++            let write_task = meow_common::scoped_join::try_spawn(async move {
+                 while let Some(pkt) = out_rx.recv().await {
+                     if conn.write_packet(&pkt, &remote).await.is_err() {
+                         break;
+@@ -481,12 +481,13 @@
+                 let _ = conn.close();
+             });
+ 
+-            Self {
++            let write_task = match write_task { Ok(task) => task, Err(error) => { read_task.abort(); return Err(error); } };
++            Ok(Self {
+                 inbound: Mutex::new(inbound),
+                 outbound: Mutex::new(PollSender::new(outbound)),
+                 read_task,
+                 write_task,
+-            }
++            })
+         }
+     }
+ 
+@@ -794,7 +795,7 @@
+         // internal would leave the front hop permanently "unused" while
+         // user traffic flows (issue #555 boundary).
+         let conn = self.dial_udp_conn(UdpTarget::Addr(remote), false).await?;
+-        Ok(Box::new(PacketConnSocket::new(conn, remote)))
++        Ok(Box::new(PacketConnSocket::new(conn, remote)?))
+     }
+ }
+ 
+@@ -2586,7 +2587,7 @@
+         });
+         let conn_cloned = Arc::clone(&conn);
+         let conn_dyn: Arc<dyn ProxyPacketConn> = conn_cloned;
+-        let mut sock = super::packet_conn_socket::PacketConnSocket::new(conn_dyn, remote);
++        let mut sock = super::packet_conn_socket::PacketConnSocket::new(conn_dyn, remote).unwrap();
+ 
+         // Outbound: poll_send → write pump → conn.write_packet(remote).
+         poll_fn(|cx| sock.poll_send(cx, b"ping"))
 --- a/crates/meow-proxy/src/direct.rs
 +++ b/crates/meow-proxy/src/direct.rs
-@@ -333,6 +333,25 @@
+@@ -3,10 +3,12 @@
+     AdapterType, MeowError, Metadata, ProxyAdapter, ProxyConn, ProxyHealth, ProxyPacketConn, Result,
+ };
+ use meow_dns::Resolver;
+-use std::net::SocketAddr;
++use std::{future::Future, net::SocketAddr};
+ use std::sync::Arc;
+ use std::time::Duration;
+ use tokio::net::{TcpStream, UdpSocket};
++
++tokio::task_local! { static RESOLVER_SNAPSHOT: Arc<Resolver>; }
+ 
+ pub struct DirectAdapter {
+     /// `Direct` normally; `Compatible` for the built-in `COMPATIBLE`
+@@ -36,6 +38,11 @@
+ }
+ 
+ impl DirectAdapter {
++    /// Pin this adapter's DNS view for one in-flight owner. New owners observe
++    /// later resolver-slot swaps; this future keeps its captured generation.
++    pub async fn with_resolver_snapshot<F: Future>(&self, resolver: Arc<Resolver>, work: F) -> F::Output {
++        RESOLVER_SNAPSHOT.scope(resolver, work).await
++    }
+     pub fn new() -> Self {
+         Self {
+             adapter_type: AdapterType::Direct,
+@@ -117,7 +124,8 @@
+         //    standalone usage).
+         if !metadata.host.is_empty() {
+             if let Some(resolver) = &self.resolver {
+-                let resolver = Arc::clone(&resolver.read());
++                let resolver = RESOLVER_SNAPSHOT.try_with(Arc::clone)
++                    .unwrap_or_else(|_| Arc::clone(&resolver.read()));
+                 return match resolver.resolve_ips(&metadata.host).await {
+                     Ok(Some(ips)) if !ips.is_empty() => Ok(ips
+                         .into_iter()
+@@ -333,6 +341,25 @@
      }
  
      async fn dial_tcp(&self, metadata: &Metadata) -> Result<Box<dyn ProxyConn>> {
@@ -3474,7 +5067,25 @@
          }
          let mut fallback: Option<Arc<dyn Proxy>> = None;
          for p in &self.static_proxies {
-@@ -343,6 +343,40 @@
+@@ -230,7 +230,7 @@
+             super::note_front_hop_member(&self.chain_health, target, &proxy);
+         }
+         let attempt = super::DialAttempt::new(&self.name, &self.dial_failures, &proxy);
+-        let conn = attempt.run(proxy.dial_tcp(metadata)).await?;
++        let conn = attempt.run(proxy.dial_tcp_observed(metadata)).await?;
+         Ok(match front_hop {
+             Some(target) => {
+                 super::watch_front_hop(conn, &self.name, &self.chain_health, target, &proxy)
+@@ -245,7 +245,7 @@
+             .first_alive()
+             .ok_or_else(|| MeowError::Proxy("no proxy available".into()))?;
+         let attempt = super::DialAttempt::new(&self.name, &self.dial_failures, &proxy);
+-        attempt.run(proxy.dial_udp(metadata)).await
++        attempt.run(proxy.dial_udp_observed(metadata)).await
+     }
+ 
+     fn unwrap_proxy(&self, metadata: &Metadata, touch: bool) -> Option<Arc<dyn Proxy>> {
+@@ -343,6 +343,45 @@
          Ok(())
      }
  
@@ -3503,6 +5114,11 @@
 +        if let Some(store) = &self.store { store.set_memory(&self.name, name); }
 +        Ok(())
 +    }
++    fn unfix_memory(&self) -> Result<()> {
++        *self.fixed.write() = None;
++        if let Some(store) = &self.store { store.set_memory(&self.name, ""); }
++        Ok(())
++    }
 +    fn flush_selection(&self) -> Option<Box<dyn FnOnce() + Send>> {
 +        self.store.clone().map(|store| Box::new(move || store.flush()) as Box<dyn FnOnce() + Send>)
 +    }
@@ -3515,8 +5131,162 @@
      fn force_set(&self, name: Option<&str>) {
          *self.fixed.write() = name.map(SmolStr::from);
          if let Some(store) = &self.store {
+--- a/crates/meow-proxy/src/group/load_balance.rs
++++ b/crates/meow-proxy/src/group/load_balance.rs
+@@ -364,7 +364,7 @@
+             super::note_front_hop_member(&self.chain_health, target, &proxy);
+         }
+         let attempt = super::DialAttempt::new(&self.name, &self.dial_failures, &proxy);
+-        let conn = attempt.run(proxy.dial_tcp(metadata)).await?;
++        let conn = attempt.run(proxy.dial_tcp_observed(metadata)).await?;
+         Ok(match front_hop {
+             Some(target) => {
+                 super::watch_front_hop(conn, &self.name, &self.chain_health, target, &proxy)
+@@ -389,7 +389,7 @@
+             }
+         })?;
+         let attempt = super::DialAttempt::new(&self.name, &self.dial_failures, &proxy);
+-        attempt.run(proxy.dial_udp(metadata)).await
++        attempt.run(proxy.dial_udp_observed(metadata)).await
+     }
+ 
+     fn unwrap_proxy(&self, metadata: &Metadata, touch: bool) -> Option<Arc<dyn Proxy>> {
+--- a/crates/meow-proxy/src/group/relay.rs
++++ b/crates/meow-proxy/src/group/relay.rs
+@@ -326,73 +326,41 @@
+     final_target: &Metadata,
+     first_hop_traffic: Option<Arc<ProxyTraffic>>,
+ ) -> Result<Box<dyn ProxyConn>> {
+-    debug_assert!(
+-        proxies.len() >= 2,
+-        "relay chain must have at least 2 proxies"
+-    );
+-
++    use meow_common::dial_outcome::{DialOutcome, DialReceipt};
++    debug_assert!(proxies.len() >= 2, "relay chain must have at least 2 proxies");
+     let proxies = flatten_hops(proxies, final_target, true)?;
+     if proxies.len() < 2 {
+-        return Err(MeowError::Proxy(format!(
+-            "relay: chain resolved to fewer than 2 hops ({})",
+-            proxies.len()
+-        )));
+-    }
+-
+-    // proxy[0]: real TCP connect; target = the next non-DIRECT proxy's
+-    // server:port, or the final destination if only DIRECT hops remain.
+-    let meta = metadata_for_next_hop(&proxies, 1, final_target);
+-    debug!(
+-        relay.hop = 0,
+-        relay.proxy = proxies[0].name(),
+-        relay.target = %meta.remote_address(),
+-        "relay: dial_tcp hop 0"
+-    );
+-    let mut conn: Box<dyn ProxyConn> =
+-        proxies[0]
+-            .dial_tcp(&meta)
+-            .await
+-            .map_err(|e| MeowError::RelayHopFailed {
+-                hop: 0,
+-                source: Box::new(e),
+-            })?;
++        return Err(MeowError::Proxy(format!("relay: chain resolved to fewer than 2 hops ({})", proxies.len())));
++    }
++    // Every hop receives its own receipt, even when metadata_for_next_hop
++    // clones final_target for a transparent tail. Nested DPA/relays can
++    // only complete this hop's branch, never an ancestor's receipt.
++    let mut successful: Vec<DialOutcome> = Vec::with_capacity(proxies.len());
++    let (meta, receipt) = DialReceipt::branch(&metadata_for_next_hop(&proxies, 1, final_target));
++    debug!(relay.hop=0, relay.proxy=proxies[0].name(), relay.target=%meta.remote_address(), "relay: dial_tcp hop 0");
++    let mut conn = proxies[0].dial_tcp_observed(&meta).await
++        .map_err(|source| MeowError::RelayHopFailed { hop:0, source:Box::new(source) })?;
++    successful.push(receipt.outcome().ok_or_else(||MeowError::Proxy("relay first hop omitted successful outcome".into()))?);
+     conn = crate::dialer::count_hop(conn, first_hop_traffic);
+-
+-    // proxy[1..N-2]: connect_over through the previous hop's stream.
+-    for i in 1..proxies.len() - 1 {
+-        let meta = metadata_for_next_hop(&proxies, i + 1, final_target);
+-        debug!(
+-            relay.hop = i,
+-            relay.proxy = proxies[i].name(),
+-            relay.target = %meta.remote_address(),
+-            "relay: connect_over hop {i}"
+-        );
+-        conn =
+-            proxies[i]
+-                .connect_over(conn, &meta)
+-                .await
+-                .map_err(|e| MeowError::RelayHopFailed {
+-                    hop: i,
+-                    source: Box::new(e),
+-                })?;
+-    }
+-
+-    // proxy[N-1]: final hop connects to the actual target.
+-    let last = proxies.len() - 1;
+-    debug!(
+-        relay.hop = last,
+-        relay.proxy = proxies[last].name(),
+-        relay.target = %final_target.remote_address(),
+-        "relay: connect_over final hop {last}"
+-    );
+-    conn = proxies[last]
+-        .connect_over(conn, final_target)
+-        .await
+-        .map_err(|e| MeowError::RelayHopFailed {
+-            hop: last,
+-            source: Box::new(e),
+-        })?;
+-
++    for i in 1..proxies.len() {
++        let target = if i + 1 == proxies.len() { final_target.clone() }
++            else { metadata_for_next_hop(&proxies,i+1,final_target) };
++        let (meta,receipt) = DialReceipt::branch(&target);
++        debug!(relay.hop=i, relay.proxy=proxies[i].name(), relay.target=%meta.remote_address(), "relay: connect_over hop");
++        conn = proxies[i].connect_over_observed(conn,&meta).await
++            .map_err(|source|MeowError::RelayHopFailed{hop:i,source:Box::new(source)})?;
++        successful.push(receipt.outcome().ok_or_else(||MeowError::Proxy("relay hop omitted successful outcome".into()))?);
++    }
++    if let Some(parent) = final_target.dial_receipt.as_ref() {
++        // Receipt types, not declared wrapper types: a DPA around Direct
++        // can have actually reached the destination through a proxy front.
++        let transparent = |outcome: &DialOutcome| matches!(outcome.leaf_type,AdapterType::Direct|AdapterType::Compatible);
++        let effective = successful.iter().rev().find(|outcome|!transparent(outcome)).unwrap_or(&successful[0]);
++        let mut chains: Vec<Arc<str>>=successful.iter().rev().filter(|outcome|!transparent(outcome))
++            .flat_map(|outcome|outcome.chains.iter().cloned()).collect();
++        if chains.is_empty() { chains=effective.chains.clone(); }
++        parent.complete_route(DialOutcome{leaf_type:effective.leaf_type,chains})?;
++    }
+     Ok(conn)
+ }
+ 
+@@ -440,7 +408,7 @@
+         relay.target = %metadata.remote_address(),
+         "relay: dial_udp on the exit hop"
+     );
+-    exit.dial_udp(metadata).await
++    exit.dial_udp_observed(metadata).await
+ }
+ 
+ // ─── RelayGroup ───────────────────────────────────────────────────────────────
 --- a/crates/meow-proxy/src/group/selector.rs
 +++ b/crates/meow-proxy/src/group/selector.rs
+@@ -190,14 +190,14 @@
+         let proxy = self
+             .selected_proxy()
+             .ok_or_else(|| MeowError::Proxy("no proxy selected".into()))?;
+-        proxy.dial_tcp(metadata).await
++        proxy.dial_tcp_observed(metadata).await
+     }
+ 
+     async fn dial_udp(&self, metadata: &Metadata) -> Result<Box<dyn ProxyPacketConn>> {
+         let proxy = self
+             .selected_proxy()
+             .ok_or_else(|| MeowError::Proxy("no proxy selected".into()))?;
+-        proxy.dial_udp(metadata).await
++        proxy.dial_udp_observed(metadata).await
+     }
+ 
+     fn unwrap_proxy(&self, _metadata: &Metadata, _touch: bool) -> Option<Arc<dyn Proxy>> {
 @@ -272,6 +272,21 @@
          }
      }
@@ -3567,7 +5337,75 @@
          // committed map — without this, a slow writer holding an older
 --- a/crates/meow-proxy/src/group/urltest.rs
 +++ b/crates/meow-proxy/src/group/urltest.rs
-@@ -459,6 +459,14 @@
+@@ -22,8 +22,8 @@
+     test_url: String,
+     expected_status: String,
+     /// Name of the currently selected proxy; `None` means "not yet picked,
+-    /// use the first available".  Updated by `pick_for_dial` whenever it
+-    /// promotes a new best.
++    /// use the first available". Managed groups update it only from their
++    /// owner commit; standalone groups retain the original dial-time update.
+     fastest: RwLock<Option<SmolStr>>,
+     health: ProxyHealth,
+     display: GroupDisplay,
+@@ -138,6 +138,13 @@
+     /// scanned again to read the current proxy's delay/aliveness; then
+     /// `fastest_proxy` cloned the Vec a second time to look up by name.
+     fn pick_for_dial(&self) -> Option<Arc<dyn Proxy>> {
++        // Managed health and policy commits reconcile the cached choice in
++        // their existing gate. Dial/UDP capability/unwrap are readers only.
++        if self.health.observed() { return self.fastest_proxy(); }
++        self.refresh_fastest()
++    }
++
++    fn refresh_fastest(&self) -> Option<Arc<dyn Proxy>> {
+         if let Some(proxy) = self.fixed_proxy_if_alive() {
+             return Some(proxy);
+         }
+@@ -336,11 +343,8 @@
+     }
+ 
+     fn support_udp(&self) -> bool {
+-        // Answer for the member `dial_udp` would actually pick — not the
+-        // stale `fastest` cache: `pick_for_dial` recomputes the selection
+-        // (including tolerance hysteresis) so a UDP query neither under-
+-        // advertises before the first TCP dial nor over-advertises when
+-        // `fastest` names a member that has since gone dead.
++        // Use the same choice as dial_udp. Managed groups read their
++        // committed pick; standalone groups retain tolerance recomputation.
+         self.pick_for_dial().is_some_and(|p| p.support_udp())
+     }
+ 
+@@ -353,7 +357,7 @@
+             super::note_front_hop_member(&self.chain_health, target, &proxy);
+         }
+         let attempt = super::DialAttempt::new(&self.name, &self.dial_failures, &proxy);
+-        let conn = attempt.run(proxy.dial_tcp(metadata)).await?;
++        let conn = attempt.run(proxy.dial_tcp_observed(metadata)).await?;
+         Ok(match front_hop {
+             Some(target) => {
+                 super::watch_front_hop(conn, &self.name, &self.chain_health, target, &proxy)
+@@ -368,16 +372,15 @@
+             .pick_for_dial()
+             .ok_or_else(|| MeowError::Proxy("no proxy available".into()))?;
+         let attempt = super::DialAttempt::new(&self.name, &self.dial_failures, &proxy);
+-        attempt.run(proxy.dial_udp(metadata)).await
++        attempt.run(proxy.dial_udp_observed(metadata)).await
+     }
+ 
+     fn unwrap_proxy(&self, metadata: &Metadata, touch: bool) -> Option<Arc<dyn Proxy>> {
+         if touch {
+             self.usage.touch_user_traffic(metadata);
+         }
+-        // upstream `Unwrap` → `fast(touch)`: `touch` gates only usage
+-        // recording — the recompute and the `fastest` update happen on
+-        // peeks too, so the probe can never disagree with the next dial.
++        // `touch` gates usage only. Managed peeks and dials read the same
++        // committed choice; standalone peeks keep the original recompute.
+         self.pick_for(metadata, false).map(|(pick, _)| pick)
+     }
+ 
+@@ -459,6 +462,34 @@
          Ok(())
      }
  
@@ -3579,12 +5417,53 @@
 +        self.force_set(Some(name));
 +        Ok(())
 +    }
++    fn commit_memory(&self, name: &str) -> Result<()> {
++        if !self.contains_name(name) { return Err(MeowError::Proxy("proxy not exist".into())); }
++        *self.fixed.write() = Some(SmolStr::from(name));
++        if let Some(store) = &self.store { store.set_memory(&self.name, name); }
++        Ok(())
++    }
++    fn unfix_memory(&self) -> Result<()> {
++        *self.fixed.write() = None;
++        if let Some(store) = &self.store { store.set_memory(&self.name, ""); }
++        let _ = self.refresh_fastest();
++        Ok(())
++    }
++    fn flush_selection(&self) -> Option<Box<dyn FnOnce() + Send>> {
++        self.store.clone().map(|store| Box::new(move || store.flush()) as Box<dyn FnOnce() + Send>)
++    }
++    fn reconcile_health(&self) {
++        // Preserve URLTest's existing pin semantics: a dead fixed member is
++        // temporarily bypassed, not erased, and resumes when healthy again.
++        let _ = self.refresh_fastest();
++    }
      fn force_set(&self, name: Option<&str>) {
          *self.fixed.write() = name.map(SmolStr::from);
          if let Some(store) = &self.store {
 --- a/crates/meow-proxy/src/health.rs
 +++ b/crates/meow-proxy/src/health.rs
-@@ -55,6 +55,11 @@
+@@ -35,6 +35,20 @@
+ pub enum UrlTestError {
+     Timeout,
+     Transport(String),
++}
++
++/// Validate using the exact scoped or CLI prober parser without dialing or
++/// publishing health. Group unpin admission must be side-effect free.
++pub fn validate_url_test_parameters(url: &str, expected: Option<&str>) -> Result<(), UrlTestError> {
++    match meow_common::probe_policy::capture() {
++        Ok(Some(_)) => crate::probe_head::parameters(url, expected).map(|_| ()),
++        Err(_) => Err(UrlTestError::Transport("probe owner closed".into())),
++        Ok(None) => {
++            ParsedUrl::parse(url).ok_or_else(|| UrlTestError::Transport(format!("invalid url: {url}")))?;
++            parse_expected(expected).map_err(UrlTestError::Transport)?;
++            Ok(())
++        }
++    }
+ }
+ 
+ /// Probe a proxy by dialing the target, issuing an HTTP/1.1 `GET`, and
+@@ -55,6 +69,11 @@
      expected: Option<&str>,
      timeout: Duration,
  ) -> Result<u16, UrlTestError> {
@@ -3596,7 +5475,7 @@
      let Some(parsed) = ParsedUrl::parse(url) else {
          return Err(UrlTestError::Transport(format!("invalid url: {url}")));
      };
-@@ -103,6 +108,14 @@
+@@ -103,6 +122,14 @@
      }
  }
  
@@ -3611,7 +5490,7 @@
  /// Probe a proxy and record the result in its [`ProxyHealth`].
  ///
  /// On success the measured delay (ms) is recorded; on any failure `0` is
-@@ -119,6 +132,7 @@
+@@ -119,6 +146,7 @@
          .expect("global delay probe semaphore is never closed");
      let adapter: &dyn ProxyAdapter = proxy.as_ref();
      let result = url_test(adapter, url, expected, timeout).await;
@@ -3619,7 +5498,7 @@
      match &result {
          Ok(d) => proxy.health().record_delay(*d),
          Err(_) => proxy.health().record_delay(0),
-@@ -858,7 +872,7 @@
+@@ -858,7 +886,7 @@
  
  /// Parse an `expected` query-param value into inclusive status-code ranges.
  /// Empty / `None` defaults to `[200..=299]`, matching upstream.
@@ -3628,6 +5507,102 @@
      let s = spec.unwrap_or("").trim();
      if s.is_empty() {
          return Ok(vec![(200, 299)]);
+--- a/crates/meow-proxy/src/hysteria2/client.rs
++++ b/crates/meow-proxy/src/hysteria2/client.rs
+@@ -18,6 +18,7 @@
+ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+ 
+ pub struct ReconnectableClient {
++    spawner: meow_common::scoped_join::Spawner,
+     cfg: Arc<Config>,
+     /// The cached connection and the [`generation`](Self::generation) it
+     /// was established under.
+@@ -34,6 +35,7 @@
+             cfg: Arc::new(cfg),
+             conn: Mutex::new(None),
+             generation: AtomicU::new(0),
++            spawner: meow_common::scoped_join::Spawner::capture(),
+         }
+     }
+ 
+@@ -57,9 +59,9 @@
+         if let Ok(mut guard) = self.conn.try_lock() {
+             return guard.take().is_some();
+         }
+-        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
++        if tokio::runtime::Handle::try_current().is_ok() {
+             let client = Arc::clone(self);
+-            runtime.spawn(async move {
++            let _ = self.spawner.try_spawn(async move {
+                 let mut guard = client.conn.lock().await;
+                 if guard
+                     .as_ref()
+--- a/crates/meow-proxy/src/hysteria2/driver.rs
++++ b/crates/meow-proxy/src/hysteria2/driver.rs
+@@ -65,7 +65,7 @@
+ }
+ 
+ /// Own the task before the first await, including during authentication.
+-struct DriverTask(tokio::task::JoinHandle<()>);
++struct DriverTask(meow_common::scoped_join::ScopedJoin<()>);
+ 
+ impl Drop for DriverTask {
+     fn drop(&mut self) {
+@@ -239,10 +239,10 @@
+         rx_bps: cfg.rx_bps,
+     };
+     let closed_task = Arc::clone(&closed);
+-    let task = DriverTask(tokio::spawn(async move {
++    let task = DriverTask(meow_common::scoped_join::try_spawn(async move {
+         run(state, conn, auth, ready_tx).await;
+         closed_task.store(true, Ordering::Relaxed);
+-    }));
++    }).map_err(Error::Io)?);
+ 
+     let udp_enabled = ready_rx
+         .await
+--- a/crates/meow-proxy/src/hysteria2/driver_tests.rs
++++ b/crates/meow-proxy/src/hysteria2/driver_tests.rs
+@@ -255,7 +255,7 @@
+                 _ = sleep(Duration::from_millis(5)) => {}
+             }
+         }
+-    }));
++    }).into());
+     Peer {
+         addr: local,
+         read_payload,
+--- a/crates/meow-proxy/src/hysteria2_adapter.rs
++++ b/crates/meow-proxy/src/hysteria2_adapter.rs
+@@ -247,15 +247,15 @@
+ }
+ 
+ impl Hy2PacketConn {
+-    fn new(session: crate::hysteria2::UdpSession, write_target: Option<String>) -> Self {
++    fn new(session: crate::hysteria2::UdpSession, write_target: Option<String>) -> Result<Self> {
+         let (command_tx, command_rx) = mpsc::channel(UDP_COMMAND_QUEUE);
+         let (packet_tx, packet_rx) = mpsc::channel(UDP_PACKET_QUEUE);
+-        tokio::spawn(run_udp_session(session, command_rx, packet_tx));
+-        Self {
++        meow_common::scoped_join::try_spawn(run_udp_session(session, command_rx, packet_tx)).map_err(MeowError::Io)?;
++        Ok(Self {
+             commands: command_tx,
+             packets: Mutex::new(packet_rx),
+             write_target,
+-        }
++        })
+     }
+ }
+ 
+@@ -416,7 +416,7 @@
+             .udp()
+             .await
+             .map_err(|e| hy2_error("udp associate", e))?;
+-        Ok(Box::new(Hy2PacketConn::new(session, write_target)))
++        Ok(Box::new(Hy2PacketConn::new(session, write_target)?))
+     }
+ 
+     /// Issue #695: drop the cached QUIC connection (see
 --- a/crates/meow-proxy/src/lib.rs
 +++ b/crates/meow-proxy/src/lib.rs
 @@ -204,3 +204,5 @@
@@ -3636,9 +5611,343 @@
  }
 +
 +mod probe_head;
+--- a/crates/meow-proxy/src/mux/client.rs
++++ b/crates/meow-proxy/src/mux/client.rs
+@@ -341,6 +341,7 @@
+ 
+ /// Shared mux client used by an adapter's dial path.
+ pub struct MuxClient {
++    spawner: meow_common::scoped_join::Spawner,
+     dial: DialFn,
+     options: MuxOptions,
+     sessions: Mutex<VecDeque<Arc<MuxSession>>>,
+@@ -356,6 +357,7 @@
+             options,
+             sessions: Mutex::new(VecDeque::new()),
+             generation: AtomicU::new(0),
++            spawner: meow_common::scoped_join::Spawner::capture(),
+         })
+     }
+ 
+@@ -378,9 +380,9 @@
+         if let Ok(mut sessions) = self.sessions.try_lock() {
+             return Self::drain_stale(&mut sessions, self.generation());
+         }
+-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
++        if tokio::runtime::Handle::try_current().is_ok() {
+             let client = Arc::clone(self);
+-            handle.spawn(async move {
++            let _ = self.spawner.try_spawn(async move {
+                 let mut sessions = client.sessions.lock().await;
+                 Self::drain_stale(&mut sessions, client.generation());
+             });
+--- a/crates/meow-proxy/src/mux/h2mux.rs
++++ b/crates/meow-proxy/src/mux/h2mux.rs
+@@ -56,7 +56,7 @@
+ pub struct Session {
+     send_request: h2::client::SendRequest<Bytes>,
+     dead: Arc<AtomicBool>,
+-    _task: tokio::task::JoinHandle<()>,
++    _task: meow_common::scoped_join::ScopedJoin<()>,
+ }
+ 
+ impl Session {
+@@ -75,10 +75,10 @@
+         let driver_dead = Arc::clone(&dead);
+         // Drive SETTINGS / WINDOW_UPDATE / PING frames; the future resolves
+         // when the physical connection dies.
+-        let task = tokio::spawn(async move {
++        let task = meow_common::scoped_join::try_spawn(async move {
+             let _ = connection.await;
+             driver_dead.store(true, Ordering::SeqCst);
+-        });
++        })?;
+         Ok(Self {
+             send_request,
+             dead,
+--- a/crates/meow-proxy/src/mux/muxcool.rs
++++ b/crates/meow-proxy/src/mux/muxcool.rs
+@@ -399,6 +399,7 @@
+ /// Dropping the last external Arc (pool eviction of a zero-stream session)
+ /// tears the session down: Drop fires the Notify, the driver exits.
+ pub(crate) struct MuxCoolSession {
++    spawner: meow_common::scoped_join::Spawner,
+     driver_tx: mpsc::Sender<Bytes>,
+     streams: Arc<Mutex<HashMap<u16, mpsc::Sender<Event>>>>,
+     next_sid: AtomicU32,
+@@ -425,6 +426,7 @@
+         let done = Arc::new(Notify::new());
+         let space = Arc::new(Notify::new());
+         let session = Arc::new(Self {
++            spawner: meow_common::scoped_join::Spawner::capture(),
+             driver_tx,
+             streams: Arc::clone(&streams),
+             next_sid: AtomicU32::new(1),
+@@ -433,18 +435,18 @@
+             done: Arc::clone(&done),
+             space: Arc::clone(&space),
+         });
+-        tokio::spawn(driver_loop(
++        meow_common::scoped_join::try_spawn(driver_loop(
+             conn,
+             out_rx,
+             Arc::clone(&streams),
+             Arc::clone(&closed),
+             Arc::clone(&done),
+             Arc::clone(&space),
+-        ));
+-        tokio::spawn(keepalive_loop(
++        ))?;
++        meow_common::scoped_join::try_spawn(keepalive_loop(
+             Arc::downgrade(&session),
+             Arc::clone(&closed),
+-        ));
++        ))?;
+         Ok(session)
+     }
+ 
+@@ -495,6 +497,7 @@
+         // while waiting for outbound capacity — otherwise the id stays
+         // consumed and the entry lingers for the session's lifetime.
+         let mut guard = StreamMapGuard {
++            spawner: self.spawner.clone(),
+             streams: Arc::clone(&self.streams),
+             sid,
+             armed: true,
+@@ -579,6 +582,7 @@
+ /// Removes the stream-map entry for `sid` when dropped while armed — the
+ /// cancellation-safe counterpart of `open_stream_parts`'s insert-then-send.
+ struct StreamMapGuard {
++    spawner: meow_common::scoped_join::Spawner,
+     streams: Arc<Mutex<HashMap<u16, mpsc::Sender<Event>>>>,
+     sid: u16,
+     armed: bool,
+@@ -596,8 +600,8 @@
+             let streams = Arc::clone(&self.streams);
+             let sid = self.sid;
+             // Detached: drop cannot await the map lock.
+-            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+-                handle.spawn(async move {
++            if tokio::runtime::Handle::try_current().is_ok() {
++                let _ = self.spawner.try_spawn(async move {
+                     streams.lock().await.remove(&sid);
+                 });
+             }
+@@ -660,8 +664,8 @@
+         // frames in the driver's channel; drop cannot await the send.
+         // Skip when no runtime exists (teardown): the session is
+         // going away anyway.
+-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+-            handle.spawn(async move {
++        if tokio::runtime::Handle::try_current().is_ok() {
++            let _ = self.session.spawner.try_spawn(async move {
+                 // Drop the stream-map entry first: Mux.Cool servers (notably
+                 // sing-box) never echo End frames, so the driver cannot
+                 // clean this up itself, and the cleanup must not wait on
+@@ -1243,8 +1247,8 @@
+                 // for the drop-without-shutdown path.
+                 let session = Arc::clone(&this.parts.session);
+                 let sid = this.parts.sid;
+-                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+-                    handle.spawn(async move {
++                if tokio::runtime::Handle::try_current().is_ok() {
++                    let _ = this.parts.session.spawner.try_spawn(async move {
+                         session.streams.lock().await.remove(&sid);
+                     });
+                 }
+--- a/crates/meow-proxy/src/mux/smux.rs
++++ b/crates/meow-proxy/src/mux/smux.rs
+@@ -314,13 +314,13 @@
+     where
+         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+     {
+-        Ok(Self::client_inner_with_budget(
++        Self::client_inner_with_budget(
+             io,
+             stream_buffer,
+             None,
+             MAX_FRAME_SIZE,
+             MAX_RECEIVE_BUFFER,
+-        ))
++        )
+     }
+ 
+     /// [`client_with_stream_buffer`](Self::client_with_stream_buffer) with
+@@ -338,13 +338,13 @@
+     where
+         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+     {
+-        Ok(Self::client_inner_with_budget(
++        Self::client_inner_with_budget(
+             io,
+             stream_buffer,
+             Some((interval, timeout)),
+             MAX_FRAME_SIZE,
+             MAX_RECEIVE_BUFFER,
+-        ))
++        )
+     }
+ 
+     /// [`client_with_keepalive`](Self::client_with_keepalive) plus the
+@@ -363,13 +363,13 @@
+     where
+         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+     {
+-        Ok(Self::client_inner_with_budget(
++        Self::client_inner_with_budget(
+             io,
+             stream_buffer,
+             Some((keepalive, keepalive_timeout)),
+             max_frame_size,
+             receive_budget,
+-        ))
++        )
+     }
+ 
+     fn client_inner_with_budget<S>(
+@@ -378,7 +378,7 @@
+         keepalive: Option<(Duration, Duration)>,
+         max_frame_size: usize,
+         receive_budget_size: usize,
+-    ) -> Self
++    ) -> io::Result<Self>
+     where
+         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+     {
+@@ -399,7 +399,7 @@
+         // original FIFO without spawning one task per dropped stream.
+         let deferred_writer_tx = writer_tx.clone();
+         let deferred_cancel = cancel.clone();
+-        tokio::spawn(async move {
++        meow_common::scoped_join::try_spawn(async move {
+             while let Some(frame) = tokio::select! {
+                 _ = deferred_cancel.cancelled() => None,
+                 frame = deferred_fin_rx.recv() => frame,
+@@ -412,13 +412,13 @@
+                 }
+                 break;
+             }
+-        });
++        })?;
+ 
+         // Writer task: outbound frames are already encoded, so the hot path
+         // performs no second allocation or payload copy.
+         let writer_state = Arc::clone(&state);
+         let writer_cancel = cancel.clone();
+-        tokio::spawn(async move {
++        meow_common::scoped_join::try_spawn(async move {
+             loop {
+                 let msg = tokio::select! {
+                     _ = writer_cancel.cancelled() => break,
+@@ -477,7 +477,7 @@
+             }
+             writer_state.mark_dead();
+             writer_cancel.cancel();
+-        });
++        })?;
+ 
+         // Reader task: frame dispatch never awaits a stream inbox, so one
+         // stalled consumer cannot stop its peers receiving data. A stream is
+@@ -487,7 +487,7 @@
+         let reader_cancel = cancel.clone();
+         let reader_writer_tx = writer_tx.clone();
+         let reader_deferred_fin_tx = deferred_fin_tx.clone();
+-        tokio::spawn(async move {
++        meow_common::scoped_join::try_spawn(async move {
+             let mut header = [0u8; FRAME_HEADER_LEN];
+             let mut discard = [0u8; 8 * 1024];
+             // Expiry of the session-wide budget-stall deadline; `None` while
+@@ -659,14 +659,14 @@
+                             let state = Arc::clone(&reader_state);
+                             let writer_tx = reader_writer_tx.clone();
+                             let deferred_fin_tx = reader_deferred_fin_tx.clone();
+-                            tokio::spawn(stall_watchdog(
++                            if meow_common::scoped_join::try_spawn(stall_watchdog(
+                                 aborted,
+                                 stats,
+                                 state,
+                                 writer_tx,
+                                 deferred_fin_tx,
+                                 stream_id,
+-                            ));
++                            )).is_err() { reader_state.mark_dead(); reader_cancel.cancel(); return; };
+                         }
+                     }
+                     CMD_FIN | CMD_NOP => {
+@@ -703,7 +703,7 @@
+             }
+             reader_state.mark_dead();
+             reader_cancel.cancel();
+-        });
++        })?;
+ 
+         // Keepalive task (xtaci/smux `keepalive`): emit a NOP every
+         // `interval`; declare the session dead once `timeout` (upstream's
+@@ -715,7 +715,7 @@
+             let ka_state = Arc::clone(&state);
+             let ka_cancel = cancel.clone();
+             let ka_writer_tx = writer_tx.clone();
+-            tokio::spawn(async move {
++            meow_common::scoped_join::try_spawn(async move {
+                 // `interval` ticks once immediately — upstream's first NOP
+                 // goes out a full interval after session start.
+                 let mut ticker =
+@@ -743,10 +743,10 @@
+                 }
+                 ka_state.mark_dead();
+                 ka_cancel.cancel();
+-            });
+-        }
+-
+-        Self {
++            })?;
++        }
++
++        Ok(Self {
+             state,
+             writer_tx,
+             deferred_fin_tx,
+@@ -755,7 +755,7 @@
+             stream_buffer,
+             // Never above the u16 length field; zero means the wire cap.
+             max_frame_size: max_frame_size.clamp(1, u16::MAX as usize),
+-        }
++        })
+     }
+ 
+     /// Open a new stream.  Client IDs count up by 2 from 1.
+--- a/crates/meow-proxy/src/mux/yamux.rs
++++ b/crates/meow-proxy/src/mux/yamux.rs
+@@ -34,7 +34,7 @@
+ pub struct Session {
+     open_tx: mpsc::UnboundedSender<OpenRequest>,
+     dead: Arc<AtomicBool>,
+-    _task: tokio::task::JoinHandle<()>,
++    _task: meow_common::scoped_join::ScopedJoin<()>,
+ }
+ 
+ impl Session {
+@@ -50,7 +50,7 @@
+         let (open_tx, mut open_rx) = mpsc::unbounded_channel::<OpenRequest>();
+         let dead = Arc::new(AtomicBool::new(false));
+         let driver_dead = Arc::clone(&dead);
+-        let task = tokio::spawn(async move {
++        let task = meow_common::scoped_join::try_spawn(async move {
+             // Queued open requests wait here in FIFO order; every request
+             // keeps its own oneshot so none can be dropped by a newer one.
+             let mut pending_opens: VecDeque<OpenRequest> = VecDeque::new();
+@@ -94,7 +94,7 @@
+             })
+             .await;
+             driver_dead.store(true, Ordering::SeqCst);
+-        });
++        })?;
+         Ok(Self {
+             open_tx,
+             dead,
 --- /dev/null
 +++ b/crates/meow-proxy/src/probe_head.rs
-@@ -0,0 +1,192 @@
+@@ -0,0 +1,199 @@
 +use bytes::Bytes;
 +use http_body_util::Empty;
 +use hyper::{Request, StatusCode};
@@ -3650,19 +5959,26 @@
 +use tokio::time::Instant;
 +use crate::health::UrlTestError;
 +
-+pub(crate) async fn run(adapter: &dyn ProxyAdapter, url: &str, expected: Option<&str>,
-+    timeout: Duration, snapshot: ProbeSnapshot) -> Result<u16, UrlTestError> {
-+    let _lease = snapshot.lease().map_err(|_| UrlTestError::Transport("probe owner closed".into()))?;
++pub(crate) fn parameters(url: &str, expected: Option<&str>) -> Result<(hyper::Uri, Vec<(u16,u16)>), UrlTestError> {
 +    let uri: hyper::Uri = url.parse().map_err(|_| UrlTestError::Transport("invalid probe URL".into()))?;
 +    let scheme = uri.scheme_str().unwrap_or("");
 +    if !matches!(scheme, "http" | "https") || uri.authority().is_none() {
 +        return Err(UrlTestError::Transport("invalid probe URL".into()));
 +    }
-+    let host = uri.host().ok_or_else(|| UrlTestError::Transport("missing probe host".into()))?;
-+    let metadata = Metadata { network: meow_common::Network::Tcp, conn_type: meow_common::ConnType::Tunnel,
-+        host: host.into(), dst_port: uri.port_u16().unwrap_or(if scheme == "https" {443} else {80}), ..Default::default() };
++    uri.host().ok_or_else(|| UrlTestError::Transport("missing probe host".into()))?;
 +    let ranges = if expected.is_none_or(|value| value.trim().is_empty()) { vec![(100, 599)] }
 +        else { crate::health::parse_expected(expected).map_err(UrlTestError::Transport)? };
++    Ok((uri, ranges))
++}
++
++pub(crate) async fn run(adapter: &dyn ProxyAdapter, url: &str, expected: Option<&str>,
++    timeout: Duration, snapshot: ProbeSnapshot) -> Result<u16, UrlTestError> {
++    let _lease = snapshot.lease().map_err(|_| UrlTestError::Transport("probe owner closed".into()))?;
++    let (uri, ranges) = parameters(url, expected)?;
++    let scheme = uri.scheme_str().unwrap_or("");
++    let host = uri.host().expect("parameters validated host");
++    let metadata = Metadata { network: meow_common::Network::Tcp, conn_type: meow_common::ConnType::Tunnel,
++        host: host.into(), dst_port: uri.port_u16().unwrap_or(if scheme == "https" {443} else {80}), ..Default::default() };
 +    let start = Instant::now();
 +    let deadline = start + timeout;
 +    let measured = snapshot.scope(async {
@@ -3831,6 +6147,33 @@
 +        origin.await.unwrap();
 +    }
 +}
+--- a/crates/meow-proxy/src/snell/adapter.rs
++++ b/crates/meow-proxy/src/snell/adapter.rs
+@@ -401,6 +401,7 @@
+ /// (when the pool is configured). Behaves as a transparent passthrough
+ /// otherwise — the v4 zero-chunk → EOF mapping happens inside `Snell` itself.
+ struct PooledConn {
++    spawner: meow_common::scoped_join::Spawner,
+     inner: Option<PoolStream>,
+     /// Pool plus the generation the conn was taken or dialled under.
+     pool: Option<(Arc<Pool>, Uint)>,
+@@ -425,6 +426,7 @@
+     fn new(snell: PoolStream, pool: Option<(Arc<Pool>, Uint)>) -> Self {
+         Self {
+             inner: Some(snell),
++            spawner: meow_common::scoped_join::Spawner::capture(),
+             pool,
+             local_half_close: LocalHalfClose::Open,
+             reuse_failed: false,
+@@ -585,7 +587,7 @@
+         if tokio::runtime::Handle::try_current().is_err() {
+             return;
+         }
+-        tokio::spawn(async move {
++        let _ = self.spawner.try_spawn(async move {
+             let mut snell = snell;
+             if finish_local_half_close(&mut snell, state).await.is_err() {
+                 return;
 --- a/crates/meow-proxy/src/socks5_adapter.rs
 +++ b/crates/meow-proxy/src/socks5_adapter.rs
 @@ -782,7 +782,7 @@
@@ -3871,6 +6214,438 @@
 +        })).map_err(MeowError::Io)?;
 +        Ok(ControlGuard(handle))
      }
+ }
+ 
+--- a/crates/meow-proxy/src/tasked_duplex.rs
++++ b/crates/meow-proxy/src/tasked_duplex.rs
+@@ -28,7 +28,8 @@
+ use std::time::Duration;
+ 
+ use tokio::io::{AsyncRead, AsyncWrite, DuplexStream, ReadBuf};
+-use tokio::task::{AbortHandle, JoinHandle};
++use tokio::task::AbortHandle;
++use meow_common::scoped_join::ScopedJoin;
+ 
+ /// Upper bound on how long `poll_shutdown` waits for the write-side relay
+ /// task to flush buffered plaintext onto the transport. Live transports
+@@ -60,7 +61,7 @@
+     /// plaintext has been framed/encrypted onto the transport and the
+     /// transport's write half was shut down. `None` once shutdown has
+     /// observed it.
+-    write_done: Option<JoinHandle<()>>,
++    write_done: Option<ScopedJoin<()>>,
+     /// Abort handle for that same write task — fired when the drain wait
+     /// times out so a wedged transport is released instead of pinning it,
+     /// and on drop.
+@@ -73,7 +74,8 @@
+     /// `read_abort` aborts the read-side relay task (owned by the
+     /// supervisor); `write_task` is the write-side relay task we wait on
+     /// during graceful shutdown.
+-    pub fn new(inner: DuplexStream, read_abort: AbortHandle, write_task: JoinHandle<()>) -> Self {
++    pub fn new(inner: DuplexStream, read_abort: AbortHandle, write_task: impl Into<ScopedJoin<()>>) -> Self {
++        let write_task = write_task.into();
+         let write_abort = write_task.abort_handle();
+         Self {
+             inner,
+@@ -288,3 +290,16 @@
+         let _ = read_task.await;
+     }
+ }
++
++#[cfg(test)]
++mod scoped_join_stream_contract_tests {
++    use super::*;
++    #[test]
++    fn actual_tasked_duplex_preserves_stream_and_proxy_conversion() {
++        fn require_stream<T: meow_transport::Stream>() {}
++        require_stream::<TaskedDuplex>();
++        let _convert: fn(TaskedDuplex) -> Box<dyn meow_common::ProxyConn> = |stream| {
++            Box::new(crate::stream_conn::StreamConn(Box::new(stream)))
++        };
++    }
++}
+--- a/crates/meow-proxy/src/trusttunnel/protocol/http2.rs
++++ b/crates/meow-proxy/src/trusttunnel/protocol/http2.rs
+@@ -69,7 +69,7 @@
+             });
+             tokio::select! { _ = canceled.cancelled() => {}, _ = driver => {} }
+             canceled.cancel();
+-        });
++        })?;
+         Ok(Box::new(H2Connection { sender, peer_limit }))
+     }
+ }
+--- a/crates/meow-proxy/src/trusttunnel/protocol/http3/driver.rs
++++ b/crates/meow-proxy/src/trusttunnel/protocol/http3/driver.rs
+@@ -204,7 +204,7 @@
+         driving.closed.store(true, Ordering::Relaxed);
+         driving.accepting.store(false, Ordering::Release);
+         canceled.cancel();
+-    });
++    })?;
+     match ready_rx.await {
+         Ok(Ok(())) => Ok((cmd_tx, shared)),
+         Ok(Err(error)) => Err(error),
+--- a/crates/meow-proxy/src/trusttunnel/protocol/mod.rs
++++ b/crates/meow-proxy/src/trusttunnel/protocol/mod.rs
+@@ -651,7 +651,7 @@
+                     Admission::Granted(opener) => {
+                         let stream = self.open(opener, lease, "_udp2").await?;
+                         if !session.retiring.is_cancelled() {
+-                            let mux = udp::Mux::new(stream, &session.cancel, &session.retiring);
++                            let mux = udp::Mux::new(stream, &session.cancel, &session.retiring)?;
+                             *slot = Some(Arc::clone(&mux));
+                             return mux.associate();
+                         }
+@@ -682,13 +682,13 @@
+     }
+ }
+ 
+-fn spawn_scoped<F>(future: F) -> tokio::task::JoinHandle<F::Output>
++fn spawn_scoped<F>(future: F) -> io::Result<meow_common::scoped_join::ScopedJoin<F::Output>>
+ where
+     F: std::future::Future + Send + 'static,
+     F::Output: Send + 'static,
+ {
+     use tracing::instrument::WithSubscriber;
+-    tokio::spawn(future.with_current_subscriber())
++    meow_common::scoped_join::try_spawn(future.with_current_subscriber())
+ }
+ 
+ #[cfg(test)]
+--- a/crates/meow-proxy/src/trusttunnel/protocol/udp.rs
++++ b/crates/meow-proxy/src/trusttunnel/protocol/udp.rs
+@@ -44,7 +44,7 @@
+         stream: TunnelStream,
+         parent: &CancellationToken,
+         retiring: &CancellationToken,
+-    ) -> Arc<Self> {
++    ) -> io::Result<Arc<Self>> {
+         let (send, mut queue) = mpsc::channel::<Bytes>(32);
+         let mux = Arc::new(Self {
+             cancel: parent.child_token(),
+@@ -87,7 +87,7 @@
+                 }
+             }
+             cancel.cancel();
+-        });
++        })?;
+         let weak = Arc::downgrade(&mux);
+         let cancel = mux.cancel.clone();
+         super::spawn_scoped(async move {
+@@ -163,8 +163,8 @@
+             if let Some(mux) = weak.upgrade() {
+                 lock(&mux.peers).clear();
+             }
+-        });
+-        mux
++        })?;
++        Ok(mux)
+     }
+ 
+     pub(crate) fn is_closed(&self) -> bool {
+--- a/crates/meow-proxy/src/vless/encryption/client.rs
++++ b/crates/meow-proxy/src/vless/encryption/client.rs
+@@ -190,7 +190,7 @@
+                 let aead = Aead::new(&enc_ticket, &united_key, use_aes);
+                 let write_ctr = (self.xor_mode == 2).then(|| new_ctr(&united_key, &iv));
+ 
+-                return Ok(spawn_relay(
++                return spawn_relay(
+                     stream,
+                     DataPhase {
+                         aead,
+@@ -206,7 +206,7 @@
+                         // next dial falls back to a fresh 1-RTT handshake.
+                         reset_cache: Some(Arc::clone(&self.cache)),
+                     },
+-                ));
++                );
+             }
+         }
+ 
+@@ -317,7 +317,7 @@
+             (None, None)
+         };
+ 
+-        Ok(spawn_relay(
++        spawn_relay(
+             stream,
+             DataPhase {
+                 aead,
+@@ -331,7 +331,7 @@
+                 xor: self.xor_mode == 2,
+                 reset_cache: None,
+             },
+-        ))
++        )
+     }
+ }
+ 
+@@ -369,7 +369,7 @@
+ /// data, FIN, or RST — issue #514). A write-side `shutdown()` alone only
+ /// half-closes; the read direction keeps delivering records until the peer
+ /// ends them.
+-pub(super) fn spawn_relay(stream: Box<dyn Stream>, dp: DataPhase) -> Box<dyn Stream> {
++pub(super) fn spawn_relay(stream: Box<dyn Stream>, dp: DataPhase) -> Result<Box<dyn Stream>> {
+     let (client, proxy) = duplex(RELAY_BUF);
+     let (rd, wr) = tokio::io::split(stream);
+     let (proxy_rd, proxy_wr) = tokio::io::split(proxy);
+@@ -388,7 +388,7 @@
+     } = dp;
+ 
+     let read_key = united_key.clone();
+-    let read_task = tokio::spawn(read_loop(
++    let read_task = meow_common::scoped_join::try_spawn(read_loop(
+         rd,
+         proxy_wr,
+         peer_aead,
+@@ -398,11 +398,12 @@
+         read_key,
+         use_aes,
+         reset_cache,
+-    ));
+-    let write_task = tokio::spawn(write_loop(
++    ))?;
++    let write_task = meow_common::scoped_join::try_spawn(write_loop(
+         wr, proxy_rd, aead, write_ctr, pre_write, united_key, use_aes,
+     ));
+ 
++    let write_task = match write_task { Ok(task) => task, Err(error) => { read_task.abort(); return Err(MeowError::Io(error)); } };
+     let read_abort = read_task.abort_handle();
+     let write_abort = write_task.abort_handle();
+ 
+@@ -415,7 +416,7 @@
+     // running until the caller half-closes or drops the endpoint (issue
+     // #514 review follow-up). If the endpoint is dropped first,
+     // `TaskedDuplex` aborts both tasks and this supervisor resolves.
+-    tokio::spawn(async move {
++    let supervisor = meow_common::scoped_join::try_spawn(async move {
+         let clean_eof = match read_task.await {
+             Ok(clean) => clean,
+             Err(e) => {
+@@ -430,9 +431,10 @@
+         }
+     });
+ 
+-    Box::new(crate::tasked_duplex::TaskedDuplex::new(
++    if let Err(error) = supervisor { read_abort.abort(); write_task.abort(); return Err(MeowError::Io(error)); }
++    Ok(Box::new(crate::tasked_duplex::TaskedDuplex::new(
+         client, read_abort, write_task,
+-    ))
++    )))
+ }
+ 
+ /// Read records from `rd`, decrypt, and forward plaintext to `proxy_wr`.
+--- a/crates/meow-proxy/src/vless/encryption/server.rs
++++ b/crates/meow-proxy/src/vless/encryption/server.rs
+@@ -285,7 +285,7 @@
+             (None, None)
+         };
+ 
+-        Ok(spawn_relay(
++        spawn_relay(
+             stream,
+             DataPhase {
+                 aead,
+@@ -299,7 +299,7 @@
+                 xor: self.xor_mode == 2,
+                 reset_cache: None,
+             },
+-        ))
++        )
+     }
+ 
+     async fn handshake_0rtt(
+@@ -342,7 +342,7 @@
+             (None, None)
+         };
+ 
+-        Ok(spawn_relay(
++        spawn_relay(
+             stream,
+             DataPhase {
+                 aead,
+@@ -356,7 +356,7 @@
+                 xor: self.xor_mode == 2,
+                 reset_cache: None,
+             },
+-        ))
++        )
+     }
+ }
+ 
+--- a/crates/meow-proxy/src/vmess/conn.rs
++++ b/crates/meow-proxy/src/vmess/conn.rs
+@@ -28,7 +28,7 @@
+     req_key: [u8; 16],
+     req_iv: [u8; 16],
+     resp_v: u8,
+-) -> TaskedDuplex {
++) -> std::io::Result<TaskedDuplex> {
+     let (resp_body_key, resp_body_iv) = response_body_keys(&req_key, &req_iv);
+     let mut read_cipher = BodyCipher::from_response_keys(security, &resp_body_key, &resp_body_iv);
+     let mut write_cipher = BodyCipher::new_writer(security, &req_key, &req_iv);
+@@ -47,7 +47,7 @@
+     // have data in flight, so the supervisor leaves it running. `false`
+     // marks a fatal end (handshake failure, decode error, transport error,
+     // or the client endpoint gone), where the write side is stopped too.
+-    let read_task = tokio::spawn(async move {
++    let read_task = meow_common::scoped_join::try_spawn(async move {
+         let mut buf = Vec::with_capacity(BodyCipher::max_plaintext() + crate::aead::TAG_LEN);
+         if let Err(e) =
+             read_aead_response_header(&mut rd, &resp_body_key, &resp_body_iv, resp_v).await
+@@ -80,10 +80,11 @@
+         };
+         let _ = proxy_wr.shutdown().await;
+         clean_eof
+-    });
++    })?;
++    let read_abort = read_task.abort_handle();
+ 
+     // Downstream: proxy_rd → encrypt → stream
+-    let write_task = tokio::spawn(async move {
++    let write_task = meow_common::scoped_join::try_spawn(async move {
+         let mut buf = vec![0u8; BodyCipher::max_plaintext()];
+         loop {
+             let n = match proxy_rd.read(&mut buf).await {
+@@ -99,8 +100,8 @@
+         }
+         let _ = wr.shutdown().await;
+     });
+-
+-    let read_abort = read_task.abort_handle();
++    let write_task = match write_task { Ok(task) => task, Err(error) => { read_task.abort(); return Err(error); } };
++
+     let write_abort = write_task.abort_handle();
+ 
+     // When the read side ends on a FATAL path — decode failure, transport
+@@ -111,7 +112,7 @@
+     // #514 review follow-up). If the client endpoint is dropped first,
+     // `TaskedDuplex` aborts both tasks and this supervisor resolves
+     // immediately.
+-    tokio::spawn(async move {
++    let supervisor = meow_common::scoped_join::try_spawn(async move {
+         let clean_eof = match read_task.await {
+             Ok(clean) => clean,
+             Err(e) => {
+@@ -126,7 +127,8 @@
+         }
+     });
+ 
+-    TaskedDuplex::new(client, read_abort, write_task)
++    if let Err(error) = supervisor { read_abort.abort(); write_task.abort(); return Err(error); }
++    Ok(TaskedDuplex::new(client, read_abort, write_task))
+ }
+ 
+ #[cfg(test)]
+@@ -148,7 +150,7 @@
+             req_key,
+             req_iv,
+             resp_v,
+-        );
++        ).unwrap();
+ 
+         app.write_all(b"GET / HTTP/1.1\r\n\r\n").await.unwrap();
+ 
+@@ -187,7 +189,7 @@
+             req_key,
+             req_iv,
+             0x5a,
+-        );
++        ).unwrap();
+         drop(app);
+ 
+         tokio::time::timeout(std::time::Duration::from_secs(2), async move {
+@@ -221,7 +223,7 @@
+         let resp_v = 0x5a;
+         let (transport, mut server) = tokio::io::duplex(4096);
+         let mut app =
+-            spawn_vmess_relay(Box::new(transport), Security::None, req_key, req_iv, resp_v);
++            spawn_vmess_relay(Box::new(transport), Security::None, req_key, req_iv, resp_v).unwrap();
+ 
+         // Client half-closes its write direction (e.g. request fully sent).
+         app.shutdown().await.unwrap();
+@@ -265,7 +267,7 @@
+         let resp_v = 0x5a;
+         let (transport, mut server) = tokio::io::duplex(4096);
+         let mut app =
+-            spawn_vmess_relay(Box::new(transport), Security::None, req_key, req_iv, resp_v);
++            spawn_vmess_relay(Box::new(transport), Security::None, req_key, req_iv, resp_v).unwrap();
+ 
+         // Server answers the response header, then half-closes its send
+         // direction while continuing to read uploads.
+@@ -322,7 +324,7 @@
+             let resp_v = 0x5a;
+             let (transport, mut server) = tokio::io::duplex(4096);
+             let mut app =
+-                spawn_vmess_relay(Box::new(transport), Security::None, req_key, req_iv, resp_v);
++                spawn_vmess_relay(Box::new(transport), Security::None, req_key, req_iv, resp_v).unwrap();
+ 
+             server
+                 .write_all(&seal_response_header(&req_key, &req_iv, resp_v))
+@@ -360,3 +362,52 @@
+         }
+     }
+ }
++
++#[cfg(test)]
++mod scoped_owner_tests {
++    use super::*;
++    use meow_common::transport_tasks::{SharedUnitJoin, TransportScope, TransportTaskContext, Work};
++    use std::{io, sync::{Arc, Mutex}};
++    use tokio::task::AbortHandle;
++    #[derive(Default)]
++    struct State { closed: bool, tasks: Vec<Arc<SharedUnitJoin>> }
++    #[derive(Default)]
++    struct Owner(Mutex<State>);
++    impl TransportTaskContext for Owner {
++        fn spawn(&self, work: Work) -> io::Result<AbortHandle> { self.spawn_join(work).map(|task| task.abort_handle()) }
++        fn spawn_join(&self, work: Work) -> io::Result<Arc<SharedUnitJoin>> {
++            let mut state = self.0.lock().unwrap();
++            if state.closed { return Err(io::Error::other("closed")); }
++            let task = SharedUnitJoin::new(tokio::spawn(work)); state.tasks.push(task.clone()); Ok(task)
++        }
++    }
++    impl Owner {
++        async fn close(&self) {
++            let tasks = { let mut state = self.0.lock().unwrap(); state.closed = true;
++                for task in &state.tasks { task.abort(); } state.tasks.clone() };
++            for task in tasks { task.wait().await; }
++        }
++    }
++    #[tokio::test]
++    async fn actual_vmess_read_write_supervisor_are_joined_before_transport_eof_ack() {
++        use tokio::io::AsyncReadExt;
++        let owner = Arc::new(Owner::default()); let scope = TransportScope::new(owner.clone());
++        let (transport, mut peer) = tokio::io::duplex(4096);
++        let app = scope.scope(async { spawn_vmess_relay(Box::new(transport), Security::None, [1;16], [2;16], 3).unwrap() }).await;
++        assert_eq!(owner.0.lock().unwrap().tasks.len(), 3);
++        owner.close().await;
++        assert!(owner.0.lock().unwrap().tasks.iter().all(|task| task.is_finished()));
++        let mut byte = [0];
++        assert_eq!(tokio::time::timeout(std::time::Duration::from_secs(1), peer.read(&mut byte)).await.unwrap().unwrap(), 0);
++        drop(app);
++    }
++    #[tokio::test]
++    async fn closed_session_rejects_vmess_before_any_relay_task_is_spawned() {
++        use tokio::io::AsyncReadExt;
++        let owner = Arc::new(Owner::default()); owner.close().await;
++        let scope = TransportScope::new(owner.clone()); let (transport, mut peer) = tokio::io::duplex(4096);
++        let result = scope.scope(async { spawn_vmess_relay(Box::new(transport), Security::None, [1;16], [2;16], 3) }).await;
++        assert!(result.is_err()); assert!(owner.0.lock().unwrap().tasks.is_empty());
++        let mut byte = [0]; assert_eq!(peer.read(&mut byte).await.unwrap(), 0);
++    }
++}
+--- a/crates/meow-proxy/src/vmess/mod.rs
++++ b/crates/meow-proxy/src/vmess/mod.rs
+@@ -195,7 +195,7 @@
+         sealed.req_key,
+         sealed.req_iv,
+         sealed.resp_v,
+-    );
++    ).map_err(MeowError::Io)?;
+     Ok(Box::new(crate::stream_conn::StreamConn(Box::new(duplex))))
  }
  
 --- a/crates/meow-rules/src/geosite_dat.rs
@@ -3996,6 +6771,81 @@
      let mut decoder = zstd::stream::Decoder::new(Cursor::new(compressed))?;
      let mut out = Vec::new();
      // Read one byte past the bound so an over-limit payload is an error rather
+--- a/crates/meow-rules/src/process.rs
++++ b/crates/meow-rules/src/process.rs
+@@ -44,7 +44,7 @@
+         // `PROCESS_LOOKUP_SUPPORTED`; elsewhere demanding it is pure cost
+         // (#625). An inbound that supplies `metadata.process` needs no
+         // lookup either way.
+-        meow_common::process_lookup::PROCESS_LOOKUP_SUPPORTED
++        cfg!(target_os = "android") || meow_common::process_lookup::PROCESS_LOOKUP_SUPPORTED
+     }
+ 
+     fn never_matches(&self) -> bool {
+@@ -52,7 +52,7 @@
+         // `metadata.process`, it stays empty forever — a non-empty payload
+         // is provably dead. (An empty payload matches the empty field;
+         // leave that quirk alone.)
+-        !meow_common::process_lookup::process_info_available() && !self.process_name.is_empty()
++        !cfg!(target_os = "android") && !meow_common::process_lookup::process_info_available() && !self.process_name.is_empty()
+     }
+ }
+ 
+@@ -60,7 +60,7 @@
+ mod tests {
+     use super::*;
+ 
+-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
++    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", target_os = "android"))]
+     #[test]
+     fn process_rule_live_and_demands_lookup_supported() {
+         let r = ProcessRule::new("curl", "DIRECT");
+@@ -68,7 +68,7 @@
+         assert!(r.should_find_process());
+     }
+ 
+-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
++    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows", target_os = "android")))]
+     #[test]
+     fn process_rule_dead_and_demands_nothing_unsupported() {
+         let r = ProcessRule::new("curl", "DIRECT");
+--- a/crates/meow-rules/src/process_path.rs
++++ b/crates/meow-rules/src/process_path.rs
+@@ -116,14 +116,14 @@
+         // `PROCESS_LOOKUP_SUPPORTED`; elsewhere demanding it is pure cost
+         // (#625). An inbound that supplies `metadata.process_path` needs
+         // no lookup either way.
+-        meow_common::process_lookup::PROCESS_LOOKUP_SUPPORTED
++        cfg!(target_os = "android") || meow_common::process_lookup::PROCESS_LOOKUP_SUPPORTED
+     }
+ 
+     fn never_matches(&self) -> bool {
+         // Where neither a native lookup nor the inbound can fill
+         // `metadata.process_path`, it stays empty — and `matches` is
+         // `false` on an empty path for every payload (#625).
+-        !meow_common::process_lookup::process_info_available()
++        !cfg!(target_os = "android") && !meow_common::process_lookup::process_info_available()
+     }
+ }
+ 
+@@ -174,7 +174,7 @@
+         assert!(!r.match_metadata(&meta_path(""), &helper()));
+     }
+ 
+-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
++    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", target_os = "android"))]
+     #[test]
+     fn process_path_live_and_demands_lookup_supported() {
+         let r = ProcessPathRule::new("curl", "DIRECT").unwrap();
+@@ -182,7 +182,7 @@
+         assert!(r.should_find_process());
+     }
+ 
+-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
++    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows", target_os = "android")))]
+     #[test]
+     fn process_path_dead_and_demands_nothing_unsupported() {
+         let r = ProcessPathRule::new("curl", "DIRECT").unwrap();
 --- a/crates/meow-rules/src/rule_set.rs
 +++ b/crates/meow-rules/src/rule_set.rs
 @@ -12,6 +12,7 @@
@@ -4231,6 +7081,350 @@
 +        assert_eq!(builder.build().len(), 1);
 +    }
 +}
+--- a/crates/meow-rules/src/uid.rs
++++ b/crates/meow-rules/src/uid.rs
+@@ -57,7 +57,7 @@
+     }
+ 
+     fn match_metadata(&self, metadata: &Metadata, _helper: &RuleMatchHelper) -> bool {
+-        meow_common::process_lookup::uid_info_available() && metadata.uid == Some(self.uid)
++        (metadata.process_identity.is_some() || meow_common::process_lookup::uid_info_available()) && metadata.uid == Some(self.uid)
+     }
+ 
+     fn adapter(&self) -> &str {
+@@ -72,7 +72,7 @@
+         // UID matching is Linux-only by policy (the parse-time Class B
+         // warn); off Linux the rule is dead, so demanding a process-table
+         // walk per connection would be pure cost (#625).
+-        cfg!(target_os = "linux")
++        cfg!(any(target_os = "linux", target_os = "android"))
+     }
+ 
+     fn never_matches(&self) -> bool {
+@@ -80,7 +80,7 @@
+         // inbound supplies `uid` — the rule is provably dead there even
+         // though e.g. the macOS lookup does populate `metadata.uid`
+         // (deadness is a policy choice, Class B per ADR-0002).
+-        !meow_common::process_lookup::uid_info_available()
++        !cfg!(target_os = "android") && !meow_common::process_lookup::uid_info_available()
+     }
+ }
+ 
+--- a/crates/meow-transport/src/grpc.rs
++++ b/crates/meow-transport/src/grpc.rs
+@@ -111,9 +111,9 @@
+         // WINDOW_UPDATE, PING, etc.).  Keep the JoinHandle on the stream so
+         // drop can bound the driver's shutdown flush — a wedged send buffer
+         // would otherwise pin the inner fd indefinitely (issue #669).
+-        let conn_driver = tokio::spawn(async move {
++        let conn_driver = meow_common::scoped_join::try_spawn(async move {
+             let _ = conn.await;
+-        });
++        })?;
+ 
+         // Open the h2 stream.  `end_of_stream = false` — we will stream data.
+         let (response_future, send_stream) = match h2.send_request(request, false) {
+@@ -307,14 +307,15 @@
+     /// this stream's send/recv refs makes the driver self-terminate, but
+     /// only if its closing flush can make progress — the handle lets Drop
+     /// bound that wait (issue #669).
+-    conn_driver: Option<tokio::task::JoinHandle<()>>,
++    conn_driver: Option<meow_common::scoped_join::ScopedJoin<()>>,
++    spawner: meow_common::scoped_join::Spawner,
+ }
+ 
+ impl GunStream {
+     fn new(
+         send: h2::SendStream<Bytes>,
+         recv: RecvState,
+-        conn_driver: tokio::task::JoinHandle<()>,
++        conn_driver: impl Into<meow_common::scoped_join::ScopedJoin<()>>,
+     ) -> Self {
+         Self {
+             send,
+@@ -322,7 +323,8 @@
+             read_buf: Bytes::new(),
+             pending_frame: Vec::new(),
+             pending_write: None,
+-            conn_driver: Some(conn_driver),
++            conn_driver: Some(conn_driver.into()),
++            spawner: meow_common::scoped_join::Spawner::capture(),
+         }
+     }
+ }
+@@ -332,11 +334,11 @@
+         let Some(mut driver) = self.conn_driver.take() else {
+             return;
+         };
+-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
++        let Ok(_runtime) = tokio::runtime::Handle::try_current() else {
+             driver.abort();
+             return;
+         };
+-        runtime.spawn(async move {
++        let _ = self.spawner.try_spawn(async move {
+             // Once this stream's refs are gone the conn closes on its own;
+             // bound that wait so a wedged shutdown flush cannot pin the fd.
+             if tokio::time::timeout(crate::h2_common::DRIVER_DRAIN_TIMEOUT, &mut driver)
+@@ -531,3 +533,13 @@
+ }
+ 
+ impl Unpin for GunStream {}
++
++#[cfg(test)]
++mod scoped_join_stream_contract_tests {
++    use super::*;
++    #[test]
++    fn actual_stream_preserves_send_sync_transport_contract() {
++        fn require_stream<T: crate::Stream>() {}
++        require_stream::<GunStream>();
++    }
++}
+--- a/crates/meow-transport/src/h2.rs
++++ b/crates/meow-transport/src/h2.rs
+@@ -97,9 +97,9 @@
+ 
+         // Drive the h2 connection (SETTINGS, WINDOW_UPDATE, PING, …) in a
+         // background task so control frames keep flowing while we stream data.
+-        let driver_task = tokio::spawn(async move {
++        let driver_task = meow_common::scoped_join::try_spawn(async move {
+             let _ = conn.await;
+-        });
++        })?;
+         let abort_handle = driver_task.abort_handle();
+ 
+         // h2 requires poll_ready/ready before send_request: sending
+--- a/crates/meow-transport/src/h2_common.rs
++++ b/crates/meow-transport/src/h2_common.rs
+@@ -234,7 +234,8 @@
+     pending_write: Option<Bytes>,
+     remote_no_error_is_eof: bool,
+     eos_sent: bool,
+-    conn_driver: Option<tokio::task::JoinHandle<()>>,
++    conn_driver: Option<meow_common::scoped_join::ScopedJoin<()>>,
++    spawner: meow_common::scoped_join::Spawner,
+ }
+ 
+ impl H2Stream {
+@@ -247,11 +248,12 @@
+             remote_no_error_is_eof: false,
+             eos_sent: false,
+             conn_driver: None,
+-        }
+-    }
+-
+-    pub fn with_conn_driver(mut self, driver: tokio::task::JoinHandle<()>) -> Self {
+-        self.conn_driver = Some(driver);
++            spawner: meow_common::scoped_join::Spawner::capture(),
++        }
++    }
++
++    pub fn with_conn_driver(mut self, driver: impl Into<meow_common::scoped_join::ScopedJoin<()>>) -> Self {
++        self.conn_driver = Some(driver.into());
+         self
+     }
+ 
+@@ -286,11 +288,11 @@
+             return;
+         };
+         let recv = self.recv.take();
+-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
++        let Ok(_runtime) = tokio::runtime::Handle::try_current() else {
+             driver.abort();
+             return;
+         };
+-        runtime.spawn(async move {
++        let _ = self.spawner.try_spawn(async move {
+             // Response EOF only closes the peer's sending half. Keep driving
+             // queued request DATA/EOS until the connection itself completes;
+             // draining the response releases its flow-control window and refs.
+@@ -1039,3 +1041,13 @@
+         assert_eq!(io.raw_os_error(), None);
+     }
+ }
++
++#[cfg(test)]
++mod scoped_join_stream_contract_tests {
++    use super::*;
++    #[test]
++    fn actual_stream_preserves_send_sync_transport_contract() {
++        fn require_stream<T: crate::Stream>() {}
++        require_stream::<H2Stream>();
++    }
++}
+--- a/crates/meow-transport/src/ws.rs
++++ b/crates/meow-transport/src/ws.rs
+@@ -312,7 +312,7 @@
+ /// could pin the fd indefinitely (issue #669). A `JoinHandle` keeps
+ /// `WsStream: Sync` without boxing the non-Sync handshake future.
+ struct UpgradeTask {
+-    handle: tokio::task::JoinHandle<io::Result<WebSocketStream<BoxStream>>>,
++    handle: meow_common::scoped_join::ScopedJoin<io::Result<WebSocketStream<BoxStream>>>,
+     /// Set once the handle resolves — a `JoinHandle` panics when polled
+     /// after completion, but a caller that retries after a failed
+     /// upgrade polls us again; return a stable terminal error instead.
+@@ -345,6 +345,7 @@
+ }
+ 
+ struct PendingState {
++    spawner: meow_common::scoped_join::Spawner,
+     inner: Option<BoxStream>,
+     uri: String,
+     host: String,
+@@ -363,6 +364,7 @@
+ }
+ 
+ enum WsInner {
++    Failed(io::ErrorKind, String),
+     Pending(Box<PendingState>),
+     /// Upgrade in progress; aborting the guard on drop releases the fd.
+     Upgrading(UpgradeTask),
+@@ -394,6 +396,7 @@
+     ) -> Self {
+         Self {
+             inner: WsInner::Pending(Box::new(PendingState {
++                spawner: meow_common::scoped_join::Spawner::capture(),
+                 inner: Some(inner),
+                 uri,
+                 host,
+@@ -407,7 +410,7 @@
+ }
+ 
+ /// Transition `state` → `WsInner::Upgrading` by spawning the handshake task.
+-fn begin_upgrade(state: &mut PendingState) -> UpgradeTask {
++fn begin_upgrade(state: &mut PendingState) -> io::Result<UpgradeTask> {
+     let inner = state.inner.take().expect("inner stream taken only once");
+     let early_value = if state.early_buf.is_empty() {
+         String::new()
+@@ -423,7 +426,7 @@
+     )
+     .expect("WsConfig produces a valid HTTP upgrade request");
+ 
+-    let handle = tokio::spawn(async move {
++    let handle = state.spawner.try_spawn(async move {
+         match tokio::time::timeout(
+             UPGRADE_TIMEOUT,
+             tokio_tungstenite::client_async_with_config(request, inner, Some(ws_config())),
+@@ -437,11 +440,11 @@
+                 format!("ws upgrade timed out after {UPGRADE_TIMEOUT:?}"),
+             )),
+         }
+-    });
+-    UpgradeTask {
++    })?;
++    Ok(UpgradeTask {
+         handle,
+         done: false,
+-    }
++    })
+ }
+ 
+ // ─── Poll helpers ─────────────────────────────────────────────────────────────
+@@ -480,10 +483,11 @@
+     ) -> Poll<io::Result<()>> {
+         loop {
+             match &mut self.inner {
++                WsInner::Failed(kind, message) => return Poll::Ready(Err(io::Error::new(*kind, message.clone()))),
+                 WsInner::Pending(state) => {
+                     // A read forces the upgrade to start (with whatever
+                     // early data has been buffered so far).
+-                    let task = begin_upgrade(state);
++                    let task = match begin_upgrade(state) { Ok(task) => task, Err(error) => { self.inner = WsInner::Failed(error.kind(), error.to_string()); return Poll::Ready(Err(error)); } };
+                     self.inner = WsInner::Upgrading(task);
+                 }
+                 WsInner::Upgrading(_) => {
+@@ -553,6 +557,7 @@
+     ) -> Poll<io::Result<usize>> {
+         loop {
+             match &mut self.inner {
++                WsInner::Failed(kind, message) => return Poll::Ready(Err(io::Error::new(*kind, message.clone()))),
+                 WsInner::Pending(state) => {
+                     let remaining = state.max_early_data - state.early_buf.len();
+                     let take = remaining.min(buf.len());
+@@ -560,7 +565,7 @@
+ 
+                     if state.early_buf.len() >= state.max_early_data {
+                         // Buffer full — start the upgrade.
+-                        let task = begin_upgrade(state);
++                        let task = match begin_upgrade(state) { Ok(task) => task, Err(error) => { self.inner = WsInner::Failed(error.kind(), error.to_string()); return Poll::Ready(Err(error)); } };
+                         self.inner = WsInner::Upgrading(task);
+                         // Return the bytes consumed so far; any overflow
+                         // will be written in the next poll_write call.
+@@ -624,9 +629,10 @@
+     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+         loop {
+             match &mut self.inner {
++                WsInner::Failed(kind, message) => return Poll::Ready(Err(io::Error::new(*kind, message.clone()))),
+                 WsInner::Pending(state) => {
+                     // Flush forces the upgrade (with buffered early data).
+-                    let task = begin_upgrade(state);
++                    let task = match begin_upgrade(state) { Ok(task) => task, Err(error) => { self.inner = WsInner::Failed(error.kind(), error.to_string()); return Poll::Ready(Err(error)); } };
+                     self.inner = WsInner::Upgrading(task);
+                 }
+                 WsInner::Upgrading(_) => {
+@@ -646,8 +652,9 @@
+     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+         loop {
+             match &mut self.inner {
++                WsInner::Failed(kind, message) => return Poll::Ready(Err(io::Error::new(*kind, message.clone()))),
+                 WsInner::Pending(state) => {
+-                    let task = begin_upgrade(state);
++                    let task = match begin_upgrade(state) { Ok(task) => task, Err(error) => { self.inner = WsInner::Failed(error.kind(), error.to_string()); return Poll::Ready(Err(error)); } };
+                     self.inner = WsInner::Upgrading(task);
+                 }
+                 WsInner::Upgrading(_) => match poll_upgrade(&mut self.inner, cx) {
+@@ -787,3 +794,37 @@
+         assert_eq!(io.kind(), io::ErrorKind::Other);
+     }
+ }
++
++#[cfg(test)]
++mod scoped_admission_tests {
++    use super::*;
++    use meow_common::transport_tasks::{SharedUnitJoin, TransportScope, TransportTaskContext, Work};
++    use std::sync::Arc;
++    struct Closed;
++    impl TransportTaskContext for Closed {
++        fn spawn(&self, _work: Work) -> io::Result<tokio::task::AbortHandle> { Err(io::Error::other("closed")) }
++        fn spawn_join(&self, _work: Work) -> io::Result<Arc<SharedUnitJoin>> { Err(io::Error::other("closed")) }
++    }
++    #[tokio::test]
++    async fn closed_origin_upgrade_has_repeatable_error_and_zero_http_bytes() {
++        use tokio::io::AsyncReadExt;
++        let scope = TransportScope::new(Arc::new(Closed));
++        let (raw, mut peer) = tokio::io::duplex(1024);
++        let mut stream = scope.scope(async { WsStream::pending(Box::new(raw), "ws://localhost/probe".into(),
++            "localhost".into(), Vec::new(), 0, "Sec-WebSocket-Protocol".into()) }).await;
++        let mut byte = [0];
++        assert_eq!(stream.read(&mut byte).await.unwrap_err().to_string(), "closed");
++        assert_eq!(stream.read(&mut byte).await.unwrap_err().to_string(), "closed");
++        assert_eq!(peer.read(&mut byte).await.unwrap(), 0);
++    }
++}
++
++#[cfg(test)]
++mod scoped_join_stream_contract_tests {
++    use super::*;
++    #[test]
++    fn actual_stream_preserves_send_sync_transport_contract() {
++        fn require_stream<T: crate::Stream>() {}
++        require_stream::<WsStream>();
++    }
++}
+--- a/crates/meow-transport/src/xhttp.rs
++++ b/crates/meow-transport/src/xhttp.rs
+@@ -190,9 +190,9 @@
+             .await
+             .map_err(|e| crate::h2_common::h2_to_transport(e, TransportError::Xhttp))?;
+ 
+-        let driver_task = tokio::spawn(async move {
++        let driver_task = meow_common::scoped_join::try_spawn(async move {
+             let _ = conn.await;
+-        });
++        })?;
+         let abort_handle = driver_task.abort_handle();
+         h2 = match tokio::time::timeout(OPEN_TIMEOUT, h2.ready()).await {
+             Ok(Ok(ready_h2)) => ready_h2,
 --- a/crates/meow-tunnel/src/health_check.rs
 +++ b/crates/meow-tunnel/src/health_check.rs
 @@ -66,7 +66,7 @@
@@ -4242,3 +7436,572 @@
      // `interval(Duration::ZERO)` panics — extract clamps 0→300, but a
      // spec constructed directly (embedders) must not kill the task.
      // The ceiling matters too: `PUT /configs?force=true` persists a raw
+@@ -118,81 +118,93 @@
+             );
+             continue;
+         }
+-        // Resolve through the group, not the route table: `use:` /
+-        // `include-all` provider members are not registry keys, so a
+-        // name lookup found zero of them and a `use:`-only group woke
+-        // every interval to probe nothing (issue #543 item 1).
+-        let Some(member_proxies) = group.member_proxies() else {
+-            continue;
+-        };
+-
+-        let members: Vec<_> = member_proxies
+-            .into_iter()
+-            .map(|p| (p.name().to_string(), p))
+-            .collect();
+-        // `expected-status` narrows the acceptance set — a periodic probe
+-        // must use the same set the group's set-triggered probes use,
+-        // otherwise the two can disagree on member health (issue #514).
+-        let expected_status = group.expected_status().filter(|s| !s.is_empty());
+-        // Keep `route` alive across the probe: it owns this generation's
+-        // dialer registry, and a mid-probe `update_routing` would otherwise
+-        // fail chained members closed and mark live nodes dead (issue #533).
+-
+-        // Automatic groups that carry `dialer-proxy` chains: a chained
+-        // member that fails its probe is checked through them before it
+-        // is taken for down.
+-        let fronts: Vec<Arc<dyn Proxy>> = proxies
+-            .values()
+-            .filter(|p| p.chain_health().is_some())
+-            .cloned()
+-            .collect();
+-        let hold = Duration::from_secs(interval_secs).saturating_mul(2);
+-
+-        let mut alive_count = 0u32;
+-        let mut total_count = 0u32;
+-        for member in meow_proxy::health::sweep_members(
+-            members,
+-            &fronts,
+-            &spec.url,
+-            expected_status,
+-            PROBE_TIMEOUT,
+-            meow_proxy::health::PROVIDER_HEALTHCHECK_CONCURRENCY,
+-            hold,
+-        )
+-        .await
+-        {
+-            total_count += 1;
+-            if member.delay > 0 {
+-                alive_count += 1;
+-            } else {
+-                warn!(
+-                    "health-check: {} / {} is dead (probe failed)",
+-                    spec.group_name, member.name
+-                );
+-            }
+-        }
+-
+-        // Record the generation only now that a probe round actually ran
+-        // (and only the pre-probe snapshot: any use that arrived *during*
+-        // the probes must still trigger the next tick).  Consuming it
+-        // earlier would let a tick with zero resolved members starve a
+-        // lazy group of its next probe.
+-        if total_count > 0 {
+-            last_probed_generation = generation;
+-        }
+-
+-        info!(
+-            "health-check: {} — {}/{} alive",
+-            spec.group_name, alive_count, total_count
+-        );
+-
+-        if let Some(chain) = group.chain_health() {
+-            // A block outlives the gap to the next round, which probes
+-            // the member again if it is among those the round tries: one
+-            // that still fails stays blocked, one that passes is cleared.
+-            probe_chain_targets(&spec, &group, chain, proxies, expected_status, hold).await;
+-        }
+-    }
++        let round_spec = spec.clone();
++        let (send, receive) = tokio::sync::oneshot::channel();
++        let work = Box::pin(async move {
++            let round: std::pin::Pin<Box<dyn std::future::Future<Output = u32> + Send>> =
++                Box::pin(run_probe_round(route, group, round_spec, interval_secs));
++            let total = match meow_common::probe_policy::capture() {
++                Ok(Some(snapshot)) => snapshot.scope(round).await,
++                Ok(None) => round.await,
++                Err(_) => return,
++            };
++            let _ = send.send(total);
++        });
++        meow_common::transport_tasks::wrap_current(work).await;
++        let Ok(total) = receive.await else { return; };
++        if total > 0 { last_probed_generation = generation; }
++    }
++}
++
++// One round, not the infinite ticker, owns the captured network/policy view.
++async fn run_probe_round(route: Arc<crate::tunnel::RouteTable>, group: Arc<dyn Proxy>,
++    spec: HealthCheckSpec, interval_secs: u64) -> u32 {
++    let proxies = &route.proxies;
++    // Resolve through the group, not the route table: `use:` /
++    // `include-all` provider members are not registry keys, so a
++    // name lookup found zero of them and a `use:`-only group woke
++    // every interval to probe nothing (issue #543 item 1).
++    let Some(member_proxies) = group.member_proxies() else { return 0; };
++
++    let members: Vec<_> = member_proxies
++        .into_iter()
++        .map(|p| (p.name().to_string(), p))
++        .collect();
++    // `expected-status` narrows the acceptance set — a periodic probe
++    // must use the same set the group's set-triggered probes use,
++    // otherwise the two can disagree on member health (issue #514).
++    let expected_status = group.expected_status().filter(|s| !s.is_empty());
++    // Keep `route` alive across the probe: it owns this generation's
++    // dialer registry, and a mid-probe `update_routing` would otherwise
++    // fail chained members closed and mark live nodes dead (issue #533).
++
++    // Automatic groups that carry `dialer-proxy` chains: a chained
++    // member that fails its probe is checked through them before it
++    // is taken for down.
++    let fronts: Vec<Arc<dyn Proxy>> = proxies
++        .values()
++        .filter(|p| p.chain_health().is_some())
++        .cloned()
++        .collect();
++    let hold = Duration::from_secs(interval_secs).saturating_mul(2);
++
++    let mut alive_count = 0u32;
++    let mut total_count = 0u32;
++    for member in meow_proxy::health::sweep_members(
++        members,
++        &fronts,
++        &spec.url,
++        expected_status,
++        PROBE_TIMEOUT,
++        meow_proxy::health::PROVIDER_HEALTHCHECK_CONCURRENCY,
++        hold,
++    )
++    .await
++    {
++        total_count += 1;
++        if member.delay > 0 {
++            alive_count += 1;
++        } else {
++            warn!(
++                "health-check: {} / {} is dead (probe failed)",
++                spec.group_name, member.name
++            );
++        }
++    }
++
++
++    info!(
++        "health-check: {} — {}/{} alive",
++        spec.group_name, alive_count, total_count
++    );
++
++    if let Some(chain) = group.chain_health() {
++        // A block outlives the gap to the next round, which probes
++        // the member again if it is among those the round tries: one
++        // that still fails stays blocked, one that passes is cleared.
++        probe_chain_targets(&spec, &group, chain, proxies, expected_status, hold).await;
++    }
++    total_count
+ }
+ 
+ /// Probe the `dialer-proxy` chains that run through `group`, once its own
+--- a/crates/meow-tunnel/src/match_engine.rs
++++ b/crates/meow-tunnel/src/match_engine.rs
+@@ -235,6 +235,15 @@
+ /// scan runs on the blocking pool so a large `/proc` table cannot stall the
+ /// Tokio worker the match executes on (issue #515).
+ pub async fn maybe_enrich_with_process_async(metadata: &Metadata) -> Option<Metadata> {
++    if let Some(owner) = metadata.process_identity.as_ref() {
++        let mut enriched = metadata.clone();
++        enriched.process.clear(); enriched.process_path.clear(); enriched.uid = None;
++        if let Some(info) = owner.lookup() {
++            enriched.process = info.name.into(); enriched.process_path = info.path.into(); enriched.uid = info.uid;
++        }
++        return Some(enriched);
++    }
++
+     if !metadata.process.is_empty() {
+         return None;
+     }
+@@ -252,6 +261,15 @@
+ /// socket scan can walk a large `/proc` tree and would stall the Tokio
+ /// worker this runs on (issue #515).
+ pub fn maybe_enrich_with_process(metadata: &Metadata) -> Option<Metadata> {
++    if let Some(owner) = metadata.process_identity.as_ref() {
++        let mut enriched = metadata.clone();
++        enriched.process.clear(); enriched.process_path.clear(); enriched.uid = None;
++        if let Some(info) = owner.lookup() {
++            enriched.process = info.name.into(); enriched.process_path = info.path.into(); enriched.uid = info.uid;
++        }
++        return Some(enriched);
++    }
++
+     if !metadata.process.is_empty() {
+         return None;
+     }
+--- a/crates/meow-tunnel/src/statistics.rs
++++ b/crates/meow-tunnel/src/statistics.rs
+@@ -22,7 +22,7 @@
+ pub use meow_common::traffic::ProxyTraffic;
+ use meow_common::traffic::ProxyTrafficSource;
+ use meow_common::Metadata;
+-use parking_lot::Mutex;
++use parking_lot::{Mutex, RwLock};
+ use serde::Serialize;
+ use smallvec::SmallVec;
+ use smol_str::SmolStr;
+@@ -73,6 +73,9 @@
+     pub download: AtomicI,
+     // Stored in the existing Arc so cancellation adds no setup allocation.
+     closed: AtomicBool,
++    direct: AtomicBool,
++    unclassified: AtomicBool,
++    dial_complete: AtomicBool,
+     close_notify: tokio::sync::Notify,
+     /// The connection's notes when the tunnel records them (see
+     /// `Tunnel::set_connection_notes`). Kept here, not on `ConnectionInfo`,
+@@ -80,10 +83,13 @@
+     /// `GET /connections/{id}` serializes them.
+     notes: Option<ConnNotes>,
+     /// The leaf proxy's totals (`chains[0]`), bumped alongside these.
+-    proxy: Option<Arc<ProxyTraffic>>,
++    proxy: RwLock<Option<Arc<ProxyTraffic>>>,
+ }
+ 
+ impl ConnCounters {
++    /// Capture the flow classification before the first relayed byte. Never a view toggle.
++    pub fn set_direct(&self, direct: bool) { self.direct.store(direct, Ordering::Relaxed); self.unclassified.store(false, Ordering::Release); }
++    pub fn is_direct(&self) -> bool { self.direct.load(Ordering::Relaxed) }
+     fn close(&self) {
+         self.closed.store(true, Ordering::Release);
+         self.close_notify.notify_waiters();
+@@ -165,6 +171,10 @@
+     download_rate: Int,
+     upload_total: Int,
+     download_total: Int,
++    proxy_upload_rate: Int,
++    proxy_download_rate: Int,
++    proxy_upload_total: Int,
++    proxy_download_total: Int,
+ }
+ 
+ pub struct Statistics {
+@@ -176,6 +186,9 @@
+     upload_total: AtomicI,
+     download_total: AtomicI,
+     traffic: Mutex<TrafficSnapshot>,
++    proxy_upload_total: AtomicI,
++    proxy_download_total: AtomicI,
++    selected_proxy_view: AtomicBool,
+     /// Keyed by `Uuid` (16 B Copy) — formerly `String`, which heap-allocated a
+     /// 36-byte hyphenated representation per insert.  REST handlers parse the
+     /// query path back into a `Uuid` at lookup time.
+@@ -245,6 +258,9 @@
+             upload_total: AtomicI::new(0),
+             download_total: AtomicI::new(0),
+             traffic: Mutex::new(TrafficSnapshot::default()),
++            proxy_upload_total: AtomicI::new(0),
++            proxy_download_total: AtomicI::new(0),
++            selected_proxy_view: AtomicBool::new(false),
+             connections: DashMap::new(),
+             headless_connections: OnceLock::new(),
+             recently_closed: Mutex::new(VecDeque::new()),
+@@ -267,18 +283,23 @@
+     /// [`Self::connection_counters`] (or `ConnectionGuard::counters`).
+     pub fn record_upload(&self, counters: &ConnCounters, n: Int) {
+         counters.upload.fetch_add(n, Ordering::Relaxed);
+-        self.record_packet_upload(counters.proxy.as_deref(), n);
++        if !counters.unclassified.load(Ordering::Acquire) { self.record_packet_upload_classified(counters.proxy.read().as_deref(), n, counters.is_direct()); }
+     }
+ 
+     /// See [`Self::record_upload`].
+     pub fn record_download(&self, counters: &ConnCounters, n: Int) {
+         counters.download.fetch_add(n, Ordering::Relaxed);
+-        self.record_packet_download(counters.proxy.as_deref(), n);
++        if !counters.unclassified.load(Ordering::Acquire) { self.record_packet_download_classified(counters.proxy.read().as_deref(), n, counters.is_direct()); }
+     }
+ 
+     /// Count `n` bytes sent through `proxy` by a flow without connection
+     /// counters (UDP): the totals and the proxy's, when it has them.
+     pub fn record_packet_upload(&self, proxy: Option<&ProxyTraffic>, n: Int) {
++        self.record_packet_upload_classified(proxy, n, false);
++    }
++
++    pub fn record_packet_upload_classified(&self, proxy: Option<&ProxyTraffic>, n: Int, direct: bool) {
++        if !direct { self.proxy_upload_total.fetch_add(n, Ordering::Relaxed); }
+         if let Some(proxy) = proxy {
+             proxy.add_upload(n);
+         }
+@@ -287,6 +308,11 @@
+ 
+     /// See [`Self::record_packet_upload`].
+     pub fn record_packet_download(&self, proxy: Option<&ProxyTraffic>, n: Int) {
++        self.record_packet_download_classified(proxy, n, false);
++    }
++
++    pub fn record_packet_download_classified(&self, proxy: Option<&ProxyTraffic>, n: Int, direct: bool) {
++        if !direct { self.proxy_download_total.fetch_add(n, Ordering::Relaxed); }
+         if let Some(proxy) = proxy {
+             proxy.add_download(n);
+         }
+@@ -348,19 +374,38 @@
+         snap.download_rate = download - snap.download_total;
+         snap.upload_total = upload;
+         snap.download_total = download;
++        let proxy_upload = self.proxy_upload_total.load(Ordering::Relaxed);
++        let proxy_download = self.proxy_download_total.load(Ordering::Relaxed);
++        snap.proxy_upload_rate = proxy_upload - snap.proxy_upload_total;
++        snap.proxy_download_rate = proxy_download - snap.proxy_download_total;
++        snap.proxy_upload_total = proxy_upload;
++        snap.proxy_download_total = proxy_download;
+     }
+ 
+     /// `(upload_rate, download_rate, upload_total, download_total)` as of the
+     /// last `sample_traffic` tick. Totals lag the live counters by up to one
+     /// tick, in exchange for being consistent with the rates.
++    /// The same sampler tick, selecting a continuously collected channel. No counter reset.
++    pub fn traffic_snapshot_for(&self, only_proxy: bool) -> (Int, Int, Int, Int) {
++        let snap = *self.traffic.lock();
++        if only_proxy { (snap.proxy_upload_rate, snap.proxy_download_rate, snap.proxy_upload_total, snap.proxy_download_total) }
++        else { (snap.upload_rate, snap.download_rate, snap.upload_total, snap.download_total) }
++    }
++    pub fn totals_for(&self, only_proxy: bool) -> (Int, Int) {
++        if only_proxy { (self.proxy_upload_total.load(Ordering::Relaxed), self.proxy_download_total.load(Ordering::Relaxed)) }
++        else { self.snapshot() }
++    }
++
++    /// Publish the session's committed display choice without touching either
++    /// channel's counters, the sampler or established connections.
++    pub fn set_only_proxy_view(&self, only_proxy: bool) {
++        self.selected_proxy_view.store(only_proxy, Ordering::Release);
++    }
++    pub fn only_proxy_view(&self) -> bool {
++        self.selected_proxy_view.load(Ordering::Acquire)
++    }
+     pub fn traffic_snapshot(&self) -> (Int, Int, Int, Int) {
+-        let snap = *self.traffic.lock();
+-        (
+-            snap.upload_rate,
+-            snap.download_rate,
+-            snap.upload_total,
+-            snap.download_total,
+-        )
++        self.traffic_snapshot_for(self.only_proxy_view())
+     }
+ 
+     pub fn track_connection(
+@@ -385,7 +430,8 @@
+         let uuid = Uuid::new_v4();
+         let counters = Arc::new(ConnCounters {
+             notes,
+-            proxy: chains.first().and_then(|leaf| self.proxy_counters(leaf)),
++            proxy: RwLock::new(chains.first().and_then(|leaf| self.proxy_counters(leaf))),
++            unclassified: AtomicBool::new(false),
+             ..ConnCounters::default()
+         });
+         let info = ConnectionInfo {
+@@ -400,6 +446,18 @@
+         self.connections.insert(uuid, info);
+         (uuid, counters)
+     }
++
++    /// Commit one actual successful dial before any relay/prefix accounting.
++    pub fn complete_dial(&self, counters: &ConnCounters, id: Option<Uuid>, outcome: &meow_common::dial_outcome::DialOutcome) -> bool {
++        if counters.dial_complete.compare_exchange(false,true,Ordering::AcqRel,Ordering::Acquire).is_err() { return false; }
++        use meow_common::dial_outcome::TrafficClass;
++        counters.direct.store(outcome.traffic_class()==TrafficClass::Direct,Ordering::Relaxed);
++        *counters.proxy.write() = outcome.chains.first().and_then(|leaf| self.proxy_counters(leaf));
++        counters.unclassified.store(outcome.traffic_class()==TrafficClass::Uncounted,Ordering::Release);
++        if let Some(id)=id { if let Some(mut info)=self.connections.get_mut(&id) { info.chains=outcome.chains.iter().cloned().collect(); } }
++        true
++    }
++    pub fn pending_dial(&self, counters: &ConnCounters) { counters.unclassified.store(true,Ordering::Release); }
+ 
+     /// Select the lighter connection registry before listeners start. The
+     /// default remains full tracking for embedders and API consumers.
+--- a/crates/meow-tunnel/src/tcp.rs
++++ b/crates/meow-tunnel/src/tcp.rs
+@@ -98,6 +98,7 @@
+         adapter: &dyn ProxyAdapter,
+     ) -> Self {
+         if let Some(counters) = stats.begin_headless_connection() {
++            stats.pending_dial(&counters);
+             return Self {
+                 stats,
+                 key: ConnectionKey::Headless,
+@@ -115,6 +116,7 @@
+             chains,
+             ConnNotes::current(),
+         );
++        stats.pending_dial(&counters);
+         Self {
+             stats,
+             key: ConnectionKey::Api(id),
+@@ -419,12 +421,15 @@
+                 proxy.adapter_type()
+             );
+             let started = std::time::Instant::now();
+-            let dial = with_dial_timeout(proxy.name(), proxy.dial_tcp(&metadata)).await;
++            let (dial_metadata, receipt) = meow_common::dial_outcome::DialReceipt::branch(&metadata);
++            let dial = with_dial_timeout(proxy.name(), proxy.dial_tcp_observed(&dial_metadata)).await;
+             // All chained front hops resolved during the dial — release the
+             // generation pin before entering the relay loop.
+             drop(route.take());
+             match dial {
+                 Ok(mut remote) => {
++                    let Some(outcome)=receipt.outcome() else { return; };
++                    inner.stats.complete_dial(guard.counters(),guard.id(),&outcome);
+                     conn_note!(Dial, "Connected in {} ms", started.elapsed().as_millis());
+                     let up = Arc::clone(guard.counters());
+                     let dn = Arc::clone(guard.counters());
+@@ -621,6 +626,9 @@
+ 
+         assert_eq!(tunnel.statistics().active_connection_count(), 0);
+         assert_eq!(guard.id(), None);
++        tunnel.statistics().complete_dial(guard.counters(),guard.id(), &meow_common::dial_outcome::DialOutcome {
++            leaf_type: meow_common::AdapterType::Direct, chains: vec![std::sync::Arc::from("DIRECT")],
++        });
+         tunnel.statistics().record_upload(guard.counters(), 123);
+         assert_eq!(tunnel.statistics().snapshot(), (123, 0));
+ 
+@@ -1115,3 +1123,4 @@
+         assert_eq!(tracked_chain(&tunnel).await, ["DIRECT", "Proxy"]);
+     }
+ }
++
+--- a/crates/meow-tunnel/src/tunnel.rs
++++ b/crates/meow-tunnel/src/tunnel.rs
+@@ -13,9 +13,12 @@
+ use parking_lot::{Mutex, RwLock};
+ use smol_str::SmolStr;
+ use std::collections::HashMap;
++use std::future::Future;
+ use std::sync::atomic::{AtomicBool, Ordering};
+ use std::sync::{Arc, Weak};
+ use tracing::{debug, info, warn};
++
++tokio::task_local! { static RESOLVER_SNAPSHOT: Arc<Resolver>; }
+ 
+ /// Bundled rules + domain index + proxies map, swapped as one `Arc` on
+ /// config reload. Reads on the connection-setup hot path take a single
+@@ -225,7 +228,7 @@
+     /// Snapshot the current resolver generation: one short read lock +
+     /// `Arc` clone. Always reflects the latest `Tunnel::set_resolver`.
+     pub fn resolver(&self) -> Arc<Resolver> {
+-        Arc::clone(&self.resolver.read())
++        RESOLVER_SNAPSHOT.try_with(Arc::clone).unwrap_or_else(|_| Arc::clone(&self.resolver.read()))
+     }
+ 
+     /// Subscribe a UDP flow to [`Tunnel::close_all_udp_sessions`] (issue
+@@ -1159,6 +1162,16 @@
+         self.inner.resolver()
+     }
+ 
++    /// Keep all resolver reads in one owned flow on the resolver generation
++    /// captured with its physical network. Existing flows may finish on their
++    /// old network while later flows observe a committed generation.
++    pub async fn with_resolver_snapshot<F: Future>(&self, resolver: Arc<Resolver>, work: F) -> F::Output {
++        let direct = Arc::clone(&self.inner.direct);
++        RESOLVER_SNAPSHOT.scope(resolver.clone(), async move {
++            direct.with_resolver_snapshot(resolver, work).await
++        }).await
++    }
++
+     /// The shared resolver slot. Pass clones to `rebuild_from_raw_*` and
+     /// the TUN loopback DNS so every consumer — including each rebuilt
+     /// `DIRECT` adapter — tracks `set_resolver` swaps (issue #514).
+--- a/crates/meow-tunnel/src/udp.rs
++++ b/crates/meow-tunnel/src/udp.rs
+@@ -1,8 +1,10 @@
++#[cfg(test)]
++use meow_common::AdapterType;
+ use crate::statistics::{ProxyTraffic, Statistics};
+ use crate::tunnel::{ResolvedTarget, TunnelInner};
+ use dashmap::DashMap;
+ use meow_common::atomic::{AtomicU, Int};
+-use meow_common::{with_dial_timeout, AdapterType, Metadata, ProxyAdapter, ProxyPacketConn};
++use meow_common::{with_dial_timeout, Metadata, ProxyAdapter, ProxyPacketConn};
+ use std::net::SocketAddr;
+ use std::sync::atomic::Ordering;
+ use std::sync::Arc;
+@@ -86,6 +88,7 @@
+ /// read outside the crate (the mobile FFIs read `UdpSession::conn`). Costs
+ /// each datagram one more boxed future (`async_trait`) than the bare conn.
+ struct CountedPacketConn {
++    direct: bool,
+     conn: Box<dyn ProxyPacketConn>,
+     stats: Arc<Statistics>,
+     proxy: Option<Arc<ProxyTraffic>>,
+@@ -96,14 +99,14 @@
+     async fn read_packet(&self, buf: &mut [u8]) -> meow_common::Result<(usize, SocketAddr)> {
+         let (n, from) = self.conn.read_packet(buf).await?;
+         self.stats
+-            .record_packet_download(self.proxy.as_deref(), n as Int);
++            .record_packet_download_classified(self.proxy.as_deref(), n as Int, self.direct);
+         Ok((n, from))
+     }
+ 
+     async fn write_packet(&self, buf: &[u8], addr: &SocketAddr) -> meow_common::Result<usize> {
+         let n = self.conn.write_packet(buf, addr).await?;
+         self.stats
+-            .record_packet_upload(self.proxy.as_deref(), n as Int);
++            .record_packet_upload_classified(self.proxy.as_deref(), n as Int, self.direct);
+         Ok(n)
+     }
+ 
+@@ -128,47 +131,19 @@
+         proxy: &dyn ProxyAdapter,
+         metadata: &Metadata,
+     ) -> meow_common::Result<Box<dyn ProxyPacketConn>> {
+-        let counted = udp_leaf_counters(&self.stats, proxy, metadata);
+-        let conn = with_dial_timeout(proxy.name(), proxy.dial_udp(metadata)).await?;
+-        let Some(leaf) = counted else {
+-            return Ok(conn);
+-        };
++        let (dial_metadata, receipt) = meow_common::dial_outcome::DialReceipt::branch(metadata);
++        let conn = with_dial_timeout(proxy.name(), proxy.dial_udp_observed(&dial_metadata)).await?;
++        let outcome=receipt.outcome().ok_or_else(||meow_common::MeowError::Proxy("UDP dial omitted outcome".into()))?;
++        use meow_common::dial_outcome::TrafficClass;
++        if outcome.traffic_class()==TrafficClass::Uncounted { return Ok(conn); }
++        let direct=outcome.traffic_class()==TrafficClass::Direct;
++        let leaf=outcome.chains.first().and_then(|name|self.stats.proxy_counters(name));
+         Ok(Box::new(CountedPacketConn {
++            direct,
+             conn,
+             stats: Arc::clone(&self.stats),
+             proxy: leaf,
+         }))
+-    }
+-}
+-
+-/// How a UDP flow through `adapter` is counted: `None` when it ends at an
+-/// adapter that sends nothing, else the counters of the leaf it ends at
+-/// (themselves `None` while headless, which keeps only the totals).
+-fn udp_leaf_counters(
+-    stats: &Statistics,
+-    adapter: &dyn ProxyAdapter,
+-    metadata: &Metadata,
+-) -> Option<Option<Arc<ProxyTraffic>>> {
+-    let mut leaf = None;
+-    let mut next = adapter.unwrap_proxy(metadata, false);
+-    for _ in 0..crate::tcp::MAX_CHAIN_HOPS {
+-        let Some(hop) = next else {
+-            break;
+-        };
+-        next = hop.unwrap_proxy(metadata, false);
+-        leaf = Some(hop);
+-    }
+-    let (name, kind) = leaf
+-        .as_deref()
+-        .map_or((adapter.name(), adapter.adapter_type()), |hop| {
+-            (hop.name(), hop.adapter_type())
+-        });
+-    match kind {
+-        AdapterType::Reject
+-        | AdapterType::RejectDrop
+-        | AdapterType::Pass
+-        | AdapterType::PassRule => None,
+-        _ => Some(stats.proxy_counters(name)),
+     }
+ }
+ 

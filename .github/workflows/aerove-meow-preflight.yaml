@@ -82,7 +82,9 @@ jobs:
           cache-on-failure: true
           cache-directories: apps/aerove-lite/meow-native/.upstream
       - name: Python source preparation and Android link policy checks
-        run: python3 apps/aerove-lite/meow-native/test_build.py
+        run: |
+          python3 apps/aerove-lite/meow-native/test_build.py
+          python3 apps/aerove-lite/meow-native/test_core_tests.py
       - name: Record actual host C and CMake prerequisites
         run: |
           set -euo pipefail
@@ -130,12 +132,15 @@ jobs:
           done
           if [ -f "$RUNNER_TEMP/meow-host-command.log" ]; then cp "$RUNNER_TEMP/meow-host-command.log" "$evidence/"; fi
           python3 - "$root" "$evidence" <<'PY'
-          import hashlib,json,sys
+          import hashlib,json,shutil,sys
           from pathlib import Path
           source_root=Path(sys.argv[1]);root=Path(sys.argv[2]);provenance=root/'AEROVE_SOURCE_PROVENANCE.json'
           sys.path.insert(0,str(source_root))
           from build_policy import copy_policy_evidence
           copy_policy_evidence(source_root,root)
+          core_tests=source_root/'build/core-tests'
+          if core_tests.is_dir():
+              shutil.copytree(core_tests,root/'core-tests')
           if provenance.exists():
               source=json.loads((root/'source.json').read_text())
               source['archiveSha256']=json.loads(provenance.read_text())['archiveSha256']

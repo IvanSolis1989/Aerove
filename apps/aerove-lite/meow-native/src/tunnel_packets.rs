@@ -7,15 +7,23 @@ use std::{collections::BTreeMap, io, net::SocketAddr, panic::AssertUnwindSafe, p
 use tokio::{io::{AsyncRead, AsyncWrite, ReadBuf}, sync::mpsc, task::JoinSet, time::{Instant, sleep}};
 use tokio_util::sync::CancellationToken;
 
-pub struct TunnelPackets { tunnel: Tunnel, idle: Duration, owner: Option<Arc<dyn FlowOwnerLookup>> }
+pub struct TunnelPackets { tunnel: Tunnel, idle: Duration, owner: Option<Arc<dyn FlowOwnerLookup>>, processes: Option<Arc<crate::process_policies::ProcessPolicies>>, network: Option<NetworkContext> }
 impl TunnelPackets {
     pub fn new(tunnel: Tunnel, idle: Duration) -> io::Result<Arc<Self>> {
         if idle.is_zero() { return Err(io::Error::new(io::ErrorKind::InvalidInput, "UDP idle timeout")); }
-        Ok(Arc::new(Self { tunnel, idle, owner: None }))
+        Ok(Arc::new(Self { tunnel, idle, owner: None, processes: None, network: None }))
+    }
+    pub fn with_process(tunnel: Tunnel, idle: Duration, processes: Arc<crate::process_policies::ProcessPolicies>) -> io::Result<Arc<Self>> {
+        if idle.is_zero() { return Err(io::Error::new(io::ErrorKind::InvalidInput, "UDP idle timeout")); }
+        Ok(Arc::new(Self { tunnel, idle, owner: None, processes: Some(processes), network: None }))
+    }
+    pub fn with_context(tunnel: Tunnel, idle: Duration, processes: Arc<crate::process_policies::ProcessPolicies>, network: NetworkContext) -> io::Result<Arc<Self>> {
+        if idle.is_zero() { return Err(io::Error::new(io::ErrorKind::InvalidInput, "UDP idle timeout")); }
+        Ok(Arc::new(Self { tunnel, idle, owner: None, processes: Some(processes), network: Some(network) }))
     }
     pub fn with_owner(tunnel: Tunnel, idle: Duration, owner: Option<Arc<dyn FlowOwnerLookup>>) -> io::Result<Arc<Self>> {
         if idle.is_zero() { return Err(io::Error::new(io::ErrorKind::InvalidInput, "UDP idle timeout")); }
-        Ok(Arc::new(Self { tunnel, idle, owner }))
+        Ok(Arc::new(Self { tunnel, idle, owner, processes: None, network: None }))
     }
 }
 fn error(message: &'static str) -> io::Error { io::Error::other(message) }
@@ -23,12 +31,24 @@ fn error(message: &'static str) -> io::Error { io::Error::other(message) }
 impl PacketHandler for TunnelPackets {
     fn tcp(&self, stream: lwip::TcpStream, source: SocketAddr, target: SocketAddr) -> PacketWork<()> {
         let tunnel = self.tunnel.clone();
-        let owner = self.owner.clone();
-        Box::pin(async move {
+        let owner = self.owner.clone(); let processes = self.processes.clone(); let network = self.network.clone();
+        let work: PacketWork<()> = Box::pin(async move {
+            let mut meta = metadata(Network::Tcp, source, target, owner.as_deref());
+            if let Some(processes) = processes { processes.current().attach(&mut meta,source,target)?; }
             meow_tunnel::tcp::handle_tcp(tunnel.inner(), Box::new(TunStream(Mutex::new(stream))),
-                metadata(Network::Tcp, source, target, owner.as_deref())).await;
+                meta).await;
             Ok(())
-        })
+        });
+        Box::pin(async move { match network { Some(network) => network.scope(work).await, None => work.await } })
+    }
+    fn tcp_with_tun(&self, stream: lwip::TcpStream, source: SocketAddr, target: SocketAddr,
+        tun: TunPlan, cancel: CancellationToken) -> PacketWork<()> {
+        if !tun.hijacks(target) { return self.tcp(stream, source, target); }
+        let tunnel = self.tunnel.clone(); let network = self.network.clone();
+        Box::pin(async move { match network {
+            Some(network) => crate::tcp_dns::serve_scoped(TunStream(Mutex::new(stream)),tunnel,network,cancel,crate::tcp_dns::Limits::default()).await,
+            None => crate::tcp_dns::serve(TunStream(Mutex::new(stream)),tunnel,cancel,crate::tcp_dns::Limits::default()).await,
+        } })
     }
     fn udp(&self, payload: Vec<u8>, _source: SocketAddr, _target: SocketAddr, dns_hijacked: bool) -> PacketWork<Option<Vec<u8>>> {
         let resolver = self.tunnel.resolver();
@@ -39,6 +59,7 @@ impl PacketHandler for TunnelPackets {
     }
     fn udp_driver(self: Arc<Self>, socket: Box<lwip::UdpSocket>, tun: TunPlan,
         cancel: CancellationToken, network: NetworkContext) -> PacketWork<()> {
+        let network = self.network.clone().unwrap_or(network);
         Box::pin(async move { self.run_udp(socket, tun, cancel, network).await })
     }
 }
@@ -76,8 +97,9 @@ impl TunnelPackets {
                 let (payload, source, target) = match packet { Ok(packet) => packet, Err(e) => break Err(e) };
                 if tun.hijacks(target) {
                     let Ok(permit) = dns_permits.clone().try_acquire_owned() else { continue; };
-                    let resolver = self.tunnel.resolver();
-                    let sender = replies.clone(); let context = network.clone(); let stop = cancel.clone();
+                    let (context, resolver) = network.captured_with_resolver();
+                    let resolver = resolver.unwrap_or_else(|| self.tunnel.resolver());
+                    let sender = replies.clone(); let stop = cancel.clone();
                     tasks.spawn(async move { context.scope(async move {
                         let _permit = permit;
                         tokio::select! { biased;
@@ -137,9 +159,9 @@ impl TunnelPackets {
         entries.insert(key, Entry { sender, activity: activity.clone(), cancel: cancel.clone() });
         let tunnel = self.tunnel.clone(); let replies = replies.clone();
         let context = network.clone(); let idle = self.idle;
-        let owner = self.owner.clone();
+        let owner = self.owner.clone(); let processes = self.processes.clone();
         tasks.spawn(async move { context.scope(async move {
-            let _ = udp_flow(tunnel, receiver, replies, key, cancel, idle, activity, epoch, owner).await;
+            let _ = udp_flow(tunnel, receiver, replies, key, cancel, idle, activity, epoch, owner, processes).await;
         }).await });
     }
 }
@@ -149,9 +171,10 @@ impl Drop for ClosePacket { fn drop(&mut self) { let _ = self.0.close(); } }
 
 async fn udp_flow(tunnel: Tunnel, mut queued: mpsc::Receiver<Vec<u8>>, replies: mpsc::Sender<Reply>,
     (source, target): (SocketAddr, SocketAddr), cancel: CancellationToken, idle: Duration,
-    activity: Arc<AtomicU64>, epoch: std::time::Instant, owner: Option<Arc<dyn FlowOwnerLookup>>) -> io::Result<()> {
+    activity: Arc<AtomicU64>, epoch: std::time::Instant, owner: Option<Arc<dyn FlowOwnerLookup>>, processes: Option<Arc<crate::process_policies::ProcessPolicies>>) -> io::Result<()> {
     if cancel.is_cancelled() { return Ok(()); }
     let mut meta = metadata(Network::Udp, source, target, owner.as_deref());
+    if let Some(processes) = processes { processes.current().attach(&mut meta,source,target)?; }
     if cancel.is_cancelled() { return Ok(()); }
     let inner = tunnel.inner();
     let mut flush = inner.udp_flush_watch();

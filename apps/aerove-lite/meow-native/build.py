@@ -12,6 +12,7 @@ import tomllib
 from prepare import prepare
 from build_policy import load_policy, digest, feature_boundary_command
 from clang_probe import probe as probe_libclang
+from core_tests import execute as execute_core_tests
 from verify_source import ROOT, sha, verify
 
 TARGETS={'aarch64-linux-android':('arm64-v8a',183),'x86_64-linux-android':('x86_64',62)}
@@ -160,6 +161,9 @@ def main():
             except BaseException as error:
                 receipt['featureBoundaryExit']=getattr(error,'returncode',1);raise
             if sha(lock)!=resolved:raise ValueError('Feature boundary test mutated Cargo.lock')
+        if not args.target and policy is not None:
+            execute_core_tests(ROOT,policy,environment,receipt)
+            if sha(lock)!=resolved:raise ValueError('Core unit tests changed the bridge Cargo.lock')
         if args.target:
             abi,machine=TARGETS[args.target];library=ROOT/'target'/args.target/'release/libaerove_meow_core.so'
             output=verify_elf(library,machine,readelf,SCRIPT_JNI_SYMBOLS+RUNTIME_JNI_SYMBOLS,build/(abi+'-readelf.txt'));receipt['scriptJniSymbols']=SCRIPT_JNI_SYMBOLS;receipt['runtimeJniSymbols']=RUNTIME_JNI_SYMBOLS;(build/(abi+'-readelf.txt')).write_text(output)

@@ -1,14 +1,18 @@
 {
   "schema": 1,
-  "manifestSha256": "34e742d365f22608296caec8975b4cbd5f9346357df30a405aee458e196251c9",
+  "manifestSha256": "5f60ffd27028424b07d4fb8f5e7574ce804eef04dc467a0b47e6ade10f7efe58",
   "resolveLock": true,
-  "expectedLockBeforeSha256": "333699a851d7ae548145740d7c9fdf9f93009eb322c333fefd5414ffdcca4eef",
+  "expectedLockBeforeSha256": "bc6695a948336ba3247c2587faeadc5514e562d2d27ae1cc47666a68ad258d81",
   "targets": [
     "lib",
+    "anytls_owned_shutdown",
     "api_lifecycle",
     "config_validation",
     "control_plane",
+    "dns_construction",
     "general_groups",
+    "group_delay",
+    "health_round_context",
     "host_policy_runtime",
     "node_delay",
     "offline_scope",
@@ -23,10 +27,15 @@
     "request_policy",
     "resource_roots",
     "runtime_transports",
+    "statistics_actual_outcome",
+    "tcp_dns",
     "transport_tasks",
-    "tun_driver"
+    "tun_driver",
+    "urltest_gate",
+    "user_request_context"
   ],
   "overlay": "source-metadata/full-runtime.json",
-  "overlaySha256": "5f0540005b38b70dfcc06ceb6fbdfbc4062dc4286829de3eef2d8621d3e9fab7",
-  "featureBoundary": "capabilities-no-default"
+  "overlaySha256": "ac4243b94ef20edcdf3348346b2234a4b6c491250377d4cdbee09cd58cef6733",
+  "featureBoundary": "capabilities-no-default",
+  "coreTests": "policy-runtime-v1"
 }

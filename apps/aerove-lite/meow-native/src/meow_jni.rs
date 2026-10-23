@@ -91,11 +91,11 @@ pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_startOwned<'loca
                 match network_handle { Some(handle) => NetworkContext::protected_on_network(callback, None, handle, cancel.clone())?, None => NetworkContext::protected(callback, None, cancel.clone()) }
             },
         };
-        let has_servers = plan.physical_network.dns.default_interface.as_ref()
-            .and_then(|name| plan.physical_network.dns.interfaces.get(name)).is_some_and(|servers| !servers.is_empty());
-        let network = if has_servers { PhysicalResolver::from_snapshot(&plan.physical_network.dns, network,
-            plan.tun.as_ref().is_some_and(|tun| tun.ipv6))?.network() }
-            else { network.with_physical_dns(Vec::new()) };
+        let ipv6 = meow_config::effective_ipv6(meow_config::parse_raw_yaml(&plan.engine_yaml).map_err(|_| BridgeError("invalidConfig".into()))?.ipv6);
+        let disconnected = network_handle.is_none() && plan.physical_network.dns.default_interface.is_none()
+            && plan.physical_network.dns.interfaces.is_empty() && (plan.runtime_mode == RuntimeMode::Proxy || plan.initially_parked);
+        let network = if disconnected { PhysicalResolver::not_connected(network,ipv6)?.network() }
+            else { PhysicalResolver::from_snapshot(&plan.physical_network.dns,network,ipv6)?.network() };
         let lookup = if owner.is_null() { None } else { Some(Arc::new(JavaOwner { vm: env.get_java_vm()?, callback: env.new_global_ref(owner)?, cancel }) as Arc<dyn FlowOwnerLookup>) };
         let fd = duplicate_fd(fd)?;
         let runtime = executor()?;
@@ -153,11 +153,12 @@ pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_awaitReady<'loca
 pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_stop<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, handle: i64) {
     env.with_env(|_| -> Result<(), BridgeError> {
         let session = session(handle)?;
-        executor()?.block_on(session.stop()).map_err(|error| failure(&session, error.code))?;
-        if session.owned_runtime().is_some_and(|owner| !owner.cleanup_confirmed()) {
-            return Err(failure(&session, "runtimeCleanupUnconfirmed"));
+        let result = executor()?.block_on(session.stop());
+        match session.owned_runtime() {
+            Some(owner) if owner.cleanup_confirmed() => Ok(()),
+            Some(_) => Err(failure(&session,"runtimeCleanupUnconfirmed")),
+            None => result.map(|_| ()).map_err(|error| failure(&session,error.code)),
         }
-        Ok(())
     }).resolve::<ThrowRuntimeExAndDefault>()
 }
 

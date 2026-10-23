@@ -51,6 +51,8 @@ pub struct CoreApi {
     private_scope: ApiLifecycle,
     user_scope: ApiLifecycle,
     private_router: Router,
+    official_router: Router,
+    private_authorization: HeaderValue,
     user_router: Option<Router>,
     log_sink: Arc<LogSink>,
     provider_tasks_started: std::sync::atomic::AtomicBool,
@@ -145,7 +147,7 @@ impl CoreApi {
             minimum: meow_api::log_stream::parse_log_level(&config.general.log_level),
         });
         private_scope.spawn(async move { plane.run_events().await; });
-        Ok(Self { state, control, private_scope, user_scope, private_router, user_router, log_sink, provider_tasks_started: std::sync::atomic::AtomicBool::new(false) })
+        Ok(Self { state, control, private_scope, user_scope, private_router, official_router: official, private_authorization: authorization, user_router, log_sink, provider_tasks_started: std::sync::atomic::AtomicBool::new(false) })
     }
 
     pub fn activate_providers(&self) -> Result<(), ApiError> {
@@ -193,6 +195,22 @@ impl CoreApi {
         Ok(())
     }
 
+    pub fn user_endpoint(&self, secret: &str, context: Arc<dyn meow_config::owned_load::LoadContext>) -> Result<UserEndpoint, ApiError> {
+        let secret = secret.trim();
+        if secret.is_empty() || secret.encode_utf16().count() > 512
+            || HeaderValue::from_bytes(format!("Bearer {secret}").as_bytes()).is_err() {
+            return Err(ApiError("invalidUserSecret"));
+        }
+        let scope = ApiLifecycle::with_context(context.clone());
+        let router = self.official_router.clone().layer(Extension(scope.clone()))
+            .layer(middleware::from_fn_with_state(Boundary {
+                user: true, secret: Arc::from(secret), authorization: self.private_authorization.clone(),
+                control: self.control.clone(), state: self.state.clone(),
+            }, boundary))
+            .layer(middleware::from_fn_with_state(context.clone(), captured_request));
+        Ok(UserEndpoint { router, scope, context })
+    }
+
     pub fn private_router(&self) -> Router { self.private_router.clone() }
     pub fn user_router(&self) -> Option<Router> { self.user_router.clone() }
 
@@ -238,6 +256,16 @@ impl CoreApi {
     }
 }
 
+#[derive(Clone)]
+pub struct UserEndpoint { router: Router, scope: ApiLifecycle, context: Arc<dyn meow_config::owned_load::LoadContext> }
+impl UserEndpoint {
+    pub fn cancel(&self) { self.scope.cancel(); }
+    pub async fn join(&self) { self.scope.join().await; }
+    pub async fn serve(&self, listener: TcpListener, cancel: CancellationToken) -> Result<(), ApiError> {
+        serve_scoped(listener, self.router.clone(), self.scope.clone(), cancel, Some(self.context.clone())).await
+    }
+}
+
 /// Upgrade callbacks are leased by the patched handlers before Hyper hands over IO.
 pub async fn serve_connection(stream: TcpStream, router: Router) {
     let service = TowerToHyperService::new(router);
@@ -247,6 +275,11 @@ pub async fn serve_connection(stream: TcpStream, router: Router) {
 
 async fn serve(listener: TcpListener, router: Router, scope: ApiLifecycle,
     cancel: CancellationToken) -> Result<(), ApiError> {
+    serve_scoped(listener, router, scope, cancel, None).await
+}
+
+pub(crate) async fn serve_scoped(listener: TcpListener, router: Router, scope: ApiLifecycle,
+    cancel: CancellationToken, context: Option<Arc<dyn meow_config::owned_load::LoadContext>>) -> Result<(), ApiError> {
     let mut children = JoinSet::new();
     let result = loop {
         tokio::select! {
@@ -260,7 +293,11 @@ async fn serve(listener: TcpListener, router: Router, scope: ApiLifecycle,
                     Ok(accepted) => accepted,
                     Err(_) => break Err(ApiError("apiAcceptFailed")),
                 };
-                children.spawn(serve_connection(stream, router.clone()));
+                let connection = serve_connection(stream, router.clone());
+                match &context {
+                    Some(context) => { children.spawn(context.wrap(Box::pin(connection))); },
+                    None => { children.spawn(Box::pin(connection)); },
+                }
             }
         }
     };
@@ -270,6 +307,16 @@ async fn serve(listener: TcpListener, router: Router, scope: ApiLifecycle,
     while children.join_next().await.is_some() {}
     scope.join().await;
     result
+}
+
+/// A keepalive connection can span several committed network generations.
+/// Capture again for each request; the connection/upgrade lifecycle stays owned
+/// by serve_scoped and ApiLifecycle.
+async fn captured_request(State(context): State<Arc<dyn meow_config::owned_load::LoadContext>>,
+    request: Request, next: Next) -> Response {
+    let (send, receive) = tokio::sync::oneshot::channel();
+    context.wrap(Box::pin(async move { let _ = send.send(next.run(request).await); })).await;
+    receive.await.unwrap_or_else(|_| StatusCode::GONE.into_response())
 }
 
 #[derive(Clone)]
@@ -378,9 +425,9 @@ fn allowed(method: &Method, path: &str) -> bool {
 fn public_control_route(method: &Method, path: &str) -> bool {
     let parts: Vec<_> = path.split('/').skip(1).collect();
     match parts.as_slice() {
-        ["proxies", name, "delay"] => method == Method::GET && !name.is_empty(),
+        ["proxies", name, "delay"] | ["group", name, "delay"] => method == Method::GET && !name.is_empty(),
         ["configs"] => method == Method::PATCH,
-        ["proxies", name] => method == Method::PUT && !name.is_empty(),
+        ["proxies", name] => (method == Method::PUT || method == Method::DELETE) && !name.is_empty(),
         ["providers", "proxies"] => method == Method::GET,
         ["providers", "proxies", name] | ["providers", "rules", name] => !name.is_empty() && (method == Method::GET || method == Method::PUT),
         ["providers", "rules"] => method == Method::GET,
@@ -409,6 +456,20 @@ async fn public_control(policy: &Boundary, request: Request) -> Response {
             Err(_) => return StatusCode::BAD_REQUEST.into_response(),
         }
     } else { None };
+    if method == Method::DELETE && path.starts_with("/proxies/") {
+        let query = match axum::extract::Query::<crate::control::UnpinQuery>::from_request_parts(&mut parts, &()).await {
+            Ok(axum::extract::Query(query)) => query,
+            Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+        };
+        return policy.control.unpin(name.expect("matched proxy name"), query).await;
+    }
+    if path.starts_with("/group/") && path.ends_with("/delay") {
+        let query = match axum::extract::Query::<crate::control::DelayQuery>::from_request_parts(&mut parts, &()).await {
+            Ok(axum::extract::Query(query)) => query,
+            Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+        };
+        return policy.control.group_delay(name.expect("matched group name"), query).await;
+    }
     if path.starts_with("/proxies/") && path.ends_with("/delay") {
         let query = match axum::extract::Query::<crate::control::DelayQuery>::from_request_parts(&mut parts, &()).await {
             Ok(axum::extract::Query(query)) => query,

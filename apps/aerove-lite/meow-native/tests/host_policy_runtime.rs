@@ -114,3 +114,64 @@ async fn native_periodic_nested_fallback_actual_health_event_route_and_stop_join
     timeout(Duration::from_secs(5),target_task).await.unwrap().unwrap(); timeout(Duration::from_secs(5),bad_task).await.unwrap().unwrap();
     assert!(TcpListener::bind(bad_address).await.is_ok()); assert!(calls.load(Ordering::Relaxed)>=2); assert!(TcpListener::bind(address).await.is_ok()); assert!(TcpListener::bind(mixed_address).await.is_ok()); assert!(TcpListener::bind(target_address).await.is_ok());
 }
+
+#[tokio::test]
+async fn startup_full_policy_snapshot_hot_commands_real_user_endpoint_and_failed_network_preserve_session() {
+    async fn user_get(path: &str, secret: Option<&str>) -> Vec<u8> {
+        let mut stream = TcpStream::connect("127.0.0.1:9090").await.unwrap();
+        let authorization = secret.map(|value|format!("Authorization: Bearer {value}\r\n")).unwrap_or_default();
+        stream.write_all(format!("GET {path} HTTP/1.1\r\nHost: localhost\r\n{authorization}Connection: close\r\n\r\n").as_bytes()).await.unwrap();
+        let mut result = Vec::new(); timeout(Duration::from_secs(5),stream.read_to_end(&mut result)).await.unwrap().unwrap(); result
+    }
+    async fn apply(owner: &aerove_meow_core::owned_runtime::OwnedRuntime, epoch: &str, op: &str, value: serde_json::Value) -> serde_json::Value {
+        serde_json::from_str(&owner.host_policy_command(command(epoch,op,value)).await.unwrap()).unwrap()
+    }
+    let roots = root_fixture::Roots::new();
+    let private = TcpListener::bind("127.0.0.1:0").await.unwrap(); let address = private.local_addr().unwrap(); drop(private);
+    let mixed = TcpListener::bind("127.0.0.1:0").await.unwrap(); let mixed_address = mixed.local_addr().unwrap(); drop(mixed);
+    let callback = Arc::new(Protect(Arc::new(AtomicUsize::new(0)))); let weak_callback = Arc::downgrade(&callback);
+    let network = NetworkContext::protected(callback.clone(),None,CancellationToken::new()).with_physical_dns(vec!["127.0.0.1:53".parse().unwrap()]);
+    drop(callback);
+    let plan = serde_json::json!({"schemaVersion":1,"runtimeMode":"proxy","initiallyParked":true,
+        "engineYaml":"strict: true\ndns: {enable: false}\nrules: ['MATCH,DIRECT']\ntun: {enable: false, auto-route: false}\n",
+        "privateControl":{"address":address.to_string(),"secret":SECRET},"inbounds":{"configYaml":format!("mixed-port: {}",mixed_address.port())},"tun":null,
+        "physicalNetwork":{"handle":null,"dns":{"defaultInterface":"fixture","interfaces":{"fixture":["127.0.0.1"]}}},
+        "hostPolicyYaml":"global-ua: Aerove/full-policy\ncheck-certificate: true\nunified-delay: true\ntcp-concurrent: true\nfind-process-mode: strict\nonly-statistics-proxy: true\nuser-controller: {enabled: false, secret: ''}\ncors-allow-origins: []\n",
+        "profileId":null,"revision":null,"resourceGeneration":null,"resourceReadRoot":roots.read.to_str().unwrap(),"cacheRoot":roots.cache.to_str().unwrap()});
+    let session = Registry::start_owned(plan.to_string(),None,network,None).unwrap();
+    timeout(Duration::from_secs(5),session.ready()).await.unwrap().unwrap();
+    let owner = session.owned_runtime().unwrap(); let mut epoch = owner.listener_status().core_epoch;
+    let snapshot = apply(&owner,&epoch,"snapshot",serde_json::json!({})).await;
+    assert_eq!(snapshot["value"].as_object().unwrap().len(),7);
+    assert_eq!(snapshot["value"]["http"],serde_json::json!({"globalUserAgent":"Aerove/full-policy","checkCertificate":true}));
+    assert_eq!(snapshot["value"]["findProcessMode"],"strict"); assert_eq!(snapshot["value"]["statistics"]["onlyStatisticsProxy"],true);
+    assert_eq!(snapshot["value"]["userController"]["enabled"],false); assert_eq!(snapshot["value"]["privateCorsOrigins"],serde_json::json!([]));
+    let statistics = apply(&owner,&epoch,"statistics",serde_json::json!({"onlyStatisticsProxy":false})).await;
+    assert_ne!(statistics["coreEpoch"],epoch); epoch=statistics["coreEpoch"].as_str().unwrap().to_owned();
+    assert!(!owner.listener_status().only_statistics_proxy); assert!(!owner.statistics().unwrap().status().unwrap().only_statistics_proxy);
+    let process = apply(&owner,&epoch,"process",serde_json::json!({"findProcessMode":"off"})).await;
+    epoch=process["coreEpoch"].as_str().unwrap().to_owned(); assert_eq!(owner.listener_status().find_process_mode,"off");
+    let invalidated = apply(&owner,&epoch,"invalidateIdentity",serde_json::json!({})).await;
+    epoch=invalidated["coreEpoch"].as_str().unwrap().to_owned(); assert_eq!(invalidated["value"]["invalidated"],true);
+    let enabled = apply(&owner,&epoch,"userController",serde_json::json!({"enabled":true,"secret":"full-policy-user-secret"})).await;
+    epoch=enabled["coreEpoch"].as_str().unwrap().to_owned(); assert_eq!(enabled["value"]["authenticated"],true);
+    assert!(user_get("/proxies",Some("full-policy-user-secret")).await.starts_with(b"HTTP/1.1 200"));
+    assert!(user_get("/proxies",None).await.starts_with(b"HTTP/1.1 401"));
+    assert!(user_get("/aerove/route",Some("full-policy-user-secret")).await.starts_with(b"HTTP/1.1 404"));
+    get(address,"/aerove/route").await;
+    #[cfg(not(target_os="android"))]
+    {
+        let rejected = owner.host_policy_command(command(&epoch,"network",serde_json::json!({"intent":"1","physicalNetwork":{"handle":"1","dns":{"defaultInterface":"fixture","interfaces":{"fixture":["127.0.0.1"]}}}}))).await.unwrap_err();
+        assert!(rejected.to_string().starts_with("physicalNetworkUnavailable"));
+        assert_eq!(owner.listener_status().core_epoch,epoch); assert_eq!(owner.status().state,"Running");
+        let snapshot = apply(&owner,&epoch,"snapshot",serde_json::json!({})).await;
+        assert_eq!(snapshot["value"]["physicalNetwork"]["intent"],"1");
+        assert!(snapshot["value"]["physicalNetwork"]["handle"].is_null());
+        get(address,"/aerove/route").await;
+    }
+    let disabled = apply(&owner,&epoch,"userController",serde_json::json!({"enabled":false,"secret":""})).await;
+    assert_eq!(disabled["value"]["enabled"],false); assert!(TcpListener::bind("127.0.0.1:9090").await.is_ok());
+    timeout(Duration::from_secs(5),session.stop()).await.unwrap().unwrap(); assert!(owner.cleanup_confirmed());
+    assert!(weak_callback.upgrade().is_none(), "a retained terminal Session must not retain the callback after confirmed join");
+    assert!(TcpListener::bind(address).await.is_ok()); assert!(TcpListener::bind(mixed_address).await.is_ok());
+}

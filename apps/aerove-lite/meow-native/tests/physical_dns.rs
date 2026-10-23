@@ -172,3 +172,34 @@ fn physical_dns_uses_selected_interface_and_preserves_numeric_ipv6_scope() {
     missing.interfaces.insert("wlan0".into(), vec!["fe80::53%0".into()]);
     assert_eq!(selected_servers(&missing).unwrap_err().kind(), io::ErrorKind::InvalidInput);
 }
+
+#[tokio::test]
+async fn direct_core_dns_queries_are_generation_owned_retired_joined_and_successor_is_independent() {
+    fn query(id: u16) -> Vec<u8> {
+        let mut bytes = vec![0,0,1,0,0,1,0,0,0,0,0,0,7]; bytes[..2].copy_from_slice(&id.to_be_bytes());
+        bytes.extend_from_slice(b"tcp-dns"); bytes.push(7); bytes.extend_from_slice(b"invalid"); bytes.extend_from_slice(&[0,0,1,0,1]); bytes
+    }
+    let cancel = CancellationToken::new(); let calls = Arc::new(AtomicUsize::new(0));
+    let old_server = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let old = PhysicalResolver::from_servers(vec![old_server.local_addr().unwrap()],context(&cancel,calls.clone(),false),false).unwrap();
+    let resolver = old.core_resolver();
+    let pending = tokio::spawn(async move { meow_dns::DnsServer::handle_query(&query(41),&resolver).await });
+    let mut bytes = [0;4096];
+    timeout(Duration::from_secs(2),old_server.recv_from(&mut bytes)).await.unwrap().unwrap();
+    timeout(Duration::from_secs(2),old.retire()).await.unwrap().unwrap();
+    assert!(old.dns_owner().cleanup_confirmed());
+    let result = timeout(Duration::from_secs(2),pending).await.unwrap().unwrap();
+    if let Ok(bytes) = result { assert!(Message::from_bytes(&bytes).unwrap().answers.is_empty(), "a retired request cannot fabricate an answer"); }
+    assert!(!cancel.is_cancelled());
+    let new_server = UdpSocket::bind("127.0.0.1:0").await.unwrap(); let address = new_server.local_addr().unwrap();
+    let peer = tokio::spawn(async move {
+        let mut bytes = [0;4096]; let (count,peer) = new_server.recv_from(&mut bytes).await.unwrap();
+        let request = Message::from_bytes(&bytes[..count]).unwrap(); new_server.send_to(&response(&request),peer).await.unwrap();
+    });
+    let next = PhysicalResolver::from_servers(vec![address],context(&cancel,calls.clone(),false),false).unwrap();
+    let answer = timeout(Duration::from_secs(2),meow_dns::DnsServer::handle_query(&query(42),&next.core_resolver())).await.unwrap().unwrap();
+    assert!(Message::from_bytes(&answer).unwrap().answers.iter().any(|record|record.data==RData::A(A(Ipv4Addr::new(127,0,0,9)))));
+    timeout(Duration::from_secs(2),peer).await.unwrap().unwrap();
+    timeout(Duration::from_secs(2),next.retire()).await.unwrap().unwrap(); assert!(next.dns_owner().cleanup_confirmed());
+    assert!(!cancel.is_cancelled()); assert!(calls.load(Ordering::Relaxed)>=2);
+}

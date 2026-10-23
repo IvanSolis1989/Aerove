@@ -200,8 +200,9 @@ impl meow_common::adapter::HealthObserver for GroupHealthObserver {
         let Some(control) = self.0.upgrade() else { return; };
         let scope = control.groups.lock().clone();
         if scope.as_ref().map_or(true, |scope| scope.is_cancelled()) { return; }
+        let epoch = meow_common::probe_policy::operation_epoch();
         let mut gate = control.plane.gate.lock();
-        if control.check_live(&gate).is_err() { return; }
+        if control.check_live(&gate).is_err() || epoch.is_some_and(|epoch| epoch != gate.core_epoch) { return; }
         let Ok(proxies) = control.group_members() else { return; };
         if !proxies.iter().any(|proxy| std::ptr::eq(proxy.health(), health)) { return; }
         let Some(revision) = gate.revision.checked_add(1) else { return; };
@@ -233,7 +234,7 @@ impl RouteControl {
                 return Err(ControlError::SelectionMemberNotIntegrated);
             }
             let members = proxy.member_proxies();
-            if members.is_some() && !matches!(proxy.adapter_type(), AdapterType::Selector | AdapterType::Fallback) {
+            if members.is_some() && !matches!(proxy.adapter_type(), AdapterType::Selector | AdapterType::Fallback | AdapterType::UrlTest) {
                 return Err(ControlError::SelectionMemberNotIntegrated);
             }
             if members.is_none() && !matches!(proxy.adapter_type(), AdapterType::Direct | AdapterType::Reject |
@@ -366,10 +367,10 @@ impl RouteControl {
 }
 
 #[derive(serde::Deserialize)]
-pub(crate) struct DelayQuery {
-    url: Option<String>, timeout: Option<String>, expected: Option<String>,
+pub struct DelayQuery {
+    pub url: Option<String>, pub timeout: Option<String>, pub expected: Option<String>,
     #[serde(rename = "coreEpoch")]
-    core_epoch: Option<String>,
+    pub core_epoch: Option<String>,
 }
 
 impl RouteControl {
@@ -464,6 +465,249 @@ impl RouteControl {
         };
         response.headers_mut().insert("x-aerove-core-epoch", HeaderValue::from_str(&epoch.to_string()).unwrap());
         response.headers_mut().insert("x-aerove-picks-version", HeaderValue::from_str(&revision.to_string()).unwrap());
+        response
+    }
+}
+
+struct GroupDelayAdmission {
+    route: Arc<meow_tunnel::tunnel::RouteTable>, group: Arc<dyn Proxy>,
+    retained: Vec<Arc<dyn Proxy>>, paths: Vec<Vec<Arc<dyn Proxy>>>,
+    keys: Vec<usize>, ticket: u64, epoch: u64, revision: u64,
+}
+
+impl RouteControl {
+    pub async fn group_delay(self: &Arc<Self>, name: String, query: DelayQuery)
+        -> axum::response::Response {
+        let Some(scope) = self.groups.lock().clone() else { return ControlError::SelectionMemberNotIntegrated.response(); };
+        let control = self.clone(); let captured = scope.clone();
+        let work = Box::pin(async move { control.group_delay_captured(name, query, captured).await });
+        match scope.run_captured(work).await { Ok(response) => response, Err(_) => ControlError::Cancelled.response() }
+    }
+
+    async fn group_delay_captured(&self, name: String, query: DelayQuery,
+        scope: Arc<meow_config::owned_load::OwnedLoadScope>) -> axum::response::Response {
+        use axum::{Json, http::StatusCode, response::IntoResponse};
+        let params = meow_api::routes::DelayParams { url: query.url, timeout: query.timeout, expected: query.expected };
+        let timeout = match meow_api::routes::parse_delay_params(&params) { Ok(timeout) => timeout, Err(response) => return *response };
+        let expected_epoch = match query.core_epoch {
+            Some(value) => match value.parse::<u64>() {
+                Ok(epoch) if epoch != 0 && epoch.to_string() == value => Some(epoch),
+                _ => return ControlError::InvalidEpoch.response(),
+            }, None => None,
+        };
+        if meow_config::validate_delay_parameters(params.url.as_deref().unwrap_or(""), params.expected.as_deref()).is_err() {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"message":"Body invalid"}))).into_response();
+        }
+        self.group_delay_batch(name, params, timeout, expected_epoch, scope).await
+    }
+
+    async fn group_delay_batch(&self, name: String, params: meow_api::routes::DelayParams,
+        timeout: std::time::Duration, expected_epoch: Option<u64>,
+        scope: Arc<meow_config::owned_load::OwnedLoadScope>) -> axum::response::Response {
+        let target = (|| {
+            let gate = self.plane.gate.lock(); self.check_live(&gate)?;
+            if expected_epoch.is_some_and(|epoch| epoch != gate.core_epoch) { return Err(ControlError::Superseded); }
+            self.group_members()?;
+            let route = self.state.tunnel.route_snapshot();
+            let group = route.proxies.get(name.as_str()).cloned().ok_or(ControlError::NotFound)?;
+            group.member_proxies().ok_or(ControlError::NotFound)?;
+            Ok((route, group))
+        })();
+        let (route, group) = match target { Ok(target) => target, Err(error) => return error.response() };
+        let selection = group.selection().filter(|selection| selection.can_unfix());
+        let flush = selection.and_then(|selection| selection.flush_selection());
+        // Reserve the non-abortable disk half before changing memory. The
+        // session owns/join tracks this worker even if the caller disappears.
+        let reserved = if flush.is_some() {
+            let (send, receive) = std::sync::mpsc::channel::<Box<dyn FnOnce() + Send>>();
+            match scope.spawn_blocking_owned(move || { if let Ok(work) = receive.recv() { work(); } }) {
+                Ok(task) => Some((send, task)), Err(_) => return ControlError::Cancelled.response(),
+            }
+        } else { None };
+        let admitted = (|| {
+            let mut gate = self.plane.gate.lock(); self.check_live(&gate)?;
+            if scope.is_cancelled() { return Err(ControlError::Cancelled); }
+            if expected_epoch.is_some_and(|epoch| epoch != gate.core_epoch) { return Err(ControlError::Superseded); }
+            let all = self.group_members()?;
+            let live = self.state.tunnel.route_snapshot();
+            if !live.proxies.get(name.as_str()).is_some_and(|live| Arc::ptr_eq(live, &group)) {
+                return Err(ControlError::Superseded);
+            }
+            let members = group.member_proxies().ok_or(ControlError::NotFound)?;
+            let paths: Vec<_> = members.into_iter().map(|member| Self::probe_path(member)).collect::<Result<_,_>>()?;
+            let keys: Vec<_> = paths.iter().flat_map(|path| path.iter().map(|member| member.health() as *const _ as usize)).collect();
+            let ticket = gate.selection_serial.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
+            let next = gate.revision.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
+            let sequence = gate.groups_sequence.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
+            let unpin = selection.is_some_and(|selection| selection.fixed().is_some_and(|name| !name.is_empty()));
+            if let Some(selection) = selection { selection.unfix_memory().map_err(|_| ControlError::InvalidSelection)?; }
+            if unpin { gate.revision = next; gate.groups_sequence = sequence; }
+            gate.selection_serial = ticket;
+            // An explicit return-to-auto supersedes a pending setter even
+            // when the group was already auto and no revision changed.
+            gate.selection_intents.insert(name.clone(), ticket);
+            for key in &keys { gate.delay_intents.insert(*key, ticket); }
+            // `all` was retained through the short commit, without calling a
+            // last-Arc destructor or external event sink while holding gate.
+            Ok((all, paths, keys, ticket, gate.core_epoch, gate.revision, unpin))
+        })();
+        let (retained, paths, keys, ticket, epoch, revision, unpin) = match admitted {
+            Ok(value) => value, Err(error) => return error.response(),
+        };
+        if unpin { self.groups_changed.notify_one(); }
+        if let Some((send, task)) = reserved {
+            if send.send(flush.unwrap()).is_err() { return ControlError::InvalidSelection.response(); }
+            if task.await.is_err() { return ControlError::InvalidSelection.response(); }
+        }
+        let admission = GroupDelayAdmission { route, group, retained, paths, keys, ticket, epoch, revision };
+        let work = self.group_delay_finish(name, params, timeout, scope, admission);
+        match meow_common::probe_policy::capture() {
+            Ok(Some(snapshot)) => match snapshot.run(async { Ok(work.await) }).await {
+                Ok(response) => response, Err(_) => ControlError::Cancelled.response(),
+            },
+            Ok(None) => work.await,
+            Err(_) => ControlError::Cancelled.response(),
+        }
+    }
+
+    async fn group_delay_finish(&self, name: String, params: meow_api::routes::DelayParams,
+        timeout: std::time::Duration, scope: Arc<meow_config::owned_load::OwnedLoadScope>,
+        admission: GroupDelayAdmission)
+        -> axum::response::Response {
+        use axum::{Json, http::{HeaderValue, StatusCode}, response::IntoResponse};
+        use futures::StreamExt;
+        let GroupDelayAdmission { route, group, retained, paths, keys, ticket, epoch, revision } = admission;
+        let deadline = tokio::time::Instant::now() + timeout;
+        let completed = {
+            let probes = futures::stream::iter(paths.iter().enumerate().map(|(index, path)| {
+                let params = &params;
+                async move {
+                    let result = meow_config::probe_leaf_without_record(path.last().unwrap(),
+                        params.url.as_deref().unwrap_or(""), params.expected.as_deref(), timeout).await;
+                    (index, result)
+                }
+            })).buffer_unordered(meow_config::GROUP_DELAY_CONCURRENCY);
+            tokio::pin!(probes);
+            let mut completed = Vec::new();
+            loop {
+                tokio::select! { biased;
+                    _ = self.plane.cancel.cancelled() => return ControlError::Cancelled.response(),
+                    item = tokio::time::timeout_at(deadline, probes.next()) => match item {
+                        Ok(Some(result)) => completed.push(result), _ => break,
+                    },
+                }
+            }
+            completed
+        }; // Drop every pending network future before publishing any result.
+        let committed = (|| {
+            let mut gate = self.plane.gate.lock(); self.check_live(&gate)?;
+            if scope.is_cancelled() { return Err(ControlError::Cancelled); }
+            if gate.core_epoch != epoch || gate.revision != revision ||
+                gate.selection_intents.get(&name) != Some(&ticket) ||
+                keys.iter().any(|key| gate.delay_intents.get(key) != Some(&ticket)) { return Err(ControlError::Superseded); }
+            let live = self.state.tunnel.route_snapshot();
+            if !live.proxies.get(name.as_str()).is_some_and(|live| Arc::ptr_eq(live, &group)) { return Err(ControlError::Superseded); }
+            let members = group.member_proxies().ok_or(ControlError::NotFound)?;
+            if members.len() != paths.len() { return Err(ControlError::Superseded); }
+            for (member, before) in members.into_iter().zip(&paths) {
+                let after = Self::probe_path(member)?;
+                if before.len() != after.len() || !before.iter().zip(&after).all(|(a,b)| Arc::ptr_eq(a,b)) {
+                    return Err(ControlError::Superseded);
+                }
+            }
+            let all = self.group_members()?;
+            let next = gate.revision.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
+            let sequence = gate.groups_sequence.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
+            let before = self.snapshot_locked(&gate).picks;
+            let fixed_before: Vec<_> = all.iter().map(|member| member.selection().and_then(|selection| selection.fixed())).collect();
+            for (index, result) in &completed {
+                let delay = result.as_ref().copied().unwrap_or(0);
+                for member in &paths[*index] { member.health().apply_committed(meow_common::adapter::HealthUpdate::Delay(delay)); }
+            }
+            for member in &all { if let Some(selection) = member.selection() { selection.reconcile_health(); } }
+            let fixed_after: Vec<_> = all.iter().map(|member| member.selection().and_then(|selection| selection.fixed())).collect();
+            if self.snapshot_locked(&gate).picks != before || fixed_before != fixed_after { gate.revision = next; }
+            if !completed.is_empty() { gate.groups_sequence = sequence; }
+            Ok((all, gate.core_epoch, gate.revision))
+        })();
+        let (_all, epoch, revision) = match committed { Ok(value) => value, Err(error) => return error.response() };
+        drop(retained); drop(route);
+        if !completed.is_empty() { self.groups_changed.notify_one(); }
+        let result: BTreeMap<String,u16> = completed.iter().filter_map(|(index,result)|
+            result.as_ref().ok().map(|delay| (paths[*index][0].name().to_string(), *delay))).collect();
+        let mut response = if result.is_empty() {
+            (StatusCode::GATEWAY_TIMEOUT, Json(serde_json::json!({"message":"Timeout"}))).into_response()
+        } else { Json(result).into_response() };
+        response.headers_mut().insert("x-aerove-core-epoch", HeaderValue::from_str(&epoch.to_string()).unwrap());
+        response.headers_mut().insert("x-aerove-picks-version", HeaderValue::from_str(&revision.to_string()).unwrap());
+        response
+    }
+}
+
+#[derive(Default, serde::Deserialize)]
+pub(crate) struct UnpinQuery {
+    #[serde(rename="coreEpoch")]
+    core_epoch: Option<String>,
+}
+impl RouteControl {
+    pub(crate) async fn unpin(self: &Arc<Self>, name:String, query:UnpinQuery) -> axum::response::Response {
+        let expected=match query.core_epoch {
+            Some(value)=>match value.parse::<u64>() { Ok(epoch) if epoch!=0 && epoch.to_string()==value=>Some(epoch), _=>return ControlError::InvalidEpoch.response() },
+            None=>None,
+        };
+        let Some(scope)=self.groups.lock().clone() else {return ControlError::SelectionMemberNotIntegrated.response();};
+        let control=self.clone();let captured=scope.clone();
+        let work=Box::pin(async move{control.unpin_captured(name,expected,captured).await});
+        match scope.run_captured(work).await {Ok(response)=>response,Err(_)=>ControlError::Cancelled.response()}
+    }
+    async fn unpin_captured(&self,name:String,expected:Option<u64>,scope:Arc<meow_config::owned_load::OwnedLoadScope>) -> axum::response::Response {
+        use axum::{http::{StatusCode,HeaderValue},response::IntoResponse};
+        let target=(||{
+            let gate=self.plane.gate.lock();self.check_live(&gate)?;
+            if expected.is_some_and(|value|value!=gate.core_epoch){return Err(ControlError::Superseded);}
+            self.group_members()?;
+            let route=self.state.tunnel.route_snapshot();
+            let group=route.proxies.get(name.as_str()).cloned().ok_or(ControlError::NotFound)?;
+            if !group.selection().is_some_and(|selection|selection.can_unfix()){return Err(ControlError::InvalidSelection);}
+            Ok((route,group))
+        })();
+        let (route,group)=match target{Ok(value)=>value,Err(error)=>return error.response()};
+        let selection=group.selection().expect("validated selection");
+        let flush=selection.flush_selection();
+        let reserved=if flush.is_some(){
+            let(send,receive)=std::sync::mpsc::channel::<Box<dyn FnOnce()+Send>>();
+            match scope.spawn_blocking_owned(move||{if let Ok(work)=receive.recv(){work();}}){
+                Ok(task)=>Some((send,task)),Err(_)=>return ControlError::Cancelled.response(),
+            }
+        }else{None};
+        let committed=(||{
+            let mut gate=self.plane.gate.lock();self.check_live(&gate)?;
+            if scope.is_cancelled(){return Err(ControlError::Cancelled);}
+            if expected.is_some_and(|value|value!=gate.core_epoch){return Err(ControlError::Superseded);}
+            let retained=self.group_members()?;
+            let live=self.state.tunnel.route_snapshot();
+            if !live.proxies.get(name.as_str()).is_some_and(|value|Arc::ptr_eq(value,&group)){return Err(ControlError::Superseded);}
+            let ticket=gate.selection_serial.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
+            let next=gate.revision.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
+            let sequence=gate.groups_sequence.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
+            let changed=selection.fixed().is_some_and(|value|!value.is_empty());
+            selection.unfix_memory().map_err(|_|ControlError::InvalidSelection)?;
+            // Even auto->auto is a new explicit intent, fencing older PUT or
+            // group batches without fabricating a route revision.
+            gate.selection_serial=ticket;gate.selection_intents.insert(name,ticket);
+            if changed{gate.revision=next;gate.groups_sequence=sequence;}
+            Ok((retained,gate.core_epoch,gate.revision,changed))
+        })();
+        let (_retained,epoch,revision,changed)=match committed{Ok(value)=>value,Err(error)=>return error.response()};
+        if changed{self.groups_changed.notify_one();}
+        if let Some((send,task))=reserved{
+            if send.send(flush.unwrap()).is_err(){return ControlError::InvalidSelection.response();}
+            if task.await.is_err(){return ControlError::InvalidSelection.response();}
+        }
+        drop(route);
+        let mut response=StatusCode::NO_CONTENT.into_response();
+        response.headers_mut().insert("x-aerove-core-epoch",HeaderValue::from_str(&epoch.to_string()).unwrap());
+        response.headers_mut().insert("x-aerove-picks-version",HeaderValue::from_str(&revision.to_string()).unwrap());
         response
     }
 }

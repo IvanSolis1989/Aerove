@@ -4,6 +4,7 @@ import json
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import shutil
+from core_tests import validate_policy as validate_core_tests
 
 HASH = re.compile('[0-9a-f]{64}')
 
@@ -30,11 +31,12 @@ def load_policy(root, *, check_resolution_seed=True):
     if not file.exists():return None
     raw=file.read_bytes();policy=json.loads(raw)
     required={'schema','manifestSha256','resolveLock','expectedLockBeforeSha256','targets','overlay','overlaySha256'}
-    if not required.issubset(policy) or set(policy)-required-{'featureBoundary'} or type(policy['schema']) is not int or policy['schema']!=1:
+    if not required.issubset(policy) or set(policy)-required-{'featureBoundary','coreTests','coreTestLockSha256'} or type(policy['schema']) is not int or policy['schema']!=1:
         raise ValueError('Unknown build policy schema or fields')
     if type(policy['resolveLock']) is not bool or any(not isinstance(policy[k],str) or not HASH.fullmatch(policy[k]) for k in ['manifestSha256','expectedLockBeforeSha256','overlaySha256']):
         raise ValueError('Invalid explicit build policy identity')
     feature_boundary_command(policy)
+    validate_core_tests(policy)
     targets=policy['targets']
     if not isinstance(targets,list) or not targets or targets[0]!='lib' or len(set(targets))!=len(targets) or any(not isinstance(t,str) or not re.fullmatch('[a-z][a-z0-9_]*',t) for t in targets):
         raise ValueError('Invalid representative test targets')

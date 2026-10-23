@@ -1,0 +1,114 @@
+"""Fixed dependency-unit admission for the policy runtime graph, with a separate real Cargo lock."""
+import hashlib
+import json
+from pathlib import Path
+import re
+import subprocess
+
+MODE='policy-runtime-v1'
+CASES=[
+    ('meow-common',name) for name in [
+        'cli_without_scope_keeps_output_and_real_join_error','observer_does_not_consume_protocol_output_or_panic',
+        'protocol_can_consume_error_before_native_observer','abort_handle_targets_actual_work_and_real_socket_reaches_eof',
+        'dropped_protocol_handle_remains_owned_until_actual_join','cancelled_join_waiter_retains_actual_handle_for_retry',
+        'closed_admission_drops_future_without_polling_user_work','nested_task_captures_same_scope_without_an_observer_task',
+        'ready_then_session_cancel_has_actual_completed_ack','captured_closed_session_never_adopts_another_current_owner',
+        'send_only_user_future_keeps_scoped_join_send_sync']
+]+[
+    ('meow-proxy','actual_tasked_duplex_preserves_stream_and_proxy_conversion'),
+    ('meow-proxy','actual_vmess_read_write_supervisor_are_joined_before_transport_eof_ack'),
+    ('meow-proxy','closed_session_rejects_vmess_before_any_relay_task_is_spawned'),
+    ('meow-transport','actual_stream_preserves_send_sync_transport_contract'),
+    ('meow-transport','closed_origin_upgrade_has_repeatable_error_and_zero_http_bytes'),
+    ('meow-anytls','actual_pool_reaper_drop_aborts_and_native_observer_joins_resource_release'),
+    ('meow-anytls','pooled_close_cancelled_after_admission_can_resume_and_last_arc_drops_both_transports'),
+    ('meow-anytls','concurrent_close_waiter_observes_completion_and_takes_over_cancelled_first_attempt'),
+    ('meow-dns','resolver_captures_generation_scope_when_constructed'),
+    ('meow-dns','upstream_exchange_stays_with_captured_generation'),
+    ('meow-dns','retiring_generation_cancels_and_joins_pending_exchange'),
+]
+# The transport contract leaf is intentionally shared by three modules; its exact expected count is3.
+COUNTS={('meow-transport','actual_stream_preserves_send_sync_transport_contract'):3}
+PACKAGES=sorted({package for package,_ in CASES})
+MANIFEST='.upstream/meow-rs/Cargo.toml'
+
+def digest(data):return hashlib.sha256(data).hexdigest()
+
+def validate_policy(policy):
+    if 'coreTests' not in policy:
+        if 'coreTestLockSha256' in policy:raise ValueError('Core test lock without approved tests')
+        return False
+    if policy['coreTests']!=MODE:raise ValueError('Unknown Core unit test admission')
+    expected=policy.get('coreTestLockSha256')
+    if expected is not None and (not isinstance(expected,str) or re.fullmatch('[0-9a-f]{64}',expected) is None):
+        raise ValueError('Invalid Core unit lock identity')
+    if not policy['resolveLock'] and expected is None:raise ValueError('Locked Core tests require an accepted Core test lock')
+    return True
+
+def feature_matrix(metadata,upstream):
+    """Project only features from the real bridge graph onto the exact prepared member paths."""
+    packages={p['id']:p for p in metadata['packages']};nodes={n['id']:n for n in metadata['resolve']['nodes']};result={}
+    for name in PACKAGES:
+        found=[p for p in packages.values() if p['name']==name and p['version']=='0.26.1']
+        if len(found)!=1 or Path(found[0]['manifest_path']).resolve()!=(upstream/'crates'/name/'Cargo.toml').resolve():
+            raise ValueError('Core unit package bypasses the prepared source')
+        features=nodes[found[0]['id']]['features']
+        if any(re.fullmatch('[A-Za-z0-9_-]+',f) is None for f in features):raise ValueError('Unexpected resolved Core feature name')
+        result[name]=sorted(set(features))
+    return result
+
+def command(package,name,features):
+    result=['cargo','test','--manifest-path',MANIFEST,'--locked','--package',package,'--lib','--no-default-features']
+    if features:result+=['--features',','.join(package+'/'+f for f in features)]
+    return result+[name,'--','--test-threads=1','--nocapture']
+
+def execute(root,policy,environment,receipt):
+    """Resolve a separately recorded test graph, then restore the source lock even after interruption."""
+    if not validate_policy(policy):return
+    root=Path(root);upstream=root/'.upstream/meow-rs';directory=root/'build/core-tests';directory.mkdir(parents=True,exist_ok=True)
+    state=dict(mode=MODE,accepted=False,commands=[],upstreamLockRestored=False)
+    receipt['coreTests']=state
+    source_lock=upstream/'Cargo.lock';original=source_lock.read_bytes()
+    (directory/'upstream-before.lock').write_bytes(original);state['upstreamLockBeforeSha256']=digest(original)
+    try:
+        bridge_command=['cargo','metadata','--locked','--format-version','1']
+        bridge=subprocess.run(bridge_command,cwd=root,env=environment,capture_output=True)
+        state['bridgeMetadataCommand']=bridge_command;state['bridgeMetadataExit']=bridge.returncode
+        (directory/'bridge-metadata.stdout.json').write_bytes(bridge.stdout);(directory/'bridge-metadata.stderr.log').write_bytes(bridge.stderr)
+        if bridge.returncode:raise subprocess.CalledProcessError(bridge.returncode,bridge_command)
+        matrix=feature_matrix(json.loads(bridge.stdout),upstream)
+        expected=policy.get('coreTestLockSha256');seed=root/'core-tests.lock' if expected is not None else root/'Cargo.lock'
+        seed_bytes=seed.read_bytes()
+        if expected is not None and digest(seed_bytes)!=expected:raise ValueError('Core test seed identity mismatch')
+        state['seedSha256']=digest(seed_bytes)
+        source_lock.write_bytes(seed_bytes)
+        args=['cargo','metadata','--manifest-path',MANIFEST,'--format-version','1']
+        if not policy['resolveLock']:args+=['--locked']
+        state['metadataCommand']=args
+        result=subprocess.run(args,cwd=root,env=environment,capture_output=True)
+        (directory/'metadata.stdout.json').write_bytes(result.stdout);(directory/'metadata.stderr.log').write_bytes(result.stderr)
+        state['metadataExit']=result.returncode
+        if result.returncode:raise subprocess.CalledProcessError(result.returncode,args)
+        metadata=json.loads(result.stdout);members={p['name'] for p in metadata['packages'] if p['id'] in metadata['workspace_members']}
+        if not set(PACKAGES)<=members:raise ValueError('Core unit packages are not members of the actual workspace')
+        state['workspaceMembers']=sorted(members)
+        state['features']=matrix
+        locked=source_lock.read_bytes();state['resolvedLockSha256']=digest(locked);(directory/'core-tests.lock').write_bytes(locked)
+        for index,(package,name) in enumerate(CASES):
+            args=command(package,name,matrix[package]);entry=dict(package=package,filter=name,command=args,exit=None,expectedPass=COUNTS.get((package,name),1));state['commands'].append(entry)
+            result=subprocess.run(args,cwd=root,env=environment,capture_output=True)
+            stem=f'{index:02d}-{package}-{name}';(directory/(stem+'.stdout.log')).write_bytes(result.stdout);(directory/(stem+'.stderr.log')).write_bytes(result.stderr)
+            entry.update(exit=result.returncode,stdoutSha256=digest(result.stdout),stderrSha256=digest(result.stderr))
+            print(result.stdout.decode('utf-8',errors='replace'),end='',flush=True);print(result.stderr.decode('utf-8',errors='replace'),end='',flush=True)
+            if result.returncode:raise subprocess.CalledProcessError(result.returncode,args)
+            count=re.findall(rb'test result: ok\. (\d+) passed; 0 failed;',result.stdout)
+            if count!=[str(entry['expectedPass']).encode()]:raise ValueError('Core unit filter did not execute its exact authored test count')
+            entry['passed']=entry['expectedPass']
+            if source_lock.read_bytes()!=locked:raise ValueError('Locked Core unit command changed its lock')
+        state['accepted']=True
+    finally:
+        source_lock.write_bytes(original)
+        state['upstreamLockRestored']=source_lock.read_bytes()==original
+        if not state['upstreamLockRestored']:state['accepted']=False
+        (directory/'receipt.json').write_bytes((json.dumps(state,indent=2)+'\n').encode())
+        if not state['upstreamLockRestored']:raise ValueError('Core source lock restoration readback failed')

@@ -10,8 +10,8 @@ struct Work { active: Mutex<usize>, done: Notify }
 struct WorkLease(Arc<Work>);
 impl Drop for WorkLease {
     fn drop(&mut self) {
-        let mut active = self.0.active.lock(); *active -= 1;
-        if *active == 0 { self.0.done.notify_waiters(); }
+        let complete = { let mut active = self.0.active.lock(); *active -= 1; *active == 0 };
+        if complete { self.0.done.notify_waiters(); }
     }
 }
 pub struct ProbePolicies { current: RwLock<Arc<ProbePolicy>>, plane: Arc<ControlPlane>, cancel: CancellationToken, work: Arc<Work> }
@@ -48,6 +48,7 @@ impl ProbePolicies {
         }
     }
     pub fn scope(self: &Arc<Self>) -> ProbeScope { ProbeScope::new(self.clone()) }
+    pub(crate) fn policy_under_plane_gate(&self) -> ProbePolicy { (**self.current.read()).clone() }
     pub fn status(&self) -> io::Result<ProbeStatus> {
         let gate = self.plane.gate.lock();
         if gate.closed || self.cancel.is_cancelled() { return Err(io::Error::from(io::ErrorKind::Interrupted)); }
@@ -74,6 +75,11 @@ impl ProbePolicies {
     }
 }
 impl ProbeSource for ProbePolicies {
+    fn snapshot_with_epoch(&self) -> io::Result<(Arc<ProbePolicy>,Option<u64>)> {
+        let gate = self.plane.gate.lock();
+        if gate.closed || self.cancel.is_cancelled() { return Err(io::Error::from(io::ErrorKind::Interrupted)); }
+        Ok((self.current.read().clone(),Some(gate.core_epoch)))
+    }
     fn enter(&self) -> io::Result<Box<dyn Send>> {
         let mut active = self.work.active.lock();
         if self.cancel.is_cancelled() { return Err(io::Error::from(io::ErrorKind::Interrupted)); }
@@ -145,4 +151,21 @@ mod tests {
         assert!(scope.scope(async { meow_common::probe_policy::capture() }).await.is_err());
         assert!(old.run(async { Ok(()) }).await.is_err());
     }
+    #[test]
+    fn completion_wakes_after_releasing_probe_work_gate() {
+        use std::task::{Context, Poll, Wake, Waker};
+        struct Check(Arc<Work>);
+        impl Wake for Check {
+            fn wake(self: Arc<Self>) { self.wake_by_ref(); }
+            fn wake_by_ref(self: &Arc<Self>) { assert!(self.0.active.try_lock().is_some(), "completion must not wake while holding the work gate"); }
+        }
+        let work = Arc::new(Work { active: Mutex::new(1), done: Notify::new() });
+        let waker = Waker::from(Arc::new(Check(work.clone()))); let mut context = Context::from_waker(&waker);
+        let mut notified = Box::pin(work.done.notified());
+        assert!(matches!(notified.as_mut().poll(&mut context),Poll::Pending));
+        drop(WorkLease(work.clone()));
+        assert!(matches!(notified.as_mut().poll(&mut context),Poll::Ready(())));
+        assert_eq!(*work.active.lock(),0);
+    }
+
 }

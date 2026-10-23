@@ -9,6 +9,8 @@ pub type PacketWork<T> = Pin<Box<dyn Future<Output = io::Result<T>> + Send + 'st
 type PacketFactory = Box<dyn FnOnce(Arc<RuntimePlan>, Arc<OwnedLoadScope>) -> PacketWork<Arc<dyn PacketHandler>> + Send>;
 pub trait PacketHandler: Send + Sync + 'static {
     fn tcp(&self, stream: lwip::TcpStream, source: SocketAddr, target: SocketAddr) -> PacketWork<()>;
+    fn tcp_with_tun(&self, stream: lwip::TcpStream, source: SocketAddr, target: SocketAddr,
+        _tun: TunPlan, _cancel: CancellationToken) -> PacketWork<()> { self.tcp(stream, source, target) }
     fn udp(&self, payload: Vec<u8>, source: SocketAddr, target: SocketAddr, dns_hijacked: bool) -> PacketWork<Option<Vec<u8>>>;
     fn udp_driver(self: Arc<Self>, socket: Box<lwip::UdpSocket>, tun: TunPlan,
         cancel: CancellationToken, network: NetworkContext) -> PacketWork<()> {
@@ -226,7 +228,7 @@ async fn drive(fd: PacketFd, mut stack: lwip::NetStack, mut tcp: lwip::TcpListen
             },
             accepted = tcp.next(), if flows.len() < 256 => {
                 let Some((stream, source, target)) = accepted else { break Err(error("netstack TCP closed")); };
-                let work = handler.tcp(stream, source, target);
+                let work = handler.tcp_with_tun(stream, source, target, tun.clone(), cancel.child_token());
                 let context = network.clone(); let stop = cancel.clone();
                 flows.spawn(async move { context.scope(async move { tokio::select! { biased;
                     _ = stop.cancelled() => Ok(()), result = work => result,

@@ -245,7 +245,7 @@ class OverlayAndResolutionTests(unittest.TestCase):
                 with self.subTest(value=invalid),self.assertRaises(ValueError):build_policy.load_policy(root)
 
     def test_feature_boundary_failure_or_lock_mutation_cannot_accept_a_resolved_lock(self):
-        for outcome in ['success','failure','mutated-lock','primary-failure']:
+        for outcome in ['success','failure','mutated-lock','primary-failure','core-failure']:
             with self.subTest(outcome=outcome),tempfile.TemporaryDirectory() as directory:
                 root=Path(directory);(root/'Cargo.toml').write_text('[package]\nname="aerove-meow-core"\n[lib]\nname="aerove_meow_core"\n[dependencies]\n')
                 (root/'Cargo.lock').write_bytes(b'accepted lock\n');previous=sha(root/'Cargo.lock')
@@ -262,7 +262,7 @@ class OverlayAndResolutionTests(unittest.TestCase):
                     if '--no-default-features' in command:
                         if outcome=='failure':raise subprocess.CalledProcessError(19,command)
                         if outcome=='mutated-lock':(root/'Cargo.lock').write_bytes(b'unexpected mutation\n')
-                with mock.patch.object(build,'probe_libclang',return_value={'library':{'path':'unit-test-fixture-only'}}),mock.patch('builtins.print'),mock.patch.object(build,'ROOT',root),mock.patch.object(build,'load_policy',return_value=policy),mock.patch.object(build,'prepare',return_value=upstream),mock.patch.object(build,'run',side_effect=run),mock.patch.object(build.subprocess,'run',side_effect=metadata),mock.patch.object(sys,'argv',['build.py','--resolve-lock']):
+                with mock.patch.object(build,'execute_core_tests',side_effect=subprocess.CalledProcessError(23,['fixed-core-unit']) if outcome=='core-failure' else None),mock.patch.object(build,'probe_libclang',return_value={'library':{'path':'unit-test-fixture-only'}}),mock.patch('builtins.print'),mock.patch.object(build,'ROOT',root),mock.patch.object(build,'load_policy',return_value=policy),mock.patch.object(build,'prepare',return_value=upstream),mock.patch.object(build,'run',side_effect=run),mock.patch.object(build.subprocess,'run',side_effect=metadata),mock.patch.object(sys,'argv',['build.py','--resolve-lock']):
                     if outcome=='success':build.main()
                     else:
                         with self.assertRaises((subprocess.CalledProcessError,ValueError)):build.main()
@@ -276,6 +276,7 @@ class OverlayAndResolutionTests(unittest.TestCase):
                 self.assertEqual(executed[1],receipt['featureBoundaryCommand'])
                 self.assertEqual(19 if outcome=='failure' else 0,receipt['featureBoundaryExit'])
                 self.assertEqual(outcome=='success',receipt['acceptedLock'])
+                if outcome=='core-failure':self.assertEqual(23,receipt['commandExit'])
                 self.assertEqual(outcome!='mutated-lock',receipt['lockUnchangedDuringLockedCommand'])
                 self.assertEqual(b'accepted lock\n',(root/'build/lock-before-resolution.lock').read_bytes())
 

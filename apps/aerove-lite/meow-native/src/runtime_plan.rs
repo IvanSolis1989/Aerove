@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, io, net::{IpAddr, SocketAddr}};
 
 #[derive(Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -49,7 +49,7 @@ pub struct TunPlan {
 #[serde(deny_unknown_fields)]
 pub struct PhysicalNetwork { pub handle: Option<String>, pub dns: PhysicalDns }
 
-#[derive(Deserialize, PartialEq, Eq)]
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PhysicalDns {
     pub default_interface: Option<String>,
