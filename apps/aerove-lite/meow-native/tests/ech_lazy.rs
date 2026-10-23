@@ -1,6 +1,7 @@
 #![cfg(all(feature="vless",any(target_os="linux",target_os="android",target_os="macos")))]
 use aerove_meow_core::transport_tasks::TransportTasks;
 use hickory_proto::{op::{Message,MessageType,OpCode},rr::{Name,Record,RecordType,RData,rdata::{HTTPS,SVCB,svcb::{EchConfigList,SvcParamKey,SvcParamValue}}}};
+use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
 use meow_common::{Metadata,socket_protect::{NetworkScope,SocketProtector},transport_tasks::{TransportTaskContext,TransportScope,Work}};
 use meow_config::{EchScope,EchSource,EchQuery,owned_load::{LoadContext,OwnedLoadScope,OwnedWork,DisabledDnsSource}};
 use meow_transport::{Transport,tls::{TlsConfig,TlsLayer,EchOpts}};

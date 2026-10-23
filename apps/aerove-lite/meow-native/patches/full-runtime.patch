@@ -2403,9 +2403,10 @@
 +}
 --- /dev/null
 +++ b/crates/meow-config/src/owned_dns_tests.rs
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,132 @@
 +use crate::owned_load::{LoadContext, OwnedLoadScope, OwnedWork};
 +use hickory_proto::{op::{Message, MessageType, OpCode}, rr::{Record, RData, rdata::A}};
++use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
 +use std::{net::{Ipv4Addr, SocketAddr}, sync::Arc, time::Duration};
 +use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, UdpSocket}, sync::Notify};
 +
