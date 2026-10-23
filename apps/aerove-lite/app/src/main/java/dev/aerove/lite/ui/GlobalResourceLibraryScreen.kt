@@ -1,5 +1,6 @@
 package dev.aerove.lite.ui
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
@@ -44,7 +45,7 @@ internal fun GlobalResourceLibraryScreen(session: GlobalResourceLibrarySession, 
     onBack: () -> Unit, onChanged: (BuilderResourceSnapshot) -> Unit,
     readFile: suspend () -> GlobalLibraryFile?, rules: GlobalRuleLibraryAccess,
     proxyLinks: GlobalProxyLinkCodec, iconLoader: GroupIconLoader) {
-    val state by session.state.collectAsState()
+    val state by session.state.collectAsStateWithLifecycle()
     val latestChanged by rememberUpdatedState(onChanged)
     val scope = rememberCoroutineScope()
     val overlay = LocalLiteOverlay.current
@@ -97,9 +98,9 @@ internal fun GlobalResourceLibraryScreen(session: GlobalResourceLibrarySession, 
     fun delete(kind: BuilderResourceKind, names: Set<String>) {
         if (names.isEmpty()) return
         show {
-            val current by session.state.collectAsState()
+            val current by session.state.collectAsStateWithLifecycle()
             ProfileMaintenanceSheet(stringResource(R.string.builder_delete), ::close) {
-                LiteText(stringResource(R.string.global_resources_delete_confirm, names.map { id -> session.state.value.snapshot!!.resources.enumerate().single { it.id == id }.name }.joinToString(", ")))
+                LiteText(stringResource(R.string.global_resources_delete_confirm, names.map { id -> current.snapshot!!.resources.enumerate().single { it.id == id }.name }.joinToString(", ")))
                 current.error?.let { LiteText(it, color = androidx.compose.material3.MaterialTheme.colorScheme.error) }
                 LiteButton(stringResource(R.string.builder_delete), { run {
                     if (kind != BuilderResourceKind.RuleProvider) session.remove(kind, names)
@@ -118,7 +119,7 @@ internal fun GlobalResourceLibraryScreen(session: GlobalResourceLibrarySession, 
         val graph = GlobalResourceLibrarySession.graph(resources)
         val index = previousName?.let { name -> resources.proxies.indexOfFirst { it.id == name } }
         show {
-            val current by session.state.collectAsState()
+            val current by session.state.collectAsStateWithLifecycle()
             ProfileBuilderEntryForm(graph, BuilderSection.Proxies, index, ::close,
                 busy = current.busy, operationError = current.error) { name, fields, _ -> run { session.putProxy(previousName, name, fields, proxyLinks::validate) } }
         }
@@ -126,14 +127,14 @@ internal fun GlobalResourceLibraryScreen(session: GlobalResourceLibrarySession, 
     fun filter(previousName: String?) {
         val initial = session.state.value.snapshot?.resources?.filters?.singleOrNull { it.id == previousName }
         show {
-            val current by session.state.collectAsState()
+            val current by session.state.collectAsStateWithLifecycle()
             GlobalFilterForm(initial, current.busy, current.error, ::close) { label, regex -> run { session.putFilter(previousName, label, regex) } }
         }
     }
     fun iconOptions(name: String) {
         val initial = requireNotNull(session.state.value.snapshot).resources.iconSets.single { it.id == name }
         show {
-            val current by session.state.collectAsState()
+            val current by session.state.collectAsStateWithLifecycle()
             GlobalNameUrlForm(stringResource(R.string.global_resources_options), initial.name,
                 initial.url.takeIf(String::isNotEmpty), current.busy, current.error, ::close) { label, url -> run { session.editIcons(name, label, url.orEmpty()) } }
         }
@@ -142,14 +143,14 @@ internal fun GlobalResourceLibraryScreen(session: GlobalResourceLibrarySession, 
         val initial = requireNotNull(session.state.value.snapshot).resources.ruleProviders.single { it.id == name }
         val address = (initial.fields["url"] as? String)?.takeIf(String::isNotEmpty)
         show {
-            val current by session.state.collectAsState()
+            val current by session.state.collectAsStateWithLifecycle()
             GlobalNameUrlForm(stringResource(R.string.global_resources_options), initial.name, address,
                 current.busy, current.error, ::close) { label, url -> run { session.perform { expected -> rules.options(requireNotNull(expected), name, label, url.orEmpty()) } } }
         }
     }
     fun importUrl(kind: BuilderResourceKind) {
         show {
-            val current by session.state.collectAsState()
+            val current by session.state.collectAsStateWithLifecycle()
             GlobalNameUrlForm(stringResource(R.string.builder_import_url), "", "", current.busy, current.error, ::close,
                 optionalName = true) { name, url -> run {
                 if (kind == BuilderResourceKind.IconSet) session.importIconsUrl(name, requireNotNull(url))
@@ -159,7 +160,7 @@ internal fun GlobalResourceLibraryScreen(session: GlobalResourceLibrarySession, 
     }
     fun scratch() {
         show {
-            val current by session.state.collectAsState()
+            val current by session.state.collectAsStateWithLifecycle()
             GlobalNameUrlForm(stringResource(R.string.global_resources_scratch), "", null, current.busy, current.error, ::close) { name, _ ->
                 ruleEditor(name, null, GlobalRuleLibraryPreview("", true))
             }
@@ -259,7 +260,7 @@ internal fun GlobalResourceLibraryScreen(session: GlobalResourceLibrarySession, 
                             }
                             BuilderResourceKind.Filter -> LiteButton(stringResource(R.string.builder_add), { filter(null) }, enabled = !state.busy)
                             else -> LiteButton(stringResource(R.string.builder_add), { show {
-                                val current by session.state.collectAsState()
+                                val current by session.state.collectAsStateWithLifecycle()
                                 ProfileMaintenanceSheet(stringResource(R.string.builder_add), ::close) {
                                     if (kind == BuilderResourceKind.RuleProvider) LiteButton(stringResource(R.string.global_resources_scratch), ::scratch, enabled = !current.busy)
                                     LiteButton(stringResource(R.string.builder_import_url), { importUrl(kind) }, enabled = !current.busy)
