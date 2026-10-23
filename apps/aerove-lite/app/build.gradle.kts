@@ -45,7 +45,7 @@ android {
     }
     sourceSets.getByName("main").java.srcDir("../third_party/material-color-utilities/src")
     sourceSets.getByName("main").assets.srcDir("src/main/java/dev/aerove/lite/editor/assets")
-    sourceSets.getByName("main").assets.srcDir(clientHelperLicenseDirectory)
+    sourceSets.getByName("main").assets.srcDir(clientHelperLicenseDirectory.get().asFile)
     testOptions { unitTests.isReturnDefaultValues = true }
     packaging {
         jniLibs.useLegacyPackaging = false
