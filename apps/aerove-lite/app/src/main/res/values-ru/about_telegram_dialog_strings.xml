@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="about_external_link">Внешняя ссылка</string>
+    <string name="about_link_go">Перейти</string>
+    <string name="about_link_cancel">Отмена</string>
+    <string name="about_link_open_failed">Не удалось открыть ссылку. Проверьте, есть ли приложение, которому разрешено её открывать.</string>
+</resources>
