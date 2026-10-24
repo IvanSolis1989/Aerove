@@ -288,6 +288,7 @@ impl Session {
         let old_control = self.control.lock().take();
         drop(old_control);
         let old = self.tunnel.lock().take();
+        if let Some(tunnel) = &old { tunnel.statistics().observation_feed().stop(); }
         drop(old);
         self.state.send_modify(|s| {
             s.phase = if outcome.is_err() { Phase::Failed } else { Phase::Stopped };
@@ -320,6 +321,10 @@ impl Session {
         };
         if self.cancel.is_cancelled() { return Ok(()); }
         let tunnel = Tunnel::new_with_slot(config.dns.resolver_slot.clone());
+        let pair = crate::network_context::ResolverPair { main: config.dns.resolver.clone(), proxy: config.dns.proxy_resolver.clone() };
+        crate::network_policy::bind_resolver_observations(&tunnel, &pair).map_err(|cause| Failure {
+            code: "resolverObservationBindingFailed", field: Some("dns".into()), reason: Some(cause.to_string()),
+        })?;
         tunnel.set_dialer_registry(config.provider_dialer_registry.clone());
         tunnel.set_mode(config.general.mode);
         tunnel.set_connection_notes(config.general.connection_notes);

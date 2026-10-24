@@ -125,6 +125,9 @@ HOST_POLICY_RUNTIME_V2_TARGETS = ('lib',
 HOST_POLICY_RUNTIME_TRAFFIC_TARGETS = tuple(
     target for original in HOST_POLICY_RUNTIME_V2_TARGETS
     for target in ((original, 'native_telemetry') if original == 'native_ech_context' else (original,)))
+HOST_POLICY_RUNTIME_OBSERVABILITY_TARGETS = tuple(
+    target for original in HOST_POLICY_RUNTIME_TRAFFIC_TARGETS
+    for target in ((original, 'native_observability') if original == 'native_ech_context' else (original,)))
 CORE_POLICY_TEST_CASES_V2 = (('meow-transport', 'scoped_join::', 11, 'lib', ('ws', 'grpc', 'h2', 'xhttp')),
  ('meow-transport',
   'actual_stream_preserves_send_sync_transport_contract',
@@ -172,6 +175,14 @@ CORE_POLICY_TEST_CASES_V2 = (('meow-transport', 'scoped_join::', 11, 'lib', ('ws
   'lib',
   ('encrypted',)))
 
+CORE_POLICY_TEST_CASES_OBSERVABILITY = CORE_POLICY_TEST_CASES_V2 + tuple(
+    (p,'observations_',n,'lib',required) for p,n,required in
+    [('meow-common',5,('aerove-android-runtime',)),('meow-dns',6,('aerove-android-runtime','encrypted')),
+     ('meow-tunnel',6,()),('meow-api',1,())])
+CORE_OBSERVABILITY_COMPILE_COMMAND = ['cargo','check','--manifest-path','.upstream/meow-rs/Cargo.toml',
+    '--locked','--package','meow-api','--package','meow-listener','--all-features']
+CORE_OBSERVABILITY_PACKAGES = tuple(sorted({p for p,_,_,_,_ in CORE_POLICY_TEST_CASES_OBSERVABILITY}|{'meow-listener'}))
+
 CORE_POLICY_TEST_PACKAGES = tuple(sorted({package for package, _, _ in CORE_POLICY_TEST_CASES}))
 
 
@@ -188,13 +199,14 @@ def native_identity(root=MEOW_ROOT):
     if "coreTests" in policy:
         approved_targets = {"policy-runtime-v1": HOST_POLICY_RUNTIME_TARGETS,
             "policy-runtime-v2": HOST_POLICY_RUNTIME_V2_TARGETS,
-            "policy-runtime-traffic-v1": HOST_POLICY_RUNTIME_TRAFFIC_TARGETS}.get(policy["coreTests"])
+            "policy-runtime-traffic-v1": HOST_POLICY_RUNTIME_TRAFFIC_TARGETS,
+            "policy-runtime-observability-v1": HOST_POLICY_RUNTIME_OBSERVABILITY_TARGETS}.get(policy["coreTests"])
         if (not approved_targets
                 or tuple(policy.get("targets", ())) != approved_targets
                 or policy.get("featureBoundary") != "capabilities-no-default"
                 or not re.fullmatch(r"[0-9a-f]{64}", str(policy.get("coreTestLockSha256", "")))):
             raise ValueError("Unrecognized Meow Core unit test policy")
-    elif "coreTestLockSha256" in policy or tuple(policy.get("targets", ())) in (HOST_POLICY_RUNTIME_TARGETS, HOST_POLICY_RUNTIME_V2_TARGETS, HOST_POLICY_RUNTIME_TRAFFIC_TARGETS):
+    elif "coreTestLockSha256" in policy or tuple(policy.get("targets", ())) in (HOST_POLICY_RUNTIME_TARGETS, HOST_POLICY_RUNTIME_V2_TARGETS, HOST_POLICY_RUNTIME_TRAFFIC_TARGETS, HOST_POLICY_RUNTIME_OBSERVABILITY_TARGETS):
         raise ValueError("Meow policy lacks approved Core unit test admission")
     def owned(name):
         path = root / name
@@ -240,10 +252,10 @@ def validate_native_receipt(receipt_path, abi=None, image=None, root=MEOW_ROOT, 
     if abi is None:
         policy = json.loads((Path(root)/"build-policy.json").read_text())
         targets = policy["targets"]
-        if "node_delay" in targets and tuple(targets) not in (HOST_NO_FAIL_FAST_TARGETS, HOST_POLICY_RUNTIME_TARGETS, HOST_POLICY_RUNTIME_V2_TARGETS, HOST_POLICY_RUNTIME_TRAFFIC_TARGETS):
+        if "node_delay" in targets and tuple(targets) not in (HOST_NO_FAIL_FAST_TARGETS, HOST_POLICY_RUNTIME_TARGETS, HOST_POLICY_RUNTIME_V2_TARGETS, HOST_POLICY_RUNTIME_TRAFFIC_TARGETS, HOST_POLICY_RUNTIME_OBSERVABILITY_TARGETS):
             raise ValueError("Unrecognized Meow no-fail-fast target contract")
         command = ["cargo", "test", "--locked"]
-        if tuple(targets) in (HOST_NO_FAIL_FAST_TARGETS, HOST_POLICY_RUNTIME_TARGETS, HOST_POLICY_RUNTIME_V2_TARGETS, HOST_POLICY_RUNTIME_TRAFFIC_TARGETS):
+        if tuple(targets) in (HOST_NO_FAIL_FAST_TARGETS, HOST_POLICY_RUNTIME_TARGETS, HOST_POLICY_RUNTIME_V2_TARGETS, HOST_POLICY_RUNTIME_TRAFFIC_TARGETS, HOST_POLICY_RUNTIME_OBSERVABILITY_TARGETS):
             command.append("--no-fail-fast")
         for target in targets:
             command += ["--lib"] if target == "lib" else ["--test", target]
@@ -284,10 +296,12 @@ def validate_core_test_receipt(state, policy, root):
     overlay = json.loads((root / policy["overlay"]).read_text())
     upstream_lock = overlay.get("files", {}).get("Cargo.lock")
     mode = policy["coreTests"]
-    if mode not in ("policy-runtime-v1", "policy-runtime-v2", "policy-runtime-traffic-v1"):
+    if mode not in ("policy-runtime-v1", "policy-runtime-v2", "policy-runtime-traffic-v1", "policy-runtime-observability-v1"):
         reject()
     cases = (tuple((package, name, count, "lib", ()) for package, name, count in CORE_POLICY_TEST_CASES)
-        if mode == "policy-runtime-v1" else CORE_POLICY_TEST_CASES_V2)
+        if mode == "policy-runtime-v1" else CORE_POLICY_TEST_CASES_OBSERVABILITY
+        if mode == "policy-runtime-observability-v1" else CORE_POLICY_TEST_CASES_V2)
+    packages = CORE_OBSERVABILITY_PACKAGES if mode == "policy-runtime-observability-v1" else CORE_POLICY_TEST_PACKAGES
     if (state.get("mode") != mode or state.get("accepted") is not True
             or state.get("upstreamLockRestored") is not True or not is_hash(upstream_lock)
             or state.get("upstreamLockBeforeSha256") != upstream_lock
@@ -301,11 +315,11 @@ def validate_core_test_receipt(state, policy, root):
         reject()
     members, features, commands = state.get("workspaceMembers"), state.get("features"), state.get("commands")
     if (not isinstance(members, list) or any(not isinstance(m, str) for m in members)
-            or members != sorted(set(members)) or not set(CORE_POLICY_TEST_PACKAGES) <= set(members)
-            or not isinstance(features, dict) or set(features) != set(CORE_POLICY_TEST_PACKAGES)
+            or members != sorted(set(members)) or not set(packages) <= set(members)
+            or not isinstance(features, dict) or set(features) != set(packages)
             or not isinstance(commands, list) or len(commands) != len(cases)):
         reject()
-    for package in CORE_POLICY_TEST_PACKAGES:
+    for package in packages:
         values = features[package]
         if (not isinstance(values, list) or any(not isinstance(f, str)
                 or re.fullmatch(r"[A-Za-z0-9_-]+", f) is None for f in values)
@@ -324,11 +338,20 @@ def validate_core_test_receipt(state, policy, root):
             command += [name]
         command += ["--", "--test-threads=1", "--nocapture"]
         if (not isinstance(entry, dict) or entry.get("package") != package or entry.get("filter") != name
-                or (mode in ("policy-runtime-v2", "policy-runtime-traffic-v1") and (entry.get("target") != target or "filter" not in entry))
+                or (mode in ("policy-runtime-v2", "policy-runtime-traffic-v1", "policy-runtime-observability-v1") and (entry.get("target") != target or "filter" not in entry))
                 or entry.get("command") != command or not exited(entry.get("exit"))
                 or type(entry.get("expectedPass")) is not int or entry["expectedPass"] != count
                 or type(entry.get("passed")) is not int or entry["passed"] != count
                 or not is_hash(entry.get("stdoutSha256")) or not is_hash(entry.get("stderrSha256"))):
+            reject()
+
+    if mode == "policy-runtime-observability-v1":
+        compile_check = state.get("compileCheck")
+        if (not isinstance(compile_check, dict)
+                or compile_check.get("command") != CORE_OBSERVABILITY_COMPILE_COMMAND
+                or not exited(compile_check.get("exit"))
+                or not is_hash(compile_check.get("stdoutSha256"))
+                or not is_hash(compile_check.get("stderrSha256"))):
             reject()
 
 

@@ -588,6 +588,84 @@ class ApkInspectionTests(unittest.TestCase):
             write('build-policy.json',missing_gate)
             with self.assertRaises(ValueError):module.native_identity(root)
 
+    def test_observability_requires_all18_exact47_cases_compile_and_separate_identity(self):
+        import copy
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/'overlay.json').write_text(json.dumps(dict(files={'Cargo.lock':'a'*64})))
+            policy=dict(coreTests='policy-runtime-observability-v1',coreTestLockSha256='b'*64,overlay='overlay.json')
+            cases=module.CORE_POLICY_TEST_CASES_OBSERVABILITY
+            self.assertEqual(module.CORE_POLICY_TEST_CASES_V2,cases[:14])
+            self.assertEqual(18,len(cases));self.assertEqual(47,sum(row[2] for row in cases))
+            features={p:sorted({f for package,_,_,_,required in cases if package==p for f in required}) for p in module.CORE_OBSERVABILITY_PACKAGES}
+            commands=[]
+            for package,name,count,target,_ in cases:
+                args=['cargo','test','--manifest-path','.upstream/meow-rs/Cargo.toml','--locked','--package',package]
+                args += ['--lib'] if target=='lib' else ['--test','transport_scope_compat']
+                args += ['--no-default-features']
+                if features[package]:args += ['--features',','.join(package+'/'+f for f in features[package])]
+                if name is not None:args += [name]
+                args += ['--','--test-threads=1','--nocapture']
+                commands.append(dict(package=package,filter=name,target=target,command=args,exit=0,expectedPass=count,passed=count,stdoutSha256='c'*64,stderrSha256='d'*64))
+            check=dict(command=module.CORE_OBSERVABILITY_COMPILE_COMMAND,exit=0,stdoutSha256='e'*64,stderrSha256='f'*64)
+            state=dict(mode=policy['coreTests'],accepted=True,upstreamLockRestored=True,upstreamLockBeforeSha256='a'*64,
+                seedSha256='b'*64,resolvedLockSha256='b'*64,bridgeMetadataCommand=['cargo','metadata','--locked','--format-version','1'],bridgeMetadataExit=0,
+                metadataCommand=['cargo','metadata','--manifest-path','.upstream/meow-rs/Cargo.toml','--format-version','1','--locked'],metadataExit=0,
+                workspaceMembers=list(module.CORE_OBSERVABILITY_PACKAGES),features=features,commands=commands,compileCheck=check)
+            module.validate_core_test_receipt(state,policy,root)
+            old44=copy.deepcopy(state)
+            for index,count in [(14,3),(16,5)]:
+                old44['commands'][index].update(expectedPass=count,passed=count)
+            with self.assertRaises(ValueError):module.validate_core_test_receipt(old44,policy,root)
+            for index in range(14,18):
+                for key,value in [('target','other'),('filter','wrong'),('expectedPass',0),('passed',0),('exit',False),('stdoutSha256',None),('command',commands[index]['command'][:-1])]:
+                    bad=copy.deepcopy(state);bad['commands'][index][key]=value
+                    with self.subTest(index=index,key=key),self.assertRaises(ValueError):module.validate_core_test_receipt(bad,policy,root)
+                bad=copy.deepcopy(state);del bad['commands'][index]
+                with self.subTest(missing=index),self.assertRaises(ValueError):module.validate_core_test_receipt(bad,policy,root)
+            for changes in [dict(mode='policy-runtime-v2'),dict(mode='policy-runtime-traffic-v1'),dict(commands=commands[:14]),
+                    dict(upstreamLockRestored=False),dict(seedSha256='0'*64),dict(metadataExit=1),dict(compileCheck=None),dict(features={})]:
+                with self.subTest(state=changes),self.assertRaises(ValueError):module.validate_core_test_receipt(dict(state,**changes),policy,root)
+            for key,value in [('exit',1),('exit',False),('command',check['command'][:-1]),('stdoutSha256',None),('stderrSha256','bad')]:
+                with self.subTest(compile=key,value=value),self.assertRaises(ValueError):module.validate_core_test_receipt(dict(state,compileCheck=dict(check,**{key:value})),policy,root)
+            for package in ['meow-api','meow-tunnel','meow-listener']:
+                bad=copy.deepcopy(state);del bad['features'][package]
+                with self.subTest(package=package),self.assertRaises(ValueError):module.validate_core_test_receipt(bad,policy,root)
+            bad=copy.deepcopy(state);bad['features']['meow-common']=[]
+            with self.assertRaises(ValueError):module.validate_core_test_receipt(bad,policy,root)
+            def write(name,value):
+                path=root/name;path.write_text(json.dumps(value) if isinstance(value,dict) else value)
+                return module.sha256(path)
+            manifest=write('Cargo.toml','manifest');lock=write('Cargo.lock','accepted-bridge')
+            core_lock=write('core-tests.lock','accepted-core');patch=write('patch','patch')
+            overlay=write('overlay.json',dict(files={'Cargo.lock':'a'*64},patch='patch',patchSha256=patch,adaptedFileManifestSha256='d'*64))
+            write('source.json',dict(commit=module.MEOW_SOURCE,tag='v0.26.1',archiveSha256='e'*64))
+            targets=list(module.HOST_POLICY_RUNTIME_OBSERVABILITY_TARGETS)
+            self.assertEqual(35,len(targets))
+            self.assertEqual(list(module.HOST_POLICY_RUNTIME_TRAFFIC_TARGETS),[t for t in targets if t!='native_observability'])
+            policy=dict(policy,resolveLock=False,manifestSha256=manifest,overlaySha256=overlay,targets=targets,
+                featureBoundary='capabilities-no-default',coreTestLockSha256=core_lock)
+            policy_hash=write('build-policy.json',policy);identity=module.native_identity(root)
+            state=dict(state,seedSha256=core_lock,resolvedLockSha256=core_lock)
+            command=['cargo','test','--locked','--no-fail-fast']
+            for target in targets:command += ['--lib'] if target=='lib' else ['--test',target]
+            command += ['--','--test-threads=1','--nocapture']
+            receipt=dict(schema=1,command=command,commandExit=0,acceptedLock=True,bootstrapRequested=False,
+                resolveLockRequested=False,lockUnchangedDuringLockedCommand=True,toolchain='rustc 1.98.1 (fixture)',androidTarget=None,
+                representativeTargets=targets,declaredSourceSpecSha256=identity['meow_source_spec_sha256'],bridgeManifestSha256=manifest,
+                buildPolicySha256=policy_hash,lockSha256Before=lock,resolvedLockSha256=lock,lockSha256After=lock,
+                source=dict(commit=module.MEOW_SOURCE,tag='v0.26.1',archiveHashBootstrapped=False,archiveSha256='e'*64,
+                    fileManifestSha256='d'*64,overlaySha256=overlay,patchSha256=patch),coreTests=state,
+                featureBoundaryCommand=['cargo','test','--locked','--no-default-features','--lib','capabilities::tests::','--','--test-threads=1','--nocapture'],featureBoundaryExit=0)
+            module.validate_native_receipt(receipt,root=root)
+            for changes in [dict(coreTests=dict(state,mode='policy-runtime-traffic-v1')),dict(coreTests=None),
+                    dict(command=command[:3]+command[4:]),dict(representativeTargets=targets[:-1])]:
+                with self.subTest(host=changes),self.assertRaises(ValueError):module.validate_native_receipt(dict(receipt,**changes),root=root)
+            for changes in [dict(targets=[t for t in targets if t!='native_observability']),
+                    dict(targets=targets+['arbitrary']),dict(coreTests='policy-runtime-traffic-v1'),dict(resolveLock=True)]:
+                write('build-policy.json',dict(policy,**changes))
+                with self.subTest(policy=changes),self.assertRaises(ValueError):module.native_identity(root)
+
+
     def test_rejects_wrong_elf_even_under_arm64_filename(self):
         with tempfile.TemporaryDirectory() as root:
             with self.assertRaisesRegex(ValueError, "ELF"):

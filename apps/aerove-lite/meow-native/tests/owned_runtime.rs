@@ -134,7 +134,11 @@ async fn one_session_routes_actual_tun_tcp_udp_dns_and_socks_udp_then_joins_and_
         stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 15\r\nConnection: close\r\n\r\nmeow-tun-direct").await.unwrap();
         stream.shutdown().await.unwrap(); let mut rest = Vec::new(); stream.read_to_end(&mut rest).await.unwrap(); tcp
     });
-    let ports = ports().await; let json = plan(ports,dns,false,&roots).to_string(); let (caller,peer) = pair();
+    let ports = ports().await;
+    let mut candidate = plan(ports,dns,false,&roots);
+    candidate["engineYaml"] = candidate["engineYaml"].as_str().unwrap().replace("rules: ['MATCH,DIRECT']",
+        &format!("rules: ['DST-PORT,{},DIRECT', 'MATCH,DIRECT']", udp_address.port())).into();
+    let json = candidate.to_string(); let (caller,peer) = pair();
     let cancel = CancellationToken::new(); let calls = Arc::new(AtomicUsize::new(0)); let context = network(&cancel,calls.clone(),dns);
     let session = Registry::start_owned(json.clone(),Some(caller.try_clone().unwrap().into()),context.clone(),None).unwrap();
     let ready = timeout(Duration::from_secs(5),session.ready()).await.unwrap().unwrap(); assert!(ready.tun_ready && ready.api_ready && ready.user_listeners_ready);
@@ -143,11 +147,22 @@ async fn one_session_routes_actual_tun_tcp_udp_dns_and_socks_udp_then_joins_and_
     real_tcp_http(&peer,tcp_address).await;
     let payload = vec![7u8;2048]; peer.send(&udp_frame(udp_address,41001,&payload)).await.unwrap();
     assert_eq!(udp_reply(&peer,41001).await,payload); assert_eq!(udp_reply(&peer,41001).await,b"second-reply");
+    let connections = http_json(&http(ports[0],"/connections").await);
+    let live = connections["connections"].as_array().unwrap().iter().find(|connection|
+        connection["metadata"]["sourcePort"].as_u64() == Some(41001)
+        && connection["metadata"]["destinationPort"].as_u64() == Some(u64::from(udp_address.port()))).unwrap();
+    assert_eq!(live["rule"],"DST-PORT");
+    assert_eq!(live["rulePayload"],udp_address.port().to_string());
+    let udp_id = live["id"].as_str().unwrap().to_owned();
     let protected = calls.load(Ordering::Relaxed);
     peer.send(&udp_frame(udp_address,41001,b"same-udp-flow")).await.unwrap();
     assert_eq!(udp_reply(&peer,41001).await,b"same-udp-flow");
     assert_eq!(udp_reply(&peer,41001).await,b"second-reply");
     assert_eq!(calls.load(Ordering::Relaxed),protected);
+    let connections = http_json(&http(ports[0],"/connections").await);
+    let same = connections["connections"].as_array().unwrap().iter().find(|connection| connection["id"] == udp_id).unwrap();
+    assert_eq!(same["rule"],"DST-PORT");
+    assert_eq!(same["rulePayload"],udp_address.port().to_string());
     peer.send(&udp_frame("198.18.0.2:53".parse().unwrap(),41002,&question("tun-owned.invalid"))).await.unwrap();
     assert_eq!(Message::from_bytes(&udp_reply(&peer,41002).await).unwrap().answers.len(),1);
     let client = UdpSocket::bind("127.0.0.1:0").await.unwrap(); client.send_to(&question("listen-udp.invalid"),ports[2]).await.unwrap(); let mut bytes = [0u8;4096];

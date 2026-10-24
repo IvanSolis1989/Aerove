@@ -8,6 +8,18 @@ use parking_lot::Mutex;
 use std::{future::Future, net::SocketAddr, pin::Pin, sync::{Arc, atomic::{AtomicU64, Ordering}}};
 use tokio_util::sync::CancellationToken;
 
+// Binding is preparation only: never publish a resolver from another session.
+pub(crate) fn bind_resolver_observations(tunnel: &Tunnel, pair: &ResolverPair) -> std::io::Result<()> {
+    let feed = tunnel.statistics().observation_feed();
+    pair.main.set_observation_feed(feed.clone()).map_err(|cause|
+        std::io::Error::new(cause.kind(), format!("dns.resolver: observation binding rejected: {cause}")))?;
+    if let Some(proxy) = &pair.proxy {
+        proxy.set_observation_feed(feed.clone()).map_err(|cause|
+            std::io::Error::new(cause.kind(), format!("dns.proxy-server-nameserver: observation binding rejected: {cause}")))?;
+    }
+    Ok(())
+}
+
 pub struct DnsBuild { pub scope: Arc<meow_config::owned_load::OwnedLoadScope>, pub work: Pin<Box<dyn Future<Output = Result<ResolverPair, String>> + Send>> }
 pub type DnsFactory = Arc<dyn Fn(NetworkContext, Arc<meow_dns::Resolver>) -> DnsBuild + Send + Sync>;
 pub struct CapturedPhysicalNetwork { pub intent: u64, pub core_epoch: u64, pub network_handle: u64, pub dns: PhysicalDns }
@@ -107,6 +119,11 @@ impl NetworkPolicyOwner {
             Ok(resolver) => resolver,
             Err(error) => { let _ = self.retire_scope(build.scope).await; let _ = self.retire_dns(next.dns_owner()).await; return Err(error); }
         };
+        if let Err(cause) = bind_resolver_observations(&self.tunnel, &pair) {
+            let _ = self.retire_scope(build.scope.clone()).await;
+            let _ = self.retire_dns(next.dns_owner()).await;
+            return Err(cause.to_string());
+        }
         let resolver = pair.main.clone();
         let next_network = next_network.with_resolver_pair(pair.clone());
         let tunnel = &self.tunnel; let network_slot = &self.network;
@@ -187,5 +204,67 @@ impl NetworkPolicyOwner {
         }
         self.joined.store(confirmed,Ordering::Release);
         if let Some(cause) = failure { self.fail(cause); Err(cause) } else { Ok(()) }
+    }
+}
+
+#[cfg(test)]
+mod resolver_observation_binding_tests {
+    use super::*;
+    fn resolver() -> Arc<meow_dns::Resolver> {
+        Arc::new(meow_dns::Resolver::new(Vec::new(), Vec::new(), meow_common::DnsMode::Normal,
+            Default::default(), false, false).unavailable(std::io::ErrorKind::NotConnected))
+    }
+    #[tokio::test]
+    async fn same_session_pair_is_idempotent_and_terminal_stop_closes_its_feed() {
+        let main = resolver(); let proxy = resolver(); let tunnel = Tunnel::new(main.clone());
+        let pair = ResolverPair { main, proxy: Some(proxy.clone()) };
+        bind_resolver_observations(&tunnel, &pair).unwrap();
+        bind_resolver_observations(&tunnel, &pair.clone()).unwrap();
+        let feed = tunnel.statistics().observation_feed().clone();
+        proxy.set_observation_feed(feed.clone()).unwrap();
+        let mut delivery = feed.activate().unwrap();
+        let activation = delivery.activation_frame();
+        assert!(activation.contains("activationCursor"));
+        let cause = meow_common::observations::DnsInitiator::Proxy.scope(proxy.resolve_ips("binding-offline.example")).await.unwrap_err();
+        assert_eq!(cause.kind(), std::io::ErrorKind::NotConnected);
+        let frame = tokio::time::timeout(std::time::Duration::from_secs(5), delivery.next_frame()).await.unwrap().unwrap();
+        let window: serde_json::Value = serde_json::from_str(&frame).unwrap();
+        assert!(window["events"].as_array().unwrap().iter().any(|event|
+            event["kind"] == "dns" && event["data"]["initiator"] == "Proxy" && event["data"]["domain"] == "binding-offline.example"));
+        feed.stop();
+        assert_eq!(tokio::time::timeout(std::time::Duration::from_secs(5), delivery.next_frame()).await.unwrap().unwrap_err().kind(), std::io::ErrorKind::Interrupted);
+        assert!(matches!(feed.activate(), Err(cause) if cause.kind() == std::io::ErrorKind::Interrupted));
+        // The same Arc remains its immutable owner even after terminal stop.
+        proxy.set_observation_feed(feed).unwrap();
+        drop(delivery);
+    }
+    #[test]
+    fn foreign_pair_is_rejected_before_cas_slot_publication_and_keeps_original_owner() {
+        let initial = resolver(); let tunnel = Tunnel::new(initial.clone());
+        let foreign_main = resolver(); let foreign = Tunnel::new(foreign_main.clone());
+        let foreign_feed = foreign.statistics().observation_feed().clone();
+        let candidate = ResolverPair { main: resolver(), proxy: Some(foreign_main.clone()) };
+        let plane = ControlPlane::new(1, CancellationToken::new()).unwrap();
+        let before = plane.stamp();
+        let result = bind_resolver_observations(&tunnel, &candidate).and_then(|()|
+            plane.commit_policy(before.0, true, || tunnel.set_resolver(candidate.main.clone()))
+                .map(|_| ()).map_err(std::io::Error::other));
+        let cause = result.unwrap_err();
+        assert_eq!(cause.kind(), std::io::ErrorKind::AlreadyExists);
+        assert!(cause.to_string().starts_with("dns.proxy-server-nameserver:"));
+        assert_eq!(plane.stamp(), before);
+        assert!(Arc::ptr_eq(&Arc::clone(&tunnel.resolver_slot().read()), &initial));
+        foreign_main.set_observation_feed(foreign_feed).unwrap();
+        let bad_main = ResolverPair { main: foreign_main, proxy: None };
+        let cause = bind_resolver_observations(&tunnel, &bad_main).unwrap_err();
+        assert_eq!(cause.kind(), std::io::ErrorKind::AlreadyExists);
+        assert!(cause.to_string().starts_with("dns.resolver:"));
+        let next = ResolverPair { main: resolver(), proxy: Some(resolver()) };
+        bind_resolver_observations(&tunnel, &next).unwrap();
+        plane.commit_policy(before.0, true, || tunnel.set_resolver(next.main.clone())).unwrap();
+        assert!(plane.stamp().0 > before.0);
+        assert!(Arc::ptr_eq(&Arc::clone(&tunnel.resolver_slot().read()), &next.main));
+        plane.cancel();
+        assert!(plane.commit_policy(plane.stamp().0, true, || panic!("cancelled publication")).is_err());
     }
 }
