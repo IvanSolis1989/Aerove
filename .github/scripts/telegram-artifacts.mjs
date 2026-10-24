@@ -27,9 +27,10 @@ export async function prepareArtifacts(repository, release, fetcher = fetch, roo
   if (release.kind === 'changelog') {
     return runHelper(['prepare', '--root', root, '--source', release.sha, '--output', directory]);
   }
-  if (!release.assets?.length) throw new Error('Release has no downloadable artifacts');
+  const assets = release.assets?.filter(asset => !['BUILD_INFO.json', 'SHA256SUMS'].includes(asset.name));
+  if (!assets?.length) throw new Error('Release has no downloadable application artifacts');
   const files = [];
-  for (const asset of release.assets) {
+  for (const asset of assets) {
     if (path.basename(asset.name) !== asset.name || /[\\/:\x00-\x1f]/.test(asset.name) ||
         asset.state !== 'uploaded' || !Number.isSafeInteger(asset.size) || asset.size <= 0 || asset.size > 2_000_000_000 ||
         !/^sha256:[a-f0-9]{64}$/.test(asset.digest || '')) throw new Error('Invalid release artifact metadata');

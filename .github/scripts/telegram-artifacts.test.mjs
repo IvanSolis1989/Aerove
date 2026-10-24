@@ -10,13 +10,24 @@ test('downloads the exact original release bytes and verifies size and digest', 
   const asset = { name: 'Aerove.apk', state: 'uploaded', size: bytes.length,
     digest: 'sha256:' + createHash('sha256').update(bytes).digest('hex'),
     browser_download_url: 'https://github.com/IvanSolis1989/Aerove/releases/download/v1/Aerove.apk' };
-  const files = await prepareArtifacts('IvanSolis1989/Aerove', { assets: [asset] }, async () => new Response(bytes));
+  const downloads = [];
+  const files = await prepareArtifacts('IvanSolis1989/Aerove', { assets: [asset,
+    { name: 'BUILD_INFO.json' }, { name: 'SHA256SUMS' },
+  ] }, async url => { downloads.push(String(url)); return new Response(bytes); });
   t.after(() => rmSync(path.dirname(files[0].path), { recursive: true }));
+  assert.deepEqual(files.map(file => file.name), ['Aerove.apk']);
+  assert.deepEqual(downloads, [asset.browser_download_url]);
   assert.deepEqual(readFileSync(files[0].path), bytes);
   assert.equal(files[0].sha256, asset.digest.slice(7));
   await assert.rejects(prepareArtifacts('IvanSolis1989/Aerove', { assets: [asset] }, async () => new Response('corrupted')), /mismatch/);
   await assert.rejects(prepareArtifacts('IvanSolis1989/Aerove', { assets: [{ ...asset, name: '../escape.apk' }] }), /metadata/);
   await assert.rejects(prepareArtifacts('IvanSolis1989/Aerove', { assets: [{ ...asset, browser_download_url: 'https://other.example/a.apk' }] }), /outside/);
+});
+
+test('does not send a release containing only build metadata', async () => {
+  await assert.rejects(prepareArtifacts('IvanSolis1989/Aerove', {
+    assets: [{ name: 'BUILD_INFO.json' }, { name: 'SHA256SUMS' }],
+  }, async () => { throw new Error('Must not download build metadata'); }), /no downloadable application artifacts/);
 });
 
 test('uploads a real small document and verifies downloaded Telegram bytes', async t => {
