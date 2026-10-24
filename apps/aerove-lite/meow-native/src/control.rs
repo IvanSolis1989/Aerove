@@ -1014,7 +1014,7 @@ mod telemetry_traffic_tests {
 mod provider_event_readiness_tests {
     use super::*;
     use crate::{api::CoreApi, providers::{self, LoadContext, OwnedLoadScope, OwnedWork}};
-    use meow_config::provider_events::ProviderObserver;
+    use meow_config::provider_events::{ProviderLease, ProviderObserver};
     use std::{future::Future, sync::atomic::{AtomicU64, Ordering}, task::Poll};
     use tokio::sync::{mpsc, oneshot};
     static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -1055,6 +1055,14 @@ mod provider_event_readiness_tests {
                 changed.await;
             }
         }).await.unwrap();
+    }
+    fn commit_installed_projection(operation: &dyn ProviderLease, projection: meow_config::ProxyProviderProjection) {
+        assert!(projection.is_current());
+        assert!(projection.is_installed());
+        operation.validate_proxy_projection(&projection, &[]).unwrap();
+        operation.commit_proxy_projection(&projection, &[], &mut || {
+            assert!(projection.is_installed(), "identity installation changed the actual provider slots");
+        }).unwrap();
     }
     struct WakeFlag(std::sync::atomic::AtomicBool);
     impl std::task::Wake for WakeFlag {
@@ -1097,7 +1105,7 @@ mod provider_event_readiness_tests {
         let unrelated = api.control.plane.begin(&spare.provider_identity()).unwrap();
         let mut receiver = api.control.subscribe_groups();
         let mut receipts = api.control.plane.subscribe();
-        operation.commit_proxy(&feed.proxies(), &[], &mut || {}).unwrap();
+        commit_installed_projection(operation.as_ref(), feed.project_members(feed.proxies()));
         let sequence = api.control.plane.gate.lock().groups_sequence; assert!(sequence > 0);
         let (send, task) = driver(api.control.clone());
         api.control.notify_provider_groups(); tick(&send).await;
@@ -1124,7 +1132,7 @@ mod provider_event_readiness_tests {
         let operation = api.control.plane.begin(&identity).unwrap();
         let mut receiver = api.control.subscribe_groups();
         let mut receipts = api.control.plane.subscribe();
-        operation.commit_proxy(&feed.proxies(), &[], &mut || {}).unwrap();
+        commit_installed_projection(operation.as_ref(), feed.project_members(feed.proxies()));
         let sequence = api.control.plane.gate.lock().groups_sequence;
         drop(operation);
         receipt(&mut receipts).await; emitting_drained(&api.control).await;
@@ -1155,7 +1163,7 @@ mod provider_event_readiness_tests {
             if baseline > 0 { assert_eq!(receiver.try_recv().unwrap(), baseline); }
             assert!(matches!(receiver.try_recv(), Err(tokio::sync::broadcast::error::TryRecvError::Empty)));
             let operation = api.control.plane.begin(&feed.provider_identity()).unwrap();
-            operation.commit_proxy(&feed.proxies(), &[], &mut || {}).unwrap();
+            commit_installed_projection(operation.as_ref(), feed.project_members(feed.proxies()));
             let sequence = api.control.plane.gate.lock().groups_sequence; assert!(sequence > baseline);
             drop(operation);
             {
@@ -1202,7 +1210,7 @@ mod provider_event_readiness_tests {
         let wake=Arc::new(ReenterDelivery { control:api.control.clone(),identity:provider.provider_identity().clone(),woke:std::sync::atomic::AtomicBool::new(false) });
         let waker=std::task::Waker::from(wake.clone());let mut receiver=api.control.subscribe_groups();let mut receive=Box::pin(receiver.recv());
         assert!(receive.as_mut().poll(&mut std::task::Context::from_waker(&waker)).is_pending());
-        let mut receipts=api.control.plane.subscribe();let operation=api.control.plane.begin(provider.provider_identity()).unwrap();operation.commit_proxy(&provider.proxies(),&[],&mut ||{}).unwrap();drop(operation);
+        let mut receipts=api.control.plane.subscribe();let operation=api.control.plane.begin(provider.provider_identity()).unwrap();commit_installed_projection(operation.as_ref(),provider.project_members(provider.proxies()));drop(operation);
         receipt(&mut receipts).await;emitting_drained(&api.control).await;
         let mut events=Box::pin(api.control.run_group_events());let flag=Arc::new(WakeFlag(std::sync::atomic::AtomicBool::new(false)));let driver=std::task::Waker::from(flag);
         assert!(events.as_mut().poll(&mut std::task::Context::from_waker(&driver)).is_pending());assert!(wake.woke.load(Ordering::Acquire));

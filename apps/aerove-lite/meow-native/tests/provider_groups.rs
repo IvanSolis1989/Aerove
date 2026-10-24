@@ -156,8 +156,11 @@ async fn provider_refresh_and_new_selection_fence_old_real_probe_without_retired
     let groups = api.control.activate_groups(&scope).unwrap(); api.activate_providers().unwrap();
     let control = api.control.clone(); let setter = tokio::spawn(async move { control.select("PICK","a").await });
     let (mut socket,_) = timeout(Duration::from_secs(5),origin.accept()).await.unwrap().unwrap(); headers(&mut socket).await;
+    let mut committed_groups = api.control.subscribe_groups();
+    let refresh_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     files.write("feed.yaml","# replace adapter while preserving display name\nproxies:\n - {name: a, type: direct}\n");
-    timeout(Duration::from_secs(5),provider.refresh_owned()).await.unwrap().unwrap(); let current = provider.proxies()[0].clone(); assert!(!Arc::ptr_eq(&current,&retired));
+    tokio::time::timeout_at(refresh_deadline,provider.refresh_owned()).await.unwrap().unwrap(); let current = provider.proxies()[0].clone(); assert!(!Arc::ptr_eq(&current,&retired));
+    tokio::time::timeout_at(refresh_deadline, committed_groups.recv()).await.unwrap().unwrap();
     let stable = api.control.select("PICK","a").await.unwrap();
     socket.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n").await.unwrap(); drop(socket);
     assert_eq!(timeout(Duration::from_secs(5),setter).await.unwrap().unwrap(),Err(ControlError::Superseded));

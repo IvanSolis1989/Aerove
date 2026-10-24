@@ -810,8 +810,7 @@ mod cleanup_ack_tests {
         let json = attachment_fixture(None,"127.0.0.1:39875".parse().unwrap(),39876,"proxy","{}");
         assert!(managed_yaml(&RuntimePlan::parse(&json,-1,false,false).unwrap()).is_ok());
     }
-    #[tokio::test(flavor="multi_thread", worker_threads=3)]
-    async fn owner_install_callback_precedes_worker_spawn_and_typed_startup_cancellation() {
+    async fn assert_owner_install_callback_stages(missing_target: bool) {
         use tokio::time::{timeout, Duration};
         let roots = super::resume_roots::Roots::new();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -819,7 +818,8 @@ mod cleanup_ack_tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let mixed = listener.local_addr().unwrap(); drop(listener);
         let mut json: serde_json::Value = serde_json::from_str(&attachment_fixture(Some(&roots),private,mixed.port(),"proxy","{}")).unwrap();
-        json["engineYaml"] = "strict: true\nproxies:\n - {name: FIRST,type: http,server: 127.0.0.1,port: 443}\n - {name: NODE,type: http,server: 127.0.0.1,port: 444,dialer-proxy: MISSING}\nrules: ['MATCH,NODE']\ndns: {enable: false,use-system-hosts: false}\ntun: {enable: false,auto-route: false}\n".into();
+        let dialer = if missing_target { "MISSING" } else { "FIRST" };
+        json["engineYaml"] = format!("strict: true\nproxies:\n - {{name: FIRST,type: http,server: 127.0.0.1,port: 443}}\n - {{name: NODE,type: http,server: 127.0.0.1,port: 444,dialer-proxy: {dialer}}}\nrules: ['MATCH,NODE']\ndns: {{enable: false,use-system-hosts: false}}\ntun: {{enable: false,auto-route: false}}\n").into();
         let resources = Arc::new(crate::resource_roots::ResourceRoots::validate(
             roots.read.to_str(),roots.cache.to_str()).unwrap());
         let cancel = CancellationToken::new();
@@ -847,19 +847,45 @@ mod cleanup_ack_tests {
         release.send(()).unwrap();
         let returned = timeout(Duration::from_secs(5),starting).await.unwrap().unwrap().unwrap();
         assert!(Arc::ptr_eq(&owner,&returned));
-        let failure = match timeout(Duration::from_secs(5),owner.ready()).await.unwrap() {
-            Err(cause) => cause,
-            Ok(_) => panic!("managed DPA unexpectedly became ready"),
-        };
-        let detail = failure.get_ref().unwrap().downcast_ref::<crate::runtime::Failure>().unwrap();
-        assert_eq!(detail.code,"managedDialerProxyGraphRejected");
-        assert_eq!(detail.field.as_deref(),Some("proxies.dialer-proxy"));
-        assert!(detail.reason.as_deref().unwrap().contains("MISSING"));
-        let status = timeout(Duration::from_secs(5),owner.wait()).await.unwrap().unwrap();
-        assert_eq!(status.state,"Failed"); assert_eq!(status.error,Some(failure.to_string()));
+        if missing_target {
+            let failure = match timeout(Duration::from_secs(5),owner.ready()).await.unwrap() {
+                Err(cause) => cause,
+                Ok(_) => panic!("missing injected dialer unexpectedly became ready"),
+            };
+            let detail = failure.get_ref().unwrap().downcast_ref::<crate::runtime::Failure>().unwrap();
+            assert_eq!(detail.code,"managedDialerProxyGraphRejected");
+            assert_eq!(detail.field.as_deref(),Some("proxies.dialer-proxy"));
+            assert!(detail.reason.as_deref().unwrap().contains("MISSING"));
+            let status = timeout(Duration::from_secs(5),owner.wait()).await.unwrap().unwrap();
+            assert_eq!(status.state,"Failed"); assert_eq!(status.error,Some(failure.to_string()));
+            // Factory validation rejects MISSING before a CoreApi/control exists.
+            assert_eq!(registered.load(Ordering::Acquire),0);
+        } else {
+            let status = timeout(Duration::from_secs(5),owner.ready()).await.unwrap().unwrap();
+            assert_eq!(status.state,"Running"); assert!(status.core_ready);
+            assert_eq!(status.api_address,Some(private)); assert!(!status.listening);
+            assert_eq!(registered.load(Ordering::Acquire),1);
+            assert!(!cancel.is_cancelled());
+            let mut client = TcpStream::connect(private).await.unwrap();
+            client.write_all(b"GET /aerove/route HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer attachment-private-secret-000000000001\r\nConnection: close\r\n\r\n").await.unwrap();
+            let mut response = String::new();
+            timeout(Duration::from_secs(5),client.read_to_string(&mut response)).await.unwrap().unwrap();
+            assert!(response.starts_with("HTTP/1.1 200"));
+            owner.cancel();
+            let status = timeout(Duration::from_secs(5),owner.wait()).await.unwrap().unwrap();
+            assert_eq!(status.state,"Exited"); assert!(status.error.is_none());
+            assert_eq!(registered.load(Ordering::Acquire),1, "stop registered a second control");
+        }
         assert!(owner.cleanup_confirmed()); assert!(cancel.is_cancelled());
-        assert_eq!(registered.load(Ordering::Acquire),1);
         for address in [private,mixed] { assert!(TcpListener::bind(address).await.is_ok()); }
+    }
+    #[tokio::test(flavor="multi_thread", worker_threads=3)]
+    async fn owner_install_callback_precedes_worker_spawn_and_typed_startup_cancellation() {
+        assert_owner_install_callback_stages(true).await;
+    }
+    #[tokio::test(flavor="multi_thread", worker_threads=3)]
+    async fn owner_install_callback_precedes_worker_spawn_and_registers_one_valid_core() {
+        assert_owner_install_callback_stages(false).await;
     }
 
     #[test]

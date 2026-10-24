@@ -206,17 +206,32 @@ async fn cancelled_http_cache_write_keeps_busy_until_scope_joins_actual_job() {
     let config = providers::load(&document, &scope, &cancel).await.unwrap();
     let provider = config.proxy_providers.get("feed").unwrap().clone();
     plane.activate(&[provider.provider_identity().clone()]).unwrap();
+    assert_eq!(provider.proxies()[0].name(), "d1");
+    assert_eq!(plane.provider_baseline()[0].revision, "1");
+    let initial_epoch = plane.stamp().0;
+    assert!(!cache.0.join("feed.yaml").exists());
     blocker.armed.store(true, Ordering::SeqCst);
     let fetching = provider.clone(); let refresh = tokio::spawn(async move { fetching.refresh_owned().await });
     tokio::time::timeout(Duration::from_secs(5), blocker.started.notified()).await.unwrap();
+    // The filesystem callback is entered only AFTER final CAS accepted this
+    // candidate. Cancelling its waiter cannot roll back that accepted receipt.
+    assert_eq!(provider.proxies()[0].name(), "d2");
+    assert!(plane.stamp().0 > initial_epoch, "live install did not advance the accepted epoch");
+    assert!(plane.provider_baseline().is_empty(), "busy source exposed a partial persistence baseline");
+    assert!(!cache.0.join("feed.yaml").exists(), "blocked job published before running");
+    assert!(!blocker.completed.load(Ordering::SeqCst));
     refresh.abort(); assert!(refresh.await.unwrap_err().is_cancelled());
     assert_eq!(tokio::time::timeout(Duration::from_secs(5), provider.refresh_owned()).await.unwrap().unwrap_err(), "providerBusy", "caller cancellation dropped admission before cache job finished");
-    assert_eq!(provider.proxies()[0].name(), "d1");
+    assert_eq!(provider.proxies()[0].name(), "d2");
+    assert!(plane.provider_baseline().is_empty(), "aborted waiter released the busy source");
     plane.cancel(); scope.cancel();
     let closing_scope = scope.clone(); let close = tokio::spawn(async move { closing_scope.close().await });
     tokio::task::yield_now().await; assert!(!close.is_finished()); blocker.release();
     tokio::time::timeout(Duration::from_secs(5), close).await.unwrap().unwrap().unwrap(); server.await.unwrap();
-    assert_eq!(plane.provider_baseline()[0].revision, "1");
+    assert!(blocker.completed.load(Ordering::SeqCst), "scope returned before actual cache writer finished");
+    assert_eq!(plane.provider_baseline()[0].revision, "2", "accepted update lost or duplicated its receipt during cancellation");
+    assert_eq!(provider.proxies()[0].name(), "d2");
+    assert!(std::fs::read_to_string(cache.0.join("feed.yaml")).unwrap().contains("name: d2"));
     assert_eq!(std::fs::read_to_string(read.0.join("feed.yaml")).unwrap(), seed);
     let next_cancel = CancellationToken::new(); let next_plane = ControlPlane::new(62, next_cancel.clone()).unwrap();
     let next_scope = OwnedLoadScope::with_context(Arc::new(Context { plane: next_plane.clone(), blocker: None, roots: Some(roots) }));
