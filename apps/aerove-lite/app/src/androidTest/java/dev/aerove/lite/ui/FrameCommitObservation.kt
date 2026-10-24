@@ -39,6 +39,8 @@ internal class FrameCommitObservation(private val label: String, private val dir
     private var drawRegistered = false
     private var commitRegistered = false
     private var deadlinePassed = false
+    private var targetRoot: View? = null
+    private var targetToken: android.os.IBinder? = null
     @Volatile private var cleanupComplete = false
 
     private val commitCallback = Runnable {
@@ -91,11 +93,18 @@ internal class FrameCommitObservation(private val label: String, private val dir
         view = target
         window = targetWindow
         observer = target.viewTreeObserver
+        targetRoot = target.rootView
+        targetToken = target.windowToken
         record("registerStart", JSONObject()
             .put("viewIdentity", System.identityHashCode(target))
             .put("windowIdentity", System.identityHashCode(targetWindow))
             .put("drawingEnabled", HardwareRendererCompat.isDrawingEnabled())
-            .put("attached", target.isAttachedToWindow).put("observerAlive", observer!!.isAlive))
+            .put("attached", target.isAttachedToWindow).put("observerAlive", observer!!.isAlive)
+            .put("rootIdentity", System.identityHashCode(targetRoot))
+            .put("decorIdentity", System.identityHashCode(targetWindow.decorView))
+            .put("observerIdentity", System.identityHashCode(observer))
+            .put("windowToken", targetToken?.toString())
+            .put("sameWindowRoot", targetRoot === targetWindow.decorView))
         targetWindow.addOnFrameMetricsAvailableListener(metricsListener, metricsHandler)
         metricsRegistered = true
         observer!!.addOnDrawListener(drawListener)
@@ -125,7 +134,47 @@ internal class FrameCommitObservation(private val label: String, private val dir
         return withinDeadline
     }
 
+    fun assertMatrixTargetUnchanged() {
+        check(Looper.myLooper() == Looper.getMainLooper())
+        val target = requireNotNull(view)
+        val decor = requireNotNull(window).decorView
+        check(target.isAttachedToWindow && target.isHardwareAccelerated && target.isShown && target.hasWindowFocus())
+        check(targetRoot === decor && target.rootView === targetRoot)
+        check(targetToken != null && target.windowToken == targetToken && decor.windowToken == targetToken)
+        check(observer!!.isAlive && target.viewTreeObserver === observer)
+        record("matrixTargetConfirmed", JSONObject().put("observerIdentity", System.identityHashCode(observer)))
+    }
+
+    fun awaitMatrixDiagnosticSubmission(): Boolean {
+        check(!deadlinePassed && !closed.get())
+        check(Looper.myLooper() != Looper.getMainLooper())
+        // ceil(run86's 9.864930166s submission - original 5s - diagnostic tail 1s) = 4s.
+        // This separate evidence budget never changes the failed original acceptance result.
+        val started = System.nanoTime()
+        record("matrixDiagnosticAwaitStart", JSONObject().put("budgetSeconds", 4)
+            .put("deadlineNanos", started + TimeUnit.SECONDS.toNanos(4)))
+        val arrived = committed.await(4, TimeUnit.SECONDS)
+        val confirmed = arrived && drawSeen.get() && commitAt.get() != 0L &&
+            commitAt.get() - started <= TimeUnit.SECONDS.toNanos(4)
+        record("matrixDiagnosticAwaitReturned", JSONObject().put("submissionConfirmed", confirmed))
+        return confirmed
+    }
+
+    fun matrixSubmissionEvidence(): JSONObject {
+        check(drawSeen.get() && committed.count == 0L && commitAt.get() != 0L)
+        return JSONObject().put("captureId", id).put("capture", label)
+            .put("viewIdentity", System.identityHashCode(view))
+            .put("windowIdentity", System.identityHashCode(window))
+            .put("rootIdentity", System.identityHashCode(targetRoot))
+            .put("observerIdentity", System.identityHashCode(observer))
+            .put("windowToken", targetToken?.toString())
+            .put("commitNanoTime", commitAt.get()).put("originalDeadlinePassed", deadlinePassed)
+            .put("diagnosticOnly", !deadlinePassed).put("promotionAccepted", false)
+    }
+
     private fun observers(): List<ViewTreeObserver> = listOfNotNull(observer, view?.viewTreeObserver).distinct()
+
+    fun cleanupConfirmed(): Boolean = closed.get() && cleanupComplete && cleanupErrors.isEmpty() && !metricsThread.isAlive
 
     private fun removeDrawOnMain() {
         if (drawRegistered) {

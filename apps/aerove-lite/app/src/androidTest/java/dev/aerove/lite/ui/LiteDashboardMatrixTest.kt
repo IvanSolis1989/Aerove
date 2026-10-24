@@ -96,64 +96,119 @@ class LiteDashboardMatrixTest {
             .put("entryClock", "Each appearance first composes from an empty/fresh key, including the first cell")
             .put("vpnActions", 0).put("networkActions", 0).put("performanceEvidence", false)
         val backgrounds = mutableMapOf<Int, List<Int>>()
+        val ledger = MatrixEvidenceLedger(cases.size)
+        val failures = JSONArray()
+        manifest.put("diagnosticCapturedCount", 0).put("failures", failures)
         HardwareCapture(compose, probe, "dashboard-matrix").use { capture ->
+            capture.beginMatrixCollection()
             capture.manifest(manifest)
+            var matrixExitFailure: Throwable? = null
             try {
                 for ((index, case) in cases.withIndex()) {
-                    assertEquals("Only appearance settings may differ between cells", reference, reference.copy(settings = case.settings).copy(settings = reference.settings))
-                    compose.runOnUiThread { selected.value = case }
-                    compose.mainClock.advanceTimeBy(400)
-                    compose.waitForIdle()
-                    compose.runOnUiThread {
-                        val window = compose.activity.window
-                        val bars = WindowCompat.getInsetsController(window, window.decorView)
-                        assertEquals("Status icon color must follow app theme independently of the OS", !case.dark, bars.isAppearanceLightStatusBars)
-                        assertEquals("Navigation icon color must follow app theme independently of the OS", !case.dark, bars.isAppearanceLightNavigationBars)
-                        @Suppress("DEPRECATION")
-                        assertEquals(android.graphics.Color.TRANSPARENT, window.statusBarColor)
-                        @Suppress("DEPRECATION")
-                        assertEquals(android.graphics.Color.TRANSPARENT, window.navigationBarColor)
-                        assertTrue(window.isNavigationBarContrastEnforced)
-                        assertTrue(!window.isStatusBarContrastEnforced)
+                    var accepted = false
+                    var diagnosticCaptured = false
+                    var caseFailure: Throwable? = null
+                    var caseExitFailure: Throwable? = null
+                    try {
+                        assertEquals("Only appearance settings may differ between cells", reference, reference.copy(settings = case.settings).copy(settings = reference.settings))
+                        compose.runOnUiThread { selected.value = case }
+                        compose.mainClock.advanceTimeBy(400)
+                        compose.waitForIdle()
+                        compose.runOnUiThread {
+                            val window = compose.activity.window
+                            val bars = WindowCompat.getInsetsController(window, window.decorView)
+                            assertEquals("Status icon color must follow app theme independently of the OS", !case.dark, bars.isAppearanceLightStatusBars)
+                            assertEquals("Navigation icon color must follow app theme independently of the OS", !case.dark, bars.isAppearanceLightNavigationBars)
+                            @Suppress("DEPRECATION")
+                            assertEquals(android.graphics.Color.TRANSPARENT, window.statusBarColor)
+                            @Suppress("DEPRECATION")
+                            assertEquals(android.graphics.Color.TRANSPARENT, window.navigationBarColor)
+                            assertTrue(window.isNavigationBarContrastEnforced)
+                            assertTrue(!window.isStatusBarContrastEnforced)
+                        }
+                        val tab = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab)
+                        compose.onNode(tab and hasText(context.getString(R.string.lite_tab_home))).assertIsSelected()
+                        compose.onNodeWithText("198.51.100.8").assertIsDisplayed()
+                        compose.onNodeWithText("Example ISP").assertIsDisplayed()
+                        compose.onNodeWithText(context.getString(R.string.lite_upload)).assertIsDisplayed()
+                        compose.onNodeWithText(context.getString(R.string.lite_download)).assertIsDisplayed()
+                        compose.onNodeWithContentDescription(context.getString(R.string.action_disconnect)).assertIsEnabled()
+                        compose.onNodeWithContentDescription(context.getString(R.string.lite_vpn)).assertIsOn()
+                        capture.captureMatrix(case.stem, "${case.stem}.png", case.json()).use { result ->
+                            result.originalFailure?.let {
+                                caseFailure = it
+                                cells[index].put("originalFailure", JSONObject().put("type", it.javaClass.name)
+                                    .put("message", it.message).put("phase", result.originalFailurePhase))
+                            }
+                            result.diagnosticFailure?.let {
+                                requireNotNull(caseFailure).addSuppressed(it)
+                                cells[index].put("diagnosticFailure", "${it.javaClass.name}: ${it.message}")
+                            }
+                            cells[index].put("captureFinalPhase", result.finalPhase)
+                            if (result.accepted) {
+                                val frame = requireNotNull(result.frame)
+                                val box = requireNotNull(probe.bounds["app"])
+                                val samples = listOf(0.3f, 0.45f, 0.6f, 0.75f).map { fraction -> frame.pixel(box.left + 2 * probe.density, box.top + box.height * fraction) }
+                                val row = backgrounds[case.row]
+                                if (row == null) backgrounds[case.row] = samples
+                                else assertTrue("A material change must not change the wallpaper phase or data", samples.zip(row).maxOf { (a, b) -> channelError(a, b) } <= 2)
+                                cells[index].put("windowSha256", frame.evidence.getString("windowSha256"))
+                                    .put("displayImage", frame.evidence.getString("displayImage"))
+                                    .put("displaySha256", frame.evidence.getString("displaySha256"))
+                                    .put("width", frame.bitmap.width).put("height", frame.bitmap.height)
+                                    .put("backgroundSamples", JSONArray(samples))
+                                accepted = true
+                            } else result.frame?.let { frame ->
+                                diagnosticCaptured = true
+                                cells[index].put("diagnosticWindowImage", frame.evidence.getString("windowImage"))
+                                    .put("diagnosticWindowSha256", frame.evidence.getString("windowSha256"))
+                                    .put("diagnosticMetadata", "diagnostic/${case.stem}.json")
+                                    .put("diagnosticSubmission", frame.evidence.getJSONObject("matrixSubmission"))
+                            }
+                        }
+                        compose.runOnUiThread {
+                            assertTrue("Screenshots cannot invoke the real core or services", actions.events.isEmpty())
+                            assertTrue("Dashboard fixtures cannot declare Connections telemetry demand", actions.connectionTelemetry.isEmpty())
+                        }
+                    } catch (failure: Throwable) {
+                        accepted = false
+                        if (caseFailure == null) caseFailure = failure else caseFailure!!.addSuppressed(failure)
+                        try {
+                            rethrowMatrixCancellation(failure)
+                        } catch (terminal: Throwable) {
+                            caseExitFailure = terminal
+                            throw terminal
+                        }
+                    } finally {
+                        if (!accepted && caseFailure == null) caseFailure = AssertionError("Matrix case did not complete original acceptance")
+                        cells[index].put("captured", accepted).put("diagnosticCaptured", diagnosticCaptured)
+                        ledger.record(case.number, accepted, diagnosticCaptured, caseFailure)
+                        caseFailure?.let { failures.put(JSONObject().put("number", case.number)
+                            .put("type", it.javaClass.name).put("message", it.message)
+                            .put("suppressed", JSONArray(it.suppressed.map { error -> "${error.javaClass.name}: ${error.message}" }))) }
+                        manifest.put("completedCount", ledger.acceptedCount)
+                            .put("diagnosticCapturedCount", ledger.diagnosticCapturedCount)
+                            .put("attemptedCount", index + 1)
+                        preserveMatrixEvidenceFailure(caseExitFailure ?: caseFailure) { capture.manifest(manifest) }
                     }
-                    val tab = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab)
-                    compose.onNode(tab and hasText(context.getString(R.string.lite_tab_home))).assertIsSelected()
-                    compose.onNodeWithText("198.51.100.8").assertIsDisplayed()
-                    compose.onNodeWithText("Example ISP").assertIsDisplayed()
-                    compose.onNodeWithText(context.getString(R.string.lite_upload)).assertIsDisplayed()
-                    compose.onNodeWithText(context.getString(R.string.lite_download)).assertIsDisplayed()
-                    compose.onNodeWithContentDescription(context.getString(R.string.action_disconnect)).assertIsEnabled()
-                    compose.onNodeWithContentDescription(context.getString(R.string.lite_vpn)).assertIsOn()
-                    capture.capture(case.stem, "${case.stem}.png", case.json()).use { frame ->
-                        val box = requireNotNull(probe.bounds["app"])
-                        val samples = listOf(0.3f, 0.45f, 0.6f, 0.75f).map { fraction -> frame.pixel(box.left + 2 * probe.density, box.top + box.height * fraction) }
-                        val row = backgrounds[case.row]
-                        if (row == null) backgrounds[case.row] = samples
-                        else assertTrue("A material change must not change the wallpaper phase or data", samples.zip(row).maxOf { (a, b) -> channelError(a, b) } <= 2)
-                        cells[index].put("captured", true).put("windowSha256", frame.evidence.getString("windowSha256"))
-                            .put("displayImage", frame.evidence.getString("displayImage"))
-                            .put("displaySha256", frame.evidence.getString("displaySha256"))
-                            .put("width", frame.bitmap.width).put("height", frame.bitmap.height)
-                            .put("backgroundSamples", JSONArray(samples))
-                    }
-                    compose.runOnUiThread {
-                        assertTrue("Screenshots cannot invoke the real core or services", actions.events.isEmpty())
-                        assertTrue("Dashboard fixtures cannot declare Connections telemetry demand", actions.connectionTelemetry.isEmpty())
-                    }
-                    manifest.put("completedCount", index + 1)
-                    capture.manifest(manifest)
                 }
+                ledger.assertAllAccepted()
                 for ((first, second) in listOf(1 to 2, 3 to 4, 1 to 3)) {
                     val difference = requireNotNull(backgrounds[first]).zip(requireNotNull(backgrounds[second])).maxOf { (a, b) -> channelError(a, b) }
                     assertTrue("The requested dark/Aurora setting must reach the actual window", difference > 8)
                 }
                 manifest.put("complete", true)
             } catch (failure: Throwable) {
-                manifest.put("failure", "${failure.javaClass.name}: ${failure.message}")
+                matrixExitFailure = failure
+                preserveMatrixEvidenceFailure(failure) {
+                    manifest.put("failure", "${failure.javaClass.name}: ${failure.message}")
+                }
                 throw failure
             } finally {
-                manifest.put("finishedAtMillis", System.currentTimeMillis())
-                capture.manifest(manifest)
+                preserveMatrixEvidenceFailure(matrixExitFailure) {
+                    manifest.put("finishedAtMillis", System.currentTimeMillis())
+                    capture.manifest(manifest)
+                }
             }
         }
     }
