@@ -29,16 +29,31 @@ class ResourcePageWorkspace(val session: ResourceManagementSession, val scripts:
     fun updateIfDue(isCurrent: () -> Boolean) = update(manual = false, isCurrent)
     private fun update(manual: Boolean, isCurrent: () -> Boolean) = synchronized(gate) {
         if (paused || closed || update?.isActive == true || !isCurrent()) return@synchronized
-        update = launch {
+        update = launch(start = false) {
+            val operation = currentCoroutineContext()[Job]
             mutable.value = mutable.value.copy(updating = true, failures = emptySet())
             try {
                 val result = if (manual) maintenance.updateAll({ canWork() && isCurrent() }, coreAvailable)
                     else maintenance.updateIfDue({ canWork() && isCurrent() }, coreAvailable)
-                mutable.value = State(failures = result.failed, completed = mutable.value.completed + 1)
-                if (canWork() && isCurrent()) session.load(null)
-            } finally { mutable.value = mutable.value.copy(updating = false) }
+                val reload = canWork() && isCurrent()
+                synchronized(gate) {
+                    if (update === operation && operation?.isActive == true) {
+                        if (reload) session.load(null)
+                        if (update === operation && operation.isActive) {
+                            update = null
+                            mutable.value = State(failures = result.failed, completed = mutable.value.completed + 1)
+                        }
+                    }
+                }
+            } finally { synchronized(gate) {
+                if (update === operation) {
+                    update = null
+                    mutable.value = mutable.value.copy(updating = false)
+                }
+            } }
         }
         if (!manual) automatic = update
+        update?.start()
     }
     fun pauseAutomatic() { synchronized(gate) { automatic?.cancel(); automatic = null } }
     fun cancel() { synchronized(gate) { jobs.toList().forEach { it.cancel() } }; session.cancel() }
@@ -70,13 +85,13 @@ class ResourcePageWorkspace(val session: ResourceManagementSession, val scripts:
             check(matches(profile, resource)) { "Resource selection changed" }
         }
     }
-    private fun launch(action: suspend () -> Unit): Job? = synchronized(gate) {
+    private fun launch(start: Boolean = true, action: suspend () -> Unit): Job? = synchronized(gate) {
         if (paused || closed || !canWork()) return@synchronized null
         val pending = scope.launch(start = CoroutineStart.LAZY) {
             try { action() } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { failed(failure) }
         }
-        jobs += pending; pending.invokeOnCompletion { synchronized(gate) { jobs -= pending } }; pending.start(); pending
+        jobs += pending; pending.invokeOnCompletion { synchronized(gate) { jobs -= pending } }; if (start) pending.start(); pending
     }
     private suspend fun <T> tracked(action: suspend () -> T): T = coroutineScope {
         val job = checkNotNull(currentCoroutineContext()[Job])
