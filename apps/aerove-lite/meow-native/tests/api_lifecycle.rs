@@ -149,3 +149,50 @@ async fn actual_idle_websockets_cancel_join_and_cancelled_wait_can_be_retried() 
     }
     assert!(TcpListener::bind(address).await.is_ok());
 }
+
+#[tokio::test]
+async fn private_connection_count_reads_same_live_statistics_without_exposing_connections() {
+    let _lock = LOCK.lock().await;
+    let (api, private, user, _mixed) = fixture().await;
+    let private_address = private.local_addr().unwrap();
+    let user_address = user.local_addr().unwrap();
+    let cancel = CancellationToken::new();
+    let owner = api.clone(); let token = cancel.clone();
+    let private_task = tokio::spawn(async move { owner.serve_private(private, token).await });
+    let owner = api.clone(); let token = cancel.clone();
+    let user_task = tokio::spawn(async move { owner.serve_user(user, token).await });
+    const PATH: &str = "/aerove/connections/count";
+    assert!(http(private_address, PATH, "wrong-secret", "GET").await.starts_with("HTTP/1.1 401"));
+    assert!(http(user_address, PATH, USER, "GET").await.starts_with("HTTP/1.1 404"));
+    assert!(http(private_address, PATH, PRIVATE, "POST").await.starts_with("HTTP/1.1 405"));
+    async fn count(address: std::net::SocketAddr, expected: u64) {
+        let response = http(address, PATH, PRIVATE, "GET").await;
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        let (headers, body) = response.split_once("\r\n\r\n").unwrap();
+        assert!(headers.to_ascii_lowercase().contains("content-type: application/json"));
+        let value: serde_json::Value = serde_json::from_str(body).unwrap();
+        assert_eq!(value, serde_json::json!({"count":expected}));
+    }
+    count(private_address, 0).await;
+    let stats = api.state.tunnel.statistics();
+    let first = meow_tunnel::tcp::ConnectionGuard::track(&stats, meow_common::Metadata::default(),
+        "MATCH".into(), "".into(), Default::default());
+    first.counters().set_direct(true);
+    count(private_address, 1).await;
+    let second = meow_tunnel::tcp::ConnectionGuard::track(&stats, meow_common::Metadata::default(),
+        "MATCH".into(), "".into(), Default::default());
+    count(private_address, 2).await;
+    drop(first); count(private_address, 1).await;
+    drop(second); count(private_address, 0).await;
+    api.control.cancel();
+    let gone = http(private_address, PATH, PRIVATE, "GET").await;
+    assert!(gone.starts_with("HTTP/1.1 410"), "{gone}");
+    let value: serde_json::Value = serde_json::from_str(gone.split_once("\r\n\r\n").unwrap().1).unwrap();
+    assert_eq!(value, serde_json::json!({"error":"cancelled"}));
+    api.cancel(); cancel.cancel();
+    private_task.await.unwrap().unwrap(); user_task.await.unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(5), api.join()).await.unwrap();
+    assert_eq!(api.active_tasks(), 0);
+    assert!(TcpListener::bind(private_address).await.is_ok());
+    assert!(TcpListener::bind(user_address).await.is_ok());
+}

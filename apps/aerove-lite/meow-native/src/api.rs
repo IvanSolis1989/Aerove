@@ -117,7 +117,9 @@ impl CoreApi {
             dns_server: Arc::new(RwLock::new(None)),
         });
         let control = crate::control::RouteControl::with_plane(state.clone(), plane.clone());
-        let aerove_router = aerove_router.merge(crate::control::router(control.clone()));
+        let counts = Router::new().route("/aerove/connections/count", axum::routing::get(connection_count_route))
+            .with_state((state.clone(), control.clone()));
+        let aerove_router = aerove_router.merge(counts).merge(crate::control::router(control.clone()));
         let authorization = HeaderValue::from_str(&format!("Bearer {private_secret}"))
             .map_err(|_| ApiError("invalidPrivateSecret"))?;
         let pages = Router::new().route("/providers/rules/{name}/rules", axum::routing::get(rule_page_route))
@@ -317,6 +319,19 @@ async fn captured_request(State(context): State<Arc<dyn meow_config::owned_load:
     let (send, receive) = tokio::sync::oneshot::channel();
     context.wrap(Box::pin(async move { let _ = send.send(next.run(request).await); })).await;
     receive.await.unwrap_or_else(|_| StatusCode::GONE.into_response())
+}
+
+async fn connection_count_route(
+    State((state, control)): State<(Arc<AppState>, Arc<crate::control::RouteControl>)>,
+) -> Response {
+    let count = {
+        let gate = control.plane.gate.lock();
+        if gate.closed || control.plane.cancel.is_cancelled() {
+            return (StatusCode::GONE, axum::Json(serde_json::json!({"error":"cancelled"}))).into_response();
+        }
+        state.tunnel.statistics().active_connection_count()
+    };
+    axum::Json(serde_json::json!({"count":count})).into_response()
 }
 
 #[derive(Clone)]
