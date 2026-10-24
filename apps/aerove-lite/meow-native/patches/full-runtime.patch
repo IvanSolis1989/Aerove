@@ -6710,6 +6710,15 @@
          let write_abort = write_task.abort_handle();
          Self {
              inner,
+@@ -177,7 +179,7 @@
+ 
+     /// Mirrors the real relay shape: one task pumping each direction
+     /// between the memory duplex and the transport.
+-    fn spawn_pair(transport: DuplexStream) -> (TaskedDuplex, JoinHandle<bool>) {
++    fn spawn_pair(transport: DuplexStream) -> (TaskedDuplex, tokio::task::JoinHandle<bool>) {
+         let (client, proxy) = tokio::io::duplex(4096);
+         let (mut rd, mut wr) = tokio::io::split(transport);
+         let (mut proxy_rd, mut proxy_wr) = tokio::io::split(proxy);
 @@ -288,3 +290,16 @@
          let _ = read_task.await;
      }

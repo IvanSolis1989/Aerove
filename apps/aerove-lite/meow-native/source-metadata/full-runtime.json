@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "patch": "patches/full-runtime.patch",
-  "patchSha256": "63fa7e3a7e624eb8708e71cb7ac5bb905f7b6eea996be439e844018b008b8166",
+  "patchSha256": "9fb9aea44ed1b30d78b7955adef7a87b1f8658a84b460300fe5f136b02900be5",
   "rawFileManifestSha256": "a1948157edb77700f6f9152f3467907fb6a050c66cd153edfe98295bbf56e550",
-  "adaptedFileManifestSha256": "959dd40a29ff0b4d88b215df6f5916c07a72a6eae7283ce26ca1b6e3a5c43743",
+  "adaptedFileManifestSha256": "50036fff992205369dab7fe738b88e83f31bf12aed75121539eea3f8fd358014",
   "changes": {
     "crates/meow-anytls/src/client/client.rs": {
       "beforeSha256": "806773111b6ca84adcdad0e24d6db6c5653e72bdba58f4d5e95fd959d3504515",
@@ -295,7 +295,7 @@
     },
     "crates/meow-proxy/src/tasked_duplex.rs": {
       "beforeSha256": "5acd20630682e0158cab839a6c5c073aca1787e44b2b5c0e2d6d9d2db51c618b",
-      "afterSha256": "f84c3b2ce4e01c1d498b79c745daf233207b662d5b73b775f757f56da9765378"
+      "afterSha256": "b9babec3f367fc009d795c0101e7b39c19c1988a635996bdcf3eb641e4666951"
     },
     "crates/meow-proxy/src/trusttunnel/protocol/http2.rs": {
       "beforeSha256": "5bca6dea83772559277831ae0737c35b394604b4eae3db98426bce92ec38390f",
@@ -831,7 +831,7 @@
     "crates/meow-proxy/src/shadow_tls_plugin.rs": "770839c1bfc1c55c3d94a954d0bb9dacd1a15b0366c53c9edcf522287b43687d",
     "crates/meow-proxy/src/socks5_adapter.rs": "adf7e4810e81eab1c6a72f49b30db9f81223bd528aa321c19f6b7d31ecbbad80",
     "crates/meow-proxy/src/stream_conn.rs": "02f505e907e203c1933898e129720e8a466826437909ab6ff942700a5d7fb0cc",
-    "crates/meow-proxy/src/tasked_duplex.rs": "f84c3b2ce4e01c1d498b79c745daf233207b662d5b73b775f757f56da9765378",
+    "crates/meow-proxy/src/tasked_duplex.rs": "b9babec3f367fc009d795c0101e7b39c19c1988a635996bdcf3eb641e4666951",
     "crates/meow-proxy/src/transport_chain.rs": "7efee42d2a41fa64d1d736685231fa05853f5a4b60b50533fedd856620948034",
     "crates/meow-proxy/src/trojan.rs": "9518e64f99b32f3ca16a2aa6db6f15c02f0ca9daff0f71214de287b60ace3590",
     "crates/meow-proxy/src/unavailable.rs": "a9fcf6a6c884f39aefd46a323c3788552e54953f59f949e2d10f92659fbdb80b",
