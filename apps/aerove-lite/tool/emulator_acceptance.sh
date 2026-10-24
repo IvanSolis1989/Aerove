@@ -29,10 +29,21 @@ test -f "$app_apk"
 test -f "$test_apk"
 sha256sum "$app_apk" "$test_apk" > "$diagnostics/APK_SHA256SUMS"
 python3 - "$diagnostics/SOURCE.json" "$phase" "$test_timeout_msec" "$serial" <<'PY'
-import json, os, subprocess, sys
+import hashlib, json, os, subprocess, sys
 from pathlib import Path
-Path(sys.argv[1]).write_text(json.dumps({"sourceRevision": os.environ["GITHUB_SHA"],
-    "sourceTree": subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], text=True).strip(),
+proof_path = os.environ.get("AEROVE_QA79_PROOF")
+proof = json.loads(Path(proof_path).read_text()) if proof_path else None
+if proof:
+    if (proof.get("sourceRevision") != "8d4bc572aa6b1984bd084e0d72d48b7c6b9f7e8e" or proof.get("sourceTree") != "a8822ba6523696f378659becf8f99121396d93f1" or proof.get("workflowRun") != "40063528837" or proof.get("harnessRevision") != os.environ["GITHUB_SHA"] or proof.get("promotionAccepted") is not False):
+        raise SystemExit("Invalid dedicated QA79 original-app proof")
+    for name, location in [("app-release.apk", "release"), ("app-release-androidTest.apk", "androidTest/release")]:
+        with Path("apps/aerove-lite/app/build/outputs/apk", location, name).open("rb") as stream:
+            if hashlib.file_digest(stream, "sha256").hexdigest() != proof["apks"][name]:
+                raise SystemExit("QA APK differs from original runtime")
+Path(sys.argv[1]).write_text(json.dumps({"sourceRevision": proof["sourceRevision"] if proof else os.environ["GITHUB_SHA"],
+    "sourceTree": proof["sourceTree"] if proof else subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], text=True).strip(),
+    "appBuildRun": proof["workflowRun"] if proof else os.environ["GITHUB_RUN_ID"],
+    "harnessRevision": os.environ["GITHUB_SHA"], "harnessRun": os.environ["GITHUB_RUN_ID"],
     "workflowRun": os.environ.get("GITHUB_RUN_ID"), "runNumber": int(os.environ["GITHUB_RUN_NUMBER"]),
     "runAttempt": int(os.environ["GITHUB_RUN_ATTEMPT"]), "phase": sys.argv[2],
     "testTimeoutMillis": int(sys.argv[3]),
@@ -40,6 +51,7 @@ Path(sys.argv[1]).write_text(json.dumps({"sourceRevision": os.environ["GITHUB_SH
     "prebuiltApks": True, "performanceEvidence": False, "deviceSerial": sys.argv[4],
     "isolatedBackgroundPolicy": True}, indent=2), encoding="utf-8")
 PY
+app_source=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sourceRevision"])' "$diagnostics/SOURCE.json")
 python3 apps/aerove-lite/tool/fixture_server.py > "$diagnostics/fixture.log" 2>&1 &
 fixture_pid=$!
 
@@ -76,10 +88,14 @@ while read -r pid; do
     fi
 done < <(pgrep -f '/emulator/qemu/|qemu-system-' || true)
 {
-    printf 'owner=reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d\n'
+    if [[ -n "${AEROVE_QA79_PROOF:-}" ]]; then
+        printf 'owner=emulator_qa79.py; actual parent returncode/signal and complete stdio in EMULATOR-OWNER.json and emulator.*.log\n'
+    else
+        printf 'owner=reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d\n'
+    fi
     printf 'acceptance_shell_pid=%s\nserial=%s\n' "$$" "$serial"
     printf 'exit_status=unavailable_non_child; no wait or emulator kill is attempted here\n'
-    printf 'complete_startup_stdio=original Actions job log; live proc fd descriptors are recorded without consuming them\n'
+    printf 'live proc fd descriptors are recorded without consuming them; this observer never waits for QEMU\n'
     if (( ${#qemu_pids[@]} == 0 )); then printf 'qemu_discovery=no_matching_process\n'; fi
 } > "$diagnostics/qemu-ownership.txt"
 
@@ -126,7 +142,7 @@ finish() {
         host_snapshot > "$diagnostics/host-after-failure.txt" 2>&1 || true
         timeout 5s sudo -n dmesg --ctime > "$diagnostics/host-kernel.txt" 2>&1
         printf '\ncollector_exit=%s\n' "$?" >> "$diagnostics/host-kernel.txt"
-        timeout 5s sudo -n journalctl --kernel --since "$diagnostic_started_at" --no-pager > "$diagnostics/host-kernel-window.txt" 2>&1
+        timeout 5s sudo -n journalctl -k --since "$diagnostic_started_at" --no-pager > "$diagnostics/host-kernel-window.txt" 2>&1
         printf '\ncollector_exit=%s\n' "$?" >> "$diagnostics/host-kernel-window.txt"
         timeout 5s sudo -n journalctl -u systemd-oomd.service --since "$diagnostic_started_at" --no-pager > "$diagnostics/host-oomd-window.txt" 2>&1
         printf '\ncollector_exit=%s\n' "$?" >> "$diagnostics/host-oomd-window.txt"
@@ -138,7 +154,7 @@ finish() {
     if [[ "$phase" != remaining ]]; then
         if [[ "$result" == 0 && "$pull_status" != 0 ]]; then result=1; fi
         gallery_status=0
-        python3 apps/aerove-lite/tool/render_gallery.py --captures "$diagnostics/captures" --source "$GITHUB_SHA" \
+        python3 apps/aerove-lite/tool/render_gallery.py --captures "$diagnostics/captures" --source "$app_source" \
             --output "$diagnostics/aerove-lite-appearance-12.html" > "$diagnostics/gallery.log" 2>&1 || gallery_status=$?
         if [[ "$result" == 0 && "$gallery_status" != 0 ]]; then result=1; fi
     fi
@@ -162,7 +178,7 @@ grep -Fx 'instrumentation:dev.aerove.lite.test/androidx.test.runner.AndroidJUnit
     "$diagnostics/instrumentation-runners.txt"
 set +e
 "${adb_device[@]}" shell am instrument -w -r -e debug false -e timeout_msec "$test_timeout_msec" "${selection[@]}" \
-    -e fixtureUrl http://10.0.2.2:18080 -e sourceRevision "$GITHUB_SHA" \
+    -e fixtureUrl http://10.0.2.2:18080 -e sourceRevision "$app_source" \
     -e isolatedBackgroundPolicy true -e deviceKind CI-emulator -e rendererBackend SwiftShader-indirect \
     dev.aerove.lite.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee "$diagnostics/instrumentation.log"
 pipeline_status=("${PIPESTATUS[@]}")
