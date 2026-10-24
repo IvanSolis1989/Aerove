@@ -181,15 +181,9 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
                         children: [
                           Expanded(
                             flex: 4,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                DashboardCardHeader(
-                                  glyph: AppGlyphs.status,
-                                  title: appLocalizations.status,
-                                ),
-                                chip,
-                              ],
+                            child: DashboardCardHeader(
+                              glyph: AppGlyphs.status,
+                              title: appLocalizations.status,
                             ),
                           ),
                           const Expanded(
@@ -197,6 +191,10 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
                             child: OutboundTrafficFigures(),
                           ),
                         ],
+                      ),
+                      Align(
+                        alignment: AlignmentDirectional.centerStart,
+                        child: chip,
                       ),
                       SizedBox(height: metrics.ipTop),
                       body(withHeader: false),
