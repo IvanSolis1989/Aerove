@@ -22,7 +22,7 @@ PROBE_PINS = {
     'install_play33_r01.py': 'b3902ac7b4b2884b4544534b313814cef3dd5b9d2dd240a87d22172e51d617a5',
     'native-bridge-readonly-check.sh': 'b364be86b259204048092586a60ddef1268ce8ecf251a38be5142a4d13937d2a',
     'readonly-check.py': 'fd0ffd845b117f4c696840458cf657f3779462b8570e73620babd3316c03e49b',
-    'probe-original-standard.py': '8d16a10bf4efddf15c35c161712a468b9e0aad000d97a3d2066a9904a316eb24',
+    'probe-original-standard.py': '000b86881d3df66a838ea7bcb813b1174fe8ca73e010eef317301d0ab51a5e2d',
 }
 
 

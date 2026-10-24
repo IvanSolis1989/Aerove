@@ -11,6 +11,7 @@ import subprocess
 import signal
 import sys
 import time
+import xml.etree.ElementTree as ET
 
 EXPECTED = {
     'Aerove-android-arm64.apk': '64c42740e9164b29cca0289ae229a1dbe4cf44899c475f867e0f62ad033cfca8',
@@ -111,6 +112,17 @@ def finalize_probe(receipt, evidence, adb, installed):
         raise cancellation
 
 
+def validate_initial_app_ui(ui_tree, activity_state):
+    root = ET.fromstring(ui_tree)
+    if not any(node.get('package') == PACKAGE for node in root.iter('node')):
+        raise RuntimeError('Captured UI tree does not belong to the original app')
+    resumed = re.compile(r'^\s*(?:topResumedActivity|mResumedActivity)\s*[=:].*?(?<!\S)'
+                         + re.escape(PACKAGE + '/com.follow.clash.MainActivity')
+                         + r'(?=[\s}])', re.MULTILINE)
+    if not resumed.search(activity_state):
+        raise RuntimeError('Original MainActivity is not the resumed activity at capture')
+
+
 def install_cancel_handler():
     def terminate(signum, frame):
         raise SystemExit(128 + signum)
@@ -207,12 +219,13 @@ def main():
         if not screen.startswith(b'\x89PNG\r\n\x1a\n'):
             raise RuntimeError('Screenshot is not a PNG')
         command('initial-ui-dump', adb + ['shell', 'uiautomator', 'dump',
-                                        '/sdcard/standard-probe-ui.xml'], check=False)
-        command('initial-ui-tree', adb + ['exec-out', 'cat', '/sdcard/standard-probe-ui.xml'], check=False)
-        command('activity-state', adb + ['shell', 'dumpsys', 'activity', 'activities'], check=False)
+                                        '/sdcard/standard-probe-ui.xml'])
+        ui_tree = command('initial-ui-tree', adb + ['exec-out', 'cat', '/sdcard/standard-probe-ui.xml'])
+        activity_state = command('activity-state', adb + ['shell', 'dumpsys', 'activity', 'activities'])
         command('renderer-state', adb + ['shell', 'dumpsys', 'SurfaceFlinger'], check=False)
         if not pid:
             raise RuntimeError('Application no longer running after initial launch')
+        validate_initial_app_ui(ui_tree, activity_state)
         receipt['status'] = 'CAPTURED INITIAL ANDROID SCREEN; HUMAN/LOG REVIEW REQUIRED'
     except BaseException as error:
         receipt['status'] = 'FAILED' if isinstance(error, Exception) else 'CANCELLED'
