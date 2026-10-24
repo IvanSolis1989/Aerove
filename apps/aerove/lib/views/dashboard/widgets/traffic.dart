@@ -244,7 +244,11 @@ class OutboundTrafficFigures extends ConsumerWidget {
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: AppTextStyle.custom(context, size: 10, leading: 10),
+                      style: AppTextStyle.custom(
+                        context,
+                        size: 10,
+                        leading: 10,
+                      ),
                     ),
                   ),
                 ],

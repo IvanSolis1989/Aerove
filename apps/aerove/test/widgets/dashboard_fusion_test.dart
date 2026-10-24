@@ -227,7 +227,10 @@ void main() {
         ),
         findsNWidgets(count),
       );
-      expect(find.bySemanticsLabel(l10n.trafficTotal(value)), findsNWidgets(count));
+      expect(
+        find.bySemanticsLabel(l10n.trafficTotal(value)),
+        findsNWidgets(count),
+      );
       expect(find.text(l10n.trafficTotal(value)), findsNothing);
     }
 
