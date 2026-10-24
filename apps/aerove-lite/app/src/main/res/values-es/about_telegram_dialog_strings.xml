@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="about_external_link">Enlace externo</string>
+    <string name="about_link_go">Ir</string>
+    <string name="about_link_open_failed">No se puede abrir este enlace. Comprueba que haya una aplicación disponible con permiso para abrirlo.</string>
+</resources>

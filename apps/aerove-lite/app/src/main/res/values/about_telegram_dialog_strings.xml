@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="about_external_link">External link</string>
+    <string name="about_link_go">Go</string>
+    <string name="about_link_open_failed">Unable to open this link. Check that an app is available and allowed to open it.</string>
+</resources>

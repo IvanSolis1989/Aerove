@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="about_external_link">Lien externe</string>
+    <string name="about_link_go">Aller</string>
+    <string name="about_link_open_failed">Impossible d’ouvrir ce lien. Vérifiez qu’une application est disponible et autorisée à l’ouvrir.</string>
+</resources>

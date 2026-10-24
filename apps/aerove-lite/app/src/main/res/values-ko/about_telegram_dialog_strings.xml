@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="about_external_link">외부 링크</string>
+    <string name="about_link_go">이동</string>
+    <string name="about_link_open_failed">이 링크를 열 수 없습니다. 링크를 열 수 있고 권한이 있는 앱이 있는지 확인하세요.</string>
+</resources>

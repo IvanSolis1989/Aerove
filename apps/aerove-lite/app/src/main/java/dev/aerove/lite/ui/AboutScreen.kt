@@ -49,9 +49,11 @@ private val Licenses = listOf(
 internal fun AboutScreen(padding: PaddingValues, onDeveloperUnlocked: () -> Unit) {
     val features = LocalLiteFeatures.current
     val uriHandler = LocalUriHandler.current
+    val telegramConfirmation = rememberAboutTelegramConfirmation()
     var selected by rememberSaveable { mutableStateOf<Int?>(null) }
     val entry = Licenses.firstOrNull { it.label == selected }
     BackHandler(entry != null) { selected = null }
+    AboutTelegramContent(telegramConfirmation, uriHandler::openUri) {
     if (entry != null) {
         LicenseBody(entry, padding) { selected = null }
     } else LazyColumn(state = LocalLiteListState.current, contentPadding = padding, verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -83,14 +85,12 @@ internal fun AboutScreen(padding: PaddingValues, onDeveloperUnlocked: () -> Unit
         }
         item {
             LitePane(Modifier.fillMaxWidth()) {
-                SettingsRow(stringResource(R.string.telegram_channel), subtitle = "t.me/IvanSolis89",
-                    onClick = { uriHandler.openUri("https://t.me/IvanSolis89") }) { LiteIcon(FullGlyphs.chevronForward) }
-            }
-        }
-        item {
-            LitePane(Modifier.fillMaxWidth()) {
-                SettingsRow(stringResource(R.string.telegram_group), subtitle = "t.me/Olympus_Habitue",
-                    onClick = { uriHandler.openUri("https://t.me/Olympus_Habitue") }) { LiteIcon(FullGlyphs.chevronForward) }
+                Column {
+                AboutTelegramLink(stringResource(R.string.telegram_channel), label = "t.me/IvanSolis89",
+                    onClick = { telegramConfirmation.request("https://t.me/IvanSolis89") })
+                AboutTelegramLink(stringResource(R.string.telegram_group), label = "t.me/Olympus_Habitue",
+                    onClick = { telegramConfirmation.request("https://t.me/Olympus_Habitue") })
+                }
             }
         }
         item { SectionLabel(stringResource(R.string.lite_open_source)) }
@@ -99,6 +99,7 @@ internal fun AboutScreen(padding: PaddingValues, onDeveloperUnlocked: () -> Unit
                 SettingsRow(stringResource(license.label), onClick = { selected = license.label }) { LiteIcon(FullGlyphs.chevronForward) }
             }
         }
+    }
     }
 }
 
