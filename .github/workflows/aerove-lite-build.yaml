@@ -267,6 +267,7 @@ jobs:
         path: |-
           apps/aerove-lite/app/build/reports/
           apps/aerove-lite/app/build/outputs/androidTest-results/
+          apps/aerove-lite/app/build/intermediates/androidTestAppKeepRules/
           ${{ runner.temp }}/lite-package-diagnostics/
         if-no-files-found: warn
     name: package

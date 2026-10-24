@@ -74,8 +74,10 @@ def prepare(output, repository, reuse_fixture, geo_files):
             raise ValueError("Fixture file limit exceeded")
         return data
 
-    previous = json.loads((reuse_fixture / 'manifest.json').read_text(encoding='utf-8'))
-    previous_by_path = {entry['sourcePath']: entry for entry in previous['providers']}
+    previous_by_path = {}
+    if reuse_fixture is not None:
+        previous = json.loads((reuse_fixture / 'manifest.json').read_text(encoding='utf-8'))
+        previous_by_path = {entry['sourcePath']: entry for entry in previous['providers']}
     script = source(SCRIPT)
     if sha(script) != SCRIPT_SHA:
         raise ValueError("Pinned script mismatch")
@@ -110,12 +112,14 @@ def prepare(output, repository, reuse_fixture, geo_files):
         if url.scheme != "https" or url.netloc != "raw.githubusercontent.com" or not url.path.startswith(prefix):
             raise ValueError("Unexpected provider origin")
         path = unquote(url.path[len(prefix):])
-        prior = previous_by_path[path]
-        data = (reuse_fixture / prior["file"]).read_bytes()
-        if sha(data) != prior["sha256"] or len(data) != prior["bytes"]:
-            raise ValueError("Frozen prior payload mismatch")
-        if data != source(path):
-            raise ValueError("Payload changed at new fixed Git commit")
+        data = source(path)
+        if reuse_fixture is not None:
+            prior = previous_by_path[path]
+            frozen = (reuse_fixture / prior["file"]).read_bytes()
+            if sha(frozen) != prior["sha256"] or len(frozen) != prior["bytes"]:
+                raise ValueError("Frozen prior payload mismatch")
+            if data != frozen:
+                raise ValueError("Payload changed at new fixed Git commit")
         total += len(data)
         if total > MAX_TOTAL:
             raise ValueError("Fixture total limit exceeded")
@@ -152,7 +156,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--smart-repository", required=True, type=Path)
-    parser.add_argument("--reuse-fixture", required=True, type=Path)
+    parser.add_argument("--reuse-fixture", type=Path)
     parser.add_argument("--country", required=True, type=Path)
     parser.add_argument("--geosite", required=True, type=Path)
     parser.add_argument("--asn", required=True, type=Path)

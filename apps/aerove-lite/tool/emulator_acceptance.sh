@@ -70,7 +70,17 @@ Path(sys.argv[1]).write_text(json.dumps(source, indent=2), encoding="utf-8")
 PY
 app_source=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sourceRevision"])' "$diagnostics/SOURCE.json")
 renderer_backend_remote=$(python3 -c 'import json,shlex,sys; print(shlex.quote(json.load(open(sys.argv[1]))["rendererBackend"]))' "$diagnostics/SOURCE.json")
-python3 apps/aerove-lite/tool/fixture_server.py > "$diagnostics/fixture.log" 2>&1 &
+fixture_args=()
+smart_fixture_args=()
+if [[ "$phase" != matrix && -n "${SMART_CONFIG_MEOW_FIXTURE_DIR:-}" ]]; then
+    smart_fixture_tree=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sourceTree"])' "$diagnostics/SOURCE.json")
+    python3 apps/aerove-lite/tool/prepare_smart_config_meow_ci_fixture.py verify \
+        --receipt "${SMART_CONFIG_MEOW_FIXTURE_RECEIPT:?Smart fixture source receipt required}" \
+        --expected-source "$app_source" --expected-tree "$smart_fixture_tree"
+    fixture_args=(--smart-config-fixture "$SMART_CONFIG_MEOW_FIXTURE_DIR")
+    smart_fixture_args=(-e smartConfigFixtureUrl http://10.0.2.2:18080/smart-config-meow)
+fi
+python3 apps/aerove-lite/tool/fixture_server.py "${fixture_args[@]}" > "$diagnostics/fixture.log" 2>&1 &
 fixture_pid=$!
 
 owned_logcat_pid=""
@@ -199,6 +209,7 @@ grep -Fx 'instrumentation:dev.aerove.lite.test/androidx.test.runner.AndroidJUnit
 set +e
 "${adb_device[@]}" shell am instrument -w -r -e debug false -e timeout_msec "$test_timeout_msec" "${selection[@]}" \
     -e fixtureUrl http://10.0.2.2:18080 -e sourceRevision "$app_source" \
+    "${smart_fixture_args[@]}" \
     -e isolatedBackgroundPolicy true -e deviceKind CI-emulator -e rendererBackend "$renderer_backend_remote" \
     dev.aerove.lite.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee "$diagnostics/instrumentation.log"
 pipeline_status=("${PIPESTATUS[@]}")

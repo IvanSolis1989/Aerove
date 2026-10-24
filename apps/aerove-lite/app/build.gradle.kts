@@ -88,8 +88,9 @@ androidComponents.onVariants(androidComponents.selector().withBuildType("release
                 com.android.build.gradle.AppPlugin::class.java.classLoader)
                 .protectionDomain.codeSource.location.toURI())
         })
-        libraries.from(variant.compileClasspath, androidTest.compileClasspath,
-            androidComponents.sdkComponents.bootClasspath)
+        // Platform definitions precede compile-only stubs, matching AGP's ordered library lookup.
+        libraries.from(androidComponents.sdkComponents.bootClasspath,
+            variant.compileClasspath, androidTest.compileClasspath)
         rules.set(layout.buildDirectory.file("intermediates/androidTestAppKeepRules/${variant.name}/rules.pro"))
         report.set(layout.buildDirectory.file("intermediates/androidTestAppKeepRules/${variant.name}/inputs.json"))
     }

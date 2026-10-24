@@ -860,13 +860,29 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **许可证、署名与证据：** Apache-2.0；固定来源与许可证据见 run83 `SOURCES.json`
 
+#### [Loyalsoldier/geoip](https://github.com/Loyalsoldier/geoip)
+
+**固定版本 / revision：** 数据 commit `7ae41d7f3d4e7acc37acd1b02e554b7bb85f3a8d`；`Country.mmdb` Git blob `eb39fa51e8d4fb167f429a75cd1492f061962134`，7,649,827 B，SHA256 `ccec4d6fa69de3a79960a460c377ac9a23c1a90e5f9052dae3488921e56201df`。
+
+**用途与采用方式：** Lite Android 内部联调使用固定 GeoIP 夹具。Git tree / blob 身份与既有官方 Meow 检查使用的真实数据库字节一致；CI 按固定 commit 获取并核对大小、SHA256 和 Git blob，不跟随 release / latest。数据不加入本仓库、APK 或发行资产；实际获取来源单独记录在测试收据中。
+
+**许可证、署名与证据：** 源码仓库许可元数据为 CC-BY-SA-4.0，核对版本 `084eb113e458b82374919dabefbc49cd2c2dd079`、LICENSE blob `cc3e2459dc5c46f1936b6e3b54137099063818e0`；该信息不替代第三方数据库各自的条款。保留原署名和数据来源约束，不视为 SCK 的 MIT 数据；[固定数据树](https://github.com/Loyalsoldier/geoip/tree/7ae41d7f3d4e7acc37acd1b02e554b7bb85f3a8d)、[源码 LICENSE](https://github.com/Loyalsoldier/geoip/blob/084eb113e458b82374919dabefbc49cd2c2dd079/LICENSE)。
+
+#### [MetaCubeX/meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat)
+
+**固定版本 / revision：** 数据 commit `bfa68b978ec9c0494203d7c0d64e186640f7257b`；`geosite.dat` Git blob `453b6468c34adee2f428c569162c05471ce1d504`，4,311,865 B，SHA256 `610e2fa2b57b1232ba2220eeea45eb6e0bbf3675e19ac6ee2d29e8eb3e294b10`。
+
+**用途与采用方式：** Lite Android 内部联调使用固定 GeoSite 夹具。固定 Git tree / blob 与既有官方 Meow 检查的真实字节一致；CI 有界获取、核验后供给显式本地资源入口，不修改原分流规则，也不冒充原 HTTP provider 下载。数据不进入本仓库、APK 或新上传的 seed。
+
+**许可证、署名与证据：** 源码仓库许可元数据为 GPL-3.0，核对版本 `4178770badecb1b349fbcd62c737e0d7a2079729`、LICENSE blob `f288702d2fa16d3cdf0035b15a9fcbc552cd88e7`；固定数据树未含 LICENSE 文件，第三方数据仍保留各自来源、版权和许可约束，不推定新的再分发授权；[固定数据树](https://github.com/MetaCubeX/meta-rules-dat/tree/bfa68b978ec9c0494203d7c0d64e186640f7257b)、[源码 LICENSE](https://github.com/MetaCubeX/meta-rules-dat/blob/4178770badecb1b349fbcd62c737e0d7a2079729/LICENSE)。
+
 #### [android.googlesource.com/platform/tools/base](https://android.googlesource.com/platform/tools/base)
 
-**固定版本 / revision：** Android Gradle Plugin `9.4.1` source artifact；Maven `gradle-9.4.1-sources.jar` SHA256 `08a69084ca47b2681671a611113ed919b986facb79dc24404fb7348d2c62a386`（没有可核实的 Git commit，故不填写 commit）
+**固定版本 / revision：** Android Gradle Plugin `9.4.1` source artifact；Maven `gradle-9.4.1-sources.jar` SHA256 `08a69084ca47b2681671a611113ed919b986facb79dc24404fb7348d2c62a386`；同版本 `builder-9.4.1-sources.jar` SHA256 `384e5cfd3aa1292a85145c40f0b4b9f4af6f963c3c93d38ef8c19eff374b159a`（没有可核实的 Git commit，故不填写 commit）
 
-**用途与采用方式：** QA83 testAPK-only task graph 只读调查：阅读 `ProguardConfigurableTask.kt`、`AndroidTestTaskManager.kt`、`R8Task.kt` 的 task/mapping 输入关系，为尚未执行的隔离诊断计划提供依据；init 候选未执行、未作为实现采用；未复制源码、未运行 Gradle
+**用途与采用方式：** 历史 QA83 testAPK-only task graph 只读调查 `ProguardConfigurableTask.kt`、`AndroidTestTaskManager.kt`、`R8Task.kt` 的 task/mapping 输入关系，该次 init 候选未执行或采用。后续正式接入公开 classfile API，并参考 `ClassFileProviderFactory.java` 与 `r8Tool.kt` 的有序 library provider 语义，修复重复库类误判：按 boot / compile classpath 顺序选首个定义，同时保留源码冲突和缺失接口的严格失败；未复制 provider 实现。真实 AGP 构建已在客户端 CI 执行，修正后的完整构建仍须验收
 
-**许可证、署名与证据：** Apache-2.0；sources jar 源文件许可头及 `NOTICE`；`NOTICE` 解压后 SHA256 `4842d6b86dc14afab28106d484946e1f927974896772c4644030be8758405ae0`；source jar 固定 SHA256 `08a69084ca47b2681671a611113ed919b986facb79dc24404fb7348d2c62a386`，文件字节 SHA 可在 `proof.json` 查验；[官方 Maven source artifact](https://dl.google.com/dl/android/maven2/com/android/tools/build/gradle/9.4.1/gradle-9.4.1-sources.jar)
+**许可证、署名与证据：** Apache-2.0；sources jar 原版权头及 `NOTICE`，有序 provider 源文件保留 AOSP 2017 署名；`NOTICE` 解压后 SHA256 `4842d6b86dc14afab28106d484946e1f927974896772c4644030be8758405ae0`。固定 `ClassFileProviderFactory.java` SHA256 `d400669af2f4773736dd1b85b01060d5d7051ba681d9611c535498b6d3b8b412`，第 49、64–65 行为顺序选首个 descriptor 的来源依据；[官方 Gradle source artifact](https://dl.google.com/dl/android/maven2/com/android/tools/build/gradle/9.4.1/gradle-9.4.1-sources.jar)、[官方 Builder source artifact](https://dl.google.com/dl/android/maven2/com/android/tools/build/builder/9.4.1/builder-9.4.1-sources.jar)
 
 ### 来源登记边界
 

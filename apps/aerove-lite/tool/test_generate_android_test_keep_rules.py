@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 import zipfile
 
-from generate_android_test_keep_rules import collect_classes, generate, write_archive
+from generate_android_test_keep_rules import collect_classes, collect_libraries, generate, write_archive
 
 
 class AndroidTestKeepRulesTest(unittest.TestCase):
@@ -41,7 +41,7 @@ class AndroidTestKeepRulesTest(unittest.TestCase):
                 with zipfile.ZipFile(archive, "w") as stream:
                     stream.writestr("library/Value.class", b"\xca\xfe\xba\xbe" + bytes([index]))
                 archives.append(archive)
-            with self.assertRaisesRegex(ValueError, "Conflicting class"):
+            with self.assertRaisesRegex(ValueError, "Conflicting .*class"):
                 collect_classes(archives)
 
     def test_trace_failure_never_leaves_rules_from_an_earlier_success(self):
@@ -61,6 +61,63 @@ class AndroidTestKeepRulesTest(unittest.TestCase):
                     generate(manifest, rules, report)
             self.assertFalse(rules.exists())
             self.assertFalse(report.exists())
+
+    def test_library_lookup_preserves_order_and_reports_both_shadow_hashes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);boot=root/'z-android.jar';stub=root/'a-core-lambda-stubs.jar'
+            chosen=b"\xca\xfe\xba\xbeboot";shadow=b"\xca\xfe\xba\xbewrong-stub"
+            write_archive(boot,{'java/lang/invoke/CallSite.class':chosen})
+            write_archive(stub,{'java/lang/invoke/CallSite.class':shadow})
+            classes,events=collect_libraries([boot,stub,boot])
+            self.assertEqual(chosen,classes['java/lang/invoke/CallSite.class'])
+            self.assertEqual(1,len(events));self.assertIn(str(boot),events[0]['selected'])
+            self.assertIn(str(stub),events[0]['shadowed']);self.assertFalse(events[0]['identical'])
+            self.assertNotEqual(events[0]['selectedSha256'],events[0]['shadowedSha256'])
+            reverse,_=collect_libraries([stub,boot]);self.assertEqual(shadow,reverse['java/lang/invoke/CallSite.class'])
+            with self.assertRaisesRegex(ValueError,'first=.*a-core-lambda.*conflict=.*z-android.jar'):
+                collect_classes([boot,stub])
+
+    def test_source_target_conflicts_and_cross_role_overlap_remain_fatal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary)
+            for name,image in [('one',b'one'),('two',b'two')]:
+                write_archive(root/(name+'.jar'),{'same/Api.class':b"\xca\xfe\xba\xbe"+image})
+            for role in ['test source','app target']:
+                with self.subTest(role=role),self.assertRaisesRegex(ValueError,'Conflicting '+role+' class'):
+                    collect_classes([root/'one.jar',root/'two.jar'],role=role)
+            manifest=dict(java='unused',r8Classpath=[],sources=[str(root/'one.jar')],targets=[str(root/'two.jar')],libraries=[])
+            with self.assertRaisesRegex(ValueError,'Test/app project class overlap'):
+                generate(manifest,root/'rules.pro',root/'report.json')
+            self.assertFalse((root/'rules.pro').exists());self.assertFalse((root/'report.json').exists())
+
+    def test_one_library_archive_cannot_hide_conflicting_duplicate_entries(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            archive=Path(temporary)/'invalid.jar'
+            with zipfile.ZipFile(archive,'w') as stream:
+                stream.writestr('lib/Api.class',b"\xca\xfe\xba\xbefirst")
+                stream.writestr('lib/Api.class',b"\xca\xfe\xba\xbesecond")
+            with self.assertRaisesRegex(ValueError,'Conflicting library input class'):
+                collect_libraries([archive])
+
+    def test_failure_record_has_exact_ordered_inputs_and_actual_tool_output(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary)
+            for role in ['source','target','library']:
+                write_archive(root/(role+'.jar'),{role+'/Api.class':b"\xca\xfe\xba\xbe"})
+            (root/'r8.jar').write_bytes(b'actual-tool-fixture')
+            manifest=dict(java='java',r8Classpath=[str(root/'r8.jar')],sources=[str(root/'source.jar')],
+                          targets=[str(root/'target.jar')],libraries=[str(root/'library.jar')])
+            rules,report=root/'rules.pro',root/'report.json'
+            failure=subprocess.CalledProcessError(1,['actual-command'],output='actual stdout',stderr='actual missing member')
+            with patch('generate_android_test_keep_rules.subprocess.run',side_effect=failure):
+                with self.assertRaises(subprocess.CalledProcessError):generate(manifest,rules,report)
+            data=json.loads((root/'report.json.failure.json').read_text())
+            self.assertEqual('failed',data['status']);self.assertEqual('actual stdout',data['stdout'])
+            self.assertEqual('actual missing member',data['stderr']);self.assertEqual(manifest,data['manifest'])
+            self.assertEqual(str(root/'library.jar'),data['orderedInputs']['libraries'][0]['path'])
+            self.assertRegex(data['orderedInputs']['libraries'][0]['sha256'],r'^[0-9a-f]{64}$')
+            self.assertIn('command',data);self.assertIn('inputClasses',data)
+            self.assertFalse(rules.exists());self.assertFalse(report.exists())
 
 
 @unittest.skipUnless(all(os.environ.get("ABI_TEST_" + key) for key in ["JAVA", "ECJ", "R8", "ANDROID_JAR"]),
@@ -104,9 +161,14 @@ class RealR8BoundaryTest(unittest.TestCase):
             write_archive(test_program, collect_classes([test, dependency]))
             rules, report = root / "generated.pro", root / "report.json"
             manifest = dict(java=java, r8Classpath=[r8], sources=[str(test_jar)], sourceDependencies=[str(dependency_jar), str(app_jar)],
-                            targets=[str(app_jar)], libraries=[library, str(app_jar)])
+                            targets=[str(app_jar)], libraries=[library] + ([os.environ["ABI_TEST_LAMBDA_STUBS"]] if os.environ.get("ABI_TEST_LAMBDA_STUBS") else []) + [str(app_jar)])
             generate(manifest, rules, report)
             generated = rules.read_text()
+            if os.environ.get('ABI_TEST_LAMBDA_STUBS'):
+                resolved=json.loads(report.read_text())
+                callsite=next(event for event in resolved['libraryShadows'] if event['className']=='java/lang/invoke/CallSite.class')
+                self.assertIn(str(Path(library).resolve()),callsite['selected'])
+                self.assertIn('core-lambda-stubs.jar',callsite['shadowed'])
             self.assertIn("-keep,allowobfuscation", generated)
             for member in ["wasRequested", "getLocalValue", "<init>(int,int,app.Api$Marker)", "value"]:
                 self.assertIn(member, generated.replace(" ", ""))
@@ -147,6 +209,35 @@ class RealR8BoundaryTest(unittest.TestCase):
             self.assertFalse(rules.exists())
             if os.environ.get("ABI_TEST_EVIDENCE"):
                 shutil.copytree(root, os.environ["ABI_TEST_EVIDENCE"], dirs_exist_ok=True)
+
+    def test_real_r8_library_precedence_never_unions_a_shadowed_definition(self):
+        java,ecj,r8,android=[os.environ['ABI_TEST_'+key] for key in ['JAVA','ECJ','R8','ANDROID_JAR']]
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary)
+            definitions={'good':('lib/Choice.java','package lib; public class Choice { public static int selected(){return 1;} }'),
+                'bad':('lib/Choice.java','package lib; public class Choice { public static int shadowOnly(){return 2;} }'),
+                'app':('app/Api.java','package app; public class Api { public static void called(){} }'),
+                'test':('test/Caller.java','package test; public class Caller { public void call(){app.Api.called();lib.Choice.selected();} }')}
+            for role,(name,text) in definitions.items():
+                source=root/role/'src'/name;source.parent.mkdir(parents=True);source.write_text(text)
+                command=[java,'-jar',ecj,'-17','-d',str(root/role/'classes')]
+                if role=='test':command+=['-cp',os.pathsep.join(str(root/n/'classes') for n in ['good','app'])]
+                subprocess.run(command+[str(source)],check=True,capture_output=True)
+                write_archive(root/(role+'.jar'),collect_classes([root/role/'classes']))
+            manifest=dict(java=java,r8Classpath=[r8],sources=[str(root/'test.jar')],targets=[str(root/'app.jar')],
+                          libraries=[android,str(root/'good.jar'),str(root/'bad.jar')])
+            rules,report=root/'rules.pro',root/'report.json'
+            generate(manifest,rules,report)
+            self.assertIn('called',rules.read_text())
+            proof=json.loads(report.read_text());self.assertEqual(1,len(proof['libraryShadows']))
+            (root/'success-report.json').write_bytes(report.read_bytes())
+            # If two libraries were unioned, this reversed input would incorrectly pass.
+            reversed_manifest=dict(manifest,libraries=[android,str(root/'bad.jar'),str(root/'good.jar')])
+            with self.assertRaises(subprocess.CalledProcessError):generate(reversed_manifest,rules,report)
+            failure=json.loads((root/'report.json.failure.json').read_text())
+            self.assertIn('selected',failure['stderr']);self.assertFalse(rules.exists());self.assertFalse(report.exists())
+            if os.environ.get('ABI_TEST_EVIDENCE'):
+                shutil.copytree(root,Path(os.environ['ABI_TEST_EVIDENCE'])/'library-precedence',dirs_exist_ok=True)
 
 
 if __name__ == "__main__":

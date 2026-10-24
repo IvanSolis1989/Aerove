@@ -339,6 +339,7 @@ jobs:
         path: |
           apps/aerove-lite/app/build/reports/
           apps/aerove-lite/app/build/test-results/
+          apps/aerove-lite/app/build/intermediates/androidTestAppKeepRules/
         if-no-files-found: warn
   reuse:
     if: ${{ !inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight))) }}
@@ -506,6 +507,32 @@ jobs:
         cmdline-tools-version: '16111833'
     - name: Fetch exact prebuilt x86 runtime
       run: python3 apps/aerove-lite/tool/ci_artifacts.py runtime --name "AEROVE-Lite-runtime-contract-attempt-${GITHUB_RUN_ATTEMPT}" --destination "$RUNNER_TEMP/lite-runtime-input"
+    - name: Checkout the immutable Smart fixture sources
+      if: ${{ matrix.phase == 'remaining' }}
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        repository: IvanSolis1989/Smart-Config-Kit
+        ref: 89abb221a157acc98d6b52c85583e6b5a5b2742b
+        path: .ci-fixture-sources/smart-config
+        persist-credentials: false
+        fetch-depth: 1
+        sparse-checkout: |
+          Meow内核系
+          rulesets/generated/fused
+    - name: Prepare and read back the pinned Smart Android fixture
+      if: ${{ matrix.phase == 'remaining' }}
+      timeout-minutes: 5
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 apps/aerove-lite/tool/prepare_smart_config_meow_ci_fixture.py prepare \
+          --smart-repository "$GITHUB_WORKSPACE/.ci-fixture-sources/smart-config" \
+          --app-repository "$GITHUB_WORKSPACE" \
+          --geo-cache "$RUNNER_TEMP/lite-smart-geodata" --download \
+          --output "$RUNNER_TEMP/lite-smart-config-meow" \
+          --receipt "$RUNNER_TEMP/lite-diagnostics/remaining/smart-fixture-source.json"
+        echo "SMART_CONFIG_MEOW_FIXTURE_DIR=$RUNNER_TEMP/lite-smart-config-meow" >> "$GITHUB_ENV"
+        echo "SMART_CONFIG_MEOW_FIXTURE_RECEIPT=$RUNNER_TEMP/lite-diagnostics/remaining/smart-fixture-source.json" >> "$GITHUB_ENV"
     - name: Existing API33 emulator environment with unchanged configuration
       shell: bash
       run: |
