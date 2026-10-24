@@ -1,0 +1,167 @@
+"""Synthetic protocol tests; no test APK, Android device or performance evidence."""
+import copy
+import json
+from pathlib import Path
+import tempfile
+import unittest
+
+import instrumentation_shards as shards
+
+
+class ShardSelectionTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.descriptions = [f"case{index}[Solid](a.b.Test)" for index in range(20)]
+        self.identity = dict(sourceRevision="a" * 40, sourceTree="b" * 40, workflowRun="11", runAttempt="2", runNumber="3")
+
+    def log(self, descriptions, statuses=None):
+        output = ""
+        for index, description in enumerate(descriptions, 1):
+            test, class_name = description.rsplit("(", 1)
+            class_name = class_name[:-1]
+            for code in (1, (statuses or {}).get(description, 0)):
+                for key, value in dict(id="AndroidJUnitRunner", numtests=len(descriptions), current=index,
+                                       **{"class": class_name, "test": test}).items():
+                    output += f"INSTRUMENTATION_STATUS: {key}={value}\n"
+                output += f"INSTRUMENTATION_STATUS_CODE: {code}\n"
+        return output + "INSTRUMENTATION_CODE: -1\n"
+
+    def write_log(self, descriptions, statuses=None):
+        path = self.root / "instrumentation.log"
+        path.write_text(self.log(descriptions, statuses))
+        return path
+
+    def discovery(self, index):
+        return dict(numShards=4, shardIndex=index, identity=self.identity, runner="androidx.test:runner:1.6.2",
+                    junit="junit:junit:4.13.2", algorithm="abs(Description.hashCode()) % 4", apkSha256={"app": "c" * 64},
+                    runtimeManifestSha256="d" * 64, dependencyReportSha256="e" * 64,
+                    discoveryFingerprint=shards.fingerprint(sorted(self.descriptions)), discoveredDescriptions=sorted(self.descriptions),
+                    discoveryCount=len(self.descriptions), excludedClass=shards.MATRIX_CLASS)
+
+    def expected(self, index):
+        return sorted(description for description in self.descriptions if shards.shard_for(description) == index)
+
+    def artifact_receipts(self):
+        for index in range(4):
+            receipt = shards.verify(self.discovery(index), self.write_log(self.expected(index)))
+            path = self.root / f"AEROVE-Lite-shard-selection-{index}-of-4-attempt-2" / "TEST-SELECTION.json"
+            path.parent.mkdir()
+            path.write_text(json.dumps(receipt))
+
+    def test_java_utf16_hash_and_min_value_reject(self):
+        self.assertEqual(2112, shards.java_hash("Aa"))
+        self.assertEqual(shards.java_hash("Aa"), shards.java_hash("BB"))
+        self.assertEqual(1772899, shards.java_hash("\U0001f600"))
+        self.assertEqual(-(2**31), shards.java_hash("polygenelubricants"))
+        with self.assertRaisesRegex(ValueError, "MIN_VALUE"):
+            shards.shard_for("polygenelubricants")
+
+    def test_log_only_needs_complete_statuses_but_no_ok_summary(self):
+        records = shards.parse_log(self.write_log(self.descriptions))
+        self.assertEqual(20, len(records))
+        self.assertEqual(set(self.descriptions), {record["description"] for record in records})
+
+    def test_discovery_binds_resolved_runner_graph_apks_source_and_never_calls_it_passed(self):
+        runtime = self.root / "runtime"
+        (runtime / "dependencies").mkdir(parents=True)
+        graph = runtime / "dependencies/releaseAndroidTestRuntimeClasspath.stdout.txt"
+        graph.write_text("+--- androidx.test:runner:1.6.2\n+--- androidx.test:runner:1.5.0 -> 1.6.2 (*)\n+--- junit:junit:4.13.2\n")
+        (runtime / "dependencies/releaseAndroidTestRuntimeClasspath.exit.txt").write_text("0\n")
+        manifest_path = runtime / "source-manifest.json"
+        manifest = dict(self.identity, files=[dict(path="dependencies/releaseAndroidTestRuntimeClasspath.stdout.txt", sha256=shards.sha(graph))])
+        manifest_path.write_text(json.dumps(manifest))
+        proof = self.root / "proof.json"
+        apks = {"app-release.apk": "c" * 64, "app-release-androidTest.apk": "d" * 64}
+        proof.write_text(json.dumps(dict(runtimeDirectory=str(runtime), apks=apks)))
+        source = self.root / "SOURCE.json"
+        source.write_text(json.dumps(dict(self.identity, phase="remaining", testShard=dict(numShards=4, shardIndex=0,
+            runner="androidx.test.runner.AndroidJUnitRunner", excludedClass=shards.MATRIX_CLASS))))
+        sums = self.root / "APK_SHA256SUMS"
+        sums.write_text("".join(f"{value}  apks/{name}\n" for name, value in apks.items()))
+        log = self.write_log(self.descriptions)
+        receipt = shards.discover(log, proof, source, sums)
+        self.assertEqual([], receipt["passedTests"])
+        self.assertEqual(20, receipt["discoveryCount"])
+        graph.write_text(graph.read_text().replace("1.6.2", "1.7.0"))
+        with self.assertRaisesRegex(ValueError, "source-bound"):
+            shards.discover(log, proof, source, sums)
+        manifest["files"][0]["sha256"] = shards.sha(graph)
+        manifest_path.write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(ValueError, "Unsupported resolved"):
+            shards.discover(log, proof, source, sums)
+
+    def test_parse_rejects_partial_duplicate_failure_unknown_and_excluded_class(self):
+        good = self.log(self.descriptions)
+        invalid = [good.replace("INSTRUMENTATION_CODE: -1", "INSTRUMENTATION_CODE: 0"),
+                   good.replace("numtests=20", "numtests=21"),
+                   good.replace("current=2\n", "current=1\n"),
+                   good.replace("INSTRUMENTATION_STATUS_CODE: 0", "INSTRUMENTATION_STATUS_CODE: -2", 1),
+                   good.replace("INSTRUMENTATION_STATUS_CODE: 0", "INSTRUMENTATION_STATUS_CODE: 9", 1),
+                   self.log([self.descriptions[0]] * 2),
+                   self.log([f"matrix({shards.MATRIX_CLASS})"]),
+                   good.replace("INSTRUMENTATION_STATUS: class=a.b.Test\n", "", 1),
+                   good.replace("INSTRUMENTATION_STATUS_CODE: 0", "INSTRUMENTATION_STATUS_CODE: 1", 1)]
+        for text in invalid:
+            path = self.root / "bad.log"
+            path.write_text(text)
+            with self.subTest(text=text[:80]), self.assertRaises(ValueError):
+                shards.parse_log(path)
+
+    def test_exact_shard_rejects_missing_extra_and_other_shard(self):
+        for index in range(4):
+            expected = self.expected(index)
+            receipt = shards.verify(self.discovery(index), self.write_log(expected))
+            self.assertTrue(receipt["allExpectedPassed"])
+            for invalid in (expected[:-1], self.descriptions, self.expected((index + 1) % 4)):
+                with self.subTest(index=index), self.assertRaises(ValueError):
+                    shards.verify(self.discovery(index), self.write_log(invalid))
+
+    def test_ignored_and_assumption_are_accounted_separately(self):
+        expected = self.expected(0)
+        statuses = {expected[0]: -3, expected[1]: -4}
+        receipt = shards.verify(self.discovery(0), self.write_log(expected, statuses))
+        self.assertFalse(receipt["allExpectedPassed"])
+        self.assertEqual([expected[0]], receipt["terminalStatuses"]["ignored"])
+        self.assertEqual([expected[1]], receipt["terminalStatuses"]["assumptionFailed"])
+        self.assertNotIn(expected[0], receipt["terminalStatuses"]["passed"])
+        self.assertNotIn(expected[1], receipt["terminalStatuses"]["passed"])
+
+    def test_aggregate_requires_exact_four_artifacts_and_same_discovery_apk_source(self):
+        self.artifact_receipts()
+        result = shards.aggregate(self.root, "a" * 40, "11", "2")
+        self.assertEqual(20, result["discoveredCount"])
+        self.assertTrue(result["allDiscoveredPassed"])
+        path = self.root / "AEROVE-Lite-shard-selection-2-of-4-attempt-2/TEST-SELECTION.json"
+        original = json.loads(path.read_text())
+        for key, invalid in (("shardIndex", 1), ("numShards", 3), ("discoveryFingerprint", "x"),
+                             ("apkSha256", {"app": "f" * 64}), ("identity", dict(self.identity, runAttempt="1"))):
+            changed = copy.deepcopy(original)
+            changed["discovery"][key] = invalid
+            path.write_text(json.dumps(changed))
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                shards.aggregate(self.root, "a" * 40, "11", "2")
+        path.write_text(json.dumps(original))
+        for expected_source, expected_run, expected_attempt in (("b" * 40, "11", "2"), ("a" * 40, "12", "2"), ("a" * 40, "11", "1")):
+            with self.assertRaises(ValueError):
+                shards.aggregate(self.root, expected_source, expected_run, expected_attempt)
+        path.unlink()
+        with self.assertRaises(ValueError):
+            shards.aggregate(self.root, "a" * 40, "11", "2")
+
+    def test_aggregate_rejects_skipped_promoted_to_passed(self):
+        self.artifact_receipts()
+        path = self.root / "AEROVE-Lite-shard-selection-0-of-4-attempt-2/TEST-SELECTION.json"
+        expected = self.expected(0)
+        receipt = shards.verify(self.discovery(0), self.write_log(expected, {expected[0]: -3}))
+        path.write_text(json.dumps(receipt))
+        self.assertFalse(shards.aggregate(self.root, "a" * 40, "11", "2")["allDiscoveredPassed"])
+        receipt["allExpectedPassed"] = True
+        path.write_text(json.dumps(receipt))
+        with self.assertRaises(ValueError):
+            shards.aggregate(self.root, "a" * 40, "11", "2")
+
+
+if __name__ == "__main__":
+    unittest.main()

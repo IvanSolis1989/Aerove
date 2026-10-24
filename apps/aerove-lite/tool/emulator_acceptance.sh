@@ -12,6 +12,18 @@ case "$phase" in
     *) echo "Unknown instrumentation phase: $phase" >&2; exit 2 ;;
 esac
 
+shard_count="${AEROVE_REMAINING_SHARD_COUNT:-}"
+shard_index="${AEROVE_REMAINING_SHARD_INDEX:-}"
+remaining_timeout=()
+if [[ -v AEROVE_REMAINING_SHARD_COUNT || -v AEROVE_REMAINING_SHARD_INDEX ]]; then
+    if [[ "$phase" != remaining || "$shard_count" != 4 || ! "$shard_index" =~ ^[0-3]$ ]]; then
+        echo 'Sharding requires remaining, count=4 and one index in 0..3; omit both variables for an unsharded run.' >&2
+        exit 2
+    fi
+    selection+=(-e numShards "$shard_count" -e shardIndex "$shard_index")
+    remaining_timeout=(timeout --signal=TERM --kill-after=20s 1200s)
+fi
+
 diagnostics="$RUNNER_TEMP/lite-diagnostics/$phase"
 serial="${ANDROID_SERIAL:-emulator-5554}"
 if [[ ! "$serial" =~ ^emulator-([0-9]+)$ ]]; then
@@ -28,7 +40,7 @@ mkdir -p "$diagnostics"
 test -f "$app_apk"
 test -f "$test_apk"
 sha256sum "$app_apk" "$test_apk" > "$diagnostics/APK_SHA256SUMS"
-python3 - "$diagnostics/SOURCE.json" "$phase" "$test_timeout_msec" "$serial" <<'PY'
+python3 - "$diagnostics/SOURCE.json" "$phase" "$test_timeout_msec" "$serial" "$shard_count" "$shard_index" "$matrix_class" <<'PY'
 import hashlib, json, os, subprocess, sys
 sys.path.insert(0, "apps/aerove-lite/tool")
 from pathlib import Path
@@ -62,7 +74,10 @@ source = {"sourceRevision": proof["sourceRevision"] if proof else original["sour
     "testTimeoutMillis": int(sys.argv[3]),
     "deviceKind": "CI-emulator", "rendererBackend": proof["rendererBackend"] if proof else current["rendererBackend"] if current else "SwiftShader-indirect",
     "prebuiltApks": True, "performanceEvidence": False, "deviceSerial": sys.argv[4],
-    "isolatedBackgroundPolicy": True}
+    "isolatedBackgroundPolicy": True,
+    "testShard": {"numShards": int(sys.argv[5]), "shardIndex": int(sys.argv[6]),
+                  "runner": "androidx.test.runner.AndroidJUnitRunner", "excludedClass": sys.argv[7],
+                  "hostInstrumentationDeadlineSeconds": 1200, "discoveryDeadlineSeconds": 120} if sys.argv[5] else None}
 if original:
     source.update(diagnosticOriginal84=True, originalAppIdentity=original,
                   promotionAccepted=False)
@@ -206,14 +221,43 @@ curl --fail --silent --show-error --retry 5 --retry-connrefused --retry-delay 1 
 "${adb_device[@]}" shell pm list instrumentation | tr -d '\r' | tee "$diagnostics/instrumentation-runners.txt"
 grep -Fx 'instrumentation:dev.aerove.lite.test/androidx.test.runner.AndroidJUnitRunner (target=dev.aerove.lite)' \
     "$diagnostics/instrumentation-runners.txt"
+if [[ -n "$shard_count" ]]; then
+    set +e
+    timeout --signal=TERM --kill-after=10s 120s "${adb_device[@]}" shell am instrument -w -r \
+        -e debug false -e log true -e notClass "$matrix_class" \
+        -e fixtureUrl http://10.0.2.2:18080 -e sourceRevision "$app_source" \
+        "${smart_fixture_args[@]}" \
+        -e isolatedBackgroundPolicy true -e deviceKind CI-emulator -e rendererBackend "$renderer_backend_remote" \
+        dev.aerove.lite.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee "$diagnostics/discovery.log"
+    discovery_status=("${PIPESTATUS[@]}")
+    set -e
+    printf '{"hostExitCode":%s,"teeExitCode":%s,"deadlineSeconds":120,"guestCancellationConfirmed":false}\n' \
+        "${discovery_status[0]}" "${discovery_status[1]}" > "$diagnostics/DISCOVERY-HOST-EXIT.json" || true
+    if [[ "${discovery_status[0]}" != 0 ]]; then exit "${discovery_status[0]}"; fi
+    if [[ "${discovery_status[1]}" != 0 ]]; then exit "${discovery_status[1]}"; fi
+    python3 apps/aerove-lite/tool/instrumentation_shards.py discover \
+        --log "$diagnostics/discovery.log" --source "$diagnostics/SOURCE.json" \
+        --proof "${AEROVE_CURRENT_RENDERER_PROOF:?Current runtime proof required for sharded acceptance}" \
+        --sums "$diagnostics/APK_SHA256SUMS" --output "$diagnostics/TEST-DISCOVERY.json"
+fi
+instrumentation_prefix=()
+if [[ "$phase" == matrix && "${AEROVE_CLEAR_FRAME_TRACE:-0}" == 1 ]]; then
+    instrumentation_prefix=(python3 apps/aerove-lite/tool/clear_frame_trace.py
+        --serial "$serial" --output "$diagnostics/clear-trace" --duration 120
+        --command-timeout 660 --)
+fi
 set +e
-"${adb_device[@]}" shell am instrument -w -r -e debug false -e timeout_msec "$test_timeout_msec" "${selection[@]}" \
+"${remaining_timeout[@]}" "${instrumentation_prefix[@]}" "${adb_device[@]}" shell am instrument -w -r -e debug false -e timeout_msec "$test_timeout_msec" "${selection[@]}" \
     -e fixtureUrl http://10.0.2.2:18080 -e sourceRevision "$app_source" \
     "${smart_fixture_args[@]}" \
     -e isolatedBackgroundPolicy true -e deviceKind CI-emulator -e rendererBackend "$renderer_backend_remote" \
     dev.aerove.lite.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee "$diagnostics/instrumentation.log"
 pipeline_status=("${PIPESTATUS[@]}")
 set -e
+if [[ -n "$shard_count" ]]; then
+    printf '{"hostExitCode":%s,"teeExitCode":%s,"deadlineSeconds":1200,"guestCancellationConfirmed":false}\n' \
+        "${pipeline_status[0]}" "${pipeline_status[1]}" > "$diagnostics/INSTRUMENTATION-HOST-EXIT.json" || true
+fi
 if [[ "${pipeline_status[0]}" != 0 ]]; then exit "${pipeline_status[0]}"; fi
 if [[ "${pipeline_status[1]}" != 0 ]]; then exit "${pipeline_status[1]}"; fi
 python3 - "$diagnostics/instrumentation.log" "$phase" "$matrix_class" <<'PY'
@@ -231,3 +275,8 @@ if sys.argv[2] == "matrix" and (summary != ["1"] or classes != {sys.argv[3]}):
 if sys.argv[2] == "remaining" and sys.argv[3] in classes:
     raise SystemExit("The remaining phase unexpectedly executed the excluded dashboard matrix class")
 PY
+if [[ -n "$shard_count" ]]; then
+    python3 apps/aerove-lite/tool/instrumentation_shards.py verify \
+        --discovery "$diagnostics/TEST-DISCOVERY.json" --log "$diagnostics/instrumentation.log" \
+        --output "$diagnostics/TEST-SELECTION.json"
+fi

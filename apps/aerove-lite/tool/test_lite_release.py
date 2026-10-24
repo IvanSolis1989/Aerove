@@ -175,10 +175,12 @@ class LitePromotionGateTests(unittest.TestCase):
         required = {
             "resolve": ["Stable lock and host production regression"],
             "verify": ["Kotlin data, lifecycle and UI compilation checks"],
-            "accepted": ["All exact-source acceptance gates passed"],
+            "accepted": ["All exact-source acceptance gates passed",
+                         "Verify the four runtime-discovered shard sets form one complete APK test selection"],
             "acceptance (matrix)": ["Real API 33 matrix verification"],
-            "acceptance (remaining)": ["Real API 33 remaining verification"],
         }
+        for shard_index in range(4):
+            required[f"acceptance (remaining shard {shard_index}/4)"] = ["Real API 33 remaining verification"]
         for abi in ("arm64-v8a", "x86_64"):
             prefix = f"build ({abi}) / "
             required[prefix+"rust"] = ["Build the pinned Rust Android bridge"]
@@ -189,7 +191,39 @@ class LitePromotionGateTests(unittest.TestCase):
         jobs = [dict(name=name,status="completed",conclusion="success",run_id=11,run_attempt=2,
             steps=[dict(name=step,conclusion="success") for step in steps]) for name,steps in required.items()]
         with mock.patch.object(release,"_gh_json",return_value={"jobs":jobs}):
-            self.assertEqual(11,len(release._candidate_jobs(11,2)))
+            self.assertEqual(14,len(release._candidate_jobs(11,2)))
+            for target in range(len(jobs)):
+                removed = jobs.pop(target)
+                with self.subTest(missing=removed["name"]), self.assertRaises(release.PromotionError):
+                    release._candidate_jobs(11,2)
+                jobs.insert(target, removed)
+            for job in list(jobs):
+                if not job["name"].startswith("acceptance ("):
+                    continue
+                jobs.append(dict(job, conclusion="failure"))
+                with self.subTest(duplicate=job["name"]), self.assertRaises(release.PromotionError):
+                    release._candidate_jobs(11,2)
+                jobs.pop()
+            for unexpected in ("acceptance (remaining)", "acceptance (remaining shard 4/4)",
+                               "acceptance (remaining shard 0/3)", "acceptance (remaining shard 0/4) extra"):
+                jobs.append(dict(jobs[0], name=unexpected))
+                with self.subTest(mixed=unexpected), self.assertRaises(release.PromotionError):
+                    release._candidate_jobs(11,2)
+                jobs.pop()
+            for target, job in enumerate(jobs):
+                if not job["name"].startswith("acceptance ("):
+                    continue
+                original_steps = jobs[target]["steps"]
+                jobs[target]["steps"] = []
+                with self.subTest(missingVerification=job["name"]), self.assertRaises(release.PromotionError):
+                    release._candidate_jobs(11,2)
+                jobs[target]["steps"] = original_steps
+                for field, invalid in (("run_attempt", 1), ("run_id", 12)):
+                    original = jobs[target][field]
+                    jobs[target][field] = invalid
+                    with self.subTest(shard=job["name"], field=field), self.assertRaises(release.PromotionError):
+                        release._candidate_jobs(11,2)
+                    jobs[target][field] = original
             for target in range(len(jobs)):
                 jobs[target]["conclusion"]="failure"
                 with self.assertRaises(release.PromotionError):release._candidate_jobs(11,2)

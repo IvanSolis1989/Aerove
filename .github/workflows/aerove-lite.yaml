@@ -2,7 +2,7 @@ name: AEROVE Lite
 permissions:
   contents: read
 concurrency:
-  group: ${{ inputs.meow_host_only && 'aerove-lite-host' || 'aerove-lite' }}-${{ github.ref }}
+  group: ${{ inputs.publish_release && format('aerove-lite-{0}', github.ref) || format('aerove-lite-{0}-{1}-{2}', github.ref, github.sha, inputs.meow_host_only && 'host' || inputs.client_preflight && 'client' || inputs.qa84_only && 'qa84' || inputs.qa79_only && 'qa79' || inputs.native_preflight && 'native' || 'full') }}
   cancel-in-progress: false
 env:
   NDK_VERSION: 28.2.13676358
@@ -498,6 +498,66 @@ jobs:
     permissions:
       contents: read
       actions: read
+  standard_original_reference:
+    name: Std 原包 Android 取图诊断（不构建）
+    continue-on-error: true
+    if: ${{ !inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    env:
+      STANDARD_REFERENCE_ROOT: ${{ runner.temp }}/standard-original-reference
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+          cmdline-tools-version: '16111833'
+      - name: Read original Std 40 artifact without rebuilding
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          github-token: ${{ github.token }}
+          repository: IvanSolis1989/Aerove
+          run-id: 40082294388
+          artifact-ids: 12555818245
+          merge-multiple: true
+          path: ${{ runner.temp }}/standard-original-input
+      - name: Existing API33 image, emulator and KVM configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$STANDARD_REFERENCE_ROOT/environment"
+          timeout --kill-after=10s 240s sdkmanager --install 'build-tools;35.0.0' emulator 'system-images;android-33;google_apis;x86_64' --channel=0
+          timeout --kill-after=5s 20s "$ANDROID_HOME/emulator/emulator" -no-window -version > "$STANDARD_REFERENCE_ROOT/environment/emulator-version.txt" 2>&1
+          grep -E '37\.2\.12\.0.*16428233' "$STANDARD_REFERENCE_ROOT/environment/emulator-version.txt"
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          echo no | timeout --kill-after=5s 30s avdmanager create avd --force -n test --package 'system-images;android-33;google_apis;x86_64' --device pixel_6
+          avd_directory="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
+          printf 'hw.cpu.ncore=2\n' >> "$avd_directory/test.avd/config.ini"
+          cp "$avd_directory/test.avd/config.ini" "$STANDARD_REFERENCE_ROOT/environment/avd-config.ini"
+      - name: Owned emulator and closed02 original-APK first-screen probe
+        shell: bash
+        run: |
+          python3 apps/aerove-lite/tool/emulator_standard_reference.py \
+            --apk-directory "$RUNNER_TEMP/standard-original-input" \
+            --diagnostics "$STANDARD_REFERENCE_ROOT/runtime"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ always() }}
+        with:
+          name: Std-original40-reference-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/standard-original-reference/
+          if-no-files-found: warn
   acceptance:
     if: ${{ !inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))) }}
     needs:
@@ -505,10 +565,31 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        phase:
-        - matrix
-        - remaining
-    name: acceptance (${{ matrix.phase }})
+        include:
+        - phase: matrix
+          label: matrix
+          artifact_suffix: matrix
+        - phase: remaining
+          label: remaining shard 0/4
+          artifact_suffix: remaining-shard-0-of-4
+          shard_count: 4
+          shard_index: 0
+        - phase: remaining
+          label: remaining shard 1/4
+          artifact_suffix: remaining-shard-1-of-4
+          shard_count: 4
+          shard_index: 1
+        - phase: remaining
+          label: remaining shard 2/4
+          artifact_suffix: remaining-shard-2-of-4
+          shard_count: 4
+          shard_index: 2
+        - phase: remaining
+          label: remaining shard 3/4
+          artifact_suffix: remaining-shard-3-of-4
+          shard_count: 4
+          shard_index: 3
+    name: acceptance (${{ matrix.label }})
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
@@ -516,6 +597,7 @@ jobs:
       actions: read
     env:
       GH_TOKEN: ${{ github.token }}
+      AEROVE_CLEAR_FRAME_TRACE: '1'
     steps:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       with:
@@ -574,7 +656,13 @@ jobs:
         cp "$avd_directory/test.avd/config.ini" "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/avd-config.ini"
     - name: Real API 33 ${{ matrix.phase }} verification
       shell: bash
-      run: python3 apps/aerove-lite/tool/emulator_current.py ${{ matrix.phase }} --runtime-directory "$RUNNER_TEMP/lite-runtime-input"
+      run: |
+        set -euo pipefail
+        if [[ '${{ matrix.phase }}' == remaining ]]; then
+          export AEROVE_REMAINING_SHARD_COUNT='${{ matrix.shard_count }}'
+          export AEROVE_REMAINING_SHARD_INDEX='${{ matrix.shard_index }}'
+        fi
+        python3 apps/aerove-lite/tool/emulator_current.py ${{ matrix.phase }} --runtime-directory "$RUNNER_TEMP/lite-runtime-input"
     - name: Preserve the first Android dashboard captures
       if: ${{ always() && matrix.phase == 'matrix' }}
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -592,10 +680,17 @@ jobs:
           timeout 15s adb logcat -d > "$RUNNER_TEMP/lite-diagnostics/logcat.txt" 2>&1 || true
           timeout 30s adb pull /sdcard/Android/data/dev.aerove.lite/files/captures "$RUNNER_TEMP/lite-diagnostics/" || true
         fi
+    - name: Preserve the exact APK shard selection receipt
+      if: ${{ matrix.phase == 'remaining' && success() }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: AEROVE-Lite-shard-selection-${{ matrix.shard_index }}-of-4-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/lite-diagnostics/remaining/TEST-SELECTION.json
+        if-no-files-found: error
     - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       if: always()
       with:
-        name: AEROVE-Lite-diagnostics-${{ matrix.phase }}-attempt-${{ github.run_attempt }}
+        name: AEROVE-Lite-diagnostics-${{ matrix.artifact_suffix }}-attempt-${{ github.run_attempt }}
         path: |
           apps/aerove-lite/app/build/reports/
           apps/aerove-lite/app/build/outputs/androidTest-results/
@@ -613,6 +708,27 @@ jobs:
     - acceptance
     runs-on: ubuntu-24.04
     steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - name: Fetch the four exact APK shard selection receipts
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        pattern: AEROVE-Lite-shard-selection-*-of-4-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/lite-shard-selection
+        merge-multiple: false
+    - name: Verify the four runtime-discovered shard sets form one complete APK test selection
+      run: |
+        python3 apps/aerove-lite/tool/instrumentation_shards.py aggregate \
+          --directory "$RUNNER_TEMP/lite-shard-selection" --source "$GITHUB_SHA" \
+          --run "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+          --output "$RUNNER_TEMP/lite-shard-selection/AGGREGATE.json"
+    - name: Preserve the aggregate APK test selection proof
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: AEROVE-Lite-shard-selection-aggregate-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/lite-shard-selection/AGGREGATE.json
+        if-no-files-found: error
     - name: All exact-source acceptance gates passed
       env:
         RESULTS: ${{ toJSON(needs) }}

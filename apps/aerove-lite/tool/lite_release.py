@@ -80,10 +80,16 @@ def _candidate_jobs(run, attempt):
     expected = {
         "resolve": ("Stable lock and host production regression",),
         "verify": ("Kotlin data, lifecycle and UI compilation checks",),
-        "accepted": ("All exact-source acceptance gates passed",),
+        "accepted": ("All exact-source acceptance gates passed",
+                     "Verify the four runtime-discovered shard sets form one complete APK test selection"),
         "acceptance (matrix)": ("Real API 33 matrix verification",),
-        "acceptance (remaining)": ("Real API 33 remaining verification",),
     }
+    for shard_index in range(4):
+        expected[f"acceptance (remaining shard {shard_index}/4)"] = ("Real API 33 remaining verification",)
+    acceptance_names = [job.get("name") for job in jobs if str(job.get("name", "")).startswith("acceptance (")]
+    expected_acceptance = [name for name in expected if name.startswith("acceptance (")]
+    if sorted(acceptance_names) != sorted(expected_acceptance):
+        raise PromotionError("Acceptance run requires exactly the matrix and four unique remaining shards 0..3/4")
     for abi in ("arm64-v8a", "x86_64"):
         prefix = f"build ({abi}) / "
         expected[prefix + "rust"] = ("Build the pinned Rust Android bridge",)

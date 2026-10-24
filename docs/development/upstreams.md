@@ -870,7 +870,25 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **用途与采用方式：** 另参照同固定提交的 `MonitoringInstrumentation.finish`（blob `c7814fee031f0c59f3294f61518d6762f23066ad`）确定有界测试诊断的退出路径；未复制实现或新增依赖。Run83 View capture 诊断只读参照 `core/java/androidx/test/core/view/ViewCapture.kt`（blob `7dba04134f52a02595d899dd3e6251a5feb6e852`，范围122–158）；未复制源码或新增依赖
 
+分片验收另按实际解析依赖 `androidx.test:runner:1.6.2` 固定 `axt_08_14_2024` / `6de0b804ca086a6194a108ef2988fa6104eea96d`：[`TestRequestBuilder.java`](https://github.com/android/android-test/blob/6de0b804ca086a6194a108ef2988fa6104eea96d/runner/android_junit_runner/java/androidx/test/internal/runner/TestRequestBuilder.java) 与 Google Maven sources JAR 对应源码逐字节相同。该版使用 `abs(hash) % numShards`，不混用旧参考 revision 的 `floorMod`。只复用公开 `numShards`、`shardIndex` 和无测试执行的 `log=true` 参数；参考 `AndroidLogOnlyBuilder`、`NonExecutingRunner` 和结果协议，保留真实 APK discovery 与执行集合核验，未复制实现或新增依赖。
+
 **许可证、署名与证据：** Apache-2.0；固定来源与许可证据见 run83 `SOURCES.json`
+
+#### [junit-team/junit4](https://github.com/junit-team/junit4)
+
+**固定版本 / revision：** `r4.13.2` / `05fe2a64f59127c02135be22f416e91260d6ede6`
+
+**用途与采用方式：** 只读参考 `Description.java`、`Parameterized.java`、`BlockJUnit4ClassRunner.java` 和 `BlockJUnit4ClassRunnerWithParameters.java`，核对真实参数化 case 的名称与 Description 身份，避免用源码名称代替 R8 后的 APK discovery。未复制实现、未新增依赖；已使用的 JUnit 版本保持不变。
+
+**许可证、署名与证据：** EPL-1.0，保留 JUnit 原署名；[固定 Description 源码](https://github.com/junit-team/junit4/blob/05fe2a64f59127c02135be22f416e91260d6ede6/src/main/java/org/junit/runner/Description.java)、[固定参数化 Runner](https://github.com/junit-team/junit4/blob/05fe2a64f59127c02135be22f416e91260d6ede6/src/main/java/org/junit/runners/parameterized/BlockJUnit4ClassRunnerWithParameters.java)。
+
+#### [AOSP Android emulator system-images](https://android.googlesource.com/platform/prebuilts/android-emulator-build/system-images/)
+
+**固定版本 / revision：** `fd510d08d1ee747159b42cc05a22d8e65eade830`；API33 / Google APIs / x86_64 镜像 revision 6。
+
+**用途与采用方式：** 只读核对 ARM64 ABI、`libndk_translation.so` 和转译器版本配置，为标准版原 ARM64 APK 在现有 CI 镜像中直接取图寻找可验证路径。当前 SDK 安装的镜像仍须实际读取属性、检查库及验证强制 ARM64 安装和首帧；参考配置不冒充当前运行证明。未将系统镜像或转译器实现复制到仓库或 APK。
+
+**许可证、署名与证据：** 保留官方 AOSP 来源与 SDK 镜像原有许可声明；[固定 build.prop](https://android.googlesource.com/platform/prebuilts/android-emulator-build/system-images/+/fd510d08d1ee747159b42cc05a22d8e65eade830/generic/system-images/android-33/google_apis/x86_64/build.prop)、[固定 source.properties](https://android.googlesource.com/platform/prebuilts/android-emulator-build/system-images/+/fd510d08d1ee747159b42cc05a22d8e65eade830/generic/system-images/android-33/google_apis/x86_64/source.properties)。仅作配置参考，不重签、不改写或重编标准版原包。
 
 #### [Loyalsoldier/geoip](https://github.com/Loyalsoldier/geoip)
 
