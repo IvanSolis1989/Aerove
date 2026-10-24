@@ -935,3 +935,215 @@
 -keep class dev.aerove.lite.overrides.NativeScriptEngine {
     native <methods>;
 }
+
+# Exact release/test ABI exercised by the Run77 image, filter and named-input tests.
+-keep,includedescriptorclasses class dev.aerove.lite.images.GroupIconLoaderKt {
+    public static java.lang.Object decodeGroupIcon(byte[],kotlin.coroutines.Continuation);
+    public static java.lang.Object decodeRasterIcon(byte[],kotlin.coroutines.Continuation);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.images.NetworkGroupIconLoader {
+    public <init>(okhttp3.OkHttpClient,dev.aerove.lite.requests.RequestPolicySource,kotlinx.coroutines.CoroutineScope,java.io.File,kotlin.jvm.functions.Function2);
+    public <init>(okhttp3.OkHttpClient,dev.aerove.lite.requests.RequestPolicySource,kotlinx.coroutines.CoroutineScope,java.io.File,kotlin.jvm.functions.Function2,int,kotlin.jvm.internal.DefaultConstructorMarker);
+    public java.lang.Object load(java.lang.String,kotlin.coroutines.Continuation);
+    public java.lang.Object closeAndJoin(kotlin.coroutines.Continuation);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.images.GroupIconImage$Raster {
+    public android.graphics.Bitmap getBitmap();
+}
+-keep,includedescriptorclasses class dev.aerove.lite.images.GroupIconImage$Encoded {
+    public android.graphics.drawable.Drawable$ConstantState getState();
+}
+-keep,includedescriptorclasses class dev.aerove.lite.images.GroupIconImage$Animated {
+    public byte[] getBytes();
+}
+-keep,includedescriptorclasses class dev.aerove.lite.requests.RequestPreferences {
+    public <init>(java.lang.String,java.util.List,boolean,int,kotlin.jvm.internal.DefaultConstructorMarker);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.regexp2.Regexp2Filters {
+    public static final dev.aerove.lite.regexp2.Regexp2Filters INSTANCE;
+    public void install(android.content.Context);
+    public void cancelActive();
+    public java.lang.Object indices(java.util.List,java.util.List,java.util.List,boolean,kotlin.coroutines.Continuation);
+    public static java.lang.Object indices$default(dev.aerove.lite.regexp2.Regexp2Filters,java.util.List,java.util.List,java.util.List,boolean,kotlin.coroutines.Continuation,int,java.lang.Object);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.profilesource.NamedProfileInput {
+    public <init>(java.lang.String,java.lang.String,dev.aerove.lite.profilesource.AgeSecret);
+    public <init>(java.lang.String,java.lang.String,dev.aerove.lite.profilesource.AgeSecret,int,kotlin.jvm.internal.DefaultConstructorMarker);
+    public java.lang.String getLabel();
+    public java.lang.String getUrl();
+    public dev.aerove.lite.profilesource.AgeSecret getSecret();
+}
+
+# Exact remaining-test ABI verified against the Run77 test DEX and app mapping/usage.
+-keep,includedescriptorclasses class dev.aerove.lite.backgroundpolicy.AndroidSsidPolicy {
+    dev.aerove.lite.backgroundpolicy.AndroidSsidPolicy INSTANCE;
+    dev.aerove.lite.backgroundpolicy.AndroidSsidPolicy$Access access(android.content.Context);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.backgroundpolicy.BackgroundPolicyJson {
+    dev.aerove.lite.backgroundpolicy.BackgroundPolicyJson INSTANCE;
+}
+-keep,includedescriptorclasses class dev.aerove.lite.backgroundpolicy.BackgroundPolicyPreferences {
+    <init>(boolean,boolean,boolean,boolean,boolean,java.util.List,boolean,int,kotlin.jvm.internal.DefaultConstructorMarker);
+    dev.aerove.lite.backgroundpolicy.BackgroundPolicyPreferences copy$default(dev.aerove.lite.backgroundpolicy.BackgroundPolicyPreferences,boolean,boolean,boolean,boolean,boolean,java.util.List,boolean,int,java.lang.Object);
+    dev.aerove.lite.backgroundpolicy.BackgroundPolicyPreferences$Companion Companion;
+    int $stable;
+}
+-keep,includedescriptorclasses class dev.aerove.lite.backgroundpolicy.BackgroundPolicyPreferences$Companion {
+    java.lang.String ssidFromPlatform(java.lang.String);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.core.ConnectionOwnerResolver {
+    dev.aerove.lite.core.ConnectionOwnerResolver$Companion Companion;
+}
+-keep,includedescriptorclasses class dev.aerove.lite.core.ConnectionOwnerResolver$Companion {
+    dev.aerove.lite.core.ConnectionOwnerResolver forTun(android.content.Context,kotlin.jvm.functions.Function0);
+    java.net.InetSocketAddress numericEndpoint$app(java.lang.String);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.data.GlobalRulePayloadRepository {
+    <init>(java.io.File,dev.aerove.lite.profilebuilder.BuilderResourceLibrary,dev.aerove.lite.data.ResourceBundleManager,dev.aerove.lite.data.NativeRulePayloadInspector,dev.aerove.lite.data.ProfileRepository,dev.aerove.lite.data.ResourceDownloader,int,kotlin.jvm.internal.DefaultConstructorMarker);
+}
+-keep,includedescriptorclasses interface dev.aerove.lite.data.NativeConfigValidator {
+    java.lang.String validate(java.lang.String);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.dnssettings.DnsPreferences {
+    <init>(java.util.Map,java.util.Set,java.util.Map,java.util.List,int,kotlin.jvm.internal.DefaultConstructorMarker);
+    dev.aerove.lite.dnssettings.DnsPreferences withValue(dev.aerove.lite.dnssettings.DnsField,dev.aerove.lite.dnssettings.DnsValue);
+    dev.aerove.lite.dnssettings.DnsValue value(dev.aerove.lite.dnssettings.DnsField);
+    int $stable;
+}
+-keep,includedescriptorclasses class dev.aerove.lite.dnssettings.DnsPreferencesTransformKt {
+    java.util.Map transformDnsPreferences$default(java.util.Map,dev.aerove.lite.dnssettings.DnsPreferences,dev.aerove.lite.dnssettings.DnsPreferences,boolean,int,java.lang.Object);
+    java.util.Map transformDnsPreferences(java.util.Map,dev.aerove.lite.dnssettings.DnsPreferences,dev.aerove.lite.dnssettings.DnsPreferences,boolean);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.integration.GlobalResourceWorkspace {
+    java.lang.Object closeAndJoin(kotlin.coroutines.Continuation);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.integration.OverrideWorkspace {
+    <init>(dev.aerove.lite.overrides.OverrideRepository,dev.aerove.lite.data.SubscriptionDownloader,kotlinx.coroutines.CoroutineScope,kotlin.jvm.functions.Function0,kotlin.jvm.functions.Function3,int,kotlin.jvm.internal.DefaultConstructorMarker);
+    void close();
+}
+-keep,includedescriptorclasses class dev.aerove.lite.integration.ProfileDetailWorkspace {
+    void close();
+}
+-keep,includedescriptorclasses class dev.aerove.lite.integration.ProfilePropertiesAccess {
+    java.lang.Object load(java.lang.String,kotlin.coroutines.Continuation);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.integration.ProxyPresentationWorkspace {
+    java.lang.Object closeAndJoin(kotlin.coroutines.Continuation);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.integration.ResourcePageWorkspace {
+    void close();
+}
+-keep,includedescriptorclasses class dev.aerove.lite.notices.ClientNoticeAction {
+    <init>(java.lang.String,kotlin.jvm.functions.Function0);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.notices.ClientNotices {
+    int $stable;
+    java.lang.Long delayUntilNextEvent();
+    java.lang.Long post$default(dev.aerove.lite.notices.ClientNotices,java.lang.String,dev.aerove.lite.notices.NoticeLevel,dev.aerove.lite.notices.ClientNoticeAction,int,java.lang.Object);
+    void clear();
+}
+-keep,includedescriptorclasses enum dev.aerove.lite.notices.NoticeLevel {
+    dev.aerove.lite.notices.NoticeLevel Info;
+    dev.aerove.lite.notices.NoticeLevel Warning;
+}
+-keep,includedescriptorclasses interface dev.aerove.lite.observability.HistoryDocuments {
+    java.lang.Object deleteCreated(java.lang.String,kotlin.coroutines.Continuation);
+    java.lang.Object save(java.lang.String,java.util.List,kotlin.jvm.functions.Function0,kotlin.coroutines.Continuation);
+    void close();
+}
+-keep,includedescriptorclasses class dev.aerove.lite.observability.HistoryExportKt {
+    dev.aerove.lite.observability.HistoryExportDigest writeHistoryExport(java.io.OutputStream,java.util.List,kotlin.jvm.functions.Function0);
+    void verifyHistoryExport(java.io.InputStream,dev.aerove.lite.observability.HistoryExportDigest,kotlin.jvm.functions.Function0);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.observability.HistoryTablePreferences {
+    <init>(java.util.Map,int,kotlin.jvm.internal.DefaultConstructorMarker);
+    int $stable;
+}
+-keep,includedescriptorclasses class dev.aerove.lite.observability.ObservabilityFeature {
+    int $stable;
+    java.io.Closeable lease(dev.aerove.lite.observability.HistoryKind);
+    void requestLogExport();
+    void setForeground(boolean);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.observability.ObservationWindow {
+    <init>(java.lang.String,long,long,long,java.util.List,kotlin.ULong,int,kotlin.jvm.internal.DefaultConstructorMarker);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.observability.ObservationWireKt {
+    dev.aerove.lite.observability.ObservationWindow decodeObservationWindow(java.lang.String);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.overrides.OverrideRepository {
+    java.lang.Object snapshot(kotlin.coroutines.Continuation);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.overrides.ScriptLibrarySession {
+    <init>(dev.aerove.lite.overrides.OverrideRepository,dev.aerove.lite.data.SubscriptionDownloader,kotlin.jvm.functions.Function1,int,kotlin.jvm.internal.DefaultConstructorMarker);
+    java.lang.Object closeAndJoin(kotlin.coroutines.Continuation);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.overrides.ScriptLibraryState {
+    dev.aerove.lite.overrides.ScriptLibraryState copy$default(dev.aerove.lite.overrides.ScriptLibraryState,java.util.List,java.util.Set,java.lang.String,java.util.Map,int,java.lang.Object);
+    int $stable;
+}
+-keep,includedescriptorclasses class dev.aerove.lite.overrides.ScriptResource {
+    <init>(java.lang.String,java.lang.String,java.lang.String,java.lang.String,long,int,kotlin.jvm.internal.DefaultConstructorMarker);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.overrides.ScriptSaveReceipt {
+    <init>(long,boolean,java.lang.String);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.profilebuilder.BuilderResourceLibrary {
+    <init>(java.io.File,dev.aerove.lite.data.SubscriptionDownloader,int,kotlin.jvm.internal.DefaultConstructorMarker);
+    java.lang.Object replace(dev.aerove.lite.profilebuilder.BuilderResourceSnapshot,dev.aerove.lite.profilebuilder.BuilderResources,kotlin.coroutines.Continuation);
+    java.lang.Object snapshot(kotlin.coroutines.Continuation);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.profilebuilder.BuilderResources {
+    <init>(java.util.List,java.util.List,java.util.List,java.util.List,int,kotlin.jvm.internal.DefaultConstructorMarker);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.profilebuilder.ProfileBuilderSession {
+    boolean isNew();
+    dev.aerove.lite.profilebuilder.ProfileBuilderSession$Companion Companion;
+    java.lang.String getSavedProfileId();
+}
+-keep,includedescriptorclasses class dev.aerove.lite.profilebuilder.ProfileBuilderSession$Companion {
+    java.lang.Object create(dev.aerove.lite.data.ProfileRepository,java.lang.String,kotlin.coroutines.Continuation);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.profiles.AndroidProfileDocuments {
+    <init>(android.content.ContentResolver);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.profilesource.BatchImportState {
+    int $stable;
+}
+-keep,includedescriptorclasses class dev.aerove.lite.resources.GeoResourcePreferences {
+    dev.aerove.lite.resources.GeoResourcePreferences copy$default(dev.aerove.lite.resources.GeoResourcePreferences,boolean,int,java.util.Map,int,java.lang.Object);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.resources.ResourceManagementRepository {
+    <init>(dev.aerove.lite.data.ProfileRepository,dev.aerove.lite.data.NativeRulePayloadInspector,int,kotlin.jvm.internal.DefaultConstructorMarker);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.resources.ResourceManagementSession {
+    <init>(dev.aerove.lite.resources.ResourceManagementRepository,kotlinx.coroutines.CoroutineScope,kotlin.jvm.functions.Function2,dev.aerove.lite.resources.ResourceManagementLibraryRepository,kotlin.jvm.functions.Function1,dev.aerove.lite.resources.GeoResourceCatalog,kotlin.jvm.functions.Function2,int,kotlin.jvm.internal.DefaultConstructorMarker);
+    java.lang.Object closeAndJoin(kotlin.coroutines.Continuation);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.resources.ResourceManagementState {
+    java.lang.String getProfileId();
+}
+-keep,includedescriptorclasses class dev.aerove.lite.ui.AgeSecretKeyPromptKt {
+    void AgeSecretKeyPrompt(boolean,java.lang.String,kotlin.jvm.functions.Function0,kotlin.jvm.functions.Function1,androidx.compose.runtime.Composer,int);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.ui.BackgroundPolicyScreenKt {
+    void BackgroundPolicyScreen(dev.aerove.lite.backgroundpolicy.BackgroundPolicyPreferences,kotlin.jvm.functions.Function1,boolean,boolean,kotlin.jvm.functions.Function0,kotlin.jvm.functions.Function0,androidx.compose.foundation.layout.PaddingValues,boolean,androidx.compose.runtime.Composer,int,int);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.ui.BatchImportFormKt {
+    void BatchImportForm(dev.aerove.lite.profilesource.BatchImportState,java.lang.String,kotlin.jvm.functions.Function0,kotlin.jvm.functions.Function1,kotlin.jvm.functions.Function1,kotlin.jvm.functions.Function0,androidx.compose.runtime.Composer,int);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.ui.DnsPreferencesScreenKt {
+    void DnsPreferencesScreen(dev.aerove.lite.dnssettings.DnsPreferences,boolean,androidx.compose.foundation.layout.PaddingValues,kotlin.jvm.functions.Function1,boolean,java.lang.String,androidx.compose.runtime.Composer,int,int);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.ui.HostsPreferencesScreenKt {
+    void HostsPreferencesScreen(dev.aerove.lite.dnssettings.DnsPreferences,boolean,androidx.compose.foundation.layout.PaddingValues,kotlin.jvm.functions.Function1,java.lang.String,androidx.compose.runtime.Composer,int,int);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.ui.NetworkSettingsScreenKt {
+    void NetworkSettingsScreen(dev.aerove.lite.networksettings.NetworkSettings,boolean,androidx.compose.foundation.layout.PaddingValues,kotlin.jvm.functions.Function1,java.lang.String,boolean,kotlin.jvm.functions.Function0,kotlin.jvm.functions.Function0,androidx.compose.runtime.Composer,int,int);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.ui.OverrideGlobalRulesScreenKt {
+    void OverrideGlobalRulesScreen(java.util.List,kotlin.jvm.functions.Function1,androidx.compose.foundation.layout.PaddingValues,boolean,androidx.compose.runtime.Composer,int,int);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.ui.ScriptLibraryScreenKt {
+    void ScriptLibraryScreen(dev.aerove.lite.overrides.ScriptLibraryState,kotlin.jvm.functions.Function1,kotlin.jvm.functions.Function1,kotlin.jvm.functions.Function1,kotlin.jvm.functions.Function2,kotlin.jvm.functions.Function1,kotlin.jvm.functions.Function1,kotlin.jvm.functions.Function2,androidx.compose.foundation.layout.PaddingValues,androidx.compose.runtime.Composer,int,int);
+}
