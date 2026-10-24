@@ -33,7 +33,7 @@ impl ProviderLease for Lease {
     fn commit(&self,changed:bool,install:&mut dyn FnMut())->Result<(),String>{self.actual.commit(changed,install)}
 }
 struct Context(Arc<Observer>);
-impl LoadContext for Context {fn wrap(&self,work:OwnedWork)->OwnedWork{work}fn provider_observer(&self)->Option<Arc<dyn ProviderObserver>>{Some(self.0.clone())}}
+impl LoadContext for Context {fn wrap(&self,work:OwnedWork)->OwnedWork{work}fn run_blocking(&self,work:Box<dyn FnOnce()+Send>){work();}fn provider_observer(&self)->Option<Arc<dyn ProviderObserver>>{Some(self.0.clone())}}
 async fn rejected_after_real_preflight(mode:&str){
     let roots=root_fixture::Roots::new();let mut servers=fixture::Servers::new();let a=servers.proxy().await;let b=servers.proxy().await;let feed=servers.feed(format!("proxies: [{{name: old,type: http,server: 127.0.0.1,port: {},dialer-proxy: FRONT}}]\n",b.address.port())).await;
     *feed.userinfo.write().await=Some("upload=10; download=20; total=1000; expire=4000000000".into());

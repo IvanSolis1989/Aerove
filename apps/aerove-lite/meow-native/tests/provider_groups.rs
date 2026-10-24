@@ -22,6 +22,7 @@ struct Context(Arc<ControlPlane>);
 impl LoadContext for Context {
     fn provider_observer(&self) -> Option<Arc<dyn ProviderObserver>> { Some(self.0.clone()) }
     fn wrap(&self, work: OwnedWork) -> OwnedWork { work }
+    fn run_blocking(&self, work: Box<dyn FnOnce() + Send>) { work(); }
 }
 async fn fixture(files: &Files, yaml: &str) -> (Arc<CoreApi>, Tunnel, Arc<OwnedLoadScope>) {
     let cancel = CancellationToken::new(); let plane = ControlPlane::new(700, cancel.clone()).unwrap();

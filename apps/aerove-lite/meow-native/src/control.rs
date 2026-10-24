@@ -1022,6 +1022,7 @@ mod provider_event_readiness_tests {
     impl LoadContext for Context {
         fn provider_observer(&self) -> Option<Arc<dyn ProviderObserver>> { Some(self.0.clone()) }
         fn wrap(&self, work: OwnedWork) -> OwnedWork { work }
+        fn run_blocking(&self, work: Box<dyn FnOnce() + Send>) { work(); }
     }
     async fn fixture() -> (Arc<CoreApi>, Arc<OwnedLoadScope>, std::path::PathBuf) {
         let root = std::env::temp_dir().join(format!("provider-event-final-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
