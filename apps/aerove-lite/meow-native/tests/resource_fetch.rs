@@ -39,6 +39,9 @@ fn request(files:&Files,url:String,name:&str,max_bytes:usize)->DownloadRequest {
     DownloadRequest {url,proxy:Some("PICK".into()),headers:BTreeMap::from([("User-Agent".into(),vec!["AEROVE fixture".into()]),("X-Proof".into(),vec!["first".into(),"second".into()])]),
         destination:files.path(&format!("stage/{name}")).to_str().unwrap().into(),max_bytes}
 }
+fn load(owner:&Arc<ResourceFetch>,source:String)->std::pin::Pin<Box<dyn std::future::Future<Output=std::io::Result<()>>+Send+'_>> {
+    Box::pin(owner.load(source))
+}
 #[tokio::test(flavor="multi_thread",worker_threads=2)]
 async fn materialized_file_provider_is_the_named_download_graph_and_never_reads_old_cache() {
     let files=Files::new();let owner=files.owner();
@@ -48,7 +51,7 @@ async fn materialized_file_provider_is_the_named_download_graph_and_never_reads_
     std::fs::write(&provider,format!("proxies: [{{name: NODE,type: http,server: '127.0.0.1',port: {}}}]\n",address.port())).unwrap();
     std::fs::write(files.path("cache/provider.yaml"),format!("proxies: [{{name: OLD,type: http,server: '127.0.0.1',port: {}}}]\n",old.local_addr().unwrap().port())).unwrap();
     let source=format!("dns: {{enable: false}}\nproxy-providers:\n P: {{type: file,path: {:?},interval: 0}}\nproxy-groups: [{{name: PICK,type: select,use: [P]}}]\nrules: ['MATCH,PICK']\n",provider.to_str().unwrap());
-    owner.load(source).await.unwrap();
+    load(&owner,source).await.unwrap();
     let origin=TcpListener::bind("127.0.0.1:0").await.unwrap();let origin_address=origin.local_addr().unwrap();
     let forwarding=tokio::spawn(proxy(ingress,1));
     let serving=tokio::spawn(async move {
@@ -65,21 +68,22 @@ async fn materialized_file_provider_is_the_named_download_graph_and_never_reads_
 async fn provider_transport_rejects_external_payload_and_unowned_dns_geodata_before_factory() {
     let files=Files::new();let owner=files.owner();let external=files.path("stage/provider.yaml");
     std::fs::write(&external,"proxies: [{name: NODE,type: direct}]\n").unwrap();
-    let yaml=format!("proxy-providers: {{P: {{type: file,path: {:?}}}}\nrules: ['MATCH,DIRECT']\n",external.to_str().unwrap());
-    assert!(owner.load(yaml).await.unwrap_err().to_string().contains("resourceReadRoot"));
+    let yaml=format!("proxy-providers: {{P: {{type: file,path: {:?}}}}}\nrules: ['MATCH,DIRECT']\n",external.to_str().unwrap());
+    assert!(load(&owner,yaml).await.unwrap_err().to_string().contains("resourceReadRoot"));
     owner.close_and_join().await.unwrap();
     let owner=files.owner();
-    assert!(owner.load("dns: {enable: true,fallback: ['udp://127.0.0.1:9']}\nrules: ['MATCH,DIRECT']\n".into()).await.unwrap_err().to_string().contains("mmdb-path"));
+    assert!(load(&owner,"dns: {enable: true,fallback: ['udp://127.0.0.1:9']}\nrules: ['MATCH,DIRECT']\n".into()).await.unwrap_err().to_string().contains("mmdb-path"));
     owner.close_and_join().await.unwrap();
 }
 #[tokio::test(flavor="multi_thread",worker_threads=2)]
 async fn named_candidate_graph_real_http_headers_staging_cap_and_no_bootstrap_rule_fetch() {
     let files=Files::new();let owner=files.owner();let ingress=TcpListener::bind("127.0.0.1:0").await.unwrap();let proxy_address=ingress.local_addr().unwrap();
     let origin=TcpListener::bind("127.0.0.1:0").await.unwrap();let origin_address=origin.local_addr().unwrap();let unused=TcpListener::bind("127.0.0.1:0").await.unwrap();
-    owner.load(yaml(proxy_address,unused.local_addr().unwrap())).await.unwrap();
+    load(&owner,yaml(proxy_address,unused.local_addr().unwrap())).await.unwrap();
     assert!(unused.accept().now_or_never().is_none());assert!(ingress.accept().now_or_never().is_none());
     let mut invalid=request(&files,format!("http://{origin_address}/body"),"missing",64);invalid.proxy=Some("MISSING".into());
-    assert!(owner.download(invalid).await.unwrap_err().to_string().contains("proxy"));assert!(origin.accept().now_or_never().is_none());
+    let failure=match owner.download(invalid).await {Err(failure)=>failure,Ok(_)=>panic!("unknown proxy unexpectedly downloaded successfully")};
+    assert!(failure.to_string().contains("proxy"));assert!(origin.accept().now_or_never().is_none());
     let forwarding=tokio::spawn(proxy(ingress,2));
     let serving=tokio::spawn(async move {for _ in 0..2 {
         let(mut socket,_)=origin.accept().await.unwrap();let request=head(&mut socket).await;
@@ -98,7 +102,7 @@ async fn named_candidate_graph_real_http_headers_staging_cap_and_no_bootstrap_ru
 async fn cancelled_named_fetch_joins_real_socket_and_never_returns_a_staged_success() {
     let files=Files::new();let owner=files.owner();let ingress=TcpListener::bind("127.0.0.1:0").await.unwrap();let address=ingress.local_addr().unwrap();
     let origin=TcpListener::bind("127.0.0.1:0").await.unwrap();let target=origin.local_addr().unwrap();let unused=TcpListener::bind("127.0.0.1:0").await.unwrap();
-    owner.load(yaml(address,unused.local_addr().unwrap())).await.unwrap();let forwarding=tokio::spawn(proxy(ingress,1));
+    load(&owner,yaml(address,unused.local_addr().unwrap())).await.unwrap();let forwarding=tokio::spawn(proxy(ingress,1));
     let request=request(&files,format!("http://{target}/held"),"cancelled",64);let running=owner.clone();let download=tokio::spawn(async move {running.download(request).await});
     let(mut socket,_)=tokio::time::timeout(Duration::from_secs(5),origin.accept()).await.unwrap().unwrap();head(&mut socket).await;
     tokio::time::timeout(Duration::from_secs(5),owner.close_and_join()).await.unwrap().unwrap();assert!(download.await.unwrap().is_err());
@@ -109,7 +113,7 @@ async fn cancelled_named_fetch_joins_real_socket_and_never_returns_a_staged_succ
 async fn invalid_candidate_dialer_cycle_has_no_network_or_staged_commit() {
     let files=Files::new();let owner=files.owner();let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();let port=listener.local_addr().unwrap().port();
     let source=format!("strict: true\nproxies: [{{name: A,type: http,server: '127.0.0.1',port: {port},dialer-proxy: B}},{{name: B,type: http,server: '127.0.0.1',port: {port},dialer-proxy: A}}]\nrules: ['MATCH,A']\n");
-    assert!(owner.load(source).await.unwrap_err().to_string().contains("cycle"));assert!(listener.accept().now_or_never().is_none());assert_eq!(std::fs::read_dir(files.path("stage")).unwrap().count(),0);
+    assert!(load(&owner,source).await.unwrap_err().to_string().contains("cycle"));assert!(listener.accept().now_or_never().is_none());assert_eq!(std::fs::read_dir(files.path("stage")).unwrap().count(),0);
     tokio::time::timeout(Duration::from_secs(5),owner.close_and_join()).await.unwrap().unwrap();
 }
 #[tokio::test]
