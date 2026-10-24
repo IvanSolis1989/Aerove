@@ -1,0 +1,71 @@
+name: AEROVE Lite original run84 matrix diagnosis only
+'on':
+  workflow_call:
+    inputs:
+      exclusive_mode:
+        type: boolean
+        required: true
+permissions:
+  contents: read
+  actions: read
+jobs:
+  android-qa:
+    name: original run84 (matrix)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+    - name: Reject mixed build, preflight, QA79 or publication modes
+      env:
+        EXCLUSIVE: ${{ inputs.exclusive_mode }}
+      run: test "$EXCLUSIVE" = true
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+      with:
+        distribution: temurin
+        java-version: '17'
+    - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+      with:
+        packages: platform-tools
+        log-accepted-android-sdk-licenses: false
+        cmdline-tools-version: '16111833'
+    - name: Existing API33 emulator environment with unchanged configuration
+      shell: bash
+      run: 'set -euo pipefail
+
+        sdkmanager --install ''build-tools;35.0.0'' emulator ''system-images;android-33;google_apis;x86_64'' --channel=0
+
+        mkdir -p "$RUNNER_TEMP/lite-diagnostics/matrix"
+
+        "$ANDROID_HOME/emulator/emulator" -no-window -version > "$RUNNER_TEMP/lite-diagnostics/matrix/emulator-version.txt" 2>&1
+
+        grep -E ''37\.2\.12\.0.*16428233'' "$RUNNER_TEMP/lite-diagnostics/matrix/emulator-version.txt"
+
+        echo ''KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"'' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+
+        sudo udevadm control --reload-rules
+
+        sudo udevadm trigger --name-match=kvm
+
+        echo no | avdmanager create avd --force -n test --package ''system-images;android-33;google_apis;x86_64'' --device pixel_6
+
+        avd_directory="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
+
+        printf ''hw.cpu.ncore=2\n'' >> "$avd_directory/test.avd/config.ini"
+
+        cp "$avd_directory/test.avd/config.ini" "$RUNNER_TEMP/lite-diagnostics/matrix/avd-config.ini"
+
+        '
+    - name: Verify original run84 runtime and execute matrix with owned emulator
+      shell: bash
+      run: python3 apps/aerove-lite/tool/emulator_original84.py --directory "$RUNNER_TEMP/qa84-original-runtime"
+    - name: Preserve original84 identity and raw owned matrix evidence
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: AEROVE-Lite-QA84-matrix-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/lite-diagnostics/matrix/
+        if-no-files-found: error

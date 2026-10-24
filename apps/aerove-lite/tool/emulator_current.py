@@ -10,6 +10,7 @@ import time
 import tempfile
 
 import ci_artifacts as artifacts
+from emulator_bootstrap import wait_ready
 from emulator_qa79 import (GPU_BACKEND, RENDERER_LABEL, emulator_environment, renderer_evidence,
                           crash_inventory, preserve_owned_crash, monitor, stop_owned,
                           finish_emulator, sha)
@@ -18,6 +19,9 @@ APK_ROOT = Path('apps/aerove-lite/app/build/outputs/apk')
 
 
 def verify_current_runtime(directory):
+    if os.environ.get('AEROVE_ORIGINAL84_PROOF'):
+        from emulator_original84 import verify_original_runtime
+        return verify_original_runtime(directory)
     expected = artifacts.identity()
     value = artifacts.verify(directory, expected, runtime=True)
     apks = {}
@@ -33,6 +37,9 @@ def verify_current_runtime(directory):
 
 
 def validate_renderer_proof(path):
+    if os.environ.get('AEROVE_ORIGINAL84_PROOF'):
+        from emulator_original84 import validate_original_renderer
+        return validate_original_renderer(path)
     proof = json.loads(Path(path).read_text())
     if (proof.get('schema') != 1 or proof.get('owner') != 'emulator_current.py'
             or proof.get('identity') != artifacts.identity()
@@ -127,20 +134,7 @@ def main():
             emulator = subprocess.Popen(emulator_command, stdin=subprocess.DEVNULL, stdout=out, stderr=err, start_new_session=True, env=emulator_environment(os.environ))
             receipt['emulatorPid'] = emulator.pid
             check_cancelled(receipt)
-            deadline = time.monotonic() + 600
-            while True:
-                check_cancelled(receipt)
-                if emulator.poll() is not None:
-                    raise RuntimeError('Owned emulator exited during boot')
-                try:
-                    boot = subprocess.run(['adb', '-s', 'emulator-5554', 'shell', 'getprop', 'sys.boot_completed'], capture_output=True, text=True, timeout=10)
-                except subprocess.TimeoutExpired:
-                    boot = subprocess.CompletedProcess([], 1, '')
-                if boot.returncode == 0 and boot.stdout.strip() == '1':
-                    break
-                if time.monotonic() >= deadline:
-                    raise TimeoutError('Existing 600-second boot deadline reached')
-                time.sleep(2)
+            wait_ready(emulator, directory, receipt, check_cancelled)
             check_cancelled(receipt)
             receipt['rendererEvidence'] = renderer_evidence((directory / 'emulator.stdout.log').read_text(errors='replace'))
             proof = dict(current, schema=1, owner='emulator_current.py',
@@ -150,7 +144,6 @@ def main():
             proof_path = directory / 'CURRENT-RENDERER-PROOF.json'
             proof_path.write_text(json.dumps(proof, indent=2) + '\n')
             environment['AEROVE_CURRENT_RENDERER_PROOF'] = str(proof_path.resolve())
-            subprocess.run(['adb', '-s', 'emulator-5554', 'shell', 'input', 'keyevent', '82'], check=True, timeout=10)
             check_cancelled(receipt)
             acceptance = subprocess.Popen(['bash', 'apps/aerove-lite/tool/emulator_acceptance.sh', args.phase], env=environment, start_new_session=True)
             check_cancelled(receipt)

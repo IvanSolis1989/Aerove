@@ -103,6 +103,63 @@ class CurrentOwnerTests(unittest.TestCase):
         self.assertEqual(current.RENDERER_LABEL, result['rendererBackend'])
 
 
+class Original84BoundaryTests(unittest.TestCase):
+    def test_optin_delegates_runtime_and_renderer_to_strict_original_adapter(self):
+        import sys
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        original = dict(sourceRevision='original-source')
+        adapter = SimpleNamespace(verify_original_runtime=Mock(return_value=original),
+                                  validate_original_renderer=Mock(return_value=original))
+        with patch.dict(sys.modules, emulator_original84=adapter), \
+                patch.dict(os.environ, AEROVE_ORIGINAL84_PROOF='fixture-proof'):
+            self.assertEqual(original, current.verify_current_runtime('runtime'))
+            self.assertEqual(original, current.validate_renderer_proof('renderer'))
+        adapter.verify_original_runtime.assert_called_once_with('runtime')
+        adapter.validate_original_renderer.assert_called_once_with('renderer')
+
+    def test_source_snapshot_keeps_original_app_and_new_harness_separate(self):
+        import sys
+        original = dict(sourceRevision='original-source', sourceTree='original-tree',
+                        workflowRun='original-run', runAttempt=1, runNumber=84)
+        verified = dict(diagnosticOriginal84=True, originalAppIdentity=original,
+                        rendererBackend=current.RENDERER_LABEL)
+        shell = Path(__file__).with_name('emulator_acceptance.sh').read_text()
+        program = shell.split("<<'PY'\n", 1)[1].split('\nPY\n', 1)[0]
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / 'SOURCE.json'
+            env = dict(AEROVE_ORIGINAL84_PROOF='fixture-proof',
+                       AEROVE_CURRENT_RENDERER_PROOF='fixture-renderer',
+                       GITHUB_SHA='harness-source', GITHUB_RUN_ID='harness-run',
+                       GITHUB_RUN_NUMBER='100', GITHUB_RUN_ATTEMPT='2')
+            with patch.dict(os.environ, env), \
+                    patch.object(current, 'validate_renderer_proof', return_value=verified), \
+                    patch.object(sys, 'argv', ['snapshot', str(output), 'matrix', '600000', 'emulator-5554']), \
+                    patch.object(current.subprocess, 'check_output', side_effect=AssertionError('must not replace original tree')):
+                os.environ.pop('AEROVE_QA79_PROOF', None)
+                exec(compile(program, 'original84-source-snapshot', 'exec'), {})
+            result = json.loads(output.read_text())
+            self.assertEqual('original-source', result['sourceRevision'])
+            self.assertEqual('original-tree', result['sourceTree'])
+            self.assertEqual('original-run', result['appBuildRun'])
+            self.assertEqual(original, result['originalAppIdentity'])
+            self.assertEqual('harness-source', result['harnessRevision'])
+            self.assertEqual('harness-run', result['workflowRun'])
+            self.assertEqual(100, result['runNumber'])
+            self.assertEqual(2, result['runAttempt'])
+            self.assertIs(False, result['promotionAccepted'])
+
+    def test_original_optin_without_validated_current_renderer_fails_closed(self):
+        import sys
+        shell = Path(__file__).with_name('emulator_acceptance.sh').read_text()
+        program = shell.split("<<'PY'\n", 1)[1].split('\nPY\n', 1)[0]
+        with patch.dict(os.environ, AEROVE_ORIGINAL84_PROOF='fixture-proof'):
+            os.environ.pop('AEROVE_QA79_PROOF', None)
+            os.environ.pop('AEROVE_CURRENT_RENDERER_PROOF', None)
+            with self.assertRaises(SystemExit):
+                exec(compile(program, 'original84-invalid-proof', 'exec'), {})
+
+
 
 class CurrentCancellationTests(unittest.TestCase):
     """Real harmless children at main's cancellation seam; never Android."""
@@ -180,7 +237,9 @@ class CurrentCancellationTests(unittest.TestCase):
                             self.fail('real emulator fixture did not initialize')
                         time.sleep(.01)
                     return subprocess.CompletedProcess(command, 0, '1')
-                return subprocess.CompletedProcess(command, 0)
+                if 'policy' in command:
+                    return subprocess.CompletedProcess(command, 0, 'KeyguardServiceDelegate\n  showing=false\n  inputRestricted=false\n  systemIsReady=true\n  bootCompleted=true\n  screenState=SCREEN_STATE_ON\n  interactiveState=INTERACTIVE_STATE_AWAKE\n', '')
+                return subprocess.CompletedProcess(command, 0, '', '')
 
             def stop_acceptance(child):
                 owners.stop_owned(child)

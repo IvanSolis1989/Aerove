@@ -41,6 +41,9 @@ current = None
 if current_path:
     from emulator_current import validate_renderer_proof
     current = validate_renderer_proof(current_path)
+original = current["originalAppIdentity"] if current and current.get("diagnosticOriginal84") is True else None
+if os.environ.get("AEROVE_ORIGINAL84_PROOF") and original is None:
+    raise SystemExit("Original84 diagnostic requires its verified renderer proof")
 if proof:
     if proof.get("gpuBackend") != "swangle" or proof.get("rendererBackend") != "SwANGLE (ANGLE + SwiftShader)":
         raise SystemExit("Invalid QA renderer proof")
@@ -50,16 +53,20 @@ if proof:
         with Path("apps/aerove-lite/app/build/outputs/apk", location, name).open("rb") as stream:
             if hashlib.file_digest(stream, "sha256").hexdigest() != proof["apks"][name]:
                 raise SystemExit("QA APK differs from original runtime")
-Path(sys.argv[1]).write_text(json.dumps({"sourceRevision": proof["sourceRevision"] if proof else os.environ["GITHUB_SHA"],
-    "sourceTree": proof["sourceTree"] if proof else subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], text=True).strip(),
-    "appBuildRun": proof["workflowRun"] if proof else os.environ["GITHUB_RUN_ID"],
+source = {"sourceRevision": proof["sourceRevision"] if proof else original["sourceRevision"] if original else os.environ["GITHUB_SHA"],
+    "sourceTree": proof["sourceTree"] if proof else original["sourceTree"] if original else subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], text=True).strip(),
+    "appBuildRun": proof["workflowRun"] if proof else original["workflowRun"] if original else os.environ["GITHUB_RUN_ID"],
     "harnessRevision": os.environ["GITHUB_SHA"], "harnessRun": os.environ["GITHUB_RUN_ID"],
     "workflowRun": os.environ.get("GITHUB_RUN_ID"), "runNumber": int(os.environ["GITHUB_RUN_NUMBER"]),
     "runAttempt": int(os.environ["GITHUB_RUN_ATTEMPT"]), "phase": sys.argv[2],
     "testTimeoutMillis": int(sys.argv[3]),
     "deviceKind": "CI-emulator", "rendererBackend": proof["rendererBackend"] if proof else current["rendererBackend"] if current else "SwiftShader-indirect",
     "prebuiltApks": True, "performanceEvidence": False, "deviceSerial": sys.argv[4],
-    "isolatedBackgroundPolicy": True}, indent=2), encoding="utf-8")
+    "isolatedBackgroundPolicy": True}
+if original:
+    source.update(diagnosticOriginal84=True, originalAppIdentity=original,
+                  promotionAccepted=False)
+Path(sys.argv[1]).write_text(json.dumps(source, indent=2), encoding="utf-8")
 PY
 app_source=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sourceRevision"])' "$diagnostics/SOURCE.json")
 renderer_backend_remote=$(python3 -c 'import json,shlex,sys; print(shlex.quote(json.load(open(sys.argv[1]))["rendererBackend"]))' "$diagnostics/SOURCE.json")

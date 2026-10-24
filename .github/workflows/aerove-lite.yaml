@@ -7,8 +7,16 @@ concurrency:
 env:
   NDK_VERSION: 28.2.13676358
 jobs:
+  qa84:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.qa84_only }}
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/aerove-lite-qa84.yaml
+    with:
+      exclusive_mode: ${{ !inputs.qa79_only && !inputs.publish_release && !inputs.native_preflight && !inputs.client_preflight }}
   qa79:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.qa79_only }}
+    if: ${{ !inputs.qa84_only && (github.event_name == 'workflow_dispatch' && inputs.qa79_only) }}
     permissions:
       contents: read
       actions: read
@@ -16,7 +24,7 @@ jobs:
     with:
       exclusive_mode: ${{ !inputs.publish_release && !inputs.native_preflight && !inputs.client_preflight }}
   legacy_native_diagnosis:
-    if: ${{ !inputs.qa79_only && (!inputs.client_preflight && (inputs.native_preflight && !inputs.publish_release)) }}
+    if: ${{ !inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (inputs.native_preflight && !inputs.publish_release))) }}
     env:
       RUSTC_BOOTSTRAP: '1'
     runs-on: ubuntu-24.04
@@ -211,7 +219,7 @@ jobs:
           ${{ runner.temp }}/lite-native-preflight/
         if-no-files-found: warn
   resolve:
-    if: ${{ !inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)) }}
+    if: ${{ !inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -242,7 +250,7 @@ jobs:
           apps/aerove-lite/meow-native/build/
         if-no-files-found: error
   verify:
-    if: ${{ !inputs.qa79_only && (inputs.client_preflight || (!inputs.native_preflight && !inputs.publish_release)) }}
+    if: ${{ !inputs.qa84_only && (!inputs.qa79_only && (inputs.client_preflight || (!inputs.native_preflight && !inputs.publish_release))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -333,7 +341,7 @@ jobs:
           apps/aerove-lite/app/build/test-results/
         if-no-files-found: warn
   reuse:
-    if: ${{ !inputs.qa79_only && (!inputs.client_preflight && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight)) }}
+    if: ${{ !inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -355,7 +363,7 @@ jobs:
         GH_TOKEN: ${{ github.token }}
       run: python3 apps/aerove-lite/tool/lite_release.py select --source "$GITHUB_SHA" --current-run "$GITHUB_RUN_ID" --outputs "$GITHUB_OUTPUT"
   release:
-    if: ${{ !inputs.qa79_only && (!inputs.client_preflight && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight && needs.reuse.result == 'success')) }}
+    if: ${{ !inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight && needs.reuse.result == 'success'))) }}
     needs:
     - reuse
     runs-on: ubuntu-24.04
@@ -445,7 +453,7 @@ jobs:
           --number "$ACCEPTANCE_NUMBER"
   build_arm:
     name: build (arm64-v8a)
-    if: ${{ !inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)) }}
+    if: ${{ !inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release))) }}
     uses: ./.github/workflows/aerove-lite-build.yaml
     with:
       abi: arm64-v8a
@@ -456,7 +464,7 @@ jobs:
       actions: read
   build_x86:
     name: build (x86_64)
-    if: ${{ !inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)) }}
+    if: ${{ !inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release))) }}
     uses: ./.github/workflows/aerove-lite-build.yaml
     with:
       abi: x86_64
@@ -466,7 +474,7 @@ jobs:
       contents: read
       actions: read
   acceptance:
-    if: ${{ !inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)) }}
+    if: ${{ !inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release))) }}
     needs:
     - build_x86
     strategy:
@@ -545,7 +553,7 @@ jobs:
           ${{ runner.temp }}/lite-fixture.log
         if-no-files-found: warn
   accepted:
-    if: ${{ !inputs.qa79_only && (!inputs.client_preflight && (always() && !inputs.native_preflight && !inputs.publish_release)) }}
+    if: ${{ !inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (always() && !inputs.native_preflight && !inputs.publish_release))) }}
     needs:
     - resolve
     - verify
@@ -569,6 +577,10 @@ jobs:
     - .github/workflows/aerove-lite-build.yaml
   workflow_dispatch:
     inputs:
+      qa84_only:
+        description: Original run84 APK matrix diagnosis only; exclusive, no build or publication
+        type: boolean
+        default: false
       qa79_only:
         description: Original run79 APK Android QA only; exclusive, no build or publication
         required: false
