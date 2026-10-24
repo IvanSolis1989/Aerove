@@ -53,6 +53,18 @@ def stop_command_best_effort(child, capture):
 
 
 
+def available_data_sources(query):
+    section = re.search(r'^DATA SOURCES REGISTERED:\r?\n(.*?)(?=^TRACING SESSIONS:|\Z)',
+                        query, re.M | re.S)
+    if section is None:
+        return ()
+    approved = ('linux.ftrace', 'linux.process_stats',
+                'android.surfaceflinger.frametimeline', 'gpu.renderstages')
+    return tuple(name for name in approved if re.search(
+        r'^\s*' + re.escape(name) + r'\s+\S+\s+\([0-9]+\)(?:\s+.*)?$',
+        section[1], re.M))
+
+
 def config_text(query, categories, duration=120):
     selected = [name for name in ('gfx', 'view', 'wm', 'sched', 'freq', 'binder_driver')
                 if re.search(r'^\s*' + re.escape(name) + r'\s+-', categories, re.M)]
@@ -69,7 +81,7 @@ data_sources {{ config {{ name: "linux.ftrace" ftrace_config {{
 data_sources {{ config {{ name: "linux.process_stats" process_stats_config {{ scan_all_processes_on_start: true }} }} }}
 '''
     for source in ('android.surfaceflinger.frametimeline', 'gpu.renderstages'):
-        if re.search(r'name:\s*"' + re.escape(source) + r'"', query):
+        if source in available_data_sources(query):
             text += f'data_sources {{ config {{ name: "{source}" }} }}\n'
     return text
 
@@ -110,15 +122,21 @@ class TraceCapture:
         (self.directory / 'TRACE-RECEIPT.json').write_text(
             json.dumps(self.receipt, indent=2) + '\n', encoding='utf-8')
 
-    def run(self, args, name, timeout=8, accepted_return_codes=(0,)):
+    def run(self, args, name, timeout=8, accepted_return_codes=(0,), input_bytes=None):
         began = time.monotonic_ns()
         item = dict(command=self.adb + args, timeoutSeconds=timeout,
                     hostMonotonicStartNanos=began, acceptedReturnCodes=list(accepted_return_codes))
+        if input_bytes is not None:
+            item.update(stdinBytes=len(input_bytes), stdinSha256=hashlib.sha256(input_bytes).hexdigest())
         try:
-            result = subprocess.run(self.adb + args, stdout=subprocess.PIPE,
+            result = subprocess.run(self.adb + args, input=input_bytes, stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT, timeout=timeout)
             data = result.stdout
             item['returnCode'] = result.returncode
+            if result.returncode not in accepted_return_codes and name in (
+                    'perfetto-start.txt', 'perfetto-query.txt', 'pull-trace.txt'):
+                self.receipt['errors'].append(dict(stage=name, returnCode=result.returncode,
+                                                   error='Diagnostic command returned non-accepted status'))
         except (subprocess.TimeoutExpired, OSError) as error:
             data = str(error).encode()
             item['error'] = str(error)
@@ -146,21 +164,28 @@ class TraceCapture:
             save_best_effort(self)
             return
         query = self.run(['shell', 'perfetto', '--query'], 'perfetto-query.txt') or ''
+        available = available_data_sources(query)
+        self.receipt['dataSourceCapability'] = dict(
+            source='perfetto-query.txt', format='DATA SOURCES REGISTERED table; exact approved name/producer/id',
+            approvedAvailable=list(available), queryRawDecoded=False)
+        if not {'linux.ftrace', 'linux.process_stats'}.issubset(available):
+            diagnostic_error(self, 'capabilities', 'Required trace data sources not confirmed by the query table')
+            save_best_effort(self)
+            return
         categories = self.run(['shell', 'atrace', '--list_categories'], 'atrace-categories.txt') or ''
+
         config = config_text(query, categories, self.duration)
         path = self.directory / 'config.pbtxt'
-        path.write_text(config, encoding='utf-8')
+        path.write_bytes(config.encode('utf-8'))
         self.receipt['configSha256'] = hashlib.sha256(config.encode()).hexdigest()
         self.run(['shell', 'cat', '/proc/uptime'], 'device-uptime-before.txt')
-        if self.run(['push', str(path), self.remote + '.pbtxt'], 'push-config.txt') is None:
-            return
         self.started = time.monotonic()
         self.receipt['traceTriggerHostMonotonicNanos'] = time.monotonic_ns()
         output = self.run(['shell', 'perfetto', '--background-wait', '--txt', '-c',
-                           self.remote + '.pbtxt', '-o', self.remote + '.pftrace'],
-                          'perfetto-start.txt', timeout=35)
+                           '-', '-o', self.remote + '.pftrace'],
+                          'perfetto-start.txt', timeout=35, input_bytes=config.encode('utf-8'))
         candidates = re.findall(r'^\s*([0-9]+)\s*$', output or '', re.M)
-        if len(candidates) != 1:
+        if len(candidates) != 1 or int(candidates[0]) <= 0:
             self.receipt['errors'].append(dict(stage='start', error='No unique owned PID; no arbitrary kill; session remains duration-bounded'))
             save_best_effort(self)
             return
@@ -206,6 +231,8 @@ def main(argv=None):
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--duration', type=int, default=120)
     parser.add_argument('--command-timeout', type=int, default=660)
+    parser.add_argument('--require-trace', action='store_true',
+                        default=os.environ.get('AEROVE_REQUIRE_FRAME_TRACE') == '1')
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     command = args.command[1:] if args.command[:1] == ['--'] else args.command
@@ -217,6 +244,8 @@ def main(argv=None):
     capture = TraceCapture(args.serial, args.output, args.duration, command[0])
     child = None
     result = 1
+    trace_blocked = False
+    capture.receipt['traceRequired'] = args.require_trace
     cancelled = []
     previous_handlers = {s: signal.getsignal(s) for s in (signal.SIGINT, signal.SIGTERM)}
 
@@ -237,12 +266,19 @@ def main(argv=None):
         except Exception as error:
             diagnostic_error(capture, 'start', error)
         check_cancelled()
-        capture.receipt['instrumentationCommand'] = command
-        capture.receipt['instrumentationStartedHostMonotonicNanos'] = time.monotonic_ns()
-        save_best_effort(capture)
-        check_cancelled()
-        child = subprocess.Popen(command)
-        result = child.wait(timeout=args.command_timeout)
+        if args.require_trace and not capture.receipt['traceStarted']:
+            trace_blocked = True
+            result = 78
+            capture.receipt.update(instrumentationSkipped=True, skipReason='required-trace-not-started',
+                                   requestedInstrumentationCommand=command)
+            diagnostic_error(capture, 'required-trace', 'Trace start not confirmed; original matrix was not launched')
+        else:
+            capture.receipt['instrumentationCommand'] = command
+            capture.receipt['instrumentationStartedHostMonotonicNanos'] = time.monotonic_ns()
+            save_best_effort(capture)
+            check_cancelled()
+            child = subprocess.Popen(command)
+            result = child.wait(timeout=args.command_timeout)
     except CollectorCancelled as error:
         result = 128 + cancelled[0]
         diagnostic_error(capture, 'instrumentation-cancelled', error)
@@ -258,18 +294,23 @@ def main(argv=None):
                     result = 128 + cancelled[0]
                     stop_command_best_effort(child, capture)
             try:
-                capture.finish()
+                if not trace_blocked or capture.started is not None:
+                    capture.finish()
+                else:
+                    capture.receipt['collectorPostDiagnosticsSkipped'] = True
             except CollectorCancelled:
                 result = 128 + cancelled[0]
             except Exception as error:
                 diagnostic_error(capture, 'finish', error)
-            capture.receipt.update(instrumentationReturnCode=result, interruptSignals=cancelled,
-                                   instrumentationFinishedHostMonotonicNanos=time.monotonic_ns())
+            capture.receipt.update(instrumentationReturnCode=None if trace_blocked else result,
+                                   wrapperReturnCode=result, interruptSignals=cancelled,
+                                   instrumentationFinishedHostMonotonicNanos=None if trace_blocked else time.monotonic_ns())
             try:
                 save_best_effort(capture)
             except CollectorCancelled:
                 result = 128 + cancelled[0]
-                capture.receipt.update(instrumentationReturnCode=result, interruptSignals=cancelled)
+                capture.receipt.update(instrumentationReturnCode=None if trace_blocked else result,
+                                       wrapperReturnCode=result, interruptSignals=cancelled)
                 save_best_effort(capture)
         finally:
             for signum, handler in previous_handlers.items():

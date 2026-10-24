@@ -20,6 +20,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       AEROVE_CLEAR_FRAME_TRACE: ${{ inputs.runtime_target == 'lite94' && '1' || '0' }}
+      AEROVE_REQUIRE_FRAME_TRACE: ${{ inputs.runtime_target == 'lite94' && '1' || '0' }}
     steps:
     - name: Reject mixed build, preflight, QA79 or publication modes
       env:
