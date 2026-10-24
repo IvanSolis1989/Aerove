@@ -2,13 +2,54 @@ name: AEROVE Lite
 permissions:
   contents: read
 concurrency:
-  group: ${{ inputs.publish_release && format('aerove-lite-{0}', github.ref) || format('aerove-lite-{0}-{1}-{2}', github.ref, github.sha, inputs.meow_host_only && 'host' || inputs.client_preflight && 'client' || inputs.qa84_only && 'qa84' || inputs.qa79_only && 'qa79' || inputs.native_preflight && 'native' || 'full') }}
+  group: ${{ inputs.publish_release && format('aerove-lite-{0}', github.ref) || format('aerove-lite-{0}-{1}-{2}', github.ref, github.sha, inputs.diagnostic_target && inputs.diagnostic_target != 'none' && format('diagnostic-{0}', inputs.diagnostic_target) || inputs.meow_host_only && 'host' || inputs.client_preflight && 'client' || inputs.qa84_only && 'qa84' || inputs.qa79_only && 'qa79' || inputs.native_preflight && 'native' || 'full') }}
   cancel-in-progress: false
 env:
   NDK_VERSION: 28.2.13676358
 jobs:
+  diagnostic_guard:
+    name: Validate prebuilt Android diagnosis only
+    if: ${{ inputs.diagnostic_target != 'none' && (github.event_name == 'workflow_dispatch' || inputs.diagnostic_target) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+    - name: Validate exclusive immutable Android diagnostic request
+      env:
+        REQUEST_EVENT: ${{ github.event_name }}
+        DIAGNOSTIC_TARGET: ${{ inputs.diagnostic_target }}
+        MEOW_HOST_ONLY: ${{ inputs.meow_host_only }}
+        QA84_ONLY: ${{ inputs.qa84_only }}
+        QA79_ONLY: ${{ inputs.qa79_only }}
+        CLIENT_PREFLIGHT: ${{ inputs.client_preflight }}
+        PUBLISH_RELEASE: ${{ inputs.publish_release }}
+        NATIVE_PREFLIGHT: ${{ inputs.native_preflight }}
+        NATIVE_TEST_SERIAL: ${{ inputs.native_test_serial }}
+        NATIVE_UNDERLAY_TESTS: ${{ inputs.native_underlay_tests }}
+        NATIVE_TEST_STACKS: ${{ inputs.native_test_stacks }}
+        NATIVE_TEST_FILTER: ${{ inputs.native_test_filter }}
+      run: |
+        python3 - <<'PY'
+        import os
+        value = os.environ['DIAGNOSTIC_TARGET']
+        conflicts = [key for key in ('MEOW_HOST_ONLY', 'QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'PUBLISH_RELEASE', 'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS') if os.environ[key] == 'true']
+        if os.environ['NATIVE_TEST_FILTER']:
+            conflicts.append('NATIVE_TEST_FILTER')
+        if value not in ('lite94-matrix', 'std40', 'both') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
+            raise SystemExit('Invalid prebuilt Android diagnosis target/event or conflicting inputs: ' + repr((value, conflicts)))
+        PY
+  diagnostic_lite94:
+    name: Immutable Lite run94 matrix diagnosis
+    needs: diagnostic_guard
+    if: ${{ needs.diagnostic_guard.result == 'success' && (inputs.diagnostic_target == 'lite94-matrix' || inputs.diagnostic_target == 'both') }}
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/aerove-lite-qa84.yaml
+    with:
+      exclusive_mode: true
+      runtime_target: lite94
   qa84:
-    if: ${{ !inputs.meow_host_only && (github.event_name == 'workflow_dispatch' && inputs.qa84_only) }}
+    if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (github.event_name == 'workflow_dispatch' && inputs.qa84_only)) }}
     permissions:
       contents: read
       actions: read
@@ -16,7 +57,7 @@ jobs:
     with:
       exclusive_mode: ${{ !inputs.qa79_only && !inputs.publish_release && !inputs.native_preflight && !inputs.client_preflight }}
   qa79:
-    if: ${{ !inputs.meow_host_only && (!inputs.qa84_only && (github.event_name == 'workflow_dispatch' && inputs.qa79_only)) }}
+    if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (github.event_name == 'workflow_dispatch' && inputs.qa79_only))) }}
     permissions:
       contents: read
       actions: read
@@ -24,7 +65,7 @@ jobs:
     with:
       exclusive_mode: ${{ !inputs.publish_release && !inputs.native_preflight && !inputs.client_preflight }}
   legacy_native_diagnosis:
-    if: ${{ !inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (inputs.native_preflight && !inputs.publish_release)))) }}
+    if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (inputs.native_preflight && !inputs.publish_release))))) }}
     env:
       RUSTC_BOOTSTRAP: '1'
     runs-on: ubuntu-24.04
@@ -219,7 +260,7 @@ jobs:
           ${{ runner.temp }}/lite-native-preflight/
         if-no-files-found: warn
   resolve:
-    if: ${{ inputs.meow_host_only || (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))) }}
+    if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (inputs.meow_host_only || (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release))))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -274,7 +315,7 @@ jobs:
           apps/aerove-lite/meow-native/build/
         if-no-files-found: error
   verify:
-    if: ${{ !inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (inputs.client_preflight || (!inputs.native_preflight && !inputs.publish_release)))) }}
+    if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (inputs.client_preflight || (!inputs.native_preflight && !inputs.publish_release))))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -366,7 +407,7 @@ jobs:
           apps/aerove-lite/app/build/intermediates/androidTestAppKeepRules/
         if-no-files-found: warn
   reuse:
-    if: ${{ !inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight)))) }}
+    if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight))))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -388,7 +429,7 @@ jobs:
         GH_TOKEN: ${{ github.token }}
       run: python3 apps/aerove-lite/tool/lite_release.py select --source "$GITHUB_SHA" --current-run "$GITHUB_RUN_ID" --outputs "$GITHUB_OUTPUT"
   release:
-    if: ${{ !inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight && needs.reuse.result == 'success')))) }}
+    if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight && needs.reuse.result == 'success'))))) }}
     needs:
     - reuse
     runs-on: ubuntu-24.04
@@ -478,7 +519,7 @@ jobs:
           --number "$ACCEPTANCE_NUMBER"
   build_arm:
     name: build (arm64-v8a)
-    if: ${{ !inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))) }}
+    if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release))))) }}
     uses: ./.github/workflows/aerove-lite-build.yaml
     with:
       abi: arm64-v8a
@@ -489,7 +530,7 @@ jobs:
       actions: read
   build_x86:
     name: build (x86_64)
-    if: ${{ !inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))) }}
+    if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release))))) }}
     uses: ./.github/workflows/aerove-lite-build.yaml
     with:
       abi: x86_64
@@ -500,14 +541,39 @@ jobs:
       actions: read
   standard_original_reference:
     name: Std 原包 Android 取图诊断（不构建）
-    continue-on-error: true
-    if: ${{ !inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))) }}
+    continue-on-error: ${{ !inputs.diagnostic_target || inputs.diagnostic_target == 'none' }}
+    if: ${{ ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))))) || (github.event_name == 'workflow_dispatch' && (inputs.diagnostic_target == 'std40' || inputs.diagnostic_target == 'both')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
       actions: read
     steps:
+      - name: Validate exclusive immutable Android diagnostic request
+        if: ${{ inputs.diagnostic_target && inputs.diagnostic_target != 'none' }}
+        env:
+          REQUEST_EVENT: ${{ github.event_name }}
+          DIAGNOSTIC_TARGET: ${{ inputs.diagnostic_target }}
+          MEOW_HOST_ONLY: ${{ inputs.meow_host_only }}
+          QA84_ONLY: ${{ inputs.qa84_only }}
+          QA79_ONLY: ${{ inputs.qa79_only }}
+          CLIENT_PREFLIGHT: ${{ inputs.client_preflight }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
+          NATIVE_PREFLIGHT: ${{ inputs.native_preflight }}
+          NATIVE_TEST_SERIAL: ${{ inputs.native_test_serial }}
+          NATIVE_UNDERLAY_TESTS: ${{ inputs.native_underlay_tests }}
+          NATIVE_TEST_STACKS: ${{ inputs.native_test_stacks }}
+          NATIVE_TEST_FILTER: ${{ inputs.native_test_filter }}
+        run: |
+          python3 - <<'PY'
+          import os
+          value = os.environ['DIAGNOSTIC_TARGET']
+          conflicts = [key for key in ('MEOW_HOST_ONLY', 'QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'PUBLISH_RELEASE', 'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS') if os.environ[key] == 'true']
+          if os.environ['NATIVE_TEST_FILTER']:
+              conflicts.append('NATIVE_TEST_FILTER')
+          if value not in ('lite94-matrix', 'std40', 'both') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
+              raise SystemExit('Invalid prebuilt Android diagnosis target/event or conflicting inputs: ' + repr((value, conflicts)))
+          PY
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
@@ -546,6 +612,24 @@ jobs:
           avd_directory="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
           printf 'hw.cpu.ncore=2\n' >> "$avd_directory/test.avd/config.ini"
           cp "$avd_directory/test.avd/config.ini" "$STANDARD_REFERENCE_ROOT/environment/avd-config.ini"
+      - name: Record diagnostic-only original Std and harness identities
+        if: ${{ inputs.diagnostic_target && inputs.diagnostic_target != 'none' }}
+        env:
+          HARNESS_SOURCE: ${{ github.sha }}
+          HARNESS_RUN: ${{ github.run_id }}
+          HARNESS_ATTEMPT: ${{ github.run_attempt }}
+          HARNESS_NUMBER: ${{ github.run_number }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          receipt = dict(diagnosticOriginalRuntime=True, runtimeTarget='std40', promotionAccepted=False,
+                         originalAppIdentity=dict(sourceRevision='c133772fc83b7984bdacb11e5dd41e2d65098771', workflowRun='40082294388', artifactId=12555818245),
+                         originalBuildInfo=json.loads((Path(os.environ['RUNNER_TEMP']) / 'standard-original-input/BUILD_INFO.json').read_text()),
+                         harnessIdentity=dict(sourceRevision=os.environ['HARNESS_SOURCE'], sourceTree=subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], text=True).strip(), workflowRun=os.environ['HARNESS_RUN'],
+                                              runAttempt=int(os.environ['HARNESS_ATTEMPT']), runNumber=int(os.environ['HARNESS_NUMBER'])))
+          (Path(os.environ['STANDARD_REFERENCE_ROOT']) / 'DIAGNOSTIC-IDENTITY.json').write_text(json.dumps(receipt, indent=2) + '\n')
+          PY
       - name: Owned emulator and closed02 original-APK first-screen probe
         shell: bash
         run: |
@@ -559,7 +643,7 @@ jobs:
           path: ${{ runner.temp }}/standard-original-reference/
           if-no-files-found: warn
   acceptance:
-    if: ${{ !inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))) }}
+    if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release))))) }}
     needs:
     - build_x86
     strategy:
@@ -699,7 +783,7 @@ jobs:
           ${{ runner.temp }}/lite-fixture.log
         if-no-files-found: warn
   accepted:
-    if: ${{ !inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (always() && !inputs.native_preflight && !inputs.publish_release)))) }}
+    if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (always() && !inputs.native_preflight && !inputs.publish_release))))) }}
     needs:
     - resolve
     - verify
@@ -744,6 +828,12 @@ jobs:
     - .github/workflows/aerove-lite-build.yaml
   workflow_dispatch:
     inputs:
+      diagnostic_target:
+        description: Immutable prebuilt Android diagnosis only; no build or promotion
+        type: choice
+        required: false
+        default: none
+        options: [none, lite94-matrix, std40, both]
       meow_host_only:
         description: Full fixed Meow host/Core preflight only; no Android build, APK or publication
         required: false

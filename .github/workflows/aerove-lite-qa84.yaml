@@ -2,6 +2,10 @@ name: AEROVE Lite original run84 matrix diagnosis only
 'on':
   workflow_call:
     inputs:
+      runtime_target:
+        type: string
+        required: false
+        default: original84
       exclusive_mode:
         type: boolean
         required: true
@@ -10,16 +14,20 @@ permissions:
   actions: read
 jobs:
   android-qa:
-    name: original run84 (matrix)
+    name: ${{ inputs.runtime_target == 'lite94' && 'diagnostic original run94 (matrix)' || 'original run84 (matrix)' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
       GH_TOKEN: ${{ github.token }}
+      AEROVE_CLEAR_FRAME_TRACE: ${{ inputs.runtime_target == 'lite94' && '1' || '0' }}
     steps:
     - name: Reject mixed build, preflight, QA79 or publication modes
       env:
         EXCLUSIVE: ${{ inputs.exclusive_mode }}
-      run: test "$EXCLUSIVE" = true
+        RUNTIME_TARGET: ${{ inputs.runtime_target }}
+      run: |
+        test "$EXCLUSIVE" = true
+        case "$RUNTIME_TARGET" in original84|lite94) ;; *) echo 'Unknown immutable runtime target' >&2; exit 2 ;; esac
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       with:
         persist-credentials: false
@@ -61,11 +69,14 @@ jobs:
         '
     - name: Verify original run84 runtime and execute matrix with owned emulator
       shell: bash
-      run: python3 apps/aerove-lite/tool/emulator_original84.py --directory "$RUNNER_TEMP/qa84-original-runtime"
+      env:
+        RUNTIME_TARGET: ${{ inputs.runtime_target }}
+        RUNTIME_DIRECTORY: ${{ inputs.runtime_target == 'lite94' && 'lite94-original-runtime' || 'qa84-original-runtime' }}
+      run: python3 apps/aerove-lite/tool/emulator_original84.py --target "$RUNTIME_TARGET" --directory "$RUNNER_TEMP/$RUNTIME_DIRECTORY"
     - name: Preserve original84 identity and raw owned matrix evidence
       if: always()
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
-        name: AEROVE-Lite-QA84-matrix-${{ github.run_attempt }}
+        name: ${{ inputs.runtime_target == 'lite94' && 'AEROVE-Lite-diagnostic94-matrix' || 'AEROVE-Lite-QA84-matrix' }}-${{ github.run_attempt }}
         path: ${{ runner.temp }}/lite-diagnostics/matrix/
         if-no-files-found: error

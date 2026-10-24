@@ -53,8 +53,8 @@ current = None
 if current_path:
     from emulator_current import validate_renderer_proof
     current = validate_renderer_proof(current_path)
-original = current["originalAppIdentity"] if current and current.get("diagnosticOriginal84") is True else None
-if os.environ.get("AEROVE_ORIGINAL84_PROOF") and original is None:
+original = current["originalAppIdentity"] if current and (current.get("diagnosticOriginal84") is True or current.get("diagnosticOriginalRuntime") is True) else None
+if (os.environ.get("AEROVE_ORIGINAL84_PROOF") or os.environ.get("AEROVE_ORIGINAL_RUNTIME_PROOF")) and original is None:
     raise SystemExit("Original84 diagnostic requires its verified renderer proof")
 if proof:
     if proof.get("gpuBackend") != "swangle" or proof.get("rendererBackend") != "SwANGLE (ANGLE + SwiftShader)":
@@ -79,8 +79,13 @@ source = {"sourceRevision": proof["sourceRevision"] if proof else original["sour
                   "runner": "androidx.test.runner.AndroidJUnitRunner", "excludedClass": sys.argv[7],
                   "hostInstrumentationDeadlineSeconds": 1200, "discoveryDeadlineSeconds": 120} if sys.argv[5] else None}
 if original:
-    source.update(diagnosticOriginal84=True, originalAppIdentity=original,
-                  promotionAccepted=False)
+    source.update(originalAppIdentity=original, promotionAccepted=False)
+    if current.get("diagnosticOriginal84") is True:
+        source["diagnosticOriginal84"] = True
+    else:
+        source.update(diagnosticOriginalRuntime=True, runtimeTarget=current["runtimeTarget"],
+                      sourceAppRevision=original["sourceRevision"],
+                      harnessIdentity=current["harnessIdentity"])
 Path(sys.argv[1]).write_text(json.dumps(source, indent=2), encoding="utf-8")
 PY
 app_source=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sourceRevision"])' "$diagnostics/SOURCE.json")

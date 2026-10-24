@@ -19,7 +19,7 @@ APK_ROOT = Path('apps/aerove-lite/app/build/outputs/apk')
 
 
 def verify_current_runtime(directory):
-    if os.environ.get('AEROVE_ORIGINAL84_PROOF'):
+    if os.environ.get('AEROVE_ORIGINAL84_PROOF') or os.environ.get('AEROVE_ORIGINAL_RUNTIME_PROOF'):
         from emulator_original84 import verify_original_runtime
         return verify_original_runtime(directory)
     expected = artifacts.identity()
@@ -37,7 +37,7 @@ def verify_current_runtime(directory):
 
 
 def validate_renderer_proof(path):
-    if os.environ.get('AEROVE_ORIGINAL84_PROOF'):
+    if os.environ.get('AEROVE_ORIGINAL84_PROOF') or os.environ.get('AEROVE_ORIGINAL_RUNTIME_PROOF'):
         from emulator_original84 import validate_original_renderer
         return validate_original_renderer(path)
     proof = json.loads(Path(path).read_text())
