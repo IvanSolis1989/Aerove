@@ -23,10 +23,10 @@ import dev.aerove.lite.data.ServiceTarget
 import dev.aerove.lite.telemetry.CoreTelemetry
 import dev.aerove.lite.telemetry.GroupRefresh
 import dev.aerove.lite.telemetry.OutboundProbe
+import dev.aerove.lite.telemetry.RouteSnapshotDemand
 import dev.aerove.lite.telemetry.TelemetrySession
 import dev.aerove.lite.telemetry.TelemetryVisibility
 import dev.aerove.lite.telemetry.sessionBindings
-import dev.aerove.lite.telemetry.routePicks
 import dev.aerove.lite.vpn.CoreEndpoint
 import dev.aerove.lite.vpn.LiteVpnService
 import dev.aerove.lite.platform.LocalNetworkMonitor
@@ -385,6 +385,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
             api === client && visible.value.active && application.vpn.value.endpoint === endpoint &&
                 !application.maintenanceActive
         }
+        acceptedRoute?.takeIf { it.client === client }?.let { owner.routeEpoch(it.client, it.epoch) }
     }
 
     private val profileLinks = ProfileLinkDecoder()
@@ -458,6 +459,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
     private data class DiagnosticsBinding(val endpoint: CoreEndpoint, val client: CoreApiClient,
         val generation: Long, val configuration: Long)
     private val diagnosticsRouteRead = Mutex()
+    private val diagnosticsRouteDemand = RouteSnapshotDemand()
     private val diagnostics: DiagnosticsCoordinator<DiagnosticsBinding> = DiagnosticsCoordinator(viewModelScope,
         readServices = ::readDiagnosticServices,
         readMemory = { it.client.memorySnapshot() }, isCurrent = ::diagnosticsBindingCurrent)
@@ -522,7 +524,8 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         val configuration: Long, val proxied: Boolean)
     private var outboundConfiguration = 0L
     private var outboundBlockedEndpoint: CoreEndpoint? = null
-    private var outboundGroupEndpoint: CoreEndpoint? = null
+    private data class AcceptedRoute(val client: CoreApiClient, val epoch: ULong, val version: ULong, val picks: Map<String, String>)
+    private var acceptedRoute: AcceptedRoute? = null
     private val outbound = OutboundProbe<OutboundKey>(viewModelScope, { key ->
         CoreApiClient(ControlEndpoint(key.endpoint.port, key.endpoint.secret)).use { it.outboundProbe(forceDirect = !key.proxied) }
     }, { it == outboundKey() })
@@ -566,7 +569,6 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
                 mutableState.update { it.copy(phase = snapshot.phase, message = snapshot.error ?: it.message,
                     networkRestartRequired = requiresNetworkRestart(it.settings, snapshot), networkError = snapshot.networkError,
                     listening = snapshot.listening, suspended = snapshot.suspended, listenerError = snapshot.listenerError) }
-                if (outboundGroupEndpoint !== snapshot.endpoint) outboundGroupEndpoint = null
                 if (snapshot.endpoint != null && outboundBlockedEndpoint !== snapshot.endpoint) outboundBlockedEndpoint = null
                 bindOutbound()
             }
@@ -598,7 +600,6 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
                     if (proxyPresentationOwner.isInitialized()) bindProxyPresentation(proxyPresentationOwner.value)
                     bindDiagnostics(null)
                     mutableState.update { it.copy(groups = emptyList(), connections = emptyList(), traffic = Traffic()) }
-                    outboundGroupEndpoint = null
                     outbound.awaitingGroups()
                     if (binding == null) return@collectLatest
                     val (endpoint, generation) = binding
@@ -622,10 +623,8 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
                                 }, { snapshot ->
                                     mutableState.update { it.copy(groups = snapshot) }
                                     if (proxyPresentationOwner.isInitialized()) proxyPresentationOwner.value.groups(snapshot)
-                                    outboundGroupEndpoint = endpoint
-                                    val picks = snapshot.routePicks()
-                                    bindOutbound(picks)
-                                    outbound.synchronize(picks)
+                                    outbound.awaitingGroups()
+                                    bindOutbound(awaitingRoute = true)
                                     synchronizeDiagnosticsRoute()
                                 }, { it.isEmpty() })
                                 session.observe("logs", mutableState.map { it.settings.openLogs }, {
@@ -642,8 +641,10 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
                                         is CoreTelemetry.Observations -> observability.acceptWindow(historyToken, event.value)
                                         is CoreTelemetry.TrafficSample -> mutableState.update { it.copy(traffic = event.value) }
                                         is CoreTelemetry.GroupsChanged -> if (groups.changed(event.revision)) {
+                                            diagnosticsRouteDemand.invalidate()
+                                            diagnosticsRouteRequest++
+                                            diagnosticsRouteJob?.cancel()
                                             diagnostics.awaitingRoute()
-                                            outboundGroupEndpoint = null
                                             outbound.awaitingGroups()
                                         }
                                     }
@@ -1105,12 +1106,11 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
             outboundConfiguration, application.vpn.value.let { it.phase == VpnPhase.Running && it.listening && !it.suspended })
     }
 
-    private fun bindOutbound(snapshotPicks: Map<String, String>? = null) {
-        val key = outboundKey()
-        val picks = if (key != null && outboundGroupEndpoint === key.endpoint && currentSession?.current == true) {
-            snapshotPicks ?: state.value.groups.routePicks()
-        } else null
-        outbound.bind(key, picks)
+    private fun bindOutbound(awaitingRoute: Boolean = false) {
+        outbound.bind(outboundKey())
+        if (!awaitingRoute && diagnosticsBinding?.let(::diagnosticsBindingCurrent) == true) {
+            acceptedRoute?.takeIf { it.client === api }?.let { outbound.replayConfirmedRoute(it.picks, it.epoch) }
+        }
         bindIpQuality(outbound.state.value.identity?.address)
     }
 
@@ -1146,14 +1146,17 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         val stamp = checks.first()
         if (diagnostics.needsRouteSync(stamp.coreEpoch, stamp.picksVersion)) diagnosticsRouteRead.withLock {
             if (diagnosticsBindingCurrent(binding) && diagnostics.needsRouteSync(stamp.coreEpoch, stamp.picksVersion)) {
-                val route = binding.client.routeSnapshot()
-                acceptDiagnosticsRoute(binding, route.coreEpoch, route.picksVersion, route.picks)
+                diagnosticsRouteDemand.read({ binding.client.routeSnapshot() }) { route ->
+                    acceptDiagnosticsRoute(binding, route.coreEpoch, route.picksVersion, route.picks)
+                }
             }
         }
         return checks
     }
 
     private fun bindDiagnostics(binding: DiagnosticsBinding?) {
+        diagnosticsRouteDemand.invalidate()
+        if (binding?.client !== diagnosticsBinding?.client) acceptedRoute = null
         diagnosticsBinding = binding
         diagnosticsRouteRequest++
         diagnosticsRouteJob?.cancel()
@@ -1162,7 +1165,13 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
 
     private fun acceptDiagnosticsRoute(binding: DiagnosticsBinding, epoch: ULong, version: ULong,
         picks: Map<String, String>) {
-        if (diagnosticsBinding == binding && diagnosticsBindingCurrent(binding)) diagnostics.route(epoch, version, picks)
+        if (diagnosticsBinding != binding || !diagnosticsBindingCurrent(binding)) return
+        val previous = acceptedRoute?.takeIf { it.client === binding.client }
+        if (previous != null && (epoch < previous.epoch || (epoch == previous.epoch && version < previous.version))) return
+        acceptedRoute = AcceptedRoute(binding.client, epoch, version, picks.toMap())
+        diagnostics.route(epoch, version, picks)
+        outbound.synchronize(picks, epoch)
+        if (proxyPresentationOwner.isInitialized()) proxyPresentationOwner.value.routeEpoch(binding.client, epoch)
     }
 
     private fun synchronizeDiagnosticsRoute() {
@@ -1175,8 +1184,9 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
             val retryDelays = longArrayOf(1_000, 2_000, 5_000, 10_000, 30_000)
             while (isActive && request == diagnosticsRouteRequest && diagnosticsBindingCurrent(binding)) {
                 try {
-                    val route = diagnosticsRouteRead.withLock { binding.client.routeSnapshot() }
-                    if (request == diagnosticsRouteRequest) acceptDiagnosticsRoute(binding, route.coreEpoch, route.picksVersion, route.picks)
+                    diagnosticsRouteDemand.read({ diagnosticsRouteRead.withLock { binding.client.routeSnapshot() } }) { route ->
+                        if (request == diagnosticsRouteRequest) acceptDiagnosticsRoute(binding, route.coreEpoch, route.picksVersion, route.picks)
+                    }
                     return@launch
                 } catch (cancelled: CancellationException) {
                     throw cancelled
