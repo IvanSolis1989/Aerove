@@ -535,33 +535,33 @@ private val SuspendedWifiGlyph = LiteGlyph(listOf(
 @Composable
 private fun OutboundModeSelector(state: LiteState, actions: LiteActions) {
     val visuals = LocalLiteVisuals.current
-        Row(Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-            ProxyMode.entries.forEachIndexed { index, mode ->
-                val selected = state.settings.mode == mode
-                val amount by animateFloatAsState(if (selected) 1f else 0f, tween(240), label = "modeShape")
-                val shape = remember(index, amount, visuals.material) {
-                    if (visuals.material != MaterialTier.Solid) LiteSuperellipse(LiteCorner.Full)
-                    else LiteSuperellipse((if (index == 0) 26.dp else 12.dp) + (if (index == 0) 0.dp else 14.dp) * amount,
-                        (if (index == 2) 26.dp else 12.dp) + (if (index == 2) 0.dp else 14.dp) * amount)
-                }
-                val fill = if (visuals.aurora) { if (visuals.dark) Color.White else Color.Black } else visuals.primary
-                val foreground = if (selected && visuals.material == MaterialTier.Solid) { if (fill == Color.White) Color.Black else Color.White } else visuals.secondaryInk
-                val interaction = remember { MutableInteractionSource() }
-                LitePane(
-                    Modifier.weight(1f).height(52.dp).selectable(selected, interactionSource = interaction, indication = null,
-                        enabled = state.busy.isEmpty(), role = Role.RadioButton, onClick = { if (!selected) actions.changeSettings(state.settings.copy(mode = mode)) }),
-                    corner = LiteCorner.Full, selected = selected, customShape = shape,
-                    solidColor = lerp(dashboardTone(), fill, amount),
-                    glassTint = visuals.primary.copy(alpha = 0.2f * amount),
-                    interactionSource = interaction,
-                ) {
-                    Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        LiteIcon(when (mode) { ProxyMode.Rule -> FullGlyphs.rules; ProxyMode.Global -> FullGlyphs.proxies; ProxyMode.Direct -> FullGlyphs.target }, color = foreground, size = 18.dp)
-                        LiteText(proxyModeLabel(mode), style = LiteType.Footnote.copy(fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal), color = foreground, maxLines = 1)
-                    }
+    Row(Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+        ProxyMode.entries.forEachIndexed { index, mode ->
+            val selected = state.settings.mode == mode
+            val amount by animateFloatAsState(if (selected) 1f else 0f, tween(240), label = "modeShape")
+            val shape = remember(index, amount, visuals.material) {
+                if (visuals.material != MaterialTier.Solid) LiteSuperellipse(LiteCorner.Full)
+                else LiteSuperellipse((if (index == 0) 26.dp else 12.dp) + (if (index == 0) 0.dp else 14.dp) * amount,
+                    (if (index == 2) 26.dp else 12.dp) + (if (index == 2) 0.dp else 14.dp) * amount)
+            }
+            val fill = if (visuals.aurora) { if (visuals.dark) Color.White else Color.Black } else visuals.primary
+            val foreground = if (selected && visuals.material == MaterialTier.Solid) { if (fill == Color.White) Color.Black else Color.White } else visuals.secondaryInk
+            val interaction = remember { MutableInteractionSource() }
+            LitePane(
+                Modifier.weight(1f).height(52.dp).selectable(selected, interactionSource = interaction, indication = null,
+                    enabled = state.busy.isEmpty(), role = Role.RadioButton, onClick = { if (!selected) actions.changeSettings(state.settings.copy(mode = mode)) }),
+                corner = LiteCorner.Full, selected = selected, customShape = shape,
+                solidColor = lerp(dashboardTone(), fill, amount),
+                glassTint = visuals.primary.copy(alpha = 0.2f * amount),
+                interactionSource = interaction,
+            ) {
+                Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    LiteIcon(when (mode) { ProxyMode.Rule -> FullGlyphs.rules; ProxyMode.Global -> FullGlyphs.proxies; ProxyMode.Direct -> FullGlyphs.target }, color = foreground, size = 18.dp)
+                    LiteText(proxyModeLabel(mode), style = LiteType.Footnote.copy(fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal), color = foreground, maxLines = 1)
                 }
             }
         }
+    }
 }
 
 @Composable
