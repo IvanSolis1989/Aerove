@@ -1103,9 +1103,10 @@
  
 --- /dev/null
 +++ b/crates/meow-common/src/observations.rs
-@@ -0,0 +1,321 @@
+@@ -0,0 +1,322 @@
 +//! Session-owned live observations. No task, timer, history scan or global sender.
 +use parking_lot::Mutex;
++pub use serde_json;
 +use serde_json::{json, Value};
 +use std::{collections::VecDeque, future::Future, io, sync::Arc};
 +use tokio::sync::broadcast;
@@ -9900,7 +9901,11 @@
      }
 --- a/crates/meow-tunnel/src/statistics.rs
 +++ b/crates/meow-tunnel/src/statistics.rs
-@@ -22,7 +22,7 @@
+@@ -19,10 +19,11 @@
+ use dashmap::DashMap;
+ use meow_common::atomic::{AtomicI, Int};
+ use meow_common::conn_notes::ConnNotes;
++use meow_common::observations::serde_json;
  pub use meow_common::traffic::ProxyTraffic;
  use meow_common::traffic::ProxyTrafficSource;
  use meow_common::Metadata;
@@ -9909,7 +9914,7 @@
  use serde::Serialize;
  use smallvec::SmallVec;
  use smol_str::SmolStr;
-@@ -69,10 +69,16 @@
+@@ -69,10 +70,16 @@
  /// (ADR-0008 §3 scopes the zero-alloc rule to per-iteration counts).
  #[derive(Debug, Default)]
  pub struct ConnCounters {
@@ -9926,7 +9931,7 @@
      close_notify: tokio::sync::Notify,
      /// The connection's notes when the tunnel records them (see
      /// `Tunnel::set_connection_notes`). Kept here, not on `ConnectionInfo`,
-@@ -80,10 +86,14 @@
+@@ -80,10 +87,14 @@
      /// `GET /connections/{id}` serializes them.
      notes: Option<ConnNotes>,
      /// The leaf proxy's totals (`chains[0]`), bumped alongside these.
@@ -9942,7 +9947,7 @@
      fn close(&self) {
          self.closed.store(true, Ordering::Release);
          self.close_notify.notify_waiters();
-@@ -165,6 +175,10 @@
+@@ -165,6 +176,10 @@
      download_rate: Int,
      upload_total: Int,
      download_total: Int,
@@ -9953,7 +9958,7 @@
  }
  
  pub struct Statistics {
-@@ -173,9 +187,13 @@
+@@ -173,9 +188,13 @@
      /// sampler derives per-interval rates as deltas of consecutive
      /// observations and never writes these counters, so no relay increment
      /// can land on the wrong side of a `swap(0)`-style reset (issue #357).
@@ -9967,7 +9972,7 @@
      /// Keyed by `Uuid` (16 B Copy) — formerly `String`, which heap-allocated a
      /// 36-byte hyphenated representation per insert.  REST handlers parse the
      /// query path back into a `Uuid` at lookup time.
-@@ -242,9 +260,13 @@
+@@ -242,9 +261,13 @@
  impl Statistics {
      pub fn new() -> Self {
          Self {
@@ -9981,7 +9986,7 @@
              connections: DashMap::new(),
              headless_connections: OnceLock::new(),
              recently_closed: Mutex::new(VecDeque::new()),
-@@ -253,6 +275,26 @@
+@@ -253,6 +276,26 @@
          }
      }
  
@@ -10008,7 +10013,7 @@
      pub fn add_upload(&self, n: Int) {
          self.upload_total.fetch_add(n, Ordering::Relaxed);
      }
-@@ -267,18 +309,25 @@
+@@ -267,18 +310,25 @@
      /// [`Self::connection_counters`] (or `ConnectionGuard::counters`).
      pub fn record_upload(&self, counters: &ConnCounters, n: Int) {
          counters.upload.fetch_add(n, Ordering::Relaxed);
@@ -10036,7 +10041,7 @@
          if let Some(proxy) = proxy {
              proxy.add_upload(n);
          }
-@@ -287,6 +336,11 @@
+@@ -287,6 +337,11 @@
  
      /// See [`Self::record_packet_upload`].
      pub fn record_packet_download(&self, proxy: Option<&ProxyTraffic>, n: Int) {
@@ -10048,7 +10053,7 @@
          if let Some(proxy) = proxy {
              proxy.add_download(n);
          }
-@@ -348,19 +402,38 @@
+@@ -348,19 +403,38 @@
          snap.download_rate = download - snap.download_total;
          snap.upload_total = upload;
          snap.download_total = download;
@@ -10094,7 +10099,7 @@
      }
  
      pub fn track_connection(
-@@ -370,8 +443,9 @@
+@@ -370,8 +444,9 @@
          rule_payload: SmolStr,
          chains: SmallVec<[Arc<str>; 1]>,
      ) -> Uuid {
@@ -10106,7 +10111,7 @@
      }
  
      pub(crate) fn track_connection_with_counters(
-@@ -384,8 +458,11 @@
+@@ -384,8 +459,11 @@
      ) -> (Uuid, Arc<ConnCounters>) {
          let uuid = Uuid::new_v4();
          let counters = Arc::new(ConnCounters {
@@ -10119,7 +10124,7 @@
              ..ConnCounters::default()
          });
          let info = ConnectionInfo {
-@@ -401,6 +478,21 @@
+@@ -401,6 +479,21 @@
          (uuid, counters)
      }
  
@@ -10141,7 +10146,7 @@
      /// Select the lighter connection registry before listeners start. The
      /// default remains full tracking for embedders and API consumers.
      pub fn set_headless(&self) {
-@@ -449,6 +541,12 @@
+@@ -449,6 +542,12 @@
      /// connection task, so a close reason noted after removal (an API
      /// close, a reload) still shows up.
      fn remember_closed(&self, info: ConnectionInfo) {
@@ -10154,7 +10159,7 @@
          if info.counters.notes.is_none() {
              return;
          }
-@@ -538,8 +636,9 @@
+@@ -538,8 +637,9 @@
          self.close_all_connections_counted();
      }
  
@@ -10166,7 +10171,7 @@
      pub fn close_all_connections_counted(&self) -> usize {
          let mut closed = 0;
          // Signal and remove under the same shard lock. A separate iteration
-@@ -547,8 +646,8 @@
+@@ -547,8 +647,8 @@
          let mut noted = Vec::new();
          self.connections.retain(|_, info| {
              info.counters.close();
@@ -10177,7 +10182,7 @@
                  noted.push(info.clone());
              }
              false
-@@ -559,7 +658,7 @@
+@@ -559,7 +659,7 @@
          if let Some(connections) = self.headless_connections.get() {
              connections.retain(|_, counters| {
                  counters.close();
@@ -10186,7 +10191,7 @@
                  false
              });
          }
-@@ -644,3 +743,154 @@
+@@ -644,3 +744,154 @@
          Ok(())
      }
  }
