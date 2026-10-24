@@ -7,6 +7,7 @@ import dev.aerove.lite.MainActivity
 import dev.aerove.lite.MaterialTier
 import org.json.JSONObject
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -14,6 +15,7 @@ import org.junit.runners.Parameterized
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 @RunWith(Parameterized::class)
 class LiteLayerAndInkRenderingTest(private val case: RenderCase) {
@@ -64,6 +66,26 @@ class LiteLayerAndInkRenderingTest(private val case: RenderCase) {
         }
     }
 
+    @Test
+    fun translucentAuroraInkPreservesGlyphCoverageAndBlankPixels() {
+        // One representative real GPU case exercises source alpha without duplicating the matrix.
+        assumeTrue("Source-alpha coverage uses the Solid/light/Aurora representative",
+            case.aurora && case.tier == MaterialTier.Solid && !case.dark)
+        val fixture = FixtureState(inkAlpha = 0.8f)
+        withOpticalFixture(compose, case, "translucent-ink_$case", initial = fixture) { state, probe, capture ->
+            val source = capture.capture("source-alpha-08")
+            val actual = compose.frame(state, fixture.copy(stage = FixtureStage.Production), capture, "ink-alpha-08")
+            val halfSource = compose.frame(state, fixture.copy(auroraPhase = 0.5f), capture, "source-half-alpha-08")
+            val halfActual = compose.frame(state, fixture.copy(stage = FixtureStage.Production, auroraPhase = 0.5f), capture, "ink-half-alpha-08")
+            val mask = compose.frame(state, fixture.copy(stage = FixtureStage.InkMask), capture, "coverage-alpha-08")
+            val report = JSONObject().put("sourceAlpha", Color.alpha(probe.ink))
+            try {
+                assertTrue("The fixture must actually draw a translucent source", Color.alpha(probe.ink) == 204)
+                for (name in listOf("ink", "inkIcon")) report.put(name, assertInk(mask, source, halfSource, actual, halfActual, probe, name))
+            } finally { capture.metrics(report) }
+        }
+    }
+
     private fun assertInk(
         mask: CapturedFrame,
         source: CapturedFrame,
@@ -78,16 +100,41 @@ class LiteLayerAndInkRenderingTest(private val case: RenderCase) {
         var inkError = 0
         var actualChange = 0
         var sourceChange = 0
+        var blankCount = 0
+        var blankError = 0
+        var edgeCount = 0
+        var edgeError = 0
+        fun composite(ink: Int, background: Int, coverage: Double): Int {
+            val alpha = coverage * Color.alpha(probe.ink) / 255.0
+            fun channel(foreground: Int, behind: Int) = (foreground * alpha + behind * (1 - alpha)).roundToInt()
+            return Color.rgb(channel(Color.red(ink), Color.red(background)), channel(Color.green(ink), Color.green(background)),
+                channel(Color.blue(ink), Color.blue(background)))
+        }
         for (y in ceil(region.top).toInt() until floor(region.bottom).toInt()) {
             for (x in ceil(region.left).toInt() until floor(region.right).toInt()) {
                 val color = mask.pixel(x.toFloat(), y.toFloat())
-                if (minOf(Color.red(color), Color.green(color), Color.blue(color)) < 254) continue
                 val first = source.pixel(x.toFloat(), y.toFloat())
                 val second = halfSource.pixel(x.toFloat(), y.toFloat())
                 val observed = actual.pixel(x.toFloat(), y.toFloat())
                 val halfObserved = halfActual.pixel(x.toFloat(), y.toFloat())
-                inkError = max(inkError, channelError(expectedInk(probe.ink, first, case, name == "inkIcon"), observed))
-                inkError = max(inkError, channelError(expectedInk(probe.ink, second, case, name == "inkIcon"), halfObserved))
+                val coverage = maxOf(Color.red(color), Color.green(color), Color.blue(color))
+                if (coverage <= 1) {
+                    blankCount++
+                    blankError = max(blankError, max(channelError(first, observed), channelError(second, halfObserved)))
+                    continue
+                }
+                val firstInk = expectedInk(probe.ink, first, case, name == "inkIcon")
+                val secondInk = expectedInk(probe.ink, second, case, name == "inkIcon")
+                if (minOf(Color.red(color), Color.green(color), Color.blue(color)) < 254) {
+                    if (coverage in 16..239) {
+                        edgeCount++
+                        edgeError = max(edgeError, channelError(composite(firstInk, first, coverage / 255.0), observed))
+                        edgeError = max(edgeError, channelError(composite(secondInk, second, coverage / 255.0), halfObserved))
+                    }
+                    continue
+                }
+                inkError = max(inkError, channelError(composite(firstInk, first, 1.0), observed))
+                inkError = max(inkError, channelError(composite(secondInk, second, 1.0), halfObserved))
                 actualChange = max(actualChange, channelError(observed, halfObserved))
                 sourceChange = max(sourceChange, channelError(first, second))
                 count++
@@ -97,6 +144,14 @@ class LiteLayerAndInkRenderingTest(private val case: RenderCase) {
             .put("actualPhaseChange", actualChange).put("sourcePhaseChange", sourceChange)
             .put("oracle", "Independent Full foreground ink scalar math on measured PNG field pixels")
             .put("subtle", case.tier == MaterialTier.Solid)
+            .put("blankMaskPixels", blankCount).put("maximumBlankPixelError", blankError)
+            .put("partialCoveragePixels", edgeCount).put("maximumCoverageError", edgeError)
+            .put("sourceAlpha", Color.alpha(probe.ink))
+        assertTrue("The measured mask must contain transparent pixels ($name)", blankCount >= 20)
+        assertTrue("Blank glyph pixels must leave the captured field unchanged ($name error=$blankError)", blankError <= 2)
+        assertTrue("The measured mask must include antialiased edges ($name)", edgeCount >= 20)
+        // Two 8-bit captures and the final blend can each round a channel once.
+        assertTrue("Partial alpha must preserve the measured glyph coverage ($name error=$edgeError)", edgeError <= 3)
         assertTrue("The hardware glyph mask must contain opaque core pixels ($name)", count >= 20)
         assertTrue("$name must preserve ordinary ink and match Full Aurora role/quality/subtle math (error=$inkError)", inkError <= 2)
         if (!case.aurora) {

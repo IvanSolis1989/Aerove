@@ -88,7 +88,17 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **用途与采用方式：** Lite资源库 Compose 状态订阅只读参考 `StateFlow.collectAsStateWithLifecycle` 默认 STARTED 和 `repeatOnLifecycle` 行为；仪表盘状态卡另参考 `AlignmentLine` 的父级继承与子项位置偏移，在同次测量中判断紧凑指标与真实前景是否碰撞。复用既有 Compose / lifecycle-runtime-compose 依赖，未复制实现、未新增依赖；实际 Android 布局仍须验收
 
+同一固定提交另只读核对 `GraphicsLayer.kt`、`LayoutNodeDrawScope.kt` 与 `AndroidRenderEffect.android.kt` 的离屏记录、`DstIn` 隔离及 RenderEffect 输入桥接，用于 Lite 极光前景蒙版修正；未复制上游实现或增加依赖。
+
 **许可证、署名与证据：** Apache-2.0；保留 Android Open Source Project 署名；[固定 `FlowExt.kt`](https://github.com/androidx/androidx/blob/851a99e20723278101bfa110cc209021ba676748/lifecycle/lifecycle-runtime-compose/src/commonMain/kotlin/androidx/lifecycle/compose/FlowExt.kt)、[固定 `AlignmentLine.kt`](https://github.com/androidx/androidx/blob/851a99e20723278101bfa110cc209021ba676748/compose/ui/ui/src/commonMain/kotlin/androidx/compose/ui/layout/AlignmentLine.kt)；本项目入口为 `GlobalResourceLibraryScreen.kt` 和 `OverviewScreen.kt`
+
+#### [google/skia](https://github.com/google/skia)
+
+**固定版本 / revision：** `chrome/m106` / `4100191c5888bfcdf3f48d6ec04e4adef458f34c`
+
+**用途与采用方式：** 只读研究 `SkRuntimeImageFilter.cpp` 和 `SkSpecialImage.cpp` 的 desired-output、输入子集及 shader 采样契约，用于定位 Lite 双高图集跨区读取字形 alpha 的风险。采用同坐标取色与独立字形蒙版；未复制 Skia 实现、未新增依赖。该参考 revision 不作为实际 Android 设备 Skia 版本或已逐层实测裁剪机制的证明。
+
+**许可证、署名与证据：** BSD-3-Clause，保留原 Skia 版权；[固定 RuntimeImageFilter 源码](https://github.com/google/skia/blob/4100191c5888bfcdf3f48d6ec04e4adef458f34c/src/effects/imagefilters/SkRuntimeImageFilter.cpp)、[固定 SpecialImage 源码](https://github.com/google/skia/blob/4100191c5888bfcdf3f48d6ec04e4adef458f34c/src/core/SkSpecialImage.cpp)。修正后的像素结果由本项目实际 Android 验收确认。
 
 #### [MetaCubeX/age](https://github.com/MetaCubeX/age)
 
@@ -745,6 +755,8 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 **用途与采用方式：** SDK 37 客户端编译修复时只读参考 Android `ActivityManager.AppTask#getTaskInfo()`：任务不存在可返回 null，采用安全访问忽略失效任务；未复制实现、未新增产品依赖。；Run83 Android capture 诊断只读参照 `ViewTreeObserver.java`（blob `5a99ab2f5bdb2ef688b398ba904147b8b2cfb96c`，范围752–779）和 `ViewRootImpl.java`（blob `a13872eef6b80ccbadb09e785dbeb14b20e493b8`，范围4209–4236、4263–4280）；未复制实现或新增依赖；同固定提交另参照 `Instrumentation.java`（blob `8984c4292023bbe21633b0aa7739c67ff10040f2`）与 `Process.java`（blob `e06e7326a8603a58c8f49397f5fa0a681a10cab2`）的受控测试退出及本进程 PID 信号路径，未复制实现
 
 同一固定提交还只读参照 `InputShellCommand.java`、`WindowManagerShellCommand.java`、`KeyguardServiceDelegate.java`、`PhoneWindowManager.java` 和 `cmds/wm/wm`，用于 #84 Android 取图启动修正：比较同步输入注入与 WindowManager 解锁，按真实 Keyguard 状态读回确认可交互；未复制 Java 实现或新增产品依赖。
+
+同一 `0d3ff311e6e80dee7fe88a2a2cfa272ce231c3c6` 提交另只读核对 [`libs/hwui/jni/RenderEffect.cpp`](https://github.com/aosp-mirror/platform_frameworks_base/blob/0d3ff311e6e80dee7fe88a2a2cfa272ce231c3c6/libs/hwui/jni/RenderEffect.cpp) 的 RuntimeShader 单输入绑定，用于极光前景蒙版修正；未复制实现。
 
 **许可证、署名与证据：** Apache-2.0，原 AOSP 源文件许可头；[固定 ActivityManager.java](https://github.com/aosp-mirror/platform_frameworks_base/blob/1cdfff555f4a21f71ccc978290e2e212e2f8b168/core/java/android/app/ActivityManager.java)、[官方 API](https://developer.android.com/reference/android/app/ActivityManager.AppTask#getTaskInfo())。；run83 固定来源中的两份 AOSP 源文件许可为 Apache-2.0，证据见 `SOURCES.json`
 

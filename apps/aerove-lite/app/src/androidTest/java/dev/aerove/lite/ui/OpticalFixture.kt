@@ -59,12 +59,14 @@ internal data class FixtureState(
     val thumbMarker: Boolean = false,
     val regularPane: Boolean = false,
     val pillPane: Boolean = false,
+    val inkAlpha: Float = 1f,
 )
 
 @Composable
 internal fun OpticalFixture(case: RenderCase, state: FixtureState, probe: RenderProbe) {
     LiteTheme(case.settings) {
         val visuals = LocalLiteVisuals.current
+        val ink = visuals.ink.copy(alpha = state.inkAlpha)
         val source = rememberLayerBackdrop()
         val phase = remember { mutableStateOf(state.auroraPhase) }
         val view = LocalView.current
@@ -78,7 +80,7 @@ internal fun OpticalFixture(case: RenderCase, state: FixtureState, probe: Render
             probe.selectedSurface = lerp(visuals.surface, visuals.primary, 0.13f).toArgb()
             probe.switchTrack = (if (case.checked) visuals.primary else lerp(visuals.surface, visuals.ink, 0.12f)).toArgb()
             probe.switchThumb = (if (case.checked) Color.White else visuals.secondaryInk).toArgb()
-            probe.ink = visuals.ink.toArgb()
+            probe.ink = ink.toArgb()
         }
         BoxWithConstraints(Modifier.fillMaxSize().onGloballyPositioned { probe.bounds["root"] = it.boundsInWindow() }) {
             val paneWidth = minOf(320.dp, maxWidth - 48.dp)
@@ -128,14 +130,14 @@ internal fun OpticalFixture(case: RenderCase, state: FixtureState, probe: Render
                     CompositionLocalProvider(LocalLiteVisuals provides visuals.copy(aurora = false, material = MaterialTier.Solid)) {
                         LiteText("MMMMMM", inkModifier, style = LiteType.Headline, color = Color.White)
                     }
-                } else if (state.stage != FixtureStage.Source) LiteText("MMMMMM", inkModifier, style = LiteType.Headline)
+                } else if (state.stage != FixtureStage.Source) LiteText("MMMMMM", inkModifier, style = LiteType.Headline, color = ink)
                 if (state.stage != FixtureStage.Source) {
                     val iconModifier = Modifier.offset(220.dp, 314.dp).onGloballyPositioned { probe.bounds["inkIcon"] = it.boundsInWindow() }
                     if (state.stage == FixtureStage.InkMask) {
                         CompositionLocalProvider(LocalLiteVisuals provides visuals.copy(aurora = false, material = MaterialTier.Solid)) {
                             LiteIcon(FullGlyphs.logs, iconModifier, color = Color.White)
                         }
-                    } else LiteIcon(FullGlyphs.logs, iconModifier)
+                    } else LiteIcon(FullGlyphs.logs, iconModifier, color = ink)
                 }
                 if (state.stage != FixtureStage.Source && state.stage != FixtureStage.InkMask) LitePane(
                     Modifier.offset(24.dp, 366.dp).size(paneWidth, 128.dp).onGloballyPositioned { probe.bounds["parent"] = it.boundsInWindow() },

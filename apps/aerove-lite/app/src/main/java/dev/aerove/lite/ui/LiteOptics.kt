@@ -16,6 +16,8 @@ import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.layer.CompositingStrategy
 import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ClipOp
@@ -86,10 +88,10 @@ private object LiteOpticsSourceCache {
                     "hazeContent.eval(clamp(pixel, uHazeClamp.xy, min(uHazeClamp.zw, uSize - 0.5)))",
                     "content.eval(clamp(pixel, uHazeClamp.xy, min(uHazeClamp.zw, uSize - 0.5)) + float2(0.0, uHazeOffset))",
                 ),
-            programs.inkSource.replaceRequired("uniform shader backdropField;", "uniform float uGlyphOffset;")
-                .replaceRequired("uniform shader glyphs;", "uniform shader atlas;")
-                .replaceRequired("backdropField.eval(", "atlas.eval(")
-                .replaceRequired("glyphs.eval(coord)", "atlas.eval(coord + float2(0.0, uGlyphOffset))"),
+            programs.inkSource.replaceRequired("uniform shader backdropField;", "uniform shader content;")
+                .replaceRequired("uniform shader glyphs;", "")
+                .replaceRequired("backdropField.eval(", "content.eval(")
+                .replaceRequired("float coverage = glyphs.eval(coord).a;", "float coverage = 1.0;"),
         )
     }
 }
@@ -277,22 +279,30 @@ internal fun Modifier.liteInkLayer(backdrop: Backdrop, style: AeroveInkStyle): M
             setFloatUniform("uSubtle", if (style.subtle) 1f else 0f)
             val background = style.contrastBackground
             setFloatUniform("uContrastBackground", background.red, background.green, background.blue, background.alpha)
-            setFloatUniform("uGlyphOffset", tile.height.toFloat())
         }
-        atlas.renderEffect = android.graphics.RenderEffect.createRuntimeShaderEffect(shader.asAndroidRuntimeShader(), "atlas").asComposeRenderEffect()
+        val inkEffect = android.graphics.RenderEffect.createRuntimeShaderEffect(shader.asAndroidRuntimeShader(), "content")
+        var previousViewport: androidx.compose.ui.graphics.RenderEffect? = null
+        atlas.compositingStrategy = CompositingStrategy.Offscreen
+        glyphs.blendMode = BlendMode.DstIn
         onDrawWithContent {
             val position = coordinates?.takeIf { it.isAttached }
             if (position == null) { drawContent(); return@onDrawWithContent }
-            field.renderEffect = viewport.effect(tile.width, tile.height, pad, position)
+            val viewportEffect = viewport.effect(tile.width, tile.height, pad, position)
+            if (previousViewport !== viewportEffect) {
+                field.renderEffect = android.graphics.RenderEffect.createChainEffect(
+                    inkEffect, viewportEffect.asAndroidRenderEffect(),
+                ).asComposeRenderEffect()
+                previousViewport = viewportEffect
+            }
             recordTile(field, tile) {
                 withTransform({ translate(pad, pad) }) { with(backdrop) { drawBackdrop(this@onDrawWithContent, position) } }
             }
             recordTile(glyphs, tile) {
                 withTransform({ translate(pad, pad) }) { this@onDrawWithContent.drawContent() }
             }
-            recordTile(atlas, IntSize(tile.width, tile.height * 2)) {
+            recordTile(atlas, tile) {
                 drawLayer(field)
-                withTransform({ translate(0f, tile.height.toFloat()) }) { drawLayer(glyphs) }
+                drawLayer(glyphs)
             }
             withTransform({ translate(-pad, -pad); clipRect(0f, 0f, tile.width.toFloat(), tile.height.toFloat()) }) { drawLayer(atlas) }
         }
