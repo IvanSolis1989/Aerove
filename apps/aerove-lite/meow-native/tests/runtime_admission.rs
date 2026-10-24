@@ -79,14 +79,19 @@ async fn unsupported_protocol_unowned_group_provider_and_malformed_factory_still
     for kind in ["ssh","wireguard","tailscale","shadowquic","tuic","unknown"] {
         configurations.push(format!("strict: true\nproxies: [{{name: NODE,type: {kind},server: 127.0.0.1,port: 443}}]\nrules: ['MATCH,NODE']\n"));
     }
-    for kind in ["relay","load-balance"] {
-        configurations.push(format!("strict: true\nproxy-groups: [{{name: GROUP,type: {kind},proxies: [DIRECT,REJECT]}}]\nrules: ['MATCH,GROUP']\n"));
+    for group in ["{name: GROUP,type: relay,proxies: [DIRECT,REJECT],use: [feed]}","{name: GROUP,type: load-balance,proxies: [DIRECT,REJECT],strategy: sticky-sessions}"] {
+        configurations.push(format!("strict: true\nproxy-groups: [{group}]\nrules: ['MATCH,GROUP']\n"));
     }
-    configurations.push("strict: true\nproxy-providers: {P: {type: http,url: 'http://127.0.0.1:1/proxies'}}\nrules: ['MATCH,DIRECT']\n".into());
+    for groups in [
+        "[{name: GROUP,type: relay,proxies: [MISSING,DIRECT]}]",
+        "[{name: GROUP,type: relay,proxies: [GROUP,DIRECT]}]",
+        "[{name: FRONT,type: relay,proxies: [BACK,DIRECT]},{name: BACK,type: load-balance,proxies: [FRONT,DIRECT],strategy: round-robin}]",
+    ] { configurations.push(format!("strict: true\nproxy-groups: {groups}\nrules: ['MATCH,DIRECT']\n")); }
+    configurations.push("strict: true\nproxy-providers: {P: {type: http,url: 'http://127.0.0.1:1/proxies',proxy: NOT_INTEGRATED}}\nrules: ['MATCH,DIRECT']\n".into());
     configurations.push("strict: true\nproxies: [{name: NODE,type: http,server: 127.0.0.1,port: 0}]\nrules: ['MATCH,NODE']\n".into());
-    configurations.push("strict: true\nproxies:\n - {name: FIRST,type: http,server: 127.0.0.1,port: 443}\n - {name: NODE,type: http,server: 127.0.0.1,port: 444,dialer-proxy: FIRST}\nrules: ['MATCH,NODE']\n".into());
+    configurations.push("strict: true\nproxies:\n - {name: FIRST,type: http,server: 127.0.0.1,port: 443}\n - {name: NODE,type: http,server: 127.0.0.1,port: 444,dialer-proxy: MISSING}\nrules: ['MATCH,NODE']\n".into());
     for kind in ["http", "socks5"] {
-        configurations.push(format!("strict: true\nproxies:\n - {{name: FIRST,type: http,server: 127.0.0.1,port: 443}}\n - {{name: NODE,type: {kind},server: 127.0.0.1,port: 444,dialer-proxy: FIRST,tls: true}}\nrules: ['MATCH,NODE']\n"));
+        configurations.push(format!("strict: true\nproxies:\n - {{name: FIRST,type: http,server: 127.0.0.1,port: 443}}\n - {{name: NODE,type: {kind},server: 127.0.0.1,port: 444,dialer-proxy: MISSING,tls: true}}\nrules: ['MATCH,NODE']\n"));
     }
     for yaml in configurations {
         let roots=root_fixture::Roots::new();let addresses=ports().await;
@@ -149,14 +154,14 @@ async fn managed_dialer_failure_preserves_field_reason_through_ready_terminal_an
     let _serial=LOCK.lock().await;
     for kind in ["http","socks5"] {
         let roots=root_fixture::Roots::new();let addresses=ports().await;
-        let yaml=format!("strict: true\nproxies:\n - {{name: FIRST,type: http,server: 127.0.0.1,port: 443}}\n - {{name: NODE,type: {kind},server: 127.0.0.1,port: 444,dialer-proxy: FIRST}}\nrules: ['MATCH,NODE']\ndns: {{enable: false,use-system-hosts: false}}\ntun: {{enable: false,auto-route: false}}\n");
+        let yaml=format!("strict: true\nproxies:\n - {{name: FIRST,type: http,server: 127.0.0.1,port: 443}}\n - {{name: NODE,type: {kind},server: 127.0.0.1,port: 444,dialer-proxy: MISSING}}\nrules: ['MATCH,NODE']\ndns: {{enable: false,use-system-hosts: false}}\ntun: {{enable: false,auto-route: false}}\n");
         let network=NetworkContext::platform(CancellationToken::new()).with_physical_dns(vec!["127.0.0.1:53".parse().unwrap()]);
         let session=Registry::start_owned(plan(yaml,addresses,&roots),None,network,None).unwrap();
         let generation=session.generation();
         let failure=timeout(Duration::from_secs(5),session.ready()).await.unwrap().unwrap_err();
-        assert_eq!(failure.code,"managedDialerProxyGraphNotIntegrated");
+        assert_eq!(failure.code,"managedDialerProxyGraphRejected");
         assert_eq!(failure.field.as_deref(),Some("proxies.dialer-proxy"));
-        assert_eq!(failure.reason.as_deref(),Some("injected dialer edges require managed graph activation and health/selection ownership"));
+        assert!(failure.reason.as_deref().unwrap().contains("MISSING"));
         let json=serde_json::to_value(&failure).unwrap();
         assert_eq!(json["field"],"proxies.dialer-proxy");assert_eq!(json["reason"],failure.reason.as_deref().unwrap());
         let owner=session.owned_runtime().unwrap();assert!(owner.cleanup_confirmed());

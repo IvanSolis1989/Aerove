@@ -27,11 +27,17 @@
     "physical_dns",
     "provider_events",
     "provider_files",
+    "provider_groups",
+    "provider_projection_gate",
     "provider_rules",
     "proxy_runtime",
     "request_policy",
     "resource_roots",
     "runtime_admission",
+    "runtime_dialers",
+    "runtime_general_groups",
+    "runtime_provider_projection",
+    "runtime_providers",
     "runtime_transports",
     "statistics_actual_outcome",
     "tcp_dns",
@@ -41,8 +47,8 @@
     "user_request_context"
   ],
   "overlay": "source-metadata/full-runtime.json",
-  "overlaySha256": "ef724cba1fe0e017e06b1e8be5b554b72a8f7bd480663a1b6ce5a0fe2f04ec1f",
+  "overlaySha256": "6ea44c56ec12d9bf91316c0fb10095875cd435ff55e8323f00d942640723b9b0",
   "featureBoundary": "capabilities-no-default",
-  "coreTests": "policy-runtime-observability-v1",
+  "coreTests": "policy-runtime-provider-general-v1",
   "coreTestLockSha256": "96b509814a2d833c39ac23c1cbee62a38e401f420ec1cf8f72a7738a71df6c58"
 }
