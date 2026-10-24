@@ -76,7 +76,7 @@ def config_text(query, categories, duration=120):
     events = '\n'.join('      ftrace_events: "' + event + '"' for event in (
         'sched/sched_switch', 'sched/sched_waking', 'sched/sched_process_exit'))
     atrace = '\n'.join('      atrace_categories: "' + name + '"' for name in selected)
-    text = f'''buffers {{ size_kb: 32768 fill_policy: DISCARD }}
+    text = f'''buffers {{ size_kb: 32768 fill_policy: RING_BUFFER }}
 duration_ms: {duration * 1000}
 write_into_file: true
 file_write_period_ms: {TRACE_WRITE_PERIOD_MS}
@@ -110,8 +110,9 @@ class TraceCapture:
         self.started = None
         self.receipt = dict(schema=1, diagnosticOnly=True, accepted=False,
                             deviceSerial=serial, durationSeconds=duration,
-                            bufferKiB=32768, fillPolicy='DISCARD', commands=[],
+                            bufferKiB=32768, fillPolicy='RING_BUFFER', commands=[],
                             errors=[], traceStarted=False, tracePulled=False,
+                            bufferPolicyCanOverwriteUnread=True, bufferOverwritesObserved=None,
                             gpuTimingNotGuaranteed=True, coldCompilationNotGuaranteed=True,
                             performanceEvidence=False, targetPackage=PACKAGE, deviceApi=None,
                             targetPidsBefore=None, targetPidsAfter=None,
