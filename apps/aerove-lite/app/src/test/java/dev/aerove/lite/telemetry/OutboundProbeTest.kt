@@ -12,6 +12,10 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import dev.aerove.lite.data.RouteSnapshot
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -35,10 +39,10 @@ class OutboundProbeTest {
             if (nonCooperative) withContext(NonCancellable) { result.await() } else result.await()
         }, { it == key })
 
-        fun enter(picks: Map<String, String>) {
+        fun enter(picks: Map<String, String>, epoch: ULong? = null) {
             probe.bind(key)
             probe.setActive(true)
-            probe.synchronize(picks)
+            probe.synchronize(picks, epoch)
         }
 
         fun changeKey(value: String) {
@@ -341,4 +345,216 @@ class OutboundProbeTest {
         assertNull(fixture.probe.state.value.error)
         fixture.probe.close()
     }
+    @Test fun sameNamesAtNewCoreEpochClearCachedIdentityButRepeatedEpochNeverPolls() = runTest {
+        val fixture = Fixture(backgroundScope)
+        val picks = mapOf("Pick" to "Balanced")
+        fixture.enter(picks, 10uL)
+        runCurrent()
+        fixture.requests.single().second.complete(answer().copy(chains = listOf("A", "Balanced", "Pick")))
+        runCurrent()
+        repeat(4) { fixture.probe.synchronize(picks, 10uL) }
+        runCurrent()
+        assertEquals(1, fixture.requests.size)
+        fixture.probe.awaitingGroups()
+        fixture.probe.synchronize(picks, 11uL)
+        assertNull(fixture.probe.state.value.identity)
+        runCurrent()
+        assertEquals(2, fixture.requests.size)
+        fixture.requests.last().second.complete(answer(ip = "8.8.8.8").copy(chains = listOf("A", "Balanced", "Pick")))
+        runCurrent()
+        fixture.probe.synchronize(picks, 10uL)
+        advanceTimeBy(60000)
+        runCurrent()
+        assertEquals(2, fixture.requests.size)
+        assertEquals("8.8.8.8", fixture.probe.state.value.identity?.address)
+        fixture.probe.close()
+    }
+
+    @Test fun lateUncancellableAnswerAtOldEpochCannotOverwriteSameNamedNewGraph() = runTest {
+        val fixture = Fixture(backgroundScope, nonCooperative = true)
+        val picks = groups().routePicks()
+        fixture.enter(picks, 10uL)
+        runCurrent()
+        fixture.probe.awaitingGroups()
+        fixture.probe.synchronize(picks, 11uL)
+        runCurrent()
+        fixture.requests.last().second.complete(answer(ip = "8.8.8.8"))
+        runCurrent()
+        fixture.requests.first().second.complete(answer(ip = "9.9.9.9"))
+        runCurrent()
+        assertEquals(2, fixture.requests.size)
+        assertEquals("8.8.8.8", fixture.probe.state.value.identity?.address)
+        assertFalse(fixture.probe.state.value.loading)
+        fixture.probe.close()
+    }
+
+    @Test fun newBindingMayRestartEpochAndRejectsOldGenerationAnswer() = runTest {
+        val fixture = Fixture(backgroundScope, nonCooperative = true)
+        val picks = groups().routePicks()
+        fixture.enter(picks, 20uL)
+        runCurrent()
+        fixture.changeKey("core-2/profile-2/global/config-2")
+        fixture.probe.synchronize(picks, 1uL)
+        runCurrent()
+        fixture.requests.last().second.complete(answer(ip = "8.8.8.8"))
+        runCurrent()
+        fixture.requests.first().second.complete(answer())
+        runCurrent()
+        assertEquals(2, fixture.requests.size)
+        assertEquals("8.8.8.8", fixture.probe.state.value.identity?.address)
+        fixture.probe.close()
+    }
+
+    @Test fun groupUpdateThenOrdinaryVpnBindCannotReplayOldTicketOrReleaseWaitingAnswer() = runTest {
+        val fixture = Fixture(backgroundScope)
+        val picks = groups().routePicks()
+        fixture.enter(picks, 10uL)
+        runCurrent()
+        fixture.probe.awaitingGroups()
+        fixture.probe.bind(fixture.key)
+        fixture.probe.replayConfirmedRoute(picks, 10uL)
+        fixture.requests.single().second.complete(answer())
+        runCurrent()
+        assertNull(fixture.probe.state.value.identity)
+        assertEquals(1, fixture.requests.size)
+        repeat(3) {
+            fixture.probe.bind(fixture.key)
+            fixture.probe.replayConfirmedRoute(picks, 10uL)
+        }
+        runCurrent()
+        assertNull(fixture.probe.state.value.identity)
+        assertEquals(1, fixture.requests.size)
+        fixture.probe.synchronize(picks, 11uL)
+        runCurrent()
+        assertEquals(2, fixture.requests.size)
+        fixture.requests.last().second.complete(answer(ip = "8.8.8.8"))
+        runCurrent()
+        assertEquals("8.8.8.8", fixture.probe.state.value.identity?.address)
+        fixture.probe.close()
+    }
+
+    @Test fun pendingRouteSurvivesVpnKeyChangeAndPauseResumeUntilAuthoritativeSnapshot() = runTest {
+        val fixture = Fixture(backgroundScope, nonCooperative = true)
+        val picks = groups().routePicks()
+        fixture.enter(picks, 10uL)
+        runCurrent()
+        fixture.probe.awaitingGroups()
+        fixture.changeKey("core-1/profile-1/rule/config-2")
+        fixture.probe.setActive(false)
+        fixture.probe.setActive(true)
+        fixture.probe.replayConfirmedRoute(picks, 10uL)
+        fixture.requests.single().second.complete(answer())
+        runCurrent()
+        assertEquals(1, fixture.requests.size)
+        assertNull(fixture.probe.state.value.identity)
+        fixture.probe.synchronize(picks, 11uL)
+        runCurrent()
+        assertEquals(2, fixture.requests.size)
+        fixture.requests.last().second.complete(answer(ip = "8.8.8.8"))
+        runCurrent()
+        assertEquals("8.8.8.8", fixture.probe.state.value.identity?.address)
+        fixture.probe.close()
+    }
+
+    @Test fun confirmedTicketCanResumeWithoutAnUpdatePendingOrAnotherLookup() = runTest {
+        val fixture = Fixture(backgroundScope)
+        val picks = groups().routePicks()
+        fixture.enter(picks, 10uL)
+        runCurrent()
+        fixture.requests.single().second.complete(answer())
+        runCurrent()
+        fixture.probe.setActive(false)
+        fixture.probe.setActive(true)
+        fixture.probe.bind(fixture.key)
+        fixture.probe.replayConfirmedRoute(picks, 10uL)
+        runCurrent()
+        assertEquals(1, fixture.requests.size)
+        assertEquals("1.1.1.1", fixture.probe.state.value.identity?.address)
+        fixture.probe.close()
+    }
+
+    @Test fun preEventRouteFetchCannotReleasePendingAnswerThroughAnEqualOldStamp() = runTest {
+        val fixture = Fixture(backgroundScope)
+        val picks = groups().routePicks()
+        val demand = RouteSnapshotDemand()
+        val oldRoute = CompletableDeferred<RouteSnapshot>()
+        var accepted = 0
+        fixture.enter(picks, 10uL)
+        runCurrent()
+        val fetch = backgroundScope.launch {
+            demand.read({ withContext(NonCancellable) { oldRoute.await() } }) { route ->
+                accepted++
+                fixture.probe.synchronize(route.picks, route.coreEpoch)
+            }
+        }
+        runCurrent()
+        demand.invalidate()
+        fixture.probe.awaitingGroups()
+        fixture.probe.bind(fixture.key)
+        fixture.probe.replayConfirmedRoute(picks, 10uL)
+        oldRoute.complete(RouteSnapshot(10uL, 1uL, picks))
+        fixture.requests.single().second.complete(answer())
+        runCurrent()
+        assertTrue(fetch.isCompleted)
+        assertEquals(0, accepted)
+        assertNull(fixture.probe.state.value.identity)
+        assertEquals(1, fixture.requests.size)
+        demand.read({ RouteSnapshot(11uL, 1uL, picks) }) { route ->
+            accepted++
+            fixture.probe.synchronize(route.picks, route.coreEpoch)
+        }
+        runCurrent()
+        assertEquals(1, accepted)
+        assertEquals(2, fixture.requests.size)
+        fixture.requests.last().second.complete(answer(ip = "8.8.8.8"))
+        runCurrent()
+        assertEquals("8.8.8.8", fixture.probe.state.value.identity?.address)
+        fixture.probe.close()
+    }
+
+    @Test fun serviceRouteReadUnderExistingMutexRejectsOldDemandAcrossBindingChange() = runTest {
+        val fixture = Fixture(backgroundScope, nonCooperative = true)
+        val picks = groups().routePicks()
+        val demand = RouteSnapshotDemand()
+        val readGate = Mutex()
+        val oldRoute = CompletableDeferred<RouteSnapshot>()
+        var accepted = 0
+        fixture.enter(picks, 20uL)
+        runCurrent()
+        val serviceFetch = backgroundScope.launch {
+            readGate.withLock {
+                demand.read({ withContext(NonCancellable) { oldRoute.await() } }) { route ->
+                    accepted++
+                    fixture.probe.synchronize(route.picks, route.coreEpoch)
+                }
+            }
+        }
+        runCurrent()
+        demand.invalidate()
+        fixture.probe.awaitingGroups()
+        fixture.changeKey("core-2/profile-2/global/config-2")
+        demand.invalidate()
+        fixture.probe.replayConfirmedRoute(picks, 20uL)
+        oldRoute.complete(RouteSnapshot(20uL, 1uL, picks))
+        fixture.requests.single().second.complete(answer())
+        runCurrent()
+        assertTrue(serviceFetch.isCompleted)
+        assertEquals(0, accepted)
+        assertNull(fixture.probe.state.value.identity)
+        assertEquals(1, fixture.requests.size)
+        readGate.withLock {
+            demand.read({ RouteSnapshot(1uL, 1uL, picks) }) { route ->
+                accepted++
+                fixture.probe.synchronize(route.picks, route.coreEpoch)
+            }
+        }
+        runCurrent()
+        assertEquals(1, accepted)
+        assertEquals(2, fixture.requests.size)
+        fixture.requests.last().second.complete(answer(ip = "8.8.8.8"))
+        runCurrent()
+        assertEquals("8.8.8.8", fixture.probe.state.value.identity?.address)
+        fixture.probe.close()
+    }
+
 }

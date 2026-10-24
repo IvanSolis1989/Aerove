@@ -41,6 +41,7 @@ class ProxyPresentationWorkspace(private val scope: CoroutineScope,
     private var bindJob: Job? = null
     private var observeJob: Job? = null
     private var groups = emptyList<ProxyGroup>()
+    private var coreEpoch: ULong? = null
     private var active = false
     @Volatile private var paused = false
     @Volatile private var closed = false
@@ -65,9 +66,19 @@ class ProxyPresentationWorkspace(private val scope: CoroutineScope,
     fun bind(key: Any?, profileId: String?, client: CoreApiClient?, read: (suspend () -> String)?, current: () -> Boolean) = synchronized(gate) {
         if (binding?.key === key && binding?.client === client) return@synchronized
         owner?.close(); owner = null; loadedBinding = null; bindJob?.cancel(); observeJob?.cancel()
+        coreEpoch = null
         binding = if (key == null || profileId == null || client == null || read == null) null else Binding(key, profileId, client, read, current)
         mutable.update { it.copy(groupUrls = emptyMap(), groupIcons = emptyMap(), delay = ProxyDelayProgress(), ready = false, failed = false) }
         restartBinding()
+    }
+    fun routeEpoch(key: Any, epoch: ULong) = synchronized(gate) {
+        val value = binding ?: return@synchronized
+        if (value.key !== key || closed || paused || !value.current()) return@synchronized
+        val previous = coreEpoch
+        if (previous != null && epoch <= previous) return@synchronized
+        coreEpoch = epoch
+        owner?.cancel(true)
+        mutable.update { it.copy(delay = ProxyDelayProgress()) }
     }
     fun active(value: Boolean) = synchronized(gate) {
         active = value
@@ -82,8 +93,10 @@ class ProxyPresentationWorkspace(private val scope: CoroutineScope,
         if (owner == null) {
             val queue = ProxyPresentationDelayTests(value.client, scope)
             owner = queue
-            observeJob = start { queue.state.collect { delay -> if (binding === value && !paused && !closed)
-                mutable.update { it.copy(delay = delay) } } }
+            observeJob = start { queue.state.collect { delay -> synchronized(gate) {
+                if (binding === value && !paused && !closed && delay == queue.state.value)
+                    mutable.update { it.copy(delay = delay) }
+            } } }
         }
         if (loadedBinding === value) {
             mutable.update { it.copy(ready = true, failed = false) }

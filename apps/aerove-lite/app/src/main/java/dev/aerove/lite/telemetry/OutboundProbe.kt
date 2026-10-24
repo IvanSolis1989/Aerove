@@ -27,6 +27,19 @@ internal data class OutboundProbeState(
 internal fun List<ProxyGroup>.routePicks(): Map<String, String> =
     filter { it.selected.isNotEmpty() }.associate { it.name to it.selected }
 
+internal class RouteSnapshotDemand {
+    private val gate = Any()
+    private var generation = 0L
+
+    fun invalidate() = synchronized(gate) { generation++ }
+
+    suspend fun <T> read(read: suspend () -> T, accept: (T) -> Unit) {
+        val requested = synchronized(gate) { generation }
+        val value = read()
+        synchronized(gate) { if (requested == generation) accept(value) }
+    }
+}
+
 internal class OutboundProbe<K : Any>(
     parent: CoroutineScope,
     private val read: suspend (K) -> OutboundAnswer,
@@ -39,7 +52,9 @@ internal class OutboundProbe<K : Any>(
     private var key: K? = null
     private var active = false
     private var synced = false
+    private var routePending = true
     private var picks = emptyMap<String, String>()
+    private var coreEpoch: ULong? = null
     private var cached: OutboundAnswer? = null
     private var task: Job? = null
     private var run = 0L
@@ -55,6 +70,7 @@ internal class OutboundProbe<K : Any>(
         this.key = key
         cancelTask()
         cached = null
+        coreEpoch = null
         forced = false
         failed = false
         staleUnder = null
@@ -75,6 +91,7 @@ internal class OutboundProbe<K : Any>(
     }
 
     fun awaitingGroups() {
+        routePending = true
         synced = false
         changed()
     }
@@ -84,7 +101,26 @@ internal class OutboundProbe<K : Any>(
         mutableState.value = OutboundProbeState(error = failure.message ?: failure.javaClass.simpleName)
     }
 
-    fun synchronize(picks: Map<String, String>) {
+    fun replayConfirmedRoute(picks: Map<String, String>, coreEpoch: ULong) {
+        if (!routePending) synchronize(picks, coreEpoch)
+    }
+
+    fun synchronize(picks: Map<String, String>, coreEpoch: ULong? = null) {
+        if (coreEpoch != null) {
+            val previousEpoch = this.coreEpoch
+            if (previousEpoch != null && coreEpoch < previousEpoch) return
+            if (previousEpoch != coreEpoch) {
+                this.coreEpoch = coreEpoch
+                cancelTask()
+                cached = null
+                forced = false
+                failed = false
+                staleUnder = null
+                failedChain = null
+                mutableState.value = OutboundProbeState()
+            }
+        }
+        routePending = false
         val previous = this.picks
         this.picks = picks.toMap()
         synced = true
