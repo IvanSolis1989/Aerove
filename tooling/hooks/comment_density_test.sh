@@ -4,9 +4,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 checker="$script_dir/comment_density.sh"
-test_tmp_root='/d/CodexTemp/aerove-independent-20261022/session-20261023/hook-go-directives/tmp'
-mkdir -p "$test_tmp_root"
-temp_dir="$(mktemp -d "$test_tmp_root/comment-density.XXXXXX")"
+temp_dir="$(mktemp -d)"
 trap 'rm -rf "$temp_dir"' EXIT
 
 repo="$temp_dir/repo"
