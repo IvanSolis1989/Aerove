@@ -507,8 +507,6 @@ jobs:
     permissions:
       contents: read
       actions: read
-    env:
-      STANDARD_REFERENCE_ROOT: ${{ runner.temp }}/standard-original-reference
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -535,6 +533,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          STANDARD_REFERENCE_ROOT="$RUNNER_TEMP/standard-original-reference"
+          printf 'STANDARD_REFERENCE_ROOT=%s\n' "$STANDARD_REFERENCE_ROOT" >> "$GITHUB_ENV"
           mkdir -p "$STANDARD_REFERENCE_ROOT/environment"
           timeout --kill-after=10s 240s sdkmanager --install 'build-tools;35.0.0' emulator 'system-images;android-33;google_apis;x86_64' --channel=0
           timeout --kill-after=5s 20s "$ANDROID_HOME/emulator/emulator" -no-window -version > "$STANDARD_REFERENCE_ROOT/environment/emulator-version.txt" 2>&1
