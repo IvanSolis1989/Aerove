@@ -19,6 +19,7 @@ class MeowTunnelBackendTest {
         var onStart: () -> Unit = {}; var onReady: () -> Unit = {}; var onStop: () -> Unit = {}; var onExit: () -> Unit = {}
         var onListener: (String,Int) -> Unit = {_,_->}
         var starts = 0; var stops = 0; var payload = ""; var descriptor = 0
+        var statusReads = 0; var statusFailure: Throwable? = null
         var parked = false;var tunMode = false
         val policy = MeowPolicyFixture()
         override fun start(planJson: String, fd: Int, protector: SocketProtector?, owner: ConnectionOwnerLookup?): Long {
@@ -32,8 +33,11 @@ class MeowTunnelBackendTest {
             parked = action == "park"
             return listeners(handle)
         }
-        override fun status(handle: Long) = MeowStatus(MeowState.Running, null, "127.0.0.1:49152", if(tunMode) NativeCore.RuntimeMode.Tun else NativeCore.RuntimeMode.Proxy,
-            tunMode && !parked, !parked, !parked, true)
+        override fun status(handle: Long): MeowStatus {
+            statusReads++; statusFailure?.let { throw it }
+            return MeowStatus(MeowState.Running, null, "127.0.0.1:49152", if(tunMode) NativeCore.RuntimeMode.Tun else NativeCore.RuntimeMode.Proxy,
+                tunMode && !parked, !parked, !parked, true)
+        }
         override fun hostPolicy(handle: Long, request: String) = policy.command(request)
         override fun listeners(handle: Long) = MeowListenerStatus(!parked,tunMode && !parked,!parked,if(parked) emptyList() else listOf(7890),policy.epoch(),policy.onlyProxy,policy.probe.unifiedDelay,policy.probe.tcpConcurrent,policy.mode)
     }
@@ -84,6 +88,47 @@ class MeowTunnelBackendTest {
         val backend = MeowTunnelBackend({lease},native)
     }
     private suspend fun CountDownLatch.entered() { assertTrue(withContext(Dispatchers.IO){await(3,TimeUnit.SECONDS)}) }
+    @Test fun startupFailureCaptureKeepsOriginalAndSuppressedWithoutAnotherStop() = runBlocking<Unit> {
+        val f = Fixture(); val original = java.io.IOException("fixture EOF"); val cleanup = java.io.IOException("fixture cleanup failed")
+        f.native.onReady = { throw original }; f.native.onStop = { throw cleanup }
+        var observed: MeowTunnelBackend.StartupFailure? = null
+        MeowTunnelBackend.observeStartupFailures { observed = it }.use {
+            val session = f.backend.open(f.plan.copy(ownerIntentToken = 17))
+            try { session.awaitReady(); fail("must preserve startup failure") } catch (failure: java.io.IOException) { assertTrue(generateSequence<Throwable>(failure) { it.cause }.any { it === original }) }
+            val actual = checkNotNull(observed)
+            assertEquals(1L, actual.nativeGeneration); assertEquals(17L, actual.intentGeneration)
+            assertTrue(generateSequence(actual.failure) { it.cause }.any { it === original })
+            assertTrue(generateSequence(actual.failure.suppressed.single()) { it.cause }.any { it === cleanup })
+            assertEquals(MeowState.Running, actual.nativeBeforeStop.getOrThrow().state)
+            assertEquals(MeowState.Running, actual.nativeAfterStop.getOrThrow().state)
+            assertEquals(1, f.native.stops); assertEquals(0, f.released); assertEquals(2, f.native.statusReads)
+        }
+        f.native.onStop = {}; f.backend.stopAndJoinRetained()
+    }
+    @Test fun absentStartupObserverDoesNotReadAdditionalNativeStatus() = runBlocking<Unit> {
+        val f = Fixture(); val original = java.io.IOException("fixture EOF"); f.native.onReady = { throw original }
+        val session = f.backend.open(f.plan)
+        try { session.awaitReady(); fail("must preserve startup failure") } catch (failure: java.io.IOException) { assertTrue(generateSequence<Throwable>(failure) { it.cause }.any { it === original }) }
+        assertEquals(0, f.native.statusReads); assertEquals(1, f.native.stops); assertEquals(1, f.released)
+    }
+    @Test fun staleObserverCloseAndDiagnosticErrorsCannotReplaceOriginalFailure() = runBlocking<Unit> {
+        val f = Fixture(); val original = java.io.IOException("fixture EOF"); f.native.onReady = { throw original }
+        f.native.statusFailure = java.io.IOException("fixture status unavailable")
+        var observed: MeowTunnelBackend.StartupFailure? = null
+        val receiver: (MeowTunnelBackend.StartupFailure) -> Unit = { observed = it; error("fixture save failed") }
+        val old = MeowTunnelBackend.observeStartupFailures(receiver); old.close()
+        MeowTunnelBackend.observeStartupFailures(receiver).use {
+            old.close()
+            assertTrue(runCatching { MeowTunnelBackend.observeStartupFailures(receiver) }.isFailure)
+            val session = f.backend.open(f.plan)
+            try { session.awaitReady(); fail("must preserve startup failure") } catch (failure: java.io.IOException) { assertTrue(generateSequence<Throwable>(failure) { it.cause }.any { it === original }) }
+            val actual = checkNotNull(observed)
+            assertTrue(generateSequence(actual.failure) { it.cause }.any { it === original })
+            assertSame(f.native.statusFailure, actual.nativeBeforeStop.exceptionOrNull())
+            assertSame(f.native.statusFailure, actual.nativeAfterStop.exceptionOrNull())
+            assertEquals(1, f.native.stops); assertEquals(1, f.released)
+        }
+    }
     @Test fun packageEventUsesSameSessionIdentityCommandAndObserverClosesAfterJoin()=runBlocking<Unit>{
         val f = Fixture(); val session = f.backend.open(f.plan); session.awaitReady()
         val exit = CountDownLatch(1); val invalidated = CompletableDeferred<Unit>()

@@ -12,6 +12,17 @@ import kotlin.coroutines.coroutineContext
 
 /** Candidate complete policy adapter; Native/ART acceptance is required before production registration. */
 class MeowTunnelBackend(private val host: Host, private val commands: Commands = JniCommands) : TunnelBackend {
+    internal data class StartupFailure(val nativeGeneration: Long, val intentGeneration: Long?, val coreEpoch: String?,
+        val failure: Throwable, val nativeBeforeStop: Result<MeowStatus>, val nativeAfterStop: Result<MeowStatus>)
+    companion object {
+        private class StartupObserver(val receive: (StartupFailure) -> Unit)
+        private val startupObserver = java.util.concurrent.atomic.AtomicReference<StartupObserver?>(null)
+        internal fun observeStartupFailures(observer: (StartupFailure) -> Unit): AutoCloseable {
+            val registration = StartupObserver(observer)
+            check(startupObserver.compareAndSet(null, registration)) { "Startup diagnostics already observed" }
+            return AutoCloseable { startupObserver.compareAndSet(registration, null) }
+        }
+    }
     /** Existing Service responsibilities: lifecycle lock, prepare/retain, Builder FD and applied-file lease. */
     fun interface Host { suspend fun acquire(plan: VpnPlan): Lease }
     interface TunReceipt { val descriptor: Int }
@@ -109,7 +120,7 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
                 check(if (config.runtimeMode == NativeCore.RuntimeMode.Tun && !config.initiallyParked) fd >= 0 && owned.protector != null else fd == -1) { "Invalid Meow FD/protect plan" }
                 val handle = commands.start(config.planJson(), fd, owned.protector, owned.connectionOwner)
                 check(handle > 0) { "Meow returned an invalid handle" }
-                Session(handle, owned).also { session = it; synchronized(gate) { retained += it } }
+                Session(handle, owned, plan.ownerIntentToken).also { session = it; synchronized(gate) { retained += it } }
             }
             coroutineContext.ensureActive()
             check(checkNotNull(lease).isCurrent()) { "Meow startup intent was superseded" }
@@ -121,7 +132,7 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
         } finally { synchronized(gate) { acquiring = false } }
     }
 
-    inner class Session internal constructor(private val handle: Long, private val lease: Lease) : ListenerPolicySession {
+    inner class Session internal constructor(private val handle: Long, private val lease: Lease, private val intentGeneration: Long?) : ListenerPolicySession {
         internal fun owns(candidate: Lease) = lease === candidate
         private val cleanup = Mutex()
         private val listenerChanges = Mutex()
@@ -196,7 +207,13 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
                     }
                 }
             } catch (failure: Throwable) {
+                val observer = startupObserver.get()
+                val before = observer?.let { runCatching { commands.status(handle) } }
                 try { stop() } catch (cleanup: Throwable) { failure.addSuppressed(cleanup) }
+                if (observer != null && startupObserver.get() === observer) {
+                    val after = runCatching { commands.status(handle) }
+                    runCatching { observer.receive(StartupFailure(handle, intentGeneration, coreEpoch, failure, checkNotNull(before), after)) }
+                }
                 throw failure
             }
         } }

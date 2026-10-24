@@ -8,6 +8,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.aerove.lite.core.MeowNativeCore
 import dev.aerove.lite.vpn.LiteVpnService
+import dev.aerove.lite.vpn.MeowTunnelBackend
+import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.collect
@@ -77,7 +79,35 @@ class NativeSmokeTest {
                     "elapsedNanos=${android.os.SystemClock.elapsedRealtimeNanos()} stage=${stage.get()} phase=${actual.phase} error=${actual.error} endpointPort=${actual.endpoint?.port}") }
             }
         }
+        val diagnosticSaveFailure = AtomicReference<Throwable?>(null)
+        val diagnosticHits = java.util.concurrent.atomic.AtomicInteger()
+        val diagnosticGeneration = AtomicReference<String?>(null)
+        val testPid = android.os.Process.myPid()
+        var startupFailed = false
+        var startupDiagnostics: AutoCloseable? = null
         try {
+            check(android.app.Application.getProcessName() == context.packageName) { "Startup diagnostics requires the target main process" }
+            startupDiagnostics = MeowTunnelBackend.observeStartupFailures { diagnostic ->
+                diagnosticHits.incrementAndGet()
+                try {
+                    val capturePid = android.os.Process.myPid()
+                    check(capturePid == testPid && diagnostic.nativeGeneration > 0 && diagnostic.intentGeneration?.let { it > 0 } == true) { "Startup diagnostic owner identity is unavailable" }
+                    diagnosticGeneration.set("${diagnostic.nativeGeneration}/${diagnostic.intentGeneration}/${diagnostic.coreEpoch}")
+                    val directory = File(checkNotNull(context.getExternalFilesDir(null)), "captures")
+                    check(directory.isDirectory || directory.mkdirs()) { "Cannot create startup diagnostics directory" }
+                    val target = File(directory, "native-smoke-startup-${android.os.SystemClock.elapsedRealtimeNanos()}.txt")
+                    val content = buildString {
+                        appendLine("testPid=$testPid capturePid=$capturePid process=${android.app.Application.getProcessName()}")
+                        appendLine("nativeGeneration=${diagnostic.nativeGeneration} intentGeneration=${diagnostic.intentGeneration} coreEpoch=${diagnostic.coreEpoch}")
+                        appendLine(diagnostic.failure.stackTraceToString())
+                        appendLine("nativeBeforeStop=" + diagnostic.nativeBeforeStop.fold({ it.toString() }, { it.stackTraceToString() }))
+                        appendLine("nativeAfterStop=" + diagnostic.nativeAfterStop.fold({ it.toString() }, { it.stackTraceToString() }))
+                    }
+                    check(content.toByteArray(Charsets.UTF_8).size <= 512 * 1024) { "Startup diagnostic exceeds 512 KiB" }
+                    target.writeText(content)
+                    android.util.Log.i("NativeSmoke", "startupDiagnostic=${target.name}")
+                } catch (failure: Throwable) { diagnosticSaveFailure.compareAndSet(null, failure) }
+            }
             event("import-profile")
             val profile = graph.profiles.importText("TUN test", "mode: direct\nrules:\n  - MATCH,DIRECT\n")
             profileId = profile.id
@@ -141,6 +171,7 @@ class NativeSmokeTest {
                 .also { check(it.phase == VpnPhase.Running) { it.error ?: "VPN could not restart" } }
             event("running-second")
         } catch (failure: Throwable) {
+            startupFailed = stage.get() in setOf("start-first", "restart")
             failures.record(failure)
             event("first-failure:${stage.get()}", failure)
         } finally {
@@ -163,6 +194,15 @@ class NativeSmokeTest {
                 cleanup("readback") {
                     assertEquals("Original settings must be restored", settings, graph.settings.read())
                     assertEquals("Only the test profile may be removed", before, graph.profiles.snapshot())
+                }
+                cleanup("startup-diagnostics") {
+                    startupDiagnostics?.close()
+                    val directory = File(checkNotNull(context.getExternalFilesDir(null)), "captures")
+                    check(directory.isDirectory || directory.mkdirs()) { "Cannot create startup diagnostics directory" }
+                    File(directory, "native-smoke-observer-${android.os.SystemClock.elapsedRealtimeNanos()}.txt").writeText(
+                        "testPid=$testPid process=${android.app.Application.getProcessName()} startupFailed=$startupFailed hits=${diagnosticHits.get()} generation=${diagnosticGeneration.get()}")
+                    diagnosticSaveFailure.get()?.let { throw it }
+                    check(!startupFailed || diagnosticHits.get() > 0) { "Startup diagnostic observer did not capture the actual failure" }
                 }
                 cleanup("observation") { observation.cancelAndJoin() }
                 event("finished", failures.first)
