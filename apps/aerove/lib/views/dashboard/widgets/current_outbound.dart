@@ -19,6 +19,7 @@ import 'package:material_ui/material_ui.dart';
 
 import 'card.dart';
 import 'outbound_motion.dart';
+import 'traffic.dart';
 
 const _builtinOutbounds = {'DIRECT', 'REJECT', 'REJECT-DROP', 'PASS'};
 
@@ -28,7 +29,9 @@ const _ipMask = '*****';
 
 /// The address the proxied traffic leaves by, next to the start button.
 class CurrentOutboundCard extends ConsumerStatefulWidget {
-  const CurrentOutboundCard({super.key});
+  const CurrentOutboundCard({super.key, this.showTraffic = false});
+
+  final bool showTraffic;
 
   @override
   ConsumerState<CurrentOutboundCard> createState() =>
@@ -94,6 +97,62 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
         : isStart
         ? (appLocalizations.running, DashboardChipTone.ok)
         : (appLocalizations.notRunning, DashboardChipTone.idle);
+    final chip = DashboardChip(label: chipLabel, tone: chipTone, dot: isStart);
+    final header = DashboardCardHeader(
+      glyph: AppGlyphs.status,
+      title: appLocalizations.status,
+      leading: [chip],
+    );
+    Widget body({required bool withHeader}) => Row(
+      crossAxisAlignment: widget.showTraffic
+          ? CrossAxisAlignment.end
+          : CrossAxisAlignment.center,
+      spacing: metrics.gap,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (withHeader) ...[header, SizedBox(height: metrics.ipTop)],
+              _ExitRow(
+                info: ipInfo,
+                failed: failed,
+                loading: loading,
+                checking: phase == ProbePhase.probing || qualityLoading,
+                onRefresh: () => _refresh(ipInfo?.ip),
+                quality: quality,
+                active: isStart,
+                metrics: metrics,
+                large: !density.isDesktop,
+              ),
+              if (density.isDesktop)
+                const Spacer()
+              else
+                const SizedBox(height: 16),
+              _Cells(
+                quality: quality,
+                loading: loading,
+                active: isStart && !suspended,
+                gap: metrics.cellGap,
+              ),
+            ],
+          ),
+        ),
+        SizedBox(
+          width: metrics.buttonSlot,
+          child: Center(
+            child: _StartToggle(
+              size: metrics.buttonSize,
+              enabled: hasProfile,
+              running: isStart,
+              suspended: suspended,
+            ),
+          ),
+        ),
+      ],
+    );
+    final largeTraffic =
+        widget.showTraffic && MediaQuery.textScalerOf(context).scale(1) > 1.3;
     return DashboardCard(
       padding: EdgeInsets.zero,
       semanticLabel: appLocalizations.status,
@@ -105,67 +164,56 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
                 shape: AppShape.all(dashboardCardRadius(density)),
                 textDirection: Directionality.of(context),
               ),
-              child: OutboundRibbon(running: isStart && !suspended),
+              child: widget.showTraffic
+                  ? OutboundTrafficBackground(running: isStart && !suspended)
+                  : OutboundRibbon(running: isStart && !suspended),
             ),
           ),
           Padding(
             padding: metrics.padding,
-            child: Row(
-              spacing: metrics.gap,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+            child: largeTraffic
+                ? Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      DashboardCardHeader(
-                        glyph: AppGlyphs.status,
-                        title: appLocalizations.status,
-                        leading: [
-                          DashboardChip(
-                            label: chipLabel,
-                            tone: chipTone,
-                            dot: isStart,
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        spacing: 8,
+                        children: [
+                          Expanded(
+                            flex: 4,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                DashboardCardHeader(
+                                  glyph: AppGlyphs.status,
+                                  title: appLocalizations.status,
+                                ),
+                                chip,
+                              ],
+                            ),
+                          ),
+                          const Expanded(
+                            flex: 6,
+                            child: OutboundTrafficFigures(),
                           ),
                         ],
                       ),
                       SizedBox(height: metrics.ipTop),
-                      _ExitRow(
-                        info: ipInfo,
-                        failed: failed,
-                        loading: loading,
-                        checking: phase == ProbePhase.probing || qualityLoading,
-                        onRefresh: () => _refresh(ipInfo?.ip),
-                        quality: quality,
-                        active: isStart,
-                        metrics: metrics,
-                        large: !density.isDesktop,
-                      ),
-                      if (density.isDesktop)
-                        const Spacer()
-                      else
-                        const SizedBox(height: 16),
-                      _Cells(
-                        quality: quality,
-                        loading: loading,
-                        active: isStart && !suspended,
-                        gap: metrics.cellGap,
-                      ),
+                      body(withHeader: false),
+                    ],
+                  )
+                : Stack(
+                    children: [
+                      body(withHeader: true),
+                      if (widget.showTraffic)
+                        const PositionedDirectional(
+                          top: 0,
+                          end: 0,
+                          width: 144,
+                          child: OutboundTrafficFigures(),
+                        ),
                     ],
                   ),
-                ),
-                SizedBox(
-                  width: metrics.buttonSlot,
-                  child: Center(
-                    child: _StartToggle(
-                      size: metrics.buttonSize,
-                      enabled: hasProfile,
-                      running: isStart,
-                      suspended: suspended,
-                    ),
-                  ),
-                ),
-              ],
-            ),
           ),
         ],
       ),
@@ -552,23 +600,31 @@ class _Cells extends StatelessWidget {
       IpQuality(asn: final asn?) => 'AS$asn',
       _ => null,
     };
+    final runtime = _Cell(
+      label: appLocalizations.runTime,
+      value: active ? const _RunTimeValue() : const _Placeholder(),
+    );
+    final identity = _Cell(
+      label: appLocalizations.ipOrganization,
+      value: organization != null
+          ? _CellText(organization)
+          : loading
+          ? SkeletonText(width: 96, style: _cellStyle(context))
+          : const _Placeholder(),
+    );
+    if (!DashboardDensityScope.of(context).isDesktop &&
+        MediaQuery.textScalerOf(context).scale(1) > 1.3) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        spacing: 8,
+        children: [runtime, identity],
+      );
+    }
     return Row(
       spacing: gap,
       children: [
-        _Cell(
-          label: appLocalizations.runTime,
-          value: active ? const _RunTimeValue() : const _Placeholder(),
-        ),
-        Flexible(
-          child: _Cell(
-            label: appLocalizations.ipOrganization,
-            value: organization != null
-                ? _CellText(organization)
-                : loading
-                ? SkeletonText(width: 96, style: _cellStyle(context))
-                : const _Placeholder(),
-          ),
-        ),
+        runtime,
+        Flexible(child: identity),
       ],
     );
   }

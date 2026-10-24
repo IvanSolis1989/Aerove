@@ -987,5 +987,7 @@
   "alreadyInLocalProxies": "本地代理中已有 {name}",
   "aboutTelegramChannel": "Telegram 频道",
   "aboutTelegramGroup": "Telegram 群组",
-  "externalLinkOpenFailed": "无法打开此链接。请检查是否有可用且获准打开链接的应用。"
+  "externalLinkOpenFailed": "无法打开此链接。请检查是否有可用且获准打开链接的应用。",
+  "dashboardNetworkControl": "网络控制",
+  "dashboardNetworkOverview": "网络概览"
 }

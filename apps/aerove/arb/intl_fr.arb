@@ -987,5 +987,7 @@
   "alreadyInLocalProxies": "{name} est déjà dans les proxys locaux",
   "aboutTelegramChannel": "Canal Telegram",
   "aboutTelegramGroup": "Groupe Telegram",
-  "externalLinkOpenFailed": "Impossible d’ouvrir ce lien. Vérifiez qu’une application est disponible et autorisée à l’ouvrir."
+  "externalLinkOpenFailed": "Impossible d’ouvrir ce lien. Vérifiez qu’une application est disponible et autorisée à l’ouvrir.",
+  "dashboardNetworkControl": "Contrôles réseau",
+  "dashboardNetworkOverview": "Vue d’ensemble du réseau"
 }

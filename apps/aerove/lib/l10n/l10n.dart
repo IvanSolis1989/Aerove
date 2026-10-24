@@ -8302,6 +8302,26 @@ class AppLocalizations {
       args: [],
     );
   }
+
+  /// `Network controls`
+  String get dashboardNetworkControl {
+    return Intl.message(
+      'Network controls',
+      name: 'dashboardNetworkControl',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Network overview`
+  String get dashboardNetworkOverview {
+    return Intl.message(
+      'Network overview',
+      name: 'dashboardNetworkOverview',
+      desc: '',
+      args: [],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {

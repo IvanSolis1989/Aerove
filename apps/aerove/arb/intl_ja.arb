@@ -987,5 +987,7 @@
   "alreadyInLocalProxies": "{name} はすでにローカルプロキシにあります",
   "aboutTelegramChannel": "Telegram チャンネル",
   "aboutTelegramGroup": "Telegram グループ",
-  "externalLinkOpenFailed": "このリンクを開けません。リンクを開くことができ、許可されたアプリがあるか確認してください。"
+  "externalLinkOpenFailed": "このリンクを開けません。リンクを開くことができ、許可されたアプリがあるか確認してください。",
+  "dashboardNetworkControl": "ネットワーク制御",
+  "dashboardNetworkOverview": "ネットワーク概要"
 }

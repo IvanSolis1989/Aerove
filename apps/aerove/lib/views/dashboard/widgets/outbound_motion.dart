@@ -634,6 +634,60 @@ class _OutboundVisibilityRender extends RenderProxyBox {
   }
 }
 
+class OutboundSampleGate extends StatefulWidget {
+  const OutboundSampleGate({super.key, required this.builder});
+
+  final Widget Function(BuildContext context, bool visible) builder;
+
+  @override
+  State<OutboundSampleGate> createState() => _OutboundSampleGateState();
+}
+
+class _OutboundSampleGateState extends State<OutboundSampleGate> {
+  ScrollPosition? _position;
+  _OutboundVisibilityRender? _render;
+  var _visible = true;
+  var _scheduled = false;
+
+  void _check() {
+    if (_scheduled) return;
+    _scheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scheduled = false;
+      if (!mounted) return;
+      final visible = _render?.visible ?? false;
+      if (visible != _visible) setState(() => _visible = visible);
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final position = Scrollable.maybeOf(context)?.position;
+    if (position != _position) {
+      _position?.removeListener(_check);
+      _position = position;
+      _position?.addListener(_check);
+    }
+    _check();
+  }
+
+  @override
+  void dispose() {
+    _position?.removeListener(_check);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => _OutboundVisibility(
+    onPaint: (render) {
+      _render = render;
+      _check();
+    },
+    child: widget.builder(context, _visible),
+  );
+}
+
 class OutboundRibbon extends StatelessWidget {
   const OutboundRibbon({super.key, required this.running});
 

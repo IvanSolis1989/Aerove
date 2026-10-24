@@ -22,7 +22,9 @@ void _changeMode(WidgetRef ref, Mode mode) {
 }
 
 class OutboundModeCard extends ConsumerWidget {
-  const OutboundModeCard({super.key});
+  const OutboundModeCard({super.key, this.embedded = false});
+
+  final bool embedded;
 
   static const _outer = 26.0;
 
@@ -32,58 +34,58 @@ class OutboundModeCard extends ConsumerWidget {
       patchClashConfigProvider.select((state) => state.mode),
     );
     final tone = DashboardColors.of(context).tone;
-    return DashboardCard(
-      semanticLabel: context.appLocalizations.outboundMode,
-      child: Column(
-        children: [
+    final content = Column(
+      children: [
+        if (!embedded)
           DashboardCardHeader(
             glyph: AppGlyphs.split,
             title: context.appLocalizations.outboundMode,
           ),
-          const SizedBox(height: 12),
-          DashboardConnectedGroup(
-            children: [
-              for (final (index, item) in Mode.values.indexed)
-                Expanded(
-                  child: DashboardConnectedButton(
-                    pane: true,
-                    selected: item == mode,
-                    first: index == 0,
-                    last: index == Mode.values.length - 1,
-                    outer: _outer,
-                    inner: 12,
-                    background: tone,
-                    semanticLabel: item.label,
-                    onTap: () => _changeMode(ref, item),
-                    builder: (foreground) => SizedBox(
-                      height: 52,
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        spacing: 2,
-                        children: [
-                          GlyphIcon(
-                            _glyphOf(item),
-                            size: 18,
-                            color: foreground,
-                          ),
-                          GlassText(
-                            item.label,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: AppTextStyle.footnote
-                                .of(context, emphasized: item == mode)
-                                .copyWith(color: foreground),
-                          ),
-                        ],
-                      ),
+        if (!embedded) const SizedBox(height: 12),
+        DashboardConnectedGroup(
+          children: [
+            for (final (index, item) in Mode.values.indexed)
+              Expanded(
+                child: DashboardConnectedButton(
+                  pane: true,
+                  selected: item == mode,
+                  first: index == 0,
+                  last: index == Mode.values.length - 1,
+                  outer: _outer,
+                  inner: 12,
+                  background: tone,
+                  semanticLabel: item.label,
+                  onTap: () => _changeMode(ref, item),
+                  builder: (foreground) => SizedBox(
+                    height: 52 * MediaQuery.textScalerOf(context).scale(1),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      spacing: 2,
+                      children: [
+                        GlyphIcon(_glyphOf(item), size: 18, color: foreground),
+                        GlassText(
+                          item.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTextStyle.footnote
+                              .of(context, emphasized: item == mode)
+                              .copyWith(color: foreground),
+                        ),
+                      ],
                     ),
                   ),
                 ),
-            ],
-          ),
-        ],
-      ),
+              ),
+          ],
+        ),
+      ],
     );
+    return embedded
+        ? content
+        : DashboardCard(
+            semanticLabel: context.appLocalizations.outboundMode,
+            child: content,
+          );
   }
 }
 

@@ -19,6 +19,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'card.dart';
+import 'connection_stats.dart';
 
 String _statusLabel(BuildContext context, ServiceProbeStatus status) {
   final localizations = context.appLocalizations;
@@ -145,7 +146,9 @@ class _ServiceView {
 }
 
 class ServiceStatusCard extends ConsumerStatefulWidget {
-  const ServiceStatusCard({super.key});
+  const ServiceStatusCard({super.key, this.includeStats = false});
+
+  final bool includeStats;
 
   @override
   ConsumerState<ServiceStatusCard> createState() => _ServiceStatusCardState();
@@ -252,24 +255,29 @@ class _ServiceStatusCardState extends ConsumerState<ServiceStatusCard>
     );
     return DashboardCard(
       semanticLabel: appLocalizations.serviceStatus,
-      onTap: mobile ? _openSheet : null,
+      onTap: mobile && !widget.includeStats ? _openSheet : null,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: mobile ? MainAxisSize.min : MainAxisSize.max,
         children: [
           DashboardCardHeader(
             glyph: AppGlyphs.verified,
-            title: appLocalizations.serviceStatus,
-            chevron: mobile,
+            title: widget.includeStats
+                ? appLocalizations.dashboardNetworkOverview
+                : appLocalizations.serviceStatus,
+            chevron: mobile && !widget.includeStats,
             trailing: [
               ?verdict,
-              if (!mobile)
+              if (!mobile || widget.includeStats)
                 Transform.translate(
                   offset: const Offset(8, 0),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       _CheckAllButton(
+                        glyph: widget.includeStats
+                            ? AppGlyphs.sync
+                            : AppGlyphs.bolt,
                         loading: loading,
                         onPressed: () => _services.refresh(shown),
                       ),
@@ -285,6 +293,10 @@ class _ServiceStatusCardState extends ConsumerState<ServiceStatusCard>
           ),
           if (mobile) const SizedBox(height: 12) else const Spacer(),
           grid,
+          if (widget.includeStats) ...[
+            const SizedBox(height: 12),
+            const ConnectionStatsCard(embedded: true),
+          ],
         ],
       ),
     );
@@ -440,8 +452,13 @@ class _ServiceCell extends StatelessWidget {
 }
 
 class _CheckAllButton extends StatelessWidget {
-  const _CheckAllButton({required this.loading, required this.onPressed});
+  const _CheckAllButton({
+    required this.loading,
+    required this.onPressed,
+    this.glyph = AppGlyphs.bolt,
+  });
 
+  final Glyph glyph;
   final bool loading;
   final VoidCallback onPressed;
 
@@ -454,7 +471,7 @@ class _CheckAllButton extends StatelessWidget {
       );
     }
     return DashboardIconButton(
-      glyph: AppGlyphs.bolt,
+      glyph: glyph,
       tooltip: context.appLocalizations.serviceCheckAll,
       onPressed: onPressed,
     );

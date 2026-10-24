@@ -987,5 +987,7 @@
   "alreadyInLocalProxies": "{name} is already in local proxies",
   "aboutTelegramChannel": "Telegram channel",
   "aboutTelegramGroup": "Telegram group",
-  "externalLinkOpenFailed": "Unable to open this link. Check that an app is available and allowed to open it."
+  "externalLinkOpenFailed": "Unable to open this link. Check that an app is available and allowed to open it.",
+  "dashboardNetworkControl": "Network controls",
+  "dashboardNetworkOverview": "Network overview"
 }

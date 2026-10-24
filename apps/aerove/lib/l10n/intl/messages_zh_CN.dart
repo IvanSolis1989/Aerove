@@ -464,6 +464,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "dark": MessageLookupByLibrary.simpleMessage("深色"),
     "dashboard": MessageLookupByLibrary.simpleMessage("仪表盘"),
     "dashboardAddableSection": MessageLookupByLibrary.simpleMessage("可添加"),
+    "dashboardNetworkControl": MessageLookupByLibrary.simpleMessage("网络控制"),
+    "dashboardNetworkOverview": MessageLookupByLibrary.simpleMessage("网络概览"),
     "databaseWriteFailedTip": MessageLookupByLibrary.simpleMessage(
       "保存更改失败，已回滚",
     ),

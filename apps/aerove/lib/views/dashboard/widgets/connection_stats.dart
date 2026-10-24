@@ -12,7 +12,9 @@ import 'connections_table.dart';
 /// The counts of the three feeds, each opening its list, for the phone and
 /// for a desktop page too short for the table.
 class ConnectionStatsCard extends ConsumerStatefulWidget {
-  const ConnectionStatsCard({super.key});
+  const ConnectionStatsCard({super.key, this.embedded = false});
+
+  final bool embedded;
 
   @override
   ConsumerState<ConnectionStatsCard> createState() =>
@@ -35,41 +37,44 @@ class _ConnectionStatsCardState extends ConsumerState<ConnectionStatsCard>
     final shape = AppShape.all(
       dashboardCardRadius(DashboardDensityScope.of(context)) - _inset,
     );
-    return DashboardCard(
-      semanticLabel: context.appLocalizations.connectionStats,
-      padding: const EdgeInsets.all(_inset),
-      child: Row(
-        children: [
-          _Stat(
-            feed: DashboardFeed.connections,
-            shape: shape,
-            count: ValueListenableBuilder(
-              valueListenable: connectionCount,
-              builder: (context, count, _) => InteractionPaced(
-                revision: count,
-                builder: (_) => _Count(count),
-              ),
+    final content = Row(
+      children: [
+        _Stat(
+          feed: DashboardFeed.connections,
+          shape: shape,
+          count: ValueListenableBuilder(
+            valueListenable: connectionCount,
+            builder: (context, count, _) => InteractionPaced(
+              revision: count,
+              builder: (_) => _Count(count),
             ),
           ),
-          _Stat(
-            feed: DashboardFeed.requests,
-            shape: shape,
-            count: ThrottledCount(
-              provider: requestCountProvider,
-              builder: (_, count) => _Count(count),
-            ),
+        ),
+        _Stat(
+          feed: DashboardFeed.requests,
+          shape: shape,
+          count: ThrottledCount(
+            provider: requestCountProvider,
+            builder: (_, count) => _Count(count),
           ),
-          _Stat(
-            feed: DashboardFeed.dns,
-            shape: shape,
-            count: ThrottledCount(
-              provider: dnsQueryCountProvider,
-              builder: (_, count) => _Count(count),
-            ),
+        ),
+        _Stat(
+          feed: DashboardFeed.dns,
+          shape: shape,
+          count: ThrottledCount(
+            provider: dnsQueryCountProvider,
+            builder: (_, count) => _Count(count),
           ),
-        ],
-      ),
+        ),
+      ],
     );
+    return widget.embedded
+        ? content
+        : DashboardCard(
+            semanticLabel: context.appLocalizations.connectionStats,
+            padding: const EdgeInsets.all(_inset),
+            child: content,
+          );
   }
 }
 

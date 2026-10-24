@@ -611,6 +611,12 @@ class MessageLookup extends MessageLookupByLibrary {
     "dashboardAddableSection": MessageLookupByLibrary.simpleMessage(
       "Можно добавить",
     ),
+    "dashboardNetworkControl": MessageLookupByLibrary.simpleMessage(
+      "Управление сетью",
+    ),
+    "dashboardNetworkOverview": MessageLookupByLibrary.simpleMessage(
+      "Обзор сети",
+    ),
     "databaseWriteFailedTip": MessageLookupByLibrary.simpleMessage(
       "Не удалось сохранить изменение; оно отменено",
     ),
