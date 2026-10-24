@@ -3,6 +3,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path, PurePosixPath
 import shutil
 import signal
@@ -21,6 +22,65 @@ PINS = {
     'runtime': (12548174624, '06529e7bd88088f3001e47b5a24ebf788e9cbc7cd0d918d96052bfd8fe359a8c', '929b464153b4902bb182f78d0a385376d81ca558c6943d1ed59ad0aa4671dd83', 'e75ed0da2994f737b7c4cc729686638e87dc4d95851dca61e7740ddc4216f395'),
     'arm': (12548960803, '90d17a36d316e315d963ee4e0bd8cb4ab9df06c873ce55938c58441d187f1681', '1b8dc13cc03eebc57849b2b861ba8ed878c5413bcdcdb8dc592c6a258dfbd258', 'a4928eb9cae92a01b683e73efaa957f49e800600a9e48e827b04e4fd27618049'),
 }
+GPU_BACKEND = 'swangle'
+RENDERER_LABEL = 'SwANGLE (ANGLE + SwiftShader)'
+
+
+def emulator_environment(environment):
+    return {key: value for key, value in environment.items()
+            if not re.search(r'TOKEN|SECRET|PASSWORD|CREDENTIAL|PRIVATE_KEY', key, re.I)}
+
+
+def renderer_evidence(output):
+    lines = [line for line in output.splitlines()
+             if re.search(r'Graphics Adapter|Graphics API Version|Selecting Vulkan device|ICD set', line)]
+    observed = '\n'.join(lines).upper()
+    if 'ANGLE' not in observed or 'SWIFTSHADER' not in observed:
+        raise ValueError('Requested SwANGLE backend was not confirmed in actual renderer startup output')
+    return lines
+
+
+def crash_database():
+    import pwd
+    return Path('/tmp') / ('android-' + pwd.getpwuid(os.getuid()).pw_name) / 'emu-crash-37.2.12.db'
+
+
+def crash_inventory():
+    root = crash_database()
+    if not root.exists():
+        return {}
+    if root.is_symlink() or root.resolve() != root or root.stat().st_uid != os.getuid():
+        raise ValueError('Unexpected crash database ownership or path')
+    return {p.relative_to(root).as_posix(): (p.stat().st_size, p.stat().st_mtime_ns)
+            for p in root.rglob('*') if p.is_file() and not p.is_symlink() and p.resolve().is_relative_to(root)}
+
+
+def preserve_owned_crash(directory, pid, before):
+    root = crash_database()
+    expected = (str(root), str(pid))
+    advertised = re.findall(r'Storing crashdata in: ([^,\r\n]+), detection is enabled for process: ([0-9]+)',
+                            (directory / 'emulator.stdout.log').read_text(errors='replace'))
+    if advertised != [expected]:
+        return dict(status='not-copied; crash path and owned PID were not uniquely advertised')
+    inventory = crash_inventory()
+    records = []
+    total = 0
+    for name, metadata in sorted(inventory.items()):
+        if before.get(name) == metadata:
+            continue
+        if len(records) >= 256:
+            records.append(dict(status='not-copied; remaining entries exceed evidence file cap'))
+            break
+        if metadata[0] > 32 * 1024 * 1024 or total + metadata[0] > 128 * 1024 * 1024:
+            records.append(dict(path=name, bytes=metadata[0], status='not-copied; evidence size cap'))
+            continue
+        destination = directory / 'owned-crashpad' / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(root / name, destination)
+        total += metadata[0]
+        records.append(dict(path=name, bytes=metadata[0], sha256=sha(destination), status='copied'))
+    return dict(status='collected new/changed files after owned process wait', ownedPid=pid,
+                database=str(root), bytes=total, files=records)
 
 
 def sha(path):
@@ -147,7 +207,7 @@ def main():
     inputs = Path(os.environ['RUNNER_TEMP']) / 'qa79-original-inputs'
     inputs.mkdir(exist_ok=False)
     apk, runtime = download_original('runtime', inputs / 'runtime')
-    proof = dict(APP, apks={'app-release.apk': runtime['apkSha256'], 'app-release-androidTest.apk': '2f600dcdd3809328c3bd11cb37e706b3f6b0d6bc80c530d5aab3131971bf70ea'}, runtime=runtime, harnessRevision=os.environ['GITHUB_SHA'], harnessRun=os.environ['GITHUB_RUN_ID'], harnessFileSha256=sha(__file__), promotionAccepted=False)
+    proof = dict(APP, apks={'app-release.apk': runtime['apkSha256'], 'app-release-androidTest.apk': '2f600dcdd3809328c3bd11cb37e706b3f6b0d6bc80c530d5aab3131971bf70ea'}, runtime=runtime, harnessRevision=os.environ['GITHUB_SHA'], harnessRun=os.environ['GITHUB_RUN_ID'], harnessFileSha256=sha(__file__), promotionAccepted=False, gpuBackend=GPU_BACKEND, rendererBackend=RENDERER_LABEL)
     if args.phase == 'matrix':
         _, proof['arm'] = download_original('arm', inputs / 'arm')
     target = Path('apps/aerove-lite/app/build/outputs/apk')
@@ -158,7 +218,7 @@ def main():
         shutil.copyfile(source, destination)
     proof_path = directory / 'ORIGINAL-APP-PROOF.json'
     proof_path.write_text(json.dumps(proof, indent=2) + '\n')
-    emulator_command = [str(Path(os.environ['ANDROID_HOME']) / 'emulator/emulator'), '-port', '5554', '-avd', 'test', '-no-window', '-gpu', 'swiftshader_indirect', '-no-snapshot', '-noaudio', '-no-boot-anim']
+    emulator_command = [str(Path(os.environ['ANDROID_HOME']) / 'emulator/emulator'), '-port', '5554', '-avd', 'test', '-no-window', '-gpu', GPU_BACKEND, '-no-snapshot', '-noaudio', '-no-boot-anim']
     receipt = dict(app=APP, harnessRevision=os.environ['GITHUB_SHA'], harnessRun=os.environ['GITHUB_RUN_ID'], command=emulator_command, ownerPid=os.getpid(), unexpectedEmulatorExit=False, cleanupRequested=False)
     environment = dict(os.environ, ANDROID_SERIAL='emulator-5554', AEROVE_QA79_PROOF=str(proof_path))
     def interrupt(signum, frame):
@@ -167,9 +227,10 @@ def main():
     signal.signal(signal.SIGINT, interrupt)
     emulator = acceptance = None
     result = 1
+    crash_before = crash_inventory()
     try:
         with (directory / 'emulator.stdout.log').open('wb') as out, (directory / 'emulator.stderr.log').open('wb') as err:
-            emulator = subprocess.Popen(emulator_command, stdin=subprocess.DEVNULL, stdout=out, stderr=err, start_new_session=True)
+            emulator = subprocess.Popen(emulator_command, stdin=subprocess.DEVNULL, stdout=out, stderr=err, start_new_session=True, env=emulator_environment(os.environ))
             receipt['emulatorPid'] = emulator.pid
             deadline = time.monotonic() + 600
             while True:
@@ -184,6 +245,7 @@ def main():
                 if time.monotonic() >= deadline:
                     raise TimeoutError('Original 600-second boot deadline reached')
                 time.sleep(2)
+            receipt['rendererEvidence'] = renderer_evidence((directory / 'emulator.stdout.log').read_text(errors='replace'))
             subprocess.run(['adb', '-s', 'emulator-5554', 'shell', 'input', 'keyevent', '82'], check=True, timeout=10)
             acceptance = subprocess.Popen(['bash', 'apps/aerove-lite/tool/emulator_acceptance.sh', args.phase], env=environment, start_new_session=True)
             result = monitor(emulator, acceptance, receipt)
@@ -193,6 +255,10 @@ def main():
             receipt['acceptanceReturnCode'] = acceptance.returncode
         if emulator is not None:
             result = finish_emulator(emulator, receipt, result)
+            try:
+                receipt['crashpad'] = preserve_owned_crash(directory, emulator.pid, crash_before)
+            except (OSError, ValueError) as error:
+                receipt['crashpad'] = dict(status='collection failed', error=str(error))
         receipt['result'] = result
         (directory / 'EMULATOR-OWNER.json').write_text(json.dumps(receipt, indent=2) + '\n')
     return result

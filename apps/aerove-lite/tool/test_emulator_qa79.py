@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import sys
 import unittest
+import tempfile
 from unittest import mock
 
 import emulator_qa79 as qa
@@ -14,6 +15,45 @@ def child(code):
 
 
 class OwnerTests(unittest.TestCase):
+    def test_renderer_metadata_requires_actual_angle_and_swiftshader_startup_evidence(self):
+        with self.assertRaisesRegex(ValueError, 'not confirmed'):
+            qa.renderer_evidence('Graphics Adapter Android Emulator OpenGL ES Translator (Google SwiftShader)')
+        output = 'Graphics Adapter ANGLE (Google SwiftShader)\nGraphics API Version OpenGL ES 3.1'
+        self.assertEqual(output.splitlines(), qa.renderer_evidence(output))
+
+    def test_emulator_environment_removes_authentication_only_from_child_copy(self):
+        original = dict(GH_TOKEN='private', GITHUB_TOKEN='private', ACTIONS_RUNTIME_TOKEN='private',
+                        ACTIONS_ID_TOKEN_REQUEST_TOKEN='private', SOME_SECRET='private',
+                        GITHUB_SHA='harness', GITHUB_RUN_ID='run', PATH='bin', ANDROID_HOME='sdk')
+        safe = qa.emulator_environment(original)
+        self.assertEqual(dict(GITHUB_SHA='harness', GITHUB_RUN_ID='run', PATH='bin', ANDROID_HOME='sdk'), safe)
+        self.assertIn('GH_TOKEN', original)
+
+    def test_crash_export_rejects_wrong_pid_before_reading_database(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            (directory / 'emulator.stdout.log').write_text('Storing crashdata in: /tmp/android-runner/emu-crash-37.2.12.db, detection is enabled for process: 17')
+            with mock.patch.object(qa, 'crash_database', return_value=Path('/tmp/android-runner/emu-crash-37.2.12.db')), mock.patch.object(qa, 'crash_inventory') as inventory:
+                self.assertIn('not-copied', qa.preserve_owned_crash(directory, 18, {})['status'])
+                inventory.assert_not_called()
+
+    def test_crash_export_copies_only_new_owned_scoped_files_with_hash(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp) / 'evidence'
+            directory.mkdir()
+            root = Path(temp) / 'db'
+            (root / 'pending').mkdir(parents=True)
+            (root / 'pending/new.dmp').write_bytes(b'owned crash dump')
+            (root / 'pending/old.dmp').write_bytes(b'prior dump')
+            (directory / 'emulator.stdout.log').write_text(f'Storing crashdata in: {root}, detection is enabled for process: 18')
+            with mock.patch.object(qa, 'crash_database', return_value=root), mock.patch.object(qa.os, 'getuid', create=True, return_value=root.stat().st_uid):
+                before = qa.crash_inventory()
+                before.pop('pending/new.dmp')
+                result = qa.preserve_owned_crash(directory, 18, before)
+            self.assertEqual(['pending/new.dmp'], [item['path'] for item in result['files']])
+            self.assertEqual(qa.sha(root / 'pending/new.dmp'), result['files'][0]['sha256'])
+            self.assertFalse((directory / 'owned-crashpad/pending/old.dmp').exists())
+
     def test_live_owned_child_records_real_termination_and_preserves_success(self):
         emulator = child('import time;time.sleep(20)')
         receipt = dict(unexpectedEmulatorExit=False)

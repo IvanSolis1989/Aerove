@@ -34,6 +34,8 @@ from pathlib import Path
 proof_path = os.environ.get("AEROVE_QA79_PROOF")
 proof = json.loads(Path(proof_path).read_text()) if proof_path else None
 if proof:
+    if proof.get("gpuBackend") != "swangle" or proof.get("rendererBackend") != "SwANGLE (ANGLE + SwiftShader)":
+        raise SystemExit("Invalid QA renderer proof")
     if (proof.get("sourceRevision") != "8d4bc572aa6b1984bd084e0d72d48b7c6b9f7e8e" or proof.get("sourceTree") != "a8822ba6523696f378659becf8f99121396d93f1" or proof.get("workflowRun") != "40063528837" or proof.get("harnessRevision") != os.environ["GITHUB_SHA"] or proof.get("promotionAccepted") is not False):
         raise SystemExit("Invalid dedicated QA79 original-app proof")
     for name, location in [("app-release.apk", "release"), ("app-release-androidTest.apk", "androidTest/release")]:
@@ -47,11 +49,12 @@ Path(sys.argv[1]).write_text(json.dumps({"sourceRevision": proof["sourceRevision
     "workflowRun": os.environ.get("GITHUB_RUN_ID"), "runNumber": int(os.environ["GITHUB_RUN_NUMBER"]),
     "runAttempt": int(os.environ["GITHUB_RUN_ATTEMPT"]), "phase": sys.argv[2],
     "testTimeoutMillis": int(sys.argv[3]),
-    "deviceKind": "CI-emulator", "rendererBackend": "SwiftShader-indirect",
+    "deviceKind": "CI-emulator", "rendererBackend": proof["rendererBackend"] if proof else "SwiftShader-indirect",
     "prebuiltApks": True, "performanceEvidence": False, "deviceSerial": sys.argv[4],
     "isolatedBackgroundPolicy": True}, indent=2), encoding="utf-8")
 PY
 app_source=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sourceRevision"])' "$diagnostics/SOURCE.json")
+renderer_backend=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["rendererBackend"])' "$diagnostics/SOURCE.json")
 python3 apps/aerove-lite/tool/fixture_server.py > "$diagnostics/fixture.log" 2>&1 &
 fixture_pid=$!
 
@@ -179,7 +182,7 @@ grep -Fx 'instrumentation:dev.aerove.lite.test/androidx.test.runner.AndroidJUnit
 set +e
 "${adb_device[@]}" shell am instrument -w -r -e debug false -e timeout_msec "$test_timeout_msec" "${selection[@]}" \
     -e fixtureUrl http://10.0.2.2:18080 -e sourceRevision "$app_source" \
-    -e isolatedBackgroundPolicy true -e deviceKind CI-emulator -e rendererBackend SwiftShader-indirect \
+    -e isolatedBackgroundPolicy true -e deviceKind CI-emulator -e rendererBackend "$renderer_backend" \
     dev.aerove.lite.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee "$diagnostics/instrumentation.log"
 pipeline_status=("${PIPESTATUS[@]}")
 set -e
