@@ -1,4 +1,10 @@
+[文档](../README.md) → [开发维护](README.md)
+
 # Issue 表单与 AI 助手
+
+面向反馈者与维护者，说明 Issue 分类、AI 回复权限、配置及验证方式。助手输出是分析资料，验收结论仍需要维护者核实。
+
+**本页导航** · [行为与权限](#行为与权限) · [配置](#配置) · [验证与手动运行](#验证与手动运行)
 
 AEROVE 的 Issue 入口按使用求助、故障、性能与耗电、功能建议、文档问题分为五类。
 表单关注标准版与 Lite 的独立版本、系统、复现条件和可验证证据，不套用配置规则仓库的分类。
@@ -57,7 +63,7 @@ Actions → **AEROVE Issue assistant** → Run workflow：
 - `send`：必须指定 Issue 编号，向该 Issue 发布一条分析；仅用于维护者明确需要重新分析的情况。
 - `deep_analysis`：使用 Pro，默认关闭。预览也会消耗相应 API 用量。
 
-离线检查：
+在仓库根目录执行离线检查：
 
 ```sh
 node --test .github/scripts/ai-issue-*.test.mjs
@@ -71,3 +77,7 @@ PR 和 main 的相关文件变更自动执行离线测试及 YAML 解析，不�
 [MiMo Chat Completions](https://mimo.mi.com/docs/zh-CN/api/chat/openai-api)、
 [MiMo 错误码](https://mimo.mi.com/docs/zh-CN/api/guidance/error-codes)、
 [GitHub Actions 安全指引](https://docs.github.com/en/actions/reference/security/secure-use)。
+
+## 相关下一步
+
+[开发维护入口](README.md) · [官方通知维护](TELEGRAM.md)

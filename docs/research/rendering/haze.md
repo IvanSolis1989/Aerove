@@ -1,4 +1,10 @@
+[文档](../../README.md) / [技术研究](../README.md)
+
 # Haze 2.0.1：AEROVE Lite 原生库复用选型核验
+
+阅读边界：本页保留固定来源、当时判断与未闭环记录，不能代替生产规格或实际验收。现行 Lite 为原生 Android + meow-rs、最低 API 33；共同界面和客户端功能以[双向契约](../../shared/UI_CONTRACT.md)为准，仅固定 Rust 核心源码证明不支持的能力可暂缓。
+
+本页目录：[结论](#结论) · [1. 发布与 Maven 的实际状态](#1-发布与-maven-的实际状态) · [2. 已核实的功能与适配约束](#2-已核实的功能与适配约束) · [3. Compose、平台和许可证](#3-compose平台和许可证) · [4. AEROVE Lite 三档材质映射建议（选型层推论，未接库验证）](#4-aerove-lite-三档材质映射建议选型层推论未接库验证) · [5. 性能、测试与未知项](#5-性能测试与未知项) · [6. 原始证据及收口](#6-原始证据及收口)
 
 核验日期：2026-10-22。按最新指令收敛为 GitHub 库选型，不作全仓生产审计，不等待网络补齐。只使用已取得的官方发布 API、Maven Central 元数据/AAR/source JAR、固定 commit 源码和文档；未构建、未运行库/测试/benchmark，未改项目、未启动代理、未执行下载的二进制。其他候选由各自责任人核验，本报告不代替其结论。
 
@@ -91,3 +97,7 @@ Haze 可复用 Compose 背景采集、模糊及 Glass 光学，不需要从零�
 - `maven-glass-metadata.xml`、`maven-glass-module.json`、`maven-android-pom.xml`、Android `.module`、AAR、source JAR 和 `.sha1`：实际发行文件与校验依据。
 - `pinned-source/`：固定 SHA 的已下载文本。部分 raw 下载中断；完整 tarball 读取失败，未获得完整归档。本报告明确区分已读文件和未验证项，已停止抓取/重试，不等待补齐。
 - 没有改项目、版本 helper 或测试，没有 Flutter/Gradle/benchmark 执行，没有递归委派。选型结论供主线程 `NATIVE_LIBRARY_SELECTION.md` 整合；真实接库另作阶段。
+
+---
+
+相关入口：[研究入口](../README.md) · [共享契约](../../shared/UI_CONTRACT.md)

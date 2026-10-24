@@ -1,4 +1,10 @@
+[Documentation](../../docs/README.md) → [Development](../../docs/development/README.md)
+
 # AEROVE Lite
+
+Build-root reference for the native Android product. Lite has not had its first public release; the pinned Meow migration still requires Rust runtime, Android and APK acceptance.
+
+**On this page** · [Development](#development) · [Ownership and behavior](#ownership-and-behavior) · [Licenses](#licenses)
 
 Independent Android application: Kotlin/Jetpack Compose, Backdrop and a pinned Rust/meow-rs core (migration in progress). The Flutter/Go Aerove
 application remains a separate product. This directory is the actual Lite application; `../../experiments/aerove-lite-renderer`
@@ -20,6 +26,8 @@ Use JDK 17, Gradle 9.6.0, Android SDK/Build Tools 37, NDK 28.2.13676358 and Rust
 `native/prepare.py`, `native/Cargo.toml`, `native/Cargo.lock` and the Gradle files. The small upstream patch and mobile
 embedding module retain the original engine license and provenance. Do not edit the generated lock to imitate a
 successful dependency resolution.
+
+Run the following commands from `apps/aerove-lite/` at the repository root.
 
 On Linux, after installing the target with `rustup target add aarch64-linux-android`:
 
@@ -69,3 +77,7 @@ The preserved clash-rs sources retain Apache-2.0 and their NOTICE, including
 the enabled TUIC feature's GPL3 condition. Backdrop and Shapes retain Apache-2.0. Copies of the principal notices are in
 the APK's `assets/licenses/` and the native source's `licenses/`. The full corresponding source and exact dependency pins
 must accompany any distributed production build.
+
+## Related next steps
+
+[Product documentation](../../docs/aerove-lite/README.md) · [Acceptance contract](../../docs/shared/ACCEPTANCE.md)

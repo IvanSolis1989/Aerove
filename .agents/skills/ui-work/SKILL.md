@@ -5,6 +5,14 @@ description: Use when changing FlClash Flutter UI, widgets, screens, Material Yo
 
 # UI Work
 
+[Documentation](../../../docs/README.md) · [Development](../../../docs/development/README.md) · [Agent references](../../skills.md)
+
+UI workflow and references for the Standard edition.
+
+**On this page**
+
+[When To Use](#when-to-use) · [Conventions](#conventions) · [Corner Radii](#corner-radii) · [Verification](#verification) · [Pitfalls](#pitfalls)
+
 ## When To Use
 
 Use this for user-facing Flutter UI changes in `lib/`, including widgets, screens, navigation surfaces, settings rows,

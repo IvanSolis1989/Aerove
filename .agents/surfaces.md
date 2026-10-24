@@ -1,5 +1,13 @@
 # Surfaces
 
+[Documentation](../docs/README.md) · [Development](../docs/development/README.md) · [Agent references](skills.md)
+
+Reference for surface hierarchy, state colors and their implementation locations.
+
+**On this page**
+
+[Levels](#levels) · [The Seeded Scheme](#the-seeded-scheme) · [State](#state) · [Borders That Stay](#borders-that-stay) · [Navigation](#navigation) · [Where It Lives](#where-it-lives) · [Checking A Change](#checking-a-change)
+
 FlClash draws structure with fills and keeps color for state. A surface stands out from what it sits on by a step in
 lightness, never by a border. Color appears where something is selected, on, failing, or the one action a screen is
 for. The dashboard set this direction; every other screen follows it, and Material components keep their behavior

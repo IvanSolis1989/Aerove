@@ -1,4 +1,10 @@
+[文档](../../README.md) / [技术研究](../README.md)
+
 # Android 原生液态玻璃复用选型证据：LiquidGlass / Cloudy
+
+阅读边界：本页保留固定来源、当时判断与未闭环记录，不能代替生产规格或实际验收。现行 Lite 为原生 Android + meow-rs、最低 API 33；共同界面和客户端功能以[双向契约](../../shared/UI_CONTRACT.md)为准，仅固定 Rust 核心源码证明不支持的能力可暂缓。
+
+本页目录：[1. 固定来源与发行核验](#1-固定来源与发行核验) · [2. 背景采样、真实折射与叠层](#2-背景采样真实折射与叠层) · [3. API、Compose 与生产依赖](#3-apicompose-与生产依赖) · [4. 缓存、读回、帧调度和生命周期](#4-缓存读回帧调度和生命周期) · [5. 超椭圆与产品适配](#5-超椭圆与产品适配) · [6. 后续接库验证事项（本阶段不执行）](#6-后续接库验证事项本阶段不执行) · [7. 证据位置与源码行链接](#7-证据位置与源码行链接)
 
 日期：2026-10-22。范围收敛为 GitHub 现成库复用选型的来源与关键实现证据，不是候选库全仓生产审计。未修改 Aerove、AEROVE Lite 或两个冻结的自研样板文件，未运行 Gradle/模拟器/真机，未安装全局工具或启动代理。本报告不审 Kyant0、Haze 或 shayann07。
 
@@ -117,3 +123,7 @@ Cloudy 有实质调度与回收设计：SkyFrameDriver 由 nested scroll/显式 
 [C-gyro]: https://github.com/belinwu/cloudy/blob/e3ffd8e957b2a29832c287a95665ecc540e9c7eb/cloudy/src/androidMain/kotlin/com/skydoves/cloudy/GyroLight.android.kt#L95-L131
 [C-extension]: https://github.com/belinwu/cloudy/blob/e3ffd8e957b2a29832c287a95665ecc540e9c7eb/cloudy/src/commonMain/kotlin/com/skydoves/cloudy/Optic.kt#L124-L142
 [C-tests]: https://github.com/belinwu/cloudy/tree/e3ffd8e957b2a29832c287a95665ecc540e9c7eb/cloudy/src/androidDeviceTest
+
+---
+
+相关入口：[研究入口](../README.md) · [共享契约](../../shared/UI_CONTRACT.md)

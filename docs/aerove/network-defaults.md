@@ -1,5 +1,7 @@
 # Aerove 国内网络默认基线
 
+[文档](../README.md) / [标准版](README.md)
+
 默认方案采用 [Smart-Config-Kit 的 FlClash 专用脚本](https://github.com/IvanSolis1989/Smart-Config-Kit/tree/main/FlClash)，
 DNS 的业务解析器、分域策略、回退链和私有节点适配由该脚本维护。
 按用户最新要求，Aerove 仅将自举解析器收紧为下列四个 DoH-over-IP 地址，不保留明文兜底，
@@ -11,6 +13,15 @@ https://223.6.6.6/dns-query
 https://8.8.8.8/dns-query
 https://1.1.1.1/dns-query
 ```
+
+## 本页目录
+
+- [来源与更新](#section-1)
+- [DNS 所有权](#section-2)
+- [Android 默认设置](#section-3)
+- [验证边界](#section-4)
+
+<a name="section-1"></a>
 
 ## 来源与更新
 
@@ -26,6 +37,8 @@ https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/main/FlClash/Fl
 
 Aerove 代码的上游同步与这份脚本的更新是两条独立流程。当前脚本通过脚本库的更新操作刷新，
 不把订阅自动更新误称为脚本自动更新，也不自行假设源仓库要求某个更新周期。
+
+<a name="section-2"></a>
 
 ## DNS 所有权
 
@@ -49,6 +62,8 @@ Aerove 代码的上游同步与这份脚本的更新是两条独立流程。当�
 业务 DNS 仍按作者方案使用国内/海外 DoH，不能为了检测网站的国家标签而替换为全海外 DNS。
 DNS 国家标签也不等于实际流量出口或泄漏结论。字段含义参考
 [Mihomo DNS 文档](https://wiki.metacubex.one/config/dns/)。
+
+<a name="section-3"></a>
 
 ## Android 默认设置
 
@@ -77,8 +92,14 @@ DNS 国家标签也不等于实际流量出口或泄漏结论。字段含义参�
 私网路由绕过保持原客户端的局域网兼容行为；被主动排除的应用、路由以及应用自己的加密 DNS
 仍需结合设备路径检查，不能以 DNS 字典一致代替整机网络验收。
 
+<a name="section-4"></a>
+
 ## 验证边界
 
 脚本来源校验、基础与私有节点用例，以及最终配置 DNS 的深比较用于防止客户端意外改写作者方案。
 Android 真机仍需核验 VPN 授权、重启后的实际配置、应用是否被排除、连接出口与 DNS 请求路径。
 静态或合成测试通过不构成“所有设备绝对零泄漏”的证明。
+
+---
+
+下一步：[标准版说明](README.md) · [文档导航](../README.md)

@@ -1,5 +1,13 @@
 # Commands
 
+[Documentation](../docs/README.md) · [Development](../docs/development/README.md) · [Agent references](skills.md)
+
+Build, development and verification commands for the Standard edition.
+
+**On this page**
+
+[Building](#building) · [Flutter Development](#flutter-development) · [Code Generation](#code-generation) · [Testing](#testing) · [Native Component Verification](#native-component-verification) · [Changelog And Release](#changelog-and-release) · [Verify](#verify) · [Worktree Tooling](#worktree-tooling)
+
 Paths and commands for the full product are relative to `apps/aerove/`; run its commands there.
 Repository governance and workflows remain at the repository root. See [workspace layout](../docs/development/REPOSITORY_LAYOUT.md).
 
@@ -269,34 +277,33 @@ they are not the AEROVE publication entry. Its original release history is in `d
 
 ### Website
 
-`website/` is the GitHub Pages site: a static page that renders `CHANGELOG.md` and the download links in the browser, and
-works as is for local previews. `tooling/website/build_site.sh [dir]` assembles it with the preview images, the app icon,
-`CHANGELOG.md` read at the latest release tag, and a `release.json` of asset names, sizes and digests fetched through
-`gh`. Without `gh` access the page falls back to the newest version in `CHANGELOG.md` and lists the files without sizes.
-It then runs `tooling/website/render_site.mjs` (Node), which writes the English page and a `zh/` copy for search engines: page
-text, the first changelog releases, canonical and `hreflang` links, JSON-LD and `sitemap.xml`, all from the strings,
-changelog parser and release markup in `website/assets/shared.js`, plus the GitHub star count from `release.json` so the
-nav does not grow when the page loads. `SITE_URL` overrides the published URL these point at.
-On the built site each URL keeps its language: the language button links to the other page and carries the section in
-view, the chosen platform and the changelog search. Only the English root sends readers who chose or prefer Chinese on
-to `zh/`, unless its URL carries `?lang=en`: the button on `zh/` links there with it, so getting back to English never
-depends on browser storage. A project site cannot serve the `robots.txt` that would announce the sitemap, so submit
-`sitemap.xml` in Google Search Console and Bing Webmaster Tools once.
+`website/` and `tooling/website/` generate the static English and Chinese GitHub Pages pages. Run assembly from the
+repository root; opening the source HTML directly does not assemble release metadata, localized pages or brand assets.
 
 ```bash
-# Run this block from the repository root.
+# Run from the repository root; the output directory must not already exist.
 bash tooling/website/build_site.sh tooling/website/.output
-python3 -m http.server -d tooling/website/.output
 ```
 
-The page's look is deliberate: low-saturation flat colour, no blur, glow, glass or soft shadow, and motion that follows
-the logo's 30° lattice. `website/assets/field.js` draws the hero's capsules on that lattice with the glyph's own
-proportions, and the slanted wipes, the dot-to-bar marks and the theme transition reuse the same angle. Text that sits
-inside the hero has to be listed in `wireField` in `app.js`, or the capsules run behind it.
+`build_site.sh` obtains actual releases through `gh api` for `SITE_REPOSITORY` (default `IvanSolis1989/Aerove`).
+`shared.js` selects stable and preview Standard releases with the exact Android APK asset; `render_site.mjs` generates
+both pages, SEO and sitemap using the actual asset URLs. If metadata is unavailable, the pages link to GitHub releases
+without inventing a download. Lite remains unreleased. The changelog is reached through the repository's authoritative
+product document, not parsed into browser-side download names.
 
-`.github/workflows/pages.yaml` deploys it after every successful stable tag build and on pushes to `main` that touch the
-site, in the public repository only; its Pages source has to be set to GitHub Actions once. The file names come from the
-actual published release assets, so a renamed artifact needs the same change in `buildsFor` in `website/assets/app.js`.
+`SITE_URL` overrides the public site root. `SITE_RELEASES_FILE` supplies an existing fixed releases JSON file for
+reproducible offline assembly. `SITE_SOURCE_ROOT` overrides the source checkout from which existing Standard/Lite brand
+resources are copied; it defaults to the checkout containing the build script. These options do not download APKs.
+The generator refuses an existing output directory; choose a fresh task-specific destination for each new assembly.
+The build assembles in a unique temporary sibling and publishes it only after successful rendering. A failed attempt leaves the final path free for retry and reports the preserved diagnostic directory; existing final outputs are never replaced.
+
+The site uses a quiet cyan/lilac palette, rounded download cards and light frosted navigation, with no refraction claim.
+`app.js` controls theme preference; `field.js` draws a static texture once. There is no browser polling or release fetch.
+The language links keep the reader in the corresponding localized page; theme and keyboard navigation remain testable.
+Follow [documentation visual checks](../docs/development/DOCUMENTATION_STYLE.md#验收与交付) before pushing changes.
+
+`.github/workflows/pages.yaml` remains the deployment entry. Its existing repository, event and authorization boundaries
+still apply; this documentation change does not deploy the site or alter CI.
 
 ## Verify
 

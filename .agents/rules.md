@@ -1,5 +1,13 @@
 # Rules
 
+[Documentation](../docs/README.md) · [Development](../docs/development/README.md) · [Agent references](skills.md)
+
+Binding engineering conventions for the Standard edition.
+
+**On this page**
+
+[Dart and Flutter Style](#dart-and-flutter-style) · [Comments](#comments) · [Core API Safety](#core-api-safety) · [Lifecycle Rules](#lifecycle-rules) · [UI Isolate Work](#ui-isolate-work) · [Testing Rules](#testing-rules) · [Running the App Locally](#running-the-app-locally) · [Commit Messages](#commit-messages) · [Migrations](#migrations) · [Generated Code](#generated-code)
+
 Paths and commands for the full product are relative to `apps/aerove/`; run its commands there.
 Repository governance and workflows remain at the repository root. See [workspace layout](../docs/development/REPOSITORY_LAYOUT.md).
 

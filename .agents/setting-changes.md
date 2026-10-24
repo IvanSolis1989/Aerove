@@ -1,5 +1,13 @@
 # Setting Changes
 
+[Documentation](../docs/README.md) · [Development](../docs/development/README.md) · [Agent references](skills.md)
+
+Reference for how settings reach the running Core and Android VPN.
+
+**On this page**
+
+[Update](#update) · [Apply](#apply) · [Restart](#restart) · [One Setting, Several Paths](#one-setting-several-paths) · [Choosing The Path](#choosing-the-path)
+
 A changed setting takes one of three paths. The path depends on who reads the setting and when it reads it, not on
 which page edits it. Choose the path when you add a setting or move one.
 

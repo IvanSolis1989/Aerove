@@ -1,4 +1,8 @@
+[Documentation](../../../../docs/README.md) → [Development](../../../../docs/development/README.md)
+
 # proxy
+
+Standard edition desktop plugin reference. Read the platform backends and failure behavior before integrating the public API; FlClash below is the inherited implementation name.
 
 FlClash's desktop system-proxy integration.
 
@@ -10,3 +14,7 @@ FlClash's desktop system-proxy integration.
 The public `Proxy` API validates the port, applies HTTP, HTTPS, and SOCKS
 settings to `127.0.0.1`, and returns `false` when the selected platform backend
 is unavailable or a command fails.
+
+## Related next steps
+
+[Build and verification commands](../../../../.agents/commands.md) · [Standard edition build root](../../README.md)

@@ -1,4 +1,8 @@
+[文档](../../docs/README.md) → [开发维护](../../docs/development/README.md)
+
 # AEROVE Lite Render Lab
+
+这是已暂停的早期渲染实验记录，供追溯构建设想与验证边界。正式 Lite 的开发入口位于独立产品工程。
 
 状态：自研尝试已暂停，源码骨架仅作开发记录，尚无Activity或可运行APK。用户要求优先复用现成原生库，后续按[玻璃库选型](../../docs/research/rendering/library-selection.md)接入固定发行版本。本目录不纳入当前治理改动的提交或任何发布。
 
@@ -13,6 +17,8 @@ Android 13+（API33）的独立原生视觉验证工程。它不依赖Flutter或
 - Android SDK Platform36和Build Tools36.0.0。编译SDK36不改变API33最低运行版本。
 
 以下是后续接库并补齐工程后的构建入口，目前骨架不能用于签收。届时在本目录创建不提交的`local.properties`，设置本机`sdk.dir`，或设置`ANDROID_HOME`。
+
+执行目录：仓库根目录下的 `experiments/aerove-lite-renderer/`。以下仍是待补齐工程后的命令，不是当前成功构建记录。
 
 ```powershell
 gradle --no-daemon :app:assembleDebug :app:lintDebug
@@ -34,3 +40,7 @@ adb pull /sdcard/aerove-renderlab.png
 真实GPU结果必须在Android13+设备或模拟器上截图、逐帧检查；成功编译不证明RuntimeShader已成功编译或视觉效果达标。模拟器也不代替真机性能和能耗验收。完整对照矩阵见[验收契约](../../docs/shared/ACCEPTANCE.md)，已完成范围与缺口写入开发记录。
 
 此阶段不据样板的假数据、包体或帧率宣称完整Lite更省内存、更省电或已达到Aerove全部视觉与功能。
+
+## 相关下一步
+
+[Lite 正式工程](../../apps/aerove-lite/README.md) · [共同验收契约](../../docs/shared/ACCEPTANCE.md)

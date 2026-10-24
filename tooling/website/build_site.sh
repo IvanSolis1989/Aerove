@@ -3,56 +3,55 @@ set -euo pipefail
 
 repo="${SITE_REPOSITORY:-IvanSolis1989/Aerove}"
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-app="$root/apps/aerove"
+source_root="${SITE_SOURCE_ROOT:-$root}"
 out="${1:-$root/tooling/website/.output}"
-
 if ! command -v node >/dev/null; then
   echo "error: tooling/website/render_site.mjs needs Node.js on PATH" >&2
   exit 1
 fi
-
-rm -rf "$out"
-mkdir -p "$out"
-cp -R "$root/website/." "$out/"
-cp "$app/snapshots/preview.png" "$app/snapshots/preview-dark.png" "$out/"
-cp "$app/assets/images/icon.png" "$out/icon.png"
-cp "$app/assets_source/images/icon/glyph.svg" "$out/favicon.svg"
-
-if stars="$(gh api "repos/$repo" --jq '.stargazers_count' 2>/dev/null)" &&
-  release="$(gh api "repos/$repo/releases/latest" --jq ".tag_name, ({
-  tag: .tag_name,
-  publishedAt: .published_at,
-  assets: [.assets[] | {name, size, digest}],
-  stars: $stars
-} | tojson)" 2>/dev/null)"; then
-  { read -r tag && read -r json; } <<<"$release"
-  printf '%s\n' "$json" >"$out/release.json"
-else
-  echo "warning: no release metadata from $repo; the page falls back to CHANGELOG.md" >&2
-  tag=""
+# Refuse existing outputs: a misspelled output path must never erase source or unrelated evidence.
+if [[ -e "$out" || -L "$out" ]]; then
+  echo "error: output already exists; choose a new empty destination: $out" >&2
+  exit 1
 fi
-
-# The changelog comes from the released tag so the notes never run ahead of the
-# downloads; the working tree copy is only a fallback for local previews.
-if [[ -n "$tag" ]] && ! git -C "$root" rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-  git -C "$root" fetch -q --depth=1 origin "refs/tags/$tag:refs/tags/$tag"
-fi
-if [[ -n "$tag" ]]; then
-  found=false
-  for path in docs/aerove/CHANGELOG.md docs/CHANGELOG_Aerove.md CHANGELOG.md; do
-    if git -C "$root" show "$tag:$path" >"$out/CHANGELOG.md" 2>/dev/null; then
-      found=true
-      break
-    fi
-  done
-  if [[ "$found" != true ]]; then
-    echo "error: released tag $tag has no recorded changelog" >&2
-    exit 1
+# Assemble in a unique sibling, so failed attempts never occupy the final output.
+parent="$(dirname -- "$out")"
+name="$(basename -- "$out")"
+mkdir -p "$parent"
+parent="$(cd "$parent" && pwd -P)"
+out="$parent/$name"
+work="$(mktemp -d "$parent/.$name.building.XXXXXX")"
+report_failure() {
+  status=$?
+  if [[ "$status" -ne 0 && -d "$work" ]]; then
+    printf 'error: site assembly failed; partial output preserved for diagnosis: %s\n' "$work" >&2
   fi
-else
-  cp "$root/docs/aerove/CHANGELOG.md" "$out/CHANGELOG.md"
+}
+trap report_failure EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+cp -R "$root/website/." "$work/"
+cp "$source_root/apps/aerove/assets/images/icon.png" "$work/icon.png"
+cp "$source_root/apps/aerove-lite/app/src/main/res/drawable-nodpi/aerove_lite_icon.png" "$work/lite-icon.png"
+cp "$source_root/apps/aerove/assets_source/images/icon/glyph.svg" "$work/favicon.svg"
+# Optional fixed metadata makes the same assembly reproducible offline; never download application packages.
+if [[ -n "${SITE_RELEASES_FILE:-}" ]]; then
+  cp "$SITE_RELEASES_FILE" "$work/releases.json"
+elif ! gh api --paginate --slurp "repos/$repo/releases?per_page=100" --jq 'add' >"$work/releases.json"; then
+  echo 'warning: release metadata unavailable; only GitHub release navigation will be shown' >&2
+  printf '[]\n' >"$work/releases.json"
 fi
-
-node "$root/tooling/website/render_site.mjs" "$out" "${SITE_URL:-https://ivansolis1989.github.io/Aerove}"
-
+node "$root/tooling/website/render_site.mjs" "$work" "${SITE_URL:-https://ivansolis1989.github.io/Aerove}" "$repo"
+# Refuse a destination created during assembly as well; never replace an existing artifact.
+if [[ -e "$out" || -L "$out" ]]; then
+  echo "error: output appeared during assembly; refusing to replace it: $out" >&2
+  exit 1
+fi
+mv -T -n -- "$work" "$out"
+# GNU mv --no-clobber may return success without moving if another writer won the race.
+if [[ -d "$work" ]]; then
+  echo "error: output could not be published without replacing an existing path: $out" >&2
+  exit 1
+fi
+trap - EXIT INT TERM
 echo "site assembled in $out"
