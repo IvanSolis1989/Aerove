@@ -90,6 +90,8 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 同一固定提交另只读核对 `GraphicsLayer.kt`、`LayoutNodeDrawScope.kt` 与 `AndroidRenderEffect.android.kt` 的离屏记录、`DstIn` 隔离及 RenderEffect 输入桥接，用于 Lite 极光前景蒙版修正；未复制上游实现或增加依赖。
 
+紧凑速度指标的单行行高另核对原 #94 APK 实际使用的 **Compose ui-text 1.12.0** 与[同版发布源码](https://dl.google.com/dl/android/maven2/androidx/compose/ui/ui-text-android/1.12.0/ui-text-android-1.12.0-sources.jar)：源码包 SHA256 `f40f267cc1bbf7315e37916d6baf818dd7791b42db6dc238303a8b48471aa292`，`LineHeightStyleSpan.android.kt` SHA256 `7b2860fed655511174fcbedf2e9cca5d88f405384e48dd360561226bb62b74be`。只读参考单行 `Trim.Both` 与指定 leading 的处理，局部使用既有 `LineHeightStyle`、`PlatformTextStyle` API；未复制实现或新增依赖。上述 Git 参考提交不是该发布版本身份；实际字形和布局仍须 Android 验收。
+
 **许可证、署名与证据：** Apache-2.0；保留 Android Open Source Project 署名；[固定 `FlowExt.kt`](https://github.com/androidx/androidx/blob/851a99e20723278101bfa110cc209021ba676748/lifecycle/lifecycle-runtime-compose/src/commonMain/kotlin/androidx/lifecycle/compose/FlowExt.kt)、[固定 `AlignmentLine.kt`](https://github.com/androidx/androidx/blob/851a99e20723278101bfa110cc209021ba676748/compose/ui/ui/src/commonMain/kotlin/androidx/compose/ui/layout/AlignmentLine.kt)；本项目入口为 `GlobalResourceLibraryScreen.kt` 和 `OverviewScreen.kt`
 
 #### [google/skia](https://github.com/google/skia)

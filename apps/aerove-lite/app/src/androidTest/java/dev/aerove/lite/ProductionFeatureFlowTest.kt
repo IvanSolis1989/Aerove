@@ -3,6 +3,8 @@ package dev.aerove.lite
 import android.content.Intent
 import android.net.VpnService
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -69,9 +71,20 @@ class ProductionFeatureFlowTest {
             activity = launched
             lateinit var controller: LiteController
             launched.onActivity { controller = ViewModelProvider(it)[LiteController::class.java] }
-            compose.waitUntil(15_000) { controller.state.value.selectedProfile == owned.id }
+            compose.waitUntil(15_000) { controller.state.value.initialized && controller.state.value.selectedProfile == owned.id }
 
-            compose.onNodeWithContentDescription(context.getString(R.string.lite_dashboard_edit)).performClick()
+            // This fixture starts with fresh settings, so complete the production consent gate first.
+            compose.onNodeWithText(context.getString(R.string.maintenance_agree)).assertIsDisplayed().performClick()
+            compose.onNodeWithText(context.getString(R.string.maintenance_confirm)).assertIsNotEnabled()
+            compose.onNodeWithContentDescription(context.getString(R.string.maintenance_disclaimer_restate_hint))
+                .performTextInput(context.getString(R.string.maintenance_disclaimer_no_service_statement))
+            compose.onNodeWithText(context.getString(R.string.maintenance_confirm)).performClick()
+            withTimeout(15_000) {
+                controller.state.first { it.settings.acceptedDisclaimerVersion >= dev.aerove.lite.maintenance.CURRENT_DISCLAIMER_VERSION && it.busy.isEmpty() }
+            }
+            assertEquals("Consent must persist through the production settings owner",
+                dev.aerove.lite.maintenance.CURRENT_DISCLAIMER_VERSION, graph.settings.read().acceptedDisclaimerVersion)
+            compose.onNodeWithContentDescription(context.getString(R.string.lite_dashboard_edit)).assertIsDisplayed().performClick()
             compose.onNodeWithTag("dashboard-editor").performScrollToNode(hasTestTag("dashboard-row-networkSpeed"))
             compose.onNodeWithContentDescription(context.getString(R.string.lite_dashboard_remove,
                 context.getString(R.string.lite_network_speed))).performClick()

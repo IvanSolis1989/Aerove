@@ -36,6 +36,9 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontSynthesis
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
@@ -344,6 +347,28 @@ class DashboardLayoutUiTest {
         put("button", statusRect("dashboard-status-button"))
     }
 
+    private fun trafficTextLayouts(): Map<String, TextLayoutResult> = buildMap {
+        for (direction in listOf("upload", "download")) for (line in listOf("label", "value", "unit", "total")) {
+            val tag = "dashboard-$direction-$line"
+            val results = mutableListOf<TextLayoutResult>()
+            compose.onNodeWithTag(tag, useUnmergedTree = true)
+                .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+            put(tag, results.single())
+        }
+    }
+
+    private fun metricGlyphBounds(layout: TextLayoutResult): android.graphics.Rect {
+        val input = layout.layoutInput
+        val style = input.style
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = with(input.density) { style.fontSize.toPx() }
+            typeface = input.fontFamilyResolver.resolve(style.fontFamily, style.fontWeight ?: FontWeight.Normal,
+                style.fontStyle ?: FontStyle.Normal, style.fontSynthesis ?: FontSynthesis.All).value as android.graphics.Typeface
+            style.localeList?.firstOrNull()?.let { textLocale = Locale.forLanguageTag(it.toLanguageTag()) }
+        }
+        return android.graphics.Rect().also { paint.getTextBounds(input.text.text, 0, input.text.length, it) }
+    }
+
     private fun trafficMeasurements(): String {
         val heading = statusRect("dashboard-status-heading")
         val body = statusRect("dashboard-status-body")
@@ -354,7 +379,10 @@ class DashboardLayoutUiTest {
         val candidate = Rect(traffic.left, heading.top, traffic.right, heading.top + traffic.height)
         val collisions = statusForegroundRects().filterKeys { it != "dashboard-status-body" && it != "dashboard-status-heading" }
             .filterValues { it.overlaps(candidate) }.keys
-        return "phase=${state.value.phase} identity=${state.value.outboundIdentity != null} loading=${state.value.outboundLoading} candidate=$candidate collisions=$collisions density=$density fontScale=$effectiveFontScale content=${statusRect("dashboard-status-content")} " +
+        val linesMeasured = trafficTextLayouts().mapValues { (_, text) ->
+            "${text.size} baseline=${text.firstBaseline} glyph=${metricGlyphBounds(text)} overflow=${text.didOverflowHeight}"
+        }
+        return "metricLines=$linesMeasured phase=${state.value.phase} identity=${state.value.outboundIdentity != null} loading=${state.value.outboundLoading} candidate=$candidate collisions=$collisions density=$density fontScale=$effectiveFontScale content=${statusRect("dashboard-status-content")} " +
             "heading=$heading body=$body traffic=$traffic bodyY=${body.top - heading.top} " +
             "nominalLineCeiling=$ceiling nominalLineTotalRounded=$rounded nominalRoundingAllowance=${ceiling - rounded} foreground=${statusForegroundRects()} " +
             "widthFits=${heading.width + (8 * density).roundToInt() + traffic.width <= statusRect("dashboard-status-content").width}"
@@ -379,6 +407,11 @@ class DashboardLayoutUiTest {
         val measuredFit = heading.width + (8 * density).roundToInt() + traffic.width <= content.width && !collision
         val overlay = expectedOverlay
         println("STATUS_OVERLAY expectedOverlay=$expectedOverlay measuredFit=$measuredFit $measurements")
+        trafficTextLayouts().forEach { (tag, text) ->
+            val glyph = metricGlyphBounds(text)
+            assertTrue("$tag must retain its measured glyphs: $measurements", !text.didOverflowHeight &&
+                text.firstBaseline + glyph.top >= 0 && text.firstBaseline + glyph.bottom <= text.size.height)
+        }
         if (overlay) assertEquals(measurements, card, statusRect("dashboard-status"))
         else assertTrue(measurements, statusRect("dashboard-status").height > card.height)
         before.forEach { (key, rect) -> assertEquals("$key $measurements", rect, after.getValue(key)) }
@@ -445,6 +478,20 @@ class DashboardLayoutUiTest {
     fun fractionalDensityChineseStatusKeepsTrafficAtTopRight() {
         val initial = fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = dev.aerove.lite.VpnPhase.Running)
         launch(initial, maxWidth = (1080f / 2.625f).dp, deviceDensity = 2.625f, language = "zh-CN")
+        addTrafficAndAssertOriginalForeground(expectedOverlay = true)
+    }
+
+    @Test
+    fun fractionalDensityEnglishAtThirteenTenthsKeepsOriginalGeometryAndGlyphs() {
+        val initial = fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = dev.aerove.lite.VpnPhase.Running)
+        launch(initial, fontScale = 1.3f, maxWidth = (1080f / 2.625f).dp, deviceDensity = 2.625f, language = "en")
+        addTrafficAndAssertOriginalForeground(expectedOverlay = true)
+    }
+
+    @Test
+    fun fractionalDensityChineseAtThirteenTenthsKeepsOriginalGeometryAndGlyphs() {
+        val initial = fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = dev.aerove.lite.VpnPhase.Running)
+        launch(initial, fontScale = 1.3f, maxWidth = (1080f / 2.625f).dp, deviceDensity = 2.625f, language = "zh-CN")
         addTrafficAndAssertOriginalForeground(expectedOverlay = true)
     }
 

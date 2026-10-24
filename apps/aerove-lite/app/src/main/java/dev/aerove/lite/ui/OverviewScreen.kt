@@ -54,6 +54,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -383,18 +385,21 @@ private fun OutboundStatusCard(state: LiteState, actions: LiteActions, showTraff
 @Composable
 private fun StatusSpeed(upload: Boolean, rate: Long, total: Long, modifier: Modifier) {
     val visuals = LocalLiteVisuals.current
+    // Single-line Trim.Both keeps the font's natural height instead of this compact leading.
+    val lineStyle = remember { LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None) }
+    val platformStyle = remember { PlatformTextStyle(includeFontPadding = false) }
     val value = formatBytes(rate).split(' ', limit = 2)
     Column(modifier.testTag(if (upload) "dashboard-upload" else "dashboard-download"), verticalArrangement = Arrangement.spacedBy(0.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
             LiteIcon(if (upload) FullGlyphs.arrowUp else FullGlyphs.arrowDown, size = 10.dp, color = visuals.secondaryInk)
-            LiteText(stringResource(if (upload) R.string.lite_upload else R.string.lite_download), style = LiteType.Caption.copy(fontSize = 11.sp, lineHeight = 12.sp), maxLines = 1)
+            LiteText(stringResource(if (upload) R.string.lite_upload else R.string.lite_download), Modifier.testTag(if (upload) "dashboard-upload-label" else "dashboard-download-label"), style = LiteType.Caption.copy(fontSize = 11.sp, lineHeight = 12.sp, platformStyle = platformStyle, lineHeightStyle = lineStyle), maxLines = 1)
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-            LiteText(value[0], Modifier.alignByBaseline(), style = LiteType.Footnote.copy(fontSize = 14.sp, lineHeight = 14.sp), maxLines = 1)
-            LiteText(stringResource(R.string.lite_rate, value.getOrElse(1) { "B" }), Modifier.alignByBaseline(), style = LiteType.Caption.copy(fontSize = 10.sp, lineHeight = 10.sp),
+            LiteText(value[0], Modifier.testTag(if (upload) "dashboard-upload-value" else "dashboard-download-value").alignByBaseline(), style = LiteType.Footnote.copy(fontSize = 14.sp, lineHeight = 14.sp, platformStyle = platformStyle, lineHeightStyle = lineStyle), maxLines = 1)
+            LiteText(stringResource(R.string.lite_rate, value.getOrElse(1) { "B" }), Modifier.testTag(if (upload) "dashboard-upload-unit" else "dashboard-download-unit").alignByBaseline(), style = LiteType.Caption.copy(fontSize = 10.sp, lineHeight = 10.sp, platformStyle = platformStyle, lineHeightStyle = lineStyle),
                 color = visuals.secondaryInk, maxLines = 1)
         }
-        LiteText(stringResource(R.string.lite_traffic_total, formatBytes(total)), style = LiteType.Caption.copy(fontSize = 10.sp, lineHeight = 10.sp), color = visuals.secondaryInk, maxLines = 1)
+        LiteText(stringResource(R.string.lite_traffic_total, formatBytes(total)), Modifier.testTag(if (upload) "dashboard-upload-total" else "dashboard-download-total"), style = LiteType.Caption.copy(fontSize = 10.sp, lineHeight = 10.sp, platformStyle = platformStyle, lineHeightStyle = lineStyle), color = visuals.secondaryInk, maxLines = 1)
     }
 }
 
