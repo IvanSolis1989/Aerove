@@ -633,6 +633,17 @@ jobs:
           timeout --kill-after=10s 240s sdkmanager --install 'build-tools;35.0.0' emulator --channel=0
           timeout --kill-after=5s 20s "$ANDROID_HOME/emulator/emulator" -no-window -version > "$STANDARD_REFERENCE_ROOT/environment/emulator-version.txt" 2>&1
           grep -E '37\.2\.12\.0.*16428233' "$STANDARD_REFERENCE_ROOT/environment/emulator-version.txt"
+          legacy_sdk_dir="$ANDROID_HOME/cmdline-tools/latest"
+          test -x "$legacy_sdk_dir/bin/sdkmanager"
+          grep -Fx 'Pkg.Revision=12.0' "$legacy_sdk_dir/source.properties" > "$STANDARD_REFERENCE_ROOT/environment/legacy-sdk-version.txt"
+          if timeout --kill-after=10s 120s "$legacy_sdk_dir/bin/sdkmanager" --sdk_root="$ANDROID_HOME" --licenses \
+              > "$STANDARD_REFERENCE_ROOT/environment/legacy-sdk-licenses.log" 2>&1 <<< "$(printf 'y\n%.0s' {1..64})"; then
+            printf '0\n' > "$STANDARD_REFERENCE_ROOT/environment/legacy-sdk-licenses.exit.txt"
+          else
+            legacy_license_rc=$?
+            printf 'SDK_LICENSE_CLI_EXIT=%s\n' "$legacy_license_rc" >&2 || true
+            exit "$legacy_license_rc"
+          fi
           test -s "$ANDROID_HOME/licenses/android-sdk-preview-license" || { echo '::error::Existing SDK setup has not recorded the official preview license'; exit 1; }
           image_archive="$RUNNER_TEMP/std-play33-r01.zip"
           timeout --kill-after=10s 250s curl --fail --location --proto '=https' --tlsv1.2 --max-time 240 \

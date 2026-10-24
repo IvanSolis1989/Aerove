@@ -918,6 +918,8 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **用途与采用方式：** 历史 QA83 testAPK-only task graph 只读调查 `ProguardConfigurableTask.kt`、`AndroidTestTaskManager.kt`、`R8Task.kt` 的 task/mapping 输入关系，该次 init 候选未执行或采用。后续正式接入公开 classfile API，并参考 `ClassFileProviderFactory.java` 与 `r8Tool.kt` 的有序 library provider 语义，修复重复库类误判：按 boot / compile classpath 顺序选首个定义，同时保留源码冲突和缺失接口的严格失败；未复制 provider 实现。真实 AGP 构建已在客户端 CI 执行，修正后的完整构建仍须验收
 
+标准版原包诊断另只读核对[固定 `sdkmanager.sh`](https://android.googlesource.com/platform/tools/base/+/dcded801a4942d06805cc74b56dc2cecbece2f80/sdklib/wrappers/sdkmanager.sh)，提交为 `dcded801a4942d06805cc74b56dc2cecbece2f80`。该 wrapper 的 `--licenses` 警告并返回成功，用于解释 CI 新工具未生成旧 preview 许可记录的边界；参考源与运行二进制身份分别记录，不互相冒充。诊断流程改用环境中已存在且核版本为 12.0 的 Java SDKmanager 执行正式许可登记，保留实际退出码和原许可文件检查；未复制 wrapper 实现、未新增或伪造许可文件。原文件保留 AOSP 2026 的 Apache-2.0 版权头。
+
 **许可证、署名与证据：** Apache-2.0；sources jar 原版权头及 `NOTICE`，有序 provider 源文件保留 AOSP 2017 署名；`NOTICE` 解压后 SHA256 `4842d6b86dc14afab28106d484946e1f927974896772c4644030be8758405ae0`。固定 `ClassFileProviderFactory.java` SHA256 `d400669af2f4773736dd1b85b01060d5d7051ba681d9611c535498b6d3b8b412`，第 49、64–65 行为顺序选首个 descriptor 的来源依据；[官方 Gradle source artifact](https://dl.google.com/dl/android/maven2/com/android/tools/build/gradle/9.4.1/gradle-9.4.1-sources.jar)、[官方 Builder source artifact](https://dl.google.com/dl/android/maven2/com/android/tools/build/builder/9.4.1/builder-9.4.1-sources.jar)
 
 ### 来源登记边界
