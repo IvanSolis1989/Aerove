@@ -1,6 +1,8 @@
 <!-- Generated compatibility feed. Edit docs/aerove/CHANGELOG.md and run tooling/sync_update_feed.py. -->
 # Aerove 变更记录
 
+[文档](README.md) / [标准版](aerove/README.md) / 发行记录
+
 本文件记录 Aerove 的功能调整和修复；功能概览与使用方法见 [中文 README](../README.md) / [English README](i18n/README.en.md)。[历史上游记录](archive/README.md) 保持独立，不由本文件替代。
 
 分支差异以记录的 FlClash `v0.9.1`（`8d4f9744948751f1273fe871e1d05276fac09b0e`）为基线。代理协议、核心路由、VPN 授权和监控数据等上游已有能力，不列为 Aerove 独创功能。

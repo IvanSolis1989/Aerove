@@ -1,5 +1,9 @@
 # AEROVE workspace instructions
 
+[文档导航](docs/README.md) · [开发维护](docs/development/README.md)
+
+仓库开发入口：产品规则、开发导航与交付边界。
+
 Read this entry point, then the applicable product instructions. The Standard edition and Lite are independent build roots:
 
 - [AEROVE 标准版](apps/aerove/AGENTS.md): Flutter and official Mihomo; run its commands in `apps/aerove/`.
@@ -67,3 +71,11 @@ Read this entry point, then the applicable product instructions. The Standard ed
   and verify hashes, signing, package identity and release notes. Pure directory or policy changes do not justify silently
   rebuilding an already verified old application.
 - No coding-agent Co-authored-by trailers. Repository comment-density and commit-message hooks remain binding.
+
+## 文档编写、排版与视觉验收契约
+
+- 所有人写项目文档、文档入口及网站中英文内容必须遵守唯一的[文档编写与视觉规范](docs/development/DOCUMENTATION_STYLE.md)，统一信息层次、导航与可读排版；密集细节进入仓库二级页面，不另建 Wiki 副本。
+- 美化必须保留命令、代码、权威条款、来源身份、机器消费者格式与历史版权；沿用唯一事实源和开源鸣谢清单，维护旧路径及锚点兼容。具体保护边界和页面模板见上述规范。
+- 推送前必须对受影响代表模板完成桌面1280px、手机390px的浅深色四组合真实渲染检查；网站中英文均需覆盖，确认无整体溢出、裁切、断图或不可读内容，并核对链接与锚点。输入未变的有效证据复用，只补验受影响风险。
+- 推送后核对真实 GitHub 和涉及的已部署站点渲染及相关 CI；本地预览不能冒充线上验收。未完成项如实记录，提交、推送与部署仍受本次授权约束。
+- 纯文档变更不重编 App、不改已验收产物身份。发布、候选、研究、Android渲染和能耗实测必须分清，不能以文档或截图替代对应验收。

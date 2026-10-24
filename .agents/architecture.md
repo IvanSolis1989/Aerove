@@ -1,5 +1,16 @@
 # Architecture
 
+[Documentation](../docs/README.md) · [Development](../docs/development/README.md) · [Agent references](skills.md)
+
+Architecture reference for the Standard edition: ownership, data flow, UI and native components.
+
+**On this page**
+
+- **Core and routing**: [Reference merge invariants](#reference-merge-invariants) · [Core Integration](#core-integration) · [DNS, NTP and Sniffer Overrides](#dns-ntp-and-sniffer-overrides) · [Listener Exposure](#listener-exposure) · [Lifecycle Ownership And Convergence](#lifecycle-ownership-and-convergence) · [Core Protocol And Event Delivery](#core-protocol-and-event-delivery) · [User-Facing Core And Delay Feedback](#user-facing-core-and-delay-feedback) · [Route Consistency](#route-consistency)
+- **UI and interaction**: [UI Layer](#ui-layer) · [Icons](#icons) · [App Bar Actions](#app-bar-actions) · [Liquid Glass](#liquid-glass) · [Popup Motion](#popup-motion) · [Row Actions And Sort Mode](#row-actions-and-sort-mode) · [Quick Edit](#quick-edit) · [Where A Route Opens](#where-a-route-opens) · [Settings Rows](#settings-rows) · [Forms](#forms) · [Keyboard Insets](#keyboard-insets) · [Rebuild Scopes](#rebuild-scopes) · [Bottom Sheet Motion](#bottom-sheet-motion) · [Page Arrival](#page-arrival)
+- **State and ownership**: [State Management](#state-management) · [Database](#database) · [Manager Stack](#manager-stack) · [Core Controller and Actions](#core-controller-and-actions) · [Safe Mode](#safe-mode)
+- **Build and plugins**: [Build System](#build-system) · [Local Plugins](#local-plugins) · [code_forge Plugin](#code_forge-plugin) · [window Plugin](#window-plugin) · [rust_api Crate Layout](#rust_api-crate-layout) · [Profile Script Engine](#profile-script-engine) · [Rust Helper Service](#rust-helper-service)
+
 Paths and commands for the full product are relative to `apps/aerove/`; run its commands there.
 Repository governance and workflows remain at the repository root. See [workspace layout](../docs/development/REPOSITORY_LAYOUT.md).
 

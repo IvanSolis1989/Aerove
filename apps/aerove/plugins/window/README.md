@@ -1,4 +1,10 @@
+[Documentation](../../../../docs/README.md) → [Development](../../../../docs/development/README.md)
+
 # window
+
+Standard edition desktop window API, lifecycle and runner integration reference. Method arguments, return values and platform limitations form the contract below; FlClash identifies the inherited implementation.
+
+**On this page** · [Dart API](#dart-api) · [Method channel contract](#method-channel-contract) · [Lifecycle](#lifecycle) · [Unused contract surface](#unused-contract-surface) · [Runner hooks](#runner-hooks)
 
 Desktop window control for FlClash on Linux, macOS and Windows. Written for
 FlClash; it replaced the `window_manager` fork, and its platform code derives
@@ -23,34 +29,147 @@ crashes on channel input.
 Arguments are a `Map<String, Object?>`; `-` means no arguments. Void methods
 return `null`.
 
-| Method | Arguments | Returns | Notes |
-| --- | --- | --- | --- |
-| `ensureInitialized` | - | null | Binds the plugin to the Flutter view's window and leaves it hidden. Every other method requires it. |
-| `show` | `inactive: bool` | null | `inactive` shows without taking focus. |
-| `hide` | - | null | |
-| `isVisible` | - | bool | |
-| `focus` | - | null | |
-| `close` | - | null | Runs the close path; with `preventClose` set only the `close` event fires. |
-| `setPreventClose` | `value: bool` | null | |
-| `isMaximized` | - | bool | |
-| `maximize` | - | null | |
-| `unmaximize` | - | null | |
-| `isMinimized` | - | bool | |
-| `minimize` | - | null | |
-| `restore` | - | null | |
-| `isFullScreen` | - | bool | |
-| `setFullScreen` | `value: bool` | null | |
-| `getBounds` | - | `{x, y, width, height}` doubles | Logical pixels, top-left origin on every platform. |
-| `setBounds` | `x?, y?, width?, height?: double` | null | Absent `x`/`y` keeps the position, absent size keeps the size. Never changes z-order or focus. |
-| `isPositionSupported` | - | bool | false on Wayland, where the compositor owns placement. |
-| `setMinimumSize` | `width, height: double` | null | |
-| `isAlwaysOnTop` / `setAlwaysOnTop` | `value: bool` | bool / null | |
-| `setTitleBarStyle` | `style: "normal" \| "hidden", windowButtonVisibility: bool` | null | Hidden keeps the system frame, border and resize edges; only the caption goes. |
-| `setSkipTaskbar` | `value: bool` | null | macOS switches the activation policy. |
-| `setRoundedCorners` | `value: bool` | null | Windows 11 corner preference; no-op elsewhere. |
-| `isEffectSupported` | `effect: String` | bool | See effects below. False for anything `setEffect` would silently not draw. |
-| `setEffect` | `effect: String, tint: int?` ARGB`, brightness: "light" \| "dark" \| null` | null | `unsupported` error when `isEffectSupported` is false. `brightness` picks the light or dark material; null follows the system. |
-| `startDragging` | - | null | Begins a window move from the current pointer press. |
+### `ensureInitialized`
+
+- **Arguments:** -
+- **Returns:** null
+- **Notes:** Binds the plugin to the Flutter view's window and leaves it hidden. Every other method requires it.
+
+### `show`
+
+- **Arguments:** `inactive: bool`
+- **Returns:** null
+- **Notes:** `inactive` shows without taking focus.
+
+### `hide`
+
+- **Arguments:** -
+- **Returns:** null
+
+### `isVisible`
+
+- **Arguments:** -
+- **Returns:** bool
+
+### `focus`
+
+- **Arguments:** -
+- **Returns:** null
+
+### `close`
+
+- **Arguments:** -
+- **Returns:** null
+- **Notes:** Runs the close path; with `preventClose` set only the `close` event fires.
+
+### `setPreventClose`
+
+- **Arguments:** `value: bool`
+- **Returns:** null
+
+### `isMaximized`
+
+- **Arguments:** -
+- **Returns:** bool
+
+### `maximize`
+
+- **Arguments:** -
+- **Returns:** null
+
+### `unmaximize`
+
+- **Arguments:** -
+- **Returns:** null
+
+### `isMinimized`
+
+- **Arguments:** -
+- **Returns:** bool
+
+### `minimize`
+
+- **Arguments:** -
+- **Returns:** null
+
+### `restore`
+
+- **Arguments:** -
+- **Returns:** null
+
+### `isFullScreen`
+
+- **Arguments:** -
+- **Returns:** bool
+
+### `setFullScreen`
+
+- **Arguments:** `value: bool`
+- **Returns:** null
+
+### `getBounds`
+
+- **Arguments:** -
+- **Returns:** `{x, y, width, height}` doubles
+- **Notes:** Logical pixels, top-left origin on every platform.
+
+### `setBounds`
+
+- **Arguments:** `x?, y?, width?, height?: double`
+- **Returns:** null
+- **Notes:** Absent `x`/`y` keeps the position, absent size keeps the size. Never changes z-order or focus.
+
+### `isPositionSupported`
+
+- **Arguments:** -
+- **Returns:** bool
+- **Notes:** false on Wayland, where the compositor owns placement.
+
+### `setMinimumSize`
+
+- **Arguments:** `width, height: double`
+- **Returns:** null
+
+### `isAlwaysOnTop` / `setAlwaysOnTop`
+
+- **Arguments:** `value: bool`
+- **Returns:** bool / null
+
+### `setTitleBarStyle`
+
+- **Arguments:** `style: "normal" \| "hidden", windowButtonVisibility: bool`
+- **Returns:** null
+- **Notes:** Hidden keeps the system frame, border and resize edges; only the caption goes.
+
+### `setSkipTaskbar`
+
+- **Arguments:** `value: bool`
+- **Returns:** null
+- **Notes:** macOS switches the activation policy.
+
+### `setRoundedCorners`
+
+- **Arguments:** `value: bool`
+- **Returns:** null
+- **Notes:** Windows 11 corner preference; no-op elsewhere.
+
+### `isEffectSupported`
+
+- **Arguments:** `effect: String`
+- **Returns:** bool
+- **Notes:** See effects below. False for anything `setEffect` would silently not draw.
+
+### `setEffect`
+
+- **Arguments:** `effect: String, tint: int?` ARGB`, brightness: "light" \| "dark" \| null`
+- **Returns:** null
+- **Notes:** `unsupported` error when `isEffectSupported` is false. `brightness` picks the light or dark material; null follows the system.
+
+### `startDragging`
+
+- **Arguments:** -
+- **Returns:** null
+- **Notes:** Begins a window move from the current pointer press.
 
 ### Events
 
@@ -207,3 +326,7 @@ the same table; they have no application caller today.
 - macOS: `WindowPlugin.instance?.handleShouldTerminate()`,
   `WindowPlugin.instance?.handleReopen()`, and `NSWindow.hiddenWindowAtLaunch()`
   for `MainFlutterWindow.order(_:relativeTo:)`.
+
+## Related next steps
+
+[Build and verification commands](../../../../.agents/commands.md) · [Standard edition build root](../../README.md)

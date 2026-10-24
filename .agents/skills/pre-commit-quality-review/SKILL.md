@@ -5,6 +5,14 @@ description: Use when the user asks to commit, amend, or squash code, or request
 
 # Pre-commit Quality Review
 
+[Documentation](../../../docs/README.md) · [Development](../../../docs/development/README.md) · [Agent references](../../skills.md)
+
+Structural review workflow within the existing commit authorization.
+
+**On this page**
+
+[Triage](#triage) · [Review the Final Structure](#review-the-final-structure) · [Findings and the User's Decision](#findings-and-the-users-decision) · [Resolve and Finish](#resolve-and-finish)
+
 Check that iterative edits converged into a clear, cohesive, maintainable implementation before they become a commit,
 so later code review is not spent on basic structure. `AGENTS.md` and `.agents/rules.md` apply throughout. This skill
 grants no authority: commit, push, and history rewrites stay under the user's existing authorization, and silence is

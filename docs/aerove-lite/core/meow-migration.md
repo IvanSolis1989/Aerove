@@ -1,7 +1,20 @@
 # Lite 内核迁移：meow-rs
 
+[文档](../../README.md) / [Lite](../README.md)
+
 2026-10-23 用户决定：Lite 从 clash-rs 切换到 meow-rs，继续原生 Android / Compose、最低 API 33。
 标准版继续 Flutter + 官方 Mihomo。这里记录实施与验收，不改变[共同契约](../../shared/UI_CONTRACT.md)。
+
+## 本页目录
+
+- [固定来源](#section-1)
+- [当前状态](#section-2)
+- [固定核心差异](#section-3)
+- [保留的运行边界](#section-4)
+- [接口和配置适配](#section-5)
+- [实施和验收顺序](#section-6)
+
+<a name="section-1"></a>
 
 ## 固定来源
 
@@ -13,18 +26,20 @@
 - 来源、用途、采用方式与许可统一登记在[开源来源与鸣谢](../../development/upstreams.md#开源来源与鸣谢)。
   分享讨论用于理解背景；未成功读取的内容不作为事实或实施指令。
 
+<a name="section-2"></a>
+
 ## 当前状态
 
 切换前的功能与并行 CI 已保存在 `932d460f18fcb0df7fff83d399417e4de69e09a4`，树
 `6457a817530396d61d534bf360c40cfa7ad370ea`。保留旧 `native/`、锁文件、适配补丁、测试场景及真实失败证据；
 停止继续扩展旧核心。旧检查点不是完成版，旧测试通过也不能代表 Meow 已通过。
 
-迁移开发位于 `codex/aerove-meow-preflight` 分支；main 的文档更新不等于生产运行时已切换。
+初始迁移检查点位于 `codex/aerove-meow-preflight` 分支；当前应用整合位于 `codex/aerove-lite-meow-app`，一般策略组检查点位于 `codex/aerove-meow-provider-general`。main 的文档更新不等于运行时或发行验收完成。
 
 新候选位于 `apps/aerove-lite/meow-native/`。第一条代表链先验证唯一运行实例、私有认证 API、真实预绑定
 mixed 端口、经 Meow DIRECT 到回环 HTTP 服务、实际流量快照、取消、等待退出和端口重新绑定。
-Kotlin 的 `MeowRuntimeConfigComposer` 只形成候选配置和宿主计划，尚未替换生产入口。
-真实 Rust/Android/APK 证据取得前，不能把新增目录、配置适配或单模块测试描述为已切换的 APK。
+当前 Kotlin 生产适配与 Gradle 原生构建入口已接入 Meow，`MeowRuntimeConfigComposer` 形成候选配置和宿主计划；旧 `native/` 继续保留。已接入构建不代表共同功能、真实路由和发行验收完成。
+实际 APK 和各项证据必须绑定原源码及构建身份，不能以新增目录、配置适配或单模块测试代替完整验收。
 
 已取得的真实证据分属不同源码图，不能相互替代：
 
@@ -35,6 +50,8 @@ Kotlin 的 `MeowRuntimeConfigComposer` 只形成候选配置和宿主计划，�
   `230f41a5d9985bb8a993ae5e1cff13733171a91a` 成功：原 13 项 host 用例、API33/NDK28.2 真正生成绑定、
   ARM64 / x86_64 链接、16 KiB ELF、四个已定义脚本 JNI 导出和动态依赖门禁全部通过；原产物收据已核。
   这些只证明该源码图，不包含后续 FD / 控制变更，不替代完整运行 JNI、TUN、配置保真、共同功能、APK 与设备验收。
+
+<a name="section-3"></a>
 
 ## 固定核心差异
 
@@ -49,6 +66,8 @@ Kotlin 的 `MeowRuntimeConfigComposer` 只形成候选配置和宿主计划，�
 列表及 UID / IN-USER 规则也已有实现，不得沿用旧核心的 blanket 拒绝。其他传输或选项差异仍须逐字段核对，
 尚未接入的 JNI、宿主策略、API、provider 或客户端功能继续阻止发行，不作为核心例外。
 
+<a name="section-4"></a>
+
 ## 保留的运行边界
 
 `LiteVpnService`、`VpnCoordinator`、`AndroidTunnelBackend` 继续唯一持有用户意图、授权、Builder、物理网络和前台生命周期。
@@ -60,6 +79,8 @@ Kotlin 的 `MeowRuntimeConfigComposer` 只形成候选配置和宿主计划，�
 - stop/park/加载取消与等待本身的取消，都须保留可恢复的退出等待；未确认退出时阻止后继启动。
 - 保留实际 MTU、IPv6、物理 DNS、应用归属、网络变化和已确认的设置应用/重启语义；不得引入公共 DNS fallback。
 - 官方 Android 的监听/sniffer 删除、强制 fake-IP、spawn 即成功、abort 不等待均不直接移植。
+
+<a name="section-5"></a>
 
 ## 接口和配置适配
 
@@ -77,6 +98,8 @@ Kotlin 的 `MeowRuntimeConfigComposer` 只形成候选配置和宿主计划，�
 - 用户控制入口不得暴露私有 AEROVE 路由。规则/配置检查仍须离线、有界、受资源归属约束。
 - QuickJS 脚本能力及独立 Go regexp2/age 辅助程序保留，不能随旧代理核心替换而丢失。
 
+<a name="section-6"></a>
+
 ## 实施和验收顺序
 
 1. 固定来源、许可和可重放准备；独立 CI 真实生成桥接锁，保存实际锁与 source/tree/run/attempt，再以 `--locked` 运行。
@@ -89,3 +112,7 @@ Kotlin 的 `MeowRuntimeConfigComposer` 只形成候选配置和宿主计划，�
 独立工作流先验证第一代表链；它不替代 Lite 的完整发行门禁。首轮最小协议 feature 集也不等于产品最终协议支持集合。
 旧 clash-rs 的能力例外须依据固定 Meow 源码重新核验。上述五项只证明固定核心能力边界，不代表配置准入或 APP 已完成；Lite 尚无首版发行或十二图。
 公开核心基准不证明 AEROVE Android 更省电，实际测量仍按[验收边界](../../shared/ACCEPTANCE.md)。
+
+---
+
+下一步：[Lite 说明](../README.md) · [共同契约](../../shared/UI_CONTRACT.md)

@@ -5,6 +5,10 @@ description: Use when changing FlClash Core integration, lifecycle/process owner
 
 # Core And Platform
 
+[Documentation](../../../docs/README.md) · [Development](../../../docs/development/README.md) · [Agent references](../../skills.md)
+
+Core and platform workflow: owners, lifecycle constraints and verification.
+
 ## When To Use
 
 Use this for changes touching `lib/core/`, `lib/manager/`, `core/`, `services/helper/`, Android app/service modules,

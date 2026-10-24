@@ -1,4 +1,8 @@
+[Documentation](../../../../docs/README.md) → [Development](../../../../docs/development/README.md)
+
 # code_forge
+
+Standard edition editor module: upstream adaptations, backend ownership and removed capabilities. The FlClash names below identify the inherited implementation and source context.
 
 The code editor behind FlClash's profile, script and config editors
 (`lib/pages/editor.dart`). It is derived from
@@ -27,4 +31,8 @@ in step with upstream.
   (`CodeForgeKeyboardShortcuts.forPlatform`), whole-line copy and cut with no
   selection, line selection from the gutter, and Material from `material_ui`.
 
-Regression tests live in `test/plugins/code_forge/` at the repository root.
+Regression tests live in `test/plugins/code_forge/` at the Standard edition build root (`apps/aerove/`).
+
+## Related next steps
+
+[Build and verification commands](../../../../.agents/commands.md) · [Standard edition build root](../../README.md)

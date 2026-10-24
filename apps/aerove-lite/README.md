@@ -1,4 +1,10 @@
+[Documentation](../../docs/README.md) → [Development](../../docs/development/README.md)
+
 # AEROVE Lite
+
+Build-root reference for the native Android product. Lite has not had its first public release; the pinned Meow migration still requires Rust runtime, Android and APK acceptance.
+
+**On this page** · [Development](#development) · [Ownership and behavior](#ownership-and-behavior) · [Licenses](#licenses)
 
 Independent Android application: Kotlin/Jetpack Compose, Backdrop and a pinned Rust/meow-rs core (migration in progress). The Flutter/Go Aerove
 application remains a separate product. This directory is the actual Lite application; `../../experiments/aerove-lite-renderer`
@@ -12,28 +18,30 @@ separate source assets.
 ## Development
 
 The selected replacement is Meow v0.26.1 at `727ddcd06f592e2f12c5222c4de6cce328df808c`.
-The candidate `meow-native/` bridge and its isolated CI must compile and run before the production JNI/build
-entry is switched. See the [migration record](../../docs/aerove-lite/core/meow-migration.md) for current gates.
-The commands below describe the preserved clash-rs checkpoint, not a validated Meow APK.
+The application build and JNI entry now use `meow-native/`; the old `native/` directory remains a preserved
+clash-rs checkpoint. Build integration does not establish complete runtime or release acceptance.
+See the [migration record](../../docs/aerove-lite/core/meow-migration.md) for current gates.
 
 Use JDK 17, Gradle 9.6.0, Android SDK/Build Tools 37, NDK 28.2.13676358 and Rust 1.99.0. Source and dependency pins are in
-`native/prepare.py`, `native/Cargo.toml`, `native/Cargo.lock` and the Gradle files. The small upstream patch and mobile
+`meow-native/source.json`, `meow-native/Cargo.toml`, `meow-native/Cargo.lock` and the Gradle files. The upstream patches and mobile
 embedding module retain the original engine license and provenance. Do not edit the generated lock to imitate a
 successful dependency resolution.
+
+Run the following commands from `apps/aerove-lite/` at the repository root.
 
 On Linux, after installing the target with `rustup target add aarch64-linux-android`:
 
 ```sh
-python3 native/build.py --target aarch64-linux-android \
-  --ndk "$ANDROID_SDK_ROOT/ndk/28.2.13676358" --output app/src/main/jniLibs
-gradle --no-daemon :app:testReleaseUnitTest :app:lintRelease :app:assembleDebug
+python3 meow-native/build.py --target aarch64-linux-android \
+  --ndk "$ANDROID_SDK_ROOT/ndk/28.2.13676358"
 ```
 
-The first real bridge dependency resolution uses `python3 native/build.py --initialize-lock --prepare-only`. Commit
-the resulting Cargo lock before accepting a build. All subsequent native builds use `--locked`. APK packaging requires
-the actual Rust ELF for the selected ABI; a frontend-only APK with an absent core is rejected.
+This command produces the ARM64 library and its original build receipt under `meow-native/build/`; it does not
+assemble an APK. The committed lock and build policy are verified and builds use `--locked`. APK packaging also
+requires the isolated client helper, the original ABI receipts, signing and source identity. Follow the authoritative
+[ABI build workflow](../../.github/workflows/aerove-lite-build.yaml) for those steps; an absent core is rejected.
 
-`../../.github/workflows/aerove-lite.yaml` checks Kotlin separately, resolves the real Cargo lock, builds the native bridge,
+`../../.github/workflows/aerove-lite.yaml` checks Kotlin separately, verifies the committed Cargo lock, builds the native bridge,
 then tests an isolated API 33 emulator. The emulator test requires a private controlled HTTP fixture and VPN permission.
 It checks forwarding from a different UID, actual core traffic counters, stop and restart. These tests do not authorize
 starting a proxy on the developer's host and do not establish real-device power or memory performance.
@@ -49,7 +57,7 @@ fingerprint and SHA256 sums. It does not create a public Release. Emulator ABI a
 - `vpn/VpnCoordinator.kt` owns latest start/stop intent. Sessions terminate before replacements open; unconfirmed
   termination blocks a second instance. The service also handles notification actions, revoke, boot and physical-network
   changes. Native code duplicates the TUN descriptor and owns only its duplicate.
-- `native/` owns the JNI registry, per-instance cancellation/join, protected sockets and bootstrap DNS, API/TUN readiness
+- `meow-native/` owns the JNI registry, per-instance cancellation/join, protected sockets and bootstrap DNS, API/TUN readiness
   and runtime logging. Desktop restart/re-exec and global shutdown are unavailable to the Android UI.
 - `ui/` owns three material tiers, shapes, native screens and lifecycle-bound visuals. Solid has no optical filter;
   frosted surfaces consistently blur; clear surfaces refract and disperse through Backdrop with a small contour adapter.
@@ -69,3 +77,7 @@ The preserved clash-rs sources retain Apache-2.0 and their NOTICE, including
 the enabled TUIC feature's GPL3 condition. Backdrop and Shapes retain Apache-2.0. Copies of the principal notices are in
 the APK's `assets/licenses/` and the native source's `licenses/`. The full corresponding source and exact dependency pins
 must accompany any distributed production build.
+
+## Related next steps
+
+[Product documentation](../../docs/aerove-lite/README.md) · [Acceptance contract](../../docs/shared/ACCEPTANCE.md)
