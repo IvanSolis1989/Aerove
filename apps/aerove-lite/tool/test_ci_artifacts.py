@@ -215,4 +215,179 @@ class AndroidHelperTests(unittest.TestCase):
                 with self.assertRaises(ci.PromotionError):ci.android_helper('go','/ndk','arm64-v8a',root/'staging',root/'out')
                 run.assert_not_called()
 
+
+class HostLockResolutionPlanTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.env = dict(REQUEST_EVENT='workflow_dispatch', MEOW_HOST_ONLY='true', DIAGNOSTIC_TARGET='none', NATIVE_TEST_FILTER='')
+        for key in ('QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'PUBLISH_RELEASE', 'NATIVE_PREFLIGHT',
+                    'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS'):
+            self.env[key] = 'false'
+        for name, data in [('Cargo.toml', b'fixture manifest'), ('Cargo.lock', b'approved fixture seed'),
+                           ('core-tests.lock', b'approved fixture Core lock'), ('fixed.patch', b'fixture overlay patch')]:
+            (self.root / name).write_bytes(data)
+        source = dict(repository='https://github.com/meow-rs/meow-rs', commit=ci.MEOW_SOURCE, tag='v0.26.1',
+                      archiveSha256='4273e027c5db3f7c052b255730f29165908772bf417ec89d9ab54478f81dcd9a')
+        (self.root / 'source.json').write_text(json.dumps(source))
+        overlay = dict(schema=1, patch='fixed.patch', patchSha256=ci.digest(self.root / 'fixed.patch'),
+                       rawFileManifestSha256='1' * 64, adaptedFileManifestSha256=ci.hashlib.sha256(b'{}').hexdigest(), files={}, changes={})
+        (self.root / 'overlay.json').write_text(json.dumps(overlay))
+        ci.sys.path.insert(0, str(ci.MEOW_ROOT))
+        try:
+            from build_policy import RESOURCE_HEALTH_TARGETS
+        finally:
+            ci.sys.path.pop(0)
+        self.policy = dict(schema=1, resolveLock=True, manifestSha256=ci.digest(self.root / 'Cargo.toml'),
+                           expectedLockBeforeSha256=ci.digest(self.root / 'Cargo.lock'), targets=list(RESOURCE_HEALTH_TARGETS),
+                           overlay='overlay.json', overlaySha256=ci.digest(self.root / 'overlay.json'),
+                           featureBoundary='capabilities-no-default', coreTests='policy-runtime-resource-health-v1',
+                           coreTestLockSha256=ci.digest(self.root / 'core-tests.lock'))
+        self.write_policy()
+        pins = {key: self.policy[key] for key in ci.HOST_LOCK_RESOLUTION_INPUTS if key != 'sourceSpecSha256'}
+        pins['sourceSpecSha256'] = ci.digest(self.root / 'source.json')
+        self.addCleanup(mock.patch.stopall)
+        mock.patch.object(ci, 'HOST_LOCK_RESOLUTION_INPUTS', pins).start()
+
+    def write_policy(self):
+        (self.root / 'build-policy.json').write_text(json.dumps(self.policy))
+
+    def test_pending_plan_does_not_accept_lock_or_run_cargo(self):
+        with mock.patch.object(ci.subprocess, 'run') as run:
+            plan = ci.host_lock_resolution_plan('host', self.root, self.env)
+        run.assert_not_called()
+        self.assertIs(plan['acceptedLock'], False)
+        self.assertEqual('pending', plan['lockAcceptance'])
+        self.assertIs(plan['resolve'], True)
+        self.assertIs(plan['android'], False)
+        self.assertEqual((42, 26, 75), (plan['nativeTargetCount'], plan['coreCommandCount'], plan['expectedCoreHits']))
+        self.assertEqual('--resolve-lock', plan['command'][-1])
+
+    def test_phase_event_mode_and_all_conflicts_reject(self):
+        for phase in (None, '', 'android', 'unknown'):
+            with self.subTest(phase=phase), self.assertRaises(ci.PromotionError):
+                ci.host_lock_resolution_plan(phase, self.root, self.env)
+        for key in self.env:
+            bad = dict(self.env)
+            bad[key] = 'false' if key == 'MEOW_HOST_ONLY' else 'push' if key == 'REQUEST_EVENT' else 'both' if key == 'DIAGNOSTIC_TARGET' else 'filter' if key == 'NATIVE_TEST_FILTER' else 'true'
+            with self.subTest(key=key), self.assertRaises(ci.PromotionError):
+                ci.host_lock_resolution_plan('host', self.root, bad)
+
+    def test_mutated_source_seed_manifest_core_overlay_and_suite_reject(self):
+        for name in ('Cargo.lock', 'Cargo.toml', 'core-tests.lock', 'source.json', 'fixed.patch'):
+            path = self.root / name; data = path.read_bytes(); path.write_bytes(b'changed')
+            try:
+                with self.subTest(file=name), self.assertRaises((ValueError, ci.PromotionError)):
+                    ci.host_lock_resolution_plan('host', self.root, self.env)
+            finally:
+                path.write_bytes(data)
+        for key, value in [('resolveLock', False), ('targets', self.policy['targets'][:-1]), ('coreTests', 'policy-runtime-v1'),
+                           ('manifestSha256', '0' * 64), ('expectedLockBeforeSha256', '0' * 64)]:
+            previous = self.policy[key]; self.policy[key] = value; self.write_policy()
+            try:
+                with self.subTest(key=key), self.assertRaises((ValueError, ci.PromotionError)):
+                    ci.host_lock_resolution_plan('host', self.root, self.env)
+            finally:
+                self.policy[key] = previous; self.write_policy()
+
+    def test_self_consistent_new_manifest_or_seed_is_still_unapproved(self):
+        for name, key in [('Cargo.lock', 'expectedLockBeforeSha256'), ('Cargo.toml', 'manifestSha256')]:
+            path = self.root / name; data = path.read_bytes(); previous = self.policy[key]
+            path.write_bytes(b'unapproved'); self.policy[key] = ci.digest(path); self.write_policy()
+            try:
+                with self.subTest(file=name), self.assertRaises(ci.PromotionError):
+                    ci.host_lock_resolution_plan('host', self.root, self.env)
+            finally:
+                path.write_bytes(data); self.policy[key] = previous; self.write_policy()
+
+    def test_default_admission_and_host_stay_strict_and_other_actions_cannot_opt_in(self):
+        for action in ('admission', 'host'):
+            with mock.patch.object(ci.sys, 'argv', ['ci_artifacts.py', action]), mock.patch.object(ci, 'native_identity', side_effect=ValueError('pending is not accepted')) as strict:
+                with self.assertRaisesRegex(ValueError, 'pending is not accepted'): ci.main()
+                strict.assert_called_once_with()
+        for args in (['native', '--host-lock-resolution', '--phase', 'host'], ['host', '--host-lock-resolution', '--phase', 'host'],
+                     ['admission', '--host-lock-resolution', '--phase', 'android'], ['admission', '--phase', 'host'], ['admission', '--host-lock-resolution'], ['admission', '--host-lock-resolution', '--phase', 'host', '--target', 'x86_64-linux-android']):
+            with mock.patch.object(ci.sys, 'argv', ['ci_artifacts.py', *args]), self.subTest(args=args), self.assertRaises(SystemExit) as caught:
+                ci.main()
+            self.assertEqual(2, caught.exception.code)
+
+    def test_dirty_native_source_preserves_original_git_error_and_prints_no_plan(self):
+        error = ci.subprocess.CalledProcessError(1, ['git', 'diff'])
+        with mock.patch.object(ci.sys, 'argv', ['ci_artifacts.py', 'admission', '--host-lock-resolution', '--phase', 'host']), mock.patch.object(ci, 'host_lock_resolution_plan', return_value={}), mock.patch.object(ci.subprocess, 'run', side_effect=error) as run, mock.patch('builtins.print') as output:
+            with self.assertRaises(ci.subprocess.CalledProcessError) as caught: ci.main()
+            self.assertIs(error, caught.exception)
+            self.assertEqual('git', run.call_args.args[0][0])
+            output.assert_not_called()
+
+
+    def test_fake_producer_plan_save_and_pending_readback_never_becomes_accepted(self):
+        # Host fixtures only: no Cargo command is executed.
+        plan = ci.host_lock_resolution_plan('host', self.root, self.env)
+        workflow = dict(sourceRevision='a' * 40, sourceTree='b' * 40, workflowRun='97', runAttempt=1, runNumber=97)
+        plan['workflowIdentity'] = workflow
+        build = self.root / 'build'; build.mkdir()
+        plan_path = build / 'host-lock-resolution-plan.json'; plan_path.write_text(json.dumps(plan))
+        plan_bytes = plan_path.read_bytes()
+        (build / 'lock-before-resolution.lock').write_bytes((self.root / 'Cargo.lock').read_bytes())
+        (self.root / 'Cargo.lock').write_bytes(b'fake producer resolved lock; not Cargo output')
+        policy_bytes = (self.root / 'build-policy.json').read_bytes()
+        ci.sys.path.insert(0, str(ci.MEOW_ROOT))
+        try:
+            from build_policy import feature_boundary_command
+            from core_tests import entries
+        finally:
+            ci.sys.path.pop(0)
+        command = ['cargo', 'test', '--locked', '--no-fail-fast']
+        for target in self.policy['targets']:
+            command += ['--lib'] if target == 'lib' else ['--test', target]
+        command += ['--', '--test-threads=1', '--nocapture']
+        overlay = json.loads((self.root / 'overlay.json').read_text())
+        core_commands = [dict(exit=0, expectedPass=entry['expectedPass'], passed=entry['expectedPass'])
+                         for entry in entries(self.policy['coreTests'])]
+        resolved = ci.digest(self.root / 'Cargo.lock')
+        receipt = dict(schema=1, acceptedLock=True, resolveLockRequested=True, bootstrapRequested=False,
+                       androidTarget=None, commandExit=0, command=command, representativeTargets=self.policy['targets'],
+                       workflowSourceSha=workflow['sourceRevision'], workflowRun=workflow['workflowRun'], workflowAttempt='1',
+                       buildPolicySha256=ci.hashlib.sha256(policy_bytes).hexdigest(),
+                       bridgeManifestSha256=self.policy['manifestSha256'], declaredSourceSpecSha256=ci.HOST_LOCK_RESOLUTION_INPUTS['sourceSpecSha256'],
+                       lockSha256Before=self.policy['expectedLockBeforeSha256'], metadataInputLockSha256=self.policy['expectedLockBeforeSha256'],
+                       metadataCommand=['cargo', 'metadata', '--format-version', '1'], metadataExit=0,
+                       resolvedLockSha256=resolved, lockSha256After=resolved, lockUnchangedDuringLockedCommand=True,
+                       featureBoundaryCommand=feature_boundary_command(self.policy), featureBoundaryExit=0,
+                       source=dict(commit=ci.MEOW_SOURCE, tag='v0.26.1', archiveSha256='4273e027c5db3f7c052b255730f29165908772bf417ec89d9ab54478f81dcd9a',
+                                   overlaySha256=self.policy['overlaySha256'], patchSha256=overlay['patchSha256'], fileManifestSha256=overlay['adaptedFileManifestSha256']),
+                       coreTests=dict(mode=self.policy['coreTests'], accepted=True, upstreamLockRestored=True,
+                                      seedSha256=self.policy['coreTestLockSha256'], resolvedLockSha256=self.policy['coreTestLockSha256'],
+                                      commands=core_commands, compileCheck=dict(exit=0)))
+        receipt_path = build / 'host-receipt.json'; receipt_path.write_text(json.dumps(receipt))
+        receipt_bytes = receipt_path.read_bytes()
+        with mock.patch.object(ci, 'identity', return_value=workflow):
+            output = ci.host_lock_resolution_result(plan_path, 'host', self.root, self.env)
+            self.assertIs(output['archiveOnly'], True)
+            self.assertIs(output['acceptedLock'], False)
+            self.assertIs(output['producerAcceptedLock'], True)
+            self.assertEqual('pending', output['lockAcceptance'])
+            self.assertEqual(plan_bytes, plan_path.read_bytes())
+            self.assertEqual(receipt_bytes, receipt_path.read_bytes())
+            self.assertEqual(policy_bytes, (self.root / 'build-policy.json').read_bytes())
+            for key, value in [('workflowRun', 'wrong'), ('commandExit', 1), ('resolveLockRequested', False),
+                               ('resolvedLockSha256', '0' * 64), ('lockSha256Before', '0' * 64), ('acceptedLock', False)]:
+                receipt_path.write_text(json.dumps(dict(receipt, **{key: value})))
+                with self.subTest(key=key), self.assertRaises(ci.PromotionError):
+                    ci.host_lock_resolution_result(plan_path, 'host', self.root, self.env)
+            receipt_path.write_bytes(receipt_bytes)
+            (build / 'lock-before-resolution.lock').write_bytes(b'wrong seed')
+            with self.assertRaises(ci.PromotionError):
+                ci.host_lock_resolution_result(plan_path, 'host', self.root, self.env)
+        with self.assertRaisesRegex(ValueError, 'accepted committed lock'):
+            ci.native_identity(self.root)
+
+    def test_pending_readback_cli_never_calls_accepted_guard_and_excludes_only_resolved_lock(self):
+        argv = ['ci_artifacts.py', 'host-resolution-result', '--host-lock-resolution', '--phase', 'host', '--receipt', 'plan.json']
+        with mock.patch.object(ci.sys, 'argv', argv), mock.patch.object(ci, 'host_lock_resolution_result', return_value=dict(archiveOnly=True, acceptedLock=False)), mock.patch.object(ci, 'native_identity', side_effect=AssertionError('accepted guard must not run')), mock.patch.object(ci.subprocess, 'run') as run, mock.patch('builtins.print') as output:
+            ci.main()
+        self.assertEqual(['git', 'diff', '--exit-code', 'HEAD', '--', 'apps/aerove-lite/meow-native', ':(exclude)apps/aerove-lite/meow-native/Cargo.lock'], run.call_args.args[0])
+        self.assertIs(json.loads(output.call_args.args[0])['acceptedLock'], False)
+
 if __name__=='__main__':unittest.main()

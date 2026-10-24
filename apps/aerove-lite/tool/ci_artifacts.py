@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import sys
 from lite_release import download_artifact, _gh_json, PromotionError
-from verify_apk import native_identity, validate_native_receipt, CORE_LIBRARY, MEOW_ROOT, CORE_JNI_SYMBOLS, exported_functions, valid_elf64_shared_object
+from verify_apk import native_identity, validate_native_receipt, CORE_LIBRARY, MEOW_ROOT, CORE_JNI_SYMBOLS, exported_functions, valid_elf64_shared_object, MEOW_SOURCE
 
 
 HOST_ASSESSMENT_ROOT = Path(__file__).with_name('regexp2-assessment')
@@ -244,13 +244,167 @@ def host_helper(go, staging, destination, receipt_path):
     return value
 
 
+HOST_LOCK_RESOLUTION_INPUTS = {
+    'manifestSha256': 'a1c719f09d0d4433e2de27e1958b936f6f0e70d84d84267003c13289cb682604',
+    'expectedLockBeforeSha256': '925bc4bdbda8f7f039759f8c4d5d862ed3263c664d6d10653d389d0950bbafeb',
+    'overlaySha256': 'cccc8f33ae1461778738f0beb80020375a3e82c00ed9e6ec523fec07b5a217e9',
+    'coreTestLockSha256': '96b509814a2d833c39ac23c1cbee62a38e401f420ec1cf8f72a7738a71df6c58',
+    'sourceSpecSha256': 'f8f76d22b27f779f5b5d06a07366cd2597404fc01aa302745230cf9ee8c1220c',
+}
+
+
+def _host_resolution_inputs(phase, root, environment, *, check_seed):
+    environment = os.environ if environment is None else environment
+    conflicts = ('QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'PUBLISH_RELEASE', 'NATIVE_PREFLIGHT',
+                 'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS')
+    if (phase != 'host' or environment.get('REQUEST_EVENT') != 'workflow_dispatch'
+            or environment.get('MEOW_HOST_ONLY') != 'true'
+            or any(environment.get(key) != 'false' for key in conflicts)
+            or environment.get('NATIVE_TEST_FILTER') != '' or environment.get('DIAGNOSTIC_TARGET') != 'none'):
+        raise PromotionError('Pending lock resolution requires explicit exclusive meow_host_only phase=host')
+    # Load the same source-owned policy/command definitions used by the real producer.
+    sys.path.insert(0, str(MEOW_ROOT))
+    try:
+        from build_policy import load_policy, owned_file, decide_plan, feature_boundary_command
+        from core_tests import entries
+    finally:
+        sys.path.pop(0)
+    root = Path(root)
+    owned_file(root, 'Cargo.lock')
+    owned_file(root, 'Cargo.toml')
+    policy = load_policy(root, check_resolution_seed=check_seed)
+    if policy is None or policy['resolveLock'] is not True:
+        raise PromotionError('Pending host admission requires explicit resolveLock=true policy')
+    for key, expected in HOST_LOCK_RESOLUTION_INPUTS.items():
+        if key != 'sourceSpecSha256' and policy.get(key) != expected:
+            raise PromotionError('Unapproved host lock-resolution input: ' + key)
+    spec_path = owned_file(root, 'source.json')
+    spec = json.loads(spec_path.read_text())
+    if (digest(spec_path) != HOST_LOCK_RESOLUTION_INPUTS['sourceSpecSha256']
+            or spec.get('commit') != MEOW_SOURCE or spec.get('tag') != 'v0.26.1'
+            or spec.get('repository') != 'https://github.com/meow-rs/meow-rs'
+            or spec.get('archiveSha256') != '4273e027c5db3f7c052b255730f29165908772bf417ec89d9ab54478f81dcd9a'):
+        raise PromotionError('Pending host resolution requires the fixed Meow source')
+    if digest(owned_file(root, 'core-tests.lock')) != policy['coreTestLockSha256']:
+        raise PromotionError('Pending host resolution changed the accepted Core test lock')
+    if policy.get('coreTests') != 'policy-runtime-resource-health-v1' or len(policy['targets']) != 42 or feature_boundary_command(policy) is None:
+        raise PromotionError('Pending host resolution requires the complete approved Native/Core suite')
+    core = entries(policy['coreTests'])
+    if len(core) != 26 or sum(entry['expectedPass'] for entry in core) != 75:
+        raise PromotionError('Pending host resolution changed the authored Core command contract')
+    plan = decide_plan(True, spec['archiveSha256'], 'workflow_dispatch', phase, False, resolve_requested=True)
+    return policy, spec, plan
+
+
+def host_lock_resolution_plan(phase, root=MEOW_ROOT, environment=None):
+    """Plan the approved pending host resolution; do not execute or accept a lock."""
+    policy, spec, plan = _host_resolution_inputs(phase, root, environment, check_seed=True)
+    return dict(schema=1, planOnly=True, phase=phase, lockAcceptance='pending', acceptedLock=False,
+                **plan, policySha256=policy['policySha256'], manifestSha256=policy['manifestSha256'],
+                seedLockSha256=policy['expectedLockBeforeSha256'], coreTestLockSha256=policy['coreTestLockSha256'],
+                sourceSpecSha256=digest(Path(root) / 'source.json'), meowSource=spec['commit'], nativeTargets=policy['targets'],
+                nativeTargetCount=42, coreCommandCount=26, expectedCoreHits=75,
+                command=['python3', 'apps/aerove-lite/meow-native/build.py', '--resolve-lock'])
+
+
+def host_lock_resolution_result(plan_path, phase, root=MEOW_ROOT, environment=None):
+    """Read back pending producer evidence for archive only; never use the APK acceptance gate."""
+    environment = os.environ if environment is None else environment
+    policy, spec, expected_plan = _host_resolution_inputs(phase, root, environment, check_seed=False)
+    root = Path(root)
+    plan_path = Path(plan_path)
+    if plan_path.is_symlink() or not plan_path.is_file():
+        raise PromotionError('Pending host plan must be an existing regular file')
+    plan = json.loads(plan_path.read_text())
+    current = identity()
+    expected = dict(planOnly=True, phase='host', acceptedLock=False, lockAcceptance='pending',
+                    policySha256=policy['policySha256'], manifestSha256=policy['manifestSha256'],
+                    seedLockSha256=policy['expectedLockBeforeSha256'], workflowIdentity=current,
+                    coreTestLockSha256=policy['coreTestLockSha256'], nativeTargets=policy['targets'],
+                    sourceSpecSha256=HOST_LOCK_RESOLUTION_INPUTS['sourceSpecSha256'], meowSource=MEOW_SOURCE,
+                    nativeTargetCount=42, coreCommandCount=26, expectedCoreHits=75,
+                    command=['python3', 'apps/aerove-lite/meow-native/build.py', '--resolve-lock'])
+    if (any(plan.get(key) != value for key, value in expected.items())
+            or plan.get('acceptedLock') is not False or plan.get('planOnly') is not True
+            or any(plan.get(key) != value for key, value in expected_plan.items())):
+        raise PromotionError('Pending host plan identity changed before readback')
+    from build_policy import owned_file, feature_boundary_command
+    receipt_path = owned_file(root, 'build/host-receipt.json')
+    receipt = json.loads(receipt_path.read_text())
+    before = owned_file(root, 'build/lock-before-resolution.lock')
+    resolved = digest(owned_file(root, 'Cargo.lock'))
+    if digest(before) != policy['expectedLockBeforeSha256']:
+        raise PromotionError('Pending host lost the original approved resolution seed')
+    command = ['cargo', 'test', '--locked', '--no-fail-fast']
+    for target in policy['targets']:
+        command += ['--lib'] if target == 'lib' else ['--test', target]
+    command += ['--', '--test-threads=1', '--nocapture']
+    identity_fields = dict(workflowSourceSha=current['sourceRevision'], workflowRun=current['workflowRun'], workflowAttempt=current['runAttempt'])
+    if (any(str(receipt.get(key)) != str(value) for key, value in identity_fields.items())
+            or receipt.get('acceptedLock') is not True or receipt.get('resolveLockRequested') is not True or receipt.get('bootstrapRequested') is not False
+            or receipt.get('androidTarget') is not None or type(receipt.get('commandExit')) is not int or receipt['commandExit'] != 0
+            or receipt.get('command') != command or receipt.get('representativeTargets') != policy['targets']
+            or receipt.get('buildPolicySha256') != policy['policySha256']
+            or receipt.get('bridgeManifestSha256') != policy['manifestSha256']
+            or receipt.get('declaredSourceSpecSha256') != HOST_LOCK_RESOLUTION_INPUTS['sourceSpecSha256']
+            or receipt.get('lockSha256Before') != policy['expectedLockBeforeSha256']
+            or receipt.get('metadataInputLockSha256') != policy['expectedLockBeforeSha256']
+            or receipt.get('metadataCommand') != ['cargo', 'metadata', '--format-version', '1']
+            or type(receipt.get('metadataExit')) is not int or receipt['metadataExit'] != 0
+            or receipt.get('resolvedLockSha256') != resolved or receipt.get('lockSha256After') != resolved
+            or receipt.get('lockUnchangedDuringLockedCommand') is not True
+            or receipt.get('featureBoundaryCommand') != feature_boundary_command(policy)
+            or type(receipt.get('featureBoundaryExit')) is not int or receipt['featureBoundaryExit'] != 0):
+        raise PromotionError('Pending host producer did not preserve the explicit full host execution')
+    source = receipt.get('source', {})
+    overlay = policy['overlayMetadata']
+    if any(source.get(key) != value for key, value in dict(commit=MEOW_SOURCE, tag='v0.26.1', archiveSha256=spec['archiveSha256'],
+            overlaySha256=policy['overlaySha256'], patchSha256=overlay['patchSha256'], fileManifestSha256=overlay['adaptedFileManifestSha256']).items()):
+        raise PromotionError('Pending host producer source identity changed')
+    core = receipt.get('coreTests', {})
+    commands = core.get('commands', [])
+    if (core.get('mode') != policy['coreTests'] or core.get('accepted') is not True or core.get('upstreamLockRestored') is not True
+            or core.get('seedSha256') != policy['coreTestLockSha256'] or core.get('resolvedLockSha256') != policy['coreTestLockSha256']
+            or not isinstance(commands, list) or len(commands) != 26
+            or any(type(entry.get('exit')) is not int or entry['exit'] != 0 or type(entry.get('passed')) is not int
+                   or entry['passed'] != entry.get('expectedPass') for entry in commands)
+            or sum(entry['passed'] for entry in commands) != 75
+            or type(core.get('compileCheck', {}).get('exit')) is not int or core['compileCheck']['exit'] != 0):
+        raise PromotionError('Pending host Core evidence is incomplete or its lock drifted')
+    return dict(schema=1, archiveOnly=True, lockAcceptance='pending', acceptedLock=False, workflowIdentity=current,
+                readbackScope='pending-producer-shape-and-locks-only', planSha256=digest(plan_path), producerReceiptSha256=digest(receipt_path), seedLockSha256=digest(before),
+                resolvedLockSha256=resolved, nativeTargetCount=42, coreCommandCount=26,
+                producerAcceptedLock=receipt.get('acceptedLock'), requiresCommittedLockAndPolicyAcceptance=True)
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=['seal', 'fetch', 'runtime', 'native', 'admission', 'host', 'host-helper', 'android-helper'])
+    parser.add_argument('action', choices=['seal', 'fetch', 'runtime', 'native', 'admission', 'host', 'host-helper', 'android-helper', 'host-resolution-result'])
     parser.add_argument('--directory'); parser.add_argument('--destination'); parser.add_argument('--name'); parser.add_argument('--abi')
     parser.add_argument('--target'); parser.add_argument('--ndk')
     parser.add_argument('--go'); parser.add_argument('--receipt')
+    parser.add_argument('--host-lock-resolution', action='store_true')
+    parser.add_argument('--phase')
     args = parser.parse_args()
+    if args.action == 'host-resolution-result':
+        if (not args.host_lock_resolution or args.phase != 'host' or not args.receipt
+                or any((args.directory, args.destination, args.name, args.abi, args.target, args.ndk, args.go))):
+            parser.error('Pending host readback requires --host-lock-resolution --phase host --receipt PLAN')
+        result = host_lock_resolution_result(args.receipt, args.phase)
+        subprocess.run(['git', 'diff', '--exit-code', 'HEAD', '--', 'apps/aerove-lite/meow-native',
+                        ':(exclude)apps/aerove-lite/meow-native/Cargo.lock'], check=True)
+        print(json.dumps(result))
+        return
+    if args.host_lock_resolution or args.phase is not None:
+        if not args.host_lock_resolution or args.action != 'admission' or args.phase != 'host':
+            parser.error('Lock-resolution planning is only admission --host-lock-resolution --phase host')
+        if any((args.directory, args.destination, args.name, args.abi, args.target, args.ndk, args.go, args.receipt)):
+            parser.error('Pending host planning does not accept build, ABI or transfer arguments')
+        plan = host_lock_resolution_plan(args.phase)
+        subprocess.run(['git', 'diff', '--exit-code', 'HEAD', '--', 'apps/aerove-lite/meow-native'], check=True)
+        plan['workflowIdentity'] = identity()
+        print(json.dumps(plan))
+        return
     if args.action == 'android-helper':
         if not all((args.go, args.ndk, args.abi, args.directory, args.destination)):
             parser.error('Android helper requires --go, --ndk, --abi, --directory and --destination')

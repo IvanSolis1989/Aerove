@@ -301,11 +301,39 @@ jobs:
         cache-workspace-crates: true
         cache-directories: apps/aerove-lite/meow-native/.upstream
     - name: Stable lock and host production regression
+      env:
+        REQUEST_EVENT: ${{ github.event_name }}
+        MEOW_HOST_ONLY: ${{ inputs.meow_host_only }}
+        DIAGNOSTIC_TARGET: ${{ inputs.diagnostic_target }}
+        NATIVE_TEST_FILTER: ${{ inputs.native_test_filter }}
+        QA84_ONLY: ${{ inputs.qa84_only }}
+        QA79_ONLY: ${{ inputs.qa79_only }}
+        CLIENT_PREFLIGHT: ${{ inputs.client_preflight }}
+        PUBLISH_RELEASE: ${{ inputs.publish_release }}
+        NATIVE_PREFLIGHT: ${{ inputs.native_preflight }}
+        NATIVE_TEST_SERIAL: ${{ inputs.native_test_serial }}
+        NATIVE_UNDERLAY_TESTS: ${{ inputs.native_underlay_tests }}
+        NATIVE_TEST_STACKS: ${{ inputs.native_test_stacks }}
       run: |-
-        python3 apps/aerove-lite/tool/ci_artifacts.py admission
-        python3 apps/aerove-lite/meow-native/build.py
-        python3 apps/aerove-lite/tool/ci_artifacts.py host
-        git diff --exit-code -- apps/aerove-lite/meow-native/Cargo.lock
+        set -euo pipefail
+        pending=false
+        if [[ "$MEOW_HOST_ONLY" == true ]]; then
+          pending=$(python3 -c 'import json; print(str(json.load(open("apps/aerove-lite/meow-native/build-policy.json"))["resolveLock"] is True).lower())')
+        fi
+        if [[ "$pending" == true ]]; then
+          evidence=apps/aerove-lite/meow-native/build
+          mkdir -p "$evidence"
+          python3 apps/aerove-lite/tool/ci_artifacts.py admission --host-lock-resolution --phase host > "$evidence/host-lock-resolution-plan.json"
+          cat "$evidence/host-lock-resolution-plan.json"
+          python3 apps/aerove-lite/meow-native/build.py --resolve-lock
+          python3 apps/aerove-lite/tool/ci_artifacts.py host-resolution-result --host-lock-resolution --phase host --receipt "$evidence/host-lock-resolution-plan.json" > "$evidence/host-lock-resolution-readback.json"
+          cat "$evidence/host-lock-resolution-readback.json"
+        else
+          python3 apps/aerove-lite/tool/ci_artifacts.py admission
+          python3 apps/aerove-lite/meow-native/build.py
+          python3 apps/aerove-lite/tool/ci_artifacts.py host
+          git diff --exit-code -- apps/aerove-lite/meow-native/Cargo.lock
+        fi
     - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       if: always()
       with:
