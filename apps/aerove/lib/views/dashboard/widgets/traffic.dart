@@ -218,25 +218,22 @@ class OutboundTrafficFigures extends ConsumerWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  SizedBox(
-                    height: 26 * DashboardDensityScope.scaleOf(context),
-                    child: Align(
-                      alignment: AlignmentDirectional.centerStart,
-                      child: GlassText(
-                        direction.labelOf(context),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: DashboardText.mobileCardTitle(context),
-                      ),
-                    ),
+                  GlassText(
+                    direction.labelOf(context),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTextStyle.custom(context, size: 11, leading: 11),
                   ),
                   GlassText(
                     '${dashboardTraffic(direction.of(latest))}/s',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: AppTextStyle.subheadline
-                        .of(context, emphasized: true)
-                        .toTabular,
+                    style: AppTextStyle.custom(
+                      context,
+                      size: 14,
+                      leading: 14,
+                      weight: AppTextStyle.caption1.emphasizedWeight,
+                    ).toTabular,
                   ),
                   GlassText(
                     context.appLocalizations.trafficTotal(
@@ -244,7 +241,7 @@ class OutboundTrafficFigures extends ConsumerWidget {
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: AppTextStyle.caption1.of(context),
+                    style: AppTextStyle.custom(context, size: 10, leading: 10),
                   ),
                 ],
               ),

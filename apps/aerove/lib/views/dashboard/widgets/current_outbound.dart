@@ -103,17 +103,16 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
       title: appLocalizations.status,
       leading: [chip],
     );
-    Widget body({required bool withHeader}) => Row(
-      crossAxisAlignment: widget.showTraffic
-          ? CrossAxisAlignment.end
-          : CrossAxisAlignment.center,
+    Widget body() => Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
       spacing: metrics.gap,
       children: [
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (withHeader) ...[header, SizedBox(height: metrics.ipTop)],
+              header,
+              SizedBox(height: metrics.ipTop),
               _ExitRow(
                 info: ipInfo,
                 failed: failed,
@@ -151,8 +150,6 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
         ),
       ],
     );
-    final largeTraffic =
-        widget.showTraffic && MediaQuery.textScalerOf(context).scale(1) > 1.3;
     return DashboardCard(
       padding: EdgeInsets.zero,
       semanticLabel: appLocalizations.status,
@@ -171,47 +168,68 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
           ),
           Padding(
             padding: metrics.padding,
-            child: largeTraffic
-                ? Column(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                if (!widget.showTraffic) return body();
+                final scaler = MediaQuery.textScalerOf(context);
+                final scale = scaler.scale(1);
+                double widthOf(String text, TextStyle style) {
+                  final painter = TextPainter(
+                    text: TextSpan(text: text, style: style),
+                    textDirection: Directionality.of(context),
+                    textScaler: scaler,
+                  )..layout();
+                  final width = painter.width;
+                  painter.dispose();
+                  return width;
+                }
+
+                final headerWidth =
+                    DashboardCardHeader.glyphSize +
+                    16 +
+                    widthOf(
+                      appLocalizations.status,
+                      density.isDesktop
+                          ? DashboardText.cardTitle(context)
+                          : DashboardText.mobileCardTitle(context),
+                    ) +
+                    20 +
+                    (isStart ? 12 : 0) +
+                    widthOf(
+                      chipLabel,
+                      AppTextStyle.caption1.of(context, emphasized: true),
+                    );
+                final figuresWidth = 132 * scale;
+                final headerHeight = (density.isDesktop ? 24 : 26) * scale;
+                final fits =
+                    constraints.maxWidth >= headerWidth + figuresWidth + 8 &&
+                    35 * scale <= headerHeight + metrics.ipTop;
+                final figures = SizedBox(
+                  width: figuresWidth,
+                  child: const OutboundTrafficFigures(),
+                );
+                if (!fits) {
+                  return Column(
                     mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        spacing: 8,
-                        children: [
-                          Expanded(
-                            flex: 4,
-                            child: DashboardCardHeader(
-                              glyph: AppGlyphs.status,
-                              title: appLocalizations.status,
-                            ),
-                          ),
-                          const Expanded(
-                            flex: 6,
-                            child: OutboundTrafficFigures(),
-                          ),
-                        ],
-                      ),
+                      body(),
+                      const SizedBox(height: 8),
                       Align(
-                        alignment: AlignmentDirectional.centerStart,
-                        child: chip,
+                        alignment: AlignmentDirectional.centerEnd,
+                        child: figures,
                       ),
-                      SizedBox(height: metrics.ipTop),
-                      body(withHeader: false),
                     ],
-                  )
-                : Stack(
-                    children: [
-                      body(withHeader: true),
-                      if (widget.showTraffic)
-                        const PositionedDirectional(
-                          top: 0,
-                          end: 0,
-                          width: 144,
-                          child: OutboundTrafficFigures(),
-                        ),
-                    ],
-                  ),
+                  );
+                }
+                return Stack(
+                  children: [
+                    body(),
+                    PositionedDirectional(top: 0, end: 0, child: figures),
+                  ],
+                );
+              },
+            ),
           ),
         ],
       ),
@@ -450,8 +468,6 @@ class _IpChips extends StatelessWidget {
   }
 }
 
-// The flag spans this much of the badge, so the bubble's widest wobble and
-// rebound reach at most 95% of it.
 const _flagCover = 0.92;
 
 class _CountryBadge extends StatefulWidget {
@@ -530,8 +546,8 @@ class _CountryBadgeState extends State<_CountryBadge> {
                     time: time,
                     wobble: wobble,
                     irregularity: wobble.abs(),
-                    color: well,
-                    shadow: shadow,
+                    color: hasFlag ? Colors.transparent : well,
+                    shadow: hasFlag ? Colors.transparent : shadow,
                     highlight: false,
                   ),
                   foregroundPainter: OutboundDropletPainter(
@@ -539,17 +555,26 @@ class _CountryBadgeState extends State<_CountryBadge> {
                     wobble: wobble,
                     irregularity: wobble.abs(),
                     color: Colors.transparent,
-                    highlight: !highContrast && finish != OutboundFinish.frost,
-                    rim: finish == OutboundFinish.clear ? rim : null,
+                    highlight:
+                        !hasFlag &&
+                        !highContrast &&
+                        finish != OutboundFinish.frost,
+                    rim: !hasFlag && finish == OutboundFinish.clear
+                        ? rim
+                        : null,
                     ring: _focused ? focusRingSide(colorScheme) : null,
                   ),
                   child: hasFlag
-                      ? ClipPath(
-                          clipper: OutboundDropletClipper(
-                            time: time,
-                            wobble: wobble,
-                            irregularity: wobble.abs(),
-                          ),
+                      ? ShaderMask(
+                          blendMode: BlendMode.dstIn,
+                          shaderCallback: (bounds) => const RadialGradient(
+                            colors: [
+                              Colors.white,
+                              Colors.white,
+                              Colors.transparent,
+                            ],
+                            stops: [0, 0.88, 1],
+                          ).createShader(bounds),
                           child: child,
                         )
                       : child,

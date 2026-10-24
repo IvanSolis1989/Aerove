@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/providers/providers.dart';
@@ -54,20 +56,24 @@ class _Control extends StatelessWidget {
     required this.value,
     required this.onChanged,
     required this.detail,
+    this.trailing,
   });
 
   final String title;
   final bool value;
   final ValueChanged<bool> onChanged;
-  final Widget detail;
+  final String detail;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
-      final label = GlassText(
-        title,
-        style: AppTextStyle.callout.of(context, emphasized: true),
-      );
+      final scaler = MediaQuery.textScalerOf(context);
+      final titleStyle = AppTextStyle.callout.of(context, emphasized: true);
+      final titleHeight =
+          scaler.scale(titleStyle.fontSize!) * titleStyle.height!;
+      final detailStyle = DashboardText.label(context);
+      final label = GlassText(title, maxLines: 2, style: titleStyle);
       final toggle = Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
         child: DashboardSwitch(
@@ -85,17 +91,39 @@ class _Control extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (stacked) ...[
-            label,
+            SizedBox(
+              height: titleHeight * 2,
+              child: Align(
+                alignment: AlignmentDirectional.topStart,
+                child: label,
+              ),
+            ),
             toggle,
           ] else
-            Row(
-              spacing: 8,
-              children: [
-                Expanded(child: label),
-                toggle,
-              ],
+            SizedBox(
+              height: math.max(CommonSwitch.trackHeight + 16, titleHeight * 2),
+              child: Row(
+                spacing: 8,
+                children: [
+                  Expanded(child: label),
+                  toggle,
+                ],
+              ),
             ),
-          detail,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: GlassText(
+                  detail,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: detailStyle,
+                ),
+              ),
+              ?trailing,
+            ],
+          ),
         ],
       );
     },
@@ -114,12 +142,9 @@ class _VpnControl extends ConsumerWidget {
       onChanged: (value) => ref
           .read(vpnSettingProvider.notifier)
           .update((state) => state.copyWith(enable: value)),
-      detail: GlassText(
-        enabled
-            ? context.appLocalizations.enabled
-            : context.appLocalizations.disabled,
-        style: DashboardText.label(context),
-      ),
+      detail: enabled
+          ? context.appLocalizations.enabled
+          : context.appLocalizations.disabled,
     );
   }
 }
@@ -135,32 +160,31 @@ class _LanControl extends ConsumerWidget {
       patchClashConfigProvider.select((s) => s.allowLan),
     );
     final port = ref.watch(patchClashConfigProvider.select((s) => s.mixedPort));
-    final address = ip == null || ip.isEmpty ? null : '$ip:$port';
+    final address = _lanAddress(ip, port, enabled);
     return _Control(
       title: l10n.allowLan,
       value: enabled,
       onChanged: (value) => ref
           .read(patchClashConfigProvider.notifier)
           .update((state) => state.copyWith(allowLan: value)),
-      detail: Row(
-        children: [
-          Expanded(
-            child: GlassText(
-              address ?? (ip == null ? '—' : l10n.noNetwork),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: DashboardText.label(context),
-            ),
-          ),
-          DashboardIconButton(
-            glyph: AppGlyphs.copy,
-            tooltip: l10n.copy,
-            onPressed: address == null
-                ? null
-                : () => copyToClipboard(context, address),
-          ),
-        ],
+      detail: address ?? (ip == null ? '—' : l10n.noNetwork),
+      trailing: DashboardIconButton(
+        glyph: AppGlyphs.copy,
+        tooltip: l10n.copy,
+        onPressed: address == null
+            ? null
+            : () => copyToClipboard(context, address),
       ),
     );
   }
+}
+
+String? _lanAddress(String? ip, int port, bool enabled) {
+  if (ip == null || ip.trim().isEmpty) return null;
+  if (!enabled) return ip;
+  if (port < 1 || port > 65535) return null;
+  final host = ip.startsWith('[') && ip.endsWith(']')
+      ? ip.substring(1, ip.length - 1)
+      : ip;
+  return host.contains(':') ? '[$host]:$port' : '$host:$port';
 }

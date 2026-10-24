@@ -14,7 +14,8 @@ API ID/Hash 从 [Telegram API 开发页面](https://my.telegram.org/apps) 取得
 Lite 后续公开 Release 复用同一通知入口，通过标签中的 `lite` 识别独立产品。
 
 所有执行读取默认分支的通知实现，不执行 Release 标签或构建产物中的代码。
-通知直接发送 Release 的全部产物文件，多个文件合并为一组，附正式/预览标记、摘要和完整说明链接。
+通知发送 Release 的应用产物文件，过滤 `BUILD_INFO.json` 与 `SHA256SUMS`，
+这两个文件继续保留在 GitHub Release。多个应用产物合并为一组，附正式/预览标记、摘要和完整说明链接。
 下载后逐项核对 GitHub Release 的 SHA256 digest 与文件大小，再把原文件作为 document 上传；不重编或改写 APK。
 附件说明只保留一次版本标题、最多四条实际变化和一个短文本“发布页”链接；
 去掉源码 SHA、包名、重复版本及构建流程。HTML 链接避免裸 URL 占据多行。
@@ -47,8 +48,8 @@ Actions → **Telegram release notification** → Run workflow，选择 main：
 频道改名后公开链接需要同步更新，numeric chat ID 保持固定。机器人权限或 Secret 缺失会明确失败，
 通知失败不改变原应用的构建和发行结果。GitHub Step Summary 显示真实消息链接或跳过原因。
 
-Smart-Config-Kit 使用同一机器人，仅 main 根 `CHANGELOG.md` 修改时发送各客户端原始配置文件，
-不压缩、不改文件名、不改文件内容；根日志引用的同日子目录日志用于提取实际变化，其部署规则独立维护。
+Smart-Config-Kit 使用同一机器人，仅 main 根 `CHANGELOG.md` 修改时发送更新摘要和仓库链接，
+不附配置文件；根日志引用的同日子目录日志用于提取实际变化，其部署规则独立维护。
 
 依据：[Telegram sendMessage](https://core.telegram.org/bots/api#sendmessage)、
 [频道关联讨论群](https://core.telegram.org/api/discussion)、
