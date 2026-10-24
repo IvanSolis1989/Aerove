@@ -556,7 +556,35 @@ class ApkInspectionTests(unittest.TestCase):
                 write('build-policy.json',dict(policy,**changes))
                 with self.subTest(fullPolicy=changes),self.assertRaises(ValueError):
                     module.native_identity(root)
-            missing_gate=dict(policy);missing_gate.pop('coreTests');missing_gate.pop('coreTestLockSha256')
+            # Stage1 retains the same Core14/29 proof and requires its new complete Native argv.
+            traffic_targets=list(module.HOST_POLICY_RUNTIME_TRAFFIC_TARGETS)
+            self.assertEqual(34,len(traffic_targets))
+            self.assertEqual(targets,[t for t in traffic_targets if t!='native_telemetry'])
+            traffic_policy=dict(policy,targets=traffic_targets,coreTests='policy-runtime-traffic-v1')
+            traffic_hash=write('build-policy.json',traffic_policy)
+            traffic_command=['cargo','test','--locked','--no-fail-fast']
+            for target in traffic_targets:traffic_command += ['--lib'] if target=='lib' else ['--test',target]
+            traffic_command += ['--','--test-threads=1','--nocapture']
+            traffic_receipt=dict(receipt,command=traffic_command,representativeTargets=traffic_targets,
+                buildPolicySha256=traffic_hash,coreTests=dict(state,mode='policy-runtime-traffic-v1'))
+            module.validate_native_receipt(traffic_receipt,root=root)
+            for changes in [dict(command=command),dict(representativeTargets=targets),
+                    dict(command=traffic_command[:3]+traffic_command[4:]),dict(coreTests=None),dict(coreTests=state)]:
+                with self.subTest(trafficReceipt=changes),self.assertRaises(ValueError):
+                    module.validate_native_receipt(dict(traffic_receipt,**changes),root=root)
+            for changes in [dict(targets=targets),dict(targets=traffic_targets+['arbitrary']),dict(targets=traffic_targets[:-1]),
+                    dict(targets=list(reversed(traffic_targets))),dict(coreTests='policy-runtime-v1'),dict(coreTests='policy-runtime-v2')]:
+                write('build-policy.json',dict(traffic_policy,**changes))
+                with self.subTest(trafficPolicy=changes),self.assertRaises(ValueError):module.native_identity(root)
+            write('build-policy.json',traffic_policy)
+            for key,value in [('target','other'),('filter','arbitrary'),('expectedPass',0),('passed',0),
+                    ('command',traffic_receipt['coreTests']['commands'][0]['command'][:-1])]:
+                bad=copy.deepcopy(traffic_receipt)
+                bad['coreTests']['commands'][0][key]=value
+                with self.subTest(trafficCore=key),self.assertRaises(ValueError):module.validate_native_receipt(bad,root=root)
+            # An old33 receipt cannot be relabelled as the new34 graph.
+            with self.assertRaises(ValueError):module.validate_native_receipt(receipt,root=root)
+            missing_gate=dict(traffic_policy);missing_gate.pop('coreTests');missing_gate.pop('coreTestLockSha256')
             write('build-policy.json',missing_gate)
             with self.assertRaises(ValueError):module.native_identity(root)
 

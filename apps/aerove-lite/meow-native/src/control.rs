@@ -160,6 +160,21 @@ pub fn router(control: Arc<RouteControl>) -> axum::Router {
         .with_state(control)
 }
 
+#[derive(serde::Deserialize)]
+struct OfficialTrafficSample {
+    up: i64, down: i64,
+    #[serde(rename="upTotal")] upload_total: i64,
+    #[serde(rename="downTotal")] download_total: i64,
+}
+fn telemetry_traffic_frame(source:&str)->Result<String, &'static str>{
+    let sample:OfficialTrafficSample=serde_json::from_str(source).map_err(|_|"trafficSampleInvalid")?;
+    if [sample.up,sample.down,sample.upload_total,sample.download_total].iter().any(|value|*value<0){
+        return Err("trafficSampleNegative");
+    }
+    Ok(serde_json::json!({"type":"traffic","up":sample.up,"down":sample.down,
+        "uploadTotal":sample.upload_total,"downloadTotal":sample.download_total}).to_string())
+}
+
 async fn provider_telemetry(
     axum::extract::State(control): axum::extract::State<Arc<RouteControl>>,
     axum::Extension(scope): axum::Extension<meow_api::lifecycle::ApiLifecycle>,
@@ -170,13 +185,27 @@ async fn provider_telemetry(
         let mut events = control.plane.subscribe();
         let mut seen = std::collections::BTreeMap::new();
         let mut groups = control.groups_events.subscribe();
+        let mut traffic = meow_api::routes::subscribe_traffic_feed(&control.state);
         for event in control.plane.provider_baseline() {
             seen.insert((event.kind, event.name.clone()), event.revision.parse::<u64>().expect("canonical provider revision"));
             let frame = serde_json::json!({"type":"providersLoaded","providers":[event]}).to_string();
             if socket.send(Message::Text(frame.into())).await.is_err() { return; }
         }
         loop {
-            tokio::select! {
+            tokio::select! { biased;
+                _ = control.plane.cancel.cancelled() => return,
+                sampled = traffic.recv() => {
+                    let sampled = match sampled {
+                        Ok(sampled) => sampled,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                    };
+                    let frame = match telemetry_traffic_frame(&sampled) {
+                        Ok(frame) => frame,
+                        Err(error) => { tracing::warn!(error,"invalid Core traffic sample"); return; }
+                    };
+                    if socket.send(Message::Text(frame.into())).await.is_err() { return; }
+                }
                 incoming = socket.recv() => if incoming.is_none() || incoming.is_some_and(|message| message.is_err() || matches!(message, Ok(Message::Close(_)))) { return; },
                 group = groups.recv() => {
                     let Ok(revision) = group else { return; };
@@ -734,5 +763,29 @@ impl RouteControl {
         response.headers_mut().insert("x-aerove-core-epoch",HeaderValue::from_str(&epoch.to_string()).unwrap());
         response.headers_mut().insert("x-aerove-picks-version",HeaderValue::from_str(&revision.to_string()).unwrap());
         response
+    }
+}
+
+#[cfg(test)]
+mod telemetry_traffic_tests {
+    use super::telemetry_traffic_frame;
+    #[test]
+    fn official_sample_maps_exact_kotlin_traffic_fields() {
+        let wire=telemetry_traffic_frame(r#"{"up":3,"down":4,"upTotal":17,"downTotal":29}"#).unwrap();
+        let event:serde_json::Value=serde_json::from_str(&wire).unwrap();
+        assert_eq!(event,serde_json::json!({"type":"traffic","up":3,"down":4,"uploadTotal":17,"downloadTotal":29}));
+    }
+    #[test]
+    fn invalid_samples_are_rejected_without_synthetic_zero_frame() {
+        for source in [r#"{"up":-1,"down":0,"upTotal":0,"downTotal":0}"#,r#"{"up":0,"down":-1,"upTotal":0,"downTotal":0}"#,
+            r#"{"up":0,"down":0,"upTotal":-1,"downTotal":0}"#,r#"{"up":0,"down":0,"upTotal":0,"downTotal":-1}"#,
+            r#"{"up":9223372036854775808,"down":0,"upTotal":0,"downTotal":0}"#,r#"{"up":"0","down":0,"upTotal":0,"downTotal":0}"#,
+            r#"{"up":0,"down":0,"upTotal":0}"#,"null"] { assert!(telemetry_traffic_frame(source).is_err()); }
+    }
+    #[test]
+    fn zero_and_signed_long_maximum_remain_exact_numbers() {
+        let wire=telemetry_traffic_frame(r#"{"up":0,"down":0,"upTotal":9223372036854775807,"downTotal":9223372036854775807}"#).unwrap();
+        let event:serde_json::Value=serde_json::from_str(&wire).unwrap();
+        assert_eq!(event["up"].as_i64(),Some(0));assert_eq!(event["uploadTotal"].as_i64(),Some(i64::MAX));
     }
 }

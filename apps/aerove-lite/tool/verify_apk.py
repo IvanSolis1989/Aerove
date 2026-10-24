@@ -121,6 +121,10 @@ HOST_POLICY_RUNTIME_V2_TARGETS = ('lib',
  'tun_driver',
  'urltest_gate',
  'user_request_context')
+# Traffic stage has a separate mode, so deleting its sole new target cannot admit old33.
+HOST_POLICY_RUNTIME_TRAFFIC_TARGETS = tuple(
+    target for original in HOST_POLICY_RUNTIME_V2_TARGETS
+    for target in ((original, 'native_telemetry') if original == 'native_ech_context' else (original,)))
 CORE_POLICY_TEST_CASES_V2 = (('meow-transport', 'scoped_join::', 11, 'lib', ('ws', 'grpc', 'h2', 'xhttp')),
  ('meow-transport',
   'actual_stream_preserves_send_sync_transport_contract',
@@ -183,13 +187,14 @@ def native_identity(root=MEOW_ROOT):
         raise ValueError("Meow requires a pinned source and accepted committed lock policy")
     if "coreTests" in policy:
         approved_targets = {"policy-runtime-v1": HOST_POLICY_RUNTIME_TARGETS,
-            "policy-runtime-v2": HOST_POLICY_RUNTIME_V2_TARGETS}.get(policy["coreTests"])
+            "policy-runtime-v2": HOST_POLICY_RUNTIME_V2_TARGETS,
+            "policy-runtime-traffic-v1": HOST_POLICY_RUNTIME_TRAFFIC_TARGETS}.get(policy["coreTests"])
         if (not approved_targets
                 or tuple(policy.get("targets", ())) != approved_targets
                 or policy.get("featureBoundary") != "capabilities-no-default"
                 or not re.fullmatch(r"[0-9a-f]{64}", str(policy.get("coreTestLockSha256", "")))):
             raise ValueError("Unrecognized Meow Core unit test policy")
-    elif "coreTestLockSha256" in policy or tuple(policy.get("targets", ())) in (HOST_POLICY_RUNTIME_TARGETS, HOST_POLICY_RUNTIME_V2_TARGETS):
+    elif "coreTestLockSha256" in policy or tuple(policy.get("targets", ())) in (HOST_POLICY_RUNTIME_TARGETS, HOST_POLICY_RUNTIME_V2_TARGETS, HOST_POLICY_RUNTIME_TRAFFIC_TARGETS):
         raise ValueError("Meow policy lacks approved Core unit test admission")
     def owned(name):
         path = root / name
@@ -235,10 +240,10 @@ def validate_native_receipt(receipt_path, abi=None, image=None, root=MEOW_ROOT, 
     if abi is None:
         policy = json.loads((Path(root)/"build-policy.json").read_text())
         targets = policy["targets"]
-        if "node_delay" in targets and tuple(targets) not in (HOST_NO_FAIL_FAST_TARGETS, HOST_POLICY_RUNTIME_TARGETS, HOST_POLICY_RUNTIME_V2_TARGETS):
+        if "node_delay" in targets and tuple(targets) not in (HOST_NO_FAIL_FAST_TARGETS, HOST_POLICY_RUNTIME_TARGETS, HOST_POLICY_RUNTIME_V2_TARGETS, HOST_POLICY_RUNTIME_TRAFFIC_TARGETS):
             raise ValueError("Unrecognized Meow no-fail-fast target contract")
         command = ["cargo", "test", "--locked"]
-        if tuple(targets) in (HOST_NO_FAIL_FAST_TARGETS, HOST_POLICY_RUNTIME_TARGETS, HOST_POLICY_RUNTIME_V2_TARGETS):
+        if tuple(targets) in (HOST_NO_FAIL_FAST_TARGETS, HOST_POLICY_RUNTIME_TARGETS, HOST_POLICY_RUNTIME_V2_TARGETS, HOST_POLICY_RUNTIME_TRAFFIC_TARGETS):
             command.append("--no-fail-fast")
         for target in targets:
             command += ["--lib"] if target == "lib" else ["--test", target]
@@ -279,7 +284,7 @@ def validate_core_test_receipt(state, policy, root):
     overlay = json.loads((root / policy["overlay"]).read_text())
     upstream_lock = overlay.get("files", {}).get("Cargo.lock")
     mode = policy["coreTests"]
-    if mode not in ("policy-runtime-v1", "policy-runtime-v2"):
+    if mode not in ("policy-runtime-v1", "policy-runtime-v2", "policy-runtime-traffic-v1"):
         reject()
     cases = (tuple((package, name, count, "lib", ()) for package, name, count in CORE_POLICY_TEST_CASES)
         if mode == "policy-runtime-v1" else CORE_POLICY_TEST_CASES_V2)
@@ -319,7 +324,7 @@ def validate_core_test_receipt(state, policy, root):
             command += [name]
         command += ["--", "--test-threads=1", "--nocapture"]
         if (not isinstance(entry, dict) or entry.get("package") != package or entry.get("filter") != name
-                or (mode == "policy-runtime-v2" and (entry.get("target") != target or "filter" not in entry))
+                or (mode in ("policy-runtime-v2", "policy-runtime-traffic-v1") and (entry.get("target") != target or "filter" not in entry))
                 or entry.get("command") != command or not exited(entry.get("exit"))
                 or type(entry.get("expectedPass")) is not int or entry["expectedPass"] != count
                 or type(entry.get("passed")) is not int or entry["passed"] != count

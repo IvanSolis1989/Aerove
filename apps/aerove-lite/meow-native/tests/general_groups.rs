@@ -74,7 +74,7 @@ async fn real_periodic_fallback_nested_put_route_and_group_event_share_one_stamp
     let changed = tokio::time::timeout(Duration::from_secs(5), async {
         let mut previous = 0;
         loop {
-            let frame = socket.next().await.unwrap().unwrap();
+            let frame = next_non_traffic(&mut socket).await;
             let event: serde_json::Value = serde_json::from_str(frame.to_text().unwrap()).unwrap();
             assert_eq!(event["type"], "groupsChanged"); let revision = event["revision"].as_u64().unwrap();
             assert!(revision > previous); previous = revision; assert_eq!(event.as_object().unwrap().len(), 2);
@@ -199,5 +199,20 @@ async fn forward(tunnel: Tunnel, expected_success: bool) {
         assert!(!responder.is_finished(), "rejected route reached target");
         responder.abort();
         assert!(responder.await.unwrap_err().is_cancelled());
+    }
+}
+
+// Multiplexing adds only the known traffic event to these existing scenarios.
+// One absolute deadline covers every skipped frame; unknown/error events are
+// returned to the unchanged scenario assertions, never swallowed.
+async fn next_non_traffic<S>(socket:&mut S)->tokio_tungstenite::tungstenite::Message
+where S:futures::Stream<Item=Result<tokio_tungstenite::tungstenite::Message,tokio_tungstenite::tungstenite::Error>>+Unpin {
+    let deadline=tokio::time::Instant::now()+Duration::from_secs(5);
+    loop {
+        let frame=tokio::time::timeout_at(deadline,socket.next()).await.unwrap().unwrap().unwrap();
+        let event:serde_json::Value=serde_json::from_str(frame.to_text().unwrap()).unwrap();
+        if event["type"]!="traffic" { return frame; }
+        assert_eq!(event.as_object().unwrap().len(),5);
+        for key in ["up","down","uploadTotal","downloadTotal"] { assert!(event[key].as_i64().is_some_and(|value|value>=0)); }
     }
 }

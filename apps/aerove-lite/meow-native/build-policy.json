@@ -17,6 +17,7 @@
     "health_round_context",
     "host_policy_runtime",
     "native_ech_context",
+    "native_telemetry",
     "node_delay",
     "offline_scope",
     "owned_runtime",
@@ -39,8 +40,8 @@
     "user_request_context"
   ],
   "overlay": "source-metadata/full-runtime.json",
-  "overlaySha256": "4ea65b26f1574fb9a4d58ff88bdbbf97abc754daa9817c52e6989d1d8a3d4d53",
+  "overlaySha256": "7f687bde4436554c102e57630551c848adb47b7cb71e7f526fb04d37d4d3359a",
   "featureBoundary": "capabilities-no-default",
-  "coreTests": "policy-runtime-v2",
+  "coreTests": "policy-runtime-traffic-v1",
   "coreTestLockSha256": "96b509814a2d833c39ac23c1cbee62a38e401f420ec1cf8f72a7738a71df6c58"
 }

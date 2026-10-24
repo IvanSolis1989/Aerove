@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "patch": "patches/full-runtime.patch",
-  "patchSha256": "9fb9aea44ed1b30d78b7955adef7a87b1f8658a84b460300fe5f136b02900be5",
+  "patchSha256": "7739b6e91502d9613789eab96811847a7b9c2903c497a8692ad86b33639e33f7",
   "rawFileManifestSha256": "a1948157edb77700f6f9152f3467907fb6a050c66cd153edfe98295bbf56e550",
-  "adaptedFileManifestSha256": "50036fff992205369dab7fe738b88e83f31bf12aed75121539eea3f8fd358014",
+  "adaptedFileManifestSha256": "b63bf5fbd5db14dd7f3ee13039e11a916f2b69a05c1daaacd292bf30d91bc73e",
   "changes": {
     "crates/meow-anytls/src/client/client.rs": {
       "beforeSha256": "806773111b6ca84adcdad0e24d6db6c5653e72bdba58f4d5e95fd959d3504515",
@@ -35,7 +35,7 @@
     },
     "crates/meow-api/src/routes.rs": {
       "beforeSha256": "ede953ab7bfc0394e70c67128c0f99f94ff60681f7d77f1e1dd1946f4f427740",
-      "afterSha256": "5aa53918ce14c2cbe7c0cde3388a70a4ab90deda0428077b60b717a71bec5d71"
+      "afterSha256": "2d9c3680f61afb5e0cc64bf5aec11996a8a30b457399106e715e4ff7ab38c9d2"
     },
     "crates/meow-common/Cargo.toml": {
       "beforeSha256": "563038bd1e9e4e22b0aa79399d44674844818e8e7a595dca4130b693605d8cc7",
@@ -1306,7 +1306,7 @@
     "crates/meow-api/src/lifecycle.rs": "6965ed6fb4fd3cf6b3cd0eeffe6343361977f961bf2bbc62fd26ea091e007419",
     "crates/meow-api/src/logbook.rs": "35f9708b9520ae8ff7389de3c404c079915793c8fc255644c1c4c438039880d6",
     "crates/meow-api/src/log_stream.rs": "3d648a3743402e06af52a0bc93a5661b6b0d3f21a4964af096d3ca5fdc6b8561",
-    "crates/meow-api/src/routes.rs": "5aa53918ce14c2cbe7c0cde3388a70a4ab90deda0428077b60b717a71bec5d71",
+    "crates/meow-api/src/routes.rs": "2d9c3680f61afb5e0cc64bf5aec11996a8a30b457399106e715e4ff7ab38c9d2",
     "crates/meow-api/src/ui.rs": "90fe34463c020f8b2d6761fb1b11be7cf2eda6db277a7ec14c169582d70ee058",
     "crates/meow-api/static/index.html": "b7ce4862842ce8186a0da3e781cf38a36a65a04aaee8ddf2ea2319049b4a8334",
     "crates/meow-api/tests/api_logs_ws_test.rs": "fd58cac7a759a831b6fc5ce6cb057bfdaca335a1011ac46b7edd98c07ade3275",

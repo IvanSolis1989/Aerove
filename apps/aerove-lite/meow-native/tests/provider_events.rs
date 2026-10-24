@@ -72,7 +72,7 @@ async fn real_http_initial_manual_unchanged_receipts_busy_and_public_mutators_sh
     let initial_get=request(user_address,"GET","/providers/proxies/feed",USER,"").await;
     assert!(initial_get.starts_with("HTTP/1.1 200"),"{initial_get}"); assert_eq!(body(&initial_get)["revision"],"1");
     let (mut telemetry, _) = tokio_tungstenite::connect_async(format!("ws://{private_address}/aerove/telemetry?token={PRIVATE}")).await.unwrap();
-    let first_frame = tokio::time::timeout(Duration::from_secs(5), telemetry.next()).await.unwrap().unwrap().unwrap();
+    let first_frame = next_non_traffic(&mut telemetry).await;
     let frame: serde_json::Value = serde_json::from_str(first_frame.to_text().unwrap()).unwrap();
     assert_eq!(frame["type"], "providersLoaded"); assert_eq!(frame["providers"][0]["revision"], "1");    let reentry = Arc::new(ReentrantWake { plane: plane.clone(), observed: std::sync::atomic::AtomicBool::new(false), completed: Notify::new() });
     let waker = std::task::Waker::from(reentry.clone());
@@ -92,7 +92,7 @@ async fn real_http_initial_manual_unchanged_receipts_busy_and_public_mutators_sh
     assert!(reentry.observed.load(std::sync::atomic::Ordering::SeqCst));
     drop(reentry_receive);
     let updated=tokio::time::timeout(Duration::from_secs(5),events.recv()).await.unwrap().unwrap();
-    let update_frame = tokio::time::timeout(Duration::from_secs(5), telemetry.next()).await.unwrap().unwrap().unwrap();
+    let update_frame = next_non_traffic(&mut telemetry).await;
     let update_wire: serde_json::Value = serde_json::from_str(update_frame.to_text().unwrap()).unwrap();
     assert_eq!(update_wire["providers"][0]["revision"], "2");
     assert_eq!(updated.revision,"2"); assert_eq!(updated.phase,"update"); assert!(!updated.changed);
@@ -100,7 +100,7 @@ async fn real_http_initial_manual_unchanged_receipts_busy_and_public_mutators_sh
     assert_eq!(body(&update_get)["revision"],"2"); assert_eq!(body(&update_get)["subscriptionInfo"]["Upload"],2);
     assert!(request(user_address,"PUT","/providers/proxies/feed",USER,"").await.starts_with("HTTP/1.1 204"));
     let unchanged=tokio::time::timeout(Duration::from_secs(5),events.recv()).await.unwrap().unwrap();
-    let unchanged_frame = tokio::time::timeout(Duration::from_secs(5), telemetry.next()).await.unwrap().unwrap().unwrap();
+    let unchanged_frame = next_non_traffic(&mut telemetry).await;
     let unchanged_wire: serde_json::Value = serde_json::from_str(unchanged_frame.to_text().unwrap()).unwrap();
     assert_eq!(unchanged_wire["providers"][0]["revision"], "3");
     assert_eq!(unchanged.revision,"3"); assert!(!unchanged.changed);
@@ -303,4 +303,19 @@ async fn structural_epoch_exhaustion_rejects_real_initial_install_without_wrap()
     assert!(result.is_err()); assert!(result.err().unwrap().to_string().contains("coreEpochExhausted"));
     server.await.unwrap(); scope.close().await.unwrap();
     assert_eq!(plane.stamp(), (u64::MAX, 0)); assert!(plane.provider_baseline().is_empty());
+}
+
+// Multiplexing adds only the known traffic event to these existing scenarios.
+// One absolute deadline covers every skipped frame; unknown/error events are
+// returned to the unchanged scenario assertions, never swallowed.
+async fn next_non_traffic<S>(socket:&mut S)->tokio_tungstenite::tungstenite::Message
+where S:futures::Stream<Item=Result<tokio_tungstenite::tungstenite::Message,tokio_tungstenite::tungstenite::Error>>+Unpin {
+    let deadline=tokio::time::Instant::now()+Duration::from_secs(5);
+    loop {
+        let frame=tokio::time::timeout_at(deadline,socket.next()).await.unwrap().unwrap().unwrap();
+        let event:serde_json::Value=serde_json::from_str(frame.to_text().unwrap()).unwrap();
+        if event["type"]!="traffic" { return frame; }
+        assert_eq!(event.as_object().unwrap().len(),5);
+        for key in ["up","down","uploadTotal","downloadTotal"] { assert!(event[key].as_i64().is_some_and(|value|value>=0)); }
+    }
 }
