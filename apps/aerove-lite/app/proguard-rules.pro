@@ -1172,3 +1172,23 @@
 -keep,includedescriptorclasses class dev.aerove.lite.data.CompatibilityValidator {
     <init>(dev.aerove.lite.data.NativeConfigValidator,java.io.File);
 }
+
+# Preserve the six app ABI members invoked by the independently minified #84 test APK.
+-keep,includedescriptorclasses class dev.aerove.lite.vpn.LiteVpnService$Companion {
+    boolean wasRequested(android.content.Context);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.profilesource.BatchImportState {
+    <init>(long,java.util.List,boolean,int,kotlin.jvm.internal.DefaultConstructorMarker);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.backgroundpolicy.BackgroundPolicyJson {
+    org.json.JSONObject encode(dev.aerove.lite.backgroundpolicy.BackgroundPolicyPreferences);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.ui.ClientNoticesHostKt {
+    androidx.compose.runtime.ProvidableCompositionLocal getLocalClientNotices();
+}
+-keep,includedescriptorclasses class dev.aerove.lite.ui.DashboardPresentationKt {
+    java.util.Set getDashboardStatusMembers();
+}
+-keep,includedescriptorclasses class dev.aerove.lite.integration.GlobalResourceWorkspace {
+    <init>(dev.aerove.lite.profilebuilder.BuilderResourceLibrary,dev.aerove.lite.data.ProfileRepository,dev.aerove.lite.data.GlobalRulePayloadRepository,kotlin.jvm.functions.Function2,kotlin.jvm.functions.Function1);
+}
