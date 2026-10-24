@@ -95,4 +95,3 @@ pub(super) fn encode_upstream_mrs(behavior: u8, count: usize, body: &[u8]) -> Ve
     inner.extend_from_slice(body);
     zstd::encode_all(Cursor::new(inner), 0).unwrap()
 }
-
