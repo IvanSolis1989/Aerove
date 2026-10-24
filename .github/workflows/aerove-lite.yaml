@@ -654,10 +654,16 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-          echo no | timeout --kill-after=5s 30s avdmanager create avd --force -n test --package 'system-images;android-33-ext4;google_apis_playstore;x86_64' --device pixel_6
-          avd_directory="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/standard-original-reference-avd"
+          printf 'ANDROID_AVD_HOME=%s\n' "$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
+          avd_directory="$ANDROID_AVD_HOME"
+          mkdir -p "$avd_directory"
+          echo no | timeout --kill-after=5s 30s avdmanager create avd --force -n test --package 'system-images;android-33-ext4;google_apis_playstore;x86_64' --device pixel_6 -p "$avd_directory/test.avd"
+          test -s "$avd_directory/test.ini"
+          test -s "$avd_directory/test.avd/config.ini"
           printf 'hw.cpu.ncore=2\n' >> "$avd_directory/test.avd/config.ini"
           cp "$avd_directory/test.avd/config.ini" "$STANDARD_REFERENCE_ROOT/environment/avd-config.ini"
+          cp "$avd_directory/test.ini" "$STANDARD_REFERENCE_ROOT/environment/avd-descriptor.ini"
       - name: Record diagnostic-only original Std and harness identities
         if: ${{ inputs.diagnostic_target && inputs.diagnostic_target != 'none' }}
         env:
