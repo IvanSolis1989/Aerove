@@ -68,24 +68,54 @@ def validate_original_files(directory):
     return info
 
 
-def inspect_packages(directory, reports):
-    tools = Path(os.environ['ANDROID_HOME']) / 'build-tools/35.0.0'
+def inspection_command(command, reports, name, kind):
+    """Persist each actual reader result before any identity parsing can reject it."""
+    record = dict(command=[str(value) for value in command], returncode=None, timeout=False)
+    stdout = stderr = ''
+    try:
+        completed = subprocess.run(command, capture_output=True, text=True, timeout=60)
+        stdout, stderr = completed.stdout, completed.stderr
+        record['returncode'] = completed.returncode
+    except (OSError, subprocess.TimeoutExpired) as error:
+        record['error'] = repr(error)
+        record['timeout'] = isinstance(error, subprocess.TimeoutExpired)
+        stdout = getattr(error, 'stdout', None) or ''
+        stderr = getattr(error, 'stderr', None) or ''
+        raise
+    finally:
+        for label, value in [('stdout', stdout), ('stderr', stderr)]:
+            if isinstance(value, bytes):
+                value = value.decode('utf-8', errors='replace')
+            path = reports / (name + '.' + kind + ('.txt' if label == 'stdout' else '.stderr.txt'))
+            path.write_text(value)
+            record[label] = path.name
+        (reports / (name + '.' + kind + '.command.json')).write_text(json.dumps(record, indent=2) + '\n')
+    completed.check_returncode()
+    return stdout
+
+
+def inspect_packages(directory, reports, tools=None):
+    tools = Path(tools) if tools is not None else Path(os.environ['ANDROID_HOME']) / 'build-tools/35.0.0'
     reports.mkdir(parents=True, exist_ok=True)
     result = {}
     for name in APKS:
         apk = Path(directory) / 'apks' / name
-        badging = subprocess.check_output([str(tools / 'aapt'), 'dump', 'badging', str(apk)], text=True)
-        signature = subprocess.check_output([str(tools / 'apksigner'), 'verify', '--verbose', '--print-certs', str(apk)], text=True)
+        badging = inspection_command([str(tools / ('aapt.exe' if os.name == 'nt' else 'aapt')),
+                                     'dump', 'badging', str(apk)], reports, name, 'badging')
+        signature = inspection_command([str(tools / ('apksigner.bat' if os.name == 'nt' else 'apksigner')),
+                                       'verify', '--verbose', '--print-certs', str(apk)], reports, name, 'signature')
         product = dict(PRODUCT)
         if name == 'app-release-androidTest.apk':
-            identity = re.search(r"^package: name='([^']+)' versionCode='([0-9]+)' versionName='([^']*)'", badging, re.M)
-            if identity is None or identity[1] != PRODUCT['applicationId'] + '.test':
+            identity = re.findall(r"^package: name='([^']+)' versionCode='([^']*)' versionName='([^']*)'[^\n]*$", badging, re.M)
+            if identity != [(PRODUCT['applicationId'] + '.test', '', '')]:
                 raise ValueError('Original84 test APK package identity mismatch')
-            product.update(applicationId=identity[1], versionCode=identity[2], version=identity[3])
-            xml = subprocess.check_output([str(tools / 'aapt'), 'dump', 'xmltree', str(apk), 'AndroidManifest.xml'], text=True)
-            if not re.search(r'android:targetPackage(?:\(0x[0-9a-f]+\))?="dev\.aerove\.lite"', xml):
+            xml = inspection_command([str(tools / ('aapt.exe' if os.name == 'nt' else 'aapt')),
+                                      'dump', 'xmltree', str(apk), 'AndroidManifest.xml'], reports, name, 'xmltree')
+            if (re.findall(r'android:targetPackage(?:\(0x[0-9a-f]+\))?="([^"]+)"', xml) != [PRODUCT['applicationId']]
+                    or len(re.findall(r'^\s+E: instrumentation \(line=', xml, re.M)) != 1
+                    or not re.search(r'android:name(?:\(0x[0-9a-f]+\))?="androidx\.test\.runner\.AndroidJUnitRunner"', xml)
+                    or re.search(r'android:version(?:Code|Name)(?:\(0x[0-9a-f]+\))?=', xml)):
                 raise ValueError('Original84 instrumentation target mismatch')
-            (reports / (name + '.xmltree.txt')).write_text(xml)
             digests = re.findall(r'^Signer #[0-9]+ certificate SHA-256 digest: ([0-9a-f]{64})$', signature, re.M)
             digests += re.findall(r'^V2 Signer: certificate SHA-256 digest: ([0-9a-f]{64})$', signature, re.M)
             if (digests != [PRODUCT['signerSha256']] or signature.splitlines().count('Verifies') != 1
@@ -96,12 +126,11 @@ def inspect_packages(directory, reports):
                        != ['Number of signers: 1']
                     or not re.search(r"^sdkVersion:'33'$", badging, re.M)):
                 raise ValueError('Original84 instrumentation signing or SDK identity mismatch')
-            result[name] = dict(application_id=identity[1], version_code=int(identity[2]), version=identity[3],
+            result[name] = dict(application_id=identity[0][0], version_code=None, version=None,
+                                version_attributes_declared=False,
                                 min_sdk=33, signer_sha256=digests[0], target_package=PRODUCT['applicationId'])
         else:
             result[name] = verify_identity(badging, signature, product, 'preview')
-        (reports / (name + '.badging.txt')).write_text(badging)
-        (reports / (name + '.signature.txt')).write_text(signature)
     return result
 
 
@@ -128,7 +157,9 @@ def verify_original_runtime(directory):
     if (app.get('signer_sha256') != PRODUCT['signerSha256'] or app.get('application_id') != PRODUCT['applicationId']
             or app.get('version') != PRODUCT['version'] or app.get('version_code') != 10 or app.get('min_sdk') != 33
             or test.get('signer_sha256') != PRODUCT['signerSha256'] or test.get('application_id') != PRODUCT['applicationId'] + '.test'
-            or test.get('min_sdk') != 33 or test.get('target_package') != PRODUCT['applicationId']):
+            or test.get('min_sdk') != 33 or test.get('target_package') != PRODUCT['applicationId']
+            or test.get('version_code') is not None or test.get('version') is not None
+            or test.get('version_attributes_declared') is not False):
         raise ValueError('Original84 verified package signer proof is missing')
     return dict(identity=ORIGINAL, apks=APKS, runtimeManifestSha256=MANIFEST_SHA256,
                 apkInspectorOutcome='success', diagnosticOriginal84=True, originalAppIdentity=ORIGINAL,

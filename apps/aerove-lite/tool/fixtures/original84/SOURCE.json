@@ -1,0 +1,125 @@
+{
+  "artifactId": 12558172679,
+  "appSource": "5d2c2bb550ab54ae485837c1dec55e961e273dab",
+  "appRun": 40088361338,
+  "appAttempt": 1,
+  "apkSha256": "725e18e231eca0cd0ee6a8839a3a4f0b415a026eb3ac107c8ace441621875162",
+  "tool": "D:\\CodexTemp\\aerove-independent-20261022\\tooling\\sdk\\build-tools\\36.0.0\\aapt.exe",
+  "toolSha256": "c528418af0c5152650d9532485f371e8eed98e1436d1ab1a197580b97917b561",
+  "commands": [
+    {
+      "command": [
+        "D:\\CodexTemp\\aerove-independent-20261022\\tooling\\sdk\\build-tools\\36.0.0\\aapt.exe",
+        "dump",
+        "badging",
+        "D:\\CodexTemp\\aerove-independent-20261022\\session-20261023\\meow-migration\\android-current-runtime-qa84-01\\original-runtime\\extracted\\apks\\app-release-androidTest.apk"
+      ],
+      "returncode": 0,
+      "stdout": "app-release-androidTest.apk.badging.txt",
+      "stdoutSha256": "efa188fbc5fb39603c88a75fb6eaaa8f315763d9c7fdc2e2408b4be684cc6ade",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "D:\\CodexTemp\\aerove-independent-20261022\\tooling\\sdk\\build-tools\\36.0.0\\aapt.exe",
+        "dump",
+        "xmltree",
+        "D:\\CodexTemp\\aerove-independent-20261022\\session-20261023\\meow-migration\\android-current-runtime-qa84-01\\original-runtime\\extracted\\apks\\app-release-androidTest.apk",
+        "AndroidManifest.xml"
+      ],
+      "returncode": 0,
+      "stdout": "app-release-androidTest.apk.xmltree.txt",
+      "stdoutSha256": "bce5556720d074f7c1a01be8c8ca953aa68be58e73ba87941fd8f03e4529a0b7",
+      "stderr": ""
+    }
+  ],
+  "sdk": "36.0.0 existing local readonly",
+  "androidExecuted": false,
+  "actualSDK36PackageInspection": "success",
+  "actualPackageIdentities": {
+    "app-release.apk": {
+      "application_id": "dev.aerove.lite",
+      "version": "0.1.0-beta.10",
+      "version_code": 10,
+      "min_sdk": 33,
+      "signer_sha256": "09f9e021ddac36ead015d27e073b673e79fdf4e02605c402a505781963b1a4d8"
+    },
+    "app-release-androidTest.apk": {
+      "application_id": "dev.aerove.lite.test",
+      "version_code": null,
+      "version": null,
+      "version_attributes_declared": false,
+      "min_sdk": 33,
+      "signer_sha256": "09f9e021ddac36ead015d27e073b673e79fdf4e02605c402a505781963b1a4d8",
+      "target_package": "dev.aerove.lite"
+    }
+  },
+  "java": "D:\\CodexTemp\\aerove-independent-20261022\\lite-f04-validation\\runtime\\jdk-17.0.20.1+1-jre\\bin\\java.exe",
+  "javaSha256": "1977f302375adbb920d41dac65c7e22eb9c2ed8e1e8d6258964154ff16f14406",
+  "signatureFixtureSha256": "e9f35319aff8feb2d0fa8adf3ba4fd81ee31e1b00efeec356e596a6d6a74d3ae",
+  "inspectionCommands": [
+    {
+      "command": [
+        "D:\\CodexTemp\\aerove-independent-20261022\\tooling\\sdk\\build-tools\\36.0.0\\aapt.exe",
+        "dump",
+        "badging",
+        "D:\\CodexTemp\\aerove-independent-20261022\\session-20261023\\meow-migration\\android-current-runtime-qa84-01\\original-runtime\\extracted\\apks\\app-release-androidTest.apk"
+      ],
+      "returncode": 0,
+      "timeout": false,
+      "stdout": "app-release-androidTest.apk.badging.txt",
+      "stderr": "app-release-androidTest.apk.badging.stderr.txt"
+    },
+    {
+      "command": [
+        "D:\\CodexTemp\\aerove-independent-20261022\\tooling\\sdk\\build-tools\\36.0.0\\apksigner.bat",
+        "verify",
+        "--verbose",
+        "--print-certs",
+        "D:\\CodexTemp\\aerove-independent-20261022\\session-20261023\\meow-migration\\android-current-runtime-qa84-01\\original-runtime\\extracted\\apks\\app-release-androidTest.apk"
+      ],
+      "returncode": 0,
+      "timeout": false,
+      "stdout": "app-release-androidTest.apk.signature.txt",
+      "stderr": "app-release-androidTest.apk.signature.stderr.txt"
+    },
+    {
+      "command": [
+        "D:\\CodexTemp\\aerove-independent-20261022\\tooling\\sdk\\build-tools\\36.0.0\\aapt.exe",
+        "dump",
+        "xmltree",
+        "D:\\CodexTemp\\aerove-independent-20261022\\session-20261023\\meow-migration\\android-current-runtime-qa84-01\\original-runtime\\extracted\\apks\\app-release-androidTest.apk",
+        "AndroidManifest.xml"
+      ],
+      "returncode": 0,
+      "timeout": false,
+      "stdout": "app-release-androidTest.apk.xmltree.txt",
+      "stderr": "app-release-androidTest.apk.xmltree.stderr.txt"
+    },
+    {
+      "command": [
+        "D:\\CodexTemp\\aerove-independent-20261022\\tooling\\sdk\\build-tools\\36.0.0\\aapt.exe",
+        "dump",
+        "badging",
+        "D:\\CodexTemp\\aerove-independent-20261022\\session-20261023\\meow-migration\\android-current-runtime-qa84-01\\original-runtime\\extracted\\apks\\app-release.apk"
+      ],
+      "returncode": 0,
+      "timeout": false,
+      "stdout": "app-release.apk.badging.txt",
+      "stderr": "app-release.apk.badging.stderr.txt"
+    },
+    {
+      "command": [
+        "D:\\CodexTemp\\aerove-independent-20261022\\tooling\\sdk\\build-tools\\36.0.0\\apksigner.bat",
+        "verify",
+        "--verbose",
+        "--print-certs",
+        "D:\\CodexTemp\\aerove-independent-20261022\\session-20261023\\meow-migration\\android-current-runtime-qa84-01\\original-runtime\\extracted\\apks\\app-release.apk"
+      ],
+      "returncode": 0,
+      "timeout": false,
+      "stdout": "app-release.apk.signature.txt",
+      "stderr": "app-release.apk.signature.stderr.txt"
+    }
+  ]
+}

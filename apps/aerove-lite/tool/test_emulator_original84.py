@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+import subprocess
 from unittest import mock
 import zipfile
 
@@ -39,7 +40,8 @@ class Original84Tests(unittest.TestCase):
         app = dict(application_id=original.PRODUCT['applicationId'], version=original.PRODUCT['version'],
                    version_code=10, min_sdk=33, signer_sha256=original.PRODUCT['signerSha256'])
         test = dict(application_id=original.PRODUCT['applicationId'] + '.test', target_package=original.PRODUCT['applicationId'],
-                    min_sdk=33, signer_sha256=original.PRODUCT['signerSha256'])
+                    min_sdk=33, signer_sha256=original.PRODUCT['signerSha256'], version_code=None, version=None,
+                    version_attributes_declared=False)
         self.proof = dict(schema=1, diagnosticOriginal84=True, originalAppIdentity=original.ORIGINAL,
                           harnessIdentity=self.harness, promotionAccepted=False,
                           artifactId=original.ARTIFACT_ID, artifactZipSha256=original.ZIP_SHA256,
@@ -147,39 +149,69 @@ class Original84Tests(unittest.TestCase):
 
     def test_package_inspection_checks_original_app_and_instrumentation(self):
         signer = original.PRODUCT['signerSha256']
-        signature = ('Verifies\nVerified using v2 scheme (APK Signature Scheme v2): true\n'
-                     'Number of signers: 1\nSigner #1 certificate SHA-256 digest: ' + signer + '\n')
-        badging = "package: name='dev.aerove.lite.test' versionCode='1' versionName=''\nsdkVersion:'33'\n"
-        target = 'android:targetPackage(0x01010021)="dev.aerove.lite"'
+        fixtures = Path(__file__).with_name('fixtures') / 'original84'
+        signature = (fixtures / 'app-release-androidTest.apk.signature.txt').read_text()
+        badging = (fixtures / 'app-release-androidTest.apk.badging.txt').read_text()
+        target = (fixtures / 'app-release-androidTest.apk.xmltree.txt').read_text()
         app = dict(application_id=original.PRODUCT['applicationId'], version=original.PRODUCT['version'],
                    version_code=10, min_sdk=33, signer_sha256=signer)
         def inspect(text=badging, cert=signature, xml=target):
             def output(command, **kwargs):
-                if 'xmltree' in command:
-                    return xml
-                if 'verify' in command:
-                    return cert
-                return text
+                value = xml if 'xmltree' in command else cert if 'verify' in command else text
+                return subprocess.CompletedProcess(command, 0, value, '')
             with mock.patch.dict(os.environ, ANDROID_HOME=str(self.root)), \
-                    mock.patch.object(original.subprocess, 'check_output', side_effect=output), \
+                    mock.patch.object(original.subprocess, 'run', side_effect=output), \
                     mock.patch.object(original, 'verify_identity', return_value=app) as verify:
                 value = original.inspect_packages(self.runtime, self.root / 'inspection')
                 verify.assert_called_once_with(text, cert, original.PRODUCT, 'preview')
                 return value
         result = inspect()
         self.assertEqual('dev.aerove.lite', result['app-release-androidTest.apk']['target_package'])
+        self.assertIsNone(result['app-release-androidTest.apk']['version_code'])
+        self.assertIsNone(result['app-release-androidTest.apk']['version'])
+        self.assertIs(result['app-release-androidTest.apk']['version_attributes_declared'], False)
         modern = signature.replace('Signer #1 certificate', 'V2 Signer: certificate')
         self.assertEqual(signer, inspect(cert=modern)['app-release-androidTest.apk']['signer_sha256'])
         for text, cert, xml in [(badging.replace('.test', '.other'), signature, target),
                                 (badging, signature, target.replace('.lite', '.other')),
+                                (badging, signature, target.replace('AndroidJUnitRunner', 'OtherRunner')),
+                                (badging, signature, target + '\n      A: android:targetPackage(0x01010021)="dev.aerove.lite"\n'),
+                                (badging, signature, target + '\n    A: android:versionCode(0x0101021b)=(type 0x10)0x1\n'),
                                 (badging, signature.replace(signer, '0' * 64), target),
                                 (badging, signature.replace('true', 'false'), target),
                                 (badging, modern + 'Number of signers: 2\n', target),
                                 (badging, modern + 'Verified using v2 scheme (APK Signature Scheme v2): false\n', target),
                                 (badging, modern + 'Signer #1 certificate SHA-256 digest: ' + signer + '\n', target),
+                                (badging.replace("versionCode=''", "versionCode='1'"), signature, target),
                                 (badging.replace("'33'", "'32'"), signature, target)]:
             with self.subTest(text=text, cert=cert, xml=xml), self.assertRaises(ValueError):
                 inspect(text, cert, xml)
+            self.assertEqual(text, (self.root / 'inspection/app-release-androidTest.apk.badging.txt').read_text())
+            self.assertEqual(0, json.loads((self.root / 'inspection/app-release-androidTest.apk.badging.command.json').read_text())['returncode'])
+
+    def test_actual_sdk_badging_rejects_old_parser_and_is_saved_before_rejection(self):
+        fixtures = Path(__file__).with_name('fixtures') / 'original84'
+        badging = (fixtures / 'app-release-androidTest.apk.badging.txt').read_text()
+        self.assertIsNone(original.re.search(r"^package: name='([^']+)' versionCode='([0-9]+)' versionName='([^']*)'", badging, original.re.M))
+        reports = self.root / 'failed-reader'
+        reports.mkdir()
+        completed = subprocess.CompletedProcess(['actual-reader-fixture'], 7, badging, 'original command failure')
+        with mock.patch.object(original.subprocess, 'run', return_value=completed), self.assertRaises(subprocess.CalledProcessError) as caught:
+            original.inspection_command(['reader'], reports, 'test.apk', 'badging')
+        self.assertEqual(7, caught.exception.returncode)
+        self.assertEqual(badging, (reports / 'test.apk.badging.txt').read_text())
+        self.assertEqual('original command failure', (reports / 'test.apk.badging.stderr.txt').read_text())
+        self.assertEqual(7, json.loads((reports / 'test.apk.badging.command.json').read_text())['returncode'])
+
+    def test_reader_timeout_retains_original_error_and_partial_outputs(self):
+        reports = self.root / 'timeout-reader'
+        reports.mkdir()
+        error = subprocess.TimeoutExpired(['reader'], 60, output=b'partial output', stderr=b'partial error')
+        with mock.patch.object(original.subprocess, 'run', side_effect=error), self.assertRaises(subprocess.TimeoutExpired) as caught:
+            original.inspection_command(['reader'], reports, 'test.apk', 'signature')
+        self.assertIs(caught.exception, error)
+        self.assertEqual('partial output', (reports / 'test.apk.signature.txt').read_text())
+        self.assertTrue(json.loads((reports / 'test.apk.signature.command.json').read_text())['timeout'])
 
 
 if __name__ == '__main__':
