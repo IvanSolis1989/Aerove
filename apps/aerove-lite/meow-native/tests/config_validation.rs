@@ -1,15 +1,65 @@
 use std::{fs, path::PathBuf, sync::atomic::{AtomicU64, Ordering}};
 use aerove_meow_core::config_validation::{self as validation, dump_rule_set, inspect_rule_set, validate_resource};
+#[path="support/resource_roots.rs"] mod preflight_roots;
+#[path="support/upstream_mrs.rs"] mod upstream_mrs;
 
 struct Fixture(PathBuf);
 impl Fixture {
     fn new(bytes: &[u8]) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let path = std::env::temp_dir().join(format!("aerove-meow-offline-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
-        fs::write(&path, bytes).unwrap(); Self(path)
+        fs::write(&path, &bytes).unwrap(); Self(path)
     }
 }
 impl Drop for Fixture { fn drop(&mut self) { let _ = fs::remove_file(&self.0); } }
+
+fn controlled_upstream_mrs() -> Vec<u8> {
+    let entries: Vec<String> = (0..411_634).map(|index| format!("rule{index:06}.test")).collect();
+    let borrowed: Vec<&str> = entries.iter().map(String::as_str).collect();
+    let body = upstream_mrs::encode_domain_set(&borrowed);
+    upstream_mrs::encode_upstream_mrs(meow_config::offline_rules::mrs_parser::TYPE_DOMAIN, entries.len(), &body)
+}
+
+#[tokio::test]
+async fn large_controlled_upstream_mrs_preflight_uses_checked_core_and_still_requires_prepared_conversion() {
+    let bytes = controlled_upstream_mrs();
+    assert!(bytes.starts_with(&meow_config::offline_rules::mrs_parser::ZSTD_MAGIC));
+    let roots = preflight_roots::Roots::new();
+    let path = roots.read.join("ad-domain.mrs"); fs::write(&path, &bytes).unwrap();
+    let receipt: serde_json::Value = serde_json::from_str(&validation::preflight_rule_resource(&path, "domain", "mrs").unwrap()).unwrap();
+    assert_eq!(receipt, serde_json::json!({"state":"validated","format":"mrs","behavior":"domain","count":411_634,
+        "requires":{"geoip":false,"asn":false,"geosite":false}}));
+    let yaml = format!("dns: {{enable: false}}\nrule-providers:\n ad: {{type: file,behavior: domain,format: mrs,path: {:?}}}\nrules: ['RULE-SET,ad,REJECT','MATCH,DIRECT']\n", path.to_str().unwrap());
+    let work: std::pin::Pin<Box<dyn std::future::Future<Output=Result<(),String>>+Send+'_>> = Box::pin(
+        aerove_meow_core::resource_fetch::validate_prepared(&yaml, roots.read.to_str().unwrap(), roots.cache.to_str().unwrap()));
+    work.await.unwrap();
+    assert_eq!(fs::read(&path).unwrap(), bytes.as_slice());
+    assert_eq!(inspect_rule_set(&path).unwrap_err(), "rule_set_invalid: $.payload.mrs: rule_set_dump_count_limit_exceeded");
+    assert_eq!(dump_rule_set(&path, "domain", "mrs").unwrap_err(), "rule_set_invalid: $.payload.mrs: rule_set_dump_count_limit_exceeded");
+}
+
+#[test]
+fn upstream_mrs_preflight_rejects_identity_corruption_and_64m_expansion_without_relaxing_other_caps() {
+    let valid = Fixture::new(&controlled_upstream_mrs());
+    assert_eq!(validation::preflight_rule_resource(&valid.0, "ipcidr", "mrs").unwrap_err(),
+        "rule_set_invalid: $.behavior: rule_set_behavior_mismatch");
+    assert_eq!(validation::preflight_rule_resource(&valid.0, "domain", "text").unwrap_err(),
+        "rule_set_invalid: $.format: rule_set_format_mismatch");
+    let broken = Fixture::new(&[0x28,0xb5,0x2f,0xfd,0]);
+    let error = validation::preflight_rule_resource(&broken.0, "domain", "mrs").unwrap_err();
+    assert!(error.starts_with("rule_set_invalid: $.payload.mrs: ")); assert!(error.contains("zstd"));
+    let expansion = std::io::Read::take(std::io::repeat(0), validation::MAX_EXPANDED_BYTES as u64 + 1);
+    let excessive = Fixture::new(&zstd::encode_all(expansion, 0).unwrap());
+    let error = validation::preflight_rule_resource(&excessive.0, "domain", "mrs").unwrap_err();
+    assert!(error.starts_with("rule_set_invalid: $.payload.mrs: ")); assert!(error.contains("decompressed_payload"));
+    let text = Fixture::new("example.test\n".repeat(validation::MAX_ENTRIES + 1).as_bytes());
+    assert!(validation::preflight_rule_resource(&text.0, "domain", "text").unwrap_err().contains("count/line limit exceeded"));
+    let mut legacy = meow_config::offline_rules::mrs_parser::write_ruleset_mrs(0, &["example.test"]).unwrap();
+    legacy[6..10].copy_from_slice(&((validation::MAX_ENTRIES + 1) as u32).to_be_bytes());
+    let legacy = Fixture::new(&legacy);
+    assert_eq!(validation::preflight_rule_resource(&legacy.0, "domain", "mrs").unwrap_err(),
+        "rule_set_invalid: $.payload.mrs: rule_set_dump_count_limit_exceeded");
+}
 
 #[tokio::test]
 async fn syntax_success_is_not_fake_complete_configuration_admission() {

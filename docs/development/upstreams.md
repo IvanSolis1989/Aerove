@@ -364,7 +364,7 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **用途与采用方式：** 分类 Issue Forms、MiMo Flash 首轮与 Pro 追问、过滤/失败只读模式作为流程参考；该流程未复制规则/提示词或自动PR。另参考首页内容分层、下载导航与二级文档组织，按本产品事实重新编写，未复制 SVG、文案或 UI。Lite 兼容准入、provider / Geo 准备及脚本联调使用固定 Meow 配置与测试向量；分流脚本仍由上游生成维护，本项目不另维护生产路由基线。测试夹具、显式本地资源供给和实际 HTTP / VPN 路由验收分别记录，不能互相代替
 
-**许可证、署名与证据：** 既有流程与 README 为只读参考；[固定 README](https://github.com/IvanSolis1989/Smart-Config-Kit/blob/18a676345de86af38f511b8137add605e0a59588/README.md)。联调固定树的 README 声明 MIT，未发现独立 LICENSE / COPYING / NOTICE 文件，不补造授权；[固定 Meow 脚本](https://github.com/IvanSolis1989/Smart-Config-Kit/blob/89abb221a157acc98d6b52c85583e6b5a5b2742b/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/AeroveLite(meow).js) SHA256 `217a4d7ecfb56d99cbb79148159ee636b882af5520c4ad7b6c6c870405f938cb`。第三方规则及数据库保留各自来源和许可约束，不视为 SCK 原创或推定采用 MIT
+**许可证、署名与证据：** 既有流程与 README 为只读参考；[固定 README](https://github.com/IvanSolis1989/Smart-Config-Kit/blob/18a676345de86af38f511b8137add605e0a59588/README.md)。联调固定树的 README 声明 MIT，未发现独立 LICENSE / COPYING / NOTICE 文件，不补造授权；[固定 Meow 脚本](https://github.com/IvanSolis1989/Smart-Config-Kit/blob/89abb221a157acc98d6b52c85583e6b5a5b2742b/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/AeroveLite(meow).js) SHA256 `217a4d7ecfb56d99cbb79148159ee636b882af5520c4ad7b6c6c870405f938cb`。第三方规则及数据库保留各自来源和许可约束，不视为 SCK 原创或推定采用 MIT；实际聚合规则的来源继续追溯固定树中的[来源账本](https://github.com/IvanSolis1989/Smart-Config-Kit/blob/89abb221a157acc98d6b52c85583e6b5a5b2742b/rulesets/generated/source-ledger.json)和[聚合清单](https://github.com/IvanSolis1989/Smart-Config-Kit/blob/89abb221a157acc98d6b52c85583e6b5a5b2742b/rulesets/generated/fused/manifest.json)，保留各数据源声明的许可及未核状态，不推定重新授权
 
 #### [tun-rs/tun-rs](https://github.com/tun-rs/tun-rs)
 
@@ -386,7 +386,9 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **固定版本 / revision：** `v0.26.1` / `727ddcd06f592e2f12c5222c4de6cce328df808c`；原始 Git 文件 map `a1948157edb77700f6f9152f3467907fb6a050c66cd153edfe98295bbf56e550`
 
-**用途与采用方式：** Lite 选定 Rust 核心，迁移中；[Run17](https://github.com/IvanSolis1989/Aerove/actions/runs/39994659739) 已完成 56 项宿主测试及双 Android ABI 链接，实际覆盖同代运行、监听与资源所有权。尚无完整 Meow APK/ART/系统路由及十二图，不代表完整功能或首发。保留此前公开基准、DNS 与官方 Android FFI/Cargo 参考记录。
+**用途与采用方式：** Lite 选定 Rust 核心，迁移中；[Run17](https://github.com/IvanSolis1989/Aerove/actions/runs/39994659739) 的历史证据为 56 项宿主测试及双 Android ABI 链接。[Run94](https://github.com/IvanSolis1989/Aerove/actions/runs/40117349063) 后续已产出双 ABI APK 并实际执行 Android 测试，但启动及清透帧验收仍失败，整体尚未接受或首发。保留此前公开基准、DNS 与官方 Android FFI/Cargo 参考记录。
+
+大规则准备预检复用该固定 Core 的严格 MRS matcher 工厂。宿主回归另原样复用[固定 MRS 测试编码器](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/crates/meow-rules/src/mrs_parser.rs)的六个 helper 至 `apps/aerove-lite/meow-native/tests/support/upstream_mrs.rs`，只调整模块导入与两个测试入口可见性；保留 Max Lv 的完整 MIT 通知。测试运行时生成受控 `.test` 域名数据，不把第三方聚合规则作为本仓二进制夹具。生产解析仍由真实 Core 完成；新增精确 zstd 依赖仅用于测试，实际锁解析和 Android 资源验收分别记录。
 
 **许可证、署名与证据：** MIT；[固定 LICENSE](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/LICENSE) 原始 SHA256 `b7a39018faacfd98597da373045fbacf2c3f134fd755e553894a6a9adad38db5`；[固定 Cargo.toml](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/Cargo.toml)。
 

@@ -61,6 +61,7 @@ libc = "0.2"
 rquickjs = { version = "=0.12.2", default-features = false, features = ["bindgen"] }
 
 [dev-dependencies]
+zstd = "=0.13.3"
 hickory-proto = "0.26"
 boring = "5.2"
 tokio-boring = "5.2"

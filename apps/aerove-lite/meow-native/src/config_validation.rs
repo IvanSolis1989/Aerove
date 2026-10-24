@@ -128,6 +128,9 @@ fn compile_rule_payload(accepted: &AcceptedRules) -> Result<(), String> {
 /// Preparation-only dependency receipt. Pending resources still require full prepared conversion.
 pub fn preflight_rule_resource(path: &Path, behavior: &str, format: &str) -> Result<String, String> {
     let bytes = read_input(path, MAX_INPUT_BYTES)?;
+    if bytes.starts_with(&rules::mrs_parser::ZSTD_MAGIC) {
+        return preflight_upstream_mrs(&bytes, behavior, format);
+    }
     let accepted = decode_rule_payload(&bytes,
         Some(parse_behavior(behavior).map_err(|e| invalid_rule("$.behavior", e))?),
         Some(canonical_format(format).map_err(|e| invalid_rule("$.format", e))?))?;
@@ -148,6 +151,26 @@ pub fn preflight_rule_resource(path: &Path, behavior: &str, format: &str) -> Res
         "state": if pending { "requiresPreparedContext" } else { "validated" },
         "format": accepted.format, "behavior": name(accepted.behavior), "count": accepted.count,
         "requires": {"geoip":required.geoip,"asn":required.asn,"geosite":required.geosite}
+    })).map_err(|e| e.to_string())
+}
+
+fn preflight_upstream_mrs(bytes: &[u8], behavior: &str, format: &str) -> Result<String, String> {
+    use rules::mrs_parser as mrs;
+    let expected = parse_behavior(behavior).map_err(|e| invalid_rule("$.behavior", e))?;
+    let format = canonical_format(format).map_err(|e| invalid_rule("$.format", e))?;
+    // Keep the host's 64MiB expansion fence before the fixed Core's larger decoder budget.
+    mrs::decompress_payload_bounded(bytes, MAX_EXPANDED_BYTES as u64)
+        .map_err(|e| invalid_rule("$.payload.mrs", e))?;
+    let reader = mrs::UpstreamRuleSetReader::open(bytes).map_err(|e| invalid_rule("$.payload.mrs", e))?;
+    let actual = behavior_tag(reader.behavior()).map_err(|e| invalid_rule("$.payload.mrs", e))?;
+    if format != "mrs" { return Err(invalid_rule("$.format", "rule_set_format_mismatch")); }
+    if expected != actual { return Err(invalid_rule("$.behavior", "rule_set_behavior_mismatch")); }
+    drop(reader);
+    let checked = rules::build_rule_set_from_mrs_with_behavior(bytes, &Default::default(), Some(expected), true)
+        .map_err(|e| invalid_rule("$.payload.mrs", e))?;
+    serde_json::to_string(&serde_json::json!({
+        "state":"validated", "format":"mrs", "behavior":name(actual), "count":checked.len(),
+        "requires":{"geoip":false,"asn":false,"geosite":false}
     })).map_err(|e| e.to_string())
 }
 
