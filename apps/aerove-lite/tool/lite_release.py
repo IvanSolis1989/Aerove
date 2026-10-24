@@ -109,7 +109,7 @@ def select_acceptance(source, current_run, outputs):
     candidates = []
     for run in data.get("workflow_runs", []):
         if (run.get("id") == current_run or run.get("head_sha") != source
-                or run.get("head_branch") != "codex/aerove-independent-architecture"
+                or run.get("head_branch") not in ("codex/aerove-independent-architecture", "codex/aerove-lite-meow-app")
                 or run.get("path", "").split("@", 1)[0] != f".github/workflows/{WORKFLOW}"
                 or run.get("status") != "completed" or run.get("conclusion") != "success"
                 or run.get("event") not in {"push", "workflow_dispatch"}):

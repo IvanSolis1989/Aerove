@@ -301,10 +301,28 @@ class LitePromotionGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp, mock.patch.object(release, "_gh_json", side_effect=api), \
                 mock.patch.object(release, "_candidate_jobs", return_value={"complete": True}):
             outputs = Path(temp) / "outputs"
-            result = release.select_acceptance(source, 999, outputs)
-            self.assertEqual(result["run_id"], run_id)
-            self.assertEqual(result["run_attempt"], attempt)
-            self.assertEqual(set(result["artifact_ids"]), {"arm", "x86", "matrix", "helper"})
+            for branch in ("codex/aerove-independent-architecture", "codex/aerove-lite-meow-app"):
+                for event in ("push", "workflow_dispatch"):
+                    run.update(head_branch=branch,event=event)
+                    with self.subTest(branch=branch,event=event):
+                        result = release.select_acceptance(source, 999, outputs)
+                        self.assertEqual(result["run_id"], run_id)
+                        self.assertEqual(result["run_attempt"], attempt)
+                        self.assertEqual(set(result["artifact_ids"]), {"arm", "x86", "matrix", "helper"})
+            for branch in ("codex/aerove-meow-preflight", "codex/unrelated", "main",
+                    "codex/aerove-lite-meow-app-extra", "codex/aerove-lite-meow-app/child", "", None):
+                run["head_branch"] = branch
+                with self.subTest(rejectedBranch=branch), self.assertRaisesRegex(release.PromotionError,"No exact-source"):
+                    release.select_acceptance(source,999,outputs)
+            run["head_branch"] = "codex/aerove-lite-meow-app"
+            for key,value in (("head_sha","b"*40),("path",".github/workflows/aerove-meow-preflight.yaml"),
+                    ("event","pull_request"),("conclusion","failure"),("run_attempt",attempt+1)):
+                original=run[key];run[key]=value
+                with self.subTest(newBranchGate=key), self.assertRaisesRegex(release.PromotionError,"No exact-source"):
+                    release.select_acceptance(source,999,outputs)
+                run[key]=original
+            with self.assertRaisesRegex(release.PromotionError,"No exact-source"):
+                release.select_acceptance(source,run_id,outputs)
             artifact_rows.pop()
             with self.assertRaisesRegex(release.PromotionError, "No exact-source"):
                 release.select_acceptance(source, 999, outputs)
