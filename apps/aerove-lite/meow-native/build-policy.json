@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "manifestSha256": "5f60ffd27028424b07d4fb8f5e7574ce804eef04dc467a0b47e6ade10f7efe58",
-  "resolveLock": true,
-  "expectedLockBeforeSha256": "bc6695a948336ba3247c2587faeadc5514e562d2d27ae1cc47666a68ad258d81",
+  "resolveLock": false,
+  "expectedLockBeforeSha256": "925bc4bdbda8f7f039759f8c4d5d862ed3263c664d6d10653d389d0950bbafeb",
   "targets": [
     "lib",
     "anytls_owned_shutdown",
@@ -41,5 +41,6 @@
   "overlay": "source-metadata/full-runtime.json",
   "overlaySha256": "4ea65b26f1574fb9a4d58ff88bdbbf97abc754daa9817c52e6989d1d8a3d4d53",
   "featureBoundary": "capabilities-no-default",
-  "coreTests": "policy-runtime-v2"
+  "coreTests": "policy-runtime-v2",
+  "coreTestLockSha256": "96b509814a2d833c39ac23c1cbee62a38e401f420ec1cf8f72a7738a71df6c58"
 }

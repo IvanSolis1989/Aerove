@@ -1,5 +1,6 @@
 /Cargo.toml text eol=lf
 /Cargo.lock text eol=lf
+/core-tests.lock text eol=lf
 /*.json text eol=lf
 /source-metadata/*.json text eol=lf
 /patches/*.patch -text
