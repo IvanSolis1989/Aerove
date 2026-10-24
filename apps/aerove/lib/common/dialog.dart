@@ -5,6 +5,7 @@ import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:url_launcher/url_launcher.dart';
 
 class Dialogs {
@@ -218,7 +219,28 @@ class Dialogs {
     if (res != true) {
       return;
     }
-    unawaited(launchUrl(Uri.parse(url)));
+    try {
+      if (await launchUrl(Uri.parse(url))) return;
+    } on PlatformException catch (error) {
+      commonPrint.log(
+        'URL launch failed: ${compactError(error)}',
+        logLevel: LogLevel.warning,
+      );
+    } on ArgumentError catch (error) {
+      commonPrint.log(
+        'URL launch failed: ${compactError(error)}',
+        logLevel: LogLevel.warning,
+      );
+    }
+    final appLocalizations = currentAppLocalizations;
+    await showMessage(
+      message: TextSpan(
+        text: '${appLocalizations.externalLinkOpenFailed}\n\n$url',
+      ),
+      title: appLocalizations.externalLink,
+      confirmText: appLocalizations.cancel,
+      cancelable: false,
+    );
   }
 }
 

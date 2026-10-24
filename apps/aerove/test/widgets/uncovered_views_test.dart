@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:fl_clash/common/l10n_labels.dart';
+import 'package:fl_clash/common/dialog.dart';
 import 'package:fl_clash/common/request.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/features/form/form.dart';
@@ -308,6 +309,58 @@ void main() {
     }
     expect(tester.takeException(), null);
   });
+
+  for (final outcome in ['false', 'platform', 'success', 'cancel']) {
+    testWidgets('external link launch handles $outcome', (tester) async {
+      const url = 'https://t.me/IvanSolis89';
+      const channel = MethodChannel('plugins.flutter.io/url_launcher');
+      final launches = <MethodCall>[];
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        launches.add(call);
+        if (outcome == 'platform') {
+          throw PlatformException(code: 'launch_failed');
+        }
+        return outcome == 'success';
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      final container = _containerFor(tester);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const TestApp(child: AboutView()),
+        ),
+      );
+      await tester.pump();
+      final l10n = AppLocalizations.current;
+      final opened = dialogs.openUrl(url);
+      await tester.pumpAndSettle();
+      expect(find.text(url, findRichText: true), findsOneWidget);
+      await tester.tap(find.text(outcome == 'cancel' ? l10n.cancel : l10n.go));
+      await tester.pumpAndSettle();
+      if (outcome == 'false' || outcome == 'platform') {
+        expect(find.byType(CommonDialog), findsOneWidget);
+        expect(find.text(l10n.externalLink), findsOneWidget);
+        expect(
+          find.text(
+            '${l10n.externalLinkOpenFailed}\n\n$url',
+            findRichText: true,
+          ),
+          findsOneWidget,
+        );
+        expect(find.text(l10n.go), findsNothing);
+        expect(find.text(l10n.cancel), findsOneWidget);
+        await tester.tap(find.text(l10n.cancel));
+        await tester.pumpAndSettle();
+      }
+      await opened;
+      expect(find.byType(CommonDialog), findsNothing);
+      expect(launches, hasLength(outcome == 'cancel' ? 0 : 1));
+      if (launches.isNotEmpty) expect(launches.single.arguments['url'], url);
+      expect(tester.takeException(), null);
+    });
+  }
 
   testWidgets('about neutral surfaces respect active glass', (tester) async {
     final container = _containerFor(tester);

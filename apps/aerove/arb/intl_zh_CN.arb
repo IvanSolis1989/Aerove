@@ -986,5 +986,6 @@
   "addedToLocalProxies": "已将 {name} 添加到本地代理",
   "alreadyInLocalProxies": "本地代理中已有 {name}",
   "aboutTelegramChannel": "Telegram 频道",
-  "aboutTelegramGroup": "Telegram 群组"
+  "aboutTelegramGroup": "Telegram 群组",
+  "externalLinkOpenFailed": "无法打开此链接。请检查是否有可用且获准打开链接的应用。"
 }
