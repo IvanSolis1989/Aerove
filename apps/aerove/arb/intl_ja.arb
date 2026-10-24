@@ -986,5 +986,6 @@
   "addedToLocalProxies": "{name} をローカルプロキシに追加しました",
   "alreadyInLocalProxies": "{name} はすでにローカルプロキシにあります",
   "aboutTelegramChannel": "Telegram チャンネル",
-  "aboutTelegramGroup": "Telegram グループ"
+  "aboutTelegramGroup": "Telegram グループ",
+  "externalLinkOpenFailed": "このリンクを開けません。リンクを開くことができ、許可されたアプリがあるか確認してください。"
 }

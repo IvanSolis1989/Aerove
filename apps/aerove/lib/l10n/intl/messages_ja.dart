@@ -705,6 +705,9 @@ class MessageLookup extends MessageLookupByLibrary {
       "外部コントローラーのシークレット",
     ),
     "externalLink": MessageLookupByLibrary.simpleMessage("外部リンク"),
+    "externalLinkOpenFailed": MessageLookupByLibrary.simpleMessage(
+      "このリンクを開けません。リンクを開くことができ、許可されたアプリがあるか確認してください。",
+    ),
     "extraLarge": MessageLookupByLibrary.simpleMessage("特大"),
     "fade": MessageLookupByLibrary.simpleMessage("フェード"),
     "failedCount": m29,

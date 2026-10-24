@@ -863,6 +863,9 @@ class MessageLookup extends MessageLookupByLibrary {
       "Секрет внешнего контроллера",
     ),
     "externalLink": MessageLookupByLibrary.simpleMessage("Внешняя ссылка"),
+    "externalLinkOpenFailed": MessageLookupByLibrary.simpleMessage(
+      "Не удалось открыть ссылку. Проверьте, есть ли приложение, которому разрешено её открывать.",
+    ),
     "extraLarge": MessageLookupByLibrary.simpleMessage("Очень крупный"),
     "fade": MessageLookupByLibrary.simpleMessage("Растворение"),
     "failedCount": m29,

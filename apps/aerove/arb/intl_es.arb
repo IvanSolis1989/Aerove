@@ -986,5 +986,6 @@
   "addedToLocalProxies": "{name} añadido a proxies locales",
   "alreadyInLocalProxies": "{name} ya está en proxies locales",
   "aboutTelegramChannel": "Canal de Telegram",
-  "aboutTelegramGroup": "Grupo de Telegram"
+  "aboutTelegramGroup": "Grupo de Telegram",
+  "externalLinkOpenFailed": "No se puede abrir este enlace. Comprueba que haya una aplicación disponible con permiso para abrirlo."
 }
