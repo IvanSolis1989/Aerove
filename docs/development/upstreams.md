@@ -828,6 +828,14 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **许可证、署名与证据：** R8 project authors，源码所示 BSD-style license；[固定命令源码](https://r8.googlesource.com/r8/+/d3a004e326742850d743833562cc2d6ca267d117/src/main/java/com/android/tools/r8/tracereferences/TraceReferencesCommandParser.java)、[固定公共诊断 API](https://r8.googlesource.com/r8/+/61dc59bf271ddb314b5e0953231bd22df0ffb17e/src/main/java/com/android/tools/r8/DiagnosticsHandler.java)、[官方 LICENSE](https://r8.googlesource.com/r8/+/refs/heads/main/LICENSE)；本项目 `generate_android_test_keep_rules.py` 与 `AndroidTestAppAbiTrace.java`。
 
+#### [google/perfetto](https://github.com/google/perfetto)
+
+**固定版本 / revision：** `v25.0` / `7e8d6801dbf73936a916dbcd8ed06a758c8d989e`
+
+**用途与采用方式：** Android 帧诊断只读参照固定 trace、时钟、服务事件、调度及 FrameTimeline proto 字段，核对原始 trace 的时间覆盖与丢包；另参照流式配置和 CLI 文件描述符传递链，为 `clear_frame_trace.py` 使用官方周期写盘参数。未复制采集器或引入解析依赖；设备实际版本、trace 完整性与线程结论须分别核验，采集启动和文件存在不代表有效性能证据。
+
+**许可证、署名与证据：** Apache-2.0；proto 保留 Android Open Source Project 2017 版权，CLI 保留 2018 版权；[固定 TraceConfig](https://github.com/google/perfetto/blob/7e8d6801dbf73936a916dbcd8ed06a758c8d989e/protos/perfetto/config/trace_config.proto)、[固定 CLI](https://github.com/google/perfetto/blob/7e8d6801dbf73936a916dbcd8ed06a758c8d989e/src/perfetto_cmd/perfetto_cmd.cc)、[固定 TracePacket](https://github.com/google/perfetto/blob/7e8d6801dbf73936a916dbcd8ed06a758c8d989e/protos/perfetto/trace/trace_packet.proto)。
+
 #### [google/gfxstream](https://github.com/google/gfxstream)
 
 **固定版本 / revision：** `0884d2d224bfe2e46cbb13b71d68d7c66e2f7dc9`

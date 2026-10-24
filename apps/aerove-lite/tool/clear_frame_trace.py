@@ -16,6 +16,11 @@ import time
 import uuid
 
 PACKAGE = 'dev.aerove.lite'
+TRACE_FILE_CAP_BYTES = 128 * 1024 * 1024
+TRACE_WRITE_PERIOD_MS = 1000
+TRACE_CONFIG_SCHEMA = ('https://github.com/google/perfetto/blob/'
+                       '7e8d6801dbf73936a916dbcd8ed06a758c8d989e/'
+                       'protos/perfetto/config/trace_config.proto')
 
 
 class CollectorCancelled(BaseException):
@@ -73,6 +78,9 @@ def config_text(query, categories, duration=120):
     atrace = '\n'.join('      atrace_categories: "' + name + '"' for name in selected)
     text = f'''buffers {{ size_kb: 32768 fill_policy: DISCARD }}
 duration_ms: {duration * 1000}
+write_into_file: true
+file_write_period_ms: {TRACE_WRITE_PERIOD_MS}
+max_file_size_bytes: {TRACE_FILE_CAP_BYTES}
 data_sources {{ config {{ name: "linux.ftrace" ftrace_config {{
 {events}
 {atrace}
@@ -107,7 +115,11 @@ class TraceCapture:
                             gpuTimingNotGuaranteed=True, coldCompilationNotGuaranteed=True,
                             performanceEvidence=False, targetPackage=PACKAGE, deviceApi=None,
                             targetPidsBefore=None, targetPidsAfter=None,
-                            remoteTrace=self.remote + '.pftrace')
+                            remoteTrace=self.remote + '.pftrace', traceCoverageValidated=False,
+                            streamingToFile=True, fileWritePeriodMillis=TRACE_WRITE_PERIOD_MS,
+                            traceFileCapBytes=TRACE_FILE_CAP_BYTES, fileCapMayStopBeforeDuration=True,
+                            earlyFileCapStopObserved=None, traceEndReason='UNKNOWN_PENDING_SERVICE_EVENTS',
+                            configSchemaReference=TRACE_CONFIG_SCHEMA)
         try:
             self.directory.mkdir(parents=True, exist_ok=False)
             self.storage_ready = True
@@ -178,6 +190,7 @@ class TraceCapture:
         path = self.directory / 'config.pbtxt'
         path.write_bytes(config.encode('utf-8'))
         self.receipt['configSha256'] = hashlib.sha256(config.encode()).hexdigest()
+        self.receipt['configSourceFile'] = str(path)
         self.run(['shell', 'cat', '/proc/uptime'], 'device-uptime-before.txt')
         self.started = time.monotonic()
         self.receipt['traceTriggerHostMonotonicNanos'] = time.monotonic_ns()
@@ -217,7 +230,8 @@ class TraceCapture:
             pulled = self.run(['pull', self.remote + '.pftrace', str(trace)], 'pull-trace.txt', timeout=15)
             if pulled is not None and trace.is_file() and trace.stat().st_size:
                 self.receipt.update(tracePulled=True, traceBytes=trace.stat().st_size,
-                                    traceSha256=hashlib.sha256(trace.read_bytes()).hexdigest())
+                                    traceSha256=hashlib.sha256(trace.read_bytes()).hexdigest(),
+                                    fileBytesAtOrAboveConfiguredCap=trace.stat().st_size >= TRACE_FILE_CAP_BYTES)
         self.run(['shell', 'cat', '/proc/uptime'], 'device-uptime-after.txt', timeout=3)
         self.run(['shell', 'dumpsys', 'gfxinfo', PACKAGE, 'framestats'], 'gfxinfo-framestats.txt', timeout=3)
         self.run(['shell', 'dumpsys', 'SurfaceFlinger', '--list'], 'surfaceflinger-layers.txt', timeout=3)
