@@ -46,10 +46,10 @@ pub fn inspect_rule_set(path: &Path) -> Result<String, String> {
 
 pub fn dump_rule_set(path: &Path, behavior: &str, format: &str) -> Result<String, String> {
     let accepted = read_rules(path, None, None)?;
-    if parse_behavior(behavior)? != accepted.behavior { return Err("rule_set_behavior_mismatch".into()); }
-    if canonical_format(format)? != accepted.format { return Err("rule_set_format_mismatch".into()); }
-    let size = accepted.entries.iter().try_fold(0usize, |n, s| n.checked_add(s.len() + 1)).ok_or("rule_set_dump_size_overflow")?;
-    if size > MAX_EXPANDED_BYTES { return Err("rule_set_dump_limit_exceeded".into()); }
+    if parse_behavior(behavior).map_err(|e| invalid_rule("$.behavior", e))? != accepted.behavior { return Err(invalid_rule("$.behavior", "rule_set_behavior_mismatch")); }
+    if canonical_format(format).map_err(|e| invalid_rule("$.format", e))? != accepted.format { return Err(invalid_rule("$.format", "rule_set_format_mismatch")); }
+    let size = accepted.entries.iter().try_fold(0usize, |n, s| n.checked_add(s.len() + 1)).ok_or_else(|| invalid_rule("$.payload", "rule_set_dump_size_overflow"))?;
+    if size > MAX_EXPANDED_BYTES { return Err(invalid_rule("$.payload", "rule_set_dump_limit_exceeded")); }
     let mut text = String::with_capacity(size);
     for entry in accepted.entries { text.push_str(&entry); text.push('\n'); }
     Ok(text)
@@ -57,7 +57,7 @@ pub fn dump_rule_set(path: &Path, behavior: &str, format: &str) -> Result<String
 
 pub async fn validate_resource(kind: &str, path: &Path, behavior: &str, format: &str) -> Result<(), String> {
     match kind.to_ascii_lowercase().as_str() {
-        "ruleset" | "rule-provider" => { read_rules(path, Some(parse_behavior(behavior)?), Some(canonical_format(format)?))?; Ok(()) }
+        "ruleset" | "rule-provider" => { read_rules(path, Some(parse_behavior(behavior).map_err(|e| invalid_rule("$.behavior", e))?), Some(canonical_format(format).map_err(|e| invalid_rule("$.format", e))?))?; Ok(()) }
         "mmdb" => {
             if !behavior.is_empty() || !matches!(format.to_ascii_lowercase().as_str(), "" | "mmdb") { return Err("mmdb expects empty behavior and empty/mmdb format".into()); }
             let bytes = read_input(path, MAX_INPUT_BYTES)?;
@@ -83,16 +83,24 @@ pub async fn validate_resource(kind: &str, path: &Path, behavior: &str, format: 
 struct AcceptedRules { format: &'static str, behavior: RuleSetBehavior, entries: Vec<String>, count: usize }
 fn read_rules(path: &Path, behavior: Option<RuleSetBehavior>, format: Option<&'static str>) -> Result<AcceptedRules, String> {
     let bytes = read_input(path, MAX_INPUT_BYTES)?;
-    let is_mrs = rules::is_mrs_bytes(&bytes);
+    read_rule_payload(&bytes, behavior, format).map_err(|reason| {
+        if reason.starts_with("rule_set_invalid:") { reason } else { invalid_rule("$.payload", reason) }
+    })
+}
+fn invalid_rule(field: &str, reason: impl std::fmt::Display) -> String {
+    format!("rule_set_invalid: {field}: {reason}")
+}
+fn read_rule_payload(bytes: &[u8], behavior: Option<RuleSetBehavior>, format: Option<&'static str>) -> Result<AcceptedRules, String> {
+    let is_mrs = rules::is_mrs_bytes(bytes);
     let (actual_format, actual_behavior, entries, source_count) = if is_mrs {
-        let (b, entries, count) = decode_mrs(&bytes)?;
+        let (b, entries, count) = decode_mrs(bytes).map_err(|e| invalid_rule("$.payload.mrs", e))?;
         ("mrs", b, entries, count)
     } else {
         if bytes.len() > MAX_TEXT_BYTES { return Err("rule-provider text input limit exceeded".into()); }
-        let source = std::str::from_utf8(&bytes).map_err(|e| e.to_string())?;
+        let source = std::str::from_utf8(bytes).map_err(|e| invalid_rule("$.payload.utf8", e))?;
         let yaml = yaml_payload(source);
         let (fmt, lines) = match (format, yaml) {
-            (Some("yaml"), r) => ("yaml", r?),
+            (Some("yaml"), r) => ("yaml", r.map_err(|e| invalid_rule("$.payload.yaml", e))?),
             (Some("text"), _) => ("text", text_lines(source)),
             (_, Ok(lines)) => ("yaml", lines),
             _ => ("text", text_lines(source)),
@@ -101,10 +109,10 @@ fn read_rules(path: &Path, behavior: Option<RuleSetBehavior>, format: Option<&'s
         let count = normalized.len();
         (fmt, classified, normalized, count)
     };
-    if let Some(expected) = format { if expected != actual_format { return Err("rule_set_format_mismatch".into()); } }
-    if let Some(expected) = behavior { if expected != actual_behavior { return Err("rule_set_behavior_mismatch".into()); } }
+    if let Some(expected) = format { if expected != actual_format { return Err(invalid_rule("$.format", "rule_set_format_mismatch")); } }
+    if let Some(expected) = behavior { if expected != actual_behavior { return Err(invalid_rule("$.behavior", "rule_set_behavior_mismatch")); } }
     bound_entries(&entries)?;
-    let compiled = rules::build_rule_set_checked(actual_behavior, &entries, &Default::default()).map_err(|e| format!("rule_set_invalid: {e}"))?;
+    let compiled = rules::build_rule_set_checked(actual_behavior, &entries, &Default::default()).map_err(|e| invalid_rule("$.payload", e))?;
     // Checked core conversion is authoritative; no source rows are returned before conversion succeeds.
     if compiled.len() != entries.len() { return Err("rule_set_accepted_count_mismatch".into()); }
     Ok(AcceptedRules { format: actual_format, behavior: actual_behavior, entries, count: source_count })

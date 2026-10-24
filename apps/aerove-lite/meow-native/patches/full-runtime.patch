@@ -8528,7 +8528,7 @@
      let s = spec.unwrap_or("").trim();
      if s.is_empty() {
          return Ok(vec![(200, 299)]);
-@@ -1486,3 +1556,220 @@
+@@ -1486,3 +1556,264 @@
          }
      }
  }
@@ -8539,6 +8539,49 @@
 +    use crate::{http_adapter::HttpAdapter,dialer::{DirectDialer,DialerTarget,ProxyRegistry,NamedProxyDialer},
 +        group::{load_balance::{LoadBalanceGroup,LbStrategy},relay::RelayGroup,dialer_proxy::DialerProxyAdapter}};
 +    use std::{net::SocketAddr,sync::atomic::AtomicUsize};
++
++    struct AdapterProxy {
++        adapter: Box<dyn ProxyAdapter>,
++        dialer: Option<Arc<dyn crate::dialer::TcpDialer>>,
++    }
++    fn adapter_proxy(adapter: impl ProxyAdapter + 'static, dialer: Option<Arc<dyn crate::dialer::TcpDialer>>) -> Arc<dyn Proxy> {
++        Arc::new(AdapterProxy { adapter: Box::new(adapter), dialer })
++    }
++    #[async_trait]
++    impl ProxyAdapter for AdapterProxy {
++        fn name(&self) -> &str { self.adapter.name() }
++        fn adapter_type(&self) -> AdapterType { self.adapter.adapter_type() }
++        fn addr(&self) -> &str { self.adapter.addr() }
++        fn support_udp(&self) -> bool { self.adapter.support_udp() }
++        async fn dial_tcp(&self, metadata: &Metadata) -> meow_common::Result<Box<dyn ProxyConn>> {
++            self.adapter.dial_tcp(metadata).await
++        }
++        async fn dial_udp(&self, metadata: &Metadata) -> meow_common::Result<Box<dyn ProxyPacketConn>> {
++            self.adapter.dial_udp(metadata).await
++        }
++        async fn connect_over(&self, stream: Box<dyn ProxyConn>, metadata: &Metadata) -> meow_common::Result<Box<dyn ProxyConn>> {
++            self.adapter.connect_over(stream, metadata).await
++        }
++        fn unwrap_proxy(&self, metadata: &Metadata, touch: bool) -> Option<Arc<dyn Proxy>> {
++            self.adapter.unwrap_proxy(metadata, touch)
++        }
++        fn reset_sessions(&self) { self.adapter.reset_sessions(); }
++        fn health(&self) -> &ProxyHealth { self.adapter.health() }
++    }
++    impl Proxy for AdapterProxy {
++        fn alive(&self) -> bool { self.adapter.health().alive() }
++        fn alive_for_url(&self, _url: &str) -> bool { self.adapter.health().alive() }
++        fn last_delay(&self) -> u16 { self.adapter.health().last_delay() }
++        fn last_delay_for_url(&self, _url: &str) -> u16 { self.adapter.health().last_delay() }
++        fn delay_history(&self) -> Vec<meow_common::DelayHistory> { self.adapter.health().delay_history() }
++        fn probe_dependencies(&self) -> std::io::Result<meow_common::adapter::ProbeDependencies> {
++            match &self.dialer {
++                Some(dialer) => dialer.probe_dependencies(),
++                None => Ok(meow_common::adapter::ProbeDependencies::default()),
++            }
++        }
++    }
++
 +    use tokio::{net::{TcpListener,TcpStream},sync::{Notify,watch},task::{JoinHandle,JoinSet}};
 +    async fn head(socket:&mut TcpStream)->Option<Vec<u8>> {
 +        let mut bytes=Vec::new();while !bytes.ends_with(b"\r\n\r\n") {bytes.push(socket.read_u8().await.ok()?);assert!(bytes.len()<8192);}Some(bytes)
@@ -8580,8 +8623,8 @@
 +            }
 +            Self{origin,proxies:[addresses[0],addresses[1]],counts,entered,release,closed,stop,tasks}
 +        }
-+        fn adapter(&self,index:usize)->Arc<dyn Proxy> {let address=self.proxies[index];Arc::new(HttpAdapter::new(
-+            if index==0 {"A"} else {"B"},"127.0.0.1",address.port(),None,false,false,Vec::new(),Arc::new(DirectDialer)))}
++        fn adapter(&self,index:usize)->Arc<dyn Proxy> {let address=self.proxies[index];adapter_proxy(HttpAdapter::new(
++            if index==0 {"A"} else {"B"},"127.0.0.1",address.port(),None,false,false,Vec::new(),Arc::new(DirectDialer)),None)}
 +        fn url(&self,path:&str)->String {format!("http://{}{path}",self.origin)}
 +        async fn close(self) {self.stop.send(true).unwrap();for task in self.tasks {task.await.unwrap();}}
 +    }
@@ -8614,11 +8657,12 @@
 +        let peers=Peers::start().await;let front=Arc::new(LoadBalanceGroup::new("FRONT",vec![peers.adapter(0),peers.adapter(1)],LbStrategy::RoundRobin));
 +        let registry=ProxyRegistry::default();registry.publish(Arc::new(std::collections::HashMap::from([("FRONT".into(),front.clone() as Arc<dyn Proxy>)])));
 +        let target=DialerTarget::new("FRONT",&registry);
-+        let wrapped:Arc<dyn Proxy>=Arc::new(DialerProxyAdapter::new(Arc::new(crate::direct::DirectAdapter::new()),target.clone()));
-+        let relay:Arc<dyn Proxy>=Arc::new(RelayGroup::new("OUTER",vec![wrapped,Arc::new(crate::direct::DirectAdapter::compatible())]));
++        let wrapped:Arc<dyn Proxy>=Arc::new(DialerProxyAdapter::new(adapter_proxy(crate::direct::DirectAdapter::new(),None),target.clone()));
++        let relay:Arc<dyn Proxy>=Arc::new(RelayGroup::new("OUTER",vec![wrapped,adapter_proxy(crate::direct::DirectAdapter::compatible(),None)]));
 +        assert!(probe_without_effects(&relay,&peers.url("/ok"),Some("204"),Duration::from_secs(5)).await.is_ok());
-+        let inner:Arc<dyn Proxy>=Arc::new(HttpAdapter::new("INJECTED","127.0.0.1",peers.proxies[1].port(),None,false,false,Vec::new(),
-+            Arc::new(NamedProxyDialer::new(target).owned_by("INJECTED"))));
++        let dialer:Arc<dyn crate::dialer::TcpDialer>=Arc::new(NamedProxyDialer::new(target).owned_by("INJECTED"));
++        let inner:Arc<dyn Proxy>=adapter_proxy(HttpAdapter::new("INJECTED","127.0.0.1",peers.proxies[1].port(),None,false,false,Vec::new(),
++            dialer.clone()),Some(dialer));
 +        assert!(probe_without_effects(&inner,&peers.url("/ok"),Some("204"),Duration::from_secs(5)).await.is_ok());
 +        assert_eq!(front.unwrap_proxy(&Metadata::default(),false).unwrap().name(),"A");assert_eq!(front.usage_generation(),0);
 +        assert!(front.chain_health().unwrap().targets().is_empty());assert!(front.delay_history().is_empty());assert!(inner.delay_history().is_empty());

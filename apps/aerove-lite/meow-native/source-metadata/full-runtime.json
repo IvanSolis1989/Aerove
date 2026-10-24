@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "patch": "patches/full-runtime.patch",
-  "patchSha256": "964513aa7710cda8ce8945ee4fe111ed221980ee49536ec6f62a6177fd2dcd7a",
+  "patchSha256": "8f4f68ff3f003ed880f53bf4649d4ecebb7e085f07bed6c701ef579ed116738e",
   "rawFileManifestSha256": "a1948157edb77700f6f9152f3467907fb6a050c66cd153edfe98295bbf56e550",
-  "adaptedFileManifestSha256": "cf78328ab4b7b72f64f41ca1bd36c82287f0807feecab43cc25fcd5f75df0e71",
+  "adaptedFileManifestSha256": "4075ab19267483b0640afc8e13087278f57eb4c72a3baceee8cde7074c42bd49",
   "changes": {
     "crates/meow-anytls/src/client/client.rs": {
       "beforeSha256": "806773111b6ca84adcdad0e24d6db6c5653e72bdba58f4d5e95fd959d3504515",
@@ -275,7 +275,7 @@
     },
     "crates/meow-proxy/src/health.rs": {
       "beforeSha256": "22d4a3f776a840343ac35c9dec188c1ae755b12789cb5d06bd7ff0bb9378191c",
-      "afterSha256": "97eb523bdf58fb521d08c6fd82e9a005e3cd1b134ac0ca18583cfbad8e1b131e"
+      "afterSha256": "a1f5e7f4f64b3f8b5f4b634e864338e878cc4b6fa42960fe8d8f87b20cd5dbba"
     },
     "crates/meow-proxy/src/hysteria2/client.rs": {
       "beforeSha256": "eebfdd6e8f22bb4154c1c7af59a574449838f7ad0555ab8fcafc9ff492bf4bc9",
@@ -853,7 +853,7 @@
     "crates/meow-proxy/src/direct.rs": "b651c28504f140254e4cb50758129d87035f0a8c845dd703ca585fc3588b20af",
     "crates/meow-proxy/src/ech_tls_tunnel.rs": "3deaaba91bcf82f08496ac92689128ddcce939ae96c4640f6bd243a1f504076f",
     "crates/meow-proxy/src/gost_plugin.rs": "fcae9e9263539848a5b05928f4f94b29552ef5dcd9182838014d3a4c3b9eb5d6",
-    "crates/meow-proxy/src/health.rs": "97eb523bdf58fb521d08c6fd82e9a005e3cd1b134ac0ca18583cfbad8e1b131e",
+    "crates/meow-proxy/src/health.rs": "a1f5e7f4f64b3f8b5f4b634e864338e878cc4b6fa42960fe8d8f87b20cd5dbba",
     "crates/meow-proxy/src/http_adapter.rs": "99899db277531756ae2e3052b4c74a6d893b1df5999b629d565032e99d7cd0a2",
     "crates/meow-proxy/src/hysteria2_adapter.rs": "f49b2ec7cecbc306eb6de0cf86cac42ed23e18e94babc47e2c50cf1c74362a8e",
     "crates/meow-proxy/src/jls_plugin.rs": "ab8691cdb634db41aaf83d002f59ca3e008d79dc78bf8723a514a0b55f95b775",
