@@ -140,7 +140,12 @@ class WorkflowPolicyTest(unittest.TestCase):
                     if action.startswith('./'):
                         local = (ROOT / action[2:]).resolve()
                         self.assertTrue(local.is_relative_to(ROOT))
-                        self.assertTrue((local / 'action.yaml').is_file())
+                        if action.startswith('./.github/workflows/'):
+                            self.assertEqual(local.parent, WORKFLOWS.resolve())
+                            self.assertIn(local.suffix, ('.yaml', '.yml'))
+                            self.assertTrue(local.is_file())
+                        else:
+                            self.assertTrue((local / 'action.yaml').is_file())
                         continue
                     self.assertRegex(action, r'^[\w.-]+/[\w./-]+@[0-9a-f]{40}$')
 
