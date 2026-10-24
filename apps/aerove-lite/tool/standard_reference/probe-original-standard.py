@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Candidate CI probe for the unchanged Std #40 APK; never builds an app."""
 import argparse
+from install_play33_r01 import validate_installed_image
 import hashlib
 import json
 import os
@@ -122,6 +123,8 @@ def main():
     parser.add_argument('--evidence', required=True, type=Path)
     parser.add_argument('--serial', required=True)
     parser.add_argument('--build-tools', required=True, type=Path)
+    parser.add_argument('--image-directory', required=True, type=Path)
+    parser.add_argument('--image-receipt', required=True, type=Path)
     args = parser.parse_args()
     if os.environ.get('GITHUB_ACTIONS') != 'true' or not args.serial.startswith('emulator-'):
         parser.error('This candidate is restricted to an isolated GitHub Actions emulator')
@@ -140,6 +143,7 @@ def main():
         return execute_command(receipt, args.evidence, label, argv, timeout, check, binary)
 
     try:
+        receipt['imageIdentity'] = validate_installed_image(args.image_directory, args.image_receipt)
         properties = {}
         for prop in ['sys.boot_completed', 'ro.build.fingerprint', 'ro.build.version.sdk',
                      'ro.product.cpu.abilist', 'ro.product.cpu.abilist64',
@@ -147,6 +151,8 @@ def main():
                      'ro.dalvik.vm.isa.arm64']:
             properties[prop] = command('prop-' + prop, adb + ['shell', 'getprop', prop])
         receipt['properties'] = properties
+        if properties['ro.build.fingerprint'] != receipt['imageIdentity']['fingerprint']:
+            raise ValueError('Booted image fingerprint differs from the fixed image sidecar')
         if properties['sys.boot_completed'] != '1' or properties['ro.build.version.sdk'] != '33':
             raise RuntimeError('Expected already booted API33 emulator')
         if 'arm64-v8a' not in properties['ro.product.cpu.abilist64'].split(','):
@@ -158,10 +164,10 @@ def main():
         if 'libndk_translation.so' not in files:
             raise RuntimeError('Bridge binary not found in checked official library directories')
         sdk = Path(os.environ.get('ANDROID_HOME') or os.environ['ANDROID_SDK_ROOT'])
-        image = sdk / 'system-images/android-33/google_apis/x86_64'
-        for name in ['source.properties', 'package.xml']:
+        image = args.image_directory
+        for name in ['source.properties', 'build.prop']:
             (args.evidence / ('image-' + name)).write_bytes((image / name).read_bytes())
-        command('emulator-version', [sdk / 'emulator/emulator', '-version'])
+        command('emulator-version', [sdk / 'emulator/emulator', '-no-window', '-version'])
         receipt['assets'] = {}
         for name, expected in EXPECTED.items():
             path = args.apk_directory / name

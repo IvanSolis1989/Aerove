@@ -9,6 +9,7 @@ import sys
 import time
 
 from emulator_bootstrap import wait_ready
+from standard_reference.install_play33_r01 import validate_installed_image
 from emulator_current import CancellationView, check_cancelled, write_owner_receipt
 from emulator_qa79 import (GPU_BACKEND, RENDERER_LABEL, emulator_environment,
                           renderer_evidence, crash_inventory, preserve_owned_crash,
@@ -18,9 +19,10 @@ SERIAL = 'emulator-5554'
 ORIGINAL_SOURCE = 'c133772fc83b7984bdacb11e5dd41e2d65098771'
 ORIGINAL_RUN = 40082294388
 PROBE_PINS = {
+    'install_play33_r01.py': '5a0d7cf06156beeacf9aa326ffeb692509715ddfaecc72bebd0d36f4588a1114',
     'native-bridge-readonly-check.sh': 'b364be86b259204048092586a60ddef1268ce8ecf251a38be5142a4d13937d2a',
-    'readonly-check.py': 'ea660cd5dfe900af6328338d852e5f2117c2e13e0c40433bf69e24af272f49ba',
-    'probe-original-standard.py': '1decf2146551061c49c0c21e741021d3bdf952fb14db411d01391dbb79c8a2b2',
+    'readonly-check.py': '9aff51a7064341050cab39c7568ddcb49886016f692d153ae5136e8c677d3b3c',
+    'probe-original-standard.py': '090ee1593e07d35a6d22719c957d6cf9a79f9bd53fcb3564e5e2a8ba7f334a35',
 }
 
 
@@ -107,7 +109,7 @@ def run_stage(name, command, limit, emulator, receipt, owned, directory, environ
             raise ChildExit(name, result)
 
 
-def run_owner(apk_directory, directory, tools_directory):
+def run_owner(apk_directory, directory, tools_directory, image_directory, image_receipt):
     if sys.platform != 'linux' or os.environ.get('GITHUB_ACTIONS') != 'true':
         raise ValueError('Std reference requires a fresh isolated GitHub Linux/KVM runner')
     directory.mkdir(parents=True, exist_ok=False)
@@ -152,6 +154,7 @@ def run_owner(apk_directory, directory, tools_directory):
             if path.is_symlink() or sha(path) != expected:
                 raise ValueError('Closed02 probe source mismatch: ' + name)
             receipt['probePins'][name] = expected
+        receipt['imageIdentity'] = validate_installed_image(image_directory, image_receipt)
         before = crash_inventory()
         with (directory / 'emulator.stdout.log').open('wb') as out, (directory / 'emulator.stderr.log').open('wb') as err:
             emulator = subprocess.Popen(emulator_command, stdin=subprocess.DEVNULL, stdout=out, stderr=err,
@@ -162,11 +165,13 @@ def run_owner(apk_directory, directory, tools_directory):
             check_owner(receipt)
             receipt['rendererEvidence'] = renderer_evidence((directory / 'emulator.stdout.log').read_text(errors='replace'))
             run_stage('readonly', ['bash', str(tools_directory / 'native-bridge-readonly-check.sh'),
-                                   str(directory / 'properties')], 180, emulator, receipt, owned,
+                                   str(directory / 'properties'), '--image-directory', str(image_directory),
+                                   '--image-receipt', str(image_receipt)], 180, emulator, receipt, owned,
                       directory, environment, deadline)
             run_stage('probe', [sys.executable, str(tools_directory / 'probe-original-standard.py'),
                                 '--apk-directory', str(apk_directory), '--evidence', str(directory / 'first-launch'),
-                                '--serial', SERIAL, '--build-tools', str(sdk / 'build-tools/35.0.0')],
+                                '--serial', SERIAL, '--build-tools', str(sdk / 'build-tools/35.0.0'),
+                                '--image-directory', str(image_directory), '--image-receipt', str(image_receipt)],
                       300, emulator, receipt, owned, directory, environment, deadline)
             check_owner(receipt)
             receipt['status'] = 'INITIAL REFERENCE CAPTURE COMPLETE; REVIEW REQUIRED; NOT TWELVE THEMES'
@@ -213,9 +218,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--apk-directory', required=True, type=Path)
     parser.add_argument('--diagnostics', required=True, type=Path)
+    parser.add_argument('--image-directory', required=True, type=Path)
+    parser.add_argument('--image-receipt', required=True, type=Path)
     parser.add_argument('--tools-directory', type=Path, default=Path(__file__).with_name('standard_reference'))
     args = parser.parse_args()
-    return run_owner(args.apk_directory, args.diagnostics, args.tools_directory)
+    return run_owner(args.apk_directory, args.diagnostics, args.tools_directory, args.image_directory, args.image_receipt)
 
 
 if __name__ == '__main__':

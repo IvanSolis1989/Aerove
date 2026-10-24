@@ -892,6 +892,8 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **用途与采用方式：** 只读核对 ARM64 ABI、`libndk_translation.so` 和转译器版本配置，为标准版原 ARM64 APK 在现有 CI 镜像中直接取图寻找可验证路径。当前 SDK 安装的镜像仍须实际读取属性、检查库及验证强制 ARM64 安装和首帧；参考配置不冒充当前运行证明。未将系统镜像或转译器实现复制到仓库或 APK。
 
+标准版原包诊断另固定使用 Google 官方 **API33 Extension4 / Google Play / x86_64 revision1**，SDK package为 `system-images;android-33-ext4;google_apis_playstore;x86_64`；[官方 schema3 清单](https://dl.google.com/android/repository/sys-img/google_apis_playstore/sys-img2-3.xml) 中的完整归档为 1,479,525,531 字节、SHA-1 `0db4201201a4b8ea1339fb5bd720d25455849100`。CI按固定URL与官方完整校验和安装，另记录实物SHA256；不改固件属性或拼接转译器。此前实际 r17 不含 ARM bridge；该固定镜像的真实能力、强制 ARM64 安装及首帧仍须运行验证，元数据不代替实际结果。
+
 **许可证、署名与证据：** 保留官方 AOSP 来源与 SDK 镜像原有许可声明；[固定 build.prop](https://android.googlesource.com/platform/prebuilts/android-emulator-build/system-images/+/fd510d08d1ee747159b42cc05a22d8e65eade830/generic/system-images/android-33/google_apis/x86_64/build.prop)、[固定 source.properties](https://android.googlesource.com/platform/prebuilts/android-emulator-build/system-images/+/fd510d08d1ee747159b42cc05a22d8e65eade830/generic/system-images/android-33/google_apis/x86_64/source.properties)。仅作配置参考，不重签、不改写或重编标准版原包。
 
 #### [Loyalsoldier/geoip](https://github.com/Loyalsoldier/geoip)
