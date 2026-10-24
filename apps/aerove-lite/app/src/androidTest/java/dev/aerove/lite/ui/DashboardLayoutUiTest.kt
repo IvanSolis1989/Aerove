@@ -21,6 +21,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
@@ -197,8 +198,10 @@ class DashboardLayoutUiTest {
         assertEquals(10, DashboardWidget.entries.size)
         launch(fixture(defaults))
         scroll(DashboardWidget.NetworkSpeed)
-        compose.onNodeWithText(context.getString(R.string.lite_traffic_total, formatBytes(4096))).assertIsDisplayed()
-        compose.onNodeWithText(context.getString(R.string.lite_traffic_total, formatBytes(8192))).assertIsDisplayed()
+        compose.onNodeWithContentDescription(context.getString(R.string.lite_traffic_total, formatBytes(4096))).assertIsDisplayed()
+        compose.onNodeWithContentDescription(context.getString(R.string.lite_traffic_total, formatBytes(8192))).assertIsDisplayed()
+        compose.onNodeWithTag("dashboard-upload-total-raw", useUnmergedTree = true).assertTextEquals(formatBytes(4096)).assertIsDisplayed()
+        compose.onNodeWithTag("dashboard-download-total-raw", useUnmergedTree = true).assertTextEquals(formatBytes(8192)).assertIsDisplayed()
         scroll(DashboardWidget.OutboundMode)
         compose.onNode(hasText(context.getString(R.string.lite_mode_global)) and hasClickAction()).performClick().assertIsSelected()
         assertEquals(ProxyMode.Global, state.value.settings.mode)
@@ -351,9 +354,23 @@ class DashboardLayoutUiTest {
         for (direction in listOf("upload", "download")) for (line in listOf("label", "value", "unit", "total")) {
             val tag = "dashboard-$direction-$line"
             val results = mutableListOf<TextLayoutResult>()
-            compose.onNodeWithTag(tag, useUnmergedTree = true)
+            compose.onNodeWithTag("$tag-raw", useUnmergedTree = true)
                 .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
             put(tag, results.single())
+        }
+    }
+
+    private fun metricElementRects(): Map<String, Rect> = buildMap {
+        val layouts = trafficTextLayouts()
+        for (direction in listOf("upload", "download")) for (part in listOf("arrow", "label", "value", "unit", "total")) {
+            val tag = "dashboard-$direction-$part"
+            val line = statusRect(tag)
+            if (part == "arrow") put(tag, line) else {
+                val glyph = metricGlyphBounds(layouts.getValue(tag))
+                val original = statusRect("$tag-raw")
+                put(tag, Rect(minOf(line.left, original.left + glyph.left), line.top,
+                    maxOf(line.right, original.left + glyph.right), line.bottom))
+            }
         }
     }
 
@@ -377,12 +394,13 @@ class DashboardLayoutUiTest {
         val ceiling = lines.sumOf { ceil(it.toDouble()).toInt() }
         val rounded = lines.sum().roundToInt()
         val candidate = Rect(traffic.left, heading.top, traffic.right, heading.top + traffic.height)
+        val candidateElements = metricElementRects().mapValues { (_, rect) -> rect.translate(Offset(0f, heading.top - traffic.top)) }
         val collisions = statusForegroundRects().filterKeys { it != "dashboard-status-body" && it != "dashboard-status-heading" }
-            .filterValues { it.overlaps(candidate) }.keys
+            .filterValues { occupied -> candidateElements.values.any(occupied::overlaps) }.keys
         val linesMeasured = trafficTextLayouts().mapValues { (_, text) ->
-            "${text.size} baseline=${text.firstBaseline} glyph=${metricGlyphBounds(text)} overflow=${text.didOverflowHeight}"
+            "raw=${text.size} baseline=${text.firstBaseline} glyph=${metricGlyphBounds(text)} overflow=${text.didOverflowHeight}"
         }
-        return "metricLines=$linesMeasured phase=${state.value.phase} identity=${state.value.outboundIdentity != null} loading=${state.value.outboundLoading} candidate=$candidate collisions=$collisions density=$density fontScale=$effectiveFontScale content=${statusRect("dashboard-status-content")} " +
+        return "candidateElements=$candidateElements metricLines=$linesMeasured phase=${state.value.phase} identity=${state.value.outboundIdentity != null} loading=${state.value.outboundLoading} candidate=$candidate collisions=$collisions density=$density fontScale=$effectiveFontScale content=${statusRect("dashboard-status-content")} " +
             "heading=$heading body=$body traffic=$traffic bodyY=${body.top - heading.top} " +
             "nominalLineCeiling=$ceiling nominalLineTotalRounded=$rounded nominalRoundingAllowance=${ceiling - rounded} foreground=${statusForegroundRects()} " +
             "widthFits=${heading.width + (8 * density).roundToInt() + traffic.width <= statusRect("dashboard-status-content").width}"
@@ -402,8 +420,10 @@ class DashboardLayoutUiTest {
         val content = statusRect("dashboard-status-content")
         val heading = before.getValue("dashboard-status-heading")
         val candidate = Rect(content.right - traffic.width, heading.top, content.right, heading.top + traffic.height)
+        val elements = metricElementRects()
+        val candidateElements = elements.mapValues { (_, rect) -> rect.translate(Offset(0f, heading.top - traffic.top)) }
         val collision = before.filterKeys { it != "dashboard-status-body" && it != "dashboard-status-heading" }
-            .values.any { it.overlaps(candidate) }
+            .values.any { occupied -> candidateElements.values.any(occupied::overlaps) }
         val measuredFit = heading.width + (8 * density).roundToInt() + traffic.width <= content.width && !collision
         val overlay = expectedOverlay
         println("STATUS_OVERLAY expectedOverlay=$expectedOverlay measuredFit=$measuredFit $measurements")
@@ -411,6 +431,12 @@ class DashboardLayoutUiTest {
             val glyph = metricGlyphBounds(text)
             assertTrue("$tag must retain its measured glyphs: $measurements", !text.didOverflowHeight &&
                 text.firstBaseline + glyph.top >= 0 && text.firstBaseline + glyph.bottom <= text.size.height)
+            val line = elements.getValue(tag)
+            val original = statusRect("$tag-raw")
+            val inkTop = original.top + text.firstBaseline + glyph.top
+            val inkBottom = original.top + text.firstBaseline + glyph.bottom
+            assertTrue("$tag actual drawn ink must fit its compact line: inkTop=$inkTop inkBottom=$inkBottom line=$line $measurements",
+                inkTop >= line.top && inkBottom <= line.bottom)
         }
         if (overlay) assertEquals(measurements, card, statusRect("dashboard-status"))
         else assertTrue(measurements, statusRect("dashboard-status").height > card.height)
@@ -429,7 +455,12 @@ class DashboardLayoutUiTest {
         // The body's transparent full-width box can contain unused space; its
         // actual foreground elements, including the independent controls, cannot.
         before.filterKeys { it != "dashboard-status-body" }.forEach { (key, rect) ->
-            assertTrue("$key $measurements", !rect.overlaps(upload) && !rect.overlaps(download))
+            elements.forEach { (metric, bounds) -> assertTrue("$key/$metric $measurements", !rect.overlaps(bounds)) }
+        }
+        elements.entries.forEachIndexed { index, first ->
+            elements.entries.drop(index + 1).forEach { second ->
+                assertTrue("${first.key}/${second.key} $measurements", !first.value.overlaps(second.value))
+            }
         }
         assertTrue(measurements, !upload.overlaps(download))
         assertTrue(actions.events.isEmpty())

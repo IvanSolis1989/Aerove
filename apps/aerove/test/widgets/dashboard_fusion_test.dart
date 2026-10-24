@@ -10,6 +10,7 @@ import 'package:fl_clash/providers/service_status.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/views/dashboard/fusion.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
+import 'package:fl_clash/views/dashboard/style.dart';
 import 'package:fl_clash/views/dashboard/widgets/card.dart';
 import 'package:fl_clash/views/dashboard/widgets/current_outbound.dart';
 import 'package:fl_clash/views/dashboard/widgets/fused_controls.dart';
@@ -177,6 +178,8 @@ void main() {
   testWidgets('traffic replaces the ribbon layer without adding card height', (
     tester,
   ) async {
+    final semantics = tester.ensureSemantics();
+    addTearDown(semantics.dispose);
     final container = await pump(tester, const CurrentOutboundCard());
     final originalHeight = tester.getSize(find.byType(DashboardCard)).height;
     final l10n = AppLocalizations.of(
@@ -210,6 +213,24 @@ void main() {
     expect(upload.height, 11);
     expect(download.height, 11);
     expect(upload.height, lessThan(status.height));
+    final totals = container.read(totalTrafficProvider);
+    final totalValues = [
+      for (final direction in TrafficDirection.values)
+        dashboardTraffic(direction.of(totals)),
+    ];
+    for (final value in totalValues.toSet()) {
+      final count = totalValues.where((item) => item == value).length;
+      expect(
+        find.descendant(
+          of: find.byType(OutboundTrafficFigures),
+          matching: find.text(value),
+        ),
+        findsNWidgets(count),
+      );
+      expect(find.bySemanticsLabel(l10n.trafficTotal(value)), findsNWidgets(count));
+      expect(find.text(l10n.trafficTotal(value)), findsNothing);
+    }
+
     expect([for (final part in mainParts) tester.getRect(part)], originalRects);
     expect([
       for (var i = 0; i < find.byType(DashboardChip).evaluate().length; i++)

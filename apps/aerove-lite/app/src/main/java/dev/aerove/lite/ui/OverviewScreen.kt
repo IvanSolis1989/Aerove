@@ -47,6 +47,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFontFamilyResolver
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -54,9 +55,11 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.rememberTextMeasurer
-import androidx.compose.ui.text.PlatformTextStyle
-import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontSynthesis
+import androidx.compose.ui.text.intl.LocaleList
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.backdrops.layerBackdrop
@@ -79,6 +82,7 @@ import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.constrainHeight
 import androidx.compose.ui.layout.FirstBaseline
+import androidx.compose.ui.layout.LastBaseline
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalView
@@ -90,6 +94,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.material3.HorizontalDivider
 import java.util.Locale
 import kotlin.math.hypot
+import kotlin.math.ceil
 import androidx.compose.ui.layout.AlignmentLine
 import androidx.compose.ui.layout.HorizontalAlignmentLine
 import androidx.compose.ui.layout.VerticalAlignmentLine
@@ -239,27 +244,38 @@ private fun DashboardHeader(icon: LiteGlyph, title: String, leading: @Composable
 }
 
 // Compose inherits alignment lines with each child's placement offset in the same measure pass.
-private enum class StatusForeground {
-    Address, Flag, Quality, Provisional, Uptime, Organization, Button, ListenerError, OutboundError;
-
+private class StatusBounds {
     val left = VerticalAlignmentLine(::minOf)
     val right = VerticalAlignmentLine(::maxOf)
     val top = HorizontalAlignmentLine(::minOf)
     val bottom = HorizontalAlignmentLine(::maxOf)
 
-    fun bounds(body: Placeable, bodyY: Int): Rect? {
-        val x = body[left]
-        if (x == AlignmentLine.Unspecified) return null
-        return Rect(x.toFloat(), (bodyY + body[top]).toFloat(), body[right].toFloat(), (bodyY + body[bottom]).toFloat())
+    fun rect(parent: Placeable, x: Int = 0, y: Int = 0): Rect? {
+        val start = parent[left]
+        if (start == AlignmentLine.Unspecified) return null
+        return Rect((x + start).toFloat(), (y + parent[top]).toFloat(), (x + parent[right]).toFloat(), (y + parent[bottom]).toFloat())
     }
 }
 
-private fun Modifier.statusForeground(part: StatusForeground) = layout { measurable, constraints ->
+private enum class StatusForeground {
+    Address, Flag, Quality, Provisional, Uptime, Organization, Button, ListenerError, OutboundError;
+    val bounds = StatusBounds()
+}
+
+private enum class StatusMetricPart {
+    UploadArrow, UploadLabel, UploadValue, UploadUnit, UploadTotal,
+    DownloadArrow, DownloadLabel, DownloadValue, DownloadUnit, DownloadTotal;
+    val bounds = StatusBounds()
+}
+
+private fun Modifier.statusBounds(bounds: StatusBounds) = layout { measurable, constraints ->
     val child = measurable.measure(constraints)
-    layout(child.width, child.height, mapOf(part.left to 0, part.top to 0, part.right to child.width, part.bottom to child.height)) {
+    layout(child.width, child.height, mapOf(bounds.left to 0, bounds.top to 0, bounds.right to child.width, bounds.bottom to child.height)) {
         child.place(0, 0)
     }
 }
+
+private fun Modifier.statusForeground(part: StatusForeground) = statusBounds(part.bounds)
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -364,9 +380,9 @@ private fun OutboundStatusCard(state: LiteState, actions: LiteActions, showTraff
                 val bodyY = heading.height + gap
                 val mainHeight = bodyY + body.height
                 val trafficX = if (layoutDirection == LayoutDirection.Ltr) constraints.maxWidth - traffic.width else 0
-                val trafficBounds = Rect(trafficX.toFloat(), 0f, (trafficX + traffic.width).toFloat(), traffic.height.toFloat())
+                val metricBounds = StatusMetricPart.entries.mapNotNull { it.bounds.rect(traffic, x = trafficX) }
                 val overlapsForeground = showTraffic && StatusForeground.entries.any { part ->
-                    part.bounds(body, bodyY)?.overlaps(trafficBounds) == true
+                    part.bounds.rect(body, y = bodyY)?.let { occupied -> metricBounds.any(occupied::overlaps) } == true
                 }
                 // Only an actual foreground collision can append metrics without constraining the original content.
                 val overlay = !showTraffic || (heading.width + 8.dp.roundToPx() + traffic.width <= constraints.maxWidth &&
@@ -383,23 +399,66 @@ private fun OutboundStatusCard(state: LiteState, actions: LiteActions, showTraff
 }
 
 @Composable
+private fun StatusMetricText(text: String, tag: String, part: StatusMetricPart, style: TextStyle,
+    color: Color, modifier: Modifier = Modifier, description: String? = null) {
+    val density = LocalDensity.current
+    val family = style.fontFamily ?: LocalLiteFontFamily.current
+    val resolvedTypeface by LocalFontFamilyResolver.current.resolve(family, style.fontWeight ?: FontWeight.Normal,
+        style.fontStyle ?: FontStyle.Normal, style.fontSynthesis ?: FontSynthesis.All)
+    val locales = style.localeList ?: LocaleList.current
+    val ink = remember(text, style.fontSize, resolvedTypeface, locales, density.density, density.fontScale) {
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = with(density) { style.fontSize.toPx() }
+            this.typeface = resolvedTypeface as android.graphics.Typeface
+            textLocales = android.os.LocaleList(*(0 until locales.size).map { Locale.forLanguageTag(locales[it].toLanguageTag()) }.toTypedArray())
+        }
+        android.graphics.Rect().also { paint.getTextBounds(text, 0, text.length, it) }
+    }
+    val leading = with(density) { ceil(style.lineHeight.toPx()).toInt() }
+    // Preserve the natural paragraph; its transparent leading does not belong to the compact line.
+    Layout(modifier = modifier.testTag(tag).semantics(mergeDescendants = true) {
+        if (description != null) contentDescription = description
+    }, content = {
+        LiteText(text, Modifier.testTag("$tag-raw"), style = style, color = color, maxLines = 1)
+    }) { children, constraints ->
+        val glyphs = children.single().measure(constraints.copy(minHeight = 0))
+        val height = maxOf(leading, ink.height())
+        val baseline = (height - ink.height()) / 2 - ink.top
+        val originalBaseline = glyphs[FirstBaseline]
+        check(originalBaseline != AlignmentLine.Unspecified)
+        layout(glyphs.width, height, mapOf(FirstBaseline to baseline, LastBaseline to baseline,
+            part.bounds.left to minOf(0, ink.left), part.bounds.right to maxOf(glyphs.width, ink.right),
+            part.bounds.top to 0, part.bounds.bottom to height)) {
+            glyphs.place(0, baseline - originalBaseline)
+        }
+    }
+}
+
+@Composable
 private fun StatusSpeed(upload: Boolean, rate: Long, total: Long, modifier: Modifier) {
     val visuals = LocalLiteVisuals.current
-    // Single-line Trim.Both keeps the font's natural height instead of this compact leading.
-    val lineStyle = remember { LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None) }
-    val platformStyle = remember { PlatformTextStyle(includeFontPadding = false) }
     val value = formatBytes(rate).split(' ', limit = 2)
-    Column(modifier.testTag(if (upload) "dashboard-upload" else "dashboard-download"), verticalArrangement = Arrangement.spacedBy(0.dp)) {
+    val prefix = if (upload) "dashboard-upload" else "dashboard-download"
+    val totalValue = formatBytes(total)
+    Column(modifier.testTag(prefix), verticalArrangement = Arrangement.spacedBy(0.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-            LiteIcon(if (upload) FullGlyphs.arrowUp else FullGlyphs.arrowDown, size = 10.dp, color = visuals.secondaryInk)
-            LiteText(stringResource(if (upload) R.string.lite_upload else R.string.lite_download), Modifier.testTag(if (upload) "dashboard-upload-label" else "dashboard-download-label"), style = LiteType.Caption.copy(fontSize = 11.sp, lineHeight = 12.sp, platformStyle = platformStyle, lineHeightStyle = lineStyle), maxLines = 1)
+            LiteIcon(if (upload) FullGlyphs.arrowUp else FullGlyphs.arrowDown,
+                Modifier.testTag("$prefix-arrow").statusBounds((if (upload) StatusMetricPart.UploadArrow else StatusMetricPart.DownloadArrow).bounds),
+                size = 10.dp, color = visuals.secondaryInk)
+            StatusMetricText(stringResource(if (upload) R.string.lite_upload else R.string.lite_download), "$prefix-label",
+                if (upload) StatusMetricPart.UploadLabel else StatusMetricPart.DownloadLabel,
+                LiteType.Caption.copy(fontSize = 11.sp, lineHeight = 12.sp), visuals.ink)
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-            LiteText(value[0], Modifier.testTag(if (upload) "dashboard-upload-value" else "dashboard-download-value").alignByBaseline(), style = LiteType.Footnote.copy(fontSize = 14.sp, lineHeight = 14.sp, platformStyle = platformStyle, lineHeightStyle = lineStyle), maxLines = 1)
-            LiteText(stringResource(R.string.lite_rate, value.getOrElse(1) { "B" }), Modifier.testTag(if (upload) "dashboard-upload-unit" else "dashboard-download-unit").alignByBaseline(), style = LiteType.Caption.copy(fontSize = 10.sp, lineHeight = 10.sp, platformStyle = platformStyle, lineHeightStyle = lineStyle),
-                color = visuals.secondaryInk, maxLines = 1)
+            StatusMetricText(value[0], "$prefix-value", if (upload) StatusMetricPart.UploadValue else StatusMetricPart.DownloadValue,
+                LiteType.Footnote.copy(fontSize = 14.sp, lineHeight = 14.sp), visuals.ink, Modifier.alignByBaseline())
+            StatusMetricText(stringResource(R.string.lite_rate, value.getOrElse(1) { "B" }), "$prefix-unit",
+                if (upload) StatusMetricPart.UploadUnit else StatusMetricPart.DownloadUnit,
+                LiteType.Caption.copy(fontSize = 10.sp, lineHeight = 10.sp), visuals.secondaryInk, Modifier.alignByBaseline())
         }
-        LiteText(stringResource(R.string.lite_traffic_total, formatBytes(total)), Modifier.testTag(if (upload) "dashboard-upload-total" else "dashboard-download-total"), style = LiteType.Caption.copy(fontSize = 10.sp, lineHeight = 10.sp, platformStyle = platformStyle, lineHeightStyle = lineStyle), color = visuals.secondaryInk, maxLines = 1)
+        StatusMetricText(totalValue, "$prefix-total", if (upload) StatusMetricPart.UploadTotal else StatusMetricPart.DownloadTotal,
+            LiteType.Caption.copy(fontSize = 10.sp, lineHeight = 10.sp), visuals.secondaryInk, Modifier.align(Alignment.End),
+            description = stringResource(R.string.lite_traffic_total, totalValue))
     }
 }
 

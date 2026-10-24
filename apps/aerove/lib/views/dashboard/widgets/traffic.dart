@@ -235,13 +235,17 @@ class OutboundTrafficFigures extends ConsumerWidget {
                       weight: AppTextStyle.caption1.emphasizedWeight,
                     ).toTabular,
                   ),
-                  GlassText(
-                    context.appLocalizations.trafficTotal(
+                  Align(
+                    alignment: AlignmentDirectional.centerEnd,
+                    child: GlassText(
                       dashboardTraffic(direction.of(total)),
+                      semanticsLabel: context.appLocalizations.trafficTotal(
+                        dashboardTraffic(direction.of(total)),
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTextStyle.custom(context, size: 10, leading: 10),
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppTextStyle.custom(context, size: 10, leading: 10),
                   ),
                 ],
               ),
