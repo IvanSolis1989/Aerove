@@ -692,6 +692,9 @@ class MessageLookup extends MessageLookupByLibrary {
       "외부 컨트롤러 시크릿",
     ),
     "externalLink": MessageLookupByLibrary.simpleMessage("외부 링크"),
+    "externalLinkOpenFailed": MessageLookupByLibrary.simpleMessage(
+      "이 링크를 열 수 없습니다. 링크를 열 수 있고 권한이 있는 앱이 있는지 확인하세요.",
+    ),
     "extraLarge": MessageLookupByLibrary.simpleMessage("매우 크게"),
     "fade": MessageLookupByLibrary.simpleMessage("페이드"),
     "failedCount": m29,

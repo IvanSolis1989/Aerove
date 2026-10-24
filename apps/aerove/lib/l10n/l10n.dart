@@ -8292,6 +8292,16 @@ class AppLocalizations {
       args: [],
     );
   }
+
+  /// `Unable to open this link. Check that an app is available and allowed to open it.`
+  String get externalLinkOpenFailed {
+    return Intl.message(
+      'Unable to open this link. Check that an app is available and allowed to open it.',
+      name: 'externalLinkOpenFailed',
+      desc: '',
+      args: [],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {
