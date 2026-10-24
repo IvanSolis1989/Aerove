@@ -501,6 +501,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
     private val updateOwner = lazy {
         UpdateFeature(UpdateRepository(UpdateHttpClient(), File(application.cacheDir, "updates"), AndroidUpdateVerifier(application)),
             AndroidUpdatePlatform(application, application.settings), viewModelScope,
+            onCloseFailure = { failure -> android.util.Log.e("LiteUpdates", "Owned update shutdown failed", failure) },
             onAutoCheckChanged = { enabled ->
                 withContext(Dispatchers.Main.immediate) {
                     val baseline = state.value.settings

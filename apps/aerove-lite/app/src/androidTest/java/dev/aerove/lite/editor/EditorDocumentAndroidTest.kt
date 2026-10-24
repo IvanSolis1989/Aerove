@@ -85,13 +85,20 @@ class EditorDocumentAndroidTest {
             main { controller.replaceAll("changed") }
             await(controller) { !it.busy && it.version > 0 }
             assertEquals(original.replace("padded", "changed"), controller.readText())
-            main { controller.undo() }
+            editable(view) { controller.undo() }
             assertEquals(original, controller.readText())
-            main { controller.redo() }
+            editable(view) { controller.redo() }
             assertEquals(original.replace("padded", "changed"), controller.readText())
             editable(view) { view.setSelection(0, 0); view.commitText("# one\n", false, false); controller.undo(); controller.undo() }
             assertEquals(original, controller.readText())
-            main { controller.redo(); controller.redo() }
+            editable(view) {
+                controller.redo()
+                assertFalse(controller.state.value.canUndo)
+                assertFalse(controller.state.value.canRedo)
+                controller.redo()
+                assertEquals(original.replace("padded", "changed"), view.text.toString())
+            }
+            editable(view) { controller.redo() }
             assertEquals("# one\n" + original.replace("padded", "changed"), controller.readText())
         } finally { main { controller.release() }; scope.cancel() }
     }

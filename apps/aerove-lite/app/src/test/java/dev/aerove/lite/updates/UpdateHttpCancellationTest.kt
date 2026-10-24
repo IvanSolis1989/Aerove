@@ -137,7 +137,7 @@ class UpdateHttpCancellationTest {
                         withTimeout(2000) { feature.state.first { it.phase == UpdatePhase.Current } }
                         scope.coroutineContext[Job]!!.children.toList().flatMap { it.children.toList() }.forEach { it.join() }
                         assertEquals(UpdatePhase.Current, feature.state.value.phase)
-                    } finally { releaseCleanup.countDown(); feature.close(); scope.cancel() }
+                    } finally { releaseCleanup.countDown(); feature.closeAndJoin(); scope.cancel() }
                 } else {
                     val first = async(Dispatchers.IO) { action(transport, 1) }
                     assertTrue(headersSent.await(2, TimeUnit.SECONDS))
@@ -160,4 +160,26 @@ class UpdateHttpCancellationTest {
             }
         }
     }
+
+    @Test fun closingAnInjectedUpdateClientDoesNotEvictOrShutdownTheSharedClient() = runBlocking<Unit> {
+        val server = okhttp3.mockwebserver.MockWebServer()
+        server.enqueue(okhttp3.mockwebserver.MockResponse().setBody("shared fixture"))
+        server.start()
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            chain.proceed(chain.request().newBuilder().url(server.url("/shared")).build())
+        }.build()
+        val transport = UpdateHttpClient(client)
+        try {
+            assertEquals("shared fixture", transport.metadata(trustedUrl).toString(Charsets.UTF_8))
+            assertEquals(1, client.connectionPool.connectionCount())
+            transport.close(); transport.close()
+            assertFalse(client.dispatcher.executorService.isShutdown)
+            assertEquals(1, client.connectionPool.connectionCount())
+        } finally {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
+                client.connectionPool.evictAll(); client.dispatcher.executorService.shutdown(); server.shutdown()
+            }
+        }
+    }
+
 }

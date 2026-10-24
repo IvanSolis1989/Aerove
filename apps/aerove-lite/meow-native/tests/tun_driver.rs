@@ -216,3 +216,39 @@ async fn captured_network_wraps_actual_blocking_thread_dial_and_restores_ambient
     }).await.unwrap();
     accepted.await.unwrap(); assert_eq!(calls.load(Ordering::Relaxed),1);
 }
+
+
+#[tokio::test]
+async fn ipv4_only_driver_drops_disabled_ipv6_and_keeps_ipv4_join_and_successor_working() {
+    let _serial = TEST_LOCK.lock().await;
+    let (caller, peer) = pair();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut json = plan(); json["tun"]["ipv6"] = false.into(); json["tun"]["inet6Address"] = serde_json::Value::Null;
+    let cancel = CancellationToken::new(); let network = context(&cancel, false, calls.clone());
+    let physical = aerove_meow_core::physical_dns::PhysicalResolver::from_servers(vec!["127.0.0.1:53".parse().unwrap()], network.clone(), false).unwrap();
+    let dns = physical.network().dns_transport_scope().unwrap();
+    let (tx, mut observed) = mpsc::channel(8);
+    let driver = TunDriver::load(&json.to_string(), caller.as_fd(), network, cancel, move |plan, scope|
+        meow_config::owned_load::with_dns_transport_scope(dns, handler(plan, scope, tx))).await.unwrap();
+    peer.send(&udp_frame(true, b"disabled-family", 443)).await.unwrap();
+    let payload = vec![4; 2048];
+    peer.send(&udp_frame(false, &payload, 443)).await.unwrap();
+    receive_reply(&peer, false, &payload).await;
+    let (source, target, _, length) = timeout(Duration::from_secs(5), observed.recv()).await.unwrap().unwrap();
+    assert!(source.is_ipv4() && target.is_ipv4()); assert_eq!(length, payload.len());
+    assert!(observed.try_recv().is_err()); assert!(driver.receipt().ready);
+    assert_eq!(driver.receipt().packets_in, 1);
+    let joined = timeout(Duration::from_secs(5), driver.stop()).await.unwrap().unwrap();
+    assert!(joined.core_done && !joined.ready);
+    caller.send(b"caller-retained").unwrap();
+    let mut retained = [0; 32]; assert_eq!(peer.recv(&mut retained).await.unwrap(), 15);
+    physical.retire().await.unwrap();
+    let cancel = CancellationToken::new(); let network = context(&cancel, false, calls);
+    let physical = aerove_meow_core::physical_dns::PhysicalResolver::from_servers(vec!["127.0.0.1:53".parse().unwrap()], network.clone(), false).unwrap();
+    let dns = physical.network().dns_transport_scope().unwrap(); let (tx, _) = mpsc::channel(8);
+    let successor = TunDriver::load(&json.to_string(), caller.as_fd(), network, cancel, move |plan, scope|
+        meow_config::owned_load::with_dns_transport_scope(dns, handler(plan, scope, tx))).await.unwrap();
+    assert!(successor.receipt().ready);
+    assert!(timeout(Duration::from_secs(5), successor.stop()).await.unwrap().unwrap().core_done);
+    physical.retire().await.unwrap();
+}

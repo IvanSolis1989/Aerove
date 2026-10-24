@@ -312,8 +312,36 @@ fn resource_fetch(handle:i64)->Result<Arc<crate::resource_fetch::ResourceFetch>,
     RESOURCE_FETCHES.get_or_init(||Mutex::new(BTreeMap::new())).lock().get(&handle).cloned()
         .ok_or_else(||BridgeError("invalid resource scope handle".into()))
 }
-fn resource_result<T>(work:impl std::future::Future<Output=std::io::Result<T>>)->Result<T,BridgeError> {
-    executor()?.block_on(validation_future(async move {work.await.map_err(|cause|cause.to_string())})).map_err(BridgeError)
+fn resource_owner_ended_exception(env: &mut jni::Env<'_>, exit: crate::resource_fetch::ResourceRequestExit) {
+    use jni::{descriptors::Desc, objects::JThrowable};
+    if env.exception_check() { return; }
+    let primary = std::panic::catch_unwind(std::panic::AssertUnwindSafe(||
+        Desc::<JThrowable>::lookup("Rust error: resourceRequestOwnerEnded", env)));
+    let primary = match primary {
+        Ok(Ok(primary)) => primary,
+        // No primary exists yet: retain any pending VM exception for the original policy.
+        Ok(Err(_)) => return,
+        Err(payload) => { std::mem::forget(payload); return; },
+    };
+    let primary_throwable: &JThrowable = primary.as_ref();
+    let diagnostic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> jni::errors::Result<()> {
+        let diagnostic = Desc::<JThrowable>::lookup(format!("resourceRequestOwnerEnded diagnostic {exit}"), env)?;
+        let throwable: &JThrowable = diagnostic.as_ref();
+        env.call_method(primary_throwable, jni_str!("addSuppressed"), jni_sig!("(Ljava/lang/Throwable;)V"), &[JValue::Object(throwable.as_ref())])?;
+        Ok(())
+    }));
+    if let Err(payload) = diagnostic { std::mem::forget(payload); }
+    if env.exception_check() { env.exception_clear(); }
+    let _ = env.throw(primary_throwable);
+}
+fn resource_result<T>(env: &mut jni::Env<'_>, work:impl std::future::Future<Output=std::io::Result<T>>)->Result<T,BridgeError> {
+    let result = executor()?.block_on(validation_future(async move { Ok(work.await) })).map_err(BridgeError)?;
+    result.map_err(|cause| {
+        if let Some(ended) = cause.get_ref().and_then(|inner| inner.downcast_ref::<crate::resource_fetch::ResourceRequestOwnerEnded>()) {
+            resource_owner_ended_exception(env, ended.exit);
+        }
+        BridgeError(cause.to_string())
+    })
 }
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_aerove_lite_core_JniResourceFetch_nativeCreate<'local>(mut env:EnvUnowned<'local>,_class:JClass<'local>,plan:JString<'local>)->i64 {
@@ -334,7 +362,7 @@ pub extern "system" fn Java_dev_aerove_lite_core_JniResourceFetch_nativeCreate<'
 pub extern "system" fn Java_dev_aerove_lite_core_JniResourceFetch_nativeLoad<'local>(mut env:EnvUnowned<'local>,_class:JClass<'local>,handle:i64,source:JString<'local>) {
     env.with_env(|env|->Result<(),BridgeError>{
         let source=source.try_to_string(env)?;if source.len()>crate::config_validation::MAX_TEXT_BYTES {return Err(BridgeError("candidate input limit".into()));}
-        resource_result(resource_fetch(handle)?.load(source))
+        resource_result(env, resource_fetch(handle)?.load(source))
     }).resolve::<ThrowRuntimeExAndDefault>()
 }
 #[unsafe(no_mangle)]
@@ -342,7 +370,7 @@ pub extern "system" fn Java_dev_aerove_lite_core_JniResourceFetch_nativeDownload
     env.with_env(|env|->Result<JString<'local>,BridgeError>{
         let text=request.try_to_string(env)?;if text.len()>262144 {return Err(BridgeError("resource request limit".into()));}
         let request=serde_json::from_str(&text).map_err(|_|BridgeError("resource request schema".into()))?;
-        let result=resource_result(resource_fetch(handle)?.download(request))?;
+        let result=resource_result(env, resource_fetch(handle)?.download(request))?;
         Ok(env.new_string(serde_json::to_string(&result).map_err(|_|BridgeError("resource response".into()))?)?)
     }).resolve::<ThrowRuntimeExAndDefault>()
 }
@@ -352,8 +380,8 @@ pub extern "system" fn Java_dev_aerove_lite_core_JniResourceFetch_nativeCancel<'
 }
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_aerove_lite_core_JniResourceFetch_nativeCloseJoin<'local>(mut env:EnvUnowned<'local>,_class:JClass<'local>,handle:i64) {
-    env.with_env(|_|->Result<(),BridgeError>{
-        let result=resource_result(resource_fetch(handle)?.close_and_join());
+    env.with_env(|env|->Result<(),BridgeError>{
+        let result=resource_result(env, resource_fetch(handle)?.close_and_join());
         RESOURCE_FETCHES.get_or_init(||Mutex::new(BTreeMap::new())).lock().remove(&handle);result
     }).resolve::<ThrowRuntimeExAndDefault>()
 }

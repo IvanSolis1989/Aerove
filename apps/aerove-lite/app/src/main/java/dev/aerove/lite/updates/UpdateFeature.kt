@@ -1,6 +1,7 @@
 package dev.aerove.lite.updates
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -36,10 +37,16 @@ class UpdateFeature(
     private val repository: UpdateRepository,
     private val platform: UpdatePlatform,
     scope: CoroutineScope,
+    private val onCloseFailure: (Throwable) -> Unit = {},
     private val onAutoCheckChanged: suspend (Boolean) -> Unit,
 ) : AutoCloseable {
     private val owner = SupervisorJob(scope.coroutineContext[Job])
     private val jobs = CoroutineScope(scope.coroutineContext + owner + Dispatchers.IO)
+    // This terminal owner outlives ViewModel cancellation until its one IO close finishes.
+    private val closeOwner = Job()
+    private val closing = CoroutineScope(scope.coroutineContext.minusKey(Job) + closeOwner + Dispatchers.IO)
+    private val closeResult = CompletableDeferred<Throwable?>()
+    private var closeStarted = false
     private val gate = Any()
     private val maintenance = Mutex()
     private val mutableState = MutableStateFlow(UpdateState())
@@ -152,7 +159,7 @@ class UpdateFeature(
         task.start()
     }
 
-    suspend fun quiesce() = withContext(NonCancellable) { maintenance.withLock { quiesceOwned() } }
+    suspend fun quiesce() = withContext(NonCancellable + Dispatchers.IO) { maintenance.withLock { quiesceOwned() } }
 
     private suspend fun quiesceOwned() {
         val pending = synchronized(gate) {
@@ -175,28 +182,65 @@ class UpdateFeature(
     }
 
     /** Secondary cleanup after primary commit: terminal even if cleanup fails; errors propagate. */
-    suspend fun clearUserState(): Unit = withContext(NonCancellable) {
-        maintenance.withLock {
-            quiesceOwned()
-            val wasClosed = synchronized(gate) {
-                val previous = closed
-                closed = true; generation++; owner.cancel(); ready = null
-                mutableState.value = UpdateState()
-                previous
-            }
+    suspend fun clearUserState() {
+        val failure = withContext(NonCancellable + Dispatchers.IO) {
             var failure: Throwable? = null
             suspend fun attempt(action: suspend () -> Unit) {
                 try { action() } catch (error: Throwable) {
-                    if (failure == null) failure = error else failure!!.addSuppressed(error)
+                    val first = failure
+                    if (first == null) failure = error
+                    else if (first !== error && first.suppressed.none { it === error }) first.addSuppressed(error)
                 }
             }
-            attempt { platform.resetPromptedTag() }
-            attempt { repository.clearUserState() }
-            if (!wasClosed) attempt { repository.close() }
-            failure?.let { throw it }
+            attempt {
+                maintenance.withLock {
+                    quiesceOwned()
+                    synchronized(gate) {
+                        closed = true; generation++; owner.cancel(); ready = null
+                        mutableState.value = UpdateState()
+                    }
+                    attempt { platform.resetPromptedTag() }
+                    attempt { repository.clearUserState() }
+                    attempt { repository.closeAndJoin() }
+                }
+            }
+            attempt { closeAndJoin() }
+            failure
+        }
+        failure?.let { throw it }
+    }
+
+    override fun close() {
+        val start = synchronized(gate) {
+            if (closeStarted) false else {
+                closeStarted = true; closed = true; quiesced = true; generation++
+                worker = null; ready = null; repository.retire(); mutableState.value = UpdateState()
+                true
+            }
+        }
+        if (!start) return
+        closing.launch {
+            try {
+                maintenance.withLock {
+                    owner.cancel()
+                    owner.join()
+                    repository.closeAndJoin()
+                }
+                closeResult.complete(null)
+            } catch (error: Throwable) {
+                try { onCloseFailure(error) } catch (report: Throwable) {
+                    if (report !== error) error.addSuppressed(report)
+                }
+                closeResult.complete(error)
+            } finally { closeOwner.complete() }
         }
     }
-    override fun close() = synchronized(gate) {
-        if (!closed) { closed = true; generation++; owner.cancel(); repository.close(); ready = null; mutableState.value = UpdateState() }
+
+    suspend fun closeAndJoin() {
+        val failure = withContext(NonCancellable) {
+            close()
+            try { closeResult.await() } finally { closeOwner.join() }
+        }
+        failure?.let { throw it }
     }
 }

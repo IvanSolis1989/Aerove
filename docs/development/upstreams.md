@@ -794,6 +794,8 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **用途与采用方式：** Lite 既有编辑器依赖；只读核验搜索发布事件与结果计数、文档布局完成时序，适配客户端单次延后发布与测试真实就绪；未复制或修改 Sora 源码，未新增依赖
 
+另核对同版发布源码的 `LineBreakLayout`、`BlockIntList` 与 `CodeEditor.isEditable`，用于确认内容切换期间的异步布局边界；本项目复用已有就绪信号约束撤销和重做，未复制编辑器实现。实际 Android 往返与连续操作仍须验收。
+
 **许可证、署名与证据：** LGPL-2.1-or-later，Rosemoe 及原贡献者；[固定 EditorSearcher](https://github.com/Rosemoe/sora-editor/blob/223e4febc8aa37f7d968ee0e8fcda95cec746342/editor/src/main/java/io/github/rosemoe/sora/widget/EditorSearcher.java)、[LICENSE](https://github.com/Rosemoe/sora-editor/blob/223e4febc8aa37f7d968ee0e8fcda95cec746342/LICENSE)；已有许可原文 SHA256 `7ffe1954587c77dfba1cf8eb9b2ea743671fa6e63f9e7a2f258119d42e14eefe`
 
 #### [Android NDK 官方文档](https://android.googlesource.com/platform/ndk)

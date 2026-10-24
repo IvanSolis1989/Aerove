@@ -94,7 +94,7 @@ class UpdatePanelUiTest {
             }
         }
     }
-    @After fun cleanup() { feature.close(); scope.cancel(); directory.deleteRecursively() }
+    @After fun cleanup() { kotlinx.coroutines.runBlocking { feature.closeAndJoin() }; scope.cancel(); directory.deleteRecursively() }
 
     @Test fun startupPromptShowsNotesAndCloseKeepsAutomaticChecksEnabled() {
         launch()

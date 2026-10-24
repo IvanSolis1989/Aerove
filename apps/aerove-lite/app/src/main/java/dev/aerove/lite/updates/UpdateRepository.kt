@@ -12,6 +12,7 @@ import java.nio.file.StandardCopyOption
 import java.nio.file.LinkOption
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -20,6 +21,8 @@ import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -35,6 +38,7 @@ interface UpdateTransport : AutoCloseable {
 
 class UpdateHttpClient(client: OkHttpClient? = null) : UpdateTransport {
     private val owned = client == null
+    private val closed = AtomicBoolean(false)
     private val http = (client ?: OkHttpClient()).newBuilder().followRedirects(false).followSslRedirects(false)
         .callTimeout(5, TimeUnit.MINUTES).connectTimeout(20, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
 
@@ -52,6 +56,7 @@ class UpdateHttpClient(client: OkHttpClient? = null) : UpdateTransport {
     }
 
     private suspend fun <T> response(raw: String, asset: Boolean, consume: suspend (okhttp3.Response) -> T): T {
+        check(!closed.get()) { "Update HTTP client is closed" }
         var url = raw.toHttpUrl()
         repeat(6) { redirects ->
             require(url.isHttps && url.port == 443 && url.username.isEmpty() && url.password.isEmpty() && url.fragment == null) { "Untrusted update endpoint" }
@@ -102,11 +107,18 @@ class UpdateHttpClient(client: OkHttpClient? = null) : UpdateTransport {
         }
     }
     override fun close() {
-        if (owned) {
-            http.dispatcher.cancelAll()
-            http.connectionPool.evictAll()
-            http.dispatcher.executorService.shutdown()
+        if (!closed.compareAndSet(false, true) || !owned) return
+        var failure: Throwable? = null
+        fun attempt(action: () -> Unit) {
+            try { action() } catch (error: Throwable) {
+                val first = failure
+                if (first == null) failure = error else if (first !== error) first.addSuppressed(error)
+            }
         }
+        attempt { http.dispatcher.cancelAll() }
+        attempt { http.connectionPool.evictAll() }
+        attempt { http.dispatcher.executorService.shutdown() }
+        failure?.let { throw it }
     }
 }
 
@@ -117,11 +129,14 @@ class UpdateRepository(
     private val transport: UpdateTransport,
     cacheDirectory: File,
     private val verifier: UpdateApkVerifier,
-) : AutoCloseable {
+) {
     private val directory = cacheDirectory.canonicalFile.apply { check(isDirectory || mkdirs()) }
     private val operationGate = Any()
     private val operations = mutableSetOf<Job>()
     private var cleared = false
+    private val closeGate = Mutex()
+    private var transportClosed = false
+    private var closeFailure: Throwable? = null
     private suspend fun <T> operation(action: suspend () -> T): T = withContext(Dispatchers.IO) {
         val job = checkNotNull(currentCoroutineContext()[Job])
         synchronized(operationGate) { check(!cleared) { "Update repository was cleared" }; operations += job }
@@ -205,7 +220,7 @@ class UpdateRepository(
         verifier.verify(update.file, update.release)
     }
 
-    suspend fun clearUserState() = withContext(NonCancellable) {
+    suspend fun clearUserState() = withContext(NonCancellable + Dispatchers.IO) {
         val pending = synchronized(operationGate) { cleared = true; operations.toList() }
         pending.forEach { it.cancel() }
         pending.joinAll()
@@ -229,7 +244,23 @@ class UpdateRepository(
             check(candidates().isEmpty()) { "Update cache cleanup did not complete" }
         }
     }
-    override fun close() = transport.close()
+    internal fun retire() = synchronized(operationGate) { cleared = true }
+
+    suspend fun closeAndJoin() {
+        val failure = withContext(NonCancellable + Dispatchers.IO) {
+            closeGate.withLock {
+                val pending = synchronized(operationGate) { cleared = true; operations.toList() }
+                pending.forEach { it.cancel() }
+                pending.joinAll()
+                if (!transportClosed) {
+                    transportClosed = true
+                    try { transport.close() } catch (error: Throwable) { closeFailure = error }
+                }
+                closeFailure
+            }
+        }
+        failure?.let { throw it }
+    }
 }
 
 internal fun ByteArray.hex(): String = joinToString("") { "%02x".format(it.toInt() and 255) }

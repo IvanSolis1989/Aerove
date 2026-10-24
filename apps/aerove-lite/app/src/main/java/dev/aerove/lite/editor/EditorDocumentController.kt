@@ -24,6 +24,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -63,6 +64,7 @@ internal class EditorDocumentController(
     private var language = EditorLanguage.Yaml
     private var darkTheme: Boolean? = null
     private var completionJob: Job? = null
+    private var readinessJob: Job? = null
     private val searchHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val searchPublication = EditorSearchPublication(searchHandler::post, searchHandler::removeCallbacks)
     private var query = EditorQuery()
@@ -145,6 +147,11 @@ internal class EditorDocumentController(
         }
         configure(editor)
         document?.let(::show)
+        readinessJob = scope.launch {
+            editor.inputReady.collect {
+                if (!released && view === editor) syncState()
+            }
+        }
     }
 
     private fun configure(editor: NativeEditorView) {
@@ -191,12 +198,13 @@ internal class EditorDocumentController(
 
     private fun syncState() {
         val editor = view ?: return
+        val historyReady = editor.inputReady.value && editor.isEditable
         val searcher = editor.searcher
         val count = if (searcher.hasQuery()) searcher.matchedPositionCount else 0
         val match = if (searcher.hasQuery()) searcher.currentMatchedPositionIndex + 1 else 0
         mutableState.value = state.value.copy(
-            canUndo = !readOnly && (editor.canUndo() || undoDocuments.isNotEmpty()),
-            canRedo = !readOnly && (editor.canRedo() || redoDocuments.isNotEmpty()),
+            canUndo = !readOnly && historyReady && (editor.canUndo() || undoDocuments.isNotEmpty()),
+            canRedo = !readOnly && historyReady && (editor.canRedo() || redoDocuments.isNotEmpty()),
             selected = editor.cursor.isSelected,
             line = editor.cursor.rightLine + 1, column = editor.cursor.rightColumn + 1,
             matches = count, match = match.coerceAtLeast(0),
@@ -206,6 +214,7 @@ internal class EditorDocumentController(
     fun undo() {
         if (readOnly || locked || state.value.busy) return
         val editor = view ?: return
+        if (!editor.inputReady.value || !editor.isEditable) return
         editor.finishComposition()
         if (editor.canUndo()) {
             editor.undoNative()
@@ -222,6 +231,7 @@ internal class EditorDocumentController(
     fun redo() {
         if (readOnly || locked || state.value.busy) return
         val editor = view ?: return
+        if (!editor.inputReady.value || !editor.isEditable) return
         if (nativeRedosBeforeBulk > 0 && editor.canRedo()) {
             editor.redoNative(); nativeRedosBeforeBulk--
         } else if (redoDocuments.isNotEmpty()) {
@@ -397,6 +407,8 @@ internal class EditorDocumentController(
         released = true
         searchPublication.close()
         completionJob?.cancel()
+        readinessJob?.cancel()
+        readinessJob = null
         val attached = view != null
         view?.let { it.searcher.stopSearch(); it.owner = null; it.release() }
         view = null

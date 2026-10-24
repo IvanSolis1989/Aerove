@@ -26,6 +26,61 @@ pub struct ResourceFetch {
     network: NetworkContext, network_slot: Arc<NetworkContextSlot>, physical: Arc<PhysicalResolver>,
     staging: PathBuf, read_root: Option<PathBuf>, close_gate: tokio::sync::Mutex<()>,
 }
+
+/// The producer's cached join result, retained without changing the primary error.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResourceRequestExit {
+    Joined(meow_common::transport_tasks::TaskOutcome),
+    ObservationPanicked,
+}
+impl std::fmt::Display for ResourceRequestExit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Joined(outcome) => {
+                let category = match (outcome.panicked, outcome.cancelled) {
+                    (true, true) => "panicked-and-cancelled",
+                    (true, false) => "panicked",
+                    (false, true) => "cancelled",
+                    (false, false) => "normal-no-send",
+                };
+                write!(f, "resourceRequestProducerExit stage=resourceProducerJoin outcome={category} panicked={} cancelled={}", outcome.panicked, outcome.cancelled)
+            },
+            Self::ObservationPanicked => f.write_str("resourceRequestProducerExit stage=resourceProducerJoin outcome=observation-panicked panicked=unknown cancelled=unknown"),
+        }
+    }
+}
+impl std::error::Error for ResourceRequestExit {}
+
+#[derive(Debug)]
+pub struct ResourceRequestOwnerEnded { pub exit: ResourceRequestExit }
+impl std::fmt::Display for ResourceRequestOwnerEnded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("resourceRequestOwnerEnded") }
+}
+impl std::error::Error for ResourceRequestOwnerEnded {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> { Some(&self.exit) }
+}
+
+async fn owner_ended_after(join: impl Future<Output=meow_common::transport_tasks::TaskOutcome>) -> io::Error {
+    use futures::FutureExt;
+    // Diagnostic collection must not replace the original sender-loss failure.
+    let exit = match std::panic::AssertUnwindSafe(join).catch_unwind().await {
+        Ok(outcome) => ResourceRequestExit::Joined(outcome),
+        Err(payload) => {
+            // The payload may itself panic when dropped outside this catch.
+            std::mem::forget(payload);
+            ResourceRequestExit::ObservationPanicked
+        },
+    };
+    io::Error::other(ResourceRequestOwnerEnded { exit })
+}
+
+async fn receive_operation<T>(rx: oneshot::Receiver<io::Result<T>>, producer: Arc<meow_common::transport_tasks::SharedUnitJoin>) -> io::Result<T> {
+    match rx.await {
+        Ok(result) => result,
+        Err(_) => Err(owner_ended_after(producer.wait()).await),
+    }
+}
+
 struct CancelRequest(CancellationToken);
 impl Drop for CancelRequest { fn drop(&mut self) { self.0.cancel(); } }
 
@@ -54,13 +109,13 @@ impl ResourceFetch {
         {
             let state=self.state.lock(); if state.closed || self.cancel.is_cancelled() { return Err(error("resourceScopeClosed")); }
         }
-        {
-            self.tasks.spawn_with(async move {
+        let producer = {
+            self.tasks.spawn_join_with(async move {
                 let result=tokio::select! { biased; _=request.cancelled()=>Err(error("resourceRequestCancelled")), result=work=>result };
                 let _=tx.send(result);
-            }, move |work| Ok(tokio::spawn(async move { network.scope(scope.run(work)).await })))?;
-        }
-        rx.await.map_err(|_|error("resourceRequestOwnerEnded"))?
+            }, move |work| Ok(tokio::spawn(async move { network.scope(scope.run(work)).await })))?
+        };
+        receive_operation(rx, producer).await
     }
     pub async fn load(self: &Arc<Self>, source: String) -> io::Result<()> {
         {
@@ -195,4 +250,140 @@ pub async fn validate_prepared(source:&str, read_root:&str, cache:&str)->Result<
     }
     let scope=OwnedLoadScope::with_context(Arc::new(PreparedContext(roots)));
     meow_config::validate_prepared_config_with_scope(&normalized,&scope).await
+}
+
+#[cfg(test)]
+mod operation_exit_tests {
+    use super::*;
+    use meow_common::transport_tasks::{SharedUnitJoin, TaskOutcome};
+    use std::{error::Error, time::Duration};
+
+    fn cause(error: &io::Error) -> ResourceRequestExit {
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert_eq!(error.to_string(), "resourceRequestOwnerEnded");
+        let typed = error.get_ref().unwrap().downcast_ref::<ResourceRequestOwnerEnded>().unwrap();
+        assert!(typed.source().unwrap().to_string().contains("resourceRequestProducerExit"));
+        assert!(typed.exit.to_string().contains("stage=resourceProducerJoin"));
+        assert!(typed.exit.to_string().len()<192);
+        typed.exit
+    }
+    fn spawn(owner: &Arc<TransportTasks>, work: impl Future<Output=()> + Send + 'static) -> Arc<SharedUnitJoin> {
+        owner.spawn_join_with(work, |work| Ok(tokio::spawn(work))).unwrap()
+    }
+
+    #[tokio::test]
+    async fn sender_loss_reports_real_panicked_join_and_cleanup_keeps_it() {
+        let owner=TransportTasks::new();let(tx,rx)=oneshot::channel::<io::Result<()>>();
+        let record=spawn(&owner,async move {let _sender=tx;panic!("controlled resource producer panic");});
+        let error=tokio::time::timeout(Duration::from_secs(5),receive_operation(rx,record.clone())).await.unwrap().unwrap_err();
+        let expected=TaskOutcome {panicked:true,cancelled:false};
+        assert_eq!(cause(&error),ResourceRequestExit::Joined(expected));
+        assert!(cause(&error).to_string().contains("outcome=panicked panicked=true cancelled=false"));
+        assert_eq!(record.wait().await,expected);
+        assert!(owner.close_joined().await.unwrap().panicked);
+        assert!(owner.close_joined().await.unwrap().panicked);
+        println!("RESOURCE_OWNER_ENDED_DIAGNOSTIC panicked=true cancelled=false");
+    }
+
+    #[tokio::test]
+    async fn sender_loss_reports_real_cancelled_join_without_a_success_result() {
+        let owner=TransportTasks::new();let(tx,rx)=oneshot::channel::<io::Result<()>>();let(started,ready)=oneshot::channel();
+        let record=spawn(&owner,async move {let _sender=tx;let _=started.send(());std::future::pending::<()>().await;});
+        ready.await.unwrap();owner.cancel();
+        let error=tokio::time::timeout(Duration::from_secs(5),receive_operation(rx,record.clone())).await.unwrap().unwrap_err();
+        let expected=TaskOutcome {panicked:false,cancelled:true};
+        assert_eq!(cause(&error),ResourceRequestExit::Joined(expected));
+        assert!(cause(&error).to_string().contains("outcome=cancelled panicked=false cancelled=true"));
+        assert_eq!(record.wait().await,expected);
+        assert!(!owner.close_joined().await.unwrap().panicked);
+        assert!(!owner.close_joined().await.unwrap().panicked);
+        println!("RESOURCE_OWNER_ENDED_DIAGNOSTIC panicked=false cancelled=true");
+    }
+
+    #[tokio::test]
+    async fn sender_loss_reports_a_normally_returned_producer_without_inventing_panic_or_cancel() {
+        let owner=TransportTasks::new();let(tx,rx)=oneshot::channel::<io::Result<()>>();
+        let record=spawn(&owner,async move {drop(tx);});
+        let error=tokio::time::timeout(Duration::from_secs(5),receive_operation(rx,record.clone())).await.unwrap().unwrap_err();
+        assert_eq!(cause(&error),ResourceRequestExit::Joined(TaskOutcome::default()));
+        assert!(cause(&error).to_string().contains("outcome=normal-no-send panicked=false cancelled=false"));
+        assert_eq!(record.wait().await,TaskOutcome::default());
+        assert!(!owner.close_joined().await.unwrap().panicked);
+        println!("RESOURCE_OWNER_ENDED_DIAGNOSTIC panicked=false cancelled=false");
+    }
+
+    #[derive(Debug)]
+    struct BusinessFailure(Arc<()>);
+    impl std::fmt::Display for BusinessFailure {
+        fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {f.write_str("original typed business failure")}
+    }
+    impl Error for BusinessFailure {}
+    #[tokio::test]
+    async fn delivered_success_and_original_typed_error_do_not_wait_or_rewrite_result() {
+        for failure in [false,true] {
+            let owner=TransportTasks::new();let(tx,rx)=oneshot::channel();let(release,held)=oneshot::channel();let identity=Arc::new(());let sent=identity.clone();
+            let record=spawn(&owner,async move {
+                let result=if failure {Err(io::Error::new(io::ErrorKind::PermissionDenied,BusinessFailure(sent)))} else {Ok(37)};
+                let _=tx.send(result);let _=held.await;
+            });
+            let result=tokio::time::timeout(Duration::from_secs(5),receive_operation(rx,record.clone())).await.unwrap();
+            assert!(!record.is_finished(),"normal result must not wait for producer join");
+            if failure {
+                let error=result.unwrap_err();assert_eq!(error.kind(),io::ErrorKind::PermissionDenied);
+                assert_eq!(error.to_string(),"original typed business failure");
+                assert!(Arc::ptr_eq(&error.get_ref().unwrap().downcast_ref::<BusinessFailure>().unwrap().0,&identity));
+            } else {assert_eq!(result.unwrap(),37);}
+            release.send(()).unwrap();assert!(!owner.close_joined().await.unwrap().panicked);
+        }
+    }
+
+    #[tokio::test]
+    async fn observation_panic_cannot_replace_the_primary_owner_ended_error() {
+        let error=owner_ended_after(async {panic!("controlled join observation panic")}).await;
+        assert_eq!(cause(&error),ResourceRequestExit::ObservationPanicked);
+    }
+
+    #[tokio::test]
+    async fn cancelled_diagnostic_wait_keeps_the_original_join_owned_for_cleanup() {
+        use futures::FutureExt;
+        let owner=TransportTasks::new();let(tx,rx)=oneshot::channel::<io::Result<()>>();let(started,ready)=oneshot::channel();let(release,held)=oneshot::channel();
+        let record=spawn(&owner,async move {drop(tx);let _=started.send(());let _=held.await;});
+        ready.await.unwrap();
+        let mut observing=Box::pin(receive_operation(rx,record.clone()));
+        assert!(observing.as_mut().now_or_never().is_none());
+        drop(observing);
+        release.send(()).unwrap();
+        let cleanup=tokio::time::timeout(Duration::from_secs(5),owner.close_joined()).await.unwrap().unwrap();
+        assert!(!cleanup.panicked);
+        assert!(record.is_finished());
+        let cached=record.wait().await;
+        assert_eq!(record.wait().await,cached);
+    }
+
+    #[tokio::test]
+    async fn panicking_payload_drop_cannot_replace_owner_ended_or_escape_observation() {
+        use futures::FutureExt;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        struct PanicOnDrop(Arc<AtomicUsize>);
+        impl Drop for PanicOnDrop {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                panic!("controlled diagnostic payload Drop panic");
+            }
+        }
+        let drops=Arc::new(AtomicUsize::new(0));
+        let payload=PanicOnDrop(drops.clone());
+        let observed=std::panic::AssertUnwindSafe(owner_ended_after(async move {
+            std::panic::panic_any(payload)
+        })).catch_unwind().await;
+        let error=match observed {
+            Ok(error)=>error,
+            Err(_)=>panic!("diagnostic payload destruction replaced original sender-loss"),
+        };
+        assert_eq!(cause(&error),ResourceRequestExit::ObservationPanicked);
+        assert_eq!(error.to_string(),"resourceRequestOwnerEnded");
+        assert_eq!(error.kind(),io::ErrorKind::Other);
+        assert_eq!(drops.load(Ordering::SeqCst),0,"captured payload must not be dropped outside catch");
+    }
+
 }

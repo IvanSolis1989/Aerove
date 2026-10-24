@@ -122,7 +122,7 @@ class UpdateFeatureTest {
         assertTrue(runCatching { repo.check(identity) }.isFailure)
         assertEquals(5, pages)
         assertEquals(0, source.downloads)
-        repo.close()
+        repo.closeAndJoin()
     }
 
     @Test fun foreignHostsRepositoriesQueriesAndWrongAbiAreRejected() {
@@ -165,7 +165,7 @@ class UpdateFeatureTest {
             scope.coroutineContext[Job]!!.children.first().children.forEach { it.join() }
             assertFalse(feature.state.value.shouldShowPrompt)
             assertTrue(temporary.root.listFiles()!!.none { it.extension == "part" || it.extension == "apk" })
-        } finally { feature.close(); scope.cancel() }
+        } finally { feature.closeAndJoin(); scope.cancel() }
     }
 
     @Test fun startupOncePromptTagDismissAndDisableAreDistinct() = runBlocking<Unit> {
@@ -182,7 +182,7 @@ class UpdateFeatureTest {
             feature.check(); await(feature) { it.phase == UpdatePhase.Available && it.visible }
             feature.disableAutomatic(); await(feature) { !it.visible }
             assertFalse(platform.automatic)
-        } finally { feature.close(); scope.cancel() }
+        } finally { feature.closeAndJoin(); scope.cancel() }
     }
 
     @Test fun unknownSourcesRoundTripAndOldReceiptsCannotInstallAnotherRequest() = runBlocking<Unit> {
@@ -205,7 +205,7 @@ class UpdateFeatureTest {
             assertTrue(feature.platformLaunched(install.id))
             feature.platformResult(install.id)
             assertEquals(UpdatePhase.Ready, feature.state.value.phase)
-        } finally { feature.close(); scope.cancel() }
+        } finally { feature.closeAndJoin(); scope.cancel() }
     }
 
     @Test fun automaticFailureIsSilentAndManualFailureIsVisible() = runBlocking<Unit> {
@@ -218,7 +218,7 @@ class UpdateFeatureTest {
             assertFalse(feature.state.value.shouldShowPrompt)
             feature.check(); await(feature) { it.phase == UpdatePhase.Failed }
             assertTrue(feature.state.value.shouldShowPrompt)
-        } finally { feature.close(); scope.cancel() }
+        } finally { feature.closeAndJoin(); scope.cancel() }
     }
 
     @Test fun disabledAutomaticSkipsFeedAndPreviouslyPromptedTagOnlySuppressesAutomaticPrompt() = runBlocking<Unit> {
@@ -228,7 +228,7 @@ class UpdateFeatureTest {
         feature.autoCheckOnce()
         scope.coroutineContext[Job]!!.children.toList().flatMap { it.children.toList() }.forEach { it.join() }
         assertEquals(0, transport.requests)
-        feature.close(); scope.cancel()
+        feature.closeAndJoin(); scope.cancel()
         platform.automatic = true
         platform.tag = transport.release.tag
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -240,7 +240,7 @@ class UpdateFeatureTest {
             assertFalse(feature.state.value.shouldShowPrompt)
             feature.check(); await(feature) { it.phase == UpdatePhase.Available && it.visible }
             assertEquals(2, transport.requests)
-        } finally { feature.close(); scope.cancel() }
+        } finally { feature.closeAndJoin(); scope.cancel() }
     }
 
     @Test fun committedClearJoinsDownloadClearsExactCacheAndTagAndRejectsLatePublication() = runBlocking<Unit> {
@@ -264,7 +264,7 @@ class UpdateFeatureTest {
             feature.check(); feature.autoCheckOnce(); feature.download()
             assertEquals(requests, transport.requests)
             assertTrue(runCatching { feature.resumeAfterMaintenance() }.isFailure)
-        } finally { transport.hold!!.complete(Unit); feature.close(); scope.cancel() }
+        } finally { transport.hold!!.complete(Unit); feature.closeAndJoin(); scope.cancel() }
     }
 
     @Test fun maintenancePausePreservesVerifiedCacheButRejectsDispatchUntilResume() = runBlocking<Unit> {
@@ -283,7 +283,7 @@ class UpdateFeatureTest {
             feature.requestInstall()
             val fresh = await(feature) { it.installRequest != null }.installRequest!!
             assertNotEquals(old.id, fresh.id)
-        } finally { feature.close(); scope.cancel() }
+        } finally { feature.closeAndJoin(); scope.cancel() }
     }
 
     @Test fun secondaryPromptFailureStillClearsCacheAndKeepsFeatureTerminal() = runBlocking<Unit> {
@@ -300,7 +300,7 @@ class UpdateFeatureTest {
             assertEquals(UpdateState(), feature.state.value)
             assertTrue(runCatching { feature.resumeAfterMaintenance() }.isFailure)
             assertTrue(runCatching { repository.check(identity) }.isFailure)
-        } finally { feature.close(); scope.cancel() }
+        } finally { feature.closeAndJoin(); scope.cancel() }
     }
 
     @Test fun uninitializedCacheClearTargetsOnlyGeneratedFileNamesAndReportsDirectoryCollision() = runBlocking<Unit> {
@@ -315,4 +315,96 @@ class UpdateFeatureTest {
         assertTrue(runCatching { UpdateRepository.clearCachedUserState(temporary.root) }.isFailure)
         assertTrue(collision.isDirectory)
     }
+
+    @Test fun closeAfterParentCancellationIsOffCallerThreadAndHasOneJoinableOwner() = runBlocking<Unit> {
+        val caller = Thread.currentThread()
+        val entered = CompletableDeferred<Unit>()
+        val release = java.util.concurrent.CountDownLatch(1)
+        val closed = java.util.concurrent.atomic.AtomicInteger()
+        val source = Transport()
+        val transport = object : UpdateTransport by source {
+            override fun close() {
+                assertNotSame("TLS/pool cleanup must not run on the caller", caller, Thread.currentThread())
+                closed.incrementAndGet(); entered.complete(Unit)
+                check(release.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            }
+        }
+        val repository = UpdateRepository(transport, temporary.root, UpdateApkVerifier { _, _ -> })
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val feature = UpdateFeature(repository, Platform(), scope) { }
+        try {
+            scope.cancel() // ViewModelScope is already cancelled before onCleared.
+            feature.close()
+            withTimeout(5000) { entered.await() }
+            feature.close()
+            val joined = async { feature.closeAndJoin() }
+            yield(); assertFalse(joined.isCompleted)
+            assertTrue(runCatching { repository.check(identity) }.isFailure)
+            assertEquals(0, source.requests)
+            release.countDown(); withTimeout(5000) { joined.await() }
+            feature.closeAndJoin(); assertEquals(1, closed.get())
+        } finally { release.countDown(); feature.closeAndJoin(); scope.cancel() }
+    }
+
+    @Test fun closeJoinsCancelledFinishingDownloadBeforeClosingItsTransport() = runBlocking<Unit> {
+        val source = Transport().apply { entered = CompletableDeferred(); hold = CompletableDeferred(); nonCancellableDownload = true }
+        val closed = java.util.concurrent.atomic.AtomicInteger()
+        val transport = object : UpdateTransport by source {
+            override fun close() {
+                assertFalse(temporary.root.listFiles().orEmpty().any { it.name.endsWith(".part") })
+                closed.incrementAndGet()
+            }
+        }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val feature = UpdateFeature(UpdateRepository(transport, temporary.root, UpdateApkVerifier { _, _ -> }), Platform(), scope) { }
+        try {
+            feature.check(); await(feature) { it.phase == UpdatePhase.Available }
+            feature.download(); withTimeout(5000) { source.entered!!.await() }
+            feature.cancel() // worker is null, but the old child still owns its finally/partial file.
+            feature.close()
+            val joined = async { feature.closeAndJoin() }
+            yield(); assertFalse(joined.isCompleted); assertEquals(0, closed.get())
+            source.hold!!.complete(Unit); withTimeout(5000) { joined.await() }
+            assertEquals(1, closed.get()); assertEquals(UpdateState(), feature.state.value)
+        } finally { source.hold!!.complete(Unit); feature.closeAndJoin(); scope.cancel() }
+    }
+
+    @Test fun terminalCloseFailureIsObservableAndRepeatedJoinKeepsTheSameFailure() = runBlocking<Unit> {
+        val failure = java.io.IOException("fixture transport shutdown")
+        val observerFailure = IllegalStateException("fixture observer shutdown")
+        val closed = java.util.concurrent.atomic.AtomicInteger()
+        val observed = java.util.concurrent.atomic.AtomicReference<Throwable?>()
+        val transport = object : UpdateTransport by Transport() {
+            override fun close() { closed.incrementAndGet(); throw failure }
+        }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val feature = UpdateFeature(UpdateRepository(transport, temporary.root, UpdateApkVerifier { _, _ -> }), Platform(), scope,
+            onCloseFailure = { observed.set(it); throw observerFailure }) { }
+        try {
+            scope.cancel(); feature.close()
+            assertSame(failure, runCatching { feature.closeAndJoin() }.exceptionOrNull())
+            assertSame(failure, observed.get())
+            assertTrue(failure.suppressed.any { it === observerFailure })
+            assertSame(failure, runCatching { feature.closeAndJoin() }.exceptionOrNull())
+            assertEquals(1, closed.get())
+        } finally { runCatching { feature.closeAndJoin() }; scope.cancel() }
+    }
+
+    @Test fun clearKeepsPrimaryPromptFailureAndStillJoinsFailedTransportClose() = runBlocking<Unit> {
+        val failure = java.io.IOException("fixture close failure")
+        val closed = java.util.concurrent.atomic.AtomicInteger()
+        val transport = object : UpdateTransport by Transport() {
+            override fun close() { closed.incrementAndGet(); throw failure }
+        }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val feature = UpdateFeature(UpdateRepository(transport, temporary.root, UpdateApkVerifier { _, _ -> }), Platform().apply { failReset = true }, scope) { }
+        try {
+            val error = runCatching { feature.clearUserState() }.exceptionOrNull()
+            assertEquals("fixture prompt reset failure", error?.message)
+            assertTrue(error!!.suppressed.any { it === failure })
+            assertEquals(1, closed.get())
+            assertEquals(UpdateState(), feature.state.value)
+        } finally { runCatching { feature.closeAndJoin() }; scope.cancel() }
+    }
+
 }

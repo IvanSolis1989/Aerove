@@ -185,6 +185,17 @@ impl Drop for TunDriver {
     fn drop(&mut self) { self.cancel.cancel(); self.loads.cancel(); self.network.cancel(); }
 }
 
+fn ingress_packet_allowed(packet: &[u8], ipv6: bool) -> io::Result<bool> {
+    let version = packet.first().map(|byte| byte >> 4);
+    match version {
+        Some(4) => Ok(true),
+        Some(6) => Ok(ipv6),
+        _ => Err(io::Error::new(io::ErrorKind::InvalidData, format!(
+            "invalidTunIpVersion: version={}; bytes={}; ipv6Allowed={ipv6}",
+            version.map_or_else(|| "none".to_owned(), |version| version.to_string()), packet.len()))),
+    }
+}
+
 async fn drive(fd: PacketFd, mut stack: lwip::NetStack, mut tcp: lwip::TcpListener,
     udp: Box<lwip::UdpSocket>, handler: Arc<dyn PacketHandler>, tun: TunPlan, network: NetworkContext,
     cancel: CancellationToken, progress: Arc<Progress>) -> io::Result<()> {
@@ -210,8 +221,10 @@ async fn drive(fd: PacketFd, mut stack: lwip::NetStack, mut tcp: lwip::TcpListen
             },
             packet = fd.read_packet() => {
                 let packet = match packet { Ok(packet) => packet, Err(e) => break Err(e) };
-                if packet.first().is_none_or(|v| !matches!(v >> 4, 4 | 6)) || (!tun.ipv6 && packet[0] >> 4 == 6) {
-                    break Err(error("packet family disagrees with actual Tun plan"));
+                match ingress_packet_allowed(&packet, tun.ipv6) {
+                    Ok(true) => {},
+                    Ok(false) => continue,
+                    Err(cause) => break Err(cause),
                 }
                 let sent = tokio::select! { biased;
                     _ = cancel.cancelled() => break Ok(()),
@@ -274,4 +287,22 @@ async fn default_udp<H: PacketHandler + ?Sized>(handler: Arc<H>, socket: Box<lwi
     tasks.abort_all();
     while tasks.join_next().await.is_some() {}
     outcome.map_err(|_| error("UDP packet owner panicked"))?
+}
+
+
+#[cfg(test)]
+mod packet_family_tests {
+    use super::ingress_packet_allowed;
+    #[test]
+    fn disabled_ipv6_is_dropped_without_admitting_it_and_invalid_versions_still_fail() {
+        assert!(ingress_packet_allowed(&[0x45], false).unwrap());
+        assert!(ingress_packet_allowed(&[0x60], true).unwrap());
+        assert!(!ingress_packet_allowed(&[0x60], false).unwrap());
+        for packet in [&[][..], &[0x00][..], &[0xf0][..]] {
+            let error = ingress_packet_allowed(packet, false).unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+            assert!(error.to_string().contains("invalidTunIpVersion:"));
+            assert!(error.to_string().contains(&format!("bytes={}", packet.len())));
+        }
+    }
 }
