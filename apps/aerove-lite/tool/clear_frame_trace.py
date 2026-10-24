@@ -110,10 +110,10 @@ class TraceCapture:
         (self.directory / 'TRACE-RECEIPT.json').write_text(
             json.dumps(self.receipt, indent=2) + '\n', encoding='utf-8')
 
-    def run(self, args, name, timeout=8):
+    def run(self, args, name, timeout=8, accepted_return_codes=(0,)):
         began = time.monotonic_ns()
         item = dict(command=self.adb + args, timeoutSeconds=timeout,
-                    hostMonotonicStartNanos=began)
+                    hostMonotonicStartNanos=began, acceptedReturnCodes=list(accepted_return_codes))
         try:
             result = subprocess.run(self.adb + args, stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT, timeout=timeout)
@@ -131,7 +131,7 @@ class TraceCapture:
             diagnostic_error(self, name, error)
         self.receipt['commands'].append(item)
         save_best_effort(self)
-        return data.decode(errors='replace') if result is not None and result.returncode == 0 else None
+        return data.decode(errors='replace') if result is not None and result.returncode in accepted_return_codes else None
 
     def start(self):
         if not self.storage_ready:
@@ -140,7 +140,7 @@ class TraceCapture:
         self.receipt['deviceApi'] = int(api.strip()) if api and api.strip().isdigit() else None
         pids = self.run(['shell', 'pidof', PACKAGE], 'target-pids-before.txt', timeout=3)
         self.receipt['targetPidsBefore'] = [int(p) for p in pids.split()] if pids and all(p.isdigit() for p in pids.split()) else None
-        help_text = self.run(['shell', 'perfetto', '--help'], 'perfetto-help.txt')
+        help_text = self.run(['shell', 'perfetto', '--help'], 'perfetto-help.txt', accepted_return_codes=(0, 1))
         if not help_text or '--background-wait' not in help_text:
             self.receipt['errors'].append(dict(stage='start', error='Existing perfetto lacks confirmed --background-wait support'))
             save_best_effort(self)

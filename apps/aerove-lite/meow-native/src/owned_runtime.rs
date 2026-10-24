@@ -66,6 +66,19 @@ pub struct OwnedRuntime {
 }
 fn error(message: &'static str) -> io::Error { io::Error::other(message) }
 
+fn cleanup_outcome<E: std::fmt::Display>(result: &Result<(), E>) -> serde_json::Value {
+    match result {
+        Ok(()) => serde_json::json!({"ok":true}),
+        Err(cause) => serde_json::json!({"ok":false,"error":cause.to_string()}),
+    }
+}
+
+fn join_cleanup_results<const N: usize>(results: [(&str, io::Result<()>); N]) -> io::Result<()> {
+    let failures: Vec<String> = results.into_iter().filter_map(|(stage,result)|
+        result.err().map(|cause| format!("{stage}: {cause}"))).collect();
+    if failures.is_empty() { Ok(()) } else { Err(io::Error::other(failures.join("; "))) }
+}
+
 fn group_activation_error(cause: crate::control::ControlError) -> io::Error {
     match cause {
         crate::control::ControlError::DialerProxyNotIntegrated => io::Error::other(crate::runtime::Failure {
@@ -137,6 +150,13 @@ impl OwnedRuntime {
             let serving = Box::pin(worker.serve(json, plan, fd, network.clone(), scope.clone(), generation, register, receiver, &mut core));
             let result = AssertUnwindSafe(serving).catch_unwind().await;
             let stopping = cancel.is_cancelled();
+            let mut cleanup_details = serde_json::Map::new();
+            cleanup_details.insert("serve".into(), match &result {
+                Ok(result) => cleanup_outcome(result),
+                Err(payload) => serde_json::json!({"ok":false,"panicked":true,"error":payload.downcast_ref::<&str>().copied()
+                    .or_else(||payload.downcast_ref::<String>().map(String::as_str)).unwrap_or("ownedRuntimePanicked")}),
+            });
+            cleanup_details.insert("stopping".into(),stopping.into());
             if !stopping && result.as_ref().ok().and_then(|outcome| outcome.as_ref().err())
                 .and_then(|cause| cause.get_ref()).is_some_and(|cause| cause.is::<crate::runtime::Failure>()) {
                 worker.startup_diagnostic.store(true, Ordering::Release);
@@ -144,7 +164,9 @@ impl OwnedRuntime {
             worker.plane.cancel(); scope.cancel();
             let user = worker.user_controller.lock().clone();
             let user_closed = match &user { Some(owner) => owner.stop().await, None => Ok(()) };
+            cleanup_details.insert("userController".into(),cleanup_outcome(&user_closed));
             let closed = match core { Some(mut core) => core.close().await, None => Ok(()) };
+            cleanup_details.insert("core".into(),cleanup_outcome(&closed));
             let closed = closed.and(user_closed);
             let network_policy = worker.network_policy.lock().clone();
             let network_closed = match &network_policy {
@@ -154,12 +176,20 @@ impl OwnedRuntime {
                     None => Ok(()),
                 }
             };
+            cleanup_details.insert("networkDns".into(),cleanup_outcome(&network_closed));
+            cleanup_details.insert("networkFailure".into(),serde_json::json!(network_policy.as_ref().and_then(|owner|owner.failure())));
+            cleanup_details.insert("userControllerFailure".into(),serde_json::json!(user.as_ref().and_then(|owner|owner.failure())));
             let closed = closed.and(network_closed);
             let transports = worker.transports.close_joined().await.map(|_| ());
+            cleanup_details.insert("transports".into(),cleanup_outcome(&transports));
             let closed = closed.and(transports);
             worker.probes.close_and_join().await;
             let loaded = scope.close().await;
-            let closed = closed.and(worker.processes.close_after_flows_join());
+            cleanup_details.insert("probes".into(),serde_json::json!({"ok":true}));
+            cleanup_details.insert("loads".into(),cleanup_outcome(&loaded));
+            let processes = worker.processes.close_after_flows_join();
+            cleanup_details.insert("processes".into(),cleanup_outcome(&processes));
+            let closed = closed.and(processes);
             network.cancel();
             let old_scope = worker.scope.lock().take(); drop(old_scope);
             let old_network = worker.network.lock().take(); drop(old_network);
@@ -171,9 +201,16 @@ impl OwnedRuntime {
                 let old_statistics = worker.statistics.lock().take();
                 drop((old_user,old_network,old_statistics));
             }
+            cleanup_details.insert("acknowledged".into(),cleanup_confirmed.into());
+            cleanup_details.insert("parkUncertain".into(),worker.cleanup.uncertain.load(Ordering::Acquire).into());
+            let cleanup_failed = closed.is_err() || (loaded.is_ok() && !cleanup_confirmed);
+            let cleanup_failure = cleanup_failed.then(|| crate::runtime::Failure {
+                code:"runtimeCleanupFailed", field:Some("runtime.cleanup".into()),
+                reason:Some(serde_json::Value::Object(cleanup_details).to_string()),
+            });
+            if let Some(detail) = &cleanup_failure { *worker.failure.lock() = Some(detail.clone()); }
             let failure = match (result, loaded, closed) {
-                (_, Ok(()), Ok(())) if !cleanup_confirmed => Some("runtimeCleanupFailed".to_owned()),
-                (_, _, Err(_)) => Some("runtimeCleanupFailed".to_owned()),
+                (_, _, _) if cleanup_failed => cleanup_failure.map(|failure|failure.to_string()),
                 (_, Err(_), _) => Some("loadJoinFailed".to_owned()),
                 (_, _, _) if network_policy.as_ref().and_then(|owner| owner.failure()).is_some() => network_policy.as_ref().and_then(|owner| owner.failure()).map(str::to_owned),
                 (_, _, _) if user.as_ref().and_then(|owner| owner.failure()).is_some() => user.as_ref().and_then(|owner| owner.failure()).map(str::to_owned),
@@ -509,7 +546,7 @@ impl RunningCore {
             if task.await.is_err_and(|joined| !joined.is_cancelled()) { task_result = Err(error("groupEventOwnerPanicked")); }
         }
         self.group_events.take();
-        active_result.and(private_result).and(task_result)
+        join_cleanup_results([("activeListeners",active_result),("privateApi",private_result),("tasks",task_result)])
     }
 }
 struct ActiveListeners { cancel: CancellationToken, tasks: JoinSet<()>, driver: Option<Arc<TunDriver>>, ingress: Arc<meow_listener::owned_ingress::OwnedIngress>, transports: Arc<crate::transport_tasks::TransportTasks> }
@@ -521,7 +558,7 @@ impl ActiveListeners {
         self.driver.take();
         while self.tasks.join_next().await.is_some() {}
         let transports = self.transports.close_joined().await.map(|_| ());
-        driver.and(transports)
+        join_cleanup_results([("tunDriver",driver),("transports",transports)])
     }
 }
 fn listener_address(spec: &NamedListener) -> io::Result<SocketAddr> {
@@ -771,6 +808,27 @@ mod resume_roots;
 #[cfg(test)]
 mod cleanup_ack_tests {
     use super::*;
+    #[test]
+    fn cleanup_diagnostic_keeps_original_serve_and_every_failed_stage() {
+        let mut details = serde_json::Map::new();
+        details.insert("serve".into(),cleanup_outcome(&Err::<(),_>(error("fixture serve failed"))));
+        details.insert("userController".into(),cleanup_outcome(&Ok::<(),io::Error>(())));
+        details.insert("core".into(),cleanup_outcome(&Err::<(),_>(join_cleanup_results([
+            ("tunDriver",Err(error("fixture TUN close failed"))),
+            ("transports",Err(error("transportRegistrationUnconfirmed"))),
+        ]).unwrap_err())));
+        assert_eq!(details["serve"]["error"],"fixture serve failed");
+        assert_eq!(details["userController"]["ok"],true);
+        assert_eq!(details["core"]["ok"],false);
+        let cause = details["core"]["error"].as_str().unwrap();
+        assert!(cause.contains("tunDriver: fixture TUN close failed"));
+        assert!(cause.contains("transports: transportRegistrationUnconfirmed"));
+    }
+    #[test]
+    fn joined_cleanup_stays_successful_and_failed_cleanup_stays_failed() {
+        assert!(join_cleanup_results([("tunDriver",Ok(())),("transports",Ok(()))]).is_ok());
+        assert!(join_cleanup_results([("tunDriver",Err(error("packet owner panicked"))),("transports",Ok(()))]).is_err());
+    }
     use std::os::{fd::{AsFd, AsRawFd}, unix::net::UnixDatagram};
     fn active(driver: Option<Arc<TunDriver>>) -> ActiveListeners {
         ActiveListeners { cancel: CancellationToken::new(), tasks: JoinSet::new(), driver,

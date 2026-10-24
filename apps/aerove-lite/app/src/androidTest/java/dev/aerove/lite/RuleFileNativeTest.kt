@@ -43,14 +43,14 @@ class RuleFileNativeTest {
     @Test
     fun corruptedAndMismatchedFilesThrowInsteadOfReportingAnEmptySuccess() {
         withFile(byteArrayOf(0x28, 0xb5.toByte(), 0x2f, 0xfd.toByte(), 0)) { file ->
-            rejects { MeowNativeCore.inspectRuleSet(file.path) }
+            rejects(file, "domain", "mrs", "$.payload.mrs") { MeowNativeCore.inspectRuleSet(file.path) }
         }
         withFile("example.com\n192.0.2.0/24\n".toByteArray()) { file ->
-            rejects { MeowNativeCore.inspectRuleSet(file.path) }
+            rejects(file, "domain", "text", "$.payload", "rule_set_mixed: domains and IP ranges") { MeowNativeCore.inspectRuleSet(file.path) }
         }
         withFile("example.com\n".toByteArray()) { file ->
-            rejects { MeowNativeCore.dumpRuleSet(file.path, "ipcidr", "text") }
-            rejects { MeowNativeCore.dumpRuleSet(file.path, "domain", "mrs") }
+            rejects(file, "ipcidr", "text", "$.behavior", "rule_set_behavior_mismatch") { MeowNativeCore.dumpRuleSet(file.path, "ipcidr", "text") }
+            rejects(file, "domain", "mrs", "$.format", "rule_set_format_mismatch") { MeowNativeCore.dumpRuleSet(file.path, "domain", "mrs") }
         }
     }
 
@@ -61,12 +61,20 @@ class RuleFileNativeTest {
         assertEquals(count, info.getInt("count"))
     }
 
-    private fun rejects(action: () -> String) {
+    private fun rejects(file: File, behavior: String, format: String, field: String, reason: String? = null, action: () -> String) {
+        val diagnostic = checkNotNull(MeowNativeCore.validateResource("ruleset", file.path, behavior, format)) {
+            "Invalid native rule file passed resource validation"
+        }
+        val prefix = "rule_set_invalid: $field: "
+        assertTrue("Native diagnostic lost its typed field: $diagnostic", diagnostic.startsWith(prefix))
+        assertTrue("Native diagnostic lost its parser reason", diagnostic.removePrefix(prefix).isNotBlank())
+        if (reason != null) assertEquals(prefix + reason, diagnostic)
         try {
             action()
             fail("Invalid native rule file was accepted")
         } catch (error: RuntimeException) {
-            assertTrue(error.message.orEmpty().startsWith("rule_set_invalid:"))
+            assertEquals(RuntimeException::class.java, error.javaClass)
+            assertEquals("JNI must preserve the native diagnostic through its fixed error policy", "Rust error: $diagnostic", error.message)
         }
     }
 

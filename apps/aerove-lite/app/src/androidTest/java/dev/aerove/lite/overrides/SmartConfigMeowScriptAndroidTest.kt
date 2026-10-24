@@ -316,7 +316,8 @@ class SmartConfigMeowScriptAndroidTest {
     @Test fun realJniNamedHttpProxyAndCancellationKeepWritersOwned() = runBlocking<Unit> {
         val expected = "payload:\n  - fixture.example\n".toByteArray()
         val fixture = ControlledConnectFixture(expected)
-        val directory = File(context.filesDir, "runtime/transport-${UUID.randomUUID()}").apply { check(mkdirs()) }
+        val privateRoot = context.filesDir.canonicalFile
+        val directory = File(privateRoot, "runtime/transport-${UUID.randomUUID()}").apply { check(mkdirs()) }.canonicalFile
         val candidate = ConfigYaml.dump(linkedMapOf(
             "proxies" to listOf(mapOf("name" to "fixture-proxy", "type" to "http", "server" to "127.0.0.1", "port" to fixture.proxy.localPort)),
             "proxy-groups" to listOf(mapOf("name" to "named-route", "type" to "select", "proxies" to listOf("fixture-proxy"))),
@@ -324,6 +325,17 @@ class SmartConfigMeowScriptAndroidTest {
         ))
         var ownedScope: ProviderDownloadScope? = null
         try {
+            assertEquals(directory.absoluteFile, directory.canonicalFile)
+            assertTrue(directory.toPath().startsWith(privateRoot.toPath()))
+            val alias = File(directory, "../${directory.name}")
+            try {
+                JniResourceFetch.factory(context).open(ProviderDownloadContext(candidate, alias, null)).closeAndJoin()
+                fail("Noncanonical staging alias bypassed the private-root guard")
+            } catch (error: IllegalArgumentException) {
+                assertEquals("Resource directory must be a canonical app-private child", error.message)
+            }
+            assertEquals(0, fixture.originConnections.get())
+            assertTrue(fixture.observed.isEmpty())
             val scope = JniResourceFetch.factory(context).open(ProviderDownloadContext(candidate, directory, null))
             ownedScope = scope
             assertArrayEquals(expected, fixture.probeDirectOrigin())
@@ -341,7 +353,8 @@ class SmartConfigMeowScriptAndroidTest {
                 scope.download(ProviderDownloadRequest("http://${fixture.authority}/negative", "absent-route", emptyMap(), File(directory, "missing.bin"), 1024))
                 fail("Unknown named route silently fell back")
             } catch (error: RuntimeException) {
-                assertEquals("proxy: download proxy 'absent-route' is not a known proxy or group", error.message)
+                assertEquals(RuntimeException::class.java, error.javaClass)
+                assertEquals("Rust error: proxy: download proxy 'absent-route' is not a known proxy or group", error.message)
             }
             assertFalse(File(directory, "missing.bin").exists())
             assertEquals("Unknown route must not reach the directly accessible origin", 1, fixture.originConnections.get())
