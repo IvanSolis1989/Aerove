@@ -521,6 +521,15 @@
              if socket
                  .send(Message::Text(connections_json(&state).await.into()))
                  .await
+@@ -957,7 +955,7 @@
+     .unwrap_or_default()
+ }
+ 
+-fn subscribe_traffic_feed(state: &Arc<AppState>) -> broadcast::Receiver<Arc<str>> {
++pub fn subscribe_traffic_feed(state: &Arc<AppState>) -> broadcast::Receiver<Arc<str>> {
+     let mut guard = state
+         .traffic_feed
+         .sender
 @@ -976,8 +974,9 @@
      // the first frame's instantaneous rate.
      state.tunnel.statistics().sample_traffic();

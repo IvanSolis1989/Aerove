@@ -7,6 +7,7 @@ import subprocess
 
 MODE='policy-runtime-v1'
 MODE_V2='policy-runtime-v2'
+MODE_TRAFFIC='policy-runtime-traffic-v1'
 CASES=[
     ('meow-common',name) for name in [
         'cli_without_scope_keeps_output_and_real_join_error','observer_does_not_consume_protocol_output_or_panic',
@@ -56,7 +57,7 @@ def validate_policy(policy):
     if 'coreTests' not in policy:
         if 'coreTestLockSha256' in policy:raise ValueError('Core test lock without approved tests')
         return False
-    if policy['coreTests'] not in (MODE,MODE_V2):raise ValueError('Unknown Core unit test admission')
+    if policy['coreTests'] not in (MODE,MODE_V2,MODE_TRAFFIC):raise ValueError('Unknown Core unit test admission')
     expected=policy.get('coreTestLockSha256')
     if expected is not None and (not isinstance(expected,str) or re.fullmatch('[0-9a-f]{64}',expected) is None):
         raise ValueError('Invalid Core unit lock identity')
@@ -82,7 +83,7 @@ def command(package,name,features):
 
 def entries(mode):
     if mode==MODE:return [dict(package=p,filter=f,expectedPass=COUNTS.get((p,f),1),target='lib',requiredFeatures=[]) for p,f in CASES]
-    if mode==MODE_V2:return CASES_V2
+    if mode in (MODE_V2,MODE_TRAFFIC):return CASES_V2
     raise ValueError('Unknown Core unit test admission')
 
 def entry_command(entry,features):
@@ -128,7 +129,7 @@ def execute(root,policy,environment,receipt):
         locked=source_lock.read_bytes();state['resolvedLockSha256']=digest(locked);(directory/'core-tests.lock').write_bytes(locked)
         for index,spec in enumerate(entries(policy['coreTests'])):
             package=spec['package'];name=spec['filter'];args=entry_command(spec,matrix[package]);entry=dict(package=package,filter=name,command=args,exit=None,expectedPass=spec['expectedPass']);state['commands'].append(entry)
-            if policy['coreTests']==MODE_V2:entry['target']=spec['target']
+            if policy['coreTests'] in (MODE_V2,MODE_TRAFFIC):entry['target']=spec['target']
             result=subprocess.run(args,cwd=root,env=environment,capture_output=True)
             label=re.sub('[^A-Za-z0-9_.-]','_',name if name is not None else spec['target'])
             stem=f'{index:02d}-{package}-{label}';(directory/(stem+'.stdout.log')).write_bytes(result.stdout);(directory/(stem+'.stderr.log')).write_bytes(result.stderr)

@@ -79,6 +79,7 @@ class CoreTestAdmissionTests(unittest.TestCase):
             self.assertEqual((up/'Cargo.lock').read_bytes(),original)
             self.assertEqual((root/'Cargo.lock').read_bytes(),bridge)
             self.assertTrue(receipt['coreTests']['upstreamLockRestored'])
+            self.assertEqual(receipt['coreTests']['mode'],contract)
             self.assertEqual(json.loads((root/'build/core-tests/receipt.json').read_bytes()),receipt['coreTests'])
             self.assertEqual(commands[0],['cargo','metadata','--locked','--format-version','1'])
             if mode=='bad-seed':
@@ -107,5 +108,14 @@ class CoreTestAdmissionTests(unittest.TestCase):
     def test_v2_success_and_zero_match_preserve_separate_lock_contract(self):
         for mode in ['success','locked','empty','raise']:
             with self.subTest(mode=mode):self.run_fixture(mode,core_tests.MODE_V2)
+
+    def test_traffic_mode_reuses_exact_v2_commands_with_its_own_receipt_identity(self):
+        self.assertNotEqual(core_tests.MODE_V2,core_tests.MODE_TRAFFIC)
+        self.assertEqual(core_tests.entries(core_tests.MODE_V2),core_tests.entries(core_tests.MODE_TRAFFIC))
+        self.assertEqual(14,len(core_tests.entries(core_tests.MODE_TRAFFIC)))
+        self.assertEqual(29,sum(e['expectedPass'] for e in core_tests.entries(core_tests.MODE_TRAFFIC)))
+        self.assertTrue(core_tests.validate_policy(dict(resolveLock=False,coreTests=core_tests.MODE_TRAFFIC,coreTestLockSha256='a'*64)))
+        for mode in ['locked','empty','raise']:
+            with self.subTest(mode=mode):self.run_fixture(mode,core_tests.MODE_TRAFFIC)
 
 if __name__=='__main__':unittest.main()
