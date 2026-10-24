@@ -2,7 +2,7 @@ name: AEROVE Lite
 permissions:
   contents: read
 concurrency:
-  group: aerove-lite-${{ github.ref }}
+  group: ${{ inputs.meow_host_only && 'aerove-lite-host' || 'aerove-lite' }}-${{ github.ref }}
   cancel-in-progress: false
 env:
   NDK_VERSION: 28.2.13676358
