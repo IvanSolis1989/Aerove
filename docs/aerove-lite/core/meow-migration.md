@@ -30,6 +30,12 @@
 
 ## 当前状态
 
+当前待验候选为 **0.1.0-beta.14 / code 14**。内置分流脚本原样采用 AEROVE Lite / meow 专版，来源和许可统一见[开源来源与鸣谢](../../development/upstreams.md#开源来源与鸣谢)。生产入口为 `LiteApplication` 的 asset loader，经 `OverrideRepository` 一次初始化进入原脚本库，再沿既有配置 Script 模式和 `ScriptLibrarySession` 更新/CAS 链路执行。
+
+标准版对照为 `common/xclash_defaults.dart` 的一次初始化，Lite 没有新增独有菜单。首次及旧安装保留已有脚本、编辑与配置选择；用户删除后不自动回填。接近既有容量上限的合法旧库暂缓加入，仍可读取、编辑和删除；释放空间或原子恢复后重试，不扩大容量上限，也不把暂缓标成初始化成功。
+
+专版接线已有最小 SDK36 闭包、16 项原 JVM 及 Node 执行证据；容量修正新增 3 项实际 JVM 回归。原联调样本与内置脚本同字节，仍须分开核对生产接线。完整应用编译、新 APK asset 读回、真实 Android QuickJS 到 Meow 流程及整体首发验收仍待完成，不能以这些局部检查代替。
+
 切换前的功能与并行 CI 已保存在 `932d460f18fcb0df7fff83d399417e4de69e09a4`，树
 `6457a817530396d61d534bf360c40cfa7ad370ea`。保留旧 `native/`、锁文件、适配补丁、测试场景及真实失败证据；
 停止继续扩展旧核心。旧检查点不是完成版，旧测试通过也不能代表 Meow 已通过。

@@ -1,0 +1,58 @@
+{
+  "repository": "IvanSolis1989/Smart-Config-Kit",
+  "commit": "70d4ddbe0b6d52af7acbd503ff1bf556a3bddacd",
+  "requestedRef": "main",
+  "path": "Meow内核系/Aerove Lite/AeroveLite(meow).js",
+  "blobSha": "5004759e68d9ced1ec07d1ec47ced22b576fcc08",
+  "bytes": 112115,
+  "sha256": "217a4d7ecfb56d99cbb79148159ee636b882af5520c4ad7b6c6c870405f938cb",
+  "sourceUrl": "https://github.com/IvanSolis1989/Smart-Config-Kit/blob/70d4ddbe0b6d52af7acbd503ff1bf556a3bddacd/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/AeroveLite(meow).js",
+  "downloadUrl": "https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/70d4ddbe0b6d52af7acbd503ff1bf556a3bddacd/Meow内核系/Aerove%20Lite/AeroveLite(meow).js",
+  "updateUrl": "https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/refs/heads/main/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/AeroveLite(meow).js",
+  "versionHeader": [
+    "// AEROVE Lite / meow-rs 分流覆写候选（共享 Meow 分流实现）",
+    "// 版本：v6.0.20-meow.3 | Build：2026-10-24",
+    "// 架构：最多 22 个 url-test 区域组 + 33 业务组；融合 MRS / residual YAML",
+    "// 规则源：rulesets/source/routing-graph.js v6.0.20",
+    "// 生成：node tools/generate-meow.js；运行时输入：Mihomo内核系/FlClash/FlClash(mihomo).js",
+    "// 变更历史：Meow内核系/Aerove Lite/CHANGELOG.md；状态：docs/support-queue.md#aerove-lite-meow",
+    "// 只维护节点清洗、分组、rule-providers、rules；DNS / TUN / 端口 / 嗅探由 App 管理。",
+    "// 前提：已展开节点的订阅；远程 proxy-providers 请先用 SubStore 展平。",
+    "// 目标接口：main(config)，JSON 对象入出；无网络、文件系统或定时器依赖。",
+    "// 官方 Meow 客户端使用相邻 Meow 目录的原生 YAML；不假定官方 App 执行 JS。",
+    "// 客户端联调和真实连接验收状态见支持队列。",
+    "",
+    "const VERSION = 'v6.0.20-meow.3'"
+  ],
+  "readmeSha256": "1d7049f2419ec0c5ad1dc51fd9289a9e7a71bdb0cbd55024e652532470bd6bc0",
+  "licenseEvidence": {
+    "rootNames": [
+      ".github",
+      ".gitignore",
+      "AGENTS.md",
+      "CHANGELOG.md",
+      "Meow内核系",
+      "Mihomo内核系",
+      "README.md",
+      "Sing-box内核系",
+      "SubStore",
+      "Xray内核系",
+      "docs",
+      "mirrors",
+      "rulesets",
+      "tools",
+      "双内核系",
+      "独立内核系"
+    ],
+    "independentRootLicenseFound": false,
+    "readmeLines": [
+      {
+        "line": 91,
+        "text": "<sub>本项目用于个人技术研究与学习，不提供节点、订阅或代理服务。采用 MIT License；第三方规则与数据遵循各自许可证。[使用边界](docs/guide/acknowledgements.md#usage)</sub>"
+      }
+    ],
+    "originalLicenseFetch": "HTTP404/no LICENSE file; original fetch script failed after script bytes saved, recovery pinned same commit"
+  },
+  "fetchedBy": "authenticated read-only GitHub contents API; exact original bytes",
+  "scriptExecuted": false
+}

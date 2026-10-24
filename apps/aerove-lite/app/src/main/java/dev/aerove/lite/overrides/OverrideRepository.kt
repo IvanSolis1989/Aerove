@@ -4,14 +4,26 @@ import dev.aerove.lite.data.PrivateStorage
 import dev.aerove.lite.data.SubscriptionDownloader
 import dev.aerove.lite.dnssettings.DnsPreferencesJson
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.attribute.BasicFileAttributes
+import java.nio.file.attribute.FileTime
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import org.json.JSONArray
 import org.json.JSONObject
 
 /** One atomic settings record; profile bindings are remapped by the backup owner on restore. */
-class OverrideRepository(privateDirectory: File) {
+class OverrideRepository(privateDirectory: File, private val bundledScript: (() -> ByteArray)? = null) {
     private val storage = PrivateStorage(File(privateDirectory, "settings"))
+    private val bundledResource by lazy { BundledMeowScript.resource(requireNotNull(bundledScript) { "Bundled script loader unavailable" }()) }
+    private data class SeedSource(val key: Any?, val bytes: Long, val modified: FileTime)
+    private var deferredSeed: SeedSource? = null
+
+    // All supported repository/restore writes atomically replace this record under the storage domain lock.
+    private fun seedSource(): SeedSource? = storage.file(FILE_NAME).takeIf { it.isFile }?.let { file ->
+        val attributes = Files.readAttributes(file.toPath(), BasicFileAttributes::class.java)
+        SeedSource(attributes.fileKey(), attributes.size(), attributes.lastModifiedTime())
+    }
 
     suspend fun snapshot(): OverrideSnapshot = storage.transaction { read() }
 
@@ -27,12 +39,24 @@ class OverrideRepository(privateDirectory: File) {
         validateScript(updated)
         currentCoroutineContext().ensureActive()
         storage.write(FILE_NAME, encode(state.copy(scripts = replace(state.scripts, updated) { it.id })))
+        deferredSeed = null
         true
+    }
+
+    private fun withBundledScript(state: OverrideSnapshot): OverrideSnapshot {
+        if (state.scripts.any { it.id == BundledMeowScript.ID }) return state.copy(bundledScriptInitialized = true)
+        val script = bundledResource.copy(updatedAt = System.currentTimeMillis())
+        var name = script.name
+        var suffix = 2
+        while (state.scripts.any { it.name == name }) name = "${script.name} (${suffix++})"
+        return state.copy(scripts = state.scripts + script.copy(name = name), bundledScriptInitialized = true)
     }
 
     suspend fun deleteScript(id: String) = mutate { state -> state.copy(
         scripts = state.scripts.filterNot { it.id == id },
         profiles = state.profiles.map { if (it.scriptId == id) it.copy(scriptId = null) else it },
+        bundledScriptInitialized = state.bundledScriptInitialized ||
+            (id == BundledMeowScript.ID && state.scripts.any { it.id == id }),
     ) }
 
     suspend fun replaceContent(id: String, expected: String, replacement: String) = mutate { state ->
@@ -68,9 +92,27 @@ class OverrideRepository(privateDirectory: File) {
         decode(text)
         currentCoroutineContext().ensureActive()
         storage.write(FILE_NAME, text)
+        deferredSeed = null
     }
 
-    private fun read() = if (storage.file(FILE_NAME).isFile) decode(storage.read(FILE_NAME, MAX_LIBRARY_BYTES)) else OverrideSnapshot()
+    private suspend fun read(): OverrideSnapshot {
+        val state = if (storage.file(FILE_NAME).isFile) decode(storage.read(FILE_NAME, MAX_LIBRARY_BYTES)) else OverrideSnapshot()
+        if (bundledScript == null || state.bundledScriptInitialized) return state
+        val source = seedSource()
+        if (source != null && source == deferredSeed) return state
+        val initialized = withBundledScript(state)
+        val text = encode(initialized)
+        if (text.toByteArray(Charsets.UTF_8).size > MAX_LIBRARY_BYTES) {
+            // Pending, never completed: retain the exact old library so edits/deletes can free capacity.
+            deferredSeed = source
+            return state
+        }
+        decode(text)
+        currentCoroutineContext().ensureActive()
+        storage.write(FILE_NAME, text)
+        deferredSeed = null
+        return initialized
+    }
 
     companion object {
         const val FILE_NAME = "overrides.json"
@@ -85,6 +127,7 @@ class OverrideRepository(privateDirectory: File) {
         }
 
         fun encode(state: OverrideSnapshot): String = JSONObject().put("version", 1)
+            .apply { if (state.bundledScriptInitialized) put("bundledScriptInitialized", true) }
             .put("scripts", JSONArray(state.scripts.map { JSONObject().put("id", it.id).put("name", it.name)
                 .put("url", it.url ?: JSONObject.NULL).put("content", it.content).put("updatedAt", it.updatedAt) }))
             .put("profiles", JSONArray(state.profiles.map { JSONObject().put("profileId", it.profileId)
@@ -119,7 +162,7 @@ class OverrideRepository(privateDirectory: File) {
             require(profiles.all { it.profileId.isNotBlank() && it.addedRules.size <= 100000 && it.disabledGlobalRuleIds.distinct().size == it.disabledGlobalRuleIds.size })
             require(profiles.all { it.addedRules.all(::validRule) && (it.matchTarget == null || (it.matchTarget.length <= 1000 && !it.matchTarget.contains('\n'))) })
             require(profiles.all { p -> (p.scriptId == null || scripts.any { it.id == p.scriptId }) && p.disabledGlobalRuleIds.all { id -> rules.any { it.id == id } } })
-            return OverrideSnapshot(scripts, profiles, rules)
+            return OverrideSnapshot(scripts, profiles, rules, if (root.has("bundledScriptInitialized")) root.getBoolean("bundledScriptInitialized") else false)
         }
 
         fun remapProfiles(state: OverrideSnapshot, ids: Map<String, String>): OverrideSnapshot = state.copy(
@@ -132,7 +175,7 @@ class OverrideRepository(privateDirectory: File) {
             val explicitIncoming = incoming.copy(profiles = incoming.profiles + profileIds.keys
                 .filter { id -> incoming.profiles.none { it.profileId == id } }.map(::ProfileOverride))
             var mapped = remapProfiles(explicitIncoming, profileIds)
-            if (replace && !profilesOnly) return mapped
+            if (replace && !profilesOnly) return mapped.copy(bundledScriptInitialized = current.bundledScriptInitialized)
             if (profilesOnly) mapped = mapped.copy(
                 profiles = mapped.profiles.map { p -> p.copy(
                     addedRules = p.addedRules + mapped.globalRules.filterNot { it.id in p.disabledGlobalRuleIds }.map { it.value },
@@ -165,7 +208,7 @@ class OverrideRepository(privateDirectory: File) {
             val existing = (current.profiles.filter { it.profileId in liveProfileIds } + liveProfileIds.filter { id -> current.profiles.none { it.profileId == id } }.map(::ProfileOverride))
             val liveProfiles = existing.filterNot { p -> importedProfiles.any { it.profileId == p.profileId } }
                 .map { it.copy(disabledGlobalRuleIds = it.disabledGlobalRuleIds + importedRules.map { rule -> rule.id }) }
-            return OverrideSnapshot(current.scripts + scripts, liveProfiles + importedProfiles, current.globalRules + importedRules)
+            return OverrideSnapshot(current.scripts + scripts, liveProfiles + importedProfiles, current.globalRules + importedRules, current.bundledScriptInitialized)
         }
 
         private fun JSONObject.nullable(key: String) = if (isNull(key)) null else getString(key)

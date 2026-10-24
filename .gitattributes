@@ -8,3 +8,5 @@ apps/aerove-lite/app/src/main/java/dev/aerove/lite/editor/assets/editor/licenses
 .github/actions/flutter/action.yaml -text
 .github/actions/flutter/setup.sh -text
 .github/actions/flutter/LICENSE -text
+# Preserve the upstream bundled script and its provenance bytes on every host.
+apps/aerove-lite/app/src/main/assets/scripts/smart-config-kit-meow* -text

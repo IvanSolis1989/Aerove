@@ -30,6 +30,7 @@ data class OverrideSnapshot(
     val scripts: List<ScriptResource> = emptyList(),
     val profiles: List<ProfileOverride> = emptyList(),
     val globalRules: List<OverrideRule> = emptyList(),
+    val bundledScriptInitialized: Boolean = false,
 )
 
 class ScriptExecutionException(val code: String) : java.io.IOException("Script: $code")

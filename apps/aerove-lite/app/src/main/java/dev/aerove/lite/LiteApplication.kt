@@ -120,7 +120,9 @@ class LiteApplication : Application() {
             resourceDownloader, { checkNotNull(settings.changes.value) { "Settings have not loaded" }.geoResources })
     }
 
-    val overrideRepository by lazy { dev.aerove.lite.overrides.OverrideRepository(filesDir) }
+    val overrideRepository by lazy { dev.aerove.lite.overrides.OverrideRepository(filesDir) {
+        assets.open(dev.aerove.lite.overrides.BundledMeowScript.ASSET).use { it.readBytes() }
+    } }
     val overridePipeline by lazy {
         dev.aerove.lite.overrides.OverridePipeline(overrideRepository, dev.aerove.lite.overrides.ScriptEngine { script, config ->
             dev.aerove.lite.overrides.NativeScriptEngine().evaluate(script, config)
