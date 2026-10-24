@@ -7,11 +7,33 @@
 
 ## 待发布
 
+- 修复「工具 > 关于」等既有外部链接在系统返回无法打开或发生可处理的启动异常时没有可见反馈的问题；失败提示显示本地化原因和原始 URL，可由用户关闭。
+- 保留打开前确认及取消不启动的行为，与 Lite 的外部链接失败提示对齐。
+
+## 0.10.0-beta.6+2026102232 — 已发布预览版
+
+发布于 **2026-10-24 08:37:08（日本时间）**：[Release](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.10.0-beta.6%2B2026102232)。发布源码为 [`e2ebadc8`](https://github.com/IvanSolis1989/Aerove/commit/e2ebadc8bcf53e9c079dd8f5812fb4a0f47f8052)，对应 [原构建 #32](https://github.com/IvanSolis1989/Aerove/actions/runs/40037605629) 与 [main 推广 #33](https://github.com/IvanSolis1989/Aerove/actions/runs/40040635234)。完整 CI（11 个渲染、6 个回归分片及静态、原生检查）与实际 APK 验收通过；main 复用同一原包，7 个应用作业跳过，保留原源码、构建记录、安装编号与签名，不重复编译。
+
+APK 验收覆盖包名、版本、签名、四个必需 ARM64 库、字体资产，以及包内两条 Telegram URL 和七语标签；公开三资产的尺寸与 SHA256 均与原件一致，小文件实际 CDN 字节和 APK 有限 Range 已核对。尚未进行本次包的真机安装、点击或语言视觉切换验证。
+
+本版本为预览版，不覆盖稳定版 latest；稳定版仍为 `0.9.1+2026102203`。APK SHA256：`0af5897d35de6fea6cb7ff39b881dd1783cb7a0d12f16a1303632b890dd40d96`。
+
+- 「工具 > 关于」的 Telegram 频道更新为 [IvanSolis89](https://t.me/IvanSolis89)，群组更新为 [Olympus_Habitue](https://t.me/Olympus_Habitue)。
+- 标准版与 Lite 同步这两个入口及七种语言文案，分别打开自家频道和群组。
+
+## 0.10.0-beta.5+2026102228 — 已发布预览版
+
+发布于 **2026-10-23 22:59:08（日本时间）**：[Release](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.10.0-beta.5%2B2026102228)。发布源码为 [`fa96b549`](https://github.com/IvanSolis1989/Aerove/commit/fa96b5491dd80dc516fd39e46d05bd49f6b9a774)，对应 [原构建 #28](https://github.com/IvanSolis1989/Aerove/actions/runs/39959283242) 与 [main 推广 #29](https://github.com/IvanSolis1989/Aerove/actions/runs/39965665533)。完整 CI 和 ARM64 APK 验收通过；main 直接推广该原包，保留源码、版本、安装编号与签名，不重复编译。发布资产的尺寸与 SHA256、实际 CDN 返回字节已核对。
+
+本版本继续移除继承上游的 `PRE` 环境标识并使用 Android 系统字体，为预览版，不覆盖稳定版 latest。APK SHA256：`a016dcb5d0d790ae66c5898220d4909b8f925cf09831e5ccd63ed7a15a5cdc47`。尚未进行本次包的真机覆盖安装；Lite 的完整 APK、十二图与首发验收仍未完成。
+
 - 检查更新同时发现本产品已发布的正式版、Alpha、Beta 和 RC，按版本选择最新可升级版本，由用户选择更新或取消；取消不下载、不安装。
 - Android 还会核对安装编号必须递增，保持标准版与 Lite 的更新资产隔离；同一产品版本的更高安装编号也可提示更新。
 - 修复只查询稳定版 latest 而漏掉较新测试版的问题；请求失败或发行列表未能完整读取时报告检查失败，不再误报已是最新版。
 - 桌面更新打开提示中选定版本的发布页，避免发现测试版后跳转到旧稳定版页面。
 - 已安装 Beta.1 或 Beta.4 的更新检查逻辑固定在旧包中，首次升级到本修复版需手动下载安装；覆盖安装保留原包名和签名。
+
+- 构建、静态检查及可独立的渲染/回归分片并行，复用同一次生成源码和 Linux Rust 产物；本次完整 CI 为 12 分 46 秒，前次为 53 分 21 秒，main 推广耗时 40 秒。这是不同运行的实测耗时，含缓存和 runner 差异，不作为受控性能基准。
 
 ## 0.10.0-beta.4+2026102220 — 已发布预览版
 

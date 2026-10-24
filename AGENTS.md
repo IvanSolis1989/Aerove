@@ -28,6 +28,7 @@ Read this entry point, then the applicable product instructions. The Standard ed
   功能、取消/恢复、核心与 APK 验收。演示数据、模拟器截图和桌面 JVM 测试不冒充生产或真机能耗结果。
 - 两版各自按产品变更选择主/次/修订版本，禁止复制 FlClash、Mihomo、meow-rs 或历史 clash-rs 的版本号。上游版本仅记录来源；
   Android 安装编号保持各产品单调递增。具体规则见[独立版本规范](docs/development/VERSIONING.md)。
+- 共同界面和功能更新可以同批发行；各自独立的内核、平台或维护更新按需单独发行，不为对齐版本号或日期重发另一版。
 - 真实应用变更完整构建一次，main 推广同一已验证 APK；不得改写原构建身份、重用其他源码的包，或因文档和流程改动
   重编已验收应用。预览版不覆盖标准版稳定 latest，Lite 使用独立更新入口。
 
