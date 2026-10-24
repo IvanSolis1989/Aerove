@@ -1,4 +1,10 @@
+[Documentation](../../../../docs/README.md) → [Development](../../../../docs/development/README.md)
+
 # tray
+
+Standard edition tray API and platform capability reference. Declare the desired state through this owner; the examples retain the inherited FlClash labels.
+
+**On this page** · [API](#api) · [Events](#events) · [Capabilities](#capabilities) · [Linux requirements](#linux-requirements)
 
 System tray integration for FlClash on Linux, macOS and Windows.
 
@@ -62,12 +68,29 @@ menu from either button, as status items do there, so it only sends `TrayMenuReq
 `Tray.instance.capabilities` reports what the current platform can do, so callers branch on ability
 rather than on `Platform.isX`.
 
-| | macOS | Windows | Linux |
-| --- | --- | --- | --- |
-| `title` | yes | no | yes |
-| `toolTip` | yes | yes | yes |
-| `iconEvents` | yes | yes | no |
-| `menuControl` | yes | yes | no |
+### `title`
+
+- **macOS:** yes
+- **Windows:** no
+- **Linux:** yes
+
+### `toolTip`
+
+- **macOS:** yes
+- **Windows:** yes
+- **Linux:** yes
+
+### `iconEvents`
+
+- **macOS:** yes
+- **Windows:** yes
+- **Linux:** no
+
+### `menuControl`
+
+- **macOS:** yes
+- **Windows:** yes
+- **Linux:** no
 
 Linux runs on AppIndicator/StatusNotifierItem, where the desktop shell owns the menu; the application
 cannot receive icon clicks or open the menu itself.
@@ -75,3 +98,7 @@ cannot receive icon clicks or open the menu itself.
 ## Linux requirements
 
 `libayatana-appindicator3-dev`, or `libappindicator3-dev` as a fallback.
+
+## Related next steps
+
+[Build and verification commands](../../../../.agents/commands.md) · [Standard edition build root](../../README.md)

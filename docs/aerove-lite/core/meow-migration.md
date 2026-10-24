@@ -1,7 +1,20 @@
 # Lite 内核迁移：meow-rs
 
+[文档](../../README.md) / [Lite](../README.md)
+
 2026-10-23 用户决定：Lite 从 clash-rs 切换到 meow-rs，继续原生 Android / Compose、最低 API 33。
 标准版继续 Flutter + 官方 Mihomo。这里记录实施与验收，不改变[共同契约](../../shared/UI_CONTRACT.md)。
+
+## 本页目录
+
+- [固定来源](#section-1)
+- [当前状态](#section-2)
+- [固定核心差异](#section-3)
+- [保留的运行边界](#section-4)
+- [接口和配置适配](#section-5)
+- [实施和验收顺序](#section-6)
+
+<a name="section-1"></a>
 
 ## 固定来源
 
@@ -12,6 +25,8 @@
   依赖升级仍须真实编译、链接与运行，不能据此跳过验证。
 - 来源、用途、采用方式与许可统一登记在[开源来源与鸣谢](../../development/upstreams.md#开源来源与鸣谢)。
   分享讨论用于理解背景；未成功读取的内容不作为事实或实施指令。
+
+<a name="section-2"></a>
 
 ## 当前状态
 
@@ -36,6 +51,8 @@ Kotlin 的 `MeowRuntimeConfigComposer` 只形成候选配置和宿主计划，�
   ARM64 / x86_64 链接、16 KiB ELF、四个已定义脚本 JNI 导出和动态依赖门禁全部通过；原产物收据已核。
   这些只证明该源码图，不包含后续 FD / 控制变更，不替代完整运行 JNI、TUN、配置保真、共同功能、APK 与设备验收。
 
+<a name="section-3"></a>
+
 ## 固定核心差异
 
 当前固定 SHA 的封闭代理 factory、导出模块与 Cargo feature 表均无 `tuic`、`ssh`、`wireguard`、
@@ -49,6 +66,8 @@ Kotlin 的 `MeowRuntimeConfigComposer` 只形成候选配置和宿主计划，�
 列表及 UID / IN-USER 规则也已有实现，不得沿用旧核心的 blanket 拒绝。其他传输或选项差异仍须逐字段核对，
 尚未接入的 JNI、宿主策略、API、provider 或客户端功能继续阻止发行，不作为核心例外。
 
+<a name="section-4"></a>
+
 ## 保留的运行边界
 
 `LiteVpnService`、`VpnCoordinator`、`AndroidTunnelBackend` 继续唯一持有用户意图、授权、Builder、物理网络和前台生命周期。
@@ -60,6 +79,8 @@ Kotlin 的 `MeowRuntimeConfigComposer` 只形成候选配置和宿主计划，�
 - stop/park/加载取消与等待本身的取消，都须保留可恢复的退出等待；未确认退出时阻止后继启动。
 - 保留实际 MTU、IPv6、物理 DNS、应用归属、网络变化和已确认的设置应用/重启语义；不得引入公共 DNS fallback。
 - 官方 Android 的监听/sniffer 删除、强制 fake-IP、spawn 即成功、abort 不等待均不直接移植。
+
+<a name="section-5"></a>
 
 ## 接口和配置适配
 
@@ -77,6 +98,8 @@ Kotlin 的 `MeowRuntimeConfigComposer` 只形成候选配置和宿主计划，�
 - 用户控制入口不得暴露私有 AEROVE 路由。规则/配置检查仍须离线、有界、受资源归属约束。
 - QuickJS 脚本能力及独立 Go regexp2/age 辅助程序保留，不能随旧代理核心替换而丢失。
 
+<a name="section-6"></a>
+
 ## 实施和验收顺序
 
 1. 固定来源、许可和可重放准备；独立 CI 真实生成桥接锁，保存实际锁与 source/tree/run/attempt，再以 `--locked` 运行。
@@ -89,3 +112,7 @@ Kotlin 的 `MeowRuntimeConfigComposer` 只形成候选配置和宿主计划，�
 独立工作流先验证第一代表链；它不替代 Lite 的完整发行门禁。首轮最小协议 feature 集也不等于产品最终协议支持集合。
 旧 clash-rs 的能力例外须依据固定 Meow 源码重新核验。上述五项只证明固定核心能力边界，不代表配置准入或 APP 已完成；Lite 尚无首版发行或十二图。
 公开核心基准不证明 AEROVE Android 更省电，实际测量仍按[验收边界](../../shared/ACCEPTANCE.md)。
+
+---
+
+下一步：[Lite 说明](../README.md) · [共同契约](../../shared/UI_CONTRACT.md)

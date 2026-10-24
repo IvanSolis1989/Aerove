@@ -1,5 +1,13 @@
 # Project Context
 
+[Documentation](../docs/README.md) · [Development](../docs/development/README.md) · [Agent references](skills.md)
+
+Product context, independent ownership and dependency constraints.
+
+**On this page**
+
+[Version Notes](#version-notes) · [Forked Dependencies](#forked-dependencies) · [Dependency Ceilings](#dependency-ceilings) · [Build Dependencies](#build-dependencies)
+
 Paths and commands for the Standard edition are relative to `apps/aerove/`; run its commands there.
 Repository governance and workflows remain at the repository root. See [workspace layout](../docs/development/REPOSITORY_LAYOUT.md).
 

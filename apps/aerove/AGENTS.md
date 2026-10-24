@@ -1,12 +1,16 @@
 # AEROVE 标准版 instructions
 
+[Documentation](../../docs/README.md) · [Development](../../docs/development/README.md) · [Agent references](../../.agents/skills.md)
+
+Standard edition development entry point and binding reference navigation.
+
 This file is the entry point for AI coding agents working in this repository. Keep it small: detailed guidance lives under
 `.agents/`, and discoverable repo skills live under `.agents/skills/*/SKILL.md`.
 
 Aerove owns its product direction and releases. FlClash is a historical source and optional reference, not an automatic
 merge target. Preserve licenses and provenance; read `../../docs/development/INDEPENDENCE.md` for migration work.
 The Standard edition tracks published stable releases from official MetaCubeX/mihomo directly, with pinned source and
-replayable adaptations in this repository. Lite uses clash-rs; neither core waits for a FlClash release.
+replayable adaptations in this repository. Lite uses meow-rs; neither core waits for a FlClash release.
 Shared UI, interaction and client functionality must stay identical in both products. Changes flow in both directions;
 only source-proven Rust-core capability gaps may be deferred. Follow `../../docs/shared/UI_CONTRACT.md` before UI work.
 

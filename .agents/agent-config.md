@@ -1,5 +1,9 @@
 # Agent Configuration Model
 
+[Documentation](../docs/README.md) · [Development](../docs/development/README.md) · [Agent references](skills.md)
+
+Reference for the configuration surfaces used by humans and coding agents.
+
 Use the smallest durable surface that matches the job.
 
 ## Surfaces

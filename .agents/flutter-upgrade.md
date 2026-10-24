@@ -1,5 +1,13 @@
 # Flutter Upgrade Checklist
 
+[Documentation](../docs/README.md) · [Development](../docs/development/README.md) · [Agent references](skills.md)
+
+SDK upgrade reference, including pinned workarounds and their removal conditions.
+
+**On this page**
+
+[Stable cadence](#stable-cadence) · [Impeller disabled on Intel macOS release builds](#impeller-disabled-on-intel-macos-release-builds) · [Impeller disabled on Windows](#impeller-disabled-on-windows) · [Wrong-size back buffer on macOS](#wrong-size-back-buffer-on-macos) · [Windows view visibility forwarded by the runner](#windows-view-visibility-forwarded-by-the-runner) · [macOS activation resumes a hidden window](#macos-activation-resumes-a-hidden-window) · [Linux minimize on Wayland reads as inactive](#linux-minimize-on-wayland-reads-as-inactive) · [Liquid glass saves around the transform of a blurring layer](#liquid-glass-saves-around-the-transform-of-a-blurring-layer)
+
 Read this before changing `FLUTTER_VERSION` in `.github/workflows/build.yaml` or `.fvmrc`. Each entry is a
 workaround tied to a Flutter bug: what it does, where it lives, and what has to be true before it can go. Remove an
 entry together with its workaround; add one whenever a new workaround is pinned to the SDK.

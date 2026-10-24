@@ -5,6 +5,10 @@ description: Use when changing FlClash UI text, scanning for hardcoded Chinese s
 
 # Localization
 
+[Documentation](../../../docs/README.md) · [Development](../../../docs/development/README.md) · [Agent references](../../skills.md)
+
+Localization workflow: source strings, generated output and verification.
+
 ## When To Use
 
 Use this for localization work in this repository, especially hardcoded UI text in `lib/`, ARB updates, missing translations, or generated `lib/l10n/` output that does not match source ARB values.

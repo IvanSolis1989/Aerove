@@ -1,10 +1,28 @@
 # clash-rs 兼容性与 Android 接入审计：Aerove / AEROVE Lite 双产品路线
 
+[文档](../../README.md) / [Lite](../README.md)
+
+> 历史审计：下文保留 2026-10-22 的固定来源、当时判断与证据，不是当前 Lite 路线。Lite 已选择 meow-rs；请先阅读[当前迁移记录](meow-migration.md)与[共同契约](../../shared/UI_CONTRACT.md)。历史中的“完整版”及功能对齐表述不替代现行标准版与 Lite 硬契约。
+
 审计日期：2026-10-22。范围为固定版本源码、公开 Release/CI 状态与当前 Aerove 桥接接口；没有修改 Aerove，也没有触碰冻结的 preview worktree。
 
 **结论：完整版 Aerove 保留 Flutter + Go/Mihomo；AEROVE Lite 独立采用 Android 原生界面 + Rust/clash-rs，界面效果和功能近似一致是持续目标。APP 只展示实际支持且可用的功能，不放占位、灰置开关或待补齐入口。clash-rs 值得进入技术原型，当前源码不足以证明 Android 产品已经可发布或功能对等。** AnyTLS、VLESS/REALITY、Hysteria2、TUIC、SS、VMess、MRS、GEOSITE 均有实现；Mieru、sniffer、Android UID/应用归属、部分 DNS/provider 语义及 Android 嵌入、protect、生命周期接口仍有已确认缺口。下文逐项区分已实现、待适配和待实测，不能因使用 Rust 就承诺所有能力已具备。
 
 本报告按用户最新产品决定收口：暂缺能力只列开发记录，不在 APP 暴露不可用入口，也不能宣称支持。导入不支持字段仍须指出具体路径、原因并报错或提供兼容提示，不能静默忽略或未经确认删除语义。双产品独立交付，不将 AEROVE Lite 作为原核心替换；不在 Lite 偷偷回退 Go 或打包双核掩盖缺口。源码语言和产品名称都不能证明省电、省内存或更快。
+
+## 本页目录
+
+- [1. 固定基线与证据边界](#section-1)
+- [2. 协议兼容性](#section-2)
+- [3. Mihomo 配置与规则：共享格式不等于共享语义](#section-3)
+- [4. REST/controller 与 Aerove 自定义协议对照](#section-4)
+- [5. Android / FFI / TUN 深审](#section-5)
+- [6. 双产品路线、开发差距与发布条件](#section-6)
+- [7. 许可与来源](#section-7)
+- [8. 测试与性能证据缺口](#section-8)
+- [9. 源码索引](#section-9)
+
+<a name="section-1"></a>
 
 ## 1. 固定基线与证据边界
 
@@ -26,6 +44,8 @@ master 比 stable 超前三个提交：[固定 compare](https://github.com/ibigb
 
 以下“有实现”只代表源码存在并能追到转换/运行路径，不表示本机已经编译、与真实服务端互通，或 Android 真机已经验收。缺少功能时区分：明确报错、默认忽略、解析后运行时不采用。
 
+<a name="section-2"></a>
+
 ## 2. 协议兼容性
 
 | 协议 | v0.10.10 的实际实现 | Lite 功能对齐的限制 |
@@ -39,6 +59,8 @@ master 比 stable 超前三个提交：[固定 compare](https://github.com/ibigb
 | VMess | 枚举、转换器、加密数据通道及多种 transport 均存在。[S-protocol][S-vmess] | 不应以名称相同认定所有 transport/header/UDP 参数等价；现成 Docker 测试是基础，不能替代 Aerove 使用的配置样本。 |
 
 master 的这些实现与 stable 字节相同，以上差异没有在 master 消失。
+
+<a name="section-3"></a>
 
 ## 3. Mihomo 配置与规则：共享格式不等于共享语义
 
@@ -79,6 +101,8 @@ Aerove 的 `setupState` 区分自定义配置、标准扩展和脚本扩展；�
 
 Lite 可以评估复用这段 Rust 逻辑并新增原生桥接；本次没有验证它的 Android 原生构建或新 JNI 接口。若提供脚本功能，必须验证脚本输入/返回值、错误、超时、覆写顺序、自定义配置、订阅刷新及最终出站/规则语义。clash-rs 解析 YAML 或其三函数 C FFI 均不等价于 Aerove 的完整配置构建链。实现和回归未完成前，APP 不展示脚本占位入口；导入依赖脚本或尚不支持的配置语义时明确报错/提示，并在开发记录追踪差距。
 
+<a name="section-4"></a>
+
 ## 4. REST/controller 与 Aerove 自定义协议对照
 
 clash-rs 的 Axum controller 有 TCP 和 IPC 入口，但这是 HTTP/WS controller。Aerove Android `Mobile.invokeMethod` 接收的是自定义方法 JSON，经 JNI/gomobile 返回原始字节，Dart 还处理响应错误与 spilled-file 等语义；它不是“同一组 HTTP URL 换个库名”。[S-api][S-ffi][A-mobile][A-dart]
@@ -97,6 +121,8 @@ clash-rs 的 Axum controller 有 TCP 和 IPC 入口，但这是 HTTP/WS controll
 重载会创建新 RuntimeComponents，然后 stop 旧 TUN/DNS/inbound/statistics，再启动新组件。它不是就地更改所有设置，也没有 Aerove“相同配置只接管、不重推以免自动组重选”的 applied-record 恢复接口。尤其在 `fd://N` 下，旧组件释放 fd 与新组件接管 fd 的时序需重新设计/验证；不能在整个 YAML reload 时反复使用同一个已转移所有权的整数。[S-reload][S-stop][A-protocol] 已进一步核对 lockfile 固定的 `tun-rs 2.8.11`：`AsyncDevice::from_fd` 取得 fd 所有权并在 drop 时关闭，`borrow_raw` 才不取得所有权。[D-tun-fd] 这是静态源码确认的所有权约束；尚未把 reload 后复用 fd 的失败复现为 Android 真机结果。
 
 内存口径也不同：clash-rs `/memory` 的 `inuse` 来自 `memory_stats().physical_mem`。锁定依赖 `memory-stats 1.2.0` 将 Android 的该值定义为当前进程 RSS、Windows 为 Working Set。[S-memory][S-memory-impl][D-memory] 嵌入原生 Android 进程后也包含宿主的内存，不能直接与 Go heap 或其他进程边界的 Core 指标比较。完整版和 Lite 应测各自完整产品的 PSS/RSS，并分开报告实际存在的运行时开销。
+
+<a name="section-5"></a>
 
 ## 5. Android / FFI / TUN 深审
 
@@ -144,6 +170,8 @@ Android 官方说明 protect 用于让隧道的出站 socket 绕开 VPN，避免
 
 仍缺少 aarch64-linux-android + TUN + 目标 crypto/protocol features 的构建、Android shared library 打包、真实 VpnService.protect、权限/revoke/Always-on/后台恢复、Wi-Fi/蜂窝切换、arm64 真机和 APK 发布产物证据。不能把 Linux aarch64 二进制视作 Android arm64 产物。
 
+<a name="section-6"></a>
+
 ## 6. 双产品路线、开发差距与发布条件
 
 本节按用户最新决定作为主线程产品治理和样板架构的源码输入。完整版 Aerove 持续使用 Flutter + Go/Mihomo；产品名固定为 **AEROVE Lite**，采用独立 Android 原生界面 + Rust/clash-rs。近似的界面效果和功能一致性是持续目标；每个版本只展示、声明已支持且实际可用的功能。暂缺能力只作开发记录，不在 APP 放占位、灰置开关或待补齐入口。
@@ -166,12 +194,16 @@ Android 官方说明 protect 用于让隧道的出站 socket 绕开 VPN，避免
 
 REST/WS 可用于原型控制面实验，不能补齐 fd/protect/UID。原生界面不必复刻 Dart/gomobile 的传输封装；已提供功能须保持清楚、可信的产品行为。上述阶段没有执行代理启动、网络更改、构建或源码改动。
 
+<a name="section-7"></a>
+
 ## 7. 许可与来源
 
 - clash-rs 固定 stable 根 `LICENSE` 是 Apache License 2.0；**同一版本 `NOTICE.md:1–4` 明确声明启用 `tuic` feature 时按 GPL3 分发，否则 Apache 2.0**。CLI 默认 standard 和 stock FFI 均包含 TUIC，不能只摘根许可证判断所有构建产物。[S-license][S-notice][S-bin-features][S-ffi-cargo]
 - 被引用的 `Itsusinn/tuic` 固定 tag `v1.8.5` 的 LICENSE API 返回 `GPL-3.0`：[许可证原文件](https://github.com/Itsusinn/tuic/blob/v1.8.5/LICENSE)。本次未扩展为全依赖法律审查；锁定版本/feature 后仍需生成依赖许可证清单，并保留适用 NOTICE/版权和修改来源。
 - Aerove 当前仓库保留 GPL-3.0 LICENSE，README 也链接 GPL-3.0。[A-license] 更换代理内核不构成删除现有 Aerove/FlClash GPL 和版权来源的依据。独立重构应记录新增独立模块与沿用/修改模块的来源边界，而不是重新贴一个统一宽松标签。
 - 以上是源码和项目声明核对，不对整个重构的衍生关系、专利或具体分发方案作未经验证的法律结论。
+
+<a name="section-8"></a>
 
 ## 8. 测试与性能证据缺口
 
@@ -192,6 +224,8 @@ REST/WS 可用于原型控制面实验，不能补齐 fd/protect/UID。原生界
 | 控制、脚本与界面 | 实际开放 API 的成功/错误/超时；若提供脚本，验证返回/Promise/异常/限时、覆写顺序；验证适用的 provider、快照/增量、route epoch、队列及后台订阅；界面仅有真实可用入口，无占位/灰置/待补齐入口。 |
 | 性能 | 同一 arm64 手机、同构建模式和协议/服务器，分别记录冷启动、配置加载、规则命中、TCP/UDP吞吐、延迟分位数、PSS/RSS/native heap、Flutter/Java 开销、CPU、wakeups、后台空闲和切网耗电；控制配置/网络/温度，重复测量并报告分布。无此证据不声称 Rust 更省资源。 |
 | 交付来源 | 可重复的固定 commit/lockfile/NDK 构建、最终 .so/APK 核验、CI run 和许可/feature 清单；不能依赖未发布 master 或移动 latest 下载。 |
+
+<a name="section-9"></a>
 
 ## 9. 源码索引
 
@@ -347,3 +381,7 @@ REST/WS 可用于原型控制面实验，不能补齐 fd/protect/UID。原生界
 [A-vpn]: https://github.com/IvanSolis1989/Aerove/blob/a3ffc6935ee7f34f37f988394c09dcf5bd4affe2/android/service/src/main/java/com/follow/clash/service/VpnService.kt#L126-L175
 [A-owner]: https://github.com/IvanSolis1989/Aerove/blob/a3ffc6935ee7f34f37f988394c09dcf5bd4affe2/android/app/src/main/kotlin/com/follow/clash/ServiceStateMachine.kt#L40-L149
 [A-license]: https://github.com/IvanSolis1989/Aerove/blob/a3ffc6935ee7f34f37f988394c09dcf5bd4affe2/LICENSE#L1-L10
+
+---
+
+下一步：[Lite 说明](../README.md) · [共同契约](../../shared/UI_CONTRACT.md)

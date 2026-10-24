@@ -1,5 +1,9 @@
 # Agent Skills
 
+[Documentation](../docs/README.md) · [Development](../docs/development/README.md) · [Agent references](skills.md)
+
+Navigation for repository skills and their discovery surfaces.
+
 Repo skills live under `.agents/skills/*/SKILL.md`, where Codex discovers them directly. Claude Code discovers them
 through the symlinks in `.claude/skills/`, one per skill, pointing back at the `.agents/skills/` directory. Both tools
 match a task against the skill `name` and `description`, then load the full instructions only when it matches.

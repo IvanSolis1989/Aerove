@@ -1,4 +1,10 @@
+[文档](../README.md) → [开发维护](README.md)
+
 # Aerove 独立开发架构
+
+面向双产品开发与迁移决策，集中说明产品所有权、共享边界和完成标准。实际发行状态仍以各产品发行记录与验收证据为准。
+
+**本页导航** · [双产品决策](#双产品决策) · [产品所有权](#产品所有权) · [边界](#边界) · [演进顺序与完成标准](#演进顺序与完成标准) · [正在查证的选择](#正在查证的选择)
 
 状态：双产品并行实施中。标准版已有稳定发行，Lite 仍须完成共同功能与实际渲染/产物验收；本文件不宣称原生界面或第二核心已可发布。
 
@@ -66,3 +72,7 @@ Aerove 按自身需求、版本和验证结果演进。FlClash 是已记录来�
 - 跨平台：Android原生并不自动提供Windows/macOS/Linux界面。Android优先的迁移需要明确桌面过渡路径，不能暗中删除平台支持。
 
 固定源码与实施：[Meow 迁移](../aerove-lite/core/meow-migration.md)；历史研究：[clash-rs与Android接入](../aerove-lite/core/clash-rs-audit.md)、[原生渲染](../research/rendering/native-rendering-audit.md)、[独立维护历史耦合](../research/independence-audit.md)。现成渲染库优先路线见[原生玻璃库选型](../research/rendering/library-selection.md)。报告区分已有实现、待适配和未实测；文内固定SHA链接用于复核，不能把候选设计当作已交付功能。
+
+## 相关下一步
+
+[双向功能契约](../shared/UI_CONTRACT.md) · [固定核心迁移](../aerove-lite/core/meow-migration.md)

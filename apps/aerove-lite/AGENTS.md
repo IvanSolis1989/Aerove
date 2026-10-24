@@ -1,5 +1,9 @@
 # AEROVE Lite
 
+[Documentation](../../docs/README.md) · [Development](../../docs/development/README.md) · [Agent references](../../.agents/skills.md)
+
+Lite development entry point: native Android, fixed-core migration and acceptance boundaries.
+
 Read [workspace rules](../../AGENTS.md), [UI contract](../../docs/shared/UI_CONTRACT.md) and
 [acceptance rules](../../docs/shared/ACCEPTANCE.md) first. This is the native Android + meow-rs product, minimum API 33. The migration is in progress; follow the
 [fixed-core migration record](../../docs/aerove-lite/core/meow-migration.md).

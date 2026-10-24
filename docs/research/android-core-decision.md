@@ -1,4 +1,10 @@
+[文档](../README.md) / [技术研究](README.md)
+
 # Android 内核选型：源码、社区反馈与公开基准
+
+阅读边界：本页保留固定来源、当时判断与未闭环记录，不能代替生产规格或实际验收。现行 Lite 为原生 Android + meow-rs、最低 API 33；共同界面和客户端功能以[双向契约](../shared/UI_CONTRACT.md)为准，仅固定 Rust 核心源码证明不支持的能力可暂缓。
+
+本页目录：[当时建议（历史记录）](#当时建议历史记录) · [直接找到的社区与开发者证据](#直接找到的社区与开发者证据) · [现有仓库可以直接复用什么](#现有仓库可以直接复用什么) · [其他选择](#其他选择) · [后续决定与验收](#后续决定与验收)
 
 历史研究日期：2026-10-22。2026-10-23 用户明确将 Lite 从 clash-rs 切换到 meow-rs；这是当前执行决定，见[迁移记录](../aerove-lite/core/meow-migration.md)。下文保留原研究与当时建议，不覆盖新决定；Lite 尚未发行。
 
@@ -56,3 +62,7 @@ Lite 首个发行版优先采用 Android 原生 Compose 界面与现有 Mihomo G
 真正比较分两组：完整版 Flutter+Mihomo 对 Lite Compose+Mihomo，隔离界面收益；同一 Compose 前端下 Mihomo 对 Rust 候选，隔离核心收益。两组都固定协议与完整规则/DNS数据、同画质三档材质与极光、相同事件频率和后台状态。测整进程 PSS/RSS、系统及进程 CPU/唤醒、固定吞吐下的能量/GB、空闲耗电、延迟、帧和可靠性；不以低配裁剪、关动效或核心 RSS 转移到内核冒充收益。
 
 证据目录 `D:/CodexTemp/aerove-independent-20261022`：共享对话提取文本、`community-clashrs-{1326,1491,1504,1512}.json`、`community-{460,746,2764}.json`。这些是公开来源快照，不是 AEROVE 真机测试结果。
+
+---
+
+相关入口：[研究入口](README.md) · [共享契约](../shared/UI_CONTRACT.md)
