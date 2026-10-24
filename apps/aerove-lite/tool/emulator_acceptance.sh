@@ -54,7 +54,7 @@ Path(sys.argv[1]).write_text(json.dumps({"sourceRevision": proof["sourceRevision
     "isolatedBackgroundPolicy": True}, indent=2), encoding="utf-8")
 PY
 app_source=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sourceRevision"])' "$diagnostics/SOURCE.json")
-renderer_backend=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["rendererBackend"])' "$diagnostics/SOURCE.json")
+renderer_backend_remote=$(python3 -c 'import json,shlex,sys; print(shlex.quote(json.load(open(sys.argv[1]))["rendererBackend"]))' "$diagnostics/SOURCE.json")
 python3 apps/aerove-lite/tool/fixture_server.py > "$diagnostics/fixture.log" 2>&1 &
 fixture_pid=$!
 
@@ -182,7 +182,7 @@ grep -Fx 'instrumentation:dev.aerove.lite.test/androidx.test.runner.AndroidJUnit
 set +e
 "${adb_device[@]}" shell am instrument -w -r -e debug false -e timeout_msec "$test_timeout_msec" "${selection[@]}" \
     -e fixtureUrl http://10.0.2.2:18080 -e sourceRevision "$app_source" \
-    -e isolatedBackgroundPolicy true -e deviceKind CI-emulator -e rendererBackend "$renderer_backend" \
+    -e isolatedBackgroundPolicy true -e deviceKind CI-emulator -e rendererBackend "$renderer_backend_remote" \
     dev.aerove.lite.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee "$diagnostics/instrumentation.log"
 pipeline_status=("${PIPESTATUS[@]}")
 set -e
