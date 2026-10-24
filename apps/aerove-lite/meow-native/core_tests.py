@@ -8,6 +8,7 @@ import subprocess
 MODE='policy-runtime-v1'
 MODE_V2='policy-runtime-v2'
 MODE_TRAFFIC='policy-runtime-traffic-v1'
+MODE_OBSERVABILITY='policy-runtime-observability-v1'
 CASES=[
     ('meow-common',name) for name in [
         'cli_without_scope_keeps_output_and_real_join_error','observer_does_not_consume_protocol_output_or_panic',
@@ -51,23 +52,36 @@ CASES_V2=[
     dict(package='meow-dns',filter='resolver::owned_generation_tests::ech_cycle_guard_survives_run_owned_query_spawn',expectedPass=1,target='lib',requiredFeatures=['encrypted']),
 ]
 
+CASES_OBSERVABILITY=CASES_V2+[
+    dict(package=p,filter='observations_',expectedPass=n,target='lib',requiredFeatures=required)
+    for p,n,required in [('meow-common',5,['aerove-android-runtime']),
+        ('meow-dns',6,['aerove-android-runtime','encrypted']),('meow-tunnel',6,[]),('meow-api',1,[])]
+]
+COMPILE_COMMAND=['cargo','check','--manifest-path',MANIFEST,'--locked','--package','meow-api',
+    '--package','meow-listener','--all-features']
+
+def packages_for_mode(mode):
+    if mode==MODE_OBSERVABILITY:return sorted(set(PACKAGES)|{'meow-tunnel','meow-api','meow-listener'})
+    if mode in (MODE,MODE_V2,MODE_TRAFFIC):return PACKAGES
+    raise ValueError('Unknown Core unit test admission')
+
 def digest(data):return hashlib.sha256(data).hexdigest()
 
 def validate_policy(policy):
     if 'coreTests' not in policy:
         if 'coreTestLockSha256' in policy:raise ValueError('Core test lock without approved tests')
         return False
-    if policy['coreTests'] not in (MODE,MODE_V2,MODE_TRAFFIC):raise ValueError('Unknown Core unit test admission')
+    if policy['coreTests'] not in (MODE,MODE_V2,MODE_TRAFFIC,MODE_OBSERVABILITY):raise ValueError('Unknown Core unit test admission')
     expected=policy.get('coreTestLockSha256')
     if expected is not None and (not isinstance(expected,str) or re.fullmatch('[0-9a-f]{64}',expected) is None):
         raise ValueError('Invalid Core unit lock identity')
     if not policy['resolveLock'] and expected is None:raise ValueError('Locked Core tests require an accepted Core test lock')
     return True
 
-def feature_matrix(metadata,upstream):
+def feature_matrix(metadata,upstream,mode=MODE):
     """Project only features from the real bridge graph onto the exact prepared member paths."""
     packages={p['id']:p for p in metadata['packages']};nodes={n['id']:n for n in metadata['resolve']['nodes']};result={}
-    for name in PACKAGES:
+    for name in packages_for_mode(mode):
         found=[p for p in packages.values() if p['name']==name and p['version']=='0.26.1']
         if len(found)!=1 or Path(found[0]['manifest_path']).resolve()!=(upstream/'crates'/name/'Cargo.toml').resolve():
             raise ValueError('Core unit package bypasses the prepared source')
@@ -84,6 +98,7 @@ def command(package,name,features):
 def entries(mode):
     if mode==MODE:return [dict(package=p,filter=f,expectedPass=COUNTS.get((p,f),1),target='lib',requiredFeatures=[]) for p,f in CASES]
     if mode in (MODE_V2,MODE_TRAFFIC):return CASES_V2
+    if mode==MODE_OBSERVABILITY:return CASES_OBSERVABILITY
     raise ValueError('Unknown Core unit test admission')
 
 def entry_command(entry,features):
@@ -109,7 +124,7 @@ def execute(root,policy,environment,receipt):
         state['bridgeMetadataCommand']=bridge_command;state['bridgeMetadataExit']=bridge.returncode
         (directory/'bridge-metadata.stdout.json').write_bytes(bridge.stdout);(directory/'bridge-metadata.stderr.log').write_bytes(bridge.stderr)
         if bridge.returncode:raise subprocess.CalledProcessError(bridge.returncode,bridge_command)
-        matrix=feature_matrix(json.loads(bridge.stdout),upstream)
+        matrix=feature_matrix(json.loads(bridge.stdout),upstream,policy['coreTests'])
         expected=policy.get('coreTestLockSha256');seed=root/'core-tests.lock' if expected is not None else root/'Cargo.lock'
         seed_bytes=seed.read_bytes()
         if expected is not None and digest(seed_bytes)!=expected:raise ValueError('Core test seed identity mismatch')
@@ -123,13 +138,13 @@ def execute(root,policy,environment,receipt):
         state['metadataExit']=result.returncode
         if result.returncode:raise subprocess.CalledProcessError(result.returncode,args)
         metadata=json.loads(result.stdout);members={p['name'] for p in metadata['packages'] if p['id'] in metadata['workspace_members']}
-        if not set(PACKAGES)<=members:raise ValueError('Core unit packages are not members of the actual workspace')
+        if not set(packages_for_mode(policy['coreTests']))<=members:raise ValueError('Core unit packages are not members of the actual workspace')
         state['workspaceMembers']=sorted(members)
         state['features']=matrix
         locked=source_lock.read_bytes();state['resolvedLockSha256']=digest(locked);(directory/'core-tests.lock').write_bytes(locked)
         for index,spec in enumerate(entries(policy['coreTests'])):
             package=spec['package'];name=spec['filter'];args=entry_command(spec,matrix[package]);entry=dict(package=package,filter=name,command=args,exit=None,expectedPass=spec['expectedPass']);state['commands'].append(entry)
-            if policy['coreTests'] in (MODE_V2,MODE_TRAFFIC):entry['target']=spec['target']
+            if policy['coreTests'] in (MODE_V2,MODE_TRAFFIC,MODE_OBSERVABILITY):entry['target']=spec['target']
             result=subprocess.run(args,cwd=root,env=environment,capture_output=True)
             label=re.sub('[^A-Za-z0-9_.-]','_',name if name is not None else spec['target'])
             stem=f'{index:02d}-{package}-{label}';(directory/(stem+'.stdout.log')).write_bytes(result.stdout);(directory/(stem+'.stderr.log')).write_bytes(result.stderr)
@@ -140,6 +155,17 @@ def execute(root,policy,environment,receipt):
             if count!=[str(entry['expectedPass']).encode()]:raise ValueError('Core unit filter did not execute its exact authored test count')
             entry['passed']=entry['expectedPass']
             if source_lock.read_bytes()!=locked:raise ValueError('Locked Core unit command changed its lock')
+        if policy['coreTests']==MODE_OBSERVABILITY:
+            args=list(COMPILE_COMMAND)
+            entry=dict(command=args,exit=None);state['compileCheck']=entry
+            result=subprocess.run(args,cwd=root,env=environment,capture_output=True)
+            (directory/'observability-compile.stdout.log').write_bytes(result.stdout)
+            (directory/'observability-compile.stderr.log').write_bytes(result.stderr)
+            entry.update(exit=result.returncode,stdoutSha256=digest(result.stdout),stderrSha256=digest(result.stderr))
+            print(result.stdout.decode('utf-8',errors='replace'),end='',flush=True)
+            print(result.stderr.decode('utf-8',errors='replace'),end='',flush=True)
+            if result.returncode:raise subprocess.CalledProcessError(result.returncode,args)
+            if source_lock.read_bytes()!=locked:raise ValueError('Locked Core compile command changed its lock')
         state['accepted']=True
     finally:
         source_lock.write_bytes(original)

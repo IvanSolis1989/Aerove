@@ -52,7 +52,7 @@ class CoreTestAdmissionTests(unittest.TestCase):
                 (root/'core-tests.lock').write_bytes(resolved if mode=='locked' else b'wrong seed')
                 policy.update(resolveLock=False,coreTestLockSha256=core_tests.digest(resolved))
             packages=[];nodes=[]
-            for name in core_tests.PACKAGES:
+            for name in core_tests.packages_for_mode(contract):
                 p=up/'crates'/name/'Cargo.toml';p.parent.mkdir(parents=True);p.write_text('')
                 packages.append(dict(id=name,name=name,version='0.26.1',manifest_path=str(p)))
                 features=sorted({feature for spec in core_tests.entries(contract) if spec['package']==name for feature in spec['requiredFeatures']})
@@ -65,6 +65,10 @@ class CoreTestAdmissionTests(unittest.TestCase):
                 if args[1]=='metadata':
                     if '--manifest-path' in args:(up/'Cargo.lock').write_bytes(resolved)
                     return subprocess.CompletedProcess(args,0,json.dumps(metadata).encode(),b'')
+                if args[1]=='check':
+                    self.assertEqual(args,core_tests.COMPILE_COMMAND)
+                    if mode=='compile-mutate':(up/'Cargo.lock').write_bytes(b'compile changed lock')
+                    return subprocess.CompletedProcess(args,101 if mode=='compile-fail' else 0,b'fixture check output',b'')
                 package=args[args.index('--package')+1]
                 spec=next(row for row in core_tests.entries(contract) if row['package']==package and core_tests.entry_command(row,next(node['features'] for node in nodes if node['id']==package))==args)
                 if mode=='nonzero':return subprocess.CompletedProcess(args,101,b'',b'actual command failure')
@@ -93,7 +97,7 @@ class CoreTestAdmissionTests(unittest.TestCase):
                 self.assertEqual((root/'build/core-tests/core-tests.lock').read_bytes(),resolved)
             else:
                 self.assertIsNotNone(error);self.assertFalse(receipt['coreTests']['accepted'])
-                self.assertEqual(len(receipt['coreTests']['commands']),1)
+                self.assertEqual(len(receipt['coreTests']['commands']),len(core_tests.entries(contract)) if mode in ['compile-fail','compile-mutate'] else 1)
 
     def test_success_records_all_authored_counts_and_restores_original_lock(self):self.run_fixture('success')
 
@@ -117,5 +121,27 @@ class CoreTestAdmissionTests(unittest.TestCase):
         self.assertTrue(core_tests.validate_policy(dict(resolveLock=False,coreTests=core_tests.MODE_TRAFFIC,coreTestLockSha256='a'*64)))
         for mode in ['locked','empty','raise']:
             with self.subTest(mode=mode):self.run_fixture(mode,core_tests.MODE_TRAFFIC)
+
+    def test_observability_runs_all18_exact47_cases_and_locked_compile_or_rejects(self):
+        specs=core_tests.entries(core_tests.MODE_OBSERVABILITY)
+        self.assertEqual(core_tests.CASES_V2,specs[:14])
+        self.assertEqual(18,len(specs));self.assertEqual(47,sum(e['expectedPass'] for e in specs))
+        for mode in ['locked','empty','compile-fail','compile-mutate','raise']:
+            with self.subTest(mode=mode):self.run_fixture(mode,core_tests.MODE_OBSERVABILITY)
+
+    def test_observability_package_projection_rejects_wrong_new_package_source_and_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            up=Path(directory);packages=[];nodes=[]
+            for name in core_tests.packages_for_mode(core_tests.MODE_OBSERVABILITY):
+                packages.append(dict(id=name,name=name,version='0.26.1',manifest_path=str(up/'crates'/name/'Cargo.toml')))
+                nodes.append(dict(id=name,features=[]))
+            metadata=dict(packages=packages,resolve=dict(nodes=nodes))
+            self.assertEqual(8,len(core_tests.feature_matrix(metadata,up,core_tests.MODE_OBSERVABILITY)))
+            for name in ['meow-api','meow-tunnel','meow-listener']:
+                package=next(p for p in packages if p['name']==name);original=dict(package)
+                for key,value in [('manifest_path',str(up/'outside/Cargo.toml')),('version','0.26.2')]:
+                    package[key]=value
+                    with self.subTest(package=name,key=key),self.assertRaises(ValueError):core_tests.feature_matrix(metadata,up,core_tests.MODE_OBSERVABILITY)
+                    package.update(original)
 
 if __name__=='__main__':unittest.main()

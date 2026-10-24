@@ -541,7 +541,15 @@
          let mut ticker = tokio::time::interval(Duration::from_secs(1));
          ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
          ticker.tick().await;
-@@ -1005,10 +1004,13 @@
+@@ -995,6 +994,7 @@
+                 }
+             }
+             state.tunnel.statistics().sample_traffic();
++            state.tunnel.statistics().observation_feed().flush_traffic();
+             let frame: Arc<str> = Arc::from(traffic_json(&state));
+             let _ = tx.send(frame);
+         }
+@@ -1005,10 +1005,13 @@
  async fn get_traffic(
      State(state): State<Arc<AppState>>,
      MaybeWebSocket(ws): MaybeWebSocket,
@@ -556,7 +564,7 @@
              let mut feed = feed;
              loop {
                  let frame = match feed.recv().await {
-@@ -1219,9 +1221,16 @@
+@@ -1219,9 +1222,16 @@
              )
                  .into_response();
          };
@@ -576,7 +584,7 @@
      } {
          let metadata = &message.metadata;
          response.insert("Status".into(), u16::from(metadata.response_code).into());
-@@ -2555,10 +2564,10 @@
+@@ -2555,10 +2565,10 @@
  // `newError("An error occurred in the delay test")`.
  
  #[derive(Deserialize)]
@@ -591,7 +599,7 @@
  }
  
  #[derive(Serialize)]
-@@ -2574,7 +2583,7 @@
+@@ -2574,7 +2584,7 @@
  /// Validate `url` and `timeout`. Returns `timeout` as `Duration` on success,
  /// or the `400 Body invalid` response on any validation failure — matching
  /// upstream's single "ErrBadRequest" shape for all parse errors.
@@ -600,7 +608,7 @@
      // upstream: hub/route/proxies.go::getProxyDelay — url is not strictly
      // validated upstream, but an empty host would panic our prober.
      let url = params.url.as_deref().unwrap_or("").trim();
-@@ -3763,6 +3772,7 @@
+@@ -3763,6 +3773,7 @@
      State(state): State<Arc<AppState>>,
      Query(params): Query<LogsParams>,
      MaybeWebSocket(ws): MaybeWebSocket,
@@ -608,7 +616,7 @@
  ) -> Response {
      let level = match parse_requested_log_level(params.level.as_deref()) {
          Ok(level) => level,
-@@ -3771,9 +3781,18 @@
+@@ -3771,9 +3782,18 @@
      let structured = params.format.as_deref() == Some("structured");
      let mut rx = state.log_tx.subscribe();
      if let Some(ws) = ws {
@@ -629,7 +637,7 @@
                      Ok(msg) if msg.level >= level => {
                          if socket
                              .send(Message::Text(log_json(&msg, structured).into()))
-@@ -3817,32 +3836,33 @@
+@@ -3817,32 +3837,33 @@
  
  // upstream: hub/route/memory.go
  //
@@ -671,7 +679,7 @@
                  if tx.receiver_count() == 0 {
                      *guard = None;
                      break;
-@@ -3858,12 +3878,17 @@
+@@ -3858,12 +3879,17 @@
  }
  
  async fn get_memory(
@@ -692,7 +700,7 @@
              if socket
                  .send(Message::Text(first.as_ref().into()))
                  .await
-@@ -3871,7 +3896,7 @@
+@@ -3871,7 +3897,7 @@
              {
                  return;
              }
@@ -701,7 +709,7 @@
              loop {
                  let msg = match feed.recv().await {
                      Ok(msg) => msg,
-@@ -3889,33 +3914,19 @@
+@@ -3889,33 +3915,19 @@
          });
      }
  
@@ -748,7 +756,7 @@
  async fn read_rss_bytes() -> u64 {
      tokio::task::spawn_blocking(|| {
          use sysinfo::{Pid, ProcessesToUpdate, System};
-@@ -3971,7 +3982,7 @@
+@@ -3971,7 +3983,7 @@
  
  #[derive(Serialize)]
  #[serde(rename_all = "camelCase")]
@@ -757,7 +765,7 @@
      name: String,
      #[serde(rename = "type")]
      provider_type: String,
-@@ -4044,6 +4055,10 @@
+@@ -4044,6 +4056,10 @@
      }
  }
  
@@ -768,7 +776,7 @@
  async fn get_providers(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
      let mut map = serde_json::Map::new();
      for entry in state.proxy_providers.iter() {
-@@ -4175,7 +4190,7 @@
+@@ -4175,7 +4191,7 @@
  // ── Rule Providers ────────────────────────────────────────────────────
  
  #[derive(Serialize)]
@@ -777,7 +785,7 @@
      name: String,
      #[serde(rename = "type")]
      provider_type: String,
-@@ -4217,6 +4232,10 @@
+@@ -4217,6 +4233,10 @@
              vehicle_type: vehicle_type.to_string(),
          }
      }
@@ -788,6 +796,33 @@
  }
  
  #[derive(Serialize)]
+@@ -4806,6 +4826,26 @@
+         assert_eq!(warm.adapters, cold.adapters + 2);
+         assert_eq!(tcp.run_until_closed(async {}).await, None);
+     }
++    #[tokio::test(start_paused = true)]
++    async fn observations_existing_single_sampler_coalesces_traffic_and_idles() {
++        let state=test_state();let feed=Arc::clone(state.tunnel.statistics().observation_feed());let mut observations=feed.activate().unwrap();
++        let mut first=subscribe_traffic_feed(&state);let mut second=subscribe_traffic_feed(&state);
++        tokio::task::yield_now().await;assert_eq!(state.traffic_feed.lifecycle.active_tasks(),1,"all consumers share the existing sampler");
++        let id:Arc<str>=Arc::from("00000000-0000-4000-8000-000000000007");
++        feed.record_traffic(Arc::clone(&id),3,0);feed.record_traffic(Arc::clone(&id),7,11);feed.record_traffic(id,13,17);
++        tokio::time::advance(Duration::from_millis(999)).await;tokio::task::yield_now().await;
++        assert!(matches!(first.try_recv(),Err(broadcast::error::TryRecvError::Empty)));
++        tokio::time::advance(Duration::from_millis(1)).await;tokio::task::yield_now().await;
++        first.recv().await.unwrap();second.recv().await.unwrap();
++        let frame:serde_json::Value=serde_json::from_str(&observations.next_frame().await.unwrap()).unwrap();
++        assert_eq!(frame["events"].as_array().unwrap().len(),1);assert_eq!(frame["events"][0]["kind"],"requestTraffic");
++        assert_eq!(frame["events"][0]["data"]["upload"],"13");assert_eq!(frame["events"][0]["data"]["download"],"17");
++        drop(first);drop(second);tokio::time::advance(Duration::from_secs(1)).await;tokio::task::yield_now().await;
++        assert!(state.traffic_feed.sender.lock().unwrap().is_none());
++        state.traffic_feed.lifecycle.shutdown().await;assert_eq!(state.traffic_feed.lifecycle.active_tasks(),0);
++        feed.stop();assert!(observations.next_frame().await.is_err());
++    }
++
+ }
+ 
+ /// Issue #695: a config mutation installs its candidate's global-route
 --- a/crates/meow-common/Cargo.toml
 +++ b/crates/meow-common/Cargo.toml
 @@ -9,6 +9,8 @@
@@ -998,15 +1033,18 @@
  pub mod adapter;
  pub mod adapter_type;
  pub mod atomic;
-@@ -31,6 +32,7 @@
+@@ -29,8 +30,10 @@
+ pub mod logbook;
+ pub mod metadata;
  pub mod network;
++pub mod observations;
  pub mod outbound_iface;
  pub mod process_lookup;
 +pub mod probe_policy;
  pub mod replay_window;
  pub mod rule;
  pub mod sniffer;
-@@ -79,3 +81,9 @@
+@@ -79,3 +82,9 @@
  
  pub mod health_check;
  pub use health_check::HealthCheckSpec;
@@ -1063,6 +1101,330 @@
      }
  }
  
+--- /dev/null
++++ b/crates/meow-common/src/observations.rs
+@@ -0,0 +1,321 @@
++//! Session-owned live observations. No task, timer, history scan or global sender.
++use parking_lot::Mutex;
++use serde_json::{json, Value};
++use std::{collections::VecDeque, future::Future, io, sync::Arc};
++use tokio::sync::broadcast;
++
++const MAX_FRAME: usize = 65_536;
++const MAX_EVENTS: usize = 32;
++const CAPACITY: usize = 128;
++
++#[derive(Clone)]
++struct Event { cursor: u64, value: Option<Value> }
++struct PendingTraffic { id:Arc<str>, upload:u64, download:u64 }
++struct State { cursor: u64, generation: u64, request: u64, stopped: bool, traffic:VecDeque<PendingTraffic> }
++/// One hub per runtime session, shared by statistics and every resolver generation.
++pub struct ObservationFeed {
++    session_id: String,
++    state: Mutex<State>,
++    sender: broadcast::Sender<Event>,
++}
++impl ObservationFeed {
++    pub fn new(session_id: String) -> Arc<Self> {
++        let (sender, _) = broadcast::channel(CAPACITY);
++        Arc::new(Self { session_id, state: Mutex::new(State { cursor: 0, generation: 0, request: 0, stopped: false, traffic:VecDeque::new() }), sender })
++    }
++    /// Subscription and watermark are captured under the producer's same lock.
++    pub fn activate(self: &Arc<Self>) -> io::Result<ObservationDelivery> {
++        let mut state = self.state.lock();
++        if state.stopped { return Err(io::Error::new(io::ErrorKind::Interrupted, "observation session stopped")); }
++        if self.sender.receiver_count()==0 { state.traffic.clear(); }
++        state.generation = state.generation.checked_add(1).ok_or_else(exhausted)?;
++        let receiver = self.sender.subscribe();
++        Ok(ObservationDelivery { feed: Arc::clone(self), receiver, generation: state.generation,
++            activation_cursor: state.cursor, cursor: state.cursor, dropped: 0, pending: VecDeque::new() })
++    }
++    /// Serialization is lazy: inactive pages do no observation JSON work.
++    /// Cursor advances even while inactive so a new lease never backfills old events.
++    pub fn publish(&self, kind: &'static str, data: impl FnOnce() -> Value) {
++        let mut state = self.state.lock();
++        self.publish_locked(&mut state,kind,data);
++    }
++    fn publish_locked(&self,state:&mut State,kind:&'static str,data:impl FnOnce()->Value) {
++        if state.stopped { return; }
++        let Some(cursor) = state.cursor.checked_add(1) else { state.stopped = true; let _ = self.sender.send(Event { cursor: state.cursor, value: None }); return };
++        state.cursor = cursor;
++        if self.sender.receiver_count() == 0 { return; }
++        let value = json!({"cursor": cursor.to_string(), "kind": kind, "data": data()});
++        // Oversize input becomes an explicit gap, never truncation or invalid JSON.
++        let value = (value.to_string().len() <= MAX_FRAME - 1024).then_some(value);
++        let _ = self.sender.send(Event { cursor, value });
++    }
++    /// Dirty traffic snapshots, coalesced to Standard's one-second cadence.
++    /// This is a bounded delivery queue, not another connection registry:
++    /// no metadata, routes, owners, sockets, lookup service or lifetime state.
++    pub fn record_traffic(&self,id:Arc<str>,upload:u64,download:u64) {
++        self.record_traffic_with(id,||Some((upload,download)));
++    }
++    /// Read current owner counters and recheck admission under the same gate
++    /// that flushes traffic and publishes Closed. The closure never awaits.
++    pub fn record_traffic_with(&self,id:Arc<str>,snapshot:impl FnOnce()->Option<(u64,u64)>) {
++        let mut state=self.state.lock();
++        if state.stopped { return; }
++        if self.sender.receiver_count()==0 { state.traffic.clear();return; }
++        let Some((upload,download))=snapshot() else { return; };
++        if let Some(pending)=state.traffic.iter_mut().find(|pending|pending.id==id) {
++            pending.upload=pending.upload.max(upload);pending.download=pending.download.max(download);return;
++        }
++        if state.traffic.len()==CAPACITY {
++            state.traffic.pop_front();
++            if let Some(cursor)=state.cursor.checked_add(1) {
++                state.cursor=cursor;let _=self.sender.send(Event { cursor,value:None });
++            } else { state.stopped=true;let _=self.sender.send(Event { cursor:state.cursor,value:None });return; }
++        }
++        state.traffic.push_back(PendingTraffic { id,upload,download });
++    }
++    /// Called only by the existing official traffic feed's owned sampler.
++    pub fn flush_traffic(&self) {
++        let mut state=self.state.lock();
++        while let Some(traffic)=state.traffic.pop_front() {
++            self.publish_locked(&mut state,"requestTraffic",||json!({"id":traffic.id,"upload":traffic.upload.to_string(),"download":traffic.download.to_string()}));
++        }
++    }
++    pub fn flush_request_traffic(&self,id:&str) {
++        let mut state=self.state.lock();
++        self.flush_request_traffic_locked(&mut state,id);
++    }
++    fn flush_request_traffic_locked(&self,state:&mut State,id:&str) {
++        if let Some(index)=state.traffic.iter().position(|traffic|traffic.id.as_ref()==id) {
++            if let Some(traffic)=state.traffic.remove(index) {
++                self.publish_locked(state,"requestTraffic",||json!({"id":traffic.id,"upload":traffic.upload.to_string(),"download":traffic.download.to_string()}));
++            }
++        }
++    }
++    /// The owner closes admission before calling this; a concurrent snapshot
++    /// either enters before this gate and is flushed, or observes closed and
++    /// never queues after the terminal event. No extra identity registry.
++    pub fn close_request(&self,id:&str,data:impl FnOnce()->Value) {
++        let mut state=self.state.lock();
++        self.flush_request_traffic_locked(&mut state,id);
++        self.publish_locked(&mut state,"requestClosed",data);
++    }
++    /// Runtime stop wakes an awaiting delivery. No detached worker needs joining.
++    pub fn stop(&self) {
++        let mut state = self.state.lock();
++        state.stopped = true;
++        state.traffic.clear();
++        let _ = self.sender.send(Event { cursor: state.cursor, value: None });
++    }
++    pub fn is_active(&self) -> bool { self.sender.receiver_count() != 0 }
++}
++fn exhausted() -> io::Error { io::Error::other("observation sequence exhausted") }
++
++pub struct ObservationDelivery {
++    feed: Arc<ObservationFeed>, receiver: broadcast::Receiver<Event>, generation: u64,
++    activation_cursor: u64, cursor: u64, dropped: u64, pending: VecDeque<Event>,
++}
++impl ObservationDelivery {
++    fn frame(&self, events: &[Value]) -> String {
++        json!({"type":"observations", "sessionId":self.feed.session_id, "generation":self.generation.to_string(),
++            "cursor":self.cursor.to_string(), "activationCursor":self.activation_cursor.to_string(),
++            "dropped":self.dropped.to_string(), "events":events}).to_string()
++    }
++    /// Stable empty activation ACK; producers after activate cannot enter this frame.
++    pub fn activation_frame(&self) -> String {
++        json!({"type":"observations", "sessionId":self.feed.session_id, "generation":self.generation.to_string(),
++            "cursor":self.activation_cursor.to_string(), "activationCursor":self.activation_cursor.to_string(),
++            "dropped":"0", "events":[]}).to_string()
++    }
++    pub async fn next_frame(&mut self) -> io::Result<String> {
++        let first = if let Some(event) = self.pending.pop_front() { event } else {
++            loop {
++                if self.feed.state.lock().stopped { return Err(io::Error::new(io::ErrorKind::Interrupted, "observation session stopped")); }
++                match self.receiver.recv().await {
++                    Ok(event) => break event,
++                    Err(broadcast::error::RecvError::Lagged(_)) => continue, // exact loss follows from cursor difference
++                    Err(broadcast::error::RecvError::Closed) => return Err(io::Error::new(io::ErrorKind::Interrupted, "observation feed closed")),
++                }
++            }
++        };
++        self.pending.push_front(first);
++        let mut events = Vec::new();
++        loop {
++            let event = if let Some(event) = self.pending.pop_front() { event } else {
++                match self.receiver.try_recv() {
++                    Ok(event) => event,
++                    Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
++                    Err(_) => break,
++                }
++            };
++            if event.cursor <= self.cursor { continue; }
++            let old_cursor = self.cursor;
++            let old_dropped = self.dropped;
++            self.dropped = self.dropped.checked_add(event.cursor - old_cursor - 1).ok_or_else(exhausted)?;
++            self.cursor = event.cursor;
++            if let Some(value) = event.value.clone() { events.push(value); }
++            else { self.dropped = self.dropped.checked_add(1).ok_or_else(exhausted)?; }
++            if self.frame(&events).len() > MAX_FRAME {
++                if event.value.is_some() { events.pop(); }
++                self.cursor = old_cursor; self.dropped = old_dropped;
++                self.pending.push_front(event); break;
++            }
++            if events.len() == MAX_EVENTS { break; }
++        }
++        if self.feed.state.lock().stopped { return Err(io::Error::new(io::ErrorKind::Interrupted, "observation session stopped")); }
++        Ok(self.frame(&events))
++    }
++}
++
++#[derive(Clone, Copy, Debug, Default)]
++pub enum DnsInitiator { App, Rule, Direct, Proxy, #[default] Other }
++impl DnsInitiator {
++    pub fn as_str(self) -> &'static str { match self { Self::App=>"App",Self::Rule=>"Rule",Self::Direct=>"Direct",Self::Proxy=>"Proxy",Self::Other=>"Other" } }
++}
++tokio::task_local! { static DNS_INITIATOR: DnsInitiator; }
++impl DnsInitiator {
++    pub fn current() -> Self { DNS_INITIATOR.try_with(|value| *value).unwrap_or_default() }
++    pub fn in_scope<T>(self, work: impl FnOnce() -> T) -> T { DNS_INITIATOR.sync_scope(self, work) }
++    /// Only logical resolver entry/return is scoped. Upstream child tasks never publish.
++    pub async fn scope<F: Future>(self, work: F) -> F::Output { DNS_INITIATOR.scope(self, work).await }
++}
++/// RFC3339 timestamp shared by producers without a new dependency.
++pub fn timestamp() -> String {
++    timestamp_at(std::time::SystemTime::now())
++}
++pub fn timestamp_at(value: std::time::SystemTime) -> String {
++    time::OffsetDateTime::from(value).format(&time::format_description::well_known::Rfc3339)
++        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_owned())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    fn feed() -> Arc<ObservationFeed> { ObservationFeed::new("00000000-0000-4000-8000-000000000001".into()) }
++    fn parse(s: String) -> Value { serde_json::from_str(&s).unwrap() }
++    #[tokio::test]
++    async fn observations_activation_excludes_old_events_and_preserves_live_first_window() {
++        let feed=feed(); feed.publish("dns", || json!({"old":true}));
++        let mut lease=feed.activate().unwrap(); feed.publish("dns", || json!({"live":true}));
++        let ack=parse(lease.activation_frame()); assert_eq!(ack["cursor"],"1"); assert_eq!(ack["events"],json!([]));
++        let live=parse(lease.next_frame().await.unwrap()); assert_eq!(live["activationCursor"],"1"); assert_eq!(live["events"][0]["cursor"],"2");
++        drop(lease); assert!(!feed.is_active()); let next=feed.activate().unwrap();assert_eq!(parse(next.activation_frame())["generation"],"2");
++    }
++    #[tokio::test]
++    async fn observations_bounded_batches_report_real_loss_and_stop_wakes() {
++        let feed=feed();let mut lease=feed.activate().unwrap();
++        for n in 0..200 { feed.publish("dns", || json!({"n":n})); }
++        let first=parse(lease.next_frame().await.unwrap());assert!(first["events"].as_array().unwrap().len()<=32);
++        assert!(first["dropped"].as_str().unwrap().parse::<u64>().unwrap()>0);
++        feed.stop();assert_eq!(lease.next_frame().await.unwrap_err().kind(),io::ErrorKind::Interrupted);
++    }
++    #[tokio::test]
++    async fn observations_full_frame_none_marker_rolls_back_without_losing_valid_event() {
++        let feed=feed();feed.state.lock().cursor=7;
++        let mut lease=feed.activate().unwrap();
++        let mut first=json!({"cursor":"8","kind":"dns","data":{"padding":""}});
++        let mut second=json!({"cursor":"9","kind":"dns","data":{"padding":""}});
++        lease.cursor=9;
++        let overhead=lease.frame(&[first.clone(),second.clone()]).len();
++        let padding=MAX_FRAME.checked_sub(overhead).unwrap();
++        first["data"]["padding"]=Value::String("a".repeat(padding/2));
++        second["data"]["padding"]=Value::String("b".repeat(padding-padding/2));
++        assert!(first.to_string().len()<=MAX_FRAME-1024 && second.to_string().len()<=MAX_FRAME-1024,
++            "both normal events fit the producer's per-event bound");
++        assert_eq!(lease.frame(&[first.clone(),second.clone()]).len(),MAX_FRAME);
++        lease.cursor=10;lease.dropped=1;
++        assert_eq!(lease.frame(&[first.clone(),second.clone()]).len(),MAX_FRAME+1,
++            "cursor 9 to 10 alone crosses the byte limit while the marker adds no event");
++        lease.cursor=7;lease.dropped=0;feed.state.lock().cursor=10;
++        assert!(feed.sender.send(Event { cursor:8,value:Some(first.clone()) }).is_ok());
++        assert!(feed.sender.send(Event { cursor:9,value:Some(second.clone()) }).is_ok());
++        assert!(feed.sender.send(Event { cursor:10,value:None }).is_ok());
++        let full=lease.next_frame().await.unwrap();assert_eq!(full.len(),MAX_FRAME);
++        let full=parse(full);assert_eq!(full["events"],json!([first,second]));assert_eq!(full["cursor"],"9");assert_eq!(full["dropped"],"0");
++        let gap=parse(lease.next_frame().await.unwrap());assert_eq!(gap["events"],json!([]));assert_eq!(gap["cursor"],"10");assert_eq!(gap["dropped"],"1");
++        feed.publish("dns",||json!({"after":true}));
++        let next=parse(lease.next_frame().await.unwrap());assert_eq!(next["events"].as_array().unwrap().len(),1);
++        assert_eq!(next["events"][0]["cursor"],"11");assert_eq!(next["dropped"],"1");
++    }
++    #[tokio::test]
++    async fn observations_traffic_out_of_order_snapshots_keep_each_direction_monotonic() {
++        let feed=feed();let mut lease=feed.activate().unwrap();
++        let id:Arc<str>=Arc::from("00000000-0000-4000-8000-000000000008");
++        let ready=Arc::new(std::sync::Barrier::new(2));let resume=Arc::new(std::sync::Barrier::new(2));
++        let late_feed=Arc::clone(&feed);let late_id=Arc::clone(&id);let prepared=Arc::clone(&ready);let released=Arc::clone(&resume);
++        let late=std::thread::spawn(move|| {
++            let old_snapshot=(10,0);prepared.wait();released.wait();
++            late_feed.record_traffic(late_id,old_snapshot.0,old_snapshot.1);
++        });
++        ready.wait();feed.record_traffic(Arc::clone(&id),10,20);resume.wait();late.join().unwrap();
++        feed.record_traffic(id,5,20);feed.flush_traffic();
++        let frame=parse(lease.next_frame().await.unwrap());assert_eq!(frame["events"].as_array().unwrap().len(),1);
++        assert_eq!(frame["events"][0]["data"]["upload"],"10");assert_eq!(frame["events"][0]["data"]["download"],"20");
++    }
++    #[tokio::test]
++    async fn observations_oversize_is_gap_and_inactive_payload_is_not_evaluated() {
++        let feed=feed();feed.publish("request", || panic!("inactive must not serialize"));
++        let mut lease=feed.activate().unwrap();feed.publish("request", || json!({"huge":"x".repeat(MAX_FRAME)}));
++        let frame=lease.next_frame().await.unwrap();assert!(frame.len()<=MAX_FRAME);let frame=parse(frame);
++        assert_eq!(frame["dropped"],"1");assert_eq!(frame["events"],json!([]));
++    }
++}
++
++/// DNS transport trackers are notification-only, like Standard pushToManager=false:
++/// they do not enter the connection table or change the tunnel's existing byte totals.
++/// The tracker follows an actual socket, including its time in a TCP idle pool.
++pub struct InternalRequest {
++    feed: Arc<ObservationFeed>, id: Arc<str>, counts: Mutex<(u64,u64)>,
++}
++impl ObservationFeed {
++    pub fn internal_request(self: &Arc<Self>, metadata: crate::Metadata, chains: Vec<Arc<str>>) -> Option<InternalRequest> {
++        let sequence = {
++            let mut state=self.state.lock();
++            if state.stopped { return None; }
++            if state.request >= 0xffff_ffff_ffff { state.stopped=true;let _=self.sender.send(Event { cursor:state.cursor,value:None });return None; }
++            state.request+=1;state.request
++        };
++        // Session UUID prefix plus a non-reused 48-bit socket sequence: opaque,
++        // canonical UUIDs without a process-global ID source or another registry.
++        let prefix=self.session_id.get(..24).unwrap_or("00000000-0000-4000-8000-");
++        let id=format!("{prefix}{sequence:012x}");
++        self.publish("request",||json!({"id":id,"start":timestamp(),"metadata":metadata,"chains":chains,
++            "rule":"","rulePayload":"","upload":"0","download":"0"}));
++        Some(InternalRequest { feed:Arc::clone(self),id:id.into(),counts:Mutex::new((0,0)) })
++    }
++}
++impl InternalRequest {
++    pub fn upload(&self, n: usize) { self.record(n,true); }
++    pub fn download(&self, n: usize) { self.record(n,false); }
++    fn record(&self, n: usize, upload: bool) {
++        if n==0 { return; }
++        {let mut counts=self.counts.lock();if upload { counts.0=counts.0.saturating_add(n as u64); }
++            else { counts.1=counts.1.saturating_add(n as u64); }}
++        self.feed.record_traffic_with(Arc::clone(&self.id),||Some(*self.counts.lock()));
++    }
++}
++impl Drop for InternalRequest {
++    fn drop(&mut self) {
++        let (up,down)=*self.counts.get_mut();
++        self.feed.close_request(&self.id,||json!({"id":self.id,"end":timestamp(),"upload":up.to_string(),"download":down.to_string()}));
++    }
++}
++/// Observes successful I/O at the same layer where the real stream is owned.
++/// A TLS wrapper goes outside this so TLS handshake bytes are not invented.
++pub struct ObservedIo<S> { inner:S, request:Option<InternalRequest> }
++impl<S> ObservedIo<S> { pub fn new(inner:S, request:Option<InternalRequest>)->Self { Self { inner,request } } }
++impl<S:tokio::io::AsyncRead+Unpin> tokio::io::AsyncRead for ObservedIo<S> {
++    fn poll_read(self:std::pin::Pin<&mut Self>,cx:&mut std::task::Context<'_>,buf:&mut tokio::io::ReadBuf<'_>)->std::task::Poll<io::Result<()>> {
++        let this=self.get_mut();let before=buf.filled().len();
++        let result=std::pin::Pin::new(&mut this.inner).poll_read(cx,buf);
++        if let std::task::Poll::Ready(Ok(()))=&result { if let Some(request)=&this.request { request.download(buf.filled().len()-before); } }
++        result
++    }
++}
++impl<S:tokio::io::AsyncWrite+Unpin> tokio::io::AsyncWrite for ObservedIo<S> {
++    fn poll_write(self:std::pin::Pin<&mut Self>,cx:&mut std::task::Context<'_>,buf:&[u8])->std::task::Poll<io::Result<usize>> {
++        let this=self.get_mut();let result=std::pin::Pin::new(&mut this.inner).poll_write(cx,buf);
++        if let std::task::Poll::Ready(Ok(n))=&result { if let Some(request)=&this.request { request.upload(*n); } }result
++    }
++    fn poll_flush(self:std::pin::Pin<&mut Self>,cx:&mut std::task::Context<'_>)->std::task::Poll<io::Result<()>> { std::pin::Pin::new(&mut self.get_mut().inner).poll_flush(cx) }
++    fn poll_shutdown(self:std::pin::Pin<&mut Self>,cx:&mut std::task::Context<'_>)->std::task::Poll<io::Result<()>> { std::pin::Pin::new(&mut self.get_mut().inner).poll_shutdown(cx) }
++}
 --- /dev/null
 +++ b/crates/meow-common/src/probe_policy.rs
 @@ -0,0 +1,159 @@
@@ -4312,9 +4674,379 @@
  default = ["encrypted", "dns-server"]
  # DoT / DoH upstreams. TLS goes through `meow_transport::tls::TlsLayer`, so
  # DNS shares the process-wide backend (BoringSSL when the app is built with
+--- a/crates/meow-dns/src/cache.rs
++++ b/crates/meow-dns/src/cache.rs
+@@ -66,7 +66,7 @@
+     ips: Box<[IpAddr]>,
+     expire_v4: Instant,
+     expire_v6: Instant,
+-    source: Option<Arc<str>>,
++    sources: Option<Box<[FamilySources]>>,
+     queried: QueryFamilies,
+     /// Per-family negative-answer kind (NODATA vs NXDOMAIN), packed 2 bits per
+     /// family so a cached NXDOMAIN can be re-served with its real rcode instead
+@@ -232,6 +232,10 @@
+ }
+ 
+ pub(crate) struct CacheLookup {
++    pub(crate) observed_v4: Option<Arc<crate::client::DnsVerdict>>,
++    pub(crate) observed_v6: Option<Arc<crate::client::DnsVerdict>>,
++    pub(crate) source_v4: Option<Arc<str>>,
++    pub(crate) source_v6: Option<Arc<str>>,
+     /// All IPs belonging to families that are still fresh.
+     pub(crate) ips: IpList,
+     /// Minimum remaining TTL across the fresh IPs in `ips` (the value a cached
+@@ -426,6 +430,10 @@
+                     min_remaining = Duration::ZERO;
+                 }
+                 return Some(CacheLookup {
++                    observed_v4: entry.sources.as_ref().and_then(|s|s.first()).and_then(|s|s.observed_v4.clone()),
++                    observed_v6: entry.sources.as_ref().and_then(|s|s.first()).and_then(|s|s.observed_v6.clone()),
++                    source_v4: entry.sources.as_ref().and_then(|s|s.first()).and_then(|s|s.v4.clone()),
++                    source_v6: entry.sources.as_ref().and_then(|s|s.first()).and_then(|s|s.v6.clone()),
+                     ips,
+                     ttl: min_remaining,
+                     v4,
+@@ -523,7 +531,7 @@
+             ips: ips.into(),
+             expire_v4: expire,
+             expire_v6: expire,
+-            source: source.map(Arc::from),
++            sources: FamilySources::packed_for(source, queried),
+             queried,
+             neg,
+         };
+@@ -552,6 +560,11 @@
+         source: Option<&str>,
+         neg: FamilyNeg,
+     ) {
++        self.merge_family_observed(domain,family,ips,ttl,source,neg,None);
++    }
++    #[allow(clippy::too_many_arguments)]
++    pub(crate) fn merge_family_observed(&self,domain:&str,family:QueryFamilies,ips:&[IpAddr],ttl:Duration,
++        source:Option<&str>,neg:FamilyNeg,observed:Option<Arc<crate::client::DnsVerdict>>) {
+         debug_assert!(
+             ips.iter().all(|ip| family.contains_ip(*ip)),
+             "merge_family received cross-family IPs; they would become \
+@@ -600,7 +613,10 @@
+         let mut merged_queried = family;
+         let mut expire_v4 = expire;
+         let mut expire_v6 = expire;
+-        let mut merged_source = source.map(Arc::from);
++        let mut merged_source = source.map(Arc::<str>::from);
++        let mut family_sources = FamilySources::default();
++        family_sources.set(family, merged_source.clone());
++        family_sources.set_observed(family,observed);
+         // Start with this family's kind; preserve the other family's kind if
+         // its answer is still fresh (so a later A query doesn't wipe a cached
+         // AAAA NXDOMAIN, and vice versa).
+@@ -633,6 +649,8 @@
+                 && (existing.neg.get(family) == NegKind::NXDOMAIN
+                     || !existing_family_ips.is_empty());
+             if preserve_existing {
++                family_sources.set_observed(family,existing.sources.as_ref().and_then(|s|s.first()).and_then(|s|s.get_observed(family)));
++                family_sources.set(family, existing.sources.as_ref().and_then(|s|s.first()).and_then(|s|s.get(family)));
+                 merged.extend_from_slice(&existing_family_ips);
+                 merged_neg = merged_neg.with(
+                     family,
+@@ -663,6 +681,8 @@
+                     existing.expire_v6 > now
+                 };
+                 if other_fresh {
++                    family_sources.set_observed(other,existing.sources.as_ref().and_then(|s|s.first()).and_then(|s|s.get_observed(other)));
++                    family_sources.set(other, existing.sources.as_ref().and_then(|s|s.first()).and_then(|s|s.get(other)));
+                     merged_queried = merged_queried.union(other);
+                     merged.extend(
+                         existing
+@@ -680,7 +700,7 @@
+                 }
+             }
+             if merged_source.is_none() {
+-                merged_source = existing.source.clone();
++                merged_source = existing.sources.as_ref().and_then(|s|s.first()).and_then(|s|s.last.clone());
+             }
+         }
+         merged.extend_from_slice(ips);
+@@ -704,7 +724,7 @@
+                 ips: merged.into(),
+                 expire_v4,
+                 expire_v6,
+-                source: merged_source,
++                sources: { family_sources.last=merged_source;family_sources.packed() },
+                 queried: merged_queried,
+                 neg: merged_neg,
+             },
+@@ -788,7 +808,7 @@
+                     name: name.to_string(),
+                     ips: visible_ips,
+                     ttl: latest.saturating_duration_since(now),
+-                    source: entry.source.as_ref().map(std::string::ToString::to_string),
++                    source: entry.sources.as_ref().and_then(|s|s.first()).and_then(|s|s.last.as_ref()).map(std::string::ToString::to_string),
+                 }
+             }));
+         }
+@@ -1554,3 +1574,35 @@
+         );
+     }
+ }
++
++/// Family provenance lives inside the existing bounded cache entry, never a
++/// second cache. A boxed slice keeps the entry's original 16-byte fat-pointer
++/// slot and size budget; the one payload is allocated only for known sources.
++#[derive(Default)]
++struct FamilySources { v4:Option<Arc<str>>, v6:Option<Arc<str>>, last:Option<Arc<str>>,
++    observed_v4:Option<Arc<crate::client::DnsVerdict>>,observed_v6:Option<Arc<crate::client::DnsVerdict>> }
++impl FamilySources {
++    fn get_observed(&self,family:QueryFamilies)->Option<Arc<crate::client::DnsVerdict>> { if family==QueryFamilies::IPV4 { self.observed_v4.clone() } else { self.observed_v6.clone() } }
++    fn set_observed(&mut self,family:QueryFamilies,value:Option<Arc<crate::client::DnsVerdict>>) { if family==QueryFamilies::IPV4 { self.observed_v4=value; } else { self.observed_v6=value; } }
++    fn get(&self,family:QueryFamilies)->Option<Arc<str>> { if family==QueryFamilies::IPV4 { self.v4.clone() } else { self.v6.clone() } }
++    fn set(&mut self,family:QueryFamilies,source:Option<Arc<str>>) { if family==QueryFamilies::IPV4 { self.v4=source; } else { self.v6=source; } }
++    fn packed(self)->Option<Box<[Self]>> { if self.v4.is_none()&&self.v6.is_none()&&self.last.is_none()&&self.observed_v4.is_none()&&self.observed_v6.is_none() { None } else { Some(vec![self].into_boxed_slice()) } }
++    fn packed_for(source:Option<&str>,queried:QueryFamilies)->Option<Box<[Self]>> {
++        let source=source.map(Arc::<str>::from);Self { v4:if queried.contains(QueryFamilies::IPV4) { source.clone() } else { None },
++            v6:if queried.contains(QueryFamilies::IPV6) { source.clone() } else { None },last:source,..Self::default() }.packed()
++    }
++}
++#[cfg(test)]
++mod observation_provenance_tests {
++    use super::*;
++    #[test]
++    fn observations_cached_upstream_remains_specific_to_each_family() {
++        let cache=DnsCache::new(32);
++        cache.merge_family("mixed.test",QueryFamilies::IPV4,&["127.0.0.1".parse().unwrap()],Duration::from_secs(60),Some("udp://v4"),FamilyNeg::None);
++        cache.merge_family("mixed.test",QueryFamilies::IPV6,&["::1".parse().unwrap()],Duration::from_secs(60),Some("tls://v6"),FamilyNeg::None);
++        let hit=cache.get_lookup("mixed.test").unwrap();assert_eq!(hit.source_v4.as_deref(),Some("udp://v4"));assert_eq!(hit.source_v6.as_deref(),Some("tls://v6"));
++        // A racing NODATA may not replace a still-fresh positive or its owner.
++        cache.merge_family("mixed.test",QueryFamilies::IPV4,&[],Duration::from_secs(60),Some("other"),FamilyNeg::NoData);
++        let hit=cache.get_lookup("mixed.test").unwrap();assert_eq!(hit.source_v4.as_deref(),Some("udp://v4"));assert_eq!(hit.source_v6.as_deref(),Some("tls://v6"));
++    }
++}
 --- a/crates/meow-dns/src/client.rs
 +++ b/crates/meow-dns/src/client.rs
-@@ -1221,7 +1221,19 @@
+@@ -6,6 +6,7 @@
+ //! ships its own DNS client instead of relying on `hickory-resolver`.
+ 
+ use crate::cache::QueryFamilies;
++use meow_common::observations::{ObservationFeed, InternalRequest, ObservedIo};
+ use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
+ use hickory_proto::rr::{Name, RData, Record, RecordType};
+ use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
+@@ -226,6 +227,7 @@
+ 
+ /// A single DNS upstream the resolver can query.
+ pub struct DnsClient {
++    observations: parking_lot::RwLock<Option<Arc<ObservationFeed>>>,
+     transport: Transport,
+     timeout: Duration,
+     proxy: Option<DnsProxy>,
+@@ -257,7 +259,7 @@
+ /// A pooled `tcp://` stream plus the [`PoolGeneration`] captured before its
+ /// socket was created.
+ struct PooledTcp {
+-    stream: TcpStream,
++    stream: ObservedIo<TcpStream>,
+     generation: PoolGeneration,
+ }
+ 
+@@ -376,6 +378,8 @@
+ /// re-queries on demand.
+ #[derive(Clone, Debug)]
+ pub(crate) struct FamilySet {
++    pub(crate) observed_v4: Option<Arc<DnsVerdict>>,
++    pub(crate) observed_v6: Option<Arc<DnsVerdict>>,
+     pub(crate) v4: Option<FamilyAnswer>,
+     pub(crate) v6: Option<FamilyAnswer>,
+     pub(crate) source: String,
+@@ -405,6 +409,15 @@
+ }
+ 
+ impl DnsClient {
++    pub(crate) fn set_observation_feed(&self, feed: Arc<ObservationFeed>) -> io::Result<()> {
++        let mut bound=self.observations.write();
++        if let Some(current)=bound.as_ref() {
++            return if Arc::ptr_eq(current,&feed) { Ok(()) }
++                else { Err(io::Error::new(io::ErrorKind::AlreadyExists,"DNS client already belongs to another observation session")) };
++        }
++        *bound=Some(feed);Ok(())
++    }
++
+     /// Plain DNS over UDP.
+     pub fn udp(addr: SocketAddr) -> Self {
+         Self {
+@@ -413,6 +426,7 @@
+             proxy: None,
+             label: None,
+             tcp_pool: TcpPool::new(),
++            observations: parking_lot::RwLock::new(None),
+         }
+     }
+ 
+@@ -424,6 +438,7 @@
+             proxy: None,
+             label: None,
+             tcp_pool: TcpPool::new(),
++            observations: parking_lot::RwLock::new(None),
+         }
+     }
+ 
+@@ -435,6 +450,7 @@
+             proxy: None,
+             label: None,
+             tcp_pool: TcpPool::new(),
++            observations: parking_lot::RwLock::new(None),
+         }
+     }
+ 
+@@ -450,6 +466,7 @@
+             proxy: None,
+             label: None,
+             tcp_pool: TcpPool::new(),
++            observations: parking_lot::RwLock::new(None),
+         }
+     }
+ 
+@@ -466,6 +483,7 @@
+             proxy: None,
+             label: None,
+             tcp_pool: TcpPool::new(),
++            observations: parking_lot::RwLock::new(None),
+         }
+     }
+ 
+@@ -611,13 +629,17 @@
+             resp.metadata.recursion_desired = true;
+             resp.metadata.recursion_available = true;
+             resp.metadata.response_code = *code;
++            let record_type=query.query_type;
+             resp.add_query(query);
++            QueryCapture::record(record_type, &Ok(resp.clone()));
+             return Ok(resp);
+         }
+         msg.add_query(query.clone());
+         let wire = msg.to_bytes()?;
+         let expected = ExpectedResponse { id, query };
+-        self.exchange(&wire, &expected).await
++        let result=self.exchange(&wire, &expected).await;
++        QueryCapture::record(expected.query.query_type,&result);
++        result
+     }
+ 
+     /// Convenience: resolve every enabled address for `name`. A and AAAA are
+@@ -736,7 +758,7 @@
+         } else {
+             (None, Some(answer))
+         };
+-        Ok(FamilySet { v4, v6, source })
++        Ok(FamilySet { v4, v6, source, observed_v4: None, observed_v6: None })
+     }
+ 
+     async fn lookup_ip_with_ipv6_inner(
+@@ -843,7 +865,9 @@
+         // Captured before the socket exists: a reset racing the connect
+         // must retire this stream too (issue #695).
+         let generation = self.tcp_pool.generation();
+-        let mut stream = factory().connect_tcp(addr).await?;
++        let stream = factory().connect_tcp(addr).await?;
++        let tracker = internal_direct_request(self.observations.read().as_ref(), addr, stream.local_addr().ok(), meow_common::Network::Tcp);
++        let mut stream = ObservedIo::new(stream, tracker);
+         let response = tcp_message_exchange(&mut stream, wire, expected).await?;
+         self.tcp_pool.push(PooledTcp { stream, generation }).await;
+         Ok(response)
+@@ -854,6 +878,7 @@
+         wire: &[u8],
+         expected: &ExpectedResponse,
+     ) -> Result<Message, ClientError> {
++        let feed = self.observations.read().clone();
+         if let Some(proxy) = self.proxy.as_ref() {
+             let addr = match &self.transport {
+                 Transport::Udp { addr } | Transport::Tcp { addr } => *addr,
+@@ -877,23 +902,23 @@
+                     ));
+                 }
+             };
+-            let response = proxy_tcp_exchange(proxy, addr, wire).await?;
++            let response = proxy_tcp_exchange(proxy, addr, wire, feed.clone()).await?;
+             return decode_validated_response(&response, expected);
+         }
+         match &self.transport {
+-            Transport::Udp { addr } => udp_exchange(*addr, wire, expected).await,
++            Transport::Udp { addr } => udp_exchange(*addr, wire, expected, feed.clone()).await,
+             Transport::Tcp { addr } => self.tcp_exchange_pooled(*addr, wire, expected).await,
+             Transport::RCode { .. } => Err(ClientError::Protocol(
+                 "rcode transport should not perform network exchange",
+             )),
+             #[cfg(feature = "encrypted")]
+             Transport::Dot { addr, sni } => {
+-                let response = dot_exchange(*addr, sni, wire).await?;
++                let response = dot_exchange(*addr, sni, wire, feed.clone()).await?;
+                 decode_validated_response(&response, expected)
+             }
+             #[cfg(feature = "encrypted")]
+             Transport::Doh { addr, sni, path } => {
+-                let response = doh_exchange(*addr, sni, path, wire).await?;
++                let response = doh_exchange(*addr, sni, path, wire, feed.clone()).await?;
+                 decode_validated_response(&response, expected)
+             }
+         }
+@@ -914,8 +939,8 @@
+     Ok(response)
+ }
+ 
+-async fn tcp_message_exchange(
+-    stream: &mut TcpStream,
++async fn tcp_message_exchange<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
++    stream: &mut S,
+     wire: &[u8],
+     expected: &ExpectedResponse,
+ ) -> Result<Message, ClientError> {
+@@ -961,6 +986,7 @@
+     proxy: &DnsProxy,
+     addr: SocketAddr,
+     wire: &[u8],
++    feed: Option<Arc<ObservationFeed>>,
+ ) -> Result<Vec<u8>, ClientError> {
+     use meow_common::{ConnType, Metadata, Network};
+     let metadata = Metadata {
+@@ -974,14 +1000,20 @@
+         internal: true,
+         ..Default::default()
+     };
+-    let mut stream = proxy
+-        .dial_tcp(&metadata)
++    let (dial_metadata, receipt) = meow_common::dial_outcome::DialReceipt::branch(&metadata);
++    let stream = proxy
++        .dial_tcp_observed(&dial_metadata)
+         .await
+         // `into_io_error` keeps the innermost `Io` verbatim: an errno-bearing
+         // dial failure (EMFILE under local fd pressure) must not be flattened
+         // into a context-only `Other` before it reaches the resolver's
+         // classifier (#682) — and `Unsupported` refusals keep their kind.
+         .map_err(|e| e.into_io_error("dns-via-proxy dial"))?;
++    let tracker = feed.as_ref().and_then(|feed| receipt.outcome().and_then(|outcome| {
++        if outcome.traffic_class() == meow_common::dial_outcome::TrafficClass::Uncounted { return None; }
++        feed.internal_request(metadata.pure(), outcome.chains)
++    }));
++    let mut stream = ObservedIo::new(stream, tracker);
+     write_lp(&mut stream, wire).await?;
+     read_lp(&mut stream).await
+ }
+@@ -1200,6 +1232,7 @@
+ /// downgrade the upstream RCODE.
+ fn family_set_from_ip_lookup(result: &IpLookupResult, source: String) -> FamilySet {
+     FamilySet {
++        observed_v4: None, observed_v6: None,
+         v4: result.v4.clone(),
+         v6: result.v6.clone(),
+         source,
+@@ -1210,6 +1243,7 @@
+     addr: SocketAddr,
+     wire: &[u8],
+     expected: &ExpectedResponse,
++    feed: Option<Arc<ObservationFeed>>,
+ ) -> Result<Message, ClientError> {
+     // A loopback upstream (e.g. the resolver's own `dns.listen` socket,
+     // which some subscriptions name in `proxy-server-nameserver`) must be
+@@ -1221,7 +1255,19 @@
      // Binding to the loopback address selects `lo0` explicitly; it also
      // needs no VPN `protect()` on Android because loopback is never routed
      // into the tunnel.
@@ -4335,21 +5067,194 @@
          let local: SocketAddr = match addr {
              SocketAddr::V4(_) => SocketAddr::from(([127, 0, 0, 1], 0)),
              SocketAddr::V6(_) => SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, 0)),
-@@ -1245,7 +1257,11 @@
+@@ -1231,10 +1277,13 @@
+         factory().bind_udp().await?
+     };
+     sock.connect(addr).await?;
+-    sock.send(wire).await?;
++    let tracker = internal_direct_request(feed.as_ref(), addr, sock.local_addr().ok(), meow_common::Network::Udp);
++    let sent = sock.send(wire).await?;
++    if let Some(tracker)=&tracker { tracker.upload(sent); }
+     let mut buf = vec![0u8; 4096];
+     loop {
+         let n = sock.recv(&mut buf).await?;
++        if let Some(tracker)=&tracker { tracker.download(n); }
+         let Ok(response) = decode_validated_response(&buf[..n], expected) else {
+             // A connected UDP socket only filters the peer tuple. Ignore
+             // malformed or unrelated datagrams and keep waiting under the
+@@ -1245,7 +1294,13 @@
              // RFC 7766 §0: retry a truncated UDP answer over TCP with a
              // one-off connection (the truncation fallback is intentionally
              // not pooled).
 -            let mut stream = factory().connect_tcp(addr).await?;
-+            let mut stream = if captured {
++            let stream = if captured {
 +                meow_common::connect_tcp(addr).await?
 +            } else {
 +                factory().connect_tcp(addr).await?
 +            };
++            let tracker = internal_direct_request(feed.as_ref(), addr, stream.local_addr().ok(), meow_common::Network::Tcp);
++            let mut stream = ObservedIo::new(stream, tracker);
              return tcp_message_exchange(&mut stream, wire, expected).await;
          }
          return Ok(response);
+@@ -1270,9 +1325,11 @@
+ }
+ 
+ #[cfg(feature = "encrypted")]
+-async fn dot_exchange(addr: SocketAddr, sni: &str, wire: &[u8]) -> Result<Vec<u8>, ClientError> {
++async fn dot_exchange(addr: SocketAddr, sni: &str, wire: &[u8], feed: Option<Arc<ObservationFeed>>) -> Result<Vec<u8>, ClientError> {
+     let tls = tls_layer(sni, "dot")?;
+     let tcp = factory().connect_tcp(addr).await?;
++    let tracker = internal_direct_request(feed.as_ref(), addr, tcp.local_addr().ok(), meow_common::Network::Tcp);
++    let tcp = ObservedIo::new(tcp, tracker);
+     let mut stream = tls.connect(Box::new(tcp)).await.map_err(|e| match e {
+         // `TransportError::Io` still carries the raw errno (#680);
+         // stringifying it here would re-flatten an `EMFILE`-class
+@@ -1328,9 +1385,12 @@
+     sni: &str,
+     path: &str,
+     wire: &[u8],
++    feed: Option<Arc<ObservationFeed>>,
+ ) -> Result<Vec<u8>, ClientError> {
+     let tls = tls_layer(sni, "http/1.1")?;
+     let tcp = factory().connect_tcp(addr).await?;
++    let tracker = internal_direct_request(feed.as_ref(), addr, tcp.local_addr().ok(), meow_common::Network::Tcp);
++    let tcp = ObservedIo::new(tcp, tracker);
+     let mut stream = tls.connect(Box::new(tcp)).await.map_err(|e| match e {
+         // `TransportError::Io` still carries the raw errno (#680);
+         // stringifying it here would re-flatten an `EMFILE`-class
+@@ -2432,7 +2492,7 @@
+             health: meow_common::ProxyHealth::new(),
+         });
+         let dyn_proxy: DnsProxy = std::sync::Arc::<CapturingMetaProxy>::clone(&proxy);
+-        let _ = proxy_tcp_exchange(&dyn_proxy, "8.8.8.8:53".parse().unwrap(), b"\x00").await;
++        let _ = proxy_tcp_exchange(&dyn_proxy, "8.8.8.8:53".parse().unwrap(), b"\x00", None).await;
+         let seen = proxy.seen.lock().unwrap();
+         let meta = seen.first().expect("the exchange must reach dial_tcp");
+         assert!(
+@@ -2524,7 +2584,7 @@
+         let proxy: DnsProxy = std::sync::Arc::new(ErrnoProxy {
+             health: meow_common::ProxyHealth::new(),
+         });
+-        let err = proxy_tcp_exchange(&proxy, "8.8.8.8:53".parse().unwrap(), b"\x00")
++        let err = proxy_tcp_exchange(&proxy, "8.8.8.8:53".parse().unwrap(), b"\x00", None)
+             .await
+             .unwrap_err();
+         let ClientError::Io(e) = err else {
+@@ -2666,3 +2726,84 @@
+         assert!(r.ips.is_empty());
+     }
+ }
++
++fn internal_direct_request(feed: Option<&Arc<ObservationFeed>>, target: SocketAddr, local: Option<SocketAddr>, network: meow_common::Network) -> Option<InternalRequest> {
++    feed.and_then(|feed| feed.internal_request(meow_common::Metadata { network,
++        conn_type:meow_common::ConnType::Inner, host:target.ip().to_string().into(), dst_ip:Some(target.ip()), dst_port:target.port(),
++        src_ip:local.map(|value|value.ip()),src_port:local.map_or(0,|value|value.port()),internal:true,..Default::default()
++    },vec![Arc::from("DIRECT")]))
++}
++
++#[cfg(test)]
++mod observation_transport_tests {
++    use super::*;
++    use std::sync::atomic::{AtomicUsize,Ordering};
++    #[tokio::test]
++    async fn observations_dns_tcp_pool_joins_once_counts_wire_and_closes_once() {
++        tokio::time::timeout(Duration::from_secs(5),async {
++            let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let addr=listener.local_addr().unwrap();
++            let up=Arc::new(AtomicUsize::new(0));let down=Arc::new(AtomicUsize::new(0));let sent=down.clone();let received=up.clone();
++            let server=tokio::spawn(async move {
++                let (mut stream,_)=listener.accept().await.unwrap();
++                for _ in 0..2 { let mut size=[0u8;2];stream.read_exact(&mut size).await.unwrap();let mut wire=vec![0u8;u16::from_be_bytes(size) as usize];stream.read_exact(&mut wire).await.unwrap();received.fetch_add(2+wire.len(),Ordering::SeqCst);
++                    let query=Message::from_bytes(&wire).unwrap();let mut answer=Message::new(query.metadata.id,MessageType::Response,OpCode::Query);answer.add_queries(query.queries.iter().cloned());
++                    let wire=answer.to_bytes().unwrap();stream.write_all(&(wire.len() as u16).to_be_bytes()).await.unwrap();stream.write_all(&wire).await.unwrap();sent.fetch_add(2+wire.len(),Ordering::SeqCst);
++                }
++            });
++            let feed=ObservationFeed::new("00000000-0000-4000-8000-000000000003".into());let mut lease=feed.activate().unwrap();let client=DnsClient::tcp(addr);client.set_observation_feed(feed.clone()).unwrap();
++            client.query("first.test",RecordType::A).await.unwrap();client.query("second.test",RecordType::TXT).await.unwrap();server.await.unwrap();
++            assert_eq!(client.reset_connections(),1,"two logical queries share exactly one physical TCP connection");
++            let frame:serde_json::Value=serde_json::from_str(&lease.next_frame().await.unwrap()).unwrap();let events=frame["events"].as_array().unwrap();
++            assert_eq!(events.iter().filter(|event|event["kind"]=="request").count(),1);assert_eq!(events.iter().filter(|event|event["kind"]=="requestClosed").count(),1);
++            let closed=events.iter().find(|event|event["kind"]=="requestClosed").unwrap();assert_eq!(closed["data"]["upload"],up.load(Ordering::SeqCst).to_string());assert_eq!(closed["data"]["download"],down.load(Ordering::SeqCst).to_string());
++            assert_eq!(events[0]["data"]["metadata"]["type"],"Inner");assert_eq!(events[0]["data"]["chains"],serde_json::json!(["DIRECT"]));
++        }).await.expect("DNS pooled wire observation regression timed out");
++    }
++    #[tokio::test]
++    async fn observations_dns_udp_cancel_drops_actual_socket_tracker_once() {
++        tokio::time::timeout(Duration::from_secs(5),async {
++            let server=tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();let addr=server.local_addr().unwrap();
++            let feed=ObservationFeed::new("00000000-0000-4000-8000-000000000004".into());let mut lease=feed.activate().unwrap();let client=Arc::new(DnsClient::udp(addr));client.set_observation_feed(feed.clone()).unwrap();
++            let work=tokio::spawn(async move { client.query("cancel.test",RecordType::A).await });
++            let mut buffer=[0u8;512];let (sent,_)=server.recv_from(&mut buffer).await.unwrap();work.abort();assert!(work.await.unwrap_err().is_cancelled());
++            let frame:serde_json::Value=serde_json::from_str(&lease.next_frame().await.unwrap()).unwrap();let events=frame["events"].as_array().unwrap();assert_eq!(events.iter().filter(|event|event["kind"]=="request").count(),1);assert_eq!(events.iter().filter(|event|event["kind"]=="requestClosed").count(),1);
++            let closed=events.iter().find(|event|event["kind"]=="requestClosed").unwrap();assert_eq!(closed["data"]["upload"],sent.to_string());assert_eq!(closed["data"]["download"],"0");
++            drop(lease);assert!(!feed.is_active());
++        }).await.expect("DNS cancelled wire observation regression timed out");
++    }
++}
++
++/// Raw answer receipt from one actual upstream client future. The resolver
++/// attaches this exact receipt to the FamilySet that won its existing race.
++/// This retains CNAME/typed answer data instead of reconstructing it from IPs.
++#[derive(Debug)]
++pub(crate) struct DnsVerdict { records:Vec<Record>, code:Option<ResponseCode>, error:String }
++impl DnsVerdict {
++    pub(crate) fn answers(&self)->Vec<String> { self.records.iter().map(dns_answer_value).collect() }
++    pub(crate) fn rcode(&self)->String { self.code.map_or_else(String::new,|code|format!("{code:?}").to_uppercase()) }
++    pub(crate) fn error(&self)->String { self.error.clone() }
++    pub(crate) fn matches_cache(&self,neg:crate::cache::FamilyNeg)->bool {
++        self.code.is_some_and(|code|match neg {
++            crate::cache::FamilyNeg::NxDomain=>code==ResponseCode::NXDomain,
++            _=>code==ResponseCode::NoError,
++        })
++    }
++}
++pub(crate) fn dns_answer_value(record:&Record)->String {
++    match &record.data { RData::A(value)=>value.0.to_string(),RData::AAAA(value)=>value.0.to_string(),
++        RData::CNAME(value)=>value.0.to_utf8().trim_end_matches('.').to_owned(),other=>other.to_string() }
++}
++#[derive(Default)]
++pub(crate) struct QueryCapture { pub(crate) values:parking_lot::Mutex<(Option<Arc<DnsVerdict>>,Option<Arc<DnsVerdict>>)> }
++tokio::task_local! { static DNS_CAPTURE: Arc<QueryCapture>; }
++impl QueryCapture {
++    pub(crate) async fn scope<F:Future>(self:Arc<Self>,work:F)->F::Output { DNS_CAPTURE.scope(self,work).await }
++    fn record(kind:RecordType,result:&Result<Message,ClientError>) {
++        if !matches!(kind,RecordType::A|RecordType::AAAA) { return; }
++        let _=DNS_CAPTURE.try_with(|capture| {
++            let value=Arc::new(match result { Ok(message)=>DnsVerdict { records:message.answers.clone(),code:Some(message.metadata.response_code),error:String::new() },
++                Err(error)=>DnsVerdict { records:Vec::new(),code:if let ClientError::Rcode(code)=error { Some(*code) } else { None },error:error.to_string() } });
++            let mut values=capture.values.lock();if kind==RecordType::A { values.0=Some(value); } else { values.1=Some(value); }
++        });
++    }
++}
+--- a/crates/meow-dns/src/host_resolver_hook.rs
++++ b/crates/meow-dns/src/host_resolver_hook.rs
+@@ -70,7 +70,7 @@
+         // `raw_os_error` (e.g. EMFILE opening the resolver socket), which
+         // `is_local_resource_error` needs to see to keep local resource
+         // exhaustion off the proxy-member health ledger (#682).
+-        match self.active().resolve_ip(host).await {
++        match meow_common::observations::DnsInitiator::Proxy.scope(self.active().resolve_ip(host)).await {
+             Ok(Some(ip)) => Ok(ip),
+             Ok(None) => Err(io::Error::new(
+                 io::ErrorKind::NotFound,
+@@ -81,7 +81,7 @@
+     }
+ 
+     async fn resolve_all(&self, host: &str) -> io::Result<Vec<IpAddr>> {
+-        match self.active().resolve_ips(host).await {
++        match meow_common::observations::DnsInitiator::Proxy.scope(self.active().resolve_ips(host)).await {
+             Ok(Some(ips)) => Ok(ips),
+             Ok(None) => Err(io::Error::new(
+                 io::ErrorKind::NotFound,
 --- a/crates/meow-dns/src/resolver.rs
 +++ b/crates/meow-dns/src/resolver.rs
+@@ -1,5 +1,5 @@
+ use crate::cache::{DnsCache, DnsCacheSnapshotEntry, FamilyCacheHit, FamilyNeg, QueryFamilies};
+-use crate::client::{prefer_errno, ClientError, DnsClient, FamilyAnswer, FamilySet};
++use crate::client::{prefer_errno, ClientError, DnsClient, FamilyAnswer, FamilySet, DnsVerdict, QueryCapture};
+ use crate::fakeip::{Pool, Skipper};
+ use crate::upstream::{HostOrIp, NameServerEntry, NameServerUrl};
+ use dashmap::DashMap;
 @@ -9,9 +9,11 @@
  use ipnet::IpNet;
  use meow_common::conn_note;
@@ -4362,7 +5267,15 @@
  use std::io;
  use std::net::{IpAddr, Ipv4Addr, SocketAddr};
  use std::sync::Arc;
-@@ -261,6 +263,11 @@
+@@ -237,6 +239,7 @@
+ }
+ 
+ pub struct Resolver {
++    observations: parking_lot::RwLock<Option<Arc<meow_common::observations::ObservationFeed>>>,
+     main: Vec<Arc<DnsClient>>,
+     fallback: Option<Vec<Arc<DnsClient>>>,
+     cache: DnsCache,
+@@ -261,14 +264,105 @@
      /// Whether IPv6 resolution is enabled. Driven by the top-level `ipv6`
      /// config flag and fixed at construction time.
      ipv6: bool,
@@ -4374,7 +5287,62 @@
  }
  
  impl Resolver {
-@@ -269,6 +276,38 @@
++    /// Bind every immutable DNS generation to the owning runtime's same live feed.
++    pub fn set_observation_feed(&self, feed: Arc<meow_common::observations::ObservationFeed>) -> io::Result<()> {
++        let mut bound = self.observations.write();
++        if let Some(current) = bound.as_ref() {
++            return if Arc::ptr_eq(current, &feed) { Ok(()) }
++                else { Err(io::Error::new(io::ErrorKind::AlreadyExists, "resolver already belongs to another observation session")) };
++        }
++        for client in self.main.iter().chain(self.fallback.iter().flatten()).chain(self.policy.iter().flat_map(|policy|policy.clients.iter())) {
++            client.set_observation_feed(Arc::clone(&feed))?;
++        }
++        *bound = Some(feed);
++        Ok(())
++    }
++    #[allow(clippy::too_many_arguments)]
++    fn observe_family(&self, host: &str, family: QueryFamilies, answer: Option<&FamilyAnswer>, observed: Option<&Arc<DnsVerdict>>,
++        source: &str, error: &str, failure_rcode: &str, cached: bool, started: std::time::Instant, time: std::time::SystemTime,
++        initiator: meow_common::observations::DnsInitiator) {
++        let Some(feed) = self.observations.read().clone() else { return; };
++        feed.publish("dns", || {
++            let (answers, rcode, error) = match answer {
++                Some(FamilyAnswer::Answer { ips, .. }) => (ips.iter().map(ToString::to_string).collect::<Vec<_>>(), "NOERROR", ""),
++                Some(FamilyAnswer::NoData(_)) => (Vec::new(), "NOERROR", ""),
++                Some(FamilyAnswer::NxDomain(_)) => (Vec::new(), "NXDOMAIN", ""),
++                _ => (Vec::new(), failure_rcode, if error.is_empty() { "DNS lookup returned no answer" } else { error }),
++            };
++            let answers=observed.map_or(answers,|value|value.answers());
++            let rcode=observed.map_or_else(||rcode.to_owned(),|value|value.rcode());
++            let error=observed.map_or_else(||error.to_owned(),|value| {
++                let actual=value.error();if !actual.is_empty() { actual }
++                else if matches!(value.rcode().as_str(),"NOERROR"|"NXDOMAIN") { String::new() } else { error.to_owned() }
++            });
++            serde_json::json!({"time":meow_common::observations::timestamp_at(time),"domain":host.trim_end_matches('.'),"type":if family == QueryFamilies::IPV4 { "A" } else { "AAAA" },
++                "initiator":initiator.as_str(),"upstream":source,"cached":cached,"answers":answers,"rcode":rcode,
++                "error":error,"delay":u64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX as u64).min(i64::MAX as u64)})
++        });
++    }
++    fn observe_cached(&self, host: &str, family: QueryFamilies, hit: &FamilyCacheHit, source: Option<&str>, observed: Option<&Arc<DnsVerdict>>) {
++        if !hit.is_fresh() { return; }
++        let Some(feed) = self.observations.read().clone() else { return; };
++        let initiator = meow_common::observations::DnsInitiator::current();
++        let started=std::time::Instant::now();let time=std::time::SystemTime::now();
++        feed.publish("dns", || {
++            let (answers, rcode) = match hit {
++                FamilyCacheHit::Answer(ips, _) => (ips.iter().map(ToString::to_string).collect::<Vec<_>>(), "NOERROR"),
++                FamilyCacheHit::NxDomain => (Vec::new(), "NXDOMAIN"),
++                _ => (Vec::new(), "NOERROR"),
++            };
++            let answers=observed.map_or(answers,|value|value.answers());
++            let rcode=observed.map_or_else(||rcode.to_owned(),|value|value.rcode());
++            serde_json::json!({"time":meow_common::observations::timestamp_at(time),"domain":host.trim_end_matches('.'),
++                "type":if family == QueryFamilies::IPV4 { "A" } else { "AAAA" }, "initiator":initiator.as_str(),
++                "upstream":source.unwrap_or(""),"cached":true,"answers":answers,"rcode":rcode,"error":"","delay":u64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX as u64).min(i64::MAX as u64)})
++        });
++    }
+     /// The global (main) upstream clients — exposed so config-layer tests
+     /// can assert which adapters `#PROXY`-tagged nameserver entries
      /// captured.
      pub fn main_nameservers(&self) -> &[Arc<DnsClient>] {
          &self.main
@@ -4413,7 +5381,7 @@
      }
  }
  
-@@ -483,6 +522,56 @@
+@@ -483,6 +577,56 @@
  /// negative is returned.
  const NEGATIVE_GRACE_PERIOD: Duration = Duration::from_millis(300);
  
@@ -4470,7 +5438,7 @@
  /// Query a pool of clients in parallel for the requested family set `want`,
  /// returning `(set, error)`: the first positive resolution or, after a short
  /// grace period, the first definitive negative (review issue C: a fast
-@@ -500,6 +589,7 @@
+@@ -500,6 +644,7 @@
      host: &str,
      want: QueryFamilies,
      ipv6_enabled: bool,
@@ -4478,7 +5446,7 @@
  ) -> (Option<FamilySet>, Option<ClientError>) {
      if clients.is_empty() {
          return (None, None);
-@@ -507,9 +597,16 @@
+@@ -507,9 +652,21 @@
      let started = tokio::time::Instant::now();
      let mut pending = FuturesUnordered::new();
      for client in clients {
@@ -4489,15 +5457,20 @@
          pending.push(async move {
 -            let result = client.lookup_set(host, want, ipv6_enabled).await;
 -            (client, result)
++            let capture=Arc::new(QueryCapture::default());
++            let query_capture=Arc::clone(&capture);
++            // Explicitly wrap the work executed by the owned child. Tokio
++            // task-local inheritance is neither assumed nor needed.
 +            let result = run_owned_query(query_scope, async move {
-+                query_client.lookup_set(&host, want, ipv6_enabled).await
-+            })
-+            .await;
++                query_capture.scope(query_client.lookup_set(&host, want, ipv6_enabled)).await
++            }).await.map(|mut set| {
++                let values=capture.values.lock();set.observed_v4=values.0.clone();set.observed_v6=values.1.clone();set
++            });
 +            (result_client, result)
          });
      }
      let mut negative: Option<FamilySet> = None;
-@@ -689,17 +786,41 @@
+@@ -689,17 +846,42 @@
  /// races first-Ok-wins — any validated `Message` (including a negative
  /// rcode) answers, so pool semantics differ from the address pipeline's
  /// positive-preference and grace period.
@@ -4506,16 +5479,18 @@
 +    name: Name,
 +    record_type: RecordType,
 +    scope: Option<TransportScope>,
-+) -> Result<Message, ClientError> {
-+    run_owned_query(scope, async move { client.query_name(&name, record_type).await }).await
++) -> Result<(Message, String), ClientError> {
++    let source = client.upstream_label().to_string();
++    run_owned_query(scope, async move { client.query_name(&name, record_type).await }).await.map(|message| (message, source))
 +}
 +
  async fn query_pool_generic(
      clients: &[Arc<DnsClient>],
      name: &Name,
      record_type: RecordType,
+-) -> Option<Message> {
 +    scope: Option<TransportScope>,
- ) -> Option<Message> {
++) -> Option<(Message, String)> {
      match clients.len() {
          0 => None,
 -        1 => clients[0].query_name(name, record_type).await.ok(),
@@ -4542,7 +5517,7 @@
              tokio::pin!(f1);
              tokio::pin!(f2);
              tokio::select! {
-@@ -711,7 +832,13 @@
+@@ -711,7 +893,13 @@
              let futs: Vec<_> = clients
                  .iter()
                  .map(|c| {
@@ -4557,16 +5532,17 @@
                  })
                  .collect();
              futures::future::select_ok(futs).await.ok().map(|(m, _)| m)
-@@ -770,6 +897,8 @@
+@@ -770,6 +958,9 @@
              fakeip_skipper: None,
              fakeip_ttl: DEFAULT_FAKE_IP_TTL,
              ipv6,
 +            transport_scope: TransportScope::current(),
 +            unavailable_error: None,
++            observations: parking_lot::RwLock::new(None),
          }
      }
  
-@@ -982,7 +1111,7 @@
+@@ -982,7 +1173,7 @@
              let mut map = HashMap::new();
              for host in &hostnames_needing_bootstrap {
                  let (set, err) =
@@ -4575,26 +5551,81 @@
                  let first = set.and_then(|set| set.positive_ips().into_iter().next());
                  match first {
                      Some(ip) => {
-@@ -1041,6 +1170,8 @@
+@@ -1041,6 +1232,9 @@
              fakeip_skipper: None,
              fakeip_ttl: DEFAULT_FAKE_IP_TTL,
              ipv6,
 +            transport_scope: TransportScope::current(),
 +            unavailable_error: None,
++            observations: parking_lot::RwLock::new(None),
          })
      }
  
-@@ -1195,6 +1326,9 @@
+@@ -1184,9 +1378,11 @@
+         let mut want = required;
+         if let Some(cached) = self.cache.get_lookup(lookup_host) {
+             if cached.v4.is_fresh() && required.contains(QueryFamilies::IPV4) {
++                self.observe_cached(lookup_host, QueryFamilies::IPV4, &cached.v4, cached.source_v4.as_deref(), cached.observed_v4.as_ref());
+                 want = want.minus(QueryFamilies::IPV4);
+             }
+             if cached.v6.is_fresh() && required.contains(QueryFamilies::IPV6) {
++                self.observe_cached(lookup_host, QueryFamilies::IPV6, &cached.v6, cached.source_v6.as_deref(), cached.observed_v6.as_ref());
+                 want = want.minus(QueryFamilies::IPV6);
+             }
+         }
+@@ -1195,6 +1391,13 @@
          // answer below. The error is only reported when nothing else can.
          let mut lookup_err: Option<io::Error> = None;
          let pipeline_set = if want.is_empty() {
 +            None
 +        } else if let Some(kind) = self.unavailable_error {
 +            lookup_err = Some(io::Error::new(kind, "DNS unavailable: no captured network"));
++            for family in [QueryFamilies::IPV4, QueryFamilies::IPV6] { if want.contains(family) {
++                self.observe_family(lookup_host, family, None, None, "", "DNS unavailable: no captured network", "", false,
++                    std::time::Instant::now(), std::time::SystemTime::now(), meow_common::observations::DnsInitiator::current());
++            } }
              None
          } else {
              match self.run_pipeline(lookup_host, want).await {
-@@ -1709,7 +1843,7 @@
+@@ -1462,6 +1665,7 @@
+         } else {
+             &cached.v6
+         };
++        self.observe_cached(host, family, hit, if family == QueryFamilies::IPV4 { cached.source_v4.as_deref() } else { cached.source_v6.as_deref() }, if family==QueryFamilies::IPV4 { cached.observed_v4.as_ref() } else { cached.observed_v6.as_ref() });
+         match hit {
+             FamilyCacheHit::Answer(ips, ttl) => Some(AddressLookupResult::Answer(ips[0], *ttl)),
+             FamilyCacheHit::NoData => Some(AddressLookupResult::NoData),
+@@ -1492,6 +1696,7 @@
+             } else {
+                 &cached.v6
+             };
++            self.observe_cached(host, family, hit, if family == QueryFamilies::IPV4 { cached.source_v4.as_deref() } else { cached.source_v6.as_deref() }, if family==QueryFamilies::IPV4 { cached.observed_v4.as_ref() } else { cached.observed_v6.as_ref() });
+             match hit {
+                 FamilyCacheHit::Answer(ips, ttl) => {
+                     return AddressLookupResult::Answer(ips[0], *ttl);
+@@ -1666,7 +1871,21 @@
+                 key: guard_key,
+                 _armed: (),
+             };
++            // This completion belongs to the flight leader. Subscribers return above.
++            // Capture provenance here; upstream child tasks/retries do not emit events.
++            let started = std::time::Instant::now();
++            let time = std::time::SystemTime::now();
++            let initiator = meow_common::observations::DnsInitiator::current();
+             let (set, err) = self.pipeline_inner(host, want).await;
++            let error = err.as_ref().map(ToString::to_string).unwrap_or_default();
++            let failure_rcode = match err.as_ref() { Some(ClientError::Rcode(code)) => format!("{code:?}").to_uppercase(), _ => String::new() };
++            for family in [QueryFamilies::IPV4, QueryFamilies::IPV6] {
++                if !want.contains(family) { continue; }
++                let answer = set.as_ref().and_then(|set| if family == QueryFamilies::IPV4 { set.v4.as_ref() } else { set.v6.as_ref() });
++                let observed=set.as_ref().and_then(|set|if family==QueryFamilies::IPV4 { set.observed_v4.as_ref() } else { set.observed_v6.as_ref() });
++                self.observe_family(host, family, answer, observed, set.as_ref().map_or("", |set| set.source.as_str()),
++                    &error, &failure_rcode, false, started, time, initiator);
++            }
+             // Only the publisher writes to the cache — including a partial
+             // set observed alongside a failure, which a subscriber's cache
+             // re-read can still pick up.
+@@ -1709,7 +1928,7 @@
          if let Some(policy) = &self.policy {
              if let Some(entry) = policy.lookup(host) {
                  conn_note!(Dns, "nameserver-policy matched {host}");
@@ -4603,7 +5634,7 @@
                  upstream_err = prefer_errno(upstream_err, err);
                  if let Some(set) = set {
                      if set.has_positive() {
-@@ -1738,7 +1872,7 @@
+@@ -1738,7 +1957,7 @@
  
          // Global nameservers (parallel, first-positive / first-definitive-negative).
          {
@@ -4612,7 +5643,7 @@
              upstream_err = prefer_errno(upstream_err, err);
              if let Some(set) = set {
                  if set.has_positive() {
-@@ -1784,7 +1918,7 @@
+@@ -1784,7 +2003,7 @@
          want: QueryFamilies,
      ) -> (Option<FamilySet>, Option<ClientError>) {
          match self.fallback.as_deref() {
@@ -4621,12 +5652,73 @@
              None => (None, None),
          }
      }
-@@ -1861,25 +1995,26 @@
+@@ -1808,33 +2027,36 @@
+             let Some(answer) = answer else { continue };
+             match answer {
+                 FamilyAnswer::Answer { ips, ttl } => {
+-                    self.cache.merge_family(
++                    self.cache.merge_family_observed(
+                         host,
+                         family,
+                         ips,
+                         *ttl,
+                         Some(&set.source),
+                         FamilyNeg::None,
++                        (if family == QueryFamilies::IPV4 { set.observed_v4.clone() } else { set.observed_v6.clone() }).filter(|value|value.matches_cache(FamilyNeg::None)),
+                     );
+                 }
+                 FamilyAnswer::NoData(ttl) => {
+-                    self.cache.merge_family(
++                    self.cache.merge_family_observed(
+                         host,
+                         family,
+                         &[],
+                         *ttl,
+                         Some(&set.source),
+                         FamilyNeg::NoData,
++                        (if family == QueryFamilies::IPV4 { set.observed_v4.clone() } else { set.observed_v6.clone() }).filter(|value|value.matches_cache(FamilyNeg::NoData)),
+                     );
+                 }
+                 FamilyAnswer::NxDomain(ttl) => {
+-                    self.cache.merge_family(
++                    self.cache.merge_family_observed(
+                         host,
+                         family,
+                         &[],
+                         *ttl,
+                         Some(&set.source),
+                         FamilyNeg::NxDomain,
++                        (if family == QueryFamilies::IPV4 { set.observed_v4.clone() } else { set.observed_v6.clone() }).filter(|value|value.matches_cache(FamilyNeg::NxDomain)),
+                     );
+                 }
+                 FamilyAnswer::Failed => {}
+@@ -1861,34 +2083,56 @@
          domain: &str,
          query_name: &Name,
          record_type: RecordType,
 -    ) -> Option<Message> {
 +    ) -> io::Result<Option<Message>> {
++        let started = std::time::Instant::now();
++        let time = std::time::SystemTime::now();
++        let initiator = meow_common::observations::DnsInitiator::current();
++        let result = self.forward_generic_observed_inner(domain, query_name, record_type).await;
++        if let Some(feed) = self.observations.read().clone() {
++            feed.publish("dns", || {
++                let (upstream, answers, rcode, error) = match &result {
++                    Ok(Some((message, source))) => (source.as_str(), message.answers.iter().map(crate::client::dns_answer_value).collect::<Vec<_>>(),
++                        format!("{:?}", message.metadata.response_code).to_uppercase(), String::new()),
++                    Ok(None) => ("", Vec::new(), String::new(), "DNS upstream returned no message".into()),
++                    Err(error) => ("", Vec::new(), String::new(), error.to_string()),
++                };
++                serde_json::json!({"time":meow_common::observations::timestamp_at(time),"domain":domain.trim_end_matches('.'),"type":record_type.to_string(),"initiator":initiator.as_str(),
++                    "upstream":upstream,"cached":false,"answers":answers,"rcode":rcode,"error":error,
++                    "delay":u64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX as u64).min(i64::MAX as u64)})
++            });
++        }
++        result.map(|message| message.map(|(message, _)| message))
++    }
++    async fn forward_generic_observed_inner(&self, domain: &str, query_name: &Name, record_type: RecordType)
++        -> io::Result<Option<(Message, String)>> {
 +        if let Some(kind) = self.unavailable_error {
 +            return Err(io::Error::new(kind, "DNS unavailable: no captured network"));
 +        }
@@ -4658,16 +5750,18 @@
      }
  
      async fn try_fallback_generic(
-@@ -1888,7 +2023,7 @@
+         &self,
+         query_name: &Name,
          record_type: RecordType,
-     ) -> Option<Message> {
+-    ) -> Option<Message> {
++    ) -> Option<(Message, String)> {
          let fb = self.fallback.as_deref()?;
 -        query_pool_generic(fb, query_name, record_type).await
 +        query_pool_generic(fb, query_name, record_type, self.transport_scope.clone()).await
      }
  
      /// Capture the live reverse (IP → host) table with remaining lifetimes,
-@@ -2146,6 +2281,51 @@
+@@ -2146,6 +2390,51 @@
      use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
      use std::net::{Ipv4Addr, Ipv6Addr};
      use std::sync::atomic::{AtomicUsize, Ordering};
@@ -4719,7 +5813,7 @@
  
      async fn one_shot_a_upstream(
          response_code: ResponseCode,
-@@ -2296,6 +2476,22 @@
+@@ -2296,6 +2585,22 @@
              client.upstream_label(),
              "https://1.1.1.1/dns-query#cloudflare-dns.com"
          );
@@ -4742,7 +5836,7 @@
      }
  
      #[tokio::test]
-@@ -4037,3 +4233,143 @@
+@@ -4037,3 +4342,228 @@
          assert_eq!(resolver.resolve_ips("gone.example").await.unwrap(), None);
      }
  }
@@ -4886,9 +5980,121 @@
 +        assert!(owner.tasks.lock().unwrap().is_empty());
 +    }
 +}
++
++#[cfg(test)]
++mod observation_tests {
++    use super::*;
++    use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
++    use hickory_proto::{op::{MessageType, OpCode, ResponseCode}, rr::{RData, Record, rdata::{A,CNAME}}};
++    use meow_common::observations::{DnsInitiator, ObservationFeed};
++    fn feed() -> Arc<ObservationFeed> { ObservationFeed::new("00000000-0000-4000-8000-000000000002".into()) }
++    #[derive(Default)]
++    struct ObservationOwner { tasks:std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>> }
++    impl meow_common::transport_tasks::TransportTaskContext for ObservationOwner {
++        fn spawn(&self,work:Work)->io::Result<tokio::task::AbortHandle> {
++            let task=tokio::spawn(work);let abort=task.abort_handle();self.tasks.lock().unwrap().push(task);Ok(abort)
++        }
++    }
++    #[tokio::test]
++    async fn observations_dns_flight_leader_once_cache_each_caller_with_real_upstream() {
++        let socket=tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();let addr=socket.local_addr().unwrap();
++        let (seen_tx,seen_rx)=tokio::sync::oneshot::channel();let release=Arc::new(tokio::sync::Notify::new());let released=release.clone();
++        let server=tokio::spawn(async move {
++            let mut buf=[0u8;512];let (n,peer)=socket.recv_from(&mut buf).await.unwrap();let query=Message::from_bytes(&buf[..n]).unwrap();
++            seen_tx.send(()).unwrap();released.notified().await;
++            let mut answer=Message::new(query.metadata.id,MessageType::Response,OpCode::Query);
++            answer.metadata.response_code=ResponseCode::NoError;answer.add_query(query.queries[0].clone());
++            let target=Name::from_ascii("edge.test.").unwrap();
++            answer.add_answer(Record::from_rdata(query.queries[0].name.clone(),60,RData::CNAME(CNAME(target.clone()))));
++            answer.add_answer(Record::from_rdata(target,60,RData::A(A(Ipv4Addr::new(127,0,0,2)))));
++            socket.send_to(&answer.to_bytes().unwrap(),peer).await.unwrap();
++        });
++        let owner=Arc::new(ObservationOwner::default());
++        let resolver=Resolver::new(vec![addr],vec![],DnsMode::Normal,DomainTrie::new(),false,false).with_transport_scope(TransportScope::new(owner.clone()));
++        let feed=feed();resolver.set_observation_feed(feed.clone()).unwrap();let mut lease=feed.activate().unwrap();
++        let (a,b,())=tokio::join!(DnsInitiator::App.scope(resolver.resolve_ips("observed.test")),
++            DnsInitiator::Rule.scope(resolver.resolve_ips("observed.test")),async { seen_rx.await.unwrap();release.notify_one(); });
++        assert_eq!(a.unwrap(),b.unwrap());server.await.unwrap();
++        let window:serde_json::Value=serde_json::from_str(&lease.next_frame().await.unwrap()).unwrap();
++        let dns:Vec<_>=window["events"].as_array().unwrap().iter().filter(|event|event["kind"]=="dns").collect();
++        assert_eq!(dns.len(),1,"singleflight subscribers must not create extra DNS events");
++        assert_eq!(window["events"].as_array().unwrap().iter().filter(|event|event["kind"]=="request").count(),1,"one actual UDP socket Join despite two waiters");
++        let data=&dns[0]["data"];assert_eq!(data["cached"],false);assert_eq!(data["upstream"],addr.to_string());
++        assert_eq!(data["type"],"A");assert_eq!(data["rcode"],"NOERROR");assert_eq!(data["answers"],serde_json::json!(["edge.test","127.0.0.2"]));
++        DnsInitiator::Direct.scope(resolver.resolve_ips("observed.test")).await.unwrap();
++        DnsInitiator::Proxy.scope(resolver.resolve_ips("observed.test")).await.unwrap();
++        DnsInitiator::Rule.scope(resolver.lookup_ipv4("observed.test")).await.unwrap();
++        let mut request=Message::new(7,MessageType::Query,OpCode::Query);
++        request.add_query(hickory_proto::op::Query::query(Name::from_ascii("observed.test").unwrap(),RecordType::A));
++        assert!(matches!(crate::server::DnsServer::try_answer_local(&request.to_bytes().unwrap(),&resolver),crate::server::LocalAnswer::Answer(_)));
++        let window:serde_json::Value=serde_json::from_str(&lease.next_frame().await.unwrap()).unwrap();let events=window["events"].as_array().unwrap();
++        assert_eq!(events.len(),4);assert_eq!(events[0]["data"]["initiator"],"Direct");assert_eq!(events[1]["data"]["initiator"],"Proxy");
++        assert_eq!(events[2]["data"]["initiator"],"Rule");assert_eq!(events[3]["data"]["initiator"],"App");
++        assert!(events.iter().all(|event|event["data"]["cached"]==true && event["data"]["upstream"]==addr.to_string()));
++        assert!(events.iter().all(|event|event["data"]["answers"]==serde_json::json!(["edge.test","127.0.0.2"])));
++        let tasks=std::mem::take(&mut *owner.tasks.lock().unwrap());assert_eq!(tasks.len(),1,"singleflight owns one actual child work task");
++        for task in tasks { task.await.unwrap(); }
++    }
++    #[tokio::test]
++    async fn observations_dns_hosts_fakeip_are_not_queries_and_failure_is_real() {
++        let feed=feed();let mut lease=feed.activate().unwrap();let mut hosts=DomainTrie::new();
++        hosts.insert("local.test",HostEntry::Addresses(vec!["127.0.0.1".parse().unwrap()]));
++        let resolver=Resolver::new(vec![],vec![],DnsMode::Normal,hosts,true,false).unavailable(io::ErrorKind::NotConnected);
++        resolver.set_observation_feed(feed.clone()).unwrap();assert!(resolver.resolve_ips("local.test").await.unwrap().is_some());
++        let mut fake=Resolver::new(vec![],vec![],DnsMode::FakeIp,DomainTrie::new(),false,false);
++        fake.set_fakeip_v4(Arc::new(Pool::new("198.18.0.0/16".parse().unwrap(),Arc::new(crate::fakeip::MemoryStore::new(1024))).unwrap()));
++        fake.set_observation_feed(feed.clone()).unwrap();assert!(fake.lookup_ipv4("fake.test").await.is_some());
++        assert_eq!(resolver.resolve_ips("missing.test").await.unwrap_err().kind(),io::ErrorKind::NotConnected);
++        let frame:serde_json::Value=serde_json::from_str(&lease.next_frame().await.unwrap()).unwrap();let events=frame["events"].as_array().unwrap();
++        assert_eq!(events.len(),1,"hosts/fake-IP synthesis must not masquerade as a resolver exchange");
++        assert_eq!(events[0]["data"]["domain"],"missing.test");assert_eq!(events[0]["data"]["cached"],false);
++        assert_eq!(events[0]["data"]["initiator"],"Other");assert!(!events[0]["data"]["error"].as_str().unwrap().is_empty());
++    }
++}
++
++#[cfg(test)]
++mod observation_owner_tests {
++    use super::*;
++    #[test]
++    fn observations_resolver_binding_cannot_reparent_an_old_generation() {
++        let resolver=Resolver::new(vec![],vec![],DnsMode::Normal,DomainTrie::new(),false,false);
++        let first=meow_common::observations::ObservationFeed::new("00000000-0000-4000-8000-000000000005".into());
++        let next=meow_common::observations::ObservationFeed::new("00000000-0000-4000-8000-000000000006".into());
++        resolver.set_observation_feed(first.clone()).unwrap();resolver.set_observation_feed(first.clone()).unwrap();
++        assert_eq!(resolver.set_observation_feed(next).unwrap_err().kind(),io::ErrorKind::AlreadyExists);
++        assert!(Arc::ptr_eq(resolver.observations.read().as_ref().unwrap(),&first));
++    }
++}
 --- a/crates/meow-dns/src/server.rs
 +++ b/crates/meow-dns/src/server.rs
-@@ -488,7 +488,7 @@
+@@ -111,10 +111,12 @@
+         self.bind().await?.run().await
+     }
+ 
+-    pub async fn handle_query(
+-        data: &[u8],
+-        resolver: &Resolver,
+-    ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
++    pub async fn handle_query(data: &[u8], resolver: &Resolver)
++        -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
++        meow_common::observations::DnsInitiator::App.scope(Self::handle_query_inner(data, resolver)).await
++    }
++    async fn handle_query_inner(data: &[u8], resolver: &Resolver)
++        -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+         // Minimal DNS parsing: extract the query name and type
+         if data.len() < 12 {
+             return Err("DNS packet too short".into());
+@@ -274,6 +276,9 @@
+     /// `pub` for the TUN dns-hijack path (`meow-listener`), which answers
+     /// locally-decidable queries inline instead of spending a task spawn.
+     pub fn try_answer_local(data: &[u8], resolver: &Resolver) -> LocalAnswer {
++        meow_common::observations::DnsInitiator::App.in_scope(|| Self::try_answer_local_inner(data, resolver))
++    }
++    fn try_answer_local_inner(data: &[u8], resolver: &Resolver) -> LocalAnswer {
+         if data.len() < 12 {
+             return LocalAnswer::Drop; // handle_query errs — silently dropped
+         }
+@@ -488,7 +493,7 @@
              .await;
  
          let mut resp = match lookup {
@@ -4897,7 +6103,7 @@
                  l.metadata.id = id;
                  // `validate_response` already guarantees this — pinned
                  // anyway since the field drives what we emit.
-@@ -550,7 +550,7 @@
+@@ -550,7 +555,7 @@
                  }
                  l
              }
@@ -4906,7 +6112,7 @@
                  let mut resp = Message::new(id, MessageType::Response, req.metadata.op_code);
                  resp.metadata.recursion_desired = req.metadata.recursion_desired;
                  resp.metadata.checking_disabled = req.metadata.checking_disabled;
-@@ -1025,23 +1025,20 @@
+@@ -1025,23 +1030,20 @@
              let data = buf[..len].to_vec();
              let resolver_slot = Arc::clone(&resolver);
              let sock: Weak<UdpSocket> = Arc::downgrade(&socket);
@@ -4936,7 +6142,7 @@
                              return;
                          };
                          if let Err(e) = sock.send_to(&response, src).await {
-@@ -1056,6 +1053,9 @@
+@@ -1056,6 +1058,9 @@
                      }
                  }
              });
@@ -5059,6 +6265,17 @@
 +        self.tracker.wait().await;
 +    }
 +}
+--- a/crates/meow-listener/src/shadowsocks.rs
++++ b/crates/meow-listener/src/shadowsocks.rs
+@@ -1160,7 +1160,7 @@
+             metadata.remote_address(),
+             proxy.name()
+         );
+-        match inner.dial_udp(proxy.as_ref(), &metadata).await {
++        match inner.dial_udp_with_rule(proxy.as_ref(), &metadata, rule_name.clone(), rule_payload.clone()).await {
+             Ok(conn) => Arc::from(conn),
+             Err(e) => {
+                 debug!(
 --- a/crates/meow-listener/src/socks5_udp.rs
 +++ b/crates/meow-listener/src/socks5_udp.rs
 @@ -406,7 +406,7 @@
@@ -5070,6 +6287,15 @@
          Arc::clone(inner),
          Arc::clone(relay),
          metadata,
+@@ -521,7 +521,7 @@
+ 
+         let conn: Arc<dyn meow_common::ProxyPacketConn> = Arc::from(
+             inner
+-                .dial_udp(proxy.as_ref(), &metadata)
++                .dial_udp_with_rule(proxy.as_ref(), &metadata, rule_name.clone(), rule_payload.clone())
+                 .await
+                 .map_err(|e| format!("dial_udp via {}: {e}", proxy.name()))?,
+         );
 @@ -550,7 +550,7 @@
              self.0.abort();
          }
@@ -5094,6 +6320,28 @@
  }
  
  #[cfg(test)]
+--- a/crates/meow-listener/src/tproxy/udp.rs
++++ b/crates/meow-listener/src/tproxy/udp.rs
+@@ -159,7 +159,7 @@
+         let mut flush = inner.udp_flush_watch();
+         let conn: Arc<dyn meow_common::ProxyPacketConn> = Arc::from(
+             inner
+-                .dial_udp(proxy.as_ref(), &metadata)
++                .dial_udp_with_rule(proxy.as_ref(), &metadata, rule_name.clone(), rule_payload.clone())
+                 .await
+                 .map_err(|e| format!("dial_udp via {}: {e}", proxy.name()))?,
+         );
+--- a/crates/meow-listener/src/tun/udp.rs
++++ b/crates/meow-listener/src/tun/udp.rs
+@@ -383,7 +383,7 @@
+     let mut flush = inner.udp_flush_watch();
+     let conn: std::sync::Arc<dyn meow_common::ProxyPacketConn> = std::sync::Arc::from(
+         inner
+-            .dial_udp(proxy.as_ref(), &metadata)
++            .dial_udp_with_rule(proxy.as_ref(), &metadata, rule_name.clone(), rule_payload.clone())
+             .await
+             .map_err(|e| format!("dial_udp via {}: {e}", proxy.name()))?,
+     );
 --- a/crates/meow-lwip/rust/core.rs
 +++ b/crates/meow-lwip/rust/core.rs
 @@ -459,6 +459,15 @@
@@ -5444,16 +6692,18 @@
      pub fn new() -> Self {
          Self {
              adapter_type: AdapterType::Direct,
-@@ -117,7 +124,8 @@
+@@ -117,8 +124,9 @@
          //    standalone usage).
          if !metadata.host.is_empty() {
              if let Some(resolver) = &self.resolver {
 -                let resolver = Arc::clone(&resolver.read());
+-                return match resolver.resolve_ips(&metadata.host).await {
 +                let resolver = RESOLVER_SNAPSHOT.try_with(Arc::clone)
 +                    .unwrap_or_else(|_| Arc::clone(&resolver.read()));
-                 return match resolver.resolve_ips(&metadata.host).await {
++                return match meow_common::observations::DnsInitiator::Direct.scope(resolver.resolve_ips(&metadata.host)).await {
                      Ok(Some(ips)) if !ips.is_empty() => Ok(ips
                          .into_iter()
+                         .map(|ip| SocketAddr::new(ip, metadata.dst_port))
 @@ -333,6 +341,25 @@
      }
  
@@ -8659,7 +9909,14 @@
  use serde::Serialize;
  use smallvec::SmallVec;
  use smol_str::SmolStr;
-@@ -73,6 +73,9 @@
+@@ -69,10 +69,16 @@
+ /// (ADR-0008 §3 scopes the zero-alloc rule to per-iteration counts).
+ #[derive(Debug, Default)]
+ pub struct ConnCounters {
++    observation_id: Option<Arc<str>>,
++    observation_joined: AtomicBool,
++    udp: AtomicBool,
+     pub upload: AtomicI,
      pub download: AtomicI,
      // Stored in the existing Arc so cancellation adds no setup allocation.
      closed: AtomicBool,
@@ -8669,7 +9926,7 @@
      close_notify: tokio::sync::Notify,
      /// The connection's notes when the tunnel records them (see
      /// `Tunnel::set_connection_notes`). Kept here, not on `ConnectionInfo`,
-@@ -80,10 +83,13 @@
+@@ -80,10 +86,14 @@
      /// `GET /connections/{id}` serializes them.
      notes: Option<ConnNotes>,
      /// The leaf proxy's totals (`chains[0]`), bumped alongside these.
@@ -8678,13 +9935,14 @@
  }
  
  impl ConnCounters {
++    pub(crate) fn mark_udp(&self) { self.udp.store(true, Ordering::Relaxed); }
 +    /// Capture the flow classification before the first relayed byte. Never a view toggle.
 +    pub fn set_direct(&self, direct: bool) { self.direct.store(direct, Ordering::Relaxed); self.unclassified.store(false, Ordering::Release); }
 +    pub fn is_direct(&self) -> bool { self.direct.load(Ordering::Relaxed) }
      fn close(&self) {
          self.closed.store(true, Ordering::Release);
          self.close_notify.notify_waiters();
-@@ -165,6 +171,10 @@
+@@ -165,6 +175,10 @@
      download_rate: Int,
      upload_total: Int,
      download_total: Int,
@@ -8695,7 +9953,11 @@
  }
  
  pub struct Statistics {
-@@ -176,6 +186,9 @@
+@@ -173,9 +187,13 @@
+     /// sampler derives per-interval rates as deltas of consecutive
+     /// observations and never writes these counters, so no relay increment
+     /// can land on the wrong side of a `swap(0)`-style reset (issue #357).
++    observations: Arc<meow_common::observations::ObservationFeed>,
      upload_total: AtomicI,
      download_total: AtomicI,
      traffic: Mutex<TrafficSnapshot>,
@@ -8705,7 +9967,11 @@
      /// Keyed by `Uuid` (16 B Copy) — formerly `String`, which heap-allocated a
      /// 36-byte hyphenated representation per insert.  REST handlers parse the
      /// query path back into a `Uuid` at lookup time.
-@@ -245,6 +258,9 @@
+@@ -242,9 +260,13 @@
+ impl Statistics {
+     pub fn new() -> Self {
+         Self {
++            observations: meow_common::observations::ObservationFeed::new(Uuid::new_v4().to_string()),
              upload_total: AtomicI::new(0),
              download_total: AtomicI::new(0),
              traffic: Mutex::new(TrafficSnapshot::default()),
@@ -8715,11 +9981,39 @@
              connections: DashMap::new(),
              headless_connections: OnceLock::new(),
              recently_closed: Mutex::new(VecDeque::new()),
-@@ -267,18 +283,23 @@
+@@ -253,6 +275,26 @@
+         }
+     }
+ 
++    pub fn observation_feed(&self) -> &Arc<meow_common::observations::ObservationFeed> { &self.observations }
++
++    fn observe_join(&self, info: &ConnectionInfo) {
++        if info.counters.observation_joined.swap(true, Ordering::AcqRel) { return; }
++        self.observations.publish("request", || serde_json::json!({
++            "id":info.id, "start":info.start, "metadata":info.metadata, "chains":info.chains,
++            "rule":info.rule, "rulePayload":info.rule_payload,
++            "upload":info.counters.upload_bytes().max(0).to_string(),
++            "download":info.counters.download_bytes().max(0).to_string(),
++        }));
++    }
++    fn observe_traffic(&self, counters: &ConnCounters) {
++        if !counters.observation_joined.load(Ordering::Acquire) || counters.closed.load(Ordering::Acquire) { return; }
++        if let Some(id) = &counters.observation_id {
++            self.observations.record_traffic_with(Arc::clone(id),|| {
++                if counters.closed.load(Ordering::Acquire) { return None; }
++                Some((counters.upload.load(Ordering::Acquire).max(0) as u64,counters.download.load(Ordering::Acquire).max(0) as u64))
++            });
++        }
++    }
+     pub fn add_upload(&self, n: Int) {
+         self.upload_total.fetch_add(n, Ordering::Relaxed);
+     }
+@@ -267,18 +309,25 @@
      /// [`Self::connection_counters`] (or `ConnectionGuard::counters`).
      pub fn record_upload(&self, counters: &ConnCounters, n: Int) {
          counters.upload.fetch_add(n, Ordering::Relaxed);
 -        self.record_packet_upload(counters.proxy.as_deref(), n);
++        self.observe_traffic(counters);
 +        if !counters.unclassified.load(Ordering::Acquire) { self.record_packet_upload_classified(counters.proxy.read().as_deref(), n, counters.is_direct()); }
      }
  
@@ -8727,6 +10021,7 @@
      pub fn record_download(&self, counters: &ConnCounters, n: Int) {
          counters.download.fetch_add(n, Ordering::Relaxed);
 -        self.record_packet_download(counters.proxy.as_deref(), n);
++        self.observe_traffic(counters);
 +        if !counters.unclassified.load(Ordering::Acquire) { self.record_packet_download_classified(counters.proxy.read().as_deref(), n, counters.is_direct()); }
      }
  
@@ -8741,7 +10036,7 @@
          if let Some(proxy) = proxy {
              proxy.add_upload(n);
          }
-@@ -287,6 +308,11 @@
+@@ -287,6 +336,11 @@
  
      /// See [`Self::record_packet_upload`].
      pub fn record_packet_download(&self, proxy: Option<&ProxyTraffic>, n: Int) {
@@ -8753,7 +10048,7 @@
          if let Some(proxy) = proxy {
              proxy.add_download(n);
          }
-@@ -348,19 +374,38 @@
+@@ -348,19 +402,38 @@
          snap.download_rate = download - snap.download_total;
          snap.upload_total = upload;
          snap.download_total = download;
@@ -8799,9 +10094,24 @@
      }
  
      pub fn track_connection(
-@@ -385,7 +430,8 @@
+@@ -370,8 +443,9 @@
+         rule_payload: SmolStr,
+         chains: SmallVec<[Arc<str>; 1]>,
+     ) -> Uuid {
+-        self.track_connection_with_counters(metadata, rule, rule_payload, chains, None)
+-            .0
++        let (id, _) = self.track_connection_with_counters(metadata, rule, rule_payload, chains, None);
++        if let Some(info) = self.connections.get(&id) { self.observe_join(&info); }
++        id
+     }
+ 
+     pub(crate) fn track_connection_with_counters(
+@@ -384,8 +458,11 @@
+     ) -> (Uuid, Arc<ConnCounters>) {
          let uuid = Uuid::new_v4();
          let counters = Arc::new(ConnCounters {
++            observation_id: Some(Arc::from(uuid.to_string())),
++            udp: AtomicBool::new(metadata.network == meow_common::Network::Udp),
              notes,
 -            proxy: chains.first().and_then(|leaf| self.proxy_counters(leaf)),
 +            proxy: RwLock::new(chains.first().and_then(|leaf| self.proxy_counters(leaf))),
@@ -8809,11 +10119,10 @@
              ..ConnCounters::default()
          });
          let info = ConnectionInfo {
-@@ -400,6 +446,18 @@
-         self.connections.insert(uuid, info);
+@@ -401,6 +478,21 @@
          (uuid, counters)
      }
-+
+ 
 +    /// Commit one actual successful dial before any relay/prefix accounting.
 +    pub fn complete_dial(&self, counters: &ConnCounters, id: Option<Uuid>, outcome: &meow_common::dial_outcome::DialOutcome) -> bool {
 +        if counters.dial_complete.compare_exchange(false,true,Ordering::AcqRel,Ordering::Acquire).is_err() { return false; }
@@ -8821,13 +10130,217 @@
 +        counters.direct.store(outcome.traffic_class()==TrafficClass::Direct,Ordering::Relaxed);
 +        *counters.proxy.write() = outcome.chains.first().and_then(|leaf| self.proxy_counters(leaf));
 +        counters.unclassified.store(outcome.traffic_class()==TrafficClass::Uncounted,Ordering::Release);
-+        if let Some(id)=id { if let Some(mut info)=self.connections.get_mut(&id) { info.chains=outcome.chains.iter().cloned().collect(); } }
++        if let Some(id)=id { if let Some(mut info)=self.connections.get_mut(&id) {
++            info.chains=outcome.chains.iter().cloned().collect();
++            self.observe_join(&info);
++        } }
 +        true
 +    }
 +    pub fn pending_dial(&self, counters: &ConnCounters) { counters.unclassified.store(true,Ordering::Release); }
- 
++
      /// Select the lighter connection registry before listeners start. The
      /// default remains full tracking for embedders and API consumers.
+     pub fn set_headless(&self) {
+@@ -449,6 +541,12 @@
+     /// connection task, so a close reason noted after removal (an API
+     /// close, a reload) still shows up.
+     fn remember_closed(&self, info: ConnectionInfo) {
++        if info.counters.observation_joined.load(Ordering::Acquire) {
++            if let Some(id)=&info.counters.observation_id {
++                self.observations.close_request(id, || serde_json::json!({"id":info.id,"end":chrono_now(),
++                    "upload":info.counters.upload_bytes().max(0).to_string(), "download":info.counters.download_bytes().max(0).to_string()}));
++            }
++        }
+         if info.counters.notes.is_none() {
+             return;
+         }
+@@ -538,8 +636,9 @@
+         self.close_all_connections_counted();
+     }
+ 
+-    /// Request closure of all tracked TCP connections and remove their entries.
+-    /// Returns the number of closure requests, not completed socket teardowns.
++    /// Close all registered flows; return TCP requests for the existing reload
++    /// report. UDP is counted separately by the existing listener flush owner.
++    /// The count is closure requests, not completed socket teardowns.
+     pub fn close_all_connections_counted(&self) -> usize {
+         let mut closed = 0;
+         // Signal and remove under the same shard lock. A separate iteration
+@@ -547,8 +646,8 @@
+         let mut noted = Vec::new();
+         self.connections.retain(|_, info| {
+             info.counters.close();
+-            closed += 1;
+-            if info.counters.notes.is_some() {
++            closed += usize::from(!info.counters.udp.load(Ordering::Relaxed));
++            if info.counters.notes.is_some() || info.counters.observation_joined.load(Ordering::Acquire) {
+                 noted.push(info.clone());
+             }
+             false
+@@ -559,7 +658,7 @@
+         if let Some(connections) = self.headless_connections.get() {
+             connections.retain(|_, counters| {
+                 counters.close();
+-                closed += 1;
++                closed += usize::from(!counters.udp.load(Ordering::Relaxed));
+                 false
+             });
+         }
+@@ -644,3 +743,154 @@
+         Ok(())
+     }
+ }
++
++impl Drop for Statistics { fn drop(&mut self) { self.observations.stop(); } }
++
++#[cfg(test)]
++mod observation_tests {
++    use super::*;
++    use meow_common::{AdapterType, Network};
++    use meow_common::dial_outcome::DialOutcome;
++    #[tokio::test]
++    async fn observations_request_actual_dial_once_traffic_and_close_without_notes() {
++        let stats=Statistics::new();let mut lease=stats.observation_feed().activate().unwrap();
++        let (failed,failed_counters)=stats.track_connection_with_counters(Metadata::default(),"MATCH".into(),"".into(),SmallVec::new(),None);
++        stats.pending_dial(&failed_counters);stats.close_connection(failed);
++        let (id,counters)=stats.track_connection_with_counters(Metadata { network:Network::Tcp,..Default::default() },"DOMAIN".into(),"a.test".into(),SmallVec::new(),None);
++        stats.pending_dial(&counters);
++        let outcome=DialOutcome { leaf_type:AdapterType::Direct,chains:vec![Arc::from("DIRECT")] };
++        assert!(stats.complete_dial(&counters,Some(id),&outcome));assert!(!stats.complete_dial(&counters,Some(id),&outcome));
++        stats.record_upload(&counters,7);stats.record_download(&counters,11);stats.close_connection(id);stats.close_connection(id);
++        let frame:serde_json::Value=serde_json::from_str(&lease.next_frame().await.unwrap()).unwrap();let events=frame["events"].as_array().unwrap();
++        assert_eq!(events.iter().filter(|event|event["kind"]=="request").count(),1);
++        assert_eq!(events.iter().filter(|event|event["kind"]=="requestClosed").count(),1);
++        assert_eq!(events[0]["data"]["chains"],serde_json::json!(["DIRECT"]));assert_eq!(events[0]["data"]["metadata"]["network"],"tcp");
++        assert_eq!(events.last().unwrap()["data"]["upload"],"7");assert_eq!(events.last().unwrap()["data"]["download"],"11");
++        assert_eq!(stats.snapshot(),(7,11));assert!(stats.recently_closed().is_empty(),"observation must not depend on optional notes");
++    }
++    #[tokio::test]
++    async fn observations_feed_follows_resolver_swap_and_stats_drop_cancels() {
++        let resolver=||Arc::new(meow_dns::Resolver::new(vec![],vec![],meow_common::DnsMode::Normal,meow_trie::DomainTrie::new(),false,false).unavailable(std::io::ErrorKind::NotConnected));
++        let tunnel=crate::Tunnel::new(resolver());let feed=Arc::clone(tunnel.statistics().observation_feed());let mut lease=feed.activate().unwrap();
++        tunnel.resolver().resolve_ips("old.test").await.unwrap_err();tunnel.set_resolver(resolver());
++        tunnel.resolver().resolve_ips("new.test").await.unwrap_err();
++        let frame:serde_json::Value=serde_json::from_str(&lease.next_frame().await.unwrap()).unwrap();assert_eq!(frame["events"].as_array().unwrap().len(),2);
++        assert_eq!(frame["events"][0]["data"]["domain"],"old.test");assert_eq!(frame["events"][1]["data"]["domain"],"new.test");
++        drop(tunnel);assert_eq!(lease.next_frame().await.unwrap_err().kind(),std::io::ErrorKind::Interrupted);
++    }
++}
++
++#[cfg(test)]
++mod observation_network_tests {
++    use super::*;
++    use tokio::io::{AsyncReadExt,AsyncWriteExt};
++    fn tunnel() -> crate::Tunnel {
++        let tunnel=crate::Tunnel::new(Arc::new(meow_dns::Resolver::new(vec![],vec![],meow_common::DnsMode::Normal,meow_trie::DomainTrie::new(),false,false)));
++        let built=meow_config::rebuild_from_raw(&Default::default()).unwrap();tunnel.update_proxies(built.proxies,built.dialer_registry);
++        tunnel.update_rules(vec![Box::new(meow_rules::final_rule::FinalRule::new("DIRECT"))]);tunnel
++    }
++    #[tokio::test]
++    async fn observations_real_tcp_success_and_reject_have_standard_join_boundary() {
++        tokio::time::timeout(std::time::Duration::from_secs(5),async {
++            let tunnel=tunnel();let feed=Arc::clone(tunnel.statistics().observation_feed());let mut lease=feed.activate().unwrap();
++            let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let target=listener.local_addr().unwrap();
++            let peer=tokio::spawn(async move { let (mut stream,_)=listener.accept().await.unwrap();let mut bytes=[0u8;4];stream.read_exact(&mut bytes).await.unwrap();assert_eq!(&bytes,b"ping");stream.write_all(b"pong").await.unwrap();stream.shutdown().await.unwrap(); });
++            let (mut client,mut inbound)=tokio::io::duplex(128);let running=tunnel.clone();
++            let metadata=Metadata { dst_ip:Some(target.ip()),dst_port:target.port(),..Default::default() };
++            let relay=tokio::spawn(async move { crate::tcp::route_inbound_tcp(running.inner(),&mut inbound,metadata,&[]).await; });
++            client.write_all(b"ping").await.unwrap();client.shutdown().await.unwrap();let mut response=Vec::new();client.read_to_end(&mut response).await.unwrap();assert_eq!(&response,b"pong");peer.await.unwrap();relay.await.unwrap();
++            let frame:serde_json::Value=serde_json::from_str(&lease.next_frame().await.unwrap()).unwrap();let events=frame["events"].as_array().unwrap();
++            assert_eq!(events.iter().filter(|e|e["kind"]=="request").count(),1);assert_eq!(events.iter().filter(|e|e["kind"]=="requestClosed").count(),1);
++            let closed=events.iter().find(|e|e["kind"]=="requestClosed").unwrap();assert_eq!(closed["data"]["upload"],"4");assert_eq!(closed["data"]["download"],"4");
++            tunnel.update_rules(vec![Box::new(meow_rules::final_rule::FinalRule::new("REJECT"))]);
++            let (_client,mut inbound)=tokio::io::duplex(128);
++            crate::tcp::route_inbound_tcp(tunnel.inner(),&mut inbound,Metadata { dst_ip:Some(target.ip()),dst_port:target.port(),..Default::default() },&[]).await;
++            feed.publish("dns",||serde_json::json!({"marker":true}));
++            let frame:serde_json::Value=serde_json::from_str(&lease.next_frame().await.unwrap()).unwrap();assert_eq!(frame["events"].as_array().unwrap().len(),1,"rejected dial never joined a successful tracker");assert_eq!(frame["events"][0]["kind"],"dns");
++        }).await.expect("real TCP observation regression timed out");
++    }
++    #[tokio::test]
++    async fn observations_real_udp_success_bidirectional_close_and_api_cancel() {
++        tokio::time::timeout(std::time::Duration::from_secs(5),async {
++            let tunnel=tunnel();let mut lease=tunnel.statistics().observation_feed().activate().unwrap();
++            let peer=tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();let target=peer.local_addr().unwrap();
++            let metadata=Metadata { network:meow_common::Network::Udp,dst_ip:Some(target.ip()),dst_port:target.port(),..Default::default() };
++            let adapter=meow_proxy::DirectAdapter::new();
++            let conn=tunnel.inner().dial_udp_with_rule(&adapter,&metadata,"MATCH".into(),"".into()).await.unwrap();
++            assert_eq!(conn.write_packet(b"ping",&target).await.unwrap(),4);let mut buffer=[0u8;64];let (n,from)=peer.recv_from(&mut buffer).await.unwrap();assert_eq!(&buffer[..n],b"ping");peer.send_to(b"pong",from).await.unwrap();
++            assert_eq!(conn.read_packet(&mut buffer).await.unwrap().0,4);conn.close().unwrap();conn.close().unwrap();drop(conn);
++            assert!(tunnel.statistics().connections.is_empty());let frame:serde_json::Value=serde_json::from_str(&lease.next_frame().await.unwrap()).unwrap();let events=frame["events"].as_array().unwrap();
++            assert_eq!(events.iter().filter(|e|e["kind"]=="request").count(),1);assert_eq!(events.iter().filter(|e|e["kind"]=="requestClosed").count(),1);assert_eq!(events[0]["data"]["metadata"]["network"],"udp");
++            let close=events.iter().find(|e|e["kind"]=="requestClosed").unwrap();assert_eq!(close["data"]["upload"],"4");assert_eq!(close["data"]["download"],"4");assert_eq!(tunnel.statistics().snapshot(),(4,4));
++            let conn=tunnel.inner().dial_udp_with_rule(&adapter,&metadata,"MATCH".into(),"".into()).await.unwrap();
++            let id=*tunnel.statistics().connections.iter().next().unwrap().key();tunnel.statistics().close_connection(id);
++            assert!(matches!(conn.read_packet(&mut buffer).await,Err(meow_common::MeowError::Io(ref e)) if e.kind()==std::io::ErrorKind::Interrupted));drop(conn);
++            let frame:serde_json::Value=serde_json::from_str(&lease.next_frame().await.unwrap()).unwrap();let events=frame["events"].as_array().unwrap();assert_eq!(events.iter().filter(|e|e["kind"]=="requestClosed").count(),1);
++        }).await.expect("real UDP observation regression timed out");
++    }
++}
++
++#[cfg(test)]
++mod observation_bulk_close_tests {
++    use super::*;
++    #[tokio::test]
++    async fn observations_bulk_close_emits_without_notes_and_preserves_tcp_reload_count() {
++        let stats=Statistics::new();let mut lease=stats.observation_feed().activate().unwrap();
++        let outcome=meow_common::dial_outcome::DialOutcome { leaf_type:meow_common::AdapterType::Direct,chains:vec![Arc::from("DIRECT")] };
++        for network in [meow_common::Network::Tcp,meow_common::Network::Udp] {
++            let (id,counters)=stats.track_connection_with_counters(Metadata { network,..Default::default() },"MATCH".into(),"".into(),SmallVec::new(),None);
++            stats.complete_dial(&counters,Some(id),&outcome);
++        }
++        assert_eq!(stats.active_connection_count(),2);
++        assert_eq!(stats.close_all_connections_counted(),1,"UDP remains accounted by the existing separate flush report");assert!(stats.connections.is_empty());
++        assert_eq!(stats.close_all_connections_counted(),0);
++        let frame:serde_json::Value=serde_json::from_str(&lease.next_frame().await.unwrap()).unwrap();let events=frame["events"].as_array().unwrap();
++        assert_eq!(events.iter().filter(|event|event["kind"]=="request").count(),2);assert_eq!(events.iter().filter(|event|event["kind"]=="requestClosed").count(),2);
++    }
++}
++
++#[cfg(test)]
++mod observation_traffic_order_tests {
++    use super::*;
++    #[tokio::test]
++    async fn observations_current_counter_snapshot_and_closed_admission_share_feed_gate() {
++        let stats=Arc::new(Statistics::new());let feed=Arc::clone(stats.observation_feed());let mut lease=feed.activate().unwrap();
++        let (id,counters)=stats.track_connection_with_counters(Metadata::default(),"MATCH".into(),"".into(),SmallVec::new(),None);
++        let outcome=meow_common::dial_outcome::DialOutcome { leaf_type:meow_common::AdapterType::Direct,chains:vec![Arc::from("DIRECT")] };
++        stats.complete_dial(&counters,Some(id),&outcome);stats.record_upload(&counters,10);
++        let wire_id=Arc::clone(counters.observation_id.as_ref().unwrap());
++        let ready=Arc::new(std::sync::Barrier::new(2));let resume=Arc::new(std::sync::Barrier::new(2));
++        let late_feed=Arc::clone(&feed);let late_id=Arc::clone(&wire_id);let actual=Arc::clone(&counters);let prepared=Arc::clone(&ready);let released=Arc::clone(&resume);
++        let delayed_snapshot=std::thread::spawn(move|| {
++            assert_eq!((actual.upload_bytes(),actual.download_bytes()),(10,0));
++            prepared.wait();released.wait();
++            late_feed.record_traffic_with(late_id,|| {
++                if actual.closed.load(Ordering::Acquire) { return None; }
++                Some((actual.upload.load(Ordering::Acquire).max(0) as u64,actual.download.load(Ordering::Acquire).max(0) as u64))
++            });
++        });
++        ready.wait();stats.record_download(&counters,20);resume.wait();delayed_snapshot.join().unwrap();feed.flush_traffic();
++        let frame:serde_json::Value=serde_json::from_str(&lease.next_frame().await.unwrap()).unwrap();
++        let traffic=frame["events"].as_array().unwrap().iter().find(|event|event["kind"]=="requestTraffic").unwrap();
++        assert_eq!(traffic["data"]["upload"],"10");assert_eq!(traffic["data"]["download"],"20");
++        let ready=Arc::new(std::sync::Barrier::new(2));let resume=Arc::new(std::sync::Barrier::new(2));
++        let late_feed=Arc::clone(&feed);let actual=Arc::clone(&counters);let prepared=Arc::clone(&ready);let released=Arc::clone(&resume);
++        let checked=Arc::new(AtomicBool::new(false));let checked_late=Arc::clone(&checked);
++        let delayed_after_close=std::thread::spawn(move|| {
++            assert!(!actual.closed.load(Ordering::Acquire),"notify was prepared while the actual flow was still open");
++            prepared.wait();released.wait();
++            late_feed.record_traffic_with(wire_id,|| {
++                checked_late.store(true,Ordering::Release);
++                assert!(actual.closed.load(Ordering::Acquire),"admission must be checked again inside the shared feed gate");
++                None
++            });
++        });
++        ready.wait();stats.close_connection(id);resume.wait();delayed_after_close.join().unwrap();assert!(checked.load(Ordering::Acquire));
++        feed.flush_traffic();feed.publish("dns",||serde_json::json!({"after_close":true}));
++        let frame:serde_json::Value=serde_json::from_str(&lease.next_frame().await.unwrap()).unwrap();let events=frame["events"].as_array().unwrap();
++        assert_eq!(events.len(),2);assert_eq!(events[0]["kind"],"requestClosed");assert_eq!(events[1]["kind"],"dns");
++        assert_eq!(events[0]["data"]["upload"],"10");assert_eq!(events[0]["data"]["download"],"20");
++        assert!(!events.iter().any(|event|event["kind"]=="requestTraffic"),"no delayed traffic may appear after Closed");
++        assert_eq!(stats.snapshot(),(10,20),"notification fencing must not count aggregate bytes twice");
++    }
++}
 --- a/crates/meow-tunnel/src/tcp.rs
 +++ b/crates/meow-tunnel/src/tcp.rs
 @@ -98,6 +98,7 @@
@@ -8902,7 +10415,43 @@
      }
  
      /// Subscribe a UDP flow to [`Tunnel::close_all_udp_sessions`] (issue
-@@ -1159,6 +1162,16 @@
+@@ -423,7 +426,7 @@
+         if metadata.host.is_empty() || metadata.dst_ip.is_some() {
+             return;
+         }
+-        if let Some(real_ip) = self.resolver().resolve_ip_real(&metadata.host).await {
++        if let Some(real_ip) = meow_common::observations::DnsInitiator::Rule.scope(self.resolver().resolve_ip_real(&metadata.host)).await {
+             debug!("pre_resolve: {} -> {}", metadata.host, real_ip);
+             metadata.dst_ip = Some(real_ip);
+         }
+@@ -562,7 +565,7 @@
+                     // `needs_ip` already encodes the `pre_resolve` guards:
+                     // host present, dst_ip absent.
+                     let started = std::time::Instant::now();
+-                    if let Some(real_ip) = self.resolver().resolve_ip_real(&metadata.host).await {
++                    if let Some(real_ip) = meow_common::observations::DnsInitiator::Rule.scope(self.resolver().resolve_ip_real(&metadata.host)).await {
+                         debug!("lazy resolve: {} -> {}", metadata.host, real_ip);
+                         conn_note!(
+                             Rule,
+@@ -828,6 +831,8 @@
+     /// `inner.direct` observe `set_resolver` swaps identically.
+     pub fn new_with_slot(resolver: meow_dns::ResolverSlot) -> Self {
+         let direct = Arc::new(DirectAdapter::new().with_resolver_slot(Arc::clone(&resolver)));
++        let stats = Arc::new(Statistics::new());
++        resolver.read().set_observation_feed(Arc::clone(stats.observation_feed())).expect("new tunnel requires a resolver owned by its session");
+         Self {
+             inner: Arc::new(TunnelInner {
+                 mode: RwLock::new(TunnelMode::Rule),
+@@ -836,7 +841,7 @@
+                 direct,
+                 reject: Arc::new(meow_proxy::RejectAdapter::new(false)),
+                 nat_table: udp::new_nat_table(),
+-                stats: Arc::new(Statistics::new()),
++                stats,
+                 tcp_generation: RwLock::new(0),
+                 health_checks: Mutex::new(crate::health_check::HealthCheckSupervisor::default()),
+                 needs_ip_resolution: AtomicBool::new(false),
+@@ -1159,6 +1164,16 @@
          self.inner.resolver()
      }
  
@@ -8919,12 +10468,21 @@
      /// The shared resolver slot. Pass clones to `rebuild_from_raw_*` and
      /// the TUN loopback DNS so every consumer — including each rebuilt
      /// `DIRECT` adapter — tracks `set_resolver` swaps (issue #514).
+@@ -1190,6 +1205,7 @@
+     pub fn set_resolver(&self, resolver: Arc<Resolver>) {
+         // One write updates the routing snapshot, `inner.direct`, and every
+         // rebuilt `DIRECT` — they all share this slot.
++        resolver.set_observation_feed(Arc::clone(self.inner.stats.observation_feed())).expect("resolver publication requires the same observation session");
+         *self.inner.resolver.write() = resolver;
+     }
+ 
 --- a/crates/meow-tunnel/src/udp.rs
 +++ b/crates/meow-tunnel/src/udp.rs
 @@ -1,8 +1,10 @@
+-use crate::statistics::{ProxyTraffic, Statistics};
 +#[cfg(test)]
 +use meow_common::AdapterType;
- use crate::statistics::{ProxyTraffic, Statistics};
++use crate::statistics::Statistics;
  use crate::tunnel::{ResolvedTarget, TunnelInner};
  use dashmap::DashMap;
  use meow_common::atomic::{AtomicU, Int};
@@ -8933,32 +10491,63 @@
  use std::net::SocketAddr;
  use std::sync::atomic::Ordering;
  use std::sync::Arc;
-@@ -86,6 +88,7 @@
- /// read outside the crate (the mobile FFIs read `UdpSession::conn`). Costs
- /// each datagram one more boxed future (`async_trait`) than the bare conn.
+@@ -88,22 +90,30 @@
  struct CountedPacketConn {
-+    direct: bool,
      conn: Box<dyn ProxyPacketConn>,
      stats: Arc<Statistics>,
-     proxy: Option<Arc<ProxyTraffic>>,
-@@ -96,14 +99,14 @@
+-    proxy: Option<Arc<ProxyTraffic>>,
++    counters: Arc<crate::statistics::ConnCounters>,
++    id: Option<uuid::Uuid>,
++    closed: std::sync::atomic::AtomicBool,
+ }
+ 
+ #[async_trait::async_trait]
+ impl ProxyPacketConn for CountedPacketConn {
      async fn read_packet(&self, buf: &mut [u8]) -> meow_common::Result<(usize, SocketAddr)> {
-         let (n, from) = self.conn.read_packet(buf).await?;
-         self.stats
+-        let (n, from) = self.conn.read_packet(buf).await?;
+-        self.stats
 -            .record_packet_download(self.proxy.as_deref(), n as Int);
-+            .record_packet_download_classified(self.proxy.as_deref(), n as Int, self.direct);
++        let (n, from) = tokio::select! {
++            biased;
++            () = self.counters.closed() => { let _ = self.close(); return Err(meow_common::MeowError::Io(std::io::Error::new(std::io::ErrorKind::Interrupted,"UDP flow closed"))); }
++            result = self.conn.read_packet(buf) => result?,
++        };
++        self.stats.record_download(&self.counters, n as Int);
          Ok((n, from))
      }
  
      async fn write_packet(&self, buf: &[u8], addr: &SocketAddr) -> meow_common::Result<usize> {
-         let n = self.conn.write_packet(buf, addr).await?;
-         self.stats
+-        let n = self.conn.write_packet(buf, addr).await?;
+-        self.stats
 -            .record_packet_upload(self.proxy.as_deref(), n as Int);
-+            .record_packet_upload_classified(self.proxy.as_deref(), n as Int, self.direct);
++        let n = tokio::select! {
++            biased;
++            () = self.counters.closed() => { let _ = self.close(); return Err(meow_common::MeowError::Io(std::io::Error::new(std::io::ErrorKind::Interrupted,"UDP flow closed"))); }
++            result = self.conn.write_packet(buf, addr) => result?,
++        };
++        self.stats.record_upload(&self.counters, n as Int);
          Ok(n)
      }
  
-@@ -128,47 +131,19 @@
+@@ -112,8 +122,15 @@
+     }
+ 
+     fn close(&self) -> meow_common::Result<()> {
+-        self.conn.close()
+-    }
++        if self.closed.swap(true, Ordering::AcqRel) { return Ok(()); }
++        let result = self.conn.close();
++        if let Some(id) = self.id { self.stats.close_connection(id); }
++        else { self.stats.close_headless_connection(&self.counters); }
++        result
++    }
++}
++impl Drop for CountedPacketConn {
++    fn drop(&mut self) { let _ = self.close(); }
+ }
+ 
+ impl TunnelInner {
+@@ -128,47 +145,30 @@
          proxy: &dyn ProxyAdapter,
          metadata: &Metadata,
      ) -> meow_common::Result<Box<dyn ProxyPacketConn>> {
@@ -8966,19 +10555,30 @@
 -        let conn = with_dial_timeout(proxy.name(), proxy.dial_udp(metadata)).await?;
 -        let Some(leaf) = counted else {
 -            return Ok(conn);
--        };
++        self.dial_udp_with_rule(proxy, metadata, smol_str::SmolStr::default(), smol_str::SmolStr::default()).await
++    }
++    /// The caller passes the rule from its one existing route decision; never re-routes.
++    pub async fn dial_udp_with_rule(&self, proxy: &dyn ProxyAdapter, metadata: &Metadata,
++        rule: smol_str::SmolStr, rule_payload: smol_str::SmolStr) -> meow_common::Result<Box<dyn ProxyPacketConn>> {
 +        let (dial_metadata, receipt) = meow_common::dial_outcome::DialReceipt::branch(metadata);
 +        let conn = with_dial_timeout(proxy.name(), proxy.dial_udp_observed(&dial_metadata)).await?;
 +        let outcome=receipt.outcome().ok_or_else(||meow_common::MeowError::Proxy("UDP dial omitted outcome".into()))?;
 +        use meow_common::dial_outcome::TrafficClass;
 +        if outcome.traffic_class()==TrafficClass::Uncounted { return Ok(conn); }
-+        let direct=outcome.traffic_class()==TrafficClass::Direct;
-+        let leaf=outcome.chains.first().and_then(|name|self.stats.proxy_counters(name));
++        // As Standard NewUDPTracker, Join follows actual association success.
++        let (id, counters) = if let Some(counters) = self.stats.begin_headless_connection() { (None, counters) }
++        else {
++            let (id, counters) = self.stats.track_connection_with_counters(metadata.pure(), rule, rule_payload,
++                outcome.chains.iter().cloned().collect(), meow_common::conn_notes::ConnNotes::current());
++            (Some(id), counters)
+         };
++        counters.mark_udp();
++        self.stats.complete_dial(&counters, id, &outcome);
          Ok(Box::new(CountedPacketConn {
-+            direct,
              conn,
              stats: Arc::clone(&self.stats),
-             proxy: leaf,
+-            proxy: leaf,
++            counters, id, closed: std::sync::atomic::AtomicBool::new(false),
          }))
 -    }
 -}
@@ -9014,3 +10614,12 @@
      }
  }
  
+@@ -363,7 +363,7 @@
+     // Bounded like mihomo's `C.DefaultUDPTimeout`. An unbounded dial here is
+     // worse than on TCP: the key is still unclaimed (see below), so every
+     // datagram of the flow starts its own stalled dial.
+-    match tunnel.dial_udp(proxy.as_ref(), &metadata).await {
++    match tunnel.dial_udp_with_rule(proxy.as_ref(), &metadata, rule_name.clone(), rule_payload.clone()).await {
+         Ok(conn) if flush.is_flushed() => {
+             debug!(
+                 "UDP {} -> {}: sessions flushed during the dial; dropping datagram",

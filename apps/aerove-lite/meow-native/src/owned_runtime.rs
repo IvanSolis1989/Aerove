@@ -313,7 +313,9 @@ impl OwnedRuntime {
         self.tunnel_capture.set(Arc::downgrade(&capture)).map_err(|_| error("tunnelCaptureAlreadySet"))?;
         let resolver_slot = tunnel.resolver_slot();
         let initial_resolver = Arc::clone(&resolver_slot.read());
-        let retired_initial = self.network_slot.replace(&network.captured().with_resolver_pair(crate::network_context::ResolverPair { main: initial_resolver, proxy: config.dns.proxy_resolver.clone() }));
+        let initial_pair = crate::network_context::ResolverPair { main: initial_resolver, proxy: config.dns.proxy_resolver.clone() };
+        crate::network_policy::bind_resolver_observations(&tunnel, &initial_pair)?;
+        let retired_initial = self.network_slot.replace(&network.captured().with_resolver_pair(initial_pair));
         drop(retired_initial);
         let dns_raw = config.raw.clone(); let dns_proxies = config.proxies.clone();
         let dns_rules = config.rule_providers.clone(); let dns_dialers = config.dialer_registry.clone();
@@ -469,6 +471,7 @@ impl OwnedRuntime {
 struct RunningCore { tunnel: Tunnel, api: Arc<CoreApi>, private_task: Option<JoinHandle<Result<(), crate::api::ApiError>>>, private_cancel: CancellationToken, active: Option<ActiveListeners>, fault: mpsc::Sender<&'static str>, dns_enabled: bool, group_events: Option<JoinHandle<()>>, health: Vec<JoinHandle<()>>, _capture: Arc<TunnelCapture> }
 impl RunningCore {
     async fn close(&mut self) -> io::Result<()> {
+        self.tunnel.statistics().observation_feed().stop();
         self.api.cancel(); self.private_cancel.cancel();
         let active_result = match self.active.take() { Some(mut active) => active.close().await, None => Ok(()) };
         self.tunnel.statistics().close_all_connections(); self.tunnel.close_all_udp_sessions();

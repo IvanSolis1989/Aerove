@@ -175,9 +175,15 @@ fn telemetry_traffic_frame(source:&str)->Result<String, &'static str>{
         "uploadTotal":sample.upload_total,"downloadTotal":sample.download_total}).to_string())
 }
 
+#[derive(Default, serde::Deserialize)]
+struct TelemetryQuery {
+    #[serde(default)] observations: bool,
+}
+
 async fn provider_telemetry(
     axum::extract::State(control): axum::extract::State<Arc<RouteControl>>,
     axum::Extension(scope): axum::Extension<meow_api::lifecycle::ApiLifecycle>,
+    axum::extract::Query(query): axum::extract::Query<TelemetryQuery>,
     upgrade: axum::extract::WebSocketUpgrade,
 ) -> axum::response::Response {
     scope.on_upgrade(upgrade, move |mut socket| async move {
@@ -186,42 +192,71 @@ async fn provider_telemetry(
         let mut seen = std::collections::BTreeMap::new();
         let mut groups = control.groups_events.subscribe();
         let mut traffic = meow_api::routes::subscribe_traffic_feed(&control.state);
+        // This receiver owns the shared sampler used by request-traffic coalescing.
+        let mut observations = if query.observations {
+            match control.state.tunnel.statistics().observation_feed().activate() {
+                Ok(delivery) => Some(delivery),
+                Err(error) => { tracing::warn!(%error,"Core observation activation failed"); return; }
+            }
+        } else { None };
+        if let Some(delivery) = observations.as_ref() {
+            // Activation captures the watermark atomically before later live frames.
+            if socket.send(Message::Text(delivery.activation_frame().into())).await.is_err() { return; }
+        }
         for event in control.plane.provider_baseline() {
             seen.insert((event.kind, event.name.clone()), event.revision.parse::<u64>().expect("canonical provider revision"));
             let frame = serde_json::json!({"type":"providersLoaded","providers":[event]}).to_string();
             if socket.send(Message::Text(frame.into())).await.is_err() { return; }
         }
         loop {
-            tokio::select! { biased;
+            let keep_open = tokio::select! { biased;
                 _ = control.plane.cancel.cancelled() => return,
-                sampled = traffic.recv() => {
-                    let sampled = match sampled {
-                        Ok(sampled) => sampled,
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
-                    };
-                    let frame = match telemetry_traffic_frame(&sampled) {
-                        Ok(frame) => frame,
-                        Err(error) => { tracing::warn!(error,"invalid Core traffic sample"); return; }
-                    };
-                    if socket.send(Message::Text(frame.into())).await.is_err() { return; }
-                }
-                incoming = socket.recv() => if incoming.is_none() || incoming.is_some_and(|message| message.is_err() || matches!(message, Ok(Message::Close(_)))) { return; },
-                group = groups.recv() => {
-                    let Ok(revision) = group else { return; };
-                    let frame = serde_json::json!({"type":"groupsChanged","revision":revision}).to_string();
-                    if socket.send(Message::Text(frame.into())).await.is_err() { return; }
-                }
-                event = events.recv() => {
-                    let Ok(event) = event else { return; };
-                    let revision = event.revision.parse::<u64>().expect("canonical provider revision");
-                    let key = (event.kind, event.name.clone());
-                    if seen.get(&key).is_some_and(|previous| *previous >= revision) { continue; }
-                    seen.insert(key, revision);
-                    let frame = serde_json::json!({"type":"providersLoaded","providers":[event]}).to_string();
-                    if socket.send(Message::Text(frame.into())).await.is_err() { return; }
-                }
-            }
+                keep_open = async {
+                    tokio::select! {
+                        observed = async {
+                            match observations.as_mut() {
+                                Some(delivery) => delivery.next_frame().await,
+                                None => std::future::pending().await,
+                            }
+                        } => {
+                            let frame = match observed {
+                                Ok(frame) => frame,
+                                Err(error) => { tracing::warn!(%error,"Core observation delivery ended"); return false; }
+                            };
+                            if socket.send(Message::Text(frame.into())).await.is_err() { return false; }
+                        }
+                        sampled = traffic.recv() => {
+                            let sampled = match sampled {
+                                Ok(sampled) => sampled,
+                                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => return true,
+                                Err(tokio::sync::broadcast::error::RecvError::Closed) => return false,
+                            };
+                            let frame = match telemetry_traffic_frame(&sampled) {
+                                Ok(frame) => frame,
+                                Err(error) => { tracing::warn!(error,"invalid Core traffic sample"); return false; }
+                            };
+                            if socket.send(Message::Text(frame.into())).await.is_err() { return false; }
+                        }
+                        incoming = socket.recv() => if incoming.is_none() || incoming.is_some_and(|message| message.is_err() || matches!(message, Ok(Message::Close(_)))) { return false; },
+                        group = groups.recv() => {
+                            let Ok(revision) = group else { return false; };
+                            let frame = serde_json::json!({"type":"groupsChanged","revision":revision}).to_string();
+                            if socket.send(Message::Text(frame.into())).await.is_err() { return false; }
+                        }
+                        event = events.recv() => {
+                            let Ok(event) = event else { return false; };
+                            let revision = event.revision.parse::<u64>().expect("canonical provider revision");
+                            let key = (event.kind, event.name.clone());
+                            if seen.get(&key).is_some_and(|previous| *previous >= revision) { return true; }
+                            seen.insert(key, revision);
+                            let frame = serde_json::json!({"type":"providersLoaded","providers":[event]}).to_string();
+                            if socket.send(Message::Text(frame.into())).await.is_err() { return false; }
+                        }
+                    }
+                    true
+                } => keep_open,
+            };
+            if !keep_open { return; }
         }
     })
 }

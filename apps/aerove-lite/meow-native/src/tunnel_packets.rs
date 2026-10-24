@@ -183,8 +183,8 @@ async fn udp_flow(tunnel: Tunnel, mut queued: mpsc::Receiver<Vec<u8>>, replies: 
         inner.pre_resolve(&mut meta).await;
         if meta.dst_ip.is_none() && !meta.host.is_empty() { meta.dst_ip = inner.resolver().resolve_ip_real(&meta.host).await; }
         let target = SocketAddr::new(meta.dst_ip.ok_or_else(|| error("UDP target unresolved"))?, meta.dst_port);
-        let Some(ResolvedTarget { adapter, route, .. }) = inner.resolve_proxy(&meta).await else { return Err(error("UDP route unavailable")); };
-        let conn: Arc<dyn ProxyPacketConn> = Arc::from(inner.dial_udp(adapter.as_ref(), &meta).await.map_err(|_| error("UDP dial failed"))?);
+        let Some(ResolvedTarget { adapter, route, rule_name, rule_payload }) = inner.resolve_proxy(&meta).await else { return Err(error("UDP route unavailable")); };
+        let conn: Arc<dyn ProxyPacketConn> = Arc::from(inner.dial_udp_with_rule(adapter.as_ref(), &meta, rule_name, rule_payload).await.map_err(|_| error("UDP dial failed"))?);
         drop(route);
         Ok((conn, target))
     };
