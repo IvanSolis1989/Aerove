@@ -54,7 +54,14 @@ async fn cancelling_initial_provider_fetch_joins_before_same_port_successor(){
 #[tokio::test(flavor="multi_thread",worker_threads=3)]
 async fn unsupported_provider_fields_fail_before_fetch_without_removing_other_runtime_guards(){
     let _serial=LOCK.lock().await;let roots=root_fixture::Roots::new();let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();let peer=listener.local_addr().unwrap();
-    for extra in ["override: {dialer-proxy: DIRECT}","proxy: PICK","allow-external-plugin: true","unknown-field: true","health-check: {enable: true,unknown-field: 1}","health-check: {enable: true,interval: 1}"]{
+    for extra in ["override: {dialer-proxy: DIRECT}","proxy: PICK","allow-external-plugin: true","unknown-field: true","health-check: {enable: true,unknown-field: 1}"]{
         let yaml=format!("strict: true\nproxy-providers: {{feed: {{type: http,url: 'http://{peer}/must-not-fetch', {extra}}}}}\nrules: ['MATCH,DIRECT']\n");let addresses=ports().await;let(session,_)=start(plan(&yaml,addresses,&roots.read,&roots.cache));let failure=timeout(Duration::from_secs(5),session.ready()).await.unwrap().unwrap_err();assert_eq!(failure.code,"providerConfigRejected");assert_eq!(failure.field.as_deref(),Some("engineYaml"));assert!(failure.reason.as_deref().unwrap().contains(extra.split(':').next().unwrap()));let terminal=timeout(Duration::from_secs(5),session.stop()).await.unwrap().unwrap();assert_eq!(terminal.phase,aerove_meow_core::Phase::Failed);if let Some(owner)=session.owned_runtime(){assert!(owner.cleanup_confirmed());}assert!(timeout(Duration::from_millis(50),listener.accept()).await.is_err(),"rejected field still caused fetch: {extra}");for address in addresses{assert!(TcpListener::bind(address).await.is_ok());}
     }
+    let mut servers=Servers::new();let feed=servers.feed("proxies: [{name: admitted,type: direct}]\n".into()).await;
+    let yaml=format!("strict: true\nproxy-providers: {{feed: {{type: http,url: 'http://{}/feed',interval: 0,health-check: {{enable: true,interval: 1}}}}}}\nrules: ['MATCH,DIRECT']\n",feed.address);
+    let addresses=ports().await;let(session,weak)=start(plan(&yaml,addresses,&roots.read,&roots.cache));
+    timeout(Duration::from_secs(5),session.ready()).await.unwrap().unwrap();
+    let provider=get(addresses[0],"/providers/proxies/feed").await;assert_eq!(provider["revision"],"1");assert_eq!(provider["proxies"][0]["name"],"admitted");
+    assert_eq!(feed.requests.load(Ordering::Relaxed),1);assert!(timeout(Duration::from_millis(50),listener.accept()).await.is_err());
+    stopped(&session,weak,addresses).await;servers.close().await;
 }

@@ -53,8 +53,22 @@ impl Fixture {
         self.api.state.proxy_providers.get("P").unwrap().proxies()[0].last_delay()
     }
     async fn close(self,task:tokio::task::JoinHandle<()>) -> TcpListener {
-        self.api.cancel();self.scope.cancel();timeout(Duration::from_secs(5),task).await.unwrap().unwrap();
-        self.scope.close().await.unwrap();self.events.await.unwrap();self.api.join().await;
+        let health_scope=self.scope.clone();
+        self.close_with_health_scope(task,health_scope).await
+    }
+    async fn close_with_health_scope(self,task:tokio::task::JoinHandle<()>,health_scope:Arc<OwnedLoadScope>) -> TcpListener {
+        self.api.cancel();health_scope.cancel();self.scope.cancel();
+        let task_join=timeout(Duration::from_secs(5),task).await.unwrap();
+        let scope_close=timeout(Duration::from_secs(5),self.scope.close()).await.unwrap();
+        let health_close=if Arc::ptr_eq(&health_scope,&self.scope){None}
+            else{Some(timeout(Duration::from_secs(5),health_scope.close()).await.unwrap())};
+        let events_join=timeout(Duration::from_secs(5),self.events).await.unwrap();
+        self.api.join().await;
+        assert!(health_scope.is_cancelled() && self.scope.is_cancelled());
+        for joined in [task_join,events_join] {
+            if let Err(failure)=joined {assert!(failure.is_cancelled(),"owned task panicked: {failure}");}
+        }
+        scope_close.unwrap();if let Some(result)=health_close{result.unwrap();}
         std::fs::remove_dir_all(self.files).unwrap();
         self.origin
     }
@@ -151,7 +165,9 @@ async fn live_network_context_refreshes_each_round_after_hot_network_and_probe_e
     let old_count=old_dials.load(Ordering::SeqCst);assert!(old_count>0);
     let next=NetworkContext::protected(Arc::new(Protect(next_dials.clone())),None,f.plane.cancel.clone())
         .with_control_plane(f.plane.clone()).with_probe_policies(f.probes.clone());
-    let (network_stamp,retired)=f.plane.commit_policy(700,true,||slot.replace(&next)).unwrap();drop(retired);
+    let initial_epoch=f.plane.stamp().0;
+    assert!(initial_epoch>700,"initial provider install must precede the hot policy CAS");
+    let (network_stamp,retired)=f.plane.commit_policy(initial_epoch,true,||slot.replace(&next)).unwrap();drop(retired);
     let command=format!(r#"{{"schemaVersion":1,"requestId":"a687578a-10f5-4a78-a924-44357aa95ae7","expectedCoreEpoch":"{}","probeDial":{{"unifiedDelay":false,"tcpConcurrent":false}}}}"#,network_stamp.0);
     let receipt=f.probes.apply(&command).unwrap();
     assert_ne!(receipt.status.core_epoch,network_stamp.0.to_string());
@@ -169,7 +185,7 @@ async fn live_network_context_refreshes_each_round_after_hot_network_and_probe_e
     assert_eq!(f.api.control.snapshot().await.unwrap().core_epoch,receipt.status.core_epoch);
     assert_eq!(f.plane.proxy_snapshot(&f.api.state,Some("P")).unwrap()["testUrl"],f.policy.url);
     assert_eq!(old_dials.load(Ordering::SeqCst),old_count);drop(pending);
-    f.close(task).await;timer_scope.cancel();timer_scope.close().await.unwrap();transports.close().await.unwrap();
+    f.close_with_health_scope(task,timer_scope).await;transports.close().await.unwrap();
 }
 
 #[tokio::test(flavor="multi_thread",worker_threads=3)]
@@ -177,8 +193,9 @@ async fn manual_intent_wins_and_member_replacement_retires_old_result() {
     let f=Fixture::new(false).await;let task=f.start();let mut old=f.request().await;
     let control=f.api.control.clone();let url=f.policy.url.clone();
     let probe=f.probes.scope();
+    let expected_epoch=f.plane.stamp().0.to_string();
     let manual=tokio::spawn(async move{probe.run_owned(control.node_delay("A".into(),crate::control::DelayQuery{
-        url:Some(url),timeout:Some("3000".into()),expected:Some("204".into()),core_epoch:Some("700".into())})).await.unwrap()});
+        url:Some(url),timeout:Some("3000".into()),expected:Some("204".into()),core_epoch:Some(expected_epoch)})).await.unwrap()});
     let mut newer=f.request().await;newer.write_all(b"HTTP/1.1 500 Failure\r\nConnection: close\r\n\r\n").await.unwrap();drop(newer);
     assert_eq!(manual.await.unwrap().status(),axum::http::StatusCode::SERVICE_UNAVAILABLE);
     old.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n").await.unwrap();drop(old);
@@ -196,8 +213,9 @@ async fn manual_intent_wins_and_member_replacement_retires_old_result() {
 async fn newer_automatic_intent_fences_pending_manual_real_response() {
     let f=Fixture::new(false).await;
     let control=f.api.control.clone();let url=f.policy.url.clone();let probe=f.probes.scope();
+    let expected_epoch=f.plane.stamp().0.to_string();
     let manual=tokio::spawn(async move{probe.run_owned(control.node_delay("A".into(),crate::control::DelayQuery{
-        url:Some(url),timeout:Some("3000".into()),expected:Some("204".into()),core_epoch:Some("700".into())})).await.unwrap()});
+        url:Some(url),timeout:Some("3000".into()),expected:Some("204".into()),core_epoch:Some(expected_epoch)})).await.unwrap()});
     let mut old_manual=f.request().await;
     let task=f.start();let mut automatic=f.request().await;
     automatic.write_all(b"HTTP/1.1 500 Failure\r\nConnection: close\r\n\r\n").await.unwrap();drop(automatic);

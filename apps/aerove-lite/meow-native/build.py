@@ -213,6 +213,12 @@ def main():
             receipt['output']=dict(abi=abi,file=str(destination/library.name),sha256=sha(library),bytes=library.stat().st_size,minPageAlignment=16384)
         receipt['commandExit']=0;receipt['acceptedLock']=True
     except BaseException as error:
+        if isinstance(error,subprocess.CalledProcessError) and error.stdout is not None:
+            print(error.stdout,end='',flush=True)
+            try:
+                failure_output=build/'command-failure.stdout.log';failure_output.write_text(error.stdout,encoding='utf-8',newline='')
+                receipt['failureStdoutSha256']=sha(failure_output)
+            except OSError as log_error:print('Could not save captured failure stdout: '+str(log_error),file=sys.stderr,flush=True)
         receipt['commandExit']=getattr(error,'returncode',1);receipt['failureType']=type(error).__name__;raise
     finally:
         receipt['command']=command;receipt['lockSha256After']=sha(lock) if lock.exists() else None
