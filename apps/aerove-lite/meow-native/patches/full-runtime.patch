@@ -3858,8 +3858,8 @@
 +    #[tokio::test(flavor="multi_thread", worker_threads=2)]
 +    async fn managed_dependency_factory_actual_injected_dial_retains_identity_and_fences_registry_aba() {
 +        let peers = RealPeers::start().await;
-+        let a: Arc<dyn Proxy> = Arc::new(DirectAdapter::new());
-+        let b: Arc<dyn Proxy> = Arc::new(DirectAdapter::new());
++        let a: Arc<dyn Proxy> = Arc::new(WrappedProxy::new(Box::new(DirectAdapter::new())));
++        let b: Arc<dyn Proxy> = Arc::new(WrappedProxy::new(Box::new(DirectAdapter::new())));
 +        let registry = ProxyRegistry::default(); publish(&registry, a.clone());
 +        let dialer: Arc<dyn TcpDialer> = Arc::new(NamedProxyDialer::new(DialerTarget::new("front", &registry)));
 +        let raw: HashMap<String, serde_yaml::Value> = serde_yaml::from_str(&format!(
@@ -3898,7 +3898,7 @@
 +            "name: actual-front\ntype: http\nserver: 127.0.0.1\nport: {}\n", peers.proxy.port())).unwrap();
 +        let direct: Arc<dyn TcpDialer> = Arc::new(DirectDialer);
 +        let front = parse_proxy_with_dialer(&raw, &direct, false).unwrap();
-+        let inner: Arc<dyn Proxy> = Arc::new(DirectAdapter::new());
++        let inner: Arc<dyn Proxy> = Arc::new(WrappedProxy::new(Box::new(DirectAdapter::new())));
 +        let registry = ProxyRegistry::default(); publish(&registry, front.clone());
 +        let target: Arc<dyn Proxy> = Arc::new(meow_proxy::DialerProxyAdapter::new(inner.clone(), DialerTarget::new("front", &registry)));
 +        let captured = crate::managed_probe_dependencies(&target).unwrap();
@@ -3931,7 +3931,7 @@
 +        let target = parse_proxy_with_dialer(&raw, &dialer, false).unwrap();
 +        assert_eq!(crate::managed_probe_dependencies(&target).err().unwrap().kind(), std::io::ErrorKind::NotFound);
 +        assert!(target.delay_history().is_empty());
-+        let front: Arc<dyn Proxy> = Arc::new(DirectAdapter::new()); publish(&registry, front.clone());
++        let front: Arc<dyn Proxy> = Arc::new(WrappedProxy::new(Box::new(DirectAdapter::new()))); publish(&registry, front.clone());
 +        let captured = crate::managed_probe_dependencies(&target).unwrap();
 +        assert!(captured.is_current()); assert!(Arc::ptr_eq(&captured.proxies[0], &front));
 +        drop(registry); assert!(captured.is_current());

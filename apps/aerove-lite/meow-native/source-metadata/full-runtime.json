@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "patch": "patches/full-runtime.patch",
-  "patchSha256": "8f4f68ff3f003ed880f53bf4649d4ecebb7e085f07bed6c701ef579ed116738e",
+  "patchSha256": "1b173f76cf55bf88453f1127d8523edab584c088dcc688c87f3a989d8d73134c",
   "rawFileManifestSha256": "a1948157edb77700f6f9152f3467907fb6a050c66cd153edfe98295bbf56e550",
-  "adaptedFileManifestSha256": "4075ab19267483b0640afc8e13087278f57eb4c72a3baceee8cde7074c42bd49",
+  "adaptedFileManifestSha256": "a9aaecd76148d82fa1619445a7ba54769e9bd5b054cf900581db94ecc754c142",
   "changes": {
     "crates/meow-anytls/src/client/client.rs": {
       "beforeSha256": "806773111b6ca84adcdad0e24d6db6c5653e72bdba58f4d5e95fd959d3504515",
@@ -131,7 +131,7 @@
     },
     "crates/meow-config/src/proxy_parser.rs": {
       "beforeSha256": "0f643edb25b6b2c65da78ab01f5bb7679938cce449047454a08175525fdd554e",
-      "afterSha256": "6ed37b673d632adce5228b34ef4fbc8dcc6ad1ea8a5fbff1dcdfa0c6832dedb1"
+      "afterSha256": "1488f1cf1a983975de7ffd04c351a82fcaa1511d6bb567edd6687c8dc0aa3ebc"
     },
     "crates/meow-config/src/proxy_provider.rs": {
       "beforeSha256": "bda4a77c88a0ee82eed77a6d5928d09f50eaf3c06c770328e65db0a451bcf262",
@@ -1245,7 +1245,7 @@
     "crates/meow-config/src/owned_dns_tests.rs": "f798b40264f1e1354dc0e8e9a9af41d5ac02a5f1eb94041c5334521f76689fb5",
     "crates/meow-config/src/owned_load.rs": "b48141191f5402d9f196ea9b1bf4926580dc04e3f76d1ed7b9112799743d4720",
     "crates/meow-config/src/provider_events.rs": "4b426caaca115a2adf364b863362134db215438df4bf01b29ce85dc7944ba874",
-    "crates/meow-config/src/proxy_parser.rs": "6ed37b673d632adce5228b34ef4fbc8dcc6ad1ea8a5fbff1dcdfa0c6832dedb1",
+    "crates/meow-config/src/proxy_parser.rs": "1488f1cf1a983975de7ffd04c351a82fcaa1511d6bb567edd6687c8dc0aa3ebc",
     "crates/meow-config/src/proxy_provider.rs": "f134f28b1e0dcf80a0c784c34cf8d8c2c49cfe2a0bd52970451ba2b20a1904fe",
     "crates/meow-config/src/proxy_provider_refresh.rs": "3d4045e92836456c99404ffc947a7de7f89a762f043b096db88719592d9a7005",
     "crates/meow-config/src/raw.rs": "4bcb90da02d20a7a9655699ad598e15c04694590c62b549cf132dfdad2525bfb",
