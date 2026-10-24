@@ -63,6 +63,8 @@ internal class EditorDocumentController(
     private var language = EditorLanguage.Yaml
     private var darkTheme: Boolean? = null
     private var completionJob: Job? = null
+    private val searchHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val searchPublication = EditorSearchPublication(searchHandler::post, searchHandler::removeCallbacks)
     private var query = EditorQuery()
     private val undoDocuments = ArrayDeque<Content>()
     private val redoDocuments = ArrayDeque<Content>()
@@ -117,7 +119,14 @@ internal class EditorDocumentController(
             }
         }
         editor.subscribeEvent(SelectionChangeEvent::class.java) { _, _ -> syncState() }
-        editor.subscribeEvent(PublishSearchResultEvent::class.java) { _, _ -> syncState() }
+        editor.subscribeEvent(PublishSearchResultEvent::class.java) { _, _ ->
+            val source = document
+            val version = state.value.version
+            val searching = query
+            searchPublication.schedule({ !released && view === editor && editor.owner === this &&
+                document === source && state.value.version == version && query == searching &&
+                scope.coroutineContext[Job]?.isActive != false }, ::syncState)
+        }
         editor.subscribeEvent(EditorKeyEvent::class.java) { event, _ ->
             if (event.action == KeyEvent.ACTION_DOWN && event.isCtrlPressed) {
                 val action: (() -> Unit)? = when (event.keyCode) {
@@ -164,6 +173,8 @@ internal class EditorDocumentController(
     suspend fun readText(): String = withContext(Dispatchers.Default) { checkNotNull(document).toString() }
 
     private fun show(content: Content) {
+        searchPublication.invalidate()
+        view?.prepareContentLayout()
         document = content
         suppress = true
         try { view?.setText(content, true, null) } finally { suppress = false }
@@ -171,6 +182,7 @@ internal class EditorDocumentController(
     }
 
     private fun onChanged() {
+        searchPublication.invalidate()
         mutableState.value = state.value.copy(version = state.value.version + 1, error = null, suggestions = emptyList())
         changed()
         syncState()
@@ -221,6 +233,7 @@ internal class EditorDocumentController(
     }
 
     fun search(next: EditorQuery) {
+        searchPublication.invalidate()
         query = next
         val editor = view ?: return
         runCatching {
@@ -382,6 +395,7 @@ internal class EditorDocumentController(
 
     fun release() {
         released = true
+        searchPublication.close()
         completionJob?.cancel()
         val attached = view != null
         view?.let { it.searcher.stopSearch(); it.owner = null; it.release() }

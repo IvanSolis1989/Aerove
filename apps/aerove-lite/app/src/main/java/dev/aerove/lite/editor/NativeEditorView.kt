@@ -9,6 +9,29 @@ import io.github.rosemoe.sora.widget.CodeEditor
 internal class NativeEditorView(context: Context) : CodeEditor(context) {
     var owner: EditorDocumentController? = null
     private var connection: InputConnection? = null
+    private var layoutSettled = false
+    private var readinessClosed = false
+    @Volatile private var readiness: kotlinx.coroutines.flow.MutableStateFlow<Boolean>? = null
+    val inputReady: kotlinx.coroutines.flow.StateFlow<Boolean>
+        get() = readiness ?: kotlinx.coroutines.flow.MutableStateFlow(!readinessClosed && layoutSettled && isEditable)
+            .also { readiness = it }
+
+    fun prepareContentLayout() { layoutSettled = false; readiness?.value = false }
+    override fun setLayoutBusy(busy: Boolean) {
+        super.setLayoutBusy(busy)
+        layoutSettled = !busy
+        readiness?.value = !readinessClosed && layoutSettled && isEditable
+    }
+    override fun setEditable(editable: Boolean) {
+        super.setEditable(editable)
+        readiness?.value = !readinessClosed && layoutSettled && isEditable
+    }
+    override fun release() {
+        readinessClosed = true
+        readiness?.value = false
+        readiness = null
+        super.release()
+    }
 
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? = super.onCreateInputConnection(outAttrs).also { connection = it }
     fun finishComposition() { connection?.finishComposingText() }

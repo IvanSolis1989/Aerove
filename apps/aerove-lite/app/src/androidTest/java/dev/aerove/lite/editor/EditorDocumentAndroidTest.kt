@@ -25,6 +25,13 @@ class EditorDocumentAndroidTest {
         withTimeout(10_000) { controller.state.first(predicate) }
     }
 
+    private fun editable(view: NativeEditorView, action: () -> Unit) = runBlocking {
+        lateinit var ready: kotlinx.coroutines.flow.StateFlow<Boolean>
+        main { ready = view.inputReady }
+        withTimeout(10_000) { ready.first { it } }
+        main { assertTrue(view.isEditable); action() }
+    }
+
     @Test fun allPinnedGrammarsAndFullSchemaLoadWithoutStartingTheCore() = runBlocking<Unit> {
         for (language in EditorLanguage.entries) {
             val loaded = EditorAssets.load(context, language, dark = false)
@@ -45,6 +52,8 @@ class EditorDocumentAndroidTest {
             controller.open("mode: rule\n", EditorLanguage.Yaml, false)
             main {
                 view = controller.createView()
+            }
+            editable(view) {
                 view.setSelection(0, 10)
                 view.commitText(" # test", false, false)
                 assertEquals("mode: rule # test\n", view.text.toString())
@@ -80,7 +89,7 @@ class EditorDocumentAndroidTest {
             assertEquals(original, controller.readText())
             main { controller.redo() }
             assertEquals(original.replace("padded", "changed"), controller.readText())
-            main { view.setSelection(0, 0); view.commitText("# one\n", false, false); controller.undo(); controller.undo() }
+            editable(view) { view.setSelection(0, 0); view.commitText("# one\n", false, false); controller.undo(); controller.undo() }
             assertEquals(original, controller.readText())
             main { controller.redo(); controller.redo() }
             assertEquals("# one\n" + original.replace("padded", "changed"), controller.readText())
