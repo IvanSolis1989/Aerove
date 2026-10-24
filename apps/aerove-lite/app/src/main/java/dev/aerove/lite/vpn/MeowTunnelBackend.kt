@@ -4,6 +4,8 @@ import dev.aerove.lite.LiteSettings
 import dev.aerove.lite.core.*
 import dev.aerove.lite.data.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.coroutines.coroutineContext
@@ -30,6 +32,8 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
         suspend fun captureNetwork(expectedDns: SystemDnsSnapshot): NetworkReceipt
         fun networkCurrent(receipt: NetworkReceipt): Boolean
         suspend fun commitNetwork(receipt: NetworkReceipt)
+        fun observeIdentityChanges(changed: () -> Unit): AutoCloseable?
+        suspend fun markUsable()
         fun clearIdentityCache()
         suspend fun stageTun(): TunReceipt
         suspend fun commitTun(receipt: TunReceipt)
@@ -125,6 +129,9 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
         @Volatile private var stopping = false
         private var joined = false
         private var released = false
+        private var identityObserved = false
+        private var identityObserver: AutoCloseable? = null
+        private val identityEvents = Channel<Unit>(Channel.CONFLATED)
         private val config get() = lease.configuration
         override val endpoint = CoreEndpoint(config.privateControl.port, config.privateControl.secret,
             lease.appliedConfiguration, lease.prepared.revision, lease.prepared.generation)
@@ -151,6 +158,12 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
             private set
 
         override suspend fun awaitReady(): Unit = withTimeout(45_000) { coroutineScope {
+            withContext(NonCancellable + Dispatchers.IO) {
+                if (!identityObserved) {
+                    identityObserver = lease.observeIdentityChanges { identityEvents.trySend(Unit) }
+                    identityObserved = true
+                }
+            }
             val waiting = async(Dispatchers.IO) { commands.awaitReady(handle) }
             try {
                 waiting.await()
@@ -174,6 +187,8 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
                     check(policies.http == expected.http && policies.probe == expected.probe && policies.mode == expected.mode &&
                         policies.onlyProxy == expected.onlyProxy && policies.controller.enabled == expected.controller.enabled) { "Meow startup policies differ from persisted plan" }
                     lease.verifyControl(endpoint)
+                    while (identityEvents.tryReceive().isSuccess) invalidateIdentity()
+                    if (actual.listening) lease.markUsable()
                     synchronized(gate) {
                         check(!stopping && lease.isCurrent()) { "Meow readiness intent was superseded" }
                         initialListenerReadback = ListenerReadback(actual.listening, actual.tunReady, actual.userListenersReady, checkNotNull(coreEpoch), actual.activePorts)
@@ -221,6 +236,7 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
                 }
                 if (enabled) check(actual.listening && actual.userListenersReady && actual.tunReady == (config.runtimeMode == NativeCore.RuntimeMode.Tun)) { "Meow resumed listener mode mismatch" }
                 acceptEpoch(actual.coreEpoch)
+                if (actual.listening) lease.markUsable()
                 val readback = ListenerReadback(actual.listening,actual.tunReady,actual.userListenersReady,actual.coreEpoch,actual.activePorts)
                 synchronized(gate) {
                     if (!stopping && lease.isCurrent() && intent == listenerIntent.get() && caller?.isActive != false) listenerReadback = readback
@@ -258,17 +274,24 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
 
         override suspend fun awaitExit(): Unit = coroutineScope {
             val terminal = async(Dispatchers.IO) { commands.awaitExit(handle) }
-            try { terminal.await() }
+            val identityFailure = CompletableDeferred<Throwable>()
+            val identityWorker = launch {
+                try { for (event in identityEvents) invalidateIdentity() }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (failure: Throwable) { identityFailure.complete(failure) }
+            }
+            try { select<Unit> { terminal.onAwait { }; identityFailure.onAwait { throw it } } }
             catch (failure: Throwable) {
                 try { stop() } catch (cleanup: Throwable) { failure.addSuppressed(cleanup) }
                 throw failure
-            }
+            } finally { identityWorker.cancelAndJoin() }
         }
         override suspend fun stop() = withContext(NonCancellable + Dispatchers.IO) {
             synchronized(gate) { stopping = true }
             listenerIntent.incrementAndGet()
             cleanup.withLock {
                 if (!joined) { commands.stop(handle); joined = true }
+                identityObserver?.close(); identityObserver = null; identityEvents.close()
                 if (!released) { release(lease); released = true }
                 synchronized(gate) { retained -= this@Session }
             }

@@ -4,6 +4,7 @@ import android.net.Network
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.ParcelFileDescriptor
+import dev.aerove.lite.appaccess.AndroidApplicationLoader
 import dev.aerove.lite.LiteApplication
 import dev.aerove.lite.core.*
 import dev.aerove.lite.data.*
@@ -128,6 +129,8 @@ class MeowAndroidHost(private val service: LiteVpnService, private val applicati
         var file: File? = null
         var cache: File? = null
         var resolver: ConnectionOwnerResolver? = null
+        var packageLoader: AndroidApplicationLoader? = null
+        var markedUsable = false
         lateinit var preparedValue: PreparedProfile
         lateinit var configValue: MeowRuntimeConfig
         override val prepared get() = preparedValue
@@ -170,6 +173,17 @@ class MeowAndroidHost(private val service: LiteVpnService, private val applicati
             if (tun != null) check(service.setUnderlyingNetworks(arrayOf(checkNotNull(captured.network)))) { "Android underlying network binding failed" }
             physicalValue = captured
         } }
+        override fun observeIdentityChanges(changed: () -> Unit): AutoCloseable? {
+            if (resolver == null) return null
+            return AndroidApplicationLoader(application).also { packageLoader = it }.observeChanges(changed)
+        }
+        override suspend fun markUsable() { cleanup.withLock {
+            if (!markedUsable) {
+                try { application.profiles.markUsable(prepared) }
+                catch (_: ProfileConflictException) { /* Never mark a newer revision usable. */ }
+                markedUsable = true
+            }
+        } }
         override fun clearIdentityCache() { resolver?.clearPackageCache() }
         lateinit var startupPlan: VpnPlan
         var controlPort = 0
@@ -203,6 +217,7 @@ class MeowAndroidHost(private val service: LiteVpnService, private val applicati
         override suspend fun release() = withContext(NonCancellable + Dispatchers.IO) { cleanup.withLock {
             admission.close()
             resolver?.clearPackageCache()
+            packageLoader?.close(); packageLoader = null
             try {
                 staged.toList().forEach { it.file.close();staged -= it }
                 cache?.let { root ->

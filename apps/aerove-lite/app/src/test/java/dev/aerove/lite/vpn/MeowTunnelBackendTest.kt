@@ -47,6 +47,7 @@ class MeowTunnelBackendTest {
             initiallyParked=parked,physicalNetworkHandle="42")
         var current = true;var released = 0;var verified = 0;var failRelease = false
         var stages=0;var commits=0;var parkedFds=0;var discarded=0;var networkCommits=0;var identityClears=0
+        var identityCallback: (() -> Unit)? = null; var observerClosed = false; var usable = 0
         val pending=mutableSetOf<MeowTunnelBackend.TunReceipt>()
         val native = Native().also { it.parked=parked;it.tunMode=tunMode }
         val lease = object : MeowTunnelBackend.Lease {
@@ -67,6 +68,8 @@ class MeowTunnelBackendTest {
             }
             override fun networkCurrent(receipt: MeowTunnelBackend.NetworkReceipt) = current
             override suspend fun commitNetwork(receipt: MeowTunnelBackend.NetworkReceipt) { networkCommits++ }
+            override fun observeIdentityChanges(changed: () -> Unit): AutoCloseable { identityCallback = changed; return AutoCloseable { observerClosed = true } }
+            override suspend fun markUsable() { usable++ }
             override fun clearIdentityCache() { identityClears++ }
             override suspend fun stageTun():MeowTunnelBackend.TunReceipt {
                 stages++;return object:MeowTunnelBackend.TunReceipt{override val descriptor=43}.also{pending+=it}
@@ -81,6 +84,19 @@ class MeowTunnelBackendTest {
         val backend = MeowTunnelBackend({lease},native)
     }
     private suspend fun CountDownLatch.entered() { assertTrue(withContext(Dispatchers.IO){await(3,TimeUnit.SECONDS)}) }
+    @Test fun packageEventUsesSameSessionIdentityCommandAndObserverClosesAfterJoin()=runBlocking<Unit>{
+        val f = Fixture(); val session = f.backend.open(f.plan); session.awaitReady()
+        val exit = CountDownLatch(1); val invalidated = CompletableDeferred<Unit>()
+        f.native.onExit = { check(exit.await(3,TimeUnit.SECONDS)) }
+        f.native.onStop = { exit.countDown() }
+        f.native.policy.onOperation = { if (it == "invalidateIdentity") invalidated.complete(Unit) }
+        val waiting = launch { session.awaitExit() }
+        checkNotNull(f.identityCallback).invoke()
+        withTimeout(3_000) { invalidated.await() }
+        assertEquals(1, f.identityClears); assertEquals(1, f.native.starts)
+        session.stop(); waiting.join()
+        assertTrue(f.observerClosed); assertEquals(1, f.released)
+    }
     @Test fun actualPreparedPlanAndReadyReceiptKeepOwnedEndpointLineage()=runBlocking<Unit>{
         val f=Fixture();val session=f.backend.open(f.plan)
         session.awaitReady();assertEquals(1,f.verified)
@@ -88,7 +104,8 @@ class MeowTunnelBackendTest {
         assertEquals(-1,f.native.descriptor)
         val json=org.json.JSONObject(f.native.payload);assertEquals("42",json.getJSONObject("physicalNetwork").getString("handle"))
         assertEquals(f.config.engineYaml,json.getString("engineYaml"));assertTrue(session.initialListenerReadback!!.listening)
-        session.stop();session.stop();assertEquals(1,f.native.stops);assertEquals(1,f.released)
+        assertEquals(1,f.usable)
+        session.stop();session.stop();assertEquals(1,f.native.stops);assertEquals(1,f.released);assertTrue(f.observerClosed)
     }
     @Test fun cancellationDuringLateStartStopsReceiptBeforeReleasingResources()=runBlocking<Unit>{
         val f=Fixture();val entered=CountDownLatch(1);val exit=CountDownLatch(1)

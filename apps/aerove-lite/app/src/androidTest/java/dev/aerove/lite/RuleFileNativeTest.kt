@@ -2,7 +2,7 @@ package dev.aerove.lite
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import dev.aerove.lite.core.NativeCore
+import dev.aerove.lite.core.MeowNativeCore
 import java.io.File
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -16,16 +16,16 @@ class RuleFileNativeTest {
     @Test
     fun textIsInspectedAndDumpedThroughRealJniWithoutChangingTheSource() {
         withFile("# source\nDOMAIN-SUFFIX,example.com\n".toByteArray()) { file ->
-            assertInfo(NativeCore.inspectRuleSet(file.path), "text", "domain", 1)
-            assertEquals("+.example.com\n", NativeCore.dumpRuleSet(file.path, "domain", "text"))
+            assertInfo(MeowNativeCore.inspectRuleSet(file.path), "text", "domain", 1)
+            assertEquals("+.example.com\n", MeowNativeCore.dumpRuleSet(file.path, "domain", "text"))
         }
     }
 
     @Test
     fun yamlRulesAliasAndBareAddressesHaveCanonicalPayloads() {
         withFile("rules: ['192.0.2.1', '2001:db8::1']\n".toByteArray()) { file ->
-            assertInfo(NativeCore.inspectRuleSet(file.path), "yaml", "ipcidr", 2)
-            val lines = NativeCore.dumpRuleSet(file.path, "ipcidr", "yaml").lineSequence().filter(String::isNotEmpty).toSet()
+            assertInfo(MeowNativeCore.inspectRuleSet(file.path), "yaml", "ipcidr", 2)
+            val lines = MeowNativeCore.dumpRuleSet(file.path, "ipcidr", "yaml").lineSequence().filter(String::isNotEmpty).toSet()
             assertEquals(setOf("192.0.2.1/32", "2001:db8::1/128"), lines)
         }
     }
@@ -34,8 +34,8 @@ class RuleFileNativeTest {
     fun emptyLocalFilesRemainEmptyClassicalSets() {
         for ((source, format) in listOf("" to "text", "payload: []\n" to "yaml")) {
             withFile(source.toByteArray()) { file ->
-                assertInfo(NativeCore.inspectRuleSet(file.path), format, "classical", 0)
-                assertEquals("", NativeCore.dumpRuleSet(file.path, "classical", format))
+                assertInfo(MeowNativeCore.inspectRuleSet(file.path), format, "classical", 0)
+                assertEquals("", MeowNativeCore.dumpRuleSet(file.path, "classical", format))
             }
         }
     }
@@ -43,14 +43,14 @@ class RuleFileNativeTest {
     @Test
     fun corruptedAndMismatchedFilesThrowInsteadOfReportingAnEmptySuccess() {
         withFile(byteArrayOf(0x28, 0xb5.toByte(), 0x2f, 0xfd.toByte(), 0)) { file ->
-            rejects { NativeCore.inspectRuleSet(file.path) }
+            rejects { MeowNativeCore.inspectRuleSet(file.path) }
         }
         withFile("example.com\n192.0.2.0/24\n".toByteArray()) { file ->
-            rejects { NativeCore.inspectRuleSet(file.path) }
+            rejects { MeowNativeCore.inspectRuleSet(file.path) }
         }
         withFile("example.com\n".toByteArray()) { file ->
-            rejects { NativeCore.dumpRuleSet(file.path, "ipcidr", "text") }
-            rejects { NativeCore.dumpRuleSet(file.path, "domain", "mrs") }
+            rejects { MeowNativeCore.dumpRuleSet(file.path, "ipcidr", "text") }
+            rejects { MeowNativeCore.dumpRuleSet(file.path, "domain", "mrs") }
         }
     }
 

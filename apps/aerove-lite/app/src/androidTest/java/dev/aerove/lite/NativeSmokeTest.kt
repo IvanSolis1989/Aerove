@@ -6,7 +6,7 @@ import androidx.core.content.ContextCompat
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import dev.aerove.lite.core.NativeCore
+import dev.aerove.lite.core.MeowNativeCore
 import dev.aerove.lite.vpn.LiteVpnService
 import java.util.UUID
 import kotlinx.coroutines.flow.first
@@ -32,8 +32,8 @@ class NativeSmokeTest {
 
     @Test
     fun nativeParserRejectsUnknownConfiguration() {
-        assertNotNull(NativeCore.validate("unknown-aerove-field: true\n"))
-        assertNull(NativeCore.validate("mode: direct\nrules: ['MATCH,DIRECT']\n"))
+        assertNotNull(MeowNativeCore.validate("unknown-aerove-field: true\n"))
+        assertNull(MeowNativeCore.validate("mode: direct\nrules: ['MATCH,DIRECT']\n"))
     }
 
     @Test

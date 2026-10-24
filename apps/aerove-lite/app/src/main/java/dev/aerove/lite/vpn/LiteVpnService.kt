@@ -29,7 +29,6 @@ import dev.aerove.lite.backgroundpolicy.AndroidSsidPolicy
 import dev.aerove.lite.data.ControlEndpoint
 import dev.aerove.lite.data.CoreApiClient
 import dev.aerove.lite.data.SystemDnsSnapshot
-import dev.aerove.lite.platform.systemDnsSnapshot
 import dev.aerove.lite.networksettings.NetworkRuntimeCoordinator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -62,12 +61,12 @@ class LiteVpnService : VpnService() {
     private var heldMaintenance: MaintenanceRuntimeContext? = null
     private var policyPreferences = BackgroundPolicyPreferences()
     private var policyObservedEndpoint: CoreEndpoint? = null
-    @Volatile private var network: Network? = null
+    private val physical = kotlinx.coroutines.flow.MutableStateFlow(CapturedMeowPhysical(null, SystemDnsSnapshot(), null))
+    private val network: Network? get() = physical.value.network
     private var networkKey: String? = null
     private val physicalNetworks = linkedSetOf<Network>()
     private val capabilitiesByNetwork = mutableMapOf<Network, NetworkCapabilities>()
     private val propertiesByNetwork = mutableMapOf<Network, LinkProperties>()
-    private val networkDns = kotlinx.coroutines.flow.MutableStateFlow(SystemDnsSnapshot())
     private var callbackRegistered = false
     private val networkObservations = kotlinx.coroutines.flow.MutableStateFlow(0L)
     private val startupIntentChanges = kotlinx.coroutines.flow.MutableStateFlow(0L)
@@ -113,10 +112,10 @@ class LiteVpnService : VpnService() {
         networkRuntime = NetworkRuntimeCoordinator(coreScope, { endpoint, settings, ipv6 ->
             CoreApiClient(ControlEndpoint(endpoint.port, endpoint.secret)).use { client -> client.applyNetwork(settings, ipv6) }
         }, { status -> coordinator.recordNetworkStatus(status) })
-        coordinator = VpnCoordinator(coreScope, AndroidTunnelBackend(this, graph, { network }, { networkDns.value }, ::initialListening, ::captureOwnerIntent, coreScope), networkRuntime::detachAndJoin,
+        coordinator = VpnCoordinator(coreScope, MeowTunnelBackend(MeowAndroidHost(this, graph, { physical.value }, ::initialListening, ::captureOwnerIntent)), networkRuntime::detachAndJoin,
             latestSavedSettings = { graph.settings.changes.value },
             beforeListenerPark = networkRuntime::parkBarrier, afterListenerResume = networkRuntime::resume,
-            latestNetworkDns = { networkDns.value }, onSessionReady = { snapshot ->
+            latestNetworkDns = { physical.value.takeIf { it.network != null }?.dns }, onSessionReady = { snapshot ->
                 networkRuntime.bind(snapshot.endpoint, snapshot.initialNetwork ?: snapshot.appliedNetwork, snapshot.initialIpv6 ?: snapshot.appliedIpv6,
                     snapshot.appliedNetwork, snapshot.appliedIpv6, initiallyParked = snapshot.suspended)
             })
@@ -132,8 +131,10 @@ class LiteVpnService : VpnService() {
         callbackRegistered = true
         registerReceiver(locationReceiver, IntentFilter(LocationManager.MODE_CHANGED_ACTION), RECEIVER_NOT_EXPORTED)
         scope.launch {
-            networkDns.collectLatest { snapshot ->
-                try { coordinator.configureNetworkDns(snapshot) }
+            physical.map { it.takeIf { captured -> captured.network != null } }.filterNotNull()
+                .distinctUntilChanged { before, after -> before.networkHandle == after.networkHandle && before.dns.json() == after.dns.json() }
+                .collectLatest { captured ->
+                try { coordinator.configureNetworkDns(captured.dns) }
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (failure: Exception) { coordinator.recordListenerError(failure.message ?: failure.javaClass.simpleName) }
             }
@@ -277,15 +278,17 @@ class LiteVpnService : VpnService() {
             ?: available.firstOrNull {
                 connectivity.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
             } ?: available.firstOrNull()
-        val dns = preferred?.let(connectivity::getLinkProperties)?.dnsServers?.joinToString { it.hostAddress ?: "" }
-        val key = preferred?.let { "${it.networkHandle}:$dns" }
-        network = preferred
-        networkDns.value = systemDnsSnapshot(preferred, propertiesByNetwork)
+        val captured = try { captureMeowPhysical(connectivity) { preferred } }
+        catch (failure: Exception) {
+            coordinator.recordListenerError(failure.message ?: failure.javaClass.simpleName)
+            return
+        }
+        val key = captured.networkHandle?.let { "$it:${captured.dns.json()}" }
+        physical.value = captured
         syncListenerPolicy()
         if (networkKey == key) return
         networkKey = key
-        if (coordinator.requestedBuilderSettings()?.network?.vpnEnabled == true)
-            setUnderlyingNetworks(preferred?.let { arrayOf(it) })
+        // The Host changes Builder underlying networks only after Native network/old-DNS join ACK.
         if (lastPlan != null && coordinator.state.value.phase == VpnPhase.Running && !coordinator.state.value.suspended) coordinator.reconnect()
     }
 
