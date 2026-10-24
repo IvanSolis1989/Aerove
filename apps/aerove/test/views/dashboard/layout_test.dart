@@ -7,6 +7,7 @@ import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/dashboard/dashboard.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
 import 'package:fl_clash/views/dashboard/widgets/card.dart';
+import 'package:fl_clash/views/dashboard/widgets/fused_controls.dart';
 import 'package:fl_clash/views/dashboard/widgets/widgets.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -432,8 +433,99 @@ void main() {
     final card = rectOf(tester, CurrentOutboundCard);
     expect(card.left, 16);
     expect(card.right, 400 - 16);
-    expect(find.byType(VpnCard), findsOneWidget);
+    final controls = find.byType(FusedNetworkControls);
+    final switches = find.descendant(
+      of: controls,
+      matching: find.byType(DashboardSwitch),
+    );
+    expect(controls, findsOneWidget);
+    expect(tester.widget<FusedNetworkControls>(controls).members, {
+      DashboardWidget.outboundMode,
+      DashboardWidget.vpnButton,
+      DashboardWidget.intranetIp,
+    });
+    expect(switches, findsNWidgets(2));
+    final l10n = tester.element(controls).appLocalizations;
+    expect(
+      tester.widgetList<DashboardSwitch>(switches).map((s) => s.semanticLabel),
+      ['VPN', l10n.allowLan],
+    );
+    expect(
+      rectOf(tester, OutboundModeCard).bottom,
+      lessThan(tester.getRect(switches.first).top),
+    );
+    expect(
+      tester.getRect(switches.first).left,
+      lessThan(tester.getRect(switches.last).left),
+    );
+    expect(
+      tester.getRect(switches.first).top,
+      tester.getRect(switches.last).top,
+    );
+    final controlsRect = tester.getRect(controls);
+    final overview = rectOf(tester, ServiceStatusCard);
+    for (final rect in [controlsRect, overview]) {
+      expect(rect.left, card.left);
+      expect(rect.right, card.right);
+    }
+    expect(controlsRect.top, greaterThan(card.bottom));
+    expect(overview.top, greaterThan(controlsRect.bottom));
+    expect(
+      tester
+          .widget<CurrentOutboundCard>(find.byType(CurrentOutboundCard))
+          .showTraffic,
+      isTrue,
+    );
+    expect(
+      tester
+          .widget<ServiceStatusCard>(find.byType(ServiceStatusCard))
+          .includeStats,
+      isTrue,
+    );
     expect(find.byType(NetworkTakeoverCard), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    await teardown(tester);
+    const saved = [
+      DashboardWidget.profiles,
+      DashboardWidget.vpnButton,
+      DashboardWidget.currentOutbound,
+    ];
+    container
+        .read(appSettingProvider.notifier)
+        .update((state) => state.copyWith(dashboardWidgets: saved));
+    await pumpDashboard(
+      tester,
+      const Size(400, 900),
+      platform: SupportPlatform.Android,
+    );
+    expect(tester.widget<FusedNetworkControls>(controls).members, {
+      DashboardWidget.vpnButton,
+    });
+    expect(switches, findsOneWidget);
+    expect(tester.widget<DashboardSwitch>(switches).semanticLabel, 'VPN');
+    expect(find.byType(OutboundModeCard), findsNothing);
+    expect(find.byType(ServiceStatusCard), findsNothing);
+    expect(
+      tester
+          .widget<CurrentOutboundCard>(find.byType(CurrentOutboundCard))
+          .showTraffic,
+      isFalse,
+    );
+    final reordered = [
+      rectOf(tester, ProfilesCard),
+      tester.getRect(controls),
+      rectOf(tester, CurrentOutboundCard),
+    ];
+    for (final rect in reordered) {
+      expect(rect.left, 16);
+      expect(rect.right, 400 - 16);
+    }
+    expect(reordered[0].bottom, lessThan(reordered[1].top));
+    expect(reordered[1].bottom, lessThan(reordered[2].top));
+    expect(container.read(appSettingProvider).dashboardWidgets, saved);
+    expect(find.byType(NetworkTakeoverCard), findsNothing);
+    expect(tester.takeException(), isNull);
 
     await teardown(tester);
   });
