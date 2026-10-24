@@ -179,6 +179,8 @@ class ApkInspectionTests(unittest.TestCase):
         with zipfile.ZipFile(path, "w") as archive:
             archive.writestr("AndroidManifest.xml", b"manifest fixture")
             archive.writestr("classes.dex", b"dex fixture")
+            for name in module.BUNDLED_SCRIPT_FILES:
+                archive.writestr("assets/scripts/" + name, (module.BUNDLED_SCRIPT_ROOT / "app/src/main/assets/scripts" / name).read_bytes())
             if include_core:
                 archive.writestr(f"lib/{abi}/libaerove_meow_core.so", self.core_elf(machine))
             for name in module.HELPER_LIBRARIES:
@@ -852,6 +854,8 @@ class ApkInspectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             apk = self.make_apk(root)
             result = self.verify(apk, "arm64-v8a")
+            self.assertEqual(result["bundled_meow_script"]["commit"], "70d4ddbe0b6d52af7acbd503ff1bf556a3bddacd")
+            self.assertEqual(len(result["bundled_meow_script"]["assets"]), 3)
             self.assertEqual(set(result["client_helpers"]), set(module.HELPER_LIBRARIES))
             for name, details in result["client_helpers"].items():
                 self.assertEqual(details["size_bytes"], 120)
@@ -874,6 +878,85 @@ class ApkInspectionTests(unittest.TestCase):
                 "sha256": "0" * 64, "bytes": 120} for name in module.HELPER_LIBRARIES]}
             with self.assertRaisesRegex(ValueError, "receipt does not match APK"):
                 self.verify(apk, "arm64-v8a", receipt)
+
+
+
+class BundledScriptApkTests(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.TemporaryDirectory()
+        self.addCleanup(self.root.cleanup)
+        self.path = Path(self.root.name) / "app.apk"
+        self.entries = {"assets/scripts/" + name:
+            (module.BUNDLED_SCRIPT_ROOT / "app/src/main/assets/scripts" / name).read_bytes()
+            for name in module.BUNDLED_SCRIPT_FILES}
+
+    def inspect(self):
+        with zipfile.ZipFile(self.path, "w") as archive:
+            for name, raw in self.entries.items():
+                archive.writestr(name, raw)
+        with zipfile.ZipFile(self.path) as archive:
+            return module.validate_bundled_script(archive)
+
+    def test_actual_three_source_asset_bytes_read_back(self):
+        proof = self.inspect()
+        self.assertEqual(proof["commit"], "70d4ddbe0b6d52af7acbd503ff1bf556a3bddacd")
+        self.assertEqual(len(proof["assets"]), 3)
+        self.assertEqual(proof["assets"]["assets/scripts/smart-config-kit-meow.js"]["bytes"], 112115)
+
+    def test_each_missing_asset_rejected(self):
+        original = dict(self.entries)
+        for name in original:
+            with self.subTest(name=name):
+                self.entries = dict(original); del self.entries[name]
+                with self.assertRaises(ValueError): self.inspect()
+
+    def test_each_modified_asset_and_crlf_rejected(self):
+        original = dict(self.entries)
+        for name, raw in original.items():
+            for changed in [raw[:-1] + bytes([raw[-1] ^ 1]), raw.replace(b"\n", b"\r\n")]:
+                with self.subTest(name=name, crlf=b"\r" in changed):
+                    self.entries = dict(original); self.entries[name] = changed
+                    with self.assertRaises(ValueError): self.inspect()
+
+    def test_wrong_metadata_source_product_and_update_url_rejected(self):
+        name = "assets/scripts/smart-config-kit-meow.source.json"
+        raw = self.entries[name]
+        for key, value in [("commit", "0"*40), ("path", "Mihomo/Standard.js"),
+                           ("updateUrl", "https://example.invalid/script.js"), ("bytes", 1)]:
+            with self.subTest(key=key):
+                metadata = json.loads(raw); metadata[key] = value
+                self.entries[name] = json.dumps(metadata, ensure_ascii=False).encode()
+                with self.assertRaises(ValueError): self.inspect()
+
+    def test_duplicate_asset_rejected(self):
+        self.inspect()
+        name, raw = next(iter(self.entries.items()))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            with zipfile.ZipFile(self.path, "a") as archive: archive.writestr(name, raw)
+        with zipfile.ZipFile(self.path) as archive:
+            with self.assertRaisesRegex(ValueError, "duplicate"): module.validate_bundled_script(archive)
+
+    def test_wrong_kotlin_constant_or_source_file_rejected(self):
+        source = module.BUNDLED_SCRIPT_ROOT / "app/src/main"
+        fixture = Path(self.root.name) / "source"
+        import shutil
+        for relative in ["java/dev/aerove/lite/overrides/BundledMeowScript.kt"] + [
+                "assets/scripts/" + name for name in module.BUNDLED_SCRIPT_FILES]:
+            target = fixture / "app/src/main" / relative
+            target.parent.mkdir(parents=True, exist_ok=True); shutil.copyfile(source / relative, target)
+        self.inspect()
+        kotlin = fixture / "app/src/main/java/dev/aerove/lite/overrides/BundledMeowScript.kt"
+        kotlin.write_text(kotlin.read_text().replace("refs/heads/main", "refs/heads/other"))
+        with zipfile.ZipFile(self.path) as archive:
+            with self.assertRaisesRegex(ValueError, "constant mismatch"):
+                module.validate_bundled_script(archive, fixture)
+
+    def test_normal_verifier_cannot_accept_legacy_or_android_test_without_assets(self):
+        self.entries = {"AndroidManifest.xml": b"test package fixture", "classes.dex": b"dex fixture"}
+        with self.assertRaises(ValueError): self.inspect()
+        with self.assertRaisesRegex(ValueError, "bundled script asset"):
+            module.verify(self.path, "x86_64", Path(self.root.name), {}, {})
 
 
 if __name__ == "__main__":

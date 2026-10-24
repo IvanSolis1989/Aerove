@@ -24,6 +24,8 @@ def verify_current_runtime(directory):
         return verify_original_runtime(directory)
     expected = artifacts.identity()
     value = artifacts.verify(directory, expected, runtime=True)
+    from verify_apk import verify_bundled_script_apk
+    bundled_script = verify_bundled_script_apk(Path(directory) / 'apks/app-release.apk')
     apks = {}
     for name, location in [('app-release.apk', 'release'),
                            ('app-release-androidTest.apk', 'androidTest/release')]:
@@ -33,7 +35,7 @@ def verify_current_runtime(directory):
             raise ValueError('Installed APK differs from verified current runtime artifact')
         apks[name] = sha(installed)
     return dict(identity=expected, apks=apks, runtimeManifestSha256=sha(Path(directory) / 'source-manifest.json'),
-                apkInspectorOutcome=value['apkInspectorOutcome'])
+                apkInspectorOutcome=value['apkInspectorOutcome'], bundledMeowScript=bundled_script)
 
 
 def validate_renderer_proof(path):

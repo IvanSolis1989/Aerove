@@ -39,7 +39,7 @@ class GlobalResourceRootUiTest {
             compose.replaceAppContent {
                 IpQualityFixture(LiteState()) {
                     val base = LocalLiteFeatures.current()
-                    val host = remember(base) { object : LiteFeatureHost by base { override val globalResources = workspace } }
+                    val host = remember(base) { object : LiteFeatureHost by base { override val globalResources = workspace; override val groupIcons = (context.applicationContext as LiteApplication).groupIcons } }
                     CompositionLocalProvider(LocalLiteFeatures provides { host }, LocalLiteMotionOverride provides true) {
                         LiteApp(LiteState(settings = LiteSettings(material = MaterialTier.Solid, aurora = false)), UiTestActions {})
                     }

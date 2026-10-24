@@ -472,6 +472,61 @@ def verify_identity(badging, signature, product, channel):
         "version_code": int(product["versionCode"]), "min_sdk": 33, "signer_sha256": signer[0]}
 
 
+BUNDLED_SCRIPT_ROOT = Path(__file__).resolve().parents[1]
+BUNDLED_SCRIPT_FILES = {
+    "smart-config-kit-meow.js": (112115, "217a4d7ecfb56d99cbb79148159ee636b882af5520c4ad7b6c6c870405f938cb"),
+    "smart-config-kit-meow.source.json": (3010, "b1fa17a7312b082343a2b4e77e798fcc8d4d6942c8d140abb68c028388e5f865"),
+    "smart-config-kit-meow.upstream-README.md": (5982, "1d7049f2419ec0c5ad1dc51fd9289a9e7a71bdb0cbd55024e652532470bd6bc0"),
+}
+
+
+def validate_bundled_script(archive, source_root=None):
+    """Normal current app only; immutable diagnostic readers retain their own pins."""
+    root = Path(source_root) if source_root is not None else BUNDLED_SCRIPT_ROOT
+    source = root / "app/src/main"
+    constants = (source / "java/dev/aerove/lite/overrides/BundledMeowScript.kt").read_text(encoding="utf-8")
+    expected_constants = {
+        "ASSET": "scripts/smart-config-kit-meow.js", "VERSION": "v6.0.20-meow.3",
+        "COMMIT": "70d4ddbe0b6d52af7acbd503ff1bf556a3bddacd",
+        "SHA256": BUNDLED_SCRIPT_FILES["smart-config-kit-meow.js"][1],
+        "UPDATE_URL": "https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/refs/heads/main/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/AeroveLite(meow).js",
+    }
+    for key, value in expected_constants.items():
+        if re.findall(r'const val ' + key + r' = "([^"\n]+)"', constants) != [value]:
+            raise ValueError("Bundled script Kotlin/source constant mismatch: " + key)
+    if re.findall(r"const val BYTES = ([0-9]+)", constants) != ["112115"]:
+        raise ValueError("Bundled script Kotlin byte count mismatch")
+    names = archive.namelist()
+    proof = {}
+    for name, (size, digest) in BUNDLED_SCRIPT_FILES.items():
+        asset = "assets/scripts/" + name
+        if names.count(asset) != 1:
+            raise ValueError("Missing or duplicate bundled script asset: " + asset)
+        info = archive.getinfo(asset)
+        if info.file_size != size:
+            raise ValueError("Bundled script asset byte count mismatch: " + asset)
+        raw = archive.read(info)  # ZIP CRC is checked by ZipFile.read as well.
+        original = source / "assets/scripts" / name
+        if (original.is_symlink() or not original.is_file() or original.read_bytes() != raw
+                or b"\r" in raw or hashlib.sha256(raw).hexdigest() != digest):
+            raise ValueError("Bundled script asset source/hash/LF mismatch: " + asset)
+        proof[asset] = {"bytes": size, "sha256": digest}
+    metadata = json.loads(archive.read("assets/scripts/smart-config-kit-meow.source.json").decode("utf-8"))
+    if (metadata.get("repository") != "IvanSolis1989/Smart-Config-Kit"
+            or metadata.get("commit") != expected_constants["COMMIT"]
+            or metadata.get("path") != "Meow内核系/Aerove Lite/AeroveLite(meow).js"
+            or metadata.get("sha256") != expected_constants["SHA256"] or metadata.get("bytes") != 112115
+            or metadata.get("readmeSha256") != BUNDLED_SCRIPT_FILES["smart-config-kit-meow.upstream-README.md"][1]
+            or metadata.get("updateUrl") != expected_constants["UPDATE_URL"]):
+        raise ValueError("Bundled script metadata/source/product mismatch")
+    return {"commit": expected_constants["COMMIT"], "update_url": expected_constants["UPDATE_URL"], "assets": proof}
+
+
+def verify_bundled_script_apk(apk):
+    with zipfile.ZipFile(apk) as archive:
+        return validate_bundled_script(archive)
+
+
 def verify(apk, abi, helper_source_root, helper_receipt, native_receipt, workflow=None):
     machine = {"arm64-v8a": 183, "x86_64": 62}[abi]
     with zipfile.ZipFile(apk) as archive:
@@ -480,6 +535,7 @@ def verify(apk, abi, helper_source_root, helper_receipt, native_receipt, workflo
         names = archive.namelist()
         if len(names) != len(set(names)):
             raise ValueError("Duplicate APK entries")
+        bundled_script = validate_bundled_script(archive)
         library = f"lib/{abi}/{CORE_LIBRARY}"
         if library not in names:
             raise ValueError("The actual Rust core is missing")
@@ -531,7 +587,7 @@ def verify(apk, abi, helper_source_root, helper_receipt, native_receipt, workflo
             raise ValueError("Not a complete Android application")
         return {**core_identity, "abi": abi, "jni_libraries": libraries, "core_sha256": hashlib.sha256(archive.read(library)).hexdigest(),
             "client_helpers": helper_readback, "client_helper_license_assets": licenses,
-            "client_helper_source_sha256": helper_provenance["source_sha256"]}
+            "client_helper_source_sha256": helper_provenance["source_sha256"], "bundled_meow_script": bundled_script}
 
 
 def build_info(identity, result, source, tree, workflow, run_number, run_attempt, apk_path, channel="preview"):
