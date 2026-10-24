@@ -635,6 +635,12 @@ class MessageLookup extends MessageLookupByLibrary {
     "dashboardAddableSection": MessageLookupByLibrary.simpleMessage(
       "Disponibles à l’ajout",
     ),
+    "dashboardNetworkControl": MessageLookupByLibrary.simpleMessage(
+      "Contrôles réseau",
+    ),
+    "dashboardNetworkOverview": MessageLookupByLibrary.simpleMessage(
+      "Vue d’ensemble du réseau",
+    ),
     "databaseWriteFailedTip": MessageLookupByLibrary.simpleMessage(
       "Échec de l’enregistrement de la modification ; elle a été annulée",
     ),

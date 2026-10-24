@@ -11,6 +11,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'edit.dart';
+import 'fusion.dart';
+import 'widgets/fused_controls.dart';
 import 'layout.dart';
 import 'style.dart';
 import 'widget_registry.dart';
@@ -340,10 +342,10 @@ class _MobileDashboard extends ConsumerWidget {
                 child: Column(
                   spacing: gap,
                   children: [
-                    for (final widget in widgets)
+                    for (final group in fuseDashboard(widgets))
                       RepaintBoundary(
-                        key: cardKeyOf(widget),
-                        child: widget.card,
+                        key: cardKeyOf(group.anchor),
+                        child: _fusedCard(group),
                       ),
                   ],
                 ),
@@ -354,4 +356,28 @@ class _MobileDashboard extends ConsumerWidget {
       ],
     );
   }
+}
+
+Widget _fusedCard(DashboardFusion group) {
+  final members = group.members;
+  if (members.contains(DashboardWidget.currentOutbound)) {
+    return CurrentOutboundCard(
+      showTraffic: members.contains(DashboardWidget.networkSpeed),
+    );
+  }
+  if (members.any(
+    const {
+      DashboardWidget.outboundMode,
+      DashboardWidget.vpnButton,
+      DashboardWidget.intranetIp,
+    }.contains,
+  )) {
+    return FusedNetworkControls(members: members);
+  }
+  if (members.contains(DashboardWidget.serviceStatus)) {
+    return ServiceStatusCard(
+      includeStats: members.contains(DashboardWidget.connectionStats),
+    );
+  }
+  return group.anchor.card;
 }

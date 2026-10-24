@@ -492,6 +492,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "dark": MessageLookupByLibrary.simpleMessage("다크"),
     "dashboard": MessageLookupByLibrary.simpleMessage("대시보드"),
     "dashboardAddableSection": MessageLookupByLibrary.simpleMessage("추가 가능"),
+    "dashboardNetworkControl": MessageLookupByLibrary.simpleMessage("네트워크 제어"),
+    "dashboardNetworkOverview": MessageLookupByLibrary.simpleMessage("네트워크 개요"),
     "databaseWriteFailedTip": MessageLookupByLibrary.simpleMessage(
       "변경 사항을 저장하지 못해 되돌렸습니다",
     ),

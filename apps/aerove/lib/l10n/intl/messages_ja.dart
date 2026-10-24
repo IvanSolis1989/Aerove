@@ -507,6 +507,10 @@ class MessageLookup extends MessageLookupByLibrary {
     "dark": MessageLookupByLibrary.simpleMessage("ダーク"),
     "dashboard": MessageLookupByLibrary.simpleMessage("ダッシュボード"),
     "dashboardAddableSection": MessageLookupByLibrary.simpleMessage("追加できるカード"),
+    "dashboardNetworkControl": MessageLookupByLibrary.simpleMessage("ネットワーク制御"),
+    "dashboardNetworkOverview": MessageLookupByLibrary.simpleMessage(
+      "ネットワーク概要",
+    ),
     "databaseWriteFailedTip": MessageLookupByLibrary.simpleMessage(
       "変更の保存に失敗したため、元に戻しました",
     ),

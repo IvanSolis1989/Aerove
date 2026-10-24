@@ -987,5 +987,7 @@
   "alreadyInLocalProxies": "«{name}» уже есть в локальных прокси",
   "aboutTelegramChannel": "Канал Telegram",
   "aboutTelegramGroup": "Группа Telegram",
-  "externalLinkOpenFailed": "Не удалось открыть ссылку. Проверьте, есть ли приложение, которому разрешено её открывать."
+  "externalLinkOpenFailed": "Не удалось открыть ссылку. Проверьте, есть ли приложение, которому разрешено её открывать.",
+  "dashboardNetworkControl": "Управление сетью",
+  "dashboardNetworkOverview": "Обзор сети"
 }

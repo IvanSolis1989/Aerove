@@ -636,6 +636,12 @@ class MessageLookup extends MessageLookupByLibrary {
     "dashboardAddableSection": MessageLookupByLibrary.simpleMessage(
       "Disponibles para añadir",
     ),
+    "dashboardNetworkControl": MessageLookupByLibrary.simpleMessage(
+      "Controles de red",
+    ),
+    "dashboardNetworkOverview": MessageLookupByLibrary.simpleMessage(
+      "Resumen de red",
+    ),
     "databaseWriteFailedTip": MessageLookupByLibrary.simpleMessage(
       "No se pudo guardar el cambio; se ha revertido",
     ),

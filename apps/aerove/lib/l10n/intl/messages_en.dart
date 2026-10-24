@@ -591,6 +591,12 @@ class MessageLookup extends MessageLookupByLibrary {
     "dashboardAddableSection": MessageLookupByLibrary.simpleMessage(
       "Available to add",
     ),
+    "dashboardNetworkControl": MessageLookupByLibrary.simpleMessage(
+      "Network controls",
+    ),
+    "dashboardNetworkOverview": MessageLookupByLibrary.simpleMessage(
+      "Network overview",
+    ),
     "databaseWriteFailedTip": MessageLookupByLibrary.simpleMessage(
       "Failed to save the change; it has been rolled back",
     ),

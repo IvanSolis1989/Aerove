@@ -987,5 +987,7 @@
   "alreadyInLocalProxies": "{name}은(는) 이미 로컬 프록시에 있습니다",
   "aboutTelegramChannel": "Telegram 채널",
   "aboutTelegramGroup": "Telegram 그룹",
-  "externalLinkOpenFailed": "이 링크를 열 수 없습니다. 링크를 열 수 있고 권한이 있는 앱이 있는지 확인하세요."
+  "externalLinkOpenFailed": "이 링크를 열 수 없습니다. 링크를 열 수 있고 권한이 있는 앱이 있는지 확인하세요.",
+  "dashboardNetworkControl": "네트워크 제어",
+  "dashboardNetworkOverview": "네트워크 개요"
 }
