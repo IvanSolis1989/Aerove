@@ -5,6 +5,11 @@
 
 分支差异以记录的 FlClash `v0.9.1`（`8d4f9744948751f1273fe871e1d05276fac09b0e`）为基线。代理协议、核心路由、VPN 授权和监控数据等上游已有能力，不列为 Aerove 独创功能。
 
+## 待发布
+
+- 修复「工具 > 关于」等既有外部链接在系统返回无法打开或发生可处理的启动异常时没有可见反馈的问题；失败提示显示本地化原因和原始 URL，可由用户关闭。
+- 保留打开前确认及取消不启动的行为，与 Lite 的外部链接失败提示对齐。
+
 ## 0.10.0-beta.6+2026102232 — 已发布预览版
 
 发布于 **2026-10-24 08:37:08（日本时间）**：[Release](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.10.0-beta.6%2B2026102232)。发布源码为 [`e2ebadc8`](https://github.com/IvanSolis1989/Aerove/commit/e2ebadc8bcf53e9c079dd8f5812fb4a0f47f8052)，对应 [原构建 #32](https://github.com/IvanSolis1989/Aerove/actions/runs/40037605629) 与 [main 推广 #33](https://github.com/IvanSolis1989/Aerove/actions/runs/40040635234)。完整 CI（11 个渲染、6 个回归分片及静态、原生检查）与实际 APK 验收通过；main 复用同一原包，7 个应用作业跳过，保留原源码、构建记录、安装编号与签名，不重复编译。
