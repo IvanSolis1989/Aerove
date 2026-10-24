@@ -388,7 +388,7 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **用途与采用方式：** Lite 选定 Rust 核心，迁移中；[Run17](https://github.com/IvanSolis1989/Aerove/actions/runs/39994659739) 的历史证据为 56 项宿主测试及双 Android ABI 链接。[Run94](https://github.com/IvanSolis1989/Aerove/actions/runs/40117349063) 后续已产出双 ABI APK 并实际执行 Android 测试，但启动及清透帧验收仍失败，整体尚未接受或首发。保留此前公开基准、DNS 与官方 Android FFI/Cargo 参考记录。
 
-大规则准备预检复用该固定 Core 的严格 MRS matcher 工厂。宿主回归另原样复用[固定 MRS 测试编码器](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/crates/meow-rules/src/mrs_parser.rs)的六个 helper 至 `apps/aerove-lite/meow-native/tests/support/upstream_mrs.rs`，只调整模块导入与两个测试入口可见性；保留 Max Lv 的完整 MIT 通知。测试运行时生成受控 `.test` 域名数据，不把第三方聚合规则作为本仓二进制夹具。生产解析仍由真实 Core 完成；新增精确 zstd 依赖仅用于测试，实际锁解析和 Android 资源验收分别记录。
+大规则元数据、独立资源验证与准备预检共用该固定 Core 的严格 MRS matcher 工厂；元数据读取不借用文本导出的 25 万条限制，文本导出仍保留原预算。宿主回归另原样复用[固定 MRS 测试编码器](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/crates/meow-rules/src/mrs_parser.rs)的六个 helper 至 `apps/aerove-lite/meow-native/tests/support/upstream_mrs.rs`，只调整模块导入与两个测试入口可见性；保留 Max Lv 的完整 MIT 通知。测试运行时生成受控 `.test` 域名数据，不把第三方聚合规则作为本仓二进制夹具。生产解析仍由真实 Core 完成；新增精确 zstd 依赖仅用于测试，实际锁解析和 Android 资源验收分别记录。
 
 **许可证、署名与证据：** MIT；[固定 LICENSE](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/LICENSE) 原始 SHA256 `b7a39018faacfd98597da373045fbacf2c3f134fd755e553894a6a9adad38db5`；[固定 Cargo.toml](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/Cargo.toml)。
 

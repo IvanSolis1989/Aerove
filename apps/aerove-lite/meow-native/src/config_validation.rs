@@ -40,7 +40,7 @@ pub fn normalize_config_fields(source: &str) -> Result<String, String> {
 }
 
 pub fn inspect_rule_set(path: &Path) -> Result<String, String> {
-    let accepted = read_rules(path, None, None)?;
+    let accepted = read_rule_summary(path, None, None)?;
     serde_json::to_string(&serde_json::json!({"format": accepted.format, "behavior": name(accepted.behavior), "count": accepted.count})).map_err(|e| e.to_string())
 }
 
@@ -57,7 +57,7 @@ pub fn dump_rule_set(path: &Path, behavior: &str, format: &str) -> Result<String
 
 pub async fn validate_resource(kind: &str, path: &Path, behavior: &str, format: &str) -> Result<(), String> {
     match kind.to_ascii_lowercase().as_str() {
-        "ruleset" | "rule-provider" => { read_rules(path, Some(parse_behavior(behavior).map_err(|e| invalid_rule("$.behavior", e))?), Some(canonical_format(format).map_err(|e| invalid_rule("$.format", e))?))?; Ok(()) }
+        "ruleset" | "rule-provider" => { read_rule_summary(path, Some(parse_behavior(behavior).map_err(|e| invalid_rule("$.behavior", e))?), Some(canonical_format(format).map_err(|e| invalid_rule("$.format", e))?))?; Ok(()) }
         "mmdb" => {
             if !behavior.is_empty() || !matches!(format.to_ascii_lowercase().as_str(), "" | "mmdb") { return Err("mmdb expects empty behavior and empty/mmdb format".into()); }
             let bytes = read_input(path, MAX_INPUT_BYTES)?;
@@ -83,9 +83,19 @@ pub async fn validate_resource(kind: &str, path: &Path, behavior: &str, format: 
 struct AcceptedRules { format: &'static str, behavior: RuleSetBehavior, entries: Vec<String>, count: usize }
 fn read_rules(path: &Path, behavior: Option<RuleSetBehavior>, format: Option<&'static str>) -> Result<AcceptedRules, String> {
     let bytes = read_input(path, MAX_INPUT_BYTES)?;
-    read_rule_payload(&bytes, behavior, format).map_err(|reason| {
-        if reason.starts_with("rule_set_invalid:") { reason } else { invalid_rule("$.payload", reason) }
-    })
+    read_rule_payload(&bytes, behavior, format).map_err(payload_error)
+}
+struct RuleSummary { format: &'static str, behavior: RuleSetBehavior, count: usize }
+fn read_rule_summary(path: &Path, behavior: Option<RuleSetBehavior>, format: Option<&'static str>) -> Result<RuleSummary, String> {
+    let bytes = read_input(path, MAX_INPUT_BYTES)?;
+    if bytes.starts_with(&rules::mrs_parser::ZSTD_MAGIC) {
+        return summarize_upstream_mrs(&bytes, behavior, format);
+    }
+    let accepted = read_rule_payload(&bytes, behavior, format).map_err(payload_error)?;
+    Ok(RuleSummary { format: accepted.format, behavior: accepted.behavior, count: accepted.count })
+}
+fn payload_error(reason: String) -> String {
+    if reason.starts_with("rule_set_invalid:") { reason } else { invalid_rule("$.payload", reason) }
 }
 fn invalid_rule(field: &str, reason: impl std::fmt::Display) -> String {
     format!("rule_set_invalid: {field}: {reason}")
@@ -155,23 +165,29 @@ pub fn preflight_rule_resource(path: &Path, behavior: &str, format: &str) -> Res
 }
 
 fn preflight_upstream_mrs(bytes: &[u8], behavior: &str, format: &str) -> Result<String, String> {
-    use rules::mrs_parser as mrs;
     let expected = parse_behavior(behavior).map_err(|e| invalid_rule("$.behavior", e))?;
     let format = canonical_format(format).map_err(|e| invalid_rule("$.format", e))?;
+    let accepted = summarize_upstream_mrs(bytes, Some(expected), Some(format))?;
+    serde_json::to_string(&serde_json::json!({
+        "state":"validated", "format":accepted.format, "behavior":name(accepted.behavior), "count":accepted.count,
+        "requires":{"geoip":false,"asn":false,"geosite":false}
+    })).map_err(|e| e.to_string())
+}
+
+/// Binary admission/metadata uses the strict matcher; text expansion keeps its separate dump budget.
+fn summarize_upstream_mrs(bytes: &[u8], behavior: Option<RuleSetBehavior>, format: Option<&'static str>) -> Result<RuleSummary, String> {
+    use rules::mrs_parser as mrs;
     // Keep the host's 64MiB expansion fence before the fixed Core's larger decoder budget.
     mrs::decompress_payload_bounded(bytes, MAX_EXPANDED_BYTES as u64)
         .map_err(|e| invalid_rule("$.payload.mrs", e))?;
     let reader = mrs::UpstreamRuleSetReader::open(bytes).map_err(|e| invalid_rule("$.payload.mrs", e))?;
     let actual = behavior_tag(reader.behavior()).map_err(|e| invalid_rule("$.payload.mrs", e))?;
-    if format != "mrs" { return Err(invalid_rule("$.format", "rule_set_format_mismatch")); }
-    if expected != actual { return Err(invalid_rule("$.behavior", "rule_set_behavior_mismatch")); }
+    if let Some(expected) = format { if expected != "mrs" { return Err(invalid_rule("$.format", "rule_set_format_mismatch")); } }
+    if let Some(expected) = behavior { if expected != actual { return Err(invalid_rule("$.behavior", "rule_set_behavior_mismatch")); } }
     drop(reader);
-    let checked = rules::build_rule_set_from_mrs_with_behavior(bytes, &Default::default(), Some(expected), true)
+    let checked = rules::build_rule_set_from_mrs_with_behavior(bytes, &Default::default(), Some(actual), true)
         .map_err(|e| invalid_rule("$.payload.mrs", e))?;
-    serde_json::to_string(&serde_json::json!({
-        "state":"validated", "format":"mrs", "behavior":name(actual), "count":checked.len(),
-        "requires":{"geoip":false,"asn":false,"geosite":false}
-    })).map_err(|e| e.to_string())
+    Ok(RuleSummary { format: "mrs", behavior: actual, count: checked.len() })
 }
 
 fn decode_mrs(bytes: &[u8]) -> Result<(RuleSetBehavior, Vec<String>, usize), String> {

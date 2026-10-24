@@ -34,24 +34,52 @@ async fn large_controlled_upstream_mrs_preflight_uses_checked_core_and_still_req
         aerove_meow_core::resource_fetch::validate_prepared(&yaml, roots.read.to_str().unwrap(), roots.cache.to_str().unwrap()));
     work.await.unwrap();
     assert_eq!(fs::read(&path).unwrap(), bytes.as_slice());
-    assert_eq!(inspect_rule_set(&path).unwrap_err(), "rule_set_invalid: $.payload.mrs: rule_set_dump_count_limit_exceeded");
+    let summary: serde_json::Value = serde_json::from_str(&inspect_rule_set(&path).unwrap()).unwrap();
+    assert_eq!(summary, serde_json::json!({"format":"mrs","behavior":"domain","count":411_634}));
+    validate_resource("ruleset", &path, "domain", "mrs").await.unwrap();
+    validate_resource("rule-provider", &path, "DOMAIN", "MRS").await.unwrap();
     assert_eq!(dump_rule_set(&path, "domain", "mrs").unwrap_err(), "rule_set_invalid: $.payload.mrs: rule_set_dump_count_limit_exceeded");
 }
 
-#[test]
-fn upstream_mrs_preflight_rejects_identity_corruption_and_64m_expansion_without_relaxing_other_caps() {
+#[tokio::test]
+async fn upstream_mrs_preflight_rejects_identity_corruption_and_64m_expansion_without_relaxing_other_caps() {
     let valid = Fixture::new(&controlled_upstream_mrs());
     assert_eq!(validation::preflight_rule_resource(&valid.0, "ipcidr", "mrs").unwrap_err(),
         "rule_set_invalid: $.behavior: rule_set_behavior_mismatch");
     assert_eq!(validation::preflight_rule_resource(&valid.0, "domain", "text").unwrap_err(),
         "rule_set_invalid: $.format: rule_set_format_mismatch");
+    assert_eq!(validate_resource("ruleset", &valid.0, "ipcidr", "mrs").await.unwrap_err(),
+        "rule_set_invalid: $.behavior: rule_set_behavior_mismatch");
+    assert_eq!(validate_resource("ruleset", &valid.0, "domain", "text").await.unwrap_err(),
+        "rule_set_invalid: $.format: rule_set_format_mismatch");
     let broken = Fixture::new(&[0x28,0xb5,0x2f,0xfd,0]);
     let error = validation::preflight_rule_resource(&broken.0, "domain", "mrs").unwrap_err();
     assert!(error.starts_with("rule_set_invalid: $.payload.mrs: ")); assert!(error.contains("zstd"));
+    assert_eq!(inspect_rule_set(&broken.0).unwrap_err(), error);
+    assert_eq!(validate_resource("ruleset", &broken.0, "domain", "mrs").await.unwrap_err(), error);
+    // A valid compressed container/header must still fail its real payload traversal/strict matcher.
+    let malformed = Fixture::new(&upstream_mrs::encode_upstream_mrs(
+        meow_config::offline_rules::mrs_parser::TYPE_DOMAIN, 1, &[1]));
+    let invalid_domain = Fixture::new(&upstream_mrs::encode_upstream_mrs(
+        meow_config::offline_rules::mrs_parser::TYPE_DOMAIN, 1, &upstream_mrs::encode_domain_set(&["."])));
+    for invalid in [&malformed, &invalid_domain] {
+        let error = validation::preflight_rule_resource(&invalid.0, "domain", "mrs").unwrap_err();
+        assert!(error.starts_with("rule_set_invalid: $.payload.mrs: "), "{error}");
+        assert_eq!(inspect_rule_set(&invalid.0).unwrap_err(), error);
+        assert_eq!(validate_resource("ruleset", &invalid.0, "domain", "mrs").await.unwrap_err(), error);
+    }
     let expansion = std::io::Read::take(std::io::repeat(0), validation::MAX_EXPANDED_BYTES as u64 + 1);
     let excessive = Fixture::new(&zstd::encode_all(expansion, 0).unwrap());
     let error = validation::preflight_rule_resource(&excessive.0, "domain", "mrs").unwrap_err();
     assert!(error.starts_with("rule_set_invalid: $.payload.mrs: ")); assert!(error.contains("decompressed_payload"));
+    assert_eq!(inspect_rule_set(&excessive.0).unwrap_err(), error);
+    assert_eq!(validate_resource("ruleset", &excessive.0, "domain", "mrs").await.unwrap_err(), error);
+    let oversized_input = Fixture::new(&[]);
+    fs::OpenOptions::new().write(true).open(&oversized_input.0).unwrap()
+        .set_len(validation::MAX_INPUT_BYTES as u64 + 1).unwrap();
+    assert_eq!(inspect_rule_set(&oversized_input.0).unwrap_err(), "resource input limit exceeded");
+    assert_eq!(validate_resource("ruleset", &oversized_input.0, "domain", "mrs").await.unwrap_err(), "resource input limit exceeded");
+    assert_eq!(validation::preflight_rule_resource(&oversized_input.0, "domain", "mrs").unwrap_err(), "resource input limit exceeded");
     let text = Fixture::new("example.test\n".repeat(validation::MAX_ENTRIES + 1).as_bytes());
     assert!(validation::preflight_rule_resource(&text.0, "domain", "text").unwrap_err().contains("count/line limit exceeded"));
     let mut legacy = meow_config::offline_rules::mrs_parser::write_ruleset_mrs(0, &["example.test"]).unwrap();
