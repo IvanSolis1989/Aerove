@@ -1,5 +1,7 @@
 pub use meow_config::owned_load::{LoadContext, OwnedLoadScope, OwnedWork, ProviderRoots};
 use std::sync::Arc;
+#[path = "provider_health.rs"]
+pub mod provider_health;
 use tokio_util::sync::CancellationToken;
 
 pub type OwnedConfigLoad<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<meow_config::Config, String>> + Send + 'a>>;
@@ -63,6 +65,12 @@ pub(crate) struct PlaneState {
     sequence: u64,
 }
 impl PlaneState {
+    pub(crate) fn provider_health_stamp(&self, identity: &ProviderIdentity) -> Option<(u64,u64)> {
+        if !self.active || self.live.get(&(identity.kind,identity.name.clone())) != Some(&identity.source) ||
+            self.busy.contains(&identity.source) || self.emitting.contains(&identity.source) { return None; }
+        self.sources.get(&identity.source).filter(|receipt|receipt.revision>0).map(|receipt|(identity.source,receipt.revision))
+    }
+
     pub(crate) fn group_events_ready(&self) -> bool {
         !self.groups_emitting && self.busy.is_empty() && self.pending.is_empty() && self.emitting.is_empty()
     }

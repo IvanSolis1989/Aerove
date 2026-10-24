@@ -91,6 +91,11 @@ fn invalid_rule(field: &str, reason: impl std::fmt::Display) -> String {
     format!("rule_set_invalid: {field}: {reason}")
 }
 fn read_rule_payload(bytes: &[u8], behavior: Option<RuleSetBehavior>, format: Option<&'static str>) -> Result<AcceptedRules, String> {
+    let accepted = decode_rule_payload(bytes, behavior, format)?;
+    compile_rule_payload(&accepted)?;
+    Ok(accepted)
+}
+fn decode_rule_payload(bytes: &[u8], behavior: Option<RuleSetBehavior>, format: Option<&'static str>) -> Result<AcceptedRules, String> {
     let is_mrs = rules::is_mrs_bytes(bytes);
     let (actual_format, actual_behavior, entries, source_count) = if is_mrs {
         let (b, entries, count) = decode_mrs(bytes).map_err(|e| invalid_rule("$.payload.mrs", e))?;
@@ -112,10 +117,38 @@ fn read_rule_payload(bytes: &[u8], behavior: Option<RuleSetBehavior>, format: Op
     if let Some(expected) = format { if expected != actual_format { return Err(invalid_rule("$.format", "rule_set_format_mismatch")); } }
     if let Some(expected) = behavior { if expected != actual_behavior { return Err(invalid_rule("$.behavior", "rule_set_behavior_mismatch")); } }
     bound_entries(&entries)?;
-    let compiled = rules::build_rule_set_checked(actual_behavior, &entries, &Default::default()).map_err(|e| invalid_rule("$.payload", e))?;
-    // Checked core conversion is authoritative; no source rows are returned before conversion succeeds.
-    if compiled.len() != entries.len() { return Err("rule_set_accepted_count_mismatch".into()); }
     Ok(AcceptedRules { format: actual_format, behavior: actual_behavior, entries, count: source_count })
+}
+fn compile_rule_payload(accepted: &AcceptedRules) -> Result<(), String> {
+    let compiled = rules::build_rule_set_checked(accepted.behavior, &accepted.entries, &Default::default()).map_err(|e| invalid_rule("$.payload", e))?;
+    if compiled.len() != accepted.entries.len() { return Err("rule_set_accepted_count_mismatch".into()); }
+    Ok(())
+}
+
+/// Preparation-only dependency receipt. Pending resources still require full prepared conversion.
+pub fn preflight_rule_resource(path: &Path, behavior: &str, format: &str) -> Result<String, String> {
+    let bytes = read_input(path, MAX_INPUT_BYTES)?;
+    let accepted = decode_rule_payload(&bytes,
+        Some(parse_behavior(behavior).map_err(|e| invalid_rule("$.behavior", e))?),
+        Some(canonical_format(format).map_err(|e| invalid_rule("$.format", e))?))?;
+    let required = meow_config::rule_geodata_requirements(&accepted.entries);
+    let pending = required.geoip || required.asn || required.geosite;
+    if !pending { compile_rule_payload(&accepted)?; }
+    else if accepted.behavior == RuleSetBehavior::Classical {
+        for entry in &accepted.entries {
+            let single = vec![entry.clone()];
+            let deps = meow_config::rule_geodata_requirements(&single);
+            if !(deps.geoip || deps.asn || deps.geosite) {
+                rules::build_rule_set_checked(accepted.behavior, &single, &Default::default())
+                    .map_err(|e| invalid_rule("$.payload", e))?;
+            }
+        }
+    }
+    serde_json::to_string(&serde_json::json!({
+        "state": if pending { "requiresPreparedContext" } else { "validated" },
+        "format": accepted.format, "behavior": name(accepted.behavior), "count": accepted.count,
+        "requires": {"geoip":required.geoip,"asn":required.asn,"geosite":required.geosite}
+    })).map_err(|e| e.to_string())
 }
 
 fn decode_mrs(bytes: &[u8]) -> Result<(RuleSetBehavior, Vec<String>, usize), String> {

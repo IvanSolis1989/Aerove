@@ -19,6 +19,34 @@ TARGETS={'aarch64-linux-android':('arm64-v8a',183),'x86_64-linux-android':('x86_
 SCRIPT_JNI_SYMBOLS=['Java_dev_aerove_lite_overrides_NativeScriptEngine_native'+name for name in ['Begin','Evaluate','Cancel','Release']]
 RUNTIME_JNI_SYMBOLS=['Java_dev_aerove_lite_core_MeowNativeCore_'+name for name in ['startOwned','status','listenerStatus','awaitReady','stop','awaitExit','listenerCommand','configurePolicies','policyStatus','capabilities','validate','inspectRuleSet','dumpRuleSet','validateResource','hostPolicyCommand']]
 
+RESOURCE_JNI_DESCRIPTORS = {'Java_dev_aerove_lite_core_JniResourceFetch_nativeCreate': '(Ljava/lang/String;)J', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeLoad': '(JLjava/lang/String;)V', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeDownload': '(JLjava/lang/String;)Ljava/lang/String;', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeCancel': '(J)V', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeCloseJoin': '(J)V', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeValidatePrepared': '(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;', 'Java_dev_aerove_lite_core_JniResourceFetch_nativePreflightRuleResource': '(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;'}
+RESOURCE_JNI_SYMBOLS = tuple(RESOURCE_JNI_DESCRIPTORS)
+RESOURCE_HEALTH_CASES = {'resource_fetch': ['materialized_file_provider_is_the_named_download_graph_and_never_reads_old_cache', 'provider_transport_rejects_external_payload_and_unowned_dns_geodata_before_factory', 'named_candidate_graph_real_http_headers_staging_cap_and_no_bootstrap_rule_fetch', 'cancelled_named_fetch_joins_real_socket_and_never_returns_a_staged_success', 'invalid_candidate_dialer_cycle_has_no_network_or_staged_commit', 'prepared_geosite_uses_actual_owned_database_and_rejects_absent_or_external_resource', 'resource_preflight_is_typed_pending_and_standalone_remains_strict', 'resource_preflight_rejects_invalid_independent_rows_and_validates_no_geo'], 'lib': ['provider_policy_fields_defaults_disabled_and_fail_closed', 'providers_keep_distinct_policies_and_only_declared_group_touch_mapping', 'independent_initial_periodic_status_and_stop_read_back', 'lazy_only_real_group_business_touch_and_no_probe_self_touch', 'epoch_and_cancel_fence_actual_pending_health', 'live_network_context_refreshes_each_round_after_hot_network_and_probe_epoch', 'manual_intent_wins_and_member_replacement_retires_old_result', 'newer_automatic_intent_fences_pending_manual_real_response', 'configured_timeout_is_real_and_stop_joins_the_pending_socket', 'provider_health_defaults_match_standard_without_enabling_periodic_meow_default']}
+
+def verify_resource_jni_source(root):
+    source=(Path(root)/'src/meow_jni.rs').read_text()
+    for symbol,expected in RESOURCE_JNI_DESCRIPTORS.items():
+        matches=re.findall(r'#\[unsafe\(no_mangle\)\]\s*pub extern "system" fn '+re.escape(symbol)+r"<'local>\(([^)]*)\)\s*(?:->\s*([^{]+))?\s*{",source)
+        if len(matches)!=1:raise ValueError('Resource JNI source export missing or ambiguous: '+symbol)
+        args,result=matches[0];all_types=[part.split(':',1)[1].strip() for part in args.split(',')]
+        if all_types[:2]!=["EnvUnowned<'local>","JClass<'local>"]:raise ValueError('Resource JNI source receiver mismatch: '+symbol)
+        types=all_types[2:]
+        table={"JString<'local>":'Ljava/lang/String;','i64':'J','':'V'}
+        try:descriptor='('+''.join(table[t] for t in types)+')'+table[result.strip()]
+        except KeyError:raise ValueError('Resource JNI source type unsupported: '+symbol)
+        if descriptor!=expected:raise ValueError('Resource JNI source descriptor mismatch: '+symbol)
+    return dict(RESOURCE_JNI_DESCRIPTORS)
+
+def added_native_test_proof(output):
+    # Require real libtest pass lines. Mentioning a case in stderr/source is insufficient.
+    names=re.findall(r'^test (\S+) \.\.\. ok$',output,re.MULTILINE)
+    for target,cases in RESOURCE_HEALTH_CASES.items():
+        for name in cases:
+            if sum(actual.split('::')[-1]==name for actual in names)!=1:
+                raise ValueError('Missing or duplicate authored Native test pass: '+target+'::'+name)
+    return dict(RESOURCE_HEALTH_CASES)
+
+
 def run(command, environment, capture=False):
     return subprocess.run(command,cwd=ROOT,env=environment,check=True,text=True,stdout=subprocess.PIPE if capture else None).stdout
 
@@ -119,6 +147,7 @@ def main():
     modes=parser.add_mutually_exclusive_group();modes.add_argument('--initialize-lock',action='store_true');modes.add_argument('--resolve-lock',action='store_true')
     parser.add_argument('--target',choices=TARGETS);parser.add_argument('--ndk',type=Path);args=parser.parse_args()
     policy=load_policy(ROOT)
+    if policy and policy.get("coreTests")=="policy-runtime-resource-health-v1":verify_resource_jni_source(ROOT)
     if args.resolve_lock and (policy is None or not policy['resolveLock']):raise ValueError('Lock resolution requires an explicit approved build policy')
     if args.target and (args.initialize_lock or args.resolve_lock or policy is not None and policy['resolveLock'] or not args.ndk or sys.platform!='linux'):
         raise ValueError('Android link requires committed lock/policy and Linux NDK; resolution is host-only')
@@ -159,7 +188,11 @@ def main():
             receipt['ndkSourceProperties']=(args.ndk/'source.properties').read_text()
             receipt['bindgenEnvironment']={key:environment[key] for key in ['LIBCLANG_PATH','CLANG_PATH','BINDGEN_EXTRA_CLANG_ARGS_'+args.target]}
             command=['cargo','build','--locked','--release','--target',args.target]
-        run(command,environment)
+        output=run(command,environment,capture=True) if not args.target and policy and policy.get("coreTests")=="policy-runtime-resource-health-v1" else run(command,environment)
+        if not args.target and policy and policy.get("coreTests")=="policy-runtime-resource-health-v1":
+            print(output,end="",flush=True)
+            (build/"native-tests.stdout.log").write_text(output)
+            receipt["addedNativeTests"]=added_native_test_proof(output)
         if sha(lock)!=resolved:raise ValueError('Locked build mutated Cargo.lock')
         if not args.target and feature_boundary_command(policy):
             receipt['featureBoundaryCommand']=feature_boundary_command(policy)
@@ -175,7 +208,7 @@ def main():
             if sha(lock)!=resolved:raise ValueError('Core unit tests changed the bridge Cargo.lock')
         if args.target:
             abi,machine=TARGETS[args.target];library=ROOT/'target'/args.target/'release/libaerove_meow_core.so'
-            output=verify_elf(library,machine,readelf,SCRIPT_JNI_SYMBOLS+RUNTIME_JNI_SYMBOLS,build/(abi+'-readelf.txt'));receipt['scriptJniSymbols']=SCRIPT_JNI_SYMBOLS;receipt['runtimeJniSymbols']=RUNTIME_JNI_SYMBOLS;(build/(abi+'-readelf.txt')).write_text(output)
+            output=verify_elf(library,machine,readelf,SCRIPT_JNI_SYMBOLS+RUNTIME_JNI_SYMBOLS+list(RESOURCE_JNI_SYMBOLS),build/(abi+'-readelf.txt'));receipt['scriptJniSymbols']=SCRIPT_JNI_SYMBOLS;receipt['runtimeJniSymbols']=RUNTIME_JNI_SYMBOLS;receipt['resourceJniDescriptors']=RESOURCE_JNI_DESCRIPTORS;(build/(abi+'-readelf.txt')).write_text(output)
             destination=build/abi;destination.mkdir(exist_ok=True);shutil.copyfile(library,destination/library.name)
             receipt['output']=dict(abi=abi,file=str(destination/library.name),sha256=sha(library),bytes=library.stat().st_size,minPageAlignment=16384)
         receipt['commandExit']=0;receipt['acceptedLock']=True

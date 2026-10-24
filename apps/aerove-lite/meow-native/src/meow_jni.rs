@@ -298,3 +298,81 @@ mod validation_boundary_tests {
         assert_eq!(validation_future::<()>(async { panic!("fixture converter panic") }).await.unwrap_err(),"native_validation_panicked");
     }
 }
+
+
+static RESOURCE_FETCHES: OnceLock<Mutex<BTreeMap<i64,Arc<crate::resource_fetch::ResourceFetch>>>> = OnceLock::new();
+static NEXT_RESOURCE_FETCH: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(1);
+#[derive(serde::Deserialize)]
+#[serde(rename_all="camelCase",deny_unknown_fields)]
+struct ResourcePlan {
+    schema_version:u8, physical_network:crate::runtime_plan::PhysicalNetwork,
+    staging_root:String,resource_read_root:Option<String>,cache_root:String,
+}
+fn resource_fetch(handle:i64)->Result<Arc<crate::resource_fetch::ResourceFetch>,BridgeError> {
+    RESOURCE_FETCHES.get_or_init(||Mutex::new(BTreeMap::new())).lock().get(&handle).cloned()
+        .ok_or_else(||BridgeError("invalid resource scope handle".into()))
+}
+fn resource_result<T>(work:impl std::future::Future<Output=std::io::Result<T>>)->Result<T,BridgeError> {
+    executor()?.block_on(validation_future(async move {work.await.map_err(|cause|cause.to_string())})).map_err(BridgeError)
+}
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_JniResourceFetch_nativeCreate<'local>(mut env:EnvUnowned<'local>,_class:JClass<'local>,plan:JString<'local>)->i64 {
+    env.with_env(|env|->Result<i64,BridgeError>{
+        let text=plan.try_to_string(env)?;if text.len()>65536 {return Err(BridgeError("resource plan limit".into()));}
+        let plan:ResourcePlan=serde_json::from_str(&text).map_err(|_|BridgeError("resource plan schema".into()))?;
+        if plan.schema_version!=1 {return Err(BridgeError("resource schemaVersion".into()));}
+        let raw=plan.physical_network.handle.as_deref().ok_or_else(||BridgeError("physicalNetwork.handle: unavailable".into()))?;
+        let network=raw.parse::<u64>().ok().filter(|n|*n!=0&&n.to_string()==raw).ok_or_else(||BridgeError("physicalNetwork.handle".into()))?;
+        let cancel=CancellationToken::new();let context=NetworkContext::platform_on_network(network,cancel.clone())?;
+        let servers=crate::physical_dns::selected_servers(&plan.physical_network.dns)?;
+        let scope=crate::resource_fetch::ResourceFetch::create(context,servers,&plan.staging_root,plan.resource_read_root.as_deref(),&plan.cache_root,cancel)?;
+        let handle=NEXT_RESOURCE_FETCH.fetch_update(std::sync::atomic::Ordering::AcqRel,std::sync::atomic::Ordering::Acquire,|n|n.checked_add(1)).map_err(|_|BridgeError("resource handles exhausted".into()))?;
+        RESOURCE_FETCHES.get_or_init(||Mutex::new(BTreeMap::new())).lock().insert(handle,scope);Ok(handle)
+    }).resolve::<ThrowRuntimeExAndDefault>()
+}
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_JniResourceFetch_nativeLoad<'local>(mut env:EnvUnowned<'local>,_class:JClass<'local>,handle:i64,source:JString<'local>) {
+    env.with_env(|env|->Result<(),BridgeError>{
+        let source=source.try_to_string(env)?;if source.len()>crate::config_validation::MAX_TEXT_BYTES {return Err(BridgeError("candidate input limit".into()));}
+        resource_result(resource_fetch(handle)?.load(source))
+    }).resolve::<ThrowRuntimeExAndDefault>()
+}
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_JniResourceFetch_nativeDownload<'local>(mut env:EnvUnowned<'local>,_class:JClass<'local>,handle:i64,request:JString<'local>)->JString<'local> {
+    env.with_env(|env|->Result<JString<'local>,BridgeError>{
+        let text=request.try_to_string(env)?;if text.len()>262144 {return Err(BridgeError("resource request limit".into()));}
+        let request=serde_json::from_str(&text).map_err(|_|BridgeError("resource request schema".into()))?;
+        let result=resource_result(resource_fetch(handle)?.download(request))?;
+        Ok(env.new_string(serde_json::to_string(&result).map_err(|_|BridgeError("resource response".into()))?)?)
+    }).resolve::<ThrowRuntimeExAndDefault>()
+}
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_JniResourceFetch_nativeCancel<'local>(mut env:EnvUnowned<'local>,_class:JClass<'local>,handle:i64) {
+    env.with_env(|_|->Result<(),BridgeError>{resource_fetch(handle)?.cancel();Ok(())}).resolve::<ThrowRuntimeExAndDefault>()
+}
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_JniResourceFetch_nativeCloseJoin<'local>(mut env:EnvUnowned<'local>,_class:JClass<'local>,handle:i64) {
+    env.with_env(|_|->Result<(),BridgeError>{
+        let result=resource_result(resource_fetch(handle)?.close_and_join());
+        RESOURCE_FETCHES.get_or_init(||Mutex::new(BTreeMap::new())).lock().remove(&handle);result
+    }).resolve::<ThrowRuntimeExAndDefault>()
+}
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_JniResourceFetch_nativeValidatePrepared<'local>(mut env:EnvUnowned<'local>,_class:JClass<'local>,source:JString<'local>,read_root:JString<'local>,cache:JString<'local>)->JString<'local> {
+    env.with_env(|env|->Result<JString<'local>,BridgeError>{
+        let source=source.try_to_string(env)?;let read_root=read_root.try_to_string(env)?;let cache=cache.try_to_string(env)?;
+        if source.len()>crate::config_validation::MAX_TEXT_BYTES {return Err(BridgeError("prepared input limit".into()));}
+        match executor()?.block_on(validation_future(crate::resource_fetch::validate_prepared(&source,&read_root,&cache))) {
+            Ok(())=>Ok(JString::null()),Err(cause)=>Ok(env.new_string(cause)?)
+        }
+    }).resolve::<ThrowRuntimeExAndDefault>()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_JniResourceFetch_nativePreflightRuleResource<'local>(mut env:EnvUnowned<'local>,_class:JClass<'local>,path:JString<'local>,behavior:JString<'local>,format:JString<'local>)->JString<'local> {
+    env.with_env(|env|->Result<JString<'local>,BridgeError>{
+        let path=path.try_to_string(env)?;let behavior=behavior.try_to_string(env)?;let format=format.try_to_string(env)?;
+        let receipt=validation_result(||crate::config_validation::preflight_rule_resource(std::path::Path::new(&path),&behavior,&format)).map_err(BridgeError)?;
+        Ok(env.new_string(receipt)?)
+    }).resolve::<ThrowRuntimeExAndDefault>()
+}

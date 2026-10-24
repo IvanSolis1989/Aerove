@@ -38,3 +38,6 @@ mod script_engine;
 mod script_jni;
 
 pub use runtime::{Failure, Phase, Registry, Session, Snapshot, StartOptions};
+
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+pub mod resource_fetch;

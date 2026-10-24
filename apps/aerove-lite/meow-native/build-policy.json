@@ -32,6 +32,7 @@
     "provider_rules",
     "proxy_runtime",
     "request_policy",
+    "resource_fetch",
     "resource_roots",
     "runtime_admission",
     "runtime_dialers",
@@ -47,8 +48,8 @@
     "user_request_context"
   ],
   "overlay": "source-metadata/full-runtime.json",
-  "overlaySha256": "b6e798792f5cabaafdf0a49b32d944578d426fe6ffec525a545352b0d67a40d5",
+  "overlaySha256": "cccc8f33ae1461778738f0beb80020375a3e82c00ed9e6ec523fec07b5a217e9",
   "featureBoundary": "capabilities-no-default",
-  "coreTests": "policy-runtime-provider-general-v1",
+  "coreTests": "policy-runtime-resource-health-v1",
   "coreTestLockSha256": "96b509814a2d833c39ac23c1cbee62a38e401f420ec1cf8f72a7738a71df6c58"
 }

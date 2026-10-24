@@ -86,9 +86,9 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **固定版本 / revision：** `851a99e20723278101bfa110cc209021ba676748`
 
-**用途与采用方式：** Lite资源库 Compose 状态订阅只读参考 `StateFlow.collectAsStateWithLifecycle` 默认 STARTED 和 `repeatOnLifecycle` 行为；复用既有 lifecycle-runtime-compose 依赖，未复制实现、未新增依赖
+**用途与采用方式：** Lite资源库 Compose 状态订阅只读参考 `StateFlow.collectAsStateWithLifecycle` 默认 STARTED 和 `repeatOnLifecycle` 行为；仪表盘状态卡另参考 `AlignmentLine` 的父级继承与子项位置偏移，在同次测量中判断紧凑指标与真实前景是否碰撞。复用既有 Compose / lifecycle-runtime-compose 依赖，未复制实现、未新增依赖；实际 Android 布局仍须验收
 
-**许可证、署名与证据：** Apache-2.0；Android Open Source Project 2022；[固定 `FlowExt.kt`](https://github.com/androidx/androidx/blob/851a99e20723278101bfa110cc209021ba676748/lifecycle/lifecycle-runtime-compose/src/commonMain/kotlin/androidx/lifecycle/compose/FlowExt.kt)；`apps/aerove-lite/app/src/main/java/dev/aerove/lite/ui/GlobalResourceLibraryScreen.kt`
+**许可证、署名与证据：** Apache-2.0；保留 Android Open Source Project 署名；[固定 `FlowExt.kt`](https://github.com/androidx/androidx/blob/851a99e20723278101bfa110cc209021ba676748/lifecycle/lifecycle-runtime-compose/src/commonMain/kotlin/androidx/lifecycle/compose/FlowExt.kt)、[固定 `AlignmentLine.kt`](https://github.com/androidx/androidx/blob/851a99e20723278101bfa110cc209021ba676748/compose/ui/ui/src/commonMain/kotlin/androidx/compose/ui/layout/AlignmentLine.kt)；本项目入口为 `GlobalResourceLibraryScreen.kt` 和 `OverviewScreen.kt`
 
 #### [MetaCubeX/age](https://github.com/MetaCubeX/age)
 
@@ -348,11 +348,11 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 #### [Smart-Config-Kit](https://github.com/IvanSolis1989/Smart-Config-Kit)
 
-**固定版本 / revision：** `28b86e2e991cde8bc2fa71b874e807c622f2b096`；README 参考 18a676345de86af38f511b8137add605e0a59588
+**固定版本 / revision：** `28b86e2e991cde8bc2fa71b874e807c622f2b096`；README 参考 `18a676345de86af38f511b8137add605e0a59588`；Lite Meow 联调基线 `89abb221a157acc98d6b52c85583e6b5a5b2742b`
 
-**用途与采用方式：** 分类 Issue Forms、MiMo Flash 首轮与 Pro 追问、过滤/失败只读模式作为流程参考；本产品重新实现，没有复制规则/提示词或自动PR；另参考首页内容分层、下载导航与二级文档组织，按本产品事实重新编写，未复制 SVG、文案或 UI
+**用途与采用方式：** 分类 Issue Forms、MiMo Flash 首轮与 Pro 追问、过滤/失败只读模式作为流程参考；该流程未复制规则/提示词或自动PR。另参考首页内容分层、下载导航与二级文档组织，按本产品事实重新编写，未复制 SVG、文案或 UI。Lite 兼容准入、provider / Geo 准备及脚本联调使用固定 Meow 配置与测试向量；分流脚本仍由上游生成维护，本项目不另维护生产路由基线。测试夹具、显式本地资源供给和实际 HTTP / VPN 路由验收分别记录，不能互相代替
 
-**许可证、署名与证据：** 未复制或分发其代码；上游 `.github/ISSUE_TEMPLATE`、固定revision，本仓库只读流程对照；[固定 README](https://github.com/IvanSolis1989/Smart-Config-Kit/blob/18a676345de86af38f511b8137add605e0a59588/README.md)，未复制或分发其文件
+**许可证、署名与证据：** 既有流程与 README 为只读参考；[固定 README](https://github.com/IvanSolis1989/Smart-Config-Kit/blob/18a676345de86af38f511b8137add605e0a59588/README.md)。联调固定树的 README 声明 MIT，未发现独立 LICENSE / COPYING / NOTICE 文件，不补造授权；[固定 Meow 脚本](https://github.com/IvanSolis1989/Smart-Config-Kit/blob/89abb221a157acc98d6b52c85583e6b5a5b2742b/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/AeroveLite(meow).js) SHA256 `217a4d7ecfb56d99cbb79148159ee636b882af5520c4ad7b6c6c870405f938cb`。第三方规则及数据库保留各自来源和许可约束，不视为 SCK 原创或推定采用 MIT
 
 #### [tun-rs/tun-rs](https://github.com/tun-rs/tun-rs)
 
@@ -734,9 +734,9 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **固定版本 / revision：** `agp-9.0` 分支固定 `449b73601ba59ae751ff76f9869f2b8461e2b9c0`
 
-**用途与采用方式：** 修复客户端预检的资产 SourceSet Provider 配置错误时，只读参照官方 `addGeneratedSourceFolder` 的 README / CustomPlugin.kt，比较 Variant 生成目录方案。实际沿用既有固定输出目录并传 File，保留原 Sync / mergeAssets 依赖；未复制示例代码。
+**用途与采用方式：** 修复客户端预检的资产 SourceSet Provider 配置错误时，只读参照官方 `addGeneratedSourceFolder` 的 README / CustomPlugin.kt，比较 Variant 生成目录方案，实际沿用固定输出目录及原 Sync / mergeAssets 依赖。另适配 `getScopedArtifacts` 示例的公开 `ScopedArtifact.CLASSES` / `Scope` / `toGet` 接线，在 R8 前读取真实 app、AndroidTest 和依赖 classfile，生成测试调用边的精确保留规则；不引入示例插件或私有任务名推断。
 
-**许可证、署名与证据：** Apache-2.0，AOSP 2022 源文件许可头；[固定示例](https://github.com/android/gradle-recipes/tree/449b73601ba59ae751ff76f9869f2b8461e2b9c0/addGeneratedSourceFolder)、[实际采用的 AGP 9.4 API](https://developer.android.com/reference/tools/gradle-api/9.4/com/android/build/api/dsl/AndroidSourceDirectorySet)。
+**许可证、署名与证据：** Apache-2.0；资产示例保留 AOSP 2022，scoped-artifact 适配保留 AOSP 2023 署名与许可链接于 `apps/aerove-lite/app/build.gradle.kts`；[固定资产示例](https://github.com/android/gradle-recipes/tree/449b73601ba59ae751ff76f9869f2b8461e2b9c0/addGeneratedSourceFolder)、[固定 classfile 示例](https://github.com/android/gradle-recipes/tree/449b73601ba59ae751ff76f9869f2b8461e2b9c0/getScopedArtifacts)、[AGP 9.4 API](https://developer.android.com/reference/tools/gradle-api/9.4/com/android/build/api/dsl/AndroidSourceDirectorySet)。适配另对照本项目 AGP 9.4.1 固定源码；源码核对不代替实际构建图验收。
 
 #### [aosp-mirror/platform_frameworks_base](https://github.com/aosp-mirror/platform_frameworks_base)
 
@@ -800,9 +800,17 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **固定版本 / revision：** 只读评估时核定 HEAD `db4a0e7af12cb92e02e1efd613d94e6d5dee037d`
 
-**用途与采用方式：** 参考项目说明评估 Android instrumentation 测试 ABI 推断方案；未读取或复制实现、未采用插件，AGP 9.4.1 兼容性未核定；本项目采用原同轮 DEX/R8 证据限定的精确保留规则
+**用途与采用方式：** 参考项目说明评估 Android instrumentation 测试 ABI 推断方案；未读取或复制实现、未采用插件，其 AGP 9.4.1 兼容性未核定。本项目保留原同轮 DEX/R8 证据限定规则，并通过官方 classfile API 与 TraceReferences 生成补充规则，不采用该插件的私有 AGP 接缝
 
 **许可证、署名与证据：** Apache-2.0，原作者署名保留；[固定项目](https://github.com/slackhq/keeper/tree/db4a0e7af12cb92e02e1efd613d94e6d5dee037d)、[LICENSE](https://github.com/slackhq/keeper/blob/db4a0e7af12cb92e02e1efd613d94e6d5dee037d/LICENSE)；本轮仅评估未采用
+
+#### [R8 官方仓库](https://r8.googlesource.com/r8/)
+
+**固定版本 / revision：** TraceReferences 命令源码 `d3a004e326742850d743833562cc2d6ca267d117`，parser blob `06cb8149b17ec95646b185a0ade00cac7dda240f`；本地最小用例使用现有 SDK36 R8 `8.10.9-dev`，生产使用本项目 AGP 实际已加载的 R8，不新增另一个版本依赖。
+
+**用途与采用方式：** 只读核对官方 `--source`、`--target`、`--lib`、`--keep-rules`、`--allowobfuscation` 与严格缺失引用行为。通过官方工具从预 R8 测试 classfile 推导 app 的精确保留规则，保留混淆；未复制工具实现。最小实际 classfile / R8 / JVM 用例不能代替生产 AGP、APK 和 Android 验收。
+
+**许可证、署名与证据：** R8 project authors，源码所示 BSD-style license；[固定命令源码](https://r8.googlesource.com/r8/+/d3a004e326742850d743833562cc2d6ca267d117/src/main/java/com/android/tools/r8/tracereferences/TraceReferencesCommandParser.java)、[官方 LICENSE](https://r8.googlesource.com/r8/+/refs/heads/main/LICENSE)；本项目 `apps/aerove-lite/tool/generate_android_test_keep_rules.py`。
 
 #### [google/gfxstream](https://github.com/google/gfxstream)
 

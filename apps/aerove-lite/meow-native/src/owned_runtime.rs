@@ -9,6 +9,7 @@ use std::{io, net::SocketAddr, os::fd::{AsFd, AsRawFd, OwnedFd}, panic::AssertUn
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream, UdpSocket}, sync::{mpsc, oneshot, watch}, task::{JoinHandle, JoinSet}};
 use tokio_util::sync::CancellationToken;
 use crate::flow_owner::FlowOwnerLookup;
+use crate::providers::provider_health;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -378,6 +379,16 @@ impl OwnedRuntime {
             core_slot.as_mut().expect("installed core").health.push(task);
         }
         api.activate_providers().map_err(|_| error("providerActivationFailed"))?;
+        for policy in provider_health::Policy::parse(&engine)? {
+            let control=api.control.clone();let plane=self.plane.clone();let owner=scope.clone();
+            let probe=self.probes.scope();let health_fault=fault.clone();let health_cancel=self.cancel.clone();
+            let work=async move {
+                let result=AssertUnwindSafe(probe.run_owned(provider_health::run(control,plane,policy,owner))).catch_unwind().await;
+                if !health_cancel.is_cancelled() || result.is_err(){let _=health_fault.try_send("providerHealthOwnerExited");}
+            };
+            let task=scope.spawn_owned(work).map_err(|_|error("providerHealthAdmissionFailed"))?;
+            core_slot.as_mut().expect("installed core").health.push(task);
+        }
         let serving = api.clone(); let stop = api_cancel.clone();
         let private_fault = fault.clone();
         let context = network.clone();
@@ -583,7 +594,6 @@ fn validate_managed_providers(map: &serde_yaml::Mapping, plan: &RuntimePlan) -> 
                 if let Some(health) = value.get("health-check") {
                     let health = health.as_mapping().ok_or_else(|| io::Error::other(format!("{prefix}.health-check: expected mapping")))?;
                     for key in health.keys() { if !matches!(key.as_str(),Some("enable"|"url"|"interval"|"timeout"|"expected-status"|"lazy")) { return Err(io::Error::other(format!("{prefix}.health-check.{}: no consumed health field",key.as_str().unwrap_or("field")))); } }
-                    if health.get(&serde_yaml::Value::String("enable".into())).and_then(serde_yaml::Value::as_bool)!=Some(false) { return Err(io::Error::other(format!("{prefix}.health-check.enable: enabled provider health-check has no periodic Core scheduler"))); }
                 }
             }
         }
@@ -618,8 +628,13 @@ fn managed_yaml(plan: &RuntimePlan) -> io::Result<String> {
                 for (key,value) in [("enable",serde_yaml::Value::Bool(false)),("lazy",serde_yaml::Value::Bool(true))] {
                     health.entry(serde_yaml::Value::String(key.into())).or_insert(value);
                 }
+                // An empty URL preserves Standard's disabled timer instead of Meow's implicit gstatic URL.
+                health.entry(serde_yaml::Value::String("url".into())).or_insert(serde_yaml::Value::String(String::new()));
                 if health.get(&serde_yaml::Value::String("enable".into())).and_then(serde_yaml::Value::as_bool)==Some(true) && health.get(&serde_yaml::Value::String("interval".into())).and_then(serde_yaml::Value::as_u64)==Some(0) {
                     health.insert(serde_yaml::Value::String("interval".into()),serde_yaml::Value::Number(300u64.into()));
+                }
+                if health.get(&serde_yaml::Value::String("timeout".into())).and_then(serde_yaml::Value::as_u64)==Some(0) {
+                    health.insert(serde_yaml::Value::String("timeout".into()),serde_yaml::Value::Number(5000u64.into()));
                 }
             }
         }
@@ -669,7 +684,9 @@ fn managed_yaml(plan: &RuntimePlan) -> io::Result<String> {
         if !["mixed-port", "port", "socks-port", "allow-lan", "bind-address", "authentication", "listeners"].contains(&key_string) { return Err(error("inboundFieldNotIntegrated")); }
         if map.insert(key.clone(), value.clone()).is_some() { return Err(error("duplicateManagedField")); }
     }
-    serde_yaml::to_string(&root).map_err(|_| error("invalidConfig"))
+    let yaml=serde_yaml::to_string(&root).map_err(|_| error("invalidEngineYaml"))?;
+    provider_health::Policy::parse(&yaml)?;
+    Ok(yaml)
 }
 async fn serve_inbound(socket: TcpListener, spec: NamedListener, tunnel: Tunnel, auth: Arc<meow_common::AuthConfig>, cancel: CancellationToken, network: NetworkContext) {
     let mut connections = JoinSet::new();
@@ -1004,7 +1021,7 @@ mod cleanup_ack_tests {
             ("proxy-providers: {P: {type: http, url: 'http://127.0.0.1:1', proxy: PICK}}","proxy"),
             ("proxy-providers: {P: {type: file, path: seed.yaml, header: {X-Test: ignored}}}","header"),
             ("proxy-providers: {P: {type: file, path: seed.yaml, ignored: true}}","ignored"),
-            ("proxy-providers: {P: {type: http, url: 'http://127.0.0.1:1', health-check: {enable: true}}}","health-check.enable"),
+            ("proxy-providers: {P: {type: http, url: 'http://127.0.0.1:1', health-check: {enable: invalid}}}","health-check.enable"),
             ("proxy-providers: {P: {type: file, path: seed.yaml, health-check: {enable: true, undocumented: true}}}","undocumented"),
             ("rule-providers: {R: {type: file, behavior: domain, path: seed.yaml, interval: 1}}","interval"),
             ("rule-providers: {R: {type: http, behavior: domain, url: 'http://127.0.0.1:1', payload: [ignored]}}","payload"),
@@ -1022,9 +1039,14 @@ mod cleanup_ack_tests {
             assert_eq!(hc["lazy"],if health.contains("lazy: false"){false}else{true});
             if health.contains("interval: 0"){assert_eq!(hc["interval"],0);}
         }
-        for health in ["{enable: true,interval: 0}","{enable: true,interval: 1,lazy: false}"] {
+        for health in ["{enable: true,interval: 0,timeout: 0}","{enable: true,interval: 1,lazy: false}"] {
             plan.engine_yaml=format!("strict: true\nproxy-providers: {{P: {{type: http,url: 'http://127.0.0.1:1',health-check: {health}}}}}\nrules: ['MATCH,DIRECT']\n");
-            let reason=managed_yaml(&plan).unwrap_err().to_string();assert!(reason.contains("proxy-providers.P.health-check.enable"));assert!(reason.contains("periodic Core scheduler"));
+            let canonical:serde_yaml::Value=serde_yaml::from_str(&managed_yaml(&plan).unwrap()).unwrap();
+            assert_eq!(canonical["proxy-providers"]["P"]["health-check"]["enable"],true);
+            assert_eq!(canonical["proxy-providers"]["P"]["health-check"]["url"],"");
+            if health.contains("interval: 0"){assert_eq!(canonical["proxy-providers"]["P"]["health-check"]["interval"],300);}
+            if health.contains("timeout: 0"){assert_eq!(canonical["proxy-providers"]["P"]["health-check"]["timeout"],5000);}
+            assert!(provider_health::Policy::parse(&managed_yaml(&plan).unwrap()).unwrap().is_empty());
         }
     }
 

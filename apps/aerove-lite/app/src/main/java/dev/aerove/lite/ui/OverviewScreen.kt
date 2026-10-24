@@ -88,6 +88,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.material3.HorizontalDivider
 import java.util.Locale
 import kotlin.math.hypot
+import androidx.compose.ui.layout.AlignmentLine
+import androidx.compose.ui.layout.HorizontalAlignmentLine
+import androidx.compose.ui.layout.VerticalAlignmentLine
+import androidx.compose.ui.layout.Placeable
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.LayoutDirection
 
 internal val LocalDashboardFusion = staticCompositionLocalOf { true }
 
@@ -230,6 +236,29 @@ private fun DashboardHeader(icon: LiteGlyph, title: String, leading: @Composable
     }
 }
 
+// Compose inherits alignment lines with each child's placement offset in the same measure pass.
+private enum class StatusForeground {
+    Address, Flag, Quality, Provisional, Uptime, Organization, Button, ListenerError, OutboundError;
+
+    val left = VerticalAlignmentLine(::minOf)
+    val right = VerticalAlignmentLine(::maxOf)
+    val top = HorizontalAlignmentLine(::minOf)
+    val bottom = HorizontalAlignmentLine(::maxOf)
+
+    fun bounds(body: Placeable, bodyY: Int): Rect? {
+        val x = body[left]
+        if (x == AlignmentLine.Unspecified) return null
+        return Rect(x.toFloat(), (bodyY + body[top]).toFloat(), body[right].toFloat(), (bodyY + body[bottom]).toFloat())
+    }
+}
+
+private fun Modifier.statusForeground(part: StatusForeground) = layout { measurable, constraints ->
+    val child = measurable.measure(constraints)
+    layout(child.width, child.height, mapOf(part.left to 0, part.top to 0, part.right to child.width, part.bottom to child.height)) {
+        child.place(0, 0)
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun OutboundStatusCard(state: LiteState, actions: LiteActions, showTraffic: Boolean = false) {
@@ -275,7 +304,7 @@ private fun OutboundStatusCard(state: LiteState, actions: LiteActions, showTraff
             if (curveMix > 0f) DashboardTrafficBackdrop(history, Modifier.matchParentSize().alpha(curveMix))
         }
         CompositionLocalProvider(LocalLiteBackdrop provides controlsSource) {
-            Layout(modifier = Modifier.padding(start = 20.dp, top = 18.dp, end = 16.dp, bottom = 18.dp), content = {
+            Layout(modifier = Modifier.padding(start = 20.dp, top = 18.dp, end = 16.dp, bottom = 18.dp).testTag("dashboard-status-content"), content = {
                 FlowRow(Modifier.testTag("dashboard-status-heading"),
                     horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(Modifier.alignBy(FirstBaseline), verticalAlignment = Alignment.CenterVertically,
@@ -295,29 +324,29 @@ private fun OutboundStatusCard(state: LiteState, actions: LiteActions, showTraff
                                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                         val shown = identity?.address ?: quality.ip?.takeIf { state.outboundLoading && quality.provisional }
                                         if (shown != null) LiteText(if (quality.hidden) "*****" else shown,
-                                            Modifier.clickable(role = Role.Button, onClick = open), style = LiteType.Title2,
+                                            Modifier.statusForeground(StatusForeground.Address).testTag("dashboard-status-ip").clickable(role = Role.Button, onClick = open), style = LiteType.Title2,
                                             color = qualityInk(quality.quality?.level), maxLines = 1)
-                                        else if (state.outboundLoading) LiteText(stringResource(R.string.lite_outbound_loading), style = LiteType.Footnote, color = visuals.secondaryInk, maxLines = 2)
-                                        else LiteText("—", style = LiteType.Title2)
-                                        IpQualityChips(quality, open)
-                                        if (quality.provisional) LiteText(stringResource(R.string.quality_provisional), style = LiteType.Caption, color = visuals.secondaryInk)
+                                        else if (state.outboundLoading) LiteText(stringResource(R.string.lite_outbound_loading), Modifier.statusForeground(StatusForeground.Address).testTag("dashboard-status-ip"), style = LiteType.Footnote, color = visuals.secondaryInk, maxLines = 2)
+                                        else LiteText("—", Modifier.statusForeground(StatusForeground.Address).testTag("dashboard-status-ip"), style = LiteType.Title2)
+                                        Box(Modifier.statusForeground(StatusForeground.Quality)) { IpQualityChips(quality, open) }
+                                        if (quality.provisional) LiteText(stringResource(R.string.quality_provisional), Modifier.statusForeground(StatusForeground.Provisional).testTag("dashboard-status-provisional"), style = LiteType.Caption, color = visuals.secondaryInk)
                                     }
                                 }
                             } else Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 CountryBubble(identity?.countryCode, state.outboundLoading, running, actions::refreshOutbound)
-                                LiteText("—", style = LiteType.Title2)
+                                LiteText("—", Modifier.statusForeground(StatusForeground.Address).testTag("dashboard-status-ip"), style = LiteType.Title2)
                             }
                             LiteText("${stringResource(R.string.lite_uptime)} ${if (running) formatUptime(state.uptimeMillis) else "—"}",
-                                style = LiteType.Caption, color = visuals.secondaryInk, maxLines = 1)
-                            LiteText(qualityState?.quality?.organization ?: "—", style = LiteType.Label, maxLines = 2)
+                                Modifier.statusForeground(StatusForeground.Uptime).testTag("dashboard-status-uptime"), style = LiteType.Caption, color = visuals.secondaryInk, maxLines = 1)
+                            LiteText(qualityState?.quality?.organization ?: "—", Modifier.statusForeground(StatusForeground.Organization).testTag("dashboard-status-organization"), style = LiteType.Label, maxLines = 2)
                         }
                         StartBubble(running, enabled, stringResource(if (suspended) R.string.integration_suspended else if (running) R.string.action_disconnect else R.string.lite_connect), time,
                             if (running) actions::disconnect else actions::connect, suspended)
                     }
-                    state.listenerError?.takeIf { it.isNotBlank() }?.let { LiteText(it, style = LiteType.Caption, color = MaterialTheme.colorScheme.error, maxLines = 2) }
-                    state.outboundError?.takeIf { it.isNotBlank() }?.let { LiteText(it, style = LiteType.Caption, color = MaterialTheme.colorScheme.error, maxLines = 2) }
+                    state.listenerError?.takeIf { it.isNotBlank() }?.let { LiteText(it, Modifier.statusForeground(StatusForeground.ListenerError).testTag("dashboard-status-listener-error"), style = LiteType.Caption, color = MaterialTheme.colorScheme.error, maxLines = 2) }
+                    state.outboundError?.takeIf { it.isNotBlank() }?.let { LiteText(it, Modifier.statusForeground(StatusForeground.OutboundError).testTag("dashboard-status-outbound-error"), style = LiteType.Caption, color = MaterialTheme.colorScheme.error, maxLines = 2) }
                 }
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp),
+                FlowRow(Modifier.testTag("dashboard-status-traffic"), horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (showTraffic) {
                         StatusSpeed(true, state.traffic.uploadPerSecond, state.traffic.upload, Modifier)
@@ -332,10 +361,14 @@ private fun OutboundStatusCard(state: LiteState, actions: LiteActions, showTraff
                 val gap = 12.dp.roundToPx()
                 val bodyY = heading.height + gap
                 val mainHeight = bodyY + body.height
-                // Metrics never measure or constrain the original foreground.
-                // Accessibility overflow is appended after it, without moving or scaling it.
+                val trafficX = if (layoutDirection == LayoutDirection.Ltr) constraints.maxWidth - traffic.width else 0
+                val trafficBounds = Rect(trafficX.toFloat(), 0f, (trafficX + traffic.width).toFloat(), traffic.height.toFloat())
+                val overlapsForeground = showTraffic && StatusForeground.entries.any { part ->
+                    part.bounds(body, bodyY)?.overlaps(trafficBounds) == true
+                }
+                // Only an actual foreground collision can append metrics without constraining the original content.
                 val overlay = !showTraffic || (heading.width + 8.dp.roundToPx() + traffic.width <= constraints.maxWidth &&
-                    traffic.height <= bodyY)
+                    !overlapsForeground)
                 val height = mainHeight + if (overlay || !showTraffic) 0 else gap + traffic.height
                 layout(constraints.maxWidth, constraints.constrainHeight(height)) {
                     heading.placeRelative(0, 0)
@@ -388,7 +421,7 @@ private fun CountryBubble(code: String?, loading: Boolean, running: Boolean, ref
     val flag = if (valid) normalized!!.map { String(Character.toChars(0x1F1E6 + it.code - 'A'.code)) }.joinToString("") else null
     val shape = remember { DashboardBubbleOutline(0f, 0f, 0f, irregularity = 0f) }
     val label = stringResource(R.string.lite_outbound_refresh)
-    Box(Modifier.size(48.dp).semantics { contentDescription = label; stateDescription = normalized ?: "" }
+    Box(Modifier.size(48.dp).statusForeground(StatusForeground.Flag).testTag("dashboard-status-flag").semantics { contentDescription = label; stateDescription = normalized ?: "" }
         .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, enabled = running && !loading, role = Role.Button, onClick = refresh),
         propagateMinConstraints = true) {
         if (loading || flag == null) LitePane(Modifier.matchParentSize(), customShape = shape, corner = LiteCorner.Full) {
@@ -453,7 +486,7 @@ private fun StartBubble(running: Boolean, enabled: Boolean, label: String, time:
         } },
     ) {
     LitePane(
-        Modifier.size(88.dp).alpha(if (enabled) 1f else 0.48f).semantics { contentDescription = label }
+        Modifier.size(88.dp).statusForeground(StatusForeground.Button).testTag("dashboard-status-button").alpha(if (enabled) 1f else 0.48f).semantics { contentDescription = label }
             .clickable(interactionSource = interaction, indication = null, enabled = enabled, role = Role.Button, onClick = onClick),
         corner = LiteCorner.Full, customShape = outline,
         solidColor = if (enabled) solid else dashboardTone(),

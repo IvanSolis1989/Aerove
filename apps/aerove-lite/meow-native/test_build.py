@@ -389,4 +389,55 @@ class AndroidRecipeTests(unittest.TestCase):
             with mock.patch.object(build.subprocess,'check_output',side_effect=[' LOAD 0 0 0 0 0 R E 0x4000\n','NEEDED libc.so',symbols]):
                 build.verify_elf(path,62,'readelf')
 
+
+class ResourceHealthContractTests(unittest.TestCase):
+    def test_all_26_symbols_are_independently_required_in_defined_dynamic_exports(self):
+        required=build.RUNTIME_JNI_SYMBOLS+build.SCRIPT_JNI_SYMBOLS+list(build.RESOURCE_JNI_SYMBOLS)
+        self.assertEqual(26,len(set(required)))
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'lib.so';header=bytearray(20);header[:6]=b'\x7fELF\x02\x01';header[16:18]=(3).to_bytes(2,'little');header[18:20]=(62).to_bytes(2,'little');path.write_bytes(header)
+            for omitted in [None]+required:
+                symbols='\n'.join(' 1: 00000123 42 FUNC GLOBAL DEFAULT '+('UND' if name==omitted else '1')+' '+name for name in required)
+                with self.subTest(omitted=omitted),mock.patch.object(build.subprocess,'check_output',side_effect=[' LOAD 0 0 0 0 0 R E 0x4000\n','NEEDED libc.so',symbols]):
+                    if omitted is None:build.verify_elf(path,62,'readelf',required)
+                    else:
+                        with self.assertRaisesRegex(ValueError,omitted):build.verify_elf(path,62,'readelf',required)
+
+    def test_resource_source_descriptors_reject_each_missing_or_changed_edge(self):
+        source=(build.ROOT/'src/meow_jni.rs').read_text()
+        actual=re.findall(r'pub extern \"system\" fn (Java_\w+)',source+(build.ROOT/'src/script_jni.rs').read_text())
+        self.assertEqual(set(build.RUNTIME_JNI_SYMBOLS+build.SCRIPT_JNI_SYMBOLS+list(build.RESOURCE_JNI_SYMBOLS)),set(actual))
+        self.assertEqual(26,len(actual))
+        self.assertEqual(build.RESOURCE_JNI_DESCRIPTORS,build.verify_resource_jni_source(build.ROOT))
+        for symbol in build.RESOURCE_JNI_SYMBOLS:
+            with self.subTest(symbol=symbol),tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);(root/'src').mkdir()
+                (root/'src/meow_jni.rs').write_text(source.replace(symbol,symbol+'_changed'))
+                with self.assertRaisesRegex(ValueError,'source export'):build.verify_resource_jni_source(root)
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/'src').mkdir()
+            (root/'src/meow_jni.rs').write_text(source.replace("plan:JString<'local>", "plan:i64"))
+            with self.assertRaisesRegex(ValueError,'descriptor'):build.verify_resource_jni_source(root)
+            (root/'src/meow_jni.rs').write_text(source.replace("_class:JClass<'local>","_class:JObject<'local>"))
+            with self.assertRaisesRegex(ValueError,'receiver'):build.verify_resource_jni_source(root)
+
+    def test_resource_health_producer_policy_cannot_drop_any_native_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);_,_,_,_,_,policy=OverlayAndResolutionTests().overlay(root)
+            policy.update(coreTests='policy-runtime-resource-health-v1',coreTestLockSha256='a'*64,targets=list(build_policy.RESOURCE_HEALTH_TARGETS))
+            (root/'build-policy.json').write_text(json.dumps(policy));build_policy.load_policy(root)
+            for omitted in policy['targets']:
+                broken=dict(policy,targets=[t for t in policy['targets'] if t!=omitted])
+                (root/'build-policy.json').write_text(json.dumps(broken))
+                with self.subTest(omitted=omitted),self.assertRaisesRegex(ValueError,'every approved Native target'):build_policy.load_policy(root)
+
+    def test_exact_added_native_passes_and_negative_missing_duplicate_or_ignored(self):
+        names=[n for cases in build.RESOURCE_HEALTH_CASES.values() for n in cases]
+        self.assertEqual(18,len(names))
+        output='\n'.join('test fixture::'+n+' ... ok' for n in names)
+        self.assertEqual(build.RESOURCE_HEALTH_CASES,build.added_native_test_proof(output))
+        for n in names:
+            for bad in [output.replace('test fixture::'+n+' ... ok',''),output+'\ntest duplicate::'+n+' ... ok',output.replace(n+' ... ok',n+' ... ignored')]:
+                with self.subTest(name=n),self.assertRaisesRegex(ValueError,'Native test pass'):build.added_native_test_proof(bad)
+
 if __name__=='__main__':unittest.main()

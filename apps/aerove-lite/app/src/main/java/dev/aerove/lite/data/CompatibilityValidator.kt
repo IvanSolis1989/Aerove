@@ -91,10 +91,19 @@ internal object ConfigYaml {
     }
 }
 
-class CompatibilityValidator(
+/** The two-argument constructor retains the historical schema; production explicitly selects forMeow. */
+class CompatibilityValidator private constructor(
     private val native: NativeConfigValidator,
-    private val resourceDirectory: File? = null,
+    private val resourceDirectory: File?,
+    private val coreSchema: ProfileCompatibilitySchema?,
 ) : ProfileValidator {
+    constructor(native: NativeConfigValidator, resourceDirectory: File? = null) : this(native, resourceDirectory, null)
+    val coreVersion: String get() = coreSchema?.coreVersion ?: CORE_VERSION
+    internal fun resourceInput(yaml: String): MutableMap<String, Any?> = coreSchema?.resourceInput(yaml) ?: ConfigYaml.parse(yaml)
+    internal fun providerDownloadInput(yaml: String): String = coreSchema?.providerDownloadInput(yaml) ?: yaml
+    internal fun preflightPreparedRule(path: File, behavior: String, format: String): RuleResourcePreflight? =
+        coreSchema?.preflightPreparedRule(path, behavior, format)
+
     override fun validate(yaml: String) = validate(yaml, false, null)
 
     internal fun validateManagedSource(yaml: String) = validate(yaml, true, null)
@@ -102,6 +111,7 @@ class CompatibilityValidator(
     internal fun validatePrepared(yaml: String, bundleDirectory: File) = validate(yaml, true, bundleDirectory)
 
     private fun validate(yaml: String, managed: Boolean, bundleDirectory: File?) {
+        coreSchema?.let { it.validate(yaml, managed, bundleDirectory); return }
         val root = ConfigYaml.parse(yaml)
         val issues = mutableListOf<ConfigIssue>()
         fun issue(path: String, reason: String) { issues += ConfigIssue(path, reason) }
@@ -395,28 +405,11 @@ class CompatibilityValidator(
         }
     }
 
-    private fun checkResource(value: String, path: String, issues: MutableList<ConfigIssue>, bundleDirectory: File? = null) {
-        if (bundleDirectory != null) {
-            val file = File(value).canonicalFile
-            if (!file.toPath().startsWith(bundleDirectory.canonicalFile.toPath()) || !file.isFile) {
-                issues += ConfigIssue(path, "Prepared resource is missing or outside its immutable bundle")
-            }
-            return
-        }
-        val directory = resourceDirectory
-        if (directory == null) {
-            issues += ConfigIssue(path, "An app-private resource file or complete bundle preparation is required")
-            return
-        }
-        try {
-            val file = privateResource(File(directory, "resources"), value)
-            if (!file.isFile || !file.canRead()) issues += ConfigIssue(path, "App-private resource file is missing")
-        } catch (_: IllegalArgumentException) {
-            issues += ConfigIssue(path, "Resource path must stay inside the app-private working directory")
-        }
-    }
+    private fun checkResource(value: String, path: String, issues: MutableList<ConfigIssue>, bundleDirectory: File? = null) =
+        checkProfileResource(value, path, issues, resourceDirectory, bundleDirectory)
 
     internal fun validateProxyPayload(source: String) {
+        coreSchema?.let { it.validateProxyPayload(source); return }
         val parsed = ConfigYaml.parse(source)
         if (parsed.keys != setOf("proxies") || parsed["proxies"] !is List<*>) {
             throw ConfigValidationException(listOf(ConfigIssue("$.proxies", "Proxy provider must contain only a proxies list")))
@@ -425,6 +418,7 @@ class CompatibilityValidator(
     }
 
     internal fun validateRulePayload(lines: List<String>, path: String) {
+        coreSchema?.let { it.validateRulePayload(lines, path); return }
         val problems = lines.mapIndexedNotNull { index, line ->
             when {
                 line.isBlank() -> ConfigIssue("$path[$index]", "Empty rule payload")
@@ -436,6 +430,13 @@ class CompatibilityValidator(
     }
 
     companion object {
+        fun forMeow(native: NativeConfigValidator, resourceDirectory: File,
+            preparedNative: NativePreparedConfigValidator, verifiedFeatures: () -> Set<String>): CompatibilityValidator =
+            CompatibilityValidator(native, resourceDirectory, MeowProfileValidator(native, preparedNative, resourceDirectory, verifiedFeatures))
+        fun forMeow(native: NativeConfigValidator, resourceDirectory: File,
+            preparedNative: NativePreparedConfigValidator, preparedRules: NativePreparedRuleValidator,
+            verifiedFeatures: () -> Set<String>): CompatibilityValidator =
+            CompatibilityValidator(native, resourceDirectory, MeowProfileValidator(native, preparedNative, resourceDirectory, verifiedFeatures, preparedRules))
         const val CORE_VERSION = "0.10.10"
         private fun keys(value: String): Set<String> = value.split(' ').filter { it.isNotEmpty() }.toSet()
         private val TOP_LEVEL = keys("port http_port socks-port redir-port tproxy-port mixed-port authentication allow-lan bind-address mode log-level dns profile proxies proxy-groups rules hosts mmdb mmdb-download-url asn-mmdb asn-mmdb-download-url geosite geosite-download-url ipv6 external-controller external-controller-ipc external-controller-unix external-ui external-ui-url secret cors-allow-origins interface routing-mark proxy-providers rule-providers experimental tun listeners inbound-providers unified-delay tcp-concurrent find-process-mode")

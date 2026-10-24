@@ -1029,11 +1029,10 @@
  }
  
  pub trait Proxy: ProxyAdapter {
-@@ -269,6 +384,20 @@
-     /// the proxies map (issue #543 item 1). Leaf adapters return `None`.
+@@ -270,6 +385,20 @@
      fn member_proxies(&self) -> Option<Vec<Arc<dyn Proxy>>> {
          None
-+    }
+     }
 +
 +    /// Same member enumeration with only exact candidate provider slots
 +    /// replaced. Group implementations keep their normal static/slot order.
@@ -1047,10 +1046,22 @@
 +    /// default; Core's configured factory and chain wrapper do so.
 +    fn probe_dependencies(&self) -> std::io::Result<ProbeDependencies> {
 +        Ok(ProbeDependencies::default())
-     }
++    }
      /// For group adapters: the name of the currently active member
      /// (selected/fastest/first-alive depending on group kind).
-@@ -472,3 +601,23 @@
+     fn current(&self) -> Option<String> {
+@@ -296,6 +425,10 @@
+     fn group_display(&self) -> Option<&GroupDisplay> {
+         None
+     }
++
++    /// Last genuine group use; provider policy owners map the declared
++    /// use/include-all relationship, matching Mihomo GroupBase.GetProxies.
++    fn last_user_use(&self) -> Option<std::time::Instant> { None }
+ 
+     /// Monotonic traffic-use generation for genuinely lazy health checks.
+     /// Leaf adapters return zero; automatic groups increment on every dial.
+@@ -472,3 +605,23 @@
          assert_eq!(back.delay, entry.delay);
      }
  }
@@ -2641,7 +2652,14 @@
      use super::*;
 --- a/crates/meow-config/src/internal_http.rs
 +++ b/crates/meow-config/src/internal_http.rs
-@@ -199,10 +199,11 @@
+@@ -193,16 +193,17 @@
+ 
+ /// [`fetch_response`] with the body cap as a parameter, so tests can
+ /// exercise the oversize paths without transferring hundreds of megabytes.
+-async fn fetch_capped(
++pub async fn fetch_capped(
+     url: &str,
+     proxy: Option<&Arc<dyn Proxy>>,
      headers: &[(String, String)],
      limit: usize,
  ) -> Result<Response> {
@@ -2692,7 +2710,7 @@
  
 +pub mod owned_load;
 +mod offline_validation;
-+pub use offline_validation::{validate_offline_config, validate_offline_config_with_scope};
++pub use offline_validation::{validate_offline_config, validate_offline_config_with_scope, validate_prepared_config_with_scope};
 +pub mod provider_events;
  pub mod auth;
  pub mod dns_parser;
@@ -2787,7 +2805,45 @@
      OFFLINE_VALIDATE.load(std::sync::atomic::Ordering::Relaxed)
  }
  
-@@ -3902,10 +3962,19 @@
+@@ -3132,6 +3192,11 @@
+     let lines = collect_geo_scan_lines(raw, provider_payloads);
+ 
+     let geoip_trigger = lines.iter().find(|l| line_references_geoip(l));
++    if geoip_trigger.is_some() { offline_validation::require_prepared_geo_file(Some(geoip_path), "$.geodata.mmdb-path")?; }
++    if lines.iter().any(|line| line_references_asn(line)) { offline_validation::require_prepared_geo_file(Some(asn_path), "$.geodata.asn-path")?; }
++    if lines.iter().any(|line| line_references_geosite(line)) || dns_policy_uses_geosite(raw) {
++        offline_validation::require_prepared_geo_file(geosite_explicit, "$.geodata.geosite-path")?;
++    }
+     let geoip = match geoip_trigger {
+         Some(_) if is_offline_validate() && !geoip_path.exists() => {
+             Some(Arc::new(meow_rules::country_index::CountryIndex::default()))
+@@ -3276,7 +3341,7 @@
+     out
+ }
+ 
+-fn dns_policy_uses_geosite(raw: &raw::RawConfig) -> bool {
++pub fn dns_policy_uses_geosite(raw: &raw::RawConfig) -> bool {
+     raw.dns
+         .as_ref()
+         .and_then(|dns| dns.nameserver_policy.as_ref())
+@@ -3351,6 +3416,16 @@
+ /// top-level `GEOIP,`/`SRC-GEOIP,` rule or nested inside a logic rule
+ /// (`AND`/`OR`/`NOT`). Comment lines never match. Uses the same regex as
+ /// [`collect_geoip_countries`] so the trigger and the allowlist agree.
++/// Resource preparation reports dependencies; this is not semantic rule admission.
++pub struct RuleGeodataRequirements { pub geoip: bool, pub asn: bool, pub geosite: bool }
++pub fn rule_geodata_requirements(lines: &[String]) -> RuleGeodataRequirements {
++    RuleGeodataRequirements {
++        geoip: lines.iter().any(|line| line_references_geoip(line)),
++        asn: lines.iter().any(|line| line_references_asn(line)),
++        geosite: lines.iter().any(|line| line_references_geosite(line)),
++    }
++}
++
+ fn line_references_geoip(line: &str) -> bool {
+     let line = line.trim();
+     !line.is_empty() && !line.starts_with('#') && geoip_scan_regex().is_match(line)
+@@ -3902,10 +3977,19 @@
      mut raw: raw::RawConfig,
      cache_dir: Option<&Path>,
  ) -> Result<Config, anyhow::Error> {
@@ -2811,7 +2867,7 @@
      if let Some(ps) = raw.proxies.as_mut() {
          ech_dns::preresolve_ech(ps, raw.strict.unwrap_or(false))
              .await
-@@ -7771,3 +7840,8 @@
+@@ -7771,3 +7855,8 @@
          );
      }
  }
@@ -2822,7 +2878,7 @@
 +pub use meow_proxy::{health::{probe_without_record as probe_leaf_without_record, UrlTestError as DelayProbeError, validate_url_test_parameters as validate_delay_parameters, GROUP_DELAY_CONCURRENCY}, DialerProxyAdapter as ChainedProxyAdapter};
 --- /dev/null
 +++ b/crates/meow-config/src/offline_validation.rs
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,191 @@
 +use crate::owned_load::{LoadContext, OwnedLoadScope, OwnedWork};
 +use std::sync::Arc;
 +
@@ -2845,6 +2901,18 @@
 +/// Cancellation-aware embedding/testing entry. The caller can retain this same
 +/// scope and await close even after dropping the validation request future.
 +pub async fn validate_offline_config_with_scope(source: &str, scope: &Arc<OwnedLoadScope>) -> Result<(), String> {
++    validate_with_scope(source, scope, false).await
++}
++
++/// Complete conversion using only an immutable, embedder-owned resource bundle.
++/// This is distinct from validating unprepared source with no resource lease.
++pub async fn validate_prepared_config_with_scope(source: &str, scope: &Arc<OwnedLoadScope>) -> Result<(), String> {
++    let roots = scope.provider_roots().map_err(str::to_owned)?.ok_or("prepared_resource_roots_required")?;
++    if roots.resource_read_root.is_none() { return Err("prepared_resource_read_root_required".into()); }
++    validate_with_scope(source, scope, true).await
++}
++
++async fn validate_with_scope(source: &str, scope: &Arc<OwnedLoadScope>, prepared: bool) -> Result<(), String> {
 +    if !scope.offline_validation() { return Err("offline_scope_required".into()); }
 +    let _cancel = CancelOnDrop(scope.clone());
 +    let result = scope.run(async {
@@ -2869,7 +2937,7 @@
 +                // entry. Do not validate against an ambient user's geodata or
 +                // invent empty country/category DBs and report conversion success.
 +                let scan = crate::collect_geo_scan_lines(&raw, &crate::rule_provider::PrefetchedPayloads::default());
-+                if scan.iter().any(|line| crate::line_references_geoip(line) || crate::line_references_asn(line) || crate::line_references_geosite(line)) || crate::dns_policy_uses_geosite(&raw) {
++                if !prepared && (scan.iter().any(|line| crate::line_references_geoip(line) || crate::line_references_asn(line) || crate::line_references_geosite(line)) || crate::dns_policy_uses_geosite(&raw)) {
 +                    return Err("offline_geodata_resource_context_required".to_owned());
 +                }
 +                let config = crate::build_config(raw, None).await.map_err(|error| error.to_string())?;
@@ -2880,6 +2948,21 @@
 +    }).await;
 +    scope.close().await.map_err(str::to_owned)?;
 +    result
++}
++
++// The parser calls this after it has prefetched actual provider payloads, so
++// geo rules hidden in a residual set receive exactly the same resource fence.
++pub(crate) fn require_prepared_geo_file(path: Option<&std::path::Path>, field: &str) -> Result<(), anyhow::Error> {
++    let Some(scope) = OwnedLoadScope::current().filter(|scope| scope.offline_validation()) else { return Ok(()); };
++    let root = scope.provider_roots().map_err(anyhow::Error::msg)?.and_then(|roots| roots.resource_read_root)
++        .ok_or_else(|| anyhow::anyhow!("offline_geodata_resource_context_required"))?;
++    let path = path.ok_or_else(|| anyhow::anyhow!("{field}: prepared geodata file required"))?;
++    let resolved = path.canonicalize().map_err(|error| anyhow::anyhow!("{field}: {error}"))?;
++    let metadata = std::fs::metadata(&resolved)?;
++    if !path.is_absolute() || path != resolved.as_path() || !resolved.starts_with(&root) || !metadata.is_file() || metadata.len() > 64 * 1024 * 1024 {
++        anyhow::bail!("{field}: outside trusted prepared resources or invalid file");
++    }
++    Ok(())
 +}
 +
 +// Compare the official typed schema instead of maintaining another key list.
@@ -7799,20 +7882,29 @@
      }
  
      fn unwrap_proxy(&self, metadata: &Metadata, touch: bool) -> Option<Arc<dyn Proxy>> {
-@@ -293,6 +293,12 @@
- 
-     fn member_proxies(&self) -> Option<Vec<Arc<dyn Proxy>>> {
+@@ -295,6 +295,12 @@
          Some(self.member_proxy_list())
-+    }
-+
+     }
+ 
 +    fn projected_member_proxies(&self, projection: &meow_common::adapter::ProviderSlotProjection) -> Option<Vec<Arc<dyn Proxy>>> {
 +        let mut members: Vec<Arc<dyn Proxy>> = self.static_proxies.iter().cloned().collect();
 +        for slot in &self.provider_slots { members.extend(projection.members(slot)); }
 +        Some(members)
-     }
- 
++    }
++
      fn current(&self) -> Option<String> {
-@@ -343,6 +349,45 @@
+         self.first_alive().map(|p| p.name().to_string())
+     }
+@@ -314,6 +320,8 @@
+     fn group_display(&self) -> Option<&GroupDisplay> {
+         Some(&self.display)
+     }
++
++    fn last_user_use(&self) -> Option<std::time::Instant> { self.usage.last_user_use() }
+ 
+     fn usage_generation(&self) -> u64 {
+         self.usage.generation()
+@@ -343,6 +351,45 @@
          Ok(())
      }
  
@@ -7858,7 +7950,7 @@
      fn force_set(&self, name: Option<&str>) {
          *self.fixed.write() = name.map(SmolStr::from);
          if let Some(store) = &self.store {
-@@ -366,6 +411,17 @@
+@@ -366,6 +413,17 @@
  
  #[cfg(test)]
  mod tests {
@@ -7904,22 +7996,53 @@
      }
  
      fn unwrap_proxy(&self, metadata: &Metadata, touch: bool) -> Option<Arc<dyn Proxy>> {
-@@ -451,6 +452,12 @@
-             true
-         });
+@@ -453,6 +454,12 @@
          Some(out)
-+    }
-+
+     }
+ 
 +    fn projected_member_proxies(&self, projection: &meow_common::adapter::ProviderSlotProjection) -> Option<Vec<Arc<dyn Proxy>>> {
 +        let mut members: Vec<Arc<dyn Proxy>> = self.static_proxies.iter().cloned().collect();
 +        for slot in &self.provider_slots { members.extend(projection.members(slot)); }
 +        Some(members)
-     }
- 
++    }
++
      fn current(&self) -> Option<String> {
+         // For load-balance, no single "current" proxy; return first alive for API compat.
+         self.first_alive_member().map(|p| p.name().to_string())
+@@ -469,6 +476,8 @@
+     fn group_display(&self) -> Option<&GroupDisplay> {
+         Some(&self.display)
+     }
++
++    fn last_user_use(&self) -> Option<std::time::Instant> { self.usage.last_user_use() }
+ 
+     fn usage_generation(&self) -> u64 {
+         self.usage.generation()
 --- a/crates/meow-proxy/src/group/mod.rs
 +++ b/crates/meow-proxy/src/group/mod.rs
-@@ -41,7 +41,7 @@
+@@ -17,17 +17,18 @@
+ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+ use tracing::{debug, info};
+ 
+-/// Lock-free traffic-use generation shared by automatic proxy groups. A lazy
++/// Atomic traffic-use generation and a short timestamp lock shared by groups. A lazy
+ /// health-check loop remembers the last generation it probed and sleeps until
+ /// another dial increments this counter.
+-pub(super) struct UsageTracker(AtomicU);
++pub(super) struct UsageTracker(AtomicU, Mutex<Option<Instant>>);
+ 
+ impl UsageTracker {
+     pub(super) fn new() -> Self {
+-        Self(AtomicU::new(0))
++        Self(AtomicU::new(0), Mutex::new(None))
+     }
+ 
+     pub(super) fn touch(&self) {
++        *self.1.lock() = Some(Instant::now());
+         self.0.fetch_add(1, Ordering::Relaxed);
+     }
+ 
+@@ -41,11 +42,13 @@
      /// probes or a background refresh would mark a lazy child as used and
      /// keep its own probe loop awake forever without any real traffic.
      pub(super) fn touch_user_traffic(&self, metadata: &Metadata) {
@@ -7928,7 +8051,13 @@
              return;
          }
          self.touch();
-@@ -352,6 +352,7 @@
+     }
++
++    pub(super) fn last_user_use(&self) -> Option<Instant> { *self.1.lock() }
+ 
+     pub(super) fn generation(&self) -> u64 {
+         #[allow(
+@@ -352,6 +355,7 @@
      tracker: &'a DialFailureTracker,
      member: &'a Arc<dyn Proxy>,
      deadline: Option<tokio::time::Instant>,
@@ -7936,7 +8065,7 @@
  }
  
  impl<'a> DialAttempt<'a> {
-@@ -365,6 +366,7 @@
+@@ -365,6 +369,7 @@
              tracker,
              member,
              deadline: meow_common::dial::dial_deadline(),
@@ -7944,7 +8073,7 @@
          }
      }
  
-@@ -391,6 +393,7 @@
+@@ -391,6 +396,7 @@
              .await;
          self.deadline = None;
          match &result {
@@ -7952,7 +8081,7 @@
              Ok(_) => self.tracker.on_success(),
              Err(err) if front_failed => debug!(
                  "proxy-group '{}': not counting a failed dial of '{}' against it: its \
-@@ -412,7 +415,7 @@
+@@ -412,7 +418,7 @@
  
  impl Drop for DialAttempt<'_> {
      fn drop(&mut self) {
@@ -7961,7 +8090,7 @@
              .deadline
              .is_some_and(|deadline| tokio::time::Instant::now() >= deadline)
          {
-@@ -528,7 +531,7 @@
+@@ -528,7 +534,7 @@
      target: ChainTarget,
      member: &Arc<dyn Proxy>,
  ) -> Box<dyn ProxyConn> {
@@ -7970,7 +8099,7 @@
          return conn;
      }
      let carrier = health.carrier(&target).as_deref() == Some(member.name());
-@@ -766,6 +769,25 @@
+@@ -766,6 +772,25 @@
  #[cfg(test)]
  mod tests {
      use super::*;
@@ -8146,7 +8275,35 @@
      use meow_common::{DelayHistory, MeowError, ProxyConn, ProxyHealth, ProxyPacketConn};
 --- a/crates/meow-proxy/src/group/selector.rs
 +++ b/crates/meow-proxy/src/group/selector.rs
-@@ -190,14 +190,14 @@
+@@ -9,6 +9,7 @@
+ use std::sync::Arc;
+ 
+ pub struct SelectorGroup {
++    usage: super::UsageTracker,
+     name: SmolStr,
+     static_proxies: Vec<Arc<dyn Proxy>>,
+     provider_slots: Vec<ProviderSlot>,
+@@ -31,6 +32,7 @@
+             provider_slots: Vec::new(),
+             selected: RwLock::new(None),
+             store: None,
++            usage: super::UsageTracker::new(),
+             health: ProxyHealth::new(),
+             display: GroupDisplay::default(),
+         }
+@@ -47,6 +49,7 @@
+             provider_slots: slots,
+             selected: RwLock::new(None),
+             store: None,
++            usage: super::UsageTracker::new(),
+             health: ProxyHealth::new(),
+             display: GroupDisplay::default(),
+         }
+@@ -187,20 +190,23 @@
+     }
+ 
+     async fn dial_tcp(&self, metadata: &Metadata) -> Result<Box<dyn ProxyConn>> {
++        self.usage.touch_user_traffic(metadata);
          let proxy = self
              .selected_proxy()
              .ok_or_else(|| MeowError::Proxy("no proxy selected".into()))?;
@@ -8155,15 +8312,31 @@
      }
  
      async fn dial_udp(&self, metadata: &Metadata) -> Result<Box<dyn ProxyPacketConn>> {
++        self.usage.touch_user_traffic(metadata);
          let proxy = self
              .selected_proxy()
              .ok_or_else(|| MeowError::Proxy("no proxy selected".into()))?;
 -        proxy.dial_udp(metadata).await
+-    }
+-
+-    fn unwrap_proxy(&self, _metadata: &Metadata, _touch: bool) -> Option<Arc<dyn Proxy>> {
 +        proxy.dial_udp_observed(metadata).await
++    }
++
++    fn unwrap_proxy(&self, metadata: &Metadata, touch: bool) -> Option<Arc<dyn Proxy>> {
++        if touch { self.usage.touch_user_traffic(metadata); }
+         self.selected_proxy()
      }
  
-     fn unwrap_proxy(&self, _metadata: &Metadata, _touch: bool) -> Option<Arc<dyn Proxy>> {
-@@ -247,6 +247,12 @@
+@@ -210,6 +216,7 @@
+ }
+ 
+ impl Proxy for SelectorGroup {
++    fn last_user_use(&self) -> Option<std::time::Instant> { self.usage.last_user_use() }
+     fn as_any(&self) -> Option<&dyn std::any::Any> {
+         Some(self)
+     }
+@@ -247,6 +254,12 @@
  
      fn member_proxies(&self) -> Option<Vec<Arc<dyn Proxy>>> {
          Some(self.member_proxy_list())
@@ -8176,7 +8349,7 @@
      }
  
      fn current(&self) -> Option<String> {
-@@ -272,6 +278,21 @@
+@@ -272,6 +285,21 @@
          }
      }
  
@@ -8333,7 +8506,16 @@
      fn current(&self) -> Option<String> {
          self.fastest_proxy().map(|p| p.name().into())
      }
-@@ -459,6 +479,34 @@
+@@ -439,6 +459,8 @@
+     fn group_display(&self) -> Option<&GroupDisplay> {
+         Some(&self.display)
+     }
++
++    fn last_user_use(&self) -> Option<std::time::Instant> { self.usage.last_user_use() }
+ 
+     fn usage_generation(&self) -> u64 {
+         self.usage.generation()
+@@ -459,6 +481,34 @@
          Ok(())
      }
  
@@ -8368,7 +8550,7 @@
      fn force_set(&self, name: Option<&str>) {
          *self.fixed.write() = name.map(SmolStr::from);
          if let Some(store) = &self.store {
-@@ -482,6 +530,18 @@
+@@ -482,6 +532,18 @@
  
  #[cfg(test)]
  mod tests {
@@ -8387,7 +8569,7 @@
      use super::*;
      use crate::group::test_support::MockProxy;
      use meow_common::Metadata;
-@@ -545,6 +605,31 @@
+@@ -545,6 +607,31 @@
      }
  
      #[test]

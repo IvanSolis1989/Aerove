@@ -16,6 +16,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import android.content.res.Configuration
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsOff
@@ -27,6 +30,7 @@ import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performSemanticsAction
@@ -38,6 +42,9 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import java.util.Locale
+import kotlin.math.ceil
+import kotlin.math.roundToInt
 import androidx.test.platform.app.InstrumentationRegistry
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
@@ -75,6 +82,7 @@ class DashboardLayoutUiTest {
     private var requestsOpened = 0
     private var dnsOpened = 0
     private var density = 1f
+    private var effectiveFontScale = 1f
 
     private fun fixture(widgets: List<DashboardWidget>) = LiteState(
         settings = LiteSettings(material = MaterialTier.Solid, aurora = false, dashboardWidgets = widgets),
@@ -85,14 +93,20 @@ class DashboardLayoutUiTest {
         connections = List(2) { ConnectionInfo("fixture-$it", "example.invalid", "tcp", "MATCH", emptyList(), 0, 0) },
     )
 
-    private fun launch(initial: LiteState, fontScale: Float = 1f, maxWidth: Dp = 592.dp) {
+    private fun launch(initial: LiteState, fontScale: Float = 1f, maxWidth: Dp = 592.dp,
+        deviceDensity: Float? = null, language: String? = null) {
         state.value = initial
         compose.replaceAppContent {
+            val configuration = Configuration(context.resources.configuration).apply {
+                if (language != null) setLocale(Locale.forLanguageTag(language))
+            }
+            val localizedContext = context.createConfigurationContext(configuration)
             IpQualityFixture(state.value) {
-            CompositionLocalProvider(LocalLiteMotionOverride provides true, LocalDiagnosticsForeground provides foreground.value,
-                LocalDensity provides Density(LocalDensity.current.density, fontScale)) {
+            CompositionLocalProvider(LocalContext provides localizedContext, LocalConfiguration provides configuration, LocalLiteMotionOverride provides true, LocalDiagnosticsForeground provides foreground.value,
+                LocalDensity provides Density(deviceDensity ?: LocalDensity.current.density, fontScale)) {
                 LiteTheme(state.value.settings) {
                     density = LocalDensity.current.density
+                    effectiveFontScale = LocalDensity.current.fontScale
                     val source = rememberLayerBackdrop()
                     val scroll = rememberLazyListState()
                     val content: @Composable (DashboardWidget) -> Unit = { widget ->
@@ -317,43 +331,138 @@ class DashboardLayoutUiTest {
         assertTrue(!state.value.settings.network.vpnEnabled && !state.value.settings.network.allowLan)
     }
 
-    @Test
-    fun compactTrafficOverlayPreservesOriginalStatusForegroundBounds() {
-        val initial = fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = dev.aerove.lite.VpnPhase.Running)
-        launch(initial, maxWidth = 412.dp)
-        fun rect(tag: String) = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
-        val card = rect("dashboard-status")
-        val heading = rect("dashboard-status-heading")
-        val body = rect("dashboard-status-body")
+    private fun statusRect(tag: String) = compose.onNodeWithTag(tag, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+
+    private fun statusForegroundRects(): Map<String, Rect> = buildMap {
+        listOf("dashboard-status-heading", "dashboard-status-body", "dashboard-status-ip",
+            "dashboard-status-organization", "dashboard-status-uptime").forEach { put(it, statusRect(it)) }
+        listOf("ip-quality-summary", "dashboard-status-provisional", "dashboard-status-listener-error",
+            "dashboard-status-outbound-error").forEach { tag ->
+            compose.onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes().singleOrNull()?.let { put(tag, it.boundsInRoot) }
+        }
+        put("flag", statusRect("dashboard-status-flag"))
+        put("button", statusRect("dashboard-status-button"))
+    }
+
+    private fun trafficMeasurements(): String {
+        val heading = statusRect("dashboard-status-heading")
+        val body = statusRect("dashboard-status-body")
+        val traffic = statusRect("dashboard-status-traffic")
+        val lines = listOf(12f, 14f, 10f).map { it * density * effectiveFontScale }
+        val ceiling = lines.sumOf { ceil(it.toDouble()).toInt() }
+        val rounded = lines.sum().roundToInt()
+        val candidate = Rect(traffic.left, heading.top, traffic.right, heading.top + traffic.height)
+        val collisions = statusForegroundRects().filterKeys { it != "dashboard-status-body" && it != "dashboard-status-heading" }
+            .filterValues { it.overlaps(candidate) }.keys
+        return "phase=${state.value.phase} identity=${state.value.outboundIdentity != null} loading=${state.value.outboundLoading} candidate=$candidate collisions=$collisions density=$density fontScale=$effectiveFontScale content=${statusRect("dashboard-status-content")} " +
+            "heading=$heading body=$body traffic=$traffic bodyY=${body.top - heading.top} " +
+            "nominalLineCeiling=$ceiling nominalLineTotalRounded=$rounded nominalRoundingAllowance=${ceiling - rounded} foreground=${statusForegroundRects()} " +
+            "widthFits=${heading.width + (8 * density).roundToInt() + traffic.width <= statusRect("dashboard-status-content").width}"
+    }
+
+    private fun addTrafficAndAssertOriginalForeground(expectedOverlay: Boolean) {
+        val card = statusRect("dashboard-status")
+        val before = statusForegroundRects()
         compose.runOnUiThread {
             state.value = state.value.copy(settings = state.value.settings.copy(
                 dashboardWidgets = listOf(DashboardWidget.CurrentOutbound, DashboardWidget.NetworkSpeed)))
         }
         compose.waitForIdle()
-        assertEquals(card, rect("dashboard-status"))
-        assertEquals(heading, rect("dashboard-status-heading"))
-        assertEquals(body, rect("dashboard-status-body"))
-        val upload = rect("dashboard-upload")
-        val download = rect("dashboard-download")
-        assertTrue(!heading.overlaps(upload) && !heading.overlaps(download))
-        assertTrue(!body.overlaps(upload) && !body.overlaps(download))
-        assertTrue(!upload.overlaps(download))
+        val measurements = trafficMeasurements()
+        val after = statusForegroundRects()
+        val traffic = statusRect("dashboard-status-traffic")
+        val content = statusRect("dashboard-status-content")
+        val heading = before.getValue("dashboard-status-heading")
+        val candidate = Rect(content.right - traffic.width, heading.top, content.right, heading.top + traffic.height)
+        val collision = before.filterKeys { it != "dashboard-status-body" && it != "dashboard-status-heading" }
+            .values.any { it.overlaps(candidate) }
+        val measuredFit = heading.width + (8 * density).roundToInt() + traffic.width <= content.width && !collision
+        val overlay = expectedOverlay
+        println("STATUS_OVERLAY expectedOverlay=$expectedOverlay measuredFit=$measuredFit $measurements")
+        if (overlay) assertEquals(measurements, card, statusRect("dashboard-status"))
+        else assertTrue(measurements, statusRect("dashboard-status").height > card.height)
+        before.forEach { (key, rect) -> assertEquals("$key $measurements", rect, after.getValue(key)) }
+        val upload = statusRect("dashboard-upload")
+        val download = statusRect("dashboard-download")
+        assertEquals(measurements, content.right, traffic.right)
+        if (overlay) {
+            assertEquals(measurements, before.getValue("dashboard-status-heading").top, traffic.top)
+            assertEquals(measurements, traffic.top, upload.top)
+            assertEquals(measurements, traffic.top, download.top)
+        } else {
+            assertTrue(measurements, traffic.top >= before.getValue("dashboard-status-body").bottom + (12 * density).roundToInt())
+            assertTrue("Fallback requires measured overflow: $measurements", !measuredFit)
+        }
+        // The body's transparent full-width box can contain unused space; its
+        // actual foreground elements, including the independent controls, cannot.
+        before.filterKeys { it != "dashboard-status-body" }.forEach { (key, rect) ->
+            assertTrue("$key $measurements", !rect.overlaps(upload) && !rect.overlaps(download))
+        }
+        assertTrue(measurements, !upload.overlaps(download))
         assertTrue(actions.events.isEmpty())
     }
 
     @Test
+    fun compactTrafficOverlayPreservesOriginalStatusForegroundBounds() {
+        val initial = fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = dev.aerove.lite.VpnPhase.Running)
+        launch(initial, maxWidth = 412.dp)
+        addTrafficAndAssertOriginalForeground(expectedOverlay = true)
+    }
+
+    @Test
+    fun fractionalDensityEnglishMatrixFixtureKeepsTrafficAtTopRight() {
+        val initial = fixture(listOf(DashboardWidget.CurrentOutbound)).copy(
+            phase = dev.aerove.lite.VpnPhase.Running, traffic = Traffic(),
+            trafficHistory = List(30) { Traffic() }, trafficHistoryRevision = 30)
+        launch(initial, maxWidth = (1080f / 2.625f).dp, deviceDensity = 2.625f, language = "en")
+        addTrafficAndAssertOriginalForeground(expectedOverlay = true)
+    }
+
+    @Test
+    fun fractionalDensityRunningWithoutIdentityUsesOnlyMeasuredFreeSpace() {
+        val initial = fixture(listOf(DashboardWidget.CurrentOutbound)).copy(
+            phase = dev.aerove.lite.VpnPhase.Running, outboundIdentity = null, traffic = Traffic())
+        launch(initial, maxWidth = (1080f / 2.625f).dp, deviceDensity = 2.625f, language = "en")
+        addTrafficAndAssertOriginalForeground(expectedOverlay = true)
+    }
+
+    @Test
+    fun fractionalDensityLoadingIdentityUsesOnlyMeasuredFreeSpace() {
+        val initial = fixture(listOf(DashboardWidget.CurrentOutbound)).copy(
+            phase = dev.aerove.lite.VpnPhase.Running, outboundIdentity = null, outboundLoading = true, traffic = Traffic())
+        launch(initial, maxWidth = (1080f / 2.625f).dp, deviceDensity = 2.625f, language = "en")
+        addTrafficAndAssertOriginalForeground(expectedOverlay = true)
+    }
+
+    @Test
+    fun fractionalDensityStoppedStatusUsesOnlyMeasuredFreeSpace() {
+        val initial = fixture(listOf(DashboardWidget.CurrentOutbound)).copy(outboundIdentity = null, traffic = Traffic())
+        launch(initial, maxWidth = (1080f / 2.625f).dp, deviceDensity = 2.625f, language = "en")
+        addTrafficAndAssertOriginalForeground(expectedOverlay = true)
+    }
+
+    @Test
+    fun fractionalDensityChineseStatusKeepsTrafficAtTopRight() {
+        val initial = fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = dev.aerove.lite.VpnPhase.Running)
+        launch(initial, maxWidth = (1080f / 2.625f).dp, deviceDensity = 2.625f, language = "zh-CN")
+        addTrafficAndAssertOriginalForeground(expectedOverlay = true)
+    }
+
+    @Test
+    fun narrowLargeChineseTextAppendsOnlyForMeasuredCollision() {
+        val initial = fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = dev.aerove.lite.VpnPhase.Running)
+        launch(initial, fontScale = 2f, maxWidth = 328.dp, deviceDensity = 2.625f, language = "zh-CN")
+        addTrafficAndAssertOriginalForeground(expectedOverlay = false)
+    }
+
+    @Test
     fun narrowLargeTextKeepsStatusAndSpeedForegroundsSeparate() {
-        launch(fixture(listOf(DashboardWidget.CurrentOutbound, DashboardWidget.NetworkSpeed)), fontScale = 2f, maxWidth = 328.dp)
+        val initial = fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = dev.aerove.lite.VpnPhase.Running)
+        launch(initial, fontScale = 2f, maxWidth = 328.dp, deviceDensity = 2.625f)
+        addTrafficAndAssertOriginalForeground(expectedOverlay = false)
         compose.onNodeWithText(context.getString(R.string.lite_status)).assertIsDisplayed()
         compose.onNodeWithText(context.getString(R.string.lite_upload)).assertIsDisplayed()
         compose.onNodeWithText(context.getString(R.string.lite_download)).assertIsDisplayed()
-        val heading = compose.onNodeWithTag("dashboard-status-heading").fetchSemanticsNode().boundsInRoot
-        val upload = compose.onNodeWithTag("dashboard-upload").fetchSemanticsNode().boundsInRoot
-        val download = compose.onNodeWithTag("dashboard-download").fetchSemanticsNode().boundsInRoot
-        assertTrue(!heading.overlaps(upload))
-        assertTrue(!heading.overlaps(download))
-        assertTrue(!upload.overlaps(download))
-        assertTrue(actions.events.isEmpty())
     }
 
 }

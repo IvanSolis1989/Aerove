@@ -15,12 +15,18 @@ ANDROID_MAX_PAGE_SIZE = 16 * 1024
 MEOW_SOURCE = "727ddcd06f592e2f12c5222c4de6cce328df808c"
 CORE_LIBRARY = "libaerove_meow_core.so"
 MEOW_ROOT = Path(__file__).resolve().parents[1] / "meow-native"
-CORE_JNI_SYMBOLS = tuple("Java_dev_aerove_lite_core_MeowNativeCore_" + name for name in
+_ORIGINAL19_CORE_JNI_SYMBOLS = tuple("Java_dev_aerove_lite_core_MeowNativeCore_" + name for name in
     ("startOwned", "status", "listenerStatus", "awaitReady", "stop", "awaitExit", "listenerCommand",
      "configurePolicies", "policyStatus", "capabilities", "validate", "inspectRuleSet", "dumpRuleSet", "validateResource",
      "hostPolicyCommand")) + tuple(
     "Java_dev_aerove_lite_overrides_NativeScriptEngine_native" + name for name in
     ("Begin", "Evaluate", "Cancel", "Release"))
+
+RESOURCE_JNI_DESCRIPTORS = {'Java_dev_aerove_lite_core_JniResourceFetch_nativeCreate': '(Ljava/lang/String;)J', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeLoad': '(JLjava/lang/String;)V', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeDownload': '(JLjava/lang/String;)Ljava/lang/String;', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeCancel': '(J)V', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeCloseJoin': '(J)V', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeValidatePrepared': '(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;', 'Java_dev_aerove_lite_core_JniResourceFetch_nativePreflightRuleResource': '(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;'}
+RESOURCE_JNI_SYMBOLS = tuple(RESOURCE_JNI_DESCRIPTORS)
+RESOURCE_HEALTH_CASES = {'resource_fetch': ['materialized_file_provider_is_the_named_download_graph_and_never_reads_old_cache', 'provider_transport_rejects_external_payload_and_unowned_dns_geodata_before_factory', 'named_candidate_graph_real_http_headers_staging_cap_and_no_bootstrap_rule_fetch', 'cancelled_named_fetch_joins_real_socket_and_never_returns_a_staged_success', 'invalid_candidate_dialer_cycle_has_no_network_or_staged_commit', 'prepared_geosite_uses_actual_owned_database_and_rejects_absent_or_external_resource', 'resource_preflight_is_typed_pending_and_standalone_remains_strict', 'resource_preflight_rejects_invalid_independent_rows_and_validates_no_geo'], 'lib': ['provider_policy_fields_defaults_disabled_and_fail_closed', 'providers_keep_distinct_policies_and_only_declared_group_touch_mapping', 'independent_initial_periodic_status_and_stop_read_back', 'lazy_only_real_group_business_touch_and_no_probe_self_touch', 'epoch_and_cancel_fence_actual_pending_health', 'live_network_context_refreshes_each_round_after_hot_network_and_probe_epoch', 'manual_intent_wins_and_member_replacement_retires_old_result', 'newer_automatic_intent_fences_pending_manual_real_response', 'configured_timeout_is_real_and_stop_joins_the_pending_socket', 'provider_health_defaults_match_standard_without_enabling_periodic_meow_default']}
+
+CORE_JNI_SYMBOLS = _ORIGINAL19_CORE_JNI_SYMBOLS + RESOURCE_JNI_SYMBOLS
 
 
 HOST_NO_FAIL_FAST_TARGETS = (
@@ -129,6 +135,7 @@ HOST_POLICY_RUNTIME_OBSERVABILITY_TARGETS = tuple(
     target for original in HOST_POLICY_RUNTIME_TRAFFIC_TARGETS
     for target in ((original, 'native_observability') if original == 'native_ech_context' else (original,)))
 HOST_POLICY_RUNTIME_PROVIDER_GENERAL_TARGETS = ('lib',)+tuple(sorted(set(HOST_POLICY_RUNTIME_OBSERVABILITY_TARGETS[1:])|{'runtime_providers', 'provider_groups', 'provider_projection_gate', 'runtime_dialers', 'runtime_general_groups', 'runtime_provider_projection'}))
+HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS = ('lib',)+tuple(sorted(set(HOST_POLICY_RUNTIME_PROVIDER_GENERAL_TARGETS[1:])|{'resource_fetch'}))
 CORE_POLICY_TEST_CASES_V2 = (('meow-transport', 'scoped_join::', 11, 'lib', ('ws', 'grpc', 'h2', 'xhttp')),
  ('meow-transport',
   'actual_stream_preserves_send_sync_transport_contract',
@@ -206,13 +213,14 @@ def native_identity(root=MEOW_ROOT):
             "policy-runtime-v2": HOST_POLICY_RUNTIME_V2_TARGETS,
             "policy-runtime-traffic-v1": HOST_POLICY_RUNTIME_TRAFFIC_TARGETS,
             "policy-runtime-observability-v1": HOST_POLICY_RUNTIME_OBSERVABILITY_TARGETS,
-            "policy-runtime-provider-general-v1": HOST_POLICY_RUNTIME_PROVIDER_GENERAL_TARGETS}.get(policy["coreTests"])
+            "policy-runtime-provider-general-v1": HOST_POLICY_RUNTIME_PROVIDER_GENERAL_TARGETS,
+            "policy-runtime-resource-health-v1": HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS}.get(policy["coreTests"])
         if (not approved_targets
                 or tuple(policy.get("targets", ())) != approved_targets
                 or policy.get("featureBoundary") != "capabilities-no-default"
                 or not re.fullmatch(r"[0-9a-f]{64}", str(policy.get("coreTestLockSha256", "")))):
             raise ValueError("Unrecognized Meow Core unit test policy")
-    elif "coreTestLockSha256" in policy or tuple(policy.get("targets", ())) in (HOST_POLICY_RUNTIME_TARGETS, HOST_POLICY_RUNTIME_V2_TARGETS, HOST_POLICY_RUNTIME_TRAFFIC_TARGETS, HOST_POLICY_RUNTIME_OBSERVABILITY_TARGETS, HOST_POLICY_RUNTIME_PROVIDER_GENERAL_TARGETS):
+    elif "coreTestLockSha256" in policy or tuple(policy.get("targets", ())) in (HOST_POLICY_RUNTIME_TARGETS, HOST_POLICY_RUNTIME_V2_TARGETS, HOST_POLICY_RUNTIME_TRAFFIC_TARGETS, HOST_POLICY_RUNTIME_OBSERVABILITY_TARGETS, HOST_POLICY_RUNTIME_PROVIDER_GENERAL_TARGETS, HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS):
         raise ValueError("Meow policy lacks approved Core unit test admission")
     def owned(name):
         path = root / name
@@ -258,16 +266,18 @@ def validate_native_receipt(receipt_path, abi=None, image=None, root=MEOW_ROOT, 
     if abi is None:
         policy = json.loads((Path(root)/"build-policy.json").read_text())
         targets = policy["targets"]
-        if "node_delay" in targets and tuple(targets) not in (HOST_NO_FAIL_FAST_TARGETS, HOST_POLICY_RUNTIME_TARGETS, HOST_POLICY_RUNTIME_V2_TARGETS, HOST_POLICY_RUNTIME_TRAFFIC_TARGETS, HOST_POLICY_RUNTIME_OBSERVABILITY_TARGETS, HOST_POLICY_RUNTIME_PROVIDER_GENERAL_TARGETS):
+        if "node_delay" in targets and tuple(targets) not in (HOST_NO_FAIL_FAST_TARGETS, HOST_POLICY_RUNTIME_TARGETS, HOST_POLICY_RUNTIME_V2_TARGETS, HOST_POLICY_RUNTIME_TRAFFIC_TARGETS, HOST_POLICY_RUNTIME_OBSERVABILITY_TARGETS, HOST_POLICY_RUNTIME_PROVIDER_GENERAL_TARGETS, HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS):
             raise ValueError("Unrecognized Meow no-fail-fast target contract")
         command = ["cargo", "test", "--locked"]
-        if tuple(targets) in (HOST_NO_FAIL_FAST_TARGETS, HOST_POLICY_RUNTIME_TARGETS, HOST_POLICY_RUNTIME_V2_TARGETS, HOST_POLICY_RUNTIME_TRAFFIC_TARGETS, HOST_POLICY_RUNTIME_OBSERVABILITY_TARGETS, HOST_POLICY_RUNTIME_PROVIDER_GENERAL_TARGETS):
+        if tuple(targets) in (HOST_NO_FAIL_FAST_TARGETS, HOST_POLICY_RUNTIME_TARGETS, HOST_POLICY_RUNTIME_V2_TARGETS, HOST_POLICY_RUNTIME_TRAFFIC_TARGETS, HOST_POLICY_RUNTIME_OBSERVABILITY_TARGETS, HOST_POLICY_RUNTIME_PROVIDER_GENERAL_TARGETS, HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS):
             command.append("--no-fail-fast")
         for target in targets:
             command += ["--lib"] if target == "lib" else ["--test", target]
         command += ["--", "--test-threads=1", "--nocapture"]
         if receipt.get("command") != command or receipt.get("androidTarget") is not None or receipt.get("representativeTargets") != targets:
             raise ValueError("Meow host receipt did not run the complete approved suite")
+        if policy.get("coreTests") == "policy-runtime-resource-health-v1" and receipt.get("addedNativeTests") != RESOURCE_HEALTH_CASES:
+            raise ValueError("Meow host receipt lacks authored resource/health Native test proof")
         if "featureBoundary" in policy:
             boundary_command = ["cargo", "test", "--locked", "--no-default-features", "--lib",
                 "capabilities::tests::", "--", "--test-threads=1", "--nocapture"]
@@ -302,14 +312,14 @@ def validate_core_test_receipt(state, policy, root):
     overlay = json.loads((root / policy["overlay"]).read_text())
     upstream_lock = overlay.get("files", {}).get("Cargo.lock")
     mode = policy["coreTests"]
-    if mode not in ("policy-runtime-v1", "policy-runtime-v2", "policy-runtime-traffic-v1", "policy-runtime-observability-v1", "policy-runtime-provider-general-v1"):
+    if mode not in ("policy-runtime-v1", "policy-runtime-v2", "policy-runtime-traffic-v1", "policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1"):
         reject()
     cases = (tuple((package, name, count, "lib", ()) for package, name, count in CORE_POLICY_TEST_CASES)
         if mode == "policy-runtime-v1" else CORE_POLICY_TEST_CASES_OBSERVABILITY
         if mode == "policy-runtime-observability-v1" else CORE_POLICY_TEST_CASES_V2)
-    if mode == "policy-runtime-provider-general-v1":cases = CORE_POLICY_TEST_CASES_PROVIDER_GENERAL
+    if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1"):cases = CORE_POLICY_TEST_CASES_PROVIDER_GENERAL
     cases = tuple(r if len(r)==6 else r+(False,) for r in cases)
-    packages = CORE_PROVIDER_GENERAL_PACKAGES if mode == "policy-runtime-provider-general-v1" else CORE_OBSERVABILITY_PACKAGES if mode == "policy-runtime-observability-v1" else CORE_POLICY_TEST_PACKAGES
+    packages = CORE_PROVIDER_GENERAL_PACKAGES if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1") else CORE_OBSERVABILITY_PACKAGES if mode == "policy-runtime-observability-v1" else CORE_POLICY_TEST_PACKAGES
     if (state.get("mode") != mode or state.get("accepted") is not True
             or state.get("upstreamLockRestored") is not True or not is_hash(upstream_lock)
             or state.get("upstreamLockBeforeSha256") != upstream_lock
@@ -346,17 +356,17 @@ def validate_core_test_receipt(state, policy, root):
             command += [name]
         command += ["--", "--test-threads=1", "--nocapture"]
         if exact:command += ["--exact"]
-        if mode == "policy-runtime-provider-general-v1" and (not isinstance(entry, dict) or type(entry.get("exact")) is not bool or entry["exact"] != exact):
+        if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1") and (not isinstance(entry, dict) or type(entry.get("exact")) is not bool or entry["exact"] != exact):
             reject()
         if (not isinstance(entry, dict) or entry.get("package") != package or entry.get("filter") != name
-                or (mode in ("policy-runtime-v2", "policy-runtime-traffic-v1", "policy-runtime-observability-v1", "policy-runtime-provider-general-v1") and (entry.get("target") != target or "filter" not in entry))
+                or (mode in ("policy-runtime-v2", "policy-runtime-traffic-v1", "policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1") and (entry.get("target") != target or "filter" not in entry))
                 or entry.get("command") != command or not exited(entry.get("exit"))
                 or type(entry.get("expectedPass")) is not int or entry["expectedPass"] != count
                 or type(entry.get("passed")) is not int or entry["passed"] != count
                 or not is_hash(entry.get("stdoutSha256")) or not is_hash(entry.get("stderrSha256"))):
             reject()
 
-    if mode in ("policy-runtime-observability-v1", "policy-runtime-provider-general-v1"):
+    if mode in ("policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1"):
         compile_check = state.get("compileCheck")
         if (not isinstance(compile_check, dict)
                 or compile_check.get("command") != CORE_OBSERVABILITY_COMPILE_COMMAND

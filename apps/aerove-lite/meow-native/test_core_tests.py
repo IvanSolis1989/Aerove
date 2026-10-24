@@ -165,4 +165,9 @@ class CoreTestAdmissionTests(unittest.TestCase):
             config['manifest_path']=str(up/'wrong/Cargo.toml')
             with self.assertRaises(ValueError):core_tests.feature_matrix(metadata,up,core_tests.MODE_PROVIDER_GENERAL)
 
+    def test_resource_health_preserves26_commands75_hits_and_compile_lock_gates(self):
+        self.assertEqual(core_tests.entries(core_tests.MODE_PROVIDER_GENERAL),core_tests.entries(core_tests.MODE_RESOURCE_HEALTH))
+        for mode in ['locked','empty','compile-fail','compile-mutate','raise']:
+            with self.subTest(mode=mode):self.run_fixture(mode,core_tests.MODE_RESOURCE_HEALTH)
+
 if __name__=='__main__':unittest.main()

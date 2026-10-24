@@ -85,7 +85,13 @@ class LiteApplication : Application() {
     val subscriptionDownloader by lazy { SubscriptionDownloader(requestPolicy) }
     val resourceDownloader by lazy { ResourceDownloader(requestPolicy) }
     val profileValidator by lazy {
-        CompatibilityValidator(NativeConfigValidator { MeowNativeCore.validate(it) }, File(filesDir, "runtime"))
+        CompatibilityValidator.forMeow(NativeConfigValidator { MeowNativeCore.validate(it) }, File(filesDir, "runtime"),
+            dev.aerove.lite.data.NativePreparedConfigValidator { yaml, root ->
+                dev.aerove.lite.core.JniResourceFetch.preparedValidator(this).validate(yaml, root)
+            }, dev.aerove.lite.data.NativePreparedRuleValidator { path, behavior, format ->
+                dev.aerove.lite.data.RuleResourcePreflight.parse(
+                    dev.aerove.lite.core.JniResourceFetch.preflightRuleResource(path, behavior, format), behavior, format)
+            }, MeowNativeCore::readVerifiedFeatures)
     }
     val rulePayloadInspector by lazy {
         dev.aerove.lite.data.NativeJsonRulePayloadInspector(
@@ -95,7 +101,10 @@ class LiteApplication : Application() {
     val resourceBundles by lazy {
         ResourceBundleManager(File(filesDir, "runtime"), profileValidator, NativeResourceValidator { kind, path, behavior, format ->
             MeowNativeCore.validateResource(kind, path, behavior, format)
-        }, downloader = resourceDownloader, offlineRules = rulePayloadInspector)
+        }, downloader = resourceDownloader, offlineRules = rulePayloadInspector,
+            providerDownloads = dev.aerove.lite.data.ProviderDownloadFactory { context ->
+                dev.aerove.lite.core.JniResourceFetch.factory(this).open(context)
+            })
     }
     val builderResourceLibrary by lazy { dev.aerove.lite.profilebuilder.BuilderResourceLibrary(filesDir, subscriptionDownloader) }
     val globalRulePayloads by lazy {

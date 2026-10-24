@@ -1234,3 +1234,105 @@ mod provider_event_readiness_tests {
         api.cancel();scope.close().await.unwrap();api.join().await;std::fs::remove_dir_all(root).unwrap();
     }
 }
+
+impl RouteControl {
+    pub(crate) fn provider_health_stamp(&self, name: &str) -> Result<(u64,u64),ControlError> {
+        let gate=self.plane.gate.lock();self.check_live(&gate)?;self.check_graph_idle(&gate)?;
+        let provider=self.state.proxy_providers.get(name).ok_or(ControlError::NotFound)?;
+        gate.provider_health_stamp(&provider.provider_identity()).ok_or(ControlError::Superseded)
+    }
+
+    pub(crate) fn provider_health_recent_use(&self, policy: &crate::providers::provider_health::Policy) -> bool {
+        let route=self.state.tunnel.route_snapshot();
+        policy.groups.iter().filter_map(|name|route.proxies.get(name.as_str()))
+            .filter_map(|proxy|proxy.last_user_use()).any(|last|last.elapsed()<policy.interval)
+    }
+
+    /// A provider round shares the HTTP selection/delay intent namespace.
+    /// Real network I/O is diagnostic; only this short gate publishes health.
+    pub(crate) async fn provider_health_round(&self, policy: &crate::providers::provider_health::Policy,
+        scope: &Arc<meow_config::owned_load::OwnedLoadScope>) -> Result<(u64,u64),ControlError> {
+        // A single operation snapshot binds every buffered member to the
+        // pre-admission policy/epoch, including transport failures.
+        let snapshot = meow_common::probe_policy::capture().map_err(|_| {
+            if self.plane.cancel.is_cancelled() { ControlError::Cancelled } else { ControlError::Superseded }
+        })?;
+        match snapshot {
+            Some(snapshot) => snapshot.scope(self.provider_health_round_captured(policy, scope)).await,
+            None => self.provider_health_round_captured(policy, scope).await,
+        }
+    }
+
+    async fn provider_health_round_captured(&self, policy: &crate::providers::provider_health::Policy,
+        scope: &Arc<meow_config::owned_load::OwnedLoadScope>) -> Result<(u64,u64),ControlError> {
+        use futures::StreamExt;
+        let captured_epoch=self.captured_probe_epoch().await?;
+        let (route,provider,stamp,members,paths,keys,ticket,epoch,revision)={
+            let mut gate=self.plane.gate.lock();self.check_live(&gate)?;self.check_graph_idle(&gate)?;
+            if scope.is_cancelled(){return Err(ControlError::Cancelled);}
+            if captured_epoch.is_some_and(|epoch|epoch!=gate.core_epoch){return Err(ControlError::Superseded);}
+            let provider=self.state.proxy_providers.get(&policy.name).ok_or(ControlError::NotFound)?.value().clone();
+            let stamp=gate.provider_health_stamp(&provider.provider_identity()).ok_or(ControlError::Superseded)?;
+            let route=self.state.tunnel.route_snapshot();
+            let members=provider.proxies();
+            let paths=members.iter().map(|member|Self::probe_graph(member.clone())).collect::<Result<Vec<_>,_>>()?;
+            let keys:Vec<_>=members.iter().map(|member|member.health() as *const _ as usize).collect();
+            gate.selection_serial=gate.selection_serial.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
+            let ticket=gate.selection_serial;
+            for key in &keys{gate.delay_intents.insert(*key,ticket);}
+            (route,provider,stamp,members,paths,keys,ticket,gate.core_epoch,gate.revision)
+        };
+        let results={
+            let probes=futures::stream::iter(members.iter().map(|member|async move {
+                meow_config::probe_without_effects_detailed(member,&policy.url,policy.expected.as_deref(),policy.timeout).await
+            })).buffered(meow_config::GROUP_DELAY_CONCURRENCY);
+            tokio::pin!(probes);
+            let mut results=Vec::with_capacity(members.len());
+            loop { tokio::select! { biased;
+                _=self.plane.cancel.cancelled()=>return Err(ControlError::Cancelled),
+                _=scope.cancelled()=>return Err(ControlError::Cancelled),
+                item=probes.next()=>match item{Some(result)=>results.push(result),None=>break},
+            } }
+            results
+        };
+        if results.iter().any(|result|result.as_ref().is_ok_and(|value|value.core_epoch.is_some_and(|value|value!=epoch))){
+            return Err(ControlError::Superseded);
+        }
+        let retired={
+            let mut gate=self.plane.gate.lock();self.check_live(&gate)?;self.check_graph_idle(&gate)?;
+            if scope.is_cancelled(){return Err(ControlError::Cancelled);}
+            if gate.core_epoch!=epoch || gate.revision!=revision || keys.iter().any(|key|gate.delay_intents.get(key)!=Some(&ticket)){
+                return Err(ControlError::Superseded);
+            }
+            let current=self.state.proxy_providers.get(&policy.name).ok_or(ControlError::Superseded)?;
+            if !Arc::ptr_eq(current.value(),&provider) || gate.provider_health_stamp(&provider.provider_identity())!=Some(stamp){
+                return Err(ControlError::Superseded);
+            }
+            let live=provider.proxies();
+            if live.len()!=members.len() || !live.iter().zip(&members).all(|(a,b)|Arc::ptr_eq(a,b)){
+                return Err(ControlError::Superseded);
+            }
+            for (member,before) in members.iter().zip(&paths){
+                let after=Self::probe_graph(member.clone())?;
+                if !before.is_current() || !after.is_current() || before.len()!=after.len() ||
+                    !before.iter().zip(&after).all(|(a,b)|Arc::ptr_eq(a,b)){return Err(ControlError::Superseded);}
+            }
+            let all=self.group_members()?;
+            let next=gate.revision.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
+            let sequence=gate.groups_sequence.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
+            let before=self.snapshot_locked(&gate).picks;
+            let fixed_before:Vec<_>=all.iter().map(|member|member.selection().and_then(|selection|selection.fixed())).collect();
+            for (member,result) in members.iter().zip(&results){
+                member.health().apply_committed(meow_common::adapter::HealthUpdate::Delay(result.as_ref().map(|value|value.delay).unwrap_or(0)));
+            }
+            for member in &all{if let Some(selection)=member.selection(){selection.reconcile_health();}}
+            let fixed_after:Vec<_>=all.iter().map(|member|member.selection().and_then(|selection|selection.fixed())).collect();
+            if self.snapshot_locked(&gate).picks!=before || fixed_before!=fixed_after{gate.revision=next;}
+            if !members.is_empty(){gate.groups_sequence=sequence;}
+            all
+        };
+        drop(retired);drop(route);
+        if !members.is_empty(){self.groups_changed.notify_one();}
+        Ok(stamp)
+    }
+}

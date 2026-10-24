@@ -241,7 +241,7 @@ class ApkInspectionTests(unittest.TestCase):
     def test_packaged_core_requires_await_exit_runtime_export(self):
         symbol = "Java_dev_aerove_lite_core_MeowNativeCore_awaitExit"
         self.assertIn(symbol, module.CORE_JNI_SYMBOLS)
-        self.assertEqual(19, len(module.CORE_JNI_SYMBOLS))
+        self.assertEqual(26, len(module.CORE_JNI_SYMBOLS))
         with tempfile.TemporaryDirectory() as temp:
             apk = self.make_apk(temp)
             self.assertEqual("arm64-v8a", self.verify(apk, "arm64-v8a")["abi"])
@@ -257,7 +257,7 @@ class ApkInspectionTests(unittest.TestCase):
     def test_packaged_core_requires_listener_command_runtime_export(self):
         symbol = "Java_dev_aerove_lite_core_MeowNativeCore_listenerCommand"
         self.assertIn(symbol, module.CORE_JNI_SYMBOLS)
-        self.assertEqual(19, len(module.CORE_JNI_SYMBOLS))
+        self.assertEqual(26, len(module.CORE_JNI_SYMBOLS))
         with tempfile.TemporaryDirectory() as temp:
             apk = self.make_apk(temp)
             self.assertEqual("arm64-v8a", self.verify(apk, "arm64-v8a")["abi"])
@@ -275,18 +275,18 @@ class ApkInspectionTests(unittest.TestCase):
             "configurePolicies", "policyStatus", "capabilities", "validate", "inspectRuleSet", "dumpRuleSet", "validateResource", "hostPolicyCommand")
         expected = tuple("Java_dev_aerove_lite_core_MeowNativeCore_" + name for name in runtime) + tuple(
             "Java_dev_aerove_lite_overrides_NativeScriptEngine_native" + name for name in ("Begin", "Evaluate", "Cancel", "Release"))
-        self.assertEqual(expected, module.CORE_JNI_SYMBOLS)
+        self.assertEqual(expected + module.RESOURCE_JNI_SYMBOLS, module.CORE_JNI_SYMBOLS)
         self.assertEqual(19, len(set(expected)))
         with tempfile.TemporaryDirectory() as temp:
             apk = self.make_apk(temp)
             self.assertEqual("arm64-v8a", self.verify(apk, "arm64-v8a")["abi"])
             with zipfile.ZipFile(apk) as archive:
                 original = {name: archive.read(name) for name in archive.namelist()}
-            for omitted in expected:
+            for omitted in module.CORE_JNI_SYMBOLS:
                 with self.subTest(omitted=omitted):
                     entries = dict(original)
                     entries["lib/arm64-v8a/" + module.CORE_LIBRARY] = self.core_elf(
-                        symbols=[name for name in expected if name != omitted])
+                        symbols=[name for name in module.CORE_JNI_SYMBOLS if name != omitted])
                     with zipfile.ZipFile(apk, "w") as archive:
                         for name, data in entries.items(): archive.writestr(name, data)
                     with self.assertRaises(ValueError) as caught:
@@ -667,10 +667,16 @@ class ApkInspectionTests(unittest.TestCase):
 
 
     def test_provider_general_requires_all26_exact75_cases_compile_and_separate_identity(self):
+        self._provider_general_receipt_contract()
+
+    def test_resource_health_requires42_targets_all26_core_commands_and_exact_native_proof(self):
+        self._provider_general_receipt_contract(resource_health=True)
+
+    def _provider_general_receipt_contract(self, resource_health=False):
         import copy
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);(root/'overlay.json').write_text(json.dumps(dict(files={'Cargo.lock':'a'*64})))
-            policy=dict(coreTests='policy-runtime-provider-general-v1',coreTestLockSha256='b'*64,overlay='overlay.json')
+            policy=dict(coreTests='policy-runtime-resource-health-v1' if resource_health else 'policy-runtime-provider-general-v1',coreTestLockSha256='b'*64,overlay='overlay.json')
             cases=module.CORE_POLICY_TEST_CASES_PROVIDER_GENERAL
             self.assertEqual(12,cases[0][2])
             self.assertEqual(module.CORE_POLICY_TEST_CASES_OBSERVABILITY[1:],tuple(r[:5] for r in cases[1:18]))
@@ -719,9 +725,9 @@ class ApkInspectionTests(unittest.TestCase):
             core_lock=write('core-tests.lock','accepted-core');patch=write('patch','patch')
             overlay=write('overlay.json',dict(files={'Cargo.lock':'a'*64},patch='patch',patchSha256=patch,adaptedFileManifestSha256='d'*64))
             write('source.json',dict(commit=module.MEOW_SOURCE,tag='v0.26.1',archiveSha256='e'*64))
-            targets=list(module.HOST_POLICY_RUNTIME_PROVIDER_GENERAL_TARGETS)
-            self.assertEqual(41,len(targets))
-            self.assertEqual(list(module.HOST_POLICY_RUNTIME_OBSERVABILITY_TARGETS),[t for t in targets if t not in ['provider_groups','provider_projection_gate','runtime_dialers','runtime_general_groups','runtime_provider_projection','runtime_providers']])
+            targets=list(module.HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS if resource_health else module.HOST_POLICY_RUNTIME_PROVIDER_GENERAL_TARGETS)
+            self.assertEqual(42 if resource_health else 41,len(targets))
+            self.assertEqual(list(module.HOST_POLICY_RUNTIME_OBSERVABILITY_TARGETS),[t for t in targets if t not in ['provider_groups','provider_projection_gate','runtime_dialers','runtime_general_groups','runtime_provider_projection','runtime_providers','resource_fetch']])
             policy=dict(policy,resolveLock=False,manifestSha256=manifest,overlaySha256=overlay,targets=targets,
                 featureBoundary='capabilities-no-default',coreTestLockSha256=core_lock)
             policy_hash=write('build-policy.json',policy);identity=module.native_identity(root)
@@ -736,7 +742,17 @@ class ApkInspectionTests(unittest.TestCase):
                 source=dict(commit=module.MEOW_SOURCE,tag='v0.26.1',archiveHashBootstrapped=False,archiveSha256='e'*64,
                     fileManifestSha256='d'*64,overlaySha256=overlay,patchSha256=patch),coreTests=state,
                 featureBoundaryCommand=['cargo','test','--locked','--no-default-features','--lib','capabilities::tests::','--','--test-threads=1','--nocapture'],featureBoundaryExit=0)
+            if resource_health:receipt['addedNativeTests']=module.RESOURCE_HEALTH_CASES
             module.validate_native_receipt(receipt,root=root)
+            if resource_health:
+                for bad in [None, {}, dict(resource_fetch=module.RESOURCE_HEALTH_CASES['resource_fetch'])]:
+                    with self.subTest(proof=bad),self.assertRaisesRegex(ValueError,'Native test proof'):
+                        module.validate_native_receipt(dict(receipt,addedNativeTests=bad),root=root)
+                for omitted in targets[1:]:
+                    write('build-policy.json',dict(policy,targets=[t for t in targets if t!=omitted]))
+                    with self.subTest(omitted_target=omitted),self.assertRaises(ValueError):module.native_identity(root)
+                write('build-policy.json',policy)
+
             for changes in [dict(coreTests=dict(state,mode='policy-runtime-traffic-v1')),dict(coreTests=None),
                     dict(command=command[:3]+command[4:]),dict(representativeTargets=targets[:-1])]:
                 with self.subTest(host=changes),self.assertRaises(ValueError):module.validate_native_receipt(dict(receipt,**changes),root=root)

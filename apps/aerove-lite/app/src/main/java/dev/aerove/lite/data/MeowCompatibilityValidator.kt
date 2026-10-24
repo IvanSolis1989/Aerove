@@ -113,7 +113,7 @@ internal object MeowCompatibilityValidator {
 
     private fun rule(value: String, path: String) {
         val type = value.substringBefore(',')
-        val supported = setOf("DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "DOMAIN-REGEX", "DOMAIN-WILDCARD", "IP-CIDR", "IP-CIDR6", "SRC-IP-CIDR", "IP-SUFFIX", "SRC-IP-SUFFIX", "SRC-PORT", "DST-PORT", "NETWORK", "PROCESS-NAME", "PROCESS-PATH", "GEOIP", "SRC-GEOIP", "GEOSITE", "IP-ASN", "SRC-IP-ASN", "IN-PORT", "IN-NAME", "IN-TYPE", "IN-USER", "DSCP", "UID", "MATCH", "RULE-SET")
+        val supported = setOf("DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "DOMAIN-REGEX", "DOMAIN-WILDCARD", "IP-CIDR", "IP-CIDR6", "SRC-IP-CIDR", "IP-SUFFIX", "SRC-IP-SUFFIX", "SRC-PORT", "DST-PORT", "NETWORK", "PROCESS-NAME", "PROCESS-PATH", "GEOIP", "SRC-GEOIP", "GEOSITE", "IP-ASN", "SRC-IP-ASN", "IN-PORT", "IN-NAME", "IN-TYPE", "IN-USER", "DSCP", "UID", "MATCH", "RULE-SET", "AND", "OR", "NOT")
         if (type !in supported) fail(path, "Rule grammar admission pending or unsupported: $type")
     }
 

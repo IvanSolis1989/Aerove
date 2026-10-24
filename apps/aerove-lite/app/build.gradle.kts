@@ -1,9 +1,112 @@
+import com.android.build.api.artifact.ScopedArtifact
+import com.android.build.api.variant.DeviceTestBuilder
+import com.android.build.api.variant.ScopedArtifacts
+import groovy.json.JsonOutput
+import java.io.File
+import javax.inject.Inject
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.ConfigurableFileCollection
+import org.gradle.api.file.Directory
+import org.gradle.api.file.RegularFile
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.ListProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.CacheableTask
+import org.gradle.api.tasks.Classpath
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.OutputFile
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.TaskAction
+import org.gradle.process.ExecOperations
 import java.util.Properties
 
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.compose")
+}
+
+// Scoped-artifact wiring adapted from android/gradle-recipes, getScopedArtifacts,
+// Copyright 2023 The Android Open Source Project, licensed under Apache-2.0.
+// https://www.apache.org/licenses/LICENSE-2.0
+@CacheableTask
+abstract class GenerateAndroidTestAppKeepRules @Inject constructor(
+    private val execOperations: ExecOperations,
+) : DefaultTask() {
+    @get:Classpath abstract val appJars: ListProperty<RegularFile>
+    @get:Classpath abstract val appDirectories: ListProperty<Directory>
+    @get:Classpath abstract val testJars: ListProperty<RegularFile>
+    @get:Classpath abstract val testDirectories: ListProperty<Directory>
+    @get:Classpath abstract val testRuntimeJars: ListProperty<RegularFile>
+    @get:Classpath abstract val testRuntimeDirectories: ListProperty<Directory>
+    @get:Classpath abstract val libraries: ConfigurableFileCollection
+    @get:Classpath abstract val r8Classpath: ConfigurableFileCollection
+    @get:Input abstract val pythonCommand: Property<String>
+    @get:Input abstract val javaCommand: Property<String>
+    @get:InputFile @get:PathSensitive(PathSensitivity.NONE)
+    abstract val generator: RegularFileProperty
+    @get:OutputFile abstract val rules: RegularFileProperty
+    @get:OutputFile abstract val report: RegularFileProperty
+
+    @TaskAction
+    fun generate() {
+        val manifest = temporaryDir.resolve("inputs.json")
+        manifest.writeText(JsonOutput.toJson(mapOf(
+            "java" to javaCommand.get(),
+            "r8Classpath" to r8Classpath.files.map { it.absolutePath },
+            "sources" to (testJars.get().map { it.asFile.absolutePath } +
+                testDirectories.get().map { it.asFile.absolutePath }),
+            "sourceDependencies" to (testRuntimeJars.get().map { it.asFile.absolutePath } +
+                testRuntimeDirectories.get().map { it.asFile.absolutePath }),
+            "targets" to (appJars.get().map { it.asFile.absolutePath } +
+                appDirectories.get().map { it.asFile.absolutePath }),
+            "libraries" to libraries.files.map { it.absolutePath },
+        )))
+        execOperations.exec {
+            commandLine(pythonCommand.get(), generator.get().asFile.absolutePath,
+                "--manifest", manifest.absolutePath,
+                "--output", rules.get().asFile.absolutePath,
+                "--report", report.get().asFile.absolutePath)
+        }.assertNormalExitValue()
+    }
+}
+
+androidComponents.onVariants(androidComponents.selector().withBuildType("release")) { variant ->
+    val androidTest = variant.deviceTests[DeviceTestBuilder.ANDROID_TEST_TYPE] ?: return@onVariants
+    val infer = tasks.register<GenerateAndroidTestAppKeepRules>(
+        "generate${variant.name.replaceFirstChar { it.uppercase() }}AndroidTestAppKeepRules",
+    ) {
+        generator.set(rootProject.layout.projectDirectory.file("tool/generate_android_test_keep_rules.py"))
+        pythonCommand.set(providers.gradleProperty("litePython").orElse("python3"))
+        javaCommand.set(File(System.getProperty("java.home"),
+            "bin/" + if (System.getProperty("os.name").startsWith("Windows")) "java.exe" else "java").absolutePath)
+        // Reuse the exact R8 already loaded by AGP, without another dependency/version.
+        r8Classpath.from(providers.provider {
+            File(Class.forName("com.android.tools.r8.R8", false,
+                com.android.build.gradle.AppPlugin::class.java.classLoader)
+                .protectionDomain.codeSource.location.toURI())
+        })
+        libraries.from(variant.compileClasspath, androidTest.compileClasspath,
+            androidComponents.sdkComponents.bootClasspath)
+        rules.set(layout.buildDirectory.file("intermediates/androidTestAppKeepRules/${variant.name}/rules.pro"))
+        report.set(layout.buildDirectory.file("intermediates/androidTestAppKeepRules/${variant.name}/inputs.json"))
+    }
+    // Public scoped artifacts carry the real compiler dependencies, before R8.
+    variant.artifacts.forScope(ScopedArtifacts.Scope.ALL).use(infer).toGet(
+        ScopedArtifact.CLASSES, GenerateAndroidTestAppKeepRules::appJars,
+        GenerateAndroidTestAppKeepRules::appDirectories,
+    )
+    androidTest.artifacts.forScope(ScopedArtifacts.Scope.PROJECT).use(infer).toGet(
+        ScopedArtifact.CLASSES, GenerateAndroidTestAppKeepRules::testJars,
+        GenerateAndroidTestAppKeepRules::testDirectories,
+    )
+    androidTest.artifacts.forScope(ScopedArtifacts.Scope.ALL).use(infer).toGet(
+        ScopedArtifact.CLASSES, GenerateAndroidTestAppKeepRules::testRuntimeJars,
+        GenerateAndroidTestAppKeepRules::testRuntimeDirectories,
+    )
+    variant.proguardFiles.add(infer.flatMap { it.rules })
 }
 
 val product = Properties().apply {
