@@ -20,6 +20,7 @@ import 'package:fl_clash/views/dashboard/widgets/current_outbound.dart';
 import 'package:fl_clash/views/dashboard/widgets/outbound_motion.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -213,52 +214,95 @@ void main() {
 
   group('the exit address', () {
     for (final density in DashboardDensity.values) {
-      testWidgets('the flag fills the ${density.name} badge bubble', (
-        tester,
-      ) async {
-        await tester.pumpWidget(
-          _app(
-            (_, _) async => _residential,
-            countryCode: 'JP',
-            density: density,
-          ),
-        );
-        await tester.pump();
-        final flag = find.byWidgetPredicate(
-          (widget) => widget is EmojiText && widget.text == '🇯🇵',
-        );
-        expect(flag, findsOneWidget);
-        final cover = find.descendant(
-          of: _bubble(),
-          matching: find.byType(EmojiCover),
-        );
-        expect(find.descendant(of: cover, matching: flag), findsOneWidget);
-        final badge = find.descendant(
-          of: _bubble(),
-          matching: find.byType(OutboundBubble),
-        );
-        final badgeSize = tester.getSize(badge);
-        expect(badgeSize.width, density == DashboardDensity.compact ? 40 : 48);
-        expect(tester.getSize(cover), badgeSize);
-        expect(tester.getSize(flag).width, greaterThan(badgeSize.width));
-        expect(
-          find.ancestor(
-            of: cover,
-            matching: find.byWidgetPredicate(
-              (widget) =>
-                  widget is ClipPath &&
-                  widget.clipper is OutboundDropletClipper,
+      testWidgets(
+        'the flag keeps the ${density.name} badge bounds without a rim',
+        (tester) async {
+          await tester.pumpWidget(
+            _app(
+              (_, _) async => _residential,
+              countryCode: 'JP',
+              density: density,
             ),
-          ),
-          findsOneWidget,
-        );
-        // Nepal's pennants leave part of the bubble to its own fill.
-        expect(_bubbles(tester).color, isNotNull);
-        expect(find.byTooltip('Retry'), findsOneWidget);
-        expect(tester.widget<InkResponse>(_bubble()).onTap, isNotNull);
-        expect(tester.takeException(), isNull);
-      });
+          );
+          await tester.pump();
+          final flag = find.byWidgetPredicate(
+            (widget) => widget is EmojiText && widget.text == '🇯🇵',
+          );
+          expect(flag, findsOneWidget);
+          final cover = find.descendant(
+            of: _bubble(),
+            matching: find.byType(EmojiCover),
+          );
+          expect(find.descendant(of: cover, matching: flag), findsOneWidget);
+          final badge = find.descendant(
+            of: _bubble(),
+            matching: find.byType(OutboundBubble),
+          );
+          final badgeSize = tester.getSize(badge);
+          expect(
+            badgeSize.width,
+            density == DashboardDensity.compact ? 40 : 48,
+          );
+          expect(tester.getSize(cover), badgeSize);
+          expect(tester.getSize(flag).width, greaterThan(badgeSize.width));
+          expect(
+            find.ancestor(
+              of: cover,
+              matching: find.byWidgetPredicate(
+                (widget) =>
+                    widget is ClipPath &&
+                    widget.clipper is OutboundDropletClipper,
+              ),
+            ),
+            findsNothing,
+          );
+          final mask = tester.widget<ShaderMask>(
+            find.ancestor(of: cover, matching: find.byType(ShaderMask)),
+          );
+          expect(mask.blendMode, BlendMode.dstIn);
+          final base = _bubbles(tester);
+          final edge =
+              _badge(tester).foregroundPainter! as OutboundDropletPainter;
+          expect(base.color, Colors.transparent);
+          expect(base.shadow, Colors.transparent);
+          expect(base.highlight, isFalse);
+          expect(edge.highlight, isFalse);
+          expect(edge.rim, isNull);
+          expect(find.byTooltip('Retry'), findsOneWidget);
+          expect(tester.widget<InkResponse>(_bubble()).onTap, isNotNull);
+          expect(tester.takeException(), isNull);
+        },
+      );
     }
+
+    testWidgets('keeps the flag centre opaque and feathers only its edge', (
+      tester,
+    ) async {
+      await tester.pumpWidget(_app((_, _) async => _residential));
+      await tester.pump();
+      final mask = tester.widget<ShaderMask>(
+        find.descendant(of: _bubble(), matching: find.byType(ShaderMask)),
+      );
+      await tester.runAsync(() async {
+        const bounds = Rect.fromLTWH(0, 0, 48, 48);
+        final recorder = ui.PictureRecorder();
+        ui.Canvas(
+          recorder,
+        ).drawRect(bounds, ui.Paint()..shader = mask.shaderCallback(bounds));
+        final picture = recorder.endRecording();
+        final image = await picture.toImage(48, 48);
+        final bytes = await image.toByteData(
+          format: ui.ImageByteFormat.rawRgba,
+        );
+        int alpha(int x, int y) => bytes!.getUint8((y * 48 + x) * 4 + 3);
+        expect(alpha(24, 24), 255);
+        expect(alpha(5, 24), 255);
+        expect(alpha(0, 24), inExclusiveRange(0, 255));
+        expect(alpha(0, 0), 0);
+        image.dispose();
+        picture.dispose();
+      });
+    });
 
     testWidgets('normalizes the exit country to an untinted flag', (
       tester,
@@ -908,15 +952,10 @@ void main() {
         await tester.pumpAndSettle();
         final gloss =
             _badge(tester).foregroundPainter! as OutboundDropletPainter;
-        expect(gloss.rim != null, finish == OutboundFinish.clear);
-        expect(
-          gloss.highlight,
-          !highContrast && finish != OutboundFinish.frost,
-        );
-        expect(
-          _bubbles(tester).shadow.a > 0,
-          finish != OutboundFinish.clear && !highContrast,
-        );
+        expect(gloss.rim, isNull);
+        expect(gloss.highlight, isFalse);
+        expect(_bubbles(tester).color, Colors.transparent);
+        expect(_bubbles(tester).shadow, Colors.transparent);
         final start = droplet(tester);
         expect(start.color == null, finish != OutboundFinish.solid);
         expect(start.shadow.a > 0, finish != OutboundFinish.clear);

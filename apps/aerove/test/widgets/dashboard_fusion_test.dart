@@ -18,8 +18,10 @@ import 'package:fl_clash/views/dashboard/widgets/outbound_motion.dart';
 import 'package:fl_clash/views/dashboard/widgets/service_status.dart';
 import 'package:fl_clash/views/dashboard/widgets/connection_stats.dart';
 import 'package:fl_clash/ui/ui.dart';
+import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../helpers/test_app.dart';
@@ -154,7 +156,12 @@ void main() {
                   child: DashboardDensityScope(
                     density: DashboardDensity.mobile,
                     scale: scale,
-                    child: child,
+                    child: child is CurrentOutboundCard
+                        ? Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [child],
+                          )
+                        : child,
                   ),
                 ),
               ),
@@ -172,6 +179,24 @@ void main() {
   ) async {
     final container = await pump(tester, const CurrentOutboundCard());
     final originalHeight = tester.getSize(find.byType(DashboardCard)).height;
+    final l10n = AppLocalizations.of(
+      tester.element(find.byType(CurrentOutboundCard)),
+    );
+    final mainParts = [
+      find.text(l10n.status),
+      find.byType(DashboardChip).first,
+      find.text('203.0.113.9'),
+      find.byType(EmojiCover),
+      find.text(l10n.runTime),
+      find.text(l10n.ipOrganization),
+      find.text('Example Organization'),
+      find.byType(OutboundBubble),
+    ];
+    final originalRects = [for (final part in mainParts) tester.getRect(part)];
+    final originalChips = [
+      for (var i = 0; i < find.byType(DashboardChip).evaluate().length; i++)
+        tester.getRect(find.byType(DashboardChip).at(i)),
+    ];
     await pump(
       tester,
       const CurrentOutboundCard(showTraffic: true),
@@ -182,8 +207,14 @@ void main() {
     final status = tester.getRect(find.text('状态'));
     final upload = tester.getRect(find.text('上传'));
     final download = tester.getRect(find.text('下载'));
-    expect(upload.top, status.top);
-    expect(download.top, status.top);
+    expect(upload.height, 11);
+    expect(download.height, 11);
+    expect(upload.height, lessThan(status.height));
+    expect([for (final part in mainParts) tester.getRect(part)], originalRects);
+    expect([
+      for (var i = 0; i < find.byType(DashboardChip).evaluate().length; i++)
+        tester.getRect(find.byType(DashboardChip).at(i)),
+    ], originalChips);
     expect(upload.overlaps(status), isFalse);
     expect(download.overlaps(status), isFalse);
     expect(
@@ -239,6 +270,140 @@ void main() {
       expect(tester.takeException(), null);
     });
   }
+
+  for (final (width, scale, ip, port) in const [
+    (360.0, 1.0, '1.1.1.1', 80),
+    (328.0, 1.0, '2001:db8:1234:5678:90ab:cdef:1234:5678', 7890),
+    (328.0, 2.0, '2001:db8:1234:5678:90ab:cdef:1234:5678', 7890),
+  ]) {
+    testWidgets('network footer baseline and touch targets at $width/$scale', (
+      tester,
+    ) async {
+      final container = await pump(
+        tester,
+        const FusedNetworkControls(
+          members: {
+            DashboardWidget.outboundMode,
+            DashboardWidget.vpnButton,
+            DashboardWidget.intranetIp,
+          },
+        ),
+        width: width,
+        scale: scale,
+      );
+      container.read(localIpProvider.notifier).value = ip;
+      container
+          .read(vpnSettingProvider.notifier)
+          .update((s) => s.copyWith(enable: true));
+      container
+          .read(patchClashConfigProvider.notifier)
+          .update((s) => s.copyWith(allowLan: true, mixedPort: port));
+      await tester.pump();
+      final l10n = AppLocalizations.of(
+        tester.element(find.byType(FusedNetworkControls)),
+      );
+      final address = ip.contains(':') ? '[$ip]:$port' : '$ip:$port';
+      double baseline(Finder text) {
+        final box = tester.renderObject<RenderBox>(text);
+        return tester.getTopLeft(text).dy +
+            box.getDryBaseline(box.constraints, TextBaseline.alphabetic)!;
+      }
+
+      expect(
+        baseline(find.text(l10n.enabled)),
+        closeTo(baseline(find.text(address)), 0.01),
+      );
+      if (width == 360 && scale == 1) {
+        expect(tester.getSize(find.byType(DashboardCard)).height, 222);
+      }
+      final switches = find.byType(DashboardSwitch);
+      final vpn = tester.getRect(switches.first);
+      final lan = tester.getRect(switches.last);
+      final copy = tester.getRect(find.byTooltip(l10n.copy));
+      expect(vpn.top, lan.top);
+      expect(vpn.overlaps(lan), isFalse);
+      expect(copy.overlaps(vpn), isFalse);
+      expect(copy.overlaps(lan), isFalse);
+      expect(copy.size, const Size.square(DashboardIconButton.size));
+      await tester.tap(switches.first);
+      await tester.pump();
+      expect(container.read(vpnSettingProvider).enable, isFalse);
+      expect(container.read(patchClashConfigProvider).allowLan, isTrue);
+      await tester.tap(switches.last);
+      await tester.pump();
+      expect(container.read(vpnSettingProvider).enable, isFalse);
+      expect(container.read(patchClashConfigProvider).allowLan, isFalse);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('LAN copy preserves complete IPv4 IPv6 and disabled addresses', (
+    tester,
+  ) async {
+    String? copied;
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') {
+        copied = (call.arguments as Map)['text'] as String;
+      }
+      return null;
+    });
+    addTearDown(
+      () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+    );
+    final container = await pump(
+      tester,
+      const FusedNetworkControls(
+        members: {DashboardWidget.vpnButton, DashboardWidget.intranetIp},
+      ),
+      width: 328,
+      scale: 2,
+    );
+    final l10n = AppLocalizations.of(
+      tester.element(find.byType(FusedNetworkControls)),
+    );
+    for (final (ip, enabled, port, expected) in <(String?, bool, int, String?)>[
+      ('192.0.2.8', true, 7890, '192.0.2.8:7890'),
+      ('192.0.2.8', false, 7890, '192.0.2.8'),
+      ('2001:db8::8', true, 7890, '[2001:db8::8]:7890'),
+      ('2001:db8::8', false, 7890, '2001:db8::8'),
+      ('[2001:db8::8]', true, 7890, '[2001:db8::8]:7890'),
+      (
+        '2001:db8:1234:5678:90ab:cdef:1234:5678',
+        true,
+        7890,
+        '[2001:db8:1234:5678:90ab:cdef:1234:5678]:7890',
+      ),
+      ('', true, 7890, null),
+      (' ', false, 7890, null),
+      (null, true, 7890, null),
+      ('192.0.2.8', true, 0, null),
+      ('192.0.2.8', true, 65536, null),
+    ]) {
+      container.read(localIpProvider.notifier).value = ip;
+      container
+          .read(patchClashConfigProvider.notifier)
+          .update((s) => s.copyWith(allowLan: enabled, mixedPort: port));
+      await tester.pump();
+      final button = find.byWidgetPredicate(
+        (w) => w is DashboardIconButton && w.tooltip == l10n.copy,
+      );
+      final action = tester.widget<DashboardIconButton>(button).onPressed;
+      if (expected == null) {
+        expect(action, isNull);
+      } else {
+        expect(find.text(expected), findsOneWidget);
+        copied = null;
+        final vpnBefore = container.read(vpnSettingProvider).enable;
+        await tester.tap(find.byTooltip(l10n.copy));
+        await tester.pump();
+        expect(copied, expected);
+        expect(container.read(vpnSettingProvider).enable, vpnBefore);
+        expect(container.read(patchClashConfigProvider).allowLan, enabled);
+      }
+    }
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'service refresh preserves count owner and count events do not refresh services',
@@ -396,23 +561,43 @@ void main() {
   testWidgets(
     'status speed and button do not overlap at narrow double text scale',
     (tester) async {
+      final container = await pump(
+        tester,
+        const CurrentOutboundCard(),
+        scale: 2,
+        width: 328,
+      );
+      final mainParts = [
+        find.text('状态'),
+        find.byType(DashboardChip).first,
+        find.text('203.0.113.9'),
+        find.byType(EmojiCover),
+        find.byType(OutboundBubble),
+      ];
+      final originalRects = [
+        for (final part in mainParts) tester.getRect(part),
+      ];
+      final originalHeight = tester.getSize(find.byType(DashboardCard)).height;
       await pump(
         tester,
         const CurrentOutboundCard(showTraffic: true),
+        existing: container,
         scale: 2,
         width: 328,
       );
       final figures = tester.getRect(find.byType(OutboundTrafficFigures));
       final chip = tester.getRect(find.byType(DashboardChip).first);
       final button = tester.getRect(find.byType(OutboundBubble));
+      expect([
+        for (final part in mainParts) tester.getRect(part),
+      ], originalRects);
+      expect(figures.top, greaterThanOrEqualTo(originalHeight - 18));
       expect(
-        tester.getRect(find.text('上传')).top,
-        tester.getRect(find.text('状态')).top,
+        tester.getSize(find.byType(DashboardCard)).height,
+        originalHeight + 8 + figures.height,
       );
-      expect(
-        tester.getRect(find.text('下载')).top,
-        tester.getRect(find.text('状态')).top,
-      );
+      expect(tester.getRect(find.text('上传')).height, 22);
+      expect(tester.getRect(find.text('下载')).height, 22);
       expect(
         figures.overlaps(chip),
         isFalse,
