@@ -806,11 +806,11 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 #### [R8 官方仓库](https://r8.googlesource.com/r8/)
 
-**固定版本 / revision：** TraceReferences 命令源码 `d3a004e326742850d743833562cc2d6ca267d117`，parser blob `06cb8149b17ec95646b185a0ade00cac7dda240f`；本地最小用例使用现有 SDK36 R8 `8.10.9-dev`，生产使用本项目 AGP 实际已加载的 R8，不新增另一个版本依赖。
+**固定版本 / revision：** TraceReferences 命令源码 `d3a004e326742850d743833562cc2d6ca267d117`，parser blob `06cb8149b17ec95646b185a0ade00cac7dda240f`；生产公共 API 另核 R8 `9.4.24` 固定提交 `61dc59bf271ddb314b5e0953231bd22df0ffb17e`。本地最小用例使用现有 SDK36 R8 `8.10.9-dev`，生产使用本项目 AGP 实际已加载的 R8，不新增另一个版本依赖。
 
-**用途与采用方式：** 只读核对官方 `--source`、`--target`、`--lib`、`--keep-rules`、`--allowobfuscation` 与严格缺失引用行为。通过官方工具从预 R8 测试 classfile 推导 app 的精确保留规则，保留混淆；未复制工具实现。最小实际 classfile / R8 / JVM 用例不能代替生产 AGP、APK 和 Android 验收。
+**用途与采用方式：** 核对官方 `--source`、`--target`、`--lib`、`--keep-rules`、`--allowobfuscation`，从预 R8 测试 classfile 推导 app 的精确保留规则并保留混淆。公共 `TraceReferencesCommand` 与类型化诊断 API 保留官方 keep/check consumer，以全部引用上下文区分应用调用边与第三方测试依赖内部引用：项目、目标成员、产品命名空间或未知上下文缺失仍失败；可延后的第三方问题完整记录为未验证，继续接受真实 test R8 / Android 检查。未复制工具实现、未用截断日志判断上下文；最小 classfile / R8 / JVM 用例不代替完整应用验收。
 
-**许可证、署名与证据：** R8 project authors，源码所示 BSD-style license；[固定命令源码](https://r8.googlesource.com/r8/+/d3a004e326742850d743833562cc2d6ca267d117/src/main/java/com/android/tools/r8/tracereferences/TraceReferencesCommandParser.java)、[官方 LICENSE](https://r8.googlesource.com/r8/+/refs/heads/main/LICENSE)；本项目 `apps/aerove-lite/tool/generate_android_test_keep_rules.py`。
+**许可证、署名与证据：** R8 project authors，源码所示 BSD-style license；[固定命令源码](https://r8.googlesource.com/r8/+/d3a004e326742850d743833562cc2d6ca267d117/src/main/java/com/android/tools/r8/tracereferences/TraceReferencesCommandParser.java)、[固定公共诊断 API](https://r8.googlesource.com/r8/+/61dc59bf271ddb314b5e0953231bd22df0ffb17e/src/main/java/com/android/tools/r8/DiagnosticsHandler.java)、[官方 LICENSE](https://r8.googlesource.com/r8/+/refs/heads/main/LICENSE)；本项目 `generate_android_test_keep_rules.py` 与 `AndroidTestAppAbiTrace.java`。
 
 #### [google/gfxstream](https://github.com/google/gfxstream)
 

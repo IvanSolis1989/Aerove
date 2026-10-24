@@ -1,12 +1,13 @@
 """Infer only the app ABI referenced by pre-R8 AndroidTest classfiles using R8.
 
 The Gradle consumer supplies real scoped class artifacts and compile/boot libraries.
-No source-name inference, hand-maintained ABI list or missing-reference suppression.
+Typed missing-reference contexts keep project/app ABI errors fatal; third-party runtime compatibility is recorded separately.
 """
 import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -14,7 +15,7 @@ import sys
 import zipfile
 
 
-def collect_classes(paths, excluded=frozenset(), *, role="program"):
+def collect_classes(paths, excluded=frozenset(), *, role="program", origins_out=None):
     """Normalize class directories/jars and reject ambiguous class definitions."""
     classes, origins = {}, {}
     for path in sorted({Path(item).resolve() for item in paths}):
@@ -43,6 +44,8 @@ def collect_classes(paths, excluded=frozenset(), *, role="program"):
         finally:
             if archive is not None:
                 archive.close()
+    if origins_out is not None:
+        origins_out.update(origins)
     return classes
 
 
@@ -93,8 +96,10 @@ def write_archive(path, classes):
 
 
 def _generate(manifest, output, report, diagnostics):
-    sources = collect_classes(manifest["sources"], role="test source")
-    targets = collect_classes(manifest["targets"], role="app target")
+    project_origins, source_origins, target_origins = {}, {}, {}
+    sources = collect_classes(manifest["sources"], role="test source", origins_out=project_origins)
+    projects = set(sources)
+    targets = collect_classes(manifest["targets"], role="app target", origins_out=target_origins)
     if not sources or not targets:
         raise ValueError("Both pre-R8 AndroidTest and app classfiles are required")
     overlap = set(sources) & set(targets)
@@ -103,7 +108,7 @@ def _generate(manifest, output, report, diagnostics):
     # Shared runtime dependencies live in the target APK; test-only runtime code
     # is also a source, since its calls can cross into that same target APK.
     sources = collect_classes(manifest["sources"] + manifest.get("sourceDependencies", []),
-                              excluded=set(targets), role="test source/dependency")
+                              excluded=set(targets), role="test source/dependency", origins_out=source_origins)
     # The test compile classpath includes the app's compile jar. Its definitions
     # must remain targets, never library classes that would evade generated keeps.
     libraries, shadows = collect_libraries(manifest["libraries"], excluded=set(sources) | set(targets))
@@ -124,21 +129,68 @@ def _generate(manifest, output, report, diagnostics):
         # Only R8's allowobfuscation is enabled. It preserves members and call
         # shape while the existing app -> test applymapping flow handles names.
         generated = work / "rules.pro"
-        command = [manifest["java"], "-Xmx768m", "-cp", os.pathsep.join(map(str, classpath)),
-                   "com.android.tools.r8.tracereferences.TraceReferences", "--keep-rules", "--allowobfuscation",
-                   "--source", str(work / "source.jar"), "--target", str(work / "target.jar"),
-                   "--lib", str(work / "library.jar"), "--output", str(generated)]
+        helper_source = Path(manifest.get("traceHelper", Path(__file__).with_name("AndroidTestAppAbiTrace.java"))).resolve(strict=True)
+        helper_classes = work / "helper"
+        helper_classes.mkdir()
+        compiler = manifest.get("javaCompiler") or [str(Path(manifest["java"]).with_name("javac" + Path(manifest["java"]).suffix))]
+        compile_command = compiler + ["-encoding", "UTF-8", "-source", "17", "-target", "17", "-cp",
+            os.pathsep.join(map(str, classpath)), "-d", str(helper_classes), str(helper_source)]
+        diagnostics["helperSourceSha256"] = hashlib.sha256(helper_source.read_bytes()).hexdigest()
+        diagnostics["helperCompileCommand"] = compile_command
+        diagnostics["command"] = compile_command
+        compiled = subprocess.run(compile_command, check=True, timeout=120, capture_output=True, text=True)
+        diagnostics["helperCompileStdout"] = compiled.stdout
+        diagnostics["helperCompileStderr"] = compiled.stderr
+        boundary_files = []
+        namespaces = manifest.get("productNamespaces", ["dev.aerove.lite"])
+        if (not isinstance(namespaces, list) or not namespaces or any(not isinstance(n, str)
+                or re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", n) is None for n in namespaces)):
+            raise ValueError("Explicit product package namespaces are required")
+        values = [projects, set(sources) - projects, set(targets)]
+        for role, names in zip(("project", "dependency", "target"), values):
+            path = work / (role + "-descriptors.txt")
+            path.write_text("".join("L" + name[:-6] + ";\n" for name in sorted(names)), encoding="utf-8")
+            boundary_files.append(path)
+        namespace_file = work / "product-prefixes.txt"
+        namespace_file.write_text("".join("L" + n.replace(".", "/") + "/\n" for n in namespaces), encoding="utf-8")
+        typed_report = work / "typed-references.json"
+        command = [manifest["java"], "-Xmx768m", "-cp", os.pathsep.join(map(str, [helper_classes] + classpath)),
+                   "AndroidTestAppAbiTrace", str(typed_report)] + list(map(str, boundary_files)) + [str(namespace_file),
+                   "--keep-rules", "--allowobfuscation", "--source", str(work / "source.jar"),
+                   "--target", str(work / "target.jar"), "--lib", str(work / "library.jar"), "--output", str(generated)]
         diagnostics["command"] = command
-        completed = subprocess.run(command, check=True, timeout=300, capture_output=True, text=True)
-        diagnostics.update(stdout=completed.stdout, stderr=completed.stderr)
+        try:
+            completed = subprocess.run(command, check=True, timeout=300, capture_output=True, text=True)
+            diagnostics.update(stdout=completed.stdout, stderr=completed.stderr)
+        finally:
+            if typed_report.exists():
+                diagnostics["referenceDiagnostics"] = json.loads(typed_report.read_text(encoding="utf-8"))
+                for item in diagnostics["referenceDiagnostics"]["missingDefinitions"]:
+                    owner = item["holder"][1:-1] + ".class"
+                    if owner in target_origins:
+                        item["targetInputOrigin"] = target_origins[owner]
+                        item["targetClassSha256"] = hashlib.sha256(targets[owner]).hexdigest()
+                    for context in item["contexts"]:
+                        name = context["holder"][1:-1] + ".class"
+                        origins = project_origins if context["role"] == "PROJECT" else source_origins
+                        if name in origins and name in sources:
+                            context["inputOrigin"] = origins[name]
+                            context["classSha256"] = hashlib.sha256(sources[name]).hexdigest()
+                diagnostics["referenceDiagnostics"]["productNamespaces"] = namespaces
+                diagnostics["referenceDiagnostics"]["boundaryClassCounts"] = dict(
+                    project=len(projects), testDependency=len(set(sources) - projects), target=len(targets))
+        typed = diagnostics.get("referenceDiagnostics", {})
+        if typed.get("traceCompleted") is not True or typed.get("fatalCount") != 0:
+            raise ValueError("Typed TraceReferences did not accept the protected app boundary")
         rules = generated.read_bytes()
-        metadata = dict(schema=2, generator="R8 TraceReferences", allowObfuscation=True,
+        metadata = dict(schema=3, generator="R8 TraceReferences", allowObfuscation=True,
                         orderedInputs=diagnostics["orderedInputs"], libraryShadows=shadows,
+                        referenceDiagnostics=typed, helperSourceSha256=diagnostics["helperSourceSha256"],
                         inputClasses=inputs, rulesSha256=hashlib.sha256(rules).hexdigest(),
                         r8ClasspathSha256=[hashlib.sha256(path.read_bytes()).hexdigest() for path in classpath])
         staged_report = work / "report.json"
         staged_report.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
-        # Publish only after strict TraceReferences exits successfully.
+        # Publish only after typed project/app boundary checks exit successfully.
         try:
             os.replace(staged_report, report)
             os.replace(generated, output)

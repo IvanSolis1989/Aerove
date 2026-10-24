@@ -45,8 +45,11 @@ abstract class GenerateAndroidTestAppKeepRules @Inject constructor(
     @get:Classpath abstract val r8Classpath: ConfigurableFileCollection
     @get:Input abstract val pythonCommand: Property<String>
     @get:Input abstract val javaCommand: Property<String>
+    @get:Input abstract val productNamespace: Property<String>
     @get:InputFile @get:PathSensitive(PathSensitivity.NONE)
     abstract val generator: RegularFileProperty
+    @get:InputFile @get:PathSensitive(PathSensitivity.NONE)
+    abstract val traceHelper: RegularFileProperty
     @get:OutputFile abstract val rules: RegularFileProperty
     @get:OutputFile abstract val report: RegularFileProperty
 
@@ -56,6 +59,10 @@ abstract class GenerateAndroidTestAppKeepRules @Inject constructor(
         manifest.writeText(JsonOutput.toJson(mapOf(
             "java" to javaCommand.get(),
             "r8Classpath" to r8Classpath.files.map { it.absolutePath },
+            "traceHelper" to traceHelper.get().asFile.absolutePath,
+            "javaCompiler" to listOf(File(File(javaCommand.get()).parentFile,
+                if (System.getProperty("os.name").startsWith("Windows")) "javac.exe" else "javac").absolutePath),
+            "productNamespaces" to listOf(productNamespace.get()),
             "sources" to (testJars.get().map { it.asFile.absolutePath } +
                 testDirectories.get().map { it.asFile.absolutePath }),
             "sourceDependencies" to (testRuntimeJars.get().map { it.asFile.absolutePath } +
@@ -79,6 +86,8 @@ androidComponents.onVariants(androidComponents.selector().withBuildType("release
         "generate${variant.name.replaceFirstChar { it.uppercase() }}AndroidTestAppKeepRules",
     ) {
         generator.set(rootProject.layout.projectDirectory.file("tool/generate_android_test_keep_rules.py"))
+        traceHelper.set(rootProject.layout.projectDirectory.file("tool/AndroidTestAppAbiTrace.java"))
+        productNamespace.set(variant.namespace)
         pythonCommand.set(providers.gradleProperty("litePython").orElse("python3"))
         javaCommand.set(File(System.getProperty("java.home"),
             "bin/" + if (System.getProperty("os.name").startsWith("Windows")) "java.exe" else "java").absolutePath)

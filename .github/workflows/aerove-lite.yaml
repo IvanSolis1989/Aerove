@@ -8,7 +8,7 @@ env:
   NDK_VERSION: 28.2.13676358
 jobs:
   qa84:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.qa84_only }}
+    if: ${{ !inputs.meow_host_only && (github.event_name == 'workflow_dispatch' && inputs.qa84_only) }}
     permissions:
       contents: read
       actions: read
@@ -16,7 +16,7 @@ jobs:
     with:
       exclusive_mode: ${{ !inputs.qa79_only && !inputs.publish_release && !inputs.native_preflight && !inputs.client_preflight }}
   qa79:
-    if: ${{ !inputs.qa84_only && (github.event_name == 'workflow_dispatch' && inputs.qa79_only) }}
+    if: ${{ !inputs.meow_host_only && (!inputs.qa84_only && (github.event_name == 'workflow_dispatch' && inputs.qa79_only)) }}
     permissions:
       contents: read
       actions: read
@@ -24,7 +24,7 @@ jobs:
     with:
       exclusive_mode: ${{ !inputs.publish_release && !inputs.native_preflight && !inputs.client_preflight }}
   legacy_native_diagnosis:
-    if: ${{ !inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (inputs.native_preflight && !inputs.publish_release))) }}
+    if: ${{ !inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (inputs.native_preflight && !inputs.publish_release)))) }}
     env:
       RUSTC_BOOTSTRAP: '1'
     runs-on: ubuntu-24.04
@@ -219,10 +219,34 @@ jobs:
           ${{ runner.temp }}/lite-native-preflight/
         if-no-files-found: warn
   resolve:
-    if: ${{ !inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release))) }}
+    if: ${{ inputs.meow_host_only || (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
+    - name: Validate exclusive full Meow host-only request
+      if: ${{ inputs.meow_host_only }}
+      env:
+        REQUEST_EVENT: ${{ github.event_name }}
+        QA84_ONLY: ${{ inputs.qa84_only }}
+        QA79_ONLY: ${{ inputs.qa79_only }}
+        CLIENT_PREFLIGHT: ${{ inputs.client_preflight }}
+        PUBLISH_RELEASE: ${{ inputs.publish_release }}
+        NATIVE_PREFLIGHT: ${{ inputs.native_preflight }}
+        NATIVE_TEST_FILTER: ${{ inputs.native_test_filter }}
+        NATIVE_TEST_SERIAL: ${{ inputs.native_test_serial }}
+        NATIVE_UNDERLAY_TESTS: ${{ inputs.native_underlay_tests }}
+        NATIVE_TEST_STACKS: ${{ inputs.native_test_stacks }}
+      run: |-
+        python3 - <<'PY'
+        import os
+        conflicts = [key for key in ('QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'PUBLISH_RELEASE',
+                     'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS')
+                     if os.environ[key] == 'true']
+        if os.environ['NATIVE_TEST_FILTER']:
+            conflicts.append('NATIVE_TEST_FILTER')
+        if os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
+            raise SystemExit('meow_host_only requires an exclusive workflow_dispatch request; conflicts: ' + ', '.join(conflicts))
+        PY
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       with:
         persist-credentials: false
@@ -250,7 +274,7 @@ jobs:
           apps/aerove-lite/meow-native/build/
         if-no-files-found: error
   verify:
-    if: ${{ !inputs.qa84_only && (!inputs.qa79_only && (inputs.client_preflight || (!inputs.native_preflight && !inputs.publish_release))) }}
+    if: ${{ !inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (inputs.client_preflight || (!inputs.native_preflight && !inputs.publish_release)))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -342,7 +366,7 @@ jobs:
           apps/aerove-lite/app/build/intermediates/androidTestAppKeepRules/
         if-no-files-found: warn
   reuse:
-    if: ${{ !inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight))) }}
+    if: ${{ !inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight)))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -364,7 +388,7 @@ jobs:
         GH_TOKEN: ${{ github.token }}
       run: python3 apps/aerove-lite/tool/lite_release.py select --source "$GITHUB_SHA" --current-run "$GITHUB_RUN_ID" --outputs "$GITHUB_OUTPUT"
   release:
-    if: ${{ !inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight && needs.reuse.result == 'success'))) }}
+    if: ${{ !inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight && needs.reuse.result == 'success')))) }}
     needs:
     - reuse
     runs-on: ubuntu-24.04
@@ -454,7 +478,7 @@ jobs:
           --number "$ACCEPTANCE_NUMBER"
   build_arm:
     name: build (arm64-v8a)
-    if: ${{ !inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release))) }}
+    if: ${{ !inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))) }}
     uses: ./.github/workflows/aerove-lite-build.yaml
     with:
       abi: arm64-v8a
@@ -465,7 +489,7 @@ jobs:
       actions: read
   build_x86:
     name: build (x86_64)
-    if: ${{ !inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release))) }}
+    if: ${{ !inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))) }}
     uses: ./.github/workflows/aerove-lite-build.yaml
     with:
       abi: x86_64
@@ -475,7 +499,7 @@ jobs:
       contents: read
       actions: read
   acceptance:
-    if: ${{ !inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release))) }}
+    if: ${{ !inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))) }}
     needs:
     - build_x86
     strategy:
@@ -580,7 +604,7 @@ jobs:
           ${{ runner.temp }}/lite-fixture.log
         if-no-files-found: warn
   accepted:
-    if: ${{ !inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (always() && !inputs.native_preflight && !inputs.publish_release))) }}
+    if: ${{ !inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (always() && !inputs.native_preflight && !inputs.publish_release)))) }}
     needs:
     - resolve
     - verify
@@ -604,6 +628,11 @@ jobs:
     - .github/workflows/aerove-lite-build.yaml
   workflow_dispatch:
     inputs:
+      meow_host_only:
+        description: Full fixed Meow host/Core preflight only; no Android build, APK or publication
+        required: false
+        type: boolean
+        default: false
       qa84_only:
         description: Original run84 APK matrix diagnosis only; exclusive, no build or publication
         type: boolean

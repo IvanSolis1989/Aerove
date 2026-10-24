@@ -1283,9 +1283,17 @@ impl RouteControl {
             (route,provider,stamp,members,paths,keys,ticket,gate.core_epoch,gate.revision)
         };
         let results={
-            let probes=futures::stream::iter(members.iter().map(|member|async move {
-                meow_config::probe_without_effects_detailed(member,&policy.url,policy.expected.as_deref(),policy.timeout).await
-            })).buffered(meow_config::GROUP_DELAY_CONCURRENCY);
+            // Each future owns its target and parameters across await. Keep
+            // members as the ordered identity snapshot for the final gate.
+            let mut pending=Vec::with_capacity(members.len());
+            for member in &members {
+                let target=member.clone();let url=policy.url.clone();
+                let expected=policy.expected.clone();let timeout=policy.timeout;
+                pending.push(async move {
+                    meow_config::probe_without_effects_detailed(&target,&url,expected.as_deref(),timeout).await
+                });
+            }
+            let probes=futures::stream::iter(pending).buffered(meow_config::GROUP_DELAY_CONCURRENCY);
             tokio::pin!(probes);
             let mut results=Vec::with_capacity(members.len());
             loop { tokio::select! { biased;

@@ -56,7 +56,7 @@ class AndroidTestKeepRulesTest(unittest.TestCase):
                             sources=[str(root / "source.jar")], targets=[str(root / "target.jar")],
                             libraries=[str(root / "library.jar")])
             (root / "r8.jar").write_bytes(b"tool")
-            with patch("generate_android_test_keep_rules.subprocess.run", side_effect=subprocess.CalledProcessError(1, "trace")):
+            with patch("generate_android_test_keep_rules.subprocess.run", side_effect=[subprocess.CompletedProcess([],0,"",""), subprocess.CalledProcessError(1, "trace")]):
                 with self.assertRaises(subprocess.CalledProcessError):
                     generate(manifest, rules, report)
             self.assertFalse(rules.exists())
@@ -109,7 +109,7 @@ class AndroidTestKeepRulesTest(unittest.TestCase):
                           targets=[str(root/'target.jar')],libraries=[str(root/'library.jar')])
             rules,report=root/'rules.pro',root/'report.json'
             failure=subprocess.CalledProcessError(1,['actual-command'],output='actual stdout',stderr='actual missing member')
-            with patch('generate_android_test_keep_rules.subprocess.run',side_effect=failure):
+            with patch('generate_android_test_keep_rules.subprocess.run',side_effect=[subprocess.CompletedProcess([],0,'',''),failure]):
                 with self.assertRaises(subprocess.CalledProcessError):generate(manifest,rules,report)
             data=json.loads((root/'report.json.failure.json').read_text())
             self.assertEqual('failed',data['status']);self.assertEqual('actual stdout',data['stdout'])
@@ -160,7 +160,7 @@ class RealR8BoundaryTest(unittest.TestCase):
             write_archive(dependency_jar, collect_classes([dependency]))
             write_archive(test_program, collect_classes([test, dependency]))
             rules, report = root / "generated.pro", root / "report.json"
-            manifest = dict(java=java, r8Classpath=[r8], sources=[str(test_jar)], sourceDependencies=[str(dependency_jar), str(app_jar)],
+            manifest = dict(java=java, javaCompiler=[java,"-jar",ecj], productNamespaces=["app"], r8Classpath=[r8], sources=[str(test_jar)], sourceDependencies=[str(dependency_jar), str(app_jar)],
                             targets=[str(app_jar)], libraries=[library] + ([os.environ["ABI_TEST_LAMBDA_STUBS"]] if os.environ.get("ABI_TEST_LAMBDA_STUBS") else []) + [str(app_jar)])
             generate(manifest, rules, report)
             generated = rules.read_text()
@@ -224,7 +224,7 @@ class RealR8BoundaryTest(unittest.TestCase):
                 if role=='test':command+=['-cp',os.pathsep.join(str(root/n/'classes') for n in ['good','app'])]
                 subprocess.run(command+[str(source)],check=True,capture_output=True)
                 write_archive(root/(role+'.jar'),collect_classes([root/role/'classes']))
-            manifest=dict(java=java,r8Classpath=[r8],sources=[str(root/'test.jar')],targets=[str(root/'app.jar')],
+            manifest=dict(java=java,javaCompiler=[java,'-jar',ecj],productNamespaces=['app'],r8Classpath=[r8],sources=[str(root/'test.jar')],targets=[str(root/'app.jar')],
                           libraries=[android,str(root/'good.jar'),str(root/'bad.jar')])
             rules,report=root/'rules.pro',root/'report.json'
             generate(manifest,rules,report)
@@ -238,6 +238,76 @@ class RealR8BoundaryTest(unittest.TestCase):
             self.assertIn('selected',failure['stderr']);self.assertFalse(rules.exists());self.assertFalse(report.exists())
             if os.environ.get('ABI_TEST_EVIDENCE'):
                 shutil.copytree(root,Path(os.environ['ABI_TEST_EVIDENCE'])/'library-precedence',dirs_exist_ok=True)
+
+    def test_typed_context_boundary_keeps_bridge_and_defers_only_third_party_compatibility(self):
+        java,ecj,r8,android=[os.environ['ABI_TEST_'+key] for key in ['JAVA','ECJ','R8','ANDROID_JAR']]
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary)
+            def compile_classes(role,definitions,classpath=()):
+                sources=[]
+                for name,text in definitions.items():
+                    p=root/role/'src'/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_text(text);sources.append(str(p))
+                destination=root/role/'classes'
+                command=[java,'-jar',ecj,'-source','17','-target','17','-d',str(destination)]
+                if classpath:command+=['-cp',os.pathsep.join(map(str,classpath))]
+                subprocess.run(command+sources,check=True,capture_output=True)
+                return collect_classes([destination]),destination
+            full,target_dir=compile_classes('app',{'app/Api.java':'package app; public class Api { public static void viaBridge(){} }',
+                'app/Removed.java':'package app; public class Removed { public static void call(){} }'})
+            target=root/'app.jar';write_archive(target,{'app/Api.class':full['app/Api.class']})
+            optional,optional_dir=compile_classes('optional',{
+                'optional/External.java':'package optional; public class External { public static int value=1; public static void call(){} }',
+                'thirdparty/RuntimeApi.java':'package thirdparty; public class RuntimeApi { public static void absentAtRuntime(){} }'})
+            dependency,dependency_dir=compile_classes('deps',{
+                'thirdparty/Bridge.java':'package thirdparty; public class Bridge { public static void call(){ app.Api.viaBridge(); } }',
+                'thirdparty/Feature.java':'package thirdparty; public class Feature { public static int optional(){optional.External.call();thirdparty.RuntimeApi.absentAtRuntime();return optional.External.value;} }'},[target_dir,optional_dir])
+            empty_api,_=compile_classes('actual-api',{'thirdparty/RuntimeApi.java':'package thirdparty; public class RuntimeApi {}'})
+            dependency.update(empty_api);depjar=root/'dependency.jar';write_archive(depjar,dependency)
+            projects,project_dir=compile_classes('project',{'zproject/TestEntry.java':'package zproject; public class TestEntry { public void call(){ thirdparty.Bridge.call(); } }'},[dependency_dir,target_dir])
+            project=root/'project.jar';write_archive(project,projects)
+            manifest=dict(java=java,javaCompiler=[java,'-jar',ecj],productNamespaces=['app'],r8Classpath=[r8],sources=[str(project)],
+                          sourceDependencies=[str(depjar)],targets=[str(target)],libraries=[android])
+            def run_case(name,changes=None,fatal=False):
+                directory=root/'cases'/name;directory.mkdir(parents=True)
+                rules,report=directory/'rules.pro',directory/'report.json'
+                if fatal:
+                    with self.assertRaises(subprocess.CalledProcessError):generate(dict(manifest,**(changes or {})),rules,report)
+                    self.assertFalse(rules.exists());self.assertFalse(report.exists())
+                    return json.loads((directory/'report.json.failure.json').read_text())['referenceDiagnostics']
+                generate(dict(manifest,**(changes or {})),rules,report)
+                proof=json.loads(report.read_text())['referenceDiagnostics']
+                self.assertEqual('not-verified',proof['testRuntimeCompatibility']);return proof
+            proof=run_case('optional-third-party')
+            self.assertEqual(0,proof['fatalCount']);self.assertGreaterEqual(proof['deferredCount'],4)
+            self.assertEqual({'class','field','method'},{e['kind'] for e in proof['missingDefinitions']})
+            mismatch=next(e for e in proof['missingDefinitions'] if e['holder']=='Lthirdparty/RuntimeApi;')
+            self.assertEqual('deferred-third-party-runtime',mismatch['classification'])
+            self.assertTrue(all(c['role']=='THIRD_PARTY_TEST' for e in proof['missingDefinitions'] for c in e['contexts']))
+            self.assertTrue(all('dependency.jar!' in c['inputOrigin'] and re.fullmatch('[0-9a-f]{64}',c['classSha256']) for e in proof['missingDefinitions'] for c in e['contexts']))
+            self.assertIn('viaBridge',(root/'cases/optional-third-party/rules.pro').read_text())
+            direct,_=compile_classes('direct-project',{'zproject/Direct.java':'package zproject; public class Direct { public void call(){ optional.External.call(); } }'},[optional_dir])
+            directjar=root/'direct.jar';write_archive(directjar,direct)
+            direct_proof=run_case('project-missing',dict(sources=[str(directjar)]),fatal=True)
+            self.assertTrue(any('project-reference' in e['fatalReasons'] for e in direct_proof['missingDefinitions']))
+            changed_target,_=compile_classes('removed-member',{'app/Api.java':'package app; public class Api {}'})
+            badtarget=root/'bad-target.jar';write_archive(badtarget,changed_target)
+            target_proof=run_case('dependency-to-missing-target-member',dict(targets=[str(badtarget)]),fatal=True)
+            self.assertTrue(any('app-target-definition' in e['fatalReasons'] for e in target_proof['missingDefinitions']))
+            removed,_=compile_classes('missing-product-dep',{'thirdparty/RemovedBridge.java':'package thirdparty; public class RemovedBridge { public void call(){app.Removed.call();} }'},[target_dir])
+            removedjar=root/'removed-dep.jar';write_archive(removedjar,removed)
+            product_proof=run_case('dependency-to-missing-product-class',dict(sourceDependencies=[str(removedjar)]),fatal=True)
+            self.assertTrue(any('product-namespace' in e['fatalReasons'] for e in product_proof['missingDefinitions']))
+            definitions={'adep/A%02d.java'%i:'package adep; public class A%02d { public void call(){optional.External.call();} }'%i for i in range(15)}
+            many,_=compile_classes('many-dependency-contexts',definitions,[optional_dir]);manyjar=root/'many.jar';write_archive(manyjar,many)
+            full_proof=run_case('project-context-after15-dependency-contexts',dict(sources=[str(directjar)],sourceDependencies=[str(manyjar)]),fatal=True)
+            collection=next(e for e in full_proof['missingDefinitions'] if len(e['contexts'])>=16)
+            self.assertEqual(16,len(collection['contexts']));self.assertEqual('THIRD_PARTY_TEST',collection['contexts'][0]['role'])
+            self.assertEqual('PROJECT',collection['contexts'][-1]['role']);self.assertIn('project-reference',collection['fatalReasons'])
+            self.assertIn('other contexts',collection['message'])
+            (root/'typed-case-results.json').write_text(json.dumps(dict(optional=proof,project=direct_proof,target=target_proof,
+                productNamespace=product_proof,fullContexts=full_proof),indent=2))
+            if os.environ.get('ABI_TEST_EVIDENCE'):
+                shutil.copytree(root,Path(os.environ['ABI_TEST_EVIDENCE'])/'typed-contexts',dirs_exist_ok=True)
 
 
 if __name__ == "__main__":
