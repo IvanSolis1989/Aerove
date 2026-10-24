@@ -18,6 +18,8 @@ EXPANDED_BYTES = 3087611035
 PACKAGE = 'system-images;android-33-ext4;google_apis_playstore;x86_64'
 RELATIVE = Path('system-images/android-33-ext4/google_apis_playstore/x86_64')
 FINGERPRINT = 'google/sdk_gphone64_x86_64/emu64xa:13/TSE4.230104.001/9453911:user/dev-keys'
+# Exact runtime value observed on the unmodified official archive in CI #104.
+RUNTIME_FINGERPRINT = 'google/sdk_gphone64_x86_64/emu64xa:13/TSE4.230104.001/9453911:user/release-keys'
 METADATA_SHA256 = {
     'source.properties': 'f0501669c60a1a9dcb1dc84e59a433d5f8d3fc013a92359f1d912516c5a72f3e',
     'build.prop': 'a8751474ab21d7cdc0fd7aae43883d41e5a21e36d316274e1d6c5918e49195df',
@@ -43,7 +45,7 @@ def validate_installed_image(directory, sidecar):
                     archiveBytes=ARCHIVE_BYTES, archiveSha1=ARCHIVE_SHA1, package=PACKAGE,
                     tag='google_apis_playstore', abi='x86_64', sourceLicense='android-sdk-preview-license',
                     apiLevel=33, extensionLevel=4, isBaseSdk=False, revision=1,
-                    fingerprint=FINGERPRINT, harnessSource=os.environ['GITHUB_SHA'])
+                    fingerprint=FINGERPRINT, runtimeFingerprint=RUNTIME_FINGERPRINT, harnessSource=os.environ['GITHUB_SHA'])
     if any(value.get(key) != item for key, item in required.items()):
         raise ValueError('Fixed image identity sidecar does not match this harness/package')
     actual_sha256 = value.get('archiveSha256', '')
@@ -83,7 +85,7 @@ def install(archive, sdk, sidecar):
     receipt = dict(schema=1, status='STARTED', officialUrl=URL, package=PACKAGE,
                    tag='google_apis_playstore', abi='x86_64',
                    apiLevel=33, extensionLevel=4, isBaseSdk=False, revision=1,
-                   fingerprint=FINGERPRINT, imageDirectory=str(target),
+                   fingerprint=FINGERPRINT, runtimeFingerprint=RUNTIME_FINGERPRINT, imageDirectory=str(target),
                    harnessSource=os.environ['GITHUB_SHA'], harnessRun=os.environ['GITHUB_RUN_ID'],
                    publishedChecksumAlgorithm='SHA-1', publishedChecksum=ARCHIVE_SHA1,
                    sourceCatalog='https://dl.google.com/android/repository/sys-img/google_apis_playstore/sys-img2-3.xml')

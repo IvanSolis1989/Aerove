@@ -145,14 +145,14 @@ def main():
     try:
         receipt['imageIdentity'] = validate_installed_image(args.image_directory, args.image_receipt)
         properties = {}
-        for prop in ['sys.boot_completed', 'ro.build.fingerprint', 'ro.build.version.sdk',
+        for prop in ['sys.boot_completed', 'ro.build.fingerprint', 'ro.system.build.fingerprint', 'ro.build.version.sdk',
                      'ro.product.cpu.abilist', 'ro.product.cpu.abilist64',
                      'ro.dalvik.vm.native.bridge', 'ro.ndk_translation.version',
                      'ro.dalvik.vm.isa.arm64']:
             properties[prop] = command('prop-' + prop, adb + ['shell', 'getprop', prop])
         receipt['properties'] = properties
-        if properties['ro.build.fingerprint'] != receipt['imageIdentity']['fingerprint']:
-            raise ValueError('Booted image fingerprint differs from the fixed image sidecar')
+        if properties['ro.build.fingerprint'] != receipt['imageIdentity']['runtimeFingerprint']:
+            raise ValueError('Booted runtime fingerprint differs from the fixed image sidecar')
         if properties['sys.boot_completed'] != '1' or properties['ro.build.version.sdk'] != '33':
             raise RuntimeError('Expected already booted API33 emulator')
         if 'arm64-v8a' not in properties['ro.product.cpu.abilist64'].split(','):

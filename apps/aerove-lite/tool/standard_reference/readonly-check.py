@@ -34,13 +34,13 @@ def main():
         if command('adb-state', ['adb', 'get-state']) != 'device':
             raise RuntimeError('ADB target is not in device state')
         receipt['properties'] = {}
-        for prop in ['sys.boot_completed', 'ro.build.fingerprint', 'ro.build.version.sdk',
+        for prop in ['sys.boot_completed', 'ro.build.fingerprint', 'ro.system.build.fingerprint', 'ro.build.version.sdk',
                      'ro.product.cpu.abi', 'ro.product.cpu.abilist', 'ro.product.cpu.abilist64',
                      'ro.system.product.cpu.abilist64', 'ro.dalvik.vm.native.bridge',
                      'ro.ndk_translation.version', 'ro.dalvik.vm.isa.arm64', 'ro.enable.native.bridge.exec']:
             receipt['properties'][prop] = command('prop-' + prop, ['adb', 'shell', 'getprop', prop])
-        if receipt['properties']['ro.build.fingerprint'] != receipt['imageIdentity']['fingerprint']:
-            raise ValueError('Booted image fingerprint differs from the fixed image sidecar')
+        if receipt['properties']['ro.build.fingerprint'] != receipt['imageIdentity']['runtimeFingerprint']:
+            raise ValueError('Booted runtime fingerprint differs from the fixed image sidecar')
         # Missing optional library paths are diagnostic data; retain the real exit.
         probe.execute_command(receipt, evidence, 'native-bridge-files',
                               ['adb', 'shell', 'ls -l /system/lib64/libndk_translation.so /system/lib64/libnb.so /system/lib64/arm64'],

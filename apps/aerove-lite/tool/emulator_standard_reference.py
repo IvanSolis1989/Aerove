@@ -19,10 +19,10 @@ SERIAL = 'emulator-5554'
 ORIGINAL_SOURCE = 'c133772fc83b7984bdacb11e5dd41e2d65098771'
 ORIGINAL_RUN = 40082294388
 PROBE_PINS = {
-    'install_play33_r01.py': '5a0d7cf06156beeacf9aa326ffeb692509715ddfaecc72bebd0d36f4588a1114',
+    'install_play33_r01.py': 'b3902ac7b4b2884b4544534b313814cef3dd5b9d2dd240a87d22172e51d617a5',
     'native-bridge-readonly-check.sh': 'b364be86b259204048092586a60ddef1268ce8ecf251a38be5142a4d13937d2a',
-    'readonly-check.py': '9aff51a7064341050cab39c7568ddcb49886016f692d153ae5136e8c677d3b3c',
-    'probe-original-standard.py': '090ee1593e07d35a6d22719c957d6cf9a79f9bd53fcb3564e5e2a8ba7f334a35',
+    'readonly-check.py': 'fd0ffd845b117f4c696840458cf657f3779462b8570e73620babd3316c03e49b',
+    'probe-original-standard.py': '8d16a10bf4efddf15c35c161712a468b9e0aad000d97a3d2066a9904a316eb24',
 }
 
 
