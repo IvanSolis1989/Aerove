@@ -37,7 +37,7 @@ def android_environment(ndk,target,environment):
     bindgen_args=shlex.join(['--sysroot='+str(sysroot),'--target='+target+'33'])
     key=target.replace('-','_');result=dict(environment)
     result.update({f'CARGO_TARGET_{key.upper()}_LINKER':str(compiler/(target+'33-clang')),
-        f'CARGO_TARGET_{key.upper()}_RUSTFLAGS':'-C link-arg=-Wl,-z,max-page-size=16384',
+        f'CARGO_TARGET_{key.upper()}_RUSTFLAGS':'-C link-arg=-Wl,-z,max-page-size=16384 -C link-arg=-Wl,-Bstatic -C link-arg=-lc++ -C link-arg=-Wl,-Bdynamic -C link-arg=-Wl,--no-undefined',
         f'CC_{key}':str(compiler/(target+'33-clang')),f'CXX_{key}':str(compiler/(target+'33-clang++')),
         f'AR_{key}':str(compiler/'llvm-ar'),f'CMAKE_TOOLCHAIN_FILE_{target}':str(toolchain),
         'ANDROID_NDK_HOME':str(ndk),'ANDROID_NDK_ROOT':str(ndk),'BORING_BSSL_RUST_CPPLIB':'c++_static','CMAKE_GENERATOR':'Ninja','CLANG_PATH':str(compiler/(target+'33-clang')),
@@ -55,10 +55,19 @@ def verify_elf(path,machine,readelf,required_symbols=(),diagnostics=None):
     dynamic=subprocess.check_output([str(readelf),'-dW',str(path)],text=True)
     if diagnostics is not None:Path(diagnostics).write_text(output+'\n'+dynamic)
     if 'libc++_shared.so' in dynamic:raise ValueError('Bridge requires an unpackaged shared C++ runtime')
-    symbols=''
+    symbols=subprocess.check_output([str(readelf),'--dyn-syms','-W',str(path)],text=True)
+    if diagnostics is not None:Path(diagnostics).write_text(output+'\n'+dynamic+'\n'+symbols)
+    # These C++ ABI symbols must be supplied by our static runtime, not the OS.
+    bionic_cxa={'__cxa_atexit','__cxa_finalize','__cxa_thread_atexit_impl'}
+    unresolved=set()
+    for line in symbols.splitlines():
+        row=line.split()
+        if len(row)>=8 and row[4]=='GLOBAL' and row[6]=='UND':
+            name=row[7].split('@',1)[0]
+            if name.startswith(('__gxx','_Z','_Unwind')) or name.startswith('__cxa_') and name not in bionic_cxa:
+                unresolved.add(name)
+    if unresolved:raise ValueError('Meow bridge has unresolved C++ runtime symbols: '+','.join(sorted(unresolved)))
     if required_symbols:
-        symbols=subprocess.check_output([str(readelf),'--dyn-syms','-W',str(path)],text=True)
-        if diagnostics is not None:Path(diagnostics).write_text(output+'\n'+dynamic+'\n'+symbols)
         exported={row.split()[-1] for row in symbols.splitlines() if re.search(r'\bFUNC\s+(?:GLOBAL|WEAK)\s+(?:DEFAULT|PROTECTED)\s+(?!UND\b)\S+\s+\S+',row)}
         missing=set(required_symbols)-exported
         if missing:raise ValueError('Required script JNI symbols missing from ELF dynamic exports: '+','.join(sorted(missing)))

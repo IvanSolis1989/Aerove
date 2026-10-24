@@ -332,6 +332,8 @@ class AndroidRecipeTests(unittest.TestCase):
                 with mock.patch.object(build,'ROOT',root):environment,readelf=build.android_environment(ndk,target,{})
                 self.assertEqual('c++_static',environment['BORING_BSSL_RUST_CPPLIB'])
                 self.assertIn('max-page-size=16384',environment['CARGO_TARGET_'+target.replace('-','_').upper()+'_RUSTFLAGS'])
+                flags=shlex.split(environment['CARGO_TARGET_'+target.replace('-','_').upper()+'_RUSTFLAGS'])
+                self.assertEqual(['-C','link-arg=-Wl,-Bstatic','-C','link-arg=-lc++','-C','link-arg=-Wl,-Bdynamic','-C','link-arg=-Wl,--no-undefined'],flags[2:])
                 self.assertIn('android-33',Path(environment['CMAKE_TOOLCHAIN_FILE_'+target]).read_text())
                 self.assertEqual(compiler/'llvm-readelf',readelf)
                 self.assertEqual(['--sysroot='+str(compiler.parent/'sysroot'),'--target='+target+'33'],shlex.split(environment['BINDGEN_EXTRA_CLANG_ARGS_'+target]))
@@ -370,5 +372,21 @@ class AndroidRecipeTests(unittest.TestCase):
             for name in build.RUNTIME_JNI_SYMBOLS:
                 missing=symbols.replace('DEFAULT 1 '+name,'DEFAULT UND '+name)
                 with self.subTest(name=name),mock.patch.object(build.subprocess,'check_output',side_effect=[' LOAD 0 0 0 0 0 R E 0x4000\n','NEEDED libc.so',missing]),self.assertRaisesRegex(ValueError,name):build.verify_elf(path,62,'readelf',required)
+
+
+    def test_unresolved_cpp_runtime_is_rejected_for_all_required_abi_families(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'lib.so';header=bytearray(20);header[:6]=b'\x7fELF\x02\x01';header[16:18]=(3).to_bytes(2,'little');header[18:20]=(62).to_bytes(2,'little');path.write_bytes(header)
+            for name in ['__gxx_personality_v0','__cxa_begin_catch','__cxa_throw','_ZSt9terminatev','_ZTISt9exception','_Unwind_Resume']:
+                symbols=' 1: 00000000 0 NOTYPE GLOBAL DEFAULT UND '+name
+                with self.subTest(name=name),mock.patch.object(build.subprocess,'check_output',side_effect=[' LOAD 0 0 0 0 0 R E 0x4000\n','NEEDED libc.so',symbols]),self.assertRaisesRegex(ValueError,r'unresolved C\+\+ runtime'):
+                    build.verify_elf(path,62,'readelf')
+
+    def test_cpp_runtime_gate_keeps_bionic_and_optional_weak_imports_valid(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'lib.so';header=bytearray(20);header[:6]=b'\x7fELF\x02\x01';header[16:18]=(3).to_bytes(2,'little');header[18:20]=(62).to_bytes(2,'little');path.write_bytes(header)
+            symbols='\n'.join([' 1: 00000000 0 FUNC GLOBAL DEFAULT UND __cxa_finalize@LIBC',' 2: 00000000 0 FUNC GLOBAL DEFAULT UND __cxa_atexit@LIBC',' 3: 00000000 0 FUNC GLOBAL DEFAULT UND __cxa_thread_atexit_impl@LIBC',' 4: 00000000 0 FUNC WEAK DEFAULT UND __gxx_personality_v0',' 5: 00000123 4 FUNC GLOBAL DEFAULT 1 __gxx_personality_v0'])
+            with mock.patch.object(build.subprocess,'check_output',side_effect=[' LOAD 0 0 0 0 0 R E 0x4000\n','NEEDED libc.so',symbols]):
+                build.verify_elf(path,62,'readelf')
 
 if __name__=='__main__':unittest.main()
