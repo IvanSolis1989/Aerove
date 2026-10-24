@@ -328,5 +328,161 @@ class LitePromotionGateTests(unittest.TestCase):
                 release.select_acceptance(source, 999, outputs)
 
 
+
+
+class CurrentRendererPromotionTests(unittest.TestCase):
+    """Small fixture matrix; mocked gallery does not prove rendered pixels."""
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.matrix = self.root / "matrix"
+        self.runtime = self.root / "runtime"
+        self.matrix.mkdir()
+        (self.runtime / "apks").mkdir(parents=True)
+        self.expected = dict(sourceRevision="a" * 40, sourceTree="b" * 40,
+                             workflowRun="123", runAttempt=2, runNumber=90)
+        apks = {}
+        entries = []
+        for name in ("app-release.apk", "app-release-androidTest.apk"):
+            path = self.runtime / "apks" / name
+            path.write_bytes(("fixture-" + name).encode())
+            apks[name] = release._sha(path)
+            entries.append(dict(path="apks/" + name, bytes=path.stat().st_size, sha256=apks[name]))
+        self.write(self.runtime / "source-manifest.json", dict(self.expected, files=entries))
+        self.source = dict(self.expected, harnessRevision=self.expected["sourceRevision"],
+                           harnessRun="123", appBuildRun="123", phase="matrix",
+                           deviceKind="CI-emulator", deviceSerial="emulator-5554",
+                           rendererBackend="SwANGLE (ANGLE + SwiftShader)",
+                           prebuiltApks=True, performanceEvidence=False)
+        self.write(self.matrix / "SOURCE.json", self.source)
+        (self.matrix / "APK_SHA256SUMS").write_text("".join(d + "  path/" + n + "\n" for n, d in apks.items()))
+        evidence = ["Graphics Adapter ANGLE (Google SwiftShader)"]
+        self.actual = dict(identity=self.expected, apks=apks,
+                           runtimeManifestSha256=release._sha(self.runtime / "source-manifest.json"),
+                           apkInspectorOutcome="success")
+        self.proof = dict(self.actual, schema=1, owner="emulator_current.py",
+                          deviceSerial="emulator-5554", gpuBackend="swangle",
+                          rendererBackend=self.source["rendererBackend"], rendererEvidence=evidence)
+        self.owner = dict(app=self.expected, runtime=self.actual,
+                          harnessRevision=self.expected["sourceRevision"], harnessRun="123",
+                          command=["/sdk/emulator/emulator", "-port", "5554", "-avd", "test", "-no-window",
+                                   "-gpu", "swangle", "-no-snapshot", "-noaudio", "-no-boot-anim"],
+                          ownerPid=99, emulatorPid=100, rendererEvidence=evidence,
+                          result=0, acceptanceReturnCode=0, unexpectedEmulatorExit=False,
+                          cleanupRequested=True, emulatorReturnCode=-15, emulatorSignal=15,
+                          cleanup=dict(terminationInitiated=True, exitObservedBeforeTermination=False,
+                                       initialReturnCode=None, returnCode=-15))
+        self.write_proofs()
+        (self.matrix / "emulator.stdout.log").write_text(evidence[0] + "\n")
+        (self.matrix / "instrumentation.log").write_text("dev.aerove.lite.ui.LiteDashboardMatrixTest\nOK (1 test)\nINSTRUMENTATION_CODE: -1\n")
+        capture = self.matrix / "captures/dashboard-matrix"
+        capture.mkdir(parents=True)
+        cases = []
+        for index in range(12):
+            name = str(index) + ".json"
+            self.write(capture / name, {})
+            cases.append(dict(metadata=name, windowImage=str(index) + ".png", displayImage=str(index) + "-display.png"))
+        self.write(capture / "manifest.json", dict(cases=cases))
+
+    def write(self, path, value):
+        path.write_text(json.dumps(value))
+
+    def write_proofs(self):
+        self.write(self.matrix / "CURRENT-RENDERER-PROOF.json", self.proof)
+        self.write(self.matrix / "EMULATOR-OWNER.json", self.owner)
+
+    def verify(self):
+        gallery = mock.Mock()
+        gallery.gallery.return_value = 12
+        spec = mock.Mock()
+        with mock.patch.object(release.importlib.util, "spec_from_file_location", return_value=spec), \
+                mock.patch.object(release.importlib.util, "module_from_spec", return_value=gallery):
+            release._verify_matrix(self.matrix, self.runtime, self.expected["sourceRevision"],
+                                   self.expected["sourceTree"], 123, 2, 90)
+        gallery.gallery.assert_called_once()
+
+    def test_current_swangle_complete_proof_passes_same_matrix_contract(self):
+        self.verify()
+
+    def test_legacy_renderer_keeps_old_contract(self):
+        self.source["rendererBackend"] = "SwiftShader-indirect"
+        self.write(self.matrix / "SOURCE.json", self.source)
+        (self.matrix / "CURRENT-RENDERER-PROOF.json").unlink()
+        (self.matrix / "EMULATOR-OWNER.json").unlink()
+        self.verify()
+
+    def test_each_required_proof_field_missing_fails(self):
+        for target in (self.proof, self.owner):
+            for key in list(target):
+                if key == "initialReturnCode":
+                    continue
+                value = target.pop(key)
+                self.write_proofs()
+                with self.subTest(key=key), self.assertRaises((release.PromotionError, FileNotFoundError)):
+                    self.verify()
+                target[key] = value
+        self.write_proofs()
+
+        for name in ("CURRENT-RENDERER-PROOF.json", "EMULATOR-OWNER.json", "emulator.stdout.log"):
+            path = self.matrix / name
+            content = path.read_bytes()
+            path.unlink()
+            with self.subTest(missingFile=name), self.assertRaises((release.PromotionError, FileNotFoundError)):
+                self.verify()
+            path.write_bytes(content)
+
+    def test_cleanup_and_unexpected_exit_cannot_pass(self):
+        for key, value in (("result", 1), ("acceptanceReturnCode", 1),
+                           ("unexpectedEmulatorExit", True), ("cleanupRequested", False)):
+            old = self.owner[key]
+            self.owner[key] = value
+            self.write_proofs()
+            with self.subTest(key=key), self.assertRaises(release.PromotionError):
+                self.verify()
+            self.owner[key] = old
+        for key in list(self.owner["cleanup"]):
+            old = self.owner["cleanup"].pop(key)
+            self.write_proofs()
+            with self.subTest(cleanupField=key), self.assertRaises(release.PromotionError):
+                self.verify()
+            self.owner["cleanup"][key] = old
+
+    def test_wrong_app_source_run_attempt_and_artifact_are_rejected(self):
+        for key in ("sourceRevision", "sourceTree", "workflowRun", "runAttempt"):
+            original = self.proof["identity"]
+            self.proof["identity"] = dict(original, **{key: "wrong"})
+            self.write_proofs()
+            with self.subTest(key=key), self.assertRaises(release.PromotionError):
+                self.verify()
+            self.proof["identity"] = original
+        self.proof["apks"] = dict(self.proof["apks"], **{"app-release.apk": "0" * 64})
+        self.write_proofs()
+        with self.assertRaises(release.PromotionError):
+            self.verify()
+
+    def test_qa79_owner_and_unconfirmed_renderer_are_rejected(self):
+        self.proof["owner"] = "emulator_qa79.py"
+        self.write_proofs()
+        with self.assertRaises(release.PromotionError):
+            self.verify()
+        self.proof["owner"] = "emulator_current.py"
+        self.write_proofs()
+        (self.matrix / "emulator.stdout.log").write_text("Graphics Adapter Google SwiftShader\n")
+        with self.assertRaises(release.PromotionError):
+            self.verify()
+
+    def test_twelve_capture_and_instrumentation_gates_are_still_required(self):
+        (self.matrix / "instrumentation.log").write_text("FAILURES!!!")
+        with self.assertRaises(release.PromotionError):
+            self.verify()
+        (self.matrix / "instrumentation.log").write_text("dev.aerove.lite.ui.LiteDashboardMatrixTest\nOK (1 test)\nINSTRUMENTATION_CODE: -1\n")
+        path = self.matrix / "captures/dashboard-matrix/manifest.json"
+        value = json.loads(path.read_text())
+        value["cases"].pop()
+        self.write(path, value)
+        with self.assertRaises(release.PromotionError):
+            self.verify()
+
 if __name__ == "__main__":
     unittest.main()

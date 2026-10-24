@@ -144,4 +144,25 @@ class CoreTestAdmissionTests(unittest.TestCase):
                     with self.subTest(package=name,key=key),self.assertRaises(ValueError):core_tests.feature_matrix(metadata,up,core_tests.MODE_OBSERVABILITY)
                     package.update(original)
 
+    def test_provider_general_requires_source26_exact75_and_locked_compile_restore(self):
+        specs=core_tests.entries(core_tests.MODE_PROVIDER_GENERAL)
+        self.assertEqual(26,len(specs));self.assertEqual(75,sum(e['expectedPass'] for e in specs))
+        self.assertEqual(12,specs[0]['expectedPass'])
+        self.assertEqual(11,core_tests.entries(core_tests.MODE_OBSERVABILITY)[0]['expectedPass'])
+        exact=next(e for e in specs if e.get('exact'))
+        self.assertEqual('proxy_provider::tests::provider_strict_refresh_keeps_last_good_on_bad_dialer',exact['filter'])
+        self.assertEqual('--exact',core_tests.entry_command(exact,[])[-1])
+        for mode in ['locked','empty','compile-fail','compile-mutate','raise']:
+            with self.subTest(mode=mode):self.run_fixture(mode,core_tests.MODE_PROVIDER_GENERAL)
+        with tempfile.TemporaryDirectory() as directory:
+            up=Path(directory);packages=[];nodes=[]
+            for name in core_tests.packages_for_mode(core_tests.MODE_PROVIDER_GENERAL):
+                packages.append(dict(id=name,name=name,version='0.26.1',manifest_path=str(up/'crates'/name/'Cargo.toml')))
+                nodes.append(dict(id=name,features=[]))
+            metadata=dict(packages=packages,resolve=dict(nodes=nodes))
+            self.assertEqual(9,len(core_tests.feature_matrix(metadata,up,core_tests.MODE_PROVIDER_GENERAL)))
+            config=next(p for p in packages if p['name']=='meow-config')
+            config['manifest_path']=str(up/'wrong/Cargo.toml')
+            with self.assertRaises(ValueError):core_tests.feature_matrix(metadata,up,core_tests.MODE_PROVIDER_GENERAL)
+
 if __name__=='__main__':unittest.main()

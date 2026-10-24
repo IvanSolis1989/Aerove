@@ -301,7 +301,18 @@ impl OwnedRuntime {
         let loading = scope.run(network.serve_scope(config_work));
         let config = tokio::select! { biased;
             _ = self.cancel.cancelled() => return Ok(()),
-            result = loading => result.map_err(|_| error("invalidConfig"))?,
+            result = loading => result.map_err(|cause| {
+                let root = serde_yaml::from_str::<serde_yaml::Value>(&engine).ok();
+                let provider_config = root.as_ref().is_some_and(|root|root.get("proxy-providers").is_some() || root.get("rule-providers").is_some());
+                let general_group = root.as_ref().and_then(|root|root.get("proxy-groups")).and_then(serde_yaml::Value::as_sequence)
+                    .is_some_and(|groups|groups.iter().any(|group|matches!(group.get("type").and_then(serde_yaml::Value::as_str),Some("relay"|"load-balance"))));
+                if provider_config { provider_configuration_error(format!("{cause:#}")) }
+                else if root.as_ref().and_then(|root|root.get("proxies")).and_then(serde_yaml::Value::as_sequence).is_some_and(|nodes|nodes.iter().any(|node|node.get("dialer-proxy").is_some())) {
+                    io::Error::other(crate::runtime::Failure { code:"managedDialerProxyGraphRejected",field:Some("proxies.dialer-proxy".into()),reason:Some(format!("{cause:#}")) })
+                }
+                else if general_group { io::Error::other(crate::runtime::Failure { code:"managedConfigRejected",field:Some("engineYaml".into()),reason:Some(format!("{cause:#}")) }) }
+                else { error("invalidConfig") }
+            })?,
         };
         if self.cancel.is_cancelled() { return Ok(()); }
         let specs = config.listeners.named.clone();
@@ -527,6 +538,59 @@ fn runtime_protocol_enabled(kind: &str) -> bool {
         _ => false,
     }
 }
+fn provider_configuration_error(reason: String) -> io::Error {
+    io::Error::other(crate::runtime::Failure {
+        code: "providerConfigRejected", field: Some("engineYaml".to_owned()), reason: Some(reason),
+    })
+}
+// Admit only provider fields actually consumed by the owned factory. Resource
+// containment is still checked by captured ResourceRoots/ProviderRoots there.
+fn validate_managed_providers(map: &serde_yaml::Mapping, plan: &RuntimePlan) -> io::Result<()> {
+    for (field, proxy) in [("proxy-providers",true),("rule-providers",false)] {
+        let Some(providers) = map.get(&serde_yaml::Value::String(field.into())) else { continue; };
+        let providers = providers.as_mapping().ok_or_else(|| io::Error::other(format!("{field}: expected provider mapping")))?;
+        for (name, value) in providers {
+            let name = name.as_str().ok_or_else(|| io::Error::other(format!("{field}.name: expected string")))?;
+            let prefix = format!("{field}.{name}");
+            let definition = value.as_mapping().ok_or_else(|| io::Error::other(format!("{prefix}: expected provider mapping")))?;
+            for key in definition.keys() {
+                let key = key.as_str().ok_or_else(|| io::Error::other(format!("{prefix}: expected string field")))?;
+                let known = if proxy { matches!(key,"type"|"url"|"path"|"interval"|"filter"|"exclude-filter"|"exclude-type"|"health-check"|"header"|"allow-external-plugin"|"proxy"|"dialer-proxy"|"override") }
+                    else { matches!(key,"type"|"behavior"|"format"|"url"|"path"|"interval"|"proxy"|"header"|"payload") };
+                if !known { return Err(io::Error::other(format!("{prefix}.{key}: no consumed provider field"))); }
+            }
+            let kind = value.get("type").and_then(serde_yaml::Value::as_str).ok_or_else(|| io::Error::other(format!("{prefix}.type: required provider type")))?;
+            if !(matches!(kind,"http"|"file") || (!proxy && kind=="inline")) { return Err(io::Error::other(format!("{prefix}.type: provider vehicle not integrated"))); }
+            for key in ["override"] {
+                if definition.contains_key(&serde_yaml::Value::String(key.into())) { return Err(io::Error::other(format!("{prefix}.{key}: managed dialer graph not integrated"))); }
+            }
+            if value.get("allow-external-plugin").is_some_and(|flag| flag.as_bool()!=Some(false)) {
+                return Err(io::Error::other(format!("{prefix}.allow-external-plugin: remote executable lifecycle not integrated")));
+            }
+            if let Some(front) = value.get("proxy") {
+                if kind!="http" || front.as_str()!=Some("DIRECT") { return Err(io::Error::other(format!("{prefix}.proxy: provider fetch currently requires explicit DIRECT or absent"))); }
+            }
+            if kind!="http" {
+                for key in ["url","header"] { if definition.contains_key(&serde_yaml::Value::String(key.into())) { return Err(io::Error::other(format!("{prefix}.{key}: only HTTP providers consume this field"))); } }
+            }
+            if kind=="file" && plan.resource_read_root.is_none() { return Err(io::Error::other(format!("{prefix}.path: trusted resourceReadRoot required"))); }
+            if !proxy && kind=="file" && value.get("interval").is_some_and(|interval|interval.as_u64()!=Some(0)) {
+                return Err(io::Error::other(format!("{prefix}.interval: file rule provider has no timed refresh")));
+            }
+            if !proxy && kind!="inline" && definition.contains_key(&serde_yaml::Value::String("payload".into())) { return Err(io::Error::other(format!("{prefix}.payload: only inline providers consume payload"))); }
+            if !proxy && kind=="inline" { for key in ["path","interval"] { if definition.contains_key(&serde_yaml::Value::String(key.into())) { return Err(io::Error::other(format!("{prefix}.{key}: inline provider does not consume this field"))); } } }
+            if proxy {
+                if let Some(health) = value.get("health-check") {
+                    let health = health.as_mapping().ok_or_else(|| io::Error::other(format!("{prefix}.health-check: expected mapping")))?;
+                    for key in health.keys() { if !matches!(key.as_str(),Some("enable"|"url"|"interval"|"timeout"|"expected-status"|"lazy")) { return Err(io::Error::other(format!("{prefix}.health-check.{}: no consumed health field",key.as_str().unwrap_or("field")))); } }
+                    if health.get(&serde_yaml::Value::String("enable".into())).and_then(serde_yaml::Value::as_bool)!=Some(false) { return Err(io::Error::other(format!("{prefix}.health-check.enable: enabled provider health-check has no periodic Core scheduler"))); }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn managed_yaml(plan: &RuntimePlan) -> io::Result<String> {
     let host: serde_yaml::Value = serde_yaml::from_str(&plan.host_policy_yaml).map_err(|_| error("invalidHostPolicy"))?;
     for (key, value) in host.as_mapping().ok_or_else(|| error("invalidHostPolicy"))? {
@@ -547,9 +611,23 @@ fn managed_yaml(plan: &RuntimePlan) -> io::Result<String> {
     }
     let mut root: serde_yaml::Value = serde_yaml::from_str(&plan.engine_yaml).map_err(|_| error("invalidEngineYaml"))?;
     let map = root.as_mapping_mut().ok_or_else(|| error("invalidEngineYaml"))?;
-    for key in ["proxy-providers", "rule-providers", "external-controller", "secret", "listeners", "mixed-port", "port", "socks-port"] {
+    // Standard provider defaults, before Meow's different implicit defaults.
+    if let Some(providers)=map.get_mut(&serde_yaml::Value::String("proxy-providers".into())).and_then(serde_yaml::Value::as_mapping_mut) {
+        for definition in providers.values_mut() {
+            if let Some(health)=definition.get_mut("health-check").and_then(serde_yaml::Value::as_mapping_mut) {
+                for (key,value) in [("enable",serde_yaml::Value::Bool(false)),("lazy",serde_yaml::Value::Bool(true))] {
+                    health.entry(serde_yaml::Value::String(key.into())).or_insert(value);
+                }
+                if health.get(&serde_yaml::Value::String("enable".into())).and_then(serde_yaml::Value::as_bool)==Some(true) && health.get(&serde_yaml::Value::String("interval".into())).and_then(serde_yaml::Value::as_u64)==Some(0) {
+                    health.insert(serde_yaml::Value::String("interval".into()),serde_yaml::Value::Number(300u64.into()));
+                }
+            }
+        }
+    }
+    for key in ["external-controller", "secret", "listeners", "mixed-port", "port", "socks-port"] {
         if map.contains_key(&serde_yaml::Value::String(key.into())) { return Err(error("engineFieldNotIntegrated")); }
     }
+    validate_managed_providers(map, plan).map_err(|cause| provider_configuration_error(cause.to_string()))?;
     if let Some(proxies) = map.get(&serde_yaml::Value::String("proxies".into())) {
         for (index, proxy) in proxies.as_sequence().ok_or_else(|| error("proxiesMustBeSequence"))?.iter().enumerate() {
             if !proxy.get("type").and_then(serde_yaml::Value::as_str).is_some_and(runtime_protocol_enabled) {
@@ -560,8 +638,20 @@ fn managed_yaml(plan: &RuntimePlan) -> io::Result<String> {
     if map.get(&serde_yaml::Value::String("strict".into())).and_then(serde_yaml::Value::as_bool) != Some(true) { return Err(error("strictConfigRequired")); }
     if let Some(groups) = map.get(&serde_yaml::Value::String("proxy-groups".into())) {
         for (index, group) in groups.as_sequence().ok_or_else(|| error("groupsMustBeSequence"))?.iter().enumerate() {
-            if !matches!(group.get("type").and_then(serde_yaml::Value::as_str), Some("select" | "fallback" | "url-test")) {
+            let kind = group.get("type").and_then(serde_yaml::Value::as_str);
+            if !matches!(kind, Some("select" | "fallback" | "url-test" | "relay" | "load-balance")) {
                 return Err(io::Error::other(format!("proxy-groups[{index}].type: runtime health ownership not integrated")));
+            }
+            if kind==Some("relay") {
+                let definition=group.as_mapping().ok_or_else(||io::Error::other(format!("proxy-groups[{index}]: expected mapping")))?;
+                for key in definition.keys() {
+                    if !matches!(key.as_str(),Some("name"|"type"|"proxies"|"include-all-proxies"|"hidden"|"icon")) {
+                        return Err(io::Error::other(crate::runtime::Failure { code:"managedGroupConfigRejected",field:Some(format!("proxy-groups[{index}].{}",key.as_str().unwrap_or("field"))),reason:Some("Relay does not consume this field".into()) }));
+                    }
+                }
+            }
+            if kind==Some("load-balance") && group.get("strategy").is_some_and(|value| !matches!(value.as_str(),Some("round-robin"|"consistent-hashing"|""))) {
+                return Err(io::Error::other(crate::runtime::Failure { code:"managedGroupConfigRejected",field:Some(format!("proxy-groups[{index}].strategy")),reason:Some("expected round-robin or consistent-hashing".into()) }));
             }
         }
     }
@@ -720,8 +810,7 @@ mod cleanup_ack_tests {
         let json = attachment_fixture(None,"127.0.0.1:39875".parse().unwrap(),39876,"proxy","{}");
         assert!(managed_yaml(&RuntimePlan::parse(&json,-1,false,false).unwrap()).is_ok());
     }
-    #[tokio::test(flavor="multi_thread", worker_threads=3)]
-    async fn owner_install_callback_precedes_worker_spawn_and_typed_startup_cancellation() {
+    async fn assert_owner_install_callback_stages(missing_target: bool) {
         use tokio::time::{timeout, Duration};
         let roots = super::resume_roots::Roots::new();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -729,7 +818,8 @@ mod cleanup_ack_tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let mixed = listener.local_addr().unwrap(); drop(listener);
         let mut json: serde_json::Value = serde_json::from_str(&attachment_fixture(Some(&roots),private,mixed.port(),"proxy","{}")).unwrap();
-        json["engineYaml"] = "strict: true\nproxies:\n - {name: FIRST,type: http,server: 127.0.0.1,port: 443}\n - {name: NODE,type: http,server: 127.0.0.1,port: 444,dialer-proxy: FIRST}\nrules: ['MATCH,NODE']\ndns: {enable: false,use-system-hosts: false}\ntun: {enable: false,auto-route: false}\n".into();
+        let dialer = if missing_target { "MISSING" } else { "FIRST" };
+        json["engineYaml"] = format!("strict: true\nproxies:\n - {{name: FIRST,type: http,server: 127.0.0.1,port: 443}}\n - {{name: NODE,type: http,server: 127.0.0.1,port: 444,dialer-proxy: {dialer}}}\nrules: ['MATCH,NODE']\ndns: {{enable: false,use-system-hosts: false}}\ntun: {{enable: false,auto-route: false}}\n").into();
         let resources = Arc::new(crate::resource_roots::ResourceRoots::validate(
             roots.read.to_str(),roots.cache.to_str()).unwrap());
         let cancel = CancellationToken::new();
@@ -757,19 +847,45 @@ mod cleanup_ack_tests {
         release.send(()).unwrap();
         let returned = timeout(Duration::from_secs(5),starting).await.unwrap().unwrap().unwrap();
         assert!(Arc::ptr_eq(&owner,&returned));
-        let failure = match timeout(Duration::from_secs(5),owner.ready()).await.unwrap() {
-            Err(cause) => cause,
-            Ok(_) => panic!("managed DPA unexpectedly became ready"),
-        };
-        let detail = failure.get_ref().unwrap().downcast_ref::<crate::runtime::Failure>().unwrap();
-        assert_eq!(detail.code,"managedDialerProxyGraphNotIntegrated");
-        assert_eq!(detail.field.as_deref(),Some("proxies.dialer-proxy"));
-        assert!(detail.reason.as_deref().unwrap().contains("health/selection ownership"));
-        let status = timeout(Duration::from_secs(5),owner.wait()).await.unwrap().unwrap();
-        assert_eq!(status.state,"Failed"); assert_eq!(status.error,Some(failure.to_string()));
+        if missing_target {
+            let failure = match timeout(Duration::from_secs(5),owner.ready()).await.unwrap() {
+                Err(cause) => cause,
+                Ok(_) => panic!("missing injected dialer unexpectedly became ready"),
+            };
+            let detail = failure.get_ref().unwrap().downcast_ref::<crate::runtime::Failure>().unwrap();
+            assert_eq!(detail.code,"managedDialerProxyGraphRejected");
+            assert_eq!(detail.field.as_deref(),Some("proxies.dialer-proxy"));
+            assert!(detail.reason.as_deref().unwrap().contains("MISSING"));
+            let status = timeout(Duration::from_secs(5),owner.wait()).await.unwrap().unwrap();
+            assert_eq!(status.state,"Failed"); assert_eq!(status.error,Some(failure.to_string()));
+            // Factory validation rejects MISSING before a CoreApi/control exists.
+            assert_eq!(registered.load(Ordering::Acquire),0);
+        } else {
+            let status = timeout(Duration::from_secs(5),owner.ready()).await.unwrap().unwrap();
+            assert_eq!(status.state,"Running"); assert!(status.core_ready);
+            assert_eq!(status.api_address,Some(private)); assert!(!status.listening);
+            assert_eq!(registered.load(Ordering::Acquire),1);
+            assert!(!cancel.is_cancelled());
+            let mut client = TcpStream::connect(private).await.unwrap();
+            client.write_all(b"GET /aerove/route HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer attachment-private-secret-000000000001\r\nConnection: close\r\n\r\n").await.unwrap();
+            let mut response = String::new();
+            timeout(Duration::from_secs(5),client.read_to_string(&mut response)).await.unwrap().unwrap();
+            assert!(response.starts_with("HTTP/1.1 200"));
+            owner.cancel();
+            let status = timeout(Duration::from_secs(5),owner.wait()).await.unwrap().unwrap();
+            assert_eq!(status.state,"Exited"); assert!(status.error.is_none());
+            assert_eq!(registered.load(Ordering::Acquire),1, "stop registered a second control");
+        }
         assert!(owner.cleanup_confirmed()); assert!(cancel.is_cancelled());
-        assert_eq!(registered.load(Ordering::Acquire),1);
         for address in [private,mixed] { assert!(TcpListener::bind(address).await.is_ok()); }
+    }
+    #[tokio::test(flavor="multi_thread", worker_threads=3)]
+    async fn owner_install_callback_precedes_worker_spawn_and_typed_startup_cancellation() {
+        assert_owner_install_callback_stages(true).await;
+    }
+    #[tokio::test(flavor="multi_thread", worker_threads=3)]
+    async fn owner_install_callback_precedes_worker_spawn_and_registers_one_valid_core() {
+        assert_owner_install_callback_stages(false).await;
     }
 
     #[test]
@@ -790,9 +906,9 @@ mod cleanup_ack_tests {
             }
         }
         for kind in ["ssh","wireguard","tailscale","shadowquic","tuic","unknown"] { assert!(!runtime_protocol_enabled(kind)); }
-        for kind in ["relay","load-balance","unknown"] {
+        for group in ["{name: BLOCKED,type: relay,proxies: [DIRECT],use: [feed]}","{name: BLOCKED,type: load-balance,proxies: [DIRECT],strategy: sticky-sessions}","{name: BLOCKED,type: unknown,proxies: [DIRECT]}"] {
             let json = attachment_fixture(None,"127.0.0.1:39875".parse().unwrap(),39876,"proxy","{}");let mut plan=RuntimePlan::parse(&json,-1,false,false).unwrap();
-            plan.engine_yaml=format!("strict: true\nproxy-groups: [{{name: BLOCKED,type: {kind},proxies: [DIRECT]}}]\n"); assert!(managed_yaml(&plan).is_err());
+            plan.engine_yaml=format!("strict: true\nproxy-groups: [{group}]\n"); assert!(managed_yaml(&plan).is_err());
         }
     }
     #[tokio::test]
@@ -870,6 +986,46 @@ mod cleanup_ack_tests {
         timeout(Duration::from_secs(5),session.stop()).await.unwrap().unwrap(); assert!(owner.cleanup_confirmed());
         assert!(unsafe{libc::fcntl(caller.as_raw_fd(),libc::F_GETFD)}>=0);
         assert!(TcpListener::bind(private_address).await.is_ok()); assert!(TcpListener::bind(mixed_address).await.is_ok());
+    }
+
+
+    #[test]
+    fn managed_provider_fields_preserved_and_ignored_or_unowned_fields_rejected() {
+        let roots=super::resume_roots::Roots::new();
+        let json=attachment_fixture(Some(&roots),"127.0.0.1:39875".parse().unwrap(),39876,"proxy","{}");
+        let mut plan=RuntimePlan::parse(&json,-1,false,false).unwrap();
+        let providers="proxy-providers: {P: {type: http, url: 'http://127.0.0.1:39877/feed', interval: 17, path: seed.yaml, filter: '^node', header: {X-Test: [one,two]}, health-check: {enable: false, url: 'http://127.0.0.1:39877/health', interval: 3, timeout: 1234, lazy: false, expected-status: 204}}}\nrule-providers: {R: {type: inline, behavior: domain, payload: ['+.test']}}\n";
+        plan.engine_yaml=format!("strict: true\n{providers}rules: ['MATCH,DIRECT']\n");
+        let accepted:serde_yaml::Value=serde_yaml::from_str(&managed_yaml(&plan).unwrap()).unwrap();
+        let input:serde_yaml::Value=serde_yaml::from_str(&plan.engine_yaml).unwrap();
+        assert_eq!(accepted["proxy-providers"],input["proxy-providers"]);assert_eq!(accepted["rule-providers"],input["rule-providers"]);
+        for (definition,field) in [
+            ("proxy-providers: {P: {type: http, url: 'http://127.0.0.1:1', override: {dialer-proxy: DIRECT}}}","override"),
+            ("proxy-providers: {P: {type: http, url: 'http://127.0.0.1:1', proxy: PICK}}","proxy"),
+            ("proxy-providers: {P: {type: file, path: seed.yaml, header: {X-Test: ignored}}}","header"),
+            ("proxy-providers: {P: {type: file, path: seed.yaml, ignored: true}}","ignored"),
+            ("proxy-providers: {P: {type: http, url: 'http://127.0.0.1:1', health-check: {enable: true}}}","health-check.enable"),
+            ("proxy-providers: {P: {type: file, path: seed.yaml, health-check: {enable: true, undocumented: true}}}","undocumented"),
+            ("rule-providers: {R: {type: file, behavior: domain, path: seed.yaml, interval: 1}}","interval"),
+            ("rule-providers: {R: {type: http, behavior: domain, url: 'http://127.0.0.1:1', payload: [ignored]}}","payload"),
+        ] { plan.engine_yaml=format!("strict: true\n{definition}\nrules: ['MATCH,DIRECT']\n");assert!(managed_yaml(&plan).unwrap_err().to_string().contains(field),"{field}"); }
+    }
+    #[test]
+    fn provider_health_defaults_match_standard_without_enabling_periodic_meow_default() {
+        let roots=super::resume_roots::Roots::new();
+        let json=attachment_fixture(Some(&roots),"127.0.0.1:39875".parse().unwrap(),39876,"proxy","{}");
+        let mut plan=RuntimePlan::parse(&json,-1,false,false).unwrap();
+        for health in ["{}","{url: 'http://probe.test/health'}","{enable: false,lazy: false,interval: 0}"] {
+            plan.engine_yaml=format!("strict: true\nproxy-providers: {{P: {{type: file,path: seed.yaml,health-check: {health}}}}}\nrules: ['MATCH,DIRECT']\n");
+            let canonical:serde_yaml::Value=serde_yaml::from_str(&managed_yaml(&plan).unwrap()).unwrap();
+            let hc=&canonical["proxy-providers"]["P"]["health-check"];assert_eq!(hc["enable"],false);
+            assert_eq!(hc["lazy"],if health.contains("lazy: false"){false}else{true});
+            if health.contains("interval: 0"){assert_eq!(hc["interval"],0);}
+        }
+        for health in ["{enable: true,interval: 0}","{enable: true,interval: 1,lazy: false}"] {
+            plan.engine_yaml=format!("strict: true\nproxy-providers: {{P: {{type: http,url: 'http://127.0.0.1:1',health-check: {health}}}}}\nrules: ['MATCH,DIRECT']\n");
+            let reason=managed_yaml(&plan).unwrap_err().to_string();assert!(reason.contains("proxy-providers.P.health-check.enable"));assert!(reason.contains("periodic Core scheduler"));
+        }
     }
 
 }

@@ -233,3 +233,57 @@ fn unix_regular_symlink_directory_and_empty_path_keep_resource_semantics() {
     assert_eq!(inspect_rule_set(&std::env::temp_dir()).unwrap_err(), "resource candidate must be a regular file");
     assert!(inspect_rule_set(std::path::Path::new("")).unwrap_err().starts_with("open resource candidate:"));
 }
+
+
+#[tokio::test]
+async fn rule_decode_errors_keep_typed_context_and_actual_decoder_reason() {
+    let zstd = vec![0x28, 0xb5, 0x2f, 0xfd, 0];
+    let zstd_reason = meow_config::offline_rules::mrs_parser::decompress_payload_bounded(
+        &zstd, validation::MAX_EXPANDED_BYTES as u64).unwrap_err().to_string();
+    let utf8 = vec![0xff, 0xfe];
+    let utf8_reason = std::str::from_utf8(&utf8).unwrap_err().to_string();
+    for (bytes, format, field, reason) in [
+        (zstd, "mrs", "$.payload.mrs", zstd_reason),
+        (utf8, "text", "$.payload.utf8", utf8_reason),
+    ] {
+        let fixture = Fixture::new(&bytes);
+        let expected = format!("rule_set_invalid: {field}: {reason}");
+        assert_eq!(inspect_rule_set(&fixture.0).unwrap_err(), expected);
+        assert_eq!(dump_rule_set(&fixture.0, "domain", format).unwrap_err(), expected);
+        assert_eq!(validate_resource("ruleset", &fixture.0, "domain", format).await.unwrap_err(), expected);
+        assert_eq!(fs::read(&fixture.0).unwrap(), bytes, "failed decode changed its input");
+    }
+}
+
+#[tokio::test]
+async fn rule_content_errors_and_identity_mismatches_keep_typed_specific_reasons() {
+    let mixed = Fixture::new(b"example.com\n192.0.2.0/24\n");
+    let expected = "rule_set_invalid: $.payload: rule_set_mixed: domains and IP ranges";
+    assert_eq!(inspect_rule_set(&mixed.0).unwrap_err(), expected);
+    assert_eq!(validate_resource("ruleset", &mixed.0, "domain", "text").await.unwrap_err(), expected);
+    let good = Fixture::new(b"example.com\n");
+    assert_eq!(dump_rule_set(&good.0, "ipcidr", "text").unwrap_err(),
+        "rule_set_invalid: $.behavior: rule_set_behavior_mismatch");
+    assert_eq!(dump_rule_set(&good.0, "domain", "mrs").unwrap_err(),
+        "rule_set_invalid: $.format: rule_set_format_mismatch");
+    assert_eq!(validate_resource("ruleset", &good.0, "domain", "mrs").await.unwrap_err(),
+        "rule_set_invalid: $.format: rule_set_format_mismatch");
+    assert_eq!(validate_resource("ruleset", &good.0, "bad-behavior", "text").await.unwrap_err(),
+        "rule_set_invalid: $.behavior: unsupported rule-provider behavior: bad-behavior");
+    let malformed = Fixture::new(b"payload: [\n");
+    let reason = meow_config::parse_raw_yaml("payload: [\n").unwrap_err().to_string();
+    assert_eq!(validate_resource("ruleset", &malformed.0, "domain", "yaml").await.unwrap_err(),
+        format!("rule_set_invalid: $.payload.yaml: {reason}"));
+    let bad = Fixture::new(b"payload: ['.']\n");
+    let reason = meow_config::offline_rules::build_rule_set_checked(
+        meow_config::offline_rules::RuleSetBehavior::Domain, &[".".to_owned()], &Default::default()).err().unwrap().to_string();
+    assert_eq!(inspect_rule_set(&bad.0).unwrap_err(), format!("rule_set_invalid: $.payload: {reason}"));
+    assert_eq!(dump_rule_set(&good.0, "domain", "text").unwrap(), "example.com\n");
+    assert_eq!(fs::read(&good.0).unwrap(), b"example.com\n");
+    let excessive = Fixture::new(format!("{}\n", "a".repeat(2049)).as_bytes());
+    assert_eq!(inspect_rule_set(&excessive.0).unwrap_err(),
+        "rule_set_invalid: $.payload: rule-provider payload count/line limit exceeded");
+    // File identity failures are resource errors, not rewritten as bad rules.
+    assert_eq!(validate_resource("ruleset", &std::env::temp_dir(), "domain", "yaml").await.unwrap_err(),
+        "resource candidate must be a regular file");
+}

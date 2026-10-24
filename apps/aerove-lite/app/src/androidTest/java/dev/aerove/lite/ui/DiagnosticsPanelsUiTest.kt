@@ -15,6 +15,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -133,6 +136,16 @@ class DiagnosticsPanelsUiTest {
     fun serviceEmptyStateChecksOnlyOnAnExplicitAction() {
         state.value = state.value.copy(phase = VpnPhase.Running)
         launch(service = true)
+        fun assertNaturalEmptyHeight() {
+            val bounds = compose.onNodeWithTag("diagnostics-services-empty", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            assertTrue("Empty content must not reserve a 108dp service grid", bounds.height < 48f * context.resources.displayMetrics.density)
+        }
+        assertNaturalEmptyHeight()
+        compose.runOnUiThread { state.value = state.value.copy(phase = VpnPhase.Stopped) }
+        compose.onNodeWithText(context.getString(R.string.diag_service_connect)).assertIsDisplayed()
+        assertNaturalEmptyHeight()
+        assertTrue(actions.events.isEmpty())
+        compose.runOnUiThread { state.value = state.value.copy(phase = VpnPhase.Running) }
         compose.onNodeWithText(context.getString(R.string.diag_service_pending)).assertIsDisplayed()
         compose.onNodeWithText("Google").assertDoesNotExist()
         assertTrue(actions.events.isEmpty())
@@ -142,6 +155,9 @@ class DiagnosticsPanelsUiTest {
             state.value = state.value.copy(diagnostics = DiagnosticsState(serviceLoading = true, serviceError = "fixture: service unavailable"))
         }
         compose.onNodeWithText("fixture: service unavailable").assertIsDisplayed()
+        compose.onNode(hasContentDescription(context.getString(R.string.diag_loading)) and
+            hasAnyAncestor(hasTestTag("diagnostics-services-empty")), useUnmergedTree = true).assertIsDisplayed()
+        assertNaturalEmptyHeight()
         compose.onNodeWithTag("diagnostics-service-refresh").assertDoesNotExist()
     }
 

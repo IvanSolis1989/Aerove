@@ -216,3 +216,45 @@ where S:futures::Stream<Item=Result<tokio_tungstenite::tungstenite::Message,toki
         for key in ["up","down","uploadTotal","downloadTotal"] { assert!(event[key].as_i64().is_some_and(|value|value>=0)); }
     }
 }
+
+#[cfg(unix)]
+#[path="support/provider_general.rs"]mod pure_servers;
+#[cfg(unix)]
+async fn managed_delay(address:std::net::SocketAddr,path:&str)->String{
+    let mut stream=TcpStream::connect(address).await.unwrap();stream.write_all(format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {PRIVATE}\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();let mut bytes=String::new();tokio::time::timeout(Duration::from_secs(5),stream.read_to_string(&mut bytes)).await.unwrap().unwrap();bytes
+}
+#[cfg(unix)]
+#[tokio::test(flavor="multi_thread",worker_threads=3)]
+async fn complete_nested_measurement_commits_requested_group_once_without_leaf_rtt_copy(){
+    let mut servers=pure_servers::Servers::new();let proxy=servers.proxy().await;let target=servers.origin().await;
+    let yaml=format!("strict: true\nproxies: [{{name: NODE,type: http,server: 127.0.0.1,port: {}}}]\nproxy-groups: [{{name: INNER,type: select,proxies: [NODE,REJECT]}}]\nrules: ['MATCH,DIRECT']\n",proxy.address.port());
+    let(api,tunnel,scope,_)=fixture(&yaml).await;let groups=api.control.activate_groups(&scope).unwrap();let route=tunnel.route_snapshot();let inner=route.proxies["INNER"].clone();let leaf=route.proxies["NODE"].clone();let own=inner.health().delay_history().len();let child=serde_json::to_value(leaf.health().delay_history()).unwrap();
+    let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();let address=listener.local_addr().unwrap();let serving_cancel=CancellationToken::new();let serving={let api=api.clone();let token=serving_cancel.clone();tokio::spawn(async move{api.serve_private(listener,token).await.unwrap();})};
+    let response=managed_delay(address,&pure_servers::delay_path("INNER",target)).await;assert!(response.starts_with("HTTP/1.1 200"),"{response}");assert_eq!(proxy.targets.lock().unwrap().as_slice(),[target.to_string()]);assert_eq!(inner.health().delay_history().len(),own+1);assert_eq!(serde_json::to_value(leaf.health().delay_history()).unwrap(),child,"complete target RTT belongs to the requested group, not its leaf");
+    serving_cancel.cancel();api.cancel();scope.close().await.unwrap();if let Err(error)=groups.await{assert!(error.is_cancelled());}serving.await.unwrap();api.join().await;servers.close().await;
+}
+#[cfg(unix)]
+#[tokio::test(flavor="multi_thread",worker_threads=3)]
+async fn slow_complete_nested_measurement_epoch_change_publishes_no_health_or_pick(){
+    let mut servers=pure_servers::Servers::new();let proxy=servers.proxy().await;let target=servers.origin().await;proxy.hold.store(true,std::sync::atomic::Ordering::Release);
+    let yaml=format!("strict: true\nproxies: [{{name: NODE,type: http,server: 127.0.0.1,port: {}}}]\nproxy-groups: [{{name: INNER,type: select,proxies: [NODE,REJECT]}}]\nrules: ['MATCH,DIRECT']\n",proxy.address.port());
+    let(api,tunnel,scope,_)=fixture(&yaml).await;let groups=api.control.activate_groups(&scope).unwrap();let route=tunnel.route_snapshot();let inner=route.proxies["INNER"].clone();let leaf=route.proxies["NODE"].clone();let own=serde_json::to_value(inner.health().delay_history()).unwrap();let child=serde_json::to_value(leaf.health().delay_history()).unwrap();let before=api.control.snapshot().await.unwrap();
+    let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();let address=listener.local_addr().unwrap();let serving_cancel=CancellationToken::new();let serving={let api=api.clone();let token=serving_cancel.clone();tokio::spawn(async move{api.serve_private(listener,token).await.unwrap();})};
+    let path=pure_servers::delay_path("INNER",target);let pending=tokio::spawn(async move{managed_delay(address,&path).await});tokio::time::timeout(Duration::from_secs(5),proxy.started.notified()).await.unwrap();assert!(!pending.is_finished());assert_eq!(serde_json::to_value(inner.health().delay_history()).unwrap(),own);assert_eq!(serde_json::to_value(leaf.health().delay_history()).unwrap(),child);
+    let stamp=api.control.plane.stamp();let(committed,_)=api.control.plane.commit_policy(stamp.0,true,||()).unwrap();proxy.release.notify_one();let response=pending.await.unwrap();assert!(response.starts_with("HTTP/1.1 409"),"{response}");assert_eq!(api.control.plane.stamp(),committed);let after=api.control.snapshot().await.unwrap();assert_eq!(after.picks,before.picks);assert_eq!(after.picks_version,before.picks_version);assert_eq!(serde_json::to_value(inner.health().delay_history()).unwrap(),own);assert_eq!(serde_json::to_value(leaf.health().delay_history()).unwrap(),child);
+    serving_cancel.cancel();api.cancel();scope.close().await.unwrap();if let Err(error)=groups.await{assert!(error.is_cancelled());}serving.await.unwrap();api.join().await;servers.close().await;
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor="multi_thread",worker_threads=3)]
+async fn actual_injected_dialer_same_arc_publication_invalidates_slow_measurement_without_health_commit(){
+    let mut servers=pure_servers::Servers::new();let front=servers.proxy().await;let exit=servers.proxy().await;let target=servers.origin().await;exit.hold.store(true,std::sync::atomic::Ordering::Release);
+    let yaml=format!("strict: true\nproxies:\n - {{name: FRONT,type: http,server: 127.0.0.1,port: {}}}\n - {{name: NODE,type: http,server: 127.0.0.1,port: {},dialer-proxy: FRONT}}\nrules: ['MATCH,NODE']\n",front.address.port(),exit.address.port());
+    let(api,tunnel,scope,_)=fixture(&yaml).await;let groups=api.control.activate_groups(&scope).unwrap();let route=tunnel.route_snapshot();let node=route.proxies["NODE"].clone();let history=serde_json::to_value(node.health().delay_history()).unwrap();let before=api.control.snapshot().await.unwrap();
+    let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();let address=listener.local_addr().unwrap();let token=CancellationToken::new();let serving={let api=api.clone();let token=token.clone();tokio::spawn(async move{api.serve_private(listener,token).await.unwrap();})};let path=pure_servers::delay_path("NODE",target);let pending=tokio::spawn(async move{managed_delay(address,&path).await});tokio::time::timeout(Duration::from_secs(5),exit.started.notified()).await.unwrap();
+    let proof=meow_config::managed_probe_dependencies(&node).unwrap();assert!(proof.is_current());
+    // Deliberate publication fault injection: the same actual Arc map and
+    // unchanged Native epoch must still not authorize an earlier measurement.
+    route.dialer_registry.publish(route.proxies.clone());assert!(!proof.is_current());exit.release.notify_one();let response=tokio::time::timeout(Duration::from_secs(5),pending).await.unwrap().unwrap();assert!(response.starts_with("HTTP/1.1 409"),"{response}");assert_eq!(api.control.snapshot().await.unwrap(),before);assert_eq!(serde_json::to_value(node.health().delay_history()).unwrap(),history);assert!(front.targets.lock().unwrap().iter().all(|value|value==&exit.address.to_string()));
+    token.cancel();api.cancel();scope.close().await.unwrap();if let Err(error)=groups.await{assert!(error.is_cancelled());}serving.await.unwrap();api.join().await;servers.close().await;
+}

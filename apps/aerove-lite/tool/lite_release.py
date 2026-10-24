@@ -224,13 +224,66 @@ def _validate_manifest(runtime, source, tree, run, attempt, number):
         raise PromotionError("x86 runtime dependency resolution did not complete")
 
 
+def _verify_current_renderer(directory, runtime_root, source_data, source, tree, run, attempt, number):
+    from emulator_qa79 import renderer_evidence
+    expected = dict(sourceRevision=source, sourceTree=tree, workflowRun=str(run),
+                    runAttempt=int(attempt), runNumber=int(number))
+    proof = _json(directory / "CURRENT-RENDERER-PROOF.json")
+    owner = _json(directory / "EMULATOR-OWNER.json")
+    runtime = Path(runtime_root)
+    apks = {name: _sha(runtime / "apks" / name)
+            for name in ("app-release.apk", "app-release-androidTest.apk")}
+    actual = dict(identity=expected, apks=apks,
+                  runtimeManifestSha256=_sha(runtime / "source-manifest.json"),
+                  apkInspectorOutcome="success")
+    stdout = (directory / "emulator.stdout.log").read_text(errors="replace")
+    try:
+        evidence = renderer_evidence(stdout)
+    except ValueError as error:
+        raise PromotionError("Current renderer startup was not confirmed") from error
+    command_tail = ["-port", "5554", "-avd", "test", "-no-window", "-gpu", "swangle",
+                    "-no-snapshot", "-noaudio", "-no-boot-anim"]
+    command = owner.get("command", [])
+    cleanup = owner.get("cleanup", {})
+    code = owner.get("emulatorReturnCode")
+    if (any(proof.get(key) != value for key, value in actual.items())
+            or proof.get("schema") != 1 or type(proof.get("schema")) is not int
+            or proof.get("owner") != "emulator_current.py"
+            or proof.get("deviceSerial") != "emulator-5554"
+            or proof.get("gpuBackend") != "swangle"
+            or proof.get("rendererBackend") != "SwANGLE (ANGLE + SwiftShader)"
+            or proof.get("rendererEvidence") != evidence
+            or source_data.get("deviceSerial") != "emulator-5554"
+            or source_data.get("harnessRevision") != source
+            or str(source_data.get("harnessRun")) != str(run)
+            or str(source_data.get("appBuildRun")) != str(run)
+            or owner.get("app") != expected or owner.get("runtime") != actual
+            or owner.get("harnessRevision") != source or str(owner.get("harnessRun")) != str(run)
+            or owner.get("rendererEvidence") != evidence
+            or owner.get("result") != 0 or type(owner.get("result")) is not int
+            or owner.get("acceptanceReturnCode") != 0 or type(owner.get("acceptanceReturnCode")) is not int
+            or owner.get("unexpectedEmulatorExit") is not False
+            or owner.get("cleanupRequested") is not True
+            or set(cleanup) != {"terminationInitiated", "exitObservedBeforeTermination", "initialReturnCode", "returnCode"}
+            or cleanup.get("terminationInitiated") is not True
+            or cleanup.get("exitObservedBeforeTermination") is not False
+            or cleanup.get("initialReturnCode") is not None
+            or type(code) is not int or cleanup.get("returnCode") != code
+            or owner.get("emulatorSignal") != (-code if code < 0 else None)
+            or type(owner.get("ownerPid")) is not int or owner["ownerPid"] <= 0
+            or type(owner.get("emulatorPid")) is not int or owner["emulatorPid"] <= 0
+            or not isinstance(command, list) or len(command) != len(command_tail) + 1
+            or Path(command[0]).name != "emulator" or command[1:] != command_tail):
+        raise PromotionError("Current SwANGLE owner proof does not match the accepted runtime")
+
+
 def _verify_matrix(root, runtime_root, source, tree, run, attempt, number):
     directory = Path(root)
     source_data = _json(directory / "SOURCE.json")
     if (source_data.get("sourceRevision") != source or source_data.get("sourceTree") != tree
             or str(source_data.get("workflowRun")) != str(run) or str(source_data.get("runAttempt")) != str(attempt)
             or str(source_data.get("runNumber")) != str(number) or source_data.get("phase") != "matrix"
-            or source_data.get("deviceKind") != "CI-emulator" or source_data.get("rendererBackend") != "SwiftShader-indirect"
+            or source_data.get("deviceKind") != "CI-emulator" or source_data.get("rendererBackend") not in {"SwiftShader-indirect", "SwANGLE (ANGLE + SwiftShader)"}
             or source_data.get("prebuiltApks") is not True or source_data.get("performanceEvidence") is not False):
         raise PromotionError("Dashboard matrix provenance does not match the accepted run")
     sums = (directory / "APK_SHA256SUMS").read_text(encoding="utf-8").splitlines()
@@ -252,6 +305,10 @@ def _verify_matrix(root, runtime_root, source, tree, run, attempt, number):
             raise PromotionError("Dashboard matrix APK does not match the x86 runtime contract")
     if apk_names != {"app-release.apk", "app-release-androidTest.apk"}:
         raise PromotionError("Dashboard matrix checksums do not identify both runtime APKs")
+    if source_data["rendererBackend"] == "SwANGLE (ANGLE + SwiftShader)":
+        _verify_current_renderer(directory, runtime_root, source_data, source, tree, run, attempt, number)
+    elif (directory / "CURRENT-RENDERER-PROOF.json").exists():
+        raise PromotionError("Current renderer proof cannot use a legacy renderer label")
     log = (directory / "instrumentation.log").read_text(encoding="utf-8", errors="replace")
     if ("dev.aerove.lite.ui.LiteDashboardMatrixTest" not in log or "OK (1 test)" not in log
             or "INSTRUMENTATION_CODE: -1" not in log or re.search(r"INSTRUMENTATION_(?:FAILED|ABORTED)|FAILURES!!!", log)):

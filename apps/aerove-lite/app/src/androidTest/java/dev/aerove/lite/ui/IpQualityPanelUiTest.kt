@@ -21,11 +21,14 @@ import androidx.compose.runtime.mutableStateOf
 import kotlinx.coroutines.awaitCancellation
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Assert.assertEquals
+import org.junit.rules.RuleChain
 import org.junit.Rule
 import org.junit.Test
 
 class IpQualityPanelUiTest {
-    @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+    val compose = createAndroidComposeRule<MainActivity>()
+    private val idleWatchdog = IpQualityIdleWatchdog()
+    @get:Rule val rules: RuleChain = RuleChain.outerRule(idleWatchdog).around(compose)
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 
     @Test fun rootMessageCancelsCardAndOwnDetailWithoutStartingHiddenRequests() {
@@ -70,7 +73,9 @@ class IpQualityPanelUiTest {
     }
 
     @Test fun actualDashboardEntrySharesOwnerAndRendersSourceFailureRetryAndRecovery() {
+        idleWatchdog.mark("body.entry")
         val calls = AtomicInteger()
+        idleWatchdog.observeCalls { calls.get() }
         val state = LiteState(phase = VpnPhase.Running, selectedProfile = "quality-display-fixture",
             outboundIdentity = OutboundIdentity("198.51.100.8", "SG", null, "unknown"))
         val lookup: suspend (String) -> IpQuality = { ip ->
@@ -78,17 +83,39 @@ class IpQualityPanelUiTest {
                 IpQualityFailure(IpQualitySource.IpQuery, IpQualitySourceStatus.RateLimited)))
             IpQuality(ip, IpQualitySource.IdentMe, IpType.Business, "Fixture organization", 123)
         }
+        idleWatchdog.mark("replaceAppContent.before")
         compose.replaceAppContent { IpQualityFixture(state, lookup) { LiteApp(state, UiTestActions {}) } }
+        idleWatchdog.mark("replaceAppContent.after")
+        idleWatchdog.mark("waitLookup1.before")
         compose.waitUntil(5000) { calls.get() == 1 }
+        idleWatchdog.mark("waitLookup1.after")
+        idleWatchdog.mark("summaryClick.before")
         compose.onNodeWithTag("ip-quality-summary").performClick()
+        idleWatchdog.mark("summaryClick.after")
+        idleWatchdog.mark("assertSource1.before")
         compose.onNodeWithText("ident.me").assertExists()
+        idleWatchdog.mark("assertSource1.after")
+        idleWatchdog.mark("assertAsn.before")
         compose.onNodeWithText("AS123").assertExists()
+        idleWatchdog.mark("assertAsn.after")
         assertEquals(1, calls.get())
+        idleWatchdog.mark("retry1Click.before")
         compose.onNodeWithText(context.getString(R.string.quality_retry)).performClick()
+        idleWatchdog.mark("retry1Click.after")
+        idleWatchdog.mark("waitLookup2.before")
         compose.waitUntil(5000) { calls.get() == 2 }
+        idleWatchdog.mark("waitLookup2.after")
+        idleWatchdog.mark("assertRateLimited.before")
         compose.onNodeWithText(context.getString(R.string.quality_source_rate_limited)).assertExists()
+        idleWatchdog.mark("assertRateLimited.after")
+        idleWatchdog.mark("retry2Click.before")
         compose.onNodeWithText(context.getString(R.string.quality_retry)).performClick()
+        idleWatchdog.mark("retry2Click.after")
+        idleWatchdog.mark("waitLookup3.before")
         compose.waitUntil(5000) { calls.get() == 3 }
+        idleWatchdog.mark("waitLookup3.after")
+        idleWatchdog.mark("assertRecoveredSource.before")
         compose.onNodeWithText("ident.me").assertExists()
+        idleWatchdog.mark("assertRecoveredSource.after")
     }
 }

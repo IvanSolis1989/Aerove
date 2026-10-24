@@ -55,14 +55,14 @@ internal class HardwareCapture(
 
     fun capture(label: String, windowImage: String = "$label-window.png", configuration: JSONObject? = null): CapturedFrame {
         rule.waitForIdle()
-        val committed = CountDownLatch(1)
-        rule.runOnUiThread {
-            assertTrue("A software View canvas is not an optical acceptance path", probe.view.isHardwareAccelerated)
-            assertTrue("The tested window must be visible and focused", probe.view.isShown && probe.view.hasWindowFocus())
-            probe.view.viewTreeObserver.registerFrameCommitCallback { committed.countDown() }
-            probe.view.invalidate()
+        FrameCommitObservation(label, root).use { observation ->
+            rule.runOnUiThread {
+                assertTrue("A software View canvas is not an optical acceptance path", probe.view.isHardwareAccelerated)
+                assertTrue("The tested window must be visible and focused", probe.view.isShown && probe.view.hasWindowFocus())
+                observation.registerAndInvalidate(probe.view, probe.view.context.activity().window)
+            }
+            assertTrue("No hardware frame was committed", observation.awaitOriginalDeadline())
         }
-        assertTrue("No hardware frame was committed", committed.await(5, TimeUnit.SECONDS))
         lateinit var target: WindowCaptureTarget
         instrumentation.runOnMainSync {
             val window = probe.view.context.activity().window

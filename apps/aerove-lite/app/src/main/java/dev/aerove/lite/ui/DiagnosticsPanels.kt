@@ -109,7 +109,7 @@ internal fun ServiceStatusPanel(state: LiteState, actions: LiteActions, showServ
             ServiceDetail(current, currentActions, close)
         }
     }) {
-        DiagnosticsHeader(FullGlyphs.verified, title, trailing = {
+        DiagnosticsHeader(FullGlyphs.verified, title, showDisclosure = showServices, trailing = {
             if (showServices) Row(verticalAlignment = Alignment.CenterVertically) {
                 ServiceVerdict(state.diagnostics.services.take(4))
                 ServiceRefresh(state, actions)
@@ -122,7 +122,7 @@ internal fun ServiceStatusPanel(state: LiteState, actions: LiteActions, showServ
             DiagnosticsEmpty(
                 state.diagnostics.serviceLoading,
                 stringResource(if (state.phase == VpnPhase.Running) R.string.diag_service_pending else R.string.diag_service_connect),
-                Modifier.heightIn(min = 108.dp),
+                Modifier.testTag("diagnostics-services-empty"),
             )
         } else Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             shown.chunked(2).forEach { row ->
@@ -214,13 +214,13 @@ private fun DiagnosticsCard(modifier: Modifier, content: @Composable ColumnScope
 }
 
 @Composable
-private fun DiagnosticsHeader(icon: LiteGlyph, title: String, trailing: @Composable () -> Unit = {}) {
+private fun DiagnosticsHeader(icon: LiteGlyph, title: String, showDisclosure: Boolean = true, trailing: @Composable () -> Unit = {}) {
     Row(Modifier.fillMaxWidth().height(26.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         LiteIcon(icon, color = LocalLiteVisuals.current.secondaryInk, size = 18.dp)
         LiteText(title, Modifier.weight(1f), style = LiteType.Label, maxLines = 1)
         trailing()
-        LiteIcon(FullGlyphs.chevronForward, color = LocalLiteVisuals.current.secondaryInk, size = 18.dp)
+        if (showDisclosure) LiteIcon(FullGlyphs.chevronForward, Modifier.testTag("diagnostics-disclosure"), color = LocalLiteVisuals.current.secondaryInk, size = 18.dp)
     }
 }
 
@@ -291,7 +291,7 @@ private fun ServiceCell(service: ServiceCheckView, modifier: Modifier) {
     val label = if (service.status == "available" && service.delayMillis != null) stringResource(R.string.diag_service_delay, service.delayMillis) else status
     val metadata = servicePresentation(service.id)
     val tone = serviceTone(service.status)
-    LitePane(modifier.height(50.dp).semantics(mergeDescendants = true) {
+    LitePane(modifier.heightIn(min = 50.dp).testTag("dashboard-service-${service.id}").semantics(mergeDescendants = true) {
         stateDescription = status
         liveRegion = LiveRegionMode.Polite
     }, corner = LiteCorner.Control, solidColor = MaterialTheme.colorScheme.fullBlock(LocalLiteVisuals.current.dark)) {

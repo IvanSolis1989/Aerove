@@ -503,6 +503,15 @@
          let delay = Some(proxy.last_delay()).filter(|&d| d > 0);
          Self {
              name: proxy.name().to_string(),
+@@ -436,7 +431,7 @@
+ /// `include-all` lists them in, so when two providers ship the same name
+ /// the first one answers; `/providers/proxies/{provider}/{name}` reaches
+ /// either.
+-fn find_proxy(
++pub fn find_proxy(
+     state: &AppState,
+     proxies: &HashMap<smol_str::SmolStr, Arc<dyn meow_common::Proxy>>,
+     name: &str,
 @@ -649,13 +644,16 @@
      State(state): State<Arc<AppState>>,
      Query(params): Query<ConnectionsParams>,
@@ -869,7 +878,7 @@
          }
      }
  
-@@ -71,9 +78,25 @@
+@@ -71,9 +78,26 @@
          self.alive.load(Ordering::Relaxed)
      }
  
@@ -891,6 +900,7 @@
 +        }
 +    }
 +    fn publish(&self, update: HealthUpdate) {
++        if crate::probe_policy::DiagnosticToken::capture().is_measurement() { return; }
 +        let observer = self.observer.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
 +        match observer { Some(observer) => observer.commit(self, update), None => self.apply_committed(update) }
 +    }
@@ -898,7 +908,7 @@
  
      pub fn last_delay(&self) -> u16 {
          self.history
-@@ -92,7 +115,8 @@
+@@ -92,7 +116,8 @@
              .collect()
      }
  
@@ -908,7 +918,7 @@
          let mut history = self
              .history
              .write()
-@@ -129,6 +153,26 @@
+@@ -129,6 +154,26 @@
      fn support_udp(&self) -> bool;
      async fn dial_tcp(&self, metadata: &Metadata) -> Result<Box<dyn ProxyConn>>;
      async fn dial_udp(&self, metadata: &Metadata) -> Result<Box<dyn ProxyPacketConn>>;
@@ -935,11 +945,10 @@
      /// Run this adapter's complete post-connect pipeline over `stream`.
      ///
      /// Used by relay groups (M1.C-2) to chain proxy hops without dialling a
-@@ -231,6 +275,17 @@
- pub trait ProxySelection: Send + Sync {
+@@ -232,6 +277,17 @@
      /// Validate and select a member by name.
      async fn set(&self, name: &str) -> Result<()>;
-+
+ 
 +    async fn prepare(&self, name: &str) -> Result<Option<(Arc<dyn Proxy>, u16)>>;
 +    fn commit(&self, name: &str, health: Option<(Arc<dyn Proxy>, u16)>) -> Result<()>;
 +    fn commit_memory(&self, _name: &str) -> Result<()> {
@@ -950,9 +959,185 @@
 +    }
 +    fn flush_selection(&self) -> Option<Box<dyn FnOnce() + Send>> { None }
 +    fn reconcile_health(&self) {}
- 
++
      /// Set or clear a selection without validation. This mirrors mihomo's
      /// `SelectAble.ForceSet` and is used to unfix automatic groups before a
+     /// group health check.
+@@ -245,6 +301,65 @@
+     /// Only automatic groups can be returned to automatic mode through
+     /// `DELETE /proxies/{name}`.
+     fn can_unfix(&self) -> bool;
++}
++
++/// Read-only substitutions for the exact provider slots a factory will install.
++/// Values retain original Arc order and identity; no slot is published here.
++#[derive(Clone, Default)]
++pub struct ProviderSlotProjection { slots: Vec<ProjectedProviderSlot> }
++#[derive(Clone)]
++struct ProjectedProviderSlot {
++    slot: ProviderSlot,
++    before: Vec<Arc<dyn Proxy>>,
++    after: Vec<Arc<dyn Proxy>>,
++}
++impl ProviderSlotProjection {
++    pub fn new(slots: Vec<(ProviderSlot, Vec<Arc<dyn Proxy>>)>) -> Self {
++        Self { slots: slots.into_iter().map(|(slot, after)| {
++            let before = slot.read().clone(); ProjectedProviderSlot { slot, before, after }
++        }).collect() }
++    }
++    /// Same slot identity as the real group owns; unrelated slots stay live.
++    pub fn members(&self, slot: &ProviderSlot) -> Vec<Arc<dyn Proxy>> {
++        self.slots.iter().find(|entry| Arc::ptr_eq(&entry.slot, slot))
++            .map_or_else(|| slot.read().clone(), |entry| entry.after.clone())
++    }
++    pub fn contains(&self, slot: &ProviderSlot) -> bool {
++        self.slots.iter().any(|entry| Arc::ptr_eq(&entry.slot, slot))
++    }
++    /// Pre-install only. Native also fences provider source/core epoch/intent
++    /// under its existing gate; ordered Arc equality is not an ABA epoch.
++    pub fn is_current(&self) -> bool {
++        self.slots.iter().all(|entry| {
++            let current = entry.slot.read();
++            current.len() == entry.before.len() && current.iter().zip(&entry.before).all(|(a,b)| Arc::ptr_eq(a,b))
++        })
++    }
++    pub fn is_installed(&self) -> bool {
++        self.slots.iter().all(|entry| {
++            let current = entry.slot.read();
++            current.len() == entry.after.len() && current.iter().zip(&entry.after).all(|(a,b)| Arc::ptr_eq(a,b))
++        })
++    }
++}
++
++/// Read-only proof owned by one actual dialer/registry publication.
++pub trait ProbeDependencyGuard: Send + Sync {
++    fn is_current(&self) -> bool;
++}
++/// Captured dependency identities, not a routing/selection plan. Keep this
++/// value until the host's final same-plane epoch/intent/graph CAS completes.
++#[derive(Clone, Default)]
++pub struct ProbeDependencies {
++    pub proxies: Vec<Arc<dyn Proxy>>,
++    guard: Option<Arc<dyn ProbeDependencyGuard>>,
++}
++impl ProbeDependencies {
++    pub fn unguarded(proxies: Vec<Arc<dyn Proxy>>) -> Self { Self { proxies, guard: None } }
++    pub fn guarded(proxies: Vec<Arc<dyn Proxy>>, guard: Arc<dyn ProbeDependencyGuard>) -> Self {
++        Self { proxies, guard: Some(guard) }
++    }
++    pub fn is_current(&self) -> bool { self.guard.as_ref().is_none_or(|guard| guard.is_current()) }
+ }
+ 
+ pub trait Proxy: ProxyAdapter {
+@@ -269,6 +384,20 @@
+     /// the proxies map (issue #543 item 1). Leaf adapters return `None`.
+     fn member_proxies(&self) -> Option<Vec<Arc<dyn Proxy>>> {
+         None
++    }
++
++    /// Same member enumeration with only exact candidate provider slots
++    /// replaced. Group implementations keep their normal static/slot order.
++    fn projected_member_proxies(&self, _projection: &ProviderSlotProjection) -> Option<Vec<Arc<dyn Proxy>>> {
++        self.member_proxies()
++    }
++
++    /// Actual non-membership dialer/wrapper dependencies. Implementations must
++    /// capture their real retained handles, without selecting or dialing. A
++    /// custom proxy with private dependencies must override this empty leaf
++    /// default; Core's configured factory and chain wrapper do so.
++    fn probe_dependencies(&self) -> std::io::Result<ProbeDependencies> {
++        Ok(ProbeDependencies::default())
+     }
+     /// For group adapters: the name of the currently active member
+     /// (selected/fastest/first-alive depending on group kind).
+@@ -472,3 +601,23 @@
+         assert_eq!(back.delay, entry.delay);
+     }
+ }
++
++#[cfg(test)]
++mod diagnostic_tests {
++    use super::*;
++    use std::sync::atomic::AtomicUsize;
++    struct Observer(AtomicUsize);
++    impl HealthObserver for Observer {
++        fn commit(&self,health:&ProxyHealth,update:HealthUpdate) {self.0.fetch_add(1,Ordering::SeqCst);health.apply_committed(update);}
++    }
++    #[tokio::test(flavor="multi_thread",worker_threads=2)]
++    async fn diagnostic_health_does_not_publish_but_parallel_business_keeps_observer() {
++        let health=Arc::new(ProxyHealth::new());let observer=Arc::new(Observer(AtomicUsize::new(0)));assert!(health.observe(observer.clone()));
++        let diagnostic=health.clone();let(tx,rx)=tokio::sync::oneshot::channel();let(release,ready)=tokio::sync::oneshot::channel();
++        let task=tokio::spawn(crate::probe_policy::DiagnosticToken::measurement().scope(async move {
++            diagnostic.set_alive(false);diagnostic.record_delay(999);tx.send(()).unwrap();ready.await.unwrap();diagnostic.record_delay(0);
++        }));
++        rx.await.unwrap();health.record_delay(7);release.send(()).unwrap();task.await.unwrap();
++        assert_eq!(observer.0.load(Ordering::SeqCst),1);assert!(health.alive());assert_eq!(health.last_delay(),7);assert_eq!(health.delay_history().len(),1);
++    }
++}
+--- a/crates/meow-common/src/chain_health.rs
++++ b/crates/meow-common/src/chain_health.rs
+@@ -293,6 +293,7 @@
+     /// Remember that `owner` dials `target` through this group. The health
+     /// check probes the chain to `target` through one of its owners.
+     pub fn note_owner(&self, target: &ChainTarget, owner: &str) {
++        if crate::probe_policy::DiagnosticToken::capture().is_measurement() { return; }
+         if let Some(state) = self.targets.read().get(target) {
+             if state.owners.iter().any(|o| o == owner) {
+                 return;
+@@ -385,6 +386,7 @@
+         reach: Reach,
+         now: Instant,
+     ) -> Option<CarrierChange> {
++        if crate::probe_policy::DiagnosticToken::capture().is_measurement() { return None; }
+         {
+             let targets = self.targets.read();
+             let state = targets.get(target);
+@@ -457,6 +459,13 @@
+     /// ([`Self::record_failed`]), or the members would all be blocked when
+     /// it comes back.
+     pub fn blame(&self, target: &ChainTarget, member: &str) -> Blame {
++        if crate::probe_policy::DiagnosticToken::capture().is_measurement() {
++            let targets = self.targets.read();
++            let Some(state) = targets.get(target) else { return Blame::Member; };
++            let count = state.failing.len() + usize::from(
++                state.failing.len() <= BLAMED_MEMBERS && !state.failing.iter().any(|name| name == member));
++            return if count > BLAMED_MEMBERS { Blame::Target } else { Blame::Member };
++        }
+         let mut targets = self.targets.write();
+         entry(&mut targets, target, Instant::now()).blame(member)
+     }
+@@ -480,6 +489,7 @@
+         reason: &'static str,
+         now: Instant,
+     ) -> Option<Duration> {
++        if crate::probe_policy::DiagnosticToken::capture().is_measurement() { return None; }
+         let mut targets = self.targets.write();
+         let state = entry(&mut targets, target, now);
+         let m = state.members.entry(SmolStr::new(member)).or_default();
+@@ -992,3 +1002,23 @@
+         assert!(targets.contains(&"new.example.com:8443".to_string()));
+     }
+ }
++
++#[cfg(test)]
++mod diagnostic_tests {
++    use super::*;
++    #[tokio::test]
++    async fn diagnostic_chain_owners_carrier_strikes_blame_and_blocks_stay_byte_semantic_same() {
++        let health=ChainHealth::tracking_carriers();let target=ChainTarget::from_server_addr("127.0.0.1:443").unwrap();
++        health.note_owner(&target,"business");health.record_reached(&target,"A");
++        health.record_failed(&target,"B",ChainVerdict::Probe{hold:Duration::from_secs(30)},"test");health.blame(&target,"B");
++        let snapshot=|| {let entries=health.targets.read();let entry=entries.get(&target).unwrap();
++            let mut members=entry.members.iter().map(|(name,state)|(name.clone(),state.strikes,state.level,state.blocked_until,state.reason)).collect::<Vec<_>>();members.sort_by(|a,b|a.0.cmp(&b.0));
++            (entries.len(),entry.owners.clone(),entry.failing.clone(),entry.carrier.clone(),entry.used,members)};
++        let before=snapshot();crate::probe_policy::DiagnosticToken::measurement().scope(async {
++            health.note_owner(&target,"probe");health.record_reached(&target,"B");health.record_probe_reached(&target,"B",true);
++            health.record_failed(&target,"C",ChainVerdict::Passive,"test");for name in ["C","D","E","F"] {health.blame(&target,name);}
++            let other=ChainTarget::from_server_addr("127.0.0.2:443").unwrap();health.note_owner(&other,"probe");health.blame(&other,"X");
++        }).await;assert_eq!(snapshot(),before);
++        health.record_reached(&target,"B");assert_ne!(snapshot(),before);
++    }
++}
 --- /dev/null
 +++ b/crates/meow-common/src/dial_outcome.rs
 @@ -0,0 +1,67 @@
@@ -1428,7 +1613,9 @@
 +}
 --- /dev/null
 +++ b/crates/meow-common/src/probe_policy.rs
-@@ -0,0 +1,159 @@
+@@ -0,0 +1,161 @@
++pub use meow_transport::transport_tasks::DiagnosticToken;
++
 +use serde::{Deserialize, Serialize};
 +use std::{future::Future, io, net::SocketAddr, pin::Pin, sync::Arc};
 +use futures::{stream::FuturesUnordered, StreamExt};
@@ -2515,16 +2702,36 @@
  // Force-disabled on iOS/Android: mobile apps embed their own UI and must not
  // ship the unzip/download path regardless of the feature flag (issue #223).
  #[cfg(all(
-@@ -30,6 +35,8 @@
+@@ -30,6 +35,28 @@
  #[cfg(test)]
  mod test_support;
  
++pub use meow_proxy::health::{probe_without_effects, probe_without_effects_detailed,
++    ProbeMeasurement as ManagedProbeMeasurement, UrlTestError as ManagedProbeError};
++
++/// Actual private dialer/wrapper dependencies for the host's existing graph
++/// capture. Retain the returned proof and test is_current() under final CAS.
++pub fn managed_probe_dependencies(proxy: &Arc<dyn meow_common::Proxy>) -> std::io::Result<ManagedProbeDependencies> {
++    proxy.probe_dependencies()
++}
++pub use meow_common::adapter::ProbeDependencies as ManagedProbeDependencies;
++
++pub use proxy_provider::ProxyProviderProjection;
++/// Read candidate edges using Core's actual group slots and provider filters.
++/// Caller retains projection and02 dependency proofs through final Native CAS.
++pub fn managed_probe_members_projected(proxy: &Arc<dyn meow_common::Proxy>, projection: &ProxyProviderProjection)
++    -> std::io::Result<Option<Vec<Arc<dyn meow_common::Proxy>>>> {
++    if !projection.is_current() { return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "staleProviderProjection")); }
++    Ok(proxy.projected_member_proxies(projection.slots()))
++}
++
++
 +pub use meow_rules as offline_rules;
 +pub use maxminddb as offline_maxminddb;
  pub use dropped_providers::DroppedProviders;
  pub use geodata::GeoDataConfig;
  
-@@ -45,6 +52,38 @@
+@@ -45,6 +72,38 @@
  use std::sync::Arc;
  use tracing::{debug, info, warn};
  
@@ -2563,7 +2770,7 @@
  pub(crate) async fn spawn_blocking_with_current_dispatcher<F, R>(
      f: F,
  ) -> Result<R, tokio::task::JoinError>
-@@ -53,7 +92,7 @@
+@@ -53,7 +112,7 @@
      R: Send + 'static,
  {
      let dispatch = tracing::dispatcher::get_default(Clone::clone);
@@ -2572,7 +2779,7 @@
  }
  
  pub(crate) fn parse_optional_socket_addr(
-@@ -603,6 +642,7 @@
+@@ -603,6 +662,7 @@
  /// True when config loading must skip remote proxy-provider fetches (see
  /// [`set_offline_validate`]).
  pub fn is_offline_validate() -> bool {
@@ -2580,7 +2787,7 @@
      OFFLINE_VALIDATE.load(std::sync::atomic::Ordering::Relaxed)
  }
  
-@@ -3902,10 +3942,19 @@
+@@ -3902,10 +3962,19 @@
      mut raw: raw::RawConfig,
      cache_dir: Option<&Path>,
  ) -> Result<Config, anyhow::Error> {
@@ -2604,7 +2811,7 @@
      if let Some(ps) = raw.proxies.as_mut() {
          ech_dns::preresolve_ech(ps, raw.strict.unwrap_or(false))
              .await
-@@ -7771,3 +7820,8 @@
+@@ -7771,3 +7840,8 @@
          );
      }
  }
@@ -2917,7 +3124,7 @@
 +}
 --- /dev/null
 +++ b/crates/meow-config/src/owned_load.rs
-@@ -0,0 +1,365 @@
+@@ -0,0 +1,391 @@
 +use parking_lot::Mutex;
 +use std::{cell::RefCell, collections::HashMap, future::Future, pin::Pin, sync::{Arc, atomic::{AtomicU64, Ordering}}};
 +use tokio::{sync::Notify, task::{AbortHandle, JoinHandle}};
@@ -3078,9 +3285,10 @@
 +    where F: FnOnce() -> R + Send + 'static, R: Send + 'static {
 +        let lease = self.lease().ok_or("ownedLoadScopeClosed")?;
 +        let owner = self.clone();
++        let diagnostic = meow_common::probe_policy::DiagnosticToken::capture();
 +        Ok(tokio::task::spawn_blocking(move || {
 +            let _lease = lease;
-+            blocking_with(owner, work)
++            diagnostic.run(|| blocking_with(owner, work))
 +        }))
 +    }
 +    pub fn cancel(&self) {
@@ -3110,23 +3318,24 @@
 +
 +pub(crate) fn spawn<F>(work: F) -> JoinHandle<F::Output>
 +where F: Future + Send + 'static, F::Output: Send + 'static {
-+    let Some(owner) = OwnedLoadScope::current() else { return tokio::spawn(work); };
++    let Some(owner) = OwnedLoadScope::current() else { return tokio::spawn(meow_common::probe_policy::DiagnosticToken::capture().scope(work)); };
 +    owner.spawn_owned(work).unwrap_or_else(|_| tokio::spawn(async { panic!("ownedLoadScopeClosed") }))
 +}
 +
 +fn blocking_with<F, R>(owner: Arc<OwnedLoadScope>, work: F) -> R
 +where F: FnOnce() -> R + Send + 'static, R: Send + 'static {
++    let diagnostic = meow_common::probe_policy::DiagnosticToken::capture();
 +    let result = Arc::new(Mutex::new(None));
 +    let output = result.clone();
 +    let context = owner.context.clone();
 +    context.run_blocking(Box::new(move || {
-+        BLOCKING.with(|slot| {
++        diagnostic.run(|| BLOCKING.with(|slot| {
 +            let prior = slot.replace(Some(owner));
 +            struct Restore<'a>(&'a RefCell<Option<Arc<OwnedLoadScope>>>, Option<Arc<OwnedLoadScope>>);
 +            impl Drop for Restore<'_> { fn drop(&mut self) { self.0.replace(self.1.take()); } }
 +            let _restore = Restore(slot, prior);
 +            *output.lock() = Some(work());
-+        })
++        }))
 +    }));
 +    let value = result.lock().take().expect("LoadContext must run blocking work");
 +    value
@@ -3134,6 +3343,7 @@
 +
 +pub(crate) fn wrap_with<F>(owner: Arc<OwnedLoadScope>, work: F) -> impl Future<Output = F::Output> + Send
 +where F: Future + Send + 'static, F::Output: Send + 'static {
++    let diagnostic = meow_common::probe_policy::DiagnosticToken::capture();
 +    let result = Arc::new(Mutex::new(None));
 +    let output = result.clone();
 +    let context = owner.context.clone();
@@ -3141,35 +3351,37 @@
 +        let value = owner.run(work).await;
 +        *output.lock() = Some(value);
 +    }));
-+    async move {
++    diagnostic.scope(async move {
 +        wrapped.await;
 +        let value = result.lock().take().expect("LoadContext must await async work");
 +        value
-+    }
++    })
 +}
 +
 +pub(crate) fn wrap_current<F>(work: F) -> impl Future<Output = F::Output> + Send
 +where F: Future + Send + 'static, F::Output: Send + 'static {
 +    let owner = OwnedLoadScope::current();
-+    async move {
++    meow_common::probe_policy::DiagnosticToken::capture().scope(async move {
 +        match owner { Some(owner) => wrap_with(owner, work).await, None => work.await }
-+    }
++    })
 +}
 +
 +pub(crate) fn spawn_blocking<F, R>(work: F) -> JoinHandle<R>
 +where F: FnOnce() -> R + Send + 'static, R: Send + 'static {
-+    let Some(owner) = OwnedLoadScope::current() else { return tokio::task::spawn_blocking(work); };
++    let diagnostic = meow_common::probe_policy::DiagnosticToken::capture();
++    let Some(owner) = OwnedLoadScope::current() else { return tokio::task::spawn_blocking(move || diagnostic.run(work)); };
 +    let Some(lease) = owner.lease() else {
 +        return tokio::spawn(async { panic!("ownedLoadScopeClosed") });
 +    };
 +    tokio::task::spawn_blocking(move || {
 +        let _lease = lease;
-+        blocking_with(owner, work)
++        diagnostic.run(|| blocking_with(owner, work))
 +    })
 +}
 +
 +pub(crate) fn spawn_thread<F>(builder: std::thread::Builder, work: F) -> std::io::Result<()>
 +where F: FnOnce() + Send + 'static {
++    let diagnostic = meow_common::probe_policy::DiagnosticToken::capture();
 +    let owner = OwnedLoadScope::current();
 +    let lease = match owner.as_ref() {
 +        Some(owner) => Some(owner.lease().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Interrupted, "ownedLoadScopeClosed"))?),
@@ -3179,7 +3391,7 @@
 +    let context = owner.clone();
 +    let thread = builder.spawn(move || {
 +        let _lease = lease;
-+        match context { Some(owner) => blocking_with(owner, work), None => work() }
++        diagnostic.run(|| match context { Some(owner) => blocking_with(owner, work), None => work() })
 +    })?;
 +    if let Some(jobs) = jobs.as_mut() { jobs.threads.push(thread); }
 +    Ok(())
@@ -3283,9 +3495,30 @@
 +    if scope.is_none() && owner.context.requires_dns_transport_scope() { return Err("dnsTransportOwnerMissing"); }
 +    Ok(scope)
 +}
++
++#[cfg(test)]
++mod diagnostic_tests {
++    use super::*;
++    use meow_common::probe_policy::DiagnosticToken;
++    #[tokio::test]
++    async fn diagnostic_owned_async_blocking_and_thread_work_captures_same_round() {
++        let owner=OwnedLoadScope::new();
++        DiagnosticToken::measurement().scope(async {
++            let observed=owner.spawn_owned(async {assert!(DiagnosticToken::capture().is_measurement());
++                spawn_blocking(|| DiagnosticToken::capture().is_measurement()).await.unwrap()
++            }).unwrap().await.unwrap();assert!(observed);
++            assert!(owner.spawn_blocking_owned(||DiagnosticToken::capture().is_measurement()).unwrap().await.unwrap());
++            let(tx,rx)=tokio::sync::oneshot::channel();owner.run(async {
++                spawn_thread(std::thread::Builder::new(),move || {tx.send(DiagnosticToken::capture().is_measurement()).unwrap();}).unwrap();
++            }).await;assert!(rx.await.unwrap());
++        }).await;
++        assert!(!owner.spawn_owned(async {DiagnosticToken::capture().is_measurement()}).unwrap().await.unwrap());
++        owner.close().await.unwrap();
++    }
++}
 --- /dev/null
 +++ b/crates/meow-config/src/provider_events.rs
-@@ -0,0 +1,45 @@
+@@ -0,0 +1,67 @@
 +use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
 +use serde::Serialize;
 +static NEXT_SOURCE: AtomicU64 = AtomicU64::new(1);
@@ -3297,6 +3530,28 @@
 +pub struct ProviderIdentity { pub kind: ProviderKind, pub name: String, pub source: u64 }
 +pub trait ProviderLease: Send + Sync {
 +    fn commit(&self, changed: bool, install: &mut dyn FnMut()) -> Result<(), String>;
++    /// Strict client projection before DNS pre-resolution or adapter creation.
++    /// The canonical maps continue through the real provider factory.
++    fn normalize_proxy_nodes(&self, _document: &serde_yaml::Value, _nodes: &mut Vec<std::collections::HashMap<String, serde_yaml::Value>>) -> Result<(), String> { Ok(()) }
++    /// Preflight before writing a fetched payload to cache. The managed bridge
++    /// rejects graphs whose members it cannot observe; CLI leases stay unchanged.
++    fn validate_proxy_members(&self, _members: &[Arc<dyn meow_common::Proxy>], _dialers: &[String]) -> Result<(), String> { Ok(()) }
++    /// Projected preflight runs before fetched cache/userinfo writes.
++    fn validate_proxy_projection(&self, projection: &crate::proxy_provider::ProxyProviderProjection, dialers: &[String]) -> Result<(), String> {
++        if !projection.is_current() { return Err("staleProviderProjection".into()); }
++        self.validate_proxy_members(projection.members(), dialers)
++    }
++    /// Both validation and original installation consume the same actual
++    /// factory-produced candidate. Defaults retain existing CLI/host behavior.
++    fn commit_proxy_projection(&self, projection: &crate::proxy_provider::ProxyProviderProjection, dialers: &[String], install: &mut dyn FnMut()) -> Result<(), String> {
++        if !projection.is_current() { return Err("staleProviderProjection".into()); }
++        self.commit_proxy(projection.members(), dialers, install)
++    }
++    /// Publish a typed proxy generation under the same provider commit gate.
++    fn commit_proxy(&self, members: &[Arc<dyn meow_common::Proxy>], dialers: &[String], install: &mut dyn FnMut()) -> Result<(), String> {
++        self.validate_proxy_members(members, dialers)?;
++        self.commit(true, install)
++    }
 +}
 +pub trait ProviderObserver: Send + Sync {
 +    fn validate(&self, kind: ProviderKind, name: &str) -> Result<(), String>;
@@ -3333,17 +3588,23 @@
 +}
 --- a/crates/meow-config/src/proxy_parser.rs
 +++ b/crates/meow-config/src/proxy_parser.rs
-@@ -35,18 +35,22 @@
+@@ -35,18 +35,28 @@
  /// Wraps a ProxyAdapter to implement the full Proxy trait
  pub struct WrappedProxy {
      adapter: Box<dyn ProxyAdapter>,
 +    configured_name: Option<String>,
++    probe_dialer: Option<Arc<dyn meow_proxy::dialer::TcpDialer>>,
  }
  
  impl WrappedProxy {
      pub fn new(adapter: Box<dyn ProxyAdapter>) -> Self {
 -        Self { adapter }
-+        Self { adapter, configured_name: None }
++        Self { adapter, configured_name: None, probe_dialer: None }
++    }
++    /// Retain the exact same dialer Arc supplied to the protocol factory.
++    /// This is metadata for read-only graph capture, not a second dial path.
++    fn with_probe_dialer(mut self, dialer: Arc<dyn meow_proxy::dialer::TcpDialer>) -> Self {
++        self.probe_dialer = Some(dialer); self
 +    }
 +    fn with_name(mut self, name: &str) -> Self {
 +        self.configured_name = Some(name.to_owned()); self
@@ -3358,16 +3619,95 @@
      }
      fn adapter_type(&self) -> AdapterType {
          self.adapter.adapter_type()
-@@ -346,7 +350,7 @@
+@@ -89,6 +99,12 @@
+ }
+ 
+ impl Proxy for WrappedProxy {
++    fn probe_dependencies(&self) -> std::io::Result<meow_common::adapter::ProbeDependencies> {
++        match &self.probe_dialer {
++            Some(dialer) => dialer.probe_dependencies(),
++            None => Ok(meow_common::adapter::ProbeDependencies::default()),
++        }
++    }
+     fn alive(&self) -> bool {
+         self.adapter.health().alive()
+     }
+@@ -279,7 +295,7 @@
+             }
+             #[cfg(not(feature = "mux"))]
+             parse_mux_options(name, config)?;
+-            Ok(Arc::new(WrappedProxy::new(Box::new(adapter))))
++            Ok(Arc::new(WrappedProxy::new(Box::new(adapter)).with_probe_dialer(Arc::clone(dialer))))
+         }
+         #[cfg(feature = "trojan")]
+         "trojan" => {
+@@ -328,47 +344,47 @@
+             }
+             #[cfg(not(feature = "mux"))]
+             parse_mux_options(name, config)?;
+-            Ok(Arc::new(WrappedProxy::new(Box::new(adapter))))
++            Ok(Arc::new(WrappedProxy::new(Box::new(adapter)).with_probe_dialer(Arc::clone(dialer))))
+         }
+         #[cfg(feature = "vless")]
+         "vless" => {
+             let adapter = parse_vless(name, config, dialer)?;
+-            Ok(Arc::new(WrappedProxy::new(Box::new(adapter))))
++            Ok(Arc::new(WrappedProxy::new(Box::new(adapter)).with_probe_dialer(Arc::clone(dialer))))
+         }
+         "http" => {
+             let adapter = parse_http(name, config, dialer)?;
+-            Ok(Arc::new(WrappedProxy::new(Box::new(adapter))))
++            Ok(Arc::new(WrappedProxy::new(Box::new(adapter)).with_probe_dialer(Arc::clone(dialer))))
+         }
+         "socks5" => {
+             let adapter = parse_socks5(name, config, dialer)?;
+-            Ok(Arc::new(WrappedProxy::new(Box::new(adapter))))
++            Ok(Arc::new(WrappedProxy::new(Box::new(adapter)).with_probe_dialer(Arc::clone(dialer))))
+         }
          "direct" => {
              reject_unthreaded_dialer(name, "direct", dialer)?;
              let adapter = parse_direct(name, config, ipv6)?;
 -            Ok(Arc::new(WrappedProxy::new(Box::new(adapter))))
-+            Ok(Arc::new(WrappedProxy::new(Box::new(adapter)).with_name(name)))
++            Ok(Arc::new(WrappedProxy::new(Box::new(adapter)).with_probe_dialer(Arc::clone(dialer)).with_name(name)))
          }
          #[cfg(feature = "anytls")]
          "anytls" => {
-@@ -1135,7 +1139,11 @@
+             reject_unthreaded_dialer(name, "anytls", dialer)?;
+             let adapter = parse_anytls(name, config)?;
+-            Ok(Arc::new(WrappedProxy::new(Box::new(adapter))))
++            Ok(Arc::new(WrappedProxy::new(Box::new(adapter)).with_probe_dialer(Arc::clone(dialer))))
+         }
+         #[cfg(feature = "hysteria2")]
+         "hysteria2" => {
+             reject_unthreaded_dialer(name, "hysteria2", dialer)?;
+             let adapter = parse_hysteria2(name, config)?;
+-            Ok(Arc::new(WrappedProxy::new(Box::new(adapter))))
++            Ok(Arc::new(WrappedProxy::new(Box::new(adapter)).with_probe_dialer(Arc::clone(dialer))))
+         }
+         #[cfg(feature = "vmess")]
+         "vmess" => {
+             let adapter = parse_vmess(name, config, dialer)?;
+-            Ok(Arc::new(WrappedProxy::new(Box::new(adapter))))
++            Ok(Arc::new(WrappedProxy::new(Box::new(adapter)).with_probe_dialer(Arc::clone(dialer))))
+         }
+         #[cfg(feature = "snell")]
+         "snell" => {
+             let adapter = parse_snell(name, config, dialer)?;
+-            Ok(Arc::new(WrappedProxy::new(Box::new(adapter))))
++            Ok(Arc::new(WrappedProxy::new(Box::new(adapter)).with_probe_dialer(Arc::clone(dialer))))
+         }
+         #[cfg(not(feature = "trusttunnel"))]
+         "trusttunnel" => Err(feature_gated_proxy_type("trusttunnel")),
+@@ -1093,7 +1109,7 @@
+         Arc::clone(dialer),
+     )
+     .map_err(|error| error.to_string())?;
+-    Ok(Arc::new(WrappedProxy::new(Box::new(adapter))))
++    Ok(Arc::new(WrappedProxy::new(Box::new(adapter)).with_probe_dialer(Arc::clone(dialer))))
+ }
+ 
+ /// Parse a `type: anytls` proxy block into an [`AnytlsAdapter`].
+@@ -1135,7 +1151,11 @@
          .and_then(serde_yaml::Value::as_bool)
          .unwrap_or(false);
  
@@ -3380,7 +3720,7 @@
  }
  
  /// Parse a `type: hysteria2` proxy block.
-@@ -1887,26 +1895,22 @@
+@@ -1887,26 +1907,22 @@
          tls_cfg.fingerprint = client_fingerprint.map(std::string::ToString::to_string);
          tls_cfg.reality = reality;
  
@@ -3420,7 +3760,7 @@
                  }
              }
          }
-@@ -4833,8 +4837,7 @@
+@@ -4833,8 +4849,7 @@
      // rather than the strict pass's error failing the whole load.
      #[tokio::test]
      async fn load_config_unknown_use_provider_warns_and_loads() {
@@ -3430,7 +3770,7 @@
          let yaml = "proxies:\n  - {name: p, type: ss, server: 127.0.0.1, port: 443, cipher: aes-128-gcm, password: x}\n\
              proxy-groups:\n  - {name: g, type: load-balance, proxies: [p], use: [ghost]}\n";
          let cfg = crate::load_config_from_str(yaml)
-@@ -5472,3 +5475,24 @@
+@@ -5472,3 +5487,169 @@
          assert_eq!(names, ["ok", "plain"], "dropped: {names:?}");
      }
  }
@@ -3455,17 +3795,183 @@
 +        }
 +    }
 +}
++
++
++#[cfg(test)]
++mod managed_dependency_tests {
++    use super::*;
++    use meow_proxy::dialer::{DialerTarget, DirectDialer, NamedProxyDialer, ProxyRegistry, TcpDialer};
++    use std::{net::SocketAddr, time::Duration};
++    use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream}, sync::Notify};
++
++    async fn header(stream: &mut TcpStream) -> Vec<u8> {
++        let mut data = Vec::new();
++        while !data.ends_with(b"\r\n\r\n") {
++            data.push(stream.read_u8().await.unwrap()); assert!(data.len() < 8192);
++        }
++        data
++    }
++    struct RealPeers {
++        proxy: SocketAddr,
++        origin: SocketAddr,
++        entered: Arc<Notify>,
++        release: Arc<Notify>,
++        origin_task: tokio::task::JoinHandle<()>,
++        proxy_task: tokio::task::JoinHandle<()>,
++    }
++    impl RealPeers {
++        async fn start() -> Self {
++            let origin_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
++            let origin = origin_listener.local_addr().unwrap();
++            let proxy_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
++            let proxy = proxy_listener.local_addr().unwrap();
++            let entered = Arc::new(Notify::new()); let release = Arc::new(Notify::new());
++            let e = entered.clone(); let r = release.clone();
++            let origin_task = tokio::spawn(async move {
++                let (mut stream, _) = origin_listener.accept().await.unwrap();
++                let request = header(&mut stream).await;
++                assert!(request.starts_with(b"GET /actual HTTP/1.1\r\n"));
++                e.notify_one(); r.notified().await;
++                stream.write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
++                stream.shutdown().await.unwrap();
++            });
++            let proxy_task = tokio::spawn(async move {
++                let (mut incoming, _) = proxy_listener.accept().await.unwrap();
++                let request = String::from_utf8(header(&mut incoming).await).unwrap();
++                let target = request.lines().next().unwrap().strip_prefix("CONNECT ").unwrap().split_whitespace().next().unwrap();
++                assert_eq!(target, origin.to_string());
++                let mut outgoing = TcpStream::connect(target).await.unwrap();
++                incoming.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n").await.unwrap();
++                let _ = tokio::io::copy_bidirectional(&mut incoming, &mut outgoing).await;
++            });
++            Self { proxy, origin, entered, release, origin_task, proxy_task }
++        }
++        fn url(&self) -> String { format!("http://{}/actual", self.origin) }
++        async fn join(self) {
++            tokio::time::timeout(Duration::from_secs(5), self.origin_task).await.unwrap().unwrap();
++            tokio::time::timeout(Duration::from_secs(5), self.proxy_task).await.unwrap().unwrap();
++        }
++    }
++    fn publish(registry: &ProxyRegistry, proxy: Arc<dyn Proxy>) {
++        registry.publish(Arc::new(HashMap::from([(SmolStr::new("front"), proxy)])));
++    }
++    #[tokio::test(flavor="multi_thread", worker_threads=2)]
++    async fn managed_dependency_factory_actual_injected_dial_retains_identity_and_fences_registry_aba() {
++        let peers = RealPeers::start().await;
++        let a: Arc<dyn Proxy> = Arc::new(DirectAdapter::new());
++        let b: Arc<dyn Proxy> = Arc::new(DirectAdapter::new());
++        let registry = ProxyRegistry::default(); publish(&registry, a.clone());
++        let dialer: Arc<dyn TcpDialer> = Arc::new(NamedProxyDialer::new(DialerTarget::new("front", &registry)));
++        let raw: HashMap<String, serde_yaml::Value> = serde_yaml::from_str(&format!(
++            "name: actual-http\ntype: http\nserver: 127.0.0.1\nport: {}\n", peers.proxy.port())).unwrap();
++        let target = parse_proxy_with_dialer(&raw, &dialer, false).unwrap();
++        let captured = crate::managed_probe_dependencies(&target).unwrap();
++        assert_eq!(captured.proxies.len(), 1); assert!(Arc::ptr_eq(&captured.proxies[0], &a));
++        assert!(captured.is_current()); assert!(target.delay_history().is_empty());
++        let held = target.clone(); let url = peers.url();
++        let task = tokio::spawn(async move {
++            crate::probe_without_effects_detailed(&held, &url, Some("204"), Duration::from_secs(5)).await
++        });
++        tokio::time::timeout(Duration::from_secs(5), peers.entered.notified()).await.unwrap();
++        publish(&registry, b.clone()); assert!(!captured.is_current());
++        let replacement = crate::managed_probe_dependencies(&target).unwrap();
++        assert!(replacement.is_current()); assert!(Arc::ptr_eq(&replacement.proxies[0], &b));
++        peers.release.notify_one();
++        let measured = tokio::time::timeout(Duration::from_secs(5), task).await.unwrap().unwrap().unwrap();
++        assert!(measured.delay >= 1); assert_eq!(measured.core_epoch, None);
++        assert!(target.delay_history().is_empty()); assert!(a.delay_history().is_empty());
++        assert!(!captured.is_current(), "completed old I/O is not a commit permit");
++        publish(&registry, a.clone());
++        assert!(!captured.is_current(), "same Arc restored must not defeat publication CAS");
++        assert!(!replacement.is_current());
++        let latest = crate::managed_probe_dependencies(&target).unwrap();
++        assert!(latest.is_current()); assert!(Arc::ptr_eq(&latest.proxies[0], &a));
++        drop(registry); assert!(latest.is_current(), "captured proof owns the same registry generation");
++        drop(captured); drop(replacement); drop(latest);
++        assert!(crate::managed_probe_dependencies(&target).is_err(), "weak private dialer fails after the final real owner drops");
++        peers.join().await;
++    }
++    #[tokio::test(flavor="multi_thread", worker_threads=2)]
++    async fn managed_dependency_dpa_private_inner_and_real_front_keep_alias_health_and_stale_proof() {
++        let peers = RealPeers::start().await;
++        let raw: HashMap<String, serde_yaml::Value> = serde_yaml::from_str(&format!(
++            "name: actual-front\ntype: http\nserver: 127.0.0.1\nport: {}\n", peers.proxy.port())).unwrap();
++        let direct: Arc<dyn TcpDialer> = Arc::new(DirectDialer);
++        let front = parse_proxy_with_dialer(&raw, &direct, false).unwrap();
++        let inner: Arc<dyn Proxy> = Arc::new(DirectAdapter::new());
++        let registry = ProxyRegistry::default(); publish(&registry, front.clone());
++        let target: Arc<dyn Proxy> = Arc::new(meow_proxy::DialerProxyAdapter::new(inner.clone(), DialerTarget::new("front", &registry)));
++        let captured = crate::managed_probe_dependencies(&target).unwrap();
++        assert_eq!(captured.proxies.len(), 2);
++        assert!(Arc::ptr_eq(&captured.proxies[0], &inner)); assert!(Arc::ptr_eq(&captured.proxies[1], &front));
++        assert!(std::ptr::eq(target.health(), inner.health()), "one health handle must not get two observers");
++        assert!(captured.is_current());
++        let held = target.clone(); let url = peers.url();
++        let task = tokio::spawn(async move {
++            crate::probe_without_effects_detailed(&held, &url, Some("204"), Duration::from_secs(5)).await
++        });
++        tokio::time::timeout(Duration::from_secs(5), peers.entered.notified()).await.unwrap();
++        // Even an equal-Arc republish is a different actual publication.
++        publish(&registry, front.clone()); assert!(!captured.is_current());
++        peers.release.notify_one();
++        assert!(tokio::time::timeout(Duration::from_secs(5), task).await.unwrap().unwrap().is_ok());
++        assert!(target.delay_history().is_empty()); assert!(front.delay_history().is_empty());
++        assert!(!captured.is_current());
++        let after = crate::managed_probe_dependencies(&target).unwrap(); assert!(after.is_current());
++        assert!(Arc::ptr_eq(&after.proxies[0], &inner)); assert!(Arc::ptr_eq(&after.proxies[1], &front));
++        peers.join().await;
++    }
++
++    #[test]
++    fn managed_dependency_unpublished_and_retired_registry_fail_closed_without_dial() {
++        let registry = ProxyRegistry::default();
++        let dialer: Arc<dyn TcpDialer> = Arc::new(NamedProxyDialer::new(DialerTarget::new("front", &registry)));
++        let raw: HashMap<String, serde_yaml::Value> = serde_yaml::from_str(
++            "name: unready-http\ntype: http\nserver: 127.0.0.1\nport: 9\n").unwrap();
++        let target = parse_proxy_with_dialer(&raw, &dialer, false).unwrap();
++        assert_eq!(crate::managed_probe_dependencies(&target).err().unwrap().kind(), std::io::ErrorKind::NotFound);
++        assert!(target.delay_history().is_empty());
++        let front: Arc<dyn Proxy> = Arc::new(DirectAdapter::new()); publish(&registry, front.clone());
++        let captured = crate::managed_probe_dependencies(&target).unwrap();
++        assert!(captured.is_current()); assert!(Arc::ptr_eq(&captured.proxies[0], &front));
++        drop(registry); assert!(captured.is_current());
++        drop(captured);
++        assert_eq!(crate::managed_probe_dependencies(&target).err().unwrap().kind(), std::io::ErrorKind::BrokenPipe);
++        assert!(target.delay_history().is_empty());
++    }
++}
 --- a/crates/meow-config/src/proxy_provider.rs
 +++ b/crates/meow-config/src/proxy_provider.rs
-@@ -46,6 +46,7 @@
+@@ -45,7 +45,28 @@
+     pub lazy: bool,
  }
  
++/// One factory-produced candidate, including the real main/derived slot
++/// replacements. Native retains this value through the final same-plane CAS.
++#[derive(Clone)]
++pub struct ProxyProviderProjection {
++    identity: crate::provider_events::ProviderIdentity,
++    candidate: Arc<()>,
++    main: ProviderSlot,
++    members: Vec<Arc<dyn Proxy>>,
++    slots: meow_common::adapter::ProviderSlotProjection,
++}
++impl ProxyProviderProjection {
++    pub fn identity(&self) -> &crate::provider_events::ProviderIdentity { &self.identity }
++    pub fn members(&self) -> &[Arc<dyn Proxy>] { &self.members }
++    pub fn same_candidate(&self, other: &Self) -> bool { Arc::ptr_eq(&self.candidate, &other.candidate) }
++    pub fn slots(&self) -> &meow_common::adapter::ProviderSlotProjection { &self.slots }
++    pub fn matches_provider_slot(&self, slot: &ProviderSlot) -> bool { Arc::ptr_eq(&self.main, slot) }
++    pub fn is_current(&self) -> bool { self.slots.is_current() }
++    pub fn is_installed(&self) -> bool { self.slots.is_installed() }
++}
++
  pub struct ProxyProvider {
 +    binding: crate::provider_events::ProviderBinding,
      pub name: String,
      pub slot: ProviderSlot,
      pub vehicle_type: &'static str,
-@@ -223,6 +224,7 @@
+@@ -223,6 +244,7 @@
          /// `None` = fetch to memory only (no containment root available for
          /// an on-disk cache; issue #429).
          cache_path: Option<PathBuf>,
@@ -3473,7 +3979,7 @@
      },
  }
  
-@@ -235,6 +237,10 @@
+@@ -235,6 +257,10 @@
          strict: bool,
          dialer_registry: meow_proxy::dialer::ProxyRegistry,
      ) -> Result<Self, String> {
@@ -3484,7 +3990,7 @@
          // Any on-disk location (read or write) must stay inside `cache_dir`
          // (issue #429): `path:` — and the provider *name* feeding the implicit
          // cache location — are attacker-influenced when the config document
-@@ -246,13 +252,15 @@
+@@ -246,13 +272,15 @@
                      .path
                      .as_deref()
                      .ok_or("file proxy-provider requires 'path'")?;
@@ -3502,7 +4008,7 @@
                      .map_err(|e| format!("proxy-provider '{name}': {e}"))?;
                  (Vehicle::File(path), "File")
              }
-@@ -271,29 +279,34 @@
+@@ -271,29 +299,34 @@
                          "proxy-provider '{name}': invalid url '{url}' (strict mode)"
                      ));
                  }
@@ -3558,7 +4064,7 @@
              }
              t => return Err(format!("unknown proxy-provider type '{t}'")),
          };
-@@ -437,6 +450,7 @@
+@@ -437,6 +470,7 @@
              def: Self::def_identity(raw),
              content_hash: Mutex::new(None), // see field docs
              subscription_userinfo: Mutex::new(None),
@@ -3566,7 +4072,27 @@
          })
      }
  
-@@ -525,7 +539,7 @@
+@@ -488,6 +522,19 @@
+         slot
+     }
+ 
++    /// Preview exactly the slot writes commit/update_derived will perform,
++    /// applying the already-compiled actual GroupFilter to the actual Arcs.
++    pub fn project_members(&self, members: Vec<Arc<dyn Proxy>>) -> ProxyProviderProjection {
++        let mut slots = vec![(self.slot.clone(), members.clone())];
++        for (filter, weak) in self.derived.read().iter() {
++            if let Some(slot) = weak.upgrade() {
++                slots.push((slot, members.iter().filter(|proxy| filter.keep(proxy.as_ref())).cloned().collect()));
++            }
++        }
++        ProxyProviderProjection { identity: self.binding.identity().clone(), candidate: Arc::new(()), main: self.slot.clone(), members,
++            slots: meow_common::adapter::ProviderSlotProjection::new(slots) }
++    }
++
+     fn update_derived(&self, proxies: &[Arc<dyn Proxy>]) {
+         let mut derived = self.derived.write();
+         derived.retain(|(filter, weak)| {
+@@ -525,7 +572,7 @@
      async fn fetch_source(&self) -> Result<(String, Option<SubscriptionUserinfo>), String> {
          let registry = &self.dialer_registry;
          match &self.vehicle {
@@ -3575,7 +4101,7 @@
                  .await
                  .map(|text| (text, None))
                  .map_err(|e| {
-@@ -601,13 +615,13 @@
+@@ -601,13 +648,13 @@
  
      /// Persist a parsed-and-committed HTTP payload for offline fallback,
      /// atomically ([`write_atomic`]).
@@ -3591,7 +4117,7 @@
          }
      }
  
-@@ -635,29 +649,30 @@
+@@ -635,77 +682,100 @@
  
      /// Keep the file next to the on-disk cache in step with `userinfo`,
      /// removing it when there is none.
@@ -3627,11 +4153,15 @@
              .ok()
              .and_then(|text| SubscriptionUserinfo::parse(&text));
 -        *self.subscription_userinfo.lock() = userinfo;
+-    }
+-
+-    /// Shared acquisition tail: dedup → parse → persist cache → commit.
 +        userinfo
-     }
- 
-     /// Shared acquisition tail: dedup → parse → persist cache → commit.
-@@ -666,46 +681,61 @@
++    }
++
++    /// Shared acquisition tail: dedup -> parse -> preflight -> commit -> persist.
+     /// `Ok(false)` when the payload is byte-identical to the last commit
+     /// (upstream's hash early-return — `updated_at` only advances on real
      /// content changes). `source` distinguishes a live fetch from an
      /// on-disk cache read — cache content is never written back. A fetch
      /// the provider accepts, changed or not, also sets the plan usage.
@@ -3644,12 +4174,13 @@
 +    pub fn is_busy(&self) -> bool { self.refresh_lock.try_lock().is_err() }
 +
      async fn ingest(&self, content: String, source: Source) -> Result<bool, anyhow::Error> {
+-        let strict = self.strict.load(Ordering::Relaxed);
 +        let operation = self.binding.begin().map_err(anyhow::Error::msg)?;
 +        self.ingest_with_operation(content, source, operation).await
 +    }
 +    async fn ingest_with_operation(&self, content: String, source: Source,
 +        operation: Arc<dyn crate::provider_events::ProviderLease>) -> Result<bool, anyhow::Error> {
-         let strict = self.strict.load(Ordering::Relaxed);
++        let strict = self.strict.load(Ordering::Relaxed) || self.binding.observed();
          let hash = content_hash(&content);
          let from_remote = matches!(source, Source::Fetched(_));
 -        if *self.content_hash.lock() == Some((hash, strict)) {
@@ -3664,30 +4195,31 @@
 +        let unchanged = *self.content_hash.lock() == Some((hash, strict));
 +        if unchanged {
 +            let userinfo = match source {
-+                Source::Fetched(userinfo) => { self.persist_userinfo(userinfo, operation.clone()).await; userinfo },
++                Source::Fetched(userinfo) => userinfo,
 +                Source::Cache => self.load_cached_userinfo().await,
 +            };
 +            operation.commit(false, &mut || {
 +                self.set_userinfo(userinfo);
 +                if from_remote { self.fetched_remote.store(true, Ordering::Relaxed); }
 +            }).map_err(anyhow::Error::msg)?;
++            if from_remote { self.persist_userinfo(userinfo, operation.clone()).await; }
 +            if from_remote { self.logbook_updated(Payload::Unchanged); }
              return Ok(false);
          }
 -        let proxies = self.parse_proxies(&content).await?;
 -        match source {
-+        let (proxies, declared) = self.parse_proxies(&content).await?;
-+        let userinfo = match source {
-             Source::Fetched(userinfo) => {
+-            Source::Fetched(userinfo) => {
 -                self.write_cache(&content).await;
 -                // Rewritten with the cache whether it changed or not, so
 -                // the two on disk always come from the same fetch.
 -                self.set_userinfo(userinfo);
 -                self.persist_userinfo(userinfo).await;
-+                self.write_cache(&content, operation.clone()).await;
-+                self.persist_userinfo(userinfo, operation.clone()).await;
-+                userinfo
-             }
+-            }
++        let (proxies, declared) = self.parse_proxies(&content, operation.as_ref()).await?;
++        let projection = self.project_members(proxies);
++        operation.validate_proxy_projection(&projection, &declared).map_err(anyhow::Error::msg)?;
++        let userinfo = match source {
++            Source::Fetched(userinfo) => userinfo,
              Source::Cache => self.load_cached_userinfo().await,
 -        }
 -        let payload = if self.has_content() {
@@ -3697,15 +4229,12 @@
 -        };
 -        self.commit(proxies);
 -        *self.content_hash.lock() = Some((hash, strict));
--        if from_remote {
--            self.fetched_remote.store(true, Ordering::Relaxed);
--            self.logbook_updated(payload);
--        }
 +        };
 +        let retired = self.slot.read().clone();
 +        let payload = if self.has_content() { Payload::Replaced(retired.len()) } else { Payload::First };
-+        let mut candidate = Some((proxies, declared));
-+        operation.commit(true, &mut || {
++        let observed_dialers = declared.clone();
++        let mut candidate = Some((projection.members().to_vec(), declared));
++        operation.commit_proxy_projection(&projection, &observed_dialers, &mut || {
 +            let (proxies, declared) = candidate.take().expect("provider installation runs once");
 +            *self.declared_dialers.write() = declared;
 +            self.set_userinfo(userinfo);
@@ -3714,6 +4243,16 @@
 +            if from_remote { self.fetched_remote.store(true, Ordering::Relaxed); }
 +        }).map_err(anyhow::Error::msg)?;
 +        drop(retired);
++        // Publish durable fallback only after final owner/epoch/graph admission.
++        // Keep the same lease through actual owned filesystem completion: the
++        // Native busy lane prevents source replacement, and stop joins writers.
+         if from_remote {
+-            self.fetched_remote.store(true, Ordering::Relaxed);
+-            self.logbook_updated(payload);
+-        }
++            self.write_cache(&content, operation.clone()).await;
++            self.persist_userinfo(userinfo, operation.clone()).await;
++        }
 +        info!(provider = %self.name, count = self.slot.read().len(), "proxy-provider refreshed");
 +        if from_remote { self.logbook_updated(payload); }
          Ok(true)
@@ -3722,7 +4261,7 @@
      /// Logbook: a fetch from the source parsed. Recorded when it replaced a
      /// payload or ends a failure the logbook shows: a first load belongs to
      /// the start or config change that declared the provider, and an
-@@ -765,7 +795,15 @@
+@@ -765,7 +835,15 @@
          if self.has_content() {
              return false;
          }
@@ -3739,7 +4278,7 @@
              Ok(content) => content,
              Err(e) if e.kind() == std::io::ErrorKind::NotFound => return false,
              Err(e) => {
-@@ -779,7 +817,9 @@
+@@ -779,7 +857,9 @@
          }
          // Report the cache's age, not the load time (upstream sets
          // `UpdatedAt` to the file's mtime too).
@@ -3750,7 +4289,7 @@
              if let Ok(age) = mtime.duration_since(UNIX_EPOCH) {
                  self.updated_at.store(
                      age.as_secs() as meow_common::atomic::Uint,
-@@ -861,7 +901,7 @@
+@@ -861,7 +941,7 @@
      /// The task holds only a `Weak` between attempts, so a provider dropped
      /// by a config commit — or an embedder shutting down — ends it.
      pub fn spawn_initial_fetch(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
@@ -3759,16 +4298,69 @@
      }
  
      /// Parse a fetched provider payload into proxies.
-@@ -878,7 +918,7 @@
+@@ -878,8 +958,9 @@
      /// `declared_dialers` is rewritten only on the success path that will
      /// be committed: an `Err` keeps the last-good slot running, so it must
      /// keep that generation's declarations too (issue #489 review).
 -    async fn parse_proxies(&self, content: &str) -> Result<Vec<Arc<dyn Proxy>>, anyhow::Error> {
-+    async fn parse_proxies(&self, content: &str) -> Result<(Vec<Arc<dyn Proxy>>, Vec<String>), anyhow::Error> {
-         let strict = self.strict.load(Ordering::Relaxed);
+-        let strict = self.strict.load(Ordering::Relaxed);
++    async fn parse_proxies(&self, content: &str, operation: &dyn crate::provider_events::ProviderLease)
++        -> Result<(Vec<Arc<dyn Proxy>>, Vec<String>), anyhow::Error> {
++        let strict = self.strict.load(Ordering::Relaxed) || self.binding.observed();
          if !crate::yaml_within_depth(content) {
              return Err(anyhow::anyhow!(
-@@ -977,15 +1017,12 @@
+                 "provider YAML exceeds the nesting-depth limit"
+@@ -912,6 +993,19 @@
+             serde_yaml::from_value(list_val)
+                 .map_err(|e| anyhow::anyhow!("provider content is not a proxy list: {e}"))?;
+ 
++        let keep = |raw_map: &HashMap<String, serde_yaml::Value>| {
++            let name = raw_map.get("name").and_then(|value| value.as_str()).unwrap_or("");
++            let kind = raw_map.get("type").and_then(|value| value.as_str()).unwrap_or("").to_lowercase();
++            self.filter.as_ref().is_none_or(|filter| filter.is_match(name))
++                && self.exclude_filter.as_ref().is_none_or(|filter| !filter.is_match(name))
++                && !self.exclude_type.iter().any(|excluded| excluded == &kind)
++        };
++        // Explicit provider filtering is intentional exclusion, not an ignored
++        // field. Managed validation sees only the factory's retained rows.
++        // Standalone CLI keeps its original pre-resolution/filter ordering.
++        if self.binding.observed() { proxy_maps.retain(&keep); }
++        operation.normalize_proxy_nodes(&doc, &mut proxy_maps).map_err(anyhow::Error::msg)?;
++
+         // Pre-resolve any DNS-sourced ECH configs into inline base64 — keeps
+         // `parse_proxy` itself sync. An `ech-opts.enable: true` node with no
+         // query source at all is a defect — strict turns it into an error.
+@@ -922,27 +1016,8 @@
+         let mut declared = Vec::new();
+         let mut result = Vec::new();
+         for raw_map in &proxy_maps {
+-            // Get raw name/type before parsing so we can filter cheaply.
+-            let raw_name = raw_map.get("name").and_then(|v| v.as_str()).unwrap_or("");
+-            let raw_type = raw_map
+-                .get("type")
+-                .and_then(|v| v.as_str())
+-                .unwrap_or("")
+-                .to_lowercase();
+-
+-            if let Some(ref re) = self.filter {
+-                if !re.is_match(raw_name) {
+-                    continue;
+-                }
+-            }
+-            if let Some(ref re) = self.exclude_filter {
+-                if re.is_match(raw_name) {
+-                    continue;
+-                }
+-            }
+-            if self.exclude_type.iter().any(|t| t == &raw_type) {
+-                continue;
+-            }
++            if !keep(raw_map) { continue; }
++            let raw_name = raw_map.get("name").and_then(|value| value.as_str()).unwrap_or("");
+ 
+             match self.parse_node(raw_map, raw_name, &mut declared) {
+                 Ok(proxy) => result.push(proxy),
+@@ -977,15 +1052,12 @@
                  }
              }
          }
@@ -3785,7 +4377,7 @@
          // Main slot first, then the derived views — readers can never
          // observe new derived contents against a stale main slot.
          *self.slot.write() = proxies;
-@@ -1138,10 +1175,11 @@
+@@ -1138,10 +1210,11 @@
          // Hold the generation across fetch+parse+swap: two overlapping
          // refreshes could otherwise interleave slot/derived/declared_dialers
          // from different payloads.
@@ -3799,7 +4391,7 @@
                      Ok(_) => Ok(()),
                      Err(e) => {
                          // A torn payload keeps the last-good set instead of
-@@ -1332,7 +1370,7 @@
+@@ -1332,7 +1405,7 @@
              fetches.push((
                  name.clone(),
                  Arc::clone(&provider),
@@ -3808,7 +4400,7 @@
              ));
          }
          result.insert(name.clone(), provider);
-@@ -1363,7 +1401,7 @@
+@@ -1363,7 +1436,7 @@
                      "proxy-provider still fetching at the startup deadline; \
                       starting empty and finishing in the background");
                  provider.background_pending.store(true, Ordering::Relaxed);
@@ -3817,7 +4409,7 @@
                      if let Ok(Err(e)) = fetch.await {
                          warn!(provider = %name, error = %e, "proxy-provider payload rejected");
                      }
-@@ -1511,30 +1549,19 @@
+@@ -1511,30 +1584,19 @@
  /// scratch, since the manual-refresh endpoint, an interval tick, and a
  /// detached initial fetch can race these writes unlaned, and a torn file
  /// would poison the next read (issue #543 review). Best-effort.
@@ -3861,7 +4453,7 @@
  }
  
  async fn read_cache(path: Option<&Path>, name: &str) -> Result<String, String> {
-@@ -1543,7 +1570,7 @@
+@@ -1543,7 +1605,7 @@
              "proxy-provider '{name}': fetch failed and no on-disk cache is configured"
          ));
      };
@@ -3870,9 +4462,332 @@
          .await
          .map_err(|e| format!("proxy-provider '{name}': no cache at {path:?}: {e}"))
  }
-@@ -3453,3 +3480,28 @@
+@@ -3452,4 +3514,351 @@
+         memory.refresh().await.unwrap();
          assert_eq!(memory.subscription_userinfo(), Some(usage(3, 4)));
      }
++
++    struct AdmissionTestLease {
++        reject: bool,
++        normalized: std::sync::atomic::AtomicUsize,
++        validated: std::sync::atomic::AtomicUsize,
++        installed: std::sync::atomic::AtomicUsize,
++        members: Mutex<Vec<Arc<dyn Proxy>>>,
++    }
++    impl AdmissionTestLease {
++        fn new(reject: bool) -> Arc<Self> {
++            Arc::new(Self { reject, normalized: Default::default(), validated: Default::default(),
++                installed: Default::default(), members: Mutex::new(Vec::new()) })
++        }
++    }
++    impl crate::provider_events::ProviderLease for AdmissionTestLease {
++        fn commit(&self, changed: bool, install: &mut dyn FnMut()) -> Result<(), String> {
++            install();
++            if changed { self.installed.fetch_add(1, Ordering::SeqCst); }
++            Ok(())
++        }
++        fn normalize_proxy_nodes(&self, _document: &serde_yaml::Value,
++            nodes: &mut Vec<HashMap<String, serde_yaml::Value>>) -> Result<(), String> {
++            self.normalized.fetch_add(1, Ordering::SeqCst);
++            nodes[0].insert("name".into(), serde_yaml::Value::String("projected".into()));
++            Ok(())
++        }
++        fn validate_proxy_members(&self, members: &[Arc<dyn Proxy>], dialers: &[String]) -> Result<(), String> {
++            self.validated.fetch_add(1, Ordering::SeqCst);
++            assert_eq!(members[0].name(), "projected"); assert!(dialers.is_empty());
++            if self.reject { return Err("fixtureMemberAdmissionDenied".into()); }
++            *self.members.lock() = members.to_vec();
++            Ok(())
++        }
++    }
++
++    #[tokio::test]
++    async fn companion_member_rejection_preserves_cache_and_last_good_slot() {
++        let dir = tempfile::tempdir().unwrap();
++        let raw = raw_http_provider("http://127.0.0.1:1/not-fetched", None);
++        let provider = ProxyProvider::new("p", &raw, Some(dir.path()), true, false, Default::default()).unwrap();
++        provider.ingest(ONE_NODE.into(), Source::Cache).await.unwrap();
++        let old = provider.proxies()[0].clone();
++        let cache = dir.path().join("provider_p.yaml");std::fs::write(&cache, ONE_NODE).unwrap();
++        let before_hash = *provider.content_hash.lock();
++        let lease = AdmissionTestLease::new(true);
++        let error = provider.ingest_with_operation(TWO_NODES.into(), Source::Fetched(None), lease.clone()).await.unwrap_err();
++        assert!(error.to_string().contains("fixtureMemberAdmissionDenied"));
++        assert_eq!(lease.normalized.load(Ordering::SeqCst), 1);
++        assert_eq!(lease.validated.load(Ordering::SeqCst), 1);
++        assert_eq!(lease.installed.load(Ordering::SeqCst), 0);
++        assert_eq!(std::fs::read_to_string(cache).unwrap(), ONE_NODE);
++        assert_eq!(*provider.content_hash.lock(), before_hash);
++        let retained = provider.proxies();assert_eq!(retained.len(), 1);assert!(Arc::ptr_eq(&retained[0], &old));
++    }
++
++    #[tokio::test]
++    async fn companion_normalized_factory_members_commit_same_arc_and_dial_real_peer() {
++        use tokio::io::{AsyncReadExt, AsyncWriteExt};
++        let dir = tempfile::tempdir().unwrap();
++        let raw = raw_http_provider("http://127.0.0.1:1/not-fetched", None);
++        let provider = ProxyProvider::new("p", &raw, Some(dir.path()), true, false, Default::default()).unwrap();
++        let lease = AdmissionTestLease::new(false);
++        assert!(provider.ingest_with_operation(ONE_NODE.into(), Source::Fetched(None), lease.clone()).await.unwrap());
++        assert_eq!(lease.normalized.load(Ordering::SeqCst), 1);
++        assert_eq!(lease.validated.load(Ordering::SeqCst), 2);
++        assert_eq!(lease.installed.load(Ordering::SeqCst), 1);
++        let published = provider.proxies();assert_eq!(published.len(), 1);assert_eq!(published[0].name(), "projected");
++        assert!(Arc::ptr_eq(&published[0], &lease.members.lock()[0]));
++        assert_eq!(std::fs::read_to_string(dir.path().join("provider_p.yaml")).unwrap(), ONE_NODE);
++        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let target = listener.local_addr().unwrap();
++        let peer = tokio::spawn(async move { let (mut socket, _) = listener.accept().await.unwrap();
++            let mut request = [0;3];socket.read_exact(&mut request).await.unwrap();assert_eq!(&request, b"req");
++            socket.write_all(b"reply").await.unwrap();socket.shutdown().await.unwrap(); });
++        tokio::time::timeout(Duration::from_secs(5), async {
++            let metadata = meow_common::Metadata { dst_ip:Some(target.ip()), dst_port:target.port(), ..Default::default() };
++            let mut connection = published[0].dial_tcp(&metadata).await.unwrap();connection.write_all(b"req").await.unwrap();
++            let mut reply = [0;5];connection.read_exact(&mut reply).await.unwrap();assert_eq!(&reply, b"reply");
++            connection.shutdown().await.unwrap();peer.await.unwrap();
++        }).await.unwrap();
++    }
++
++    // Actual provider factory/slots/HTTP and the public projection consumer
++    // contract, without publishing a temporary route or dialing in validation.
++    struct ProjectionBarrier {
++        entered: tokio::sync::Notify,
++        released: std::sync::Mutex<bool>,
++        changed: std::sync::Condvar,
++    }
++    impl ProjectionBarrier {
++        fn new() -> Arc<Self> { Arc::new(Self { entered: tokio::sync::Notify::new(), released: std::sync::Mutex::new(false), changed: std::sync::Condvar::new() }) }
++        fn pause(&self) {
++            self.entered.notify_one();
++            let released = self.released.lock().unwrap();
++            let (released, deadline) = self.changed.wait_timeout_while(released, Duration::from_secs(5), |value| !*value).unwrap();
++            assert!(!deadline.timed_out() && *released, "test must release preflight before deadline");
++        }
++        fn release(&self) { *self.released.lock().unwrap() = true; self.changed.notify_all(); }
++    }
++    struct ProjectionState { epoch: std::sync::atomic::AtomicU64, cancelled: AtomicBool }
++    impl crate::provider_events::ProviderLease for ProjectionLease {
++        fn commit(&self, _changed: bool, install: &mut dyn FnMut()) -> Result<(), String> {
++            if let Some(barrier) = &self.at_unchanged_commit { barrier.pause(); }
++            self.check()?; install(); self.commits.fetch_add(1, Ordering::SeqCst); Ok(())
++        }
++        fn validate_proxy_projection(&self, projection: &ProxyProviderProjection, _dialers: &[String]) -> Result<(), String> {
++            self.check()?;
++            if projection.identity() != &self.identity || !projection.matches_provider_slot(&self.slot) || !projection.is_current() {
++                return Err("staleProviderProjection".into());
++            }
++            assert_eq!(self.network.load(Ordering::SeqCst), 0, "preflight must not dial");
++            validate_projected_graph(projection)?;
++            *self.preflight.lock() = Some(projection.clone());
++            self.validated.fetch_add(1, Ordering::SeqCst);
++            if let Some(barrier) = &self.after_preflight { barrier.pause(); }
++            Ok(())
++        }
++        fn commit_proxy_projection(&self, projection: &ProxyProviderProjection, _dialers: &[String], install: &mut dyn FnMut()) -> Result<(), String> {
++            self.check()?;
++            let prior = self.preflight.lock();
++            if prior.as_ref().is_none_or(|prior| !prior.same_candidate(projection)) || !projection.is_current() {
++                return Err("staleProviderProjection".into());
++            }
++            validate_projected_graph(projection)?;
++            assert_eq!(self.network.load(Ordering::SeqCst), 0, "commit must precede forwarding");
++            install();
++            assert!(projection.is_installed(), "actual main+filtered slots consume precisely this candidate");
++            self.commits.fetch_add(1, Ordering::SeqCst); Ok(())
++        }
++    }
++    struct ProjectionLease {
++        identity: crate::provider_events::ProviderIdentity,
++        slot: ProviderSlot,
++        state: Arc<ProjectionState>,
++        admitted_epoch: u64,
++        preflight: Mutex<Option<ProxyProviderProjection>>,
++        commits: std::sync::atomic::AtomicUsize,
++        validated: std::sync::atomic::AtomicUsize,
++        network: Arc<std::sync::atomic::AtomicUsize>,
++        after_preflight: Option<Arc<ProjectionBarrier>>,
++        at_unchanged_commit: Option<Arc<ProjectionBarrier>>,
++    }
++    impl ProjectionLease {
++        fn new(provider: &ProxyProvider, network: Arc<std::sync::atomic::AtomicUsize>, after_preflight: Option<Arc<ProjectionBarrier>>, at_unchanged_commit: Option<Arc<ProjectionBarrier>>) -> Arc<Self> {
++            Arc::new(Self { identity: provider.provider_identity().clone(), slot: provider.slot.clone(),
++                state: Arc::new(ProjectionState { epoch: std::sync::atomic::AtomicU64::new(901), cancelled: AtomicBool::new(false) }),
++                admitted_epoch: 901, preflight: Mutex::new(None), commits: Default::default(), validated: Default::default(),
++                network, after_preflight, at_unchanged_commit })
++        }
++        fn check(&self) -> Result<(), String> {
++            if self.state.cancelled.load(Ordering::SeqCst) { return Err("cancelled".into()); }
++            if self.state.epoch.load(Ordering::SeqCst) != self.admitted_epoch { return Err("staleProviderEpoch".into()); }
++            Ok(())
++        }
++    }
++    impl meow_common::probe_policy::ProbeSource for ProjectionState {
++        fn snapshot(&self) -> std::io::Result<Arc<meow_common::probe_policy::ProbePolicy>> {
++            if self.cancelled.load(Ordering::SeqCst) { return Err(std::io::ErrorKind::Interrupted.into()); }
++            Ok(Arc::new(meow_common::probe_policy::ProbePolicy { unified_delay: false, tcp_concurrent: true }))
++        }
++        fn snapshot_with_epoch(&self) -> std::io::Result<(Arc<meow_common::probe_policy::ProbePolicy>, Option<u64>)> {
++            Ok((self.snapshot()?, Some(self.epoch.load(Ordering::SeqCst))))
++        }
++        fn cancelled(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output=()>+Send+'_>> { Box::pin(std::future::pending()) }
++    }
++    // The Native caller owns the same bounded DFS and final gate. This test
++    // consumer validates only Core-returned edges, never predicts a selection.
++    fn validate_projected_graph(projection: &ProxyProviderProjection) -> Result<(), String> {
++        fn visit(proxy: Arc<dyn Proxy>, projection: &ProxyProviderProjection, path: &mut std::collections::BTreeSet<usize>, seen: &mut std::collections::BTreeSet<usize>, depth: usize) -> Result<(), String> {
++            let id = Arc::as_ptr(&proxy).cast::<()>() as usize;
++            if depth > 64 || path.contains(&id) { return Err("projectedProxyCycle".into()); }
++            if !seen.insert(id) { return Ok(()); }
++            path.insert(id);
++            if let Some(members) = crate::managed_probe_members_projected(&proxy, projection).map_err(|e| e.to_string())? {
++                for member in members { visit(member, projection, path, seen, depth+1)?; }
++            }
++            let dependencies = crate::managed_probe_dependencies(&proxy).map_err(|e| e.to_string())?;
++            if !dependencies.is_current() { return Err("staleManagedProxyGraph".into()); }
++            for member in &dependencies.proxies { visit(member.clone(), projection, path, seen, depth+1)?; }
++            path.remove(&id); Ok(())
++        }
++        let mut path = Default::default(); let mut seen = Default::default();
++        for member in projection.members() { visit(member.clone(), projection, &mut path, &mut seen, 0)?; }
++        Ok(())
++    }
++    async fn projection_header(socket: &mut tokio::net::TcpStream) -> Vec<u8> {
++        use tokio::io::AsyncReadExt;
++        let mut bytes = Vec::new();
++        while !bytes.ends_with(b"\r\n\r\n") { bytes.push(socket.read_u8().await.unwrap()); assert!(bytes.len() < 8192); }
++        bytes
++    }
++    async fn projection_payload(body: String, userinfo: Option<&str>) -> (String, tokio::task::JoinHandle<()>) {
++        use tokio::io::AsyncWriteExt;
++        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let address = listener.local_addr().unwrap();
++        let header = userinfo.map(|value| format!("subscription-userinfo: {value}\r\n")).unwrap_or_default();
++        let task = tokio::spawn(async move {
++            let (mut stream, _) = listener.accept().await.unwrap();
++            let request = projection_header(&mut stream).await; assert!(request.starts_with(b"GET "));
++            let response = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n{header}Connection: close\r\n\r\n{body}", body.len());
++            stream.write_all(response.as_bytes()).await.unwrap(); stream.shutdown().await.unwrap();
++        });
++        (format!("http://{address}/provider"), task)
++    }
++    struct ProjectionNetwork {
++        proxy: std::net::SocketAddr,
++        origin: std::net::SocketAddr,
++        count: Arc<std::sync::atomic::AtomicUsize>,
++        proxy_task: tokio::task::JoinHandle<()>,
++        origin_task: tokio::task::JoinHandle<()>,
++    }
++    impl ProjectionNetwork {
++        async fn start() -> Self {
++            use tokio::io::AsyncWriteExt;
++            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); let origin = listener.local_addr().unwrap();
++            let origin_task = tokio::spawn(async move {
++                let (mut socket, _) = listener.accept().await.unwrap();
++                let request = projection_header(&mut socket).await; assert!(request.starts_with(b"HEAD /valid HTTP/1.1\r\n"));
++                socket.write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap(); socket.shutdown().await.unwrap();
++            });
++            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); let proxy = listener.local_addr().unwrap();
++            let count = Arc::new(std::sync::atomic::AtomicUsize::new(0)); let seen = count.clone();
++            let proxy_task = tokio::spawn(async move {
++                let (mut incoming, _) = listener.accept().await.unwrap(); seen.fetch_add(1, Ordering::SeqCst);
++                let request = String::from_utf8(projection_header(&mut incoming).await).unwrap();
++                let target = request.lines().next().unwrap().strip_prefix("CONNECT ").unwrap().split_whitespace().next().unwrap(); assert_eq!(target, origin.to_string());
++                let mut outgoing = tokio::net::TcpStream::connect(target).await.unwrap();
++                incoming.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n").await.unwrap();
++                let _ = tokio::io::copy_bidirectional(&mut incoming, &mut outgoing).await;
++            });
++            Self { proxy, origin, count, proxy_task, origin_task }
++        }
++        async fn finish(self, forwarded: bool) {
++            if !forwarded { self.proxy_task.abort(); self.origin_task.abort(); }
++            for task in [self.proxy_task, self.origin_task] {
++                let joined = tokio::time::timeout(Duration::from_secs(5), task).await.unwrap();
++                if forwarded { joined.unwrap(); } else { assert!(joined.unwrap_err().is_cancelled()); }
++            }
++        }
++    }
++    fn projection_body(port: u16) -> String {
++        format!("proxies:\n  - {{name: X, type: http, server: 127.0.0.1, port: {port}, dialer-proxy: F}}\n  - {{name: B, type: direct}}\n")
++    }
++    fn projection_front(provider: &ProxyProvider, registry: &meow_proxy::dialer::ProxyRegistry, filter: &str) -> Arc<dyn Proxy> {
++        let raw: crate::raw::RawProxyGroup = serde_yaml::from_str(&format!("name: F\ntype: select\nfilter: '{filter}'\n")).unwrap();
++        let filter = GroupFilter::from_raw_group(&raw).unwrap().unwrap();
++        let group: Arc<dyn Proxy> = Arc::new(meow_proxy::SelectorGroup::new_with_providers("F", vec![], vec![provider.derived_slot(&filter)]));
++        registry.publish(Arc::new(HashMap::from([(smol_str::SmolStr::new("F"), group.clone())]))); group
++    }
++    const PROJECTED_OLD: &str = "proxies:\n  - {name: B, type: direct}\n";
++    #[tokio::test(flavor="multi_thread", worker_threads=2)]
++    async fn projected_refresh_filtered_slot_uses_new_actual_b_and_forwards_real_http() {
++        let network = ProjectionNetwork::start().await; let body = projection_body(network.proxy.port());
++        let (url, fetched) = projection_payload(body.clone(), Some("upload=12; download=4; total=50; expire=0")).await;
++        let dir = tempfile::tempdir().unwrap(); let registry = meow_proxy::dialer::ProxyRegistry::default();
++        let provider = ProxyProvider::new("p", &raw_http_provider(&url, None), Some(dir.path()), false, true, registry.clone()).unwrap();
++        provider.ingest(PROJECTED_OLD.into(), Source::Cache).await.unwrap(); let old = provider.proxies()[0].clone();
++        let front = projection_front(&provider, &registry, "^B$");
++        let lease = ProjectionLease::new(&provider, network.count.clone(), None, None);
++        let (text, usage) = provider.fetch_source().await.unwrap();
++        provider.ingest_with_operation(text, Source::Fetched(usage), lease.clone()).await.unwrap();
++        tokio::time::timeout(Duration::from_secs(5), fetched).await.unwrap().unwrap();
++        assert_eq!(lease.commits.load(Ordering::SeqCst), 1); assert_eq!(lease.validated.load(Ordering::SeqCst), 1);
++        let captured = lease.preflight.lock().clone().unwrap(); assert!(captured.is_installed()); assert!(!captured.is_current());
++        assert!(captured.same_candidate(&captured.clone()));
++        let another = provider.project_members(captured.members().to_vec());
++        assert!(!captured.same_candidate(&another), "equal members are not the same factory candidate");
++        assert_eq!(crate::managed_probe_members_projected(&front,&captured).err().unwrap().kind(),std::io::ErrorKind::Interrupted);
++        let members = provider.proxies(); let new_b = members.iter().find(|p| p.name()=="B").unwrap(); let x = members.iter().find(|p|p.name()=="X").unwrap();
++        assert!(!Arc::ptr_eq(new_b, &old)); let actual = front.member_proxies().unwrap(); assert_eq!(actual.len(),1); assert!(Arc::ptr_eq(&actual[0],new_b));
++        assert_eq!(std::fs::read_to_string(dir.path().join("provider_p.yaml")).unwrap(),body);
++        assert_eq!(std::fs::read_to_string(provider.userinfo_path().unwrap()).unwrap(), "upload=12; download=4; total=50; expire=0");
++        let scope = meow_common::probe_policy::ProbeScope::new(lease.state.clone());
++        let measured = scope.scope(crate::probe_without_effects_detailed(x, &format!("http://{}/valid",network.origin), Some("204"), Duration::from_secs(5))).await.unwrap();
++        assert_eq!(measured.core_epoch,Some(901)); assert!(measured.delay>=1); assert_eq!(network.count.load(Ordering::SeqCst),1);
++        assert!(x.delay_history().is_empty()); assert!(new_b.delay_history().is_empty()); network.finish(true).await;
++    }
++    #[tokio::test(flavor="multi_thread", worker_threads=2)]
++    async fn projected_refresh_true_cycle_preserves_http_cache_userinfo_and_never_dials() {
++        let network = ProjectionNetwork::start().await; let body = projection_body(network.proxy.port());
++        let (url, fetched) = projection_payload(body, Some("upload=99; download=0; total=100; expire=0")).await;
++        let dir = tempfile::tempdir().unwrap(); let registry = meow_proxy::dialer::ProxyRegistry::default();
++        let provider = ProxyProvider::new("p", &raw_http_provider(&url,None), Some(dir.path()), false, true, registry.clone()).unwrap();
++        provider.ingest(PROJECTED_OLD.into(), Source::Cache).await.unwrap(); let old = provider.proxies()[0].clone();
++        let _front = projection_front(&provider,&registry,".*");
++        let cache=dir.path().join("provider_p.yaml");let side=provider.userinfo_path().unwrap();std::fs::write(&cache,PROJECTED_OLD).unwrap();std::fs::write(&side,"upload=1; download=0; total=5; expire=0").unwrap();
++        provider.set_userinfo(Some(SubscriptionUserinfo::parse("upload=1; download=0; total=5; expire=0").unwrap()));
++        let info=provider.subscription_userinfo();
++        let hash=*provider.content_hash.lock();let lease=ProjectionLease::new(&provider,network.count.clone(),None,None);
++        let (text,usage)=provider.fetch_source().await.unwrap();let result=provider.ingest_with_operation(text,Source::Fetched(usage),lease.clone()).await;
++        assert!(result.unwrap_err().to_string().contains("projectedProxyCycle"));
++        assert_eq!(lease.commits.load(Ordering::SeqCst),0);assert_eq!(network.count.load(Ordering::SeqCst),0);
++        assert_eq!(std::fs::read_to_string(cache).unwrap(),PROJECTED_OLD);assert_eq!(std::fs::read_to_string(side).unwrap(),"upload=1; download=0; total=5; expire=0");
++        assert_eq!(*provider.content_hash.lock(),hash);assert!(Arc::ptr_eq(&provider.proxies()[0],&old));assert_eq!(provider.subscription_userinfo(),info);
++        tokio::time::timeout(Duration::from_secs(5),fetched).await.unwrap().unwrap();network.finish(false).await;
++    }
++    async fn projection_late_rejection(cancel: bool, unchanged: bool) {
++        let body=if unchanged {PROJECTED_OLD.to_owned()} else {"proxies:\n  - {name: replacement, type: direct}\n".to_owned()};
++        let header=if cancel {None} else {Some("upload=99; download=0; total=100; expire=0")};
++        let (url,fetched)=projection_payload(body,header).await;let dir=tempfile::tempdir().unwrap();
++        let provider=Arc::new(ProxyProvider::new("p",&raw_http_provider(&url,None),Some(dir.path()),false,true,Default::default()).unwrap());
++        provider.ingest(PROJECTED_OLD.into(),Source::Cache).await.unwrap();let old=provider.proxies()[0].clone();
++        let cache=dir.path().join("provider_p.yaml");let side=provider.userinfo_path().unwrap();let previous="upload=1; download=0; total=5; expire=0";
++        std::fs::write(&cache,PROJECTED_OLD).unwrap();std::fs::write(&side,previous).unwrap();provider.set_userinfo(Some(SubscriptionUserinfo::parse(previous).unwrap()));
++        let hash=*provider.content_hash.lock();let info=provider.subscription_userinfo();let barrier=ProjectionBarrier::new();
++        let lease=ProjectionLease::new(&provider,Arc::new(Default::default()),if unchanged{None}else{Some(barrier.clone())},if unchanged{Some(barrier.clone())}else{None});
++        let held=provider.clone();let operation=lease.clone();
++        let task=tokio::spawn(async move {let(text,usage)=held.fetch_source().await.unwrap();held.ingest_with_operation(text,Source::Fetched(usage),operation).await});
++        tokio::time::timeout(Duration::from_secs(5),barrier.entered.notified()).await.unwrap();
++        if cancel {lease.state.cancelled.store(true,Ordering::SeqCst);} else {lease.state.epoch.store(902,Ordering::SeqCst);}
++        barrier.release();let error=tokio::time::timeout(Duration::from_secs(5),task).await.unwrap().unwrap().unwrap_err().to_string();
++        assert!(error.contains(if cancel{"cancelled"}else{"staleProviderEpoch"}));assert_eq!(lease.commits.load(Ordering::SeqCst),0);
++        assert_eq!(std::fs::read_to_string(cache).unwrap(),PROJECTED_OLD);assert_eq!(std::fs::read_to_string(side).unwrap(),previous);
++        assert_eq!(*provider.content_hash.lock(),hash);assert_eq!(provider.subscription_userinfo(),info);assert!(Arc::ptr_eq(&provider.proxies()[0],&old));
++        tokio::time::timeout(Duration::from_secs(5),fetched).await.unwrap().unwrap();
++    }
++    #[tokio::test(flavor="multi_thread", worker_threads=2)]
++    async fn projected_late_epoch_after_preflight_preserves_http_cache_and_receipt() { projection_late_rejection(false,false).await; }
++    #[tokio::test(flavor="multi_thread", worker_threads=2)]
++    async fn projected_late_cancel_after_preflight_preserves_http_sidecar_and_live() { projection_late_rejection(true,false).await; }
++    #[tokio::test(flavor="multi_thread", worker_threads=2)]
++    async fn projected_unchanged_final_rejection_does_not_delete_http_sidecar() { projection_late_rejection(true,true).await; }
++
  }
 +
 +
@@ -6594,7 +7509,22 @@
          let (io, peer) = tokio::io::duplex(64);
 --- a/crates/meow-proxy/src/dialer.rs
 +++ b/crates/meow-proxy/src/dialer.rs
-@@ -446,8 +446,8 @@
+@@ -163,6 +163,14 @@
+     async fn dial_addr(&self, addr: SocketAddr, internal: bool) -> io::Result<Box<dyn Stream>> {
+         self.dial(&addr.ip().to_string(), addr.port(), internal)
+             .await
++    }
++
++    /// Identity capture through this actual dialer, never a name-only lookup
++    /// supplied by the host. Opaque custom proxy dialers fail closed.
++    fn probe_dependencies(&self) -> io::Result<meow_common::adapter::ProbeDependencies> {
++        if self.is_proxy() {
++            Err(io::Error::new(io::ErrorKind::Unsupported, "opaqueProxyDialerDependencies"))
++        } else { Ok(meow_common::adapter::ProbeDependencies::default()) }
+     }
+ 
+     /// Whether this dialer tunnels through another proxy (vs. direct).
+@@ -446,8 +454,8 @@
          /// on its own once the `PollSender` side closes — but only after
          /// the in-flight `write_packet` completes, so a wedged front-proxy
          /// conn would pin it indefinitely; abort that one too.
@@ -6605,7 +7535,7 @@
      }
  
      impl Drop for PacketConnSocket {
-@@ -458,12 +458,12 @@
+@@ -458,12 +466,12 @@
      }
  
      impl PacketConnSocket {
@@ -6620,7 +7550,7 @@
                  let mut buf = vec![0u8; 65536];
                  // try_send drops on a full queue: KCP retransmits, same as
                  // a full kernel socket buffer upstream.
-@@ -471,8 +471,8 @@
+@@ -471,8 +479,8 @@
                      let _ = in_tx.try_send(buf[..n].to_vec());
                  }
                  let _ = reader.close();
@@ -6631,7 +7561,7 @@
                  while let Some(pkt) = out_rx.recv().await {
                      if conn.write_packet(&pkt, &remote).await.is_err() {
                          break;
-@@ -481,12 +481,13 @@
+@@ -481,12 +489,13 @@
                  let _ = conn.close();
              });
  
@@ -6647,7 +7577,18 @@
          }
      }
  
-@@ -794,7 +795,7 @@
+@@ -687,6 +696,10 @@
+ 
+ #[async_trait]
+ impl TcpDialer for ProxyDialer {
++    fn probe_dependencies(&self) -> io::Result<meow_common::adapter::ProbeDependencies> {
++        Ok(meow_common::adapter::ProbeDependencies::unguarded(vec![self.proxy.clone()]))
++    }
++
+     async fn dial(&self, host: &str, port: u16, internal: bool) -> io::Result<Box<dyn Stream>> {
+         self.dial_metadata(inner_dial_metadata(host, port, internal))
+             .await
+@@ -794,7 +807,7 @@
          // internal would leave the front hop permanently "unused" while
          // user traffic flows (issue #555 boundary).
          let conn = self.dial_udp_conn(UdpTarget::Addr(remote), false).await?;
@@ -6656,7 +7597,86 @@
      }
  }
  
-@@ -2586,7 +2587,7 @@
+@@ -808,6 +821,7 @@
+ #[derive(Default)]
+ pub struct RegistryCell {
+     proxies: RwLock<Option<ProxySnapshot>>,
++    publication: std::sync::atomic::AtomicU64,
+     /// See [`ProxyRegistry::count_traffic_into`]. Weak because a registry
+     /// can outlive the tunnel that installed it: provider fetch contexts
+     /// keep clones.
+@@ -845,7 +859,11 @@
+     pub fn publish(&self, proxies: ProxySnapshot) {
+         // Swap under the lock but drop the superseded snapshot — which runs
+         // every adapter destructor — outside it.
+-        let old = self.cell.proxies.write().replace(proxies);
++        let mut published = self.cell.proxies.write();
++        let revision = self.cell.publication.load(std::sync::atomic::Ordering::Relaxed);
++        self.cell.publication.store(revision.saturating_add(1), std::sync::atomic::Ordering::Relaxed);
++        let old = published.replace(proxies);
++        drop(published);
+         drop(old);
+     }
+ 
+@@ -891,6 +909,17 @@
+ pub struct DialerTarget {
+     name: SmolStr,
+     registry: Weak<RegistryCell>,
++}
++
++struct DialerPublicationGuard {
++    cell: Arc<RegistryCell>,
++    publication: u64,
++}
++impl meow_common::adapter::ProbeDependencyGuard for DialerPublicationGuard {
++    fn is_current(&self) -> bool {
++        let _published = self.cell.proxies.read();
++        self.publication != u64::MAX && self.cell.publication.load(std::sync::atomic::Ordering::Relaxed) == self.publication
++    }
+ }
+ 
+ impl DialerTarget {
+@@ -917,6 +946,20 @@
+                 .as_ref()
+                 .and_then(|map| map.get(&self.name).cloned())
+         })
++    }
++
++    /// Resolve through the same weak cell and lock as a real dial. The proof
++    /// keeps this registry generation alive and detects every publication,
++    /// including A -> B -> A and a republish of the same proxy Arc.
++    pub fn probe_dependencies(&self) -> io::Result<meow_common::adapter::ProbeDependencies> {
++        let cell = self.registry.upgrade().ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, self.missing_error()))?;
++        let published = cell.proxies.read();
++        let proxy = published.as_ref().and_then(|map| map.get(&self.name).cloned())
++            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, self.missing_error()))?;
++        let publication = cell.publication.load(std::sync::atomic::Ordering::Relaxed);
++        if publication == u64::MAX { return Err(io::Error::other("dialerPublicationExhausted")); }
++        drop(published);
++        Ok(meow_common::adapter::ProbeDependencies::guarded(vec![proxy], Arc::new(DialerPublicationGuard { cell, publication })))
+     }
+ 
+     /// Where hops through this target count their bytes: `None` until a
+@@ -994,6 +1037,7 @@
+     /// outbound's only way out. A failure the group puts down to the
+     /// server (see [`blame_front_hop`]) is the outbound's too.
+     fn judge_front<T>(&self, result: &io::Result<T>) {
++        if meow_common::probe_policy::DiagnosticToken::capture().is_measurement() { return; }
+         if result.is_err()
+             && self.target.resolve().is_some_and(|front| {
+                 blame_front_hop(&front) == Blame::Member && has_live_member(&front)
+@@ -1205,6 +1249,10 @@
+ 
+ #[async_trait]
+ impl TcpDialer for NamedProxyDialer {
++    fn probe_dependencies(&self) -> io::Result<meow_common::adapter::ProbeDependencies> {
++        self.target.probe_dependencies()
++    }
++
+     async fn dial(&self, host: &str, port: u16, internal: bool) -> io::Result<Box<dyn Stream>> {
+         self.dial_inner(inner_dial_metadata(host, port, internal))
+             .await
+@@ -2586,7 +2634,7 @@
          });
          let conn_cloned = Arc::clone(&conn);
          let conn_dyn: Arc<dyn ProxyPacketConn> = conn_cloned;
@@ -6731,6 +7751,25 @@
          let dests = self.resolve_targets(metadata).await?;
          let mut last_err = None;
  
+--- a/crates/meow-proxy/src/group/dialer_proxy.rs
++++ b/crates/meow-proxy/src/group/dialer_proxy.rs
+@@ -165,6 +165,16 @@
+ }
+ 
+ impl Proxy for DialerProxyAdapter {
++    fn projected_member_proxies(&self, projection: &meow_common::adapter::ProviderSlotProjection) -> Option<Vec<Arc<dyn Proxy>>> {
++        self.inner.projected_member_proxies(projection)
++    }
++
++    fn probe_dependencies(&self) -> std::io::Result<meow_common::adapter::ProbeDependencies> {
++        let mut dependencies = self.dialer.probe_dependencies()?;
++        dependencies.proxies.insert(0, self.inner.clone());
++        Ok(dependencies)
++    }
++
+     fn alive(&self) -> bool {
+         self.inner.alive()
+     }
 --- a/crates/meow-proxy/src/group/fallback.rs
 +++ b/crates/meow-proxy/src/group/fallback.rs
 @@ -120,7 +120,7 @@
@@ -6738,7 +7777,7 @@
              // Upstream clears a stale fallback pin in memory when it is
              // observed dead, but leaves the persistent cache untouched.
 -            *self.fixed.write() = None;
-+            if !self.health.observed() { *self.fixed.write() = None; }
++            if !self.health.observed() && !meow_common::probe_policy::DiagnosticToken::capture().is_measurement() { *self.fixed.write() = None; }
          }
          let mut fallback: Option<Arc<dyn Proxy>> = None;
          for p in &self.static_proxies {
@@ -6760,7 +7799,20 @@
      }
  
      fn unwrap_proxy(&self, metadata: &Metadata, touch: bool) -> Option<Arc<dyn Proxy>> {
-@@ -343,6 +343,45 @@
+@@ -293,6 +293,12 @@
+ 
+     fn member_proxies(&self) -> Option<Vec<Arc<dyn Proxy>>> {
+         Some(self.member_proxy_list())
++    }
++
++    fn projected_member_proxies(&self, projection: &meow_common::adapter::ProviderSlotProjection) -> Option<Vec<Arc<dyn Proxy>>> {
++        let mut members: Vec<Arc<dyn Proxy>> = self.static_proxies.iter().cloned().collect();
++        for slot in &self.provider_slots { members.extend(projection.members(slot)); }
++        Some(members)
+     }
+ 
+     fn current(&self) -> Option<String> {
+@@ -343,6 +349,45 @@
          Ok(())
      }
  
@@ -6806,9 +7858,35 @@
      fn force_set(&self, name: Option<&str>) {
          *self.fixed.write() = name.map(SmolStr::from);
          if let Some(store) = &self.store {
+@@ -366,6 +411,17 @@
+ 
+ #[cfg(test)]
+ mod tests {
++    #[tokio::test]
++    async fn diagnostic_fallback_dead_pin_selection_does_not_clear_business_pin() {
++        let a=MockProxy::new("A");let b=MockProxy::new("B");a.set_alive(false);
++        let group=FallbackGroup::new("G",vec![a,b]);*group.fixed.write()=Some("A".into());
++        meow_common::probe_policy::DiagnosticToken::measurement().scope(async {
++            assert_eq!(group.first_alive().unwrap().name(),"B");assert!(group.dial_tcp(&Metadata::default()).await.is_err());
++        }).await;
++        assert_eq!(group.fixed.read().as_deref(),Some("A"));assert_eq!(group.usage_generation(),0);
++        assert_eq!(group.first_alive().unwrap().name(),"B");assert!(group.fixed.read().is_none());
++    }
++
+     use super::*;
+     use crate::group::test_support::MockProxy;
+     use meow_common::Metadata;
 --- a/crates/meow-proxy/src/group/load_balance.rs
 +++ b/crates/meow-proxy/src/group/load_balance.rs
-@@ -364,7 +364,7 @@
+@@ -215,6 +215,7 @@
+         advance: bool,
+         blocked: &[(SmolStr, Duration)],
+     ) -> Option<Arc<dyn Proxy>> {
++        let advance = advance && !meow_common::probe_policy::DiagnosticToken::capture().is_measurement();
+         let usable = |p: &Arc<dyn Proxy>| {
+             self.eligible(p, udp_only) && !blocked.iter().any(|(name, _)| name == p.name())
+         };
+@@ -364,7 +365,7 @@
              super::note_front_hop_member(&self.chain_health, target, &proxy);
          }
          let attempt = super::DialAttempt::new(&self.name, &self.dial_failures, &proxy);
@@ -6817,7 +7895,7 @@
          Ok(match front_hop {
              Some(target) => {
                  super::watch_front_hop(conn, &self.name, &self.chain_health, target, &proxy)
-@@ -389,7 +389,7 @@
+@@ -389,7 +390,7 @@
              }
          })?;
          let attempt = super::DialAttempt::new(&self.name, &self.dial_failures, &proxy);
@@ -6826,6 +7904,98 @@
      }
  
      fn unwrap_proxy(&self, metadata: &Metadata, touch: bool) -> Option<Arc<dyn Proxy>> {
+@@ -451,6 +452,12 @@
+             true
+         });
+         Some(out)
++    }
++
++    fn projected_member_proxies(&self, projection: &meow_common::adapter::ProviderSlotProjection) -> Option<Vec<Arc<dyn Proxy>>> {
++        let mut members: Vec<Arc<dyn Proxy>> = self.static_proxies.iter().cloned().collect();
++        for slot in &self.provider_slots { members.extend(projection.members(slot)); }
++        Some(members)
+     }
+ 
+     fn current(&self) -> Option<String> {
+--- a/crates/meow-proxy/src/group/mod.rs
++++ b/crates/meow-proxy/src/group/mod.rs
+@@ -41,7 +41,7 @@
+     /// probes or a background refresh would mark a lazy child as used and
+     /// keep its own probe loop awake forever without any real traffic.
+     pub(super) fn touch_user_traffic(&self, metadata: &Metadata) {
+-        if metadata.is_internal() {
++        if metadata.is_internal() || meow_common::probe_policy::DiagnosticToken::capture().is_measurement() {
+             return;
+         }
+         self.touch();
+@@ -352,6 +352,7 @@
+     tracker: &'a DialFailureTracker,
+     member: &'a Arc<dyn Proxy>,
+     deadline: Option<tokio::time::Instant>,
++    diagnostic: bool,
+ }
+ 
+ impl<'a> DialAttempt<'a> {
+@@ -365,6 +366,7 @@
+             tracker,
+             member,
+             deadline: meow_common::dial::dial_deadline(),
++            diagnostic: meow_common::probe_policy::DiagnosticToken::capture().is_measurement(),
+         }
+     }
+ 
+@@ -391,6 +393,7 @@
+             .await;
+         self.deadline = None;
+         match &result {
++            _ if self.diagnostic => {},
+             Ok(_) => self.tracker.on_success(),
+             Err(err) if front_failed => debug!(
+                 "proxy-group '{}': not counting a failed dial of '{}' against it: its \
+@@ -412,7 +415,7 @@
+ 
+ impl Drop for DialAttempt<'_> {
+     fn drop(&mut self) {
+-        if self
++        if !self.diagnostic && self
+             .deadline
+             .is_some_and(|deadline| tokio::time::Instant::now() >= deadline)
+         {
+@@ -528,7 +531,7 @@
+     target: ChainTarget,
+     member: &Arc<dyn Proxy>,
+ ) -> Box<dyn ProxyConn> {
+-    if member.chain_health().is_some() {
++    if meow_common::probe_policy::DiagnosticToken::capture().is_measurement() || member.chain_health().is_some() {
+         return conn;
+     }
+     let carrier = health.carrier(&target).as_deref() == Some(member.name());
+@@ -766,6 +769,25 @@
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++    #[tokio::test]
++    async fn diagnostic_dial_attempt_success_error_and_late_drop_preserve_failure_streak() {
++        use crate::group::test_support::MockProxy;
++        let member:Arc<dyn Proxy>=MockProxy::new_failing("member",AdapterType::Http,"timed out");
++        let tracker=DialFailureTracker::new();
++        for _ in 1..DIAL_FAILURE_THRESHOLD {assert!(!tracker.on_failure(&proxy_err("timed out")));}
++        let late=meow_common::probe_policy::DiagnosticToken::measurement().scope(async {
++            DialAttempt::new("G",&tracker,&member).run(async {Ok::<_,MeowError>(())}).await.unwrap();
++            assert!(DialAttempt::new("G",&tracker,&member).run(async {Err::<(),_>(proxy_err("connection refused"))}).await.is_err());
++            let mut attempt=DialAttempt::new("G",&tracker,&member);attempt.deadline=Some(tokio::time::Instant::now());attempt
++        }).await;
++        drop(late);assert!(member.health().alive());assert!(tracker.on_failure(&proxy_err("timed out")),"diagnostic success must not clear business streak");
++        let normal=DialFailureTracker::new();let mut late=DialAttempt::new("G",&normal,&member);late.deadline=Some(tokio::time::Instant::now());drop(late);
++        for _ in 1..DIAL_FAILURE_THRESHOLD-1 {assert!(!normal.on_failure(&proxy_err("timed out")));}
++        assert!(normal.on_failure(&proxy_err("timed out")),"ordinary deadline Drop still counts");
++        DialAttempt::new("G",&normal,&member).run(async {Ok::<_,MeowError>(())}).await.unwrap();
++        assert!(!normal.on_failure(&proxy_err("timed out")),"ordinary success still clears streak");
++    }
++
+ 
+     #[test]
+     fn explicit_pool_pressure_never_escalates() {
 --- a/crates/meow-proxy/src/group/relay.rs
 +++ b/crates/meow-proxy/src/group/relay.rs
 @@ -326,73 +326,41 @@
@@ -6837,9 +8007,10 @@
 -        "relay chain must have at least 2 proxies"
 -    );
 -
+-    let proxies = flatten_hops(proxies, final_target, true)?;
 +    use meow_common::dial_outcome::{DialOutcome, DialReceipt};
 +    debug_assert!(proxies.len() >= 2, "relay chain must have at least 2 proxies");
-     let proxies = flatten_hops(proxies, final_target, true)?;
++    let proxies = flatten_hops(proxies, final_target, !meow_common::probe_policy::DiagnosticToken::capture().is_measurement())?;
      if proxies.len() < 2 {
 -        return Err(MeowError::Proxy(format!(
 -            "relay: chain resolved to fewer than 2 hops ({})",
@@ -6934,6 +8105,15 @@
      Ok(conn)
  }
  
+@@ -424,7 +392,7 @@
+     proxies: &[Arc<dyn Proxy>],
+     metadata: &Metadata,
+ ) -> Result<Box<dyn ProxyPacketConn>> {
+-    let hops = flatten_hops(proxies, metadata, true)?;
++    let hops = flatten_hops(proxies, metadata, !meow_common::probe_policy::DiagnosticToken::capture().is_measurement())?;
+     let Some(exit) = udp_exit(&hops) else {
+         debug!(
+             relay.hops = hops.len(),
 @@ -440,7 +408,7 @@
          relay.target = %metadata.remote_address(),
          "relay: dial_udp on the exit hop"
@@ -6943,6 +8123,27 @@
  }
  
  // ─── RelayGroup ───────────────────────────────────────────────────────────────
+@@ -593,6 +561,20 @@
+ 
+ #[cfg(test)]
+ mod tests {
++    #[tokio::test]
++    async fn diagnostic_relay_nested_lb_dial_reuses_peek_without_advancing_business() {
++        let first=MockProxy::new_udp("A","10.0.0.1",1080,1);let second=MockProxy::new_udp("B","10.0.0.2",1080,2);
++        let a=first.udp_dials.clone();let b=second.udp_dials.clone();
++        let lb=Arc::new(LoadBalanceGroup::new("LB",vec![first,second],LbStrategy::RoundRobin));
++        let group=RelayGroup::new("relay",vec![MockProxy::direct(),lb.clone()]);
++        meow_common::probe_policy::DiagnosticToken::measurement().scope(async {
++            group.dial_udp(&udp_target()).await.unwrap();group.dial_udp(&udp_target()).await.unwrap();
++        }).await;
++        assert_eq!(lb.usage_generation(),0);assert_eq!(a.lock().len(),2);assert!(b.lock().is_empty());
++        group.dial_udp(&udp_target()).await.unwrap();assert_eq!(a.lock().len(),3);
++        group.dial_udp(&udp_target()).await.unwrap();assert_eq!(b.lock().len(),1);assert_eq!(lb.usage_generation(),2);
++    }
++
+     use super::*;
+     use crate::{LbStrategy, LoadBalanceGroup, SelectorGroup};
+     use meow_common::{DelayHistory, MeowError, ProxyConn, ProxyHealth, ProxyPacketConn};
 --- a/crates/meow-proxy/src/group/selector.rs
 +++ b/crates/meow-proxy/src/group/selector.rs
 @@ -190,14 +190,14 @@
@@ -6962,7 +8163,20 @@
      }
  
      fn unwrap_proxy(&self, _metadata: &Metadata, _touch: bool) -> Option<Arc<dyn Proxy>> {
-@@ -272,6 +272,21 @@
+@@ -247,6 +247,12 @@
+ 
+     fn member_proxies(&self) -> Option<Vec<Arc<dyn Proxy>>> {
+         Some(self.member_proxy_list())
++    }
++
++    fn projected_member_proxies(&self, projection: &meow_common::adapter::ProviderSlotProjection) -> Option<Vec<Arc<dyn Proxy>>> {
++        let mut members: Vec<Arc<dyn Proxy>> = self.static_proxies.iter().cloned().collect();
++        for slot in &self.provider_slots { members.extend(projection.members(slot)); }
++        Some(members)
+     }
+ 
+     fn current(&self) -> Option<String> {
+@@ -272,6 +278,21 @@
          }
      }
  
@@ -7037,7 +8251,15 @@
          if let Some(proxy) = self.fixed_proxy_if_alive() {
              return Some(proxy);
          }
-@@ -192,7 +199,14 @@
+@@ -187,12 +194,23 @@
+ 
+         if let Some(bp) = best_proxy.as_ref() {
+             if best_delay.saturating_add(self.tolerance) < current_delay || !current_alive {
+-                *self.fastest.write() = Some(SmolStr::from(bp.name()));
++                if !meow_common::probe_policy::DiagnosticToken::capture().is_measurement() {
++                    *self.fastest.write() = Some(SmolStr::from(bp.name()));
++                }
+                 return Some(Arc::clone(bp));
              }
          } else if !current_alive {
              let fb = first_any.clone();
@@ -7045,15 +8267,17 @@
 +            // A managed fallback is provisional until a measured candidate
 +            // exists. Unfix-before-probe must not create an unmeasured
 +            // incumbent that can incorrectly acquire tolerance protection.
-+            *self.fastest.write() = if self.health.observed() {
-+                None
-+            } else {
-+                fb.as_ref().map(|p| SmolStr::from(p.name()))
-+            };
++            if !meow_common::probe_policy::DiagnosticToken::capture().is_measurement() {
++                *self.fastest.write() = if self.health.observed() {
++                    None
++                } else {
++                    fb.as_ref().map(|p| SmolStr::from(p.name()))
++                };
++            }
              return fb;
          }
          current_proxy.or(best_proxy).or(first_any)
-@@ -336,11 +350,8 @@
+@@ -336,11 +354,8 @@
      }
  
      fn support_udp(&self) -> bool {
@@ -7067,7 +8291,7 @@
          self.pick_for_dial().is_some_and(|p| p.support_udp())
      }
  
-@@ -353,7 +364,7 @@
+@@ -353,7 +368,7 @@
              super::note_front_hop_member(&self.chain_health, target, &proxy);
          }
          let attempt = super::DialAttempt::new(&self.name, &self.dial_failures, &proxy);
@@ -7076,7 +8300,7 @@
          Ok(match front_hop {
              Some(target) => {
                  super::watch_front_hop(conn, &self.name, &self.chain_health, target, &proxy)
-@@ -368,16 +379,15 @@
+@@ -368,16 +383,15 @@
              .pick_for_dial()
              .ok_or_else(|| MeowError::Proxy("no proxy available".into()))?;
          let attempt = super::DialAttempt::new(&self.name, &self.dial_failures, &proxy);
@@ -7096,7 +8320,20 @@
          self.pick_for(metadata, false).map(|(pick, _)| pick)
      }
  
-@@ -459,6 +469,34 @@
+@@ -420,6 +434,12 @@
+         Some(self.member_proxy_list())
+     }
+ 
++    fn projected_member_proxies(&self, projection: &meow_common::adapter::ProviderSlotProjection) -> Option<Vec<Arc<dyn Proxy>>> {
++        let mut members: Vec<Arc<dyn Proxy>> = self.static_proxies.iter().cloned().collect();
++        for slot in &self.provider_slots { members.extend(projection.members(slot)); }
++        Some(members)
++    }
++
+     fn current(&self) -> Option<String> {
+         self.fastest_proxy().map(|p| p.name().into())
+     }
+@@ -459,6 +479,34 @@
          Ok(())
      }
  
@@ -7131,7 +8368,26 @@
      fn force_set(&self, name: Option<&str>) {
          *self.fixed.write() = name.map(SmolStr::from);
          if let Some(store) = &self.store {
-@@ -545,6 +583,31 @@
+@@ -482,6 +530,18 @@
+ 
+ #[cfg(test)]
+ mod tests {
++    #[tokio::test]
++    async fn diagnostic_urltest_real_selection_scan_does_not_publish_incumbent() {
++        let a=MockProxy::new("A");let b=MockProxy::new("B");a.set_delay(20);b.set_delay(5);
++        let group=UrlTestGroup::new("G",vec![a,b],0);let before=group.fastest.read().clone();
++        meow_common::probe_policy::DiagnosticToken::measurement().scope(async {
++            assert_eq!(group.pick_for_dial().unwrap().name(),"B");
++            assert!(group.dial_tcp(&Metadata::default()).await.is_err());
++        }).await;
++        assert_eq!(*group.fastest.read(),before);assert_eq!(group.usage_generation(),0);
++        assert_eq!(group.pick_for_dial().unwrap().name(),"B");assert_eq!(group.fastest.read().as_deref(),Some("B"));
++    }
++
+     use super::*;
+     use crate::group::test_support::MockProxy;
+     use meow_common::Metadata;
+@@ -545,6 +605,31 @@
      }
  
      #[test]
@@ -7198,7 +8454,7 @@
      let Some(parsed) = ParsedUrl::parse(url) else {
          return Err(UrlTestError::Transport(format!("invalid url: {url}")));
      };
-@@ -103,6 +122,14 @@
+@@ -103,6 +122,56 @@
      }
  }
  
@@ -7210,10 +8466,52 @@
 +    url_test(proxy.as_ref(), url, expected, timeout).await
 +}
 +
++/// Measure through the original complete adapter graph without publishing
++/// health, chain verdicts, usage or automatic-group dial-failure/RR state.
++/// Ownership/epoch/protect/policy/deadline still come from the existing scopes;
++/// the caller must commit the measured target under its own original CAS gate.
++pub async fn probe_without_effects(
++    proxy: &Arc<dyn Proxy>, url: &str, expected: Option<&str>, timeout: Duration,
++) -> Result<u16, UrlTestError> {
++    probe_without_effects_detailed(proxy, url, expected, timeout).await.map(|measured| measured.delay)
++}
++
++/// Measurement from one captured operation. The epoch is not a commit permit:
++/// the host must still compare its route, identity, revision and latest intent
++/// under the existing control gate before publishing the requested target.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct ProbeMeasurement {
++    pub delay: u16,
++    pub core_epoch: Option<u64>,
++}
++
++/// The same pure real dial, with its captured epoch. Revalidate in the captured
++/// scope after I/O, so an epoch change cannot turn a completed stale probe into
++/// an apparently current measurement. CLI operation has no host epoch.
++pub async fn probe_without_effects_detailed(
++    proxy: &Arc<dyn Proxy>, url: &str, expected: Option<&str>, timeout: Duration,
++) -> Result<ProbeMeasurement, UrlTestError> {
++    let measured = async {
++        match meow_common::probe_policy::capture() {
++            Ok(Some(snapshot)) => snapshot.run(async {
++                let result = probe_without_record(proxy, url, expected, timeout).await;
++                let _ = meow_common::probe_policy::capture()?;
++                Ok(result.map(|delay| ProbeMeasurement {
++                    delay, core_epoch: meow_common::probe_policy::operation_epoch(),
++                }))
++            }).await.map_err(|error| UrlTestError::Transport(error.to_string()))?,
++            Ok(None) => probe_without_record(proxy, url, expected, timeout).await
++                .map(|delay| ProbeMeasurement { delay, core_epoch: None }),
++            Err(error) => Err(UrlTestError::Transport(error.to_string())),
++        }
++    };
++    meow_common::probe_policy::DiagnosticToken::measurement().scope(measured).await
++}
++
  /// Probe a proxy and record the result in its [`ProxyHealth`].
  ///
  /// On success the measured delay (ms) is recorded; on any failure `0` is
-@@ -119,6 +146,7 @@
+@@ -119,6 +188,7 @@
          .expect("global delay probe semaphore is never closed");
      let adapter: &dyn ProxyAdapter = proxy.as_ref();
      let result = url_test(adapter, url, expected, timeout).await;
@@ -7221,7 +8519,7 @@
      match &result {
          Ok(d) => proxy.health().record_delay(*d),
          Err(_) => proxy.health().record_delay(0),
-@@ -858,7 +886,7 @@
+@@ -858,7 +928,7 @@
  
  /// Parse an `expected` query-param value into inclusive status-code ranges.
  /// Empty / `None` defaults to `[200..=299]`, matching upstream.
@@ -7230,6 +8528,271 @@
      let s = spec.unwrap_or("").trim();
      if s.is_empty() {
          return Ok(vec![(200, 299)]);
+@@ -1486,3 +1556,264 @@
+         }
+     }
+ }
++
++#[cfg(test)]
++mod diagnostic_tests {
++    use super::*;
++    use crate::{http_adapter::HttpAdapter,dialer::{DirectDialer,DialerTarget,ProxyRegistry,NamedProxyDialer},
++        group::{load_balance::{LoadBalanceGroup,LbStrategy},relay::RelayGroup,dialer_proxy::DialerProxyAdapter}};
++    use std::{net::SocketAddr,sync::atomic::AtomicUsize};
++
++    struct AdapterProxy {
++        adapter: Box<dyn ProxyAdapter>,
++        dialer: Option<Arc<dyn crate::dialer::TcpDialer>>,
++    }
++    fn adapter_proxy(adapter: impl ProxyAdapter + 'static, dialer: Option<Arc<dyn crate::dialer::TcpDialer>>) -> Arc<dyn Proxy> {
++        Arc::new(AdapterProxy { adapter: Box::new(adapter), dialer })
++    }
++    #[async_trait]
++    impl ProxyAdapter for AdapterProxy {
++        fn name(&self) -> &str { self.adapter.name() }
++        fn adapter_type(&self) -> AdapterType { self.adapter.adapter_type() }
++        fn addr(&self) -> &str { self.adapter.addr() }
++        fn support_udp(&self) -> bool { self.adapter.support_udp() }
++        async fn dial_tcp(&self, metadata: &Metadata) -> meow_common::Result<Box<dyn ProxyConn>> {
++            self.adapter.dial_tcp(metadata).await
++        }
++        async fn dial_udp(&self, metadata: &Metadata) -> meow_common::Result<Box<dyn ProxyPacketConn>> {
++            self.adapter.dial_udp(metadata).await
++        }
++        async fn connect_over(&self, stream: Box<dyn ProxyConn>, metadata: &Metadata) -> meow_common::Result<Box<dyn ProxyConn>> {
++            self.adapter.connect_over(stream, metadata).await
++        }
++        fn unwrap_proxy(&self, metadata: &Metadata, touch: bool) -> Option<Arc<dyn Proxy>> {
++            self.adapter.unwrap_proxy(metadata, touch)
++        }
++        fn reset_sessions(&self) { self.adapter.reset_sessions(); }
++        fn health(&self) -> &ProxyHealth { self.adapter.health() }
++    }
++    impl Proxy for AdapterProxy {
++        fn alive(&self) -> bool { self.adapter.health().alive() }
++        fn alive_for_url(&self, _url: &str) -> bool { self.adapter.health().alive() }
++        fn last_delay(&self) -> u16 { self.adapter.health().last_delay() }
++        fn last_delay_for_url(&self, _url: &str) -> u16 { self.adapter.health().last_delay() }
++        fn delay_history(&self) -> Vec<meow_common::DelayHistory> { self.adapter.health().delay_history() }
++        fn probe_dependencies(&self) -> std::io::Result<meow_common::adapter::ProbeDependencies> {
++            match &self.dialer {
++                Some(dialer) => dialer.probe_dependencies(),
++                None => Ok(meow_common::adapter::ProbeDependencies::default()),
++            }
++        }
++    }
++
++    use tokio::{net::{TcpListener,TcpStream},sync::{Notify,watch},task::{JoinHandle,JoinSet}};
++    async fn head(socket:&mut TcpStream)->Option<Vec<u8>> {
++        let mut bytes=Vec::new();while !bytes.ends_with(b"\r\n\r\n") {bytes.push(socket.read_u8().await.ok()?);assert!(bytes.len()<8192);}Some(bytes)
++    }
++    struct Peers { origin:SocketAddr, proxies:[SocketAddr;2], counts:[Arc<AtomicUsize>;2],
++        entered:Arc<Notify>,release:Arc<Notify>,closed:Arc<Notify>,stop:watch::Sender<bool>,tasks:Vec<JoinHandle<()>> }
++    impl Peers {
++        async fn start()->Self {
++            let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();let origin=listener.local_addr().unwrap();
++            let(stop,mut cancel)=watch::channel(false);let entered=Arc::new(Notify::new());let release=Arc::new(Notify::new());let closed=Arc::new(Notify::new());
++            let e=entered.clone();let r=release.clone();let c=closed.clone();let mut tasks=Vec::new();
++            tasks.push(tokio::spawn(async move {let mut children=JoinSet::new();loop {tokio::select!{biased;
++                _=cancel.changed()=>break,
++                done=children.join_next(),if !children.is_empty()=>{done.unwrap().unwrap();},
++                accepted=listener.accept()=>{let(mut socket,_)=accepted.unwrap();let e=e.clone();let r=r.clone();let c=c.clone();children.spawn(async move {
++                    let Some(request)=head(&mut socket).await else{return;};
++                    if request.windows(6).any(|part|part==b"/hold ") {e.notify_one();let mut byte=[0];tokio::select!{
++                        _=r.notified()=>{},result=socket.read(&mut byte)=>{assert_eq!(result.unwrap(),0);c.notify_one();return;}
++                    }}
++                    let response=if request.windows(6).any(|part|part==b"/fail ") {b"HTTP/1.1 503 Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".as_slice()}
++                        else {b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".as_slice()};
++                    let _=socket.write_all(response).await;let _=socket.shutdown().await;
++                });}
++            }}children.abort_all();while children.join_next().await.is_some(){} }));
++            let mut addresses=Vec::new();let counts=[Arc::new(AtomicUsize::new(0)),Arc::new(AtomicUsize::new(0))];
++            for counter in &counts {
++                let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();addresses.push(listener.local_addr().unwrap());
++                let mut cancel=stop.subscribe();let counter=counter.clone();tasks.push(tokio::spawn(async move {let mut children=JoinSet::new();loop{tokio::select!{biased;
++                    _=cancel.changed()=>break,
++                    done=children.join_next(),if !children.is_empty()=>{done.unwrap().unwrap();},
++                    accepted=listener.accept()=>{let(mut incoming,_)=accepted.unwrap();let counter=counter.clone();children.spawn(async move {
++                        let Some(request)=head(&mut incoming).await else{return;};let text=String::from_utf8(request).unwrap();
++                        let target=text.lines().next().unwrap().strip_prefix("CONNECT ").unwrap().split_whitespace().next().unwrap();
++                        let mut outgoing=TcpStream::connect(target).await.unwrap();counter.fetch_add(1,Ordering::SeqCst);
++                        incoming.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n").await.unwrap();
++                        let _=tokio::io::copy_bidirectional(&mut incoming,&mut outgoing).await;
++                    });}
++                }}children.abort_all();while children.join_next().await.is_some(){} }));
++            }
++            Self{origin,proxies:[addresses[0],addresses[1]],counts,entered,release,closed,stop,tasks}
++        }
++        fn adapter(&self,index:usize)->Arc<dyn Proxy> {let address=self.proxies[index];adapter_proxy(HttpAdapter::new(
++            if index==0 {"A"} else {"B"},"127.0.0.1",address.port(),None,false,false,Vec::new(),Arc::new(DirectDialer)),None)}
++        fn url(&self,path:&str)->String {format!("http://{}{path}",self.origin)}
++        async fn close(self) {self.stop.send(true).unwrap();for task in self.tasks {task.await.unwrap();}}
++    }
++    async fn business(group:&dyn Proxy,origin:SocketAddr) {
++        let meta=Metadata{dst_ip:Some(origin.ip()),dst_port:origin.port(),..Default::default()};
++        let mut conn=group.dial_tcp(&meta).await.unwrap();conn.write_all(b"GET /business HTTP/1.1\r\nHost: fixture\r\nConnection: close\r\n\r\n").await.unwrap();
++        let mut response=Vec::new();tokio::time::timeout(Duration::from_secs(5),conn.read_to_end(&mut response)).await.unwrap().unwrap();assert!(response.starts_with(b"HTTP/1.1 204"));
++    }
++    #[tokio::test(flavor="multi_thread",worker_threads=2)]
++    async fn diagnostic_real_http_rr_parallel_business_failure_and_cancel_do_not_rotate() {
++        let peers=Peers::start().await;let a=peers.adapter(0);let b=peers.adapter(1);
++        let group=Arc::new(LoadBalanceGroup::new("RR",vec![a.clone(),b.clone()],LbStrategy::RoundRobin));let proxy:Arc<dyn Proxy>=group.clone();
++        business(group.as_ref(),peers.origin).await;assert_eq!(group.unwrap_proxy(&Metadata::default(),false).unwrap().name(),"B");
++        let held=proxy.clone();let url=peers.url("/hold");let measured=tokio::spawn(async move {probe_without_effects(&held,&url,Some("204"),Duration::from_secs(5)).await});
++        tokio::time::timeout(Duration::from_secs(5),peers.entered.notified()).await.unwrap();
++        business(group.as_ref(),peers.origin).await;assert_eq!(group.unwrap_proxy(&Metadata::default(),false).unwrap().name(),"A");
++        peers.release.notify_one();assert!(measured.await.unwrap().is_ok());assert_eq!(group.usage_generation(),2);
++        assert_eq!((peers.counts[0].load(Ordering::SeqCst),peers.counts[1].load(Ordering::SeqCst)),(1,2));
++        assert!(probe_without_effects(&proxy,&peers.url("/fail"),Some("204"),Duration::from_secs(5)).await.is_err());
++        assert_eq!(group.unwrap_proxy(&Metadata::default(),false).unwrap().name(),"A");
++        let held=proxy.clone();let url=peers.url("/hold");let measured=tokio::spawn(async move {probe_without_effects(&held,&url,None,Duration::from_secs(5)).await});
++        tokio::time::timeout(Duration::from_secs(5),peers.entered.notified()).await.unwrap();measured.abort();assert!(measured.await.unwrap_err().is_cancelled());
++        tokio::time::timeout(Duration::from_secs(5),peers.closed.notified()).await.unwrap();
++        assert_eq!(group.unwrap_proxy(&Metadata::default(),false).unwrap().name(),"A");assert_eq!(group.usage_generation(),2);
++        for member in [a,b] {assert!(member.health().alive());assert!(member.delay_history().is_empty());}
++        peers.close().await;
++    }
++    #[tokio::test]
++    async fn diagnostic_real_relay_dpa_and_injected_named_dialer_keep_chain_snapshot() {
++        let peers=Peers::start().await;let front=Arc::new(LoadBalanceGroup::new("FRONT",vec![peers.adapter(0),peers.adapter(1)],LbStrategy::RoundRobin));
++        let registry=ProxyRegistry::default();registry.publish(Arc::new(std::collections::HashMap::from([("FRONT".into(),front.clone() as Arc<dyn Proxy>)])));
++        let target=DialerTarget::new("FRONT",&registry);
++        let wrapped:Arc<dyn Proxy>=Arc::new(DialerProxyAdapter::new(adapter_proxy(crate::direct::DirectAdapter::new(),None),target.clone()));
++        let relay:Arc<dyn Proxy>=Arc::new(RelayGroup::new("OUTER",vec![wrapped,adapter_proxy(crate::direct::DirectAdapter::compatible(),None)]));
++        assert!(probe_without_effects(&relay,&peers.url("/ok"),Some("204"),Duration::from_secs(5)).await.is_ok());
++        let dialer:Arc<dyn crate::dialer::TcpDialer>=Arc::new(NamedProxyDialer::new(target).owned_by("INJECTED"));
++        let inner:Arc<dyn Proxy>=adapter_proxy(HttpAdapter::new("INJECTED","127.0.0.1",peers.proxies[1].port(),None,false,false,Vec::new(),
++            dialer.clone()),Some(dialer));
++        assert!(probe_without_effects(&inner,&peers.url("/ok"),Some("204"),Duration::from_secs(5)).await.is_ok());
++        assert_eq!(front.unwrap_proxy(&Metadata::default(),false).unwrap().name(),"A");assert_eq!(front.usage_generation(),0);
++        assert!(front.chain_health().unwrap().targets().is_empty());assert!(front.delay_history().is_empty());assert!(inner.delay_history().is_empty());
++        assert_eq!((peers.counts[0].load(Ordering::SeqCst),peers.counts[1].load(Ordering::SeqCst)),(2,1));
++        peers.close().await;
++    }
++    struct Owner {closed:AtomicBool,changed:Notify}
++    impl meow_common::probe_policy::ProbeSource for Owner {
++        fn snapshot(&self)->std::io::Result<Arc<meow_common::probe_policy::ProbePolicy>> {
++            if self.closed.load(Ordering::SeqCst) {Err(std::io::ErrorKind::Interrupted.into())} else {Ok(Arc::new(Default::default()))}
++        }
++        fn cancelled(&self)->std::pin::Pin<Box<dyn std::future::Future<Output=()>+Send+'_>> {Box::pin(async {
++            loop {let notified=self.changed.notified();tokio::pin!(notified);notified.as_mut().enable();if self.closed.load(Ordering::SeqCst){return;}notified.await;}
++        })}
++    }
++    #[tokio::test]
++    async fn diagnostic_owned_policy_cancel_reaches_real_socket_eof_without_health_publication() {
++        let peers=Peers::start().await;let proxy=peers.adapter(0);let owner=Arc::new(Owner{closed:AtomicBool::new(false),changed:Notify::new()});
++        let scope=meow_common::probe_policy::ProbeScope::new(owner.clone());let url=peers.url("/hold");let held=proxy.clone();
++        let task=tokio::spawn(async move {scope.scope(probe_without_effects(&held,&url,None,Duration::from_secs(5))).await});
++        tokio::time::timeout(Duration::from_secs(5),peers.entered.notified()).await.unwrap();owner.closed.store(true,Ordering::SeqCst);owner.changed.notify_waiters();
++        assert!(task.await.unwrap().is_err());tokio::time::timeout(Duration::from_secs(5),peers.closed.notified()).await.unwrap();
++        assert!(proxy.health().alive());assert!(proxy.delay_history().is_empty());peers.close().await;
++    }
++
++    struct EpochOwner {
++        epoch: std::sync::atomic::AtomicU64,
++        closed: AtomicBool,
++        changed: Notify,
++        entered: Notify,
++    }
++    impl EpochOwner {
++        fn new(epoch: u64) -> Arc<Self> {
++            Arc::new(Self { epoch: std::sync::atomic::AtomicU64::new(epoch),
++                closed: AtomicBool::new(false), changed: Notify::new(), entered: Notify::new() })
++        }
++    }
++    impl meow_common::probe_policy::ProbeSource for EpochOwner {
++        fn snapshot(&self) -> std::io::Result<Arc<meow_common::probe_policy::ProbePolicy>> {
++            if self.closed.load(Ordering::SeqCst) { return Err(std::io::ErrorKind::Interrupted.into()); }
++            Ok(Arc::new(meow_common::probe_policy::ProbePolicy { unified_delay: false, tcp_concurrent: true }))
++        }
++        fn snapshot_with_epoch(&self) -> std::io::Result<(Arc<meow_common::probe_policy::ProbePolicy>, Option<u64>)> {
++            Ok((self.snapshot()?, Some(self.epoch.load(Ordering::SeqCst))))
++        }
++        fn enter(&self) -> std::io::Result<Box<dyn Send>> {
++            self.snapshot()?;
++            self.entered.notify_one();
++            Ok(Box::new(()))
++        }
++        fn cancelled(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
++            Box::pin(async {
++                loop {
++                    let notified = self.changed.notified(); tokio::pin!(notified); notified.as_mut().enable();
++                    if self.closed.load(Ordering::SeqCst) { return; }
++                    notified.await;
++                }
++            })
++        }
++    }
++    #[tokio::test(flavor="multi_thread", worker_threads=2)]
++    async fn diagnostic_completed_real_probe_rejects_changed_captured_epoch_without_health() {
++        let peers = Peers::start().await;
++        let proxy = peers.adapter(0);
++        let owner = EpochOwner::new(41);
++        let scope = meow_common::probe_policy::ProbeScope::new(owner.clone());
++        let held = proxy.clone(); let url = peers.url("/hold");
++        let task = tokio::spawn(async move {
++            scope.scope(probe_without_effects_detailed(&held, &url, Some("204"), Duration::from_secs(5))).await
++        });
++        tokio::time::timeout(Duration::from_secs(5), peers.entered.notified()).await.unwrap();
++        owner.epoch.store(42, Ordering::SeqCst);
++        peers.release.notify_one();
++        let result = tokio::time::timeout(Duration::from_secs(5), task).await.unwrap().unwrap();
++        assert!(matches!(result, Err(UrlTestError::Transport(ref reason)) if reason.contains("staleProbeEpoch")));
++        assert!(proxy.delay_history().is_empty()); assert!(proxy.health().alive());
++        assert_eq!(peers.counts[0].load(Ordering::SeqCst), 1);
++        peers.close().await;
++    }
++    #[tokio::test]
++    async fn diagnostic_detailed_epoch_is_captured_and_only_requested_group_can_be_committed() {
++        let peers = Peers::start().await;
++        let a = peers.adapter(0); let b = peers.adapter(1);
++        a.health().apply_committed(meow_common::adapter::HealthUpdate::Delay(41));
++        b.health().apply_committed(meow_common::adapter::HealthUpdate::Delay(67));
++        let group = Arc::new(LoadBalanceGroup::new("measured-RR", vec![a.clone(),b.clone()], LbStrategy::RoundRobin));
++        let target: Arc<dyn Proxy> = group.clone();
++        let owner = EpochOwner::new(73);
++        let scope = meow_common::probe_policy::ProbeScope::new(owner.clone());
++        let measured = scope.scope(probe_without_effects_detailed(&target, &peers.url("/ok"), Some("204"), Duration::from_secs(5))).await.unwrap();
++        assert_eq!(measured.core_epoch, Some(73)); assert!(measured.delay >= 1);
++        assert!(target.health().delay_history().is_empty()); assert_eq!(group.usage_generation(), 0);
++        assert_eq!(group.unwrap_proxy(&Metadata::default(), false).unwrap().name(), "A");
++        assert_eq!((a.health().last_delay(), b.health().last_delay()), (41, 67));
++        assert_eq!((a.delay_history().len(), b.delay_history().len()), (1, 1));
++        assert!(!meow_common::probe_policy::DiagnosticToken::capture().is_measurement());
++        // A real Native caller additionally checks route/revision/intent/provider
++        // admission under its existing gate. Core supplies no substitute gate.
++        assert_eq!(owner.epoch.load(Ordering::SeqCst), measured.core_epoch.unwrap());
++        target.health().apply_committed(meow_common::adapter::HealthUpdate::Delay(measured.delay));
++        assert_eq!(target.health().delay_history().len(), 1);
++        assert_eq!(target.health().last_delay(), measured.delay);
++        assert_eq!((a.health().last_delay(), b.health().last_delay()), (41, 67));
++        assert_eq!((a.delay_history().len(), b.delay_history().len()), (1, 1));
++        assert_eq!(group.unwrap_proxy(&Metadata::default(), false).unwrap().name(), "A");
++        peers.close().await;
++    }
++    #[tokio::test(flavor="multi_thread", worker_threads=2)]
++    async fn diagnostic_owner_cancel_while_queued_for_real_global_permit_never_dials() {
++        let peers = Peers::start().await;
++        let proxy = peers.adapter(0);
++        let held_permits = tokio::time::timeout(Duration::from_secs(5),
++            global_delay_probe_limiter().acquire_many(GLOBAL_DELAY_PROBE_CONCURRENCY as u32)).await.unwrap().unwrap();
++        let owner = EpochOwner::new(91);
++        let scope = meow_common::probe_policy::ProbeScope::new(owner.clone());
++        let held = proxy.clone(); let url = peers.url("/ok");
++        let task = tokio::spawn(async move {
++            scope.scope(probe_without_effects_detailed(&held, &url, Some("204"), Duration::from_secs(5))).await
++        });
++        tokio::time::timeout(Duration::from_secs(5), owner.entered.notified()).await.unwrap();
++        assert!(!task.is_finished());
++        owner.closed.store(true, Ordering::SeqCst); owner.changed.notify_waiters();
++        let result = tokio::time::timeout(Duration::from_secs(5), task).await.unwrap().unwrap();
++        assert!(result.is_err());
++        assert_eq!((peers.counts[0].load(Ordering::SeqCst), peers.counts[1].load(Ordering::SeqCst)), (0, 0));
++        assert!(proxy.delay_history().is_empty());
++        drop(held_permits);
++        peers.close().await;
++    }
++}
 --- a/crates/meow-proxy/src/hysteria2/client.rs
 +++ b/crates/meow-proxy/src/hysteria2/client.rs
 @@ -18,6 +18,7 @@
@@ -9008,7 +10571,7 @@
  pub mod tls;
 --- /dev/null
 +++ b/crates/meow-transport/src/scoped_join.rs
-@@ -0,0 +1,216 @@
+@@ -0,0 +1,236 @@
 +use crate::transport_tasks::{self, TransportScope};
 +use std::{future::Future, io, pin::Pin, task::{Context, Poll}};
 +use tokio::task::{AbortHandle, JoinError};
@@ -9046,10 +10609,11 @@
 +    where F: Future + Send + 'static, F::Output: Send + 'static {
 +        let (send, receive) = tokio::sync::oneshot::channel();
 +        let inherited = self.scope.clone();
-+        let unit = Box::pin(async move {
++        let diagnostic = transport_tasks::DiagnosticToken::capture();
++        let unit = Box::pin(diagnostic.scope(async move {
 +            let value = match inherited { Some(scope) => scope.scope(work).await, None => work.await };
 +            let _ = send.send(value);
-+        });
++        }));
 +        let shared = match &self.scope {
 +            Some(scope) => scope.spawn_join(unit)?,
 +            None => {
@@ -9223,6 +10787,25 @@
 +        fn require_send_sync<T: Send + Sync>(_: &T) {}
 +        require_send_sync(&task);
 +        assert_eq!(task.await.unwrap(), 19);
++    }
++}
++
++#[cfg(test)]
++mod diagnostic_tests {
++    use super::*;
++    use crate::transport_tasks::DiagnosticToken;
++    #[tokio::test]
++    async fn diagnostic_spawner_captures_each_operation_not_its_long_lived_owner() {
++        let spawner=DiagnosticToken::measurement().scope(async {Spawner::capture()}).await;
++        assert!(!spawner.try_spawn(async {DiagnosticToken::capture().is_measurement()}).unwrap().await.unwrap());
++        let child=DiagnosticToken::measurement().scope(async {
++            spawner.try_spawn(async {
++                assert!(DiagnosticToken::capture().is_measurement());
++                try_spawn(async {DiagnosticToken::capture().is_measurement()}).unwrap().await.unwrap()
++            }).unwrap()
++        }).await;
++        assert!(child.await.unwrap());
++        assert!(!spawner.try_spawn(async {DiagnosticToken::capture().is_measurement()}).unwrap().await.unwrap());
 +    }
 +}
 --- a/crates/meow-transport/src/tls.rs
@@ -9446,11 +11029,47 @@
 +}
 --- /dev/null
 +++ b/crates/meow-transport/src/transport_tasks.rs
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,136 @@
 +use std::{cell::RefCell, future::Future, io, pin::Pin, sync::Arc};
 +use tokio::task::AbortHandle;
 +#[path = "transport_join.rs"] mod transport_join;
 +pub use transport_join::{SharedUnitJoin, TaskOutcome};
++
++/// Explicit per-operation diagnostic token. Never stored in a session owner or
++/// long-lived Spawner: each spawn captures the operation invoking it.
++#[derive(Clone, Copy, Debug, Default)]
++pub struct DiagnosticToken(bool);
++thread_local! { static DIAGNOSTIC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
++impl DiagnosticToken {
++    pub fn capture() -> Self { Self(DIAGNOSTIC.with(std::cell::Cell::get)) }
++    pub fn measurement() -> Self { Self(true) }
++    pub fn is_measurement(self) -> bool { self.0 }
++    pub fn run<T>(self, work: impl FnOnce() -> T) -> T {
++        struct Restore(bool);
++        impl Drop for Restore { fn drop(&mut self) { DIAGNOSTIC.with(|slot| slot.set(self.0)); } }
++        let _restore = Restore(DIAGNOSTIC.with(|slot| slot.replace(self.0)));
++        work()
++    }
++    pub fn scope<F: Future>(self, work: F) -> DiagnosticFuture<F> {
++        DiagnosticFuture { token: self, future: Some(Box::pin(work)) }
++    }
++    fn wrap(self, work: Work) -> Work { Box::pin(self.scope(work)) }
++}
++/// Re-enters on each poll AND on destruction, including abort outside the
++/// original scope. Pending futures never leave a thread-wide mute installed.
++pub struct DiagnosticFuture<F: Future> {
++    token: DiagnosticToken, future: Option<Pin<Box<F>>>,
++}
++impl<F: Future> Future for DiagnosticFuture<F> {
++    type Output = F::Output;
++    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
++        let this = self.get_mut();
++        this.token.run(|| this.future.as_mut().expect("diagnostic future already dropped").as_mut().poll(cx))
++    }
++}
++impl<F: Future> Drop for DiagnosticFuture<F> {
++    fn drop(&mut self) { self.token.run(|| drop(self.future.take())); }
++}
 +
 +pub type Work = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 +pub trait TransportTaskContext: Send + Sync {
@@ -9480,13 +11099,13 @@
 +        }
 +        Self::current().unwrap_or_else(|| Self::new(Arc::new(MissingOwner)))
 +    }
-+    pub fn wrap(&self, work: Work) -> Work { self.0.wrap(work) }
-+    pub fn spawn(&self, work: Work) -> io::Result<AbortHandle> { self.0.spawn(work) }
-+    pub fn spawn_join(&self, work: Work) -> io::Result<Arc<SharedUnitJoin>> { self.0.spawn_join(work) }
++    pub fn wrap(&self, work: Work) -> Work { DiagnosticToken::capture().wrap(self.0.wrap(work)) }
++    pub fn spawn(&self, work: Work) -> io::Result<AbortHandle> { self.0.spawn(DiagnosticToken::capture().wrap(work)) }
++    pub fn spawn_join(&self, work: Work) -> io::Result<Arc<SharedUnitJoin>> { self.0.spawn_join(DiagnosticToken::capture().wrap(work)) }
 +    pub fn current() -> Option<Self> {
 +        CURRENT.try_with(Clone::clone).ok().or_else(|| BLOCKING.with(|slot| slot.borrow().clone()))
 +    }
-+    pub async fn scope<F: Future>(&self, work: F) -> F::Output { CURRENT.scope(self.clone(), work).await }
++    pub async fn scope<F: Future>(&self, work: F) -> F::Output { DiagnosticToken::capture().scope(CURRENT.scope(self.clone(), work)).await }
 +    pub fn run_blocking<T>(&self, work: impl FnOnce() -> T) -> T {
 +        struct Restore(Option<TransportScope>);
 +        impl Drop for Restore {
@@ -9498,19 +11117,54 @@
 +}
 +
 +pub fn spawn(work: Work) -> io::Result<AbortHandle> {
-+    if let Some(scope) = TransportScope::current() { return scope.0.spawn(work); }
-+    Ok(tokio::spawn(work).abort_handle())
++    if let Some(scope) = TransportScope::current() { return scope.spawn(work); }
++    Ok(tokio::spawn(DiagnosticToken::capture().wrap(work)).abort_handle())
 +}
 +
 +pub fn spawn_join(work: Work) -> io::Result<Arc<SharedUnitJoin>> {
-+    if let Some(scope) = TransportScope::current() { return scope.0.spawn_join(work); }
-+    Ok(SharedUnitJoin::new(tokio::spawn(work)))
++    if let Some(scope) = TransportScope::current() { return scope.spawn_join(work); }
++    Ok(SharedUnitJoin::new(tokio::spawn(DiagnosticToken::capture().wrap(work))))
 +}
 +
 +/// Re-enter the same session's live context for one caller-owned operation.
 +/// This creates no task and keeps cancellation with the calling future.
 +pub fn wrap_current(work: Work) -> Work {
-+    match TransportScope::current() { Some(scope) => scope.wrap(work), None => work }
++    match TransportScope::current() { Some(scope) => scope.wrap(work), None => DiagnosticToken::capture().wrap(work) }
++}
++
++#[cfg(test)]
++mod diagnostic_tests {
++    use super::*;
++    use std::sync::atomic::{AtomicUsize, Ordering};
++    struct OnDrop(Arc<AtomicUsize>);
++    impl Drop for OnDrop {
++        fn drop(&mut self) { assert!(DiagnosticToken::capture().is_measurement());self.0.fetch_add(1,Ordering::SeqCst); }
++    }
++    #[tokio::test]
++    async fn diagnostic_future_drop_outside_scope_restores_only_its_own_context() {
++        let drops=Arc::new(AtomicUsize::new(0));let count=drops.clone();
++        let mut measured=Box::pin(DiagnosticToken::measurement().scope(async move {
++            let _guard=OnDrop(count);std::future::pending::<()>().await;
++        }));
++        std::future::poll_fn(|cx| { assert!(measured.as_mut().poll(cx).is_pending());std::task::Poll::Ready(()) }).await;
++        assert!(!DiagnosticToken::capture().is_measurement());
++        drop(measured);assert_eq!(drops.load(Ordering::SeqCst),1);assert!(!DiagnosticToken::capture().is_measurement());
++        let panic=std::panic::catch_unwind(|| DiagnosticToken::measurement().run(|| panic!("fixture")));
++        assert!(panic.is_err());assert!(!DiagnosticToken::capture().is_measurement());
++    }
++    #[tokio::test(flavor="multi_thread",worker_threads=2)]
++    async fn diagnostic_spawn_abort_inherits_token_without_muting_parallel_business() {
++        let drops=Arc::new(AtomicUsize::new(0));let count=drops.clone();let(tx,rx)=tokio::sync::oneshot::channel();
++        let task=DiagnosticToken::measurement().scope(async {
++            spawn_join(Box::pin(async move {assert!(DiagnosticToken::capture().is_measurement());
++                let _guard=OnDrop(count);tx.send(()).unwrap();std::future::pending::<()>().await;
++            })).unwrap()
++        }).await;
++        rx.await.unwrap();
++        let ordinary=spawn_join(Box::pin(async {assert!(!DiagnosticToken::capture().is_measurement());})).unwrap();
++        ordinary.wait().await;task.abort();assert!(task.wait().await.cancelled);
++        assert_eq!(drops.load(Ordering::SeqCst),1);assert!(!DiagnosticToken::capture().is_measurement());
++    }
 +}
 --- a/crates/meow-transport/src/ws.rs
 +++ b/crates/meow-transport/src/ws.rs

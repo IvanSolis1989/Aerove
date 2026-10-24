@@ -10,6 +10,14 @@ import dev.aerove.lite.core.MeowNativeCore
 import dev.aerove.lite.vpn.LiteVpnService
 import java.util.UUID
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -44,20 +52,53 @@ class NativeSmokeTest {
         require(fixture.matches(Regex("http://10\\.0\\.2\\.2:[0-9]+")))
         val port = fixture.substringAfterLast(':').toInt()
         assertNull("Grant ACTIVATE_VPN to the development package before this test", VpnService.prepare(context))
-        val profile = graph.profiles.importText("TUN test", "mode: direct\nrules:\n  - MATCH,DIRECT\n")
-        graph.profiles.select(profile.id)
-        graph.settings.save(LiteSettings(mode = ProxyMode.Direct), vpnAuthorized = true)
-        val activity = ActivityScenario.launch(MainActivity::class.java)
+        assertEquals("Do not take over an existing VPN session", VpnPhase.Stopped, graph.vpn.value.phase)
+        check(!LiteVpnService.wasRequested(context)) { "Do not replace an existing VPN request" }
+        val before = graph.profiles.snapshot()
+        check(before.selectedId != null || before.profiles.isEmpty()) { "Cannot restore an unselected nonempty profile library" }
+        val settings = graph.settings.read()
+        var profileId: String? = null
+        var activity: ActivityScenario<MainActivity>? = null
+        var startRequested = false
+        val failures = NativeSmokeFailures()
+        val stage = AtomicReference("setup")
+        fun event(name: String, failure: Throwable? = null) {
+            stage.set(name)
+            runCatching {
+                val actual = graph.vpn.value
+                val message = "elapsedNanos=${android.os.SystemClock.elapsedRealtimeNanos()} stage=$name phase=${actual.phase} error=${actual.error} endpointPort=${actual.endpoint?.port}"
+                if (failure == null) android.util.Log.i("NativeSmoke", message)
+                else android.util.Log.e("NativeSmoke", message, failure)
+            }
+        }
+        val observation = launch(Dispatchers.IO) {
+            graph.vpn.distinctUntilChangedBy { Triple(it.phase, it.error, it.endpoint?.port) }.collect { actual ->
+                runCatching { android.util.Log.i("NativeSmoke",
+                    "elapsedNanos=${android.os.SystemClock.elapsedRealtimeNanos()} stage=${stage.get()} phase=${actual.phase} error=${actual.error} endpointPort=${actual.endpoint?.port}") }
+            }
+        }
         try {
+            event("import-profile")
+            val profile = graph.profiles.importText("TUN test", "mode: direct\nrules:\n  - MATCH,DIRECT\n")
+            profileId = profile.id
+            graph.profiles.select(profile.id)
+            graph.settings.save(LiteSettings(mode = ProxyMode.Direct), vpnAuthorized = true)
+            event("launch-activity")
+            activity = ActivityScenario.launch(MainActivity::class.java)
+            event("start-first")
+            startRequested = true
             start()
             withTimeout(60_000) { graph.vpn.first { it.phase == VpnPhase.Running || it.phase == VpnPhase.Failed } }
                 .also { check(it.phase == VpnPhase.Running) { it.error ?: "VPN did not become ready" } }
+            event("running-first")
             val token = UUID.randomUUID().toString()
+            event("cross-uid-traffic")
             val command = "printf 'GET /$token HTTP/1.0\\r\\nHost: fixture\\r\\n\\r\\n' | toybox nc -w 10 10.0.2.2 $port"
             val response = instrumentation.uiAutomation.executeShellCommand(command).use { descriptor ->
                 android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { it.readText() }
             }
             assertTrue("An independent shell UID must receive its unique fixture response through the TUN", response.contains("AEROVE_LITE_FIXTURE:$token"))
+            event("private-controller")
             val endpoint = checkNotNull(graph.vpn.value.endpoint)
             val client = OkHttpClient()
             try {
@@ -91,18 +132,43 @@ class NativeSmokeTest {
                 client.connectionPool.evictAll()
                 client.dispatcher.executorService.shutdown()
             }
+            event("stop-first")
             stop()
             withTimeout(15_000) { graph.vpn.first { it.phase == VpnPhase.Stopped } }
+            event("restart")
             start()
             withTimeout(60_000) { graph.vpn.first { it.phase == VpnPhase.Running || it.phase == VpnPhase.Failed } }
                 .also { check(it.phase == VpnPhase.Running) { it.error ?: "VPN could not restart" } }
+            event("running-second")
+        } catch (failure: Throwable) {
+            failures.record(failure)
+            event("first-failure:${stage.get()}", failure)
         } finally {
-            try {
-                stop()
-                withTimeout(15_000) { graph.vpn.first { it.phase == VpnPhase.Stopped } }
-                graph.profiles.delete(profile.id)
-            } finally { activity.close() }
+            withContext(NonCancellable) {
+                suspend fun cleanup(name: String, action: suspend () -> Unit) {
+                    failures.attempt {
+                        event("cleanup:$name")
+                        try { withTimeout(15_000) { action() } }
+                        catch (failure: Throwable) { event("cleanup-failed:$name", failure); throw failure }
+                    }
+                }
+                if (startRequested) cleanup("stop") {
+                    stop()
+                    graph.vpn.first { it.phase == VpnPhase.Stopped }
+                }
+                cleanup("activity") { activity?.close() }
+                cleanup("settings") { graph.settings.save(settings, vpnAuthorized = true) }
+                cleanup("selection") { before.selectedId?.let { graph.profiles.select(it) } }
+                cleanup("owned-profile") { profileId?.let { graph.profiles.delete(it) } }
+                cleanup("readback") {
+                    assertEquals("Original settings must be restored", settings, graph.settings.read())
+                    assertEquals("Only the test profile may be removed", before, graph.profiles.snapshot())
+                }
+                cleanup("observation") { observation.cancelAndJoin() }
+                event("finished", failures.first)
+            }
         }
+        failures.rethrow()
         }
     }
 
@@ -113,4 +179,21 @@ class NativeSmokeTest {
     private fun stop() {
         context.startService(Intent(context, LiteVpnService::class.java).setAction(LiteVpnService.ACTION_STOP))
     }
+}
+
+internal class NativeSmokeFailures {
+    var first: Throwable? = null
+        private set
+
+    fun record(failure: Throwable) {
+        val original = first
+        if (original == null) first = failure
+        else if (original !== failure) original.addSuppressed(failure)
+    }
+
+    suspend fun attempt(action: suspend () -> Unit) {
+        try { action() } catch (failure: Throwable) { record(failure) }
+    }
+
+    fun rethrow() { first?.let { throw it } }
 }

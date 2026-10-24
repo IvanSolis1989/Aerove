@@ -29,6 +29,9 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
@@ -38,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import dev.aerove.lite.ServiceCheckView
 import dev.aerove.lite.ConnectionInfo
 import dev.aerove.lite.DashboardWidget
 import dev.aerove.lite.LiteSettings
@@ -240,6 +244,101 @@ class DashboardLayoutUiTest {
         compose.runOnUiThread { foreground.value = true }
         compose.waitUntil { actions.dashboardTelemetry.lastOrNull() == true }
         assertTrue(actions.connectionTelemetry.none { it })
+    }
+
+    @Test
+    fun statisticsOnlyHasThreeRealRoutesWithoutServiceDisclosureOrDemand() {
+        launch(fixture(listOf(DashboardWidget.ConnectionStats)))
+        compose.onNodeWithTag("diagnostics-disclosure").assertDoesNotExist()
+        compose.onNodeWithText(context.getString(R.string.lite_tab_connections)).performClick()
+        compose.onNodeWithText(context.getString(R.string.history_requests)).performClick()
+        compose.onNodeWithText(context.getString(R.string.history_dns)).performClick()
+        assertEquals(1, connectionsOpened)
+        assertEquals(1, requestsOpened)
+        assertEquals(1, dnsOpened)
+        assertTrue(actions.serviceTelemetry.all { it.isEmpty() })
+    }
+
+    @Test
+    fun serviceCellsGrowForTwoLinesAtLargeText() {
+        val initial = fixture(listOf(DashboardWidget.ServiceStatus))
+        launch(initial.copy(diagnostics = initial.diagnostics.copy(services = listOf(
+            ServiceCheckView("netflix", "available", checkedAt = 1),
+            ServiceCheckView("youtube", "restricted", checkedAt = 1)))), fontScale = 2f, maxWidth = 328.dp)
+        listOf("netflix", "youtube").forEach { id ->
+            val cell = compose.onNodeWithTag("dashboard-service-$id").fetchSemanticsNode().boundsInRoot
+            assertTrue(cell.height >= (36f + 32f) * density - 1f)
+        }
+        listOf("Netflix", "YouTube").forEach { label ->
+            val layouts = mutableListOf<TextLayoutResult>()
+            compose.onNodeWithText(label, useUnmergedTree = true).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+            assertTrue(!layouts.single().didOverflowHeight)
+        }
+    }
+
+    private fun footerBaseline(tag: String): Float {
+        val node = compose.onNodeWithTag(tag)
+        val layouts = mutableListOf<TextLayoutResult>()
+        node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        return node.fetchSemanticsNode().boundsInRoot.top + layouts.single().firstBaseline
+    }
+
+    private fun assertFooterBaselineAndCopyTarget() {
+        assertEquals(footerBaseline("dashboard-vpn-footer"), footerBaseline("dashboard-lan-footer"), 0.5f)
+        val address = compose.onNodeWithTag("dashboard-lan-footer").fetchSemanticsNode().boundsInRoot
+        val copy = compose.onNodeWithTag("dashboard-lan-copy").fetchSemanticsNode()
+        assertTrue(!address.overlaps(copy.boundsInRoot))
+        assertTrue(copy.touchBoundsInRoot.width >= 48f * density - 1f)
+        assertTrue(copy.touchBoundsInRoot.height >= 48f * density - 1f)
+        compose.onNodeWithTag("dashboard-lan-copy").performClick()
+        assertTrue(actions.events.isEmpty())
+    }
+
+    @Test
+    fun networkControlFootersShareActualTextBaseline() {
+        launch(fixture(listOf(DashboardWidget.OutboundMode, DashboardWidget.VpnButton, DashboardWidget.IntranetIp)), maxWidth = 412.dp)
+        assertFooterBaselineAndCopyTarget()
+    }
+
+    @Test
+    fun narrowLargeTextIpv6FooterRetainsBaselineAndIndependentCopy() {
+        val initial = fixture(listOf(DashboardWidget.OutboundMode, DashboardWidget.VpnButton, DashboardWidget.IntranetIp))
+        launch(initial.copy(localAddress = "2001:db8:1234:5678:9abc:def0:1234:5678",
+            settings = initial.settings.copy(network = initial.settings.network.copy(allowLan = true))),
+            fontScale = 2f, maxWidth = 328.dp)
+        assertFooterBaselineAndCopyTarget()
+        listOf(R.string.lite_mode_rule, R.string.lite_mode_global, R.string.lite_mode_direct).forEach { label ->
+            val layouts = mutableListOf<TextLayoutResult>()
+            compose.onNodeWithText(context.getString(label)).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+            assertTrue(!layouts.single().didOverflowHeight)
+        }
+        compose.onNodeWithContentDescription(context.getString(R.string.lite_vpn)).assertIsOn().performClick().assertIsOff()
+        compose.onNodeWithContentDescription(context.getString(R.string.network_allow_lan)).assertIsOn().performClick().assertIsOff()
+        assertTrue(!state.value.settings.network.vpnEnabled && !state.value.settings.network.allowLan)
+    }
+
+    @Test
+    fun compactTrafficOverlayPreservesOriginalStatusForegroundBounds() {
+        val initial = fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = dev.aerove.lite.VpnPhase.Running)
+        launch(initial, maxWidth = 412.dp)
+        fun rect(tag: String) = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+        val card = rect("dashboard-status")
+        val heading = rect("dashboard-status-heading")
+        val body = rect("dashboard-status-body")
+        compose.runOnUiThread {
+            state.value = state.value.copy(settings = state.value.settings.copy(
+                dashboardWidgets = listOf(DashboardWidget.CurrentOutbound, DashboardWidget.NetworkSpeed)))
+        }
+        compose.waitForIdle()
+        assertEquals(card, rect("dashboard-status"))
+        assertEquals(heading, rect("dashboard-status-heading"))
+        assertEquals(body, rect("dashboard-status-body"))
+        val upload = rect("dashboard-upload")
+        val download = rect("dashboard-download")
+        assertTrue(!heading.overlaps(upload) && !heading.overlaps(download))
+        assertTrue(!body.overlaps(upload) && !body.overlaps(download))
+        assertTrue(!upload.overlaps(download))
+        assertTrue(actions.events.isEmpty())
     }
 
     @Test

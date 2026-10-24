@@ -1,6 +1,6 @@
 # AEROVE Lite
 
-工程位于 [apps/aerove-lite](../../apps/aerove-lite/)，采用原生 Android 界面，内核按用户决定迁移至固定 meow-rs v0.26.1，最低 Android 13。当前处于开发和验证阶段，生产入口尚未切换。
+工程位于 [apps/aerove-lite](../../apps/aerove-lite/)，采用原生 Android 界面，内核按用户决定迁移至固定 meow-rs v0.26.1，最低 Android 13。当前处于开发和验证阶段，Meow 已接入应用构建，首个公开版本尚未发行。
 
 - [双产品开发契约](../shared/UI_CONTRACT.md)
 - [验收规则](../shared/ACCEPTANCE.md)

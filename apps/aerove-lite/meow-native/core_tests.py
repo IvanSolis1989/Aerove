@@ -9,6 +9,7 @@ MODE='policy-runtime-v1'
 MODE_V2='policy-runtime-v2'
 MODE_TRAFFIC='policy-runtime-traffic-v1'
 MODE_OBSERVABILITY='policy-runtime-observability-v1'
+MODE_PROVIDER_GENERAL='policy-runtime-provider-general-v1'
 CASES=[
     ('meow-common',name) for name in [
         'cli_without_scope_keeps_output_and_real_join_error','observer_does_not_consume_protocol_output_or_panic',
@@ -57,10 +58,14 @@ CASES_OBSERVABILITY=CASES_V2+[
     for p,n,required in [('meow-common',5,['aerove-android-runtime']),
         ('meow-dns',6,['aerove-android-runtime','encrypted']),('meow-tunnel',6,[]),('meow-api',1,[])]
 ]
+# New diagnostic test is also covered by the retained broad scoped_join:: filter.
+CASES_PROVIDER_GENERAL=[dict(entry,expectedPass=12 if index==0 else entry['expectedPass'],exact=False)
+    for index,entry in enumerate(CASES_OBSERVABILITY)]+[{'package': 'meow-config', 'filter': 'proxy_provider::tests::companion_', 'expectedPass': 2, 'target': 'lib', 'requiredFeatures': [], 'exact': False}, {'package': 'meow-config', 'filter': 'proxy_provider::tests::provider_strict_refresh_keeps_last_good_on_bad_dialer', 'expectedPass': 1, 'target': 'lib', 'requiredFeatures': [], 'exact': True}, {'package': 'meow-common', 'filter': 'diagnostic_', 'expectedPass': 2, 'target': 'lib', 'requiredFeatures': [], 'exact': False}, {'package': 'meow-config', 'filter': 'diagnostic_', 'expectedPass': 1, 'target': 'lib', 'requiredFeatures': [], 'exact': False}, {'package': 'meow-proxy', 'filter': 'diagnostic_', 'expectedPass': 10, 'target': 'lib', 'requiredFeatures': [], 'exact': False}, {'package': 'meow-transport', 'filter': 'diagnostic_', 'expectedPass': 3, 'target': 'lib', 'requiredFeatures': [], 'exact': False}, {'package': 'meow-config', 'filter': 'managed_dependency_', 'expectedPass': 3, 'target': 'lib', 'requiredFeatures': [], 'exact': False}, {'package': 'meow-config', 'filter': 'proxy_provider::tests::projected_', 'expectedPass': 5, 'target': 'lib', 'requiredFeatures': [], 'exact': False}]
 COMPILE_COMMAND=['cargo','check','--manifest-path',MANIFEST,'--locked','--package','meow-api',
     '--package','meow-listener','--all-features']
 
 def packages_for_mode(mode):
+    if mode==MODE_PROVIDER_GENERAL:return sorted(set(PACKAGES)|{'meow-tunnel','meow-api','meow-listener','meow-config'})
     if mode==MODE_OBSERVABILITY:return sorted(set(PACKAGES)|{'meow-tunnel','meow-api','meow-listener'})
     if mode in (MODE,MODE_V2,MODE_TRAFFIC):return PACKAGES
     raise ValueError('Unknown Core unit test admission')
@@ -71,7 +76,7 @@ def validate_policy(policy):
     if 'coreTests' not in policy:
         if 'coreTestLockSha256' in policy:raise ValueError('Core test lock without approved tests')
         return False
-    if policy['coreTests'] not in (MODE,MODE_V2,MODE_TRAFFIC,MODE_OBSERVABILITY):raise ValueError('Unknown Core unit test admission')
+    if policy['coreTests'] not in (MODE,MODE_V2,MODE_TRAFFIC,MODE_OBSERVABILITY,MODE_PROVIDER_GENERAL):raise ValueError('Unknown Core unit test admission')
     expected=policy.get('coreTestLockSha256')
     if expected is not None and (not isinstance(expected,str) or re.fullmatch('[0-9a-f]{64}',expected) is None):
         raise ValueError('Invalid Core unit lock identity')
@@ -99,11 +104,12 @@ def entries(mode):
     if mode==MODE:return [dict(package=p,filter=f,expectedPass=COUNTS.get((p,f),1),target='lib',requiredFeatures=[]) for p,f in CASES]
     if mode in (MODE_V2,MODE_TRAFFIC):return CASES_V2
     if mode==MODE_OBSERVABILITY:return CASES_OBSERVABILITY
+    if mode==MODE_PROVIDER_GENERAL:return CASES_PROVIDER_GENERAL
     raise ValueError('Unknown Core unit test admission')
 
 def entry_command(entry,features):
     if not set(entry['requiredFeatures'])<=set(features):raise ValueError('Actual bridge graph lacks the authored Core test feature')
-    if entry['target']=='lib':return command(entry['package'],entry['filter'],features)
+    if entry['target']=='lib':return command(entry['package'],entry['filter'],features)+(['--exact'] if entry.get('exact') else [])
     if entry['package']!='meow-common' or entry['target']!='transport_scope_compat' or entry['filter'] is not None:
         raise ValueError('Unknown fixed Core integration target')
     result=['cargo','test','--manifest-path',MANIFEST,'--locked','--package',entry['package'],'--test','transport_scope_compat','--no-default-features']
@@ -144,7 +150,8 @@ def execute(root,policy,environment,receipt):
         locked=source_lock.read_bytes();state['resolvedLockSha256']=digest(locked);(directory/'core-tests.lock').write_bytes(locked)
         for index,spec in enumerate(entries(policy['coreTests'])):
             package=spec['package'];name=spec['filter'];args=entry_command(spec,matrix[package]);entry=dict(package=package,filter=name,command=args,exit=None,expectedPass=spec['expectedPass']);state['commands'].append(entry)
-            if policy['coreTests'] in (MODE_V2,MODE_TRAFFIC,MODE_OBSERVABILITY):entry['target']=spec['target']
+            if policy['coreTests'] in (MODE_V2,MODE_TRAFFIC,MODE_OBSERVABILITY,MODE_PROVIDER_GENERAL):entry['target']=spec['target']
+            if policy['coreTests']==MODE_PROVIDER_GENERAL:entry['exact']=spec['exact']
             result=subprocess.run(args,cwd=root,env=environment,capture_output=True)
             label=re.sub('[^A-Za-z0-9_.-]','_',name if name is not None else spec['target'])
             stem=f'{index:02d}-{package}-{label}';(directory/(stem+'.stdout.log')).write_bytes(result.stdout);(directory/(stem+'.stderr.log')).write_bytes(result.stderr)
@@ -155,7 +162,7 @@ def execute(root,policy,environment,receipt):
             if count!=[str(entry['expectedPass']).encode()]:raise ValueError('Core unit filter did not execute its exact authored test count')
             entry['passed']=entry['expectedPass']
             if source_lock.read_bytes()!=locked:raise ValueError('Locked Core unit command changed its lock')
-        if policy['coreTests']==MODE_OBSERVABILITY:
+        if policy['coreTests'] in (MODE_OBSERVABILITY,MODE_PROVIDER_GENERAL):
             args=list(COMPILE_COMMAND)
             entry=dict(command=args,exit=None);state['compileCheck']=entry
             result=subprocess.run(args,cwd=root,env=environment,capture_output=True)

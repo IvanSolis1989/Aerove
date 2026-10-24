@@ -1147,3 +1147,28 @@
 -keep,includedescriptorclasses class dev.aerove.lite.ui.ScriptLibraryScreenKt {
     void ScriptLibraryScreen(dev.aerove.lite.overrides.ScriptLibraryState,kotlin.jvm.functions.Function1,kotlin.jvm.functions.Function1,kotlin.jvm.functions.Function1,kotlin.jvm.functions.Function2,kotlin.jvm.functions.Function1,kotlin.jvm.functions.Function1,kotlin.jvm.functions.Function2,androidx.compose.foundation.layout.PaddingValues,androidx.compose.runtime.Composer,int,int);
 }
+
+-keep,includedescriptorclasses class dev.aerove.lite.ui.LiteTabTransitionHostKt {
+    androidx.compose.runtime.ProvidableCompositionLocal getLocalLitePageActive();
+}
+-keep,includedescriptorclasses class dev.aerove.lite.backgroundpolicy.BackgroundPolicyPreferences {
+    java.util.List getExcludeSSIDs();
+}
+-keep,includedescriptorclasses class dev.aerove.lite.notices.ClientNotices {
+    <init>(kotlin.jvm.functions.Function0,int,kotlin.jvm.internal.DefaultConstructorMarker);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.ui.DashboardPresentationKt {
+    java.util.List dashboardPresentationWidgets(java.util.List);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.dnssettings.DnsValue$Entries {
+    java.util.List getValue();
+}
+-keep,includedescriptorclasses class dev.aerove.lite.dnssettings.DnsPreferences {
+    java.util.Set getOverridden();
+}
+-keep,includedescriptorclasses class dev.aerove.lite.ui.GlobalNetworkRestartNoticeKt {
+    void GlobalNetworkRestartNotice(boolean,kotlin.jvm.functions.Function0,boolean,androidx.compose.runtime.Composer,int,int);
+}
+-keep,includedescriptorclasses class dev.aerove.lite.data.CompatibilityValidator {
+    <init>(dev.aerove.lite.data.NativeConfigValidator,java.io.File);
+}

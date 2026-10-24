@@ -498,21 +498,24 @@ jobs:
         cmdline-tools-version: '16111833'
     - name: Fetch exact prebuilt x86 runtime
       run: python3 apps/aerove-lite/tool/ci_artifacts.py runtime --name "AEROVE-Lite-runtime-contract-attempt-${GITHUB_RUN_ATTEMPT}" --destination "$RUNNER_TEMP/lite-runtime-input"
-    - name: Enable KVM for the isolated test emulator
+    - name: Existing API33 emulator environment with unchanged configuration
+      shell: bash
       run: |
+        set -euo pipefail
+        sdkmanager --install 'build-tools;35.0.0' emulator 'system-images;android-33;google_apis;x86_64' --channel=0
+        mkdir -p "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}"
+        "$ANDROID_HOME/emulator/emulator" -no-window -version > "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/emulator-version.txt" 2>&1
+        grep -E '37\.2\.12\.0.*16428233' "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/emulator-version.txt"
         echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
         sudo udevadm control --reload-rules
         sudo udevadm trigger --name-match=kvm
+        echo no | avdmanager create avd --force -n test --package 'system-images;android-33;google_apis;x86_64' --device pixel_6
+        avd_directory="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
+        printf 'hw.cpu.ncore=2\n' >> "$avd_directory/test.avd/config.ini"
+        cp "$avd_directory/test.avd/config.ini" "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/avd-config.ini"
     - name: Real API 33 ${{ matrix.phase }} verification
-      uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
-      with:
-        api-level: 33
-        arch: x86_64
-        target: google_apis
-        profile: pixel_6
-        disable-animations: false
-        emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-        script: bash apps/aerove-lite/tool/emulator_acceptance.sh ${{ matrix.phase }}
+      shell: bash
+      run: python3 apps/aerove-lite/tool/emulator_current.py ${{ matrix.phase }} --runtime-directory "$RUNNER_TEMP/lite-runtime-input"
     - name: Preserve the first Android dashboard captures
       if: ${{ always() && matrix.phase == 'matrix' }}
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

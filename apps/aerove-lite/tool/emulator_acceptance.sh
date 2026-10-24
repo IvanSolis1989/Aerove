@@ -30,9 +30,17 @@ test -f "$test_apk"
 sha256sum "$app_apk" "$test_apk" > "$diagnostics/APK_SHA256SUMS"
 python3 - "$diagnostics/SOURCE.json" "$phase" "$test_timeout_msec" "$serial" <<'PY'
 import hashlib, json, os, subprocess, sys
+sys.path.insert(0, "apps/aerove-lite/tool")
 from pathlib import Path
 proof_path = os.environ.get("AEROVE_QA79_PROOF")
 proof = json.loads(Path(proof_path).read_text()) if proof_path else None
+current_path = os.environ.get("AEROVE_CURRENT_RENDERER_PROOF")
+if proof_path and current_path:
+    raise SystemExit("Mixed original-app and current-run renderer proofs")
+current = None
+if current_path:
+    from emulator_current import validate_renderer_proof
+    current = validate_renderer_proof(current_path)
 if proof:
     if proof.get("gpuBackend") != "swangle" or proof.get("rendererBackend") != "SwANGLE (ANGLE + SwiftShader)":
         raise SystemExit("Invalid QA renderer proof")
@@ -49,7 +57,7 @@ Path(sys.argv[1]).write_text(json.dumps({"sourceRevision": proof["sourceRevision
     "workflowRun": os.environ.get("GITHUB_RUN_ID"), "runNumber": int(os.environ["GITHUB_RUN_NUMBER"]),
     "runAttempt": int(os.environ["GITHUB_RUN_ATTEMPT"]), "phase": sys.argv[2],
     "testTimeoutMillis": int(sys.argv[3]),
-    "deviceKind": "CI-emulator", "rendererBackend": proof["rendererBackend"] if proof else "SwiftShader-indirect",
+    "deviceKind": "CI-emulator", "rendererBackend": proof["rendererBackend"] if proof else current["rendererBackend"] if current else "SwiftShader-indirect",
     "prebuiltApks": True, "performanceEvidence": False, "deviceSerial": sys.argv[4],
     "isolatedBackgroundPolicy": True}, indent=2), encoding="utf-8")
 PY
@@ -93,6 +101,8 @@ done < <(pgrep -f '/emulator/qemu/|qemu-system-' || true)
 {
     if [[ -n "${AEROVE_QA79_PROOF:-}" ]]; then
         printf 'owner=emulator_qa79.py; actual parent returncode/signal and complete stdio in EMULATOR-OWNER.json and emulator.*.log\n'
+    elif [[ -n "${AEROVE_CURRENT_RENDERER_PROOF:-}" ]]; then
+        printf 'owner=emulator_current.py; actual parent returncode/signal and complete stdio in EMULATOR-OWNER.json and emulator.*.log\n'
     else
         printf 'owner=reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d\n'
     fi
