@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="about_external_link">外部リンク</string>
+    <string name="about_link_go">開く</string>
+    <string name="about_link_cancel">キャンセル</string>
+    <string name="about_link_open_failed">このリンクを開けません。リンクを開くことができ、許可されたアプリがあるか確認してください。</string>
+</resources>

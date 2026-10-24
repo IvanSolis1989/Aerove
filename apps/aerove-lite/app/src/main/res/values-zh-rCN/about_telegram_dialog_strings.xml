@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="about_external_link">外部链接</string>
+    <string name="about_link_go">前往</string>
+    <string name="about_link_cancel">取消</string>
+    <string name="about_link_open_failed">无法打开此链接。请检查是否有可用且获准打开链接的应用。</string>
+</resources>
