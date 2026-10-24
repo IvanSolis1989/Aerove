@@ -134,6 +134,14 @@ tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.con
     dependsOn(prepareClientHelperLicenses)
 }
 
+// Lint reads source assets directly, without passing through mergeAssets.
+tasks.withType<com.android.build.gradle.internal.lint.LintModelWriterTask>().configureEach {
+    dependsOn(prepareClientHelperLicenses)
+}
+tasks.withType<com.android.build.gradle.internal.lint.AndroidLintAnalysisTask>().configureEach {
+    dependsOn(prepareClientHelperLicenses)
+}
+
 dependencies {
     implementation("androidx.core:core-ktx:1.19.0")
     implementation("androidx.activity:activity-compose:1.13.0")
