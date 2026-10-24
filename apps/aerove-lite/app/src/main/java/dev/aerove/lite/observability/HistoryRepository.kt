@@ -8,6 +8,8 @@ data class HistorySnapshot(
     val logs: List<HistoryLogEntry> = emptyList(),
     val truncated: Boolean = false,
     val sessionRevision: Long = 0,
+    val requestCount: Long? = null,
+    val dnsCount: Long? = null,
 )
 
 /** Consumes only the existing stream; it owns no timer, network client or coroutine. */
@@ -24,33 +26,61 @@ class HistoryRepository {
     private val logs = ArrayDeque<HistoryLogEntry>()
     private var logSerial = 0L
     private var sessionRevision = 0L
+    private var activation: ULong? = null
+    private var requestCount = 0L
+    private var dnsCount = 0L
+    private var countsReady = false
+    private var countsComplete = true
 
     @Synchronized fun bindSession(value: Long?) {
         if (token == value) return
         sessionRevision++
         token = value; runtime = null; generation = null; cursor = 0uL; dropped = 0uL
         retiredRuntimes.clear(); requests.clear(); dns.clear(); logs.clear(); truncated = false
+        resetCounts()
+    }
+
+    private fun resetCounts() {
+        activation = null; requestCount = 0; dnsCount = 0; countsReady = false; countsComplete = true
     }
 
     @Synchronized fun accept(binding: Long, window: ObservationWindow): Boolean {
         if (token == null || token != binding || window.sessionId in retiredRuntimes) return false
+        if (window.activationCursor?.let { it > window.cursor } == true) return false
+        if (window.events.isEmpty() && window.activationCursor != null &&
+            (runtime != window.sessionId || generation != window.generation) &&
+            window.cursor != window.activationCursor) return false
         if (runtime != window.sessionId) {
             runtime?.let { retiredRuntimes += it; requests.clear(); dns.clear(); logs.clear(); truncated = false; sessionRevision++ }
             while (retiredRuntimes.size > 16) retiredRuntimes.remove(retiredRuntimes.first())
             runtime = window.sessionId; generation = null
+            resetCounts()
         }
         val oldGeneration = generation
         if (oldGeneration != null && window.generation < oldGeneration) return false
         if (window.generation != oldGeneration) {
+            if (countsReady && window.activationCursor == null) countsComplete = false
+            activation = window.activationCursor
+            countsReady = activation != null
             generation = window.generation
             cursor = if (window.events.isEmpty()) window.cursor else 0uL
             dropped = window.dropped
-        } else if (window.cursor < cursor) return false
+        } else if (window.cursor < cursor || window.activationCursor != activation) return false
         var previous = cursor
+        var liveCursor = maxOf(cursor, activation ?: cursor)
         if (window.dropped > dropped) truncated = true
         window.events.filter { it.cursor > cursor }.forEach { event ->
             if (event.cursor - previous > 1uL) truncated = true
             previous = event.cursor
+            if (activation?.let { event.cursor > it } == true) {
+                if (event.cursor - liveCursor > 1uL) countsComplete = false
+                liveCursor = event.cursor
+                when (event) {
+                    is ObservationEvent.Request -> if (requestCount < Long.MAX_VALUE) requestCount++ else countsComplete = false
+                    is ObservationEvent.Dns -> if (dnsCount < Long.MAX_VALUE) dnsCount++ else countsComplete = false
+                    else -> Unit
+                }
+            }
             when (event) {
                 is ObservationEvent.Request -> requests[event.value.id] = event.value
                 is ObservationEvent.Traffic -> requests[event.id]?.let {
@@ -65,6 +95,7 @@ class HistoryRepository {
             while (dns.size > 3000) dns.remove(dns.keys.first())
         }
         if (window.cursor > previous) truncated = true
+        if (countsReady && window.cursor > liveCursor) countsComplete = false
         cursor = window.cursor; dropped = window.dropped
         return true
     }
@@ -89,5 +120,6 @@ class HistoryRepository {
         when (kind) { HistoryKind.Requests -> requests.clear(); HistoryKind.Dns -> dns.clear(); HistoryKind.Logs -> logs.clear() }
     }
 
-    @Synchronized fun snapshot(): HistorySnapshot = HistorySnapshot(requests.values.toList(), dns.values.toList(), logs.toList(), truncated, sessionRevision)
+    @Synchronized fun snapshot(): HistorySnapshot = HistorySnapshot(requests.values.toList(), dns.values.toList(), logs.toList(), truncated, sessionRevision,
+        requestCount.takeIf { countsReady && countsComplete }, dnsCount.takeIf { countsReady && countsComplete })
 }

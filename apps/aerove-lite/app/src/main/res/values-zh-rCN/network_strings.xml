@@ -11,7 +11,7 @@
     <string name="network_bypass_domains">绕过的域名</string>
     <string name="network_inbound">入站</string>
     <string name="network_ports">端口</string>
-    <string name="network_allow_lan">允许局域网连接</string>
+    <string name="network_allow_lan">局域网代理</string>
     <string name="network_authentication">身份验证</string>
     <string name="network_credentials">账号与密码</string>
     <string name="network_mixed_port">混合端口</string>

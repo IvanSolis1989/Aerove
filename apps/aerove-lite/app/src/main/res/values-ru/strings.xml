@@ -418,7 +418,7 @@
     <string name="navigation_tab_animation">Анимация вкладок</string>
     <string name="network_account_required">Требуется учетная запись.</string>
     <string name="network_allow_bypass">Разрешить обход</string>
-    <string name="network_allow_lan">Разрешить доступ к локальной сети</string>
+    <string name="network_allow_lan">Разрешить LAN</string>
     <string name="network_authenticated_proxy_detail">Системный прокси-сервер Android не может передавать учетные данные. Аутентифицированные соединения продолжаются через туннель VPN.</string>
     <string name="network_authentication">Аутентификация</string>
     <string name="network_bypass_domains">Исключённые домены</string>

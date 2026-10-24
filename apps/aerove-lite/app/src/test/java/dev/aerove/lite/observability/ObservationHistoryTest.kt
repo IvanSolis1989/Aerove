@@ -106,4 +106,121 @@ class ObservationHistoryTest {
         assertEquals(listOf(1, 2, 3), anchor.update(listOf(2, 3), false))
         assertEquals(listOf(2, 3), anchor.update(listOf(2, 3), true))
     }
+    @Test fun activationWatermarkIsStrictAndLegacyWindowsDoNotInventKnownCounts() {
+        val legacy = decodeObservationWindow(envelope(emptyList()).toString())
+        assertNull(legacy.activationCursor)
+        val source = envelope(emptyList(), "1").put("cursor", "7").put("activationCursor", "7")
+        assertEquals(7uL, decodeObservationWindow(source.toString()).activationCursor)
+        for (bad in listOf<Any>("08", "8", 7, JSONObject.NULL)) {
+            assertThrows(IOException::class.java) { decodeObservationWindow(source.put("activationCursor", bad).toString()) }
+        }
+        val repository = HistoryRepository(); repository.bindSession(1)
+        repository.accept(1, legacy)
+        assertNull(repository.snapshot().requestCount)
+        assertNull(repository.snapshot().dnsCount)
+    }
+
+    @Test fun firstWindowSeparatesRealNewEventsFromBackfillAndDeduplicatesCursor() {
+        val repository = HistoryRepository(); repository.bindSession(1)
+        val backfill = request("old-request")
+        val live = request("live-request")
+        val oldDns = DnsHistoryEntry("old", time, "old.test", "A")
+        val newDns = DnsHistoryEntry("new", time, "new.test", "A")
+        val first = ObservationWindow(runtime, 1u, 12u, 0u, listOf(
+            ObservationEvent.Request(9u, backfill), ObservationEvent.Dns(10u, oldDns),
+            ObservationEvent.Request(11u, live), ObservationEvent.Dns(12u, newDns)), 10u)
+        assertTrue(repository.accept(1, first))
+        assertEquals(2, repository.snapshot().requests.size)
+        assertEquals(2, repository.snapshot().dns.size)
+        assertEquals(1L, repository.snapshot().requestCount)
+        assertEquals(1L, repository.snapshot().dnsCount)
+        assertTrue(repository.accept(1, first))
+        assertEquals(1L, repository.snapshot().requestCount)
+        repository.accept(1, ObservationWindow(runtime, 1u, 14u, 0u, listOf(
+            ObservationEvent.Traffic(13u, live.id, 8u, 9u),
+            ObservationEvent.Closed(14u, live.id, time.plusSeconds(1), 8u, 9u)), 10u))
+        assertEquals(1L, repository.snapshot().requestCount)
+        assertEquals(1L, repository.snapshot().dnsCount)
+    }
+
+    @Test fun cumulativeLiveCountsSurviveRetentionEvictionAndExplicitListClear() {
+        val repository = HistoryRepository(); repository.bindSession(1)
+        repository.accept(1, ObservationWindow(runtime, 1u, 0u, 0u, emptyList(), 0u))
+        assertEquals(0L, repository.snapshot().requestCount)
+        repeat(2002) { index ->
+            val cursor = (index + 1).toULong()
+            repository.accept(1, ObservationWindow(runtime, 1u, cursor, 0u,
+                listOf(ObservationEvent.Request(cursor, request("flow-$index"))), 0u))
+        }
+        assertEquals(2000, repository.snapshot().requests.size)
+        assertEquals(2002L, repository.snapshot().requestCount)
+        repository.clear(HistoryKind.Requests); repository.clear(HistoryKind.Dns)
+        assertTrue(repository.snapshot().requests.isEmpty())
+        assertEquals(2002L, repository.snapshot().requestCount)
+        assertEquals(0L, repository.snapshot().dnsCount)
+    }
+
+    @Test fun resumeUsesNewActivationInsteadOfCountingHiddenBackfillAndFullSetupResets() {
+        val repository = HistoryRepository(); repository.bindSession(1)
+        repository.accept(1, ObservationWindow(runtime, 1u, 0u, 0u, emptyList(), 0u))
+        repository.accept(1, ObservationWindow(runtime, 1u, 1u, 0u, listOf(ObservationEvent.Request(1u, request("one"))), 0u))
+        repository.accept(1, ObservationWindow(runtime, 2u, 51u, 0u, listOf(
+            ObservationEvent.Request(49u, request("hidden")), ObservationEvent.Request(51u, request("new"))), 50u))
+        assertEquals(2L, repository.snapshot().requestCount)
+        assertFalse(repository.accept(1, ObservationWindow(runtime, 1u, 52u, 0u, emptyList(), 0u)))
+        assertFalse(repository.accept(1, ObservationWindow(runtime, 2u, 51u, 0u, emptyList(), 49u)))
+        assertEquals(2L, repository.snapshot().requestCount)
+        repository.bindSession(2)
+        assertNull(repository.snapshot().requestCount)
+        assertFalse(repository.accept(1, ObservationWindow(runtime, 2u, 52u, 0u, emptyList(), 50u)))
+        repository.accept(2, ObservationWindow(runtime, 3u, 52u, 0u, emptyList(), 52u))
+        assertEquals(0L, repository.snapshot().requestCount)
+        assertEquals(0L, repository.snapshot().dnsCount)
+    }
+
+    @Test fun missingLiveCursorMakesCountsUnknownInsteadOfSilentlyReturningPartialTotals() {
+        val repository = HistoryRepository(); repository.bindSession(1)
+        repository.accept(1, ObservationWindow(runtime, 1u, 10u, 0u, emptyList(), 10u))
+        repository.accept(1, ObservationWindow(runtime, 1u, 12u, 1u,
+            listOf(ObservationEvent.Request(12u, request())), 10u))
+        assertTrue(repository.snapshot().truncated)
+        assertNull(repository.snapshot().requestCount)
+        assertNull(repository.snapshot().dnsCount)
+        repository.clear(HistoryKind.Requests)
+        assertNull(repository.snapshot().requestCount)
+    }
+
+    @Test fun newRuntimeEmptyActivationGapIsRejectedWithoutPublishingKnownZero() {
+        val repository = HistoryRepository(); repository.bindSession(1)
+        val before = repository.snapshot()
+        assertFalse(repository.accept(1, ObservationWindow(runtime, 1u, 12u, 0u, emptyList(), 10u)))
+        assertEquals(before, repository.snapshot())
+        assertNull(repository.snapshot().requestCount)
+        assertTrue(repository.accept(1, ObservationWindow(runtime, 1u, 10u, 0u, emptyList(), 10u)))
+        assertEquals(0L, repository.snapshot().requestCount)
+        assertEquals(0L, repository.snapshot().dnsCount)
+        val other = UUID.randomUUID().toString()
+        val confirmed = repository.snapshot()
+        assertFalse(repository.accept(1, ObservationWindow(other, 1u, 12u, 0u, emptyList(), 10u)))
+        assertEquals(confirmed, repository.snapshot())
+        assertTrue(repository.accept(1, ObservationWindow(other, 1u, 11u, 0u,
+            listOf(ObservationEvent.Request(11u, request("new-runtime"))), 10u)))
+        assertEquals(1L, repository.snapshot().requestCount)
+    }
+
+    @Test fun resumeEmptyActivationGapCannotAdvanceGenerationOrHideLostEvents() {
+        val repository = HistoryRepository(); repository.bindSession(1)
+        assertTrue(repository.accept(1, ObservationWindow(runtime, 1u, 1u, 0u,
+            listOf(ObservationEvent.Request(1u, request("first"))), 0u)))
+        val confirmed = repository.snapshot()
+        assertFalse(repository.accept(1, ObservationWindow(runtime, 2u, 12u, 0u, emptyList(), 10u)))
+        assertEquals(confirmed, repository.snapshot())
+        assertTrue(repository.accept(1, ObservationWindow(runtime, 2u, 11u, 0u,
+            listOf(ObservationEvent.Request(11u, request("after-resume"))), 10u)))
+        assertEquals(2L, repository.snapshot().requestCount)
+        assertEquals(0L, repository.snapshot().dnsCount)
+        assertTrue(repository.accept(1, ObservationWindow(runtime, 3u, 20u, 0u, emptyList(), 20u)))
+        assertEquals(2L, repository.snapshot().requestCount)
+    }
+
 }

@@ -17,7 +17,8 @@ data class HistoryDocumentRequest(val id: Long, val name: String = "aerove-logs.
 enum class HistoryNotice { Exported, Cancelled, Failed, PartialDocument, DnsCacheCleared }
 data class ObservabilityState(val snapshot: HistorySnapshot = HistorySnapshot(),
     val document: HistoryDocumentRequest? = null, val exporting: Boolean = false,
-    val clearingDns: Boolean = false, val notice: HistoryNotice? = null)
+    val clearingDns: Boolean = false, val notice: HistoryNotice? = null,
+    val observationsAvailable: Boolean = false)
 
 class ObservabilityFeature(scope: CoroutineScope, private val documents: HistoryDocuments,
     private val clearDnsCache: suspend () -> Unit) : Closeable {
@@ -45,7 +46,7 @@ class ObservabilityFeature(scope: CoroutineScope, private val documents: History
         if (binding == token) return@synchronized
         binding = token; repository.bindSession(token); cancelExport()
         dnsEpoch++; dnsJob?.cancel(); dnsJob = null
-        publish { it.copy(snapshot = repository.snapshot(), clearingDns = false) }
+        publish { it.copy(snapshot = repository.snapshot(), clearingDns = false, observationsAvailable = false) }
         updateDemand()
     }
 
@@ -63,7 +64,7 @@ class ObservabilityFeature(scope: CoroutineScope, private val documents: History
 
     fun acceptWindow(token: Long, window: ObservationWindow) = synchronized(gate) {
         if (!enabled.value || !repository.accept(token, window)) return@synchronized
-        publish { it.copy(snapshot = repository.snapshot()) }
+        publish { it.copy(snapshot = repository.snapshot(), observationsAvailable = true) }
     }
 
     fun acceptLog(token: Long, line: LogLine) = synchronized(gate) {

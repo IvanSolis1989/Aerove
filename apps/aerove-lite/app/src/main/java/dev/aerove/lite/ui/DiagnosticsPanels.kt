@@ -88,7 +88,8 @@ import kotlinx.coroutines.delay
 internal val LocalDiagnosticsForeground = staticCompositionLocalOf { true }
 
 @Composable
-internal fun ServiceStatusPanel(state: LiteState, actions: LiteActions) {
+internal fun ServiceStatusPanel(state: LiteState, actions: LiteActions, showServices: Boolean = true,
+    titleResource: Int = R.string.diag_service_status, footer: @Composable () -> Unit = {}) {
     val current by rememberUpdatedState(state)
     val currentActions by rememberUpdatedState(actions)
     val detail = rememberDiagnosticsDetail()
@@ -96,21 +97,25 @@ internal fun ServiceStatusPanel(state: LiteState, actions: LiteActions) {
     val foreground = LocalDiagnosticsForeground.current
     val overlay = LocalLiteOverlay.current
     val view = LocalView.current
-    val watched = if (foreground && (detail.opened || (visible && overlay.content == null)))
+    val watched = if (showServices && foreground && (detail.opened || (visible && overlay.content == null)))
         state.diagnostics.services.let { if (detail.opened) it else it.take(4) }.map { it.id }.toSet() else emptySet()
     ServiceTelemetryDemand(actions, watched)
-    val title = stringResource(R.string.diag_service_status)
+    val title = stringResource(titleResource)
     DiagnosticsCard(Modifier.testTag("diagnostics-services").onGloballyPositioned {
         val bounds = it.boundsInWindow()
         visible = !bounds.isEmpty && bounds.overlaps(Rect(0f, 0f, view.rootView.width.toFloat(), view.rootView.height.toFloat()))
-    }.clickable(role = Role.Button) {
+    }.clickable(enabled = showServices, role = Role.Button) {
         detail.open { close ->
             ServiceDetail(current, currentActions, close)
         }
     }) {
         DiagnosticsHeader(FullGlyphs.verified, title, trailing = {
-            ServiceVerdict(state.diagnostics.services.take(4))
+            if (showServices) Row(verticalAlignment = Alignment.CenterVertically) {
+                ServiceVerdict(state.diagnostics.services.take(4))
+                ServiceRefresh(state, actions)
+            }
         })
+        if (showServices) {
         Spacer(Modifier.height(12.dp))
         val shown = state.diagnostics.services.take(4)
         if (shown.isEmpty()) {
@@ -119,7 +124,6 @@ internal fun ServiceStatusPanel(state: LiteState, actions: LiteActions) {
                 stringResource(if (state.phase == VpnPhase.Running) R.string.diag_service_pending else R.string.diag_service_connect),
                 Modifier.heightIn(min = 108.dp),
             )
-            ServiceRefresh(state, actions)
         } else Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             shown.chunked(2).forEach { row ->
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -132,6 +136,8 @@ internal fun ServiceStatusPanel(state: LiteState, actions: LiteActions) {
             DiagnosticsLoading()
         }
         DiagnosticsError(state.diagnostics.serviceError)
+        }
+        footer()
     }
 }
 

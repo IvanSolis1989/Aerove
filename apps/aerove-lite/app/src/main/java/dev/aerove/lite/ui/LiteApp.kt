@@ -261,7 +261,7 @@ fun LiteApp(state: LiteState, actions: LiteActions) {
                         memoryInfoContent = { MemoryInfoPanel(state, actions) }, openProfileDetails = {
                             val selected = state.profiles.firstOrNull { it.id == state.selectedProfile }
                             if (selected?.custom == true) builderProfile = selected.id else if (selected != null) profileDetailOpen = true
-                        })
+                        }, openRequests = { detail = DetailPage.Requests }, openDns = { detail = DetailPage.DnsQueries })
                 }
                 CompositionLocalProvider(LocalDiagnosticsForeground provides
                     (resumed && !covered && !scanMounted && editorProfile == null && builderProfile == null && scriptEditing == null && !dashboardEditing)) {

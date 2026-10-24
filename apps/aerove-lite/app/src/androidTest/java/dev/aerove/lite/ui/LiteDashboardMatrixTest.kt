@@ -90,7 +90,7 @@ class LiteDashboardMatrixTest {
                 .put("outbound", "198.51.100.8").put("countryCode", "SG").put("organization", "Example ISP")
                 .put("kind", "Residential").put("localAddress", "192.0.2.8").put("uptimeMillis", 0)
                 .put("quality", "fixed androidTest lookup; no provider request or real IP quality evidence")
-                .put("traffic", "zero upload/download rates and totals; no invented history"))
+                .put("traffic", "zero upload/download rates and totals; thirty zero-valued androidTest samples render flat baselines, not network history"))
             .put("dataSha256", sha256(reference.toString())).put("locale", context.resources.configuration.locales.toLanguageTags())
             .put("composeAdvancePerAppearanceMillis", 400).put("layoutDirection", "LTR")
             .put("entryClock", "Each appearance first composes from an empty/fresh key, including the first cell")
@@ -179,6 +179,8 @@ private fun dashboardFixture() = LiteState(
     selectedProfile = "screenshot-only",
     groups = listOf(ProxyGroup("Fixture selector", "Selector", "DIRECT", listOf(ProxyNode("DIRECT", "Direct")))),
     traffic = Traffic(),
+    trafficHistory = List(30) { Traffic() },
+    trafficHistoryRevision = 30,
     outboundIdentity = OutboundIdentity("198.51.100.8", "SG", "Example ISP", "Residential"),
     localAddress = "192.0.2.8",
     uptimeMillis = 0,

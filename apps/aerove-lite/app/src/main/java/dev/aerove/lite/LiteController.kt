@@ -24,6 +24,7 @@ import dev.aerove.lite.telemetry.CoreTelemetry
 import dev.aerove.lite.telemetry.GroupRefresh
 import dev.aerove.lite.telemetry.OutboundProbe
 import dev.aerove.lite.telemetry.RouteSnapshotDemand
+import dev.aerove.lite.telemetry.withDashboardHistory
 import dev.aerove.lite.telemetry.TelemetrySession
 import dev.aerove.lite.telemetry.TelemetryVisibility
 import dev.aerove.lite.telemetry.sessionBindings
@@ -447,6 +448,14 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
             it.lease(dev.aerove.lite.observability.HistoryKind.Requests)
             it.setForeground(visible.value.active)
             it.bindSession(observationRuntime?.let { observationToken })
+            val feature = it
+            viewModelScope.launch {
+                feature.state.collect { history ->
+                    if (feature.state.value === history) mutableState.update { current ->
+                        current.copy(dashboardCounts = current.dashboardCounts.withDashboardHistory(history))
+                    }
+                }
+            }
         }
     }
     override val observability get() = observabilityOwner.value
@@ -454,10 +463,14 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         if (observationRuntime === endpoint) return
         observationRuntime = endpoint
         observationToken++
+        mutableState.update { it.resetDashboardRuntime() }
         if (observabilityOwner.isInitialized()) observabilityOwner.value.bindSession(endpoint?.let { observationToken })
     }
     private data class DiagnosticsBinding(val endpoint: CoreEndpoint, val client: CoreApiClient,
         val generation: Long, val configuration: Long)
+    private var serviceTelemetryTargets = emptySet<String>()
+    private val dashboardConnections = dev.aerove.lite.telemetry.DashboardConnectionSummary<DiagnosticsBinding>(
+        viewModelScope, { it.client.connectionCount() }, ::diagnosticsBindingCurrent)
     private val diagnosticsRouteRead = Mutex()
     private val diagnosticsRouteDemand = RouteSnapshotDemand()
     private val diagnostics: DiagnosticsCoordinator<DiagnosticsBinding> = DiagnosticsCoordinator(viewModelScope,
@@ -532,6 +545,11 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
     var filePicker: (() -> Unit)? = null
 
     init {
+        viewModelScope.launch {
+            dashboardConnections.state.collect { count ->
+                mutableState.update { it.copy(dashboardCounts = it.dashboardCounts.copy(connectionCount = count)) }
+            }
+        }
         viewModelScope.launch {
             diagnostics.state.collect { snapshot -> mutableState.update { it.copy(diagnostics = snapshot) } }
         }
@@ -639,7 +657,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
                                     when (event) {
                                         is CoreTelemetry.ProvidersLoaded -> profileDetails.providersLoaded(endpoint,event)
                                         is CoreTelemetry.Observations -> observability.acceptWindow(historyToken, event.value)
-                                        is CoreTelemetry.TrafficSample -> mutableState.update { it.copy(traffic = event.value) }
+                                        is CoreTelemetry.TrafficSample -> mutableState.update { it.acceptDashboardTraffic(event.value) }
                                         is CoreTelemetry.GroupsChanged -> if (groups.changed(event.revision)) {
                                             diagnosticsRouteDemand.invalidate()
                                             diagnosticsRouteRequest++
@@ -718,6 +736,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         profileMaintenance.close()
         if (profileImportsOwner.isInitialized()) profileImportsOwner.value.close()
         diagnostics.close()
+        dashboardConnections.close()
         diagnosticsRouteJob?.cancel()
         outbound.close()
         openedEditor = null
@@ -742,10 +761,11 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         if (profileDetailsOwner.isInitialized()) profileDetailsOwner.value.telemetryActive(active)
     }
     override fun setConnectionTelemetryActive(active: Boolean) { connectionTelemetryActive.value = active }
+    override fun setDashboardTelemetryActive(active: Boolean) { dashboardConnections.active(active) }
     override fun setMemoryTelemetryActive(active: Boolean) { diagnostics.memory(active) }
-    override fun setServiceTelemetryTargets(ids: Set<String>) { diagnostics.watch(ids) }
+    override fun setServiceTelemetryTargets(ids: Set<String>) { serviceTelemetryTargets = ids.toSet(); diagnostics.watch(serviceTelemetryTargets) }
     override fun refreshServiceChecks() {
-        diagnostics.refresh(state.value.settings.enabledServiceIds().toSet())
+        diagnostics.refresh(serviceTelemetryTargets)
         synchronizeDiagnosticsRoute()
     }
     override fun refreshServiceCheck(id: String) {
@@ -1161,6 +1181,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         diagnosticsRouteRequest++
         diagnosticsRouteJob?.cancel()
         diagnostics.bind(binding)
+        dashboardConnections.bind(binding)
     }
 
     private fun acceptDiagnosticsRoute(binding: DiagnosticsBinding, epoch: ULong, version: ULong,
@@ -1569,3 +1590,13 @@ private fun mergeDnsPreferences(before: dev.aerove.lite.dnssettings.DnsPreferenc
         legacyFallbackServers = choose(before.legacyFallbackServers, requested.legacyFallbackServers, current.legacyFallbackServers),
     )
 }
+
+internal fun LiteState.acceptDashboardTraffic(sample: Traffic): LiteState = copy(
+    traffic = sample,
+    trafficHistory = dev.aerove.lite.telemetry.appendDashboardTraffic(trafficHistory, sample),
+    trafficHistoryRevision = Math.addExact(trafficHistoryRevision, 1L),
+)
+
+internal fun LiteState.resetDashboardRuntime(): LiteState = copy(
+    trafficHistory = emptyList(), dashboardCounts = DashboardCounts(), trafficHistoryRevision = 0,
+)

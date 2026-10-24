@@ -92,7 +92,9 @@ class DashboardEditorTest {
         compose.replaceAppContent {
             CompositionLocalProvider(LocalLiteMotionOverride provides true) { LiteApp(root.value, actions) }
         }
-        compose.onNodeWithTag("dashboard-card-networkSpeed").assertIsDisplayed()
+        compose.onNodeWithTag("dashboard-card-currentOutbound").assertIsDisplayed()
+        compose.onNodeWithTag("dashboard-upload").assertIsDisplayed()
+        compose.onNodeWithTag("dashboard-card-networkSpeed").assertDoesNotExist()
         compose.onNodeWithContentDescription(context.getString(R.string.lite_dashboard_edit)).performClick()
         compose.onNodeWithTag("dashboard-row-currentOutbound").assertIsDisplayed()
         compose.onNodeWithTag("dashboard-row-networkSpeed").assertIsDisplayed()
@@ -101,6 +103,7 @@ class DashboardEditorTest {
         confirm()
         compose.onNodeWithTag("dashboard-layout").assertIsDisplayed()
         compose.onNodeWithTag("dashboard-card-networkSpeed").assertDoesNotExist()
+        compose.onNodeWithTag("dashboard-upload").assertDoesNotExist()
         assertEquals(listOf(DashboardWidget.CurrentOutbound), root.value.settings.dashboardWidgets)
         assertEquals(1, actions.settings.size)
         compose.onNodeWithContentDescription(context.getString(R.string.lite_dashboard_edit)).performClick()

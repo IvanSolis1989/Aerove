@@ -197,7 +197,7 @@
     <string name="network_bypass_domains">우회 도메인</string>
     <string name="network_inbound">인바운드</string>
     <string name="network_ports">포트</string>
-    <string name="network_allow_lan">LAN 접속 허용</string>
+    <string name="network_allow_lan">LAN 허용</string>
     <string name="network_authentication">인증</string>
     <string name="network_credentials">계정 및 비밀번호</string>
     <string name="network_mixed_port">혼합 포트</string>

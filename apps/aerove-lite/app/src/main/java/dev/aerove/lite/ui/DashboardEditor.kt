@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -187,7 +188,7 @@ fun DashboardEditor(
                             if (index < shown.lastIndex) add(CustomAccessibilityAction(down) { update(shown.move(index, index + 1)); true })
                         }
                     }) {
-                    if (cardContent != null) Box(Modifier.fillMaxWidth().clearAndSetSemantics {}) { cardContent(item) }
+                    if (cardContent != null) Box(Modifier.fillMaxWidth().clearAndSetSemantics {}) { CompositionLocalProvider(LocalDashboardFusion provides false) { cardContent(item) } }
                     else LitePane(Modifier.fillMaxWidth()) {
                         Row(Modifier.fillMaxWidth().defaultMinSize(minHeight = 64.dp).padding(horizontal = 16.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {

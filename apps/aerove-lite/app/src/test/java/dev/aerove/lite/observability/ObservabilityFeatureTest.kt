@@ -106,4 +106,21 @@ class ObservabilityFeatureTest {
             feature.flushDnsCache(); feature.until { it.notice == HistoryNotice.DnsCacheCleared }
         } finally { feature.close() }
     }
+    @Test fun observationAvailabilityRequiresAnAcceptedWindowAndResetsOnCoreBinding() = runBlocking {
+        val feature = ObservabilityFeature(this, DiskDocuments()) {}
+        try {
+            feature.bindSession(1); feature.setForeground(true)
+            val lease = feature.lease(HistoryKind.Requests)
+            assertFalse(feature.state.value.observationsAvailable)
+            feature.acceptWindow(2, window())
+            assertFalse(feature.state.value.observationsAvailable)
+            feature.acceptWindow(1, ObservationWindow(UUID.randomUUID().toString(), 1u, 0u, 0u, emptyList()))
+            assertTrue(feature.state.value.observationsAvailable)
+            assertTrue(feature.state.value.snapshot.requests.isEmpty())
+            feature.bindSession(2)
+            assertFalse(feature.state.value.observationsAvailable)
+            lease.close()
+        } finally { feature.close() }
+    }
+
 }

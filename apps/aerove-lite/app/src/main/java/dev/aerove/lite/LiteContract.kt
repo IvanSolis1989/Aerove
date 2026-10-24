@@ -230,6 +230,9 @@ data class ConnectionInfo(
     val observedAtNanos: Long? = null,
 )
 data class Traffic(val uploadPerSecond: Long = 0, val downloadPerSecond: Long = 0, val upload: Long = 0, val download: Long = 0)
+
+data class DashboardCounts(val connectionCount: Int? = null, val requestCount: Long? = null,
+    val dnsCount: Long? = null, val historyTruncated: Boolean = false)
 data class LogLine(val time: Long, val level: String, val message: String)
 data class InstalledApp(val packageName: String, val label: String)
 
@@ -272,6 +275,9 @@ data class LiteState(
     val externalProfile: String? = null,
     val profileImportVisible: Boolean = false,
     val profileImportKeyPrompt: Boolean = false,
+    val trafficHistory: List<Traffic> = emptyList(),
+    val dashboardCounts: DashboardCounts = DashboardCounts(),
+    val trafficHistoryRevision: Long = 0,
 )
 
 interface LiteActions {
@@ -294,6 +300,7 @@ interface LiteActions {
     fun setProviderTelemetryActive(active: Boolean)
     fun setMemoryTelemetryActive(active: Boolean)
     fun setConnectionTelemetryActive(active: Boolean)
+    fun setDashboardTelemetryActive(active: Boolean)
     fun closeConnection(id: String)
     fun closeAllConnections()
     fun shuffleAurora()

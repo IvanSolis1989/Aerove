@@ -118,6 +118,17 @@ class CoreApiClient(
             .shareIn(streamScope, SharingStarted.WhileSubscribed(0, 0), replay = 1)
     }
 
+    suspend fun connectionCount(): Int {
+        val row = JSONObject(request(listOf("aerove", "connections", "count"), maxBytes = 1024))
+        if (row.keys().asSequence().toSet() != setOf("count")) throw IOException("Invalid connection count response")
+        val count = row.get("count")
+        return when (count) {
+            is Int -> count.takeIf { it >= 0 }
+            is Long -> count.takeIf { it in 0..Int.MAX_VALUE.toLong() }?.toInt()
+            else -> null
+        } ?: throw IOException("Invalid connection count")
+    }
+
     suspend fun proxies(): List<ProxyNode> = withContext(Dispatchers.Default) {
         proxyMap().entries.map { (name, row) -> node(name, row) }
     }

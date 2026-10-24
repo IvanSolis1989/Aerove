@@ -8,6 +8,7 @@ internal class UiTestActions(private val onSettings: (LiteSettings) -> Unit,
     initialSettings: LiteSettings) : LiteActions {
     constructor(onSettings: (LiteSettings) -> Unit) : this(onSettings, LiteSettings())
     val events = mutableListOf<String>()
+    val dashboardTelemetry = mutableListOf<Boolean>()
     val settings = mutableListOf<LiteSettings>()
     val connectionTelemetry = mutableListOf<Boolean>()
     val memoryTelemetry = mutableListOf<Boolean>()
@@ -49,6 +50,7 @@ internal class UiTestActions(private val onSettings: (LiteSettings) -> Unit,
     override fun refreshServiceChecks() { events += "refreshServiceChecks" }
     override fun refreshServiceCheck(id: String) { events += "refreshServiceCheck:$id" }
     override fun setServiceTelemetryTargets(ids: Set<String>) { serviceTelemetry += ids.toSet() }
+    override fun setDashboardTelemetryActive(active: Boolean) { dashboardTelemetry += active }
     override fun setProviderTelemetryActive(active: Boolean) { providerTelemetry += active }
     override fun setMemoryTelemetryActive(active: Boolean) { memoryTelemetry += active }
     override fun shuffleAurora() { events += "shuffleAurora" }

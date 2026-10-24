@@ -197,7 +197,7 @@
     <string name="network_bypass_domains">除外ドメイン</string>
     <string name="network_inbound">インバウンド</string>
     <string name="network_ports">ポート</string>
-    <string name="network_allow_lan">LAN アクセスを許可</string>
+    <string name="network_allow_lan">LANプロキシ</string>
     <string name="network_authentication">認証</string>
     <string name="network_credentials">アカウントとパスワード</string>
     <string name="network_mixed_port">Mixedポート</string>

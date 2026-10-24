@@ -15,6 +15,7 @@ import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.Stroke
+import dev.aerove.lite.Traffic
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -30,8 +31,9 @@ import kotlin.math.sin
 @Composable
 internal fun rememberDashboardTime(moving: Boolean): State<Float> {
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    return produceState(0f, moving, lifecycle) {
-        if (moving) lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+    val active = LocalLitePageActive.current && !LocalLiteReducedMotion.current
+    return produceState(0f, moving, lifecycle, active) {
+        if (moving && active) lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             var previous = 0L
             while (isActive) withFrameNanos { now ->
                 if (previous != 0L) value += ((now - previous) / 1_000_000_000f).coerceAtMost(0.05f)
@@ -164,3 +166,47 @@ private val ribbonStrands = arrayOf(
     doubleArrayOf(0.46, 0.11, 6.6, -0.75, 0.075, 4.4, -1.1, 0.7, 2.1),
     doubleArrayOf(0.7, 0.09, 4.3, 1.35, 0.06, 2.6, 1.4, 0.55, 4.3),
 )
+
+// Real shared traffic samples replace the ribbon in the same background bounds.
+// Geometry is cached until the history or measured card size changes; there is no sampler here.
+@Composable
+internal fun DashboardTrafficBackdrop(history: List<Traffic>, modifier: Modifier) {
+    val curves = rememberDashboardCurves(history)
+    val dark = LocalLiteVisuals.current.dark
+    Box(modifier.drawWithCache {
+        fun path(points: List<DashboardCurvePoint>) = Path().apply {
+            if (points.isNotEmpty()) {
+                moveTo(points[0].x * size.width, points[0].y * size.height)
+                for (index in 1 until points.size) {
+                    val previous = points[index - 1]
+                    val next = points[index]
+                    val middleX = (previous.x + next.x) * size.width / 2f
+                    cubicTo(middleX, previous.y * size.height, middleX, next.y * size.height,
+                        next.x * size.width, next.y * size.height)
+                }
+            }
+        }
+        val series = listOf(curves.upload to Color(0xFF8C78D5), curves.download to Color(0xFF519FD8)).map { (points, color) ->
+            val line = path(points)
+            val fill = Path().apply {
+                addPath(line)
+                if (points.isNotEmpty()) {
+                    lineTo(size.width, size.height)
+                    lineTo(0f, size.height)
+                    close()
+                }
+            }
+            Triple(line, fill, color)
+        }
+        val stroke = Stroke(1.8.dp.toPx())
+        onDrawBehind {
+            series.forEach { (line, fill, color) ->
+                drawPath(fill, Brush.verticalGradient(listOf(color.copy(alpha = if (dark) 0.16f else 0.12f), Color.Transparent)))
+                drawPath(line, color.copy(alpha = if (dark) 0.48f else 0.35f), style = stroke)
+            }
+        }
+    })
+}
+
+@Composable
+private fun rememberDashboardCurves(history: List<Traffic>) = androidx.compose.runtime.remember(history) { dashboardTrafficCurves(history) }

@@ -32,6 +32,8 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
 import com.kyant.backdrop.backdrops.layerBackdrop
@@ -60,11 +62,14 @@ class DashboardLayoutUiTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private val state = mutableStateOf(LiteState())
     private val editing = mutableStateOf(false)
+    private val foreground = mutableStateOf(true)
     private val bounds = ConcurrentHashMap<String, Rect>()
     private val actions = UiTestActions { state.value = state.value.copy(settings = it) }
     private var profilesOpened = 0
     private var proxiesOpened = 0
     private var connectionsOpened = 0
+    private var requestsOpened = 0
+    private var dnsOpened = 0
     private var density = 1f
 
     private fun fixture(widgets: List<DashboardWidget>) = LiteState(
@@ -76,11 +81,12 @@ class DashboardLayoutUiTest {
         connections = List(2) { ConnectionInfo("fixture-$it", "example.invalid", "tcp", "MATCH", emptyList(), 0, 0) },
     )
 
-    private fun launch(initial: LiteState) {
+    private fun launch(initial: LiteState, fontScale: Float = 1f, maxWidth: Dp = 592.dp) {
         state.value = initial
         compose.replaceAppContent {
             IpQualityFixture(state.value) {
-            CompositionLocalProvider(LocalLiteMotionOverride provides true) {
+            CompositionLocalProvider(LocalLiteMotionOverride provides true, LocalDiagnosticsForeground provides foreground.value,
+                LocalDensity provides Density(LocalDensity.current.density, fontScale)) {
                 LiteTheme(state.value.settings) {
                     density = LocalDensity.current.density
                     val source = rememberLayerBackdrop()
@@ -90,7 +96,8 @@ class DashboardLayoutUiTest {
                         Box(Modifier.fillMaxWidth().onGloballyPositioned { bounds["$mode-${widget.wireName}"] = it.boundsInRoot() }) {
                             DashboardCard(widget, state.value, actions, { profilesOpened++ }, { connectionsOpened++ }, { proxiesOpened++ },
                                 serviceStatusContent = { LiteText("Service content fixture") },
-                                memoryInfoContent = { LiteText("Memory content fixture") })
+                                memoryInfoContent = { LiteText("Memory content fixture") },
+                                openRequests = { requestsOpened++ }, openDns = { dnsOpened++ })
                         }
                     }
                     Box(Modifier.fillMaxSize()) {
@@ -98,7 +105,7 @@ class DashboardLayoutUiTest {
                             LiteWallpaper(remember { mutableStateOf(0f) }, Modifier.fillMaxSize())
                         }
                         CompositionLocalProvider(LocalLiteBackdrop provides source, LocalLiteInkBackdrop provides source, LocalLiteListState provides scroll) {
-                            Box(Modifier.align(Alignment.TopCenter).widthIn(max = 592.dp).fillMaxSize()) {
+                            Box(Modifier.align(Alignment.TopCenter).widthIn(max = maxWidth).fillMaxSize()) {
                                 if (editing.value) DashboardEditor(state.value.settings,
                                     { actions.changeSettings(it) }, { editing.value = false }, cardContent = content)
                                 else {
@@ -118,7 +125,12 @@ class DashboardLayoutUiTest {
     }
 
     private fun scroll(widget: DashboardWidget) {
-        compose.onNodeWithTag("dashboard-layout").performScrollToNode(hasTestTag("dashboard-card-${widget.wireName}"))
+        val anchor = dashboardPresentationWidgets(state.value.settings.dashboardWidgets).first { candidate ->
+            candidate == widget || (candidate in DashboardStatusMembers && widget in DashboardStatusMembers) ||
+                (candidate in DashboardControlMembers && widget in DashboardControlMembers) ||
+                (candidate in DashboardOverviewMembers && widget in DashboardOverviewMembers)
+        }
+        compose.onNodeWithTag("dashboard-layout").performScrollToNode(hasTestTag("dashboard-card-${anchor.wireName}"))
     }
     private fun tapCard(widget: DashboardWidget) {
         scroll(widget)
@@ -171,6 +183,9 @@ class DashboardLayoutUiTest {
         assertEquals(ProxyMode.Global, state.value.settings.mode)
         scroll(DashboardWidget.VpnButton)
         compose.onNodeWithContentDescription(context.getString(R.string.lite_vpn)).assertIsOn().performClick().assertIsOff()
+        compose.onNodeWithContentDescription(context.getString(R.string.network_allow_lan)).assertIsOff().performClick().assertIsOn()
+        assertTrue(state.value.settings.network.allowLan)
+        assertTrue(!state.value.settings.network.vpnEnabled)
         assertEquals(0, actions.events.count { it == "connect" || it == "disconnect" })
         tapCard(DashboardWidget.Profiles)
         assertEquals(1, profilesOpened)
@@ -180,11 +195,15 @@ class DashboardLayoutUiTest {
         tapCard(DashboardWidget.ProxyGroups)
         assertEquals(1, proxiesOpened)
         scroll(DashboardWidget.ServiceStatus)
-        compose.onNodeWithText("Service content fixture").assertIsDisplayed()
-        scroll(DashboardWidget.ConnectionStats)
-        compose.onNodeWithText(context.getString(R.string.lite_connection_count, 2)).assertIsDisplayed()
-        tapCard(DashboardWidget.ConnectionStats)
+        compose.onNodeWithText(context.getString(R.string.dashboard_network_overview)).assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.lite_tab_connections)).performClick()
+        compose.onNodeWithText(context.getString(R.string.history_requests)).performClick()
+        compose.onNodeWithText(context.getString(R.string.history_dns)).performClick()
         assertEquals(1, connectionsOpened)
+        assertEquals(1, requestsOpened)
+        assertEquals(1, dnsOpened)
+        assertTrue(actions.dashboardTelemetry.contains(true))
+        assertTrue(actions.connectionTelemetry.none { it })
     }
 
     @Test
@@ -205,4 +224,37 @@ class DashboardLayoutUiTest {
         assertEquals(initial, state.value)
         assertEquals(0, profilesOpened + proxiesOpened + connectionsOpened)
     }
+    @Test
+    fun summaryDemandPausesWhenCoveredAndServiceRefreshDoesNotRequestOtherData() {
+        launch(fixture(listOf(DashboardWidget.CurrentOutbound, DashboardWidget.ServiceStatus, DashboardWidget.ConnectionStats)).copy(phase = dev.aerove.lite.VpnPhase.Running))
+        scroll(DashboardWidget.ServiceStatus)
+        compose.waitUntil { actions.dashboardTelemetry.lastOrNull() == true }
+        compose.onNodeWithContentDescription(context.getString(R.string.diag_service_check_all)).performClick()
+        assertEquals(listOf("refreshServiceChecks"), actions.events)
+        compose.runOnUiThread { foreground.value = false }
+        compose.waitUntil { actions.dashboardTelemetry.lastOrNull() == false }
+        val declarations = actions.dashboardTelemetry.size
+        compose.runOnUiThread { state.value = state.value.copy(uptimeMillis = 42) }
+        compose.waitForIdle()
+        assertEquals(declarations, actions.dashboardTelemetry.size)
+        compose.runOnUiThread { foreground.value = true }
+        compose.waitUntil { actions.dashboardTelemetry.lastOrNull() == true }
+        assertTrue(actions.connectionTelemetry.none { it })
+    }
+
+    @Test
+    fun narrowLargeTextKeepsStatusAndSpeedForegroundsSeparate() {
+        launch(fixture(listOf(DashboardWidget.CurrentOutbound, DashboardWidget.NetworkSpeed)), fontScale = 2f, maxWidth = 328.dp)
+        compose.onNodeWithText(context.getString(R.string.lite_status)).assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.lite_upload)).assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.lite_download)).assertIsDisplayed()
+        val heading = compose.onNodeWithTag("dashboard-status-heading").fetchSemanticsNode().boundsInRoot
+        val upload = compose.onNodeWithTag("dashboard-upload").fetchSemanticsNode().boundsInRoot
+        val download = compose.onNodeWithTag("dashboard-download").fetchSemanticsNode().boundsInRoot
+        assertTrue(!heading.overlaps(upload))
+        assertTrue(!heading.overlaps(download))
+        assertTrue(!upload.overlaps(download))
+        assertTrue(actions.events.isEmpty())
+    }
+
 }

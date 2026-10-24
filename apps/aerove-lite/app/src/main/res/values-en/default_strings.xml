@@ -197,7 +197,7 @@
     <string name="network_bypass_domains">Bypass domains</string>
     <string name="network_inbound">Inbound</string>
     <string name="network_ports">Ports</string>
-    <string name="network_allow_lan">Allow LAN access</string>
+    <string name="network_allow_lan">Allow LAN</string>
     <string name="network_authentication">Authentication</string>
     <string name="network_credentials">Account and password</string>
     <string name="network_mixed_port">Mixed port</string>

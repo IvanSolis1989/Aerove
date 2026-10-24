@@ -6,7 +6,7 @@ import java.util.UUID
 import org.json.JSONObject
 
 data class ObservationWindow(val sessionId: String, val generation: ULong, val cursor: ULong,
-    val dropped: ULong, val events: List<ObservationEvent>)
+    val dropped: ULong, val events: List<ObservationEvent>, val activationCursor: ULong? = null)
 
 sealed interface ObservationEvent {
     val cursor: ULong
@@ -25,6 +25,7 @@ fun decodeObservationWindow(source: String): ObservationWindow = try {
     val generation = root.u64("generation").also { require(it > 0uL) }
     val cursor = root.u64("cursor")
     val dropped = root.u64("dropped")
+    val activation = if (root.has("activationCursor")) root.u64("activationCursor").also { require(it <= cursor) } else null
     val values = root.getJSONArray("events")
     require(values.length() <= 32)
     var previous = 0uL
@@ -53,7 +54,7 @@ fun decodeObservationWindow(source: String): ObservationWindow = try {
             else -> error("Unknown observation")
         }
     }
-    ObservationWindow(session, generation, cursor, dropped, events)
+    ObservationWindow(session, generation, cursor, dropped, events, activation)
 } catch (_: Exception) { throw IOException("Core returned an invalid observation window") }
 
 private fun JSONObject.text(key: String): String = get(key).let { require(it is String); it }

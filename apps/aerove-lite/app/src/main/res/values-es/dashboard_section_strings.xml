@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="dashboard_network_control">Controles de red</string>
+    <string name="dashboard_network_overview">Resumen de red</string>
+</resources>
