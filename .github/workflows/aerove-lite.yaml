@@ -34,7 +34,7 @@ jobs:
         conflicts = [key for key in ('MEOW_HOST_ONLY', 'QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'PUBLISH_RELEASE', 'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS') if os.environ[key] == 'true']
         if os.environ['NATIVE_TEST_FILTER']:
             conflicts.append('NATIVE_TEST_FILTER')
-        if value not in ('lite94-matrix', 'std40', 'both') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
+        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
             raise SystemExit('Invalid prebuilt Android diagnosis target/event or conflicting inputs: ' + repr((value, conflicts)))
         PY
   diagnostic_lite94:
@@ -48,6 +48,17 @@ jobs:
     with:
       exclusive_mode: true
       runtime_target: lite94
+  diagnostic_beta14_profile:
+    name: Immutable beta14 render profile only (no build)
+    needs: diagnostic_guard
+    if: ${{ needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'beta14-profile-only' }}
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/aerove-lite-qa84.yaml
+    with:
+      exclusive_mode: true
+      runtime_target: beta14
   qa84:
     if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (github.event_name == 'workflow_dispatch' && inputs.qa84_only)) }}
     permissions:
@@ -887,7 +898,7 @@ jobs:
         type: choice
         required: false
         default: none
-        options: [none, lite94-matrix, std40, both]
+        options: [none, lite94-matrix, std40, both, beta14-profile-only]
       meow_host_only:
         description: Full fixed Meow host/Core preflight only; no Android build, APK or publication
         required: false

@@ -146,6 +146,14 @@ def main():
             proof_path = directory / 'CURRENT-RENDERER-PROOF.json'
             proof_path.write_text(json.dumps(proof, indent=2) + '\n')
             environment['AEROVE_CURRENT_RENDERER_PROOF'] = str(proof_path.resolve())
+            if environment.get('AEROVE_BETA14_PROFILE') == '1':
+                if current.get('runtimeTarget') != 'beta14':
+                    raise ValueError('Profile-only requires verified immutable beta14 runtime')
+                from beta14_render_profile import proc_stat
+                receipt['profileQemuStarttime'] = proc_stat((Path('/proc') / str(emulator.pid) / 'stat').read_text())['starttime']
+                profile_owner = directory / 'PROFILE-OWNER.json'
+                write_owner_receipt(profile_owner, receipt)
+                environment['AEROVE_BETA14_PROFILE_OWNER'] = str(profile_owner.resolve())
             check_cancelled(receipt)
             acceptance = subprocess.Popen(['bash', 'apps/aerove-lite/tool/emulator_acceptance.sh', args.phase], env=environment, start_new_session=True)
             check_cancelled(receipt)
@@ -182,7 +190,16 @@ def main():
             if interrupt_signals or cleanup_errors:
                 result = 1
             receipt['result'] = result
-            write_owner_receipt(directory / 'EMULATOR-OWNER.json', receipt)
+            if environment.get('AEROVE_BETA14_PROFILE') == '1':
+                try:
+                    write_owner_receipt(directory / 'EMULATOR-OWNER.json', receipt)
+                except OSError as error:
+                    # New diagnostics cannot replace a prior acceptance/cancellation result.
+                    try: print('Profile owner receipt save failed: '+repr(error),file=sys.stderr)
+                    except OSError: pass
+                    if result == 0: result = 1
+            else:
+                write_owner_receipt(directory / 'EMULATOR-OWNER.json', receipt)
 
     return result
 

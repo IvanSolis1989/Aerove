@@ -46,6 +46,9 @@ def runtime_spec(target='original84'):
                     manifestSha256=MANIFEST_SHA256, apks=APKS, product=PRODUCT)
     if target == 'lite94':
         return ORIGINAL94
+    if target == 'beta14':
+        from beta14_runtime import SPEC
+        return SPEC
     raise ValueError('Unknown approved original runtime target')
 
 
@@ -57,9 +60,9 @@ def proof_context():
     if legacy:
         return legacy, 'original84'
     if neutral:
-        if release._json(neutral).get('runtimeTarget') != 'lite94':
+        if release._json(neutral).get('runtimeTarget') not in ('lite94','beta14'):
             raise ValueError('Neutral proof requires approved lite94 target')
-        return neutral, 'lite94'
+        return neutral, release._json(neutral)['runtimeTarget']
     raise ValueError('Original runtime identity is diagnostic opt-in only')
 
 
@@ -85,6 +88,8 @@ def checked_archive(archive, destination, target='original84'):
             raise ValueError('Duplicate original84 ZIP entries')
         for name in names:
             path = PurePosixPath(name)
+            if target == 'beta14' and ('\\' in name or path.as_posix() != name.rstrip('/')):
+                raise ValueError('Unsafe beta14 ZIP path')
             mode = source.getinfo(name).external_attr >> 16
             if path.is_absolute() or '..' in path.parts or '\\' in name or stat.S_ISLNK(mode):
                 raise ValueError('Unsafe original84 ZIP entry')
@@ -112,6 +117,9 @@ def validate_original_files(directory, target='original84'):
                     channel='preview', abi='x86_64', apk_sha256=spec['apks']['app-release.apk'])
     if any(info.get(key) != value for key, value in expected.items()):
         raise ValueError('Original84 BUILD_INFO identity mismatch')
+    if target == 'beta14':
+        from beta14_runtime import verify_contract
+        verify_contract(directory)
     return info
 
 
@@ -206,7 +214,7 @@ def verify_original_runtime(directory):
     proof_path, target = proof_context()
     spec = runtime_spec(target)
     proof = release._json(proof_path)
-    if target == 'lite94' and (type(proof.get('schema')) is not int or proof.get('promotionAccepted') is not False
+    if target != 'original84' and (type(proof.get('schema')) is not int or proof.get('promotionAccepted') is not False
             or proof.get('diagnosticOriginalRuntime') is not True
             or any(not isinstance(proof.get(key), dict) or any(type(proof[key].get(field)) is not int
                    for field in ('runNumber', 'runAttempt')) for key in ('originalAppIdentity', 'harnessIdentity'))):
@@ -237,6 +245,10 @@ def verify_original_runtime(directory):
             or test.get('version_code') is not None or test.get('version') is not None
             or test.get('version_attributes_declared') is not False):
         raise ValueError('Original84 verified package signer proof is missing')
+    if target == 'beta14':
+        from beta14_runtime import verify_contract
+        if proof.get('nativeBundleProof') != verify_contract(directory):
+            raise ValueError('beta14 exact26/3 proof missing or changed')
     return dict(identity=spec['identity'], apks=spec['apks'], runtimeManifestSha256=spec['manifestSha256'],
                 apkInspectorOutcome='success', **diagnostic_fields(target), originalAppIdentity=spec['identity'],
                 harnessIdentity=proof['harnessIdentity'], promotionAccepted=False)
@@ -261,15 +273,33 @@ def prepare(directory, evidence, target='original84'):
     archive = directory.with_suffix('.zip')
     if directory.exists() or archive.exists():
         raise ValueError('Never overwrite or redownload original84 inputs')
-    row = release._gh_json(f"repos/{release.REPO}/actions/artifacts/{spec['artifact']}")
+    reader = release._gh_json
+    if target == 'beta14':
+        from beta14_runtime import api_json
+        reader = api_json
+    row = reader(f"repos/{release.REPO}/actions/artifacts/{spec['artifact']}")
     if (row.get('id') != spec['artifact'] or row.get('name') != 'AEROVE-Lite-runtime-contract-attempt-1'
             or row.get('expired') or row.get('digest') != 'sha256:' + spec['zipSha256']
             or row.get('workflow_run', {}).get('id') != int(spec['identity']['workflowRun'])
             or row['workflow_run'].get('head_sha') != spec['identity']['sourceRevision']):
         raise ValueError('Original84 artifact API identity changed')
+    if target == 'beta14':
+        if row.get('size_in_bytes') != spec['zipBytes']:
+            raise ValueError('beta14 artifact API size differs')
+        run=reader(f"repos/{release.REPO}/actions/runs/{spec['identity']['workflowRun']}")
+        if (run.get('id') != int(spec['identity']['workflowRun']) or run.get('head_sha') != spec['identity']['sourceRevision']
+                or run.get('run_number') != 107 or run.get('run_attempt') != 1 or run.get('status') != 'completed'):
+            raise ValueError('beta14 original run API identity differs')
     evidence.mkdir(parents=True, exist_ok=True)
-    (evidence / ('original84-artifact-api.json' if target == 'original84' else 'original94-artifact-api.json')).write_text(json.dumps(row, indent=2) + '\n')
-    release._gh_binary(f"repos/{release.REPO}/actions/artifacts/{spec['artifact']}/zip", archive)
+    if target == 'beta14': (evidence / 'original107-run-api.json').write_text(json.dumps(run,indent=2)+'\n')
+    (evidence / ('original84-artifact-api.json' if target == 'original84' else 'original107-artifact-api.json' if target == 'beta14' else 'original94-artifact-api.json')).write_text(json.dumps(row, indent=2) + '\n')
+    if target == 'beta14':
+        from beta14_runtime import download
+        download(f"repos/{release.REPO}/actions/artifacts/{spec['artifact']}/zip",archive)
+    else:
+        release._gh_binary(f"repos/{release.REPO}/actions/artifacts/{spec['artifact']}/zip",archive)
+    if target == 'beta14' and archive.stat().st_size != spec['zipBytes']:
+        raise ValueError('beta14 complete archive size differs')
     checked_archive(archive, directory, target)
     validate_original_files(directory, target)
     packages = inspect_packages(directory, evidence / (target + '-package-readback') if target != 'original84' else evidence / 'original84-package-readback', target=target)
@@ -284,6 +314,10 @@ def prepare(directory, evidence, target='original84'):
                  artifactId=spec['artifact'], artifactZipSha256=spec['zipSha256'],
                  runtimeManifestSha256=spec['manifestSha256'], apks=spec['apks'], packages=packages,
                  runtimeDirectory=str(directory.resolve()))
+    if target == 'beta14':
+        from beta14_runtime import verify_contract
+        proof['nativeBundleProof']=verify_contract(directory)
+        (evidence / 'BETA14-NATIVE-BUNDLE-PROOF.json').write_text(json.dumps(proof['nativeBundleProof'],indent=2)+'\n')
     path = evidence / ('ORIGINAL84-APP-PROOF.json' if target == 'original84' else 'ORIGINAL-RUNTIME-APP-PROOF.json')
     path.write_text(json.dumps(proof, indent=2) + '\n')
     return path
@@ -292,7 +326,7 @@ def prepare(directory, evidence, target='original84'):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--directory', type=Path, required=True)
-    parser.add_argument('--target', choices=['original84', 'lite94'], default='original84')
+    parser.add_argument('--target', choices=['original84', 'lite94','beta14'], default='original84')
     args = parser.parse_args()
     if os.environ.get('AEROVE_QA79_PROOF') or os.environ.get('AEROVE_CURRENT_RENDERER_PROOF') or os.environ.get('AEROVE_ORIGINAL84_PROOF') or os.environ.get('AEROVE_ORIGINAL_RUNTIME_PROOF'):
         raise ValueError('Original84 QA requires fresh unmixed proof')

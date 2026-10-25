@@ -844,6 +844,8 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **用途与采用方式：** SwANGLE 诊断只读参照：核对 `host/include/render-utils/renderer_enums.h` 中 SwiftShader indirect 与 ANGLE/SwANGLE renderer enum 的区分；未复制源码，不认定为当前打包的 37.2.12 源码身份。
 
+beta14 原包独立采样诊断另只读参照官方 AOSP 镜像固定 [`6be02d3adef772c85eabf99c21654aefa43abece`](https://android.googlesource.com/platform/hardware/google/gfxstream/+/6be02d3adef772c85eabf99c21654aefa43abece/) 的 guest `GLESv2_enc/gl2_enc.cpp`、`iostream/include/libOpenglRender/IOStream.h`、`OpenglSystemCommon/HostConnection.cpp`/`QemuPipeStream.cpp` 与 `android-emu/aemu/base/Tracing.h`，确认 `glGenTextures encode` 包含同步协议 readback 的范围；未复制驱动、未将公共 lineage 冒认为运行 guest ELF 或 37.2.12 packaged source。现成 CI 工具的 host/native 采样仍须实际权限、时钟、窗口与符号核验，不据此宣称 App shader/GPU 根因或性能通过。
+
 **许可证、署名与证据：** Apache-2.0，固定源码文件头；[固定 renderer_enums.h](https://github.com/google/gfxstream/blob/0884d2d224bfe2e46cbb13b71d68d7c66e2f7dc9/host/include/render-utils/renderer_enums.h)。
 
 #### [google/swiftshader](https://github.com/google/swiftshader)

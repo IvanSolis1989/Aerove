@@ -251,6 +251,12 @@ if [[ "$phase" == matrix && "${AEROVE_CLEAR_FRAME_TRACE:-0}" == 1 ]]; then
         --serial "$serial" --output "$diagnostics/clear-trace" --duration 120
         --command-timeout 660 --)
 fi
+if [[ "${AEROVE_BETA14_PROFILE:-0}" == 1 ]]; then
+    [[ "$phase" == matrix && "${AEROVE_CLEAR_FRAME_TRACE:-0}" == 1 ]] || exit 2
+    instrumentation_prefix=(python3 apps/aerove-lite/tool/beta14_render_profile.py run
+        --serial "$serial" --owner "${AEROVE_BETA14_PROFILE_OWNER:?Verified beta14 owner required}"
+        --output "$diagnostics/render-profile" -- "${instrumentation_prefix[@]}")
+fi
 set +e
 "${remaining_timeout[@]}" "${instrumentation_prefix[@]}" "${adb_device[@]}" shell am instrument -w -r -e debug false -e timeout_msec "$test_timeout_msec" "${selection[@]}" \
     -e fixtureUrl http://10.0.2.2:18080 -e sourceRevision "$app_source" \
@@ -284,4 +290,8 @@ if [[ -n "$shard_count" ]]; then
     python3 apps/aerove-lite/tool/instrumentation_shards.py verify \
         --discovery "$diagnostics/TEST-DISCOVERY.json" --log "$diagnostics/instrumentation.log" \
         --output "$diagnostics/TEST-SELECTION.json"
+fi
+
+if [[ "${AEROVE_BETA14_PROFILE:-0}" == 1 ]]; then
+    python3 apps/aerove-lite/tool/beta14_render_profile.py qualify --output "$diagnostics/render-profile"
 fi
