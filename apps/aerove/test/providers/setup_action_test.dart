@@ -1139,6 +1139,35 @@ void main() {
     });
   });
 
+  group('applyIfGlobalRulesUsed', () {
+    for (final (name, profile, applies) in [
+      ('a standard extension', Profile.normal(label: 'p'), true),
+      (
+        'a script extension',
+        Profile.normal(label: 'p').copyWith(extendType: ExtendType.script),
+        false,
+      ),
+      ('a custom profile', Profile.custom(label: 'p'), false),
+    ]) {
+      test('${applies ? 'applies' : 'leaves alone'} $name', () async {
+        final setupAction = TestSetupAction();
+        final scoped = ProviderContainer(
+          overrides: [
+            profilesProvider.overrideWith(() => TestProfiles([profile])),
+            currentProfileIdProvider.overrideWithBuild((_, _) => profile.id),
+            setupActionProvider.overrideWith(() => setupAction),
+          ],
+        );
+        addTearDown(scoped.dispose);
+
+        scoped.read(setupActionProvider.notifier).applyIfGlobalRulesUsed();
+        await Future<void>.delayed(const Duration(milliseconds: 800));
+
+        expect(setupAction.applyProfileCalls, applies ? 1 : 0);
+      });
+    }
+  });
+
   group('_setupConfig via the real SetupAction', () {
     late Directory tempDir;
     late String? originalLastConfigMd5;

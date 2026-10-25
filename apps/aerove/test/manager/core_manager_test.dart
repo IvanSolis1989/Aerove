@@ -24,6 +24,7 @@ import 'package:mocktail/mocktail.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../helpers/app_paths.dart';
+import '../helpers/test_database_providers.dart';
 import '../helpers/test_profiles.dart';
 
 class _MockCoreHandlerInterface extends Mock implements CoreHandlerInterface {}
@@ -61,6 +62,10 @@ CoreEvent _geoUpdate({
 class _ApplyRecordingSetupAction extends SetupAction {
   int updates = 0;
   int applies = 0;
+  int globalRulesApplies = 0;
+
+  @override
+  void applyIfGlobalRulesUsed() => globalRulesApplies++;
 
   @override
   Future<void> updateConfigDebounce() async {
@@ -762,6 +767,30 @@ void main() {
 
     expect(setupAction.applies, 2);
     expect(setupAction.updates, 0);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('a change to the global added rules, not their first load, '
+      'asks for an apply', (tester) async {
+    final setupAction = _ApplyRecordingSetupAction();
+    final container = await _pumpCoreManager(
+      tester,
+      _coreInterface(),
+      overrides: [
+        setupActionProvider.overrideWith(() => setupAction),
+        globalRulesProvider.overrideWith(() => TestGlobalRules()),
+      ],
+    );
+    await tester.pump();
+    expect(setupAction.globalRulesApplies, 0);
+
+    container.read(globalRulesProvider.notifier).value = [
+      const Rule(id: 1, content: 'a.test', ruleTarget: 'DIRECT'),
+    ];
+    await tester.pump();
+
+    expect(setupAction.globalRulesApplies, 1);
 
     await tester.pumpWidget(const SizedBox.shrink());
   });

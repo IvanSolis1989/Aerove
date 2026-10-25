@@ -530,6 +530,16 @@ class SetupAction extends _$SetupAction {
     });
   }
 
+  void applyIfGlobalRulesUsed() {
+    final profile = ref.read(currentProfileProvider);
+    if (profile == null ||
+        profile.type == ProfileType.custom ||
+        profile.extendType != ExtendType.standard) {
+      return;
+    }
+    applyProfileDebounce(silence: true);
+  }
+
   Future<bool> _inputsApplied() async {
     final applied = _appliedInputs;
     return applied != null && applied == await _currentInputs();

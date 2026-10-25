@@ -77,6 +77,9 @@ database once instead of watching them. Content is applied explicitly by whateve
 
 - Profile editors call `autoApplyProfile` when they close.
 - Subscription updates, scripts and app-level providers call `applyProfileDebounce`.
+- `CoreManager` watches the global added rules, ignoring their first load, and answers every later change with
+  `applyIfGlobalRulesUsed`. Only a non-custom profile with the standard extension merges them, so a custom or script
+  profile is left alone, and the editors that write them need no apply call of their own.
 - A profile switch runs `fullSetup`.
 - A start applies again with `force` unless the last apply saw the same inputs (`_inputsApplied`), the `testUrl` and
   `skipCertVerify` that only `SetupParams` carries included.
