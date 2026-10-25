@@ -67,6 +67,8 @@ void main() {
   late Exception? compileError;
   late Completer<void>? compileGate;
   late List<({String name, String url})> compiles;
+  late List<String> reloads;
+  late Exception? reloadError;
 
   setUpAll(() async {
     home = Directory.systemTemp.createTempSync('flclash-providers-action-');
@@ -108,9 +110,18 @@ void main() {
     compileError = null;
     compileGate = null;
     compiles = [];
+    reloads = [];
+    reloadError = null;
     final cacheRoot = Directory(await appPath.providerCacheRootPath);
     if (cacheRoot.existsSync()) cacheRoot.deleteSync(recursive: true);
     final core = _MockCoreHandlerInterface();
+    when(() => core.updateExternalProvider(any())).thenAnswer((
+      invocation,
+    ) async {
+      reloads.add(invocation.positionalArguments.single as String);
+      if (reloadError case final error?) throw error;
+      return '';
+    });
     when(() => core.compileRuleSet(any(), url: any(named: 'url'))).thenAnswer((
       invocation,
     ) async {
@@ -485,6 +496,96 @@ void main() {
 
     expect(compiles, hasLength(1));
     expect(setup.forced, [true, false]);
+  });
+
+  group('a refreshed remote set', () {
+    const remote = ClashProvider(
+      id: 41,
+      label: 'Remote',
+      url: 'https://example.com/r.list',
+    );
+    late ClashProvider saved;
+
+    setUp(() async {
+      await ruleSetIn(profileId, 'Remote', id: 30);
+      await action().putProvider(remote);
+      await pumpEventQueue();
+      saved = await stored(remote.id);
+      setup.forced.clear();
+    });
+
+    Future<void> refresh({bool Function()? isCurrent}) async {
+      await action().putProvider(
+        saved,
+        previous: saved,
+        refresh: true,
+        isCurrent: isCurrent,
+      );
+      await pumpEventQueue();
+    }
+
+    test('is read again in place while its definition holds', () async {
+      await refresh();
+
+      expect(reloads, ['Remote']);
+      expect(setup.applies, 0);
+    });
+
+    test('reapplies once it changes shape', () async {
+      compiled = (
+        behavior: RuleProviderBehavior.classical,
+        format: RuleProviderFormat.text,
+      );
+
+      await refresh();
+
+      expect(reloads, isEmpty);
+      expect(setup.forced, [true]);
+    });
+
+    test('reapplies when the Core does not run it', () async {
+      reloadError = const CoreMethodException(
+        code: 'provider_not_found',
+        message: 'Remote',
+      );
+
+      await refresh();
+
+      expect(reloads, ['Remote']);
+      expect(setup.forced, [true]);
+    });
+
+    test('is left alone when the current profile does not use it', () async {
+      container.read(currentProfileIdProvider.notifier).value = otherCustomId;
+
+      await refresh();
+
+      expect(reloads, isEmpty);
+      expect(setup.applies, 0);
+    });
+
+    test('an automatic update reads it in place and leaves nothing for the '
+        'next foreground', () async {
+      await refresh(isCurrent: () => true);
+      await action().resumeAutomaticUpdates(isCurrent: () => true);
+
+      expect(reloads, ['Remote']);
+      expect(setup.applies, 0);
+    });
+
+    test('an automatic update the Core cannot reload reapplies once, and '
+        'only then', () async {
+      reloadError = const CoreMethodException(
+        code: 'provider_not_found',
+        message: 'Remote',
+      );
+
+      await refresh(isCurrent: () => true);
+      await action().resumeAutomaticUpdates(isCurrent: () => true);
+
+      expect(reloads, ['Remote']);
+      expect(setup.forced, [true]);
+    });
   });
 
   test(

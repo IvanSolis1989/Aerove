@@ -85,12 +85,15 @@ class ClashProvidersAction extends _$ClashProvidersAction {
       if (previous != null && previous.fileName != next.fileName) {
         await _clearCache(previous);
       }
-      final apply = applyIfReferenced(
-        ProviderKind.rule,
-        {next.label, ?previous?.label},
-        force: content != null || download,
-        isCurrent: isCurrent,
-      );
+      final reread = content != null || download;
+      final apply = reread && next == before
+          ? _reloadIfReferenced(next, isCurrent: isCurrent)
+          : applyIfReferenced(
+              ProviderKind.rule,
+              {next.label, ?previous?.label},
+              force: reread,
+              isCurrent: isCurrent,
+            );
       if (isCurrent == null) {
         unawaited(apply);
       } else {
@@ -325,12 +328,55 @@ class ClashProvidersAction extends _$ClashProvidersAction {
     bool Function()? isCurrent,
   }) async {
     checkUpdateCurrent(isCurrent);
-    final profile = ref.read(currentProfileProvider);
-    if (profile == null ||
-        profile.type != ProfileType.custom ||
-        !await isReferenced(profile.id)) {
+    if (!await _currentUses(isReferenced)) {
       return;
     }
+    await _applyCurrent(force: force, isCurrent: isCurrent);
+  }
+
+  /// A reapply would close every connection and reset the route, while the
+  /// Core rereads a file set it runs under the same definition in place.
+  Future<void> _reloadIfReferenced(
+    ClashProvider provider, {
+    bool Function()? isCurrent,
+  }) async {
+    checkUpdateCurrent(isCurrent);
+    if (!await _currentUses(
+      (profileId) =>
+          _isReferenced(profileId, ProviderKind.rule, {provider.label}),
+    )) {
+      return;
+    }
+    checkUpdateCurrent(isCurrent);
+    try {
+      final message = await _core.updateExternalProvider(
+        providerName: provider.label,
+      );
+      if (message.isEmpty) {
+        return;
+      }
+    } catch (error) {
+      commonPrint.log(
+        'reload ${provider.label} failed: $error',
+        logLevel: coreFailureLogLevel(error),
+      );
+    }
+    await _applyCurrent(force: true, isCurrent: isCurrent);
+  }
+
+  Future<bool> _currentUses(
+    Future<bool> Function(int profileId) isReferenced,
+  ) async {
+    final profile = ref.read(currentProfileProvider);
+    return profile != null &&
+        profile.type == ProfileType.custom &&
+        await isReferenced(profile.id);
+  }
+
+  Future<void> _applyCurrent({
+    required bool force,
+    bool Function()? isCurrent,
+  }) async {
     checkUpdateCurrent(isCurrent);
     final setup = ref.read(setupActionProvider.notifier);
     if (isCurrent == null) {

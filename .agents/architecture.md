@@ -1439,8 +1439,11 @@ An app-level rule set's behavior and format are what the Core's `compileRuleSet`
 choice. The source stays at `getProviderCachePath(fileName)`; a domain or ipcidr set also gets an `.mrs` beside it, and
 that is what the config loads, while classical rules have no mrs form and load from the source. The Core downloads a
 remote set too and mihomo sees it as a `file` provider, so a sync goes through `ClashProvidersAction`, not mihomo's
-HTTP vehicle. `ClashProvidersAction.prepare` rebuilds a missing cache while the config is built, since backups carry
-only local sources and sets saved before compiling existed have no `.mrs`.
+HTTP vehicle. New content or a refresh that leaves the row unchanged reaches the running Core through
+`updateExternalProvider`, which rereads the file without closing connections; only a changed row, a set the Core does
+not run or a failed reread reapplies the profile with `force`. `ClashProvidersAction.prepare` rebuilds a missing cache
+while the config is built, since backups carry only local sources and sets saved before compiling existed have no
+`.mrs`.
 
 `IconSets` and `IconRecords` only feed the proxy-group icon picker. A set is an icon gallery in the format Quantumult X
 and Loon subscribe to, kept whole as one JSON column; a record is an icon the user saved on a group, written on save and
