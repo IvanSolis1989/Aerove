@@ -7,7 +7,13 @@
 
 分支差异以记录的 FlClash `v0.9.1`（`8d4f9744948751f1273fe871e1d05276fac09b0e`）为基线。代理协议、核心路由、VPN 授权和监控数据等上游已有能力，不列为 Aerove 独创功能。
 
-## 待发布
+## 0.11.0-beta.5+2026102249 — 已发布预览版
+
+发布于 **2026-10-25 22:09:21（日本时间）**：[Release](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.11.0-beta.5%2B2026102249)。发布源码为 [`74be86d7`](https://github.com/IvanSolis1989/Aerove/commit/74be86d743bb343e20e21e2df5334d0e07ef610d)，对应 [原构建 #49](https://github.com/IvanSolis1989/Aerove/actions/runs/40189135162) 与 [main 推广 #50](https://github.com/IvanSolis1989/Aerove/actions/runs/40196280216)。完整 CI（11 个渲染、6 个回归分片及静态、原生检查）与 APK 验收在原构建同一尝试中通过；main 复用同一原包，7 个应用作业跳过，保留原源码、构建记录、安装编号与签名，不重复编译。
+
+公开三资产的尺寸与 SHA256 均与原构建一致，签名证书 SHA256 为 `0fc82c3b7b089b6244d9ed167b352ff76185417d07689853caca286fbdeb6e60`。已在真机安装本包，确认文字操作弹出框与全应用玻璃效果；真机 TalkBack 读屏顺序及其他功能流程尚未逐项验证。内部 x86_64 首屏诊断因 CI 模拟器宿主进程退出未取得画面，不作为验收依据。
+
+本版本为预览版，不覆盖稳定版 latest；稳定版仍为 `0.9.1+2026102203`。APK SHA256：`3037c64fe0c4b3c61936d71809e9f126ca69b240877a2211bcb796bd18f13f30`。
 
 **0.11.0-beta.5** 预览版：兼容的仪表盘布局与交互扩展，保留既有布局设置、包名、签名与更新入口。
 
