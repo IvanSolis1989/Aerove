@@ -46,14 +46,14 @@ ServiceCheckItem _item(
   region: region,
   checkedAt: 1700000000000,
   coreEpoch: coreEpoch,
-  picksVersion: 1,
+  routeVersion: 1,
 );
 
 OutboundIpResult _address(String ip, String country) => OutboundIpResult(
   url: 'https://www.cloudflare.com/cdn-cgi/trace',
   body: 'ip=$ip\nloc=$country\n',
   coreEpoch: 1,
-  picksVersion: 1,
+  routeVersion: 1,
 );
 
 void main() {
@@ -100,7 +100,7 @@ void main() {
         routeTrackerProvider.overrideWithBuild(
           (ref, _) => RouteState(
             coreEpoch: 1,
-            picksVersion: 1,
+            routeVersion: 1,
             hostEpoch: 1,
             proxied: ref.watch(isStartProvider),
             synced: true,
@@ -671,7 +671,7 @@ void main() {
     epoch = 2;
     ProviderScope.containerOf(tester.element(find.byType(ServiceStatusCard)))
         .read(routeTrackerProvider.notifier)
-        .applySnapshot(const RouteSnapshot(coreEpoch: 2, picksVersion: 1));
+        .applySnapshot(const RouteSnapshot(coreEpoch: 2, routeVersion: 1));
     await tester.pump();
     await tester.pump(
       probeMoveSettleDuration - const Duration(milliseconds: 1),
@@ -1043,7 +1043,7 @@ void main() {
     epoch = 2;
     containerOf(tester)
         .read(routeTrackerProvider.notifier)
-        .applySnapshot(const RouteSnapshot(coreEpoch: 2, picksVersion: 1));
+        .applySnapshot(const RouteSnapshot(coreEpoch: 2, routeVersion: 1));
     await tester.pump(probeSettleDuration);
     await tester.pump(commonDuration);
     expect(find.text('Available'), findsOneWidget);

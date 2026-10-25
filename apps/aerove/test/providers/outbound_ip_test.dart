@@ -1,3 +1,4 @@
+import 'package:fl_clash/common/constant.dart';
 import 'package:fl_clash/common/exit_snapshot.dart';
 import 'package:fl_clash/common/preferences.dart';
 import 'package:fl_clash/common/service_probe.dart';
@@ -23,11 +24,14 @@ const _answer = OutboundIpResult(
   body: 'ip=2.2.2.2\nloc=US\n',
   chains: ['HK-01'],
   coreEpoch: 1,
-  picksVersion: 1,
+  routeVersion: 1,
 );
 
 void main() {
-  setUpAll(() => registerFallbackValue(const OutboundIpParams(timeout: 0)));
+  setUpAll(() {
+    registerFallbackValue(const OutboundIpParams(timeout: 0));
+    registerFallbackValue(const CheckRoutesParams());
+  });
 
   late _MockCore core;
 
@@ -45,7 +49,7 @@ void main() {
         routeTrackerProvider.overrideWithBuild(
           (_, _) => RouteState(
             coreEpoch: 1,
-            picksVersion: 1,
+            routeVersion: 1,
             hostEpoch: 1,
             proxied: proxied,
             synced: true,
@@ -112,9 +116,17 @@ void main() {
       (_) async => const OutboundIpResult(
         url: 'https://www.cloudflare.com/cdn-cgi/trace',
         body: 'ip=2.2.2.2\nloc=US\n',
-        chains: ['HK-01', 'Proxy'],
+        chains: ['HK-01', 'Balance', 'Proxy'],
         coreEpoch: 1,
-        picksVersion: 1,
+        routeVersion: 1,
+        hits: [RouteHit(host: 'www.cloudflare.com:443', exit: 'Balance')],
+        nodeHits: [
+          RouteHit(
+            host: 'www.cloudflare.com:443',
+            proxy: 'HK-01',
+            exit: 'HK-01',
+          ),
+        ],
       ),
     );
     final container = build();
@@ -129,6 +141,9 @@ void main() {
     final entry = container.read(outboundIpProbeProvider).entryOf('HK-01');
     expect(entry.phase, ProbePhase.fresh);
     expect(entry.value?.ip, '2.2.2.2');
+    expect(entry.stamp?.hits, const [
+      RouteHit(host: 'www.cloudflare.com:443', proxy: 'HK-01', exit: 'HK-01'),
+    ]);
   });
 
   test('a Core error is a failure until it is refreshed', () async {
@@ -136,7 +151,7 @@ void main() {
       (_) async => const OutboundIpResult(
         error: 'timeout',
         coreEpoch: 1,
-        picksVersion: 1,
+        routeVersion: 1,
       ),
     );
     final container = build();
@@ -155,6 +170,54 @@ void main() {
     await pumpEventQueue();
 
     verify(() => core.outboundIp(any())).called(1);
+  });
+
+  testWidgets('a reselect that keeps the exit asks no source again, and one '
+      'that moves it asks once', (tester) async {
+    await mockPreferences();
+    const hit = RouteHit(host: 'www.cloudflare.com:443', exit: 'HK-01');
+    var version = 1;
+    when(() => core.outboundIp(any())).thenAnswer(
+      (_) async => _answer.copyWith(routeVersion: version, hits: const [hit]),
+    );
+    var exitHeld = true;
+    final checked = <List<List<RouteHit>>>[];
+    when(() => core.checkRoutes(any())).thenAnswer((invocation) async {
+      final routes =
+          (invocation.positionalArguments.single as CheckRoutesParams).routes;
+      checked.add(routes);
+      return RouteCheck(
+        coreEpoch: 1,
+        routeVersion: version,
+        held: [for (final route in routes) route.isNotEmpty && exitHeld],
+      );
+    });
+    final container = build();
+    final tracker = container.read(routeTrackerProvider.notifier);
+    container.read(outboundIpProbeProvider.notifier).watch(routedOutbound);
+    await tester.pump();
+    verify(() => core.outboundIp(any())).called(1);
+
+    tracker.applySnapshot(RouteSnapshot(coreEpoch: 1, routeVersion: ++version));
+    await tester.pump(probeSettleDuration);
+    await tester.pump();
+
+    expect(checked.single, contains(equals(const [hit])));
+    verifyNever(() => core.outboundIp(any()));
+    final entry = container
+        .read(outboundIpProbeProvider)
+        .entryOf(routedOutbound);
+    expect(entry.phase, ProbePhase.fresh);
+    expect(entry.stamp?.routeVersion, 2);
+
+    exitHeld = false;
+    tracker.applySnapshot(RouteSnapshot(coreEpoch: 1, routeVersion: ++version));
+    await tester.pump(probeSettleDuration);
+    await tester.pump(probeThrottleDuration);
+
+    expect(checked, hasLength(2));
+    verify(() => core.outboundIp(any())).called(1);
+    await tester.pump(probeThrottleDuration);
   });
 
   group('the last exit', () {

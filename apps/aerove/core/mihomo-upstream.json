@@ -14,9 +14,13 @@
     {
       "path": "core/patches/flclash-v0.9.2-pre.1-apis.patch",
       "sha256": "1f6aeaa6fa77cf7930d95d92271480bc01b63c6cb3d2dc94da58773e129ff9be"
+    },
+    {
+      "path": "core/patches/flclash-v0.9.2-route-api.patch",
+      "sha256": "414a1c889c20aec74582f59ea05767fd4c92f9e787d92c3ea02b290dc53a6432"
     }
   ],
-  "result_tree": "9f68b8fc874e4aa0f4effc57462b69500fbd782c",
+  "result_tree": "c355670ac6f41d50012f5b0423ecf9465fe460c2",
   "provenance": {
     "preserved_merge": "109e5954c116b3814a2e3dbb414aff03f26a491b",
     "adaptation_commits": [
@@ -49,6 +53,24 @@
             "bytes": 2242,
             "lines": 85,
             "url": "https://github.com/chen08209/Clash.Meta/blob/86e56192ddd815e2094212531c48a364eb35659d/dns/patch_clear.go"
+          }
+        ]
+      },
+      {
+        "repository": "https://github.com/chen08209/Clash.Meta",
+        "commit": "c5062921054902b25215a6a933e72ccd714c9bfa",
+        "patch": "core/patches/flclash-v0.9.2-route-api.patch",
+        "license": "GNU General Public License, version 3 (repository LICENSE)",
+        "license_blob": "f288702d2fa16d3cdf0035b15a9fcbc552cd88e7",
+        "files": [
+          {
+            "path": "tunnel/patch.go",
+            "introduced_by": "c5062921054902b25215a6a933e72ccd714c9bfa",
+            "blob": "d3ae861a61c780ffd1cec71d0fc536b6c514bf9f",
+            "sha256": "75b792e3fae323b1c87bdca522a046d5ceb9208d9b29b12005466124643e89a4",
+            "bytes": 3891,
+            "lines": 123,
+            "url": "https://github.com/chen08209/Clash.Meta/blob/c5062921054902b25215a6a933e72ccd714c9bfa/tunnel/patch.go"
           }
         ]
       }

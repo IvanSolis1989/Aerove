@@ -1,0 +1,28 @@
+FlClash 0.9.2 route API on official Mihomo v1.19.33
+Source-Repository: https://github.com/chen08209/Clash.Meta
+Source-Revision: c5062921054902b25215a6a933e72ccd714c9bfa
+ResolveRoute-Introduced-By: c5062921054902b25215a6a933e72ccd714c9bfa
+Source-License: GNU General Public License, version 3 (repository LICENSE)
+Source-License-Blob: f288702d2fa16d3cdf0035b15a9fcbc552cd88e7
+The added function retains the exact source bytes and upstream comments.
+This patch follows aerove-v1.19.33.patch and flclash-v0.9.2-pre.1-apis.patch.
+
+diff --git a/tunnel/patch.go b/tunnel/patch.go
+index e54f72f94b492c5cd161f60cea212a4c4dedbb34..d3ae861a61c780ffd1cec71d0fc536b6c514bf9f 100644
+--- a/tunnel/patch.go
++++ b/tunnel/patch.go
+@@ -110,3 +110,14 @@ func RuleProvidersSnapshot() map[string]P.RuleProvider {
+ 	defer configMux.RUnlock()
+ 	return ruleProviders
+ }
++
++// ResolveRoute picks the adapter a connection for metadata would be handed
++// to, by the same steps an incoming connection takes, without dialing it.
++func ResolveRoute(metadata *C.Metadata) (C.Proxy, error) {
++	fixMetadata(metadata)
++	if err := preHandleMetadata(metadata); err != nil {
++		return nil, err
++	}
++	proxy, _, err := resolveMetadata(metadata)
++	return proxy, err
++}

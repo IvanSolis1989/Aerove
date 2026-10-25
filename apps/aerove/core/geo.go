@@ -69,7 +69,7 @@ func onGeoUpdate(geoType string, updating bool, skipped bool, updateErr error) {
 		releaseHookUpdate(geoUpdateScope + geoType)
 		scheduleReclaimOwnership()
 		if !skipped && updateErr == nil {
-			bumpRouteEpoch()
+			changeRoute(routeMoved)
 			if geoType == "GEOSITE" {
 				rebuildGeoSiteMatchers()
 				scheduleLoadMemoryRelease()

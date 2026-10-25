@@ -77,7 +77,8 @@ class ServiceCheck {
     this.region,
     this.checkedAt,
     this.coreEpoch = 0,
-    this.picksVersion = 0,
+    this.routeVersion = 0,
+    this.hits = const [],
   });
 
   factory ServiceCheck.of(ServiceCheckItem item) {
@@ -90,7 +91,8 @@ class ServiceCheck {
           ? DateTime.fromMillisecondsSinceEpoch(item.checkedAt)
           : null,
       coreEpoch: item.coreEpoch,
-      picksVersion: item.picksVersion,
+      routeVersion: item.routeVersion,
+      hits: item.hits,
     );
   }
 
@@ -100,7 +102,8 @@ class ServiceCheck {
   final String? region;
   final DateTime? checkedAt;
   final int coreEpoch;
-  final int picksVersion;
+  final int routeVersion;
+  final List<RouteHit> hits;
 
   String? get node => chains.firstOrNull;
 
@@ -113,7 +116,8 @@ class ServiceCheck {
       other.region == region &&
       other.checkedAt == checkedAt &&
       other.coreEpoch == coreEpoch &&
-      other.picksVersion == picksVersion;
+      other.routeVersion == routeVersion &&
+      listEquals(other.hits, hits);
 
   @override
   int get hashCode => Object.hash(
@@ -123,7 +127,8 @@ class ServiceCheck {
     region,
     checkedAt,
     coreEpoch,
-    picksVersion,
+    routeVersion,
+    Object.hashAll(hits),
   );
 
   @override

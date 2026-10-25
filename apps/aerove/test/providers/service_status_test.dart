@@ -24,7 +24,7 @@ ServiceCheckItem _item(String name, {String status = 'available'}) =>
       chains: const ['HK-01'],
       checkedAt: 1700000000000,
       coreEpoch: 1,
-      picksVersion: 1,
+      routeVersion: 1,
     );
 
 void main() {
@@ -52,7 +52,7 @@ void main() {
         routeTrackerProvider.overrideWithBuild(
           (_, _) => RouteState(
             coreEpoch: 1,
-            picksVersion: 1,
+            routeVersion: 1,
             hostEpoch: 1,
             proxied: proxied,
             synced: synced,
@@ -137,6 +137,7 @@ void main() {
       expect(sweeps.skip(ServiceTarget.values.length).map((s) => s.names), [
         for (final target in ServiceTarget.values) [target.id],
       ]);
+      await tester.pump(probeThrottleDuration);
     },
   );
 
@@ -212,9 +213,9 @@ void main() {
     expect(stateOf(scope).valueOf(ServiceTarget.claude), isNotNull);
   });
 
-  test(
+  testWidgets(
     'a timeout is shown as a status and retried once the app resumes',
-    () async {
+    (tester) async {
       when(() => core.serviceCheck(any())).thenAnswer((invocation) async {
         final params =
             invocation.positionalArguments.single as ServiceCheckParams;
@@ -225,16 +226,20 @@ void main() {
       });
       final scope = container();
       notifierOf(scope).watch(ServiceTarget.youtube);
-      await pumpEventQueue();
+      await tester.pump();
 
       final entry = stateOf(scope).entryOf(ServiceTarget.youtube);
       expect(entry.phase, ProbePhase.failed);
       expect(entry.value?.status, ServiceProbeStatus.timeout);
 
+      await tester.pump(const Duration(seconds: 1));
       scope.read(routeTrackerProvider.notifier).markResumed();
-      await pumpEventQueue();
+      await tester.pump();
+      expect(sweeps, hasLength(1));
 
+      await tester.pump(probeThrottleDuration);
       expect(sweeps, hasLength(2));
+      await tester.pump(probeThrottleDuration);
     },
   );
 
@@ -253,6 +258,7 @@ void main() {
     await tester.pump(probeSettleDuration);
     expect(sweeps, hasLength(2));
     expect(stateOf(scope).valueOf(ServiceTarget.youtube), isNotNull);
+    await tester.pump(probeThrottleDuration);
   });
 
   testWidgets('an answer that arrives after the route changed is asked again', (
@@ -283,6 +289,7 @@ void main() {
       stateOf(scope).entryOf(ServiceTarget.youtube).phase,
       ProbePhase.fresh,
     );
+    await tester.pump(probeThrottleDuration);
   });
 
   test(

@@ -216,6 +216,10 @@ class CoreController {
     return _interface.watchRoute(watch);
   }
 
+  Future<RouteCheck?> checkRoutes(CheckRoutesParams params) {
+    return _interface.checkRoutes(params);
+  }
+
   Future<void> setUiTelemetryActive(bool active) {
     return _interface.setUiTelemetryActive(active);
   }

@@ -64,6 +64,10 @@ const probeTimeoutDuration = Duration(seconds: 10);
 
 const probeSettleDuration = Duration(milliseconds: 1500);
 
+/// Spans one config load, whose providers, rule sets and url-test picks land
+/// over a few seconds, so an exit moving with each costs one probe more.
+const probeThrottleDuration = Duration(seconds: 5);
+
 const probeMoveSettleDuration = Duration(milliseconds: 300);
 
 const downloadTimeoutDuration = Duration(seconds: 20);
