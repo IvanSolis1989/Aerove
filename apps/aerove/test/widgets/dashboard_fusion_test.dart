@@ -22,6 +22,7 @@ import 'package:fl_clash/ui/ui.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -227,6 +228,10 @@ void main() {
         ),
         findsNWidgets(count),
       );
+      final totalLabel = find.bySemanticsLabel(l10n.trafficTotal(value));
+      if (totalLabel.evaluate().length != count) {
+        debugDumpSemanticsTree(DebugSemanticsDumpOrder.traversalOrder);
+      }
       expect(
         find.bySemanticsLabel(l10n.trafficTotal(value)),
         findsNWidgets(count),

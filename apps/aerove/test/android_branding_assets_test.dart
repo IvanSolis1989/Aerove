@@ -193,17 +193,25 @@ void main() {
     );
   });
 
-  test('published website marks share the canonical ribbon', () {
-    final path = _attribute(
-      _read('assets_source/images/icon/glyph.svg'),
-      'path',
-      'd',
-    );
+  test('published website marks use canonical packaged assets', () {
+    final site = _read('../../website/index.html');
     expect(
-      RegExp(RegExp.escape(path)).allMatches(_read('../../website/index.html')),
+      RegExp(r'src="\{\{up\}\}icon\.png"').allMatches(site),
       hasLength(2),
     );
-    expect(_read('../../website/assets/field.js'), contains(path));
+    final build = _read('../../tooling/website/build_site.sh');
+    expect(
+      build,
+      contains(
+        r'cp "$source_root/apps/aerove/assets/images/icon.png" "$work/icon.png"',
+      ),
+    );
+    expect(
+      build,
+      contains(
+        r'cp "$source_root/apps/aerove/assets_source/images/icon/glyph.svg" "$work/favicon.svg"',
+      ),
+    );
   });
 
   test('store icon and TV banner retain their required dimensions', () async {
