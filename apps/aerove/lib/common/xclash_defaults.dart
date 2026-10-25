@@ -142,7 +142,9 @@ class XClashDefaults {
       throw StateError('XClash defaults must be prepared before migration');
     }
     if (record['complete'] == true) {
-      await _database.transaction(_database.scriptsDao.migrateLegacyDefaultUrls);
+      await _database.transaction(
+        _database.scriptsDao.migrateLegacyDefaultUrls,
+      );
       return config;
     }
     final id = record['scriptId'] as int;
@@ -189,10 +191,12 @@ class XClashDefaults {
     }
     await _database.transaction(() async {
       if (installed == null) {
-        await _database.into(_database.scripts).insert(
-          script.toCompanion(),
-          onConflict: DoNothing(target: [_database.scripts.id]),
-        );
+        await _database
+            .into(_database.scripts)
+            .insert(
+              script.toCompanion(),
+              onConflict: DoNothing(target: [_database.scripts.id]),
+            );
       }
       await _database.scriptsDao.migrateLegacyDefaultUrls();
       if ((applyPreset || replaceLegacyDns) && !await _saveConfig(next)) {

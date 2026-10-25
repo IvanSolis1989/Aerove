@@ -10238,7 +10238,113 @@
      #[test]
 --- a/crates/meow-rules/src/mrs_parser.rs
 +++ b/crates/meow-rules/src/mrs_parser.rs
-@@ -140,7 +140,8 @@
+@@ -56,6 +56,12 @@
+ 
+ #[derive(Debug, thiserror::Error)]
+ pub enum MrsError {
++    #[error("mrs: validation cancelled")]
++    Cancelled,
++    #[error("mrs: allocation failed for {0}")]
++    Allocation(&'static str),
++    #[error("{0}")]
++    RuleSet(String),
+     #[error("mrs: wrong format (not an mrs file — first 4 bytes are not 'MRS!')")]
+     WrongFormat,
+     #[error("mrs: unsupported version {0} (expected 1)")]
+@@ -81,8 +87,92 @@
+     InvalidDomainSetVersion(u8),
+     #[error("mrs: invalid ip-cidr-set version {0}")]
+     InvalidIpCidrSetVersion(u8),
++    #[error("mrs: invalid ip-cidr range: {from} > {to}")]
++    InvalidIpCidrRange { from: IpAddr, to: IpAddr },
+     #[error("mrs: invalid length for {0}: {1}")]
+     InvalidLength(&'static str, i64),
++}
++
++/// Per-operation limits and cancellation. This does not own a task or change global parser policy.
++#[derive(Clone)]
++pub struct MrsReadControl {
++    compressed: u64,
++    expanded: u64,
++    cancelled: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
++    cancelled_latched: std::sync::Arc<std::sync::atomic::AtomicBool>,
++}
++impl MrsReadControl {
++    pub fn new(compressed: u64, expanded: u64, cancelled: impl Fn() -> bool + Send + Sync + 'static) -> Self {
++        Self { compressed: compressed.min(MAX_DECOMPRESSED_BYTES), expanded: expanded.min(MAX_DECOMPRESSED_BYTES), cancelled: std::sync::Arc::new(cancelled), cancelled_latched: Default::default() }
++    }
++    pub fn compressed_limit(&self) -> u64 { self.compressed }
++    pub fn expanded_limit(&self) -> u64 { self.expanded }
++    pub fn check(&self) -> Result<(), MrsError> {
++        use std::sync::atomic::Ordering;
++        if self.cancelled_latched.load(Ordering::Acquire) || (self.cancelled)() {
++            self.cancelled_latched.store(true, Ordering::Release);
++            Err(MrsError::Cancelled)
++        } else { Ok(()) }
++    }
++}
++impl Default for MrsReadControl {
++    fn default() -> Self { Self::new(MAX_DECOMPRESSED_BYTES, MAX_DECOMPRESSED_BYTES, || false) }
++}
++fn checkpoint(control: Option<&MrsReadControl>) -> Result<(), MrsError> {
++    if let Some(control) = control { control.check()?; }
++    Ok(())
++}
++fn reserve<T>(out: &mut Vec<T>, count: usize, what: &'static str) -> Result<(), MrsError> {
++    out.try_reserve_exact(count).map_err(|_| MrsError::Allocation(what))
++}
++
++/// One forward-only bounded source. Owned sources drop when decoding ends; borrowed sources stay with their caller.
++struct ControlledInput<'a, R> { source: R, consumed: u64, control: &'a MrsReadControl, exceeded: &'a std::cell::Cell<bool> }
++impl<R: Read> Read for ControlledInput<'_, R> {
++    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
++        self.control.check().map_err(std::io::Error::other)?;
++        if self.exceeded.get() { return Err(std::io::Error::other("mrs: compressed input limit exceeded")); }
++        let count = buffer.len().min(64 * 1024).min((self.control.compressed.saturating_sub(self.consumed) + 1) as usize);
++        let read = self.source.read(&mut buffer[..count])?;
++        self.control.check().map_err(std::io::Error::other)?;
++        self.consumed += read as u64;
++        if self.consumed > self.control.compressed {
++            self.exceeded.set(true);
++            return Err(std::io::Error::other("mrs: compressed input limit exceeded"));
++        }
++        Ok(read)
++    }
++}
++fn decompress_from_reader<R: Read>(source: R, control: &MrsReadControl) -> Result<Vec<u8>, MrsError> {
++    control.check()?;
++    let exceeded = std::cell::Cell::new(false);
++    let failure = |error: std::io::Error| {
++        if control.check().is_err() { MrsError::Cancelled }
++        else if exceeded.get() { MrsError::InvalidLength("compressed_payload", control.compressed as i64) }
++        else { MrsError::Zstd(error) }
++    };
++    let source = ControlledInput { source, consumed: 0, control, exceeded: &exceeded };
++    let mut decoder = zstd::stream::Decoder::new(source).map_err(failure)?;
++    let mut out = Vec::new();
++    let mut buffer = [0u8; 64 * 1024];
++    loop {
++        control.check()?;
++        let remaining = control.expanded.saturating_sub(out.len() as u64);
++        let count = buffer.len().min((remaining + 1) as usize);
++        let read = decoder.read(&mut buffer[..count]).map_err(failure)?;
++        control.check()?;
++        if read == 0 { break; }
++        if read as u64 > remaining { return Err(MrsError::InvalidLength("decompressed_payload", control.expanded as i64)); }
++        let required = out.len() + read;
++        if required > out.capacity() {
++            let target = out.capacity().max(buffer.len()).saturating_mul(2).min(control.expanded as usize).max(required);
++            let additional = target - out.len();
++            reserve(&mut out, additional, "decompressed_payload")?;
++        }
++        out.extend_from_slice(&buffer[..read]);
++    }
++    control.check()?;
++    Ok(out)
+ }
+ 
+ /// Parsed mrs header.
+@@ -140,7 +230,8 @@
      decompress_payload_bounded(compressed, MAX_DECOMPRESSED_BYTES)
  }
  
@@ -10248,6 +10354,614 @@
      let mut decoder = zstd::stream::Decoder::new(Cursor::new(compressed))?;
      let mut out = Vec::new();
      // Read one byte past the bound so an over-limit payload is an error rather
+@@ -405,11 +496,24 @@
+     body_offset: usize,
+     behavior: u8,
+     count: usize,
++    control: Option<MrsReadControl>,
+ }
+ 
+ impl UpstreamRuleSetReader {
+     pub fn open(bytes: &[u8]) -> Result<Self, MrsError> {
+         let decompressed = decompress_payload(bytes)?;
++        Self::from_decompressed(decompressed, None)
++    }
++
++    /// Accept an owned or borrowed Read without retaining a compressed copy. Limits never exceed the fixed Core ceiling.
++    pub fn open_from_reader<R: Read>(source: R, control: MrsReadControl) -> Result<Self, MrsError> {
++        let decompressed = decompress_from_reader(source, &control)?;
++        Self::from_decompressed(decompressed, Some(control))
++    }
++    pub fn check_cancelled(&self) -> Result<(), MrsError> { checkpoint(self.control.as_ref()) }
++
++    fn from_decompressed(decompressed: Vec<u8>, control: Option<MrsReadControl>) -> Result<Self, MrsError> {
++        checkpoint(control.as_ref())?;
+         let mut r = ByteReader::new(&decompressed);
+         let magic = r.read_array::<4>("upstream_magic")?;
+         if magic != UPSTREAM_MRS_MAGIC {
+@@ -435,11 +539,13 @@
+         let _ = r.read_slice("extra", extra_len)?;
+         let body_offset = decompressed.len() - r.remaining_slice().len();
+ 
++        checkpoint(control.as_ref())?;
+         Ok(Self {
+             decompressed,
+             body_offset,
+             behavior,
+             count,
++            control,
+         })
+     }
+ 
+@@ -461,7 +567,7 @@
+         if self.behavior != TYPE_DOMAIN {
+             return Err(MrsError::InvalidBehavior(self.behavior));
+         }
+-        walk_upstream_domain_set(self.body(), &mut on_domain)
++        walk_upstream_domain_set_controlled(self.body(), &mut on_domain, self.control.as_ref())
+     }
+ 
+     /// Walk every network of an `ipcidr` body (ranges are split into
+@@ -470,6 +576,7 @@
+         if self.behavior != TYPE_IPCIDR {
+             return Err(MrsError::InvalidBehavior(self.behavior));
+         }
++        self.check_cancelled()?;
+         let mut r = ByteReader::new(self.body());
+         let version = r.read_u8("ipcidr_set_version")?;
+         if version != 1 {
+@@ -481,34 +588,48 @@
+         }
+         let mut emitted = 0usize;
+         for _ in 0..len {
++            self.check_cancelled()?;
+             let from = r.read_array::<16>("ipcidr_from")?;
+             let to = r.read_array::<16>("ipcidr_to")?;
+             let from = IpAddr::from(Ipv6Addr::from(from));
+             let to = IpAddr::from(Ipv6Addr::from(to));
++            if self.control.is_some() && from > to {
++                return Err(MrsError::InvalidIpCidrRange { from, to });
++            }
++            let mut cancelled = false;
+             push_range_prefixes(from, to, &mut |net| {
++                if cancelled || self.check_cancelled().is_err() { cancelled = true; return; }
+                 emitted += 1;
+                 on_net(net);
++                cancelled = self.check_cancelled().is_err();
+             });
++            if cancelled { return Err(MrsError::Cancelled); }
+             // One 32-byte record can expand to over a hundred CIDRs; bound
+             // the total or a max-size payload amplifies ~100x (issue #513).
+             if emitted > MAX_DOMAIN_SET_ENTRIES {
+                 return Err(MrsError::InvalidLength("ipcidr_set_output", emitted as i64));
+             }
+         }
++        self.check_cancelled()?;
+         Ok(())
+     }
+ }
+ 
+ /// Decode a succinct domain set, calling `on_domain` once per domain
+ /// (forward byte order, reused buffer).
++#[cfg(test)]
+ fn walk_upstream_domain_set(data: &[u8], on_domain: &mut dyn FnMut(&str)) -> Result<(), MrsError> {
++    walk_upstream_domain_set_controlled(data, on_domain, None)
++}
++fn walk_upstream_domain_set_controlled(data: &[u8], on_domain: &mut dyn FnMut(&str), control: Option<&MrsReadControl>) -> Result<(), MrsError> {
++    checkpoint(control)?;
+     let mut r = ByteReader::new(data);
+     let version = r.read_u8("domain_set_version")?;
+     if version != 1 {
+         return Err(MrsError::InvalidDomainSetVersion(version));
+     }
+-    let leaves = read_u64_vec(&mut r, "domain_set_leaves")?;
+-    let label_bitmap = read_u64_vec(&mut r, "domain_set_label_bitmap")?;
++    let leaves = read_u64_vec_controlled(&mut r, "domain_set_leaves", control)?;
++    let label_bitmap = read_u64_vec_controlled(&mut r, "domain_set_label_bitmap", control)?;
+     let labels_len = r.read_i64_be("domain_set_labels_len")?;
+     if labels_len < 1 {
+         return Err(MrsError::InvalidLength("domain_set_labels_len", labels_len));
+@@ -522,10 +643,11 @@
+     // Enforce the correlation *before* DomainSetIndex materializes one `usize`
+     // per set bit — a mostly-ones bitmap would otherwise amplify the input
+     // ~64x into memory (issue #513).
+-    let node_count: usize = label_bitmap
+-        .iter()
+-        .map(|word| word.count_ones() as usize)
+-        .sum();
++    let mut node_count = 0usize;
++    for (index, word) in label_bitmap.iter().enumerate() {
++        if index & 511 == 0 { checkpoint(control)?; }
++        node_count += word.count_ones() as usize;
++    }
+     if node_count > labels.len() + 1 {
+         return Err(MrsError::InvalidLength(
+             "domain_set_terminators",
+@@ -536,18 +658,21 @@
+     let traversal = DomainSetTraversal {
+         leaves: &leaves,
+         label_bitmap: &label_bitmap,
+-        label_index: DomainSetIndex::new(&label_bitmap),
++        label_index: DomainSetIndex::new_controlled(&label_bitmap, control, Some(node_count))?,
+         labels,
+     };
+     let mut current = Vec::new();
+     let mut forward = Vec::new();
+-    traversal.traverse(0, 0, &mut current, &mut |reversed: &[u8]| {
++    traversal.traverse_controlled(0, 0, &mut current, &mut |reversed: &[u8]| {
+         forward.clear();
+         forward.extend(reversed.iter().rev());
+-        if let Ok(domain) = std::str::from_utf8(&forward) {
++        if control.is_some() {
++            on_domain(utf8("domain_set_leaf", &forward)?);
++        } else if let Ok(domain) = std::str::from_utf8(&forward) {
+             on_domain(domain);
+         }
+-    })
++        Ok(())
++    }, control)
+ }
+ 
+ #[cfg(test)]
+@@ -557,7 +682,12 @@
+     Ok(out)
+ }
+ 
++#[cfg(test)]
+ fn read_u64_vec(r: &mut ByteReader<'_>, what: &'static str) -> Result<Vec<u64>, MrsError> {
++    read_u64_vec_controlled(r, what, None)
++}
++fn read_u64_vec_controlled(r: &mut ByteReader<'_>, what: &'static str, control: Option<&MrsReadControl>) -> Result<Vec<u64>, MrsError> {
++    checkpoint(control)?;
+     let declared = r.read_i64_be(what)?;
+     if declared < 1 {
+         return Err(MrsError::InvalidLength(what, declared));
+@@ -570,10 +700,12 @@
+         .checked_mul(std::mem::size_of::<u64>())
+         .ok_or(MrsError::InvalidLength(what, declared))?;
+     r.need(what, bytes)?;
+-    let mut out = Vec::with_capacity(len);
+-    for _ in 0..len {
++    let mut out = if control.is_some() { let mut out = Vec::new(); reserve(&mut out, len, what)?; out } else { Vec::with_capacity(len) };
++    for index in 0..len {
++        if index & 511 == 0 { checkpoint(control)?; }
+         out.push(r.read_u64_be(what)?);
+     }
++    checkpoint(control)?;
+     Ok(out)
+ }
+ 
+@@ -598,14 +730,10 @@
+ const MAX_DOMAIN_SET_DEPTH: usize = 4 * 1024;
+ 
+ impl DomainSetTraversal<'_> {
+-    fn traverse(
+-        &self,
+-        root_node: usize,
+-        root_bm: usize,
+-        current: &mut Vec<u8>,
+-        out: &mut dyn FnMut(&[u8]),
++    fn traverse_controlled(
++        &self, root_node: usize, root_bm: usize, current: &mut Vec<u8>, out: &mut dyn FnMut(&[u8]) -> Result<(), MrsError>, control: Option<&MrsReadControl>,
+     ) -> Result<(), MrsError> {
+-        self.traverse_bounded(
++        self.traverse_bounded_controlled(
+             root_node,
+             root_bm,
+             current,
+@@ -613,6 +741,7 @@
+             MAX_DOMAIN_SET_ENTRIES,
+             MAX_DOMAIN_SET_BYTES,
+             MAX_DOMAIN_SET_DEPTH,
++            control,
+         )
+     }
+ 
+@@ -623,6 +752,7 @@
+     /// Frame discipline: `current` holds one label byte per frame above the
+     /// root, so `current.len() == stack.len() - 1` is an invariant.
+     #[allow(clippy::too_many_arguments, reason = "bounds grouped for tests")]
++    #[cfg(test)]
+     fn traverse_bounded(
+         &self,
+         root_node: usize,
+@@ -633,14 +763,26 @@
+         max_bytes: usize,
+         max_depth: usize,
+     ) -> Result<(), MrsError> {
++        self.traverse_bounded_controlled(root_node, root_bm, current, &mut |value| { out(value); Ok(()) }, max_entries, max_bytes, max_depth, None)
++    }
++    #[allow(clippy::too_many_arguments, reason = "bounds and per-operation control")]
++    fn traverse_bounded_controlled(
++        &self, root_node: usize, root_bm: usize, current: &mut Vec<u8>, out: &mut dyn FnMut(&[u8]) -> Result<(), MrsError>,
++        max_entries: usize, max_bytes: usize, max_depth: usize, control: Option<&MrsReadControl>,
++    ) -> Result<(), MrsError> {
++        checkpoint(control)?;
+         let mut out_count = 0usize;
+         let mut out_bytes = 0usize;
+         let mut stack: Vec<(usize, usize)> = vec![(root_node, root_bm)];
+         if get_bit(self.leaves, root_node) {
+             out_count += 1;
+-            out(current);
+-        }
++            out(current)?;
++            checkpoint(control)?;
++        }
++        let mut steps = 0usize;
+         while let Some(top) = stack.last_mut() {
++            if steps & 1023 == 0 { checkpoint(control)?; }
++            steps = steps.wrapping_add(1);
+             let (node_id, idx) = *top;
+             // A terminator bit, an out-of-range label, or a missing child node
+             // all end this frame exactly as the recursive `return` did.
+@@ -673,7 +815,9 @@
+                 }
+                 out_bytes += current.len();
+                 out_count += 1;
+-                out(current);
++                checkpoint(control)?;
++                out(current)?;
++                checkpoint(control)?;
+             }
+             if stack.len() >= max_depth {
+                 return Err(MrsError::InvalidLength(
+@@ -683,6 +827,7 @@
+             }
+             stack.push((next_node_id, next_bm_idx));
+         }
++        checkpoint(control)?;
+         Ok(())
+     }
+ }
+@@ -693,11 +838,19 @@
+ }
+ 
+ impl DomainSetIndex {
+-    fn new(bits: &[u64]) -> Self {
+-        let mut rank_ones_by_word = Vec::with_capacity(bits.len() + 1);
++    #[cfg(test)]
++    fn new(bits: &[u64]) -> Self { Self::new_controlled(bits, None, None).expect("uncontrolled index construction") }
++    fn new_controlled(bits: &[u64], control: Option<&MrsReadControl>, nodes: Option<usize>) -> Result<Self, MrsError> {
++        checkpoint(control)?;
++        let mut rank_ones_by_word = Vec::new();
+         let mut select_ones = Vec::new();
++        if control.is_some() {
++            reserve(&mut rank_ones_by_word, bits.len() + 1, "domain_set_rank_index")?;
++            reserve(&mut select_ones, nodes.unwrap_or(0), "domain_set_select_index")?;
++        } else { rank_ones_by_word = Vec::with_capacity(bits.len() + 1); }
+         let mut seen_ones = 0usize;
+         for (word_idx, word) in bits.iter().copied().enumerate() {
++            if word_idx & 511 == 0 { checkpoint(control)?; }
+             rank_ones_by_word.push(seen_ones);
+             let mut remaining = word;
+             while remaining != 0 {
+@@ -708,10 +861,11 @@
+             seen_ones += word.count_ones() as usize;
+         }
+         rank_ones_by_word.push(seen_ones);
+-        Self {
++        checkpoint(control)?;
++        Ok(Self {
+             rank_ones_by_word,
+             select_ones,
+-        }
++        })
+     }
+ 
+     fn count_zeros(&self, bits: &[u64], upto: usize) -> usize {
+@@ -1368,4 +1522,311 @@
+             "byte cap must error"
+         );
+     }
+-}
++
++    #[test]
++    fn owned_upstream_reader_preserves_checked_matcher_and_sink_after_input_drop() {
++        use crate::rule_set::{build_rule_set_from_mrs_with_sink, build_rule_set_from_upstream_reader, AcceptedEntrySink, RuleSetBehavior};
++        #[derive(Default)]
++        struct Capture(std::sync::Mutex<Vec<String>>);
++        impl AcceptedEntrySink for Capture {
++            fn accepted(&self, entry: &str) { self.0.lock().unwrap().push(entry.to_owned()); }
++        }
++        let bytes = encode_upstream_mrs(TYPE_DOMAIN, 2, &encode_domain_set(&["a.test", "+.b.test"]));
++        let old_sink = std::sync::Arc::new(Capture::default());
++        let original = build_rule_set_from_mrs_with_sink(&bytes, &Default::default(), Some(RuleSetBehavior::Domain), true, Some(old_sink.clone())).unwrap();
++        assert_eq!(original.len(), 2); drop(original);
++        let reader = UpstreamRuleSetReader::open(&bytes).unwrap();
++        assert_eq!(reader.behavior(), TYPE_DOMAIN); assert_eq!(reader.count(), 2);
++        drop(bytes);
++        let sink = std::sync::Arc::new(Capture::default());
++        let checked = build_rule_set_from_upstream_reader(reader, Some(RuleSetBehavior::Domain), true, Some(sink.clone())).unwrap();
++        assert_eq!(checked.len(), 2); assert_eq!(checked.behavior(), RuleSetBehavior::Domain);
++        assert_eq!(*sink.0.lock().unwrap(), *old_sink.0.lock().unwrap());
++    }
++
++    #[test]
++    fn owned_upstream_reader_keeps_identity_and_real_payload_errors() {
++        use crate::rule_set::{build_rule_set_from_mrs_with_behavior, build_rule_set_from_upstream_reader, RuleSetBehavior};
++        let bytes = encode_upstream_mrs(TYPE_DOMAIN, 1, &encode_domain_set(&["a.test"]));
++        let expected = build_rule_set_from_mrs_with_behavior(&bytes, &Default::default(), Some(RuleSetBehavior::IpCidr), true).err().unwrap();
++        let actual = build_rule_set_from_upstream_reader(UpstreamRuleSetReader::open(&bytes).unwrap(), Some(RuleSetBehavior::IpCidr), true, None).err().unwrap();
++        assert_eq!(actual.to_string(), expected);
++        for body in [encode_domain_set(&["."]), vec![1]] {
++            let bytes = encode_upstream_mrs(TYPE_DOMAIN, 1, &body);
++            let expected = build_rule_set_from_mrs_with_behavior(&bytes, &Default::default(), Some(RuleSetBehavior::Domain), true).err().unwrap();
++            let reader = UpstreamRuleSetReader::open(&bytes).unwrap();
++            let actual = build_rule_set_from_upstream_reader(reader, Some(RuleSetBehavior::Domain), true, None).err().unwrap();
++            assert_eq!(actual.to_string(), expected);
++        }
++    }
++    struct StreamProbe {
++        bytes: Cursor<Vec<u8>>,
++        dropped: std::sync::Arc<std::sync::atomic::AtomicBool>,
++        reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
++        cancel_after_read: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
++        chunk: usize,
++    }
++    impl Read for StreamProbe {
++        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
++            self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
++            let count = out.len().min(self.chunk);
++            let read = self.bytes.read(&mut out[..count])?;
++            if let Some(flag) = &self.cancel_after_read { flag.store(true, std::sync::atomic::Ordering::SeqCst); }
++            Ok(read)
++        }
++    }
++    impl Drop for StreamProbe {
++        fn drop(&mut self) { self.dropped.store(true, std::sync::atomic::Ordering::SeqCst); }
++    }
++    fn stream_probe(bytes: Vec<u8>, chunk: usize) -> StreamProbe {
++        StreamProbe { bytes: Cursor::new(bytes), dropped: Default::default(), reads: Default::default(), cancel_after_read: None, chunk }
++    }
++    fn stream_fixture() -> Vec<u8> {
++        encode_upstream_mrs(TYPE_DOMAIN, 2, &encode_domain_set(&["a.test", "+.b.test"]))
++    }
++    #[test]
++    fn streamed_owned_real_matcher_releases_owned_source_and_preserves_borrowed_source() {
++        use crate::rule_set::{build_checked_upstream_rule_set_from_reader, AcceptedEntrySink, RuleSetBehavior};
++        struct Sink(std::sync::Arc<std::sync::atomic::AtomicBool>, std::sync::atomic::AtomicUsize);
++        impl AcceptedEntrySink for Sink {
++            fn accepted(&self, _: &str) {
++                assert!(self.0.load(std::sync::atomic::Ordering::SeqCst), "owned compressed source must drop before matching");
++                self.1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
++            }
++        }
++        let source = stream_probe(stream_fixture(), 1);
++        let dropped = source.dropped.clone();
++        let sink = std::sync::Arc::new(Sink(dropped.clone(), Default::default()));
++        let set = build_checked_upstream_rule_set_from_reader(source, MrsReadControl::default(), Some(RuleSetBehavior::Domain), Some(sink.clone())).unwrap();
++        assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
++        assert_eq!(set.len(), 2); assert_eq!(set.behavior(), RuleSetBehavior::Domain);
++        for (host, expected) in [("a.test", true), ("child.b.test", true), ("unrelated.test", false)] {
++            let metadata = meow_common::Metadata { host: host.into(), dst_port: 443, ..Default::default() };
++            assert_eq!(set.matches(&metadata, &meow_common::RuleMatchHelper), expected);
++        }
++        assert_eq!(sink.1.load(std::sync::atomic::Ordering::SeqCst), 2);
++        let mut borrowed = stream_probe(stream_fixture(), 3);
++        let dropped = borrowed.dropped.clone();
++        let set = build_checked_upstream_rule_set_from_reader(&mut borrowed, MrsReadControl::default(), Some(RuleSetBehavior::Domain), None).unwrap();
++        assert_eq!(set.len(), 2); assert!(!dropped.load(std::sync::atomic::Ordering::SeqCst));
++        assert!(borrowed.reads.load(std::sync::atomic::Ordering::SeqCst) > 1);
++        drop(borrowed); assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
++    }
++    #[test]
++    fn streamed_owned_exact_input_and_expansion_bounds_never_truncate_success() {
++        let bytes = stream_fixture();
++        let expanded = decompress_payload(&bytes).unwrap().len() as u64;
++        let limit = bytes.len() as u64;
++        let reader = UpstreamRuleSetReader::open_from_reader(Cursor::new(&bytes), MrsReadControl::new(limit, expanded, || false)).unwrap();
++        assert_eq!(reader.count(), 2);
++        let error = UpstreamRuleSetReader::open_from_reader(Cursor::new(&bytes), MrsReadControl::new(limit - 1, expanded, || false)).err().unwrap();
++        assert!(matches!(error, MrsError::InvalidLength("compressed_payload", _)));
++        let error = UpstreamRuleSetReader::open_from_reader(Cursor::new(&bytes), MrsReadControl::new(limit, expanded - 1, || false)).err().unwrap();
++        assert!(matches!(error, MrsError::InvalidLength("decompressed_payload", _)));
++        let clamp = MrsReadControl::new(u64::MAX, u64::MAX, || false);
++        assert_eq!(clamp.compressed, MAX_DECOMPRESSED_BYTES); assert_eq!(clamp.expanded, MAX_DECOMPRESSED_BYTES);
++        assert_eq!(clamp.compressed_limit(), MAX_DECOMPRESSED_BYTES); assert_eq!(clamp.expanded_limit(), MAX_DECOMPRESSED_BYTES);
++    }
++    #[test]
++    fn streamed_owned_truncated_and_valid_header_bad_body_keep_actual_errors() {
++        use crate::rule_set::{build_rule_set_from_mrs_with_behavior, build_checked_upstream_rule_set_from_reader, RuleSetBehavior};
++        let bytes = stream_fixture();
++        for end in [0, 3, bytes.len() - 1] {
++            assert!(UpstreamRuleSetReader::open_from_reader(Cursor::new(&bytes[..end]), MrsReadControl::default()).is_err());
++        }
++        for body in [vec![1], encode_domain_set(&["."])] {
++            let bytes = encode_upstream_mrs(TYPE_DOMAIN, 1, &body);
++            let original = build_rule_set_from_mrs_with_behavior(&bytes, &Default::default(), Some(RuleSetBehavior::Domain), true).err().unwrap();
++            let actual = build_checked_upstream_rule_set_from_reader(Cursor::new(bytes), MrsReadControl::default(), Some(RuleSetBehavior::Domain), None).err().unwrap();
++            assert_eq!(actual.to_string(), original);
++        }
++        let error = build_checked_upstream_rule_set_from_reader(Cursor::new(stream_fixture()), MrsReadControl::default(), Some(RuleSetBehavior::IpCidr), None).err().unwrap();
++        assert!(error.to_string().contains("behavior mismatch"));
++    }
++    #[test]
++    fn streamed_owned_cancel_before_read_or_after_real_read_drops_source() {
++        let source = stream_probe(stream_fixture(), 4); let dropped = source.dropped.clone(); let reads = source.reads.clone();
++        let error = UpstreamRuleSetReader::open_from_reader(source, MrsReadControl::new(u64::MAX, u64::MAX, || true)).err().unwrap();
++        assert!(matches!(error, MrsError::Cancelled)); assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 0); assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
++        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
++        let mut source = stream_probe(stream_fixture(), 4); source.cancel_after_read = Some(cancel.clone()); let dropped = source.dropped.clone();
++        let error = UpstreamRuleSetReader::open_from_reader(source, MrsReadControl::new(u64::MAX, u64::MAX, move || cancel.load(std::sync::atomic::Ordering::SeqCst))).err().unwrap();
++        assert!(matches!(error, MrsError::Cancelled)); assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
++        let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)); let probe = cancelled.clone();
++        let control = MrsReadControl::new(u64::MAX, u64::MAX, move || probe.load(std::sync::atomic::Ordering::SeqCst));
++        let clone = control.clone(); cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
++        assert!(matches!(control.check(), Err(MrsError::Cancelled)));
++        cancelled.store(false, std::sync::atomic::Ordering::SeqCst);
++        assert!(matches!(clone.check(), Err(MrsError::Cancelled)), "an operation cannot be uncancelled");
++    }
++    #[test]
++    fn streamed_owned_cancel_during_expansion_is_not_partial_output() {
++        let bytes = zstd::encode_all(Cursor::new(vec![0u8; 512 * 1024]), 0).unwrap();
++        let probes = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)); let count = probes.clone();
++        let error = decompress_from_reader(Cursor::new(bytes), &MrsReadControl::new(u64::MAX, u64::MAX, move || count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) >= 10)).err().unwrap();
++        assert!(matches!(error, MrsError::Cancelled)); assert!(probes.load(std::sync::atomic::Ordering::SeqCst) >= 11);
++    }
++    #[test]
++    fn streamed_owned_body_word_and_index_construction_have_cancel_checkpoints() {
++        let mut bytes = Vec::new(); write_i64(&mut bytes, 2048); for _ in 0..2048 { write_u64(&mut bytes, 1); }
++        let probes = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)); let count = probes.clone();
++        let control = MrsReadControl::new(u64::MAX, u64::MAX, move || count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) >= 2);
++        let error = read_u64_vec_controlled(&mut ByteReader::new(&bytes), "checkpoint_test", Some(&control)).err().unwrap();
++        assert!(matches!(error, MrsError::Cancelled));
++        let count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)); let probe = count.clone();
++        let control = MrsReadControl::new(u64::MAX, u64::MAX, move || probe.fetch_add(1, std::sync::atomic::Ordering::SeqCst) >= 2);
++        let error = DomainSetIndex::new_controlled(&vec![1; 2048], Some(&control), Some(2048)).err().unwrap();
++        assert!(matches!(error, MrsError::Cancelled)); assert!(count.load(std::sync::atomic::Ordering::SeqCst) >= 3);
++    }
++    #[test]
++    fn streamed_owned_traversal_and_strict_sink_cancel_before_next_entry() {
++        use crate::rule_set::{build_checked_upstream_rule_set_from_reader, AcceptedEntrySink, RuleSetBehavior};
++        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)); let probe = cancel.clone();
++        let reader = UpstreamRuleSetReader::open_from_reader(Cursor::new(stream_fixture()), MrsReadControl::new(u64::MAX, u64::MAX, move || probe.load(std::sync::atomic::Ordering::SeqCst))).unwrap();
++        let mut entries = 0; let error = reader.for_each_domain(|_| { entries += 1; cancel.store(true, std::sync::atomic::Ordering::SeqCst); }).err().unwrap();
++        assert!(matches!(error, MrsError::Cancelled)); assert_eq!(entries, 1);
++        struct CancelSink(std::sync::Arc<std::sync::atomic::AtomicBool>, std::sync::atomic::AtomicUsize);
++        impl AcceptedEntrySink for CancelSink { fn accepted(&self, _: &str) { self.1.fetch_add(1, std::sync::atomic::Ordering::SeqCst); self.0.store(true, std::sync::atomic::Ordering::SeqCst); } }
++        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)); let probe = cancel.clone(); let sink = std::sync::Arc::new(CancelSink(cancel, Default::default()));
++        let result = build_checked_upstream_rule_set_from_reader(Cursor::new(stream_fixture()), MrsReadControl::new(u64::MAX, u64::MAX, move || probe.load(std::sync::atomic::Ordering::SeqCst)), Some(RuleSetBehavior::Domain), Some(sink.clone()));
++        assert!(matches!(result.err().unwrap(), MrsError::Cancelled)); assert_eq!(sink.1.load(std::sync::atomic::Ordering::SeqCst), 1);
++    }
++
++
++    #[test]
++    fn streamed_owned_real_ip_matcher_and_network_cancel_preserve_mapped_range_semantics() {
++        use crate::rule_set::{build_checked_upstream_rule_set_from_reader, RuleSetBehavior};
++        let mut body = vec![1]; write_i64(&mut body, 1);
++        body.extend_from_slice(&Ipv4Addr::new(192, 168, 0, 0).to_ipv6_mapped().octets());
++        body.extend_from_slice(&Ipv4Addr::new(192, 168, 0, 255).to_ipv6_mapped().octets());
++        let bytes = encode_upstream_mrs(TYPE_IPCIDR, 1, &body);
++        let set = build_checked_upstream_rule_set_from_reader(Cursor::new(&bytes), MrsReadControl::default(), Some(RuleSetBehavior::IpCidr), None).unwrap();
++        assert_eq!(set.len(), 1); assert_eq!(set.behavior(), RuleSetBehavior::IpCidr);
++        for (ip, expected) in [("192.168.0.1", true), ("192.168.1.1", false)] {
++            let metadata = meow_common::Metadata { dst_ip: Some(ip.parse().unwrap()), dst_port: 443, ..Default::default() };
++            assert_eq!(set.matches(&metadata, &meow_common::RuleMatchHelper), expected);
++        }
++        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)); let probe = cancel.clone();
++        let reader = UpstreamRuleSetReader::open_from_reader(Cursor::new(bytes), MrsReadControl::new(u64::MAX, u64::MAX, move || probe.load(std::sync::atomic::Ordering::SeqCst))).unwrap();
++        let mut emitted = 0;
++        let error = reader.for_each_net(|net| { assert_eq!(net.to_string(), "192.168.0.0/24"); emitted += 1; cancel.store(true, std::sync::atomic::Ordering::SeqCst); }).err().unwrap();
++        assert!(matches!(error, MrsError::Cancelled)); assert_eq!(emitted, 1);
++    }
++
++    #[test]
++    fn streamed_owned_actual_256m_fences_use_streams_not_binary_fixtures() {
++        // Byte-fence tests, not an assertion that a zero payload is a valid rule set.
++        let control = MrsReadControl::default();
++        let exceeded = std::cell::Cell::new(false);
++        let mut source = ControlledInput { source: std::io::repeat(0).take(MAX_DECOMPRESSED_BYTES), consumed: 0, control: &control, exceeded: &exceeded };
++        let mut buffer = [0u8; 64 * 1024]; let mut bytes = 0u64;
++        loop { let read = source.read(&mut buffer).unwrap(); if read == 0 { break; } bytes += read as u64; }
++        assert_eq!(bytes, MAX_DECOMPRESSED_BYTES); assert!(!exceeded.get());
++        let mut source = ControlledInput { source: std::io::repeat(0).take(MAX_DECOMPRESSED_BYTES + 1), consumed: 0, control: &control, exceeded: &exceeded };
++        loop { match source.read(&mut buffer) { Ok(0) => panic!("oversized compressed source accepted"), Ok(_) => {}, Err(_) => break } }
++        assert!(exceeded.get()); assert_eq!(source.consumed, MAX_DECOMPRESSED_BYTES + 1);
++        assert!(source.read(&mut buffer).is_err()); assert_eq!(source.consumed, MAX_DECOMPRESSED_BYTES + 1);
++        let compressed = zstd::encode_all(std::io::repeat(0).take(MAX_DECOMPRESSED_BYTES), 0).unwrap();
++        let expanded = decompress_from_reader(Cursor::new(compressed), &control).unwrap();
++        assert_eq!(expanded.len() as u64, MAX_DECOMPRESSED_BYTES); assert_eq!(expanded.first(), Some(&0)); assert_eq!(expanded.last(), Some(&0));
++        drop(expanded);
++        let compressed = zstd::encode_all(std::io::repeat(0).take(MAX_DECOMPRESSED_BYTES + 1), 0).unwrap();
++        assert!(matches!(decompress_from_reader(Cursor::new(compressed), &control).err().unwrap(), MrsError::InvalidLength("decompressed_payload", _)));
++    }
++
++    #[test]
++    fn streamed_owned_all_frames_and_trailing_corruption_are_not_ignored() {
++        let first = zstd::encode_all(Cursor::new(b"first"), 0).unwrap();
++        let second = zstd::encode_all(Cursor::new(b"second"), 0).unwrap();
++        let mut both = first.clone(); both.extend_from_slice(&second);
++        assert_eq!(decompress_from_reader(stream_probe(both.clone(), 1), &MrsReadControl::default()).unwrap(), b"firstsecond");
++        let error = decompress_from_reader(stream_probe(both, 1), &MrsReadControl::new(first.len() as u64, MAX_DECOMPRESSED_BYTES, || false)).err().unwrap();
++        assert!(matches!(error, MrsError::InvalidLength("compressed_payload", _)));
++        let mut corrupt = stream_fixture(); corrupt.extend_from_slice(b"not-a-zstd-frame");
++        assert!(decompress_from_reader(Cursor::new(corrupt), &MrsReadControl::default()).is_err());
++    }
++
++    #[test]
++    fn streamed_owned_strict_invalid_utf8_leaf_is_typed_error_while_bytes_remain_compatible() {
++        use crate::rule_set::{build_checked_upstream_rule_set_from_reader, build_rule_set_from_mrs_with_behavior, RuleSetBehavior};
++        let invalid_only = encode_domain_set_raw(&[2], &[6], &[0xff]);
++        let mut mixed = encode_domain_set(&["a.test", "b.test"]);
++        let invalid_label = {
++            let mut reader = ByteReader::new(&mixed);
++            assert_eq!(reader.read_u8("version").unwrap(), 1);
++            read_u64_vec(&mut reader, "leaves").unwrap();
++            read_u64_vec(&mut reader, "bitmap").unwrap();
++            let labels_len = reader.read_i64_be("labels_len").unwrap() as usize;
++            let labels_offset = mixed.len() - reader.remaining_slice().len();
++            labels_offset + mixed[labels_offset..labels_offset + labels_len].iter().position(|byte| *byte == b'b').unwrap()
++        };
++        mixed[invalid_label] = 0xff;
++        for (body, declared, accepted) in [(invalid_only, 1, 0), (mixed, 2, 1)] {
++            let bytes = encode_upstream_mrs(TYPE_DOMAIN, declared, &body);
++            let old = build_rule_set_from_mrs_with_behavior(&bytes, &Default::default(), Some(RuleSetBehavior::Domain), true).unwrap();
++            assert_eq!(old.len(), accepted); assert_eq!(old.behavior(), RuleSetBehavior::Domain);
++            if accepted == 1 {
++                let metadata = meow_common::Metadata { host: "a.test".into(), dst_port: 443, ..Default::default() };
++                assert!(old.matches(&metadata, &meow_common::RuleMatchHelper));
++            }
++            let error = build_checked_upstream_rule_set_from_reader(Cursor::new(&bytes), MrsReadControl::default(), Some(RuleSetBehavior::Domain), None).err().unwrap();
++            assert!(matches!(error, MrsError::Utf8("domain_set_leaf", _)));
++            let reader = UpstreamRuleSetReader::open_from_reader(Cursor::new(bytes), MrsReadControl::default()).unwrap();
++            assert!(matches!(reader.for_each_domain(|_| {}).err().unwrap(), MrsError::Utf8("domain_set_leaf", _)));
++        }
++    }
++
++    // Same body encoding as the original upstream_ruleset_mrs_ipcidr_parses test, using its original writers.
++    fn strict_range_fixture(ranges: &[(Ipv6Addr, Ipv6Addr)]) -> Vec<u8> {
++        let mut body = vec![1]; write_i64(&mut body, ranges.len() as i64);
++        for (from, to) in ranges { body.extend_from_slice(&from.octets()); body.extend_from_slice(&to.octets()); }
++        encode_upstream_mrs(TYPE_IPCIDR, ranges.len(), &body)
++    }
++    #[test]
++    fn streamed_owned_strict_inverted_ranges_are_typed_errors_while_bytes_keep_empty_or_partial_sets() {
++        use crate::rule_set::{build_checked_upstream_rule_set_from_reader, build_rule_set_from_mrs_with_behavior, RuleSetBehavior};
++        let valid = (Ipv4Addr::new(192, 168, 0, 0).to_ipv6_mapped(), Ipv4Addr::new(192, 168, 0, 255).to_ipv6_mapped());
++        for invalid in [
++            (Ipv4Addr::new(192, 168, 0, 2).to_ipv6_mapped(), Ipv4Addr::new(192, 168, 0, 1).to_ipv6_mapped()),
++            ("::2".parse::<Ipv6Addr>().unwrap(), "::1".parse::<Ipv6Addr>().unwrap()),
++        ] {
++            for mixed in [false, true] {
++                let ranges = if mixed { vec![valid, invalid] } else { vec![invalid] };
++                let bytes = strict_range_fixture(&ranges);
++                let old = build_rule_set_from_mrs_with_behavior(&bytes, &Default::default(), Some(RuleSetBehavior::IpCidr), true).unwrap();
++                assert_eq!(old.len(), usize::from(mixed)); assert_eq!(old.behavior(), RuleSetBehavior::IpCidr);
++                let error = build_checked_upstream_rule_set_from_reader(Cursor::new(bytes), MrsReadControl::default(), Some(RuleSetBehavior::IpCidr), None).err().unwrap();
++                match error {
++                    MrsError::InvalidIpCidrRange { from, to } => {
++                        assert_eq!(from, IpAddr::V6(invalid.0)); assert_eq!(to, IpAddr::V6(invalid.1));
++                    }
++                    other => panic!("expected actual range error, received {other}"),
++                }
++            }
++        }
++    }
++    #[test]
++    fn streamed_owned_strict_codec_accepted_special_ranges_keep_original_matches_and_actual_counts() {
++        use crate::rule_set::{build_checked_upstream_rule_set_from_reader, build_rule_set_from_mrs_with_behavior, RuleSetBehavior};
++        let cases = [
++            (Ipv4Addr::UNSPECIFIED.to_ipv6_mapped(), Ipv4Addr::BROADCAST.to_ipv6_mapped()),
++            (Ipv4Addr::new(192, 168, 0, 2).to_ipv6_mapped(), Ipv4Addr::new(192, 168, 0, 2).to_ipv6_mapped()),
++            (Ipv4Addr::new(192, 168, 0, 1).to_ipv6_mapped(), Ipv4Addr::new(192, 168, 0, 14).to_ipv6_mapped()),
++            (Ipv6Addr::UNSPECIFIED, Ipv6Addr::from(u128::MAX)),
++            (Ipv6Addr::UNSPECIFIED, Ipv6Addr::UNSPECIFIED),
++            (Ipv6Addr::from(u128::MAX), Ipv6Addr::from(u128::MAX)),
++            ("2001:db8::1".parse().unwrap(), "2001:db8::e".parse().unwrap()),
++            (Ipv4Addr::new(0, 0, 0, 1).to_ipv6_mapped(), "2001:db8::1".parse().unwrap()),
++        ];
++        for range in cases {
++            let bytes = strict_range_fixture(&[range]);
++            let old = build_rule_set_from_mrs_with_behavior(&bytes, &Default::default(), Some(RuleSetBehavior::IpCidr), true).unwrap();
++            let strict = build_checked_upstream_rule_set_from_reader(Cursor::new(bytes), MrsReadControl::default(), Some(RuleSetBehavior::IpCidr), None).unwrap();
++            assert!(strict.len() > 0); assert_eq!(strict.len(), old.len()); assert_eq!(strict.behavior(), RuleSetBehavior::IpCidr);
++            for address in ["0.0.0.0", "192.168.0.2", "192.168.0.15", "255.255.255.255", "::", "::1", "2001:db8::2", "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"] {
++                let metadata = meow_common::Metadata { dst_ip: Some(address.parse().unwrap()), dst_port: 443, ..Default::default() };
++                assert_eq!(strict.matches(&metadata, &meow_common::RuleMatchHelper), old.matches(&metadata, &meow_common::RuleMatchHelper), "range={range:?} address={address}");
++            }
++        }
++    }
++}
 --- a/crates/meow-rules/src/process.rs
 +++ b/crates/meow-rules/src/process.rs
 @@ -44,7 +44,7 @@
@@ -10413,7 +11127,20 @@
              for entry in entries {
                  builder.push_checked(entry)?;
              }
-@@ -179,6 +212,13 @@
+@@ -165,9 +198,9 @@
+ /// Parse an MRS binary payload and optionally validate it against the
+ /// configured provider behavior.
+ ///
+-/// Entries stream from the zstd decoder straight into the set builders: no
+-/// decompressed copy of the payload and no per-entry `String` list is held,
+-/// so the load peak is the finished set plus a small buffer.
++/// Legacy entries stream from zstd into the set builders. Upstream payloads
++/// retain one bounded decoded frame while the matcher is built; neither path
++/// constructs an intermediate per-entry `String` list.
+ ///
+ /// `strict` (issue #533): the first malformed entry fails the build instead
+ /// of being warn-skipped — parity with [`build_rule_set_checked`] for the
+@@ -179,53 +212,20 @@
      expected: Option<RuleSetBehavior>,
      strict: bool,
  ) -> Result<Box<dyn RuleSet>, String> {
@@ -10427,25 +11154,55 @@
      use crate::mrs_parser::{
          parse_header, stream_ipcidr_list, stream_string_list, UpstreamRuleSetReader,
          TYPE_CLASSICAL, TYPE_DOMAIN, TYPE_IPCIDR, ZSTD_MAGIC,
-@@ -195,7 +235,7 @@
-         }
-         return match actual {
-             RuleSetBehavior::Domain => {
+     };
+     if bytes.len() >= 4 && bytes[..4] == ZSTD_MAGIC {
+         let reader = UpstreamRuleSetReader::open(bytes).map_err(|e| e.to_string())?;
+-        let actual = behavior_from_type_tag(reader.behavior())?;
+-        if let Some(expected) = expected {
+-            if expected != actual {
+-                return Err(format!(
+-                    "mrs: behavior mismatch: config says {expected}, file says {actual}"
+-                ));
+-            }
+-        }
+-        return match actual {
+-            RuleSetBehavior::Domain => {
 -                let mut builder = DomainRuleSetBuilder::new();
-+                let mut builder = DomainRuleSetBuilder::with_sink(sink.clone());
-                 let mut first_err = None;
-                 reader
-                     .for_each_domain(|d| {
-@@ -216,7 +256,7 @@
-                 Ok(Box::new(builder.build()))
-             }
-             RuleSetBehavior::IpCidr => {
+-                let mut first_err = None;
+-                reader
+-                    .for_each_domain(|d| {
+-                        if first_err.is_none() {
+-                            if strict {
+-                                if let Err(e) = builder.push_checked(d) {
+-                                    first_err = Some(e);
+-                                }
+-                            } else {
+-                                builder.push(d);
+-                            }
+-                        }
+-                    })
+-                    .map_err(|e| e.to_string())?;
+-                if let Some(e) = first_err {
+-                    return Err(e);
+-                }
+-                Ok(Box::new(builder.build()))
+-            }
+-            RuleSetBehavior::IpCidr => {
 -                let mut builder = IpCidrRuleSetBuilder::new();
-+                let mut builder = IpCidrRuleSetBuilder::with_sink(sink.clone());
-                 reader
-                     .for_each_net(|net| builder.push_net(net))
-                     .map_err(|e| e.to_string())?;
-@@ -242,7 +282,7 @@
+-                reader
+-                    .for_each_net(|net| builder.push_net(net))
+-                    .map_err(|e| e.to_string())?;
+-                Ok(Box::new(builder.build()))
+-            }
+-            RuleSetBehavior::Classical => {
+-                Err("mrs: upstream format does not support classical behavior".to_string())
+-            }
+-        };
++        return build_rule_set_from_upstream_reader(reader, expected, strict, sink).map_err(|e| e.to_string());
+     }
+ 
+     let (hdr, compressed) = parse_header(bytes).map_err(|e| e.to_string())?;
+@@ -242,7 +242,7 @@
      let mut first_err = None;
      let result = match hdr.type_tag {
          TYPE_DOMAIN => {
@@ -10454,7 +11211,7 @@
              stream_string_list(decoder, |entry| {
                  if first_err.is_none() {
                      if strict {
-@@ -258,12 +298,12 @@
+@@ -258,12 +258,12 @@
              Box::new(builder.build()) as Box<dyn RuleSet>
          }
          TYPE_IPCIDR => {
@@ -10469,7 +11226,86 @@
              stream_string_list(decoder, |entry| {
                  if first_err.is_none() {
                      if strict {
-@@ -321,9 +361,11 @@
+@@ -286,6 +286,78 @@
+     Ok(result)
+ }
+ 
++/// Build an upstream matcher from an owned or borrowed bounded source, with per-operation cancellation.
++/// No compressed copy is retained. The reader frame and control are dropped before returning the set.
++pub fn build_checked_upstream_rule_set_from_reader<R: std::io::Read>(
++    source: R, control: crate::mrs_parser::MrsReadControl,
++    expected: Option<RuleSetBehavior>, sink: Option<Arc<dyn AcceptedEntrySink>>,
++) -> Result<Box<dyn RuleSet>, crate::mrs_parser::MrsError> {
++    let observer = control.clone();
++    let reader = crate::mrs_parser::UpstreamRuleSetReader::open_from_reader(source, control)?;
++    let result = build_rule_set_from_upstream_reader(reader, expected, true, sink);
++    observer.check()?;
++    result
++}
++
++/// Consume one already-decoded upstream frame and build its real matcher.
++/// Ownership releases the decoded frame before returning the independent set.
++/// This reuses the same strict validation and accepted-entry sink as the bytes factory.
++pub fn build_rule_set_from_upstream_reader(
++    reader: crate::mrs_parser::UpstreamRuleSetReader,
++    expected: Option<RuleSetBehavior>, strict: bool,
++    sink: Option<Arc<dyn AcceptedEntrySink>>,
++) -> Result<Box<dyn RuleSet>, crate::mrs_parser::MrsError> {
++    use crate::mrs_parser::MrsError;
++    reader.check_cancelled()?;
++    let actual = behavior_from_type_tag(reader.behavior()).map_err(MrsError::RuleSet)?;
++    if let Some(expected) = expected {
++        if expected != actual {
++            return Err(MrsError::RuleSet(format!(
++                "mrs: behavior mismatch: config says {expected}, file says {actual}"
++            )));
++        }
++    }
++    match actual {
++        RuleSetBehavior::Domain => {
++            let mut builder = DomainRuleSetBuilder::with_sink(sink.clone());
++            let mut first_err = None;
++            reader
++                .for_each_domain(|d| {
++                    if first_err.is_none() {
++                        if strict {
++                            if let Err(e) = builder.push_checked(d) {
++                                first_err = Some(e);
++                            }
++                        } else {
++                            builder.push(d);
++                        }
++                    }
++                })
++                ?;
++            if let Some(e) = first_err {
++                return Err(MrsError::RuleSet(e));
++            }
++            reader.check_cancelled()?;
++            let set = builder.build();
++            reader.check_cancelled()?;
++            Ok(Box::new(set))
++        }
++        RuleSetBehavior::IpCidr => {
++            let mut builder = IpCidrRuleSetBuilder::with_sink(sink.clone());
++            reader
++                .for_each_net(|net| builder.push_net(net))
++                ?;
++            reader.check_cancelled()?;
++            let set = builder.build();
++            reader.check_cancelled()?;
++            Ok(Box::new(set))
++        }
++        RuleSetBehavior::Classical => {
++            Err(MrsError::RuleSet("mrs: upstream format does not support classical behavior".to_string()))
++        }
++    }
++}
++
+ fn behavior_from_type_tag(type_tag: u8) -> Result<RuleSetBehavior, String> {
+     use crate::mrs_parser::{TYPE_CLASSICAL, TYPE_DOMAIN, TYPE_IPCIDR};
+     match type_tag {
+@@ -321,9 +393,11 @@
  pub struct DomainRuleSetBuilder {
      trie: DomainTrie<()>,
      count: usize,
@@ -10481,7 +11317,7 @@
      pub fn new() -> Self {
          Self::default()
      }
-@@ -351,10 +393,11 @@
+@@ -351,10 +425,11 @@
          let bare_inserted = if let Some(rest) = entry.strip_prefix("+.") {
              self.trie.insert(rest, ())
          } else {
@@ -10494,7 +11330,7 @@
              Ok(())
          } else {
              Err(format!("'{entry}' is not a valid domain pattern"))
-@@ -423,9 +466,11 @@
+@@ -423,9 +498,11 @@
  pub struct IpCidrRuleSetBuilder {
      set: IpRangeSetBuilder,
      count: usize,
@@ -10506,7 +11342,7 @@
      pub fn new() -> Self {
          Self::default()
      }
-@@ -459,6 +504,7 @@
+@@ -459,6 +536,7 @@
      pub fn push_net(&mut self, net: IpNet) {
          self.set.add(net);
          self.count += 1;
@@ -10514,7 +11350,7 @@
      }
  
      pub fn build(self) -> IpCidrRuleSet {
-@@ -509,14 +555,13 @@
+@@ -509,14 +587,13 @@
  pub struct ClassicalRuleSetBuilder<'a> {
      rules: Vec<Box<dyn Rule>>,
      ctx: &'a ParserContext,
@@ -10533,7 +11369,7 @@
      }
  
      pub fn push(&mut self, entry: &str) {
-@@ -570,6 +615,7 @@
+@@ -570,6 +647,7 @@
          match parse_rule(&patched, self.ctx) {
              Ok(rule) => {
                  self.rules.push(rule);
@@ -10541,7 +11377,7 @@
                  Ok(())
              }
              Err(e) => Err(format!("'{entry}': {e}")),
-@@ -965,3 +1011,16 @@
+@@ -965,3 +1043,16 @@
          assert!(err.contains("+."), "unexpected: {err}");
      }
  }

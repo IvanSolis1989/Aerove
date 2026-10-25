@@ -30,9 +30,17 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **固定版本 / revision：** `v1.19.33` / `3f27ef39f8c96bbfbc8b0b9bb10f5c9ef60149d8`
 
-**用途与采用方式：** 标准版 Go 代理核心，来源代码及本项目适配
+**用途与采用方式：** 标准版 Go 代理核心，来源代码及本项目适配。Lite MRS 读取另只读参照固定 [`component/cidr/ipcidr_set_bin.go`](https://github.com/MetaCubeX/mihomo/blob/3f27ef39f8c96bbfbc8b0b9bb10f5c9ef60149d8/component/cidr/ipcidr_set_bin.go)，核对闭区间端点编码；未复制 Go 实现或新增依赖
 
 **许可证、署名与证据：** GPL-3.0；`apps/aerove/core/mihomo-upstream.json`、`apps/aerove/core/Clash.Meta/LICENSE`、该目录源码及其原始版权头
+
+#### [go4org/netipx](https://github.com/go4org/netipx)
+
+**固定版本 / revision：** `3075585bcbeb7a9f042662e543b03efe900018be`
+
+**用途与采用方式：** Lite MRS 严格读取只读参照 [`netipx.go`](https://github.com/go4org/netipx/blob/3075585bcbeb7a9f042662e543b03efe900018be/netipx.go) 的 `IPRangeFrom`、`IsValid` 和 `AppendPrefixes`，确认倒置范围没有合法哨兵语义；未复制实现或新增产品依赖。原有字节入口兼容行为与新增严格 Read 入口分别验证
+
+**许可证、署名与证据：** BSD-3-Clause，保留 `Copyright (c) 2020 The Inet.af AUTHORS`；[固定 LICENSE](https://github.com/go4org/netipx/blob/3075585bcbeb7a9f042662e543b03efe900018be/LICENSE)。实际参考源码及许可证已随 Core03 来源证据保存，不据此宣称 Native 大规则或 Android 验收通过
 
 #### [MetaCubeX/http](https://github.com/MetaCubeX/http)
 

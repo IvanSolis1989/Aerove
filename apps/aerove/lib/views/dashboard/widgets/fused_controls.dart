@@ -154,7 +154,9 @@ class _LanAddress extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final l10n = context.appLocalizations;
     final ip = ref.watch(localIpProvider);
-    final enabled = ref.watch(patchClashConfigProvider.select((s) => s.allowLan));
+    final enabled = ref.watch(
+      patchClashConfigProvider.select((s) => s.allowLan),
+    );
     final port = ref.watch(patchClashConfigProvider.select((s) => s.mixedPort));
     final address = _lanAddress(ip, port, enabled);
     final label = address ?? (ip == null ? '—' : l10n.noNetwork);

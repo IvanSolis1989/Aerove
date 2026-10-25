@@ -147,7 +147,7 @@ def main():
     modes=parser.add_mutually_exclusive_group();modes.add_argument('--initialize-lock',action='store_true');modes.add_argument('--resolve-lock',action='store_true')
     parser.add_argument('--target',choices=TARGETS);parser.add_argument('--ndk',type=Path);args=parser.parse_args()
     policy=load_policy(ROOT)
-    if policy and policy.get("coreTests")=="policy-runtime-resource-health-v1":verify_resource_jni_source(ROOT)
+    if policy and policy.get("coreTests") in ("policy-runtime-resource-health-v1","policy-runtime-mrs-reader-v1"):verify_resource_jni_source(ROOT)
     if args.resolve_lock and (policy is None or not policy['resolveLock']):raise ValueError('Lock resolution requires an explicit approved build policy')
     if args.target and (args.initialize_lock or args.resolve_lock or policy is not None and policy['resolveLock'] or not args.ndk or sys.platform!='linux'):
         raise ValueError('Android link requires committed lock/policy and Linux NDK; resolution is host-only')
@@ -188,8 +188,8 @@ def main():
             receipt['ndkSourceProperties']=(args.ndk/'source.properties').read_text()
             receipt['bindgenEnvironment']={key:environment[key] for key in ['LIBCLANG_PATH','CLANG_PATH','BINDGEN_EXTRA_CLANG_ARGS_'+args.target]}
             command=['cargo','build','--locked','--release','--target',args.target]
-        output=run(command,environment,capture=True) if not args.target and policy and policy.get("coreTests")=="policy-runtime-resource-health-v1" else run(command,environment)
-        if not args.target and policy and policy.get("coreTests")=="policy-runtime-resource-health-v1":
+        output=run(command,environment,capture=True) if not args.target and policy and policy.get("coreTests") in ("policy-runtime-resource-health-v1","policy-runtime-mrs-reader-v1") else run(command,environment)
+        if not args.target and policy and policy.get("coreTests") in ("policy-runtime-resource-health-v1","policy-runtime-mrs-reader-v1"):
             print(output,end="",flush=True)
             (build/"native-tests.stdout.log").write_text(output)
             receipt["addedNativeTests"]=added_native_test_proof(output)

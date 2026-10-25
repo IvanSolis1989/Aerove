@@ -674,16 +674,20 @@ class ApkInspectionTests(unittest.TestCase):
     def test_resource_health_requires42_targets_all26_core_commands_and_exact_native_proof(self):
         self._provider_general_receipt_contract(resource_health=True)
 
-    def _provider_general_receipt_contract(self, resource_health=False):
+    def test_mrs_reader_requires46_source_tests_format_proof_and_retains42_native_targets(self):
+        self._provider_general_receipt_contract(resource_health=True,mrs_reader=True)
+
+    def _provider_general_receipt_contract(self, resource_health=False, mrs_reader=False):
         import copy
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);(root/'overlay.json').write_text(json.dumps(dict(files={'Cargo.lock':'a'*64})))
-            policy=dict(coreTests='policy-runtime-resource-health-v1' if resource_health else 'policy-runtime-provider-general-v1',coreTestLockSha256='b'*64,overlay='overlay.json')
-            cases=module.CORE_POLICY_TEST_CASES_PROVIDER_GENERAL
+            policy=dict(coreTests='policy-runtime-mrs-reader-v1' if mrs_reader else 'policy-runtime-resource-health-v1' if resource_health else 'policy-runtime-provider-general-v1',coreTestLockSha256='b'*64,overlay='overlay.json')
+            cases=module.CORE_POLICY_TEST_CASES_MRS_READER if mrs_reader else module.CORE_POLICY_TEST_CASES_PROVIDER_GENERAL
             self.assertEqual(12,cases[0][2])
             self.assertEqual(module.CORE_POLICY_TEST_CASES_OBSERVABILITY[1:],tuple(r[:5] for r in cases[1:18]))
-            self.assertEqual(26,len(cases));self.assertEqual(75,sum(row[2] for row in cases))
-            features={p:sorted({f for package,_,_,_,required,_ in cases if package==p for f in required}) for p in module.CORE_PROVIDER_GENERAL_PACKAGES}
+            self.assertEqual(28 if mrs_reader else 26,len(cases));self.assertEqual(121 if mrs_reader else 75,sum(row[2] for row in cases))
+            packages=tuple(sorted(set(module.CORE_PROVIDER_GENERAL_PACKAGES)|({"meow-rules"} if mrs_reader else set())))
+            features={p:sorted({f for package,_,_,_,required,_ in cases if package==p for f in required}) for p in packages}
             commands=[]
             for package,name,count,target,_,exact in cases:
                 args=['cargo','test','--manifest-path','.upstream/meow-rs/Cargo.toml','--locked','--package',package]
@@ -698,13 +702,20 @@ class ApkInspectionTests(unittest.TestCase):
             state=dict(mode=policy['coreTests'],accepted=True,upstreamLockRestored=True,upstreamLockBeforeSha256='a'*64,
                 seedSha256='b'*64,resolvedLockSha256='b'*64,bridgeMetadataCommand=['cargo','metadata','--locked','--format-version','1'],bridgeMetadataExit=0,
                 metadataCommand=['cargo','metadata','--manifest-path','.upstream/meow-rs/Cargo.toml','--format-version','1','--locked'],metadataExit=0,
-                workspaceMembers=list(module.CORE_PROVIDER_GENERAL_PACKAGES),features=features,commands=commands,compileCheck=check)
+                workspaceMembers=list(packages),features=features,commands=commands,compileCheck=check)
+            if mrs_reader:
+                fmt=dict(command=module.CORE_MRS_READER_FORMAT_COMMAND,exit=0,stdoutSha256='e'*64,stderrSha256='f'*64)
+                state['formatCheck']=fmt
+                for key,value in [('exit',1),('exit',False),('command',fmt['command'][:-1]),('stdoutSha256',None)]:
+                    with self.subTest(format=key),self.assertRaises(ValueError):
+                        module.validate_core_test_receipt(dict(state,formatCheck=dict(fmt,**{key:value})),policy,root)
+                with self.assertRaises(ValueError):module.validate_core_test_receipt(dict(state,formatCheck=None),policy,root)
             module.validate_core_test_receipt(state,policy,root)
             old74=copy.deepcopy(state)
             for index,count in [(0,11)]:
                 old74['commands'][index].update(expectedPass=count,passed=count)
             with self.assertRaises(ValueError):module.validate_core_test_receipt(old74,policy,root)
-            for index in range(18,26):
+            for index in range(18,len(cases)):
                 for key,value in [('exact',None),('target','other'),('filter','wrong'),('expectedPass',0),('passed',0),('exit',False),('stdoutSha256',None),('command',commands[index]['command'][:-1])]:
                     bad=copy.deepcopy(state);bad['commands'][index][key]=value
                     with self.subTest(index=index,key=key),self.assertRaises(ValueError):module.validate_core_test_receipt(bad,policy,root)

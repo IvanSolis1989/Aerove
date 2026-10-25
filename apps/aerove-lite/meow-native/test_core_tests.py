@@ -65,6 +65,10 @@ class CoreTestAdmissionTests(unittest.TestCase):
                 if args[1]=='metadata':
                     if '--manifest-path' in args:(up/'Cargo.lock').write_bytes(resolved)
                     return subprocess.CompletedProcess(args,0,json.dumps(metadata).encode(),b'')
+                if args[0]=='rustfmt':
+                    self.assertEqual(args,core_tests.MRS_FORMAT_COMMAND)
+                    if mode=='format-mutate':(up/'Cargo.lock').write_bytes(b'format changed lock')
+                    return subprocess.CompletedProcess(args,1 if mode=='format-fail' else 0,b'fixture format output',b'')
                 if args[1]=='check':
                     self.assertEqual(args,core_tests.COMPILE_COMMAND)
                     if mode=='compile-mutate':(up/'Cargo.lock').write_bytes(b'compile changed lock')
@@ -97,7 +101,7 @@ class CoreTestAdmissionTests(unittest.TestCase):
                 self.assertEqual((root/'build/core-tests/core-tests.lock').read_bytes(),resolved)
             else:
                 self.assertIsNotNone(error);self.assertFalse(receipt['coreTests']['accepted'])
-                self.assertEqual(len(receipt['coreTests']['commands']),len(core_tests.entries(contract)) if mode in ['compile-fail','compile-mutate'] else 1)
+                self.assertEqual(len(receipt['coreTests']['commands']),len(core_tests.entries(contract)) if mode in ['compile-fail','compile-mutate','format-fail','format-mutate'] else 1)
 
     def test_success_records_all_authored_counts_and_restores_original_lock(self):self.run_fixture('success')
 
@@ -169,5 +173,14 @@ class CoreTestAdmissionTests(unittest.TestCase):
         self.assertEqual(core_tests.entries(core_tests.MODE_PROVIDER_GENERAL),core_tests.entries(core_tests.MODE_RESOURCE_HEALTH))
         for mode in ['locked','empty','compile-fail','compile-mutate','raise']:
             with self.subTest(mode=mode):self.run_fixture(mode,core_tests.MODE_RESOURCE_HEALTH)
+
+    def test_mrs_reader_keeps_all_previous_commands_and_adds46_with_format_lock_gates(self):
+        specs=core_tests.entries(core_tests.MODE_MRS_READER)
+        self.assertEqual(core_tests.CASES_PROVIDER_GENERAL,specs[:26])
+        self.assertEqual((28,121),(len(specs),sum(e['expectedPass'] for e in specs)))
+        self.assertEqual(['mrs_parser::tests::','rule_set::tests::'],[e['filter'] for e in specs[26:]])
+        self.assertEqual({'meow-rules'},set(core_tests.packages_for_mode(core_tests.MODE_MRS_READER))-set(core_tests.packages_for_mode(core_tests.MODE_RESOURCE_HEALTH)))
+        for mode in ['locked','empty','compile-fail','compile-mutate','format-fail','format-mutate','raise']:
+            with self.subTest(mode=mode):self.run_fixture(mode,core_tests.MODE_MRS_READER)
 
 if __name__=='__main__':unittest.main()

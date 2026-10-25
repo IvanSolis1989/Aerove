@@ -98,9 +98,8 @@ void main() {
   );
 
   Future<List<Map<String, Object?>>> scriptRows() async => [
-    for (final row in await db.customSelect(
-      'SELECT * FROM scripts ORDER BY id',
-    ).get())
+    for (final row
+        in await db.customSelect('SELECT * FROM scripts ORDER BY id').get())
       Map<String, Object?>.from(row.data),
   ];
 
@@ -219,29 +218,37 @@ void main() {
     },
   );
 
-  test('bundled script metadata pins the exact current upstream bytes', () async {
-    final source = jsonDecode(
-      await File(
-        'assets/data/smart-config-kit-flclash.source.json',
-      ).readAsString(),
-    ) as Map<String, dynamic>;
-    expect(source['revision'], '70d4ddbe0b6d52af7acbd503ff1bf556a3bddacd');
-    expect(source['version'], 'v6.0.20-flclash.23');
-    expect(source['sourcePath'], 'Mihomo内核系/FlClash/FlClash(mihomo).js');
-    expect(source['updateUrl'], xclashDefaultScriptUrl);
-    expect(source['sha256'], xclashDefaultScriptSha256);
-    expect(sha256.convert(bundledScript).toString(), source['sha256']);
-    expect(bundledScript.length, 149441);
-    expect(
-      sha1.convert([
-        ...utf8.encode('blob ${bundledScript.length}\u0000'),
-        ...bundledScript,
-      ]).toString(),
-      source['gitBlob'],
-    );
-    expect(source['gitBlob'], '65beff76d400f51d21686b04b09ccc40df6e620e');
-    expect(utf8.decode(bundledScript), contains('// 版本：${source['version']} '));
-  });
+  test(
+    'bundled script metadata pins the exact current upstream bytes',
+    () async {
+      final source =
+          jsonDecode(
+                await File(
+                  'assets/data/smart-config-kit-flclash.source.json',
+                ).readAsString(),
+              )
+              as Map<String, dynamic>;
+      expect(source['revision'], '70d4ddbe0b6d52af7acbd503ff1bf556a3bddacd');
+      expect(source['version'], 'v6.0.20-flclash.23');
+      expect(source['sourcePath'], 'Mihomo内核系/FlClash/FlClash(mihomo).js');
+      expect(source['updateUrl'], xclashDefaultScriptUrl);
+      expect(source['sha256'], xclashDefaultScriptSha256);
+      expect(sha256.convert(bundledScript).toString(), source['sha256']);
+      expect(bundledScript.length, 149441);
+      expect(
+        sha1.convert([
+          ...utf8.encode('blob ${bundledScript.length}\u0000'),
+          ...bundledScript,
+        ]).toString(),
+        source['gitBlob'],
+      );
+      expect(source['gitBlob'], '65beff76d400f51d21686b04b09ccc40df6e620e');
+      expect(
+        utf8.decode(bundledScript),
+        contains('// 版本：${source['version']} '),
+      );
+    },
+  );
 
   test('default script URL uses the current Mihomo location', () {
     expect(
@@ -299,10 +306,9 @@ void main() {
       await file.writeAsBytes(bytes);
       contents[id] = bytes;
     }
-    final profile = Profile.normal(label: 'Keep binding').copyWith(
-      extendType: ExtendType.script,
-      scriptId: 123,
-    );
+    final profile = Profile.normal(
+      label: 'Keep binding',
+    ).copyWith(extendType: ExtendType.script, scriptId: 123);
     await db.profilesDao.putAll([profile.toCompanion()]);
     final user = initial.copyWith(currentProfileId: profile.id);
     await storage.setString(configKey, jsonEncode(user));
@@ -354,41 +360,44 @@ void main() {
     expect(await defaults.associateNewProfile(profile), profile);
   });
 
-  test('URL migration preserves a concurrently committed custom edit', () async {
-    final previous = Script(
-      id: 123,
-      label: 'Existing',
-      lastUpdateTime: DateTime.utc(2024),
-      url:
-          'https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/'
-          'main/FlClash/FlClash%28mihomo%29.js',
-      order: 9,
-    );
-    await db.scriptsDao.putAll([previous.toCompanion()]);
-    await writeMigrationJournal();
-    final defaults = metadataMigration();
-    await defaults.prepare(isAndroid: true);
-    final edited = previous.copyWith(
-      label: 'Concurrent user label',
-      url: 'https://example.test/concurrent.js',
-    );
-    final editedInTransaction = Completer<void>();
-    final allowCommit = Completer<void>();
-    addTearDown(() {
-      if (!allowCommit.isCompleted) allowCommit.complete();
-    });
-    final editing = db.transaction(() async {
-      await db.scriptsDao.putAll([edited.toCompanion()]);
-      editedInTransaction.complete();
-      await allowCommit.future;
-    });
-    await editedInTransaction.future;
-    final migrating = defaults.initialize(initial);
-    allowCommit.complete();
-    await editing;
-    await migrating;
-    expect(await db.scriptsDao.query().get(), [edited]);
-  });
+  test(
+    'URL migration preserves a concurrently committed custom edit',
+    () async {
+      final previous = Script(
+        id: 123,
+        label: 'Existing',
+        lastUpdateTime: DateTime.utc(2024),
+        url:
+            'https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/'
+            'main/FlClash/FlClash%28mihomo%29.js',
+        order: 9,
+      );
+      await db.scriptsDao.putAll([previous.toCompanion()]);
+      await writeMigrationJournal();
+      final defaults = metadataMigration();
+      await defaults.prepare(isAndroid: true);
+      final edited = previous.copyWith(
+        label: 'Concurrent user label',
+        url: 'https://example.test/concurrent.js',
+      );
+      final editedInTransaction = Completer<void>();
+      final allowCommit = Completer<void>();
+      addTearDown(() {
+        if (!allowCommit.isCompleted) allowCommit.complete();
+      });
+      final editing = db.transaction(() async {
+        await db.scriptsDao.putAll([edited.toCompanion()]);
+        editedInTransaction.complete();
+        await allowCommit.future;
+      });
+      await editedInTransaction.future;
+      final migrating = defaults.initialize(initial);
+      allowCommit.complete();
+      await editing;
+      await migrating;
+      expect(await db.scriptsDao.query().get(), [edited]);
+    },
+  );
 
   test('failed URL migration rolls back all rows and retries', () async {
     const legacy =
@@ -442,16 +451,17 @@ void main() {
     );
     await db.scriptsDao.putAll([previous.toCompanion()]);
     await scriptFile().parent.create(recursive: true);
-    final body = utf8.encode('// User body; do not seed a new bundled version\n');
+    final body = utf8.encode(
+      '// User body; do not seed a new bundled version\n',
+    );
     await scriptFile().writeAsBytes(body);
     await writeMigrationJournal(complete: false);
     final defaults = metadataMigration();
     await defaults.prepare(isAndroid: true);
     expect(await defaults.initialize(initial), same(initial));
-    expect(
-      await db.scriptsDao.query().get(),
-      [previous.copyWith(url: xclashDefaultScriptUrl)],
-    );
+    expect(await db.scriptsDao.query().get(), [
+      previous.copyWith(url: xclashDefaultScriptUrl),
+    ]);
     expect(await scriptFile().readAsBytes(), body);
   });
 
@@ -480,9 +490,11 @@ void main() {
     );
     expect(await db.scriptsDao.query().get(), [previous]);
     expect(defaults.recommendedScriptId, isNull);
-    final journal = jsonDecode(
-      await File('${home.path}/xclash-defaults.json').readAsString(),
-    ) as Map<String, dynamic>;
+    final journal =
+        jsonDecode(
+              await File('${home.path}/xclash-defaults.json').readAsString(),
+            )
+            as Map<String, dynamic>;
     expect(journal['complete'], false);
     await db.customStatement('DROP TRIGGER reject_url_migration');
     await defaults.initialize(initial);
@@ -510,10 +522,9 @@ void main() {
         label: 'Custom source',
         url: 'https://example.test/keep.js',
       );
-      final profile = Profile.normal(label: 'Restored binding').copyWith(
-        extendType: ExtendType.script,
-        scriptId: restored.id,
-      );
+      final profile = Profile.normal(
+        label: 'Restored binding',
+      ).copyWith(extendType: ExtendType.script, scriptId: restored.id);
       final selected = initial.copyWith(currentProfileId: profile.id);
       await storage.setString(configKey, jsonEncode(selected));
       final preferencesBefore = storage.getString(configKey);
@@ -555,10 +566,9 @@ void main() {
             'https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/'
             'main/FlClash/FlClash%28mihomo%29.js',
       );
-      final profile = Profile.normal(label: 'Restored binding').copyWith(
-        extendType: ExtendType.script,
-        scriptId: restored.id,
-      );
+      final profile = Profile.normal(
+        label: 'Restored binding',
+      ).copyWith(extendType: ExtendType.script, scriptId: restored.id);
       final bodyBefore = await scriptFile().readAsBytes();
       await db.customStatement(
         'CREATE TRIGGER reject_url_migration BEFORE UPDATE OF url ON scripts '
@@ -574,7 +584,9 @@ void main() {
           const [],
           isOverride: isOverride,
         ),
-        throwsA(predicate((error) => '$error'.contains('blocked URL migration'))),
+        throwsA(
+          predicate((error) => '$error'.contains('blocked URL migration')),
+        ),
       );
       expect(await scriptRows(), before);
       expect(await db.profilesDao.query().get(), isEmpty);

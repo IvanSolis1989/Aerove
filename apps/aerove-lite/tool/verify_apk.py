@@ -193,6 +193,12 @@ CORE_OBSERVABILITY_PACKAGES = tuple(sorted({p for p,_,_,_,_ in CORE_POLICY_TEST_
 
 CORE_POLICY_TEST_CASES_PROVIDER_GENERAL = tuple((r[:2]+(12,)+r[3:]+(False,)) if i==0 else r+(False,)
     for i,r in enumerate(CORE_POLICY_TEST_CASES_OBSERVABILITY))+(('meow-config', 'proxy_provider::tests::companion_', 2, 'lib', (), False), ('meow-config', 'proxy_provider::tests::provider_strict_refresh_keeps_last_good_on_bad_dialer', 1, 'lib', (), True), ('meow-common', 'diagnostic_', 2, 'lib', (), False), ('meow-config', 'diagnostic_', 1, 'lib', (), False), ('meow-proxy', 'diagnostic_', 10, 'lib', (), False), ('meow-transport', 'diagnostic_', 3, 'lib', (), False), ('meow-config', 'managed_dependency_', 3, 'lib', (), False), ('meow-config', 'proxy_provider::tests::projected_', 5, 'lib', (), False))
+CORE_POLICY_TEST_CASES_MRS_READER = CORE_POLICY_TEST_CASES_PROVIDER_GENERAL + (
+    ('meow-rules', 'mrs_parser::tests::', 30, 'lib', (), False),
+    ('meow-rules', 'rule_set::tests::', 16, 'lib', (), False))
+CORE_MRS_READER_FORMAT_COMMAND = ['rustfmt','--check','--edition','2021',
+    '.upstream/meow-rs/crates/meow-rules/src/mrs_parser.rs',
+    '.upstream/meow-rs/crates/meow-rules/src/rule_set.rs']
 CORE_PROVIDER_GENERAL_PACKAGES = tuple(sorted(set(CORE_OBSERVABILITY_PACKAGES)|{'meow-config'}))
 
 CORE_POLICY_TEST_PACKAGES = tuple(sorted({package for package, _, _ in CORE_POLICY_TEST_CASES}))
@@ -214,7 +220,8 @@ def native_identity(root=MEOW_ROOT):
             "policy-runtime-traffic-v1": HOST_POLICY_RUNTIME_TRAFFIC_TARGETS,
             "policy-runtime-observability-v1": HOST_POLICY_RUNTIME_OBSERVABILITY_TARGETS,
             "policy-runtime-provider-general-v1": HOST_POLICY_RUNTIME_PROVIDER_GENERAL_TARGETS,
-            "policy-runtime-resource-health-v1": HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS}.get(policy["coreTests"])
+            "policy-runtime-resource-health-v1": HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS,
+            "policy-runtime-mrs-reader-v1": HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS}.get(policy["coreTests"])
         if (not approved_targets
                 or tuple(policy.get("targets", ())) != approved_targets
                 or policy.get("featureBoundary") != "capabilities-no-default"
@@ -276,7 +283,7 @@ def validate_native_receipt(receipt_path, abi=None, image=None, root=MEOW_ROOT, 
         command += ["--", "--test-threads=1", "--nocapture"]
         if receipt.get("command") != command or receipt.get("androidTarget") is not None or receipt.get("representativeTargets") != targets:
             raise ValueError("Meow host receipt did not run the complete approved suite")
-        if policy.get("coreTests") == "policy-runtime-resource-health-v1" and receipt.get("addedNativeTests") != RESOURCE_HEALTH_CASES:
+        if policy.get("coreTests") in ("policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1") and receipt.get("addedNativeTests") != RESOURCE_HEALTH_CASES:
             raise ValueError("Meow host receipt lacks authored resource/health Native test proof")
         if "featureBoundary" in policy:
             boundary_command = ["cargo", "test", "--locked", "--no-default-features", "--lib",
@@ -312,14 +319,16 @@ def validate_core_test_receipt(state, policy, root):
     overlay = json.loads((root / policy["overlay"]).read_text())
     upstream_lock = overlay.get("files", {}).get("Cargo.lock")
     mode = policy["coreTests"]
-    if mode not in ("policy-runtime-v1", "policy-runtime-v2", "policy-runtime-traffic-v1", "policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1"):
+    if mode not in ("policy-runtime-v1", "policy-runtime-v2", "policy-runtime-traffic-v1", "policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1"):
         reject()
     cases = (tuple((package, name, count, "lib", ()) for package, name, count in CORE_POLICY_TEST_CASES)
         if mode == "policy-runtime-v1" else CORE_POLICY_TEST_CASES_OBSERVABILITY
         if mode == "policy-runtime-observability-v1" else CORE_POLICY_TEST_CASES_V2)
-    if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1"):cases = CORE_POLICY_TEST_CASES_PROVIDER_GENERAL
+    if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1"):cases = CORE_POLICY_TEST_CASES_PROVIDER_GENERAL
+    if mode == "policy-runtime-mrs-reader-v1":cases = CORE_POLICY_TEST_CASES_MRS_READER
     cases = tuple(r if len(r)==6 else r+(False,) for r in cases)
-    packages = CORE_PROVIDER_GENERAL_PACKAGES if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1") else CORE_OBSERVABILITY_PACKAGES if mode == "policy-runtime-observability-v1" else CORE_POLICY_TEST_PACKAGES
+    packages = CORE_PROVIDER_GENERAL_PACKAGES if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1") else CORE_OBSERVABILITY_PACKAGES if mode == "policy-runtime-observability-v1" else CORE_POLICY_TEST_PACKAGES
+    if mode == "policy-runtime-mrs-reader-v1":packages = tuple(sorted(set(CORE_PROVIDER_GENERAL_PACKAGES)|{"meow-rules"}))
     if (state.get("mode") != mode or state.get("accepted") is not True
             or state.get("upstreamLockRestored") is not True or not is_hash(upstream_lock)
             or state.get("upstreamLockBeforeSha256") != upstream_lock
@@ -356,23 +365,32 @@ def validate_core_test_receipt(state, policy, root):
             command += [name]
         command += ["--", "--test-threads=1", "--nocapture"]
         if exact:command += ["--exact"]
-        if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1") and (not isinstance(entry, dict) or type(entry.get("exact")) is not bool or entry["exact"] != exact):
+        if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1") and (not isinstance(entry, dict) or type(entry.get("exact")) is not bool or entry["exact"] != exact):
             reject()
         if (not isinstance(entry, dict) or entry.get("package") != package or entry.get("filter") != name
-                or (mode in ("policy-runtime-v2", "policy-runtime-traffic-v1", "policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1") and (entry.get("target") != target or "filter" not in entry))
+                or (mode in ("policy-runtime-v2", "policy-runtime-traffic-v1", "policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1") and (entry.get("target") != target or "filter" not in entry))
                 or entry.get("command") != command or not exited(entry.get("exit"))
                 or type(entry.get("expectedPass")) is not int or entry["expectedPass"] != count
                 or type(entry.get("passed")) is not int or entry["passed"] != count
                 or not is_hash(entry.get("stdoutSha256")) or not is_hash(entry.get("stderrSha256"))):
             reject()
 
-    if mode in ("policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1"):
+    if mode in ("policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1"):
         compile_check = state.get("compileCheck")
         if (not isinstance(compile_check, dict)
                 or compile_check.get("command") != CORE_OBSERVABILITY_COMPILE_COMMAND
                 or not exited(compile_check.get("exit"))
                 or not is_hash(compile_check.get("stdoutSha256"))
                 or not is_hash(compile_check.get("stderrSha256"))):
+            reject()
+
+    if mode == "policy-runtime-mrs-reader-v1":
+        format_check = state.get("formatCheck")
+        if (not isinstance(format_check, dict)
+                or format_check.get("command") != CORE_MRS_READER_FORMAT_COMMAND
+                or not exited(format_check.get("exit"))
+                or not is_hash(format_check.get("stdoutSha256"))
+                or not is_hash(format_check.get("stderrSha256"))):
             reject()
 
 

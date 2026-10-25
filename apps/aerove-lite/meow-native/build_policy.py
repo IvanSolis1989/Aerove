@@ -39,7 +39,7 @@ def load_policy(root, *, check_resolution_seed=True):
     feature_boundary_command(policy)
     validate_core_tests(policy)
     targets=policy['targets']
-    if policy.get('coreTests')=='policy-runtime-resource-health-v1' and tuple(targets)!=RESOURCE_HEALTH_TARGETS:
+    if policy.get('coreTests') in ('policy-runtime-resource-health-v1','policy-runtime-mrs-reader-v1') and tuple(targets)!=RESOURCE_HEALTH_TARGETS:
         raise ValueError('Resource/health build requires every approved Native target')
     if not isinstance(targets,list) or not targets or targets[0]!='lib' or len(set(targets))!=len(targets) or any(not isinstance(t,str) or not re.fullmatch('[a-z][a-z0-9_]*',t) for t in targets):
         raise ValueError('Invalid representative test targets')
