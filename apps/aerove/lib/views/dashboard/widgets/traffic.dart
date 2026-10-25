@@ -214,44 +214,54 @@ class OutboundTrafficFigures extends ConsumerWidget {
         children: [
           for (final direction in TrafficDirection.values)
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  GlassText(
-                    direction.labelOf(context),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppTextStyle.custom(context, size: 11, leading: 11),
-                  ),
-                  GlassText(
-                    '${dashboardTraffic(direction.of(latest))}/s',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppTextStyle.custom(
-                      context,
-                      size: 14,
-                      leading: 14,
-                      weight: AppTextStyle.caption1.emphasizedWeight,
-                    ).toTabular,
-                  ),
-                  Align(
-                    alignment: AlignmentDirectional.centerEnd,
-                    child: GlassText(
-                      dashboardTraffic(direction.of(total)),
-                      semanticsLabel: context.appLocalizations.trafficTotal(
-                        dashboardTraffic(direction.of(total)),
-                      ),
+              child: DashboardStop(
+                order: direction.index,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    GlassText(
+                      direction.labelOf(context),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: AppTextStyle.custom(
                         context,
-                        size: 10,
-                        leading: 10,
+                        size: 11,
+                        leading: 11,
                       ),
                     ),
-                  ),
-                ],
+                    GlassText(
+                      '${dashboardTraffic(direction.of(latest))}/s',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTextStyle.custom(
+                        context,
+                        size: 14,
+                        leading: 14,
+                        weight: AppTextStyle.caption1.emphasizedWeight,
+                      ).toTabular,
+                    ),
+                    Align(
+                      alignment: AlignmentDirectional.centerEnd,
+                      child: Semantics(
+                        container: true,
+                        child: GlassText(
+                          dashboardTraffic(direction.of(total)),
+                          semanticsLabel: context.appLocalizations.trafficTotal(
+                            dashboardTraffic(direction.of(total)),
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTextStyle.custom(
+                            context,
+                            size: 10,
+                            leading: 10,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
         ],
@@ -383,7 +393,6 @@ class SpeedCard extends ConsumerWidget {
     final speed = current.traffic;
     return DashboardCard(
       padding: EdgeInsets.zero,
-      semanticLabel: direction.labelOf(context),
       clipBehavior: Clip.antiAlias,
       child: Stack(
         children: [
@@ -416,15 +425,20 @@ class SpeedCard extends ConsumerWidget {
                         maxLines: 1,
                         style: DashboardText.cardTitle(context),
                       ),
+                      // The card's own label is the direction and its speed;
+                      // its total follows before the peak, as on the phone.
                       Expanded(
-                        child: GlassText(
-                          appLocalizations.trafficPeak(
-                            '${dashboardTraffic(peak)}/s',
+                        child: DashboardStop(
+                          order: 1,
+                          child: GlassText(
+                            appLocalizations.trafficPeak(
+                              '${dashboardTraffic(peak)}/s',
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.end,
+                            style: DashboardText.label(context),
                           ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.end,
-                          style: DashboardText.label(context),
                         ),
                       ),
                     ],
@@ -440,10 +454,13 @@ class SpeedCard extends ConsumerWidget {
                   unitStyle: AppTextStyle.subheadline,
                 ),
                 const SizedBox(height: 2),
-                GlassText(
-                  appLocalizations.trafficTotal(dashboardTraffic(total)),
-                  maxLines: 1,
-                  style: DashboardText.label(context),
+                DashboardStop(
+                  order: 0,
+                  child: GlassText(
+                    appLocalizations.trafficTotal(dashboardTraffic(total)),
+                    maxLines: 1,
+                    style: DashboardText.label(context),
+                  ),
                 ),
               ],
             ),
@@ -475,7 +492,6 @@ class NetworkSpeedCard extends ConsumerWidget {
   ) {
     final latest = traffics.list.safeLast(const Traffic());
     return DashboardCard(
-      semanticLabel: context.appLocalizations.networkSpeed,
       child: Column(
         children: [
           DashboardCardHeader(
@@ -488,11 +504,14 @@ class NetworkSpeedCard extends ConsumerWidget {
             children: [
               for (final direction in TrafficDirection.values)
                 Expanded(
-                  child: _SpeedTile(
-                    direction: direction,
-                    speed: direction.of(latest),
-                    total: direction.of(total),
-                    traffics: traffics,
+                  child: DashboardStop(
+                    order: direction.index,
+                    child: _SpeedTile(
+                      direction: direction,
+                      speed: direction.of(latest),
+                      total: direction.of(total),
+                      traffics: traffics,
+                    ),
                   ),
                 ),
             ],
@@ -598,13 +617,16 @@ class _SpeedTile extends StatelessWidget {
                         style: AppTextStyle.title1,
                         unitStyle: AppTextStyle.footnote,
                       ),
-                      GlassText(
-                        context.appLocalizations.trafficTotal(
-                          dashboardTraffic(total),
+                      Semantics(
+                        container: true,
+                        child: GlassText(
+                          context.appLocalizations.trafficTotal(
+                            dashboardTraffic(total),
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: DashboardText.label(context),
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: DashboardText.label(context),
                       ),
                     ],
                   ),

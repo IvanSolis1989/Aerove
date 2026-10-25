@@ -66,9 +66,14 @@ void main() {
     return tester.widget<Container>(container).decoration! as ShapeDecoration;
   }
 
-  double startRadiusOf(WidgetTester tester, Mode mode) {
-    final shape = decorationOf(tester, mode).shape as RoundedSuperellipseBorder;
-    return (shape.borderRadius as BorderRadius).topLeft.x;
+  void expectFullPills(WidgetTester tester) {
+    for (final mode in Mode.values) {
+      expect(decorationOf(tester, mode).shape, AppShape.full);
+      expect(
+        tester.widget<InkWell>(buttonOf(mode)).customBorder,
+        AppShape.full,
+      );
+    }
   }
 
   testWidgets('the card shows every mode with its own glyph', (tester) async {
@@ -86,7 +91,7 @@ void main() {
     }
   });
 
-  testWidgets('tapping a mode selects it and turns it into the pill', (
+  testWidgets('tapping a mode selects it and every mode stays a full pill', (
     tester,
   ) async {
     await pump(tester, const OutboundModeCard());
@@ -98,7 +103,7 @@ void main() {
     for (final mode in Mode.values) {
       expect(decorationOf(tester, mode).color!.a, 1);
     }
-    final innerRadius = startRadiusOf(tester, Mode.direct);
+    expectFullPills(tester);
 
     await tester.tap(buttonOf(Mode.direct));
     await tester.pumpAndSettle();
@@ -106,7 +111,7 @@ void main() {
     expect(container.read(patchClashConfigProvider).mode, Mode.direct);
     expect(decorationOf(tester, Mode.direct).color, colorScheme.primary);
     expect(decorationOf(tester, Mode.rule).color, isNot(colorScheme.primary));
-    expect(startRadiusOf(tester, Mode.direct), greaterThan(innerRadius));
+    expectFullPills(tester);
   });
 
   for (final quality in LiquidGlassQuality.values) {

@@ -128,6 +128,21 @@ class DashboardCard extends StatelessWidget {
   }
 }
 
+/// A screen-reader stop read in [order]; unkeyed siblings fall back to geometry.
+class DashboardStop extends StatelessWidget {
+  const DashboardStop({super.key, required this.order, required this.child});
+
+  final int order;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    container: true,
+    sortKey: OrdinalSortKey(order.toDouble()),
+    child: child,
+  );
+}
+
 class DashboardCardHeader extends StatelessWidget {
   const DashboardCardHeader({
     super.key,
@@ -417,6 +432,9 @@ class DashboardConnectedButton extends StatelessWidget {
 
   final bool selected;
   final bool pane;
+
+  /// Keeps every button a full pill whatever its selection, as the outbound
+  /// modes require on every material.
   final bool pill;
   final bool first;
   final bool last;

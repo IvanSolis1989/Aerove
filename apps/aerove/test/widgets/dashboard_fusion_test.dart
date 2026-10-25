@@ -1,7 +1,9 @@
 import 'dart:ui' show SemanticsAction, SemanticsFlag;
 
+import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/common/service_probe.dart';
 import 'package:fl_clash/enum/enum.dart';
+import 'package:fl_clash/features/ip_quality/labels.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/ip_quality.dart';
@@ -110,6 +112,9 @@ void main() {
     Widget child, {
     double scale = 1,
     double width = 360,
+    double? height,
+    DashboardDensity density = DashboardDensity.mobile,
+    double? densityScale,
     ProviderContainer? existing,
   }) async {
     tester.view.physicalSize = const Size(1000, 1200);
@@ -154,13 +159,14 @@ void main() {
               alignment: Alignment.topLeft,
               child: SizedBox(
                 width: width,
+                height: height,
                 child: MediaQuery.withClampedTextScaling(
                   minScaleFactor: scale,
                   maxScaleFactor: scale,
                   child: DashboardDensityScope(
-                    density: DashboardDensity.mobile,
-                    scale: scale,
-                    child: child is CurrentOutboundCard
+                    density: density,
+                    scale: densityScale ?? scale,
+                    child: child is CurrentOutboundCard && height == null
                         ? Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [child],
@@ -182,96 +188,322 @@ void main() {
     tester,
   ) async {
     final semantics = tester.ensureSemantics();
-    addTearDown(semantics.dispose);
-    final container = await pump(tester, const CurrentOutboundCard());
-    final originalHeight = tester.getSize(find.byType(DashboardCard)).height;
-    final l10n = AppLocalizations.of(
-      tester.element(find.byType(CurrentOutboundCard)),
-    );
-    final mainParts = [
-      find.text(l10n.status),
-      find.byType(DashboardChip).first,
-      find.text('203.0.113.9'),
-      find.byType(EmojiCover),
-      find.text(l10n.runTime),
-      find.text(l10n.ipOrganization),
-      find.text('Example Organization'),
-      find.byType(OutboundBubble),
-    ];
-    final originalRects = [for (final part in mainParts) tester.getRect(part)];
-    final originalChips = [
-      for (var i = 0; i < find.byType(DashboardChip).evaluate().length; i++)
-        tester.getRect(find.byType(DashboardChip).at(i)),
-    ];
-    await pump(
-      tester,
-      const CurrentOutboundCard(showTraffic: true),
-      existing: container,
-    );
-    final fusedHeight = tester.getSize(find.byType(DashboardCard)).height;
-    expect(fusedHeight, originalHeight);
-    final status = tester.getRect(find.text('状态'));
-    final upload = tester.getRect(find.text('上传'));
-    final download = tester.getRect(find.text('下载'));
-    expect(upload.height, 11);
-    expect(download.height, 11);
-    expect(upload.height, lessThan(status.height));
-    final totals = container.read(totalTrafficProvider);
-    final totalValues = [
-      for (final direction in TrafficDirection.values)
-        dashboardTraffic(direction.of(totals)),
-    ];
-    for (final value in totalValues.toSet()) {
-      final count = totalValues.where((item) => item == value).length;
-      expect(
-        find.descendant(
-          of: find.byType(OutboundTrafficFigures),
-          matching: find.text(value),
-        ),
-        findsNWidgets(count),
+    try {
+      final container = await pump(tester, const CurrentOutboundCard());
+      final originalHeight = tester.getSize(find.byType(DashboardCard)).height;
+      final l10n = AppLocalizations.of(
+        tester.element(find.byType(CurrentOutboundCard)),
       );
-      final totalLabel = find.bySemanticsLabel(l10n.trafficTotal(value));
-      if (totalLabel.evaluate().length != count) {
-        debugDumpSemanticsTree(DebugSemanticsDumpOrder.traversalOrder);
+      final mainParts = [
+        find.text(l10n.status),
+        find.byType(DashboardChip).first,
+        find.text('203.0.113.9'),
+        find.byType(EmojiCover),
+        find.text(l10n.runTime),
+        find.text(l10n.ipOrganization),
+        find.text('Example Organization'),
+        find.byType(OutboundBubble),
+      ];
+      final originalRects = [
+        for (final part in mainParts) tester.getRect(part),
+      ];
+      final originalChips = [
+        for (var i = 0; i < find.byType(DashboardChip).evaluate().length; i++)
+          tester.getRect(find.byType(DashboardChip).at(i)),
+      ];
+      await pump(
+        tester,
+        const CurrentOutboundCard(showTraffic: true),
+        existing: container,
+      );
+      final fusedHeight = tester.getSize(find.byType(DashboardCard)).height;
+      expect(fusedHeight, originalHeight);
+      final status = tester.getRect(find.text('状态'));
+      final upload = tester.getRect(find.text('上传'));
+      final download = tester.getRect(find.text('下载'));
+      expect(upload.height, 11);
+      expect(download.height, 11);
+      expect(upload.height, lessThan(status.height));
+      final totals = container.read(totalTrafficProvider);
+      final totalValues = [
+        for (final direction in TrafficDirection.values)
+          dashboardTraffic(direction.of(totals)),
+      ];
+      for (final value in totalValues.toSet()) {
+        final count = totalValues.where((item) => item == value).length;
+        expect(
+          find.descendant(
+            of: find.byType(OutboundTrafficFigures),
+            matching: find.text(value),
+          ),
+          findsNWidgets(count),
+        );
+        final totalLabel = find.bySemanticsLabel(l10n.trafficTotal(value));
+        if (totalLabel.evaluate().length != count) {
+          debugDumpSemanticsTree(DebugSemanticsDumpOrder.traversalOrder);
+        }
+        expect(
+          find.bySemanticsLabel(l10n.trafficTotal(value)),
+          findsNWidgets(count),
+        );
+        expect(find.text(l10n.trafficTotal(value)), findsNothing);
       }
-      expect(
-        find.bySemanticsLabel(l10n.trafficTotal(value)),
-        findsNWidgets(count),
-      );
-      expect(find.text(l10n.trafficTotal(value)), findsNothing);
-    }
 
-    expect([for (final part in mainParts) tester.getRect(part)], originalRects);
-    expect([
-      for (var i = 0; i < find.byType(DashboardChip).evaluate().length; i++)
-        tester.getRect(find.byType(DashboardChip).at(i)),
-    ], originalChips);
-    expect(upload.overlaps(status), isFalse);
-    expect(download.overlaps(status), isFalse);
-    expect(
-      tester
-          .getRect(find.byType(OutboundTrafficFigures))
-          .overlaps(tester.getRect(find.byType(OutboundBubble))),
-      isFalse,
+      expect([
+        for (final part in mainParts) tester.getRect(part),
+      ], originalRects);
+      expect([
+        for (var i = 0; i < find.byType(DashboardChip).evaluate().length; i++)
+          tester.getRect(find.byType(DashboardChip).at(i)),
+      ], originalChips);
+      expect(upload.overlaps(status), isFalse);
+      expect(download.overlaps(status), isFalse);
+      expect(
+        tester
+            .getRect(find.byType(OutboundTrafficFigures))
+            .overlaps(tester.getRect(find.byType(OutboundBubble))),
+        isFalse,
+      );
+      container
+          .read(trafficsProvider.notifier)
+          .addTraffic(const Traffic(up: 1024, down: 4096));
+      await tester.pump();
+      expect(find.byType(LineChart), findsNWidgets(2));
+      expect(find.byType(OutboundRibbon), findsNothing);
+      final charts = tester.widgetList<LineChart>(find.byType(LineChart));
+      expect(charts.map((chart) => chart.minScale).toSet(), {8192.0});
+      expect(find.byType(OutboundTrafficFigures), findsOneWidget);
+      expect(tester.getSize(find.byType(DashboardCard)).height, originalHeight);
+      container.read(trafficsProvider.notifier).clear();
+      container.read(trafficsProvider.notifier).addTraffic(const Traffic());
+      await tester.pump();
+      for (final chart in tester.widgetList<LineChart>(
+        find.byType(LineChart),
+      )) {
+        expect(chart.values, everyElement(0));
+      }
+      expect(tester.takeException(), null);
+    } finally {
+      semantics.dispose();
+    }
+  });
+
+  Future<ProviderContainer> pumpTraffic(
+    WidgetTester tester,
+    Widget child, {
+    double scale = 1,
+    double width = 360,
+    double? height,
+    DashboardDensity density = DashboardDensity.mobile,
+    double? densityScale,
+  }) async {
+    final container = await pump(
+      tester,
+      child,
+      scale: scale,
+      width: width,
+      height: height,
+      density: density,
+      densityScale: densityScale,
     );
     container
         .read(trafficsProvider.notifier)
-        .addTraffic(const Traffic(up: 1024, down: 4096));
+        .addTraffic(const Traffic(up: 1024, down: 2048));
+    container.read(totalTrafficProvider.notifier).value = const Traffic(
+      up: 4096,
+      down: 8 << 20,
+    );
     await tester.pump();
-    expect(find.byType(LineChart), findsNWidgets(2));
-    expect(find.byType(OutboundRibbon), findsNothing);
-    final charts = tester.widgetList<LineChart>(find.byType(LineChart));
-    expect(charts.map((chart) => chart.minScale).toSet(), {8192.0});
-    expect(find.byType(OutboundTrafficFigures), findsOneWidget);
-    expect(tester.getSize(find.byType(DashboardCard)).height, originalHeight);
-    container.read(trafficsProvider.notifier).clear();
-    container.read(trafficsProvider.notifier).addTraffic(const Traffic());
-    await tester.pump();
-    for (final chart in tester.widgetList<LineChart>(find.byType(LineChart))) {
-      expect(chart.values, everyElement(0));
+    return container;
+  }
+
+  List<String> readingOrder(WidgetTester tester) {
+    final card = tester.getSemantics(find.byType(DashboardCard));
+    bool inCard(SemanticsNode? node) =>
+        node != null && (node == card || inCard(node.parent));
+    return [
+      for (final node in tester.semantics.simulatedAccessibilityTraversal())
+        if (inCard(node)) node.label,
+    ];
+  }
+
+  /// Upload before download, each its label with its speed, then its total.
+  List<String> trafficStops(
+    BuildContext context,
+    ProviderContainer container, {
+    required String Function(num speed) speed,
+  }) {
+    final latest = container.read(trafficsProvider).list.last;
+    final totals = container.read(totalTrafficProvider);
+    final stops = [
+      for (final direction in TrafficDirection.values) ...[
+        '${direction.labelOf(context)}\n${speed(direction.of(latest))}',
+        AppLocalizations.of(
+          context,
+        ).trafficTotal(dashboardTraffic(direction.of(totals))),
+      ],
+    ];
+    expect(stops.toSet(), hasLength(4));
+    return stops;
+  }
+
+  /// The title once, the state, then what the exit is before the controls
+  /// acting on it.
+  (List<String>, List<String>) statusStops(
+    BuildContext context,
+    ProviderContainer container,
+  ) {
+    final l10n = AppLocalizations.of(context);
+    final quality = container
+        .read(ipQualityProvider('203.0.113.9'))
+        .requireValue;
+    final level = '${l10n.ipQualityShort} ${quality.level.label(context)}';
+    return (
+      [
+        l10n.status,
+        l10n.running,
+        '${quality.type.label(context)}\n$level',
+        '${l10n.runTime}\n${getTimeText(container.read(runTimeProvider))}',
+        '${l10n.ipOrganization}\nExample Organization',
+      ],
+      ['${l10n.retry}\nGB', '203.0.113.9', l10n.stop],
+    );
+  }
+
+  for (final (label, width, scale, density, overlay) in const [
+    ('mobile overlay', 360.0, 1.0, DashboardDensity.mobile, true),
+    ('mobile stacked', 328.0, 2.0, DashboardDensity.mobile, false),
+    ('desktop overlay', 600.0, 0.9, DashboardDensity.standard, true),
+  ]) {
+    testWidgets(
+      'a screen reader takes the $label status card in reading order',
+      (tester) async {
+        final semantics = tester.ensureSemantics();
+        try {
+          // A desktop card has a fixed height and a density scale of at least
+          // one; its header leaves the overlay room only below that text scale.
+          final container = await pumpTraffic(
+            tester,
+            const CurrentOutboundCard(showTraffic: true),
+            width: width,
+            scale: scale,
+            height: density.isDesktop ? 208 : null,
+            density: density,
+            densityScale: density.isDesktop ? 1 : null,
+          );
+          expect(
+            find.ancestor(
+              of: find.byType(OutboundTrafficFigures),
+              matching: find.byType(PositionedDirectional),
+            ),
+            overlay ? findsOneWidget : findsNothing,
+          );
+          final context = tester.element(find.byType(OutboundTrafficFigures));
+          final (summary, controls) = statusStops(context, container);
+          final traffic = trafficStops(
+            context,
+            container,
+            speed: (speed) => '${dashboardTraffic(speed)}/s',
+          );
+          final order = readingOrder(tester);
+          expect(
+            order,
+            overlay
+                ? [
+                    ...summary.take(2),
+                    ...traffic,
+                    ...summary.skip(2),
+                    ...controls,
+                  ]
+                : [...summary, ...controls, ...traffic],
+            reason: order.join(' / '),
+          );
+        } finally {
+          semantics.dispose();
+        }
+      },
+    );
+  }
+
+  for (final (density, width, height) in const [
+    (DashboardDensity.mobile, 360.0, null),
+    (DashboardDensity.standard, 600.0, 208.0),
+    (DashboardDensity.compact, 520.0, 176.0),
+  ]) {
+    testWidgets('the ${density.name} status card without traffic reads the '
+        'same order', (tester) async {
+      final semantics = tester.ensureSemantics();
+      try {
+        final container = await pump(
+          tester,
+          const CurrentOutboundCard(),
+          width: width,
+          height: height,
+          density: density,
+        );
+        final context = tester.element(find.byType(CurrentOutboundCard));
+        final (summary, controls) = statusStops(context, container);
+        final order = readingOrder(tester);
+        expect(order, [...summary, ...controls], reason: order.join(' / '));
+      } finally {
+        semantics.dispose();
+      }
+    });
+  }
+
+  testWidgets('the network speed card reads its title once, then two stops '
+      'per direction', (tester) async {
+    final semantics = tester.ensureSemantics();
+    try {
+      final container = await pumpTraffic(tester, const NetworkSpeedCard());
+      final context = tester.element(find.byType(NetworkSpeedCard));
+      final traffic = trafficStops(
+        context,
+        container,
+        speed: (speed) => '${speed.traffic.value} ${speed.traffic.unit}/s',
+      );
+      final order = readingOrder(tester);
+      expect(order, [
+        AppLocalizations.of(context).networkSpeed,
+        ...traffic,
+      ], reason: order.join(' / '));
+    } finally {
+      semantics.dispose();
     }
-    expect(tester.takeException(), null);
   });
+
+  for (final direction in TrafficDirection.values) {
+    testWidgets('the desktop ${direction.name} card reads its direction once, '
+        'its total next', (tester) async {
+      final semantics = tester.ensureSemantics();
+      try {
+        final container = await pumpTraffic(
+          tester,
+          SpeedCard(direction: direction),
+          width: 300,
+          height: 208,
+          density: DashboardDensity.standard,
+        );
+        final context = tester.element(find.byType(SpeedCard));
+        final traffic = trafficStops(
+          context,
+          container,
+          speed: (speed) => '${speed.traffic.value} ${speed.traffic.unit}/s',
+        );
+        final speeds = container.read(trafficsProvider).list;
+        final peak = speeds.map(direction.of).reduce((a, b) => a > b ? a : b);
+        final order = readingOrder(tester);
+        expect(order, [
+          ...traffic.skip(direction.index * 2).take(2),
+          AppLocalizations.of(
+            context,
+          ).trafficPeak('${dashboardTraffic(peak)}/s'),
+        ], reason: order.join(' / '));
+      } finally {
+        semantics.dispose();
+      }
+    });
+  }
 
   for (final scale in [1.0, 2.0]) {
     testWidgets('network controls retain separate switches at scale $scale', (
@@ -335,44 +567,51 @@ void main() {
         );
         final address = ip.contains(':') ? '[$ip]:$port' : '$ip:$port';
         final semantics = tester.ensureSemantics();
-        addTearDown(semantics.dispose);
-        expect(find.text(l10n.enabled), findsNothing);
-        expect(find.text(l10n.disabled), findsNothing);
-        expect(find.byTooltip(l10n.copy), findsNothing);
-        final addressNode = find.byKey(const ValueKey('dashboard-lan-address'));
-        final copyNode = find.byKey(const ValueKey('dashboard-lan-copy'));
-        final copy = tester.getRect(copyNode);
-        final addressRect = tester.getRect(addressNode);
-        expect(addressRect.center.dx, closeTo(copy.center.dx, 0.01));
-        expect(addressRect.center.dy, closeTo(copy.center.dy, 0.01));
-        expect(copy.height, greaterThanOrEqualTo(48));
-        expect(
-          copy.width,
-          tester.getSize(find.byType(DashboardCard)).width - 40,
-        );
-        final semanticsData = tester.getSemantics(copyNode).getSemanticsData();
-        expect(semanticsData.label, l10n.copy);
-        expect(semanticsData.value, address);
-        expect(semanticsData.hasAction(SemanticsAction.tap), isTrue);
-        if (width == 360 && scale == 1) {
-          expect(tester.getSize(find.byType(DashboardCard)).height, 220);
+        try {
+          expect(find.text(l10n.enabled), findsNothing);
+          expect(find.text(l10n.disabled), findsNothing);
+          expect(find.byTooltip(l10n.copy), findsNothing);
+          final addressNode = find.byKey(
+            const ValueKey('dashboard-lan-address'),
+          );
+          final copyNode = find.byKey(const ValueKey('dashboard-lan-copy'));
+          final copy = tester.getRect(copyNode);
+          final addressRect = tester.getRect(addressNode);
+          expect(addressRect.center.dx, closeTo(copy.center.dx, 0.01));
+          expect(addressRect.center.dy, closeTo(copy.center.dy, 0.01));
+          expect(copy.height, greaterThanOrEqualTo(48));
+          expect(
+            copy.width,
+            tester.getSize(find.byType(DashboardCard)).width - 40,
+          );
+          final semanticsData = tester
+              .getSemantics(copyNode)
+              .getSemanticsData();
+          expect(semanticsData.label, l10n.copy);
+          expect(semanticsData.value, address);
+          expect(semanticsData.hasAction(SemanticsAction.tap), isTrue);
+          if (width == 360 && scale == 1) {
+            expect(tester.getSize(find.byType(DashboardCard)).height, 220);
+          }
+          final switches = find.byType(DashboardSwitch);
+          final vpn = tester.getRect(switches.first);
+          final lan = tester.getRect(switches.last);
+          expect(vpn.top, lan.top);
+          expect(vpn.overlaps(lan), isFalse);
+          expect(copy.overlaps(vpn), isFalse);
+          expect(copy.overlaps(lan), isFalse);
+          await tester.tap(switches.first);
+          await tester.pump();
+          expect(container.read(vpnSettingProvider).enable, isFalse);
+          expect(container.read(patchClashConfigProvider).allowLan, isTrue);
+          await tester.tap(switches.last);
+          await tester.pump();
+          expect(container.read(vpnSettingProvider).enable, isFalse);
+          expect(container.read(patchClashConfigProvider).allowLan, isFalse);
+          expect(tester.takeException(), isNull);
+        } finally {
+          semantics.dispose();
         }
-        final switches = find.byType(DashboardSwitch);
-        final vpn = tester.getRect(switches.first);
-        final lan = tester.getRect(switches.last);
-        expect(vpn.top, lan.top);
-        expect(vpn.overlaps(lan), isFalse);
-        expect(copy.overlaps(vpn), isFalse);
-        expect(copy.overlaps(lan), isFalse);
-        await tester.tap(switches.first);
-        await tester.pump();
-        expect(container.read(vpnSettingProvider).enable, isFalse);
-        expect(container.read(patchClashConfigProvider).allowLan, isTrue);
-        await tester.tap(switches.last);
-        await tester.pump();
-        expect(container.read(vpnSettingProvider).enable, isFalse);
-        expect(container.read(patchClashConfigProvider).allowLan, isFalse);
-        expect(tester.takeException(), isNull);
       },
     );
   }
@@ -485,51 +724,55 @@ void main() {
       tester.element(find.byType(FusedNetworkControls)),
     );
     final semantics = tester.ensureSemantics();
-    addTearDown(semantics.dispose);
-    for (final (ip, enabled, port, expected) in <(String?, bool, int, String?)>[
-      ('192.0.2.8', true, 7890, '192.0.2.8:7890'),
-      ('192.0.2.8', false, 7890, '192.0.2.8'),
-      ('2001:db8::8', true, 7890, '[2001:db8::8]:7890'),
-      ('2001:db8::8', false, 7890, '2001:db8::8'),
-      ('[2001:db8::8]', true, 7890, '[2001:db8::8]:7890'),
-      (
-        '2001:db8:1234:5678:90ab:cdef:1234:5678',
-        true,
-        7890,
-        '[2001:db8:1234:5678:90ab:cdef:1234:5678]:7890',
-      ),
-      ('', true, 7890, null),
-      (' ', false, 7890, null),
-      (null, true, 7890, null),
-      ('192.0.2.8', true, 0, null),
-      ('192.0.2.8', true, 65536, null),
-    ]) {
-      container.read(localIpProvider.notifier).value = ip;
-      container
-          .read(patchClashConfigProvider.notifier)
-          .update((s) => s.copyWith(allowLan: enabled, mixedPort: port));
-      await tester.pump();
-      final button = find.byKey(const ValueKey('dashboard-lan-copy'));
-      final action = tester.widget<Semantics>(button).properties.onTap;
-      final data = tester.getSemantics(button).getSemanticsData();
-      expect(data.label, l10n.copy);
-      expect(data.hasFlag(SemanticsFlag.isEnabled), expected != null);
-      expect(data.hasAction(SemanticsAction.tap), expected != null);
-      if (expected == null) {
-        expect(action, isNull);
-      } else {
-        expect(find.text(expected), findsOneWidget);
-        copied = null;
-        final vpnBefore = container.read(vpnSettingProvider).enable;
-        final target = tester.getRect(button);
-        await tester.tapAt(Offset(target.left + 2, target.center.dy));
+    try {
+      for (final (ip, enabled, port, expected)
+          in <(String?, bool, int, String?)>[
+            ('192.0.2.8', true, 7890, '192.0.2.8:7890'),
+            ('192.0.2.8', false, 7890, '192.0.2.8'),
+            ('2001:db8::8', true, 7890, '[2001:db8::8]:7890'),
+            ('2001:db8::8', false, 7890, '2001:db8::8'),
+            ('[2001:db8::8]', true, 7890, '[2001:db8::8]:7890'),
+            (
+              '2001:db8:1234:5678:90ab:cdef:1234:5678',
+              true,
+              7890,
+              '[2001:db8:1234:5678:90ab:cdef:1234:5678]:7890',
+            ),
+            ('', true, 7890, null),
+            (' ', false, 7890, null),
+            (null, true, 7890, null),
+            ('192.0.2.8', true, 0, null),
+            ('192.0.2.8', true, 65536, null),
+          ]) {
+        container.read(localIpProvider.notifier).value = ip;
+        container
+            .read(patchClashConfigProvider.notifier)
+            .update((s) => s.copyWith(allowLan: enabled, mixedPort: port));
         await tester.pump();
-        expect(copied, expected);
-        expect(container.read(vpnSettingProvider).enable, vpnBefore);
-        expect(container.read(patchClashConfigProvider).allowLan, enabled);
+        final button = find.byKey(const ValueKey('dashboard-lan-copy'));
+        final action = tester.widget<Semantics>(button).properties.onTap;
+        final data = tester.getSemantics(button).getSemanticsData();
+        expect(data.label, l10n.copy);
+        expect(data.hasFlag(SemanticsFlag.isEnabled), expected != null);
+        expect(data.hasAction(SemanticsAction.tap), expected != null);
+        if (expected == null) {
+          expect(action, isNull);
+        } else {
+          expect(find.text(expected), findsOneWidget);
+          copied = null;
+          final vpnBefore = container.read(vpnSettingProvider).enable;
+          final target = tester.getRect(button);
+          await tester.tapAt(Offset(target.left + 2, target.center.dy));
+          await tester.pump();
+          expect(copied, expected);
+          expect(container.read(vpnSettingProvider).enable, vpnBefore);
+          expect(container.read(patchClashConfigProvider).allowLan, enabled);
+        }
       }
+      expect(tester.takeException(), isNull);
+    } finally {
+      semantics.dispose();
     }
-    expect(tester.takeException(), isNull);
   });
 
   testWidgets(

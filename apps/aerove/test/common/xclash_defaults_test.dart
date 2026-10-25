@@ -546,7 +546,10 @@ void main() {
         restored.copyWith(url: xclashDefaultScriptUrl),
       );
       expect(await db.scriptsDao.get(custom.id).getSingle(), custom);
-      expect(await db.profilesDao.query().get(), [profile]);
+      // An override restore renumbers profiles by their backup position.
+      expect(await db.profilesDao.query().get(), [
+        isOverride ? profile.copyWith(order: 0) : profile,
+      ]);
       expect(storage.getString(configKey), preferencesBefore);
       expect(await journal.readAsBytes(), journalBefore);
       expect(await file.readAsBytes(), content);

@@ -27,6 +27,13 @@ bool isBuiltinOutbound(String name) => _builtinOutbounds.contains(name);
 
 const _ipMask = '*****';
 
+/// What a screen reader takes after the title, the card's own label;
+/// traffic comes where it is drawn.
+enum _CardStop { chip, overlaidTraffic, summary, toggle, appendedTraffic }
+
+/// The summary reports the exit before it offers the controls acting on it.
+enum _SummaryStop { quality, runTime, organization, retry, address }
+
 /// The address the proxied traffic leaves by, next to the start button.
 class CurrentOutboundCard extends ConsumerStatefulWidget {
   const CurrentOutboundCard({super.key, this.showTraffic = false});
@@ -101,7 +108,34 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
     final header = DashboardCardHeader(
       glyph: AppGlyphs.status,
       title: appLocalizations.status,
-      leading: [chip],
+      leading: [DashboardStop(order: _CardStop.chip.index, child: chip)],
+    );
+    final summary = DashboardStop(
+      order: _CardStop.summary.index,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _ExitRow(
+            info: ipInfo,
+            failed: failed,
+            loading: loading,
+            checking: phase == ProbePhase.probing || qualityLoading,
+            onRefresh: () => _refresh(ipInfo?.ip),
+            quality: quality,
+            active: isStart,
+            metrics: metrics,
+            large: !density.isDesktop,
+          ),
+          if (density.isDesktop) const Spacer() else const SizedBox(height: 16),
+          _Cells(
+            quality: quality,
+            loading: loading,
+            active: isStart && !suspended,
+            gap: metrics.cellGap,
+          ),
+        ],
+      ),
     );
     Widget body() => Row(
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -113,38 +147,21 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
             children: [
               header,
               SizedBox(height: metrics.ipTop),
-              _ExitRow(
-                info: ipInfo,
-                failed: failed,
-                loading: loading,
-                checking: phase == ProbePhase.probing || qualityLoading,
-                onRefresh: () => _refresh(ipInfo?.ip),
-                quality: quality,
-                active: isStart,
-                metrics: metrics,
-                large: !density.isDesktop,
-              ),
-              if (density.isDesktop)
-                const Spacer()
-              else
-                const SizedBox(height: 16),
-              _Cells(
-                quality: quality,
-                loading: loading,
-                active: isStart && !suspended,
-                gap: metrics.cellGap,
-              ),
+              if (density.isDesktop) Expanded(child: summary) else summary,
             ],
           ),
         ),
         SizedBox(
           width: metrics.buttonSlot,
           child: Center(
-            child: _StartToggle(
-              size: metrics.buttonSize,
-              enabled: hasProfile,
-              running: isStart,
-              suspended: suspended,
+            child: DashboardStop(
+              order: _CardStop.toggle.index,
+              child: _StartToggle(
+                size: metrics.buttonSize,
+                enabled: hasProfile,
+                running: isStart,
+                suspended: suspended,
+              ),
             ),
           ),
         ),
@@ -152,7 +169,6 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
     );
     return DashboardCard(
       padding: EdgeInsets.zero,
-      semanticLabel: appLocalizations.status,
       child: Stack(
         children: [
           Positioned.fill(
@@ -217,7 +233,10 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
                       const SizedBox(height: 8),
                       Align(
                         alignment: AlignmentDirectional.centerEnd,
-                        child: figures,
+                        child: DashboardStop(
+                          order: _CardStop.appendedTraffic.index,
+                          child: figures,
+                        ),
                       ),
                     ],
                   );
@@ -225,7 +244,14 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
                 return Stack(
                   children: [
                     body(),
-                    PositionedDirectional(top: 0, end: 0, child: figures),
+                    PositionedDirectional(
+                      top: 0,
+                      end: 0,
+                      child: DashboardStop(
+                        order: _CardStop.overlaidTraffic.index,
+                        child: figures,
+                      ),
+                    ),
                   ],
                 );
               },
@@ -352,41 +378,54 @@ class _ExitRow extends StatelessWidget {
     return Row(
       spacing: 12,
       children: [
-        _CountryBadge(
-          countryCode: info?.countryCode,
-          size: metrics.badgeSize,
-          active: active,
-          checking: checking,
-          onRefresh: onRefresh,
+        DashboardStop(
+          order: _SummaryStop.retry.index,
+          child: _CountryBadge(
+            countryCode: info?.countryCode,
+            size: metrics.badgeSize,
+            active: active,
+            checking: checking,
+            onRefresh: onRefresh,
+          ),
         ),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              SizedBox(
-                height:
-                    metrics.ip.leading * DashboardDensityScope.scaleOf(context),
-                child: Align(
-                  alignment: AlignmentDirectional.centerStart,
-                  child: ip,
+              DashboardStop(
+                order: _SummaryStop.address.index,
+                child: SizedBox(
+                  height:
+                      metrics.ip.leading *
+                      DashboardDensityScope.scaleOf(context),
+                  child: Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: ip,
+                  ),
                 ),
               ),
               const SizedBox(height: 4),
-              if (failed)
-                SizedBox(
-                  height: _chipHeight(large),
-                  child: Align(
-                    alignment: AlignmentDirectional.centerStart,
-                    child: GlassText(
-                      appLocalizations.tapIconToRetry,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: DashboardText.label(context),
-                    ),
-                  ),
-                )
-              else
-                _IpChips(quality: quality, loading: loading, large: large),
+              DashboardStop(
+                order: _SummaryStop.quality.index,
+                child: failed
+                    ? SizedBox(
+                        height: _chipHeight(large),
+                        child: Align(
+                          alignment: AlignmentDirectional.centerStart,
+                          child: GlassText(
+                            appLocalizations.tapIconToRetry,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: DashboardText.label(context),
+                          ),
+                        ),
+                      )
+                    : _IpChips(
+                        quality: quality,
+                        loading: loading,
+                        large: large,
+                      ),
+              ),
             ],
           ),
         ),
@@ -635,19 +674,27 @@ class _Cells extends StatelessWidget {
           ? SkeletonText(width: 96, style: _cellStyle(context))
           : const _Placeholder(),
     );
+    final runtimeStop = DashboardStop(
+      order: _SummaryStop.runTime.index,
+      child: runtime,
+    );
+    final identityStop = DashboardStop(
+      order: _SummaryStop.organization.index,
+      child: identity,
+    );
     if (!DashboardDensityScope.of(context).isDesktop &&
         MediaQuery.textScalerOf(context).scale(1) > 1.3) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         spacing: 8,
-        children: [runtime, identity],
+        children: [runtimeStop, identityStop],
       );
     }
     return Row(
       spacing: gap,
       children: [
-        runtime,
-        Flexible(child: identity),
+        runtimeStop,
+        Flexible(child: identityStop),
       ],
     );
   }
