@@ -1,4 +1,4 @@
-"""One internal x86 ABI build receipt and a first-screen probe, never promotion."""
+"""One internal x86 ABI build of a formal Standard source and a first-screen probe, never promotion."""
 import argparse
 import hashlib
 import json
@@ -13,28 +13,63 @@ import time
 import xml.etree.ElementTree as ET
 import zipfile
 
-SOURCE = 'd8557dc664d0614339b7a8a676697367568f698e'
-TREE = '70d19dcdaba20519bda88b545bbcbf113ba9d019'
-STANDARD_TREE = '5807e5924efb38f3db00da80f3ae078973a14094'
-TARGET_KEY = SOURCE + '-android-x64'
+REPOSITORY = 'IvanSolis1989/Aerove'
+WORKFLOW_PATH = '.github/workflows/aerove-standard-x86-qa.yaml'
+HARNESS_BRANCH = 'codex/aerove-lite-meow-app'
+HARNESS_REF = 'refs/heads/' + HARNESS_BRANCH
+RUN_TITLE = 'AEROVE Standard internal x86 QA for formal run '
+REGISTRATION_TITLE = 'AEROVE Standard internal x86 QA registration push '
+READBACK_BUILD_TOOLS = '35.0.0'
+FORMAL_WORKFLOW = '.github/workflows/xclash-android.yaml'
+FORMAL_WORKFLOW_NAME = 'Aerove Android'
+FORMAL_APK = 'Aerove-android-arm64.apk'
 PACKAGE = 'com.follow.clash.dev'
 SIGNER = '0fc82c3b7b089b6244d9ed167b352ff76185417d07689853caca286fbdeb6e60'
-VERSION_NAME = '0.11.0-beta.4'
-VERSION_CODE = '2026102243'
-FORMAL_PLAN_CODE = dict(source='d8557dc664d0614339b7a8a676697367568f698e', workflowRun='40143599605',
-                        runNumber=43, versionCode='2026102243', dataRole='runtimeCodePlanOnly')
-APK_NAME = 'Aerove-standard-internal-qa-d8557dc-x86_64.apk'
-ARTIFACT_NAME = 'Aerove-standard-internal-x86-qa-d8557dc'
-ORIGINAL = dict(source='c133772fc83b7984bdacb11e5dd41e2d65098771',
-                sourceTree='fb4a8fb6f0f8d3126a5a637673b8f333d80a8888', buildRun='40082294388', artifactId=12555818245,
-                abi='arm64-v8a', apkSha256='64c42740e9164b29cca0289ae229a1dbe4cf44899c475f867e0f62ad033cfca8',
-                signerSha256='0fc82c3b7b089b6244d9ed167b352ff76185417d07689853caca286fbdeb6e60',
-                package='com.follow.clash.dev', versionName='0.11.0-beta.3', versionCode='2026102240')
-PROVEN_NONEXECUTING_TARGET = 'd8557dc664d0614339b7a8a676697367568f698e-android-x64'
-PROVEN_NONEXECUTING_RUN = dict(id=40144859752, workflow_id=395518893, run_number=1, run_attempt=1,
-                              head_sha='6b8f00cf6b0dd3eb241d21c885f272ef03dde102', event='push',
-                              head_branch='codex/aerove-lite-meow-app', status='completed', conclusion='failure',
-                              path='.github/workflows/aerove-standard-x86-qa-d8557dc.yaml')
+APK_NAME = 'Aerove-standard-internal-qa-x86_64.apk'
+ARTIFACT_PREFIX = 'Aerove-standard-internal-x86-qa-'
+COMPILE_STEP = 'Build only the new x86 ABI once'
+TOOLCHAIN = dict(flutter='3.47.6', go='1.27.1', rust='1.99.0', ndk='28.2.13676358', java='17')
+FORMAL_PINS = (
+    "  FLUTTER_VERSION: '3.47.6'",
+    "          go-version: '1.27.1'",
+    "          toolchain: '1.99.0'",
+    '          ndk-version: r28c',
+    "          java-version: '17'",
+    '          flutter build apk --no-pub --release --target-platform android-arm64 \\',
+    '            --build-name "$VERSION_NAME" --build-number "$VERSION_NUMBER" \\',
+    '            --dart-define=APP_ENV="$APP_ENV"',
+)
+HARNESS_PINS = (
+    "          flutter-version: '3.47.6'",
+    "          go-version: '1.27.1'",
+    "          toolchain: '1.99.0'",
+    '          ndk-version: r28c',
+    "          java-version: '17'",
+    '          flutter build apk --no-pub --release --target-platform android-x64 \\',
+    '            --build-name "$QA_VERSION_NAME" --build-number "$QA_VERSION_CODE" \\',
+    '            --dart-define=APP_ENV="$QA_APP_ENV" 2>&1 | tee "$root/build.log"',
+    "          timeout --kill-after=10s 300s sdkmanager --install 'build-tools;35.0.0' --channel=0",
+    '          build_tools="$ANDROID_HOME/build-tools/35.0.0"',
+)
+OWN_LIBRARIES = ('libapp.so', 'libclash.so', 'libflutter.so', 'librust_api.so')
+NATIVE_ABIS = {'arm64-v8a': (2, 183), 'armeabi-v7a': (1, 40), 'x86': (1, 3), 'x86_64': (2, 62)}
+HISTORICAL_ARM = (
+    dict(source='c133772fc83b7984bdacb11e5dd41e2d65098771', buildRun='40082294388', versionCode='2026102240',
+         apkSha256='64c42740e9164b29cca0289ae229a1dbe4cf44899c475f867e0f62ad033cfca8'),
+    dict(source='d8557dc664d0614339b7a8a676697367568f698e', buildRun='40143599605', versionCode='2026102243',
+         apkSha256='392221a7808b6e036215304797da7cf025933a2f2a5078fcd190b3e729f6cb5e'),
+)
+SHA1 = re.compile(r'[0-9a-f]{40}')
+SHA256 = re.compile(r'[0-9a-f]{64}')
+RUN_ID = re.compile(r'[1-9][0-9]{0,19}')
+VERSION_NAME = re.compile(r'(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?')
+VERSION_CODE = re.compile(r'[1-9][0-9]{0,9}')
+SUBMODULE_STATUS = re.compile(r'([ +U-])([0-9a-f]{40}) (\S+)(?: \(.*\))?')
+FORMAL_FIELDS = dict(schema=int, role=str, repository=str, workflowPath=str, runId=int, runNumber=int,
+                     runAttempt=int, event=str, headBranch=str, workflow=str, source=str, sourceTree=str,
+                     standardSubtree=str, artifactId=int, generatedArtifactId=int, buildInfoSha256=str,
+                     apkSha256=str, apkBytes=int, version=str, versionName=str, versionCode=str, appEnv=str,
+                     package=str, abi=str, signerSha256=str)
 
 
 def sha(path):
@@ -46,47 +81,103 @@ def save(path, value):
     path.write_text(json.dumps(value, indent=2) + '\n', encoding='utf-8')
 
 
-def base_identity(run, attempt, harness, run_number):
-    return dict(schema=1, kind='standard-internal-x86-qa', diagnosticOnly=True, accepted=False,
-                normalAccepted=False, mainPromotionAllowed=False, source=SOURCE, sourceTree=TREE,
-                standardSubtree=STANDARD_TREE, targetKey=TARGET_KEY,
-                dataRoles=dict(source='newQaApplication', originalArmReference='immutableOldArmBaseline',
-                               formalPlanCode='runtimeCodePlanOnly'), formalPlanCode=FORMAL_PLAN_CODE,
+def load(path):
+    return json.loads(Path(path).read_text(encoding='utf-8'))
+
+
+def target_key(source):
+    return source + '-android-x64'
+
+
+def artifact_name(source):
+    return ARTIFACT_PREFIX + source
+
+
+def run_url(run):
+    return f'https://github.com/{REPOSITORY}/actions/runs/{run}'
+
+
+def positive(value):
+    return type(value) is int and value > 0
+
+
+def output(values):
+    with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as stream:
+        stream.write(''.join(f'{key}={value}\n' for key, value in values.items()))
+
+
+def validate_formal(formal):
+    if not isinstance(formal, dict) or set(formal) != set(FORMAL_FIELDS):
+        raise ValueError('Formal ARM build identity has missing or unexpected fields')
+    if any(type(formal[key]) is not kind for key, kind in FORMAL_FIELDS.items()):
+        raise ValueError('Formal ARM build identity has unexpected field types')
+    name, code = formal['versionName'], formal['versionCode']
+    if (formal['schema'] != 1 or formal['role'] != 'immutableFormalArmBuild' or formal['repository'] != REPOSITORY
+            or formal['workflowPath'] != FORMAL_WORKFLOW or formal['event'] not in ('workflow_dispatch', 'push')
+            or not all(positive(formal[key]) for key in ('runId', 'runNumber', 'runAttempt', 'artifactId',
+                                                          'generatedArtifactId', 'apkBytes'))
+            or not formal['headBranch'] or formal['workflow'] != run_url(formal['runId'])
+            or not all(SHA1.fullmatch(formal[key]) for key in ('source', 'sourceTree', 'standardSubtree'))
+            or not all(SHA256.fullmatch(formal[key]) for key in ('buildInfoSha256', 'apkSha256', 'signerSha256'))
+            or not VERSION_NAME.fullmatch(name) or not VERSION_CODE.fullmatch(code)
+            or formal['version'] != f'{name}+{code}' or formal['appEnv'] != ('pre' if '-' in name else 'stable')
+            or formal['package'] != PACKAGE or formal['abi'] != 'arm64-v8a' or formal['signerSha256'] != SIGNER):
+        raise ValueError('Formal ARM build identity is inconsistent')
+    if any(formal['apkSha256'] == old['apkSha256'] or str(formal['runId']) == old['buildRun']
+           or formal['source'] == old['source'] for old in HISTORICAL_ARM):
+        raise ValueError('Formal ARM build reuses a historical ARM identity')
+    return formal
+
+
+def base_identity(formal, run, attempt, harness, run_number, ref):
+    return dict(schema=2, kind='standard-internal-x86-qa', diagnosticOnly=True, accepted=False,
+                normalAccepted=False, mainPromotionAllowed=False, source=formal['source'],
+                sourceTree=formal['sourceTree'], standardSubtree=formal['standardSubtree'],
+                targetKey=target_key(formal['source']),
+                dataRoles=dict(source='newQaApplication', formalArmBuild='immutableFormalArmBuild',
+                               versionCode='formalBuildInfoOnly'), formalArmBuild=formal,
                 buildRun=str(run), buildAttempt=int(attempt), buildRunNumber=int(run_number), harnessSource=harness,
-                buildWorkflow=f'https://github.com/IvanSolis1989/Aerove/actions/runs/{run}',
-                targetPlatform='android-x64', appEnv='pre', originalArmReference=ORIGINAL)
+                harnessRef=ref, buildWorkflow=run_url(run), targetPlatform='android-x64', appEnv=formal['appEnv'])
 
 
 def validate_identity(info):
-    expected = dict(schema=1, kind='standard-internal-x86-qa', diagnosticOnly=True, accepted=False,
-                    normalAccepted=False, mainPromotionAllowed=False, source=SOURCE, sourceTree=TREE,
-                    standardSubtree=STANDARD_TREE, targetKey=TARGET_KEY,
-                    dataRoles=dict(source='newQaApplication', originalArmReference='immutableOldArmBaseline',
-                                   formalPlanCode='runtimeCodePlanOnly'), formalPlanCode=FORMAL_PLAN_CODE,
-                    targetPlatform='android-x64', appEnv='pre', originalArmReference=ORIGINAL)
+    formal = validate_formal(info.get('formalArmBuild'))
+    expected = dict(schema=2, kind='standard-internal-x86-qa', diagnosticOnly=True, accepted=False,
+                    normalAccepted=False, mainPromotionAllowed=False, source=formal['source'],
+                    sourceTree=formal['sourceTree'], standardSubtree=formal['standardSubtree'],
+                    targetKey=target_key(formal['source']),
+                    dataRoles=dict(source='newQaApplication', formalArmBuild='immutableFormalArmBuild',
+                                   versionCode='formalBuildInfoOnly'),
+                    targetPlatform='android-x64', appEnv=formal['appEnv'], readbackBuildTools=READBACK_BUILD_TOOLS)
     if any(info.get(k) != v or type(info.get(k)) is not type(v) for k, v in expected.items()):
-        raise ValueError('QA/source/original ARM reference identity mismatch')
+        raise ValueError('QA/source/formal ARM build identity mismatch')
     run = info.get('buildRun', '')
-    if (not re.fullmatch(r'[0-9]+', run) or run in {ORIGINAL['buildRun'], FORMAL_PLAN_CODE['workflowRun']}
-            or info.get('buildWorkflow') != f'https://github.com/IvanSolis1989/Aerove/actions/runs/{run}'
-            or not info.get('harnessSource') or info.get('buildAttempt') != 1
+    if (type(run) is not str or not RUN_ID.fullmatch(run) or run == str(formal['runId'])
+            or run in {old['buildRun'] for old in HISTORICAL_ARM}
+            or info.get('buildWorkflow') != run_url(run)
+            or type(info.get('harnessSource')) is not str or not SHA1.fullmatch(info['harnessSource'])
+            or info.get('harnessRef') != HARNESS_REF
+            or info.get('buildAttempt') != 1 or type(info.get('buildAttempt')) is not int
             or type(info.get('buildRunNumber')) is not int or info['buildRunNumber'] < 1):
         raise ValueError('New QA build must retain its own first-attempt run and harness identity')
-    if FORMAL_PLAN_CODE['source'] != SOURCE or FORMAL_PLAN_CODE['versionCode'] != VERSION_CODE:
-        raise ValueError('Formal runtime code plan does not belong to this exact QA application source')
-    actual = dict(abi='x86_64', package=PACKAGE, versionName=VERSION_NAME,
-                  versionCode=VERSION_CODE, signerSha256=SIGNER)
+    actual = dict(abi='x86_64', package=PACKAGE, versionName=formal['versionName'],
+                  versionCode=formal['versionCode'], signerSha256=SIGNER)
     if info.get('actual') != actual or info.get('apk', {}).get('file') != APK_NAME:
-        raise ValueError('Actual QA APK identity differs from the pinned target')
+        raise ValueError('Actual QA APK identity differs from the formal BUILD_INFO target')
     digest = info.get('apk', {}).get('sha256', '')
-    if not re.fullmatch(r'[0-9a-f]{64}', digest) or digest == ORIGINAL['apkSha256']:
-        raise ValueError('QA APK cannot be the original ARM artifact')
+    if (type(digest) is not str or not SHA256.fullmatch(digest) or digest == formal['apkSha256']
+            or digest in {old['apkSha256'] for old in HISTORICAL_ARM}):
+        raise ValueError('QA APK cannot be a formal or historical ARM artifact')
+    return info
 
 
-def validate_elf(name, data):
-    if (not name.startswith('lib/x86_64/') or len(data) < 20 or data[:6] != b'\x7fELF\x02\x01'
-            or struct.unpack_from('<H', data, 18)[0] != 62):
-        raise ValueError('Expected only ELF64 little-endian x86_64 native libraries: ' + name)
+def validate_elf(name, abi, data):
+    elf_class, machine = NATIVE_ABIS[abi]
+    header = 64 if elf_class == 2 else 52
+    if (len(data) < header or data[:7] != b'\x7fELF' + bytes((elf_class, 1, 1))
+            or struct.unpack_from('<H', data, 18)[0] != machine or struct.unpack_from('<I', data, 20)[0] != 1
+            or struct.unpack_from('<H', data, header - 12)[0] != header):
+        raise ValueError(f'Native library is not a little-endian ELF for {abi}: {name}')
 
 
 def fallback_receipt(receipt):
@@ -157,104 +248,241 @@ def inspection_command(command, directory, label, timeout=60, check=True, receip
     return stdout
 
 
-def inspect_apk(apk, tools, directory):
-    directory.mkdir(parents=True, exist_ok=True)
-    def inspect(label, args):
-        return inspection_command([str(tools / label), *args, str(apk)], directory, label, suffix='.txt').decode(errors='replace')
-    signature = inspect('apksigner', ['verify', '--verbose', '--print-certs'])
-    if re.findall(r'^Signer #[0-9]+ certificate SHA-256 digest: ([0-9a-f]+)$', signature, re.M) != [SIGNER]:
-        raise ValueError('QA signing certificate differs from the persistent original test certificate')
-    badging = inspect('aapt', ['dump', 'badging'])
-    if (not re.search(r"^package: name='" + re.escape(PACKAGE)
-                      + r"' versionCode='" + VERSION_CODE + r"' versionName='" + re.escape(VERSION_NAME) + r"'", badging, re.M)
-            or re.findall(r'^native-code:\s*(.+)$', badging, re.M) != ["'x86_64'"]):
-        raise ValueError('QA package/version/native ABI badging mismatch')
-    libraries = []
-    with zipfile.ZipFile(apk) as archive:
-        names = archive.namelist()
-        if len(names) != len(set(names)) or archive.testzip() is not None:
-            raise ValueError('APK duplicate entries or CRC failure')
-        for name in names:
-            if name.startswith('lib/') and name.endswith('.so'):
-                data = archive.read(name)
-                validate_elf(name, data)
-                libraries.append(dict(path=name, bytes=len(data), sha256=hashlib.sha256(data).hexdigest()))
-    if not {'libapp.so', 'libflutter.so', 'libclash.so', 'librust_api.so'} <= {Path(x['path']).name for x in libraries}:
-        raise ValueError('Missing Flutter/AOT/Go/Rust native library; no hooks may be disabled')
-    return dict(abi='x86_64', package=PACKAGE, versionName=VERSION_NAME,
-                versionCode=VERSION_CODE, signerSha256=SIGNER), libraries
-
-
-def check_source(root):
-    for args, expected in [(['rev-parse', 'HEAD'], SOURCE), (['rev-parse', 'HEAD^{tree}'], TREE),
-                           (['rev-parse', 'HEAD:apps/aerove'], STANDARD_TREE),
-                           (['diff', '--name-only', 'HEAD'], '')]:
-        if subprocess.check_output(['git', '-C', str(root), *args], text=True).strip() != expected:
-            raise ValueError('Fixed application source/tree or tracked content changed')
-
-
-def build_guard_decision(current, runs, histories, artifacts):
-    blockers = []
-    nonexecuting = []
-    if artifacts:
-        blockers.append(dict(reason='QA_ARTIFACT_EXISTS_REUSE_ONLY', artifacts=artifacts))
-    for run in runs:
-        if run['id'] == current['id'] or run['run_number'] > current['run_number']:
-            continue
-        history = histories[run['id']]
-        if run['id'] == PROVEN_NONEXECUTING_RUN['id']:
-            identity_matches = all(run.get(k) == v and type(run.get(k)) is type(v)
-                                   for k, v in PROVEN_NONEXECUTING_RUN.items())
-            if (identity_matches and PROVEN_NONEXECUTING_TARGET == TARGET_KEY
-                    and history['jobs'] == [] and history.get('artifacts') == []):
-                nonexecuting.append(run['id'])
-                continue
-            blockers.append(dict(run=run['id'], reason='KNOWN_NONEXECUTING_PROOF_MISMATCH_REVIEW_REQUIRED'))
-            continue
-        if run['status'] != 'completed':
-            blockers.append(dict(run=run['id'], reason='PRIOR_RUN_ACTIVE_REVIEW_REQUIRED'))
-        build_jobs = [job for job in history['jobs'] if job['name'] == 'build_internal_qa']
-        if not build_jobs:
-            blockers.append(dict(run=run['id'], reason='BUILD_HISTORY_MISSING_REVIEW_REQUIRED'))
-        for job in build_jobs:
-            compile_steps = [step for step in job.get('steps', []) if step['name'] == 'Build only the new x86 ABI once']
-            if not compile_steps and job.get('conclusion') != 'skipped':
-                blockers.append(dict(run=run['id'], reason='COMPILE_HISTORY_MISSING_REVIEW_REQUIRED'))
-            for step in compile_steps:
-                if step.get('conclusion') != 'skipped' and step.get('status') != 'queued':
-                    blockers.append(dict(run=run['id'], reason='COMPILE_STEP_ENTERED_REVIEW_OR_REUSE_ONLY',
-                                         status=step.get('status'), conclusion=step.get('conclusion')))
-    return dict(diagnosticOnly=True, accepted=False, allowed=not blockers, blockers=blockers,
-                provenNonExecutingRuns=nonexecuting,
-                currentRunExcluded=current['id'], applicationSource=SOURCE, targetKey=TARGET_KEY,
-                targetPlatform='android-x64')
-
-
-def guard(args):
-    if os.environ.get('GITHUB_RUN_ATTEMPT') != '1':
-        raise ValueError('Do not rerun the build job; retry a proven precompile failure only through a new scoped harness push')
-    directory = args.directory / 'once-guard'
-    directory.mkdir(parents=True, exist_ok=False)
-    prefix = 'repos/IvanSolis1989/Aerove/actions/'
+def api_reader(directory):
+    prefix = f'repos/{REPOSITORY}/actions/'
     def read(label, endpoint, field=None):
         data = json.loads(inspection_command(['gh', 'api', '--paginate', '--slurp', prefix + endpoint], directory, label))
         if field is None:
             if len(data) != 1:
                 raise ValueError('Unexpected paginated single-object API result')
             return data[0]
-        return [item for page in data for item in page[field]]
-    current = read('current-run', 'runs/' + os.environ['GITHUB_RUN_ID'])
-    runs = read('workflow-runs', f'workflows/{current["workflow_id"]}/runs?per_page=100', 'workflow_runs')
-    artifacts = read('qa-artifacts', 'artifacts?name=' + ARTIFACT_NAME + '&per_page=100', 'artifacts')
-    histories = {}
+        items = [item for page in data for item in page[field]]
+        if not data or any(type(page.get('total_count')) is not int or page['total_count'] != len(items) for page in data):
+            raise ValueError('Paginated API list is incomplete or inconsistent: ' + endpoint)
+        return items
+    return read
+
+
+def signer_and_badging(apk, tools, directory):
+    directory.mkdir(parents=True, exist_ok=True)
+    def inspect(label, args):
+        return inspection_command([str(tools / label), *args, str(apk)], directory, label, suffix='.txt').decode(errors='replace')
+    signature = inspect('apksigner', ['verify', '--verbose', '--print-certs'])
+    if re.findall(r'^Signer #[0-9]+ certificate SHA-256 digest: ([0-9a-f]+)$', signature, re.M) != [SIGNER]:
+        raise ValueError('Signing certificate differs from the persistent original test certificate')
+    return inspect('aapt', ['dump', 'badging'])
+
+
+def pinned_build_tools(path):
+    if path.name != READBACK_BUILD_TOOLS:
+        raise ValueError('APK readback must use the pinned build-tools ' + READBACK_BUILD_TOOLS)
+    return path
+
+
+def badging_matches(badging, version_name, version_code):
+    return bool(re.search(r"^package: name='" + re.escape(PACKAGE) + r"' versionCode='" + re.escape(version_code)
+                          + r"' versionName='" + re.escape(version_name) + r"'", badging, re.M))
+
+
+def native_code(badging):
+    lines = re.findall(r'^((?:alt-)?native-code):(.*)$', badging, re.M)
+    if len(lines) != 1 or lines[0][0] != 'native-code' or not re.fullmatch(r"(?: '[^']+')+", lines[0][1]):
+        raise ValueError('aapt badging must report exactly one native-code line')
+    return re.findall(r"'([^']+)'", lines[0][1])
+
+
+def native_libraries(apk, abi, badging):
+    libraries = []
+    with zipfile.ZipFile(apk) as archive:
+        names = archive.namelist()
+        if len(names) != len(set(names)) or archive.testzip() is not None:
+            raise ValueError('APK duplicate entries or CRC failure')
+        for name in names:
+            if not name.startswith('lib/'):
+                continue
+            parts = name.split('/')
+            if len(parts) != 3 or parts[1] not in NATIVE_ABIS or not re.fullmatch(r'lib[\w.+-]+\.so', parts[2]):
+                raise ValueError('Unexpected native library entry: ' + name)
+            data = archive.read(name)
+            validate_elf(name, parts[1], data)
+            libraries.append(dict(abi=parts[1], path=name, bytes=len(data), sha256=hashlib.sha256(data).hexdigest()))
+    present = {}
+    for row in libraries:
+        present.setdefault(row['abi'], set()).add(row['path'].rpartition('/')[2])
+    own = sorted(row['path'] for row in libraries if row['path'].rpartition('/')[2] in OWN_LIBRARIES)
+    if own != [f'lib/{abi}/{name}' for name in OWN_LIBRARIES]:
+        raise ValueError(f'Flutter/AOT/Go/Rust libraries must exist once and only for {abi}; no hooks may be disabled')
+    if any(not names <= present[abi] for other, names in present.items() if other != abi):
+        raise ValueError(f'A third-party native library is packaged for another ABI but not for {abi}')
+    if native_code(badging) != sorted(present):
+        raise ValueError('aapt native-code differs from the APK native library directories')
+    return libraries
+
+
+def inspect_apk(apk, tools, directory, formal):
+    badging = signer_and_badging(apk, tools, directory)
+    if not badging_matches(badging, formal['versionName'], formal['versionCode']):
+        raise ValueError('QA package/version badging mismatch')
+    libraries = native_libraries(apk, 'x86_64', badging)
+    return dict(abi='x86_64', package=PACKAGE, versionName=formal['versionName'],
+                versionCode=formal['versionCode'], signerSha256=SIGNER), libraries
+
+
+def git_text(root, *args):
+    return subprocess.check_output(['git', '-C', str(root), *args], text=True)
+
+
+def git_value(root, *args):
+    return git_text(root, *args).strip()
+
+
+def check_submodules(root):
+    gitlinks = {}
+    for entry in git_text(root, 'ls-tree', '-r', '-z', 'HEAD').split('\0'):
+        meta, _, path = entry.partition('\t')
+        if meta.startswith('160000 '):
+            gitlinks[path] = meta.split()[2]
+    reported = {}
+    for line in git_text(root, 'submodule', 'status', '--recursive').splitlines():
+        found = SUBMODULE_STATUS.fullmatch(line)
+        if not found or found[1] != ' ' or found[3] in reported:
+            raise ValueError('Application submodule is uninitialised, drifted or conflicted: ' + line)
+        reported[found[3]] = found[2]
+    if any(reported.get(path) != commit for path, commit in gitlinks.items()):
+        raise ValueError('Application submodules do not match the formal source gitlinks: ' + json.dumps(gitlinks))
+
+
+def check_source(root, formal):
+    for args, expected, label in [
+            (['rev-parse', 'HEAD'], formal['source'], 'source'),
+            (['rev-parse', 'HEAD^{tree}'], formal['sourceTree'], 'tree'),
+            (['rev-parse', 'HEAD:apps/aerove'], formal['standardSubtree'], 'Standard subtree'),
+            (['diff', '--name-only', 'HEAD'], '', 'tracked content'),
+            (['status', '--porcelain', '--untracked-files=all', '--ignore-submodules=none'], '', 'untracked or unstaged entries')]:
+        actual = git_value(root, *args)
+        if actual != expected:
+            raise ValueError(f'Application checkout differs from the formal source ({label}): {actual}')
+    check_submodules(root)
+
+
+def validate_formal_run(run, run_id):
+    if (run.get('id') != run_id or run.get('path') != FORMAL_WORKFLOW or run.get('name') != FORMAL_WORKFLOW_NAME
+            or run.get('event') not in ('workflow_dispatch', 'push') or run.get('status') != 'completed'
+            or run.get('conclusion') != 'success' or not positive(run.get('run_number'))
+            or not positive(run.get('run_attempt')) or type(run.get('head_sha')) is not str
+            or not SHA1.fullmatch(run['head_sha']) or type(run.get('head_branch')) is not str or not run['head_branch']
+            or (run.get('repository') or {}).get('full_name') != REPOSITORY
+            or (run.get('head_repository') or {}).get('full_name') != REPOSITORY):
+        raise ValueError('Formal run is not a completed successful Aerove Android build of this repository')
+    return dict(runId=run_id, runNumber=run['run_number'], runAttempt=run['run_attempt'], event=run['event'],
+                headBranch=run['head_branch'], source=run['head_sha'])
+
+
+def requested_run(text):
+    if not isinstance(text, str) or not RUN_ID.fullmatch(text):
+        raise ValueError('formal_run_id must be a positive decimal workflow run id')
+    if text == os.environ.get('GITHUB_RUN_ID'):
+        raise ValueError('The QA run cannot be its own formal build')
+    return int(text)
+
+
+def formal_run(args):
+    run_id = requested_run(args.run_id)
+    if os.environ.get('GITHUB_REPOSITORY') != REPOSITORY:
+        raise ValueError('QA runs only in the original repository')
+    directory = args.directory / 'formal'
+    directory.mkdir(parents=True, exist_ok=False)
+    identity = validate_formal_run(api_reader(directory)('formal-run', f'runs/{run_id}'), run_id)
+    save(directory / 'FORMAL_RUN.json', identity)
+    output(dict(source=identity['source'], run_number=identity['runNumber']))
+    return 0
+
+
+def run_target(title, current_formal, source, resolve):
+    if not title.startswith(RUN_TITLE) or not RUN_ID.fullmatch(title[len(RUN_TITLE):]):
+        return True
+    formal = int(title[len(RUN_TITLE):])
+    return formal == current_formal or resolve(formal) in (None, source)
+
+
+def registration_run(run):
+    head = run.get('head_sha')
+    return (run.get('event') == 'push' and type(head) is str and SHA1.fullmatch(head) is not None
+            and run.get('display_title') == REGISTRATION_TITLE + head)
+
+
+def build_guard_decision(current, runs, histories, registrations, artifacts, source):
+    blockers = []
+    registered = []
+    if artifacts:
+        blockers.append(dict(reason='QA_ARTIFACT_EXISTS_REUSE_ONLY', artifacts=artifacts))
     for run in runs:
-        if run['id'] != current['id'] and run['run_number'] <= current['run_number']:
-            histories[run['id']] = dict(
-                jobs=read(f'jobs-{run["id"]}', f'runs/{run["id"]}/jobs?filter=all&per_page=100', 'jobs'))
-            if run['id'] == PROVEN_NONEXECUTING_RUN['id']:
-                histories[run['id']]['artifacts'] = read(
-                    f'artifacts-{run["id"]}', f'runs/{run["id"]}/artifacts?per_page=100', 'artifacts')
-    result = build_guard_decision(current, runs, histories, artifacts)
+        if run['id'] in registrations:
+            jobs = registrations[run['id']]
+            if any(job.get('conclusion') != 'skipped' for job in jobs):
+                blockers.append(dict(run=run['id'], reason='REGISTRATION_RUN_EXECUTED_A_JOB_REVIEW_REQUIRED'))
+            registered.append(dict(run=run['id'], title=run['display_title'], event=run['event'],
+                                   status=run.get('status'), conclusion=run.get('conclusion'), jobs=len(jobs)))
+            continue
+        if run['id'] not in histories:
+            continue
+        if run['status'] != 'completed':
+            blockers.append(dict(run=run['id'], reason='PRIOR_RUN_ACTIVE_REVIEW_REQUIRED'))
+        build_jobs = [job for job in histories[run['id']] if job['name'] == 'build_internal_qa']
+        if not build_jobs:
+            blockers.append(dict(run=run['id'], reason='BUILD_HISTORY_MISSING_REVIEW_REQUIRED'))
+        for job in build_jobs:
+            compile_steps = [step for step in job.get('steps', []) if step['name'] == COMPILE_STEP]
+            if not compile_steps and job.get('conclusion') != 'skipped':
+                blockers.append(dict(run=run['id'], reason='COMPILE_HISTORY_MISSING_REVIEW_REQUIRED'))
+            for step in compile_steps:
+                if step.get('conclusion') != 'skipped' and step.get('status') != 'queued':
+                    blockers.append(dict(run=run['id'], reason='COMPILE_STEP_ENTERED_REVIEW_OR_REUSE_ONLY',
+                                         status=step.get('status'), conclusion=step.get('conclusion')))
+    return dict(diagnosticOnly=True, accepted=False, allowed=not blockers, blockers=blockers, registrationRuns=registered,
+                sameTargetRuns=sorted(histories), currentRunExcluded=current['id'], applicationSource=source,
+                targetKey=target_key(source), targetPlatform='android-x64')
+
+
+def guard(args):
+    if os.environ.get('GITHUB_RUN_ATTEMPT') != '1':
+        raise ValueError('Do not rerun the build job; retry a proven precompile failure only through a new dispatch')
+    if os.environ.get('GITHUB_REF') != HARNESS_REF:
+        raise ValueError('The internal QA build runs only from the locked harness branch')
+    run_id = requested_run(args.run_id)
+    source = args.source
+    if type(source) is not str or not SHA1.fullmatch(source):
+        raise ValueError('Guard requires the resolved formal source')
+    directory = args.directory / 'once-guard'
+    directory.mkdir(parents=True, exist_ok=False)
+    read = api_reader(directory)
+    current = read('current-run', 'runs/' + os.environ['GITHUB_RUN_ID'])
+    if (current.get('path') != WORKFLOW_PATH or current.get('event') != 'workflow_dispatch'
+            or current.get('head_branch') != HARNESS_BRANCH
+            or current.get('display_title') != RUN_TITLE + str(run_id) or current.get('run_attempt') != 1):
+        raise ValueError('Current QA run identity does not match its dispatched formal run')
+    runs = read('workflow-runs', f'workflows/{current["workflow_id"]}/runs?per_page=100', 'workflow_runs')
+    artifacts = read('qa-artifacts', 'artifacts?name=' + artifact_name(source) + '&per_page=100', 'artifacts')
+    sources = {run_id: source}
+    def resolve(formal):
+        if formal not in sources:
+            try:
+                sources[formal] = read(f'formal-{formal}', f'runs/{formal}').get('head_sha')
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError):
+                sources[formal] = None
+        return sources[formal]
+    def jobs_of(run):
+        return read(f'jobs-{run["id"]}', f'runs/{run["id"]}/jobs?filter=all&per_page=100', 'jobs')
+    histories = {}
+    registrations = {}
+    for run in runs:
+        if run['id'] == current['id'] or run['run_number'] > current['run_number']:
+            continue
+        if registration_run(run):
+            registrations[run['id']] = jobs_of(run)
+        elif run_target(run.get('display_title') or '', run_id, source, resolve):
+            histories[run['id']] = jobs_of(run)
+    result = build_guard_decision(current, runs, histories, registrations, artifacts, source)
     try:
         save(directory / 'ONCE-GUARD.json', result)
     except BaseException as error:
@@ -267,32 +495,123 @@ def guard(args):
     return 0
 
 
+def check_pins(text, pins, label):
+    lines = text.splitlines()
+    missing = [pin for pin in pins if pin not in lines]
+    if missing or sum(line.lstrip().startswith('flutter build apk ') for line in lines) != 1:
+        raise ValueError(f'{label} toolchain or build command differs from the pinned QA contract: {missing}')
+
+
+def read_reuse(path):
+    values = {}
+    for line in path.read_text(encoding='utf-8').splitlines():
+        key, separator, value = line.partition('=')
+        if not separator or key in values:
+            raise ValueError('Invalid artifact selection output')
+        values[key] = value
+    if set(values) != {'run_id', 'run_number', 'artifact_id', 'generated_artifact_id'} or not all(
+            RUN_ID.fullmatch(value) for value in values.values()):
+        raise ValueError('The promotion finder did not select one complete original build')
+    return {key: int(value) for key, value in values.items()}
+
+
+def formal_artifacts(args):
+    run = load(args.directory / 'formal/FORMAL_RUN.json')
+    selected = read_reuse(args.directory / 'formal/reuse.env')
+    if selected['run_id'] != run['runId'] or selected['run_number'] != run['runNumber']:
+        raise ValueError('Main promotion would reuse a different original build than the dispatched formal run')
+    output(selected)
+    return 0
+
+
+def formal(args):
+    tools = pinned_build_tools(args.build_tools)
+    run = load(args.directory / 'formal/FORMAL_RUN.json')
+    selected = read_reuse(args.directory / 'formal/reuse.env')
+    if selected['run_id'] != run['runId'] or selected['run_number'] != run['runNumber']:
+        raise ValueError('Main promotion would reuse a different original build than the dispatched formal run')
+    root = args.source_root
+    tree = git_value(root, 'rev-parse', 'HEAD^{tree}')
+    subtree = git_value(root, 'rev-parse', 'HEAD:apps/aerove')
+    check_source(root, dict(source=run['source'], sourceTree=tree, standardSubtree=subtree))
+    generated = args.directory / 'formal/generated'
+    if ((generated / 'xclash-generated.patch').stat().st_size != 0
+            or (generated / 'xclash-verified-tree.txt').read_text(encoding='ascii').strip() != tree):
+        raise ValueError('Formal build did not verify this exact committed tree')
+    if git_value(root, 'rev-parse', 'HEAD:.github/actions/flutter') != git_value(args.harness, 'rev-parse', 'HEAD:.github/actions/flutter'):
+        raise ValueError('Harness Flutter installer differs from the formal source installer')
+    check_pins((root / FORMAL_WORKFLOW).read_text(encoding='utf-8'), FORMAL_PINS, 'Formal')
+    check_pins((args.harness / WORKFLOW_PATH).read_text(encoding='utf-8'), HARNESS_PINS, 'Harness')
+    apk_directory = args.directory / 'formal/apk'
+    info = load(apk_directory / 'BUILD_INFO.json')
+    name, separator, code = info.get('version', '').rpartition('+')
+    sys.path.insert(0, str(root / 'apps/aerove/tool'))
+    import aerove_version
+    plan = aerove_version.resolve_product_version(
+        (root / 'apps/aerove/pubspec.yaml').read_text(encoding='utf-8'), run['runNumber'])
+    if (not separator or info.get('source') != run['source'] or info.get('workflow') != run_url(run['runId'])
+            or info.get('applicationId') != PACKAGE or info.get('appEnv') != plan['app_env']
+            or name != plan['name'] or code != str(plan['number'])):
+        raise ValueError('Formal BUILD_INFO does not derive from this formal run number and source')
+    apk = apk_directory / FORMAL_APK
+    badging = signer_and_badging(apk, tools, args.directory / 'formal/readback')
+    if not badging_matches(badging, name, code):
+        raise ValueError('Formal ARM APK badging differs from its BUILD_INFO')
+    native_libraries(apk, 'arm64-v8a', badging)
+    identity = validate_formal(dict(
+        schema=1, role='immutableFormalArmBuild', repository=REPOSITORY, workflowPath=FORMAL_WORKFLOW,
+        runId=run['runId'], runNumber=run['runNumber'], runAttempt=run['runAttempt'], event=run['event'],
+        headBranch=run['headBranch'], workflow=run_url(run['runId']), source=run['source'], sourceTree=tree,
+        standardSubtree=subtree, artifactId=selected['artifact_id'],
+        generatedArtifactId=selected['generated_artifact_id'], buildInfoSha256=sha(apk_directory / 'BUILD_INFO.json'),
+        apkSha256=sha(apk), apkBytes=apk.stat().st_size, version=info['version'], versionName=name, versionCode=code,
+        appEnv=info['appEnv'], package=PACKAGE, abi='arm64-v8a', signerSha256=SIGNER))
+    save(args.directory / 'FORMAL_BUILD.json', identity)
+    save(args.directory / 'QA_BUILD_PENDING.json', dict(
+        diagnosticOnly=True, accepted=False, mainPromotionAllowed=False, source=identity['source'],
+        buildRun=os.environ['GITHUB_RUN_ID'], buildRunNumber=os.environ['GITHUB_RUN_NUMBER'],
+        versionName=name, versionCode=code, formalRun=identity['runId'], formalRunNumber=identity['runNumber'],
+        targetPlatform='android-x64', actualReadback=False))
+    output(dict(version_name=name, version_code=code, app_env=identity['appEnv']))
+    return 0
+
+
+def source_check(args):
+    check_source(args.source_root, validate_formal(load(args.directory / 'FORMAL_BUILD.json')))
+    return 0
+
+
 def verify(args):
+    tools = pinned_build_tools(args.build_tools)
     apk = args.directory / APK_NAME
     if apk.is_symlink() or not apk.is_file():
         raise ValueError('Missing plain QA APK')
     readback = (args.evidence if args.evidence else args.directory) / 'apk-readback'
-    actual, libraries = inspect_apk(apk, args.build_tools, readback)
     if args.create:
-        check_source(args.source_root)
-        info = base_identity(os.environ['GITHUB_RUN_ID'], os.environ['GITHUB_RUN_ATTEMPT'], os.environ['GITHUB_SHA'],
-                             os.environ['GITHUB_RUN_NUMBER'])
+        formal_identity = validate_formal(load(args.directory / 'FORMAL_BUILD.json'))
+        check_source(args.source_root, formal_identity)
+        actual, libraries = inspect_apk(apk, tools, readback, formal_identity)
+        info = base_identity(formal_identity, os.environ['GITHUB_RUN_ID'], os.environ['GITHUB_RUN_ATTEMPT'],
+                             os.environ['GITHUB_SHA'], os.environ['GITHUB_RUN_NUMBER'], os.environ['GITHUB_REF'])
         info.update(actual=actual, nativeLibraries=libraries,
                     apk=dict(file=APK_NAME, sha256=sha(apk), bytes=apk.stat().st_size),
-                    toolchain=dict(flutter='3.47.6', go='1.27.1', rust='1.99.0', ndk='28.2.13676358', java='17'),
-                    applicationSourceCheck=dict(source=SOURCE, tree=TREE, standardSubtree=STANDARD_TREE,
-                                                trackedContentUnchanged=True),
+                    toolchain=TOOLCHAIN, readbackBuildTools=tools.name,
+                    applicationSourceCheck=dict(source=formal_identity['source'], tree=formal_identity['sourceTree'],
+                                                standardSubtree=formal_identity['standardSubtree'],
+                                                trackedContentUnchanged=True, checkoutClean=True,
+                                                submodulesAtGitlinks=True),
                     toolchainEvidence={p.name: sha(p) for p in (args.directory / 'toolchain').iterdir() if p.is_file()},
                     buildLogSha256=sha(args.directory / 'build.log'),
                     command='flutter build apk --no-pub --release --target-platform android-x64 '
-                            f'--build-name {VERSION_NAME} --build-number {VERSION_CODE} --dart-define=APP_ENV=pre')
+                            f'--build-name {formal_identity["versionName"]} --build-number {formal_identity["versionCode"]} '
+                            f'--dart-define=APP_ENV={formal_identity["appEnv"]}')
         validate_identity(info)
         save(args.directory / 'QA_BUILD_INFO.json', info)
         names = [APK_NAME, 'QA_BUILD_INFO.json']
         (args.directory / 'QA_SHA256SUMS').write_text(''.join(f'{sha(args.directory / n)}  {n}\n' for n in names))
     else:
-        info = json.loads((args.directory / 'QA_BUILD_INFO.json').read_text())
-        validate_identity(info)
+        info = validate_identity(load(args.directory / 'QA_BUILD_INFO.json'))
+        actual, libraries = inspect_apk(apk, tools, readback, info['formalArmBuild'])
         if info['apk'] != dict(file=APK_NAME, sha256=sha(apk), bytes=apk.stat().st_size) or info['actual'] != actual or info['nativeLibraries'] != libraries:
             raise ValueError('Saved QA receipt differs from actual APK readback')
         expected = ''.join(f'{sha(args.directory / n)}  {n}\n' for n in [APK_NAME, 'QA_BUILD_INFO.json'])
@@ -345,6 +664,7 @@ def run_probe(args):
     try:
         try:
             receipt['qaBuild'] = verify(args)
+            version_code = receipt['qaBuild']['actual']['versionCode']
             props = {p: command('prop-' + p, adb + ['shell', 'getprop', p]).decode().strip()
                      for p in ['sys.boot_completed', 'ro.build.version.sdk', 'ro.product.cpu.abilist64',
                                'ro.build.fingerprint', 'ro.dalvik.vm.native.bridge']}
@@ -358,7 +678,7 @@ def run_probe(args):
             command('install-x86-qa', adb + ['install', '--abi', 'x86_64', args.directory / APK_NAME], timeout=90)
             installed = True
             package = command('installed-package', adb + ['shell', 'dumpsys', 'package', PACKAGE]).decode()
-            if 'primaryCpuAbi=x86_64' not in package or f'versionCode={VERSION_CODE}' not in package:
+            if 'primaryCpuAbi=x86_64' not in package or f'versionCode={version_code}' not in package:
                 raise ValueError('Installed QA ABI/version mismatch')
             launch = command('launch', adb + ['shell', 'am', 'start', '-W', '-n', PACKAGE + '/com.follow.clash.MainActivity'], timeout=35).decode()
             if 'Status: ok' not in launch:
@@ -435,9 +755,11 @@ def capture(args):
     from emulator_qa79 import emulator_environment, renderer_evidence, crash_inventory, preserve_owned_crash, finish_emulator
     if sys.platform != 'linux' or os.environ.get('GITHUB_ACTIONS') != 'true':
         raise ValueError('Only a fresh isolated GitHub Linux/KVM runner is allowed')
+    qa = validate_identity(load(args.directory / 'QA_BUILD_INFO.json'))
     args.evidence.mkdir(parents=True, exist_ok=False)
     receipt = dict(owner='standard_x86_qa.py', ownerPid=os.getpid(), diagnosticOnly=True, accepted=False,
-                   source=SOURCE, sourceTree=TREE, harnessSource=os.environ['GITHUB_SHA'],
+                   source=qa['source'], sourceTree=qa['sourceTree'], formalRun=qa['formalArmBuild']['runId'],
+                   harnessSource=os.environ['GITHUB_SHA'],
                    harnessRun=os.environ['GITHUB_RUN_ID'], qaArtifactId=os.environ['QA_ARTIFACT_ID'],
                    primaryResult=0, interruptSignals=[], children=[],
                    cleanupErrors=[], gpuBackend='swangle', status='STARTED')
@@ -517,8 +839,11 @@ def capture(args):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('phase', choices=['guard', 'verify', 'probe', 'capture'])
+    parser.add_argument('phase', choices=['formal-run', 'guard', 'formal-artifacts', 'formal', 'source', 'verify',
+                                          'probe', 'capture'])
     parser.add_argument('--directory', type=Path, required=True)
+    parser.add_argument('--run-id')
+    parser.add_argument('--source')
     parser.add_argument('--build-tools', type=Path)
     parser.add_argument('--create', action='store_true')
     parser.add_argument('--source-root', type=Path)
@@ -527,11 +852,25 @@ def main():
     args = parser.parse_args()
     if os.environ.get('GITHUB_ACTIONS') != 'true':
         raise ValueError('QA commands require an isolated GitHub Actions runner')
+    if args.phase == 'formal-run':
+        return formal_run(args)
     if args.phase == 'guard':
         return guard(args)
+    if args.phase == 'formal-artifacts':
+        return formal_artifacts(args)
+    if args.phase == 'source':
+        if args.source_root is None:
+            parser.error('source requires --source-root')
+        return source_check(args)
     if args.build_tools is None:
-        parser.error('--build-tools is required outside the read-only once guard')
+        parser.error('--build-tools is required for APK readback phases')
+    if args.phase == 'formal':
+        if args.source_root is None or args.harness is None:
+            parser.error('formal requires --source-root and --harness')
+        return formal(args)
     if args.phase == 'verify':
+        if args.create and args.source_root is None:
+            parser.error('verify --create requires --source-root')
         verify(args)
         return 0
     return run_probe(args) if args.phase == 'probe' else capture(args)
