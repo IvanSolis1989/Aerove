@@ -27,7 +27,7 @@ class ResourceRuntimeApplyTest {
     }
     @Test fun readyRuntimeUsesCurrentSavedDynamicGenerationAndAuthenticatedRouteReadback() = runBlocking<Unit> {
         MockWebServer().use { server ->
-            server.enqueue(MockResponse().setBody("""{"core-epoch":2,"picks-version":1,"picks":{}}""")); server.start()
+            server.enqueue(MockResponse().setBody("""{"core-epoch":"2","picks-version":"1","picks":{}}""")); server.start()
             val before = endpoint()
             val actual = endpoint(server.port, generation = "dynamic-script-generation")
             val snapshots = MutableStateFlow(VpnSnapshot(VpnPhase.Running, before))

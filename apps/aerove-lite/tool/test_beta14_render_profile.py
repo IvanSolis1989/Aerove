@@ -230,4 +230,77 @@ class RuntimeWorkflowTests(unittest.TestCase):
     def test_actual_existing107_inventory_native26_and_three_assets(self):
         root=Path(os.environ['AEROVE_PROFILE_RUNTIME107']);info=original.validate_original_files(root,'beta14');self.assertEqual(14,info['version_code']);proof=runtime.verify_contract(root);self.assertEqual(26,len(proof['jniExports']));self.assertEqual(3,len(proof['bundledMeowScript']['assets']))
 
+class MarkerDiagnosticTests(unittest.TestCase):
+    def capture(self):
+        c=p.Capture.__new__(p.Capture);c.stop=threading.Event();c.lock=threading.RLock();c.cleanup=False;c.cleanup_deadline=None;c.sample_deadline=None;c.adb='fixture-adb';c.serial='emulator-5554';c.receipt={'commands':[],'errors':[]};c.save=mock.Mock(return_value=True)
+        return c
+    def done(self,stdout=b'WAIT\n',stderr=b'',rc=0):return subprocess.CompletedProcess([],rc,stdout,stderr)
+    def failure(self,c,side_effect=None,done=None):
+        with mock.patch.object(p.subprocess,'run',side_effect=side_effect,return_value=done or self.done(rc=1)):
+            with self.assertRaisesRegex(ValueError,'Fresh first-Clear marker query unavailable'):c.marker()
+        return c.receipt['markerQueryFailures'][-1]
+    def test_only_exact_marker_enums_can_advance(self):
+        for token in ('WAIT','START','END'):
+            with self.subTest(token=token):
+                c=self.capture()
+                with mock.patch.object(p.subprocess,'run',return_value=self.done((token+'\n').encode())) as cmd:self.assertEqual(token,c.marker())
+                self.assertNotIn('markerQueryFailures',c.receipt);self.assertEqual([],c.receipt['commands']);cmd.assert_called_once();c.save.assert_not_called()
+    def test_nonzero_query_has_bounded_stderr_and_stdout_hash_no_plaintext(self):
+        c=self.capture();stdout=b'private-output-not-a-marker';stderr=b'bad '+b'\xff'*4000
+        row=self.failure(c,done=self.done(stdout,stderr,rc=1));self.assertEqual(1,row['returnCode']);self.assertFalse(row['timedOut']);self.assertEqual(len(stdout),row['stdoutBytes']);self.assertEqual(p.hashlib.sha256(stdout).hexdigest(),row['stdoutSha256']);self.assertIsNone(row['markerToken']);self.assertLessEqual(len(row['stderr'].encode()),2048);self.assertTrue(row['stderrTruncated']);self.assertNotIn('private-output',json.dumps(c.receipt));self.assertNotIn('command',row);self.assertEqual('firstClearMarkerQuery',row['logicalCommand']);self.assertEqual('preflight',row['phase']);self.assertIsNone(row['remainingBudgetSeconds']);c.save.assert_not_called()
+    def test_unexpected_success_stdout_is_failure_not_wait(self):
+        c=self.capture();row=self.failure(c,done=self.done(b'WAIT\nSTART\n'));self.assertEqual(0,row['returnCode']);self.assertIsNone(row['markerToken']);self.assertEqual(11,row['stdoutBytes'])
+    def test_timeout_preserves_partial_metadata_and_elapsed_arm_budget(self):
+        c=self.capture();c.receipt['armHostMonoNanos']=100000000000
+        with mock.patch.object(p.time,'monotonic_ns',side_effect=[100000000000,103000000000]):row=self.failure(c,side_effect=subprocess.TimeoutExpired('marker',3,output=b'private partial',stderr=b'timeout detail'))
+        self.assertIsNone(row['returnCode']);self.assertTrue(row['timedOut']);self.assertEqual('TimeoutExpired',row['errorType']);self.assertEqual(3,row['elapsedSeconds']);self.assertEqual(3,row['timeoutSeconds']);self.assertEqual(90,row['remainingBudgetSeconds']);self.assertEqual('arm',row['phase']);self.assertEqual(15,row['stdoutBytes']);self.assertEqual('timeout detail',row['stderr']);c.save.assert_not_called()
+    def test_oserror_records_errno_and_unknown_output_without_private_message(self):
+        c=self.capture();row=self.failure(c,side_effect=OSError(5,'private launch error'));self.assertEqual(5,row['osErrorNumber']);self.assertFalse(row['timedOut']);self.assertIsNone(row['returnCode']);self.assertIsNone(row['stdoutBytes']);self.assertIsNone(row['stderr']);self.assertNotIn('private launch error',json.dumps(c.receipt))
+    def test_expired_sample_budget_cannot_launch_or_fake_zero_return(self):
+        c=self.capture();c.sample_deadline=p.time.monotonic()-1
+        with mock.patch.object(p.subprocess,'run') as cmd:
+            with self.assertRaisesRegex(ValueError,'Fresh first-Clear'):c.marker()
+        cmd.assert_not_called();c.save.assert_not_called();row=c.receipt['markerQueryFailures'][0];self.assertEqual('sample',row['phase']);self.assertEqual(0,row['timeoutSeconds']);self.assertEqual(0,row['remainingBudgetSeconds']);self.assertIsNone(row['returnCode']);self.assertTrue(row['collectionDeadlineExpired']);self.assertIsNone(row['stdoutSha256'])
+    def test_short_remaining_sample_budget_clips_actual_query_timeout(self):
+        c=self.capture();c.sample_deadline=101
+        with mock.patch.object(p.time,'monotonic',return_value=100),mock.patch.object(p.time,'monotonic_ns',side_effect=[100000000000,100500000000]),mock.patch.object(p.subprocess,'run',return_value=self.done(rc=1)) as cmd:
+            with self.assertRaises(ValueError):c.marker()
+        self.assertEqual(1,cmd.call_args.kwargs['timeout']);row=c.receipt['markerQueryFailures'][0];self.assertEqual(1,row['remainingBudgetSeconds']);self.assertEqual(.5,row['elapsedSeconds'])
+    def test_storage_false_or_throw_cannot_replace_original_marker_error(self):
+        for behavior in (False,OSError('ENOSPC')):
+            c=self.capture();c.save=mock.Mock(side_effect=behavior) if isinstance(behavior,Exception) else mock.Mock(return_value=behavior)
+            with self.subTest(behavior=str(behavior)):row=self.failure(c);self.assertEqual(1,row['returnCode'])
+    def test_failure_rows_capped_at_eight_no_auto_query_retry(self):
+        c=self.capture()
+        with mock.patch.object(p.subprocess,'run',return_value=self.done(rc=1)) as cmd:
+            for _ in range(10):
+                with self.assertRaises(ValueError):c.marker()
+        self.assertEqual(10,cmd.call_count);self.assertEqual(8,len(c.receipt['markerQueryFailures']));self.assertEqual(10,c.receipt['markerQueryFailureCount']);self.assertEqual(2,c.receipt['markerFailureRowsDropped'])
+    def test_cancellation_never_turns_into_marker_query_failure(self):
+        c=self.capture();c.stop.set()
+        with mock.patch.object(p.subprocess,'run') as cmd:
+            with self.assertRaises(p.Cancelled):c.marker()
+        cmd.assert_not_called();self.assertNotIn('markerQueryFailures',c.receipt);c.save.assert_not_called()
+    def test_marker_never_enters_slow_or_failing_storage_before_stop(self):
+        c=self.capture();entered=[]
+        def storage():entered.append('unexpected-write');raise OSError('slow/failing storage must not be entered')
+        c.save=storage;self.failure(c);self.assertEqual([],entered);self.assertEqual(1,c.receipt['markerQueryFailureCount'])
+    def test_existing_sample_finally_stops_owned_profilers_before_receipt_write(self):
+        with tempfile.TemporaryDirectory() as d:
+            c=self.capture();c.output=Path(d);c.qemu=Path(d);c.check_owner=mock.Mock();c.host=mock.Mock();c.host.poll.return_value=0;c.guest=None;c.host_log=None;c.guest_log=None;c.host_perf=False;c.receipt['nativeSampling']='UNAVAILABLE_HOST_ONLY_UNKNOWN_NATIVE';c.receipt['markerQueryFailures']=[];order=[]
+            def shell(cmd,**kw):
+                if cmd.startswith('if [ -f '):return dict(logicalCommand='firstClearMarkerQuery',returnCode=None,timedOut=True,timeoutSeconds=0,remainingBudgetSeconds=0,stderr=None,stdoutBytes=None,stdoutSha256=None,markerToken=None)
+                return dict(returnCode=1,stdout='',stderr='')
+            c.shell=shell;c.stop_guest=lambda:order.append('stop-guest');c.export_guest=lambda:None
+            def save():
+                self.assertEqual(['stop-host','stop-guest'],order);order.append('save')
+                return p.Capture.save(c)
+            c.save=save
+            with mock.patch.object(p,'stop_owned',side_effect=lambda *args:order.append('stop-host')):c.sample()
+            self.assertEqual(['stop-host','stop-guest','save'],order);saved=json.loads((Path(d)/'PROFILE-RECEIPT.json').read_text());self.assertEqual(1,len(saved['markerQueryFailures']));self.assertTrue(any(x['message']=='Fresh first-Clear marker query unavailable' for x in saved['errors']))
+    def test_existing_nonmarker_command_output_contract_is_unchanged(self):
+        c=self.capture()
+        with mock.patch.object(p.subprocess,'run',return_value=self.done(b'raw allowed for existing nonmarker',b'existing stderr')):row=c.command(['existing-command'])
+        self.assertEqual('raw allowed for existing nonmarker',row['stdout']);self.assertEqual('existing stderr',row['stderr']);self.assertEqual(['existing-command'],row['command']);self.assertFalse(row['truncated']);self.assertEqual([row],c.receipt['commands']);self.assertNotIn('stdoutSha256',row)
+
 if __name__=='__main__':unittest.main(verbosity=2)

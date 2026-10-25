@@ -6,6 +6,7 @@ import 'package:collection/collection.dart';
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/common/xclash_script_url.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
@@ -452,6 +453,7 @@ class Database extends _$Database {
         proxyDialersDao.putAllWithBatch(b, proxyDialers);
       });
       await _purgeOrphans();
+      await scriptsDao.migrateLegacyDefaultUrls();
     });
   }
 

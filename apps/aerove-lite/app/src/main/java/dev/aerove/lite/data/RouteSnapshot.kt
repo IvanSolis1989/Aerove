@@ -25,7 +25,13 @@ internal fun decodeRouteSnapshot(source: String): RouteSnapshot {
         ) throw IOException("Core returned an invalid route pick")
         group to selected
     }
-    val epoch = fields.unsigned("core-epoch")
+    // Native RouteSnapshot serializes u64 identities as decimal strings; never coerce via Double/Long.
+    fun counter(key: String): ULong {
+        val text = fields[key] as? String
+        return text?.toULongOrNull()?.takeIf { it.toString() == text }
+            ?: throw IOException("Core returned an invalid $key counter")
+    }
+    val epoch = counter("core-epoch")
     if (epoch == 0uL) throw IOException("Core returned an invalid route epoch")
-    return RouteSnapshot(epoch, fields.unsigned("picks-version"), picks)
+    return RouteSnapshot(epoch, counter("picks-version"), picks)
 }

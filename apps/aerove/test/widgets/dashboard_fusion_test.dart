@@ -1,3 +1,5 @@
+import 'dart:ui' show SemanticsAction, SemanticsFlag;
+
 import 'package:fl_clash/common/service_probe.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/l10n/l10n.dart';
@@ -305,7 +307,7 @@ void main() {
     (328.0, 1.0, '2001:db8:1234:5678:90ab:cdef:1234:5678', 7890),
     (328.0, 2.0, '2001:db8:1234:5678:90ab:cdef:1234:5678', 7890),
   ]) {
-    testWidgets('network footer baseline and touch targets at $width/$scale', (
+    testWidgets('network full-width centered address and touch targets at $width/$scale', (
       tester,
     ) async {
       final container = await pump(
@@ -332,28 +334,33 @@ void main() {
         tester.element(find.byType(FusedNetworkControls)),
       );
       final address = ip.contains(':') ? '[$ip]:$port' : '$ip:$port';
-      double baseline(Finder text) {
-        final box = tester.renderObject<RenderBox>(text);
-        return tester.getTopLeft(text).dy +
-            box.getDryBaseline(box.constraints, TextBaseline.alphabetic)!;
-      }
-
-      expect(
-        baseline(find.text(l10n.enabled)),
-        closeTo(baseline(find.text(address)), 0.01),
-      );
+      final semantics = tester.ensureSemantics();
+      addTearDown(semantics.dispose);
+      expect(find.text(l10n.enabled), findsNothing);
+      expect(find.text(l10n.disabled), findsNothing);
+      expect(find.byTooltip(l10n.copy), findsNothing);
+      final addressNode = find.byKey(const ValueKey('dashboard-lan-address'));
+      final copyNode = find.byKey(const ValueKey('dashboard-lan-copy'));
+      final copy = tester.getRect(copyNode);
+      final addressRect = tester.getRect(addressNode);
+      expect(addressRect.center.dx, closeTo(copy.center.dx, 0.01));
+      expect(addressRect.center.dy, closeTo(copy.center.dy, 0.01));
+      expect(copy.height, greaterThanOrEqualTo(48));
+      expect(copy.width, tester.getSize(find.byType(DashboardCard)).width - 40);
+      final semanticsData = tester.getSemantics(copyNode).getSemanticsData();
+      expect(semanticsData.label, l10n.copy);
+      expect(semanticsData.value, address);
+      expect(semanticsData.hasAction(SemanticsAction.tap), isTrue);
       if (width == 360 && scale == 1) {
-        expect(tester.getSize(find.byType(DashboardCard)).height, 222);
+        expect(tester.getSize(find.byType(DashboardCard)).height, 220);
       }
       final switches = find.byType(DashboardSwitch);
       final vpn = tester.getRect(switches.first);
       final lan = tester.getRect(switches.last);
-      final copy = tester.getRect(find.byTooltip(l10n.copy));
       expect(vpn.top, lan.top);
       expect(vpn.overlaps(lan), isFalse);
       expect(copy.overlaps(vpn), isFalse);
       expect(copy.overlaps(lan), isFalse);
-      expect(copy.size, const Size.square(DashboardIconButton.size));
       await tester.tap(switches.first);
       await tester.pump();
       expect(container.read(vpnSettingProvider).enable, isFalse);
@@ -364,6 +371,62 @@ void main() {
       expect(container.read(patchClashConfigProvider).allowLan, isFalse);
       expect(tester.takeException(), isNull);
     });
+  }
+
+  for (final material in LiquidGlassMode.values) {
+    for (final aurora in [false, true]) {
+      for (final brightness in Brightness.values) {
+        testWidgets('mode pills remain full and centered $material/$aurora/$brightness', (tester) async {
+          await pump(
+            tester,
+            Theme(
+              data: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue, brightness: brightness)),
+              child: AuroraAppearance(
+                enabled: aurora,
+                child: LiquidGlassScope(
+                  enabled: material != LiquidGlassMode.none,
+                  quality: material == LiquidGlassMode.ultra ? LiquidGlassQuality.ultra : LiquidGlassQuality.standard,
+                  child: LiquidGlassHost(
+                    enabled: material != LiquidGlassMode.none,
+                    child: const FusedNetworkControls(members: {DashboardWidget.outboundMode}),
+                  ),
+                ),
+              ),
+            ),
+          );
+          final buttons = find.byType(DashboardConnectedButton);
+          expect(buttons, findsNWidgets(3));
+          final rectangles = <Rect>[];
+          for (var i = 0; i < Mode.values.length; i++) {
+            final mode = Mode.values[i];
+            final button = buttons.at(i);
+            final rect = tester.getRect(button);
+            final icon = tester.getRect(find.byKey(ValueKey('dashboard-mode-${mode.name}-icon')));
+            final text = tester.getRect(find.byKey(ValueKey('dashboard-mode-${mode.name}-label')));
+            final group = icon.expandToInclude(text);
+            expect(icon.center.dx, closeTo(rect.center.dx, 0.01));
+            expect(text.center.dx, closeTo(rect.center.dx, 0.01));
+            expect(group.center.dy, closeTo(rect.center.dy, 0.01));
+            expect(rect.height, greaterThanOrEqualTo(48));
+            final fill = tester.widget<Container>(find.descendant(
+              of: button,
+              matching: find.byWidgetPredicate((w) => w is Container && w.decoration is ShapeDecoration),
+            ).first);
+            final shape = (fill.decoration! as ShapeDecoration).shape;
+            expect(shape, AppShape.full);
+            final path = shape.getOuterPath(Offset.zero & rect.size);
+            expect(path.contains(Offset(rect.width / 2, rect.height / 2)), isTrue);
+            expect(path.contains(const Offset(0.1, 0.1)), isFalse);
+            rectangles.add(rect);
+          }
+          for (final rect in rectangles) {
+            expect(rect.width, closeTo(rectangles.first.width, 0.01));
+            expect(rect.height, rectangles.first.height);
+          }
+          expect(tester.takeException(), isNull);
+        });
+      }
+    }
   }
 
   testWidgets('LAN copy preserves complete IPv4 IPv6 and disabled addresses', (
@@ -391,6 +454,8 @@ void main() {
     final l10n = AppLocalizations.of(
       tester.element(find.byType(FusedNetworkControls)),
     );
+    final semantics = tester.ensureSemantics();
+    addTearDown(semantics.dispose);
     for (final (ip, enabled, port, expected) in <(String?, bool, int, String?)>[
       ('192.0.2.8', true, 7890, '192.0.2.8:7890'),
       ('192.0.2.8', false, 7890, '192.0.2.8'),
@@ -414,17 +479,20 @@ void main() {
           .read(patchClashConfigProvider.notifier)
           .update((s) => s.copyWith(allowLan: enabled, mixedPort: port));
       await tester.pump();
-      final button = find.byWidgetPredicate(
-        (w) => w is DashboardIconButton && w.tooltip == l10n.copy,
-      );
-      final action = tester.widget<DashboardIconButton>(button).onPressed;
+      final button = find.byKey(const ValueKey('dashboard-lan-copy'));
+      final action = tester.widget<Semantics>(button).properties.onTap;
+      final data = tester.getSemantics(button).getSemanticsData();
+      expect(data.label, l10n.copy);
+      expect(data.hasFlag(SemanticsFlag.isEnabled), expected != null);
+      expect(data.hasAction(SemanticsAction.tap), expected != null);
       if (expected == null) {
         expect(action, isNull);
       } else {
         expect(find.text(expected), findsOneWidget);
         copied = null;
         final vpnBefore = container.read(vpnSettingProvider).enable;
-        await tester.tap(find.byTooltip(l10n.copy));
+        final target = tester.getRect(button);
+        await tester.tapAt(Offset(target.left + 2, target.center.dy));
         await tester.pump();
         expect(copied, expected);
         expect(container.read(vpnSettingProvider).enable, vpnBefore);

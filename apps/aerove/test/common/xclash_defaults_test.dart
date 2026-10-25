@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -75,6 +76,33 @@ void main() {
   }
 
   File scriptFile() => File('${home.path}/scripts/123.js');
+
+  Future<void> writeMigrationJournal({bool complete = true}) async {
+    await File('${home.path}/xclash-defaults.json').writeAsString(
+      jsonEncode({
+        'scriptId': 123,
+        'freshAndroid': false,
+        'legacyDns': false,
+        'complete': complete,
+      }),
+    );
+  }
+
+  XClashDefaults metadataMigration() => XClashDefaults(
+    storage: storage,
+    database: db,
+    directory: home,
+    loadScript: () async => throw StateError('Must not reload script content'),
+    createId: () => throw StateError('Must not allocate a script'),
+    saveConfig: (_) async => throw StateError('Must not rewrite preferences'),
+  );
+
+  Future<List<Map<String, Object?>>> scriptRows() async => [
+    for (final row in await db.customSelect(
+      'SELECT * FROM scripts ORDER BY id',
+    ).get())
+      Map<String, Object?>.from(row.data),
+  ];
 
   test(
     'open uses the owned preference store and public support path',
@@ -190,6 +218,382 @@ void main() {
       expect(await scriptFile().readAsString(), 'user-updated-script');
     },
   );
+
+  test('bundled script metadata pins the exact current upstream bytes', () async {
+    final source = jsonDecode(
+      await File(
+        'assets/data/smart-config-kit-flclash.source.json',
+      ).readAsString(),
+    ) as Map<String, dynamic>;
+    expect(source['revision'], '70d4ddbe0b6d52af7acbd503ff1bf556a3bddacd');
+    expect(source['version'], 'v6.0.20-flclash.23');
+    expect(source['sourcePath'], 'Mihomo内核系/FlClash/FlClash(mihomo).js');
+    expect(source['updateUrl'], xclashDefaultScriptUrl);
+    expect(source['sha256'], xclashDefaultScriptSha256);
+    expect(sha256.convert(bundledScript).toString(), source['sha256']);
+    expect(bundledScript.length, 149441);
+    expect(
+      sha1.convert([
+        ...utf8.encode('blob ${bundledScript.length}\u0000'),
+        ...bundledScript,
+      ]).toString(),
+      source['gitBlob'],
+    );
+    expect(source['gitBlob'], '65beff76d400f51d21686b04b09ccc40df6e620e');
+    expect(utf8.decode(bundledScript), contains('// 版本：${source['version']} '));
+  });
+
+  test('default script URL uses the current Mihomo location', () {
+    expect(
+      xclashDefaultScriptUrl,
+      'https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/'
+      'refs/heads/main/Mihomo%E5%86%85%E6%A0%B8%E7%B3%BB/FlClash/'
+      'FlClash%28mihomo%29.js',
+    );
+  });
+
+  test('completed journals migrate only exact legacy URL metadata', () async {
+    const root =
+        'https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/';
+    final legacyUrls = [
+      for (final branch in ['main', 'refs/heads/main'])
+        for (final name in [
+          'FlClash(mihomo).js',
+          'FlClash%28mihomo%29.js',
+          'FlClash%28mihomo).js',
+          'FlClash(mihomo%29.js',
+        ])
+          '$root$branch/FlClash/$name',
+    ];
+    final unchangedUrls = <String?>[
+      xclashDefaultScriptUrl,
+      xclashDefaultScriptUrl.replaceAll('%28', '(').replaceAll('%29', ')'),
+      '${legacyUrls.first}?version=custom',
+      '${legacyUrls.first}#custom',
+      legacyUrls.first.replaceFirst('IvanSolis1989', 'OtherOwner'),
+      legacyUrls.first.replaceFirst('Smart-Config-Kit', 'OtherRepository'),
+      legacyUrls.first.replaceFirst('https:', 'http:'),
+      legacyUrls.first.replaceFirst('FlClash/FlClash', 'FlClash/custom'),
+      '${legacyUrls.first}/',
+      '${legacyUrls.first} ',
+      'https://example.test/custom.js',
+      '',
+      null,
+    ];
+    final urls = [...legacyUrls, ...unchangedUrls];
+    final contents = <int, List<int>>{};
+    for (var i = 0; i < urls.length; i++) {
+      final id = 123 + i;
+      await db.scriptsDao.putAll([
+        Script(
+          id: id,
+          label: 'User label $id',
+          lastUpdateTime: DateTime.utc(2024, 2, 3, 4, 5, 6),
+          url: urls[i],
+          order: i + 7,
+        ).toCompanion(),
+      ]);
+      final bytes = utf8.encode('// Keep customized content for $id\n');
+      final file = File('${home.path}/scripts/$id.js');
+      await file.parent.create(recursive: true);
+      await file.writeAsBytes(bytes);
+      contents[id] = bytes;
+    }
+    final profile = Profile.normal(label: 'Keep binding').copyWith(
+      extendType: ExtendType.script,
+      scriptId: 123,
+    );
+    await db.profilesDao.putAll([profile.toCompanion()]);
+    final user = initial.copyWith(currentProfileId: profile.id);
+    await storage.setString(configKey, jsonEncode(user));
+    final preferencesBefore = {
+      for (final key in storage.getKeys()) key: storage.get(key),
+    };
+    await writeMigrationJournal();
+    final journal = File('${home.path}/xclash-defaults.json');
+    final journalBefore = await journal.readAsBytes();
+    final before = await scriptRows();
+    final expected = [
+      for (final row in before)
+        {
+          ...row,
+          if (legacyUrls.contains(row['url'])) 'url': xclashDefaultScriptUrl,
+        },
+    ];
+    final defaults = metadataMigration();
+    await defaults.prepare(isAndroid: true);
+    expect(await defaults.initialize(user), same(user));
+    expect(await scriptRows(), expected);
+    expect(await db.profilesDao.query().get(), [profile]);
+    expect(await journal.readAsBytes(), journalBefore);
+    expect({
+      for (final key in storage.getKeys()) key: storage.get(key),
+    }, preferencesBefore);
+    for (final entry in contents.entries) {
+      expect(
+        await File('${home.path}/scripts/${entry.key}.js').readAsBytes(),
+        entry.value,
+      );
+    }
+    expect(await defaults.initialize(user), same(user));
+    expect(await scriptRows(), expected);
+    final restarted = metadataMigration();
+    await restarted.prepare(isAndroid: true);
+    expect(await restarted.initialize(user), same(user));
+    expect(await scriptRows(), expected);
+  });
+
+  test('migration does not recreate a deleted default script', () async {
+    await writeMigrationJournal();
+    final defaults = metadataMigration();
+    await defaults.prepare(isAndroid: true);
+    expect(await defaults.initialize(initial), same(initial));
+    expect(await db.scriptsDao.query().get(), isEmpty);
+    expect(await scriptFile().exists(), false);
+    final profile = Profile.normal();
+    expect(await defaults.associateNewProfile(profile), profile);
+  });
+
+  test('URL migration preserves a concurrently committed custom edit', () async {
+    final previous = Script(
+      id: 123,
+      label: 'Existing',
+      lastUpdateTime: DateTime.utc(2024),
+      url:
+          'https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/'
+          'main/FlClash/FlClash%28mihomo%29.js',
+      order: 9,
+    );
+    await db.scriptsDao.putAll([previous.toCompanion()]);
+    await writeMigrationJournal();
+    final defaults = metadataMigration();
+    await defaults.prepare(isAndroid: true);
+    final edited = previous.copyWith(
+      label: 'Concurrent user label',
+      url: 'https://example.test/concurrent.js',
+    );
+    final editedInTransaction = Completer<void>();
+    final allowCommit = Completer<void>();
+    addTearDown(() {
+      if (!allowCommit.isCompleted) allowCommit.complete();
+    });
+    final editing = db.transaction(() async {
+      await db.scriptsDao.putAll([edited.toCompanion()]);
+      editedInTransaction.complete();
+      await allowCommit.future;
+    });
+    await editedInTransaction.future;
+    final migrating = defaults.initialize(initial);
+    allowCommit.complete();
+    await editing;
+    await migrating;
+    expect(await db.scriptsDao.query().get(), [edited]);
+  });
+
+  test('failed URL migration rolls back all rows and retries', () async {
+    const legacy =
+        'https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/'
+        'main/FlClash/FlClash%28mihomo%29.js';
+    for (final id in [123, 124]) {
+      await db.scriptsDao.putAll([
+        Script(
+          id: id,
+          label: 'Keep $id',
+          lastUpdateTime: DateTime.utc(2024),
+          url: legacy,
+          order: id,
+        ).toCompanion(),
+      ]);
+    }
+    await writeMigrationJournal();
+    final journal = File('${home.path}/xclash-defaults.json');
+    final journalBefore = await journal.readAsBytes();
+    final before = await scriptRows();
+    await db.customStatement(
+      'CREATE TRIGGER reject_url_migration BEFORE UPDATE OF url ON scripts '
+      'WHEN OLD.id = 124 BEGIN '
+      "SELECT RAISE(ABORT, 'blocked URL migration'); END",
+    );
+    final defaults = metadataMigration();
+    await defaults.prepare(isAndroid: true);
+    await expectLater(
+      defaults.initialize(initial),
+      throwsA(predicate((error) => '$error'.contains('blocked URL migration'))),
+    );
+    expect(await scriptRows(), before);
+    expect(await journal.readAsBytes(), journalBefore);
+    await db.customStatement('DROP TRIGGER reject_url_migration');
+    expect(await defaults.initialize(initial), same(initial));
+    expect(
+      (await db.scriptsDao.query().get()).map((script) => script.url),
+      everyElement(xclashDefaultScriptUrl),
+    );
+  });
+
+  test('unfinished installation preserves an existing script body', () async {
+    final previous = Script(
+      id: 123,
+      label: 'Keep user label',
+      lastUpdateTime: DateTime.utc(2024),
+      url:
+          'https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/'
+          'main/FlClash/FlClash(mihomo).js',
+      order: 11,
+    );
+    await db.scriptsDao.putAll([previous.toCompanion()]);
+    await scriptFile().parent.create(recursive: true);
+    final body = utf8.encode('// User body; do not seed a new bundled version\n');
+    await scriptFile().writeAsBytes(body);
+    await writeMigrationJournal(complete: false);
+    final defaults = metadataMigration();
+    await defaults.prepare(isAndroid: true);
+    expect(await defaults.initialize(initial), same(initial));
+    expect(
+      await db.scriptsDao.query().get(),
+      [previous.copyWith(url: xclashDefaultScriptUrl)],
+    );
+    expect(await scriptFile().readAsBytes(), body);
+  });
+
+  test('failed migration cannot complete an unfinished installation', () async {
+    const legacy =
+        'https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/'
+        'main/FlClash/FlClash(mihomo).js';
+    final previous = Script(
+      id: 124,
+      label: 'Keep existing',
+      lastUpdateTime: DateTime.utc(2024),
+      url: legacy,
+    );
+    await db.scriptsDao.putAll([previous.toCompanion()]);
+    await writeMigrationJournal(complete: false);
+    await db.customStatement(
+      'CREATE TRIGGER reject_url_migration BEFORE UPDATE OF url ON scripts '
+      'WHEN OLD.id = 124 BEGIN '
+      "SELECT RAISE(ABORT, 'blocked URL migration'); END",
+    );
+    final defaults = service();
+    await defaults.prepare(isAndroid: true);
+    await expectLater(
+      defaults.initialize(initial),
+      throwsA(predicate((error) => '$error'.contains('blocked URL migration'))),
+    );
+    expect(await db.scriptsDao.query().get(), [previous]);
+    expect(defaults.recommendedScriptId, isNull);
+    final journal = jsonDecode(
+      await File('${home.path}/xclash-defaults.json').readAsString(),
+    ) as Map<String, dynamic>;
+    expect(journal['complete'], false);
+    await db.customStatement('DROP TRIGGER reject_url_migration');
+    await defaults.initialize(initial);
+    expect(defaults.recommendedScriptId, 123);
+    expect(
+      (await db.scriptsDao.query().get()).map((script) => script.url),
+      everyElement(xclashDefaultScriptUrl),
+    );
+  });
+
+  for (final isOverride in [false, true]) {
+    test('hot restore repairs legacy metadata, override=$isOverride', () async {
+      await install();
+      final restored = Script(
+        id: 124,
+        label: 'Restored custom body',
+        lastUpdateTime: DateTime.utc(2024, 3, 4),
+        url:
+            'https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/'
+            'refs/heads/main/FlClash/FlClash(mihomo).js',
+        order: 8,
+      );
+      final custom = restored.copyWith(
+        id: 125,
+        label: 'Custom source',
+        url: 'https://example.test/keep.js',
+      );
+      final profile = Profile.normal(label: 'Restored binding').copyWith(
+        extendType: ExtendType.script,
+        scriptId: restored.id,
+      );
+      final selected = initial.copyWith(currentProfileId: profile.id);
+      await storage.setString(configKey, jsonEncode(selected));
+      final preferencesBefore = storage.getString(configKey);
+      final journal = File('${home.path}/xclash-defaults.json');
+      final journalBefore = await journal.readAsBytes();
+      final file = File('${home.path}/scripts/${restored.id}.js');
+      final content = utf8.encode('// Restored user content, never replace\n');
+      await file.writeAsBytes(content);
+      await db.restore(
+        [profile],
+        [restored, custom],
+        const [],
+        const [],
+        const [],
+        isOverride: isOverride,
+      );
+      expect(
+        await db.scriptsDao.get(restored.id).getSingle(),
+        restored.copyWith(url: xclashDefaultScriptUrl),
+      );
+      expect(await db.scriptsDao.get(custom.id).getSingle(), custom);
+      expect(await db.profilesDao.query().get(), [profile]);
+      expect(storage.getString(configKey), preferencesBefore);
+      expect(await journal.readAsBytes(), journalBefore);
+      expect(await file.readAsBytes(), content);
+      if (isOverride) {
+        expect(await db.scriptsDao.get(123).getSingleOrNull(), isNull);
+      }
+    });
+
+    test('hot restore URL failure rolls back, override=$isOverride', () async {
+      await install();
+      final before = await scriptRows();
+      final restored = Script(
+        id: 124,
+        label: 'Restored',
+        lastUpdateTime: DateTime.utc(2024),
+        url:
+            'https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/'
+            'main/FlClash/FlClash%28mihomo%29.js',
+      );
+      final profile = Profile.normal(label: 'Restored binding').copyWith(
+        extendType: ExtendType.script,
+        scriptId: restored.id,
+      );
+      final bodyBefore = await scriptFile().readAsBytes();
+      await db.customStatement(
+        'CREATE TRIGGER reject_url_migration BEFORE UPDATE OF url ON scripts '
+        'WHEN OLD.id = 124 BEGIN '
+        "SELECT RAISE(ABORT, 'blocked URL migration'); END",
+      );
+      await expectLater(
+        db.restore(
+          [profile],
+          [restored],
+          const [],
+          const [],
+          const [],
+          isOverride: isOverride,
+        ),
+        throwsA(predicate((error) => '$error'.contains('blocked URL migration'))),
+      );
+      expect(await scriptRows(), before);
+      expect(await db.profilesDao.query().get(), isEmpty);
+      expect(await scriptFile().readAsBytes(), bodyBefore);
+      await db.customStatement('DROP TRIGGER reject_url_migration');
+      await db.restore(
+        [profile],
+        [restored],
+        const [],
+        const [],
+        const [],
+        isOverride: isOverride,
+      );
+      expect(
+        await db.scriptsDao.get(restored.id).getSingle(),
+        restored.copyWith(url: xclashDefaultScriptUrl),
+      );
+    });
+  }
 
   test(
     'desktop gets the offline script without Android network changes',

@@ -18,6 +18,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -26,6 +28,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -73,7 +76,9 @@ class DiagnosticsPanelsUiTest {
                         Box(Modifier.fillMaxSize().background(LocalLiteVisuals.current.page).layerBackdrop(backdrop))
                         CompositionLocalProvider(LocalLiteBackdrop provides backdrop, LocalLiteInkBackdrop provides backdrop,
                             LocalLiteOverlay provides overlay, LocalDiagnosticsForeground provides foreground.value) {
-                            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
+                            // Match LiteApp: a modal owns interaction and hides the covered page from semantics.
+                            Column(Modifier.fillMaxSize().then(if (overlay.content != null) Modifier.clearAndSetSemantics {} else Modifier)
+                                .verticalScroll(rememberScrollState()).padding(16.dp)) {
                                 if (scrollMemory) Spacer(Modifier.fillMaxWidth().height(1800.dp))
                                 if (service) ServiceStatusPanel(state.value, actions)
                                 else if (showMemory.value) MemoryInfoPanel(state.value, actions)
@@ -178,7 +183,8 @@ class DiagnosticsPanelsUiTest {
         compose.onNodeWithTag("diagnostics-services").performClick()
         compose.onNodeWithText("Claude").assertIsDisplayed()
         compose.onNodeWithText("SG · route fixture").assertIsDisplayed()
-        compose.onNodeWithContentDescription(context.getString(R.string.diag_service_check_all)).performClick()
+        compose.onAllNodesWithContentDescription(context.getString(R.string.diag_service_check_all)).assertCountEquals(1)
+        compose.onNodeWithContentDescription(context.getString(R.string.diag_service_check_all)).assertIsDisplayed().performClick()
         assertEquals(listOf("refreshServiceChecks"), actions.events)
     }
 

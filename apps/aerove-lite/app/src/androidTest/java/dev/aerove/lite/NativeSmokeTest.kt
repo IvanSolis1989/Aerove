@@ -2,11 +2,21 @@ package dev.aerove.lite
 
 import android.content.Intent
 import android.net.VpnService
+import android.os.SystemClock
+import android.system.ErrnoException
+import android.system.Os
+import android.system.OsConstants
+import android.system.StructPollfd
+import java.io.ByteArrayOutputStream
+import java.io.FileDescriptor
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import androidx.core.content.ContextCompat
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.aerove.lite.core.MeowNativeCore
+import dev.aerove.lite.networksettings.NetworkSettings
 import dev.aerove.lite.vpn.LiteVpnService
 import dev.aerove.lite.vpn.MeowTunnelBackend
 import java.io.File
@@ -112,7 +122,7 @@ class NativeSmokeTest {
             val profile = graph.profiles.importText("TUN test", "mode: direct\nrules:\n  - MATCH,DIRECT\n")
             profileId = profile.id
             graph.profiles.select(profile.id)
-            graph.settings.save(LiteSettings(mode = ProxyMode.Direct), vpnAuthorized = true)
+            graph.settings.save(LiteSettings(mode = ProxyMode.Direct, network = NetworkSettings(bypassPrivateRoute = false)), vpnAuthorized = true)
             event("launch-activity")
             activity = ActivityScenario.launch(MainActivity::class.java)
             event("start-first")
@@ -123,10 +133,13 @@ class NativeSmokeTest {
             event("running-first")
             val token = UUID.randomUUID().toString()
             event("cross-uid-traffic")
-            val command = "printf 'GET /$token HTTP/1.0\\r\\nHost: fixture\\r\\n\\r\\n' | toybox nc -w 10 10.0.2.2 $port"
-            val response = instrumentation.uiAutomation.executeShellCommand(command).use { descriptor ->
-                android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { it.readText() }
-            }
+            val response = probeFixture(port, token)
+            runCatching {
+                val captureDirectory = File(checkNotNull(context.getExternalFilesDir(null)), "captures")
+                check(captureDirectory.isDirectory || captureDirectory.mkdirs()) { "Cannot create TUN fixture diagnostics directory" }
+                File(captureDirectory, "native-smoke-tcp-${android.os.SystemClock.elapsedRealtimeNanos()}.txt").writeText(
+                    "testPid=$testPid process=${android.app.Application.getProcessName()} bypassPrivateRoute=false responseBytes=${response.toByteArray(Charsets.UTF_8).size}\n$response")
+            }.onFailure { android.util.Log.w("NativeSmoke", "TUN fixture diagnostic could not be saved", it) }
             assertTrue("An independent shell UID must receive its unique fixture response through the TUN", response.contains("AEROVE_LITE_FIXTURE:$token"))
             event("private-controller")
             val endpoint = checkNotNull(graph.vpn.value.endpoint)
@@ -209,6 +222,74 @@ class NativeSmokeTest {
             }
         }
         failures.rethrow()
+        }
+    }
+
+    private suspend fun probeFixture(port: Int, token: String): String = withContext(Dispatchers.IO) {
+        val deadline = SystemClock.elapsedRealtime() + 10_000
+        val pipes = instrumentation.uiAutomation.executeShellCommandRw(
+            "toybox timeout -s KILL 10 toybox nc -w 10 10.0.2.2 $port")
+        var failure: Throwable? = null
+        try {
+            for (pipe in pipes) {
+                val fd = pipe.fileDescriptor
+                Os.fcntlInt(fd, OsConstants.F_SETFL, Os.fcntlInt(fd, OsConstants.F_GETFL, 0) or OsConstants.O_NONBLOCK)
+            }
+            val request = "GET /$token HTTP/1.0\r\nHost: fixture\r\n\r\n".toByteArray(Charsets.US_ASCII)
+            var offset = 0
+            while (offset < request.size) {
+                awaitPipe(pipes[1].fileDescriptor, OsConstants.POLLOUT, deadline)
+                try { offset += Os.write(pipes[1].fileDescriptor, request, offset, request.size - offset) }
+                catch (error: ErrnoException) {
+                    if (error.errno != OsConstants.EAGAIN && error.errno != OsConstants.EINTR) throw error
+                }
+            }
+            pipes[1].close()
+            val output = ByteArrayOutputStream()
+            val buffer = ByteArray(8192)
+            while (true) {
+                awaitPipe(pipes[0].fileDescriptor, OsConstants.POLLIN, deadline)
+                val count = try { Os.read(pipes[0].fileDescriptor, buffer, 0, buffer.size) }
+                catch (error: ErrnoException) {
+                    if (error.errno != OsConstants.EAGAIN && error.errno != OsConstants.EINTR) throw error
+                    continue
+                }
+                if (count == 0) break
+                check(output.size() + count <= 64 * 1024) { "Controlled TUN fixture response exceeds 64 KiB" }
+                output.write(buffer, 0, count)
+            }
+            output.toByteArray().toString(Charsets.UTF_8)
+        } catch (error: Throwable) {
+            failure = error
+            throw error
+        } finally {
+            var closeFailure: Throwable? = null
+            for (pipe in pipes) {
+                try { pipe.close() } catch (error: Throwable) {
+                    val original = failure ?: closeFailure
+                    if (original == null) closeFailure = error else original.addSuppressed(error)
+                }
+            }
+            closeFailure?.let { throw it }
+        }
+    }
+
+    private suspend fun awaitPipe(fd: FileDescriptor, events: Int, deadline: Long) {
+        val poll = StructPollfd().apply { this.fd = fd; this.events = events.toShort() }
+        while (true) {
+            currentCoroutineContext().ensureActive()
+            val remaining = deadline - SystemClock.elapsedRealtime()
+            check(remaining > 0) { "Controlled TUN fixture request/response exceeded 10000ms" }
+            val ready = try { Os.poll(arrayOf(poll), minOf(100L, remaining).toInt()) }
+            catch (error: ErrnoException) {
+                if (error.errno != OsConstants.EINTR) throw error
+                continue
+            }
+            currentCoroutineContext().ensureActive()
+            check(SystemClock.elapsedRealtime() < deadline) { "Controlled TUN fixture request/response exceeded 10000ms" }
+            if (ready == 0) continue
+            check(poll.revents.toInt() and OsConstants.POLLNVAL == 0) { "Controlled TUN fixture pipe is invalid" }
+            if (poll.revents.toInt() and (events or OsConstants.POLLHUP or OsConstants.POLLERR) != 0) return
         }
     }
 

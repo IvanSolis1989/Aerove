@@ -2,11 +2,12 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
-import 'package:drift/drift.dart' show Variable;
+import 'package:drift/drift.dart' show DoNothing, Variable;
 import 'package:fl_clash/common/constant.dart';
 import 'package:fl_clash/common/path.dart';
 import 'package:fl_clash/common/preferences.dart';
 import 'package:fl_clash/common/snowflake.dart';
+import 'package:fl_clash/common/xclash_script_url.dart';
 import 'package:fl_clash/database/database.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
@@ -14,12 +15,11 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 
-const xclashDefaultScriptUrl =
-    'https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/main/'
-    'FlClash/FlClash%28mihomo%29.js';
+export 'xclash_script_url.dart' show xclashDefaultScriptUrl;
+
 const xclashDefaultScriptAsset = 'assets/data/smart-config-kit-flclash.js';
 const xclashDefaultScriptSha256 =
-    'd962c99703ca0c4fb0649541b81a7d24d94f2737ad3d83937a85a42e07f4ccc5';
+    '0f8c6d3c6385e2a22b6435a5ade37c6236f376531749bf446642ce481977f6ec';
 
 XClashDefaults? xclashDefaults;
 
@@ -142,20 +142,14 @@ class XClashDefaults {
       throw StateError('XClash defaults must be prepared before migration');
     }
     if (record['complete'] == true) {
+      await _database.transaction(_database.scriptsDao.migrateLegacyDefaultUrls);
       return config;
     }
     final id = record['scriptId'] as int;
-    final bytes = utf8.encode(
-      utf8.decode(await _loadScript()).replaceAll('\r\n', '\n'),
-    );
-    if (sha256.convert(bytes).toString() != xclashDefaultScriptSha256) {
-      throw StateError(
-        'Bundled Smart-Config-Kit script integrity check failed',
-      );
-    }
     final existing = await _database.scriptsDao.query().get();
+    final installed = existing.get(id);
     final script =
-        existing.get(id) ??
+        installed ??
         Script(
           id: id,
           label: existing.uniqueLabel(
@@ -182,9 +176,25 @@ class XClashDefaults {
             },
           )
         : config;
-    await _writeAtomic(_scriptFile(id), bytes);
+    if (installed == null && !await _scriptFile(id).exists()) {
+      final bytes = utf8.encode(
+        utf8.decode(await _loadScript()).replaceAll('\r\n', '\n'),
+      );
+      if (sha256.convert(bytes).toString() != xclashDefaultScriptSha256) {
+        throw StateError(
+          'Bundled Smart-Config-Kit script integrity check failed',
+        );
+      }
+      await _writeAtomic(_scriptFile(id), bytes);
+    }
     await _database.transaction(() async {
-      await _database.scriptsDao.putAll([script.toCompanion()]);
+      if (installed == null) {
+        await _database.into(_database.scripts).insert(
+          script.toCompanion(),
+          onConflict: DoNothing(target: [_database.scripts.id]),
+        );
+      }
+      await _database.scriptsDao.migrateLegacyDefaultUrls();
       if ((applyPreset || replaceLegacyDns) && !await _saveConfig(next)) {
         throw StateError('Failed to save XClash initial network preferences');
       }

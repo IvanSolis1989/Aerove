@@ -10,7 +10,7 @@ import org.junit.Test
 
 class RouteSnapshotTest {
     @Test fun decodesExactUnsignedCountersAndEscapedPicks() {
-        val route = decodeRouteSnapshot("""{"core-epoch":18446744073709551615,"picks-version":9007199254740993,"picks":{"group\\name":"node\"name","中文":"DIRECT"}}""")
+        val route = decodeRouteSnapshot("""{"core-epoch":"18446744073709551615","picks-version":"9007199254740993","picks":{"group\\name":"node\"name","中文":"DIRECT"}}""")
         assertEquals(ULong.MAX_VALUE, route.coreEpoch)
         assertEquals(9007199254740993uL, route.picksVersion)
         assertEquals(mapOf("group\\name" to "node\"name", "中文" to "DIRECT"), route.picks)
@@ -22,14 +22,22 @@ class RouteSnapshotTest {
             valid("{\"g\":\"a\",\"g\":\"b\"}"), valid("{\"\":\"a\"}"),
             valid("{\"g\":\"\"}"), valid("{\"g\":1}"), valid("{\"g\":{\"x\":{}}}"),
             valid("{\"g\":\"a\\n\"}"), valid("[]"), valid("null"),
-            valid("{}").replace("\"core-epoch\":1", "\"core-epoch\":0"),
-            valid("{}").replace("\"core-epoch\":1", "\"core-epoch\":1.0"),
-            valid("{}").replace("\"core-epoch\":1", "\"core-epoch\":18446744073709551616"),
-            valid("{}").replace("\"picks-version\":0", "\"picks-version\":-1"),
+            """{"core-epoch":1,"picks-version":0,"picks":{}}""",
             valid("{}").dropLast(1), valid("{}") + " garbage",
-            valid("{}").replace("\"picks-version\":0", "\"picks-version\":0,\"picks-version\":1"),
+            valid("{}").replace("\"picks-version\":\"0\"", "\"picks-version\":\"0\",\"picks-version\":\"1\""),
             valid("{}").replace("\"picks\":{}", "\"picks\":{},\"extra\":0"),
         )) assertThrows(source, IOException::class.java) { decodeRouteSnapshot(source) }
+        for (field in listOf("core-epoch", "picks-version")) {
+            val original = if (field == "core-epoch") "1" else "0"
+            for (literal in listOf("1", "1.0", "1e0", "-1", "true", "false", "null", "[]", "{}",
+                "\"\"", "\"01\"", "\"+1\"", "\"-1\"", "\"1.0\"", "\"1e0\"", "\" 1\"", "\"1 \"", "\"18446744073709551616\"")) {
+                val source = valid("{}").replace("\"$field\":\"$original\"", "\"$field\":$literal")
+                assertThrows(source, IOException::class.java) { decodeRouteSnapshot(source) }
+            }
+        }
+        assertThrows(IOException::class.java) {
+            decodeRouteSnapshot(valid("{}").replace("\"core-epoch\":\"1\"", "\"core-epoch\":\"0\""))
+        }
     }
 
     @Test fun requestsAuthenticatedRealRouteAndPropagatesConflict() = runBlocking {
@@ -50,5 +58,5 @@ class RouteSnapshotTest {
         }
     }
 
-    private fun valid(picks: String) = """{"core-epoch":1,"picks-version":0,"picks":$picks}"""
+    private fun valid(picks: String) = """{"core-epoch":"1","picks-version":"0","picks":$picks}"""
 }

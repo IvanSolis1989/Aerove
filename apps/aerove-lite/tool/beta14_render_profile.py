@@ -80,24 +80,48 @@ class Capture:
         try:raw=(json.dumps(self.receipt,indent=2)+'\n').encode()
         except (TypeError,ValueError,RuntimeError) as error:self.error('receipt-encode',error);return False
         return self.put('PROFILE-RECEIPT.json',raw,1024*1024)
-    def command(self,args,timeout=3,record=True):
+    def command(self,args,timeout=3,record=True,metadata_only=False):
         if self.stop.is_set() and not self.cleanup:raise Cancelled()
         row=dict(command=args,hostMonoStart=time.monotonic_ns(),returnCode=None)
         timeout=self.remaining(timeout)
+        if metadata_only:
+            row.pop('command')
+            phase='cleanup' if self.cleanup_deadline is not None else 'sample' if self.sample_deadline is not None else 'arm' if self.receipt.get('armHostMonoNanos') is not None else 'preflight'
+            deadline=self.cleanup_deadline if phase=='cleanup' else self.sample_deadline if phase=='sample' else self.receipt['armHostMonoNanos']/1e9+90 if phase=='arm' else None
+            row.update(logicalCommand='firstClearMarkerQuery',phase=phase,timeoutSeconds=timeout,
+              remainingBudgetSeconds=None if deadline is None else max(0,deadline-row['hostMonoStart']/1e9),timedOut=False)
+        def outputs(stdout,stderr):
+            if metadata_only:
+                token=stdout.decode(errors='replace').strip() if stdout is not None else None
+                preview=None if stderr is None else stderr[:2048].decode(errors='replace').encode()[:2048].decode(errors='ignore')
+                row.update(stdoutBytes=None if stdout is None else len(stdout),stdoutSha256=None if stdout is None else hashlib.sha256(stdout).hexdigest(),
+                  markerToken=token if token in ('WAIT','START','END') else None,
+                  stderr=preview,stderrBytes=None if stderr is None else len(stderr),stderrTruncated=stderr is not None and len(stderr)>2048)
+            else:row.update(stdout=stdout[:32768].decode(errors='replace'),stderr=stderr[:32768].decode(errors='replace'),truncated=len(stdout)>32768 or len(stderr)>32768)
         if timeout<=0:
-            row['collectionDeadlineExpired']=True;return row
+            row['collectionDeadlineExpired']=True
+            if metadata_only:
+                outputs(None,None);row['hostMonoEnd']=time.monotonic_ns()
+                row['elapsedSeconds']=(row['hostMonoEnd']-row['hostMonoStart'])/1e9
+            return row
         try:
             done=subprocess.run(args,capture_output=True,timeout=timeout)
-            row.update(returnCode=done.returncode,stdout=done.stdout[:32768].decode(errors='replace'),stderr=done.stderr[:32768].decode(errors='replace'),truncated=len(done.stdout)>32768 or len(done.stderr)>32768)
-        except (OSError,subprocess.TimeoutExpired) as error:row.update(errorType=type(error).__name__)
+            row['returnCode']=done.returncode;outputs(done.stdout,done.stderr)
+        except (OSError,subprocess.TimeoutExpired) as error:
+            row.update(errorType=type(error).__name__)
+            if metadata_only:
+                row['timedOut']=isinstance(error,subprocess.TimeoutExpired)
+                row['osErrorNumber']=error.errno if isinstance(error,OSError) else None
+                outputs(error.output if isinstance(error,subprocess.TimeoutExpired) else None,error.stderr if isinstance(error,subprocess.TimeoutExpired) else None)
         row['hostMonoEnd']=time.monotonic_ns()
+        if metadata_only:row['elapsedSeconds']=(row['hostMonoEnd']-row['hostMonoStart'])/1e9
         if record:
             with self.lock:
                 if len(self.receipt['commands'])<48:self.receipt['commands'].append(row)
         return row
-    def shell(self,cmd,root=False,record=True):
+    def shell(self,cmd,root=False,record=True,metadata_only=False):
         command=['su','0','sh','-c',shlex.quote(cmd)] if root else [cmd]
-        return self.command([self.adb,'-s',self.serial,'shell',*command],record=record)
+        return self.command([self.adb,'-s',self.serial,'shell',*command],record=record,metadata_only=metadata_only)
     def preflight(self):
         if not self.adb:raise ValueError('Existing adb missing; no install allowed')
         self.receipt['guestId']=self.shell('id')
@@ -143,9 +167,20 @@ class Capture:
         self.receipt['clockCaveat']='host monotonic and guest uptime probe bounds/0.01s quantization must be joined to same-run Perfetto; no direct clock equivalence'
         if self.marker()!='WAIT':raise ValueError('Fresh matrix markers required; never reuse earlier case files')
     def marker(self):
-        r=self.shell(f'if [ -f {END} ]; then echo END; elif [ -f {START} ]; then echo START; else echo WAIT; fi',record=False)
-        if r.get('returnCode')!=0 or r.get('stdout','').strip() not in ('WAIT','START','END'):raise ValueError('Fresh first-Clear marker query unavailable')
-        return r['stdout'].strip()
+        r=self.shell(f'if [ -f {END} ]; then echo END; elif [ -f {START} ]; then echo START; else echo WAIT; fi',record=False,metadata_only=True)
+        if r.get('returnCode')!=0 or r.get('markerToken') not in ('WAIT','START','END'):
+            # Preserve the failed query, never raw stdout or an expanded/private command.
+            # Storage failures cannot replace the original marker error or command result.
+            try:
+                with self.lock:
+                    rows=self.receipt.setdefault('markerQueryFailures',[])
+                    self.receipt['markerQueryFailureCount']=self.receipt.get('markerQueryFailureCount',0)+1
+                    if len(rows)<8:rows.append(r)
+                    else:self.receipt['markerFailureRowsDropped']=self.receipt.get('markerFailureRowsDropped',0)+1
+                # No IO here: stop profilers before the existing sample/run receipt saves.
+            except Exception:pass
+            raise ValueError('Fresh first-Clear marker query unavailable')
+        return r['markerToken']
     def guest_info(self):
         r=self.shell('pidof dev.aerove.lite');pids=r.get('stdout','').split()
         if len(pids)!=1 or not pids[0].isdigit():raise ValueError('Unique actual App PID not available')

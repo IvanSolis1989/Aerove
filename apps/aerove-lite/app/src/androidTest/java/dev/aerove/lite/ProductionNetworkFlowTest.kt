@@ -224,6 +224,16 @@ class ProductionNetworkFlowTest {
             launched.onActivity { controller = ViewModelProvider(it)[LiteController::class.java] }
             compose.waitUntil(15_000) { controller.state.value.selectedProfile == owned.id &&
                 controller.state.value.settings == seededSettings }
+            compose.onNodeWithText(context.getString(R.string.maintenance_agree)).assertIsDisplayed().performClick()
+            compose.onNodeWithText(context.getString(R.string.maintenance_confirm)).assertIsNotEnabled()
+            compose.onNodeWithContentDescription(context.getString(R.string.maintenance_disclaimer_restate_hint))
+                .performTextInput(context.getString(R.string.maintenance_disclaimer_no_service_statement))
+            compose.onNodeWithText(context.getString(R.string.maintenance_confirm)).performClick()
+            withTimeout(15_000) {
+                controller.state.first { it.settings.acceptedDisclaimerVersion >= dev.aerove.lite.maintenance.CURRENT_DISCLAIMER_VERSION && it.busy.isEmpty() }
+            }
+            assertEquals("Consent must persist through the production settings owner",
+                dev.aerove.lite.maintenance.CURRENT_DISCLAIMER_VERSION, graph.settings.read().acceptedDisclaimerVersion)
             // The existing Controller starts the single service owner; no direct native or fake host start.
             started = true
             launched.onActivity { controller.connect() }

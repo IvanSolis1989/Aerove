@@ -21,6 +21,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
@@ -287,7 +288,21 @@ class DashboardLayoutUiTest {
             ServiceCheckView("youtube", "restricted", checkedAt = 1)))), fontScale = 2f, maxWidth = 328.dp)
         listOf("netflix", "youtube").forEach { id ->
             val cell = compose.onNodeWithTag("dashboard-service-$id").fetchSemanticsNode().boundsInRoot
-            assertTrue(cell.height >= (36f + 32f) * density - 1f)
+            val lines = listOf("label", "status").map { part ->
+                val node = compose.onNodeWithTag("dashboard-service-$id-$part", useUnmergedTree = true)
+                val layouts = mutableListOf<TextLayoutResult>()
+                node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+                node.fetchSemanticsNode().boundsInRoot to layouts.single()
+            }
+            val measurement = "service=$id cell=$cell density=$density fontScale=$effectiveFontScale " +
+                "lines=${lines.map { (bounds, result) -> "bounds=$bounds size=${result.size} baseline=${result.firstBaseline} overflow=${result.didOverflowHeight}" }}"
+            assertTrue(measurement, cell.height >= (36f + 32f) * density - 1f)
+            assertTrue(measurement, cell.height >= 50f * effectiveFontScale.coerceAtLeast(1f) * density - 1f)
+            lines.forEach { (bounds, result) ->
+                assertTrue(measurement, !result.didOverflowHeight)
+                assertTrue(measurement, bounds.top >= cell.top - 1f && bounds.bottom <= cell.bottom + 1f)
+            }
+            assertTrue(measurement, lines[0].first.bottom <= lines[1].first.top + 1f)
         }
         listOf("Netflix", "YouTube").forEach { label ->
             val layouts = mutableListOf<TextLayoutResult>()
@@ -296,37 +311,45 @@ class DashboardLayoutUiTest {
         }
     }
 
-    private fun footerBaseline(tag: String): Float {
-        val node = compose.onNodeWithTag(tag)
-        val layouts = mutableListOf<TextLayoutResult>()
-        node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
-        return node.fetchSemanticsNode().boundsInRoot.top + layouts.single().firstBaseline
-    }
-
-    private fun assertFooterBaselineAndCopyTarget() {
-        assertEquals(footerBaseline("dashboard-vpn-footer"), footerBaseline("dashboard-lan-footer"), 0.5f)
-        val address = compose.onNodeWithTag("dashboard-lan-footer").fetchSemanticsNode().boundsInRoot
+    private fun assertCenteredAddressAndCopyTarget() {
+        compose.onNodeWithTag("dashboard-vpn-footer").assertDoesNotExist()
+        compose.onNodeWithText(context.getString(R.string.lite_enabled)).assertDoesNotExist()
+        compose.onNodeWithText(context.getString(R.string.lite_disabled)).assertDoesNotExist()
+        val address = statusRect("dashboard-lan-footer")
         val copy = compose.onNodeWithTag("dashboard-lan-copy").fetchSemanticsNode()
-        assertTrue(!address.overlaps(copy.boundsInRoot))
-        assertTrue(copy.touchBoundsInRoot.width >= 48f * density - 1f)
-        assertTrue(copy.touchBoundsInRoot.height >= 48f * density - 1f)
-        compose.onNodeWithTag("dashboard-lan-copy").performClick()
+        val vpn = statusRect("dashboard-vpn")
+        val lan = statusRect("dashboard-intranet")
+        val measured = "address=$address copy=${copy.boundsInRoot} vpn=$vpn lan=$lan density=$density"
+        assertEquals(measured, copy.boundsInRoot.center.x, address.center.x, 0.5f)
+        assertEquals(measured, copy.boundsInRoot.center.y, address.center.y, 0.5f)
+        assertEquals(measured, vpn.left, copy.boundsInRoot.left, 0.5f)
+        assertEquals(measured, lan.right, copy.boundsInRoot.right, 0.5f)
+        assertTrue(measured, !copy.boundsInRoot.overlaps(vpn) && !copy.boundsInRoot.overlaps(lan))
+        assertTrue(measured, copy.touchBoundsInRoot.width >= 48f * density - 1f)
+        assertTrue(measured, copy.touchBoundsInRoot.height >= 48f * density - 1f)
+        if (effectiveFontScale == 1f) assertEquals(measured, 220f * density, statusRect("dashboard-network-controls").height, 1f)
+        assertEquals(context.getString(R.string.lite_copy), copy.config[SemanticsActions.OnClick].label)
+        compose.onNodeWithTag("dashboard-lan-copy").performTouchInput { click(Offset(2f, height / 2f)) }
+        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        val expected = dashboardLanAddress(state.value.localAddress, state.value.settings.network.ports.mixed,
+            state.value.settings.network.allowLan)
+        compose.runOnIdle { assertEquals(expected, clipboard.primaryClip?.getItemAt(0)?.text?.toString()) }
         assertTrue(actions.events.isEmpty())
     }
 
     @Test
-    fun networkControlFootersShareActualTextBaseline() {
+    fun networkControlsCenterFullWidthCopyAddress() {
         launch(fixture(listOf(DashboardWidget.OutboundMode, DashboardWidget.VpnButton, DashboardWidget.IntranetIp)), maxWidth = 412.dp)
-        assertFooterBaselineAndCopyTarget()
+        assertCenteredAddressAndCopyTarget()
     }
 
     @Test
-    fun narrowLargeTextIpv6FooterRetainsBaselineAndIndependentCopy() {
+    fun narrowLargeTextIpv6AddressRetainsCenterAndIndependentCopy() {
         val initial = fixture(listOf(DashboardWidget.OutboundMode, DashboardWidget.VpnButton, DashboardWidget.IntranetIp))
         launch(initial.copy(localAddress = "2001:db8:1234:5678:9abc:def0:1234:5678",
             settings = initial.settings.copy(network = initial.settings.network.copy(allowLan = true))),
             fontScale = 2f, maxWidth = 328.dp)
-        assertFooterBaselineAndCopyTarget()
+        assertCenteredAddressAndCopyTarget()
         listOf(R.string.lite_mode_rule, R.string.lite_mode_global, R.string.lite_mode_direct).forEach { label ->
             val layouts = mutableListOf<TextLayoutResult>()
             compose.onNodeWithText(context.getString(label)).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
@@ -335,6 +358,94 @@ class DashboardLayoutUiTest {
         compose.onNodeWithContentDescription(context.getString(R.string.lite_vpn)).assertIsOn().performClick().assertIsOff()
         compose.onNodeWithContentDescription(context.getString(R.string.network_allow_lan)).assertIsOn().performClick().assertIsOff()
         assertTrue(!state.value.settings.network.vpnEnabled && !state.value.settings.network.allowLan)
+    }
+
+    @Test
+    fun lanWholeRowCopiesCompleteAddressesAndDisablesMissingValues() {
+        launch(fixture(listOf(DashboardWidget.VpnButton, DashboardWidget.IntranetIp)), maxWidth = 328.dp)
+        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        data class CopyCase(val ip: String?, val enabled: Boolean, val port: Int, val expected: String?)
+        for ((ip, enabled, port, expected) in listOf(
+            CopyCase("192.0.2.8", true, 7890, "192.0.2.8:7890"),
+            CopyCase("192.0.2.8", false, 7890, "192.0.2.8"),
+            CopyCase("2001:db8::8", true, 7890, "[2001:db8::8]:7890"),
+            CopyCase("[2001:db8::8]", true, 7890, "[2001:db8::8]:7890"),
+            CopyCase("2001:db8::8", false, 7890, "2001:db8::8"),
+            CopyCase(null, true, 7890, null), CopyCase(" ", false, 7890, null),
+            CopyCase("192.0.2.8", true, 0, null), CopyCase("192.0.2.8", true, 65536, null))) {
+            compose.runOnUiThread {
+                val network = state.value.settings.network
+                state.value = state.value.copy(localAddress = ip, settings = state.value.settings.copy(
+                    network = network.copy(allowLan = enabled, ports = network.ports.copy(mixed = port))))
+            }
+            val row = compose.onNodeWithTag("dashboard-lan-copy")
+            if (expected == null) row.assertIsNotEnabled() else {
+                val before = state.value.settings.network
+                row.performTouchInput { click(Offset(width - 2f, height / 2f)) }
+                compose.runOnIdle { assertEquals(expected, clipboard.primaryClip?.getItemAt(0)?.text?.toString()) }
+                assertEquals(before, state.value.settings.network)
+            }
+        }
+    }
+
+    @Test
+    fun modePillsHaveEqualFullShapesAndCenteredActualIconTextGroups() {
+        launch(fixture(listOf(DashboardWidget.OutboundMode)), maxWidth = 412.dp, deviceDensity = 2.625f)
+        for (material in MaterialTier.entries) for (aurora in listOf(false, true))
+            for (colorMode in listOf(dev.aerove.lite.ColorMode.Light, dev.aerove.lite.ColorMode.Dark)) {
+                compose.runOnUiThread { state.value = state.value.copy(settings = state.value.settings.copy(
+                    material = material, aurora = aurora, colorMode = colorMode, mode = ProxyMode.Rule)) }
+                val pills = ProxyMode.entries.map { mode ->
+                    val pill = statusRect("dashboard-mode-${mode.name}")
+                    val icon = statusRect("dashboard-mode-${mode.name}-icon")
+                    val label = statusRect("dashboard-mode-${mode.name}-label")
+                    val content = Rect(minOf(icon.left, label.left), minOf(icon.top, label.top),
+                        maxOf(icon.right, label.right), maxOf(icon.bottom, label.bottom))
+                    val measured = "material=$material aurora=$aurora color=$colorMode mode=$mode pill=$pill icon=$icon label=$label"
+                    assertEquals(measured, pill.center.x, icon.center.x, 0.5f)
+                    assertEquals(measured, pill.center.x, label.center.x, 0.5f)
+                    assertEquals(measured, pill.center.y, content.center.y, 0.5f)
+                    assertTrue(measured, content.top >= pill.top && content.bottom <= pill.bottom)
+                    assertTrue(measured, pill.height >= 48f * density - 1f)
+                    val shape = DashboardModePillShape.geometry(pill.size, androidx.compose.ui.unit.LayoutDirection.Ltr, Density(density))
+                    assertEquals(measured, 1, shape.radii.distinct().size)
+                    assertTrue(measured, shape.radii.first() >= minOf(pill.width, pill.height) / density / 2 - 0.01)
+                    pill
+                }
+                assertTrue("pill widths=$pills", pills.maxOf { it.width } - pills.minOf { it.width } <= 1f)
+                assertTrue("pill heights=$pills", pills.maxOf { it.height } - pills.minOf { it.height } <= 1f)
+                compose.onNodeWithTag("dashboard-mode-Global").performClick()
+                assertEquals(ProxyMode.Global, state.value.settings.mode)
+            }
+    }
+
+    @Test
+    fun startGlyphCanvasKeepsItsOwnSizeAndRealPathInsideOriginalButton() {
+        val initial = fixture(listOf(DashboardWidget.CurrentOutbound))
+        launch(initial.copy(phase = dev.aerove.lite.VpnPhase.Running), maxWidth = 412.dp, deviceDensity = 2.625f)
+        for ((phase, suspended) in listOf(dev.aerove.lite.VpnPhase.Running to false,
+            dev.aerove.lite.VpnPhase.Stopped to false, dev.aerove.lite.VpnPhase.Starting to false,
+            dev.aerove.lite.VpnPhase.Stopping to false, dev.aerove.lite.VpnPhase.Running to true)) {
+            compose.runOnUiThread { state.value = state.value.copy(phase = phase, suspended = suspended) }
+            val button = statusRect("dashboard-status-button")
+            val canvas = statusRect("dashboard-status-glyph")
+            val measured = "phase=$phase suspended=$suspended button=$button canvas=$canvas density=$density"
+            assertEquals(measured, 88f * density, button.width, 1f)
+            assertEquals(measured, 88f * density, button.height, 1f)
+            assertEquals(measured, 88f * 0.34f * density, canvas.width, 1f)
+            assertEquals(measured, 88f * 0.34f * density, canvas.height, 1f)
+            assertEquals(measured, button.center.x, canvas.center.x, 0.5f)
+            assertEquals(measured, button.center.y, canvas.center.y, 0.5f)
+            if (!suspended) {
+                val progress = if (phase == dev.aerove.lite.VpnPhase.Running) 1f else 0f
+                val paths = FullGlyphs.playPause(progress).shapes.map { it.path.getBounds().inflate(0.9f) }
+                val ink = Rect(paths.minOf { it.left }, paths.minOf { it.top }, paths.maxOf { it.right }, paths.maxOf { it.bottom })
+                val inkHeight = ink.height / 24f * canvas.height
+                assertTrue("$measured normalizedPath=$ink inkHeight=$inkHeight", ink.top >= 0 && ink.bottom <= 24 && inkHeight < button.height / 4)
+                if (progress == 1f) assertEquals(measured, 14f / 24f * canvas.height, inkHeight, 0.1f)
+            }
+        }
+
     }
 
     private fun statusRect(tag: String) = compose.onNodeWithTag(tag, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot

@@ -48,6 +48,8 @@ data class RenderCase(val tier: MaterialTier, val aurora: Boolean, val dark: Boo
     override fun toString() = "${tier.name}_${if (aurora) "aurora" else "ordinary"}_${if (dark) "dark" else "light"}_${if (checked) "on" else "off"}_${if (enabled) "enabled" else "disabled"}"
 }
 
+internal val OpticalPaneShape = dev.aerove.lite.optics.AeroveSuperellipseShape(LiteCorner.Card)
+
 internal enum class FixtureStage { Source, Production, NoLens, InkMask, OutlineMask, FlatThumb }
 internal data class FixtureState(
     val stage: FixtureStage = FixtureStage.Source,
@@ -106,7 +108,7 @@ internal fun OpticalFixture(case: RenderCase, state: FixtureState, probe: Render
             CompositionLocalProvider(LocalLiteBackdrop provides source, LocalLiteInkBackdrop provides source) {
                 Box(Modifier.offset(24.dp, 32.dp).size(paneWidth, 176.dp).onGloballyPositioned { probe.bounds["pane"] = it.boundsInWindow() }) {
                     when (state.stage) {
-                        FixtureStage.Production -> LitePane(Modifier.fillMaxSize(),
+                        FixtureStage.Production -> LitePane(Modifier.fillMaxSize(), corner = OpticalPaneShape.corner,
                             glassStyle = when {
                                 state.pillPane -> AeroveGlassStyle.pill(case.dark)
                                 case.tier == MaterialTier.Clear && !state.regularPane -> AeroveGlassStyle.lensContent()
@@ -115,7 +117,7 @@ internal fun OpticalFixture(case: RenderCase, state: FixtureState, probe: Render
                         FixtureStage.NoLens -> NoLensControl(case, Modifier.fillMaxSize(),
                             blurOnly = if (state.pillPane) 15.6f else null, glassTint = if (state.pillPane) Color.Transparent else null)
                         FixtureStage.OutlineMask -> CompositionLocalProvider(LocalLiteVisuals provides visuals.copy(material = MaterialTier.Solid)) {
-                            LitePane(Modifier.fillMaxSize()) {}
+                            LitePane(Modifier.fillMaxSize(), corner = OpticalPaneShape.corner) {}
                         }
                         else -> Unit
                     }
@@ -170,7 +172,7 @@ internal fun OpticalFixture(case: RenderCase, state: FixtureState, probe: Render
 private fun NoLensControl(
     case: RenderCase,
     modifier: Modifier,
-    corner: Dp = LiteCorner.Card,
+    corner: Dp = OpticalPaneShape.corner,
     selected: Boolean = false,
     solidColor: Color? = null,
     glassStyle: AeroveGlassStyle? = null,

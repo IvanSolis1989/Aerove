@@ -221,14 +221,15 @@ private fun ConnectionStatsCard(state: LiteState, openConnections: () -> Unit) {
 }
 
 @Composable
-private fun DashboardPane(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+private fun DashboardPane(modifier: Modifier = Modifier, contentPadding: PaddingValues = PaddingValues(horizontal = 20.dp, vertical = 18.dp),
+    content: @Composable ColumnScope.() -> Unit) {
     val visuals = LocalLiteVisuals.current
     LitePane(
         modifier.fillMaxWidth(), corner = LiteCorner.Dashboard,
         glassTint = if (visuals.material == MaterialTier.Frosted) visuals.ink.copy(alpha = 0.06f) else Color.Transparent,
         shadows = if (visuals.material == MaterialTier.Solid) fullDashboardShadows(visuals.dark) else emptyList(),
     ) {
-        Column(Modifier.padding(horizontal = 20.dp, vertical = 18.dp), content = content)
+        Column(Modifier.padding(contentPadding), content = content)
     }
 }
 
@@ -558,7 +559,9 @@ private fun StartBubble(running: Boolean, enabled: Boolean, label: String, time:
         interactionSource = interaction,
     ) {
         val foreground = if (enabled && visuals.material == MaterialTier.Solid) { if (solid == Color.White) Color.Black else Color.White } else visuals.secondaryInk
-        LiteIcon(glyph, Modifier.align(Alignment.Center), foreground, fill = 1f, size = 88.dp * 0.34f)
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            LiteIcon(glyph, Modifier.testTag("dashboard-status-glyph"), foreground, fill = 1f, size = 88.dp * 0.34f)
+        }
     }
     }
 }
@@ -667,32 +670,29 @@ private val SuspendedWifiGlyph = LiteGlyph(listOf(
     glyphCircle(12, 18.6, 1.7, role = LiteGlyphRole.Line, solid = true),
     glyphPolyline(listOf(vertex(4.5, 3), vertex(20.5, 19)), role = LiteGlyphRole.Line)))
 
+internal val DashboardModePillShape = LiteSuperellipse(LiteCorner.Full)
+
 @Composable
 private fun OutboundModeSelector(state: LiteState, actions: LiteActions) {
     val visuals = LocalLiteVisuals.current
     Row(Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-        ProxyMode.entries.forEachIndexed { index, mode ->
+        ProxyMode.entries.forEach { mode ->
             val selected = state.settings.mode == mode
             val amount by animateFloatAsState(if (selected) 1f else 0f, tween(240), label = "modeShape")
-            val shape = remember(index, amount, visuals.material) {
-                if (visuals.material != MaterialTier.Solid) LiteSuperellipse(LiteCorner.Full)
-                else LiteSuperellipse((if (index == 0) 26.dp else 12.dp) + (if (index == 0) 0.dp else 14.dp) * amount,
-                    (if (index == 2) 26.dp else 12.dp) + (if (index == 2) 0.dp else 14.dp) * amount)
-            }
             val fill = if (visuals.aurora) { if (visuals.dark) Color.White else Color.Black } else visuals.primary
             val foreground = if (selected && visuals.material == MaterialTier.Solid) { if (fill == Color.White) Color.Black else Color.White } else visuals.secondaryInk
             val interaction = remember { MutableInteractionSource() }
             LitePane(
-                Modifier.weight(1f).heightIn(min = 52.dp).selectable(selected, interactionSource = interaction, indication = null,
+                Modifier.weight(1f).heightIn(min = 52.dp * LocalDensity.current.fontScale.coerceAtLeast(1f)).testTag("dashboard-mode-${mode.name}").selectable(selected, interactionSource = interaction, indication = null,
                     enabled = state.busy.isEmpty(), role = Role.RadioButton, onClick = { if (!selected) actions.changeSettings(state.settings.copy(mode = mode)) }),
-                corner = LiteCorner.Full, selected = selected, customShape = shape,
+                corner = LiteCorner.Full, selected = selected, customShape = DashboardModePillShape,
                 solidColor = lerp(dashboardTone(), fill, amount),
                 glassTint = visuals.primary.copy(alpha = 0.2f * amount),
                 interactionSource = interaction,
             ) {
-                Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    LiteIcon(when (mode) { ProxyMode.Rule -> FullGlyphs.rules; ProxyMode.Global -> FullGlyphs.proxies; ProxyMode.Direct -> FullGlyphs.target }, color = foreground, size = 18.dp)
-                    LiteText(proxyModeLabel(mode), style = LiteType.Footnote.copy(fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal), color = foreground, maxLines = 1)
+                Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically)) {
+                    LiteIcon(when (mode) { ProxyMode.Rule -> FullGlyphs.rules; ProxyMode.Global -> FullGlyphs.proxies; ProxyMode.Direct -> FullGlyphs.target }, Modifier.testTag("dashboard-mode-${mode.name}-icon"), color = foreground, size = 18.dp)
+                    LiteText(proxyModeLabel(mode), Modifier.testTag("dashboard-mode-${mode.name}-label"), style = LiteType.Footnote.copy(fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal), color = foreground, maxLines = 1)
                 }
             }
         }
@@ -706,7 +706,8 @@ private fun NetworkControlsCard(state: LiteState, actions: LiteActions, shown: S
     val enabled = state.busy.isEmpty() && state.phase != VpnPhase.Starting && state.phase != VpnPhase.Stopping
     val clipboard = LocalClipboardManager.current
     val address = dashboardLanAddress(state.localAddress, network.ports.mixed, network.allowLan)
-    DashboardPane(Modifier.testTag("dashboard-network-controls")) {
+    DashboardPane(Modifier.testTag("dashboard-network-controls"), contentPadding = PaddingValues(start = 20.dp, top = 18.dp, end = 20.dp,
+        bottom = if (DashboardWidget.IntranetIp in shown) 0.dp else 18.dp)) {
         DashboardHeader(FullGlyphs.split, stringResource(R.string.dashboard_network_control))
         if (DashboardWidget.OutboundMode in shown) {
             Spacer(Modifier.height(12.dp))
@@ -715,9 +716,7 @@ private fun NetworkControlsCard(state: LiteState, actions: LiteActions, shown: S
         val vpn = DashboardWidget.VpnButton in shown
         val lan = DashboardWidget.IntranetIp in shown
         if (vpn || lan) {
-            Spacer(Modifier.height(12.dp))
-            HorizontalDivider(color = visuals.secondaryInk.copy(alpha = 0.12f))
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(if (DashboardWidget.OutboundMode in shown) 16.dp else 12.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 if (vpn) Box(Modifier.weight(1f).testTag("dashboard-vpn")) {
                     NetworkControlToggle(stringResource(R.string.lite_vpn), network.vpnEnabled, enabled) {
@@ -730,37 +729,13 @@ private fun NetworkControlsCard(state: LiteState, actions: LiteActions, shown: S
                     }
                 }
             }
-            Layout(modifier = Modifier.fillMaxWidth(), content = {
-                LiteText(if (vpn) stringResource(if (network.vpnEnabled) R.string.lite_enabled else R.string.lite_disabled) else "",
-                    Modifier.testTag("dashboard-vpn-footer"), style = LiteType.Caption, color = visuals.secondaryInk, maxLines = 1)
-                LiteText(if (lan) address ?: "—" else "", Modifier.testTag("dashboard-lan-footer"),
-                    style = LiteType.Caption, color = visuals.secondaryInk, maxLines = 1)
-                Box {
-                    if (lan) LiteIconButton(stringResource(R.string.lite_copy), FullGlyphs.copy,
-                        { address?.let { clipboard.setText(AnnotatedString(it)) } },
-                        Modifier.testTag("dashboard-lan-copy"), enabled = address != null)
-                }
-            }) { children, constraints ->
-                val columnGap = if (vpn && lan) 16.dp.roundToPx() else 0
-                val columnWidth = (constraints.maxWidth - columnGap) / if (vpn && lan) 2 else 1
-                val loose = constraints.copy(minWidth = 0, minHeight = 0, maxWidth = columnWidth)
-                val copy = children[2].measure(loose)
-                val left = children[0].measure(loose)
-                val right = children[1].measure(loose.copy(maxWidth = (columnWidth - copy.width - 4.dp.roundToPx()).coerceAtLeast(0)))
-                val leftBaseline = left[FirstBaseline]
-                val rightBaseline = right[FirstBaseline]
-                val above = maxOf(leftBaseline, rightBaseline)
-                val below = maxOf(left.height - leftBaseline, right.height - rightBaseline)
-                val height = maxOf(copy.height, above + below)
-                val baseline = (height - above - below) / 2 + above
-                val lanX = if (vpn && lan) columnWidth + columnGap else 0
-                layout(constraints.maxWidth, height) {
-                    if (vpn) left.placeRelative(0, baseline - leftBaseline)
-                    if (lan) {
-                        right.placeRelative(lanX, baseline - rightBaseline)
-                        copy.placeRelative(lanX + columnWidth - copy.width, (height - copy.height) / 2)
-                    }
-                }
+            if (lan) Box(Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("dashboard-lan-copy")
+                .clickable(enabled = address != null, role = Role.Button, onClickLabel = stringResource(R.string.lite_copy)) {
+                    address?.let { clipboard.setText(AnnotatedString(it)) }
+                }.padding(horizontal = 8.dp, vertical = 4.dp), contentAlignment = Alignment.Center) {
+                LiteText(address ?: "—", Modifier.testTag("dashboard-lan-footer"),
+                    style = LiteType.Caption.copy(textAlign = androidx.compose.ui.text.style.TextAlign.Center),
+                    color = visuals.secondaryInk, maxLines = 2)
             }
         }
     }

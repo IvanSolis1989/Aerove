@@ -13,11 +13,8 @@ import dev.aerove.lite.vpn.captureMeowPhysical
 import java.io.File
 import java.security.MessageDigest
 import java.util.UUID
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -96,15 +93,9 @@ object JniResourceFetch {
     private class NativeScope(val handle: Long, private val cache: File) : ProviderDownloadScope {
         private val close = Mutex()
         @Volatile private var closed = false
-        suspend fun <T> call(work: () -> T): T = coroutineScope {
+        suspend fun <T> call(work: () -> T): T {
             check(!closed) { "Resource scope is closed" }
-            val running = async(Dispatchers.IO) { work() }
-            try { running.await() }
-            catch (cancel: CancellationException) {
-                try { nativeCancel(handle) } catch (failure: Throwable) { cancel.addSuppressed(failure) }
-                withContext(NonCancellable) { running.join() }
-                throw cancel
-            }
+            return nativeResourceCall({ nativeCancel(handle) }, work)
         }
         override suspend fun download(request: ProviderDownloadRequest): ProviderDownloadResult = call {
             val headers = JSONObject()

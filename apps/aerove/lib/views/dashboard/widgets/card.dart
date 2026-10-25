@@ -403,6 +403,7 @@ class DashboardConnectedButton extends StatelessWidget {
   const DashboardConnectedButton({
     super.key,
     this.pane = false,
+    this.pill = false,
     required this.selected,
     required this.first,
     required this.last,
@@ -416,6 +417,7 @@ class DashboardConnectedButton extends StatelessWidget {
 
   final bool selected;
   final bool pane;
+  final bool pill;
   final bool first;
   final bool last;
   final double outer;
@@ -448,7 +450,7 @@ class DashboardConnectedButton extends StatelessWidget {
           builder: (context, amount, child) {
             final start = lerpDouble(startRest, outer, amount)!;
             final end = lerpDouble(endRest, outer, amount)!;
-            final shape = glass
+            final shape = glass || pill
                 ? AppShape.full
                 : AppShape.of(
                     BorderRadius.horizontal(

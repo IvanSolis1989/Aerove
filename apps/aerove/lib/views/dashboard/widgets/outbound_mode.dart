@@ -48,6 +48,7 @@ class OutboundModeCard extends ConsumerWidget {
               Expanded(
                 child: DashboardConnectedButton(
                   pane: true,
+                  pill: true,
                   selected: item == mode,
                   first: index == 0,
                   last: index == Mode.values.length - 1,
@@ -62,9 +63,15 @@ class OutboundModeCard extends ConsumerWidget {
                       mainAxisAlignment: MainAxisAlignment.center,
                       spacing: 2,
                       children: [
-                        GlyphIcon(_glyphOf(item), size: 18, color: foreground),
+                        GlyphIcon(
+                          _glyphOf(item),
+                          key: ValueKey('dashboard-mode-${item.name}-icon'),
+                          size: 18,
+                          color: foreground,
+                        ),
                         GlassText(
                           item.label,
+                          key: ValueKey('dashboard-mode-${item.name}-label'),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: AppTextStyle.footnote
@@ -138,6 +145,7 @@ class OutboundModeBar extends ConsumerWidget {
                     Expanded(
                       child: DashboardConnectedButton(
                         pane: true,
+                        pill: true,
                         selected: item == mode,
                         first: index == 0,
                         last: index == Mode.values.length - 1,

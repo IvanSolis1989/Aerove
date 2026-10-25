@@ -23,6 +23,10 @@ class Scripts extends Table {
 class ScriptsDao extends DatabaseAccessor<Database> with _$ScriptsDaoMixin {
   ScriptsDao(super.attachedDatabase);
 
+  Future<int> migrateLegacyDefaultUrls() =>
+      (update(scripts)..where((row) => row.url.isIn(legacyXclashDefaultScriptUrls)))
+          .write(const ScriptsCompanion(url: Value(xclashDefaultScriptUrl)));
+
   Selectable<Script> query() {
     return scripts.readable(
       (row) => row.toScript(),

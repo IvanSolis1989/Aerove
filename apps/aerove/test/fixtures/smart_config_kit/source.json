@@ -1,10 +1,14 @@
 {
-  "revision": "6847cd225d70bc9eb6fdd9311d50ff53bc91981c",
-  "gitBlob": "b92cdae0b826e43e6fc0237ec739d3d5bec134c2",
-  "scriptSha256": "d962c99703ca0c4fb0649541b81a7d24d94f2737ad3d83937a85a42e07f4ccc5",
-  "generation": "Unmodified script main(config) executed offline using Node.js; DNS extracted from its returned object.",
+  "revision": "70d4ddbe0b6d52af7acbd503ff1bf556a3bddacd",
+  "gitBlob": "65beff76d400f51d21686b04b09ccc40df6e620e",
+  "scriptSha256": "0f8c6d3c6385e2a22b6435a5ade37c6236f376531749bf446642ce481977f6ec",
+  "generation": "Restored fixed synthetic Node vm main(config) runner; DNS extracted from the result. Both legacy fixtures were reproduced before validating this source.",
+  "generator": "tool/generate_smart_config_kit_dns_fixtures.mjs",
   "syntheticOnly": true,
   "networkRequests": 0,
   "baseline": "Two synthetic FQDN nodes; no source DNS.",
-  "private": "Same nodes; source has exact node resolver hints and unrelated global DNS. Only the active-node proxy-server-nameserver-policy changes."
+  "private": "Same nodes; exact node resolver hints, an unused node hint and unrelated global DNS. Only active-node proxy-server-nameserver-policy survives.",
+  "previousRevision": "6847cd225d70bc9eb6fdd9311d50ff53bc91981c",
+  "previousGitBlob": "b92cdae0b826e43e6fc0237ec739d3d5bec134c2",
+  "previousScriptSha256": "d962c99703ca0c4fb0649541b81a7d24d94f2737ad3d83937a85a42e07f4ccc5"
 }

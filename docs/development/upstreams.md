@@ -90,6 +90,8 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 同一固定提交另只读核对 `GraphicsLayer.kt`、`LayoutNodeDrawScope.kt` 与 `AndroidRenderEffect.android.kt` 的离屏记录、`DstIn` 隔离及 RenderEffect 输入桥接，用于 Lite 极光前景蒙版修正；未复制上游实现或增加依赖。
 
+网络控制与启停图标另只读参照同提交 [`Box.kt`](https://github.com/androidx/androidx/blob/851a99e20723278101bfa110cc209021ba676748/compose/foundation/foundation-layout/src/commonMain/kotlin/androidx/compose/foundation/layout/Box.kt) 默认不传播最小约束的测量行为，局部复用既有居中布局 API；未复制实现或新增依赖。参考 Git 身份与实际 Compose 发布依赖分别保留。
+
 紧凑速度指标的单行行高另核对原 #94 APK 实际使用的 **Compose ui-text 1.12.0** 与[同版发布源码](https://dl.google.com/dl/android/maven2/androidx/compose/ui/ui-text-android/1.12.0/ui-text-android-1.12.0-sources.jar)：源码包 SHA256 `f40f267cc1bbf7315e37916d6baf818dd7791b42db6dc238303a8b48471aa292`，`LineHeightStyleSpan.android.kt` SHA256 `7b2860fed655511174fcbedf2e9cca5d88f405384e48dd360561226bb62b74be`。只读参考单行 `Trim.Both` 与指定 leading 的处理，局部使用既有 `LineHeightStyle`、`PlatformTextStyle` API；未复制实现或新增依赖。上述 Git 参考提交不是该发布版本身份；实际字形和布局仍须 Android 验收。
 
 **许可证、署名与证据：** Apache-2.0；保留 Android Open Source Project 署名；[固定 `FlowExt.kt`](https://github.com/androidx/androidx/blob/851a99e20723278101bfa110cc209021ba676748/lifecycle/lifecycle-runtime-compose/src/commonMain/kotlin/androidx/lifecycle/compose/FlowExt.kt)、[固定 `AlignmentLine.kt`](https://github.com/androidx/androidx/blob/851a99e20723278101bfa110cc209021ba676748/compose/ui/ui/src/commonMain/kotlin/androidx/compose/ui/layout/AlignmentLine.kt)；本项目入口为 `GlobalResourceLibraryScreen.kt` 和 `OverviewScreen.kt`
@@ -210,7 +212,7 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **固定版本 / revision：** SDK `3.47.6` / framework `5fc346839b5d0eef006ed8404392afb4dfae428d`
 
-**用途与采用方式：** 标准版Flutter框架；Lite optics几何与AGSL shader适配源自Flutter Impeller superellipse；字体测试fixture保留Roboto许可，生产不新增捆绑字体；字体策略只读参考SDK Android默认字体行为
+**用途与采用方式：** 标准版Flutter框架；Lite optics几何与AGSL shader适配源自Flutter Impeller superellipse；字体测试fixture保留Roboto许可，生产不新增捆绑字体；字体策略只读参考SDK Android默认字体行为。网络控制与启停比例另只读参考同固定 SDK 的 [`RenderPositionedBox`](https://github.com/flutter/flutter/blob/5fc346839b5d0eef006ed8404392afb4dfae428d/packages/flutter/lib/src/rendering/shifted_box.dart) 松约束居中行为，采用既有 Center、InkWell、Semantics 和 AppShape，未复制实现或新增依赖
 
 **许可证、署名与证据：** BSD-3-Clause（Flutter）；字体按原 `roboto_license.txt`；`apps/aerove-lite/app/src/main/assets/optics/NOTICE.md`、`FLUTTER_LICENSE`、`apps/aerove/test/fixtures/fonts/SOURCE.json`
 
@@ -360,11 +362,13 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 #### [Smart-Config-Kit](https://github.com/IvanSolis1989/Smart-Config-Kit)
 
-**固定版本 / revision：** `28b86e2e991cde8bc2fa71b874e807c622f2b096`；README 参考 `18a676345de86af38f511b8137add605e0a59588`；Lite Meow 联调基线 `89abb221a157acc98d6b52c85583e6b5a5b2742b`；Lite 生产内置专版 `70d4ddbe0b6d52af7acbd503ff1bf556a3bddacd`
+**固定版本 / revision：** `28b86e2e991cde8bc2fa71b874e807c622f2b096`；README 参考 `18a676345de86af38f511b8137add605e0a59588`；Lite Meow 联调基线 `89abb221a157acc98d6b52c85583e6b5a5b2742b`；两版当前内置来源 `70d4ddbe0b6d52af7acbd503ff1bf556a3bddacd`；标准版旧快照 `6847cd225d70bc9eb6fdd9311d50ff53bc91981c` 保留在资产来源历史中
 
 **用途与采用方式：** 分类 Issue Forms、MiMo Flash 首轮与 Pro 追问、过滤/失败只读模式作为流程参考；该流程未复制规则/提示词或自动PR。另参考首页内容分层、下载导航与二级文档组织，按本产品事实重新编写，未复制 SVG、文案或 UI。Lite 兼容准入、provider / Geo 准备及脚本联调使用固定 Meow 配置与测试向量；分流脚本仍由上游生成维护，本项目不另维护生产路由基线。 Lite 生产资产原样采用 `v6.0.20-meow.3` 专版，位于 `apps/aerove-lite/app/src/main/assets/scripts/smart-config-kit-meow.js`，原文 112115 字节；一次初始化及更新沿既有脚本库、配置选择和 CAS 链路，按标准版初始化语义保留用户编辑、删除与选择。测试夹具、显式本地资源供给和实际 HTTP / VPN 路由验收分别记录，不能互相代替
 
 **许可证、署名与证据：** 既有流程与 README 为只读参考；[固定 README](https://github.com/IvanSolis1989/Smart-Config-Kit/blob/18a676345de86af38f511b8137add605e0a59588/README.md)。联调固定树的 README 声明 MIT，未发现独立 LICENSE / COPYING / NOTICE 文件，不补造授权；[固定 Meow 脚本](https://github.com/IvanSolis1989/Smart-Config-Kit/blob/89abb221a157acc98d6b52c85583e6b5a5b2742b/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/AeroveLite(meow).js) SHA256 `217a4d7ecfb56d99cbb79148159ee636b882af5520c4ad7b6c6c870405f938cb`。[固定生产专版](https://github.com/IvanSolis1989/Smart-Config-Kit/blob/70d4ddbe0b6d52af7acbd503ff1bf556a3bddacd/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/AeroveLite(meow).js) SHA256 `217a4d7ecfb56d99cbb79148159ee636b882af5520c4ad7b6c6c870405f938cb`，保留原脚本头、来源 JSON 和固定 README；该 README 同样声明 MIT，未发现独立 LICENSE 文件。当前内置原文与旧联调样本同字节，固定来源身份分别保留。后续[专版更新地址](https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/refs/heads/main/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/AeroveLite(meow).js)随 main 变化，与本次固定打包来源分开记录。 第三方规则及数据库保留各自来源和许可约束，不视为 SCK 原创或推定采用 MIT；实际聚合规则的来源继续追溯固定树中的[来源账本](https://github.com/IvanSolis1989/Smart-Config-Kit/blob/89abb221a157acc98d6b52c85583e6b5a5b2742b/rulesets/generated/source-ledger.json)和[聚合清单](https://github.com/IvanSolis1989/Smart-Config-Kit/blob/89abb221a157acc98d6b52c85583e6b5a5b2742b/rulesets/generated/fused/manifest.json)，保留各数据源声明的许可及未核状态，不推定重新授权
+
+标准版原样采用 `v6.0.20-flclash.23`，位于 `apps/aerove/assets/data/smart-config-kit-flclash.js`。[固定 Mihomo / FlClash 源码](https://github.com/IvanSolis1989/Smart-Config-Kit/blob/70d4ddbe0b6d52af7acbd503ff1bf556a3bddacd/Mihomo%E5%86%85%E6%A0%B8%E7%B3%BB/FlClash/FlClash(mihomo).js)为 149441 字节，Git blob `65beff76d400f51d21686b04b09ccc40df6e620e`、SHA256 `0f8c6d3c6385e2a22b6435a5ade37c6236f376531749bf446642ce481977f6ec`。跟随主线的[更新地址](https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/refs/heads/main/Mihomo%E5%86%85%E6%A0%B8%E7%B3%BB/FlClash/FlClash(mihomo).js)与固定打包身份分开。已知旧官方地址仅迁移 URL 元数据，保留用户正文、关联、自定义来源和删除状态；客户端不手改上游生成脚本。两份 DNS 用例以固定输入执行旧快照重现原有字节，再执行新快照生成并读回核对，保留各自来源，不用新 SHA 冒称旧测试输入；这不代替完整 App 或真实网络验收。
 
 #### [tun-rs/tun-rs](https://github.com/tun-rs/tun-rs)
 
@@ -863,6 +867,22 @@ beta14 原包独立采样诊断另只读参照官方 AOSP 镜像固定 [`6be02d3
 **用途与采用方式：** SwANGLE QA81 崩溃诊断只读参照：核对 `client/crash_report_database_generic.cc` 的 crash database layout 与 minidump report capture；未新增依赖、未复制源码。
 
 **许可证、署名与证据：** Apache-2.0，固定源码文件头；[固定 crash_report_database_generic.cc](https://github.com/chromium/crashpad/blob/32fbcb2a47991daac5954319bcdf1cb804282db7/client/crash_report_database_generic.cc)。
+
+#### [AOSP platform/external/toybox](https://android.googlesource.com/platform/external/toybox)
+
+**固定版本 / revision：** `android-13.0.0_r1`
+
+**用途与采用方式：** Lite TUN 测试只读核对 [`timeout.c`](https://android.googlesource.com/platform/external/toybox/+/refs/tags/android-13.0.0_r1/toys/other/timeout.c) 的单调时钟、子进程限时与等待，以及 [`netcat.c`](https://android.googlesource.com/platform/external/toybox/+/refs/tags/android-13.0.0_r1/toys/net/netcat.c) 的连接超时边界；调用测试系统已有命令，未复制实现或新增运行时依赖。远端 nc 的独立限时不代表取消瞬间已回收全部远端进程。
+
+**许可证、署名与证据：** 保留固定源码中 Rob Landley 2013 / 2007 版权头及上游许可声明；只作行为参考。两文件 SHA256 分别为 `985cc5300ece9af6c87c5797ff0b607c45f0dde79e9f347dc37a97b8e1bbe715`、`8397c2436b246e69b08d7c21c66daaecbc2f094b0d13718e4b5c4c6c0ff9cc3c`。
+
+#### [AOSP platform/libcore](https://android.googlesource.com/platform/libcore)
+
+**固定版本 / revision：** `android-13.0.0_r1`
+
+**用途与采用方式：** Lite TUN 测试只读核对 [`android.system.Os`](https://android.googlesource.com/platform/libcore/+/refs/tags/android-13.0.0_r1/luni/src/main/java/android/system/Os.java) 的 pipe、非阻塞读写、poll 及 FD 关闭接口，复用系统 API；未复制实现或新增依赖。Host NIO 管道检查与真实 Android Os 执行分别记录。
+
+**许可证、署名与证据：** Apache-2.0，保留 Android Open Source Project 2011 版权；固定文件 SHA256 `32a21f9c2efce8dbf2bdaf075339463795bbc57096121148104bb98502a56553`。
 
 #### [platform/external/qemu](https://android.googlesource.com/platform/external/qemu)
 

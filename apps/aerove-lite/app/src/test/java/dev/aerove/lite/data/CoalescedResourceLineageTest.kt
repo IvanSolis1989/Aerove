@@ -21,7 +21,7 @@ class CoalescedResourceLineageTest {
         val obsolete = current.copy(revision = "old-source", generation = "old-resource")
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         MockWebServer().use { server ->
-            server.enqueue(MockResponse().setBody("""{"core-epoch":2,"picks-version":1,"picks":{}}""")); server.start()
+            server.enqueue(MockResponse().setBody("""{"core-epoch":"2","picks-version":"1","picks":{}}""")); server.start()
             val initial = CoreEndpoint(9091, secret, AppliedConfigSnapshot("profile", File("unused")), "previous", "previous")
             val ready = CoreEndpoint(server.port, secret, AppliedConfigSnapshot("profile", File("unused")), current.revision, current.generation)
             val snapshots = MutableStateFlow(VpnSnapshot(VpnPhase.Running, initial)); val starts = AtomicInteger()

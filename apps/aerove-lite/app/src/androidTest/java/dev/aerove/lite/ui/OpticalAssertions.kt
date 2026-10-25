@@ -1,6 +1,7 @@
 package dev.aerove.lite.ui
 
 import android.graphics.Color
+import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.geometry.Rect
 import dev.aerove.lite.MaterialTier
 import org.json.JSONArray
@@ -47,17 +48,32 @@ internal fun assertViewport(probe: RenderProbe) {
     assertTrue("Use a portrait viewport at least 300 x 510 dp; the entire optical fixture must be visible", root.width >= 300 * probe.density && root.height >= 510 * probe.density)
 }
 
-internal fun assertCorners(source: CapturedFrame, actual: CapturedFrame, probe: RenderProbe, outlineMask: CapturedFrame = actual) {
+internal fun assertCorners(
+    source: CapturedFrame, actual: CapturedFrame, probe: RenderProbe,
+    shape: dev.aerove.lite.optics.AeroveSuperellipseShape, outlineMask: CapturedFrame = actual,
+) {
     val pane = requireNotNull(probe.bounds["pane"])
-    val inset = 2 * probe.density
-    for (x in listOf(pane.left + inset, pane.right - inset)) {
-        for (y in listOf(pane.top + inset, pane.bottom - inset)) {
-            assertTrue("The superellipse exterior must expose the original background", channelError(source.pixel(x, y), actual.pixel(x, y)) <= 2)
+    val density = androidx.compose.ui.unit.Density(probe.density, probe.fontScale)
+    val direction = androidx.compose.ui.unit.LayoutDirection.Ltr // The fixture declares symmetric corners.
+    val size = androidx.compose.ui.geometry.Size(pane.width, pane.height)
+    val samples = shapeCornerSamples(shape.geometry(size, direction, density), pane.left.toDouble(), pane.top.toDouble(), probe.density.toDouble())
+    // Independently verify the chosen pixel and its one-pixel guard with the actual rendered Path.
+    val outline = shape.createOutline(size, direction, density) as androidx.compose.ui.graphics.Outline.Generic
+    val path = android.graphics.Path(outline.path.asAndroidPath())
+    path.offset(pane.left, pane.top)
+    val region = android.graphics.Region()
+    region.setPath(path, android.graphics.Region(floor(pane.left).toInt() - 1, floor(pane.top).toInt() - 1,
+        ceil(pane.right).toInt() + 1, ceil(pane.bottom).toInt() + 1))
+    for (sample in samples.exterior + samples.interior) {
+        val inside = sample in samples.interior
+        for (dy in -1..1) for (dx in -1..1) {
+            assertTrue("Actual Path membership/one-pixel guard disagrees with geometry: $sample inside=$inside",
+                region.contains(sample.x + dx, sample.y + dy) == inside)
         }
     }
-    if (channelError(source.pixel(pane.left + 6 * probe.density, pane.top + 6 * probe.density), probe.surface) > 20) {
-        assertTrue("The actual RSuperellipse outline must fill its interior; transparent optical tint cannot serve as a shape mask", channelError(source.pixel(pane.left + 6 * probe.density, pane.top + 6 * probe.density), outlineMask.pixel(pane.left + 6 * probe.density, pane.top + 6 * probe.density)) > 3)
-    }
+    assertShapePixels(samples, { x, y -> source.pixel(x.toFloat(), y.toFloat()) },
+        { x, y -> actual.pixel(x.toFloat(), y.toFloat()) },
+        { x, y -> outlineMask.pixel(x.toFloat(), y.toFloat()) }, probe.surface, ::channelError)
 }
 
 internal data class LineProfile(val positions: DoubleArray, val values: DoubleArray) {

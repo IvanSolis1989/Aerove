@@ -291,7 +291,8 @@ private fun ServiceCell(service: ServiceCheckView, modifier: Modifier) {
     val label = if (service.status == "available" && service.delayMillis != null) stringResource(R.string.diag_service_delay, service.delayMillis) else status
     val metadata = servicePresentation(service.id)
     val tone = serviceTone(service.status)
-    LitePane(modifier.heightIn(min = 50.dp).testTag("dashboard-service-${service.id}").semantics(mergeDescendants = true) {
+    val minimumHeight = 50.dp * LocalDensity.current.fontScale.coerceAtLeast(1f)
+    LitePane(modifier.heightIn(min = minimumHeight).testTag("dashboard-service-${service.id}").semantics(mergeDescendants = true) {
         stateDescription = status
         liveRegion = LiveRegionMode.Polite
     }, corner = LiteCorner.Control, solidColor = MaterialTheme.colorScheme.fullBlock(LocalLiteVisuals.current.dark)) {
@@ -299,8 +300,10 @@ private fun ServiceCell(service: ServiceCheckView, modifier: Modifier) {
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ServiceBadge(metadata, tone.ink, 36.dp, 9.dp)
             Column(Modifier.weight(1f)) {
-                LiteText(metadata.label, style = LiteType.Footnote.copy(fontWeight = FontWeight.SemiBold), maxLines = 1)
-                LiteText(label, style = LiteType.Caption.copy(fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum"),
+                LiteText(metadata.label, Modifier.testTag("dashboard-service-${service.id}-label"),
+                    style = LiteType.Footnote.copy(fontWeight = FontWeight.SemiBold), maxLines = 1)
+                LiteText(label, Modifier.testTag("dashboard-service-${service.id}-status"),
+                    style = LiteType.Caption.copy(fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum"),
                     color = if (service.status == "available") LocalLiteVisuals.current.secondaryInk else tone.ink, maxLines = 1)
             }
         }

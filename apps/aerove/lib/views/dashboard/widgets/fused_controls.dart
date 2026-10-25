@@ -4,6 +4,7 @@ import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
+import 'package:fl_clash/views/dashboard/layout.dart';
 import 'package:fl_clash/views/dashboard/style.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -24,6 +25,11 @@ class FusedNetworkControls extends StatelessWidget {
     final vpn = members.contains(DashboardWidget.vpnButton);
     final lan = members.contains(DashboardWidget.intranetIp);
     return DashboardCard(
+      padding: lan
+          ? dashboardCardPadding(
+              DashboardDensityScope.of(context),
+            ).copyWith(bottom: 0)
+          : null,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
@@ -44,6 +50,7 @@ class FusedNetworkControls extends StatelessWidget {
                 if (lan) const Expanded(child: _LanControl()),
               ],
             ),
+          if (lan) const _LanAddress(),
         ],
       ),
     );
@@ -55,15 +62,11 @@ class _Control extends StatelessWidget {
     required this.title,
     required this.value,
     required this.onChanged,
-    required this.detail,
-    this.trailing,
   });
 
   final String title;
   final bool value;
   final ValueChanged<bool> onChanged;
-  final String detail;
-  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
@@ -72,7 +75,6 @@ class _Control extends StatelessWidget {
       final titleStyle = AppTextStyle.callout.of(context, emphasized: true);
       final titleHeight =
           scaler.scale(titleStyle.fontSize!) * titleStyle.height!;
-      final detailStyle = DashboardText.label(context);
       final label = GlassText(title, maxLines: 2, style: titleStyle);
       final toggle = Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
@@ -110,20 +112,6 @@ class _Control extends StatelessWidget {
                 ],
               ),
             ),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: GlassText(
-                  detail,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: detailStyle,
-                ),
-              ),
-              ?trailing,
-            ],
-          ),
         ],
       );
     },
@@ -142,9 +130,6 @@ class _VpnControl extends ConsumerWidget {
       onChanged: (value) => ref
           .read(vpnSettingProvider.notifier)
           .update((state) => state.copyWith(enable: value)),
-      detail: enabled
-          ? context.appLocalizations.enabled
-          : context.appLocalizations.disabled,
     );
   }
 }
@@ -153,27 +138,55 @@ class _LanControl extends ConsumerWidget {
   const _LanControl();
 
   @override
+  Widget build(BuildContext context, WidgetRef ref) => _Control(
+    title: context.appLocalizations.allowLan,
+    value: ref.watch(patchClashConfigProvider.select((s) => s.allowLan)),
+    onChanged: (value) => ref
+        .read(patchClashConfigProvider.notifier)
+        .update((state) => state.copyWith(allowLan: value)),
+  );
+}
+
+class _LanAddress extends ConsumerWidget {
+  const _LanAddress();
+
+  @override
   Widget build(BuildContext context, WidgetRef ref) {
     final l10n = context.appLocalizations;
     final ip = ref.watch(localIpProvider);
-    final enabled = ref.watch(
-      patchClashConfigProvider.select((s) => s.allowLan),
-    );
+    final enabled = ref.watch(patchClashConfigProvider.select((s) => s.allowLan));
     final port = ref.watch(patchClashConfigProvider.select((s) => s.mixedPort));
     final address = _lanAddress(ip, port, enabled);
-    return _Control(
-      title: l10n.allowLan,
-      value: enabled,
-      onChanged: (value) => ref
-          .read(patchClashConfigProvider.notifier)
-          .update((state) => state.copyWith(allowLan: value)),
-      detail: address ?? (ip == null ? '—' : l10n.noNetwork),
-      trailing: DashboardIconButton(
-        glyph: AppGlyphs.copy,
-        tooltip: l10n.copy,
-        onPressed: address == null
-            ? null
-            : () => copyToClipboard(context, address),
+    final label = address ?? (ip == null ? '—' : l10n.noNetwork);
+    final VoidCallback? copy = address == null
+        ? null
+        : () => copyToClipboard(context, address);
+    return Semantics(
+      key: const ValueKey('dashboard-lan-copy'),
+      button: true,
+      enabled: address != null,
+      label: l10n.copy,
+      value: label,
+      excludeSemantics: true,
+      onTap: copy,
+      child: InkWell(
+        onTap: copy,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 48),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            child: Center(
+              child: GlassText(
+                label,
+                key: const ValueKey('dashboard-lan-address'),
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: DashboardText.label(context),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

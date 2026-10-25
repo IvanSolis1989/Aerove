@@ -195,10 +195,7 @@ void main() {
 
   test('published website marks use canonical packaged assets', () {
     final site = _read('../../website/index.html');
-    expect(
-      RegExp(r'src="\{\{up\}\}icon\.png"').allMatches(site),
-      hasLength(2),
-    );
+    expect(RegExp(r'src="\{\{up\}\}icon\.png"').allMatches(site), hasLength(2));
     final build = _read('../../tooling/website/build_site.sh');
     expect(
       build,
