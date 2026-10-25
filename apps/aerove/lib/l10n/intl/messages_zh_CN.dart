@@ -1401,7 +1401,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "socksPort": MessageLookupByLibrary.simpleMessage("Socks端口"),
     "softStyle": MessageLookupByLibrary.simpleMessage("柔和"),
-    "solidThemeColor": MessageLookupByLibrary.simpleMessage("普通主题色"),
+    "solidThemeColor": MessageLookupByLibrary.simpleMessage("随选单色"),
     "sort": MessageLookupByLibrary.simpleMessage("排序"),
     "source": MessageLookupByLibrary.simpleMessage("来源"),
     "sourceIp": MessageLookupByLibrary.simpleMessage("源IP"),

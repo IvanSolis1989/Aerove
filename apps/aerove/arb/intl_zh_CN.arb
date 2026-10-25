@@ -90,7 +90,7 @@
   "profileAutoUpdateIntervalNullValidationDesc": "请输入自动更新间隔时间",
   "profileAutoUpdateIntervalInvalidValidationDesc": "请输入有效间隔时间格式",
   "themeMode": "主题模式",
-  "solidThemeColor": "普通主题色",
+  "solidThemeColor": "随选单色",
   "themeColor": "主题色彩",
   "preview": "预览",
   "auto": "自动",

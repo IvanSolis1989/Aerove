@@ -172,7 +172,7 @@
     <string name="lite_style_tinted">氛围</string>
     <string name="lite_style_soft">柔和</string>
     <string name="lite_style_monochrome">单色</string>
-    <string name="lite_normal_theme">普通主题色</string>
+    <string name="lite_normal_theme">随选单色</string>
     <string name="lite_aurora_colors">底图配色</string>
     <string name="lite_aurora_edit_color">编辑底图颜色 %1$d</string>
     <string name="lite_aurora_regenerate">换一张</string>
