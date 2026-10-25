@@ -27,38 +27,163 @@ concurrency:
 
 jobs:
   tag:
-    # head_branch also names a branch push's branch, so only a tag at the built commit counts as a release.
+    permissions:
+      contents: read
+      actions: read
     if: >-
       github.repository == 'IvanSolis1989/Aerove' &&
       github.event_name == 'workflow_run' &&
+      github.event.workflow_run.name == 'Aerove Android' &&
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     outputs:
-      stable: ${{ steps.lookup.outputs.stable }}
+      released: ${{ steps.lookup.outputs.released }}
     steps:
-      - name: Look up the tag
+      - name: Read back the published Standard release
         id: lookup
         env:
           GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          SHA: ${{ github.event.workflow_run.head_sha }}
-          REMOTE: ${{ github.server_url }}/${{ github.repository }}
         run: |
-          release=$(gh api "repos/$REPOSITORY/releases/latest") || exit 0
-          NAME=$(jq -r 'select(.draft == false and .prerelease == false) | .tag_name' <<< "$release")
-          [[ "$NAME" =~ ^v[0-9] ]] || exit 0
-          if git ls-remote --tags "$REMOTE" "refs/tags/$NAME" "refs/tags/$NAME^{}" | grep -q "^$SHA[[:space:]]"; then
-            echo 'stable=true' >> "$GITHUB_OUTPUT"
-          fi
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import re
+          import subprocess
+          from datetime import datetime
+          from pathlib import Path
+          from urllib.parse import quote
+
+          repository = os.environ['GITHUB_REPOSITORY']
+          server = os.environ['GITHUB_SERVER_URL']
+          workflow = '.github/workflows/xclash-android.yaml'
+          event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())['workflow_run']
+
+          def api(endpoint, *, pages=False, raw=False):
+              command = ['gh', 'api', f'repos/{repository}/{endpoint}']
+              if pages:
+                  command += ['--paginate', '--slurp']
+              if raw:
+                  command += ['-H', 'Accept: application/octet-stream']
+              result = subprocess.run(command, check=True, capture_output=True, text=True)
+              return result.stdout if raw else json.loads(result.stdout)
+
+          def valid_run(run, *, on_main=True):
+              return (run.get('name') == 'Aerove Android' and run.get('path') == workflow
+                      and run.get('head_sha') == event['head_sha']
+                      and isinstance(run.get('head_branch'), str) and bool(run['head_branch'])
+                      and (not on_main or run['head_branch'] == 'main')
+                      and run.get('event') in ('push', 'workflow_dispatch')
+                      and run.get('status') == 'completed' and run.get('conclusion') == 'success'
+                      and run.get('repository', {}).get('full_name') == repository
+                      and run.get('head_repository', {}).get('full_name') == repository
+                      and type(run.get('id')) is int and run['id'] > 0
+                      and type(run.get('run_attempt')) is int and run['run_attempt'] > 0)
+
+          def jobs(run):
+              pages = api(f'actions/runs/{run["id"]}/attempts/{run["run_attempt"]}/jobs?per_page=100', pages=True)
+              found = [job for page in pages for job in page['jobs']]
+              total = pages[0]['total_count']
+              if (any(page['total_count'] != total for page in pages) or len(found) != total
+                      or len({job['id'] for job in found}) != total
+                      or len({job['name'] for job in found}) != total):
+                  raise ValueError('Incomplete or ambiguous workflow job pagination')
+              if any(job.get('run_id') != run['id'] or job.get('head_sha') != run['head_sha']
+                     or job.get('run_attempt', run['run_attempt']) != run['run_attempt'] for job in found):
+                  raise ValueError('Workflow job identity mismatch')
+              return {job['name']: job for job in found}
+
+          def succeeded(found, name):
+              job = found.get(name, {})
+              return job.get('status') == 'completed' and job.get('conclusion') == 'success'
+
+          def tag_commit(tag):
+              target = api('git/ref/tags/' + quote(tag, safe=''))['object']
+              if target['type'] == 'tag':
+                  target = api('git/tags/' + target['sha'])['object']
+              return target['sha'] if target['type'] == 'commit' else None
+
+          def original_build(info, tag):
+              match = re.fullmatch(re.escape(server + '/' + repository + '/actions/runs/') + r'([1-9][0-9]*)',
+                                   info.get('workflow', ''))
+              if (not match or info.get('source') != event['head_sha'] or info.get('version') != tag[1:]
+                      or info.get('applicationId') != 'com.follow.clash.dev'
+                      or info.get('signing') != 'persistent Android test key'):
+                  return False
+              run_id = int(match[1])
+              run = api(f'actions/runs/{run_id}')
+              if run.get('id') != run_id or not valid_run(run, on_main=False):
+                  return False
+              found = jobs(run)
+              return succeeded(found, 'verify') and succeeded(found, 'apk')
+
+          def released_assets(release, tag):
+              names = ('Aerove-android-arm64.apk', 'BUILD_INFO.json', 'SHA256SUMS')
+              entries = release.get('assets', [])
+              assets = {name: [asset for asset in entries if asset.get('name') == name] for name in names}
+              if any(len(selected) != 1 for selected in assets.values()):
+                  return False
+              assets = {name: selected[0] for name, selected in assets.items()}
+              if any(asset.get('state') != 'uploaded' or type(asset.get('id')) is not int
+                     or type(asset.get('size')) is not int or asset['size'] <= 0
+                     or not re.fullmatch(r'sha256:[0-9a-f]{64}', asset.get('digest', ''))
+                     for asset in assets.values()):
+                  return False
+              info_text = api(f'releases/assets/{assets["BUILD_INFO.json"]["id"]}', raw=True)
+              sums_text = api(f'releases/assets/{assets["SHA256SUMS"]["id"]}', raw=True)
+              for name, text in [('BUILD_INFO.json', info_text), ('SHA256SUMS', sums_text)]:
+                  data = text.encode('utf-8')
+                  if len(data) != assets[name]['size'] or 'sha256:' + hashlib.sha256(data).hexdigest() != assets[name]['digest']:
+                      return False
+              sums = {}
+              for line in sums_text.splitlines():
+                  match = re.fullmatch(r'([0-9a-f]{64}) [ *](Aerove-android-arm64\.apk|BUILD_INFO\.json)', line)
+                  if not match or match[2] in sums:
+                      return False
+                  sums[match[2]] = match[1]
+              if set(sums) != set(names[:2]) or any('sha256:' + value != assets[name]['digest'] for name, value in sums.items()):
+                  return False
+              info = json.loads(info_text)
+              if info.get('appEnv') != ('pre' if release['prerelease'] else 'stable'):
+                  return False
+              return original_build(info, tag)
+
+          def main():
+              if repository != 'IvanSolis1989/Aerove' or server != 'https://github.com' or not valid_run(event):
+                  return
+              current = api(f'actions/runs/{event["id"]}')
+              if (not valid_run(current) or current['id'] != event['id']
+                      or current['run_attempt'] != event['run_attempt'] or not succeeded(jobs(current), 'release')):
+                  return
+              candidates = []
+              for page in api('releases?per_page=100', pages=True):
+                  for release in page:
+                      tag = release.get('tag_name', '')
+                      if (release.get('draft') is not False or type(release.get('prerelease')) is not bool
+                              or not release.get('published_at')
+                              or not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?\+[1-9][0-9]*', tag)):
+                          continue
+                      if datetime.fromisoformat(release['published_at']) < datetime.fromisoformat(current['created_at']):
+                          continue
+                      if tag_commit(tag) == event['head_sha'] and released_assets(release, tag):
+                          candidates.append(tag)
+              if len(candidates) > 1:
+                  raise ValueError('Multiple releases match the completed Android run')
+              if candidates:
+                  with Path(os.environ['GITHUB_OUTPUT']).open('a') as output:
+                      output.write('released=true\nrelease_tag=' + candidates[0] + '\n')
+
+          main()
+          PY
 
   deploy:
     needs: tag
     if: >-
       github.repository == 'IvanSolis1989/Aerove' &&
       !cancelled() &&
-      (github.event_name != 'workflow_run' || needs.tag.outputs.stable == 'true')
+      (github.event_name != 'workflow_run' || needs.tag.outputs.released == 'true')
     runs-on: ubuntu-latest
     environment:
       name: github-pages
