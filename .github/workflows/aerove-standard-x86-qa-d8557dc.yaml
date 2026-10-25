@@ -56,7 +56,7 @@ jobs:
           test "$(git -C app rev-parse HEAD:apps/aerove)" = 5807e5924efb38f3db00da80f3ae078973a14094
           test -z "$(git -C app status --porcelain)"
           ! git -C app submodule status --recursive | grep -E '^[-+U]'
-      - uses: ./app/.github/actions/flutter
+      - uses: IvanSolis1989/Aerove/.github/actions/flutter@d8557dc664d0614339b7a8a676697367568f698e
         with:
           channel: stable
           flutter-version: '3.47.6'
@@ -169,7 +169,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
-      ANDROID_AVD_HOME: ${{ runner.temp }}/standard-x86-qa-avd
       QA_ARTIFACT_ID: ${{ needs.build_internal_qa.outputs.artifact_id }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -194,6 +193,8 @@ jobs:
         run: |
           set -euo pipefail
           root="$RUNNER_TEMP/standard-x86-qa-render"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/standard-x86-qa-avd"
+          printf 'ANDROID_AVD_HOME=%s\n' "$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
           mkdir -p "$root/environment" "$ANDROID_AVD_HOME"
           timeout --kill-after=10s 300s sdkmanager --install 'build-tools;35.0.0' emulator 'system-images;android-33;google_apis;x86_64' --channel=0
           "$ANDROID_HOME/emulator/emulator" -no-window -version > "$root/environment/emulator-version.txt" 2>&1

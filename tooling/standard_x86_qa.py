@@ -30,6 +30,11 @@ ORIGINAL = dict(source='c133772fc83b7984bdacb11e5dd41e2d65098771',
                 abi='arm64-v8a', apkSha256='64c42740e9164b29cca0289ae229a1dbe4cf44899c475f867e0f62ad033cfca8',
                 signerSha256='0fc82c3b7b089b6244d9ed167b352ff76185417d07689853caca286fbdeb6e60',
                 package='com.follow.clash.dev', versionName='0.11.0-beta.3', versionCode='2026102240')
+PROVEN_NONEXECUTING_TARGET = 'd8557dc664d0614339b7a8a676697367568f698e-android-x64'
+PROVEN_NONEXECUTING_RUN = dict(id=40144859752, workflow_id=395518893, run_number=1, run_attempt=1,
+                              head_sha='6b8f00cf6b0dd3eb241d21c885f272ef03dde102', event='push',
+                              head_branch='codex/aerove-lite-meow-app', status='completed', conclusion='failure',
+                              path='.github/workflows/aerove-standard-x86-qa-d8557dc.yaml')
 
 
 def sha(path):
@@ -190,14 +195,24 @@ def check_source(root):
 
 def build_guard_decision(current, runs, histories, artifacts):
     blockers = []
+    nonexecuting = []
     if artifacts:
         blockers.append(dict(reason='QA_ARTIFACT_EXISTS_REUSE_ONLY', artifacts=artifacts))
     for run in runs:
         if run['id'] == current['id'] or run['run_number'] > current['run_number']:
             continue
+        history = histories[run['id']]
+        if run['id'] == PROVEN_NONEXECUTING_RUN['id']:
+            identity_matches = all(run.get(k) == v and type(run.get(k)) is type(v)
+                                   for k, v in PROVEN_NONEXECUTING_RUN.items())
+            if (identity_matches and PROVEN_NONEXECUTING_TARGET == TARGET_KEY
+                    and history['jobs'] == [] and history.get('artifacts') == []):
+                nonexecuting.append(run['id'])
+                continue
+            blockers.append(dict(run=run['id'], reason='KNOWN_NONEXECUTING_PROOF_MISMATCH_REVIEW_REQUIRED'))
+            continue
         if run['status'] != 'completed':
             blockers.append(dict(run=run['id'], reason='PRIOR_RUN_ACTIVE_REVIEW_REQUIRED'))
-        history = histories[run['id']]
         build_jobs = [job for job in history['jobs'] if job['name'] == 'build_internal_qa']
         if not build_jobs:
             blockers.append(dict(run=run['id'], reason='BUILD_HISTORY_MISSING_REVIEW_REQUIRED'))
@@ -210,6 +225,7 @@ def build_guard_decision(current, runs, histories, artifacts):
                     blockers.append(dict(run=run['id'], reason='COMPILE_STEP_ENTERED_REVIEW_OR_REUSE_ONLY',
                                          status=step.get('status'), conclusion=step.get('conclusion')))
     return dict(diagnosticOnly=True, accepted=False, allowed=not blockers, blockers=blockers,
+                provenNonExecutingRuns=nonexecuting,
                 currentRunExcluded=current['id'], applicationSource=SOURCE, targetKey=TARGET_KEY,
                 targetPlatform='android-x64')
 
@@ -235,6 +251,9 @@ def guard(args):
         if run['id'] != current['id'] and run['run_number'] <= current['run_number']:
             histories[run['id']] = dict(
                 jobs=read(f'jobs-{run["id"]}', f'runs/{run["id"]}/jobs?filter=all&per_page=100', 'jobs'))
+            if run['id'] == PROVEN_NONEXECUTING_RUN['id']:
+                histories[run['id']]['artifacts'] = read(
+                    f'artifacts-{run["id"]}', f'runs/{run["id"]}/artifacts?per_page=100', 'artifacts')
     result = build_guard_decision(current, runs, histories, artifacts)
     try:
         save(directory / 'ONCE-GUARD.json', result)
