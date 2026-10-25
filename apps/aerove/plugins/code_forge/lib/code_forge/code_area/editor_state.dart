@@ -26,6 +26,7 @@ class _CodeForgeState extends State<CodeForge>
   final MagnifierController _magnifierController = MagnifierController();
   final _isMobile = Platform.isAndroid || Platform.isIOS;
   GlobalKey _codeFieldKey = GlobalKey();
+  TwoDimensionalChildBuilderDelegate? _fieldDelegate;
   final GlobalKey _editorStackKey = GlobalKey();
   TextInputConnection? _connection;
   bool _isHovering = false;
@@ -196,6 +197,7 @@ class _CodeForgeState extends State<CodeForge>
     _focusNode.dispose();
     _hscrollController.dispose();
     _ownedVscrollController?.dispose();
+    _fieldDelegate?.dispose();
     super.dispose();
   }
 
@@ -262,6 +264,47 @@ class _CodeForgeState extends State<CodeForge>
           ),
   };
 
+  // A new delegate is what makes the viewport rebuild the field, and the
+  // viewport listens to the old one until it takes the new.
+  TwoDimensionalChildBuilderDelegate _nextFieldDelegate() {
+    final previous = _fieldDelegate;
+    if (previous != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => previous.dispose());
+    }
+    return _fieldDelegate = TwoDimensionalChildBuilderDelegate(
+      maxXIndex: 0,
+      maxYIndex: 0,
+      builder: (_, vic) {
+        return Focus(
+          focusNode: _focusNode,
+          onKeyEvent: _handleKeyEvent,
+          child: _CodeField(
+            key: _codeFieldKey,
+            controller: _controller,
+            editorTheme: widget.editorTheme,
+            language: widget.language,
+            innerPadding: widget.innerPadding,
+            vscrollController: _vscrollController,
+            hscrollController: _hscrollController,
+            focusNode: _focusNode,
+            readOnly: _readOnly,
+            caretBlinkController: _caretBlinkController,
+            lineHighlightController: _lineHighlightController,
+            textStyle: widget.textStyle,
+            gutterStyle: _gutterStyle,
+            selectionStyle: _selectionStyle,
+            isMobile: _isMobile,
+            selectionActiveNotifier: _selectionActiveNotifier,
+            onContextMenuRequest: _handleContextMenuRequest,
+            lineWrap: widget.lineWrap,
+            caretRectNotifier: _caretRectNotifier,
+            magnifierNotifier: _magnifierNotifier,
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -322,42 +365,7 @@ class _CodeForgeState extends State<CodeForge>
                                   horizontalAxisDirection: AxisDirection.right,
                                   mainAxis: Axis.vertical,
                                   lineWrap: widget.lineWrap,
-                                  delegate: TwoDimensionalChildBuilderDelegate(
-                                    maxXIndex: 0,
-                                    maxYIndex: 0,
-                                    builder: (_, vic) {
-                                      return Focus(
-                                        focusNode: _focusNode,
-                                        onKeyEvent: _handleKeyEvent,
-                                        child: _CodeField(
-                                          key: _codeFieldKey,
-                                          controller: _controller,
-                                          editorTheme: widget.editorTheme,
-                                          language: widget.language,
-                                          innerPadding: widget.innerPadding,
-                                          vscrollController: _vscrollController,
-                                          hscrollController: _hscrollController,
-                                          focusNode: _focusNode,
-                                          readOnly: _readOnly,
-                                          caretBlinkController:
-                                              _caretBlinkController,
-                                          lineHighlightController:
-                                              _lineHighlightController,
-                                          textStyle: widget.textStyle,
-                                          gutterStyle: _gutterStyle,
-                                          selectionStyle: _selectionStyle,
-                                          isMobile: _isMobile,
-                                          selectionActiveNotifier:
-                                              _selectionActiveNotifier,
-                                          onContextMenuRequest:
-                                              _handleContextMenuRequest,
-                                          lineWrap: widget.lineWrap,
-                                          caretRectNotifier: _caretRectNotifier,
-                                          magnifierNotifier: _magnifierNotifier,
-                                        ),
-                                      );
-                                    },
-                                  ),
+                                  delegate: _nextFieldDelegate(),
                                 ),
                           );
                         },
