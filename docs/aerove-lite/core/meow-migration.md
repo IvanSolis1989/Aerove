@@ -103,6 +103,15 @@ mixed 端口、经 Meow DIRECT 到回环 HTTP 服务、实际流量快照、取�
 - provider 的初始、手动、定时、文件和未变化成功都须在真正提交后产生一致事件；失败不前进 revision。
 - 用户控制入口不得暴露私有 AEROVE 路由。规则/配置检查仍须离线、有界、受资源归属约束。
 - QuickJS 脚本能力及独立 Go regexp2/age 辅助程序保留，不能随旧代理核心替换而丢失。
+- 标准版已选择性整合 FlClash v0.9.2 的路由命中复核：探测结果记录各主机实际出口，路线移动只递增 route-version，
+  界面在稳定后请核心不拨号复核，出口未变的结果保留。Lite 仍按 picks 判断新鲜度，须在 `meow-native` 记录命中、
+  区分移动与重置并提供私有 `checkRoutes`，再替换 `RouteSnapshot`、`ServiceProbe`、`OutboundProbe` 与
+  `DiagnosticsCoordinator` 的 picks 判断，沿用 1.5 秒稳定、300 ms 移动稳定和同目标 5 秒节流。固定核心
+  `crates/meow-tunnel/src/tunnel.rs` 已有 `pre_handle_metadata`、`pre_resolve`、`resolve_proxy`，不构成核心例外；
+  完成前阻止下一次 Lite 发行。
+- 同批整合中，全局文件规则集内容刷新而定义未变时，Lite 改用核心 `PUT /providers/rules/{name}` 原地重载，内联规则集或
+  重载失败才整体重新应用；编辑全局规则后重新应用使用它的当前配置须以 JVM 测试核实，缺失即补齐。新建配置排序、拖动
+  返回焦点和 Flutter 资源释放在 Lite 不适用：新导入配置本就追加到末尾，返回走系统 BackHandler，编辑器为 sora-editor。
 
 <a name="section-6"></a>
 

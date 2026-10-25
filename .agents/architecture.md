@@ -522,19 +522,24 @@ failure shows at once, a stop cancels it, and a failure still standing when it e
 A probe result on the dashboard — the exit IP, a node's exit IP, a service check — either describes the route in
 force or is being asked again. The mechanism has three parts.
 
-- The Core is the source of truth for the route. `core/route.go` keeps a structural epoch (advanced by a config
-  apply, a mode or IPv6 switch, any proxy provider whose version changed, any rule set that loaded new content,
-  whether the user or its own interval updated it, and a start: the listeners coming up and, on Android, the TUN
-  after them) and a `picks` map from each Selector, URLTest and Fallback group
-  to what it resolves to right now, versioned on every change. `handleChangeProxy` re-reads the picks under
+- The Core is the source of truth for the route. `core/route.go` keeps two counters. The epoch marks a reset that
+  no answer survives: a config apply, an IPv6 switch and a start (the listeners coming up and, on Android, the TUN
+  after them). The route version marks a move that may or may not change where a host leaves: a Selector, URLTest or
+  Fallback pick, a proxy provider whose version changed, a rule set that loaded new content, whether the user or its
+  own interval updated it, a GeoIP or GeoSite update and a mode switch. `handleChangeProxy` re-reads the picks under
   `selectMu` and answers `ChangeProxyResult{changed}`, so the connection reset only runs when the pick moved. A
   health check moving a URLTest pick has no mihomo hook, so the picks are polled every second while the host watches
   (`watchRoute(true)`) and the listeners are up; the same poll notices a provider or rule set that updated in the
-  background. Every probe answer carries the counters it started under; `routeChanged` publishes the state whenever
-  it differs from the last read. A start moves the epoch because `isStartProvider` flips before the Core is told,
-  so the probes sent at the tap leave ahead of the TUN routes and over DNS connections `handleStartListener` resets,
-  and an Android start acknowledges before the VPN exists. Outbound IP lookups are cancelled by the first lookup
-  under a newer epoch, which frees their probe slots; lookups under one epoch are left alone, since the routed
+  background. Every probe answer carries the counters it started under and its hits: for each host it dialed, the
+  proxy it was pinned to and the exit it left through, taken from the tracked chain or, for a dial that never reached
+  the tracker, resolved again. An exit names the last hop with its type and server address, or the load balancer
+  above it, since a balancer spreads connections without the route moving. `checkRoutes` resolves those hosts again
+  through `tunnel.ResolveRoute`, which the replayable `core/patches/flclash-v0.9.2-route-api.patch` adds to the
+  official source, and answers per probe result whether every exit held. `routeChanged` publishes the counters
+  whenever they differ from the last read. A start resets the epoch because `isStartProvider` flips before the Core
+  is told, so the probes sent at the tap leave ahead of the TUN routes and over DNS connections `handleStartListener`
+  resets, and an Android start acknowledges before the VPN exists. Outbound IP lookups are cancelled by the first
+  lookup under a newer epoch, which frees their probe slots; lookups under one epoch are left alone, since the routed
   target while stopped and a pinned `DIRECT` send the same request.
 - `routeTrackerProvider` in `lib/providers/route_state.dart` merges that with the host's side: `proxied` (running and
   not suspended), a host epoch that a connectivity event moves, and `synced`, which is false until `watchRoute` has
@@ -546,17 +551,19 @@ force or is being asked again. The mechanism has three parts.
   itself when the event listener is cleared, because an engine that goes away never sends `watchRoute(false)`.
 - `RoutedProbe` in `lib/providers/routed_probe.dart` is the one cache both `OutboundIpProbe` and `ServiceStatus` mix
   in. A widget `watch`es the target it shows and `unwatch`es on the way out; only watched targets are probed, one
-  request in flight per target. An answer is stamped with the Core's counters and the host state at launch, and
-  `RouteState.isFresh` walks its chain against the picks, so a selection change only invalidates results that went
-  through the changed group while an epoch change invalidates everything. A stale watched entry shows as checking at
-  once and is asked again once the route has settled, so asking at each step does not spend a probe on every route
-  but the last. A move (`RouteState.hasMovedSince`: the Core epoch, the host epoch or `proxied`) waits
-  `probeMoveSettleDuration`, since a start moves it three times within about 150 ms (`proxied`, then the listeners,
-  then the Android TUN) and the user is watching for the new address. A re-pick alone waits `probeSettleDuration`,
-  past the next pick poll, because groups rebuilt together re-pick on neighbouring polls; a move during that wait cuts
-  it short. A newly watched target, a
-  `refresh` and a resumed retry do not wait; an unwatched stale entry is dropped. Nothing launches while the app is
-  hidden: what falls due waits for it to be shown.
+  request in flight per target. An answer is stamped with the Core's counters, its hits and the host state at
+  launch. A reset (`RouteState.hasMovedSince`: the Core epoch, the host epoch or `proxied`) invalidates everything:
+  a stale watched entry shows as checking at once and is asked again after `probeMoveSettleDuration`, since a start
+  moves it three times within about 150 ms (`proxied`, then the listeners, then the Android TUN) and the user is
+  watching for the new address. A new route version leaves every answer on show; once `probeSettleDuration` has
+  outlasted the next pick poll, the hits of all of them go to `checkRoutes` in one call. An answer whose exit held
+  takes the checked version and costs no request to an outside site; only one whose exit moved is dropped and asked
+  again. An answer that lands under an older version than the state stays checking until its own check returns, so
+  it never shows and then flips. A probe the user did not ask for and no reset forced waits out
+  `probeThrottleDuration` since the target's last probe, so an exit that moves with each provider, rule set and
+  url-test pick of one config load costs at most one probe more; a resumed retry and a target watched again soon
+  after its last probe wait too. A `refresh` waits for neither, and an unwatched entry whose exit moved is dropped.
+  Nothing launches or checks while the app is hidden: what falls due waits for it to be shown.
   Failures wait for `retry`, `refresh`, or the app resuming (`markResumed`), and
   a service check that timed out is a failure that still shows its status. `refresh` is the user's own request and
   runs for unwatched targets too: the service sheet reads the cache and never watches its rows, because one service
