@@ -654,6 +654,30 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **许可证、署名与证据：** MIT；[固定提交 LICENSE](https://github.com/actions/upload-artifact/blob/ea165f8d65b6e75b540449e92b4886f43607fa02/LICENSE)
 
+#### [actions/configure-pages](https://github.com/actions/configure-pages)
+
+**固定版本 / revision：** `983d7736d9b0ae728b81ab479565c72886d7745b`
+
+**用途与采用方式：** 项目站点部署前启用并读取 GitHub Pages 配置。按固定 SHA 引用。
+
+**许可证、署名与证据：** MIT；[固定提交 LICENSE](https://github.com/actions/configure-pages/blob/983d7736d9b0ae728b81ab479565c72886d7745b/LICENSE)
+
+#### [actions/upload-pages-artifact](https://github.com/actions/upload-pages-artifact)
+
+**固定版本 / revision：** `7b1f4a764d45c48632c6b24a0339c27f5614fb0b`
+
+**用途与采用方式：** 把生成的项目站点打包为 Pages 产物。v4.0.0 已把内部的 `actions/upload-artifact` 固定为 `ea165f8d`，满足仓库“所有 action 固定完整 SHA”的要求；v3.0.1 仍引用 `@v4` 标签，会在作业准备阶段被拒绝。站点不含点开头文件，v4 排除这类文件不影响输出。按固定 SHA 引用。
+
+**许可证、署名与证据：** MIT；[固定提交 LICENSE](https://github.com/actions/upload-pages-artifact/blob/7b1f4a764d45c48632c6b24a0339c27f5614fb0b/LICENSE)
+
+#### [actions/deploy-pages](https://github.com/actions/deploy-pages)
+
+**固定版本 / revision：** `d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e`
+
+**用途与采用方式：** 把已上传的站点产物部署到 GitHub Pages。按固定 SHA 引用。
+
+**许可证、署名与证据：** MIT；[固定提交 LICENSE](https://github.com/actions/deploy-pages/blob/d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e/LICENSE)
+
 #### [android-actions/setup-android](https://github.com/android-actions/setup-android)
 
 **固定版本 / revision：** `9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407`
