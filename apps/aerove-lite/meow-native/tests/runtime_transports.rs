@@ -89,7 +89,29 @@ async fn full_factory_http_and_socks_tcp_keepalive_stop_join_and_ports_rebind() 
         let calls = Arc::new(AtomicUsize::new(0)); let cancel = CancellationToken::new();
         let network = NetworkContext::protected(Arc::new(Protect(calls.clone())),None,cancel).with_physical_dns(vec!["127.0.0.1:53".parse().unwrap()]);
         let session = Registry::start_owned(plan(ports,peer_address,kind,&roots),None,network,None).unwrap();
-        timeout(Duration::from_secs(5),session.ready()).await.unwrap().unwrap();
+        let readiness = timeout(Duration::from_secs(5),session.ready()).await;
+        {
+            use std::io::Write as _;
+            let owner = session.owned_runtime();
+            let diagnostic = serde_json::json!({
+                "stage":"ready", "protocol":kind, "generation":session.generation().to_string(),
+                "privateControl":ports[0].to_string(), "mixed":ports[1].to_string(),
+                "target":target_address.to_string(), "upstream":peer_address.to_string(),
+                "readyResult":format!("{readiness:?}"), "session":session.snapshot(),
+                "ownedStatus":owner.as_ref().map(|owner|owner.status()),
+                "typedFailure":readiness.as_ref().ok().and_then(|result|result.as_ref().err()),
+                "listeners":owner.as_ref().map(|owner|owner.listener_status()),
+                "cleanupConfirmed":owner.as_ref().map(|owner|owner.cleanup_confirmed()),
+            });
+            let diagnostic = diagnostic.to_string();
+            let diagnostic = if diagnostic.len() <= 16 * 1024 { diagnostic } else {
+                serde_json::json!({"stage":"ready", "protocol":kind, "diagnosticOmitted":true,
+                    "diagnosticBytes":diagnostic.len(), "maximumBytes":16 * 1024}).to_string()
+            };
+            // Preserve the original readiness failure even if diagnostic output cannot be saved.
+            let _ = writeln!(std::io::stdout().lock(), "RUNTIME_TRANSPORT_STARTUP_DIAGNOSTIC {diagnostic}");
+        }
+        readiness.unwrap().unwrap();
         let mut client = socks_connect(ports[1],target_address).await;
         for path in ["/first","/second"] {
             client.write_all(format!("GET {path} HTTP/1.1\r\nHost: localhost\r\n\r\n").as_bytes()).await.unwrap();

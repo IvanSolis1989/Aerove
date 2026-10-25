@@ -174,6 +174,8 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **用途与采用方式：** 读取 `CoroutineScope.kt`、`Job.kt`、`Builders.common.kt`，复用结构化并发取消语义，并确认 `withContext` 的prompt cancellation可能在IO提交后丢失返回值；导入/文件写入沿用项目既有 `onCommitted` 回执处理；未复制实现代码、未新增依赖
 
+取消诊断另只读核对同版 [`StackTraceRecovery.kt`](https://github.com/Kotlin/kotlinx.coroutines/blob/1.10.2/kotlinx-coroutines-core/jvm/src/internal/StackTraceRecovery.kt) 的异常副本与原始 cause 关系，生产只使用公开 `ensureActive()` 取得当前 Job 的权威取消原因，测试在严格识别恢复边界后保留原对象及附加诊断断言；未调用内部恢复 API或新增依赖。debug 开／关的 JVM 复现与真实 Gradle、Android 验收分别记录。
+
 **许可证、署名与证据：** Apache-2.0；`apps/aerove-lite/app/build.gradle.kts`、[CoroutineScope.kt](https://github.com/Kotlin/kotlinx.coroutines/blob/1.10.2/kotlinx-coroutines-core/common/src/CoroutineScope.kt)、[Job.kt](https://github.com/Kotlin/kotlinx.coroutines/blob/1.10.2/kotlinx-coroutines-core/common/src/Job.kt)、[Builders.common.kt](https://github.com/Kotlin/kotlinx.coroutines/blob/1.10.2/kotlinx-coroutines-core/common/src/Builders.common.kt)
 
 #### [BigBadaboom/androidsvg](https://github.com/BigBadaboom/androidsvg)
@@ -236,9 +238,17 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **固定版本 / revision：** Dart `3.13.5` / `04bcd1036cdc799ac6564988f159ee454d42c822`
 
-**用途与采用方式：** TLS、字体、Socket API及 `Isolate.kill` 生命周期只读核验；kill不保证挂起socket立即EOF/FD清理，因此未以隔离区退出替代逐请求取消
+**用途与采用方式：** TLS、字体、Socket API及 `Isolate.kill` 生命周期只读核验；kill不保证挂起socket立即EOF/FD清理，因此未以隔离区退出替代逐请求取消。另只读核对 DateTime 相等与 UTC/local 转换语义，用于数据库往返测试夹具，不改变生产时间存储
 
 **许可证、署名与证据：** BSD-3-Clause；[Isolate.kill API](https://api.dart.dev/dart-isolate/Isolate/kill.html)、固定Dart SDK版本/source
+
+#### [simolus3/drift](https://github.com/simolus3/drift)
+
+**固定版本 / revision：** `2.35.1` / tag `drift-2.35.1` / `f7e4c72bd10d92b9e1a8bfb768730ca1096b1341`；现有 Pub 锁定包 SHA256 `a21a6a7a9e6a0bcabdf47a9af4247c556d38dc9bfe9f05c4fdf72a488bb57eab`
+
+**用途与采用方式：** 标准版已有数据库依赖。内置脚本旧 URL 迁移只读核对 [`connection_user.dart`](https://github.com/simolus3/drift/blob/f7e4c72bd10d92b9e1a8bfb768730ca1096b1341/drift/lib/src/runtime/api/connection_user.dart) 事务、[`insert.dart`](https://github.com/simolus3/drift/blob/f7e4c72bd10d92b9e1a8bfb768730ca1096b1341/drift/lib/src/runtime/query_builder/statements/insert.dart) 显式冲突目标的 `DoNothing`，以及 [`mapping.dart`](https://github.com/simolus3/drift/blob/f7e4c72bd10d92b9e1a8bfb768730ca1096b1341/drift/lib/src/runtime/types/mapping.dart) 的 INTEGER 时间映射；未复制实现或新增依赖。测试保留严格模型、并发编辑、正文与事务回滚断言。
+
+**许可证、署名与证据：** MIT，Copyright © 2021 Simon Binder；保留安装包原 `LICENSE` 与 Pub 锁。固定映射源码副本 SHA256 `25f2fdcf64585e763f32a07f6c1b6b67be69a902202ed3a9b78ef7db02f174eb`。
 
 #### [rust-lang/cargo](https://github.com/rust-lang/cargo)
 

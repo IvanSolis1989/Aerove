@@ -26,14 +26,40 @@ class NativeResourceCallTest {
         val diagnostic=RuntimeException("resourceRequestProducerExit stage=resourceProducerJoin outcome=cancelled panicked=false cancelled=true")
         original.addSuppressed(diagnostic)
         val caught=try {nativeResourceCall({cancels.incrementAndGet()}) {throw original};null} catch(error:Throwable) {error}
-        assertSame(original,caught)
-        assertSame(diagnostic,caught!!.suppressed.single())
+        assertSame(original,originalException(caught!!))
+        assertSame(diagnostic,originalException(caught).suppressed.single())
         assertEquals(0,cancels.get())
     }
 
     @Test fun intentionalCancelKeepsCancellationAfterBlockedNativeReturnsItsCancellationError() = cancellation(false,false)
     @Test fun nativeCancelFailureIsSuppressedWithoutReplacingCancellation() = cancellation(true,false)
     @Test fun cancelledCallerWaitsForNativeExitEvenIfNativeReturnsSuccess() = cancellation(false,true)
+
+    @Test fun activeNativeCancellationKeepsItsOwnIdentityAndCleanupDiagnostic() = runBlocking {
+        val cancels = AtomicInteger()
+        val original = CancellationException("native cancellation while caller is active")
+        val cleanup = IllegalStateException("native cancel cleanup")
+        val caught = try {
+            nativeResourceCall({ cancels.incrementAndGet(); throw cleanup }) { throw original }
+            null
+        } catch (error: Throwable) { error }
+        assertSame(original, originalException(caught!!))
+        assertSame(cleanup, originalException(caught).suppressed.single())
+        assertEquals(1, cancels.get())
+    }
+
+    @Test fun recoveryNormalizationRequiresSameClassCauseAndCoroutineFrame() {
+        val original = RuntimeException("same message")
+        val unrelated = RuntimeException("same message")
+        val ordinaryWrapper = RuntimeException("same message", original)
+        val recovered = RuntimeException("same message", original).apply {
+            stackTrace = arrayOf(StackTraceElement("_COROUTINE._BOUNDARY", "_", "CoroutineDebugging.kt", 42))
+        }
+        assertSame(unrelated, originalException(unrelated))
+        assertNotSame(original, originalException(unrelated))
+        assertSame(ordinaryWrapper, originalException(ordinaryWrapper))
+        assertSame(original, originalException(recovered))
+    }
 
     private fun cancellation(cancelFails:Boolean,nativeSucceeds:Boolean) = runBlocking {
         supervisorScope {
@@ -61,12 +87,19 @@ class NativeResourceCallTest {
                 request.cancel(original)
                 val caught=try {request.await();null} catch(error:Throwable) {error}
                 assertTrue("cancellation was replaced by $caught",caught is CancellationException)
-                assertSame(original,caught)
+                assertSame(original,originalException(caught!!))
                 assertEquals(1,cancels.get())
                 assertEquals("cancel must join the real blocking worker before returning",1,exits.get())
                 assertTrue(request.isCompleted)
-                if(cancelFails)assertTrue(caught!!.suppressed.any {it===cleanup})
+                if(cancelFails)assertTrue(originalException(caught).suppressed.any {it===cleanup})
             } finally {release.countDown();withContext(NonCancellable) {request.join()}}
         }
+    }
+
+    // Same narrow recovery predicate as kotlinx.coroutines 1.10.2 StackTraceRecovery.unwrapImpl.
+    private fun originalException(error: Throwable): Throwable {
+        val cause = error.cause
+        return if (cause != null && cause.javaClass == error.javaClass &&
+            error.stackTrace.any { it.className.startsWith("_COROUTINE.") }) cause else error
     }
 }

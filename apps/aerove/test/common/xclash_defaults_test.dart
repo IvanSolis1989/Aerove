@@ -366,7 +366,7 @@ void main() {
       final previous = Script(
         id: 123,
         label: 'Existing',
-        lastUpdateTime: DateTime.utc(2024),
+        lastUpdateTime: DateTime.utc(2024).toLocal(),
         url:
             'https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/'
             'main/FlClash/FlClash%28mihomo%29.js',
@@ -443,7 +443,7 @@ void main() {
     final previous = Script(
       id: 123,
       label: 'Keep user label',
-      lastUpdateTime: DateTime.utc(2024),
+      lastUpdateTime: DateTime.utc(2024).toLocal(),
       url:
           'https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/'
           'main/FlClash/FlClash(mihomo).js',
@@ -472,7 +472,7 @@ void main() {
     final previous = Script(
       id: 124,
       label: 'Keep existing',
-      lastUpdateTime: DateTime.utc(2024),
+      lastUpdateTime: DateTime.utc(2024).toLocal(),
       url: legacy,
     );
     await db.scriptsDao.putAll([previous.toCompanion()]);
@@ -511,7 +511,7 @@ void main() {
       final restored = Script(
         id: 124,
         label: 'Restored custom body',
-        lastUpdateTime: DateTime.utc(2024, 3, 4),
+        lastUpdateTime: DateTime.utc(2024, 3, 4).toLocal(),
         url:
             'https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/'
             'refs/heads/main/FlClash/FlClash(mihomo).js',
@@ -561,7 +561,7 @@ void main() {
       final restored = Script(
         id: 124,
         label: 'Restored',
-        lastUpdateTime: DateTime.utc(2024),
+        lastUpdateTime: DateTime.utc(2024).toLocal(),
         url:
             'https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/'
             'main/FlClash/FlClash%28mihomo%29.js',
