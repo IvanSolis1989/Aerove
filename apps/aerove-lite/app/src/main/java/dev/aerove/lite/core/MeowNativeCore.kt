@@ -22,10 +22,10 @@ object MeowNativeCore {
     @JvmStatic external fun hostPolicyCommand(handle: Long, requestJson: String): String
 
     // Offline conversion only: null means valid; diagnostics preserve native parser errors.
-    @JvmStatic external fun validate(config: String): String?
-    @JvmStatic external fun validateResource(kind: String, path: String, behavior: String, format: String): String?
-    @JvmStatic external fun inspectRuleSet(path: String): String
-    @JvmStatic external fun dumpRuleSet(path: String, behavior: String, format: String): String
+    @JvmStatic external fun validate(handle: Long, config: String): String?
+    @JvmStatic external fun validateResource(handle: Long, kind: String, path: String, behavior: String, format: String): String?
+    @JvmStatic external fun inspectRuleSet(handle: Long, path: String): String
+    @JvmStatic external fun dumpRuleSet(handle: Long, path: String, behavior: String, format: String): String
 
     fun readCapabilities() = MeowCapabilitiesCodec.decode(capabilities())
     fun readVerifiedFeatures(): Set<String> = readCapabilities().verifiedFeatures

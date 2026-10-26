@@ -47,8 +47,8 @@ class ProfileDetailRootUiTest {
             val endpoint = CoreEndpoint(server.port,"fixture-private-secret-00000000000000",AppliedConfigSnapshot(profile.id,file),prepared.revision,prepared.generation)
             val library = dev.aerove.lite.profilebuilder.BuilderResourceLibrary(directory)
             val inspector = object : NativeRulePayloadInspector {
-                override fun inspect(path: String) = RulePayloadInspection("text","domain",1)
-                override fun dump(path: String, behavior: String, format: String) = File(path).readText()
+                override suspend fun inspect(path: String) = RulePayloadInspection("text","domain",1)
+                override suspend fun dump(path: String, behavior: String, format: String) = File(path).readText()
             }
             val managed = dev.aerove.lite.integration.ProfileDetailResources(repository,ResourceManagementRepository(repository),library,
                 GlobalRulePayloadRepository(directory,library,manager,inspector,repository))

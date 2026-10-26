@@ -1,7 +1,7 @@
 """Fixed dependency-unit admission for the policy runtime graph, with a separate real Cargo lock."""
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import subprocess
 
@@ -12,6 +12,7 @@ MODE_OBSERVABILITY='policy-runtime-observability-v1'
 MODE_PROVIDER_GENERAL='policy-runtime-provider-general-v1'
 MODE_RESOURCE_HEALTH='policy-runtime-resource-health-v1'
 MODE_MRS_READER='policy-runtime-mrs-reader-v1'
+MODE_PROVIDER_READER='policy-runtime-provider-reader-v1'
 CASES=[
     ('meow-common',name) for name in [
         'cli_without_scope_keeps_output_and_real_join_error','observer_does_not_consume_protocol_output_or_panic',
@@ -65,16 +66,31 @@ CASES_PROVIDER_GENERAL=[dict(entry,expectedPass=12 if index==0 else entry['expec
     for index,entry in enumerate(CASES_OBSERVABILITY)]+[{'package': 'meow-config', 'filter': 'proxy_provider::tests::companion_', 'expectedPass': 2, 'target': 'lib', 'requiredFeatures': [], 'exact': False}, {'package': 'meow-config', 'filter': 'proxy_provider::tests::provider_strict_refresh_keeps_last_good_on_bad_dialer', 'expectedPass': 1, 'target': 'lib', 'requiredFeatures': [], 'exact': True}, {'package': 'meow-common', 'filter': 'diagnostic_', 'expectedPass': 2, 'target': 'lib', 'requiredFeatures': [], 'exact': False}, {'package': 'meow-config', 'filter': 'diagnostic_', 'expectedPass': 1, 'target': 'lib', 'requiredFeatures': [], 'exact': False}, {'package': 'meow-proxy', 'filter': 'diagnostic_', 'expectedPass': 10, 'target': 'lib', 'requiredFeatures': [], 'exact': False}, {'package': 'meow-transport', 'filter': 'diagnostic_', 'expectedPass': 3, 'target': 'lib', 'requiredFeatures': [], 'exact': False}, {'package': 'meow-config', 'filter': 'managed_dependency_', 'expectedPass': 3, 'target': 'lib', 'requiredFeatures': [], 'exact': False}, {'package': 'meow-config', 'filter': 'proxy_provider::tests::projected_', 'expectedPass': 5, 'target': 'lib', 'requiredFeatures': [], 'exact': False}]
 CASES_MRS_READER=CASES_PROVIDER_GENERAL+[
     dict(package='meow-rules',filter='mrs_parser::tests::',expectedPass=30,target='lib',requiredFeatures=[],exact=False),
-    dict(package='meow-rules',filter='rule_set::tests::',expectedPass=16,target='lib',requiredFeatures=[],exact=False),
+    dict(package='meow-rules',filter='rule_set::tests::',expectedPass=15,target='lib',requiredFeatures=[],exact=False),
+    # The overlay's rule_set regression lives outside rule_set::tests, so it is admitted by its exact libtest path.
+    dict(package='meow-rules',filter='rule_set::plain_domain_validation_regression::invalid_plain_pattern_is_not_an_accepted_rule',expectedPass=1,target='lib',requiredFeatures=[],exact=True),
+]
+# Provider reader keeps every MRS command and adds the real reader15 module and the unchanged 41 provider tests.
+CASES_PROVIDER_READER=CASES_MRS_READER+[
+    dict(package='meow-config',filter='rule_provider::reader::tests::reader15_',expectedPass=15,target='lib',requiredFeatures=[],exact=False),
+    dict(package='meow-config',filter='rule_provider::tests::',expectedPass=41,target='lib',requiredFeatures=[],exact=False),
 ]
 MRS_FORMAT_COMMAND=['rustfmt','--check','--edition','2021',
     '.upstream/meow-rs/crates/meow-rules/src/mrs_parser.rs',
     '.upstream/meow-rs/crates/meow-rules/src/rule_set.rs']
+# rustfmt also checks every out-of-line module a listed file declares, so each #[path] child is listed too.
+PROVIDER_READER_FORMAT_COMMAND=['rustfmt','--check','--edition','2021',
+    '.upstream/meow-rs/crates/meow-config/src/rule_provider.rs',
+    '.upstream/meow-rs/crates/meow-config/src/rule_pages.rs',
+    '.upstream/meow-rs/crates/meow-config/src/rule_provider_reader.rs',
+    '.upstream/meow-rs/crates/meow-config/src/rule_provider_reader_tests.rs']
 COMPILE_COMMAND=['cargo','check','--manifest-path',MANIFEST,'--locked','--package','meow-api',
     '--package','meow-listener','--all-features']
+# Modes whose build must run all 42 Native targets, the resource JNI source gate and the added Native test proof.
+FULL_NATIVE_SUITE_MODES=(MODE_RESOURCE_HEALTH,MODE_MRS_READER,MODE_PROVIDER_READER)
 
 def packages_for_mode(mode):
-    if mode==MODE_MRS_READER:return sorted(set(packages_for_mode(MODE_RESOURCE_HEALTH))|{'meow-rules'})
+    if mode in (MODE_MRS_READER,MODE_PROVIDER_READER):return sorted(set(packages_for_mode(MODE_RESOURCE_HEALTH))|{'meow-rules'})
     if mode in (MODE_PROVIDER_GENERAL,MODE_RESOURCE_HEALTH):return sorted(set(PACKAGES)|{'meow-tunnel','meow-api','meow-listener','meow-config'})
     if mode==MODE_OBSERVABILITY:return sorted(set(PACKAGES)|{'meow-tunnel','meow-api','meow-listener'})
     if mode in (MODE,MODE_V2,MODE_TRAFFIC):return PACKAGES
@@ -82,15 +98,44 @@ def packages_for_mode(mode):
 
 def digest(data):return hashlib.sha256(data).hexdigest()
 
+MOD_ITEM=re.compile(r'\bmod\s+[A-Za-z_][A-Za-z0-9_]*\s*;')
+PATH_MOD=re.compile(r'^((?:#\[[^\n]*\]\n)+)(?:pub(?:\([a-z]+\))? )?mod [A-Za-z_][A-Za-z0-9_]*;$',re.MULTILINE)
+
+def format_files(root,command):
+    """Hash every file a rustfmt command checks, which must be exactly the files it lists.
+
+    rustfmt follows out-of-line modules without evaluating cfg. Only top-level #[path] children are resolved
+    (relative to the declaring file, as rustc does); any other out-of-line module fails closed."""
+    declared=list(command[4:]);found={};pending=list(declared)
+    while pending:
+        name=pending.pop(0)
+        if name in found:continue
+        data=(Path(root)/name).read_bytes();found[name]=digest(data);text=data.decode('utf-8')
+        children=PATH_MOD.findall(text)
+        if len(children)!=len(MOD_ITEM.findall(text)):raise ValueError('Format gate cannot resolve an out-of-line module in '+name)
+        for attributes in children:
+            paths=re.findall(r'^#\[path = "([A-Za-z0-9_.-]+)"\]$',attributes,re.MULTILINE)
+            child=(PurePosixPath(name).parent/paths[0]).as_posix() if len(paths)==1 and paths[0] not in ('.','..') else None
+            if child is None or not (Path(root)/child).is_file():raise ValueError('Format gate cannot resolve an out-of-line module in '+name)
+            pending.append(child)
+    if len(set(declared))!=len(declared) or set(found)!=set(declared):
+        raise ValueError('Format gate does not declare every file rustfmt checks: '+','.join(sorted(set(found)^set(declared))))
+    return {name:found[name] for name in declared}
+
 def validate_policy(policy):
     if 'coreTests' not in policy:
         if 'coreTestLockSha256' in policy:raise ValueError('Core test lock without approved tests')
         return False
-    if policy['coreTests'] not in (MODE,MODE_V2,MODE_TRAFFIC,MODE_OBSERVABILITY,MODE_PROVIDER_GENERAL,MODE_RESOURCE_HEALTH,MODE_MRS_READER):raise ValueError('Unknown Core unit test admission')
+    if policy['coreTests'] not in (MODE,MODE_V2,MODE_TRAFFIC,MODE_OBSERVABILITY,MODE_PROVIDER_GENERAL,MODE_RESOURCE_HEALTH,MODE_MRS_READER,MODE_PROVIDER_READER):raise ValueError('Unknown Core unit test admission')
     expected=policy.get('coreTestLockSha256')
     if expected is not None and (not isinstance(expected,str) or re.fullmatch('[0-9a-f]{64}',expected) is None):
         raise ValueError('Invalid Core unit lock identity')
     if not policy['resolveLock'] and expected is None:raise ValueError('Locked Core tests require an accepted Core test lock')
+    if policy['coreTests']==MODE_PROVIDER_READER:
+        # Same 42-target gate as build_policy applies to the earlier full-suite modes, owned here for this mode.
+        from build_policy import RESOURCE_HEALTH_TARGETS
+        if not isinstance(policy.get('targets'),list) or tuple(policy['targets'])!=RESOURCE_HEALTH_TARGETS:
+            raise ValueError('Provider reader admission requires every approved Native target')
     return True
 
 def feature_matrix(metadata,upstream,mode=MODE):
@@ -114,6 +159,7 @@ def entries(mode):
     if mode==MODE:return [dict(package=p,filter=f,expectedPass=COUNTS.get((p,f),1),target='lib',requiredFeatures=[]) for p,f in CASES]
     if mode in (MODE_V2,MODE_TRAFFIC):return CASES_V2
     if mode==MODE_MRS_READER:return CASES_MRS_READER
+    if mode==MODE_PROVIDER_READER:return CASES_PROVIDER_READER
     if mode==MODE_OBSERVABILITY:return CASES_OBSERVABILITY
     if mode in (MODE_PROVIDER_GENERAL,MODE_RESOURCE_HEALTH):return CASES_PROVIDER_GENERAL
     raise ValueError('Unknown Core unit test admission')
@@ -135,7 +181,21 @@ def execute(root,policy,environment,receipt):
     receipt['coreTests']=state
     source_lock=upstream/'Cargo.lock';original=source_lock.read_bytes()
     (directory/'upstream-before.lock').write_bytes(original);state['upstreamLockBeforeSha256']=digest(original)
+    def format_check(key,command,stem,locked):
+        args=list(command);entry=dict(command=args,exit=None);state[key]=entry
+        entry['files']=format_files(root,args)
+        result=subprocess.run(args,cwd=root,env=environment,capture_output=True)
+        (directory/(stem+'.stdout.log')).write_bytes(result.stdout)
+        (directory/(stem+'.stderr.log')).write_bytes(result.stderr)
+        entry.update(exit=result.returncode,stdoutSha256=digest(result.stdout),stderrSha256=digest(result.stderr))
+        print(result.stdout.decode('utf-8',errors='replace'),end='',flush=True)
+        print(result.stderr.decode('utf-8',errors='replace'),end='',flush=True)
+        if source_lock.read_bytes()!=locked:raise ValueError('Core format check changed its lock')
+        return result.returncode
     try:
+        if policy['coreTests']==MODE_PROVIDER_READER and (not isinstance(receipt.get('addedNativeTests'),dict) or not receipt['addedNativeTests']):
+            # build.py must have run its full-suite Native proof (and resource JNI source gate) for this mode first.
+            raise ValueError('Provider reader admission requires the full Native suite proof before Core tests')
         bridge_command=['cargo','metadata','--locked','--format-version','1']
         bridge=subprocess.run(bridge_command,cwd=root,env=environment,capture_output=True)
         state['bridgeMetadataCommand']=bridge_command;state['bridgeMetadataExit']=bridge.returncode
@@ -159,10 +219,18 @@ def execute(root,policy,environment,receipt):
         state['workspaceMembers']=sorted(members)
         state['features']=matrix
         locked=source_lock.read_bytes();state['resolvedLockSha256']=digest(locked);(directory/'core-tests.lock').write_bytes(locked)
+        format_failures=[]
+        if policy['coreTests']==MODE_PROVIDER_READER:
+            # Both rustfmt gates run first and are recorded; a failure is raised only after every test and compile
+            # command, so one host run uploads the exact diffs together with the authored test results.
+            for key,command_args,stem in [('formatCheck',MRS_FORMAT_COMMAND,'mrs-reader-format'),
+                    ('providerFormatCheck',PROVIDER_READER_FORMAT_COMMAND,'provider-reader-format')]:
+                exit_code=format_check(key,command_args,stem,locked)
+                if exit_code:format_failures.append((exit_code,command_args))
         for index,spec in enumerate(entries(policy['coreTests'])):
             package=spec['package'];name=spec['filter'];args=entry_command(spec,matrix[package]);entry=dict(package=package,filter=name,command=args,exit=None,expectedPass=spec['expectedPass']);state['commands'].append(entry)
-            if policy['coreTests'] in (MODE_V2,MODE_TRAFFIC,MODE_OBSERVABILITY,MODE_PROVIDER_GENERAL,MODE_RESOURCE_HEALTH,MODE_MRS_READER):entry['target']=spec['target']
-            if policy['coreTests'] in (MODE_PROVIDER_GENERAL,MODE_RESOURCE_HEALTH,MODE_MRS_READER):entry['exact']=spec['exact']
+            if policy['coreTests'] in (MODE_V2,MODE_TRAFFIC,MODE_OBSERVABILITY,MODE_PROVIDER_GENERAL,MODE_RESOURCE_HEALTH,MODE_MRS_READER,MODE_PROVIDER_READER):entry['target']=spec['target']
+            if policy['coreTests'] in (MODE_PROVIDER_GENERAL,MODE_RESOURCE_HEALTH,MODE_MRS_READER,MODE_PROVIDER_READER):entry['exact']=spec['exact']
             result=subprocess.run(args,cwd=root,env=environment,capture_output=True)
             label=re.sub('[^A-Za-z0-9_.-]','_',name if name is not None else spec['target'])
             stem=f'{index:02d}-{package}-{label}';(directory/(stem+'.stdout.log')).write_bytes(result.stdout);(directory/(stem+'.stderr.log')).write_bytes(result.stderr)
@@ -173,7 +241,7 @@ def execute(root,policy,environment,receipt):
             if count!=[str(entry['expectedPass']).encode()]:raise ValueError('Core unit filter did not execute its exact authored test count')
             entry['passed']=entry['expectedPass']
             if source_lock.read_bytes()!=locked:raise ValueError('Locked Core unit command changed its lock')
-        if policy['coreTests'] in (MODE_OBSERVABILITY,MODE_PROVIDER_GENERAL,MODE_RESOURCE_HEALTH,MODE_MRS_READER):
+        if policy['coreTests'] in (MODE_OBSERVABILITY,MODE_PROVIDER_GENERAL,MODE_RESOURCE_HEALTH,MODE_MRS_READER,MODE_PROVIDER_READER):
             args=list(COMPILE_COMMAND)
             entry=dict(command=args,exit=None);state['compileCheck']=entry
             result=subprocess.run(args,cwd=root,env=environment,capture_output=True)
@@ -194,6 +262,7 @@ def execute(root,policy,environment,receipt):
             print(result.stderr.decode('utf-8',errors='replace'),end='',flush=True)
             if result.returncode:raise subprocess.CalledProcessError(result.returncode,args)
             if source_lock.read_bytes()!=locked:raise ValueError('Core format check changed its lock')
+        if format_failures:raise subprocess.CalledProcessError(format_failures[0][0],list(format_failures[0][1]))
         state['accepted']=True
     finally:
         source_lock.write_bytes(original)

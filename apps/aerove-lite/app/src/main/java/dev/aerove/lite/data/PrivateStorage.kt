@@ -5,6 +5,7 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.nio.ByteBuffer
+import java.nio.CharBuffer
 import java.nio.channels.FileChannel
 import java.nio.charset.CodingErrorAction
 import java.nio.file.Files
@@ -20,6 +21,8 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import okio.buffer
+import okio.sink
 
 internal const val MAX_PROFILE_BYTES = 4 * 1024 * 1024
 
@@ -60,12 +63,27 @@ internal fun InputStream.readBounded(limit: Int): ByteArray {
     return result.toByteArray()
 }
 
-internal fun ByteArray.strictUtf8(): String = strictUtf8PreservingBom().removePrefix("\uFEFF")
+internal fun ByteArray.strictUtf8(): String = strictUtf8From(if (size >= 3 && this[0] == 0xEF.toByte() &&
+    this[1] == 0xBB.toByte() && this[2] == 0xBF.toByte()) 3 else 0)
 
-internal fun ByteArray.strictUtf8PreservingBom(): String = Charsets.UTF_8.newDecoder()
-    .onMalformedInput(CodingErrorAction.REPORT)
-    .onUnmappableCharacter(CodingErrorAction.REPORT)
-    .decode(ByteBuffer.wrap(this)).toString()
+internal fun ByteArray.strictUtf8PreservingBom(): String = strictUtf8From(0)
+
+/** Validates in fixed chunks, then decodes once into the String: no whole-text CharBuffer or BOM substring copy. */
+private fun ByteArray.strictUtf8From(offset: Int): String {
+    val decoder = Charsets.UTF_8.newDecoder()
+        .onMalformedInput(CodingErrorAction.REPORT)
+        .onUnmappableCharacter(CodingErrorAction.REPORT)
+    val input = ByteBuffer.wrap(this, offset, size - offset)
+    val output = CharBuffer.allocate(8192)
+    while (true) {
+        val result = decoder.decode(input, output, true)
+        if (result.isError) result.throwException()
+        output.clear()
+        if (result.isUnderflow) break
+    }
+    decoder.flush(output)
+    return String(this, offset, size - offset, Charsets.UTF_8)
+}
 
 private fun InputStream.restoreText(limit: Int): String = Charsets.UTF_8.newDecoder()
     .onMalformedInput(CodingErrorAction.REPORT)
@@ -114,7 +132,7 @@ internal class PrivateStorage(directory: File) {
         val temporary = file(".tmp-${UUID.randomUUID()}")
         try {
             FileOutputStream(temporary).use { output ->
-                output.write(content.toByteArray(Charsets.UTF_8))
+                output.sink().buffer().run { writeUtf8(content); flush() }
                 output.fd.sync()
             }
             Files.move(

@@ -11,15 +11,15 @@ class ConfigValidationException(val issues: List<ConfigIssue>) :
 
 fun interface NativeConfigValidator {
     // The bridge must run the pinned parser, conversion and strict unknown-field validation.
-    fun validate(yaml: String): String?
+    suspend fun validate(yaml: String): String?
 }
 
 fun interface ProfileValidator {
-    fun validate(yaml: String)
+    suspend fun validate(yaml: String)
 }
 
 fun interface NativeResourceValidator {
-    fun validate(kind: String, path: String, behavior: String, format: String): String?
+    suspend fun validate(kind: String, path: String, behavior: String, format: String): String?
 }
 
 data class PreparedProfile internal constructor(

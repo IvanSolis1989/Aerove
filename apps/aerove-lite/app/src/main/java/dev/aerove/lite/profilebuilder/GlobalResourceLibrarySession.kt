@@ -1,5 +1,7 @@
 package dev.aerove.lite.profilebuilder
 
+import java.io.FilterInputStream
+import java.io.InputStream
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -17,7 +19,26 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 
-data class GlobalLibraryFile(val name: String, val bytes: ByteArray)
+/** A picked document; [open] streams it under the consumer's bound with the picker's original error text. */
+class GlobalLibraryFile(val name: String, private val source: suspend () -> InputStream) {
+    constructor(name: String, bytes: ByteArray) : this(name, { bytes.inputStream() })
+    suspend fun open(limitBytes: Long, label: String = "Rule resource"): InputStream = PickedDocumentInput(source(), limitBytes, label)
+}
+
+private class PickedDocumentInput(input: InputStream, private val limit: Long, private val label: String) : FilterInputStream(input) {
+    private var count = 0L
+    override fun read(): Int = super.read().also { if (it >= 0) charge(1) }
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
+        super.read(buffer, offset, length).also { if (it > 0) charge(it.toLong()) }
+    override fun skip(count: Long): Long = super.skip(count).also(::charge)
+    private fun charge(bytes: Long) {
+        count += bytes
+        require(count <= limit) { "$label exceeds ${limit / (1024 * 1024)} MiB" }
+    }
+}
+
+private const val MAX_ICON_FILE_BYTES = 32L * 1024 * 1024
+
 data class GlobalResourceTarget(val kind: BuilderResourceKind, val id: String)
 data class GlobalResourceItem(val id: String, val name: String, val fields: List<String>)
 data class GlobalResourceLibraryState(val snapshot: BuilderResourceSnapshot? = null, val busy: Boolean = false,
@@ -30,7 +51,9 @@ interface GlobalProxyLinkCodec {
     suspend fun decode(text: String): List<BuilderEntry>
 }
 
-data class GlobalRuleLibraryPreview(val text: String, val editable: Boolean)
+data class GlobalRuleLibraryPreview(val text: String, val editable: Boolean, val oversize: Boolean = false) {
+    fun editorText(): String = if (oversize) dev.aerove.lite.data.editorSizeFailure(dev.aerove.lite.data.MAX_RULE_PREVIEW_BYTES) else text
+}
 data class GlobalRuleLibraryInfo(val behavior: String, val format: String, val count: Int?, val bytes: Long,
     val updatedAt: Long, val remote: Boolean)
 interface GlobalRuleLibraryAccess {
@@ -155,7 +178,20 @@ class GlobalResourceLibrarySession(private val library: BuilderResourceLibrary,
         }
     }
     suspend fun importIcons(file: GlobalLibraryFile): Boolean = perform { expected ->
-        library.importIconSet(requireNotNull(expected), file.bytes.toString(Charsets.UTF_8), fallbackName = file.name.substringBeforeLast('.'))
+        val bytes = withContext(Dispatchers.IO) {
+            file.open(MAX_ICON_FILE_BYTES, "Icon set").use { input ->
+                val output = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    output.write(buffer, 0, count)
+                }
+                output.toByteArray()
+            }
+        }
+        library.importIconSet(requireNotNull(expected), bytes.toString(Charsets.UTF_8), fallbackName = file.name.substringBeforeLast('.'))
     }
     suspend fun importIconsUrl(name: String, url: String): Boolean = perform { expected -> library.importRemoteIconSet(requireNotNull(expected), url.trim(), name.trim()) }
     suspend fun editIcons(previousId: String, name: String, url: String): Boolean = perform { expected ->

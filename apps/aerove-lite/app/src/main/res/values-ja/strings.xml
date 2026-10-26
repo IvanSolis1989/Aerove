@@ -348,7 +348,8 @@
     <string name="lite_delete">削除</string>
     <string name="lite_refresh">更新</string>
     <string name="lite_search">検索</string>
-    <string name="lite_connect">接続</string>
+    <string name="lite_start">開始</string>
+    <string name="lite_stop">停止</string>
     <string name="lite_connected">接続済み</string>
     <string name="lite_disconnected">切断済み</string>
     <string name="lite_connecting">接続中…</string>
@@ -473,7 +474,7 @@
     <string name="lite_network_speed">ネットワーク速度</string>
     <string name="lite_uptime">稼働時間</string>
     <string name="lite_organization">組織</string>
-    <string name="lite_traffic_total">合計 %1$s</string>
+    <string name="lite_traffic_total">累計 %1$s</string>
     <string name="lite_vpn">VPN</string>
     <string name="lite_enabled">有効</string>
     <string name="lite_disabled">無効</string>
@@ -482,7 +483,10 @@
     <string name="lite_type_mobile">モバイル</string>
     <string name="lite_type_business">ビジネス</string>
     <string name="lite_type_hosting">ホスティング</string>
-    <string name="lite_outbound_refresh">アウトバウンドアドレスを更新</string>
+    <string name="lite_outbound_retry">再試行</string>
+    <string name="lite_details">%1$sの詳細</string>
+    <string name="lite_outbound_ip">アウトバウンド IP</string>
+    <string name="lite_tap_icon_to_retry">アイコンをタップして再試行</string>
     <string name="lite_outbound_loading">アウトバウンドアドレスを確認中…</string>
     <string name="lite_open_logs">ログを有効にする</string>
     <string name="lite_open_logs_detail">コアのログを収集し、ログページを表示します。</string>

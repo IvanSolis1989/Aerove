@@ -4,7 +4,7 @@ import json
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import shutil
-from core_tests import validate_policy as validate_core_tests
+from core_tests import FULL_NATIVE_SUITE_MODES, validate_policy as validate_core_tests
 
 HASH = re.compile('[0-9a-f]{64}')
 RESOURCE_HEALTH_TARGETS = ('lib', 'anytls_owned_shutdown', 'api_lifecycle', 'config_validation', 'control_plane', 'dns_construction', 'ech_lazy', 'ech_response_binding', 'general_groups', 'group_delay', 'health_round_context', 'host_policy_runtime', 'native_ech_context', 'native_observability', 'native_telemetry', 'node_delay', 'offline_scope', 'owned_runtime', 'owned_spawn', 'packet_fd', 'physical_dns', 'provider_events', 'provider_files', 'provider_groups', 'provider_projection_gate', 'provider_rules', 'proxy_runtime', 'request_policy', 'resource_fetch', 'resource_roots', 'runtime_admission', 'runtime_dialers', 'runtime_general_groups', 'runtime_provider_projection', 'runtime_providers', 'runtime_transports', 'statistics_actual_outcome', 'tcp_dns', 'transport_tasks', 'tun_driver', 'urltest_gate', 'user_request_context')
@@ -27,6 +27,10 @@ def feature_boundary_command(policy):
     if policy['featureBoundary']!='capabilities-no-default':raise ValueError('Unknown feature boundary check')
     return ['cargo','test','--locked','--no-default-features','--lib','capabilities::tests::','--','--test-threads=1','--nocapture']
 
+def full_native_suite(policy):
+    """The one predicate for the 42-target suite, the resource JNI source gate and the added Native test proof."""
+    return policy is not None and policy.get('coreTests') in FULL_NATIVE_SUITE_MODES
+
 def load_policy(root, *, check_resolution_seed=True):
     file=Path(root)/'build-policy.json'
     if not file.exists():return None
@@ -39,7 +43,7 @@ def load_policy(root, *, check_resolution_seed=True):
     feature_boundary_command(policy)
     validate_core_tests(policy)
     targets=policy['targets']
-    if policy.get('coreTests') in ('policy-runtime-resource-health-v1','policy-runtime-mrs-reader-v1') and tuple(targets)!=RESOURCE_HEALTH_TARGETS:
+    if full_native_suite(policy) and tuple(targets)!=RESOURCE_HEALTH_TARGETS:
         raise ValueError('Resource/health build requires every approved Native target')
     if not isinstance(targets,list) or not targets or targets[0]!='lib' or len(set(targets))!=len(targets) or any(not isinstance(t,str) or not re.fullmatch('[a-z][a-z0-9_]*',t) for t in targets):
         raise ValueError('Invalid representative test targets')

@@ -2,10 +2,23 @@
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+import build_policy
 import core_tests
+
+# The files rustfmt reaches from the two provider-reader format gates, with the overlay's real module declarations.
+FORMAT_SOURCES={'crates/meow-rules/src/mrs_parser.rs':'mod tests {\n}\n','crates/meow-rules/src/rule_set.rs':'mod tests {\n}\n',
+    'crates/meow-config/src/rule_provider.rs':'#[path = "rule_pages.rs"]\nmod rule_pages;\npub use rule_pages::RulePage;\n#[path = "rule_provider_reader.rs"]\nmod reader;\n',
+    'crates/meow-config/src/rule_pages.rs':'pub struct RulePage;\n',
+    'crates/meow-config/src/rule_provider_reader.rs':'#[cfg(test)]\n#[path = "rule_provider_reader_tests.rs"]\nmod tests;\n',
+    'crates/meow-config/src/rule_provider_reader_tests.rs':'#[test]\nfn fixture() {}\n'}
+
+def write_format_sources(upstream,sources=FORMAT_SOURCES):
+    for name,text in sources.items():
+        path=Path(upstream)/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(text,newline='\n')
 
 class CoreTestAdmissionTests(unittest.TestCase):
     def test_fixed_policy_and_exact_feature_owner_reject_unknown_inputs(self):
@@ -48,6 +61,8 @@ class CoreTestAdmissionTests(unittest.TestCase):
             original=b'actual-upstream-lock';bridge=b'accepted-bridge-lock';resolved=b'actual-cargo-core-lock'
             (up/'Cargo.lock').write_bytes(original);(root/'Cargo.lock').write_bytes(bridge)
             policy=dict(resolveLock=True,coreTests=contract)
+            provider=contract==core_tests.MODE_PROVIDER_READER
+            if provider:policy['targets']=list(build_policy.RESOURCE_HEALTH_TARGETS)
             if mode in ['locked','bad-seed']:
                 (root/'core-tests.lock').write_bytes(resolved if mode=='locked' else b'wrong seed')
                 policy.update(resolveLock=False,coreTestLockSha256=core_tests.digest(resolved))
@@ -58,17 +73,23 @@ class CoreTestAdmissionTests(unittest.TestCase):
                 features=sorted({feature for spec in core_tests.entries(contract) if spec['package']==name for feature in spec['requiredFeatures']})
                 if name=='meow-common':features=sorted(set(features+['aerove-android-runtime']))
                 nodes.append(dict(id=name,features=features,deps=[]))
+            if provider:
+                write_format_sources(up)
+                if mode=='format-undeclared':
+                    write_format_sources(up,{'crates/meow-config/src/rule_provider.rs':FORMAT_SOURCES['crates/meow-config/src/rule_provider.rs']+'#[path = "rule_extra.rs"]\nmod extra;\n',
+                        'crates/meow-config/src/rule_extra.rs':'fn extra() {}\n'})
             metadata=dict(packages=packages,resolve=dict(nodes=nodes),workspace_members=[p['id'] for p in packages])
-            receipt={};commands=[]
+            receipt=dict(addedNativeTests={'lib':['fixture_native_proof']}) if provider else {};commands=[]
             def fake(args,**kwargs):
                 commands.append(args)
                 if args[1]=='metadata':
                     if '--manifest-path' in args:(up/'Cargo.lock').write_bytes(resolved)
                     return subprocess.CompletedProcess(args,0,json.dumps(metadata).encode(),b'')
                 if args[0]=='rustfmt':
-                    self.assertEqual(args,core_tests.MRS_FORMAT_COMMAND)
+                    self.assertIn(args,[core_tests.MRS_FORMAT_COMMAND,core_tests.PROVIDER_READER_FORMAT_COMMAND] if provider else [core_tests.MRS_FORMAT_COMMAND])
                     if mode=='format-mutate':(up/'Cargo.lock').write_bytes(b'format changed lock')
-                    return subprocess.CompletedProcess(args,1 if mode=='format-fail' else 0,b'fixture format output',b'')
+                    failed=mode=='format-fail' or (mode=='format-fail-provider' and args==core_tests.PROVIDER_READER_FORMAT_COMMAND)
+                    return subprocess.CompletedProcess(args,1 if failed else 0,b'fixture format output',b'')
                 if args[1]=='check':
                     self.assertEqual(args,core_tests.COMPILE_COMMAND)
                     if mode=='compile-mutate':(up/'Cargo.lock').write_bytes(b'compile changed lock')
@@ -94,14 +115,44 @@ class CoreTestAdmissionTests(unittest.TestCase):
                 self.assertIsInstance(error,ValueError);self.assertFalse(receipt['coreTests']['accepted'])
                 self.assertEqual(len(commands),1);return
             self.assertEqual(commands[1],['cargo','metadata','--manifest-path',core_tests.MANIFEST,'--format-version','1']+(['--locked'] if mode=='locked' else []))
+            formats=[args for args in commands if args[0]=='rustfmt']
+            if provider:
+                # Both gates run before the first Core test command, in Core03-then-provider order.
+                self.assertEqual([core_tests.MRS_FORMAT_COMMAND,core_tests.PROVIDER_READER_FORMAT_COMMAND][:len(formats)],formats)
+                self.assertEqual(commands[2:2+len(formats)],formats)
             if mode in ['success','locked']:
                 self.assertIsNone(error);self.assertTrue(receipt['coreTests']['accepted'])
                 self.assertEqual(len(receipt['coreTests']['commands']),len(core_tests.entries(contract)))
                 self.assertEqual(sum(row['passed'] for row in receipt['coreTests']['commands']),sum(row['expectedPass'] for row in core_tests.entries(contract)))
                 self.assertEqual((root/'build/core-tests/core-tests.lock').read_bytes(),resolved)
+                if provider:
+                    self.assertEqual(2,len(formats))
+                    for key,expected in [('formatCheck',core_tests.MRS_FORMAT_COMMAND),('providerFormatCheck',core_tests.PROVIDER_READER_FORMAT_COMMAND)]:
+                        self.assertEqual((expected,0),(receipt['coreTests'][key]['command'],receipt['coreTests'][key]['exit']))
+                        self.assertEqual({name:core_tests.digest((root/name).read_bytes()) for name in expected[4:]},receipt['coreTests'][key]['files'])
+                        self.assertEqual(expected[4:],list(receipt['coreTests'][key]['files']))
+                    for stem in ['mrs-reader-format','provider-reader-format']:
+                        self.assertEqual(b'fixture format output',(root/'build/core-tests'/(stem+'.stdout.log')).read_bytes())
             else:
                 self.assertIsNotNone(error);self.assertFalse(receipt['coreTests']['accepted'])
-                self.assertEqual(len(receipt['coreTests']['commands']),len(core_tests.entries(contract)) if mode in ['compile-fail','compile-mutate','format-fail','format-mutate'] else 1)
+                if provider and mode=='format-mutate':
+                    # A rustfmt gate that touches the lock is rejected at once, before any Core test command.
+                    self.assertIsInstance(error,ValueError);self.assertEqual(0,len(receipt['coreTests']['commands']))
+                elif provider and mode=='format-undeclared':
+                    # A module rustfmt would check but the gate does not list stops before its rustfmt and every test.
+                    self.assertIsInstance(error,ValueError);self.assertIn('does not declare every file rustfmt checks',str(error))
+                    self.assertEqual([core_tests.MRS_FORMAT_COMMAND],formats);self.assertEqual(3,len(commands))
+                    self.assertEqual(0,len(receipt['coreTests']['commands']));self.assertIsNone(receipt['coreTests']['providerFormatCheck']['exit'])
+                elif provider and mode in ['format-fail','format-fail-provider']:
+                    # Deferred format failure: every authored command and the compile gate still ran and were recorded.
+                    self.assertIsInstance(error,subprocess.CalledProcessError)
+                    self.assertEqual(len(core_tests.entries(contract)),len(receipt['coreTests']['commands']))
+                    self.assertTrue(all(row['passed']==row['expectedPass'] for row in receipt['coreTests']['commands']))
+                    self.assertEqual(0,receipt['coreTests']['compileCheck']['exit']);self.assertEqual(2,len(formats))
+                    self.assertEqual((1 if mode=='format-fail' else 0,1),(receipt['coreTests']['formatCheck']['exit'],receipt['coreTests']['providerFormatCheck']['exit']))
+                    self.assertEqual(error.cmd,core_tests.MRS_FORMAT_COMMAND if mode=='format-fail' else core_tests.PROVIDER_READER_FORMAT_COMMAND)
+                else:
+                    self.assertEqual(len(receipt['coreTests']['commands']),len(core_tests.entries(contract)) if mode in ['compile-fail','compile-mutate','format-fail','format-mutate'] else 1)
 
     def test_success_records_all_authored_counts_and_restores_original_lock(self):self.run_fixture('success')
 
@@ -177,10 +228,125 @@ class CoreTestAdmissionTests(unittest.TestCase):
     def test_mrs_reader_keeps_all_previous_commands_and_adds46_with_format_lock_gates(self):
         specs=core_tests.entries(core_tests.MODE_MRS_READER)
         self.assertEqual(core_tests.CASES_PROVIDER_GENERAL,specs[:26])
-        self.assertEqual((28,121),(len(specs),sum(e['expectedPass'] for e in specs)))
-        self.assertEqual(['mrs_parser::tests::','rule_set::tests::'],[e['filter'] for e in specs[26:]])
+        self.assertEqual((29,121),(len(specs),sum(e['expectedPass'] for e in specs)))
+        self.assertEqual([('mrs_parser::tests::',30,False),('rule_set::tests::',15,False),('rule_set::plain_domain_validation_regression::invalid_plain_pattern_is_not_an_accepted_rule',1,True)],
+            [(e['filter'],e['expectedPass'],e['exact']) for e in specs[26:]])
+        self.assertEqual('--exact',core_tests.entry_command(specs[28],[])[-1])
         self.assertEqual({'meow-rules'},set(core_tests.packages_for_mode(core_tests.MODE_MRS_READER))-set(core_tests.packages_for_mode(core_tests.MODE_RESOURCE_HEALTH)))
         for mode in ['locked','empty','compile-fail','compile-mutate','format-fail','format-mutate','raise']:
             with self.subTest(mode=mode):self.run_fixture(mode,core_tests.MODE_MRS_READER)
+
+    def test_provider_reader_keeps_all_mrs_commands_adds56_and_both_format_gates(self):
+        specs=core_tests.entries(core_tests.MODE_PROVIDER_READER)
+        self.assertEqual(core_tests.CASES_MRS_READER,specs[:29])
+        self.assertEqual((31,177),(len(specs),sum(e['expectedPass'] for e in specs)))
+        self.assertEqual([('meow-config','rule_provider::reader::tests::reader15_',15,'lib',[],False),('meow-config','rule_provider::tests::',41,'lib',[],False)],
+            [(e['package'],e['filter'],e['expectedPass'],e['target'],e['requiredFeatures'],e['exact']) for e in specs[29:]])
+        self.assertEqual(core_tests.packages_for_mode(core_tests.MODE_MRS_READER),core_tests.packages_for_mode(core_tests.MODE_PROVIDER_READER))
+        self.assertEqual(['rustfmt','--check','--edition','2021','.upstream/meow-rs/crates/meow-rules/src/mrs_parser.rs','.upstream/meow-rs/crates/meow-rules/src/rule_set.rs'],core_tests.MRS_FORMAT_COMMAND)
+        self.assertEqual(['rustfmt','--check','--edition','2021']+['.upstream/meow-rs/crates/meow-config/src/'+name for name in ['rule_provider.rs','rule_pages.rs','rule_provider_reader.rs','rule_provider_reader_tests.rs']],core_tests.PROVIDER_READER_FORMAT_COMMAND)
+        self.assertEqual((core_tests.MODE_RESOURCE_HEALTH,core_tests.MODE_MRS_READER,core_tests.MODE_PROVIDER_READER),core_tests.FULL_NATIVE_SUITE_MODES)
+        for mode in ['success','locked','empty','nonzero','mutate','compile-fail','compile-mutate','format-fail','format-fail-provider','format-mutate','format-undeclared','raise']:
+            with self.subTest(mode=mode):self.run_fixture(mode,core_tests.MODE_PROVIDER_READER)
+
+    def test_format_gate_files_are_exactly_what_rustfmt_follows_or_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);up=root/'.upstream/meow-rs';write_format_sources(up)
+            for command in [core_tests.MRS_FORMAT_COMMAND,core_tests.PROVIDER_READER_FORMAT_COMMAND]:
+                self.assertEqual({name:core_tests.digest((root/name).read_bytes()) for name in command[4:]},core_tests.format_files(root,command))
+            pages='.upstream/meow-rs/crates/meow-config/src/rule_pages.rs'
+            for bad in [[name for name in core_tests.PROVIDER_READER_FORMAT_COMMAND if name!=pages],core_tests.PROVIDER_READER_FORMAT_COMMAND+[pages],
+                    core_tests.PROVIDER_READER_FORMAT_COMMAND[:5]]:
+                with self.subTest(declared=bad[4:]),self.assertRaisesRegex(ValueError,'does not declare every file rustfmt checks'):core_tests.format_files(root,bad)
+            provider='crates/meow-config/src/rule_provider.rs';reader='crates/meow-config/src/rule_provider_reader.rs'
+            for name,extra in [(provider,'mod plain;\n'),(provider,'#[cfg(test)]\nmod hidden;\n'),(provider,'#[cfg(test)] #[path = "rule_pages.rs"] mod inline;\n'),
+                    (provider,'#[path = "missing.rs"]\nmod missing;\n'),(provider,'#[path = "../escape.rs"]\nmod escape;\n'),
+                    (provider,'#[path = "rule_pages.rs"]\n#[path = "rule_provider_reader.rs"]\nmod twice;\n'),
+                    (reader,'mod nested {\n    #[path = "rule_pages.rs"]\n    mod again;\n}\n'),(reader,'#[cfg_attr(test, path = "rule_pages.rs")]\nmod conditional;\n')]:
+                with self.subTest(file=name,extra=extra),tempfile.TemporaryDirectory() as other:
+                    copy=Path(other);write_format_sources(copy/'.upstream/meow-rs',dict(FORMAT_SOURCES,**{name:FORMAT_SOURCES[name]+extra}))
+                    (copy/'.upstream/meow-rs/crates/meow-config/escape.rs').write_text('')
+                    with self.assertRaisesRegex(ValueError,'cannot resolve an out-of-line module'):core_tests.format_files(copy,core_tests.PROVIDER_READER_FORMAT_COMMAND)
+
+class BuildContractTests(unittest.TestCase):
+    """build.py is owned by the native domain; these pin what this admission needs from it (build-py-requirements.json)."""
+    def drive(self,mode):
+        import build
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/'Cargo.toml').write_text('[package]\nname="aerove-meow-core"\n[lib]\nname="aerove_meow_core"\n[dependencies]\n')
+            (root/'Cargo.lock').write_bytes(b'accepted lock\n');(root/'source.json').write_text('{}')
+            upstream=root/'source';upstream.mkdir();(upstream/'AEROVE_SOURCE_PROVENANCE.json').write_text('{}')
+            full=mode in core_tests.FULL_NATIVE_SUITE_MODES
+            targets=list(build_policy.RESOURCE_HEALTH_TARGETS) if full else ['lib','proxy_runtime']
+            policy=dict(resolveLock=False,expectedLockBeforeSha256=core_tests.digest(b'accepted lock\n'),targets=targets,
+                policySha256='fixture policy',coreTests=mode,coreTestLockSha256='a'*64)
+            output=''.join('test fixture::'+name+' ... ok\n' for cases in build.RESOURCE_HEALTH_CASES.values() for name in cases)
+            calls=dict(jni=[],suite=[],core=[])
+            def run(command,environment,capture=False):
+                if command[0]=='rustc':return 'rustc 1.98.1 fixture'
+                calls['suite'].append((command,capture))
+                return output if capture else None
+            def core(core_root,core_policy,environment,receipt):calls['core'].append(json.loads(json.dumps(receipt)))
+            with patch.object(build,'ROOT',root),patch.object(build,'load_policy',return_value=policy),patch.object(build,'prepare',return_value=upstream),\
+                    patch.object(build,'probe_libclang',return_value={'library':{'path':'unit-test-fixture-only'}}),patch.object(build,'run',side_effect=run),\
+                    patch.object(build,'execute_core_tests',side_effect=core),patch.object(build,'verify_resource_jni_source',side_effect=calls['jni'].append),\
+                    patch('builtins.print'),patch.object(sys,'argv',['build.py']):
+                build.main()
+            return build,root,full,calls,json.loads((root/'build/host-receipt.json').read_text())
+
+    def test_each_full_suite_mode_runs_the_jni_source_gate_native_proof_and_all42_targets_before_core_tests(self):
+        self.assertEqual((core_tests.MODE_RESOURCE_HEALTH,core_tests.MODE_MRS_READER,core_tests.MODE_PROVIDER_READER),core_tests.FULL_NATIVE_SUITE_MODES)
+        for mode in core_tests.FULL_NATIVE_SUITE_MODES+(core_tests.MODE_PROVIDER_GENERAL,):
+            with self.subTest(mode=mode):
+                build,root,full,calls,receipt=self.drive(mode)
+                self.assertEqual(full,build_policy.full_native_suite(dict(coreTests=mode)))
+                self.assertEqual([root] if full else [],calls['jni'],'build.py must run verify_resource_jni_source exactly for full-suite modes')
+                suite,capture=calls['suite'][0]
+                self.assertEqual(full,capture,'build.py must capture the full Native suite output for the added-test proof')
+                self.assertEqual(sorted(build_policy.RESOURCE_HEALTH_TARGETS[1:]) if full else ['proxy_runtime'],sorted(suite[i+1] for i,arg in enumerate(suite) if arg=='--test'))
+                proof=build.RESOURCE_HEALTH_CASES if full else None
+                self.assertEqual(proof,receipt.get('addedNativeTests'),'build.py must record addedNativeTests for full-suite modes')
+                self.assertEqual(1,len(calls['core']));self.assertEqual(proof,calls['core'][0].get('addedNativeTests'))
+                self.assertEqual((0,True),(receipt['commandExit'],receipt['acceptedLock']))
+
+    def test_full_suite_predicate_and_policy_loader_require_every_native_target_per_mode(self):
+        self.assertFalse(build_policy.full_native_suite(None))
+        for mode in [core_tests.MODE,core_tests.MODE_V2,core_tests.MODE_TRAFFIC,core_tests.MODE_OBSERVABILITY,core_tests.MODE_PROVIDER_GENERAL,'unknown']:
+            self.assertFalse(build_policy.full_native_suite(dict(coreTests=mode)),mode)
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/'Cargo.toml').write_bytes(b'manifest');(root/'Cargo.lock').write_bytes(b'lock')
+            (root/'patches').mkdir();(root/'patches/p.patch').write_bytes(b'patch');(root/'source-metadata').mkdir()
+            overlay=dict(schema=1,patch='patches/p.patch',patchSha256=core_tests.digest(b'patch'),rawFileManifestSha256='c'*64,
+                adaptedFileManifestSha256=core_tests.digest(b'{}'),changes={},files={})
+            metadata=(json.dumps(overlay)+'\n').encode();(root/'source-metadata/m.json').write_bytes(metadata)
+            base=dict(schema=1,manifestSha256=core_tests.digest(b'manifest'),resolveLock=False,expectedLockBeforeSha256=core_tests.digest(b'lock'),
+                targets=list(build_policy.RESOURCE_HEALTH_TARGETS),overlay='source-metadata/m.json',overlaySha256=core_tests.digest(metadata),coreTestLockSha256='a'*64)
+            for mode in core_tests.FULL_NATIVE_SUITE_MODES:
+                (root/'build-policy.json').write_text(json.dumps(dict(base,coreTests=mode)))
+                self.assertTrue(build_policy.full_native_suite(build_policy.load_policy(root)))
+                for omitted in build_policy.RESOURCE_HEALTH_TARGETS[1:]:
+                    (root/'build-policy.json').write_text(json.dumps(dict(base,coreTests=mode,targets=[t for t in base['targets'] if t!=omitted])))
+                    with self.subTest(mode=mode,omitted=omitted),self.assertRaisesRegex(ValueError,'every approved Native target'):build_policy.load_policy(root)
+
+    def test_provider_reader_policy_requires_all42_native_targets(self):
+        targets=list(build_policy.RESOURCE_HEALTH_TARGETS);self.assertEqual(42,len(targets))
+        policy=dict(resolveLock=False,coreTests=core_tests.MODE_PROVIDER_READER,coreTestLockSha256='a'*64)
+        self.assertTrue(core_tests.validate_policy(dict(policy,targets=targets)))
+        for bad in [None,targets[:-1],targets+['arbitrary'],list(reversed(targets)),tuple(targets)]+[[t for t in targets if t!=omitted] for omitted in targets[1:]]:
+            with self.subTest(targets=bad),self.assertRaisesRegex(ValueError,'every approved Native target'):
+                core_tests.validate_policy(dict(policy) if bad is None else dict(policy,targets=bad))
+        with self.assertRaisesRegex(ValueError,'accepted Core test lock'):core_tests.validate_policy(dict(policy,coreTestLockSha256=None,targets=targets))
+
+    def test_provider_reader_rejects_missing_native_suite_proof_before_any_command(self):
+        for proof in [None,{},[],'proof']:
+            with self.subTest(proof=proof),tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);up=root/'.upstream/meow-rs';up.mkdir(parents=True);(up/'Cargo.lock').write_bytes(b'actual-upstream-lock')
+                receipt={} if proof is None else dict(addedNativeTests=proof);commands=[]
+                policy=dict(resolveLock=False,coreTests=core_tests.MODE_PROVIDER_READER,coreTestLockSha256='a'*64,targets=list(build_policy.RESOURCE_HEALTH_TARGETS))
+                with patch.object(core_tests.subprocess,'run',lambda args,**kwargs:commands.append(args)):
+                    with self.assertRaisesRegex(ValueError,'full Native suite proof'):core_tests.execute(root,policy,{},receipt)
+                self.assertEqual([],commands);self.assertFalse(receipt['coreTests']['accepted'])
+                self.assertTrue(receipt['coreTests']['upstreamLockRestored']);self.assertEqual(b'actual-upstream-lock',(up/'Cargo.lock').read_bytes())
+                self.assertEqual(json.loads((root/'build/core-tests/receipt.json').read_bytes()),receipt['coreTests'])
 
 if __name__=='__main__':unittest.main()

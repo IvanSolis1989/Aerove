@@ -26,8 +26,8 @@ class GlobalResourceRootUiTest {
         val manager = ResourceBundleManager(File(directory, "runtime"), validator, NativeResourceValidator { _, _, _, _ -> null })
         val repository = ProfileRepository(directory, ProfileValidator {}, resources = manager, globalResources = library)
         val parser = object : NativeRulePayloadInspector {
-            override fun inspect(path: String): RulePayloadInspection = error("No rule payload used")
-            override fun dump(path: String, behavior: String, format: String): String = error("No rule payload used")
+            override suspend fun inspect(path: String): RulePayloadInspection = error("No rule payload used")
+            override suspend fun dump(path: String, behavior: String, format: String): String = error("No rule payload used")
         }
         val workspace = GlobalResourceWorkspace(library, repository,
             GlobalRulePayloadRepository(directory, library, manager, parser, repository), { error("No node edit used") }, {})

@@ -26,7 +26,8 @@
     <string name="lite_delete">删除</string>
     <string name="lite_refresh">更新</string>
     <string name="lite_search">搜索</string>
-    <string name="lite_connect">连接</string>
+    <string name="lite_start">启动</string>
+    <string name="lite_stop">暂停</string>
     <string name="lite_connected">已连接</string>
     <string name="lite_disconnected">未连接</string>
     <string name="lite_connecting">正在连接…</string>
@@ -54,7 +55,7 @@
     <string name="lite_download">下载</string>
     <string name="lite_upload_total">累计上传</string>
     <string name="lite_download_total">累计下载</string>
-    <string name="lite_rate">%1$s/秒</string>
+    <string name="lite_rate">%1$s/s</string>
     <string name="lite_live_connections">活动连接</string>
     <string name="lite_connection_count">%1$d 个连接</string>
     <string name="lite_proxy_mode">出站模式</string>
@@ -151,9 +152,9 @@
     <string name="lite_running">运行中</string>
     <string name="lite_not_running">未运行</string>
     <string name="lite_network_speed">网络速度</string>
-    <string name="lite_uptime">运行时间</string>
+    <string name="lite_uptime">运行时长</string>
     <string name="lite_organization">组织</string>
-    <string name="lite_traffic_total">总计 %1$s</string>
+    <string name="lite_traffic_total">累计 %1$s</string>
     <string name="lite_vpn">VPN</string>
     <string name="lite_enabled">已启用</string>
     <string name="lite_disabled">已禁用</string>
@@ -162,7 +163,10 @@
     <string name="lite_type_mobile">移动网络</string>
     <string name="lite_type_business">企业</string>
     <string name="lite_type_hosting">数据中心</string>
-    <string name="lite_outbound_refresh">刷新出口地址</string>
+    <string name="lite_outbound_retry">重试</string>
+    <string name="lite_details">%1$s详情</string>
+    <string name="lite_outbound_ip">出站 IP</string>
+    <string name="lite_tap_icon_to_retry">点击图标重试</string>
     <string name="lite_outbound_loading">正在检测出口地址…</string>
     <string name="lite_open_logs">启用日志</string>
     <string name="lite_open_logs_detail">采集核心日志并显示日志页面。</string>

@@ -32,6 +32,7 @@ class ProfileResourceEditSnapshot internal constructor(
     val profileId: String, val key: String, val profileSourceIdentity: String,
     val revision: String, val generation: String, val sourceSha256: String,
     val contentSha256: String, val bytes: ByteArray, internal val restoreEpoch: Long, internal val repositoryRoot: String,
+    internal val editorOversize: Boolean = false,
 ) {
     override fun toString(): String = "ProfileResourceEditSnapshot([content redacted])"
 }
@@ -634,20 +635,24 @@ class ProfileRepository(
 
     suspend fun sideLoadResource(id: String, key: String, input: InputStream): PreparedProfile = mutateResource(id, key, input)
 
-    suspend fun resourceEditSnapshot(id: String, key: String): ProfileResourceEditSnapshot =
+    suspend fun resourceEditSnapshot(id: String, key: String, textLimit: Int = MAX_PROFILE_BYTES): ProfileResourceEditSnapshot =
         privateDomainTransaction(storage.root.parentFile!!) {
             val manager = checkNotNull(resources) { "Resource manager is not configured" }
             val prepared = prepare(id)
             manager.load(id, checkNotNull(prepared.generation), prepared.source)
             val record = replaceableResourceRecord(prepared, key)
             val entry = storage.transaction { load().entry(id) }
+            // A file the editor would refuse is hashed in place; its bytes are never loaded.
             val bytes = withContext(Dispatchers.IO) {
-                privateResource(checkNotNull(prepared.resourceDirectory), record.getString("file")).readBytes().also {
+                val file = privateResource(checkNotNull(prepared.resourceDirectory), record.getString("file"))
+                if (file.editorTextBytes() > textLimit) null.also { check(sha256(file) == record.getString("sha256")) { "Resource content changed" } }
+                else file.readBytes().also {
                     check(java.security.MessageDigest.getInstance("SHA-256").digest(it).joinToString("") { byte -> "%02x".format(byte) } == record.getString("sha256")) { "Resource content changed" }
                 }
             }
             ProfileResourceEditSnapshot(id, key, entry.summary.sourceIdentity, prepared.revision,
-                prepared.generation, record.getString("sourceSha256"), record.getString("sha256"), bytes, resourceEditEpoch.get(), storage.root.path)
+                prepared.generation, record.getString("sourceSha256"), record.getString("sha256"), bytes ?: ByteArray(0), resourceEditEpoch.get(), storage.root.path,
+                editorOversize = bytes == null)
         }
 
     suspend fun replaceResource(expected: ProfileResourceEditSnapshot, input: InputStream): PreparedProfile =

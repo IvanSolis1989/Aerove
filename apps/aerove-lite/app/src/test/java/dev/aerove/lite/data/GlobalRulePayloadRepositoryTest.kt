@@ -26,13 +26,13 @@ class GlobalRulePayloadRepositoryTest {
     @get:Rule val temporary = TemporaryFolder()
     private class Parser : NativeRulePayloadInspector {
         var failDump = false
-        override fun inspect(path: String): RulePayloadInspection {
+        override suspend fun inspect(path: String): RulePayloadInspection {
             if (File(path).readBytes().firstOrNull() == 0xff.toByte()) return RulePayloadInspection("mrs", "domain", 1)
             val text = File(path).readText()
             require(text != "invalid")
             return RulePayloadInspection("text", "domain", text.lineSequence().count { it.isNotBlank() })
         }
-        override fun dump(path: String, behavior: String, format: String): String {
+        override suspend fun dump(path: String, behavior: String, format: String): String {
             check(!failDump) { "Injected parser failure" }
             if (format == "mrs") return "binary.example\n"
             return File(path).readText().lineSequence().filter { it.isNotBlank() }.joinToString("\n", postfix = if (File(path).length() == 0L) "" else "\n") { it.removePrefix("DOMAIN-SUFFIX,") }

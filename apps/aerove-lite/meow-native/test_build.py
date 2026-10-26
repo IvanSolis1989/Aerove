@@ -1,4 +1,5 @@
 """Source/recipe tests only. These never invoke Rust, NDK, Gradle or network."""
+import importlib.util
 import io
 import json
 import re
@@ -16,6 +17,7 @@ import prepare
 import build
 import build_policy
 import clang_probe
+import jni_abi
 from verify_source import sha, verify, source_spec
 
 class SourceTests(unittest.TestCase):
@@ -421,6 +423,18 @@ class ResourceHealthContractTests(unittest.TestCase):
             (root/'src/meow_jni.rs').write_text(source.replace("_class:JClass<'local>","_class:JObject<'local>"))
             with self.assertRaisesRegex(ValueError,'receiver'):build.verify_resource_jni_source(root)
 
+    def test_every_resource_edge_after_create_takes_the_owner_handle_first(self):
+        for symbol,descriptor in build.RESOURCE_JNI_DESCRIPTORS.items():
+            with self.subTest(symbol=symbol):
+                self.assertEqual(not symbol.endswith('_nativeCreate'),descriptor.startswith('(J'))
+        source=(build.ROOT/'src/meow_jni.rs').read_text()
+        for name in ['nativeValidatePrepared','nativePreflightRuleResource']:
+            symbol='Java_dev_aerove_lite_core_JniResourceFetch_'+name
+            with self.subTest(symbol=symbol),tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);(root/'src').mkdir()
+                (root/'src/meow_jni.rs').write_text(source.replace(symbol+"<'local>(mut env:EnvUnowned<'local>,_class:JClass<'local>,handle:i64,",symbol+"<'local>(mut env:EnvUnowned<'local>,_class:JClass<'local>,"))
+                with self.assertRaisesRegex(ValueError,'descriptor'):build.verify_resource_jni_source(root)
+
     def test_resource_health_producer_policy_cannot_drop_any_native_target(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);_,_,_,_,_,policy=OverlayAndResolutionTests().overlay(root)
@@ -433,11 +447,176 @@ class ResourceHealthContractTests(unittest.TestCase):
 
     def test_exact_added_native_passes_and_negative_missing_duplicate_or_ignored(self):
         names=[n for cases in build.RESOURCE_HEALTH_CASES.values() for n in cases]
-        self.assertEqual(18,len(names))
+        self.assertEqual(32,len(names))
         output='\n'.join('test fixture::'+n+' ... ok' for n in names)
         self.assertEqual(build.RESOURCE_HEALTH_CASES,build.added_native_test_proof(output))
         for n in names:
             for bad in [output.replace('test fixture::'+n+' ... ok',''),output+'\ntest duplicate::'+n+' ... ok',output.replace(n+' ... ok',n+' ... ignored')]:
                 with self.subTest(name=n),self.assertRaisesRegex(ValueError,'Native test pass'):build.added_native_test_proof(bad)
+
+class ResourceHealthTableTests(unittest.TestCase):
+    """build.py's receipt table and verify_apk.py's acceptance table must name the same cases in the same order."""
+    def test_build_and_apk_verification_tables_are_identical(self):
+        verify_apk=_load_verify_apk()
+        self.assertEqual(build.RESOURCE_HEALTH_CASES,verify_apk.RESOURCE_HEALTH_CASES)
+        self.assertEqual([(t,list(c)) for t,c in build.RESOURCE_HEALTH_CASES.items()],[(t,list(c)) for t,c in verify_apk.RESOURCE_HEALTH_CASES.items()])
+
+    def test_one_sided_table_drift_is_caught(self):
+        path=build.ROOT.parent/'tool/verify_apk.py';source=path.read_text()
+        for target,cases in build.RESOURCE_HEALTH_CASES.items():
+            drifted=source.replace(repr(cases[-1]),repr(cases[-1]+'_renamed'),1)
+            self.assertNotEqual(source,drifted)
+            module=types.ModuleType('verify_apk_drift');module.__file__=str(path)
+            exec(compile(drifted,str(path),'exec'),module.__dict__)
+            with self.subTest(target=target):self.assertNotEqual(build.RESOURCE_HEALTH_CASES,module.RESOURCE_HEALTH_CASES)
+
+class RuleResourceBoundTests(unittest.TestCase):
+    """Kotlin rule-resource bounds are the Native admission constants, not a separate host policy."""
+    KOTLIN='app/src/main/java/dev/aerove/lite/data/RuleResourceText.kt'
+    def test_kotlin_bounds_equal_native_admission_constants(self):
+        rust=(build.ROOT/'src/config_validation.rs').read_text()
+        kotlin=(build.ROOT.parent/self.KOTLIN).read_text()
+        def product(expression):
+            expression=expression.replace('_','').replace('L','')
+            self.assertRegex(expression,r'^[0-9 *]+$')
+            result=1
+            for factor in expression.split('*'):result*=int(factor)
+            return result
+        def rust_bytes(name):
+            value=re.search(r'pub const '+name+r': usize = ([^;]+);',rust).group(1)
+            return rust_bytes(value) if re.fullmatch(r'[A-Z_]+',value) else product(value)
+        def kotlin_value(name):
+            return product(re.search(r'internal const val '+name+r' = ([^\n]+)',kotlin).group(1))
+        self.assertEqual(64*1024*1024,rust_bytes('MAX_INPUT_BYTES'))
+        self.assertEqual(rust_bytes('MAX_INPUT_BYTES'),kotlin_value('MAX_RULE_INPUT_BYTES'))
+        self.assertEqual(rust_bytes('MAX_DUMP_TEXT_BYTES'),kotlin_value('MAX_RULE_TEXT_BYTES'))
+        self.assertEqual(rust_bytes('MAX_DUMP_TEXT_BYTES'),rust_bytes('MAX_RULE_TEXT_BYTES'))
+        self.assertEqual(rust_bytes('MAX_ENTRIES'),kotlin_value('MAX_RULE_PAYLOAD_ENTRIES'))
+        self.assertEqual(2048,rust_bytes('MAX_ENTRY_BYTES'))
+        self.assertEqual(rust_bytes('MAX_ENTRY_BYTES'),kotlin_value('MAX_RULE_ENTRY_BYTES'))
+        self.assertIn('pub const MAX_YAML_RULE_VALUES: usize = MAX_ENTRIES + 2;',rust)
+        self.assertIsNotNone(re.search(r'^internal const val MAX_RULE_YAML_VALUES = MAX_RULE_PAYLOAD_ENTRIES \+ 2$',kotlin,re.M))
+        self.assertNotIn('> 2048',rust)
+        self.assertIn('if bytes.len() > MAX_RULE_TEXT_BYTES { return Err(format!("rule-provider text input exceeds {MAX_RULE_TEXT_BYTES} bytes")); }',rust)
+
+def _load_verify_apk():
+    spec=importlib.util.spec_from_file_location('verify_apk_tables',build.ROOT.parent/'tool/verify_apk.py')
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    return module
+
+class StrictJniAbiTests(unittest.TestCase):
+    """All 26 bridge exports: Rust signature, Kotlin external, build.py tables and verify_apk.py agree without wildcards."""
+    APPROVED={**build.RUNTIME_JNI_DESCRIPTORS,**build.SCRIPT_JNI_DESCRIPTORS,**build.RESOURCE_JNI_DESCRIPTORS}
+    KOTLIN=['app/src/main/java/dev/aerove/lite/core/MeowNativeCore.kt','app/src/main/java/dev/aerove/lite/core/JniResourceFetch.kt',
+        'app/src/main/java/dev/aerove/lite/overrides/NativeScriptEngine.kt','app/src/main/java/dev/aerove/lite/core/NativeCore.kt']
+    def tree(self,directory,edit=None):
+        """Copy only the gate inputs; edit=(relative path, old, new) applies one exact one-sided drift."""
+        lite=Path(directory);root=lite/'meow-native'
+        for relative in [*('meow-native/'+name for name in jni_abi.RUST_SOURCES),*self.KOTLIN,'tool/verify_apk.py']:
+            target=lite/relative;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes((build.ROOT.parent/relative).read_bytes())
+        if edit:
+            relative,old,new=edit;path=lite/relative;text=path.read_text(encoding='utf-8')
+            self.assertEqual(1,text.count(old),'mutation anchor: '+old);path.write_text(text.replace(old,new),encoding='utf-8')
+        return root
+
+    def test_repository_exports_match_rust_kotlin_build_tables_and_apk_gate(self):
+        self.assertEqual(26,len(self.APPROVED));self.assertEqual(15,len(build.RUNTIME_JNI_DESCRIPTORS));self.assertEqual(4,len(build.SCRIPT_JNI_DESCRIPTORS))
+        self.assertEqual([],jni_abi.check(build.ROOT,self.APPROVED))
+        self.assertEqual(list(build.RUNTIME_JNI_DESCRIPTORS),build.RUNTIME_JNI_SYMBOLS)
+        self.assertEqual(list(build.SCRIPT_JNI_DESCRIPTORS),build.SCRIPT_JNI_SYMBOLS)
+        for name in ['validate','validateResource','inspectRuleSet','dumpRuleSet']:
+            self.assertTrue(build.RUNTIME_JNI_DESCRIPTORS['Java_dev_aerove_lite_core_MeowNativeCore_'+name].startswith('(J'),name)
+
+    def test_each_one_sided_drift_is_rejected_by_the_build_gate(self):
+        core='app/src/main/java/dev/aerove/lite/core/MeowNativeCore.kt';jni='meow-native/src/meow_jni.rs';script='meow-native/src/script_jni.rs'
+        release='pub extern "system" fn Java_dev_aerove_lite_overrides_NativeScriptEngine_nativeRelease<'
+        drifts={
+            'Rust validate loses its owner handle':(jni,"_class: JClass<'local>, handle: i64, source: JString<'local>) -> JString<'local> {","_class: JClass<'local>, source: JString<'local>) -> JString<'local> {"),
+            'Kotlin dumpRuleSet loses its owner handle':(core,'external fun dumpRuleSet(handle: Long, path: String,','external fun dumpRuleSet(path: String,'),
+            'Kotlin inspectRuleSet becomes an instance method':(core,'@JvmStatic external fun inspectRuleSet(','external fun inspectRuleSet('),
+            'Kotlin parameter type without strict mapping':(core,'external fun awaitReady(handle: Long)','external fun awaitReady(handle: ByteArray)'),
+            'Kotlin declaration carries an unchecked annotation':(core,'@JvmStatic external fun stop(','@JvmStatic @JvmName("halt") external fun stop('),
+            'Kotlin internal external has a mangled JVM name':(core,'@JvmStatic external fun stop(','@JvmStatic internal external fun stop('),
+            'Kotlin result drifts':(core,'external fun capabilities(): String','external fun capabilities(): Int'),
+            'Rust startOwned object parameter is unmapped':(jni,"protector: JObject<'local>, owner: JObject<'local>","callback: JObject<'local>, owner: JObject<'local>"),
+            'Rust result drifts':(jni,"_MeowNativeCore_awaitReady<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, handle: i64) {","_MeowNativeCore_awaitReady<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, handle: i64) -> i64 {"),
+            'Rust callback signature drifts from the Kotlin interface':(jni,'jni_sig!("(I)Z")','jni_sig!("(J)Z")'),
+            'Kotlin callback interface drifts from Rust':('app/src/main/java/dev/aerove/lite/core/NativeCore.kt','fun protect(fd: Int): Boolean','fun protect(fd: Long): Boolean'),
+            'script export becomes static':(script,"nativeBegin<'local>(mut env: EnvUnowned<'local>, _this: JObject<'local>)","nativeBegin<'local>(mut env: EnvUnowned<'local>, _this: JClass<'local>)"),
+            'Rust export without an approved Kotlin native':(script,'#[unsafe(no_mangle)]\n'+release,
+                "#[unsafe(no_mangle)]\npub extern \"system\" fn Java_dev_aerove_lite_overrides_NativeScriptEngine_nativeExtra<'local>(mut env: EnvUnowned<'local>, _this: JObject<'local>) {}\n#[unsafe(no_mangle)]\n"+release),
+            'Rust export bypasses the strict no_mangle form':(script,'#[unsafe(no_mangle)]\n'+release,'#[no_mangle]\n'+release),
+            'verify_apk.py loses an export':('tool/verify_apk.py','"configurePolicies", "policyStatus"','"configurePolicies"'),
+        }
+        for label,edit in drifts.items():
+            with self.subTest(label),tempfile.TemporaryDirectory() as directory:
+                root=self.tree(directory,edit)
+                self.assertTrue(jni_abi.check(root,self.APPROVED),label+' was accepted')
+                with self.assertRaisesRegex(ValueError,'Strict JNI ABI mismatch'):build.verify_resource_jni_source(root)
+        with tempfile.TemporaryDirectory() as directory:
+            root=self.tree(directory);self.assertEqual(build.RESOURCE_JNI_DESCRIPTORS,build.verify_resource_jni_source(root))
+            for omitted in self.APPROVED:
+                with self.subTest(table_omits=omitted):self.assertTrue(jni_abi.check(root,{k:v for k,v in self.APPROVED.items() if k!=omitted}))
+
+    def test_classfile_mode_compares_compiled_natives_and_callback_interfaces(self):
+        def classfile(path,methods):
+            pool=[];index={}
+            def utf8(text):
+                if text not in index:pool.append(b'\x01'+len(text.encode()).to_bytes(2,'big')+text.encode());index[text]=len(pool)
+                return index[text]
+            body=b''.join(access.to_bytes(2,'big')+utf8(name).to_bytes(2,'big')+utf8(descriptor).to_bytes(2,'big')+b'\x00\x00' for name,descriptor,access in methods)
+            data=b'\xca\xfe\xba\xbe\x00\x00\x00\x34'+(len(pool)+1).to_bytes(2,'big')+b''.join(pool)+b'\x00\x21\x00\x00\x00\x00\x00\x00\x00\x00'+len(methods).to_bytes(2,'big')+body+b'\x00\x00'
+            path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(data)
+        def compile_fixture(classes,approved,flip=None):
+            for cls,(package,_,static) in jni_abi.CLASSES.items():
+                prefix=jni_abi.symbol(cls,'')
+                methods=[(name[len(prefix):],descriptor,0x0100|(0x0008 if static!=(name==flip) else 0)) for name,descriptor in approved.items() if name.startswith(prefix)]
+                classfile(Path(classes)/package.replace('.','/')/(cls+'.class'),methods+[('readStatus','(J)Ljava/lang/Object;',0x0011)])
+            classfile(Path(classes)/'dev/aerove/lite/core/SocketProtector.class',[('protect','(I)Z',0x0401)])
+            classfile(Path(classes)/'dev/aerove/lite/core/ConnectionOwnerLookup.class',[('resolveConnectionOwner','(ILjava/lang/String;Ljava/lang/String;)Ljava/lang/String;',0x0401)])
+        dump='Java_dev_aerove_lite_core_MeowNativeCore_dumpRuleSet'
+        for label,approved,flip,ok in [('exact',self.APPROVED,None,True),('descriptor',dict(self.APPROVED,**{dump:'(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;'}),None,False),('static',self.APPROVED,dump,False)]:
+            with self.subTest(label),tempfile.TemporaryDirectory() as classes:
+                compile_fixture(classes,approved,flip)
+                self.assertEqual(ok,not jni_abi.check(build.ROOT,self.APPROVED,classes_dir=classes),label)
+
+class BuildPyRequirementTests(unittest.TestCase):
+    """Native mirror of core-provider-v3 build-py-requirements.json; test_core_tests.BuildContractTests stays authoritative."""
+    def drive(self,mode):
+        import core_tests
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/'Cargo.toml').write_text('[package]\nname="aerove-meow-core"\n[lib]\nname="aerove_meow_core"\n[dependencies]\n')
+            (root/'Cargo.lock').write_bytes(b'accepted lock\n');(root/'source.json').write_text('{}')
+            upstream=root/'source';upstream.mkdir();(upstream/'AEROVE_SOURCE_PROVENANCE.json').write_text('{}')
+            full=build_policy.full_native_suite(dict(coreTests=mode))
+            policy=dict(resolveLock=False,expectedLockBeforeSha256=core_tests.digest(b'accepted lock\n'),policySha256='fixture policy',coreTests=mode,
+                coreTestLockSha256='a'*64,targets=list(build_policy.RESOURCE_HEALTH_TARGETS) if full else ['lib','proxy_runtime'])
+            output=''.join('test fixture::'+name+' ... ok\n' for cases in build.RESOURCE_HEALTH_CASES.values() for name in cases)
+            calls=dict(gate=[],suite=[],core=[])
+            def run(command,environment,capture=False):
+                if command[0]=='rustc':return 'rustc 1.98.1 fixture'
+                calls['suite'].append(capture);return output if capture else None
+            with mock.patch.object(build,'ROOT',root),mock.patch.object(build,'load_policy',return_value=policy),mock.patch.object(build,'prepare',return_value=upstream),\
+                    mock.patch.object(build,'probe_libclang',return_value={'library':{'path':'unit-test-fixture-only'}}),mock.patch.object(build,'run',side_effect=run),\
+                    mock.patch.object(build,'execute_core_tests',side_effect=lambda r,p,e,receipt:calls['core'].append(dict(receipt))),\
+                    mock.patch.object(build,'verify_resource_jni_source',side_effect=calls['gate'].append),mock.patch('builtins.print'),mock.patch.object(sys,'argv',['build.py']):
+                build.main()
+            return full,root,calls,json.loads((root/'build/host-receipt.json').read_text())
+
+    def test_full_suite_modes_run_the_strict_jni_gate_and_record_native_passes_before_core_tests(self):
+        import core_tests
+        self.assertIn(core_tests.MODE_PROVIDER_READER,core_tests.FULL_NATIVE_SUITE_MODES)
+        for mode in core_tests.FULL_NATIVE_SUITE_MODES+(core_tests.MODE_PROVIDER_GENERAL,):
+            with self.subTest(mode=mode):
+                full,root,calls,receipt=self.drive(mode)
+                self.assertEqual([root] if full else [],calls['gate'])
+                self.assertEqual([full],calls['suite'])
+                expected=build.RESOURCE_HEALTH_CASES if full else None
+                self.assertEqual(expected,receipt.get('addedNativeTests'));self.assertEqual(expected,calls['core'][0].get('addedNativeTests'))
+
+    def test_build_py_has_one_full_suite_predicate_and_no_literal_mode_tuple(self):
+        source=(build.ROOT/'build.py').read_text()
+        self.assertEqual(3,source.count('full_native_suite(policy)'))
+        for mode in ['policy-runtime-resource-health-v1','policy-runtime-mrs-reader-v1','policy-runtime-provider-reader-v1']:self.assertNotIn(mode,source)
 
 if __name__=='__main__':unittest.main()

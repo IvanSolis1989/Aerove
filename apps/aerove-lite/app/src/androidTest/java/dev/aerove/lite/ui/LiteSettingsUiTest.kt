@@ -5,6 +5,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.hasClickAction
@@ -13,6 +14,7 @@ import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
@@ -101,7 +103,8 @@ class LiteSettingsUiTest {
         val state = mutableStateOf(LiteState(phase = VpnPhase.Running, outboundIdentity = identity))
         val actions = UiTestActions {}
         compose.replaceAppContent { IpQualityFixture(state.value) { LiteApp(state.value, actions) } }
-        val refresh = compose.onNodeWithContentDescription(text(R.string.lite_outbound_refresh))
+        val refresh = compose.onNodeWithTag("dashboard-status-flag")
+        refresh.assertContentDescriptionEquals("${text(R.string.lite_outbound_retry)}\n${identity.countryCode}")
         refresh.performClick()
         compose.runOnUiThread {
             assertEquals(listOf("refreshOutbound"), actions.events)

@@ -22,9 +22,9 @@ _ORIGINAL19_CORE_JNI_SYMBOLS = tuple("Java_dev_aerove_lite_core_MeowNativeCore_"
     "Java_dev_aerove_lite_overrides_NativeScriptEngine_native" + name for name in
     ("Begin", "Evaluate", "Cancel", "Release"))
 
-RESOURCE_JNI_DESCRIPTORS = {'Java_dev_aerove_lite_core_JniResourceFetch_nativeCreate': '(Ljava/lang/String;)J', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeLoad': '(JLjava/lang/String;)V', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeDownload': '(JLjava/lang/String;)Ljava/lang/String;', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeCancel': '(J)V', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeCloseJoin': '(J)V', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeValidatePrepared': '(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;', 'Java_dev_aerove_lite_core_JniResourceFetch_nativePreflightRuleResource': '(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;'}
+RESOURCE_JNI_DESCRIPTORS = {'Java_dev_aerove_lite_core_JniResourceFetch_nativeCreate': '(Ljava/lang/String;)J', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeLoad': '(JLjava/lang/String;)V', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeDownload': '(JLjava/lang/String;)Ljava/lang/String;', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeCancel': '(J)V', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeCloseJoin': '(J)V', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeValidatePrepared': '(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;', 'Java_dev_aerove_lite_core_JniResourceFetch_nativePreflightRuleResource': '(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;'}
 RESOURCE_JNI_SYMBOLS = tuple(RESOURCE_JNI_DESCRIPTORS)
-RESOURCE_HEALTH_CASES = {'resource_fetch': ['materialized_file_provider_is_the_named_download_graph_and_never_reads_old_cache', 'provider_transport_rejects_external_payload_and_unowned_dns_geodata_before_factory', 'named_candidate_graph_real_http_headers_staging_cap_and_no_bootstrap_rule_fetch', 'cancelled_named_fetch_joins_real_socket_and_never_returns_a_staged_success', 'invalid_candidate_dialer_cycle_has_no_network_or_staged_commit', 'prepared_geosite_uses_actual_owned_database_and_rejects_absent_or_external_resource', 'resource_preflight_is_typed_pending_and_standalone_remains_strict', 'resource_preflight_rejects_invalid_independent_rows_and_validates_no_geo'], 'lib': ['provider_policy_fields_defaults_disabled_and_fail_closed', 'providers_keep_distinct_policies_and_only_declared_group_touch_mapping', 'independent_initial_periodic_status_and_stop_read_back', 'lazy_only_real_group_business_touch_and_no_probe_self_touch', 'epoch_and_cancel_fence_actual_pending_health', 'live_network_context_refreshes_each_round_after_hot_network_and_probe_epoch', 'manual_intent_wins_and_member_replacement_retires_old_result', 'newer_automatic_intent_fences_pending_manual_real_response', 'configured_timeout_is_real_and_stop_joins_the_pending_socket', 'provider_health_defaults_match_standard_without_enabling_periodic_meow_default']}
+RESOURCE_HEALTH_CASES = {'resource_fetch': ['materialized_file_provider_is_the_named_download_graph_and_never_reads_old_cache', 'provider_transport_rejects_external_payload_and_unowned_dns_geodata_before_factory', 'named_candidate_graph_real_http_headers_staging_cap_and_no_bootstrap_rule_fetch', 'cancelled_named_fetch_joins_real_socket_and_never_returns_a_staged_success', 'invalid_candidate_dialer_cycle_has_no_network_or_staged_commit', 'prepared_geosite_uses_actual_owned_database_and_rejects_absent_or_external_resource', 'resource_preflight_is_typed_pending_and_standalone_remains_strict', 'resource_preflight_rejects_invalid_independent_rows_and_validates_no_geo'], 'lib': ['provider_policy_fields_defaults_disabled_and_fail_closed', 'providers_keep_distinct_policies_and_only_declared_group_touch_mapping', 'independent_initial_periodic_status_and_stop_read_back', 'lazy_only_real_group_business_touch_and_no_probe_self_touch', 'epoch_and_cancel_fence_actual_pending_health', 'live_network_context_refreshes_each_round_after_hot_network_and_probe_epoch', 'manual_intent_wins_and_member_replacement_retires_old_result', 'newer_automatic_intent_fences_pending_manual_real_response', 'configured_timeout_is_real_and_stop_joins_the_pending_socket', 'provider_health_defaults_match_standard_without_enabling_periodic_meow_default', 'prepared_validation_forwards_the_owner_token_into_geodata_reading', 'transport_load_forwards_the_fetch_token_into_dns_geodata_reading', 'a_concurrent_close_cannot_report_joined_before_the_first_closer_joins_its_children', 'zstd_geo_expansion_observes_cancellation_between_chunks_not_only_around_the_resource', 'interrupted_reads_are_retried_like_read_to_end_and_other_errors_stay_specific', 'text_rule_entries_stop_at_either_entry_bound_before_they_are_collected', 'yaml_event_pass_admits_the_value_bound_and_stops_one_value_past_it', 'streaming_text_admission_checks_the_entry_before_retaining_the_tail', 'streaming_yaml_admission_counts_events_before_the_rest_is_read', 'streaming_rule_admission_keeps_utf8_size_and_cancel_ahead_of_semantic_errors'], 'config_validation': ['zstd_geodata_streaming_matches_the_fixed_core_bounded_decoder', 'official_mrs_text_between_8m_and_64m_stays_previewable', 'official_mrs_compressed_input_between_32m_and_64m_is_admitted_and_the_64m_input_bound_holds', 'text_rule_input_up_to_the_64m_text_budget_is_admitted_and_the_input_bound_holds']}
 
 CORE_JNI_SYMBOLS = _ORIGINAL19_CORE_JNI_SYMBOLS + RESOURCE_JNI_SYMBOLS
 
@@ -195,10 +195,20 @@ CORE_POLICY_TEST_CASES_PROVIDER_GENERAL = tuple((r[:2]+(12,)+r[3:]+(False,)) if 
     for i,r in enumerate(CORE_POLICY_TEST_CASES_OBSERVABILITY))+(('meow-config', 'proxy_provider::tests::companion_', 2, 'lib', (), False), ('meow-config', 'proxy_provider::tests::provider_strict_refresh_keeps_last_good_on_bad_dialer', 1, 'lib', (), True), ('meow-common', 'diagnostic_', 2, 'lib', (), False), ('meow-config', 'diagnostic_', 1, 'lib', (), False), ('meow-proxy', 'diagnostic_', 10, 'lib', (), False), ('meow-transport', 'diagnostic_', 3, 'lib', (), False), ('meow-config', 'managed_dependency_', 3, 'lib', (), False), ('meow-config', 'proxy_provider::tests::projected_', 5, 'lib', (), False))
 CORE_POLICY_TEST_CASES_MRS_READER = CORE_POLICY_TEST_CASES_PROVIDER_GENERAL + (
     ('meow-rules', 'mrs_parser::tests::', 30, 'lib', (), False),
-    ('meow-rules', 'rule_set::tests::', 16, 'lib', (), False))
+    ('meow-rules', 'rule_set::tests::', 15, 'lib', (), False),
+    ('meow-rules', 'rule_set::plain_domain_validation_regression::invalid_plain_pattern_is_not_an_accepted_rule', 1, 'lib', (), True))
 CORE_MRS_READER_FORMAT_COMMAND = ['rustfmt','--check','--edition','2021',
     '.upstream/meow-rs/crates/meow-rules/src/mrs_parser.rs',
     '.upstream/meow-rs/crates/meow-rules/src/rule_set.rs']
+# Provider reader: every MRS command, then the real reader15 module and the unchanged 41 provider tests.
+CORE_POLICY_TEST_CASES_PROVIDER_READER = CORE_POLICY_TEST_CASES_MRS_READER + (
+    ('meow-config', 'rule_provider::reader::tests::reader15_', 15, 'lib', (), False),
+    ('meow-config', 'rule_provider::tests::', 41, 'lib', (), False))
+CORE_PROVIDER_READER_FORMAT_COMMAND = ['rustfmt','--check','--edition','2021',
+    '.upstream/meow-rs/crates/meow-config/src/rule_provider.rs',
+    '.upstream/meow-rs/crates/meow-config/src/rule_pages.rs',
+    '.upstream/meow-rs/crates/meow-config/src/rule_provider_reader.rs',
+    '.upstream/meow-rs/crates/meow-config/src/rule_provider_reader_tests.rs']
 CORE_PROVIDER_GENERAL_PACKAGES = tuple(sorted(set(CORE_OBSERVABILITY_PACKAGES)|{'meow-config'}))
 
 CORE_POLICY_TEST_PACKAGES = tuple(sorted({package for package, _, _ in CORE_POLICY_TEST_CASES}))
@@ -221,7 +231,8 @@ def native_identity(root=MEOW_ROOT):
             "policy-runtime-observability-v1": HOST_POLICY_RUNTIME_OBSERVABILITY_TARGETS,
             "policy-runtime-provider-general-v1": HOST_POLICY_RUNTIME_PROVIDER_GENERAL_TARGETS,
             "policy-runtime-resource-health-v1": HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS,
-            "policy-runtime-mrs-reader-v1": HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS}.get(policy["coreTests"])
+            "policy-runtime-mrs-reader-v1": HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS,
+            "policy-runtime-provider-reader-v1": HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS}.get(policy["coreTests"])
         if (not approved_targets
                 or tuple(policy.get("targets", ())) != approved_targets
                 or policy.get("featureBoundary") != "capabilities-no-default"
@@ -283,7 +294,7 @@ def validate_native_receipt(receipt_path, abi=None, image=None, root=MEOW_ROOT, 
         command += ["--", "--test-threads=1", "--nocapture"]
         if receipt.get("command") != command or receipt.get("androidTarget") is not None or receipt.get("representativeTargets") != targets:
             raise ValueError("Meow host receipt did not run the complete approved suite")
-        if policy.get("coreTests") in ("policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1") and receipt.get("addedNativeTests") != RESOURCE_HEALTH_CASES:
+        if policy.get("coreTests") in ("policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1") and receipt.get("addedNativeTests") != RESOURCE_HEALTH_CASES:
             raise ValueError("Meow host receipt lacks authored resource/health Native test proof")
         if "featureBoundary" in policy:
             boundary_command = ["cargo", "test", "--locked", "--no-default-features", "--lib",
@@ -319,16 +330,17 @@ def validate_core_test_receipt(state, policy, root):
     overlay = json.loads((root / policy["overlay"]).read_text())
     upstream_lock = overlay.get("files", {}).get("Cargo.lock")
     mode = policy["coreTests"]
-    if mode not in ("policy-runtime-v1", "policy-runtime-v2", "policy-runtime-traffic-v1", "policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1"):
+    if mode not in ("policy-runtime-v1", "policy-runtime-v2", "policy-runtime-traffic-v1", "policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1"):
         reject()
     cases = (tuple((package, name, count, "lib", ()) for package, name, count in CORE_POLICY_TEST_CASES)
         if mode == "policy-runtime-v1" else CORE_POLICY_TEST_CASES_OBSERVABILITY
         if mode == "policy-runtime-observability-v1" else CORE_POLICY_TEST_CASES_V2)
-    if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1"):cases = CORE_POLICY_TEST_CASES_PROVIDER_GENERAL
+    if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1"):cases = CORE_POLICY_TEST_CASES_PROVIDER_GENERAL
     if mode == "policy-runtime-mrs-reader-v1":cases = CORE_POLICY_TEST_CASES_MRS_READER
+    if mode == "policy-runtime-provider-reader-v1":cases = CORE_POLICY_TEST_CASES_PROVIDER_READER
     cases = tuple(r if len(r)==6 else r+(False,) for r in cases)
-    packages = CORE_PROVIDER_GENERAL_PACKAGES if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1") else CORE_OBSERVABILITY_PACKAGES if mode == "policy-runtime-observability-v1" else CORE_POLICY_TEST_PACKAGES
-    if mode == "policy-runtime-mrs-reader-v1":packages = tuple(sorted(set(CORE_PROVIDER_GENERAL_PACKAGES)|{"meow-rules"}))
+    packages = CORE_PROVIDER_GENERAL_PACKAGES if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1") else CORE_OBSERVABILITY_PACKAGES if mode == "policy-runtime-observability-v1" else CORE_POLICY_TEST_PACKAGES
+    if mode in ("policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1"):packages = tuple(sorted(set(CORE_PROVIDER_GENERAL_PACKAGES)|{"meow-rules"}))
     if (state.get("mode") != mode or state.get("accepted") is not True
             or state.get("upstreamLockRestored") is not True or not is_hash(upstream_lock)
             or state.get("upstreamLockBeforeSha256") != upstream_lock
@@ -365,17 +377,17 @@ def validate_core_test_receipt(state, policy, root):
             command += [name]
         command += ["--", "--test-threads=1", "--nocapture"]
         if exact:command += ["--exact"]
-        if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1") and (not isinstance(entry, dict) or type(entry.get("exact")) is not bool or entry["exact"] != exact):
+        if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1") and (not isinstance(entry, dict) or type(entry.get("exact")) is not bool or entry["exact"] != exact):
             reject()
         if (not isinstance(entry, dict) or entry.get("package") != package or entry.get("filter") != name
-                or (mode in ("policy-runtime-v2", "policy-runtime-traffic-v1", "policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1") and (entry.get("target") != target or "filter" not in entry))
+                or (mode in ("policy-runtime-v2", "policy-runtime-traffic-v1", "policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1") and (entry.get("target") != target or "filter" not in entry))
                 or entry.get("command") != command or not exited(entry.get("exit"))
                 or type(entry.get("expectedPass")) is not int or entry["expectedPass"] != count
                 or type(entry.get("passed")) is not int or entry["passed"] != count
                 or not is_hash(entry.get("stdoutSha256")) or not is_hash(entry.get("stderrSha256"))):
             reject()
 
-    if mode in ("policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1"):
+    if mode in ("policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1"):
         compile_check = state.get("compileCheck")
         if (not isinstance(compile_check, dict)
                 or compile_check.get("command") != CORE_OBSERVABILITY_COMPILE_COMMAND
@@ -384,7 +396,7 @@ def validate_core_test_receipt(state, policy, root):
                 or not is_hash(compile_check.get("stderrSha256"))):
             reject()
 
-    if mode == "policy-runtime-mrs-reader-v1":
+    if mode in ("policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1"):
         format_check = state.get("formatCheck")
         if (not isinstance(format_check, dict)
                 or format_check.get("command") != CORE_MRS_READER_FORMAT_COMMAND
@@ -392,6 +404,20 @@ def validate_core_test_receipt(state, policy, root):
                 or not is_hash(format_check.get("stdoutSha256"))
                 or not is_hash(format_check.get("stderrSha256"))):
             reject()
+
+    if mode == "policy-runtime-provider-reader-v1":
+        provider_format = state.get("providerFormatCheck")
+        if (not isinstance(provider_format, dict)
+                or provider_format.get("command") != CORE_PROVIDER_READER_FORMAT_COMMAND
+                or not exited(provider_format.get("exit"))
+                or not is_hash(provider_format.get("stdoutSha256"))
+                or not is_hash(provider_format.get("stderrSha256"))):
+            reject()
+        # Each gate names every file rustfmt checked, with the exact adapted overlay bytes it read.
+        for gate in (state["formatCheck"], provider_format):
+            expected = {name: overlay.get("files", {}).get(name.removeprefix(".upstream/meow-rs/")) for name in gate["command"][4:]}
+            if gate.get("files") != expected or not all(is_hash(value) for value in expected.values()):
+                reject()
 
 
 def exported_functions(image):

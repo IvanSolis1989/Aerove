@@ -3,6 +3,9 @@ package dev.aerove.lite.data
 import java.io.File
 import java.net.InetSocketAddress
 import java.net.Proxy
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.*
 import okhttp3.OkHttpClient
@@ -351,5 +354,66 @@ class MeowProviderPreparationTest {
         assertEquals("$.rule-providers.first", wrapped.issues.single().path)
         assertTrue(wrapped.issues.single().reason.contains("rule_set_invalid: invalid MRS magic")); assertSame(nativeCause, wrapped.cause)
         assertTrue(repo.list().isEmpty()); assertFalse(File(temporary.root, "profiles/index.json").exists())
+    }
+
+    private fun ownedManager(schema: CompatibilityValidator) = ResourceBundleManager(runtime, schema, NativeResourceValidator { _, _, _, _ -> null },
+        ResourceDownloader(), providerDownloads = ProviderDownloadFactory { object : ProviderDownloadScope {
+            override suspend fun download(request: ProviderDownloadRequest): ProviderDownloadResult {
+                val digest = "payload: [example.com]\n".byteInputStream().use { copyResource(it, request.destination, request.maxBytes) }
+                return ProviderDownloadResult(digest.bytes, digest.sha256)
+            }
+            override suspend fun closeAndJoin() = Unit
+        } })
+    /** Fake JNI edges under the production preparedResourceValidator: closeJoin must see the worker exited and the cache intact. */
+    private inner class OwnedConversion {
+        val entered = CountDownLatch(1); val cancelled = CountDownLatch(1)
+        val exited = AtomicBoolean(); val joined = AtomicBoolean(); val cacheAtJoin = AtomicBoolean()
+        @Volatile var generation: File? = null
+        @Volatile var cache: File? = null
+        private val native = object : dev.aerove.lite.core.OfflineResourceNative {
+            override fun create(plan: String): Long { assertTrue(org.json.JSONObject(plan).getBoolean("offline")); return 56 }
+            override fun cancel(handle: Long) { assertEquals(56L, handle); cancelled.countDown() }
+            override fun closeJoin(handle: Long) {
+                assertEquals(56L, handle); assertTrue(exited.get()); assertTrue(generation!!.isDirectory)
+                cacheAtJoin.set(cache!!.isDirectory); joined.set(true)
+            }
+            override fun validatePrepared(handle: Long, candidate: String, readRoot: String, cacheRoot: String): String? {
+                assertEquals(56L, handle); generation = File(readRoot); cache = File(cacheRoot); assertTrue(cache!!.isDirectory)
+                entered.countDown()
+                check(cancelled.await(10, TimeUnit.SECONDS)) { "native cancellation never reached the conversion worker" }
+                exited.set(true); error("resourceReadCancelled")
+            }
+        }
+        val production = dev.aerove.lite.core.preparedResourceValidator(temporary.root, temporary.newFolder("validation-cache"), native)
+        fun assertJoinedThenCacheRemoved() {
+            assertTrue(exited.get()); assertTrue(joined.get()); assertTrue(cacheAtJoin.get()); assertFalse(cache!!.exists())
+        }
+    }
+
+    @Test fun preparedConversionCancelReachesTheOwnedWorkerAndJoinsBeforeTheGenerationIsRemoved() = runBlocking<Unit> {
+        val conversion = OwnedConversion()
+        val schema = validator(conversion.production)
+        val repo = ProfileRepository(temporary.root, schema, resources = ownedManager(schema))
+        val job = async(Dispatchers.Default) { repo.importText("prepared cancel", source("https://example.invalid/rules")) }
+        assertTrue(withContext(Dispatchers.IO) { conversion.entered.await(5, TimeUnit.SECONDS) })
+        job.cancel(); withTimeout(5000) { job.join() }
+        assertTrue(job.isCancelled); conversion.assertJoinedThenCacheRemoved()
+        assertFalse(conversion.generation!!.exists())
+        assertFalse(File(temporary.root, "profiles/index.json").exists()); assertTrue(repo.list().isEmpty())
+    }
+
+    @Test fun startupConversionCancelJoinsTheOwnedWorkerAndKeepsTheSealedGeneration() = runBlocking<Unit> {
+        val conversion = OwnedConversion(); var owned = false
+        val schema = validator(NativePreparedConfigValidator { yaml, bundle -> if (owned) conversion.production.validate(yaml, bundle) else null })
+        val repo = ProfileRepository(temporary.root, schema, resources = ownedManager(schema))
+        val profile = repo.importText("startup cancel", source("https://example.invalid/rules"))
+        val index = File(temporary.root, "profiles/index.json").readBytes()
+        owned = true
+        val job = async(Dispatchers.Default) { repo.prepareForStart(profile.id) }
+        assertTrue(withContext(Dispatchers.IO) { conversion.entered.await(5, TimeUnit.SECONDS) })
+        job.cancel(); withTimeout(5000) { job.join() }
+        assertTrue(job.isCancelled); conversion.assertJoinedThenCacheRemoved()
+        assertTrue(conversion.generation!!.isDirectory)
+        assertArrayEquals(index, File(temporary.root, "profiles/index.json").readBytes())
     }
 }

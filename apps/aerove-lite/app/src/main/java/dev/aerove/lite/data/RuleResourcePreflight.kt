@@ -5,7 +5,7 @@ import org.json.JSONObject
 
 /** Preparation-only decoding/structure result. Pending is never config admission. */
 fun interface NativePreparedRuleValidator {
-    fun preflight(path: File, behavior: String, format: String): RuleResourcePreflight
+    suspend fun preflight(path: File, behavior: String, format: String): RuleResourcePreflight
 }
 
 class RuleResourcePreflight private constructor(

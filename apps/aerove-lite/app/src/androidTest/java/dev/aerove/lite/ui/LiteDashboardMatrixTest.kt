@@ -130,9 +130,9 @@ class LiteDashboardMatrixTest {
                         compose.onNode(tab and hasText(context.getString(R.string.lite_tab_home))).assertIsSelected()
                         compose.onNodeWithText("198.51.100.8").assertIsDisplayed()
                         compose.onNodeWithText("Example ISP").assertIsDisplayed()
-                        compose.onNodeWithText(context.getString(R.string.lite_upload)).assertIsDisplayed()
-                        compose.onNodeWithText(context.getString(R.string.lite_download)).assertIsDisplayed()
-                        compose.onNodeWithContentDescription(context.getString(R.string.action_disconnect)).assertIsEnabled()
+                        compose.onNodeWithText(context.getString(R.string.lite_upload), useUnmergedTree = true).assertIsDisplayed()
+                        compose.onNodeWithText(context.getString(R.string.lite_download), useUnmergedTree = true).assertIsDisplayed()
+                        compose.onNodeWithContentDescription(context.getString(R.string.lite_stop)).assertIsEnabled()
                         compose.onNodeWithContentDescription(context.getString(R.string.lite_vpn)).assertIsOn()
                         capture.captureMatrix(case.stem, "${case.stem}.png", case.json()).use { result ->
                             result.originalFailure?.let {

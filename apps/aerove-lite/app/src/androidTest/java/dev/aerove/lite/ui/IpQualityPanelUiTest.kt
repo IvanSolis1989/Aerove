@@ -1,5 +1,8 @@
 package dev.aerove.lite.ui
 
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -45,7 +48,8 @@ class IpQualityPanelUiTest {
         assertEquals(0, calls.get())
         compose.runOnIdle { state.value = state.value.copy(message = null) }
         compose.waitUntil(5000) { calls.get() == 1 }
-        compose.onNodeWithTag("ip-quality-summary").performClick()
+        compose.onNodeWithTag("ip-quality-summary").assert(SemanticsMatcher.keyNotDefined(SemanticsActions.OnClick))
+        compose.onNodeWithTag("dashboard-status-ip").performClick()
         compose.onNodeWithText(context.getString(R.string.quality_detection_tip)).assertExists()
         compose.runOnIdle { assertEquals(1, calls.get()); assertEquals(0, cancellations.get()) }
         compose.runOnIdle { state.value = state.value.copy(message = "Detail covered fixture") }

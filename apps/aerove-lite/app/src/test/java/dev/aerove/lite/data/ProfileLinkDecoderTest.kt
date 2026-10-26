@@ -83,7 +83,7 @@ class ProfileLinkDecoderTest {
             "anytls://p@a.example:443", "trojan://p@a.example:443?type=ws&path=%2Fws",
             "vmess://$uuid@a.example:443", "vless://$uuid@a.example:443?type=xhttp&path=%2Fx",
             "tuic://$uuid:p@a.example:443", "hy2://p@a.example")
-        validator.validate(inline(decode(*links.toTypedArray())).config)
+        runBlocking { validator.validate(inline(decode(*links.toTypedArray())).config) }
         assertEquals(1, calls)
     }
 

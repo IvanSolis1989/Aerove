@@ -86,8 +86,9 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
     private val afterListenerResume: (CoreEndpoint) -> Unit = {},
     private val latestNetworkDns: () -> dev.aerove.lite.data.SystemDnsSnapshot? = { null },
     private val onSessionReady: (VpnSnapshot) -> Unit = {},
+    private val nanoTime: () -> Long = System::nanoTime,
 ) {
-    private data class Request(val generation: Long, val plan: VpnPlan?, val internalReconnect: Boolean = false)
+    private data class Request(val generation: Long, val plan: VpnPlan?, val internalReconnect: Boolean = false, val startedAtNanos: Long = 0)
     private val generation = AtomicLong()
     private val requests = MutableStateFlow(Request(0, null))
     private val mutableState = MutableStateFlow(VpnSnapshot())
@@ -109,7 +110,7 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
                     publish(request, VpnSnapshot())
                     return@collectLatest
                 }
-                publish(request, VpnSnapshot(VpnPhase.Starting))
+                publish(request, VpnSnapshot(VpnPhase.Starting, runningSinceNanos = request.startedAtNanos))
                 val requestedPlan = checkNotNull(request.plan)
                 var openedPlan = requestedPlan
                 withContext(NonCancellable) {
@@ -129,7 +130,7 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
                 val initiallyParked = initialListener?.listening == false
                 val actualBuilder = builderSettings.takeUnless { initiallyParked }
                 val startupNetwork = actualBuilder?.network?.snapshot()
-                val ready = VpnSnapshot(VpnPhase.Running, running.endpoint, runningSinceNanos = System.nanoTime(),
+                val ready = VpnSnapshot(VpnPhase.Running, running.endpoint, runningSinceNanos = request.startedAtNanos,
                     initialNetwork = startupNetwork, initialIpv6 = actualBuilder?.ipv6, initialSettings = actualBuilder,
                     plannedBuilderSettings = builderSettings,
                     appliedNetwork = openedPlan.settings.network.snapshot(), appliedIpv6 = openedPlan.settings.ipv6,
@@ -169,11 +170,13 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
     }
 
     @Synchronized
-    fun start(plan: VpnPlan) {
+    fun start(plan: VpnPlan, requestedAtNanos: Long = nanoTime()) {
         if (closed) return
         val next = generation.incrementAndGet()
-        mutableState.value = VpnSnapshot(VpnPhase.Starting)
-        requests.value = Request(next, plan)
+        val current = mutableState.value
+        val started = current.uptimeStartNanos(true).takeUnless { it == 0L } ?: requestedAtNanos
+        mutableState.value = VpnSnapshot(VpnPhase.Starting, runningSinceNanos = started)
+        requests.value = Request(next, plan, startedAtNanos = started)
     }
 
     @Synchronized
@@ -198,8 +201,9 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
         val current = mutableState.value
         val baseline = preserveBuilder(plan, current)
         val next = generation.incrementAndGet()
-        mutableState.value = VpnSnapshot(VpnPhase.Starting)
-        requests.value = Request(next, baseline, internalReconnect = true)
+        val started = current.uptimeStartNanos(true).takeUnless { it == 0L } ?: nanoTime()
+        mutableState.value = VpnSnapshot(VpnPhase.Starting, runningSinceNanos = started)
+        requests.value = Request(next, baseline, internalReconnect = true, startedAtNanos = started)
     }
 
     /** Refresh Core configuration without accepting pending Android Builder or mode changes. */
@@ -210,9 +214,10 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
         val preserved = preserveBuilder(currentPlan, mutableState.value)
         val baseline = preserved.builderSettings()
         val next = generation.incrementAndGet()
-        mutableState.value = VpnSnapshot(VpnPhase.Starting)
+        val started = mutableState.value.uptimeStartNanos(true).takeUnless { it == 0L } ?: nanoTime()
+        mutableState.value = VpnSnapshot(VpnPhase.Starting, runningSinceNanos = started)
         requests.value = Request(next, plan.copy(vpnNetwork = baseline.network, vpnIpv6 = baseline.ipv6, vpnSettings = baseline,
-            vpnReservedFakeIpRanges = preserved.vpnReservedFakeIpRanges, vpnDnsEnabled = preserved.vpnDnsEnabled))
+            vpnReservedFakeIpRanges = preserved.vpnReservedFakeIpRanges, vpnDnsEnabled = preserved.vpnDnsEnabled), startedAtNanos = started)
     }
 
     private fun preserveBuilder(plan: VpnPlan, current: VpnSnapshot): VpnPlan {
@@ -368,3 +373,6 @@ fun requiresVpnRestart(desired: LiteSettings, snapshot: VpnSnapshot): Boolean {
 internal fun canStartRuntime(vpnEnabled: Boolean, systemVpnRequest: Boolean = false,
     isVpnAuthorized: () -> Boolean): Boolean =
     (!systemVpnRequest || vpnEnabled) && (!vpnEnabled || isVpnAuthorized())
+
+internal fun VpnSnapshot.uptimeStartNanos(visible: Boolean): Long =
+    if (visible && (phase == VpnPhase.Starting || phase == VpnPhase.Running)) runningSinceNanos else 0L

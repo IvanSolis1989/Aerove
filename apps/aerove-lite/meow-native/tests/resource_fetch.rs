@@ -157,6 +157,6 @@ fn resource_preflight_rejects_invalid_independent_rows_and_validates_no_geo() {
     let receipt:serde_json::Value=serde_json::from_str(&preflight_rule_resource(&path,"classical","yaml").unwrap()).unwrap();
     assert_eq!(receipt["state"],"validated");assert_eq!(receipt["count"],2);
     assert_eq!(receipt["requires"],serde_json::json!({"geoip":false,"asn":false,"geosite":false}));
-    std::fs::write(&path,vec![b'x';aerove_meow_core::config_validation::MAX_TEXT_BYTES+1]).unwrap();
-    assert!(preflight_rule_resource(&path,"classical","yaml").is_err());
+    std::fs::OpenOptions::new().write(true).open(&path).unwrap().set_len(aerove_meow_core::config_validation::MAX_RULE_TEXT_BYTES as u64+1).unwrap();
+    assert_eq!(preflight_rule_resource(&path,"classical","yaml").unwrap_err(),"resource input exceeds 67108864 bytes");
 }

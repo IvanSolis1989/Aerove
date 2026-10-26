@@ -148,11 +148,11 @@ class ResourceManagementGeoTest {
             var now = System.currentTimeMillis() + 1000
             val native = NativeResourceValidator { _, _, _, _ -> null }
             val inspector = object : dev.aerove.lite.data.NativeRulePayloadInspector {
-                override fun inspect(path: String): dev.aerove.lite.data.RulePayloadInspection {
+                override suspend fun inspect(path: String): dev.aerove.lite.data.RulePayloadInspection {
                     require(File(path).readText() == "payload: ['+.example.com']")
                     return dev.aerove.lite.data.RulePayloadInspection("yaml", "domain", 1)
                 }
-                override fun dump(path: String, behavior: String, format: String): String {
+                override suspend fun dump(path: String, behavior: String, format: String): String {
                     require(behavior == "domain" && format == "yaml")
                     inspect(path)
                     return "+.example.com\n"

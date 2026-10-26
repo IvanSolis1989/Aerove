@@ -348,7 +348,8 @@
     <string name="lite_delete">삭제</string>
     <string name="lite_refresh">새로 고침</string>
     <string name="lite_search">검색</string>
-    <string name="lite_connect">연결</string>
+    <string name="lite_start">시작</string>
+    <string name="lite_stop">중지</string>
     <string name="lite_connected">연결됨</string>
     <string name="lite_disconnected">연결 끊김</string>
     <string name="lite_connecting">연결 중…</string>
@@ -473,7 +474,7 @@
     <string name="lite_network_speed">네트워크 속도</string>
     <string name="lite_uptime">실행 시간</string>
     <string name="lite_organization">조직</string>
-    <string name="lite_traffic_total">총 %1$s</string>
+    <string name="lite_traffic_total">합계 %1$s</string>
     <string name="lite_vpn">VPN</string>
     <string name="lite_enabled">사용</string>
     <string name="lite_disabled">사용 안 함</string>
@@ -482,7 +483,10 @@
     <string name="lite_type_mobile">모바일</string>
     <string name="lite_type_business">기업용</string>
     <string name="lite_type_hosting">호스팅</string>
-    <string name="lite_outbound_refresh">아웃바운드 주소 새로 고침</string>
+    <string name="lite_outbound_retry">다시 시도</string>
+    <string name="lite_details">%1$s 상세 정보</string>
+    <string name="lite_outbound_ip">아웃바운드 IP</string>
+    <string name="lite_tap_icon_to_retry">아이콘을 눌러 다시 시도</string>
     <string name="lite_outbound_loading">아웃바운드 주소 확인 중…</string>
     <string name="lite_open_logs">로그 활성화</string>
     <string name="lite_open_logs_detail">코어 로그를 수집하고 로그 페이지를 표시합니다.</string>

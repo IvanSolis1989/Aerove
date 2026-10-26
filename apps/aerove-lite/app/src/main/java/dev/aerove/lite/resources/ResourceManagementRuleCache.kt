@@ -1,7 +1,6 @@
 package dev.aerove.lite.resources
 
 import dev.aerove.lite.data.CompatibilityValidator
-import dev.aerove.lite.data.ConfigYaml
 import dev.aerove.lite.data.NativeRulePayloadInspector
 import dev.aerove.lite.data.RulePayloadInspection
 import dev.aerove.lite.data.copyLocalRuleResource
@@ -9,12 +8,14 @@ import dev.aerove.lite.data.NativeResourceValidator
 import dev.aerove.lite.data.PrivateStorage
 import dev.aerove.lite.data.ResourceDigest
 import dev.aerove.lite.data.ResourceDownloader
+import dev.aerove.lite.data.MAX_RULE_INPUT_BYTES
+import dev.aerove.lite.data.MAX_RULE_TEXT_BYTES
 import dev.aerove.lite.data.copyResource
 import dev.aerove.lite.data.deletePrivateTree
 import dev.aerove.lite.data.privateResource
-import dev.aerove.lite.data.readBounded
+import dev.aerove.lite.data.forEachRuleLine
+import dev.aerove.lite.data.readRuleYaml
 import dev.aerove.lite.data.sha256
-import dev.aerove.lite.data.strictUtf8
 import java.io.File
 import java.io.InputStream
 import java.util.UUID
@@ -29,6 +30,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import okio.utf8Size
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -64,8 +66,8 @@ internal class ResourceManagementRuleCache(directory: File, private val validato
         val staging = File(storage.root, ".staging/${UUID.randomUUID()}").apply { check(mkdirs()) }
         try {
             val file = File(staging, "payload.bin")
-            val digest = if (input == null) downloader.download(url, file, limit(format, assetKind))
-                else input.use { copyResource(it, file, limit(format, assetKind)) }
+            val digest = if (input == null) downloader.download(url, file, limit(assetKind))
+                else input.use { copyResource(it, file, limit(assetKind)) }
             currentCoroutineContext().ensureActive()
             locked {
                 if (!isCurrent()) throw CancellationException("Resource source changed")
@@ -107,8 +109,8 @@ internal class ResourceManagementRuleCache(directory: File, private val validato
         var committed = false
         return try {
             val file = File(directory, "payload.bin")
-            val digest = if (input == null) downloader.download(url, file, limit(format, assetKind))
-                else input.use { if (localId != null) copyLocalRuleResource(it, file, limit(format, assetKind)) else copyResource(it, file, limit(format, assetKind)) }
+            val digest = if (input == null) downloader.download(url, file, limit(assetKind))
+                else input.use { if (localId != null) copyLocalRuleResource(it, file, limit(assetKind)) else copyResource(it, file, limit(assetKind)) }
             if (expected != null) require(digest.bytes == expected.bytes && digest.sha256 == expected.sha256 && expected.updatedAt >= 0) {
                 "Restored rule resource digest does not match its manifest"
             }
@@ -125,7 +127,7 @@ internal class ResourceManagementRuleCache(directory: File, private val validato
                 runtimeFormat = if (format == "mrs") "mrs" else "text"
                 if (format != "mrs") {
                     val canonical = parser.dump(file.path, behavior, format)
-                    require(canonical.toByteArray(Charsets.UTF_8).size <= limit("text")) { "Materialized rule payload exceeds limit" }
+                    require(canonical.utf8Size() <= MAX_RULE_TEXT_BYTES) { "Materialized rule payload exceeds $MAX_RULE_TEXT_BYTES UTF-8 bytes" }
                     runtimeFile = File(directory, "runtime.txt")
                     PrivateStorage(directory).write("runtime.txt", canonical)
                     validate(runtimeFile, behavior, "text")
@@ -212,18 +214,16 @@ internal class ResourceManagementRuleCache(directory: File, private val validato
 
     private fun validate(file: File, behavior: String, format: String): Int? {
         if (format == "mrs") return null
-        val text = file.inputStream().use { it.readBounded(limit(format).toInt()).strictUtf8() }
-        val lines = if (format == "text") text.lineSequence().map(String::trim)
-            .filter { it.isNotEmpty() && !it.startsWith('#') && !it.startsWith("//") }.toList()
-        else {
-            val root = ConfigYaml.parse(text, limit(format).toInt())
-            require(root.keys == setOf("payload")) { "Rule resource YAML must contain only payload" }
-            val rows = root["payload"] as? List<*> ?: error("Rule resource payload is missing")
-            require(rows.all { it is String }) { "Rule resource payload must contain strings" }
-            rows.filterIsInstance<String>()
-        }
-        validator.validateRulePayload(lines, "$.rule-providers.library.payload")
-        return lines.size
+        val path = "$.rule-providers.library.payload"
+        val check = validator.ruleLineCheck(path)
+        if (format == "text") return file.forEachRuleLine(limit(), check::line).also { check.finish() }.requireEntryBound(path)
+        val root = file.readRuleYaml(limit())
+        require(root.keys == setOf("payload")) { "Rule resource YAML must contain only payload" }
+        val rows = root["payload"] as? List<*> ?: error("Rule resource payload is missing")
+        require(rows.all { it is String }) { "Rule resource payload must contain strings" }
+        rows.filterIsInstance<String>().forEachIndexed(check::line)
+        check.finish()
+        return rows.size
     }
 
     private fun read(identity: String): Pair<ManagedRuleResource, File>? {
@@ -265,7 +265,7 @@ internal class ResourceManagementRuleCache(directory: File, private val validato
         else require(behavior.isEmpty() && format.isEmpty()) { "Unexpected geo resource format" }
         return sha256(JSONArray(if (localId == null) listOf(assetKind, url, behavior, format) else listOf(assetKind, "local", localId, behavior, format)).toString())
     }
-    private fun limit(format: String, assetKind: String = "ruleset") = if (assetKind != "ruleset") 64L * 1024 * 1024 else if (format == "mrs") 32L * 1024 * 1024 else 8L * 1024 * 1024
+    private fun limit(assetKind: String = "ruleset") = if (assetKind != "ruleset") 64L * 1024 * 1024 else MAX_RULE_INPUT_BYTES
     private class CacheLock(val path: String) : AbstractCoroutineContextElement(Key) {
         @Volatile var active = true
         companion object Key : CoroutineContext.Key<CacheLock>

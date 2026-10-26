@@ -236,61 +236,56 @@ pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_capabilities<'lo
     }).resolve::<ThrowRuntimeExAndDefault>()
 }
 
-fn validation_result<T>(work: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
-        .unwrap_or_else(|_| Err("native_validation_panicked".into()))
-}
 async fn validation_future<T>(work: impl std::future::Future<Output = Result<T, String>>) -> Result<T, String> {
     use futures::FutureExt;
     std::panic::AssertUnwindSafe(work).catch_unwind().await
         .unwrap_or_else(|_| Err("native_validation_panicked".into()))
 }
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_validate<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, source: JString<'local>) -> JString<'local> {
+pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_validate<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, handle: i64, source: JString<'local>) -> JString<'local> {
     env.with_env(|env| -> Result<JString<'local>, BridgeError> {
         let source = source.try_to_string(env)?;
-        match executor()?.block_on(validation_future(crate::config_validation::validate_config(&source))) {
+        let owner = resource_fetch(handle)?;
+        match resource_result(env, owner.reader.validate_config(source))? {
             Ok(()) => Ok(JString::null()),
             Err(error) => Ok(env.new_string(error)?),
         }
     }).resolve::<ThrowRuntimeExAndDefault>()
 }
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_validateResource<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, kind: JString<'local>, path: JString<'local>, behavior: JString<'local>, format: JString<'local>) -> JString<'local> {
+pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_validateResource<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, handle: i64, kind: JString<'local>, path: JString<'local>, behavior: JString<'local>, format: JString<'local>) -> JString<'local> {
     env.with_env(|env| -> Result<JString<'local>, BridgeError> {
         let kind = kind.try_to_string(env)?; let path = path.try_to_string(env)?;
         let behavior = behavior.try_to_string(env)?; let format = format.try_to_string(env)?;
-        match executor()?.block_on(validation_future(crate::config_validation::validate_resource(&kind,std::path::Path::new(&path),&behavior,&format))) {
+        let owner = resource_fetch(handle)?;
+        // Owner, cancellation and bridge failures throw (possibly already pending); only validator diagnostics return.
+        match resource_result(env, crate::resource_fetch::validate_resource_owned(&owner.reader, kind, path, behavior, format))? {
             Ok(()) => Ok(JString::null()),
             Err(error) => Ok(env.new_string(error)?),
         }
     }).resolve::<ThrowRuntimeExAndDefault>()
 }
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_inspectRuleSet<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, path: JString<'local>) -> JString<'local> {
+pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_inspectRuleSet<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, handle: i64, path: JString<'local>) -> JString<'local> {
     env.with_env(|env| -> Result<JString<'local>, BridgeError> {
         let path = path.try_to_string(env)?;
-        let output = validation_result(|| crate::config_validation::inspect_rule_set(std::path::Path::new(&path))).map_err(BridgeError)?;
+        let owner = resource_fetch(handle)?;
+        let output = resource_result(env, owner.reader.read(move |cancel| crate::config_validation::inspect_rule_set_controlled(std::path::Path::new(&path),cancel)))?;
         Ok(env.new_string(output)?)
     }).resolve::<ThrowRuntimeExAndDefault>()
 }
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_dumpRuleSet<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, path: JString<'local>, behavior: JString<'local>, format: JString<'local>) -> JString<'local> {
+pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_dumpRuleSet<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, handle: i64, path: JString<'local>, behavior: JString<'local>, format: JString<'local>) -> JString<'local> {
     env.with_env(|env| -> Result<JString<'local>, BridgeError> {
         let path = path.try_to_string(env)?; let behavior = behavior.try_to_string(env)?; let format = format.try_to_string(env)?;
-        let output = validation_result(|| crate::config_validation::dump_rule_set(std::path::Path::new(&path),&behavior,&format)).map_err(BridgeError)?;
+        let owner = resource_fetch(handle)?;
+        let output = resource_result(env, owner.reader.read(move |cancel| crate::config_validation::dump_rule_set_controlled(std::path::Path::new(&path),&behavior,&format,cancel)))?;
         Ok(env.new_string(output)?)
     }).resolve::<ThrowRuntimeExAndDefault>()
 }
 #[cfg(test)]
 mod validation_boundary_tests {
     use super::*;
-    #[test]
-    fn synchronous_validation_keeps_specific_errors_and_contains_panics() {
-        assert_eq!(validation_result(|| Ok::<_,String>("payload\n".to_owned())).unwrap(),"payload\n");
-        assert_eq!(validation_result::<()>(|| Err("rule_set_behavior_mismatch".into())).unwrap_err(),"rule_set_behavior_mismatch");
-        assert_eq!(validation_result::<()>(|| panic!("fixture parser panic")).unwrap_err(),"native_validation_panicked");
-    }
     #[tokio::test]
     async fn asynchronous_validation_keeps_specific_errors_and_contains_panics() {
         validation_future(async { Ok::<_,String>(()) }).await.unwrap();
@@ -300,15 +295,36 @@ mod validation_boundary_tests {
 }
 
 
-static RESOURCE_FETCHES: OnceLock<Mutex<BTreeMap<i64,Arc<crate::resource_fetch::ResourceFetch>>>> = OnceLock::new();
+static RESOURCE_FETCHES: OnceLock<Mutex<BTreeMap<i64,Arc<ResourceHandle>>>> = OnceLock::new();
 static NEXT_RESOURCE_FETCH: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(1);
 #[derive(serde::Deserialize)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]
 struct ResourcePlan {
-    schema_version:u8, physical_network:crate::runtime_plan::PhysicalNetwork,
-    staging_root:String,resource_read_root:Option<String>,cache_root:String,
+    schema_version:u8,
+    #[serde(default)] offline:bool,
+    physical_network:Option<crate::runtime_plan::PhysicalNetwork>,
+    staging_root:Option<String>,resource_read_root:Option<String>,cache_root:Option<String>,
 }
-fn resource_fetch(handle:i64)->Result<Arc<crate::resource_fetch::ResourceFetch>,BridgeError> {
+struct ResourceHandle {
+    fetch: Option<Arc<crate::resource_fetch::ResourceFetch>>,
+    reader: Arc<crate::resource_fetch::OfflineResourceOwner>,
+}
+impl ResourceHandle {
+    fn cancel(&self) {
+        self.reader.cancel();
+        if let Some(fetch) = &self.fetch { fetch.cancel(); }
+    }
+    async fn close_and_join(&self) -> std::io::Result<()> {
+        self.cancel();
+        let read = self.reader.close_and_join().await;
+        let fetch = match &self.fetch { Some(fetch) => fetch.close_and_join().await, None => Ok(()) };
+        read.and(fetch)
+    }
+    fn fetch(&self) -> Result<Arc<crate::resource_fetch::ResourceFetch>, BridgeError> {
+        self.fetch.clone().ok_or_else(|| BridgeError("offline resource owner has no download graph".into()))
+    }
+}
+fn resource_fetch(handle:i64)->Result<Arc<ResourceHandle>,BridgeError> {
     RESOURCE_FETCHES.get_or_init(||Mutex::new(BTreeMap::new())).lock().get(&handle).cloned()
         .ok_or_else(||BridgeError("invalid resource scope handle".into()))
 }
@@ -349,11 +365,22 @@ pub extern "system" fn Java_dev_aerove_lite_core_JniResourceFetch_nativeCreate<'
         let text=plan.try_to_string(env)?;if text.len()>65536 {return Err(BridgeError("resource plan limit".into()));}
         let plan:ResourcePlan=serde_json::from_str(&text).map_err(|_|BridgeError("resource plan schema".into()))?;
         if plan.schema_version!=1 {return Err(BridgeError("resource schemaVersion".into()));}
-        let raw=plan.physical_network.handle.as_deref().ok_or_else(||BridgeError("physicalNetwork.handle: unavailable".into()))?;
-        let network=raw.parse::<u64>().ok().filter(|n|*n!=0&&n.to_string()==raw).ok_or_else(||BridgeError("physicalNetwork.handle".into()))?;
-        let cancel=CancellationToken::new();let context=NetworkContext::platform_on_network(network,cancel.clone())?;
-        let servers=crate::physical_dns::selected_servers(&plan.physical_network.dns)?;
-        let scope=crate::resource_fetch::ResourceFetch::create(context,servers,&plan.staging_root,plan.resource_read_root.as_deref(),&plan.cache_root,cancel)?;
+        let fetch = if plan.offline {
+            if plan.physical_network.is_some() || plan.staging_root.is_some() || plan.resource_read_root.is_some() || plan.cache_root.is_some() {
+                return Err(BridgeError("offline resource plan cannot contain network or roots".into()));
+            }
+            None
+        } else {
+            let physical = plan.physical_network.ok_or_else(||BridgeError("physicalNetwork: required".into()))?;
+            let raw=physical.handle.as_deref().ok_or_else(||BridgeError("physicalNetwork.handle: unavailable".into()))?;
+            let network=raw.parse::<u64>().ok().filter(|n|*n!=0&&n.to_string()==raw).ok_or_else(||BridgeError("physicalNetwork.handle".into()))?;
+            let cancel=CancellationToken::new();let context=NetworkContext::platform_on_network(network,cancel.clone())?;
+            let servers=crate::physical_dns::selected_servers(&physical.dns)?;
+            Some(crate::resource_fetch::ResourceFetch::create(context,servers,
+                plan.staging_root.as_deref().ok_or_else(||BridgeError("stagingRoot: required".into()))?,
+                plan.resource_read_root.as_deref(),plan.cache_root.as_deref().ok_or_else(||BridgeError("cacheRoot: required".into()))?,cancel)?)
+        };
+        let scope = Arc::new(ResourceHandle { fetch, reader: crate::resource_fetch::OfflineResourceOwner::new() });
         let handle=NEXT_RESOURCE_FETCH.fetch_update(std::sync::atomic::Ordering::AcqRel,std::sync::atomic::Ordering::Acquire,|n|n.checked_add(1)).map_err(|_|BridgeError("resource handles exhausted".into()))?;
         RESOURCE_FETCHES.get_or_init(||Mutex::new(BTreeMap::new())).lock().insert(handle,scope);Ok(handle)
     }).resolve::<ThrowRuntimeExAndDefault>()
@@ -362,7 +389,7 @@ pub extern "system" fn Java_dev_aerove_lite_core_JniResourceFetch_nativeCreate<'
 pub extern "system" fn Java_dev_aerove_lite_core_JniResourceFetch_nativeLoad<'local>(mut env:EnvUnowned<'local>,_class:JClass<'local>,handle:i64,source:JString<'local>) {
     env.with_env(|env|->Result<(),BridgeError>{
         let source=source.try_to_string(env)?;if source.len()>crate::config_validation::MAX_TEXT_BYTES {return Err(BridgeError("candidate input limit".into()));}
-        resource_result(env, resource_fetch(handle)?.load(source))
+        resource_result(env, resource_fetch(handle)?.fetch()?.load(source))
     }).resolve::<ThrowRuntimeExAndDefault>()
 }
 #[unsafe(no_mangle)]
@@ -370,7 +397,7 @@ pub extern "system" fn Java_dev_aerove_lite_core_JniResourceFetch_nativeDownload
     env.with_env(|env|->Result<JString<'local>,BridgeError>{
         let text=request.try_to_string(env)?;if text.len()>262144 {return Err(BridgeError("resource request limit".into()));}
         let request=serde_json::from_str(&text).map_err(|_|BridgeError("resource request schema".into()))?;
-        let result=resource_result(env, resource_fetch(handle)?.download(request))?;
+        let result=resource_result(env, resource_fetch(handle)?.fetch()?.download(request))?;
         Ok(env.new_string(serde_json::to_string(&result).map_err(|_|BridgeError("resource response".into()))?)?)
     }).resolve::<ThrowRuntimeExAndDefault>()
 }
@@ -386,21 +413,23 @@ pub extern "system" fn Java_dev_aerove_lite_core_JniResourceFetch_nativeCloseJoi
     }).resolve::<ThrowRuntimeExAndDefault>()
 }
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_aerove_lite_core_JniResourceFetch_nativeValidatePrepared<'local>(mut env:EnvUnowned<'local>,_class:JClass<'local>,source:JString<'local>,read_root:JString<'local>,cache:JString<'local>)->JString<'local> {
+pub extern "system" fn Java_dev_aerove_lite_core_JniResourceFetch_nativeValidatePrepared<'local>(mut env:EnvUnowned<'local>,_class:JClass<'local>,handle:i64,source:JString<'local>,read_root:JString<'local>,cache:JString<'local>)->JString<'local> {
     env.with_env(|env|->Result<JString<'local>,BridgeError>{
         let source=source.try_to_string(env)?;let read_root=read_root.try_to_string(env)?;let cache=cache.try_to_string(env)?;
         if source.len()>crate::config_validation::MAX_TEXT_BYTES {return Err(BridgeError("prepared input limit".into()));}
-        match executor()?.block_on(validation_future(crate::resource_fetch::validate_prepared(&source,&read_root,&cache))) {
+        let owner=resource_fetch(handle)?;
+        match resource_result(env,owner.reader.validate_prepared(source,read_root,cache))? {
             Ok(())=>Ok(JString::null()),Err(cause)=>Ok(env.new_string(cause)?)
         }
     }).resolve::<ThrowRuntimeExAndDefault>()
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_aerove_lite_core_JniResourceFetch_nativePreflightRuleResource<'local>(mut env:EnvUnowned<'local>,_class:JClass<'local>,path:JString<'local>,behavior:JString<'local>,format:JString<'local>)->JString<'local> {
+pub extern "system" fn Java_dev_aerove_lite_core_JniResourceFetch_nativePreflightRuleResource<'local>(mut env:EnvUnowned<'local>,_class:JClass<'local>,handle:i64,path:JString<'local>,behavior:JString<'local>,format:JString<'local>)->JString<'local> {
     env.with_env(|env|->Result<JString<'local>,BridgeError>{
         let path=path.try_to_string(env)?;let behavior=behavior.try_to_string(env)?;let format=format.try_to_string(env)?;
-        let receipt=validation_result(||crate::config_validation::preflight_rule_resource(std::path::Path::new(&path),&behavior,&format)).map_err(BridgeError)?;
+        let owner=resource_fetch(handle)?;
+        let receipt=resource_result(env,owner.reader.read(move |cancel|crate::config_validation::preflight_rule_resource_controlled(std::path::Path::new(&path),&behavior,&format,cancel)))?;
         Ok(env.new_string(receipt)?)
     }).resolve::<ThrowRuntimeExAndDefault>()
 }

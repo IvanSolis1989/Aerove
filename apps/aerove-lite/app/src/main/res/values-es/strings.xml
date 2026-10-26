@@ -423,7 +423,8 @@
     <string name="lite_dismiss">Cerrar</string>
     <string name="lite_message">Mensaje</string>
     <string name="lite_refresh">Actualizar</string>
-    <string name="lite_connect">Conectar</string>
+    <string name="lite_start">Iniciar</string>
+    <string name="lite_stop">Detener</string>
     <string name="lite_disconnecting">Desconectando…</string>
     <string name="lite_failed">Error de conexión</string>
     <string name="lite_profile_required">Importa un perfil para conectar</string>
@@ -513,10 +514,13 @@
     <string name="lite_license_core">clash-rs · Apache 2.0</string>
     <string name="lite_license_core_notice">clash-rs · NOTICE</string>
     <string name="lite_license_backdrop">Backdrop · Apache 2.0</string>
-    <string name="lite_traffic_total">Total %1$s</string>
+    <string name="lite_traffic_total">Total: %1$s</string>
     <string name="lite_type_mobile">Móvil</string>
     <string name="lite_type_hosting">Alojamiento</string>
-    <string name="lite_outbound_refresh">Actualizar dirección de salida</string>
+    <string name="lite_outbound_retry">Reintentar</string>
+    <string name="lite_details">Detalles de %1$s</string>
+    <string name="lite_outbound_ip">IP de salida</string>
+    <string name="lite_tap_icon_to_retry">Toca el icono para reintentar</string>
     <string name="lite_outbound_loading">Comprobando dirección de salida…</string>
     <string name="lite_open_logs">Activar registros</string>
     <string name="lite_open_logs_detail">Recopilar registros del núcleo y mostrar la página Registros.</string>

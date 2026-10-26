@@ -28,6 +28,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.AnnotatedString
 import dev.aerove.lite.R
@@ -65,17 +66,18 @@ internal fun IpQualityStatus(feature: IpQualityFeature, content: @Composable (Ip
 }
 
 @Composable
-internal fun IpQualityChips(state: IpQualityState, open: () -> Unit) {
-    FlowRow(Modifier.testTag("ip-quality-summary").clickable(role = Role.Button, onClick = open).padding(vertical = 2.dp),
+internal fun IpQualityChips(state: IpQualityState, open: () -> Unit, placeholder: Boolean = false) {
+    // A placeholder is neither read nor tappable, like Standard's skeleton chips; the address still opens the details.
+    FlowRow(Modifier.testTag("ip-quality-summary").then(if (placeholder) Modifier.clearAndSetSemantics {}
+        else Modifier.clickable(role = Role.Button, onClick = open)).padding(vertical = 2.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         val quality = state.quality
         QualityChip(stringResource(R.string.quality_short))
         if (quality != null) {
             QualityChip(stringResource(typeLabel(quality.type)))
             QualityChip(stringResource(levelLabel(quality.level)), quality.level)
-        } else LiteText(stringResource(if (state.loading) R.string.quality_loading else if (state.failed)
-            R.string.quality_failed else R.string.quality_unknown), style = LiteType.Caption,
-            color = if (state.failures.isNotEmpty()) MaterialTheme.colorScheme.error else LocalLiteVisuals.current.secondaryInk)
+        } else LiteText(stringResource(if (state.loading) R.string.quality_loading else R.string.quality_unknown), style = LiteType.Caption,
+            color = LocalLiteVisuals.current.secondaryInk)
     }
 }
 

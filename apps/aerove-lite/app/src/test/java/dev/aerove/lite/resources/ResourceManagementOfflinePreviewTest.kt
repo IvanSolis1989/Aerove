@@ -40,8 +40,8 @@ class ResourceManagementOfflinePreviewTest {
         return profiles to id
     }
     private fun inspector(action: (File) -> String) = object : NativeRulePayloadInspector {
-        override fun inspect(path: String): RulePayloadInspection = error("Preview must call full offline dump")
-        override fun dump(path: String, behavior: String, format: String): String {
+        override suspend fun inspect(path: String): RulePayloadInspection = error("Preview must call full offline dump")
+        override suspend fun dump(path: String, behavior: String, format: String): String {
             assertEquals("domain", behavior); assertEquals("mrs", format)
             return action(File(path))
         }
@@ -106,6 +106,53 @@ class ResourceManagementOfflinePreviewTest {
                 assertTrue(file.exists()); assertFalse(job.isCompleted)
             } finally { finish.countDown(); job.join() }
             assertTrue(job.isCancelled); assertFalse(published)
+            profiles.collectGarbage(); assertFalse(file.exists())
+        }
+    }
+
+    @Test fun nativeTextAbove8MiBStaysPreviewableAndTheNativeBudgetErrorReleasesTheLease() = runBlocking<Unit> {
+        MockWebServer().use { server ->
+            server.start(); val (profiles, id) = fixture(server)
+            // This preview has no Kotlin text cap; the native 64 MiB dump budget is its only text bound.
+            val text = "a".repeat(8 * 1024 * 1024 + 1)
+            val shown = ResourceManagementRepository(profiles, inspector { text }).preview(id, key)
+            assertEquals(text.length, shown.length); assertTrue(text == shown)
+            val budget = IllegalArgumentException("rule_set_invalid: \$.payload: rule_set_dump_limit_exceeded")
+            lateinit var file: File
+            val failure = runCatching { ResourceManagementRepository(profiles, inspector { target ->
+                file = target; runBlocking { profiles.delete(id); profiles.collectGarbage() }
+                assertTrue(target.exists()); throw budget
+            }).preview(id, key) }.exceptionOrNull()!!
+            assertSame(budget, originalFailure(failure))
+            profiles.collectGarbage(); assertFalse(file.exists())
+        }
+    }
+    @Test fun realCoroutineOwnerCancellationJoinsBeforeTheProfileLeaseCanBeReleased() = runBlocking<Unit> {
+        MockWebServer().use { server ->
+            server.start(); val (profiles, id) = fixture(server)
+            val entered = CountDownLatch(1); val cancelled = CountDownLatch(1); val finish = CountDownLatch(1)
+            val exited = java.util.concurrent.atomic.AtomicBoolean(); val joined = java.util.concurrent.atomic.AtomicBoolean()
+            lateinit var file: File
+            val parser = object : NativeRulePayloadInspector {
+                override suspend fun inspect(path: String): RulePayloadInspection = error("dump only")
+                override suspend fun dump(path: String, behavior: String, format: String): String =
+                    dev.aerove.lite.core.ownedOfflineResourceRead({ 52 }, { cancelled.countDown() }, {
+                        assertTrue(exited.get()); assertTrue(file.isFile); joined.set(true)
+                    }, {
+                        file = File(path); entered.countDown(); check(finish.await(5, TimeUnit.SECONDS))
+                        assertTrue(file.isFile); exited.set(true); "stale result\n"
+                    })
+            }
+            val repository = ResourceManagementRepository(profiles, parser)
+            var published = false
+            val job = launch(Dispatchers.Default) { repository.preview(id, key); published = true }
+            try {
+                assertTrue(withContext(Dispatchers.IO) { entered.await(5, TimeUnit.SECONDS) })
+                job.cancel(); assertTrue(withContext(Dispatchers.IO) { cancelled.await(5, TimeUnit.SECONDS) })
+                profiles.delete(id); profiles.collectGarbage()
+                assertTrue(file.isFile); assertFalse(job.isCompleted); assertFalse(joined.get())
+            } finally { finish.countDown(); withTimeout(5000) { job.join() } }
+            assertTrue(joined.get()); assertFalse(published)
             profiles.collectGarbage(); assertFalse(file.exists())
         }
     }

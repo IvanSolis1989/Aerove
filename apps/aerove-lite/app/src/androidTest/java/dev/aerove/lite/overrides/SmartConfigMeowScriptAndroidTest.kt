@@ -162,7 +162,9 @@ class SmartConfigMeowScriptAndroidTest {
             val nativePrepared = JniResourceFetch.preparedValidator(context)
             var finalNativeCalls = 0
             var pendingPreflights = 0
-            val validator = CompatibilityValidator.forMeow(NativeConfigValidator(MeowNativeCore::validate), runtime,
+            val validator = CompatibilityValidator.forMeow(NativeConfigValidator { yaml ->
+                JniResourceFetch.offlineRead { MeowNativeCore.validate(it, yaml) }
+            }, runtime,
                 NativePreparedConfigValidator { yaml, readRoot ->
                     finalNativeCalls++
                     nativePrepared.validate(yaml, readRoot)
@@ -171,7 +173,9 @@ class SmartConfigMeowScriptAndroidTest {
                         if (it.requiresPreparedContext) pendingPreflights++
                     }
                 }, MeowNativeCore::readVerifiedFeatures)
-            val manager = ResourceBundleManager(runtime, validator, NativeResourceValidator(MeowNativeCore::validateResource),
+            val manager = ResourceBundleManager(runtime, validator, NativeResourceValidator { kind, path, behavior, format ->
+                JniResourceFetch.offlineRead { MeowNativeCore.validateResource(it, kind, path, behavior, format) }
+            },
                 providerDownloads = JniResourceFetch.factory(context), downloader = ResourceDownloader())
             val pipeline = OverridePipeline(repository, NativeScriptEngine())
             var admission: String? = null
