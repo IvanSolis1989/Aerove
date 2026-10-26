@@ -367,4 +367,90 @@ class ResourceBundleManagerTest {
             repo.resourceEditSnapshot(id, "$.proxy-providers.remote.prepared")
         } }
         assertArrayEquals(before, index().readBytes())
-    }}
+    }
+    @Test fun identicalDueRefreshKeepsGenerationAndAdvancesOnlyIndexReceipt() = runBlocking<Unit> {
+        val repo = repository()
+        server.enqueue(payload())
+        val id = repo.importText("Main", ruleSource(interval = 60)).id
+        val before = repo.prepareForStart(id)
+        val manifest = File(before.resourceDirectory!!, "manifest.json").readBytes()
+        now += 60_000
+        server.enqueue(payload())
+        assertNull(repo.refreshIfDue(id))
+        val after = repo.refreshSchedule(id)
+        assertEquals(before.generation, after.generation)
+        assertEquals(now + 60_000, after.nextRefreshAt)
+        assertArrayEquals(manifest, File(before.resourceDirectory, "manifest.json").readBytes())
+        assertNull(repo.refreshIfDue(id))
+        assertEquals(2, server.requestCount)
+        assertEquals(1, File(runtime, "resources/bundles/$id").listFiles()!!.size)
+    }
+
+    @Test fun dueRefreshSkipsZeroIntervalAndPreservesLocalOverride() = runBlocking<Unit> {
+        val repo = repository()
+        server.enqueue(payload())
+        val id = repo.importText("Main", ruleSource(interval = 0)).id
+        now += 86_400_000
+        assertNull(repo.refreshIfDue(id))
+        assertEquals(1, server.requestCount)
+        repo.sideLoadResource(id, "$.rule-providers.remote", "payload: ['+.local.test']".byteInputStream())
+        now += 86_400_000
+        assertNull(repo.refreshIfDue(id))
+        assertTrue(File(provider(repo.prepareForStart(id))["path"] as String).readText().contains("local.test"))
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun dueRefreshDownloadsOnlyDueKeyAndDoesNotResetOtherDeadline() = runBlocking<Unit> {
+        val repo = repository()
+        val source = ConfigYaml.parse(ruleSource(interval = 60))
+        @Suppress("UNCHECKED_CAST") val providers = source["rule-providers"] as MutableMap<String, Any?>
+        @Suppress("UNCHECKED_CAST") val remote = providers["remote"] as Map<String, Any?>
+        providers["slow"] = remote + mapOf("interval" to 120, "url" to server.url("/slow").toString())
+        server.enqueue(payload()); server.enqueue(payload())
+        val id = repo.importText("Main", ConfigYaml.dump(source)).id
+        val first = repo.prepareForStart(id)
+        now += 60_000
+        server.enqueue(payload())
+        assertNull(repo.refreshIfDue(id))
+        assertEquals(3, server.requestCount)
+        assertEquals(first.nextRefreshAt!! + 60_000, repo.refreshSchedule(id).nextRefreshAt)
+        now += 60_000
+        server.enqueue(payload()); server.enqueue(payload())
+        assertNull(repo.refreshIfDue(id))
+        assertEquals(5, server.requestCount)
+    }
+
+    @Test fun failedDueKeyRetriesWithoutRedownloadingSuccessfulKey() = runBlocking<Unit> {
+        val repo = repository()
+        val source = ConfigYaml.parse(ruleSource(interval = 60))
+        @Suppress("UNCHECKED_CAST") val providers = source["rule-providers"] as MutableMap<String, Any?>
+        @Suppress("UNCHECKED_CAST") val remote = providers["remote"] as Map<String, Any?>
+        providers["second"] = remote + mapOf("url" to server.url("/second").toString())
+        server.enqueue(payload()); server.enqueue(payload())
+        val id = repo.importText("Main", ConfigYaml.dump(source)).id
+        now += 60_000
+        server.enqueue(MockResponse().setResponseCode(503)); server.enqueue(payload())
+        assertThrows(ConfigValidationException::class.java) { runBlocking { repo.refreshIfDue(id) } }
+        assertEquals(now + 10_000, repo.refreshSchedule(id).nextRefreshAt)
+        assertNull(repo.refreshIfDue(id))
+        assertEquals(4, server.requestCount)
+        now += 10_000
+        server.enqueue(payload())
+        assertNull(repo.refreshIfDue(id))
+        assertEquals(5, server.requestCount)
+    }
+
+    @Test fun automaticRefreshDoesNotDiscardSideLoadedDueResource() = runBlocking<Unit> {
+        val repo = repository()
+        server.enqueue(payload())
+        val id = repo.importText("Main", ruleSource(interval = 60)).id
+        repo.sideLoadResource(id, "$.rule-providers.remote", "payload: ['+.local.test']".byteInputStream())
+        val before = repo.prepareForStart(id)
+        now += 120_000
+        assertNull(repo.refreshIfDue(id))
+        val after = repo.refreshSchedule(id)
+        assertEquals(before.generation, after.generation)
+        assertTrue(File(provider(after)["path"] as String).readText().contains("local.test"))
+        assertEquals(1, server.requestCount)
+    }
+}

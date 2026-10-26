@@ -13,6 +13,7 @@ class ProfileMaintenanceFacade(
     ownerScope: CoroutineScope,
     private val onUpdated: suspend (ProfileSummary, ProfileMaintenanceRequest) -> Unit = { _, _ -> },
     onAutomaticError: (String, Throwable) -> Unit = { _, _ -> },
+    afterAutomaticSweep: suspend (() -> Boolean) -> Unit = {},
 ) : AutoCloseable {
     private val reloadGate = Mutex()
     private val maintenance = ProfileMaintenance(ownerScope, update = { request ->
@@ -22,7 +23,7 @@ class ProfileMaintenanceFacade(
             onUpdated(summary, request)
         }
         checkNotNull(summary.lastSuccessfulUpdateAt)
-    }, onAutomaticError = onAutomaticError)
+    }, onAutomaticError = onAutomaticError, afterAutomaticSweep = afterAutomaticSweep)
 
     val runningProfileIds = maintenance.runningProfileIds
 
@@ -77,6 +78,7 @@ class ProfileMaintenanceFacade(
     fun resumeAfterMaintenance(foreground: Boolean) = maintenance.resumeAfterMaintenance(foreground)
 
     fun setForeground(value: Boolean) = maintenance.setForeground(value)
+    fun resetAutomaticBackoff() { maintenance.resetAutomaticBackoff(); repository.resetResourceBackoff() }
     fun checkDue() = maintenance.checkDue()
     fun cancel(id: String) = maintenance.cancel(id)
     fun snapshot(): ProfileMaintenanceSnapshot = maintenance.snapshot()

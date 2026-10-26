@@ -1,6 +1,7 @@
 package dev.aerove.lite.resources
 
 import dev.aerove.lite.overrides.ScriptLibrarySession
+import dev.aerove.lite.data.MaintenanceBackoff
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -21,21 +22,28 @@ class ResourceManagementMaintenance(private val geo: GeoResourceCatalog, private
     private val scripts: ScriptLibrarySession, private val preferences: () -> GeoResourcePreferences,
     private val onChanged: suspend () -> Unit, private val clock: () -> Long = System::currentTimeMillis) {
     private val gate = Any()
+    private val backoff = MaintenanceBackoff(clock)
+    fun resetAutomaticBackoff(key: String? = null) = backoff.reset(key)
     private val maintenance = Mutex()
     private val operations = mutableSetOf<Job>()
     private var active: Job? = null
+    private val skippedCore = mutableSetOf<String>()
     private var quiesced = false
     private var revision = 0L
 
     suspend fun updateIfDue(isCurrent: () -> Boolean, coreAvailable: () -> Boolean): ResourceManagementMaintenanceResult =
         update(false, isCurrent, coreAvailable)
 
+    suspend fun updateSkippedIfDue(isCurrent: () -> Boolean, coreAvailable: () -> Boolean): ResourceManagementMaintenanceResult =
+        update(false, isCurrent, coreAvailable, coreOnly = true)
+
     suspend fun updateAll(isCurrent: () -> Boolean, coreAvailable: () -> Boolean): ResourceManagementMaintenanceResult =
         update(true, isCurrent, coreAvailable)
 
-    private suspend fun update(manual: Boolean, isCurrent: () -> Boolean, coreAvailable: () -> Boolean): ResourceManagementMaintenanceResult = coroutineScope {
+    private suspend fun update(manual: Boolean, isCurrent: () -> Boolean, coreAvailable: () -> Boolean, coreOnly: Boolean = false): ResourceManagementMaintenanceResult = coroutineScope {
         val operation = checkNotNull(currentCoroutineContext()[Job])
         val token = synchronized(gate) {
+            if (coreOnly && skippedCore.isEmpty()) return@coroutineScope ResourceManagementMaintenanceResult(emptySet(), emptySet())
             if (quiesced) throw CancellationException("Resource maintenance is paused")
             if (active?.isActive == true) return@coroutineScope ResourceManagementMaintenanceResult(emptySet(), emptySet())
             operations += operation
@@ -46,15 +54,23 @@ class ResourceManagementMaintenance(private val geo: GeoResourceCatalog, private
             } }
             revision
         }
+        if (manual) backoff.reset()
         val settings = preferences().validate()
         if (!isCurrent() || (!manual && !settings.autoUpdate)) return@coroutineScope ResourceManagementMaintenanceResult(emptySet(), emptySet())
         fun current() = synchronized(gate) { !quiesced && token == revision && operation.isActive } &&
             isCurrent() && preferences() == settings
         fun due(time: Long?) = time == null || clock() - time > settings.intervalHours * 3_600_000L
+        val interval = settings.intervalHours * 3_600_000L
         val updated = mutableSetOf<String>()
         val failed = mutableSetOf<String>()
         suspend fun scriptUpdate(id: String): Pair<String, Boolean>? {
+            val script = scripts.state.value.scripts.firstOrNull { it.id == id } ?: return null
+            val key = "script:$id"
+            val source = script.url.orEmpty()
+            if (!manual && !backoff.ready(key, source)) return null
             val receipt = scripts.updateWithReceipt(id)
+            if (receipt.committed) backoff.reset(key)
+            else if (!manual && receipt.errorCode != null) backoff.failed(key, source, interval)
             return when {
                 receipt.errorCode != null -> "script:$id" to false
                 receipt.committed -> "script:$id" to true
@@ -89,31 +105,50 @@ class ResourceManagementMaintenance(private val geo: GeoResourceCatalog, private
             if (current() && updated.isNotEmpty()) onChanged()
             return@coroutineScope ResourceManagementMaintenanceResult(updated, failed)
         }
-        if (coreAvailable()) {
-            val results = geo.updateIfDue(::current)
-            updated += results.updated.map { "geo:${it.wire}" }
-            failed += results.failures.map { "geo:${it.wire}" }
+        for (entry in geo.snapshot()) {
+            currentCoroutineContext().ensureActive()
+            if (!current()) break
+            val key = "geo:${entry.kind.wire}"
+            if (!due(entry.saved?.updatedAt) || (coreOnly && synchronized(gate) { key !in skippedCore })) continue
+            if (!coreAvailable()) { synchronized(gate) { skippedCore += key }; continue }
+            if (!backoff.ready(key, entry.url)) continue
+            synchronized(gate) { skippedCore -= key }
+            try { geo.sync(entry.kind); backoff.reset(key); updated += key }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { if (current()) backoff.failed(key, entry.url, interval); failed += key }
         }
         val libraryEntries = library.snapshot().entries
         suspend fun updateLibrary(kind: ResourceManagementRemoteKind) {
             for (entry in libraryEntries.filter { it.kind == kind }) {
                 currentCoroutineContext().ensureActive()
                 if (!current()) break
-                if (!due(entry.updatedAt) || (kind == ResourceManagementRemoteKind.RuleSet && !coreAvailable())) continue
-                try { library.sync(entry.id); updated += entry.id }
+                if (!due(entry.updatedAt) || (coreOnly && synchronized(gate) { entry.id !in skippedCore })) continue
+                if (kind == ResourceManagementRemoteKind.RuleSet && !coreAvailable()) {
+                    synchronized(gate) { skippedCore += entry.id }; continue
+                }
+                synchronized(gate) { skippedCore -= entry.id }
+                val identity = "${entry.kind}:${entry.url}"
+                if (!backoff.ready(entry.id, identity)) continue
+                try { library.sync(entry.id); backoff.reset(entry.id); updated += entry.id }
                 catch (cancelled: CancellationException) { throw cancelled }
-                catch (_: Exception) { failed += entry.id }
+                catch (_: Exception) { if (current()) backoff.failed(entry.id, identity, interval); failed += entry.id }
             }
         }
         // Standard automatic maintenance remains ordered: icon sets, scripts, then core-visible providers.
-        updateLibrary(ResourceManagementRemoteKind.IconSet)
-        if (current()) {
+        if (!coreOnly) updateLibrary(ResourceManagementRemoteKind.IconSet)
+        if (!coreOnly && current()) {
             scripts.refresh()
             for (script in scripts.state.value.scripts) {
                 currentCoroutineContext().ensureActive()
                 if (!current()) break
                 if (script.url == null || !due(script.updatedAt) || script.id in scripts.state.value.busyIds) continue
-                scriptUpdate(script.id)?.let { (id, success) -> if (success) updated += id else failed += id }
+                try { scriptUpdate(script.id)?.let { (id, success) -> if (success) updated += id else failed += id } }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) {
+                    val key = "script:${script.id}"
+                    if (current()) backoff.failed(key, script.url.orEmpty(), interval)
+                    failed += key
+                }
             }
         }
         updateLibrary(ResourceManagementRemoteKind.RuleSet)

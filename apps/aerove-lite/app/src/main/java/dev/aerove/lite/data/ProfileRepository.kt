@@ -17,6 +17,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -36,6 +39,8 @@ class ProfileResourceEditSnapshot internal constructor(
 ) {
     override fun toString(): String = "ProfileResourceEditSnapshot([content redacted])"
 }
+data class ProfileResourceChecks(val checkedAt: Map<String, Long>, val receipts: Map<String, ResourceCheckReceipt>)
+
 data class ProfileDocumentSnapshot(val profile: ProfileSummary, val revision: String, val yaml: String)
 
 data class ProfileSourceTransform(val compiledYaml: String, val policyFingerprint: String,
@@ -65,6 +70,36 @@ class ProfileRepository(
     private val storage = PrivateStorage(File(privateDirectory, "profiles"))
     private val leases = liveProfiles.computeIfAbsent(storage.root.path) { mutableMapOf() }
     private val resourceEditEpoch = resourceEditEpochs.computeIfAbsent(storage.root.path) { java.util.concurrent.atomic.AtomicLong() }
+    private val resourceBackoff = MaintenanceBackoff(clock, initialMillis = 10_000)
+    private val resourceScheduleGate = Any()
+    private val mutableResourceScheduleRevision = MutableStateFlow(0L)
+    val resourceScheduleRevision: StateFlow<Long> = mutableResourceScheduleRevision.asStateFlow()
+
+    fun resetResourceBackoff() {
+        synchronized(resourceScheduleGate) {
+            resourceBackoff.reset()
+            mutableResourceScheduleRevision.value++
+        }
+    }
+
+    private data class ResourceDeadlines(val normal: Long?, val effective: Long?)
+
+    private suspend fun resourceDeadlines(entry: Entry, bundle: ResourceBundle): ResourceDeadlines {
+        val times = checkNotNull(resources).refreshTimes(bundle, entry.resourceCheckedAt)
+        return synchronized(resourceScheduleGate) {
+            ResourceDeadlines(times.values.minOrNull(), times.map { (key, due) ->
+                maxOf(due, resourceBackoff.deadline("${entry.summary.id}:$key", entry.summary.sourceIdentity) ?: 0L)
+            }.minOrNull())
+        }
+    }
+
+    private fun currentResourceSchedule(revision: Long): Boolean = synchronized(resourceScheduleGate) {
+        mutableResourceScheduleRevision.value == revision
+    }
+
+    private fun requireResourceSchedule(revision: Long) {
+        if (mutableResourceScheduleRevision.value != revision) throw CancellationException("Resource schedule changed")
+    }
     private var migratedResourceStamp: String? = null // Accessed only under the shared domain transaction.
 
     suspend fun snapshot(): ProfileSnapshot = storage.transaction {
@@ -417,6 +452,8 @@ class ProfileRepository(
                 bundle = bundle?.generation,
                 previousBundle = old.bundle,
                 nextRefreshAt = bundle?.nextRefreshAt,
+                resourceCheckedAt = if (replaceSource) emptyMap() else old.resourceCheckedAt,
+                resourceReceipts = (if (replaceSource) emptyMap() else old.resourceReceipts) + bundle?.refreshReceipts.orEmpty(),
                 sourceMetadata = sourceMetadata ?: if (sha256(yaml) == old.sourceMetadata?.logicalSourceSha256) old.sourceMetadata
                     else ProfileSourceMetadata.plain(yaml).let { plain -> old.sourceMetadata?.secret()?.use { plain.withSecret(it) } ?: plain },
             )
@@ -571,7 +608,8 @@ class ProfileRepository(
         val (entry, source) = pair
         val bundle = entry.bundle?.let { checkNotNull(resources) { "Resource manager is required for this profile" }.load(id, it, source) }
         if (bundle == null) validate(source)
-        return PreparedProfile(id, source, bundle?.yaml ?: source, entry.current, bundle?.generation, bundle?.directory, bundle?.nextRefreshAt)
+        return PreparedProfile(id, source, bundle?.yaml ?: source, entry.current, bundle?.generation, bundle?.directory,
+            bundle?.let { resourceDeadlines(entry, it).effective })
     }
 
     suspend fun prepareForStart(id: String): PreparedProfile {
@@ -589,7 +627,8 @@ class ProfileRepository(
             previous.sourcePolicyFingerprint == transform.policyFingerprint &&
             previous.policyFingerprint == manager.currentPolicyFingerprint(previous, transform.policyFingerprint)) {
             check(transform.isCurrent()) { "Profile policy changed during preparation" }
-            return PreparedProfile(id, source, previous.yaml, entry.current, previous.generation, previous.directory, previous.nextRefreshAt)
+            return PreparedProfile(id, source, previous.yaml, entry.current, previous.generation, previous.directory,
+                resourceDeadlines(entry, previous).effective)
         }
         val bundle = manager.prepare(id, transform.compiledYaml, previous, refreshKeys = emptySet(), logicalOriginalSource = source,
             policyFingerprint = transform.policyFingerprint, geoUrls = transform.geoUrls)
@@ -599,6 +638,7 @@ class ProfileRepository(
             check(transform.isCurrent() && bundle.policyFingerprint == manager.currentPolicyFingerprint(bundle, transform.policyFingerprint)) {
                 "Profile policy changed during preparation"
             }
+            val deadlines = resourceDeadlines(entry, bundle)
             storage.transaction {
                 val index = load()
                 val current = index.entry(id)
@@ -607,16 +647,32 @@ class ProfileRepository(
                 }
                 currentCoroutineContext().ensureActive()
                 save(index.copy(entries = index.entries.map { if (it.summary.id == id) it.copy(bundle = bundle.generation,
-                    nextRefreshAt = bundle.nextRefreshAt) else it }), collect = false)
+                    nextRefreshAt = deadlines.normal, resourceReceipts = it.resourceReceipts + bundle.refreshReceipts) else it }), collect = false)
                 manager.committed(id, bundle.generation)
                 committed = true
             }
-            return PreparedProfile(id, source, bundle.yaml, entry.current, bundle.generation, bundle.directory, bundle.nextRefreshAt)
+            return PreparedProfile(id, source, bundle.yaml, entry.current, bundle.generation, bundle.directory, deadlines.effective)
         } finally { if (!committed) manager.discard(id, bundle.generation) }
+    }
+
+    suspend fun resourceCheckedAt(id: String): Map<String, Long> = storage.transaction { load().entry(id).resourceCheckedAt }
+
+    suspend fun resourceChecks(prepared: PreparedProfile): ProfileResourceChecks = storage.transaction {
+        val entry = load().entry(prepared.profileId)
+        if (entry.current == prepared.revision && entry.bundle == prepared.generation)
+            ProfileResourceChecks(entry.resourceCheckedAt, entry.resourceReceipts)
+        else ProfileResourceChecks(emptyMap(), emptyMap())
+    }
+
+    suspend fun refreshSchedule(id: String): PreparedProfile {
+        val (entry, source) = storage.transaction { load().entry(id).let { it to readSource(it) } }
+        val bundle = entry.bundle?.let { checkNotNull(resources).load(id, it, source) } ?: return prepare(id)
+        return PreparedProfile(id, source, bundle.yaml, entry.current, bundle.generation, bundle.directory, resourceDeadlines(entry, bundle).effective)
     }
 
     suspend fun refreshResources(id: String): PreparedProfile = privateDomainTransaction(storage.root.parentFile!!) {
         val manager = checkNotNull(resources) { "Resource manager is not configured" }
+        resetResourceBackoff()
         val (entry, source) = storage.transaction { load().entry(id).let { it to readSource(it) } }
         manager.withResourceOverride(id, null) {
             replace(id, source, entry.current, refreshResourceKeys = setOf("*"))
@@ -624,10 +680,73 @@ class ProfileRepository(
         }
     }
 
-    suspend fun refreshIfDue(id: String): PreparedProfile? {
-        val entry = storage.transaction { load().entry(id) }
-        val due = entry.nextRefreshAt ?: return null
-        return if (clock() >= due) refreshResources(id) else null
+    suspend fun refreshIfDue(id: String): PreparedProfile? = privateDomainTransaction(storage.root.parentFile!!) {
+        val manager = resources ?: return@privateDomainTransaction null
+        val (entry, source) = storage.transaction { load().entry(id).let { it to readSource(it) } }
+        val previous = entry.bundle?.let { manager.load(id, it, source) } ?: return@privateDomainTransaction null
+        val revision = synchronized(resourceScheduleGate) { mutableResourceScheduleRevision.value }
+        val identity = entry.summary.sourceIdentity
+        val times = manager.refreshTimes(previous, entry.resourceCheckedAt)
+        val dueKeys = synchronized(resourceScheduleGate) {
+            requireResourceSchedule(revision)
+            times.filter { (key, at) -> at <= clock() && resourceBackoff.ready("$id:$key", identity) }.keys
+        }
+        if (dueKeys.isEmpty()) return@privateDomainTransaction null
+        val intervals = manager.refreshIntervals(previous)
+        val transform = sourcePolicy.forStart(id, source)
+        var currentBundle = previous
+        var checked = entry.resourceCheckedAt
+        var failure: Exception? = null
+        var committed = false
+        try {
+            for (key in dueKeys) {
+                currentCoroutineContext().ensureActive()
+                try {
+                    val candidate = manager.prepare(id, transform.compiledYaml, currentBundle, setOf(key), source,
+                        transform.policyFingerprint, transform.geoUrls)
+                    if (!transform.isCurrent() || !currentResourceSchedule(revision)) {
+                        if (candidate.generation != currentBundle.generation) manager.discard(id, candidate.generation)
+                        throw CancellationException("Profile policy or resource schedule changed during refresh")
+                    }
+                    if (currentBundle.generation != previous.generation && currentBundle.generation != candidate.generation)
+                        manager.discard(id, currentBundle.generation)
+                    currentBundle = candidate
+                    synchronized(resourceScheduleGate) {
+                        requireResourceSchedule(revision)
+                        resourceBackoff.reset("$id:$key")
+                    }
+                    checked = checked + (key to clock())
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    synchronized(resourceScheduleGate) {
+                        requireResourceSchedule(revision)
+                        resourceBackoff.failed("$id:$key", identity, checkNotNull(intervals[key]))
+                    }
+                    failure = error
+                }
+            }
+            val bundle = currentBundle
+            check(transform.isCurrent()) { "Profile policy changed during refresh" }
+            val deadlines = resourceDeadlines(entry.copy(resourceCheckedAt = checked), bundle)
+            storage.transaction {
+                val index = load()
+                val current = index.entry(id)
+                if (current.current != entry.current || current.bundle != entry.bundle || current.summary != entry.summary) throw ProfileConflictException(id)
+                currentCoroutineContext().ensureActive()
+                synchronized(resourceScheduleGate) { requireResourceSchedule(revision) }
+                save(index.copy(entries = index.entries.map { if (it.summary.id == id) it.copy(bundle = bundle.generation,
+                    previousBundle = if (bundle.generation == previous.generation) it.previousBundle else previous.generation,
+                    nextRefreshAt = deadlines.normal, resourceCheckedAt = checked,
+                    resourceReceipts = it.resourceReceipts + bundle.refreshReceipts) else it }), collect = false)
+                manager.committed(id, bundle.generation)
+                committed = true
+            }
+            if (bundle.generation == previous.generation) {
+                if (failure != null) throw failure
+                null
+            } else PreparedProfile(id, source, bundle.yaml, entry.current, bundle.generation, bundle.directory, deadlines.effective)
+        } finally { if (!committed && currentBundle.generation != previous.generation) manager.discard(id, currentBundle.generation) }
     }
 
     /** Explicit sync restores the original URL after a local side-load, without changing source identity. */
@@ -974,6 +1093,12 @@ class ProfileRepository(
                 nullableString(row, "backupId")?.also(::checkGeneration),
                 if (row.isNull("sourceMetadata")) null else ProfileSourceMetadata.parse(row.optJSONObject("sourceMetadata")
                     ?: throw IllegalArgumentException("Invalid private profile source metadata")),
+                row.optJSONObject("resourceCheckedAt")?.let { value -> value.keys().asSequence().associateWith { key ->
+                    value.getLong(key).also { require(it >= 0) }
+                } } ?: emptyMap(),
+                if (row.isNull("resourceReceipts")) emptyMap() else row.getJSONObject("resourceReceipts").let { receipts ->
+                    receipts.keys().asSequence().associateWith { key -> ResourceCheckReceipt.parse(receipts.getJSONObject(key)) }
+                },
             )
         }
         require(entries.map { it.summary.id }.distinct().size == entries.size) { "Duplicate profile id" }
@@ -999,7 +1124,9 @@ class ProfileRepository(
                 .put("bundle", e.bundle ?: JSONObject.NULL).put("previousBundle", e.previousBundle ?: JSONObject.NULL)
                 .put("lastUsableBundle", e.lastUsableBundle ?: JSONObject.NULL)
                 .put("nextRefreshAt", e.nextRefreshAt ?: JSONObject.NULL).put("backupId", e.backupId ?: JSONObject.NULL)
-                .put("sourceMetadata", e.sourceMetadata?.json() ?: JSONObject.NULL))
+                .put("sourceMetadata", e.sourceMetadata?.json() ?: JSONObject.NULL)
+                .put("resourceCheckedAt", JSONObject(e.resourceCheckedAt))
+                .put("resourceReceipts", JSONObject().apply { e.resourceReceipts.forEach { (key, receipt) -> put(key, receipt.json()) } }))
         }
         val encoded = JSONObject().put("schema", 1).put("profiles", array)
             .put("selected", index.selected ?: JSONObject.NULL).toString()
@@ -1038,6 +1165,8 @@ class ProfileRepository(
         val nextRefreshAt: Long? = null,
         val backupId: String? = null,
         val sourceMetadata: ProfileSourceMetadata? = null,
+        val resourceCheckedAt: Map<String, Long> = emptyMap(),
+        val resourceReceipts: Map<String, ResourceCheckReceipt> = emptyMap(),
     )
 
     private data class Index(val entries: List<Entry>, val selected: String?) {

@@ -10,7 +10,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.security.MessageDigest
 
-data class OverrideTransform(val yaml: String, val fingerprint: String)
+data class OverrideTransform(val yaml: String, val fingerprint: String, val parsed: MutableMap<String, Any?>? = null)
 
 fun interface ScriptEngine {
     suspend fun evaluate(script: String, configJson: String): String
@@ -41,7 +41,7 @@ class OverridePipeline(private val repository: OverrideRepository, private val e
             ?: throw ConfigValidationException(listOf(ConfigIssue("$.rules[$index]", "Expected a rule string"))) } ?: emptyList()
         // Standard rules DAO places the profile's ordered rows before enabled global rows.
         val added = profile.addedRules + snapshot.globalRules.filterNot { it.id in profile.disabledGlobalRuleIds }.map { it.value }
-        if (added.isEmpty()) return@withContext result(sourceYaml)
+        if (added.isEmpty()) return@withContext OverrideTransform(sourceYaml, fingerprint, source)
         val target = profile.matchTarget?.trim()?.takeIf { it.isNotEmpty() } ?: rules.asReversed()
             .firstNotNullOfOrNull { line -> line.split(',').takeIf { it.first().trim().uppercase() in setOf("MATCH", "FINAL") }?.getOrNull(1)?.trim() }
         source["rules"] = added.map { rule ->

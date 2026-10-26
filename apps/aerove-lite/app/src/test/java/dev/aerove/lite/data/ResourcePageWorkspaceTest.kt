@@ -167,47 +167,27 @@ class ResourcePageWorkspaceTest {
         }
     }
 
-    @Test fun reloadNotificationReentryCannotCommitTheCancelledAutomaticOverManualUpdate() = runBlocking<Unit> {
+    @Test fun emptyAutomaticUpdateDoesNotReloadSessionAndManualUpdateStillCompletes() = runBlocking<Unit> {
         MockWebServer().use { server ->
-            val oldAtReturn = java.util.concurrent.CountDownLatch(1)
-            val releaseOld = java.util.concurrent.CountDownLatch(1)
-            val manualHttp = java.util.concurrent.CountDownLatch(1)
-            val releaseHttp = java.util.concurrent.CountDownLatch(1)
             server.dispatcher = object : Dispatcher() {
-                override fun dispatch(request: RecordedRequest): MockResponse {
-                    manualHttp.countDown()
-                    check(releaseHttp.await(5, java.util.concurrent.TimeUnit.SECONDS))
-                    return MockResponse().setBody("binary fixture")
-                }
+                override fun dispatch(request: RecordedRequest) = MockResponse().setBody("binary fixture")
             }
             server.start()
-            lateinit var f: Fixture
-            val activeChecks = java.util.concurrent.atomic.AtomicInteger()
-            f = Fixture(server) {
-                if (f.page.state.value.updating && activeChecks.incrementAndGet() == 2) {
-                    oldAtReturn.countDown()
-                    check(releaseOld.await(5, java.util.concurrent.TimeUnit.SECONDS))
-                }
-                true
-            }
+            val f = Fixture(server)
+            var loads = 0
             val observer = CoroutineScope(Dispatchers.Unconfined).launch(start = CoroutineStart.UNDISPATCHED) {
-                f.session.state.first { it.busy.isNotEmpty() }
-                f.page.pauseAutomatic()
-                f.page.updateAll()
-                check(manualHttp.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                f.session.state.collect { if (it.busy.isNotEmpty()) loads++ }
             }
             try {
                 f.page.updateIfDue { true }
-                assertTrue(oldAtReturn.await(5, java.util.concurrent.TimeUnit.SECONDS))
-                val oldJob = f.scope.coroutineContext[Job]!!.children.single()
-                releaseOld.countDown()
-                withTimeout(5000) { observer.join(); oldJob.join() }
-                assertTrue(f.page.state.value.updating)
-                assertEquals(0L, f.page.state.value.completed)
-                releaseHttp.countDown()
                 withTimeout(5000) { f.page.state.first { it.completed == 1L && !it.updating } }
+                assertEquals(0, loads)
+                assertEquals(0, server.requestCount)
+                f.page.updateAll()
+                withTimeout(5000) { f.page.state.first { it.completed == 2L && !it.updating } }
                 assertEquals(3, server.requestCount)
-            } finally { releaseOld.countDown(); releaseHttp.countDown(); observer.cancelAndJoin(); f.close() }
+                assertTrue(f.page.state.value.failures.isEmpty())
+            } finally { observer.cancelAndJoin(); f.close() }
         }
     }
 

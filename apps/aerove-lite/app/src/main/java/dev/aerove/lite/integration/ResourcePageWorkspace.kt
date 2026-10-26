@@ -35,7 +35,7 @@ class ResourcePageWorkspace(val session: ResourceManagementSession, val scripts:
             try {
                 val result = if (manual) maintenance.updateAll({ canWork() && isCurrent() }, coreAvailable)
                     else maintenance.updateIfDue({ canWork() && isCurrent() }, coreAvailable)
-                val reload = canWork() && isCurrent()
+                val reload = canWork() && isCurrent() && result.updated.isNotEmpty() && session.state.value.busy.isEmpty()
                 synchronized(gate) {
                     if (update === operation && operation?.isActive == true) {
                         if (reload) session.load(null)
@@ -55,9 +55,11 @@ class ResourcePageWorkspace(val session: ResourceManagementSession, val scripts:
         if (!manual) automatic = update
         update?.start()
     }
+    fun resetAutomaticBackoff() = maintenance.resetAutomaticBackoff()
     fun pauseAutomatic() { synchronized(gate) { automatic?.cancel(); automatic = null } }
     fun cancel() { synchronized(gate) { jobs.toList().forEach { it.cancel() } }; session.cancel() }
     fun sync(remote: ResourceManagementRemoteResource) {
+        maintenance.resetAutomaticBackoff(remote.id)
         if (remote.kind == ResourceManagementRemoteKind.Script) launch {
             val receipt = scripts.updateWithReceipt(remote.id.removePrefix("script:"))
             mutable.value = mutable.value.copy(failures = if (receipt.errorCode == null) emptySet() else setOf(remote.id))

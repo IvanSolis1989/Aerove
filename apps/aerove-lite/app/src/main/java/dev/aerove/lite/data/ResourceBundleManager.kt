@@ -24,6 +24,21 @@ import dev.aerove.lite.resources.CachedLibraryRule
 import dev.aerove.lite.resources.LibraryCacheRestore
 import dev.aerove.lite.dnssettings.validateDnsOutboundReferences
 
+data class ResourceCheckReceipt(val checkedAt: Long, val sourceSha256: String, val sha256: String,
+    val subscriptionUserInfo: String?) {
+    init {
+        require(checkedAt >= 0 && sourceSha256.matches(Regex("[0-9a-f]{64}")) && sha256.matches(Regex("[0-9a-f]{64}")))
+        require(subscriptionUserInfo == null ||
+            dev.aerove.lite.resources.ResourceSubscriptionInfo.parse(subscriptionUserInfo)?.header() == subscriptionUserInfo)
+    }
+    internal fun json(): JSONObject = JSONObject().put("checkedAt", checkedAt).put("sourceSha256", sourceSha256)
+        .put("sha256", sha256).put("subscriptionUserInfo", subscriptionUserInfo ?: JSONObject.NULL)
+    companion object {
+        internal fun parse(row: JSONObject) = ResourceCheckReceipt(row.getLong("checkedAt"), row.getString("sourceSha256"),
+            row.getString("sha256"), if (row.isNull("subscriptionUserInfo")) null else row.getString("subscriptionUserInfo"))
+    }
+}
+
 internal data class ResourceBundle(
     val generation: String,
     val directory: File,
@@ -33,6 +48,7 @@ internal data class ResourceBundle(
     val compiledInputSha256: String = sourceSha256,
     val policyFingerprint: String = "",
     val sourcePolicyFingerprint: String = policyFingerprint,
+    val refreshReceipts: Map<String, ResourceCheckReceipt> = emptyMap(),
 )
 
 class ResourceBundleManager(
@@ -127,6 +143,7 @@ class ResourceBundleManager(
         val assets = File(candidate, "assets").apply { check(mkdir()) }
         val rootConfig = validator.resourceInput(source)
         val records = mutableListOf<Record>()
+        val refreshReceipts = linkedMapOf<String, ResourceCheckReceipt>()
         val previousManifest = if (previous != null && refreshKeys != null)
             JSONObject(PrivateStorage(previous.directory).read("manifest.json", 1024 * 1024)) else null
         val reusable = if (previousManifest != null) {
@@ -228,7 +245,7 @@ class ResourceBundleManager(
                 else -> MAX_GEO_BYTES
             }
             val override = overridePath(key, identity).takeIf { localFile(profileId, it).isFile }
-            val forced = key in refreshKeys.orEmpty() || "*" in refreshKeys.orEmpty()
+            val forced = key in refreshKeys.orEmpty() || ("*" in refreshKeys.orEmpty() && kind in setOf("proxy-provider", "ruleset"))
             val sharedKind = fetchPolicy == null && kind in setOf("ruleset", "mmdb", "geosite")
             val libraryAtPreparation = if ((url != null || globalLocalId != null) && sharedKind)
                 library.snapshot(key, url ?: "", behavior, format, kind, globalLocalId) else null
@@ -274,6 +291,8 @@ class ResourceBundleManager(
                     else -> "captured-transport"
                 })
             records += record
+            if (url != null && cached == null && override == null) refreshReceipts[key] =
+                ResourceCheckReceipt(clock(), identity, digest.sha256, digest.subscriptionUserInfo)
             return record
         }
 
@@ -348,7 +367,7 @@ class ResourceBundleManager(
                         if (provider["path"] != null) localFile(profileId, provider["path"] as String)
                         return@providerLoop
                     }
-                    val seconds = (provider["interval"] as? Number)?.toLong() ?: if (type == "http" && !rule) 86400 else 0
+                    val seconds = (provider["interval"] as? Number)?.toLong() ?: 0
                     if (seconds < 0 || seconds > MAX_INTERVAL_SECONDS) throw problem("$key.interval", "Invalid refresh interval")
                     val record = materialize(
                         key, if (rule) "ruleset" else "source-proxy",
@@ -406,7 +425,7 @@ class ResourceBundleManager(
             store.write("input.yaml", source)
             store.write("config.yaml", prepared)
             val now = clock()
-            val next = records.filter { it.interval > 0 }.minOfOrNull { now + it.interval * 1000 }
+            val next = records.filter { it.interval > 0 && !it.localOverride }.minOfOrNull { it.updatedAt + it.interval * 1000 }
             val recordJson = JSONArray(records.map { it.toJson() })
             val effectiveFingerprint = resourcePolicyFingerprint(policyFingerprint, recordJson, actual = true)
             val manifest = JSONObject().put("schema", 1).put("profileId", profileId)
@@ -417,6 +436,20 @@ class ResourceBundleManager(
                 .put("configSha256", sha256(prepared)).put("createdAt", now)
                 .put("nextRefreshAt", next ?: JSONObject.NULL)
                 .put("records", recordJson)
+            if (previous != null && refreshKeys != null && previous.compiledInputSha256 == sha256(source) &&
+                previous.sourcePolicyFingerprint == policyFingerprint && previous.policyFingerprint == effectiveFingerprint) {
+                val oldRecords = JSONObject(PrivateStorage(previous.directory).read("manifest.json", 1024 * 1024)).getJSONArray("records")
+                fun identity(rows: JSONArray) = (0 until rows.length()).map { index -> rows.getJSONObject(index).let {
+                    listOf(it.getString("key"), it.getString("kind"), it.getString("format"), it.getString("sha256"),
+                        it.optBoolean("localOverride", false).toString())
+                } }.sortedBy { it.first() }
+                if (identity(oldRecords) == identity(recordJson)) {
+                    closeDownloadScope()
+                    removeBundle(candidate)
+                    synchronized(state) { state.candidates.remove("$profileId/$generation") }
+                    return previous.copy(refreshReceipts = previous.refreshReceipts + refreshReceipts)
+                }
+            }
             store.write("manifest.json", manifest.toString())
             closeDownloadScope()
             currentCoroutineContext().ensureActive()
@@ -456,7 +489,8 @@ class ResourceBundleManager(
                 removeBundle(destination)
                 throw failure
             }
-            ResourceBundle(generation, destination, sha256(logicalOriginalSource), prepared, next, sha256(source), effectiveFingerprint, policyFingerprint)
+            ResourceBundle(generation, destination, sha256(logicalOriginalSource), prepared, next, sha256(source), effectiveFingerprint, policyFingerprint,
+                previous?.refreshReceipts.orEmpty() + refreshReceipts)
         } catch (failure: Throwable) {
             try { closeDownloadScope() } catch (cleanup: Throwable) { if (cleanup !== failure) failure.addSuppressed(cleanup) }
             removeBundle(candidate)
@@ -523,6 +557,24 @@ class ResourceBundleManager(
         ResourceBundle(generation, directory, sha256(source), yaml,
             if (manifest.isNull("nextRefreshAt")) null else manifest.getLong("nextRefreshAt"), compiledInputSha, policyFingerprint,
             manifest.optString("sourcePolicyFingerprint", policyFingerprint))
+    }
+
+    internal suspend fun refreshIntervals(bundle: ResourceBundle): Map<String, Long> = withContext(Dispatchers.IO) {
+        val rows = JSONObject(PrivateStorage(bundle.directory).read("manifest.json", 1024 * 1024)).getJSONArray("records")
+        (0 until rows.length()).map { rows.getJSONObject(it) }.associate { it.getString("key") to it.getLong("interval") * 1000 }
+    }
+
+    internal suspend fun refreshTimes(bundle: ResourceBundle, checked: Map<String, Long>): Map<String, Long> = withContext(Dispatchers.IO) {
+        val records = JSONObject(PrivateStorage(bundle.directory).read("manifest.json", 1024 * 1024)).getJSONArray("records")
+        buildMap {
+            for (index in 0 until records.length()) {
+                val record = records.getJSONObject(index)
+                val interval = record.getLong("interval")
+                if (interval <= 0 || record.optBoolean("localOverride", false) || record.isNull("url")) continue
+                val key = record.getString("key")
+                put(key, maxOf(record.getLong("updatedAt"), checked[key] ?: 0L) + interval * 1000)
+            }
+        }
     }
 
     internal suspend fun currentPolicyFingerprint(bundle: ResourceBundle, sourcePolicy: String): String {

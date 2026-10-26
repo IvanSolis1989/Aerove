@@ -33,7 +33,7 @@ class ProfileSourcePipeline(
         val extended = if (selected.customProfile) OverrideTransform(bound, overrides.fingerprint(profileId, bound))
             else overrides.resolve(profileId, bound)
         val settings = readSettings()
-        val source = transformDnsPreferences(ConfigYaml.parse(extended.yaml), settings.dnsPreferences,
+        val source = transformDnsPreferences(extended.parsed ?: ConfigYaml.parse(extended.yaml), settings.dnsPreferences,
             selected.preferences, selected.customProfile)
         val compiled = ConfigYaml.dump(source)
         val urls = geoUrls(settings)
@@ -44,8 +44,9 @@ class ProfileSourcePipeline(
             selection.customProfile == selected.customProfile &&
                 builders.snapshot().resources.resolve(logicalOriginalSource) == bound &&
                 overrides.fingerprint(profileId, bound) == extended.fingerprint && geoUrls(current) == urls &&
-                ConfigYaml.dump(transformDnsPreferences(ConfigYaml.parse(extended.yaml), current.dnsPreferences,
-                    selection.preferences, selection.customProfile)) == compiled
+                ((current.dnsPreferences == settings.dnsPreferences && selection.preferences == selected.preferences) ||
+                    ConfigYaml.dump(transformDnsPreferences(ConfigYaml.parse(extended.yaml), current.dnsPreferences,
+                        selection.preferences, selection.customProfile)) == compiled)
         }, geoUrls = urls)
     }
 

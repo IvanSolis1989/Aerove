@@ -69,6 +69,7 @@ class ResourceManagementRepository(private val profiles: ProfileRepository,
     private suspend fun describe(prepared: PreparedProfile): ResourceManagementSnapshot {
         val lease = profiles.retain(prepared)
         try {
+            val checks = profiles.resourceChecks(prepared)
             return withContext(Dispatchers.IO) {
                 val directory = prepared.resourceDirectory ?: return@withContext ResourceManagementSnapshot(prepared, emptyList())
                 val manifest = JSONObject(File(directory, "manifest.json").readText())
@@ -78,6 +79,11 @@ class ResourceManagementRepository(private val profiles: ProfileRepository,
                     val path = if (row.isNull("localPath")) null else row.getString("localPath")
                     val kind = row.getString("kind")
                     val format = row.optString("format")
+                    val key = row.getString("key")
+                    val receipt = checks.receipts[key]?.takeIf { !row.optBoolean("localOverride", false) &&
+                        it.sourceSha256 == row.getString("sourceSha256") && it.sha256 == row.getString("sha256") }
+                    val subscriptionInfo = if (receipt != null) ResourceSubscriptionInfo.parse(receipt.subscriptionUserInfo)
+                        else if (row.isNull("subscriptionUserInfo")) null else ResourceSubscriptionInfo.parse(row.getString("subscriptionUserInfo"))
                     val count = if (kind in setOf("ruleset", "source-proxy") && format in setOf("yaml", "text")) {
                         val file = File(directory, row.getString("file")).canonicalFile
                         require(file.toPath().startsWith(directory.canonicalFile.toPath()))
@@ -92,9 +98,10 @@ class ResourceManagementRepository(private val profiles: ProfileRepository,
                         }
                     } else null
                     ManagedResource(row.getString("key"), row.getString("kind"), row.getString("sha256"), row.getLong("bytes"),
-                        row.optLong("updatedAt", manifest.getLong("createdAt")), if (row.isNull("url")) null else row.getString("url"), path,
+                        maxOf(row.optLong("updatedAt", manifest.getLong("createdAt")), checks.checkedAt[key] ?: 0L, receipt?.checkedAt ?: 0L),
+                        if (row.isNull("url")) null else row.getString("url"), path,
                         path?.startsWith(".overrides/") == true, row.optString("behavior"), row.optString("format"),
-                        if (row.isNull("subscriptionUserInfo")) null else ResourceSubscriptionInfo.parse(row.getString("subscriptionUserInfo")), count)
+                        subscriptionInfo, count)
                 }
                 ResourceManagementSnapshot(prepared, entries)
             }

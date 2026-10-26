@@ -72,6 +72,7 @@ class ProfileMaintenance(
     private val waitMillis: suspend (Long) -> Unit = { delay(it) },
     private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val checkIntervalMillis: Long = 20 * 60 * 1000L,
+    private val afterAutomaticSweep: suspend (() -> Boolean) -> Unit = {},
 ) : AutoCloseable {
     private val lock = Any()
     private val quiesceGate = Mutex()
@@ -80,6 +81,7 @@ class ProfileMaintenance(
     private val lifetime = SupervisorJob(ownerScope.coroutineContext[Job])
     private val scope = CoroutineScope(ownerScope.coroutineContext + lifetime + dispatcher)
     private val rows = linkedMapOf<String, Row>()
+    private val backoff = MaintenanceBackoff(now)
     private var order = emptyList<String>()
     private var foreground = false
     private var started = false
@@ -126,6 +128,7 @@ class ProfileMaintenance(
                 if (replacement == null || replacement.sourceIdentity != row.policy?.sourceIdentity) {
                     row.epoch++
                     row.receipt = null
+                    backoff.reset(id)
                     row.invalidated = replacement != null && row.active > 0
                     row.flight?.let { it.valid = false; cancel += it }
                     row.flight = null
@@ -213,6 +216,8 @@ class ProfileMaintenance(
         }
     }
 
+    fun resetAutomaticBackoff() = backoff.reset()
+
     fun checkDue() = startScan(regular = true)
 
     fun invalidate(profileId: String) {
@@ -265,7 +270,9 @@ class ProfileMaintenance(
             if (closed || !lifetime.isActive || maintenancePaused) return null
             val row = rows[profileId] ?: return null
             val policy = row.policy?.takeIf { it.isSubscription || operation != null } ?: return null
+            if (manual) backoff.reset(profileId)
             if (!manual) {
+                if (!backoff.ready(profileId, policy.sourceIdentity)) return null
                 if (!foreground || !automatic(policy) || generation != expectedGeneration) return null
                 val last = listOfNotNull(policy.lastUpdatedAtMillis, row.receipt).maxOrNull()
                 if (!row.invalidated && (!regular || (last != null && addTime(last, policy.intervalMillis) >= now()))) return null
@@ -313,6 +320,7 @@ class ProfileMaintenance(
                 require(timestamp >= 0) { "Update callback returned an invalid timestamp" }
                 synchronized(lock) {
                     if (current(flight)) {
+                        backoff.reset(flight.policy.id)
                         flight.row.receipt = timestamp
                         flight.outcome = ProfileMaintenanceResult.Updated(timestamp)
                     }
@@ -323,6 +331,7 @@ class ProfileMaintenance(
         } catch (error: Exception) {
             synchronized(lock) {
                 if (current(flight)) {
+                    if (!flight.manual) backoff.failed(flight.policy.id, flight.policy.sourceIdentity, flight.policy.intervalMillis)
                     flight.outcome = ProfileMaintenanceResult.Failed(error)
                     if (!flight.manual) flight.report = error
                 }
@@ -365,6 +374,8 @@ class ProfileMaintenance(
                     if (!synchronized(lock) { !closed && !maintenancePaused && foreground && generation == epoch }) break
                     acquire(id, manual = false, regular = regular, expectedGeneration = epoch)?.result?.await()
                 }
+                fun current() = synchronized(lock) { !closed && !maintenancePaused && foreground && generation == epoch }
+                if (current()) afterAutomaticSweep(::current)
             }
             scan = job
             job.invokeOnCompletion {
@@ -430,4 +441,25 @@ class ProfileMaintenance(
 
     private fun addTime(time: Long, interval: Long): Long =
         if (time > Long.MAX_VALUE - interval) Long.MAX_VALUE else time + interval
+}
+
+class MaintenanceBackoff(private val now: () -> Long = System::currentTimeMillis,
+    private val initialMillis: Long = 20 * 60 * 1000L) {
+    private data class Failure(val source: String, val delay: Long, val until: Long)
+    private val failures = mutableMapOf<String, Failure>()
+    @Synchronized fun ready(key: String, source: String): Boolean {
+        val failure = failures[key] ?: return true
+        if (failure.source != source) { failures.remove(key); return true }
+        return now() >= failure.until
+    }
+    @Synchronized fun deadline(key: String, source: String): Long? = failures[key]?.takeIf { it.source == source }?.until
+    @Synchronized fun failed(key: String, source: String, intervalMillis: Long) {
+        require(intervalMillis > 0)
+        val previous = failures[key]?.takeIf { it.source == source }
+        val delay = if (previous == null) minOf(initialMillis, intervalMillis)
+            else minOf(intervalMillis, if (previous.delay > Long.MAX_VALUE / 2) Long.MAX_VALUE else previous.delay * 2)
+        val time = now()
+        failures[key] = Failure(source, delay, if (time > Long.MAX_VALUE - delay) Long.MAX_VALUE else time + delay)
+    }
+    @Synchronized fun reset(key: String? = null) { if (key == null) failures.clear() else failures.remove(key) }
 }
