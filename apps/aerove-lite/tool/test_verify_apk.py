@@ -928,7 +928,7 @@ class ApkInspectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             apk = self.make_apk(root)
             result = self.verify(apk, "arm64-v8a")
-            self.assertEqual(result["bundled_meow_script"]["commit"], "70d4ddbe0b6d52af7acbd503ff1bf556a3bddacd")
+            self.assertEqual(result["bundled_meow_script"]["commit"], "23a2c93b6cba799b83f51e56f95b7f378b425503")
             self.assertEqual(len(result["bundled_meow_script"]["assets"]), 3)
             self.assertEqual(set(result["client_helpers"]), set(module.HELPER_LIBRARIES))
             for name, details in result["client_helpers"].items():
@@ -973,9 +973,32 @@ class BundledScriptApkTests(unittest.TestCase):
 
     def test_actual_three_source_asset_bytes_read_back(self):
         proof = self.inspect()
-        self.assertEqual(proof["commit"], "70d4ddbe0b6d52af7acbd503ff1bf556a3bddacd")
+        self.assertEqual(proof["commit"], "23a2c93b6cba799b83f51e56f95b7f378b425503")
         self.assertEqual(len(proof["assets"]), 3)
-        self.assertEqual(proof["assets"]["assets/scripts/smart-config-kit-meow.js"]["bytes"], 112115)
+        self.assertEqual(proof["assets"]["assets/scripts/smart-config-kit-meow.js"]["bytes"], 115462)
+
+    def test_explicit_frozen_bundle_pins_stay_independent_of_current_table(self):
+        proof = self.inspect()
+        expected = dict(files=proof["assets"], commit=proof["commit"], update_url=proof["update_url"])
+        with mock.patch.object(module, "BUNDLED_SCRIPT_FILES", {}):
+            self.assertEqual(proof, module.verify_bundled_script_apk(self.path, expected_bundle=expected))
+            with self.assertRaises((ValueError, KeyError)): module.verify_bundled_script_apk(self.path)
+        for key in ("commit", "update_url"):
+            wrong = dict(expected); wrong[key] = "wrong"
+            with self.assertRaisesRegex(ValueError, "metadata"):
+                module.verify_bundled_script_apk(self.path, expected_bundle=wrong)
+
+    def test_explicit_frozen_bundle_pins_reject_all_three_changed_assets(self):
+        proof = self.inspect()
+        expected = dict(files=proof["assets"], commit=proof["commit"], update_url=proof["update_url"])
+        original = dict(self.entries)
+        for name, raw in original.items():
+            with self.subTest(name=name):
+                self.entries = dict(original); self.entries[name] = raw[:-1] + bytes([raw[-1] ^ 1])
+                with zipfile.ZipFile(self.path, "w") as archive:
+                    for entry, data in self.entries.items(): archive.writestr(entry, data)
+                with self.assertRaises(ValueError):
+                    module.verify_bundled_script_apk(self.path, expected_bundle=expected)
 
     def test_each_missing_asset_rejected(self):
         original = dict(self.entries)

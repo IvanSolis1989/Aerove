@@ -519,9 +519,9 @@ def verify_identity(badging, signature, product, channel):
 
 BUNDLED_SCRIPT_ROOT = Path(__file__).resolve().parents[1]
 BUNDLED_SCRIPT_FILES = {
-    "smart-config-kit-meow.js": (112115, "217a4d7ecfb56d99cbb79148159ee636b882af5520c4ad7b6c6c870405f938cb"),
-    "smart-config-kit-meow.source.json": (3010, "b1fa17a7312b082343a2b4e77e798fcc8d4d6942c8d140abb68c028388e5f865"),
-    "smart-config-kit-meow.upstream-README.md": (5982, "1d7049f2419ec0c5ad1dc51fd9289a9e7a71bdb0cbd55024e652532470bd6bc0"),
+    "smart-config-kit-meow.js": (115462, "2acc2840a9c1d896672c9933904a4ccf63a61beb8881543b9138c0606e53c88f"),
+    "smart-config-kit-meow.source.json": (3039, "b9fa1db2f43fa42cd18dbf575ef0ea974b86bea446edb8cc9e2210585cef3abf"),
+    "smart-config-kit-meow.upstream-README.md": (6122, "d2dee136f53dfbfc9b68db0c348cb3bdb089c61ce88ae814169ad42b249d8598"),
 }
 
 
@@ -531,19 +531,25 @@ def validate_bundled_script(archive, source_root=None):
     source = root / "app/src/main"
     constants = (source / "java/dev/aerove/lite/overrides/BundledMeowScript.kt").read_text(encoding="utf-8")
     expected_constants = {
-        "ASSET": "scripts/smart-config-kit-meow.js", "VERSION": "v6.0.20-meow.3",
-        "COMMIT": "70d4ddbe0b6d52af7acbd503ff1bf556a3bddacd",
+        "ASSET": "scripts/smart-config-kit-meow.js", "VERSION": "v6.0.20-meow.4",
+        "COMMIT": "23a2c93b6cba799b83f51e56f95b7f378b425503",
         "SHA256": BUNDLED_SCRIPT_FILES["smart-config-kit-meow.js"][1],
         "UPDATE_URL": "https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/refs/heads/main/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/AeroveLite(meow).js",
     }
     for key, value in expected_constants.items():
         if re.findall(r'const val ' + key + r' = "([^"\n]+)"', constants) != [value]:
             raise ValueError("Bundled script Kotlin/source constant mismatch: " + key)
-    if re.findall(r"const val BYTES = ([0-9]+)", constants) != ["112115"]:
+    if re.findall(r"const val BYTES = ([0-9]+)", constants) != ["115462"]:
         raise ValueError("Bundled script Kotlin byte count mismatch")
+    return _validate_bundled_script_assets(archive, BUNDLED_SCRIPT_FILES, expected_constants, source)
+
+
+def _validate_bundled_script_assets(archive, files, expected_constants, source=None):
+    if set(files) != {"smart-config-kit-meow.js", "smart-config-kit-meow.source.json", "smart-config-kit-meow.upstream-README.md"}:
+        raise ValueError("Bundled script exact three-file pin set required")
     names = archive.namelist()
     proof = {}
-    for name, (size, digest) in BUNDLED_SCRIPT_FILES.items():
+    for name, (size, digest) in files.items():
         asset = "assets/scripts/" + name
         if names.count(asset) != 1:
             raise ValueError("Missing or duplicate bundled script asset: " + asset)
@@ -551,8 +557,8 @@ def validate_bundled_script(archive, source_root=None):
         if info.file_size != size:
             raise ValueError("Bundled script asset byte count mismatch: " + asset)
         raw = archive.read(info)  # ZIP CRC is checked by ZipFile.read as well.
-        original = source / "assets/scripts" / name
-        if (original.is_symlink() or not original.is_file() or original.read_bytes() != raw
+        original = source / "assets/scripts" / name if source is not None else None
+        if ((original is not None and (original.is_symlink() or not original.is_file() or original.read_bytes() != raw))
                 or b"\r" in raw or hashlib.sha256(raw).hexdigest() != digest):
             raise ValueError("Bundled script asset source/hash/LF mismatch: " + asset)
         proof[asset] = {"bytes": size, "sha256": digest}
@@ -560,16 +566,22 @@ def validate_bundled_script(archive, source_root=None):
     if (metadata.get("repository") != "IvanSolis1989/Smart-Config-Kit"
             or metadata.get("commit") != expected_constants["COMMIT"]
             or metadata.get("path") != "Meow内核系/Aerove Lite/AeroveLite(meow).js"
-            or metadata.get("sha256") != expected_constants["SHA256"] or metadata.get("bytes") != 112115
-            or metadata.get("readmeSha256") != BUNDLED_SCRIPT_FILES["smart-config-kit-meow.upstream-README.md"][1]
+            or metadata.get("sha256") != expected_constants["SHA256"] or metadata.get("bytes") != files["smart-config-kit-meow.js"][0]
+            or metadata.get("readmeSha256") != files["smart-config-kit-meow.upstream-README.md"][1]
             or metadata.get("updateUrl") != expected_constants["UPDATE_URL"]):
         raise ValueError("Bundled script metadata/source/product mismatch")
     return {"commit": expected_constants["COMMIT"], "update_url": expected_constants["UPDATE_URL"], "assets": proof}
 
 
-def verify_bundled_script_apk(apk):
+def verify_bundled_script_apk(apk, *, expected_bundle=None):
     with zipfile.ZipFile(apk) as archive:
-        return validate_bundled_script(archive)
+        if expected_bundle is None:
+            return validate_bundled_script(archive)
+        files = {name.removeprefix("assets/scripts/"): (pin["bytes"], pin["sha256"])
+                 for name, pin in expected_bundle["files"].items()}
+        expected = {"COMMIT": expected_bundle["commit"], "UPDATE_URL": expected_bundle["update_url"],
+                    "SHA256": files["smart-config-kit-meow.js"][1]}
+        return _validate_bundled_script_assets(archive, files, expected)
 
 
 def verify(apk, abi, helper_source_root, helper_receipt, native_receipt, workflow=None):

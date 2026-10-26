@@ -39,7 +39,9 @@ def verify_contract(directory):
         actual={name for name in exported_functions(core) if name.startswith('Java_')}
         if digest(core)!=CORE_SHA or not valid_elf64_shared_object(core,62) or actual!=symbols:
             raise ValueError('beta14 actual ELF machine/alignment/hash/exact26 JNI mismatch')
-    bundled=verify_bundled_script_apk(apk)
+    bundled=verify_bundled_script_apk(apk, expected_bundle=dict(files=ASSETS,
+        commit="70d4ddbe0b6d52af7acbd503ff1bf556a3bddacd",
+        update_url="https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/refs/heads/main/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/AeroveLite(meow).js"))
     info=json.loads((root/'BUILD_INFO.json').read_text())
     if bundled['assets']!=ASSETS or bundled!=info.get('bundled_meow_script') or info.get('core_sha256')!=CORE_SHA:
         raise ValueError('beta14 three actual asset/source/BUILD_INFO identities differ')
