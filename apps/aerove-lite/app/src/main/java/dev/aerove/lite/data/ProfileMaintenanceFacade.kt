@@ -78,6 +78,7 @@ class ProfileMaintenanceFacade(
     fun resumeAfterMaintenance(foreground: Boolean) = maintenance.resumeAfterMaintenance(foreground)
 
     fun setForeground(value: Boolean) = maintenance.setForeground(value)
+    fun resetSubscriptionBackoff(): Unit = maintenance.resetAutomaticBackoff()
     fun resetAutomaticBackoff() { maintenance.resetAutomaticBackoff(); repository.resetResourceBackoff() }
     fun checkDue() = maintenance.checkDue()
     fun cancel(id: String) = maintenance.cancel(id)

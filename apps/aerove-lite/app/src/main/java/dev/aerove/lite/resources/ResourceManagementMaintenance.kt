@@ -42,19 +42,21 @@ class ResourceManagementMaintenance(private val geo: GeoResourceCatalog, private
 
     private suspend fun update(manual: Boolean, isCurrent: () -> Boolean, coreAvailable: () -> Boolean, coreOnly: Boolean = false): ResourceManagementMaintenanceResult = coroutineScope {
         val operation = checkNotNull(currentCoroutineContext()[Job])
-        val token = synchronized(gate) {
+        val admission = synchronized(gate) {
             if (coreOnly && skippedCore.isEmpty()) return@coroutineScope ResourceManagementMaintenanceResult(emptySet(), emptySet())
             if (quiesced) throw CancellationException("Resource maintenance is paused")
             if (active?.isActive == true) return@coroutineScope ResourceManagementMaintenanceResult(emptySet(), emptySet())
+            if (manual) backoff.reset()
             operations += operation
             active = operation
             operation.invokeOnCompletion { synchronized(gate) {
                 operations -= operation
                 if (active === operation) active = null
             } }
-            revision
+            revision to backoff.epoch()
         }
-        if (manual) backoff.reset()
+        val token = admission.first
+        val backoffEpoch = admission.second
         val settings = preferences().validate()
         if (!isCurrent() || (!manual && !settings.autoUpdate)) return@coroutineScope ResourceManagementMaintenanceResult(emptySet(), emptySet())
         fun current() = synchronized(gate) { !quiesced && token == revision && operation.isActive } &&
@@ -63,14 +65,15 @@ class ResourceManagementMaintenance(private val geo: GeoResourceCatalog, private
         val interval = settings.intervalHours * 3_600_000L
         val updated = mutableSetOf<String>()
         val failed = mutableSetOf<String>()
-        suspend fun scriptUpdate(id: String): Pair<String, Boolean>? {
+        suspend fun scriptUpdate(id: String, ticket: MaintenanceBackoff.Ticket = backoff.ticket("script:$id", backoffEpoch)): Pair<String, Boolean>? {
             val script = scripts.state.value.scripts.firstOrNull { it.id == id } ?: return null
             val key = "script:$id"
             val source = script.url.orEmpty()
             if (!manual && !backoff.ready(key, source)) return null
             val receipt = scripts.updateWithReceipt(id)
-            if (receipt.committed) backoff.reset(key)
-            else if (!manual && receipt.errorCode != null) backoff.failed(key, source, interval)
+            if (!current()) return null
+            if (receipt.committed) backoff.succeededIfCurrent(key, ticket)
+            else if (!manual && receipt.errorCode != null) backoff.failedIfCurrent(key, source, interval, ticket)
             return when {
                 receipt.errorCode != null -> "script:$id" to false
                 receipt.committed -> "script:$id" to true
@@ -111,11 +114,12 @@ class ResourceManagementMaintenance(private val geo: GeoResourceCatalog, private
             val key = "geo:${entry.kind.wire}"
             if (!due(entry.saved?.updatedAt) || (coreOnly && synchronized(gate) { key !in skippedCore })) continue
             if (!coreAvailable()) { synchronized(gate) { skippedCore += key }; continue }
+            val ticket = backoff.ticket(key, backoffEpoch)
             if (!backoff.ready(key, entry.url)) continue
             synchronized(gate) { skippedCore -= key }
-            try { geo.sync(entry.kind); backoff.reset(key); updated += key }
+            try { geo.sync(entry.kind); if (current()) { backoff.succeededIfCurrent(key, ticket); updated += key } }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { if (current()) backoff.failed(key, entry.url, interval); failed += key }
+            catch (_: Exception) { if (current()) { backoff.failedIfCurrent(key, entry.url, interval, ticket); failed += key } }
         }
         val libraryEntries = library.snapshot().entries
         suspend fun updateLibrary(kind: ResourceManagementRemoteKind) {
@@ -128,10 +132,11 @@ class ResourceManagementMaintenance(private val geo: GeoResourceCatalog, private
                 }
                 synchronized(gate) { skippedCore -= entry.id }
                 val identity = "${entry.kind}:${entry.url}"
+                val ticket = backoff.ticket(entry.id, backoffEpoch)
                 if (!backoff.ready(entry.id, identity)) continue
-                try { library.sync(entry.id); backoff.reset(entry.id); updated += entry.id }
+                try { library.sync(entry.id); if (current()) { backoff.succeededIfCurrent(entry.id, ticket); updated += entry.id } }
                 catch (cancelled: CancellationException) { throw cancelled }
-                catch (_: Exception) { if (current()) backoff.failed(entry.id, identity, interval); failed += entry.id }
+                catch (_: Exception) { if (current()) { backoff.failedIfCurrent(entry.id, identity, interval, ticket); failed += entry.id } }
             }
         }
         // Standard automatic maintenance remains ordered: icon sets, scripts, then core-visible providers.
@@ -142,12 +147,15 @@ class ResourceManagementMaintenance(private val geo: GeoResourceCatalog, private
                 currentCoroutineContext().ensureActive()
                 if (!current()) break
                 if (script.url == null || !due(script.updatedAt) || script.id in scripts.state.value.busyIds) continue
-                try { scriptUpdate(script.id)?.let { (id, success) -> if (success) updated += id else failed += id } }
+                val ticket = backoff.ticket("script:${script.id}", backoffEpoch)
+                try { scriptUpdate(script.id, ticket)?.let { (id, success) -> if (success) updated += id else failed += id } }
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) {
                     val key = "script:${script.id}"
-                    if (current()) backoff.failed(key, script.url.orEmpty(), interval)
-                    failed += key
+                    if (current()) {
+                        backoff.failedIfCurrent(key, script.url.orEmpty(), interval, ticket)
+                        failed += key
+                    }
                 }
             }
         }

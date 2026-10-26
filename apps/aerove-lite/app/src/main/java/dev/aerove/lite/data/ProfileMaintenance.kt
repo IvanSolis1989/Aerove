@@ -104,7 +104,7 @@ class ProfileMaintenance(
     }
 
     private class Flight(val row: Row, var policy: ProfileMaintenancePolicy, val epoch: Long, var manual: Boolean,
-        val operation: (suspend (ProfileMaintenanceRequest) -> Long)? = null) {
+        val backoffTicket: MaintenanceBackoff.Ticket, val operation: (suspend (ProfileMaintenanceRequest) -> Long)? = null) {
         val result = CompletableDeferred<ProfileMaintenanceResult>()
         var valid = true
         var outcome: ProfileMaintenanceResult = ProfileMaintenanceResult.Cancelled
@@ -285,7 +285,7 @@ class ProfileMaintenance(
                 return@synchronized it
                 }
             }
-            val created = Flight(row, policy, row.epoch, manual, operation)
+            val created = Flight(row, policy, row.epoch, manual, backoff.ticket(profileId), operation)
             created.job = scope.launch(start = CoroutineStart.LAZY) { runFlight(created) }
             if (!created.job.isActive && created.job.isCancelled) return null
             row.active++
@@ -320,7 +320,7 @@ class ProfileMaintenance(
                 require(timestamp >= 0) { "Update callback returned an invalid timestamp" }
                 synchronized(lock) {
                     if (current(flight)) {
-                        backoff.reset(flight.policy.id)
+                        backoff.succeededIfCurrent(flight.policy.id, flight.backoffTicket)
                         flight.row.receipt = timestamp
                         flight.outcome = ProfileMaintenanceResult.Updated(timestamp)
                     }
@@ -331,7 +331,7 @@ class ProfileMaintenance(
         } catch (error: Exception) {
             synchronized(lock) {
                 if (current(flight)) {
-                    if (!flight.manual) backoff.failed(flight.policy.id, flight.policy.sourceIdentity, flight.policy.intervalMillis)
+                    if (!flight.manual) backoff.failedIfCurrent(flight.policy.id, flight.policy.sourceIdentity, flight.policy.intervalMillis, flight.backoffTicket)
                     flight.outcome = ProfileMaintenanceResult.Failed(error)
                     if (!flight.manual) flight.report = error
                 }
@@ -447,6 +447,18 @@ class MaintenanceBackoff(private val now: () -> Long = System::currentTimeMillis
     private val initialMillis: Long = 20 * 60 * 1000L) {
     private data class Failure(val source: String, val delay: Long, val until: Long)
     private val failures = mutableMapOf<String, Failure>()
+    private var resetEpoch = 0L
+    private val keyEpochs = mutableMapOf<String, Long>()
+    internal data class Ticket(val epoch: Long, val keyEpoch: Long)
+    @Synchronized internal fun epoch(): Long = resetEpoch
+    @Synchronized internal fun ticket(key: String, epoch: Long = resetEpoch): Ticket = Ticket(epoch, keyEpochs[key] ?: 0L)
+    private fun current(key: String, ticket: Ticket): Boolean = ticket.epoch == resetEpoch && ticket.keyEpoch == (keyEpochs[key] ?: 0L)
+    @Synchronized internal fun succeededIfCurrent(key: String, ticket: Ticket) {
+        if (current(key, ticket)) failures.remove(key)
+    }
+    @Synchronized internal fun failedIfCurrent(key: String, source: String, intervalMillis: Long, ticket: Ticket) {
+        if (current(key, ticket)) failed(key, source, intervalMillis)
+    }
     @Synchronized fun ready(key: String, source: String): Boolean {
         val failure = failures[key] ?: return true
         if (failure.source != source) { failures.remove(key); return true }
@@ -461,5 +473,14 @@ class MaintenanceBackoff(private val now: () -> Long = System::currentTimeMillis
         val time = now()
         failures[key] = Failure(source, delay, if (time > Long.MAX_VALUE - delay) Long.MAX_VALUE else time + delay)
     }
-    @Synchronized fun reset(key: String? = null) { if (key == null) failures.clear() else failures.remove(key) }
+    @Synchronized fun reset(key: String? = null) {
+        if (key == null) {
+            resetEpoch++
+            keyEpochs.clear()
+            failures.clear()
+        } else {
+            keyEpochs[key] = (keyEpochs[key] ?: 0L) + 1
+            failures.remove(key)
+        }
+    }
 }
