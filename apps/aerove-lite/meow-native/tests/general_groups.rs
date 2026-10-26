@@ -77,8 +77,16 @@ async fn real_periodic_fallback_nested_put_route_and_group_event_share_one_stamp
             let frame = next_non_traffic(&mut socket).await;
             let event: serde_json::Value = serde_json::from_str(frame.to_text().unwrap()).unwrap();
             assert_eq!(event["type"], "groupsChanged"); let revision = event["revision"].as_u64().unwrap();
-            assert!(revision > previous); previous = revision; assert_eq!(event.as_object().unwrap().len(), 2);
+            assert!(revision > previous); previous = revision;
+            let object = event.as_object().unwrap(); assert_eq!(object.len(), 3);
+            assert!(["type", "revision", "routeVersion"].iter().all(|key| object.contains_key(*key)));
+            let route_version = event["routeVersion"].as_u64().unwrap();
+            assert_eq!(event["revision"].to_string(), revision.to_string());
+            assert_eq!(event["routeVersion"].to_string(), route_version.to_string());
             let snapshot = api.control.snapshot().await.unwrap();
+            let snapshot_version = snapshot.route_version.parse::<u64>().unwrap();
+            assert_eq!(snapshot_version.to_string(), snapshot.route_version);
+            assert!(snapshot_version >= route_version);
             if snapshot.picks["AUTO"] == "DIRECT" { break snapshot; }
         }
     }).await.unwrap();

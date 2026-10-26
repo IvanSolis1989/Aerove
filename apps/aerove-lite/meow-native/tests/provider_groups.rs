@@ -96,7 +96,7 @@ async fn file_provider_nested_select_real_route_refresh_derived_health_and_stop(
     timeout(Duration::from_secs(5),provider.refresh_owned()).await.unwrap().unwrap();
     timeout(Duration::from_secs(5),changed.recv()).await.unwrap().unwrap();
     assert!(api.control.plane.proxy_snapshot(&api.state,Some("feed")).is_ok(), "group event escaped a durable/busy lease");
-    let after = api.control.snapshot().await.unwrap(); assert_eq!(before.core_epoch,after.core_epoch);
+    let after = api.control.snapshot().await.unwrap(); assert_ne!(before.core_epoch,after.core_epoch);
     assert!(after.route_version.parse::<u64>().unwrap()>before.route_version.parse::<u64>().unwrap());
     assert_eq!(after.picks["PICK"],"c");
     assert_eq!(tunnel.route_snapshot().proxies["FILTER"].members().unwrap(),vec!["c".to_owned()]);
