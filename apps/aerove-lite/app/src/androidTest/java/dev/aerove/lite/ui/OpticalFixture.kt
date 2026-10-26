@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
@@ -16,6 +18,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.material3.Text
+import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.graphics.layer.GraphicsLayer
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.text.style.TextOverflow
+import java.util.concurrent.ConcurrentHashMap
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
@@ -32,6 +41,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
@@ -79,6 +89,11 @@ internal data class FixtureState(
     val lensControl: LensControl = LensControl.None,
     val plainInkControl: Boolean = false,
     val switchForegroundControl: Boolean = false,
+    val sdkInkReference: SdkInkReferenceCapture? = null,
+    val fixtureGeometry: JSONObject? = null,
+    val inkContrastSource: Boolean = false,
+    val inkContrastDrawReceipt: JSONObject? = null,
+    val sceneDrawReceipt: JSONObject? = null,
 )
 
 internal fun FixtureState.opticalConfiguration(): JSONObject {
@@ -88,14 +103,27 @@ internal fun FixtureState.opticalConfiguration(): JSONObject {
         .put("parentSelected", parentSelected).put("frontHue", frontHue).put("switchMarkers", switchMarkers)
         .put("thumbMarker", thumbMarker).put("regularPane", regularPane).put("pillPane", pillPane)
         .put("inkAlpha", inkAlpha).put("lensControl", lensControl.name).put("plainInkControl", plainInkControl)
-        .put("diagnosticOnly", lensControl != LensControl.None || plainInkControl)
+        .put("diagnosticOnly", lensControl != LensControl.None || plainInkControl || inkContrastSource)
+        .put("fixtureGeometry", if (stage == FixtureStage.Source || stage == FixtureStage.InkMask) JSONObject.NULL else fixtureGeometry?.let { JSONObject(it.toString()) } ?: JSONObject.NULL)
+        .put("sceneDrawReceipt", sceneDrawReceipt?.let { JSONObject(it.toString()) } ?: JSONObject.NULL)
+        .put("inkContrastSource", inkContrastSource)
+        .put("samplingSourceMode", if (inkContrastSource) "wallpaper+independent-test-contrast" else "original-wallpaper-and-bench-markers")
+        .put("pureAuroraLocalMotionEvidence", false)
+        .put("inkContrastDefinition", if (!inkContrastSource) JSONObject.NULL else JSONObject()
+            .put("bandDp", JSONArray(listOf(0, 310, "full-width", 354))).put("zeroRgb", "ff0000").put("halfRgb", "0000ff")
+            .put("alpha", 0.60).put("blendMode", "SrcOver").put("zeroTime", 0L).put("halfTime", 45_000_000L)
+            .put("drawOrder", "After real LiteWallpaper and existing markers, before original InkMask black band")
+            .put("drawReceipt", inkContrastDrawReceipt?.let { JSONObject(it.toString()) } ?: JSONObject.NULL))
+        .put("sdkInkReference", sdkInkReference != null)
+        .put("sdkInkReferencePaint", if (sdkInkReference == null) JSONObject.NULL else "Independent direct Compose Text/SDK layer and raw vector; original paint alpha already included in RGBA")
         .put("switchForegroundControl", switchForegroundControl)
         .put("switchForegroundReference", if (!switchForegroundControl) JSONObject.NULL else JSONObject()
             .put("stages", "NoLens; non-Solid only; existing FlatThumb foreground unchanged")
             .put("glyph", "Original check/close selected by RenderCase.checked")
             .put("paint", "Original visuals.ink; enabled alpha1, disabled alpha0.38; GlyphDrawing without liteInk")
             .put("requestedSizeDp", 14).put("alignment", "Center in the original 24dp control thumb")
-            .put("actualGlyphBounds", "Not directly observed; original constraints retained"))
+            .put("actualGlyphBounds", "See switch-control-thumb/track window Rects; original glyph constraints retained")
+            .put("positionStages", "NoLens and FlatThumb; foreground rendering remains independently selected").put("checkedPosition", "Independent measured track maxWidth minus 28dp, rounded once in pixels"))
         .put("plainInkPaint", "Original ink color/alpha/font/style/position; only liteInk disabled, no black background or white replacement")
         .put("lensParameters", if (lensControl == LensControl.None) JSONObject.NULL else JSONObject()
             .put("base", "AeroveGlassStyle.lensContent").put("dispersion", style.dispersion).put("refraction", style.refraction)
@@ -116,6 +144,7 @@ internal fun FixtureState.opticalConfiguration(): JSONObject {
 
 @Composable
 internal fun OpticalFixture(case: RenderCase, state: FixtureState, probe: RenderProbe) {
+    require(state.sdkInkReference == null || (state.plainInkControl && state.stage == FixtureStage.Production))
     require(!state.plainInkControl || state.stage != FixtureStage.InkMask) { "Plain ink must retain the original backdrop and paint" }
     require(state.lensControl == LensControl.None || (case.tier == MaterialTier.Clear && state.stage == FixtureStage.Production && !state.regularPane && !state.pillPane))
     LiteTheme(case.settings) {
@@ -136,7 +165,16 @@ internal fun OpticalFixture(case: RenderCase, state: FixtureState, probe: Render
             probe.switchThumb = (if (case.checked) Color.White else visuals.secondaryInk).toArgb()
             probe.ink = ink.toArgb()
         }
-        BoxWithConstraints(Modifier.fillMaxSize().onGloballyPositioned { probe.bounds["root"] = it.boundsInWindow() }) {
+        BoxWithConstraints(Modifier.fillMaxSize().onGloballyPositioned { probe.bounds["root"] = it.boundsInWindow() }.drawWithContent {
+            drawContent()
+            state.sceneDrawReceipt?.let { receipt ->
+                receipt.put("drawPasses", receipt.optLong("drawPasses", 0L) + 1L).put("stage", state.stage.name)
+                    .put("auroraTime", state.auroraTime).put("inkContrastSource", state.inkContrastSource)
+                    .put("parentSelected", state.parentSelected).put("frontHue", state.frontHue)
+                    .put("plainInkControl", state.plainInkControl).put("sdkInkReference", state.sdkInkReference != null)
+                    .put("inkAlpha", state.inkAlpha).put("method", "OpticalFixture root drawWithContent after drawContent")
+            }
+        }) {
             val paneWidth = minOf(320.dp, maxWidth - 48.dp)
             Box(Modifier.fillMaxSize().layerBackdrop(source)) {
                 LiteWallpaper(auroraTime, Modifier.fillMaxSize())
@@ -154,6 +192,15 @@ internal fun OpticalFixture(case: RenderCase, state: FixtureState, probe: Render
                         drawRect(white, Offset(0f, y.toPx()), Size(size.width, 1.dp.toPx()))
                     }
                     if (state.pillPane) drawRect(white, Offset(0f, 120.dp.toPx()), Size(size.width, 1.dp.toPx()))
+                    if (state.inkContrastSource) {
+                        val time = auroraTime.longValue
+                        check(time == 0L || time == 45_000_000L) { "Controlled ink input has exactly two fixed poses" }
+                        val signal = if (time == 0L) Color.Red else Color.Blue
+                        drawRect(signal.copy(alpha = 0.60f), Offset(0f, 310.dp.toPx()), Size(size.width, 44.dp.toPx()), blendMode = BlendMode.SrcOver)
+                        state.inkContrastDrawReceipt?.put("drawReadTime", time)?.put("signalRgb", if (time == 0L) "ff0000" else "0000ff")
+                            ?.put("bandPx", JSONArray(listOf(0f, 310.dp.toPx(), size.width, 354.dp.toPx())))
+                            ?.put("alpha", 0.60)?.put("blendMode", "SrcOver")?.put("canvasDrawExecuted", true)
+                    }
                     if (state.stage == FixtureStage.InkMask) drawRect(Color.Black, Offset(0f, 310.dp.toPx()), Size(size.width, 44.dp.toPx()))
                 }
             }
@@ -186,8 +233,8 @@ internal fun OpticalFixture(case: RenderCase, state: FixtureState, probe: Render
                 }
                 Box(Modifier.offset(24.dp, 244.dp).size(60.dp, 48.dp).onGloballyPositioned { probe.bounds["switch"] = it.boundsInWindow() }) {
                     if (state.stage == FixtureStage.Production) LiteSwitch(case.checked, "rendering-switch", {}, case.enabled)
-                    if (state.stage == FixtureStage.NoLens) NoLensSwitch(case, foregroundControl = state.switchForegroundControl)
-                    if (state.stage == FixtureStage.FlatThumb) NoLensSwitch(case, flatTrack = false)
+                    if (state.stage == FixtureStage.NoLens) NoLensSwitch(case, foregroundControl = state.switchForegroundControl, measuredPosition = state.switchForegroundControl, probe = if (state.switchForegroundControl) probe else null)
+                    if (state.stage == FixtureStage.FlatThumb) NoLensSwitch(case, flatTrack = false, measuredPosition = state.switchForegroundControl, probe = if (state.switchForegroundControl) probe else null)
                 }
                 CompositionLocalProvider(LocalLiteVisuals provides if (state.plainInkControl) visuals.copy(aurora = false, material = MaterialTier.Solid) else visuals) {
                 val inkModifier = Modifier.offset(24.dp, 312.dp).onGloballyPositioned { probe.bounds["ink"] = it.boundsInWindow() }
@@ -195,36 +242,55 @@ internal fun OpticalFixture(case: RenderCase, state: FixtureState, probe: Render
                     CompositionLocalProvider(LocalLiteVisuals provides visuals.copy(aurora = false, material = MaterialTier.Solid)) {
                         LiteText("MMMMMM", inkModifier, style = LiteType.Headline, color = Color.White)
                     }
-                } else if (state.stage != FixtureStage.Source) LiteText("MMMMMM", inkModifier, style = LiteType.Headline, color = ink)
+                } else if (state.stage != FixtureStage.Source) {
+                    val reference = state.sdkInkReference
+                    if (reference != null) SdkInkReferenceGlyph("ink", reference, inkModifier, ink)
+                    else LiteText("MMMMMM", inkModifier, style = LiteType.Headline, color = ink)
+                }
                 if (state.stage != FixtureStage.Source) {
                     val iconModifier = Modifier.offset(220.dp, 314.dp).onGloballyPositioned { probe.bounds["inkIcon"] = it.boundsInWindow() }
                     if (state.stage == FixtureStage.InkMask) {
                         CompositionLocalProvider(LocalLiteVisuals provides visuals.copy(aurora = false, material = MaterialTier.Solid)) {
                             LiteIcon(FullGlyphs.logs, iconModifier, color = Color.White)
                         }
-                    } else LiteIcon(FullGlyphs.logs, iconModifier, color = ink)
+                    } else {
+                        val reference = state.sdkInkReference
+                        if (reference != null) SdkInkReferenceGlyph("inkIcon", reference, iconModifier, ink)
+                        else LiteIcon(FullGlyphs.logs, iconModifier, color = ink)
+                    }
                 }
                 }
                 if (state.stage != FixtureStage.Source && state.stage != FixtureStage.InkMask) LitePane(
-                    Modifier.offset(24.dp, 366.dp).size(paneWidth, 128.dp).onGloballyPositioned { probe.bounds["parent"] = it.boundsInWindow() },
+                    Modifier.offset(24.dp, 366.dp).size(paneWidth, 128.dp).onGloballyPositioned { probe.bounds["parent"] = it.boundsInWindow(clipBounds = false) },
                     selected = state.parentSelected,
                     clipContent = false,
                 ) {
+                    FixtureLooseContent("parent-content", state.fixtureGeometry) {
                     CompositionLocalProvider(LocalLiteVisuals provides visuals.copy(material = MaterialTier.Clear)) {
                         LitePane(
                             Modifier.offset((-20).dp, (-20).dp).size(140.dp, 72.dp)
-                                .onGloballyPositioned { probe.bounds["cornerProbe"] = it.boundsInWindow() },
+                                .onGloballyPositioned { probe.bounds["cornerProbe"] = it.boundsInWindow(clipBounds = false) },
                             glassStyle = AeroveGlassStyle(blur = 0f, refraction = 0f, bevel = 0f, rim = 0f),
                         ) {}
                     }
                     LitePane(
-                        Modifier.align(Alignment.Center).size(140.dp, 72.dp).onGloballyPositioned { probe.bounds["child"] = it.boundsInWindow() },
+                        Modifier.align(Alignment.Center).size(140.dp, 72.dp).onGloballyPositioned { probe.bounds["child"] = it.boundsInWindow(clipBounds = false) },
                         corner = LiteCorner.Control,
                     ) {
+                        FixtureLooseContent("child-content", state.fixtureGeometry) {
                         LiteText(
-                            "MMMM", Modifier.align(Alignment.Center).onGloballyPositioned { probe.bounds["front"] = it.boundsInWindow() },
+                            "MMMM", Modifier.align(Alignment.Center).onGloballyPositioned { probe.bounds["front"] = it.boundsInWindow(clipBounds = false) },
                             style = LiteType.Headline, color = if (state.frontHue) Color.Cyan else Color.Magenta,
+                            onTextLayout = { result ->
+                                state.fixtureGeometry?.put("front-text-layout", JSONObject().put("text", result.layoutInput.text.text)
+                                    .put("widthPx", result.size.width).put("heightPx", result.size.height)
+                                    .put("minWidthPx", result.layoutInput.constraints.minWidth).put("minHeightPx", result.layoutInput.constraints.minHeight)
+                                    .put("maxWidthPx", result.layoutInput.constraints.maxWidth).put("maxHeightPx", result.layoutInput.constraints.maxHeight)
+                                    .put("overflow", result.didOverflowWidth || result.didOverflowHeight).put("lineCount", result.lineCount))
+                            },
                         )
+                        }
+                    }
                     }
                 }
             }
@@ -292,7 +358,7 @@ private fun NoLensControl(
 }
 
 @Composable
-private fun NoLensSwitch(case: RenderCase, flatTrack: Boolean = true, foregroundControl: Boolean = false) {
+private fun NoLensSwitch(case: RenderCase, flatTrack: Boolean = true, foregroundControl: Boolean = false, measuredPosition: Boolean = false, probe: RenderProbe? = null) {
     Box(Modifier.size(60.dp, 48.dp).alpha(if (case.enabled || case.tier != MaterialTier.Solid) 1f else 0.48f), contentAlignment = Alignment.Center) {
         val visuals = LocalLiteVisuals.current
         val inactive = if (case.tier == MaterialTier.Frosted) 0.13f else 0.06f
@@ -300,8 +366,8 @@ private fun NoLensSwitch(case: RenderCase, flatTrack: Boolean = true, foreground
         val thumbTint = visuals.surface.copy(alpha = if (case.enabled) 0.08f else 0.03f)
         val finish = AeroveGlassStyle.regular(case.dark).copy(blur = 0f)
         val children: @Composable BoxScope.() -> Unit = {
-            Box(Modifier.offset(if (case.checked) 24.dp else 4.dp, 4.dp)) {
-                NoLensControl(case, Modifier.size(24.dp), LiteCorner.Full, case.checked,
+            val thumb: @Composable () -> Unit = {
+                NoLensControl(case, Modifier.size(24.dp).onGloballyPositioned { probe?.bounds?.set("switch-control-thumb", it.boundsInWindow()) }, LiteCorner.Full, case.checked,
                     solidColor = if (case.checked) Color.White else visuals.secondaryInk, glassStyle = finish, glassTint = thumbTint) {
                     if ((foregroundControl || !flatTrack) && case.tier != MaterialTier.Solid) {
                         val glyph = if (case.checked) FullGlyphs.check else FullGlyphs.close
@@ -311,10 +377,66 @@ private fun NoLensSwitch(case: RenderCase, flatTrack: Boolean = true, foreground
                     }
                 }
             }
+            if (measuredPosition) {
+                BoxWithConstraints(Modifier.fillMaxWidth().height(32.dp).onGloballyPositioned { probe?.bounds?.set("switch-control-track", it.boundsInWindow()) }) {
+                    val thumbLeft = if (case.checked) maxWidth - 28.dp else 4.dp
+                    Box(Modifier.offset { IntOffset(thumbLeft.roundToPx(), 4.dp.roundToPx()) }) { thumb() }
+                }
+            } else Box(Modifier.offset(if (case.checked) 24.dp else 4.dp, 4.dp)) { thumb() }
         }
         if (flatTrack) NoLensControl(case, Modifier.size(52.dp, 32.dp), LiteCorner.Full, case.checked,
             solidColor = if (case.checked) visuals.primary else lerp(visuals.surface, visuals.ink, 0.12f), glassStyle = finish, glassTint = trackTint, content = children)
         else LitePane(Modifier.size(52.dp, 32.dp), corner = LiteCorner.Full, selected = case.checked,
             solidColor = if (case.checked) visuals.primary else lerp(visuals.surface, visuals.ink, 0.12f), glassStyle = finish, glassTint = trackTint, content = children)
+    }
+}
+
+internal class SdkInkReferenceCapture {
+    val layers = ConcurrentHashMap<String, GraphicsLayer>()
+    val bounds = ConcurrentHashMap<String, Rect>()
+    val details = ConcurrentHashMap<String, JSONObject>()
+}
+
+/** An independent SDK source image: no production ink modifier, shader or layer helper. */
+@Composable
+private fun SdkInkReferenceGlyph(name: String, references: SdkInkReferenceCapture, modifier: Modifier, paint: Color) {
+    val layer = rememberGraphicsLayer()
+    val family = LocalLiteFontFamily.current
+    val style = LiteType.Headline.copy(fontFamily = LiteType.Headline.fontFamily ?: family)
+    SideEffect { references.layers[name] = layer }
+    val recording = modifier.onGloballyPositioned { references.bounds[name] = it.boundsInWindow() }.drawWithContent {
+        layer.record { this@drawWithContent.drawContent() }
+        drawLayer(layer)
+    }
+    val detail = JSONObject().put("paintArgb", paint.toArgb()).put("sourceAlphaIncluded", true)
+        .put("renderer", if (name == "ink") "Direct Compose Material3 Text" else "Raw vector GlyphDrawing")
+        .put("resolvedPlatformTypeface", "not directly observed")
+    if (name == "ink") {
+        Text("MMMMMM", recording, color = paint, style = style, maxLines = Int.MAX_VALUE, overflow = TextOverflow.Ellipsis,
+            onTextLayout = { result ->
+                detail.put("text", result.layoutInput.text.text).put("fontSizeSp", style.fontSize.value)
+                    .put("lineHeightSp", style.lineHeight.value).put("fontWeight", style.fontWeight?.weight ?: JSONObject.NULL)
+                    .put("letterSpacingSp", style.letterSpacing.value).put("fontFamilyRequest", style.fontFamily.toString())
+                    .put("layoutSizePx", JSONArray(listOf(result.size.width, result.size.height)))
+                    .put("layoutConstraints", result.layoutInput.constraints.toString())
+                references.details[name] = detail
+            })
+    } else {
+        SideEffect { references.details[name] = detail.put("glyph", "FullGlyphs.logs").put("requestedSizeDp", 24) }
+        GlyphDrawing(FullGlyphs.logs, recording.size(24.dp), paint, fill = 0f)
+    }
+}
+
+/** Only the test scene releases inherited minima; production Pane layout is untouched. */
+@Composable
+private fun FixtureLooseContent(name: String, trace: JSONObject?, content: @Composable BoxScope.() -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxSize(), propagateMinConstraints = false) {
+        SideEffect {
+            trace?.put(name, JSONObject().put("incomingMinWidthPx", constraints.minWidth)
+                .put("incomingMaxWidthPx", constraints.maxWidth).put("incomingMinHeightPx", constraints.minHeight)
+                .put("incomingMaxHeightPx", constraints.maxHeight).put("propagateMinConstraints", false)
+                .put("childMinWidthPx", 0).put("childMinHeightPx", 0))
+        }
+        content()
     }
 }
